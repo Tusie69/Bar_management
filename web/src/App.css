@@ -1,0 +1,41 @@
+.shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.card {
+  width: min(640px, 100%);
+  padding: clamp(28px, 6vw, 56px);
+  border: 1px solid #2d3440;
+  border-radius: 24px;
+  background: #171a20;
+  box-shadow: 0 24px 64px rgb(0 0 0 / 35%);
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  color: #d7aa4d;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+h1 { margin: 0; font-size: clamp(2rem, 7vw, 4rem); line-height: 1.05; }
+.description { margin: 20px 0 32px; color: #b7bec9; line-height: 1.65; }
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: #242933;
+  color: #d7dce4;
+  font-size: 0.9rem;
+}
+
+.status__dot { width: 9px; height: 9px; border-radius: 50%; background: #d7aa4d; }
+.status--online .status__dot { background: #4fd18b; box-shadow: 0 0 0 4px rgb(79 209 139 / 14%); }
+.status--offline .status__dot { background: #f46f6f; box-shadow: 0 0 0 4px rgb(244 111 111 / 14%); }

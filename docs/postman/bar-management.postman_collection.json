@@ -1,0 +1,26 @@
+{
+  "info": {
+    "name": "Bar Management API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [{ "key": "baseUrl", "value": "http://localhost:3000/api/v1" }],
+  "item": [
+    {
+      "name": "Health",
+      "request": { "method": "GET", "url": "{{baseUrl}}/health" }
+    },
+    {
+      "name": "Tables by date",
+      "request": { "method": "GET", "url": "{{baseUrl}}/tables?date=2026-10-25" }
+    },
+    {
+      "name": "Update table status",
+      "request": {
+        "method": "PATCH",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"date\": \"2026-10-25\",\n  \"status\": \"OCCUPIED\"\n}" },
+        "url": "{{baseUrl}}/tables/1/status"
+      }
+    }
+  ]
+}

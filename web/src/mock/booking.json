@@ -1,0 +1,11 @@
+{
+  "id": 101,
+  "customer": { "name": "Nguyễn Văn An", "phone": "0901234567" },
+  "startAt": "2026-10-25T21:00:00+07:00",
+  "endAt": "2026-10-26T00:00:00+07:00",
+  "guestCount": 6,
+  "source": "HOTLINE",
+  "note": "Sinh nhật",
+  "status": "CONFIRMED",
+  "tables": [{ "id": 4, "code": "B9" }, { "id": 5, "code": "B10" }]
+}

@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "TABLE_TIME_CONFLICT",
+    "message": "Bàn B9 đã có booking trong khung giờ này.",
+    "details": { "tableIds": [4], "conflictingBookingIds": [99] }
+  }
+}

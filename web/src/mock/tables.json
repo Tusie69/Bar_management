@@ -1,0 +1,25 @@
+{
+  "date": "2026-10-25",
+  "tables": [
+    {
+      "id": 1,
+      "code": "B1",
+      "name": "Bàn B1",
+      "zone": "Khu bàn",
+      "capacity": 4,
+      "position": { "x": 80, "y": 80 },
+      "isBackup": false,
+      "status": "AVAILABLE"
+    },
+    {
+      "id": 8,
+      "code": "SC1",
+      "name": "Bàn sơ cua 1",
+      "zone": "Kho bàn",
+      "capacity": 4,
+      "position": { "x": 500, "y": 400 },
+      "isBackup": true,
+      "status": "BACKUP_INACTIVE"
+    }
+  ]
+}
