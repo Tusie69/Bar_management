@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
 
 type TableState = 'AVAILABLE' | 'RESERVED' | 'IN_USE'
-type BookingStatus = 'RESERVED' | 'LATE' | 'NO_SHOW' | 'IN_USE'
 
 interface TableView {
   id: number
@@ -18,19 +17,9 @@ interface TableView {
 }
 
 interface TablesResponse { businessDate: string; tables: TableView[] }
-interface BookingPreview { id: number; time: string; table: string; guest: string; partySize: number; phone: string; source: string; status: BookingStatus }
 
 const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/api/v1'
 const stateLabels: Record<TableState, string> = { AVAILABLE: 'Chưa đặt', RESERVED: 'Đang đặt', IN_USE: 'Đang sử dụng' }
-const bookingLabels: Record<BookingStatus, string> = { RESERVED: 'Đang đặt', LATE: 'Đến muộn', NO_SHOW: 'Không đến', IN_USE: 'Đang sử dụng' }
-const previewBookings: BookingPreview[] = [
-  { id: 1, time: '19:45', table: 'Bar 5', guest: 'Anh Tuấn', partySize: 2, phone: '222', source: 'Zalo', status: 'NO_SHOW' },
-  { id: 2, time: '19:45', table: 'A3', guest: 'Khách Walk-in', partySize: 3, phone: 'WK', source: '', status: 'IN_USE' },
-  { id: 3, time: '20:00', table: 'A1', guest: 'Anh Minh', partySize: 4, phone: '678', source: 'Hotline', status: 'LATE' },
-  { id: 4, time: '21:00', table: 'B3', guest: 'Chị Lan', partySize: 6, phone: '321', source: 'Fanpage', status: 'RESERVED' },
-  { id: 5, time: '21:30', table: 'B11 + B12', guest: 'Chị Hà', partySize: 8, phone: '890', source: 'Cổ đông', status: 'RESERVED' },
-  { id: 6, time: '00:30', table: 'A5', guest: 'Khách •333', partySize: 4, phone: '333', source: 'Hotline', status: 'RESERVED' },
-]
 
 function todayInVietnam(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
@@ -60,7 +49,6 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [automatic, setAutomatic] = useState(true)
 
   const loadTables = useCallback(async () => {
     try {
@@ -85,8 +73,6 @@ function App() {
     reserved: tables.filter((table) => table.state === 'RESERVED').length,
     inUse: tables.filter((table) => table.state === 'IN_USE').length,
     backup: tables.filter((table) => table.isBackup).length,
-    late: previewBookings.filter((booking) => booking.status === 'LATE').length,
-    noShow: previewBookings.filter((booking) => booking.status === 'NO_SHOW').length,
   }), [tables])
 
   async function updateSelected(update: { state?: TableState; isBackup?: boolean }): Promise<void> {
@@ -111,31 +97,26 @@ function App() {
         <p className="side-label">TÍNH NĂNG</p>
         <button className="side-nav side-nav--active" type="button"><i />Lễ tân · Đặt bàn</button>
         <div className="side-placeholder">Khu vực chọn tính năng<br />(bổ sung sau)</div>
-        <div className="demo-tools">
-          <p className="side-label">CÔNG CỤ DEMO</p><span>Giờ mô phỏng</span><strong>20:20 · 23/10</strong><small>Ngày làm việc 23/10 (17:00 → 05:00)</small>
-          <div className="demo-actions"><button type="button">+5′</button><button type="button">+15′</button><button type="button">Đặt lại</button></div>
-          <span>Xem với vai trò</span><div className="role-switch"><button className="active" type="button">Lễ tân</button><button type="button">Admin</button></div>
-        </div>
       </aside>
 
       <section className="main-shell">
         <header className="topbar">
           <div className="page-title"><h1>Sơ đồ bàn</h1><span>LỄ TÂN · ĐẶT BÀN</span></div>
           <label className="date-control"><span>NGÀY LÀM VIỆC (17:00 → 05:00)</span><input type="date" value={businessDate} onChange={(event) => { setLoading(true); setError(null); setSelectedId(null); setBusinessDate(event.target.value) }} /></label>
-          <div className="auto-control"><span>TRẠNG THÁI TỰ ĐỘNG</span><div className="segmented"><button className={automatic ? 'active' : ''} type="button" onClick={() => setAutomatic(true)}>Tự động</button><button className={!automatic ? 'active' : ''} type="button" onClick={() => setAutomatic(false)}>Thủ công</button></div></div>
+          <div className="auto-control"><span>TRẠNG THÁI TỰ ĐỘNG</span><div className="segmented"><button type="button" disabled>Chờ migration</button></div></div>
           <div className="history-actions"><button type="button" disabled>↶ Hoàn tác</button><button type="button" disabled>↷ Làm lại</button></div>
-          <div className="primary-actions"><button type="button">Bàn chờ <b>2</b></button><button type="button">Tìm khách</button><button type="button">Xuất text</button><button className="add-booking" type="button">+ Đặt bàn</button></div>
+          <div className="primary-actions"><button type="button" disabled>Bàn chờ</button><button type="button" disabled>Tìm khách</button><button type="button" disabled>Xuất text</button><button className="add-booking" type="button" disabled>+ Đặt bàn</button></div>
         </header>
         {error && <div className="error-banner" role="alert">{error}</div>}
 
         <main className="workspace">
           <section className="map-panel">
             <div className="legend" aria-label="Tổng hợp trạng thái bàn">
-              <span><i className="dot dot--available" />Chưa đặt <b>{counts.available}</b></span><span><i className="dot dot--reserved" />Đang đặt <b>{counts.reserved}</b></span><span><i className="dot dot--late" />Đến muộn <b>{counts.late}</b></span><span><i className="dot dot--no-show" />Không đến <b>{counts.noShow}</b></span><span><i className="dot dot--in-use" />Đang sử dụng <b>{counts.inUse}</b></span><span><i className="dot dot--backup" />Sơ cua <b>{counts.backup}</b></span>
+              <span><i className="dot dot--available" />Chưa đặt <b>{counts.available}</b></span><span><i className="dot dot--reserved" />Đang đặt <b>{counts.reserved}</b></span><span><i className="dot dot--in-use" />Đang sử dụng <b>{counts.inUse}</b></span><span><i className="dot dot--backup" />Sơ cua <b>{counts.backup}</b></span>
             </div>
             <div className="map-stage" aria-label="Sơ đồ bàn 21GAM">
-              <span className="map-note">Màu tạm · Đang sử dụng = xanh lá</span><div className="fixture fixture--left" /><div className="fixture fixture--right" />
-              <div className="bar-block"><BrandMark compact /><strong>QUẦY BAR</strong><span>21 ghế</span></div>
+              <div className="fixture fixture--left" /><div className="fixture fixture--right" />
+              <div className="bar-block"><BrandMark compact /><strong>QUẦY BAR</strong></div>
               {loading && <p className="empty-state">Đang tải sơ đồ bàn…</p>}{!loading && tables.length === 0 && <p className="empty-state">Chưa có dữ liệu bàn</p>}
               {tables.map((table) => <button key={table.id} type="button" className={`table-node table-node--${table.state.toLowerCase().replace('_', '-')} ${table.isBackup ? 'table-node--backup' : ''} ${selectedId === table.id ? 'table-node--selected' : ''}`} style={{ left: `${table.position.x}%`, top: `${table.position.y}%` }} onClick={() => setSelectedId(table.id)} title={`${table.area.name} · ${stateLabels[table.state]}`}>{table.code}</button>)}
               {tables.length > 0 && <><span className="area-label area-label--a">KHU A</span><span className="area-label area-label--b">KHU B</span><span className="area-label area-label--c">KHU C</span><span className="entrance">↑ LỐI VÀO</span></>}
@@ -144,9 +125,8 @@ function App() {
           </section>
 
           <section className="booking-panel">
-            <header className="booking-header"><div><h2>Đặt bàn</h2><strong>Ngày làm việc {formatBusinessDate(businessDate)}</strong><p>Chạm một bàn trên sơ đồ để thao tác · chạm một dòng để chọn bàn của booking.</p></div><span>{previewBookings.length} lượt · {previewBookings.reduce((sum, booking) => sum + booking.partySize, 0)} khách</span></header>
-            <div className="booking-list">{previewBookings.map((booking) => <button className="booking-row" type="button" key={booking.id}><time>{booking.time}</time><strong className="booking-table">{booking.table}</strong><span className="guest"><b>{booking.guest}</b><small>{booking.partySize} khách · {booking.phone === 'WK' ? 'WK' : `••• ••• ${booking.phone}`}{booking.source ? ` · ${booking.source}` : ''}</small></span><span className={`status status--${booking.status.toLowerCase().replace('_', '-')}`}>{bookingLabels[booking.status]}</span></button>)}</div>
-            <span className="demo-data-note">Dữ liệu booking minh họa giao diện · API booking sẽ triển khai ở bước tiếp theo</span>
+            <header className="booking-header"><div><h2>Đặt bàn</h2><strong>Ngày làm việc {formatBusinessDate(businessDate)}</strong><p>Dữ liệu sẽ được kết nối sau khi có migration và API booking chính thức.</p></div></header>
+            <div className="booking-empty"><strong>Chưa có dữ liệu đặt bàn</strong><span>Đang chờ migration chính thức.</span></div>
           </section>
         </main>
       </section>
