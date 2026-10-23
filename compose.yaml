@@ -1,0 +1,37 @@
+services:
+  mysql:
+    image: mysql:9.7.2
+    container_name: 21gam-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-gam21_root_dev}
+      MYSQL_ROOT_HOST: localhost
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-gam21_dev}
+      MYSQL_USER: ${MYSQL_USER:-gam21}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-gam21_dev}
+      TZ: Asia/Ho_Chi_Minh
+    command:
+      - --bind-address=0.0.0.0
+      - --mysqlx=OFF
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --sql-mode=ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+      - --transaction-isolation=REPEATABLE-READ
+      - --binlog-format=ROW
+      - --binlog-expire-logs-seconds=2592000
+      - --innodb-print-all-deadlocks=ON
+      - --innodb-native-foreign-keys=ON
+    ports:
+      - "127.0.0.1:${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - 21gam_mysql97_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u$${MYSQL_USER} -p$${MYSQL_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+volumes:
+  21gam_mysql97_data:
+

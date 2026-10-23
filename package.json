@@ -1,0 +1,19 @@
+{
+  "name": "21gam-bar-management",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @21gam/api --filter @21gam/web dev",
+    "dev:api": "pnpm --filter @21gam/api dev",
+    "dev:web": "pnpm --filter @21gam/web dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
+
