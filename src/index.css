@@ -1,0 +1,309 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource/roboto/400.css";
+@import "@fontsource/roboto/500.css";
+@import "@fontsource/roboto/600.css";
+@import "@fontsource/roboto/700.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * 21GAM tokens, GAM Dashboard v2.
+ * Chrome is monochrome + one blue action color (--primary). Hue for table/booking
+ * state stays in --st-*. Text has three tiers (--tx-1 / --tx-2 / --tx-3), all >= 4.5:1.
+ * Light = "Daylight". Dark = "Service" (default).
+ */
+:root {
+  --radius: 2px;
+
+  --background: oklch(0.95 0.008 100);
+  --surface-1: oklch(1 0 0);
+  --surface-2: oklch(0.965 0.006 100);
+  --surface-3: oklch(0.93 0.008 100);
+  --floor: oklch(0.975 0.005 100);
+  --floor-grid: oklch(0.87 0.008 100);
+  --floor-zone: oklch(0.945 0.007 100);
+  --floor-wall: oklch(0.42 0.01 80);
+  --floor-fixture: oklch(0.92 0.008 100);
+
+  --foreground: oklch(0.205 0.008 80);
+  --text-muted: oklch(0.42 0.01 80);
+  --text-subtle: oklch(0.5 0.01 80);
+  --tx-1: #1f2937;
+  --tx-strong: #111827;
+  --tx-head: #374151;
+  --tx-2: #4b5563;
+  --tx-3: #6b7280;
+
+  --border: oklch(0.885 0.008 100);
+  --border-strong: oklch(0.8 0.01 100);
+  --table-line: oklch(0.5 0.01 80);
+  --input: oklch(0.8 0.01 100);
+  --ring: oklch(0.205 0.008 80);
+
+  --card: var(--surface-1);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface-1);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.5 0.15 255);
+  --primary-foreground: oklch(0.99 0 0);
+  --primary-ink: oklch(0.47 0.15 255);
+  --primary-tint: oklch(0.5 0.15 255 / 0.09);
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--surface-3);
+  --accent-foreground: var(--foreground);
+  --destructive: oklch(0.53 0.18 27);
+  /* Wordmark only. */
+  --brand: oklch(0.5 0.085 75);
+
+  --st-reserved: oklch(0.52 0.14 250);
+  --st-late: oklch(0.54 0.13 65);
+  --st-noshow: oklch(0.53 0.18 27);
+  --st-seated: oklch(0.52 0.12 160);
+  --st-oos: oklch(0.58 0.005 80);
+  --st-free: var(--table-line);
+  --st-reserved-tint: oklch(0.52 0.14 250 / 0.1);
+  --st-late-tint: oklch(0.6 0.13 65 / 0.14);
+  --st-noshow-tint: oklch(0.53 0.18 27 / 0.1);
+  --st-seated-tint: oklch(0.52 0.12 160 / 0.14);
+  --st-seated-fill: oklch(0.52 0.12 160);
+  --on-seated: oklch(0.99 0 0);
+
+  --shadow-float: 0 1px 2px oklch(0.2 0.01 80 / 0.06), 0 12px 32px -12px oklch(0.2 0.01 80 / 0.22);
+
+  /* oklab, not oklch: oklch mixing shifted the reserved hue toward violet. */
+  --st-reserved-ink: color-mix(in oklab, var(--st-reserved) 72%, var(--tx-1));
+  --st-late-ink: color-mix(in oklab, var(--st-late) 72%, var(--tx-1));
+  --st-noshow-ink: color-mix(in oklab, var(--st-noshow) 72%, var(--tx-1));
+  --st-seated-ink: color-mix(in oklab, var(--st-seated) 72%, var(--tx-1));
+
+  --sidebar: oklch(0.95 0.008 100);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--surface-2);
+  --sidebar-accent-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+}
+
+.dark {
+  --background: oklch(0.245 0.006 80);
+  --surface-1: oklch(0.28 0.007 80);
+  --surface-2: oklch(0.315 0.008 80);
+  --surface-3: oklch(0.355 0.009 80);
+  --floor: oklch(0.222 0.005 80);
+  --floor-grid: oklch(0.32 0.007 80);
+  --floor-zone: oklch(0.258 0.006 80);
+  --floor-wall: oklch(0.66 0.01 85);
+  --floor-fixture: oklch(0.29 0.007 80);
+
+  --foreground: oklch(0.93 0.01 90);
+  --text-muted: oklch(0.8 0.01 85);
+  --text-subtle: oklch(0.69 0.009 85);
+  --tx-1: #f3f4f6;
+  --tx-strong: #f9fafb;
+  --tx-head: #e5e7eb;
+  --tx-2: #d1d5db;
+  --tx-3: #9ca3af;
+
+  --border: oklch(0.365 0.008 80);
+  --border-strong: oklch(0.45 0.009 80);
+  --table-line: oklch(0.66 0.008 85);
+  --input: oklch(0.45 0.009 80);
+  --ring: oklch(0.93 0.01 90);
+
+  --primary: oklch(0.56 0.14 252);
+  --primary-foreground: oklch(0.99 0 0);
+  --primary-ink: oklch(0.77 0.1 250);
+  --primary-tint: oklch(0.62 0.14 252 / 0.2);
+  --destructive: oklch(0.69 0.145 25);
+  --brand: oklch(0.83 0.075 88);
+
+  --st-reserved: oklch(0.74 0.1 245);
+  --st-late: oklch(0.8 0.12 80);
+  --st-noshow: oklch(0.69 0.145 25);
+  --st-seated: oklch(0.75 0.11 158);
+  --st-oos: oklch(0.58 0.005 80);
+  --st-reserved-tint: oklch(0.74 0.1 245 / 0.18);
+  --st-late-tint: oklch(0.8 0.12 80 / 0.17);
+  --st-noshow-tint: oklch(0.69 0.145 25 / 0.2);
+  --st-seated-tint: oklch(0.75 0.11 158 / 0.18);
+  --st-seated-fill: oklch(0.69 0.1 158);
+  --on-seated: oklch(0.2 0.02 158);
+
+  --shadow-float: 0 1px 0 oklch(1 0 0 / 0.05) inset, 0 16px 36px -14px oklch(0 0 0 / 0.55);
+
+  --sidebar: oklch(0.215 0.005 80);
+}
+
+@theme inline {
+  --font-sans: "Roboto", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+
+  /* v2 scale: body/buttons 13px, secondary 12px. No 12.5px anywhere. */
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.5;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-ink: var(--primary-ink);
+  --color-primary-tint: var(--primary-tint);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand: var(--brand);
+
+  --color-tx-1: var(--tx-1);
+  --color-tx-strong: var(--tx-strong);
+  --color-tx-head: var(--tx-head);
+  --color-tx-2: var(--tx-2);
+  --color-tx-3: var(--tx-3);
+
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-subtle: var(--text-subtle);
+  --color-strong: var(--border-strong);
+  --color-floor: var(--floor);
+
+  --color-st-reserved: var(--st-reserved);
+  --color-st-late: var(--st-late);
+  --color-st-noshow: var(--st-noshow);
+  --color-st-seated: var(--st-seated);
+  --color-st-oos: var(--st-oos);
+  --color-st-reserved-tint: var(--st-reserved-tint);
+  --color-st-reserved-ink: var(--st-reserved-ink);
+  --color-st-late-ink: var(--st-late-ink);
+  --color-st-noshow-ink: var(--st-noshow-ink);
+  --color-st-seated-ink: var(--st-seated-ink);
+  --color-st-late-tint: var(--st-late-tint);
+  --color-st-noshow-tint: var(--st-noshow-tint);
+  --color-st-seated-tint: var(--st-seated-tint);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* v2 is square-ish: every rounded-* up to lg is 2px. */
+  --radius-sm: var(--radius);
+  --radius-md: var(--radius);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 2px);
+  --radius-2xl: calc(var(--radius) + 2px);
+
+  --shadow-float: var(--shadow-float);
+
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    color-scheme: light;
+    -webkit-tap-highlight-color: transparent;
+    text-size-adjust: 100%;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background font-sans text-tx-1 antialiased;
+    font-variant-numeric: tabular-nums;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+    letter-spacing: -0.01em;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  ::placeholder {
+    color: var(--tx-3);
+  }
+  a {
+    color: var(--tx-1);
+  }
+  a:hover {
+    color: var(--tx-2);
+  }
+  ::selection {
+    background: oklch(0.74 0.115 245 / 0.35);
+  }
+}
+
+@layer utilities {
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+  .eyebrow {
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--tx-3);
+  }
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  .touch-none-pan {
+    touch-action: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes glyph-in {
+  from {
+    opacity: 0.35;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Identity tones (avatars, guest icons): one hue per entity via --h. Never used for table state. */
+.tone {
+  background: oklch(0.55 0.13 var(--h, 265) / 0.13);
+  color: oklch(0.42 0.12 var(--h, 265));
+}
+.dark .tone {
+  background: oklch(0.74 0.11 var(--h, 265) / 0.17);
+  color: oklch(0.86 0.09 var(--h, 265));
+}
