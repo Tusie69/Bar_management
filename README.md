@@ -2,6 +2,8 @@
 
 Phần mềm quản lý vận hành nội bộ 21GAM. Sprint 0 dựng nền tảng cho Module Lễ tân và Đặt bàn.
 
+Tài liệu tổng hợp trạng thái, phần đã hoàn thành, điểm chặn và lộ trình gần nhất: [Báo cáo dự án ngày 24/10/2026](docs/PROJECT_STATUS_2026-10-24.md).
+
 ## Công nghệ
 
 - Web: React, Vite, TypeScript

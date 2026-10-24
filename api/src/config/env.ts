@@ -25,6 +25,11 @@ export const env = {
   organizationId: readNumber('ORGANIZATION_ID', 1),
   venueId: readNumber('VENUE_ID', 1),
   actorUserId: readNumber('ACTOR_USER_ID', 1),
+  session: {
+    cookieName: readString('SESSION_COOKIE_NAME', '21gam_session'),
+    ttlHours: readNumber('SESSION_TTL_HOURS', 12),
+    csrfSecret: process.env.SESSION_CSRF_SECRET,
+  },
   database: {
     host: readString('DB_HOST', '127.0.0.1'),
     port: readNumber('DB_PORT', 3306),

@@ -203,6 +203,10 @@ button:disabled { cursor: not-allowed; }
 .detail-actions button, .spare-action { min-height: 39px; padding: 0 10px; font-size: .7rem; }
 .detail-actions button:not(:disabled) { cursor: pointer; }
 .detail-actions button:disabled, .spare-action:disabled { color: var(--subtle); }
+.visit-close-panel { display: grid; gap: 7px; margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 3px; background: var(--surface-2); }
+.visit-close-panel strong { font-size: .82rem; }
+.visit-close-panel > span:not(.eyebrow), .visit-close-panel small { color: var(--muted); font-size: .68rem; line-height: 1.45; }
+.visit-close-panel button { min-height: 36px; border: 1px solid var(--line-strong); border-radius: 3px; color: var(--subtle); background: var(--surface-3); }
 .spare-action { margin-top: 8px; border-style: dashed; }
 
 @media (max-width: 1180px) {

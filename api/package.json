@@ -10,6 +10,7 @@
     "dev": "tsx watch src/server.ts",
     "db:migrate": "tsx src/database/migrate.ts",
     "db:seed": "tsx src/database/seed.ts",
+    "auth:bootstrap": "tsx src/auth/bootstrap-admin.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "lint": "eslint src test",

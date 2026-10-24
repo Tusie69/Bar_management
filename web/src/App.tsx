@@ -17,6 +17,11 @@ interface TableView {
   state: TableState
   isBackup: boolean
   version: number
+  activeVisit: {
+    id: number
+    version: number
+    tableCodes: string[]
+  } | null
 }
 
 interface TablesResponse {
@@ -390,6 +395,17 @@ function App() {
                     <button type="button" disabled={saving || selectedTable.state !== 'AVAILABLE' || selectedBooking?.status !== 'BOOKED'} onClick={() => selectedBooking && void requestBooking(`/${selectedBooking.id}/assign`, { version: selectedBooking.version, tableIds: [selectedTable.id] })}>Gán cho booking đang chọn</button>
                     <span>Trạng thái bàn được cập nhật tự động qua booking và lượt khách.</span>
                   </div>
+                  {selectedTable.activeVisit ? (
+                    <div className="visit-close-panel">
+                      <span className="eyebrow">LƯỢT ĐANG MỞ</span>
+                      <strong>Visit #{selectedTable.activeVisit.id}</strong>
+                      <span>{selectedTable.activeVisit.tableCodes.length} bàn: {selectedTable.activeVisit.tableCodes.join(' + ').replaceAll('BAR0', '')}</span>
+                      <button type="button" disabled title="Chờ hệ thống đăng nhập và phân quyền visit.end">
+                        Kết thúc lượt / Trả bàn
+                      </button>
+                      <small>Chưa thể thao tác: authentication/RBAC chưa được kích hoạt.</small>
+                    </div>
+                  ) : null}
                   <button className="spare-action" type="button" disabled>Bàn sơ cua được cấu hình cố định trong database</button>
                 </div>
               ) : (

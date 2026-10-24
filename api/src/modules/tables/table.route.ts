@@ -1,5 +1,6 @@
 import { Router } from 'express'
 
+import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { AppError } from '../../errors/app-error.js'
 import { listTables, updateTableState } from './table.repository.js'
 import { isTableState } from './table-state.js'
@@ -24,13 +25,13 @@ function parseBody(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-tableRouter.get('/', async (request, response) => {
+tableRouter.get('/', requireAuthentication, async (request, response) => {
   const businessDate = parseBusinessDate(request.query.date)
   const tables = await listTables(businessDate)
   response.json({ businessDate, tables })
 })
 
-tableRouter.patch('/:id/status', async (request, response) => {
+tableRouter.patch('/:id/status', requireAuthentication, requireCsrfProtection, requirePermission('table.assign'), async (request, response) => {
   const tableId = Number(request.params.id)
   if (!Number.isSafeInteger(tableId) || tableId <= 0) {
     throw new AppError(400, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.')
