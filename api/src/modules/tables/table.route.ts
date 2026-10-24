@@ -48,18 +48,20 @@ tableRouter.patch('/:id/status', async (request, response) => {
   if (isBackup !== undefined && typeof isBackup !== 'boolean') {
     throw new AppError(400, 'INVALID_BACKUP_FLAG', 'Cờ bàn sơ cua phải là true hoặc false.')
   }
+  if (isBackup !== undefined) {
+    throw new AppError(400, 'FIXED_SPARE_TABLE', 'Bàn sơ cua là cấu hình cố định và không thể thay đổi theo ngày.')
+  }
   if (expectedVersion !== undefined && (!Number.isSafeInteger(expectedVersion) || Number(expectedVersion) < 0)) {
     throw new AppError(400, 'INVALID_VERSION', 'Phiên bản bàn không hợp lệ.')
   }
-  if (state === undefined && isBackup === undefined) {
-    throw new AppError(400, 'EMPTY_UPDATE', 'Cần gửi trạng thái hoặc cờ bàn sơ cua.')
+  if (state === undefined) {
+    throw new AppError(400, 'EMPTY_UPDATE', 'Cần gửi trạng thái bàn.')
   }
 
   const table = await updateTableState({
     tableId,
     businessDate,
     ...(state === undefined ? {} : { state }),
-    ...(isBackup === undefined ? {} : { isBackup }),
     ...(expectedVersion === undefined ? {} : { expectedVersion: Number(expectedVersion) }),
     ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
   })

@@ -29,13 +29,13 @@ interface TableRow extends RowDataPacket {
   position_x: string
   position_y: string
   state: TableState
-  is_backup: number
+  is_spare: number
   version: number
 }
 
 interface LockedStateRow extends RowDataPacket {
   state: TableState
-  is_backup: number
+  is_spare: number
   version: number
 }
 
@@ -49,7 +49,7 @@ function toTableView(row: TableRow): TableView {
     area: { code: row.area_code, name: row.area_name, floor: row.floor_number },
     position: { x: Number(row.position_x), y: Number(row.position_y) },
     state: row.state,
-    isBackup: Boolean(row.is_backup),
+    isBackup: Boolean(row.is_spare),
     version: row.version,
   }
 }
@@ -61,7 +61,7 @@ export async function listTables(businessDate: string): Promise<TableView[]> {
        a.code AS area_code, a.name AS area_name, a.floor_number,
        t.position_x, t.position_y,
        COALESCE(ds.state, 'AVAILABLE') AS state,
-       COALESCE(ds.is_backup, FALSE) AS is_backup,
+       t.is_spare,
        COALESCE(ds.version, 0) AS version
      FROM tables t
      JOIN areas a ON a.id = t.area_id
@@ -78,7 +78,6 @@ export interface UpdateTableStateInput {
   tableId: number
   businessDate: string
   state?: TableState
-  isBackup?: boolean
   expectedVersion?: number
   reason?: string
 }
@@ -100,9 +99,10 @@ async function lockOrCreateDailyState(
     [input.businessDate, input.tableId],
   )
   const [stateRows] = await connection.execute<LockedStateRow[]>(
-    `SELECT state, is_backup, version
-     FROM table_daily_states
-     WHERE business_date = ? AND table_id = ?
+    `SELECT ds.state, ds.version, t.is_spare
+     FROM table_daily_states AS ds
+     JOIN tables AS t ON t.id = ds.table_id
+     WHERE ds.business_date = ? AND ds.table_id = ?
      FOR UPDATE`,
     [input.businessDate, input.tableId],
   )
@@ -124,25 +124,21 @@ export async function updateTableState(input: UpdateTableStateInput): Promise<Ta
     }
 
     const nextState = input.state ?? current.state
-    const nextBackup = input.isBackup ?? Boolean(current.is_backup)
     if (!canTransitionTableState(current.state, nextState)) {
       throw new AppError(400, 'INVALID_TABLE_STATE_TRANSITION', `Không thể chuyển bàn từ ${current.state} sang ${nextState}.`)
-    }
-    if (nextBackup && nextState !== 'AVAILABLE') {
-      throw new AppError(400, 'BACKUP_TABLE_NOT_AVAILABLE', 'Chỉ bàn trống mới có thể bật chế độ sơ cua.')
     }
 
     await connection.execute(
       `UPDATE table_daily_states
-       SET state = ?, is_backup = ?, version = version + 1
+       SET state = ?, version = version + 1
        WHERE business_date = ? AND table_id = ?`,
-      [nextState, nextBackup, input.businessDate, input.tableId],
+      [nextState, input.businessDate, input.tableId],
     )
     await connection.execute(
       `INSERT INTO table_state_history
        (business_date, table_id, from_state, to_state, from_backup, to_backup, reason)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [input.businessDate, input.tableId, current.state, nextState, Boolean(current.is_backup), nextBackup, input.reason ?? null],
+      [input.businessDate, input.tableId, current.state, nextState, Boolean(current.is_spare), Boolean(current.is_spare), input.reason ?? null],
     )
     await connection.commit()
   } catch (error) {

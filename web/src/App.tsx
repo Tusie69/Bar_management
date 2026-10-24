@@ -130,7 +130,7 @@ function App() {
     [tables],
   )
 
-  async function updateSelected(update: { state?: TableState; isBackup?: boolean }): Promise<void> {
+  async function updateSelected(update: { state: TableState }): Promise<void> {
     if (!selectedTable) return
     setSaving(true)
     setError(null)
@@ -282,7 +282,7 @@ function App() {
                   <dl><div><dt>Khu vực</dt><dd>{selectedTable.area.name}</dd></div><div><dt>Trạng thái</dt><dd>{stateLabels[selectedTable.state]}</dd></div><div><dt>Sức chứa</dt><dd>{selectedTable.capacity ?? 'Chưa cập nhật'}</dd></div><div><dt>Phiên bản</dt><dd>{selectedTable.version}</dd></div></dl>
                   <div className="detail-actions">
                     {(['AVAILABLE', 'RESERVED', 'IN_USE'] as const).map((state) => (
-                      <button key={state} type="button" disabled={saving || selectedTable.state === state || (selectedTable.isBackup && state !== 'AVAILABLE')} onClick={() => void updateSelected({ state })}>{stateLabels[state]}</button>
+                      <button key={state} type="button" disabled={saving || selectedTable.state === state} onClick={() => void updateSelected({ state })}>{stateLabels[state]}</button>
                     ))}
                   </div>
                   <button className="spare-action" type="button" disabled>Bàn sơ cua được cấu hình cố định trong database</button>
