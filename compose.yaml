@@ -6,7 +6,7 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-gam21_root_dev}
       MYSQL_ROOT_HOST: localhost
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-gam21_dev}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-gam21_platform_dev}
       MYSQL_USER: ${MYSQL_USER:-gam21}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-gam21_dev}
       TZ: Asia/Ho_Chi_Minh

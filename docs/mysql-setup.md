@@ -24,9 +24,9 @@ Docker không bắt buộc theo tài liệu. Compose là cách cô lập môi tr
 | mysql2 UTC, utf8mb4, BIGINT string | Đạt | `api/src/database/pool.ts` |
 | Transaction ghi READ COMMITTED | Đạt cho repository hiện có | `api/src/modules/tables/table.repository.ts` |
 | dbmate 2.36.0 | Đạt | `.tools/dbmate.exe`, checksum khớp tài liệu; file được Git ignore |
-| Tách `gam_migrator` / `gam_app` | Chưa thể áp dụng đúng | Thiếu migration chính thức và ma trận quyền theo bảng ở doc 08 §8; prototype tạm dùng user `gam21` |
-| Migration 0001–0011 / 26 bảng | Chưa thể áp dụng | Gói bàn giao không chứa `ddl_draft.sql` hoặc migration nguồn |
-| 330 cột / 77 FK / 86 CHECK | Chưa thể xác nhận | Cần DDL chính thức và bộ verification |
+| Tách `gam_migrator` / `gam_app` | Chưa hoàn tất | Dev tạm dùng user `gam21`; production phải tách tài khoản migration và API |
+| Migration schema v1.2 / 26 bảng | Đạt | `api/database/migrations/0001_initial_schema.sql` |
+| Seed demo có guard | Đạt | `api/database/seeds/demo.sql`; đã kiểm chứng dựng lại database trắng |
 
 ## Sai khác phát hiện trong hướng dẫn
 
@@ -34,11 +34,10 @@ Trên MySQL 9.7.2 chính thức, `SELECT @@mysqlx` trả lỗi `Unknown system v
 
 Trong container, `bind-address=0.0.0.0` là cần thiết để Docker port forwarding hoạt động. Giới hạn truy cập được thực thi ở host bằng mapping `127.0.0.1:3306:3306`; vì vậy máy khác vẫn không truy cập được.
 
-## File còn thiếu để triển khai schema chính thức
+## File còn thiếu để triển khai production
 
 Cần nhận nguyên bản các file sau, không dựng lại từ bảng mô tả:
 
-- `db/migrations/0001*.sql` đến `0011*.sql`, hoặc `verification/ddl_draft.sql` để đối chiếu.
 - `verification/fk_lint.sql`.
 - Hai bộ test database được nhắc trong tài liệu.
 - Quyền theo từng bảng cho `gam_app` (doc 08 §8).

@@ -127,6 +127,38 @@ button:disabled { cursor: not-allowed; }
 .empty-panel strong { color: var(--muted); font-size: .78rem; }
 .empty-panel span { font-size: .68rem; }
 
+.booking-list { min-height: 0; flex: 1; display: grid; align-content: start; gap: 6px; padding: 10px 12px; overflow-y: auto; }
+.booking-card { width: 100%; display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 8px 10px; align-items: center; padding: 11px; border: 1px solid var(--line); border-radius: 3px; color: var(--text); background: var(--surface-2); text-align: left; cursor: pointer; }
+.booking-card:hover, .booking-card--selected { border-color: var(--line-strong); background: var(--surface-3); }
+.booking-card--selected { box-shadow: inset 2px 0 var(--primary); }
+.booking-card time { color: var(--text); font-size: .78rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+.booking-card > span { min-width: 0; display: grid; gap: 3px; }
+.booking-card strong { overflow: hidden; font-size: .73rem; text-overflow: ellipsis; white-space: nowrap; }
+.booking-card small { color: var(--muted); font-size: .61rem; }
+.booking-card > b { max-width: 78px; overflow: hidden; color: var(--muted); font-size: .62rem; text-overflow: ellipsis; white-space: nowrap; }
+.booking-card em { grid-column: 2 / 4; color: var(--reserved); font-size: .6rem; font-style: normal; }
+.booking-card--checked_in em { color: var(--in-use); }
+.booking-card--cancelled, .booking-card--no_show { opacity: .58; }
+.booking-card--cancelled em, .booking-card--no_show em { color: var(--danger); }
+.booking-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 10px 12px 12px; border-top: 1px solid var(--line); }
+.booking-actions strong, .booking-actions span { grid-column: 1 / -1; font-size: .7rem; }
+.booking-actions button { min-height: 34px; border: 1px solid var(--line); border-radius: 3px; color: var(--text); background: var(--surface-2); font-size: .65rem; cursor: pointer; }
+.booking-actions button:disabled { color: var(--subtle); cursor: not-allowed; }
+.detail-actions span { color: var(--subtle); font-size: .64rem; line-height: 1.45; }
+
+.modal-backdrop { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(0 0 0 / 65%); backdrop-filter: blur(3px); }
+.booking-form { width: min(560px, 100%); display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 20px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--surface-1); box-shadow: var(--shadow); }
+.form-heading { grid-column: 1 / -1; display: flex; align-items: flex-start; justify-content: space-between; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.form-heading h2 { margin: 4px 0 0; font-size: 1.1rem; }
+.form-heading button { width: 32px; height: 32px; border: 1px solid var(--line); color: var(--text); background: transparent; cursor: pointer; }
+.booking-form label { display: grid; gap: 6px; color: var(--muted); font-size: .68rem; }
+.booking-form input, .booking-form select, .booking-form textarea { width: 100%; min-height: 38px; padding: 8px 10px; color: var(--text); border: 1px solid var(--line); border-radius: 3px; background: var(--surface-2); }
+.booking-form textarea { resize: vertical; }
+.form-wide { grid-column: 1 / -1; }
+.form-note { margin: 0; padding: 12px; color: var(--muted); border: 1px dashed var(--line); font-size: .7rem; }
+.form-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; padding-top: 6px; }
+.form-actions > button { min-height: 38px; padding: 0 15px; border: 1px solid var(--line); border-radius: 3px; background: var(--surface-2); cursor: pointer; }
+
 .floor-column { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 12px 14px 14px; }
 .floor-summary { min-height: 40px; display: flex; align-items: center; gap: 10px; }
 .floor-summary > span { margin-left: auto; color: var(--muted); font-size: .68rem; font-variant-numeric: tabular-nums; }
@@ -211,4 +243,6 @@ button:disabled { cursor: not-allowed; }
   .floor-summary > span { margin: 0; }
   .floor-column { padding-inline: 8px; }
   .table-node { width: 31px; height: 31px; font-size: .56rem; }
+  .booking-form { grid-template-columns: 1fr; }
+  .booking-form label, .form-wide { grid-column: 1; }
 }

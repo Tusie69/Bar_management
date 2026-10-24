@@ -4,6 +4,7 @@ import express from 'express'
 import { env } from './config/env.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { notFoundHandler } from './middleware/not-found.js'
+import { bookingRouter } from './modules/bookings/booking.route.js'
 import { tableRouter } from './modules/tables/table.route.js'
 import { healthRouter } from './routes/health.route.js'
 
@@ -15,6 +16,7 @@ app.use(express.json({ limit: '1mb' }))
 
 app.use('/api/v1/health', healthRouter)
 app.use('/api/v1/tables', tableRouter)
+app.use('/api/v1/bookings', bookingRouter)
 
 app.use(notFoundHandler)
 app.use(errorHandler)

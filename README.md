@@ -20,9 +20,8 @@ compose.yaml
 
 ## Trạng thái database
 
-Cấu hình server đã khóa theo MySQL 9.7.2 LTS và dbmate 2.36.0. Bộ migration 0001–0011 chính thức chưa có trong tài liệu được bàn giao, vì vậy các migration trong `api/database/migrations` hiện chỉ là prototype Sprint 0 và không phải GAM-APP Database v1.2.
-
-Xem ma trận đối chiếu tại `docs/mysql-setup.md` trước khi dựng lại database.
+Dự án dùng schema GAM-APP v1.2 gồm 26 bảng trong `api/database/migrations/0001_initial_schema.sql`.
+Seed tổng hợp tại `api/database/seeds/demo.sql` chỉ được phép chạy trên database trống có hậu tố `_dev` hoặc `_test`; file có guard và tự rollback nếu dữ liệu nền không đúng.
 
 ## Chạy lần đầu với Docker (khuyên dùng cho môi trường dev)
 
@@ -35,8 +34,11 @@ Copy-Item web/.env.example web/.env
 docker compose up -d mysql
 pnpm install
 pnpm --filter @21gam/api db:migrate
+pnpm --filter @21gam/api db:seed
 pnpm dev
 ```
+
+Không chạy lại `db:seed` trên database đã có dữ liệu. Seed cố ý từ chối chạy lần hai.
 
 Mở `http://localhost:5173`. API health nằm tại `http://localhost:3000/api/v1/health`.
 
