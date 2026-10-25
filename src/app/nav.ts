@@ -1,4 +1,12 @@
-import { CalendarClock, ChartColumn, LayoutDashboard, ListOrdered, Settings, Users, type LucideIcon } from "lucide-react"
+import {
+  CalendarClock,
+  ChartColumn,
+  LayoutDashboard,
+  ListOrdered,
+  Settings,
+  Users,
+  type LucideIcon,
+} from "lucide-react"
 import type { Permission } from "@/domain/access"
 
 export interface NavItem {

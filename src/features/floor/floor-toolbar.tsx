@@ -1,5 +1,15 @@
 import { vi } from "date-fns/locale"
-import { CalendarDays, ChevronLeft, ChevronRight, Clock, List, ListTodo, Map as MapIcon, Plus, type LucideIcon } from "lucide-react"
+import {
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  List,
+  ListTodo,
+  Map as MapIcon,
+  Plus,
+  type LucideIcon,
+} from "lucide-react"
 import { Fragment, useState } from "react"
 import { GuardedButton } from "@/components/common"
 import { Button } from "@/components/ui/button"
@@ -142,7 +152,13 @@ function DayNav({ today }: { today: BusinessDate }) {
           />
         </PopoverContent>
       </Popover>
-      <Button variant="outline" size="icon" className="bg-surface-1" onClick={() => go(addDays(date, 1))} aria-label="Ngày sau">
+      <Button
+        variant="outline"
+        size="icon"
+        className="bg-surface-1"
+        onClick={() => go(addDays(date, 1))}
+        aria-label="Ngày sau"
+      >
         <ChevronRight />
       </Button>
       {date !== today ? (

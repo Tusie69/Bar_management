@@ -51,10 +51,14 @@ await flow("walk-in from table panel, then undo", 1, async (page) => {
   await expectLabel(table(page, "B5"), /Chưa đặt/)
 })
 
-await flow("walk-in sheet auto-suggests a table (2 taps)", 1, async (page) => {
+await flow("inline walk-in suggests a table (3 taps)", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await page.getByRole("button", { name: "Walk-in" }).first().click()
-  await page.getByRole("button", { name: /Mở bàn cho 2 khách/ }).click()
+  await page
+    .getByRole("button", { name: /^Gợi ý / })
+    .first()
+    .click()
+  await page.getByRole("button", { name: "Mở bàn ngay" }).click()
   await expectLabel(table(page, "B5"), /Đang sử dụng/)
 })
 
@@ -109,12 +113,9 @@ await flow("booking flow end-to-end for tomorrow with table", 1, async (page) =>
 
 await flow("validation: booking needs name or phone, note without phone", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
-  await page.getByRole("button", { name: "Đặt bàn" }).first().click()
-  await page.getByRole("button", { name: /Tiếp/ }).click()
-  await page.getByRole("button", { name: "Nhận trước, xếp bàn sau" }).click()
-  await page.getByRole("button", { name: /Tiếp/ }).click()
+  await page.getByRole("button", { name: "Tạo đặt bàn" }).click()
   await page.getByLabel("Ghi chú").fill("goi 0901234567")
-  await page.getByRole("button", { name: /Tiếp/ }).click()
+  await page.getByRole("button", { name: "Lưu đặt bàn" }).click()
   await page.getByRole("alert").filter({ hasText: "Cần ít nhất tên hoặc số điện thoại" }).waitFor()
   await page.getByRole("alert").filter({ hasText: "Không ghi số điện thoại vào ghi chú" }).waitFor()
 })
@@ -194,12 +195,25 @@ await flow("availability tomorrow: B3 reserved, A3 free", 1, async (page) => {
   // The date/time taskbar: stepping the day from Live switches to Khả dụng for that day.
   await page.getByRole("button", { name: "Ngày sau" }).click()
   await page.waitForTimeout(600)
-  if ((await page.getByRole("radio", { name: "Khả dụng" }).getAttribute("aria-checked")) !== "true")
-    throw new Error("stepping the date should switch to Khả dụng")
+  await page.getByRole("status").filter({ hasText: "Xem trước" }).waitFor()
   const b3 = await page.locator('[aria-label^="Bàn B3:"]').first().getAttribute("aria-label")
   const a3 = await page.locator('[aria-label^="Bàn A3:"]').first().getAttribute("aria-label")
   if (!/giữ cho booking/.test(b3)) throw new Error("B3 should be reserved tomorrow: " + b3)
   if (!/Trống/.test(a3)) throw new Error("A3 should be free tomorrow: " + a3)
+})
+
+await flow("inline form: occupied table is refused, free table is picked on the map", 1, async (page) => {
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await page.getByRole("button", { name: "Walk-in" }).first().click()
+  await table(page, "A3").click()
+  await page
+    .getByText(/A3: không trống/)
+    .first()
+    .waitFor()
+  await table(page, "B5").click()
+  await page.getByRole("button", { name: "Bỏ B5" }).waitFor()
+  await page.getByRole("button", { name: "Mở bàn ngay" }).click()
+  await expectLabel(table(page, "B5"), /Đang sử dụng/)
 })
 
 await flow("cancel booking requires confirmation with reason", 1, async (page) => {

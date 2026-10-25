@@ -1,5 +1,6 @@
-import { Check, Eye, Radio, Search, X } from "lucide-react"
-import { useMemo, useState } from "react"
+import { Check, Eye, MousePointerClick, Radio, Search, X } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { toast } from "sonner"
 import { Stepper } from "@/components/common"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
@@ -15,6 +16,7 @@ import { BookingList, BookingTable, LIST_TABS, useBookingItems, type ListTab } f
 import { FloorCanvas } from "./floor-canvas"
 import { FloorTimeline } from "./floor-timeline"
 import { FloorToolbar, TimeField } from "./floor-toolbar"
+import { draftPickable, QuickForm } from "./quick-form"
 import { ShiftPanel } from "./shift-panel"
 import { TableDetail } from "./table-detail"
 import { useFloorModel } from "./use-floor-model"
@@ -72,6 +74,14 @@ export function FloorPage() {
   const xl = useMediaQuery("(min-width: 1280px)")
   const [listOpen, setListOpen] = useState(false)
   const [tab, setTab] = useState<ListTab>("attn")
+  // Leaving Điều phối drops the inline draft so the shell sheets do not pop open elsewhere.
+  useEffect(
+    () => () => {
+      const s = useUi.getState()
+      if (s.draft) (s.draft.kind === "booking" ? s.closeBooking : s.closeWalkIn)()
+    },
+    [],
+  )
   const availKey = `${ui.availDate}|${ui.availTime}|${ui.floorMode}`
   const [availSelState, setAvailSelState] = useState<{ key: string; ids: number[] }>({ key: "", ids: [] })
   const availSel = availSelState.key === availKey ? availSelState.ids : []
@@ -84,7 +94,8 @@ export function FloorPage() {
   const live = ui.floorMode === "live"
   const today = model.floor?.businessDate ?? businessDateOf(now)
   const date = live ? today : ui.availDate
-  const view = ui.pick ? "map" : ui.view
+  const draft = ui.draft
+  const view = ui.pick || draft ? "map" : ui.view
   const feed = useBookingItems(model, date, live, Math.floor(now.getTime() / MS.MIN))
 
   const availAt = useMemo(() => atBusinessTime(ui.availDate, ui.availTime), [ui.availDate, ui.availTime])
@@ -92,6 +103,15 @@ export function FloorPage() {
   const availMap = useMemo(
     () => new Map((availability.data?.tables ?? []).map((t) => [t.tableId, t])),
     [availability.data],
+  )
+  const draftAt = useMemo(
+    () => (draft?.kind === "booking" ? atBusinessTime(draft.date, draft.time) : null),
+    [draft?.kind, draft?.date, draft?.time],
+  )
+  const draftAvail = useAvailability(draftAt, draft?.party ?? 2)
+  const draftAvailMap = useMemo(
+    () => new Map((draftAvail.data?.tables ?? []).map((t) => [t.tableId, t])),
+    [draftAvail.data],
   )
 
   const pickable = useMemo(() => {
@@ -101,15 +121,22 @@ export function FloorPage() {
     return set
   }, [ui.pick, model.freeIds])
 
-  const selectedIds = ui.pick
-    ? ui.pickSelection
-    : !live
-      ? availSel
-      : ui.selectedTableId
-        ? [ui.selectedTableId]
-        : []
+  const selectedIds = draft
+    ? draft.tableIds
+    : ui.pick
+      ? ui.pickSelection
+      : !live
+        ? availSel
+        : ui.selectedTableId
+          ? [ui.selectedTableId]
+          : []
 
   const onTableClick = (id: number) => {
+    if (draft) {
+      if (draft.tableIds.includes(id) || draftPickable(draft.kind, id, model, draftAvail.data))
+        return ui.toggleDraftTable(id)
+      return toast.info(`${model.label(id)}: không trống · chọn vị trí trống`)
+    }
     if (ui.pick) return ui.togglePick(id)
     if (!live) {
       const status = availMap.get(id)?.status
@@ -120,7 +147,9 @@ export function FloorPage() {
     ui.selectTable(ui.selectedTableId === id ? null : id)
   }
 
-  const panel = !live ? (
+  const panel = draft ? (
+    <QuickForm model={model} availability={draftAvail.data} />
+  ) : !live ? (
     <AvailabilityPanel
       model={model}
       result={availability.data}
@@ -135,17 +164,19 @@ export function FloorPage() {
   )
 
   // v2: the timeline gets the full width until a row is picked.
-  const showRight = wide && (view !== "timeline" || !live || !!ui.selectedTableId)
-  const bottomOpen =
-    !wide && ((live && !!ui.selectedTableId && !ui.pick) || (!live && availSel.length > 0))
+  const showRight = wide && (!!draft || view !== "timeline" || !live || !!ui.selectedTableId)
+  const bottomOpen = !wide && (!!draft || (live && !!ui.selectedTableId && !ui.pick) || (!live && availSel.length > 0))
+  const bookingDraft = draft?.kind === "booking" ? draft : null
 
   const counts = model.counts
   const summary =
     view === "list"
       ? `${feed[tab].length} mục`
-      : live
-        ? `${model.tables.length} vị trí · ${counts.seated ?? 0} đang dùng · ${counts.free ?? 0} trống`
-        : `Xem trước ${ui.availTime} · ${ui.availParty} khách`
+      : bookingDraft
+        ? `Khả dụng ${bookingDraft.time} · ${fmtBusinessDate(bookingDraft.date, "short")} · ${bookingDraft.party} khách`
+        : live
+          ? `${model.tables.length} vị trí · ${counts.seated ?? 0} đang dùng · ${counts.free ?? 0} trống`
+          : `Xem trước ${ui.availTime} · ${ui.availParty} khách`
 
   const list = <BookingList feed={feed} tab={tab} setTab={setTab} model={model} live={live} />
 
@@ -162,7 +193,12 @@ export function FloorPage() {
             Xem trước · {fmtBusinessDate(ui.availDate, "short")}
           </span>
           <TimeField value={ui.availTime} onChange={(time) => ui.setAvailability({ time })} className="h-9 w-[96px]" />
-          <Stepper value={ui.availParty} onChange={(party) => ui.setAvailability({ party })} label="số khách" size="sm" />
+          <Stepper
+            value={ui.availParty}
+            onChange={(party) => ui.setAvailability({ party })}
+            label="số khách"
+            size="sm"
+          />
           <span className="text-muted-foreground">Chạm bàn trống để chọn vị trí.</span>
           <Button variant="ghost" size="sm" className="ml-auto h-8 gap-1.5" onClick={() => ui.setFloorMode("live")}>
             <Radio className="size-3.5" /> Về Live
@@ -189,7 +225,7 @@ export function FloorPage() {
             ) : (
               <Segmented label="Lọc khu" value={ui.zone} onChange={ui.setZone} options={ZONE_TABS} />
             )}
-            {live && view === "map" && !ui.pick ? (
+            {live && view === "map" && !ui.pick && !draft ? (
               <Button variant="ghost" size="sm" onClick={() => ui.setFloorMode("availability")}>
                 <Search /> Xem khả dụng
               </Button>
@@ -207,20 +243,39 @@ export function FloorPage() {
                 <FloorCanvas
                   tables={model.tables}
                   zones={model.catalog.zones}
-                  mode={ui.floorMode}
+                  mode={bookingDraft ? "availability" : draft ? "live" : ui.floorMode}
                   states={model.states}
-                  availability={availMap}
-                  groups={live ? model.floor?.groups : []}
+                  availability={bookingDraft ? draftAvailMap : availMap}
+                  groups={live && !bookingDraft ? model.floor?.groups : []}
                   selectedIds={selectedIds}
-                  pickable={pickable}
+                  pickable={draft ? null : pickable}
                   zoneFocus={ui.zone}
                   now={now}
                   onTableClick={onTableClick}
-                  onBackgroundClick={() => !ui.pick && live && ui.selectTable(null)}
-                  ariaLabel={live ? "Sơ đồ bàn, trạng thái hiện tại" : `Sơ đồ khả dụng lúc ${ui.availTime}`}
+                  onBackgroundClick={() => !ui.pick && !draft && live && ui.selectTable(null)}
+                  ariaLabel={
+                    bookingDraft
+                      ? `Sơ đồ khả dụng lúc ${bookingDraft.time} để chọn bàn`
+                      : live
+                        ? "Sơ đồ bàn, trạng thái hiện tại"
+                        : `Sơ đồ khả dụng lúc ${ui.availTime}`
+                  }
                 />
               )}
               <PickBanner model={model} />
+              {draft ? (
+                <div
+                  className="pointer-events-none absolute top-3 left-1/2 z-10 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-2 rounded-sm border border-strong bg-popover/95 px-3 py-2 text-sm shadow-float backdrop-blur"
+                  aria-live="polite"
+                >
+                  <MousePointerClick className="size-4 shrink-0 text-primary-ink" aria-hidden />
+                  <span className="truncate">
+                    {draft.tableIds.length
+                      ? `Đã chọn ${draft.tableIds.map((id) => model.label(id)).join(", ")} · chạm để thêm hoặc bỏ`
+                      : "Chạm vị trí trống để gán bàn cho đơn"}
+                  </span>
+                </div>
+              ) : null}
             </div>
           ) : view === "timeline" ? (
             <FloorTimeline model={model} date={date} now={now} zone={ui.zone} live={live} />
@@ -246,7 +301,7 @@ export function FloorPage() {
             <div className="flex justify-center pt-2" aria-hidden>
               <span className="h-1 w-10 rounded-full bg-strong" />
             </div>
-            {!live ? (
+            {!live && !draft ? (
               <Button
                 variant="ghost"
                 size="icon-sm"

@@ -176,7 +176,9 @@ function useRowActions(model: FloorModel, live: boolean) {
       confirmLabel="Check-in"
       onConfirm={async (count) => {
         if (!checkIn) return
-        const r = await run(() => api.checkIn({ reservationId: checkIn.id, version: checkIn.version, guestCount: count }))
+        const r = await run(() =>
+          api.checkIn({ reservationId: checkIn.id, version: checkIn.version, guestCount: count }),
+        )
         if (r) setCheckIn(null)
       }}
     />
@@ -204,7 +206,10 @@ function ActionButton({ a }: { a: ReturnType<ReturnType<typeof useRowActions>["a
       permission={a.permission}
       variant="outline"
       size="sm"
-      className={cn("min-w-[84px] bg-surface-1 font-semibold", primary ? "border-primary text-primary-ink" : "border-strong")}
+      className={cn(
+        "min-w-[84px] bg-surface-1 font-semibold",
+        primary ? "border-primary text-primary-ink" : "border-strong",
+      )}
       onClick={(e) => {
         e.stopPropagation()
         a.run()
@@ -287,15 +292,18 @@ export function BookingList({
                 </button>
               </div>
               {(Object.keys(SOURCE_LABEL) as BookingSourceCode[]).map((code) => (
-                <label key={code} className="flex h-10 cursor-pointer items-center gap-2.5 px-3.5 text-sm hover:bg-surface-2">
+                <label
+                  key={code}
+                  className="flex h-10 cursor-pointer items-center gap-2.5 px-3.5 text-sm hover:bg-surface-2"
+                >
                   <Checkbox
                     checked={sources.includes(code)}
-                    onCheckedChange={(on) =>
-                      setSources((s) => (on ? [...s, code] : s.filter((x) => x !== code)))
-                    }
+                    onCheckedChange={(on) => setSources((s) => (on ? [...s, code] : s.filter((x) => x !== code)))}
                   />
                   <span className="flex-1">{SOURCE_LABEL[code]}</span>
-                  <span className="tnum text-xs text-tx-3">{feed.all.filter((it) => it.sourceCode === code).length}</span>
+                  <span className="tnum text-xs text-tx-3">
+                    {feed.all.filter((it) => it.sourceCode === code).length}
+                  </span>
                 </label>
               ))}
               <span className="block h-2" />
@@ -309,7 +317,9 @@ export function BookingList({
         ) : rows.length === 0 ? (
           <div className="flex flex-col items-center gap-1.5 px-6 py-10 text-center">
             <span className="text-sm font-semibold">{q ? "Không tìm thấy" : "Không có mục nào"}</span>
-            <span className="text-xs text-tx-2">{q ? `Không có booking khớp “${q}”.` : "Danh sách này đang trống."}</span>
+            <span className="text-xs text-tx-2">
+              {q ? `Không có booking khớp “${q}”.` : "Danh sách này đang trống."}
+            </span>
           </div>
         ) : (
           rows.map((it) => {
@@ -366,7 +376,9 @@ export function BookingList({
               onClick={() => setTab(t.id)}
               className={cn(
                 "flex h-12 flex-1 items-center justify-center gap-1.5 px-1.5 text-sm whitespace-nowrap",
-                on ? "bg-primary-tint font-medium text-primary-ink shadow-[inset_0_2px_0_var(--primary)]" : "text-tx-2 hover:bg-surface-2",
+                on
+                  ? "bg-primary-tint font-medium text-primary-ink shadow-[inset_0_2px_0_var(--primary)]"
+                  : "text-tx-2 hover:bg-surface-2",
               )}
             >
               {t.label}
@@ -390,7 +402,17 @@ export function BookingList({
 const COLS = "grid-cols-[76px_minmax(150px,1.3fr)_112px_64px_minmax(96px,0.8fr)_104px_132px_104px]"
 
 /** "Danh sách" workspace view: same feed as the left list, as a table. */
-export function BookingTable({ feed, tab, model, live }: { feed: BookingFeed; tab: ListTab; model: FloorModel; live: boolean }) {
+export function BookingTable({
+  feed,
+  tab,
+  model,
+  live,
+}: {
+  feed: BookingFeed
+  tab: ListTab
+  model: FloorModel
+  live: boolean
+}) {
   const { select, actionOf, dialog } = useRowActions(model, live)
   const rows = feed[tab]
   return (

@@ -64,7 +64,12 @@ export function FloorTimeline({
       .filter((t) => t.zoneCode === z)
       .sort((a, b) => (a.seqNo ?? 0) - (b.seqNo ?? 0) || a.code.localeCompare(b.code, "vi", { numeric: true }))
     const unit = z === "BAR" ? "ghế" : "bàn"
-    return { z, name: `${zv?.name ?? z}${zv?.isWaitingArea ? " · khu chờ" : ""}`, count: `${tables.length} ${unit}`, tables }
+    return {
+      z,
+      name: `${zv?.name ?? z}${zv?.isWaitingArea ? " · khu chờ" : ""}`,
+      count: `${tables.length} ${unit}`,
+      tables,
+    }
   })
   const select = (t: TableView, a?: AllocationView) => {
     if (live && (!a || !a.releasedAt)) ui.selectTable(t.id)
@@ -85,8 +90,15 @@ export function FloorTimeline({
             type="button"
             onClick={() => select(t, a)}
             title={`${head} · ${a.name}`}
-            className={cn("absolute inset-y-1.5 z-[2] overflow-hidden text-left", active ? "rounded-l-sm" : "rounded-sm bg-surface-3 text-tx-2")}
-            style={{ left: x0, width: w, ...(active ? { background: "var(--st-seated-fill)", color: "var(--on-seated)" } : {}) }}
+            className={cn(
+              "absolute inset-y-1.5 z-[2] overflow-hidden text-left",
+              active ? "rounded-l-sm" : "rounded-sm bg-surface-3 text-tx-2",
+            )}
+            style={{
+              left: x0,
+              width: w,
+              ...(active ? { background: "var(--st-seated-fill)", color: "var(--on-seated)" } : {}),
+            }}
           >
             {inside ? (
               <span className="absolute inset-x-2 inset-y-0 flex flex-col justify-center text-xs leading-4 whitespace-nowrap">
@@ -124,7 +136,10 @@ export function FloorTimeline({
       return (
         <Fragment key={a.allocationId}>
           {overdue && nowX !== null ? (
-            <div className="absolute bottom-[7px] z-[2] border-b-2 border-dotted" style={{ left: x1, width: nowX - x1, borderColor: "var(--st-late)" }} />
+            <div
+              className="absolute bottom-[7px] z-[2] border-b-2 border-dotted"
+              style={{ left: x1, width: nowX - x1, borderColor: "var(--st-late)" }}
+            />
           ) : null}
           <button
             type="button"
@@ -154,7 +169,10 @@ export function FloorTimeline({
     return (
       <Fragment key={a.allocationId}>
         {a.warning && nowX !== null && nowX > x0 ? (
-          <div className="absolute bottom-[7px] z-[2] border-b-2 border-dotted" style={{ left: x0, width: nowX - x0, borderColor: m.color }} />
+          <div
+            className="absolute bottom-[7px] z-[2] border-b-2 border-dotted"
+            style={{ left: x0, width: nowX - x0, borderColor: m.color }}
+          />
         ) : null}
         <button
           type="button"
@@ -181,7 +199,10 @@ export function FloorTimeline({
   }
 
   return (
-    <div ref={scrollRef} className="relative min-h-0 flex-1 scrollbar-thin overflow-auto rounded-sm border bg-surface-1">
+    <div
+      ref={scrollRef}
+      className="relative min-h-0 flex-1 scrollbar-thin overflow-auto rounded-sm border bg-surface-1"
+    >
       <div className="relative" style={{ width: LW + HOURS * HW }}>
         <div className="sticky top-0 z-[5] flex h-11 border-b border-strong bg-surface-1">
           <div className="sticky left-0 z-[6] flex w-[104px] shrink-0 items-center gap-2 border-r border-strong bg-surface-1 px-3 text-xs font-semibold text-tx-head">
@@ -229,13 +250,17 @@ export function FloorTimeline({
                     )}
                   >
                     <span className="text-xs font-semibold text-tx-strong">{model.label(t.id)}</span>
-                    <span className="tnum ml-auto text-xs font-medium text-tx-2">{t.isSpare ? "sơ cua" : t.capacity}</span>
+                    <span className="tnum ml-auto text-xs font-medium text-tx-2">
+                      {t.isSpare ? "sơ cua" : t.capacity}
+                    </span>
                   </button>
                   <div className="relative shrink-0" style={{ width: HOURS * HW, backgroundImage: GRID }}>
                     {t.status === "OUT_OF_SERVICE" ? (
                       <div
                         className="absolute inset-x-0 inset-y-1"
-                        style={{ background: "repeating-linear-gradient(45deg,var(--surface-3) 0 2px,transparent 2px 7px)" }}
+                        style={{
+                          background: "repeating-linear-gradient(45deg,var(--surface-3) 0 2px,transparent 2px 7px)",
+                        }}
                       >
                         <span
                           className="absolute top-1/2 -translate-y-1/2 text-xs font-medium whitespace-nowrap text-tx-2"

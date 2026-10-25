@@ -9,6 +9,7 @@ npm run dev
 ```
 
 ## File thay đổi
+
 - `package.json` — thay `@fontsource/be-vietnam-pro` bằng `@fontsource/roboto`
 - `public/21gam-logo.png` — logo thanh bên (mới)
 - `src/index.css` — token v2: primary xanh, radius 2px, 3 tầng chữ `--tx-*`, ink pha oklab, text-sm = 13px, tabular-nums
@@ -20,21 +21,15 @@ npm run dev
 - `src/features/floor/booking-list.tsx` (mới) — danh sách booking bên trái + bảng ở chế độ Danh sách
 - `src/features/floor/floor-timeline.tsx` (mới) — chế độ Thời gian
 - `src/features/floor/shift-panel.tsx` (mới) — cột phải: KPI ca + danh sách chờ
+- `src/features/floor/quick-form.tsx` (mới) — form v2 ngay trong cột phải: tab Đặt bàn / Walk-in, SĐT + tên, ngày (7 ngày), giờ 15', số khách, nguồn đặt, **chọn bàn bằng cách chạm sơ đồ** (sơ đồ chuyển sang khả dụng theo giờ của đơn), gợi ý bàn vừa chỗ, dòng sức chứa, mốc cảnh báo muộn / không đến, kiểm tra lỗi. Lưu: Đặt bàn → `createReservation`; Walk-in có bàn → `seatWalkIn`; Walk-in chưa có bàn → danh sách chờ.
+- `src/state/ui.ts` — thêm `draft` (`setDraft`, `toggleDraftTable`, `switchDraft`); `openBooking` / `openWalkIn` tạo draft, nên mọi nút cũ (toolbar, chi tiết bàn "Đặt trước", bảng khả dụng) đều mở form inline khi đang ở Điều phối.
+- `src/app/shell.tsx` — Sheet đặt bàn / Walk-in cũ chỉ còn dùng ở các trang khác (Đặt bàn, Tổng quan).
+- `e2e/flows.mjs` — cập nhật theo form mới (đã sửa sẵn, chép đè là xong) + thêm 1 flow chọn bàn trên sơ đồ.
 
 ## Có thể xoá
+
 - `src/features/floor/service-panel.tsx` — không còn được import.
 
-## Sửa e2e/flows.mjs (2 chỗ)
-Toolbar mới không còn toggle "Live / Khả dụng", và header có nút "Theo dõi đơn đặt bàn" nên `name: "Đặt bàn"` khớp nhầm.
+## Còn thiếu ở API
 
-1. Flow `validation: booking needs name or phone…`:
-```diff
--  await page.getByRole("button", { name: "Đặt bàn" }).first().click()
-+  await page.getByRole("button", { name: "Tạo đặt bàn" }).click()
-```
-2. Flow `availability tomorrow…`:
-```diff
--  if ((await page.getByRole("radio", { name: "Khả dụng" }).getAttribute("aria-checked")) !== "true")
--    throw new Error("stepping the date should switch to Khả dụng")
-+  await page.getByRole("status").filter({ hasText: "Xem trước" }).waitFor()
-```
+- `WalkInInput` chưa có `phone` / `note`, nên form Walk-in chưa có hai ô này (đánh dấu `shortcut:` trong `quick-form.tsx`).

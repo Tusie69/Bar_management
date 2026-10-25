@@ -65,6 +65,8 @@ import { ReservationDetailSheet } from "@/features/reservations/reservation-deta
 import { NAV } from "./nav"
 
 export function AppShell() {
+  // v2: on Điều phối the booking / walk-in forms live inline in the right column (quick-form.tsx).
+  const onFloor = useLocation().pathname.startsWith("/floor")
   return (
     <SidebarProvider defaultOpen={false} className="h-dvh min-h-0">
       <AppSidebar />
@@ -75,8 +77,8 @@ export function AppShell() {
         </main>
       </div>
       <MobileNav />
-      <BookingSheet />
-      <WalkInSheet />
+      {onFloor ? null : <BookingSheet />}
+      {onFloor ? null : <WalkInSheet />}
       <ReservationDetailSheet />
     </SidebarProvider>
   )
@@ -117,7 +119,7 @@ function AppSidebar() {
                     asChild
                     isActive={location.pathname.startsWith(item.to)}
                     tooltip={item.label}
-                    className="h-10 gap-3 px-2.5 text-tx-2 hover:bg-surface-2 hover:text-tx-1 data-[active=true]:bg-surface-2 data-[active=true]:font-medium data-[active=true]:text-tx-1 data-[active=true]:shadow-[inset_2px_0_0_var(--primary)] data-[active=true]:[&>svg]:text-primary-ink [&>svg]:size-5"
+                    className="h-10 gap-3 px-2.5 text-tx-2 hover:bg-surface-2 hover:text-tx-1 data-[active=true]:bg-surface-2 data-[active=true]:font-medium data-[active=true]:text-tx-1 data-[active=true]:shadow-[inset_2px_0_0_var(--primary)] [&>svg]:size-5 data-[active=true]:[&>svg]:text-primary-ink"
                   >
                     <NavLink to={item.to} onClick={() => setOpenMobile(false)}>
                       <item.icon />
@@ -470,28 +472,28 @@ function AlertsBell() {
           <ul className="max-h-[60vh] overflow-y-auto">
             {alerts.map((a) => (
               <li key={a.key} className="border-t">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setOpen(false)
-                      if (a.tableId) {
-                        ui.selectTable(a.tableId)
-                        navigate("/floor")
-                      } else if (a.reservationId) ui.openReservation(a.reservationId, bd)
-                    }}
-                    className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-2"
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false)
+                    if (a.tableId) {
+                      ui.selectTable(a.tableId)
+                      navigate("/floor")
+                    } else if (a.reservationId) ui.openReservation(a.reservationId, bd)
+                  }}
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-2"
+                >
+                  <span
+                    className="grid size-8 shrink-0 place-items-center rounded-sm"
+                    style={{ color: `var(--st-${a.tone}-ink)`, background: `var(--st-${a.tone}-tint)` }}
                   >
-                    <span
-                      className="grid size-8 shrink-0 place-items-center rounded-sm"
-                      style={{ color: `var(--st-${a.tone}-ink)`, background: `var(--st-${a.tone}-tint)` }}
-                    >
-                      {a.icon}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold text-tx-strong">{a.title}</span>
-                      <span className="tnum block truncate text-xs text-tx-2">{a.detail}</span>
-                    </span>
-                  </button>
+                    {a.icon}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-tx-strong">{a.title}</span>
+                    <span className="tnum block truncate text-xs text-tx-2">{a.detail}</span>
+                  </span>
+                </button>
               </li>
             ))}
           </ul>

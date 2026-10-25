@@ -43,6 +43,15 @@ export interface BookingPrefill {
   party?: number
 }
 
+/** v2 inline form on Điều phối (right column). Tables are picked on the map. */
+export interface QuickDraft {
+  kind: "booking" | "walkin"
+  date: BusinessDate
+  time: string
+  party: number
+  tableIds: number[]
+}
+
 export interface UndoItem {
   id: number
   summary: string
@@ -81,6 +90,7 @@ interface UiState {
   walkInOpen: boolean
   walkInPrefill: number[]
   reservationDetail: { id: number; bd: BusinessDate } | null
+  draft: QuickDraft | null
 
   undoStack: UndoItem[]
   redoStack: UndoItem[]
@@ -103,6 +113,9 @@ interface UiState {
   closeBooking: () => void
   openWalkIn: (tableIds?: number[]) => void
   closeWalkIn: () => void
+  setDraft: (patch: Partial<QuickDraft>) => void
+  toggleDraftTable: (id: number) => void
+  switchDraft: (kind: QuickDraft["kind"]) => void
   openReservation: (id: number | null, bd?: BusinessDate) => void
 
   pushUndo: (item: UndoItem) => void
@@ -129,6 +142,7 @@ export const useUi = create<UiState>((set, get) => ({
   walkInOpen: false,
   walkInPrefill: [],
   reservationDetail: null,
+  draft: null,
   undoStack: [],
   redoStack: [],
 
@@ -162,10 +176,68 @@ export const useUi = create<UiState>((set, get) => ({
     set({ override: null })
   },
 
-  openBooking: (bookingPrefill = {}) => set({ bookingOpen: true, bookingPrefill }),
-  closeBooking: () => set({ bookingOpen: false }),
-  openWalkIn: (walkInPrefill = []) => set({ walkInOpen: true, walkInPrefill }),
-  closeWalkIn: () => set({ walkInOpen: false }),
+  openBooking: (bookingPrefill = {}) =>
+    set({
+      bookingOpen: true,
+      walkInOpen: false,
+      bookingPrefill,
+      selectedTableId: null,
+      pick: null,
+      pickSelection: [],
+      draft: {
+        kind: "booking",
+        date: bookingPrefill.date ?? businessDateOf(clock.now()),
+        time: bookingPrefill.time ?? defaultTime(),
+        party:
+          bookingPrefill.party ??
+          (bookingPrefill.tableIds?.length ? Math.min(8, bookingPrefill.tableIds.length * 4) : 4),
+        tableIds: bookingPrefill.tableIds ?? [],
+      },
+    }),
+  closeBooking: () => set({ bookingOpen: false, draft: null }),
+  openWalkIn: (walkInPrefill = []) =>
+    set({
+      walkInOpen: true,
+      bookingOpen: false,
+      walkInPrefill,
+      floorMode: "live",
+      selectedTableId: null,
+      pick: null,
+      pickSelection: [],
+      draft: {
+        kind: "walkin",
+        date: businessDateOf(clock.now()),
+        time: defaultTime(),
+        party: 2,
+        tableIds: walkInPrefill,
+      },
+    }),
+  closeWalkIn: () => set({ walkInOpen: false, draft: null }),
+  setDraft: (patch) => set((s) => (s.draft ? { draft: { ...s.draft, ...patch } } : {})),
+  toggleDraftTable: (id) =>
+    set((s) =>
+      s.draft
+        ? {
+            draft: {
+              ...s.draft,
+              tableIds: s.draft.tableIds.includes(id)
+                ? s.draft.tableIds.filter((x) => x !== id)
+                : [...s.draft.tableIds, id],
+            },
+          }
+        : {},
+    ),
+  switchDraft: (kind) =>
+    set((s) =>
+      s.draft
+        ? {
+            bookingOpen: kind === "booking",
+            walkInOpen: kind === "walkin",
+            floorMode: kind === "walkin" ? "live" : s.floorMode,
+            draft: { ...s.draft, kind, ...(kind === "walkin" ? { date: businessDateOf(clock.now()) } : {}) },
+          }
+        : {},
+    ),
   openReservation: (id, bd) =>
     set({ reservationDetail: id === null ? null : { id, bd: bd ?? businessDateOf(clock.now()) } }),
 
