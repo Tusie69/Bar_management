@@ -4,28 +4,36 @@
  * availability for the draft and tables are picked by tapping the map.
  * Submit: booking -> createReservation; walk-in with tables -> seatWalkIn;
  * walk-in without tables -> WALK_IN waitlist.
+ * Guest count (1–10 + Khác) and arrival slots (19:00 → 01:00, 30') come from domain/booking-rules
+ * through components/booking-pickers, shared with the booking sheet.
  */
 import { X } from "lucide-react"
 import { useState } from "react"
-import { GuardedButton, Stepper } from "@/components/common"
+import {
+  BookingTimePicker,
+  GuestPicker,
+  guestCount,
+  guestError,
+  guestValueFrom,
+  type GuestValue,
+} from "@/components/booking-pickers"
+import { GuardedButton } from "@/components/common"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { Permission } from "@/domain/access"
+import {
+  bookingCalendarDate,
+  bookingInstant,
+  isAfterMidnight,
+  slotLabel,
+  validateBookingTime,
+} from "@/domain/booking-rules"
 import { SOURCE_LABEL, type BookingSourceCode } from "@/domain/enums"
 import type { AvailabilityResult } from "@/domain/models"
 import { useAction } from "@/hooks/use-action"
 import { useNow } from "@/hooks/use-data"
 import { NOTE_PHONE_ERROR, isPlausibleVnPhone, noteHasPhoneNumber } from "@/lib/text"
-import {
-  addDays,
-  atBusinessTime,
-  businessDateOf,
-  businessSlots,
-  fmtBusinessDate,
-  fmtDayMonth,
-  fmtTime,
-  MS,
-} from "@/lib/time"
+import { addDays, businessDateOf, fmtBusinessDate, fmtDayMonth, fmtTime, MS } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
@@ -73,19 +81,30 @@ export function QuickForm({
   const [note, setNote] = useState("")
   const [source, setSource] = useState<BookingSourceCode>("HOTLINE")
   const [tried, setTried] = useState(false)
+  const [guest, setGuest] = useState<GuestValue>(() => guestValueFrom(draft.party))
 
   const isB = draft.kind === "booking"
   const close = isB ? ui.closeBooking : ui.closeWalkIn
-  const at = atBusinessTime(draft.date, draft.time)
-  const isPast = isB && at.getTime() < now.getTime() - 5 * MS.MIN
+  // Re-derived every render: changing the date re-checks the slot without silently replacing it.
+  const timeError = isB ? validateBookingTime(draft.date, draft.time, now) : null
+  const at = isB && !timeError ? bookingInstant(draft.date, draft.time) : null
+  const party = guestCount(guest)
   const venue = model.catalog?.venue
 
-  const errors: { name?: string; phone?: string; note?: string; time?: string } = {}
+  const errors: { name?: string; phone?: string; note?: string; time?: string; party?: string } = {}
   if (isB && !name.trim() && !phone.trim()) errors.name = "Cần ít nhất tên hoặc số điện thoại"
   if (isB && phone.trim() && !isPlausibleVnPhone(phone)) errors.phone = "Số điện thoại 10 số, bắt đầu bằng 0"
   if (isB && noteHasPhoneNumber(note)) errors.note = NOTE_PHONE_ERROR
-  if (isPast) errors.time = "Giờ đã chọn đã qua, chọn giờ khác."
+  if (timeError) errors.time = timeError
+  const pErr = guestError(guest)
+  if (pErr) errors.party = pErr
   const shown = tried ? errors : {}
+
+  const onGuest = (v: GuestValue) => {
+    setGuest(v)
+    const n = guestCount(v)
+    if (n !== null) ui.setDraft({ party: n })
+  }
 
   const dates = Array.from({ length: 7 }, (_, i) => addDays(today, i))
   const dateLabel = (bd: string, i: number) =>
@@ -94,11 +113,10 @@ export function QuickForm({
       : i === 1
         ? `Ngày mai · ${fmtDayMonth(bd)}`
         : fmtBusinessDate(bd).replace(", ", " · ")
-  const slots = businessSlots().filter((s) => atBusinessTime(draft.date, s).getTime() >= now.getTime() - 5 * MS.MIN)
 
   const blocked = draft.tableIds.filter((id) => !draftPickable(draft.kind, id, model, availability))
   const cap = draft.tableIds.reduce((s, id) => s + (model.byId.get(id)?.capacity ?? 0), 0)
-  const short = draft.party - cap
+  const short = party === null ? 0 : party - cap
 
   // Best-fit free tables (same order as the old walk-in sheet) so a walk-in stays two taps.
   const zoneOk = new Set(model.catalog?.zones.filter((z) => z.isBookable).map((z) => z.id))
@@ -119,13 +137,14 @@ export function QuickForm({
 
   const submit = async () => {
     setTried(true)
-    if (Object.keys(errors).length || blocked.length) return
+    if (Object.keys(errors).length || blocked.length || party === null) return
     if (isB) {
+      if (!at) return
       const r = await run((o) =>
         api.createReservation({
           contactName: name.trim() || undefined,
           phone: phone.trim() || undefined,
-          partySize: draft.party,
+          partySize: party,
           expectedAt: at,
           sourceCode: source,
           note: note.trim() || undefined,
@@ -141,7 +160,7 @@ export function QuickForm({
       const r = await run((o) =>
         api.seatWalkIn({
           tableIds: ids,
-          guestCount: draft.party,
+          guestCount: party,
           contactName: name.trim() || undefined,
           overrideReason: o,
         }),
@@ -155,8 +174,8 @@ export function QuickForm({
     const r = await run(() =>
       api.addWaitlist({
         kind: "WALK_IN",
-        contactName: name.trim() || `Khách Walk-in ${draft.party} người`,
-        partySize: draft.party,
+        contactName: name.trim() || `Khách Walk-in ${party} người`,
+        partySize: party,
         channel: "IN_PERSON",
         preferenceMode: "ANY",
         preferences: [],
@@ -240,8 +259,9 @@ export function QuickForm({
           </div>
         </section>
 
-        <section className="flex flex-col gap-3">
-          <span className="text-sm font-semibold text-primary-ink">Thời gian &amp; số khách</span>
+        <section className="flex flex-col gap-4">
+          <span className="text-sm font-semibold text-primary-ink">Số khách &amp; thời gian</span>
+          <GuestPicker value={guest} onChange={onGuest} showErrors={tried} />
           {isB ? (
             <>
               <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
@@ -261,62 +281,45 @@ export function QuickForm({
                   </Select>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <span className={label12}>Giờ đến</span>
-                  <Select value={draft.time} onValueChange={(time) => ui.setDraft({ time })}>
-                    <SelectTrigger
-                      className="tnum h-11 w-full border-strong aria-[invalid=true]:border-st-noshow"
-                      aria-label="Giờ đến"
-                      aria-invalid={!!shown.time}
-                    >
+                  <span className={label12}>Nguồn đặt</span>
+                  <Select value={source} onValueChange={(v) => setSource(v as BookingSourceCode)}>
+                    <SelectTrigger className="h-11 w-full border-strong" aria-label="Nguồn đặt">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent className="max-h-72">
-                      {slots.map((s) => (
-                        <SelectItem key={s} value={s} className="tnum">
-                          {s}
+                    <SelectContent>
+                      {(model.catalog?.sources ?? []).map((s) => (
+                        <SelectItem key={s.code} value={s.code}>
+                          {SOURCE_LABEL[s.code]}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
-              <FieldError>{shown.time}</FieldError>
-              {venue ? (
+              <BookingTimePicker
+                date={draft.date}
+                value={draft.time}
+                now={now}
+                onChange={(time) => ui.setDraft({ time })}
+                error={tried || draft.time ? timeError : null}
+              />
+              {at ? (
                 <span className="tnum text-xs text-pretty text-tx-2">
-                  Cảnh báo đến muộn lúc {fmtTime(new Date(at.getTime() + venue.lateWarningMinutes * MS.MIN))} · không
-                  đến lúc {fmtTime(new Date(at.getTime() + venue.noShowWarningMinutes * MS.MIN))}
+                  {isAfterMidnight(draft.time)
+                    ? `${slotLabel(draft.time)} là sáng ${fmtDayMonth(bookingCalendarDate(draft.date, draft.time))}, vẫn thuộc ngày kinh doanh ${fmtDayMonth(draft.date)}. `
+                    : ""}
+                  {venue
+                    ? `Cảnh báo đến muộn lúc ${fmtTime(new Date(at.getTime() + venue.lateWarningMinutes * MS.MIN))} · không đến lúc ${fmtTime(new Date(at.getTime() + venue.noShowWarningMinutes * MS.MIN))}`
+                    : ""}
                 </span>
               ) : null}
             </>
-          ) : null}
-          <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3">
+          ) : (
             <div className="flex flex-col gap-1.5">
-              <span className={label12}>Số khách</span>
-              <Stepper value={draft.party} onChange={(party) => ui.setDraft({ party })} label="số khách" max={60} />
+              <span className={label12}>Vào lúc</span>
+              <span className="tnum flex h-11 items-center text-sm">{fmtTime(now)} · bây giờ</span>
             </div>
-            {isB ? (
-              <div className="flex flex-col gap-1.5">
-                <span className={label12}>Nguồn đặt</span>
-                <Select value={source} onValueChange={(v) => setSource(v as BookingSourceCode)}>
-                  <SelectTrigger className="h-11 w-full border-strong" aria-label="Nguồn đặt">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(model.catalog?.sources ?? []).map((s) => (
-                      <SelectItem key={s.code} value={s.code}>
-                        {SOURCE_LABEL[s.code]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-1.5">
-                <span className={label12}>Vào lúc</span>
-                <span className="tnum flex h-11 items-center text-sm">{fmtTime(now)} · bây giờ</span>
-              </div>
-            )}
-          </div>
+          )}
         </section>
 
         <section className="flex flex-col gap-2.5">
@@ -352,9 +355,11 @@ export function QuickForm({
                 <FieldError>{`${blocked.map((id) => model.label(id)).join(", ")} không còn trống · bỏ chọn để tiếp tục`}</FieldError>
               ) : (
                 <span className={cn("tnum text-xs", short > 0 ? "text-st-late-ink" : "text-tx-2")}>
-                  {short > 0
-                    ? `Sức chứa ${cap} chỗ · thiếu ${short} chỗ cho ${draft.party} khách · cần Chủ quán duyệt`
-                    : `Sức chứa ${cap} chỗ · đủ cho ${draft.party} khách`}
+                  {party === null
+                    ? `Sức chứa ${cap} chỗ · nhập số khách để so sánh`
+                    : short > 0
+                      ? `Sức chứa ${cap} chỗ · thiếu ${short} chỗ cho ${party} khách · cần Chủ quán duyệt`
+                      : `Sức chứa ${cap} chỗ · đủ cho ${party} khách`}
                 </span>
               )}
             </>
@@ -363,7 +368,7 @@ export function QuickForm({
               {isB ? "Chưa chọn bàn · có thể xếp sau" : "Chưa chọn bàn · nếu hết chỗ, đưa vào danh sách chờ"}
             </div>
           )}
-          {suggestions.length > 0 && cap < draft.party ? (
+          {suggestions.length > 0 && party !== null && cap < party ? (
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-xs text-tx-3">Gợi ý</span>
               {suggestions.map((t) => (

@@ -3,24 +3,41 @@
  * 1 Ngày giờ + số khách -> 2 Khả dụng + vị trí -> 3 Thông tin khách -> 4 Xác nhận.
  * The server re-checks availability on confirm; a 409 sends the user back to
  * step 2 with fresh availability.
+ * Guest count (1–10 + Khác) and arrival slots (19:00 → 01:00, 30') come from domain/booking-rules
+ * through components/booking-pickers, shared with the inline form on Điều phối.
  */
 import { zodResolver } from "@hookform/resolvers/zod"
 import { ArrowLeft, ArrowRight, Check, Link2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useForm, useWatch } from "react-hook-form"
 import { z } from "zod"
-import { MaskedPhone, PendingTag, QuickCounts, SectionTitle, Stepper } from "@/components/common"
+import {
+  BookingTimePicker,
+  GuestPicker,
+  guestCount,
+  guestValueFrom,
+  type GuestValue,
+} from "@/components/booking-pickers"
+import { MaskedPhone, PendingTag, SectionTitle } from "@/components/common"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  bookingCalendarDate,
+  bookingInstant,
+  defaultBookingSlot,
+  isAfterMidnight,
+  slotLabel,
+  validateBookingTime,
+} from "@/domain/booking-rules"
 import { SOURCE_LABEL, type BookingSourceCode } from "@/domain/enums"
 import { useAction } from "@/hooks/use-action"
 import { useAvailability, useNow } from "@/hooks/use-data"
 import { NOTE_PHONE_ERROR, isPlausibleVnPhone, noteHasPhoneNumber } from "@/lib/text"
-import { addDays, atBusinessTime, businessDateOf, businessSlots, fmtBusinessDate, type BusinessDate } from "@/lib/time"
+import { addDays, businessDateOf, fmtBusinessDate, fmtDayMonth, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
@@ -73,12 +90,14 @@ function BookingBody() {
   const [time, setTime] = useState(() => {
     const wanted = prefill.time ?? ui.availTime
     const d = prefill.date ?? today
-    if (atBusinessTime(d, wanted).getTime() >= now.getTime() - 5 * 60_000) return wanted
-    return businessSlots().find((s) => atBusinessTime(d, s).getTime() >= now.getTime()) ?? wanted
+    if (!validateBookingTime(d, wanted, now)) return wanted
+    return defaultBookingSlot(d, now) ?? "19:00"
   })
-  const [party, setParty] = useState(
-    prefill.party ?? (prefill.tableIds?.length ? Math.min(8, prefill.tableIds.length * 4) : 2),
+  const [guest, setGuest] = useState<GuestValue>(() =>
+    guestValueFrom(prefill.party ?? (prefill.tableIds?.length ? Math.min(8, prefill.tableIds.length * 4) : 2)),
   )
+  // While "Khác" is being typed, availability keeps the last valid count.
+  const party = guestCount(guest) ?? guest.party
   const [tables, setTables] = useState<number[]>(prefill.tableIds ?? [])
   const [later, setLater] = useState(false)
 
@@ -88,8 +107,10 @@ function BookingBody() {
     mode: "onTouched",
   })
 
-  const at = useMemo(() => atBusinessTime(date, time), [date, time])
-  const isPast = at.getTime() < now.getTime() - 5 * 60_000
+  // Re-derived every render: changing the date re-checks the slot without silently replacing it.
+  const timeError = validateBookingTime(date, time, now)
+  const at = useMemo(() => bookingInstant(date, time), [date, time])
+  const nextDayNote = isAfterMidnight(time) ? ` (sáng ${fmtDayMonth(bookingCalendarDate(date, time))})` : ""
   const availability = useAvailability(step >= 1 ? at : null, party)
   const availMap = useMemo(
     () => new Map((availability.data?.tables ?? []).map((t) => [t.tableId, t])),
@@ -119,7 +140,12 @@ function BookingBody() {
     setTables((t) => (t.includes(id) ? t.filter((x) => x !== id) : [...t, id]))
   }
 
-  const canNext = [!isPast && party >= 1, later || (tables.length > 0 && blockedSelected.length === 0), true, true]
+  const canNext = [
+    !timeError && guestCount(guest) !== null,
+    later || (tables.length > 0 && blockedSelected.length === 0),
+    true,
+    true,
+  ]
 
   const next = async () => {
     if (step === 2) {
@@ -147,7 +173,6 @@ function BookingBody() {
     else setStep((s) => (s === 3 ? 1 : s))
   }
 
-  const futureSlots = businessSlots().filter((s) => atBusinessTime(date, s).getTime() >= now.getTime() - 5 * 60_000)
   const v = useWatch({ control: form.control }) as GuestForm
 
   return (
@@ -204,34 +229,18 @@ function BookingBody() {
             </section>
             <section className="grid gap-2">
               <SectionTitle>Số khách</SectionTitle>
-              <div className="flex flex-wrap items-center gap-3">
-                <Stepper value={party} onChange={setParty} label="số khách" max={60} />
-                <QuickCounts value={party} onChange={setParty} options={[2, 4, 6, 8, 10]} />
-              </div>
+              <GuestPicker value={guest} onChange={setGuest} />
             </section>
             <section className="grid gap-2">
-              <SectionTitle aside={<span className="text-xs text-subtle">Ca 17:00 → 05:00</span>}>Giờ đến</SectionTitle>
-              <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-6" role="radiogroup" aria-label="Giờ đến">
-                {futureSlots.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    role="radio"
-                    aria-checked={time === s}
-                    onClick={() => setTime(s)}
-                    className={cn(
-                      "tnum h-11 rounded-lg border text-sm transition-colors",
-                      time === s ? "border-foreground bg-foreground text-background" : "hover:bg-surface-2",
-                    )}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-              {futureSlots.length === 0 ? (
-                <p className="text-sm text-muted-foreground">Ca này đã hết giờ nhận đặt. Chọn ngày khác.</p>
-              ) : null}
-              {isPast ? <p className="text-sm text-destructive">Giờ đã chọn đã qua, chọn giờ khác.</p> : null}
+              <SectionTitle>Giờ đến</SectionTitle>
+              <BookingTimePicker
+                date={date}
+                value={time}
+                now={now}
+                onChange={setTime}
+                error={timeError}
+                gridClassName="sm:grid-cols-5"
+              />
             </section>
           </div>
         ) : null}
@@ -239,9 +248,13 @@ function BookingBody() {
         {step === 1 ? (
           <div className="grid gap-4">
             <p className="text-sm text-muted-foreground">
-              Khả dụng lúc <b className="text-foreground">{time}</b>, {fmtBusinessDate(date)} cho{" "}
-              <b className="text-foreground">{party} khách</b>. Chính sách giữ bàn: {availability.data?.policy ?? "..."}{" "}
-              <PendingTag />
+              Khả dụng lúc{" "}
+              <b className="text-foreground">
+                {slotLabel(time)}
+                {nextDayNote}
+              </b>
+              , {fmtBusinessDate(date)} cho <b className="text-foreground">{party} khách</b>. Chính sách giữ bàn:{" "}
+              {availability.data?.policy ?? "..."} <PendingTag />
             </p>
             <div className="h-[340px] overflow-hidden rounded-xl border">
               {model.catalog ? (
@@ -402,7 +415,8 @@ function BookingBody() {
                 k="Thời gian"
                 v={
                   <span className="tnum">
-                    {time} · {fmtBusinessDate(date)}
+                    {slotLabel(time)}
+                    {nextDayNote} · ngày kinh doanh {fmtBusinessDate(date)}
                   </span>
                 }
               />

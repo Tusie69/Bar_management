@@ -3,6 +3,7 @@
  * global dialogs (conflict / override reason), sheets, undo/redo stacks.
  */
 import { create } from "zustand"
+import { defaultBookingSlot, isBookingSlot } from "@/domain/booking-rules"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { clock } from "@/services"
@@ -187,7 +188,10 @@ export const useUi = create<UiState>((set, get) => ({
       draft: {
         kind: "booking",
         date: bookingPrefill.date ?? businessDateOf(clock.now()),
-        time: bookingPrefill.time ?? defaultTime(),
+        // Booking arrival must be one of the 13 slots (19:00 → 01:00, 30'). Availability mode keeps defaultTime().
+        time: isBookingSlot(bookingPrefill.time)
+          ? bookingPrefill.time
+          : (defaultBookingSlot(bookingPrefill.date ?? businessDateOf(clock.now()), clock.now()) ?? "19:00"),
         party:
           bookingPrefill.party ??
           (bookingPrefill.tableIds?.length ? Math.min(8, bookingPrefill.tableIds.length * 4) : 4),
@@ -234,7 +238,14 @@ export const useUi = create<UiState>((set, get) => ({
             bookingOpen: kind === "booking",
             walkInOpen: kind === "walkin",
             floorMode: kind === "walkin" ? "live" : s.floorMode,
-            draft: { ...s.draft, kind, ...(kind === "walkin" ? { date: businessDateOf(clock.now()) } : {}) },
+            draft: {
+              ...s.draft,
+              kind,
+              ...(kind === "walkin" ? { date: businessDateOf(clock.now()) } : {}),
+              ...(kind === "booking" && !isBookingSlot(s.draft.time)
+                ? { time: defaultBookingSlot(s.draft.date, clock.now()) ?? "19:00" }
+                : {}),
+            },
           }
         : {},
     ),
