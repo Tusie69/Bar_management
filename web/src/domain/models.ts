@@ -73,7 +73,8 @@ export interface TableView {
   y: number
   w: number
   h: number
-  seating: SeatingStyle | "bar"
+  /** Optional because the current database stores geometry, but not chair orientation. */
+  seating?: SeatingStyle | "bar"
 }
 
 export interface CombinationView {
@@ -82,11 +83,13 @@ export interface CombinationView {
   displayName: string
   memberIds: number[]
   capacity: number
-  pendingConfirmation: boolean
+  /** Mock/product-review metadata; absent when the database has no equivalent field. */
+  pendingConfirmation?: boolean
 }
 
 export interface BookingSourceView {
-  id: number
+  /** The current read API exposes the stable code/name pair, not its internal database id. */
+  id?: number
   code: BookingSourceCode
   name: string
 }
@@ -135,7 +138,8 @@ export interface FloorTableState {
   state: TableLiveState
   claim: ClaimView | null
   /** Seated but the business day already rolled over: "bàn chưa nhả từ hôm trước". */
-  staleFromPreviousDay: boolean
+  /** Absent when the backend read model cannot determine carry-over occupancy. */
+  staleFromPreviousDay?: boolean
 }
 
 /** One row of table_allocations, resolved for display (history + timeline). */

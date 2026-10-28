@@ -82,7 +82,7 @@ function toBooking(row: BookingRow, now = new Date()): BookingView {
     Number(row.no_show_warning_minutes),
   )
   return {
-    id: row.id,
+    id: Number(row.id),
     guestName: row.guest_name,
     phoneLast3: row.phone_last3,
     partySize: row.party_size,
@@ -190,8 +190,18 @@ export async function createBooking(actor: AuthenticatedActor, input: CreateBook
       (organization_id, venue_id, contact_name, contact_name_search, source_id, party_size,
        expected_at, business_date, note, created_by_user_id)
      VALUES (?, ?, ?, LOWER(?), ?, ?, ?, ?, ?, ?)`,
-    [actor.organizationId, actor.venueId, input.guestName, input.guestName, source.id, input.partySize,
-      schedule.mysqlExpectedAt, schedule.businessDate, input.note ?? null, actor.userId],
+    [
+      actor.organizationId,
+      actor.venueId,
+      input.guestName,
+      input.guestName,
+      source.id,
+      input.partySize,
+      schedule.mysqlExpectedAt,
+      schedule.businessDate,
+      input.note ?? null,
+      actor.userId,
+    ],
   )
   return getBookingById(actor, result.insertId)
 }
@@ -226,7 +236,8 @@ async function lockReservation(
   )
   const reservation = rows[0]
   if (!reservation) throw new AppError(404, 'BOOKING_NOT_FOUND', 'Không tìm thấy đặt bàn.')
-  if (reservation.version !== expectedVersion) throw new AppError(409, 'VERSION_CONFLICT', 'Đặt bàn vừa được thay đổi. Vui lòng tải lại.')
+  if (reservation.version !== expectedVersion)
+    throw new AppError(409, 'VERSION_CONFLICT', 'Đặt bàn vừa được thay đổi. Vui lòng tải lại.')
   return reservation
 }
 
@@ -302,23 +313,39 @@ export async function updateBooking(
       [actor.organizationId, actor.venueId, id],
     )
     if (holdRows.some((row) => row.allocation_id === null || row.table_id === null)) {
-      throw new AppError(409, 'BOOKING_HOLD_INCONSISTENT', 'Booking có HOLD không còn allocation hợp lệ; không thể tự động sửa.')
+      throw new AppError(
+        409,
+        'BOOKING_HOLD_INCONSISTENT',
+        'Booking có HOLD không còn allocation hợp lệ; không thể tự động sửa.',
+      )
     }
-    if (holdRows.some((row) => (
-      !sameInstant(row.hold_starts_at, reservation.expected_at)
-      || row.allocation_starts_at === null
-      || !sameInstant(row.allocation_starts_at, reservation.expected_at)
-      || row.allocation_business_date === null
-      || dateOnly(row.allocation_business_date) !== dateOnly(reservation.business_date)
-    ))) {
-      throw new AppError(409, 'BOOKING_HOLD_SCHEDULE_MISMATCH', 'Lịch booking và HOLD hiện tại không nhất quán; đã dừng để bảo toàn lịch sử.')
+    if (
+      holdRows.some(
+        (row) =>
+          !sameInstant(row.hold_starts_at, reservation.expected_at) ||
+          row.allocation_starts_at === null ||
+          !sameInstant(row.allocation_starts_at, reservation.expected_at) ||
+          row.allocation_business_date === null ||
+          dateOnly(row.allocation_business_date) !== dateOnly(reservation.business_date),
+      )
+    ) {
+      throw new AppError(
+        409,
+        'BOOKING_HOLD_SCHEDULE_MISMATCH',
+        'Lịch booking và HOLD hiện tại không nhất quán; đã dừng để bảo toàn lịch sử.',
+      )
     }
 
     const currentExpectedAt = reservation.expected_at
-    const scheduleChanged = currentExpectedAt.getTime() !== schedule.expectedAtUtc.getTime()
-      || dateOnly(reservation.business_date) !== schedule.businessDate
+    const scheduleChanged =
+      currentExpectedAt.getTime() !== schedule.expectedAtUtc.getTime() ||
+      dateOnly(reservation.business_date) !== schedule.businessDate
     if (scheduleChanged && holdRows.some((row) => row.planned_until !== null)) {
-      throw new AppError(409, 'WINDOWED_HOLD_EDIT_UNSUPPORTED', 'Chưa thể sửa lịch cho HOLD có thời hạn mà vẫn bảo toàn đúng lịch sử.')
+      throw new AppError(
+        409,
+        'WINDOWED_HOLD_EDIT_UNSUPPORTED',
+        'Chưa thể sửa lịch cho HOLD có thời hạn mà vẫn bảo toàn đúng lịch sử.',
+      )
     }
 
     const changedFields: string[] = []
@@ -328,7 +355,8 @@ export async function updateBooking(
     if ((reservation.note ?? '') !== (input.note ?? '')) changedFields.push('note')
     if (currentExpectedAt.getTime() !== schedule.expectedAtUtc.getTime()) changedFields.push('expectedAt')
     if (dateOnly(reservation.business_date) !== schedule.businessDate) changedFields.push('businessDate')
-    if (!changedFields.length) throw new AppError(400, 'BOOKING_NOT_CHANGED', 'Booking không có thông tin nào thay đổi.')
+    if (!changedFields.length)
+      throw new AppError(400, 'BOOKING_NOT_CHANGED', 'Booking không có thông tin nào thay đổi.')
 
     const allocationIds = holdRows.map((row) => Number(row.allocation_id))
     const tableIds = holdRows.map((row) => Number(row.table_id))
@@ -344,7 +372,11 @@ export async function updateBooking(
         [actor.organizationId, actor.venueId, schedule.businessDate, ...tableIds, ...allocationIds],
       )
       if (conflicts.length) {
-        throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Bàn đang giữ đã có booking hoặc lượt sử dụng trong ngày làm việc mới.')
+        throw new AppError(
+          409,
+          'TABLE_ALREADY_OCCUPIED',
+          'Bàn đang giữ đã có booking hoặc lượt sử dụng trong ngày làm việc mới.',
+        )
       }
       const holdId = Number(holdRows[0]?.hold_id)
       const [holdUpdate] = await connection.execute<ResultSetHeader>(
@@ -364,7 +396,11 @@ export async function updateBooking(
         [schedule.mysqlExpectedAt, schedule.businessDate, actor.organizationId, actor.venueId, ...allocationIds],
       )
       if (allocationUpdate.affectedRows !== allocationIds.length) {
-        throw new AppError(409, 'BOOKING_ALLOCATION_CONFLICT', 'Allocation của booking vừa được thay đổi. Vui lòng tải lại.')
+        throw new AppError(
+          409,
+          'BOOKING_ALLOCATION_CONFLICT',
+          'Allocation của booking vừa được thay đổi. Vui lòng tải lại.',
+        )
       }
     }
 
@@ -419,20 +455,22 @@ export async function updateBooking(
             changedFields,
           },
           ...(scheduleChanged && allocationIds.length
-            ? [{
-                type: 'active_hold_schedule',
-                holdId: Number(holdRows[0]?.hold_id),
-                allocationIds,
-                tableIds,
-                before: {
-                  expectedAt: currentExpectedAt.toISOString(),
-                  businessDate: dateOnly(reservation.business_date),
+            ? [
+                {
+                  type: 'active_hold_schedule',
+                  holdId: Number(holdRows[0]?.hold_id),
+                  allocationIds,
+                  tableIds,
+                  before: {
+                    expectedAt: currentExpectedAt.toISOString(),
+                    businessDate: dateOnly(reservation.business_date),
+                  },
+                  after: {
+                    expectedAt: schedule.expectedAtUtc.toISOString(),
+                    businessDate: schedule.businessDate,
+                  },
                 },
-                after: {
-                  expectedAt: schedule.expectedAtUtc.toISOString(),
-                  businessDate: schedule.businessDate,
-                },
-              }]
+              ]
             : []),
         ]),
       ],
@@ -455,11 +493,12 @@ async function releaseActiveHold(
   reservationId: number,
   reason: string,
 ): Promise<void> {
-  const holdReasonCode = reason === 'NO_SHOW'
-    ? 'CUSTOMER_NO_SHOW'
-    : reason === 'RESERVATION_CANCELLED'
-      ? 'RESERVATION_CANCELLED'
-      : 'STAFF_REASSIGNED'
+  const holdReasonCode =
+    reason === 'NO_SHOW'
+      ? 'CUSTOMER_NO_SHOW'
+      : reason === 'RESERVATION_CANCELLED'
+        ? 'RESERVATION_CANCELLED'
+        : 'STAFF_REASSIGNED'
   await connection.execute(
     `UPDATE table_allocations AS a
      JOIN table_holds AS h ON h.venue_id = a.venue_id AND h.id = a.hold_id
@@ -485,7 +524,8 @@ export async function assignBookingTables(
   try {
     await connection.beginTransaction()
     const reservation = await lockReservation(connection, actor, id, expectedVersion)
-    if (reservation.status !== 'BOOKED') throw new AppError(409, 'BOOKING_NOT_ASSIGNABLE', 'Chỉ đặt bàn đang chờ mới được gán bàn.')
+    if (reservation.status !== 'BOOKED')
+      throw new AppError(409, 'BOOKING_NOT_ASSIGNABLE', 'Chỉ đặt bàn đang chờ mới được gán bàn.')
     const uniqueTableIds = [...new Set(tableIds)]
     if (!uniqueTableIds.length) throw new AppError(400, 'TABLE_REQUIRED', 'Cần chọn ít nhất một bàn.')
     const placeholders = uniqueTableIds.map(() => '?').join(',')
@@ -494,9 +534,15 @@ export async function assignBookingTables(
        ORDER BY id FOR UPDATE`,
       [actor.venueId, ...uniqueTableIds],
     )
-    if (tableRows.length !== uniqueTableIds.length) throw new AppError(400, 'TABLE_NOT_FOUND', 'Có bàn không tồn tại hoặc ngừng hoạt động.')
+    if (tableRows.length !== uniqueTableIds.length)
+      throw new AppError(400, 'TABLE_NOT_FOUND', 'Có bàn không tồn tại hoặc ngừng hoạt động.')
     const spareTable = tableRows.find((table) => Boolean(table.is_spare))
-    if (spareTable) throw new AppError(409, 'SPARE_TABLE_NOT_BOOKABLE', `Bàn ${spareTable.code} là bàn sơ cua và chưa được cấu hình để nhận booking.`)
+    if (spareTable)
+      throw new AppError(
+        409,
+        'SPARE_TABLE_NOT_BOOKABLE',
+        `Bàn ${spareTable.code} là bàn sơ cua và chưa được cấu hình để nhận booking.`,
+      )
     const [previousAllocations] = await connection.execute<(RowDataPacket & { id: number; table_id: number })[]>(
       `SELECT a.id, a.table_id FROM table_allocations AS a
        JOIN table_holds AS h ON h.venue_id = a.venue_id AND h.id = a.hold_id
@@ -508,8 +554,8 @@ export async function assignBookingTables(
     const previousTableIds = previousAllocations.map((allocation) => Number(allocation.table_id))
     const requestedTableIds = [...uniqueTableIds].sort((left, right) => left - right)
     if (
-      previousTableIds.length === requestedTableIds.length
-      && previousTableIds.every((tableId, index) => tableId === requestedTableIds[index])
+      previousTableIds.length === requestedTableIds.length &&
+      previousTableIds.every((tableId, index) => tableId === requestedTableIds[index])
     ) {
       throw new AppError(409, 'TABLE_ASSIGNMENT_UNCHANGED', 'Booking đã được gán đúng các bàn đã chọn.')
     }
@@ -520,7 +566,8 @@ export async function assignBookingTables(
        FOR UPDATE`,
       [actor.venueId, dateOnly(reservation.business_date), ...uniqueTableIds],
     )
-    if (conflicts.length) throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
+    if (conflicts.length)
+      throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
     const [holdResult] = await connection.execute<ResultSetHeader>(
       `INSERT INTO table_holds
         (organization_id, venue_id, hold_kind, reservation_id, starts_at, created_by_user_id)
@@ -533,8 +580,15 @@ export async function assignBookingTables(
         `INSERT INTO table_allocations
           (organization_id, venue_id, table_id, kind, hold_id, starts_at, business_date, created_by_user_id)
          VALUES (?, ?, ?, 'HOLD', ?, ?, ?, ?)`,
-        [actor.organizationId, actor.venueId, tableId, holdResult.insertId, reservation.expected_at,
-          dateOnly(reservation.business_date), actor.userId],
+        [
+          actor.organizationId,
+          actor.venueId,
+          tableId,
+          holdResult.insertId,
+          reservation.expected_at,
+          dateOnly(reservation.business_date),
+          actor.userId,
+        ],
       )
       newAllocationIds.push(allocationResult.insertId)
     }
@@ -543,7 +597,8 @@ export async function assignBookingTables(
        WHERE organization_id = ? AND venue_id = ? AND id = ? AND version = ? AND status = 'BOOKED'`,
       [actor.userId, actor.organizationId, actor.venueId, id, expectedVersion],
     )
-    if (reservationUpdate.affectedRows !== 1) throw new AppError(409, 'VERSION_CONFLICT', 'Booking vừa được thay đổi. Vui lòng tải lại.')
+    if (reservationUpdate.affectedRows !== 1)
+      throw new AppError(409, 'VERSION_CONFLICT', 'Booking vừa được thay đổi. Vui lòng tải lại.')
     const changeSequence = await nextVenueChangeSequence(connection, actor)
     await connection.execute(
       `INSERT INTO operation_log
@@ -562,14 +617,16 @@ export async function assignBookingTables(
         id,
         expectedVersion,
         expectedVersion + 1,
-        JSON.stringify([{
-          type: 'reservation_table_assignment',
-          previousAllocationIds: previousAllocations.map((allocation) => Number(allocation.id)),
-          previousTableIds,
-          holdId: holdResult.insertId,
-          newAllocationIds,
-          newTableIds: requestedTableIds,
-        }]),
+        JSON.stringify([
+          {
+            type: 'reservation_table_assignment',
+            previousAllocationIds: previousAllocations.map((allocation) => Number(allocation.id)),
+            previousTableIds,
+            holdId: holdResult.insertId,
+            newAllocationIds,
+            newTableIds: requestedTableIds,
+          },
+        ]),
         previousAllocations.length ? 'STAFF_REASSIGNED' : 'INITIAL_ASSIGNMENT',
       ],
     )
@@ -594,7 +651,8 @@ export async function closeBooking(
   try {
     await connection.beginTransaction()
     const reservation = await lockReservation(connection, actor, id, expectedVersion)
-    if (reservation.status !== 'BOOKED') throw new AppError(409, 'BOOKING_NOT_CLOSABLE', 'Đặt bàn này không còn ở trạng thái chờ.')
+    if (reservation.status !== 'BOOKED')
+      throw new AppError(409, 'BOOKING_NOT_CLOSABLE', 'Đặt bàn này không còn ở trạng thái chờ.')
     const [activeAllocationRows] = await connection.execute<(RowDataPacket & { id: number; table_id: number })[]>(
       `SELECT a.id, a.table_id FROM table_allocations AS a
        JOIN table_holds AS h ON h.organization_id = a.organization_id AND h.venue_id = a.venue_id AND h.id = a.hold_id
@@ -609,10 +667,20 @@ export async function closeBooking(
        close_reason_code = ?, close_reason_note = ?, updated_by_user_id = ?, updated_at = UTC_TIMESTAMP(3),
        version = version + 1
        WHERE organization_id = ? AND venue_id = ? AND id = ? AND status = 'BOOKED' AND version = ?`,
-      [status, actor.userId, status === 'NO_SHOW' ? 'NO_SHOW_CONFIRMED' : 'CUSTOMER_REQUEST',
-        closeReasonNote ?? null, actor.userId, actor.organizationId, actor.venueId, id, expectedVersion],
+      [
+        status,
+        actor.userId,
+        status === 'NO_SHOW' ? 'NO_SHOW_CONFIRMED' : 'CUSTOMER_REQUEST',
+        closeReasonNote ?? null,
+        actor.userId,
+        actor.organizationId,
+        actor.venueId,
+        id,
+        expectedVersion,
+      ],
     )
-    if (updateResult.affectedRows !== 1) throw new AppError(409, 'VERSION_CONFLICT', 'Booking vừa được thay đổi. Vui lòng tải lại.')
+    if (updateResult.affectedRows !== 1)
+      throw new AppError(409, 'VERSION_CONFLICT', 'Booking vừa được thay đổi. Vui lòng tải lại.')
     const changeSequence = await nextVenueChangeSequence(connection, actor)
     await connection.execute(
       `INSERT INTO operation_log
@@ -620,11 +688,28 @@ export async function closeBooking(
          auth_session_id, action, entity_type, entity_id, entity_version_before,
          entity_version_after, changes, reason_code, is_undoable)
        VALUES (?, ?, ?, 'USER', ?, ?, ?, ?, 'reservation', ?, ?, ?, ?, ?, 0)`,
-      [actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
-        actor.authSessionId ?? null, status === 'NO_SHOW' ? 'RESERVATION_NO_SHOW' : 'RESERVATION_CANCELLED',
-        id, expectedVersion, expectedVersion + 1,
-        JSON.stringify([{ type: 'released_hold_allocations', allocations: activeAllocationRows.map((row) => ({ id: Number(row.id), tableId: Number(row.table_id) })) }]),
-        status === 'NO_SHOW' ? 'NO_SHOW_CONFIRMED' : 'CUSTOMER_REQUEST'],
+      [
+        actor.organizationId,
+        actor.venueId,
+        changeSequence,
+        actor.userId,
+        actor.membershipId,
+        actor.authSessionId ?? null,
+        status === 'NO_SHOW' ? 'RESERVATION_NO_SHOW' : 'RESERVATION_CANCELLED',
+        id,
+        expectedVersion,
+        expectedVersion + 1,
+        JSON.stringify([
+          {
+            type: 'released_hold_allocations',
+            allocations: activeAllocationRows.map((row) => ({
+              id: Number(row.id),
+              tableId: Number(row.table_id),
+            })),
+          },
+        ]),
+        status === 'NO_SHOW' ? 'NO_SHOW_CONFIRMED' : 'CUSTOMER_REQUEST',
+      ],
     )
     await connection.commit()
   } catch (error) {
@@ -636,12 +721,17 @@ export async function closeBooking(
   return getBookingById(actor, id)
 }
 
-export async function checkInBooking(actor: AuthenticatedActor, id: number, expectedVersion: number): Promise<BookingView> {
+export async function checkInBooking(
+  actor: AuthenticatedActor,
+  id: number,
+  expectedVersion: number,
+): Promise<BookingView> {
   const connection = await databasePool.getConnection()
   try {
     await connection.beginTransaction()
     const reservation = await lockReservation(connection, actor, id, expectedVersion)
-    if (reservation.status !== 'BOOKED') throw new AppError(409, 'BOOKING_NOT_CHECKIN', 'Chỉ đặt bàn đang chờ mới được check-in.')
+    if (reservation.status !== 'BOOKED')
+      throw new AppError(409, 'BOOKING_NOT_CHECKIN', 'Chỉ đặt bàn đang chờ mới được check-in.')
     const [allocationRows] = await connection.execute<(RowDataPacket & { table_id: number; hold_id: number })[]>(
       `SELECT a.table_id, a.hold_id FROM table_allocations AS a
        JOIN table_holds AS h ON h.venue_id = a.venue_id AND h.id = a.hold_id
@@ -671,8 +761,15 @@ export async function checkInBooking(actor: AuthenticatedActor, id: number, expe
         (organization_id, venue_id, origin, customer_id, contact_name, guest_count, started_at,
          business_date, created_by_user_id)
        VALUES (?, ?, 'RESERVATION', ?, ?, ?, UTC_TIMESTAMP(3), ?, ?)`,
-      [actor.organizationId, actor.venueId, reservation.customer_id, reservation.contact_name,
-        reservation.party_size, dateOnly(reservation.business_date), actor.userId],
+      [
+        actor.organizationId,
+        actor.venueId,
+        reservation.customer_id,
+        reservation.contact_name,
+        reservation.party_size,
+        dateOnly(reservation.business_date),
+        actor.userId,
+      ],
     )
     const holdId = firstAllocation.hold_id
     await connection.execute(
@@ -690,8 +787,14 @@ export async function checkInBooking(actor: AuthenticatedActor, id: number, expe
         `INSERT INTO table_allocations
           (organization_id, venue_id, table_id, kind, visit_id, starts_at, business_date, created_by_user_id)
          VALUES (?, ?, ?, 'USAGE', ?, UTC_TIMESTAMP(3), ?, ?)`,
-        [actor.organizationId, actor.venueId, allocation.table_id, visitResult.insertId,
-          dateOnly(reservation.business_date), actor.userId],
+        [
+          actor.organizationId,
+          actor.venueId,
+          allocation.table_id,
+          visitResult.insertId,
+          dateOnly(reservation.business_date),
+          actor.userId,
+        ],
       )
     }
     await connection.execute(
@@ -727,16 +830,23 @@ export async function createWalkIn(actor: AuthenticatedActor, input: CreateWalkI
       `SELECT id, code, is_spare FROM dining_tables WHERE venue_id = ? AND status = 'ACTIVE' AND id IN (${placeholders}) FOR UPDATE`,
       [actor.venueId, ...uniqueTableIds],
     )
-    if (tableRows.length !== uniqueTableIds.length) throw new AppError(400, 'TABLE_NOT_FOUND', 'Có bàn không tồn tại hoặc ngừng hoạt động.')
+    if (tableRows.length !== uniqueTableIds.length)
+      throw new AppError(400, 'TABLE_NOT_FOUND', 'Có bàn không tồn tại hoặc ngừng hoạt động.')
     const spareTable = tableRows.find((table) => Boolean(table.is_spare))
-    if (spareTable) throw new AppError(409, 'SPARE_TABLE_NOT_BOOKABLE', `Bàn ${spareTable.code} là bàn sơ cua và chưa được cấu hình để nhận khách.`)
+    if (spareTable)
+      throw new AppError(
+        409,
+        'SPARE_TABLE_NOT_BOOKABLE',
+        `Bàn ${spareTable.code} là bàn sơ cua và chưa được cấu hình để nhận khách.`,
+      )
     const [conflicts] = await connection.execute<RowDataPacket[]>(
       `SELECT table_id FROM table_allocations
        WHERE venue_id = ? AND released_at IS NULL AND table_id IN (${placeholders})
        FOR UPDATE`,
       [actor.venueId, ...uniqueTableIds],
     )
-    if (conflicts.length) throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
+    if (conflicts.length)
+      throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
     const [visitResult] = await connection.execute<ResultSetHeader>(
       `INSERT INTO visits
         (organization_id, venue_id, origin, contact_name, guest_count, started_at, business_date, created_by_user_id)

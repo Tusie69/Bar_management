@@ -6,7 +6,7 @@ import { api } from "@/services"
 import { useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
 import { LoginPage } from "./login-page"
-import { ServerSessionPage } from "./server-session-page"
+import { HttpFloorPage } from "@/features/floor/http-floor-page"
 
 export function AuthBoundary({ children }: { children: ReactNode }) {
   const status = useSession((state) => state.authStatus)
@@ -27,7 +27,7 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
   }, [queryClient, status])
 
   if (api.mode === "mock") return children
-  if (status === "authenticated") return <ServerSessionPage />
+  if (status === "authenticated") return <HttpFloorPage />
   if (status === "anonymous") return <LoginPage />
   if (status === "error") {
     return (

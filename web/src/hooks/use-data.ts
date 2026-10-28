@@ -49,7 +49,12 @@ export function useBusinessDate(): BusinessDate {
 /* ---------------- queries ---------------- */
 
 export function useCatalog() {
-  return useQuery({ queryKey: qk.catalog, queryFn: () => api.getCatalog(), staleTime: 60_000 })
+  return useQuery({
+    queryKey: qk.catalog,
+    queryFn: () => api.getCatalog(),
+    staleTime: 60_000,
+    retry: api.mode === "mock" ? 1 : false,
+  })
 }
 
 export function useFloorState() {
@@ -58,6 +63,7 @@ export function useFloorState() {
     queryFn: () => api.getFloorState(clock.now()),
     placeholderData: keepPreviousData,
     refetchInterval: 15_000,
+    retry: api.mode === "mock" ? 1 : false,
   })
 }
 

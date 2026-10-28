@@ -8,7 +8,16 @@
  * contracts.ts must be agreed with the backend team before use.
  */
 import type { ChangeEvent, SessionUser } from "@/domain/models"
+import { businessDateOf } from "@/lib/time"
 import type { GamApi } from "../contracts"
+import {
+  mapCatalog,
+  mapFloorState,
+  type BackendBooking,
+  type BackendCatalog,
+  type BackendSource,
+  type BackendTableState,
+} from "./floor-adapter"
 import type { HttpClient } from "./http-client"
 
 const DATE_KEYS = /At$|^at$|Date$/
@@ -28,6 +37,22 @@ export function createHttpApi(client: HttpClient, venueId: number): GamApi {
   const post = <T>(path: string, body?: unknown) => client.post<T>(pathForVenue(path), body, options)
   const request = <T>(method: "PUT" | "PATCH" | "DELETE", path: string, body?: unknown) =>
     client.request<T>(method, pathForVenue(path), body, options)
+
+  let catalogPromise: ReturnType<GamApi["getCatalog"]> | null = null
+  const loadCatalog = () => {
+    if (!catalogPromise) {
+      catalogPromise = Promise.all([
+        get<BackendCatalog>("/tables/catalog"),
+        get<{ sources: BackendSource[] }>("/bookings/sources"),
+      ])
+        .then(([catalog, sourceResponse]) => mapCatalog(catalog, sourceResponse.sources))
+        .catch((error: unknown) => {
+          catalogPromise = null
+          throw error
+        })
+    }
+    return catalogPromise
+  }
 
   return {
     mode: "http",
@@ -61,8 +86,16 @@ export function createHttpApi(client: HttpClient, venueId: number): GamApi {
       }, 2500)
       return () => clearInterval(timer)
     },
-    getCatalog: () => get("/venues/:venueId/catalog"),
-    getFloorState: (at) => get(`/venues/:venueId/floor-state?at=${at.toISOString()}`),
+    getCatalog: loadCatalog,
+    getFloorState: async (at) => {
+      const businessDate = businessDateOf(at)
+      const [catalog, tableResponse, bookingResponse] = await Promise.all([
+        loadCatalog(),
+        get<{ businessDate: string; tables: BackendTableState[] }>(`/tables?date=${businessDate}`),
+        get<{ businessDate: string; bookings: BackendBooking[] }>(`/bookings?date=${businessDate}`),
+      ])
+      return mapFloorState(at, tableResponse.businessDate, tableResponse.tables, bookingResponse.bookings, catalog)
+    },
     getAvailability: (at, party) => get(`/venues/:venueId/availability?at=${at.toISOString()}&party=${party}`),
     getShiftOverview: () => get("/venues/:venueId/shift-overview"),
     listReservations: (q) =>
