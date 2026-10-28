@@ -1,8 +1,9 @@
 import { Router } from 'express'
 
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
+import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { AppError } from '../../errors/app-error.js'
-import { listTables, updateTableState } from './table.repository.js'
+import { configureTable, listTables, updateTableState } from './table.repository.js'
 import { isTableState } from './table-state.js'
 
 export const tableRouter = Router()
@@ -25,9 +26,9 @@ function parseBody(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-tableRouter.get('/', requireAuthentication, async (request, response) => {
+tableRouter.get('/', requireAuthentication, requirePermission('customer.view_masked'), async (request, response) => {
   const businessDate = parseBusinessDate(request.query.date)
-  const tables = await listTables(businessDate)
+  const tables = await listTables(requireAuthenticatedActor(request), businessDate)
   response.json({ businessDate, tables })
 })
 
@@ -67,5 +68,21 @@ tableRouter.patch('/:id/status', requireAuthentication, requireCsrfProtection, r
     ...(typeof body.reason === 'string' ? { reason: body.reason } : {}),
   })
   response.json({ table })
+})
+
+tableRouter.patch('/:id/configuration', requireAuthentication, requireCsrfProtection, requirePermission('venue.configure'), async (request, response) => {
+  const tableId = Number(request.params.id)
+  if (!Number.isSafeInteger(tableId) || tableId <= 0) throw new AppError(400, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.')
+  const body = parseBody(request.body as unknown)
+  if (typeof body.isSpare !== 'boolean') throw new AppError(400, 'INVALID_BACKUP_FLAG', 'Cờ bàn sơ cua phải là true hoặc false.')
+  if (!Number.isSafeInteger(body.version) || Number(body.version) < 1) throw new AppError(400, 'INVALID_VERSION', 'Phiên bản bàn không hợp lệ.')
+  if (typeof body.reason !== 'string' || !body.reason.trim()) throw new AppError(400, 'REASON_REQUIRED', 'Cần nhập lý do thay đổi cấu hình bàn.')
+  if (body.reason.trim().length > 500) throw new AppError(400, 'REASON_TOO_LONG', 'Lý do không được vượt quá 500 ký tự.')
+  response.json({ table: await configureTable(requireAuthenticatedActor(request), {
+    tableId,
+    isSpare: body.isSpare,
+    expectedVersion: Number(body.version),
+    reason: body.reason.trim(),
+  }) })
 })
 

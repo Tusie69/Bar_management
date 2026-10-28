@@ -190,7 +190,7 @@ mysqlDescribe('closeVisit MySQL integration', () => {
     expect(allocationRows).toHaveLength(1)
     expect(allocationRows[0]?.released_at).not.toBeNull()
     expect(allocationRows[0]?.release_reason).toBe('GUEST_LEFT')
-    const tables = await listTables('2026-10-24')
+    const tables = await listTables(actor, '2026-10-24')
     expect(tables.find((table) => table.id === tableIds[0])?.state).toBe('AVAILABLE')
   })
 

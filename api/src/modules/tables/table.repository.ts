@@ -1,6 +1,6 @@
-import type { RowDataPacket } from 'mysql2/promise'
+import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise'
 
-import { env } from '../../config/env.js'
+import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
 import type { TableState } from './table-state.js'
@@ -63,7 +63,7 @@ function toTableView(row: TableRow): TableView {
   }
 }
 
-export async function listTables(businessDate: string): Promise<TableView[]> {
+export async function listTables(actor: AuthenticatedActor, businessDate: string): Promise<TableView[]> {
   const [rows] = await databasePool.execute<TableRow[]>(
     `SELECT
        dt.id, dt.code, dt.display_name, dt.kind AS table_type, dt.capacity,
@@ -98,7 +98,7 @@ export async function listTables(businessDate: string): Promise<TableView[]> {
      LEFT JOIN visits AS v ON v.venue_id = dt.venue_id AND v.id = a.active_visit_id AND v.ended_at IS NULL
      WHERE dt.venue_id = ? AND dt.status = 'ACTIVE'
      ORDER BY z.sort_order, dt.id`,
-    [env.venueId, businessDate, env.venueId],
+    [actor.venueId, businessDate, actor.venueId],
   )
   return rows.map(toTableView)
 }
@@ -118,4 +118,85 @@ export function updateTableState(input: UpdateTableStateInput): Promise<TableVie
     'TABLE_STATE_DERIVED',
     'Trạng thái bàn được cập nhật qua gán bàn, check-in và kết thúc lượt khách.',
   ))
+}
+
+export interface ConfigureTableInput {
+  tableId: number
+  isSpare: boolean
+  expectedVersion: number
+  reason: string
+}
+
+export async function configureTable(actor: AuthenticatedActor, input: ConfigureTableInput): Promise<{
+  id: number
+  code: string
+  isBackup: boolean
+  version: number
+}> {
+  const connection = await databasePool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const [rows] = await connection.execute<(RowDataPacket & { id: number; code: string; is_spare: number; status: string; version: number })[]>(
+      `SELECT id, code, is_spare, status, version
+       FROM dining_tables
+       WHERE organization_id = ? AND venue_id = ? AND id = ?
+       FOR UPDATE`,
+      [actor.organizationId, actor.venueId, input.tableId],
+    )
+    const table = rows[0]
+    if (!table) throw new AppError(404, 'TABLE_NOT_FOUND', 'Không tìm thấy bàn trong địa điểm hiện tại.')
+    if (table.status !== 'ACTIVE') throw new AppError(409, 'TABLE_NOT_ACTIVE', 'Chỉ có thể cấu hình bàn đang hoạt động.')
+    if (Number(table.version) !== input.expectedVersion) {
+      throw new AppError(409, 'VERSION_CONFLICT', 'Bàn vừa được thay đổi. Vui lòng tải lại.')
+    }
+    const [allocations] = await connection.execute<RowDataPacket[]>(
+      `SELECT id FROM table_allocations
+       WHERE organization_id = ? AND venue_id = ? AND table_id = ? AND released_at IS NULL
+       LIMIT 1 FOR UPDATE`,
+      [actor.organizationId, actor.venueId, input.tableId],
+    )
+    if (allocations.length) {
+      throw new AppError(409, 'TABLE_HAS_OPEN_ALLOCATION', 'Không thể đổi cấu hình khi bàn còn HOLD hoặc đang được sử dụng.')
+    }
+    if (Boolean(table.is_spare) === input.isSpare) {
+      throw new AppError(409, 'TABLE_CONFIGURATION_UNCHANGED', 'Cấu hình bàn không thay đổi.')
+    }
+    const [updated] = await connection.execute<ResultSetHeader>(
+      `UPDATE dining_tables
+       SET is_spare = ?, version = version + 1, updated_at = UTC_TIMESTAMP(3)
+       WHERE organization_id = ? AND venue_id = ? AND id = ? AND version = ? AND status = 'ACTIVE'`,
+      [input.isSpare ? 1 : 0, actor.organizationId, actor.venueId, input.tableId, input.expectedVersion],
+    )
+    if (updated.affectedRows !== 1) throw new AppError(409, 'VERSION_CONFLICT', 'Bàn vừa được thay đổi. Vui lòng tải lại.')
+    const [venueRows] = await connection.execute<(RowDataPacket & { change_seq: string })[]>(
+      'SELECT change_seq FROM venues WHERE organization_id = ? AND id = ? FOR UPDATE',
+      [actor.organizationId, actor.venueId],
+    )
+    const venue = venueRows[0]
+    if (!venue) throw new AppError(404, 'VENUE_NOT_FOUND', 'Không tìm thấy địa điểm vận hành.')
+    const changeSequence = (BigInt(venue.change_seq) + 1n).toString()
+    await connection.execute(
+      `UPDATE venues SET change_seq = ?, version = version + 1, updated_at = UTC_TIMESTAMP(3)
+       WHERE organization_id = ? AND id = ?`,
+      [changeSequence, actor.organizationId, actor.venueId],
+    )
+    await connection.execute(
+      `INSERT INTO operation_log
+        (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
+         auth_session_id, action, entity_type, entity_id, entity_version_before,
+         entity_version_after, changes, reason_code, reason_note, is_undoable)
+       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'TABLE_CONFIGURATION_UPDATED', 'dining_table', ?, ?, ?, ?, 'MANUAL', ?, 0)`,
+      [actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
+        actor.authSessionId ?? null, input.tableId, input.expectedVersion, input.expectedVersion + 1,
+        JSON.stringify([{ type: 'table_spare_configuration', previousIsSpare: Boolean(table.is_spare), isSpare: input.isSpare }]),
+        input.reason],
+    )
+    await connection.commit()
+    return { id: input.tableId, code: table.code, isBackup: input.isSpare, version: input.expectedVersion + 1 }
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
 }

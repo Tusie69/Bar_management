@@ -1,6 +1,7 @@
 import type { RequestHandler } from 'express'
 
 import { AppError } from '../errors/app-error.js'
+import { env } from '../config/env.js'
 import {
   attachAuthentication,
   getAuthentication,
@@ -8,6 +9,20 @@ import {
 } from './authenticated-actor.js'
 import { authenticateSession, hasPermission } from './auth.service.js'
 import { readSessionCookie, requireCsrfHeader } from './session-security.js'
+
+const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+export const requireTrustedOrigin: RequestHandler = (request, _response, next) => {
+  if (safeMethods.has(request.method)) {
+    next()
+    return
+  }
+  const origin = request.header('origin')
+  if (origin !== env.webOrigin) {
+    throw new AppError(403, 'ORIGIN_NOT_ALLOWED', 'Nguồn gửi yêu cầu không được phép.')
+  }
+  next()
+}
 
 export const requireAuthentication: RequestHandler = async (request, _response, next) => {
   const token = readSessionCookie(request)

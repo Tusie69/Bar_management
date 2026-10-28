@@ -7,6 +7,7 @@ describe('POST /api/v1/visits/:id/close', () => {
   it('fails closed before touching the database when no authenticated actor exists', async () => {
     const response = await request(app)
       .post('/api/v1/visits/1/close')
+      .set('Origin', 'http://localhost:5173')
       .send({ version: 1, mode: 'MANUAL', reason: 'GUEST_LEFT' })
 
     expect(response.status).toBe(401)

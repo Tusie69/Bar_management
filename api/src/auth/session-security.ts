@@ -8,17 +8,14 @@ const developmentCsrfSecret = randomBytes(32)
 
 function csrfSecret(): Buffer {
   if (env.session.csrfSecret) return Buffer.from(env.session.csrfSecret, 'utf8')
-  if (env.nodeEnv === 'production') {
-    throw new Error('Thiếu biến môi trường SESSION_CSRF_SECRET trong production')
-  }
   return developmentCsrfSecret
 }
 
 function cookieOptions(): CookieOptions {
   return {
     httpOnly: true,
-    secure: env.nodeEnv === 'production',
-    sameSite: 'lax',
+    secure: env.session.cookieSecure,
+    sameSite: env.session.sameSite,
     path: '/api/v1',
     maxAge: env.session.ttlHours * 60 * 60 * 1000,
   }

@@ -55,9 +55,14 @@ export async function login(username: string, password: string, deviceLabel?: st
   }
 
   const [venueRows] = await databasePool.execute<RowDataPacket[]>(
-    `SELECT 1 FROM venues
-     WHERE organization_id = ? AND id = ? AND status = 'ACTIVE'`,
-    [env.organizationId, env.venueId],
+    `SELECT 1 FROM venues AS v
+     WHERE v.organization_id = ? AND v.id = ? AND v.status = 'ACTIVE'
+       AND EXISTS (
+         SELECT 1 FROM membership_roles AS mr
+         WHERE mr.organization_id = ? AND mr.membership_id = ?
+           AND mr.revoked_at IS NULL AND (mr.venue_id IS NULL OR mr.venue_id = ?)
+       )`,
+    [env.organizationId, env.venueId, env.organizationId, user.membership_id, env.venueId],
   )
   if (!venueRows[0]) throw new AppError(403, 'VENUE_ACCESS_UNAVAILABLE', 'Địa điểm vận hành không khả dụng.')
 
@@ -105,8 +110,13 @@ export async function authenticateSession(sessionToken: string): Promise<Authent
      WHERE s.organization_id = ? AND s.token_hash = ?
        AND s.revoked_at IS NULL AND s.expires_at > UTC_TIMESTAMP(3)
        AND m.status = 'ACTIVE' AND u.status = 'ACTIVE' AND v.status = 'ACTIVE'
+       AND EXISTS (
+         SELECT 1 FROM membership_roles AS mr
+         WHERE mr.organization_id = s.organization_id AND mr.membership_id = s.membership_id
+           AND mr.revoked_at IS NULL AND (mr.venue_id IS NULL OR mr.venue_id = ?)
+       )
      LIMIT 1`,
-    [env.venueId, env.organizationId, hashSessionToken(sessionToken)],
+    [env.venueId, env.organizationId, hashSessionToken(sessionToken), env.venueId],
   )
   const row = rows[0]
   if (!row) return null

@@ -55,7 +55,11 @@ function isoDateTime(value: Date | string): string {
   return date.toISOString()
 }
 
-async function assertVisitEndPermission(connection: PoolConnection, actor: AuthenticatedActor): Promise<void> {
+async function assertVisitPermission(
+  connection: PoolConnection,
+  actor: AuthenticatedActor,
+  permissionCode: 'visit.end' | 'visit.move',
+): Promise<void> {
   const [rows] = await connection.execute<RowDataPacket[]>(
     `SELECT 1
      FROM memberships AS m
@@ -67,12 +71,16 @@ async function assertVisitEndPermission(connection: PoolConnection, actor: Authe
      WHERE m.organization_id = ? AND m.id = ? AND m.user_id = ?
        AND m.status = 'ACTIVE' AND u.status = 'ACTIVE'
        AND mr.revoked_at IS NULL AND (mr.venue_id IS NULL OR mr.venue_id = ?)
-       AND p.code = 'visit.end'
+       AND p.code = ?
      LIMIT 1`,
-    [actor.organizationId, actor.membershipId, actor.userId, actor.venueId],
+    [actor.organizationId, actor.membershipId, actor.userId, actor.venueId, permissionCode],
   )
   if (!rows[0]) {
-    throw new AppError(403, 'VISIT_END_FORBIDDEN', 'Tài khoản không có quyền kết thúc lượt khách.')
+    throw new AppError(
+      403,
+      permissionCode === 'visit.end' ? 'VISIT_END_FORBIDDEN' : 'VISIT_MOVE_FORBIDDEN',
+      'Tài khoản không có quyền thực hiện thao tác với lượt khách.',
+    )
   }
 }
 
@@ -100,7 +108,7 @@ export async function closeVisit(
   const connection = await databasePool.getConnection()
   try {
     await connection.beginTransaction()
-    await assertVisitEndPermission(connection, actor)
+    await assertVisitPermission(connection, actor, 'visit.end')
 
     if (input.mode === 'AFTER_PAYMENT') {
       throw new AppError(
@@ -208,6 +216,154 @@ export async function closeVisit(
       endReason: input.reason,
       version: closed.version,
       releasedTables: allocations.map((allocation) => ({ id: Number(allocation.table_id), code: allocation.table_code })),
+    }
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
+}
+
+export interface MoveVisitInput {
+  visitId: number
+  expectedVersion: number
+  tableIds: number[]
+  note?: string
+}
+
+export interface MovedVisitView {
+  id: number
+  businessDate: string
+  version: number
+  previousTables: Array<{ id: number; code: string }>
+  tables: Array<{ id: number; code: string }>
+}
+
+export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput): Promise<MovedVisitView> {
+  const connection = await databasePool.getConnection()
+  try {
+    await connection.beginTransaction()
+    await assertVisitPermission(connection, actor, 'visit.move')
+    const [visitRows] = await connection.execute<LockedVisitRow[]>(
+      `SELECT id, business_date, ended_at, version, paid_marked_at
+       FROM visits WHERE organization_id = ? AND venue_id = ? AND id = ? FOR UPDATE`,
+      [actor.organizationId, actor.venueId, input.visitId],
+    )
+    const visit = visitRows[0]
+    if (!visit) throw new AppError(404, 'VISIT_NOT_FOUND', 'Không tìm thấy lượt khách.')
+    if (visit.ended_at !== null) throw new AppError(409, 'VISIT_ALREADY_CLOSED', 'Lượt khách đã kết thúc trước đó.')
+    if (visit.version !== input.expectedVersion) {
+      throw new AppError(409, 'VERSION_CONFLICT', 'Lượt khách vừa được thay đổi. Vui lòng tải lại.')
+    }
+
+    const [currentAllocations] = await connection.execute<AllocationRow[]>(
+      `SELECT a.id, a.table_id, dt.code AS table_code, a.business_date
+       FROM table_allocations AS a
+       JOIN dining_tables AS dt ON dt.venue_id = a.venue_id AND dt.id = a.table_id
+       WHERE a.organization_id = ? AND a.venue_id = ? AND a.visit_id = ?
+         AND a.kind = 'USAGE' AND a.released_at IS NULL
+       ORDER BY a.table_id, a.id FOR UPDATE`,
+      [actor.organizationId, actor.venueId, input.visitId],
+    )
+    if (!currentAllocations.length) {
+      throw new AppError(409, 'VISIT_HAS_NO_ACTIVE_TABLES', 'Lượt khách không còn bàn đang sử dụng để chuyển.')
+    }
+    const targetTableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
+    if (!targetTableIds.length) throw new AppError(400, 'TABLE_REQUIRED', 'Cần chọn ít nhất một bàn mới.')
+    const currentTableIds = currentAllocations.map((allocation) => Number(allocation.table_id))
+    if (
+      currentTableIds.length === targetTableIds.length
+      && currentTableIds.every((tableId, index) => tableId === targetTableIds[index])
+    ) {
+      throw new AppError(409, 'TABLE_ASSIGNMENT_UNCHANGED', 'Lượt khách đang sử dụng đúng các bàn đã chọn.')
+    }
+
+    const targetPlaceholders = targetTableIds.map(() => '?').join(',')
+    const [targetTables] = await connection.execute<(RowDataPacket & { id: number; code: string; is_spare: number })[]>(
+      `SELECT id, code, is_spare FROM dining_tables
+       WHERE organization_id = ? AND venue_id = ? AND status = 'ACTIVE' AND id IN (${targetPlaceholders})
+       ORDER BY id FOR UPDATE`,
+      [actor.organizationId, actor.venueId, ...targetTableIds],
+    )
+    if (targetTables.length !== targetTableIds.length) {
+      throw new AppError(400, 'TABLE_NOT_FOUND', 'Có bàn không tồn tại hoặc ngừng hoạt động.')
+    }
+    const spareTable = targetTables.find((table) => Boolean(table.is_spare))
+    if (spareTable) throw new AppError(409, 'SPARE_TABLE_NOT_BOOKABLE', `Bàn ${spareTable.code} là bàn sơ cua và chưa được cấu hình để nhận khách.`)
+    const allocationIds = currentAllocations.map((allocation) => Number(allocation.id))
+    const allocationPlaceholders = allocationIds.map(() => '?').join(',')
+    const visitBusinessDate = dateOnly(visit.business_date)
+    const [conflicts] = await connection.execute<RowDataPacket[]>(
+      `SELECT id FROM table_allocations
+       WHERE organization_id = ? AND venue_id = ? AND business_date = ? AND released_at IS NULL
+         AND table_id IN (${targetPlaceholders}) AND id NOT IN (${allocationPlaceholders})
+       ORDER BY table_id, id FOR UPDATE`,
+      [actor.organizationId, actor.venueId, visitBusinessDate, ...targetTableIds, ...allocationIds],
+    )
+    if (conflicts.length) throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn mới đang được giữ hoặc sử dụng.')
+
+    const [releaseResult] = await connection.execute<ResultSetHeader>(
+      `UPDATE table_allocations SET released_at = UTC_TIMESTAMP(3), released_by_user_id = ?, release_reason = 'MOVED'
+       WHERE organization_id = ? AND venue_id = ? AND visit_id = ? AND kind = 'USAGE' AND released_at IS NULL`,
+      [actor.userId, actor.organizationId, actor.venueId, input.visitId],
+    )
+    if (releaseResult.affectedRows !== currentAllocations.length) {
+      throw new AppError(409, 'ALLOCATION_MOVE_CONFLICT', 'Danh sách bàn đang sử dụng vừa được thay đổi.')
+    }
+    const newAllocationIds: number[] = []
+    for (const tableId of targetTableIds) {
+      const [allocationResult] = await connection.execute<ResultSetHeader>(
+        `INSERT INTO table_allocations
+          (organization_id, venue_id, table_id, kind, visit_id, starts_at, business_date, created_by_user_id)
+         VALUES (?, ?, ?, 'USAGE', ?, UTC_TIMESTAMP(3), ?, ?)`,
+        [actor.organizationId, actor.venueId, tableId, input.visitId, visitBusinessDate, actor.userId],
+      )
+      newAllocationIds.push(allocationResult.insertId)
+    }
+    const [visitUpdate] = await connection.execute<ResultSetHeader>(
+      `UPDATE visits SET version = version + 1, updated_at = UTC_TIMESTAMP(3)
+       WHERE organization_id = ? AND venue_id = ? AND id = ? AND ended_at IS NULL AND version = ?`,
+      [actor.organizationId, actor.venueId, input.visitId, input.expectedVersion],
+    )
+    if (visitUpdate.affectedRows !== 1) throw new AppError(409, 'VERSION_CONFLICT', 'Lượt khách vừa được thay đổi. Vui lòng tải lại.')
+
+    const changeSequence = await nextVenueChangeSequence(connection, actor)
+    await connection.execute(
+      `INSERT INTO operation_log
+        (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
+         auth_session_id, action, entity_type, entity_id, entity_version_before,
+         entity_version_after, changes, reason_code, reason_note, is_undoable)
+       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'VISIT_TABLES_MOVED', 'visit', ?, ?, ?, ?, 'MANUAL', ?, 0)`,
+      [
+        actor.organizationId,
+        actor.venueId,
+        changeSequence,
+        actor.userId,
+        actor.membershipId,
+        actor.authSessionId ?? null,
+        input.visitId,
+        input.expectedVersion,
+        input.expectedVersion + 1,
+        JSON.stringify([{
+          type: 'visit_table_move',
+          previousAllocationIds: allocationIds,
+          previousTableIds: currentTableIds,
+          newAllocationIds,
+          newTableIds: targetTableIds,
+        }]),
+        input.note ?? null,
+      ],
+    )
+    await connection.commit()
+    return {
+      id: input.visitId,
+      businessDate: visitBusinessDate,
+      version: input.expectedVersion + 1,
+      previousTables: currentAllocations.map((allocation) => ({
+        id: Number(allocation.table_id), code: allocation.table_code,
+      })),
+      tables: targetTables.map((table) => ({ id: Number(table.id), code: table.code })),
     }
   } catch (error) {
     await connection.rollback()
