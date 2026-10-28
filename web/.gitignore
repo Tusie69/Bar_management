@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Test artifacts
+e2e/.artifacts
+
+# design-sync & ds-sync (bỏ qua toàn bộ)
+.ds-sync/
+ds-bundle/
+.design-sync/
