@@ -1,6 +1,6 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise'
 import request from 'supertest'
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { app } from '../src/app.js'
 import type { AuthenticatedActor } from '../src/auth/authenticated-actor.js'
@@ -24,6 +24,7 @@ import {
 } from '../src/modules/bookings/no-show.worker.js'
 import {
   createWaitlistEntry,
+  listWaitlist,
   seatWaitlistEntry,
   type WaitlistEntryView,
 } from '../src/modules/waitlist/waitlist.repository.js'
@@ -121,9 +122,9 @@ async function resetFixture(): Promise<void> {
     [tableOneId, organizationId, venueId, tableTwoId, organizationId, venueId],
   )
   await databasePool.execute(
-    `INSERT INTO booking_sources (id, organization_id, code, name)
-     VALUES (?, ?, 'HOTLINE', 'Hotline')`,
-    [sourceId, organizationId],
+    `INSERT INTO booking_sources (id, organization_id, code, name, sort_order)
+     VALUES (?, ?, 'HOTLINE', 'Hotline', 1), (?, ?, 'OTHER', 'Khác', 2)`,
+    [sourceId, organizationId, sourceId + 1, organizationId],
   )
 }
 
@@ -162,6 +163,10 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
 
   beforeEach(async () => {
     await resetFixture()
+  })
+
+  afterAll(async () => {
+    await clearOperationalData()
   })
 
   it('runs Create → Assign → Edit → Check-in → Close while preserving allocation history', async () => {
@@ -385,7 +390,10 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     const auth = JSON.parse(login.text) as AuthResponse
     const sources = await receptionist.get('/api/v1/bookings/sources')
     expect(sources.status).toBe(200)
-    expect(JSON.parse(sources.text)).toEqual({ sources: [{ code: 'HOTLINE', name: 'Hotline' }] })
+    expect(JSON.parse(sources.text)).toEqual({ sources: [
+      { code: 'HOTLINE', name: 'Hotline' },
+      { code: 'OTHER', name: 'Khác' },
+    ] })
     const waitlistPayload = {
       guestName: 'Route waitlist guest', partySize: 2, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
     }
@@ -460,12 +468,35 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     expect(detail.text).not.toContain('phone_ciphertext')
     expect(detail.text).not.toContain('phone_hmac')
 
+    await createWaitlistEntry(actor, {
+      guestName: 'Export wait one', partySize: 2, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+    })
+    await createWaitlistEntry(actor, {
+      guestName: 'Export wait two', partySize: 3, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+    })
+    const cancelledDraft = await createBooking(actor, bookingInput('2030-10-24', '22:00', 'Export cancelled'))
+    const cancelledAssigned = await assignBookingTables(actor, cancelledDraft.id, cancelledDraft.version, [tableTwoId])
+    await closeBooking(actor, cancelledAssigned.id, cancelledAssigned.version, 'CANCELLED')
+    await databasePool.execute(
+      `INSERT INTO dining_tables
+        (id, organization_id, venue_id, zone_id, code, display_name, kind, capacity, status, pos_x, pos_y)
+       VALUES (9303, ?, ?, 9301, 'T3', 'Table 3', 'TABLE', 4, 'OUT_OF_SERVICE', 30, 30)`,
+      [organizationId, venueId],
+    )
+
     const exported = await receptionist.get('/api/v1/bookings/export?date=2030-10-24')
     expect(exported.status).toBe(200)
     expect(exported.headers['content-type']).toContain('text/plain')
     expect(exported.headers['content-disposition']).toContain('21gam-bookings-2030-10-24.txt')
+    expect(exported.text).toContain('Danh sách bàn đặt 21Gam thứ Năm, 24/10/2030')
     expect(exported.text).toContain('Nguyễn Minh Search')
-    expect(exported.text).toContain('1 booking | 1 bàn đã gán | 4 khách')
+    expect(exported.text).toContain('T1: 21:00 · Nguyễn Minh Search · 4 khách')
+    expect(exported.text).toContain('BC (Bàn Chờ +2)')
+    expect(exported.text).toMatch(/BÀN OUT\nT3/)
+    expect(exported.text).toMatch(/BÀN HUỶ\nT2: 22:00 · Export cancelled/)
+    expect(exported.text).toContain('Tổng bàn đặt: 1')
+    expect(exported.text).toContain('Tổng khách đặt: 4')
+    expect(exported.text).toContain('Bàn khách quen O: Chưa xác nhận nghiệp vụ')
     expect(exported.text).not.toContain('phone')
   })
 
@@ -585,7 +616,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     expect(Number(visit.version)).toBe(1)
   })
 
-  it('keeps a waitlist entry unique and seats it after a table is released', async () => {
+  it('keeps a waitlist entry unique and creates a booking hold after a table is released', async () => {
     const occupyingVisit = await createWalkIn(actor, {
       guestName: 'Current guest', partySize: 2, businessDate: '2030-10-24', tableIds: [tableOneId],
     })
@@ -598,18 +629,127 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     await closeVisit(actor, {
       visitId: occupyingVisit.visitId, expectedVersion: 1, mode: 'MANUAL', reason: 'GUEST_LEFT',
     })
-    const seated = await seatWaitlistEntry(actor, {
+    const assigned = await seatWaitlistEntry(actor, {
       entryId: entry.id, expectedVersion: entry.version, tableIds: [tableOneId],
     })
-    expect(seated.entry.status).toBe('SEATED')
-    expect(seated.entry.visitId).toBe(seated.visitId)
+    expect(assigned.entry.status).toBe('HOLD_ACTIVE')
+    expect(assigned.entry.reservationId).toBe(assigned.reservationId)
+    expect(assigned.entry.visitId).toBeNull()
     await expect(seatWaitlistEntry(actor, {
       entryId: entry.id, expectedVersion: entry.version, tableIds: [tableOneId],
     })).rejects.toMatchObject({ code: 'VERSION_CONFLICT' })
     const [visits] = await databasePool.execute<RowDataPacket[]>(
       "SELECT id FROM visits WHERE contact_name = 'Waiting guest'",
     )
-    expect(visits).toHaveLength(1)
+    expect(visits).toHaveLength(0)
+    const hold = await row(
+      `SELECT r.status, r.visit_id, a.kind FROM reservations r
+       JOIN table_holds h ON h.reservation_id = r.id
+       JOIN table_allocations a ON a.hold_id = h.id
+       WHERE r.id = ? AND a.released_at IS NULL`,
+      [assigned.reservationId],
+    )
+    expect(hold).toMatchObject({ status: 'BOOKED', visit_id: null, kind: 'HOLD' })
+  })
+
+  it('lists the real queue in FIFO order with id tie-breaker and venue scope', async () => {
+    const first = await createWaitlistEntry(actor, {
+      guestName: 'FIFO first', partySize: 2, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+    })
+    const second = await createWaitlistEntry(actor, {
+      guestName: 'FIFO second', partySize: 3, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+    })
+    await databasePool.execute(
+      'UPDATE waitlist_entries SET queued_at = ? WHERE id IN (?, ?)',
+      ['2030-10-24 12:00:00.000', first.id, second.id],
+    )
+    const otherVenueId = venueId + 1
+    await databasePool.execute(
+      `INSERT INTO venues
+        (id, organization_id, code, name, timezone, business_day_start_local, business_day_cutoff_local)
+       VALUES (?, ?, 'OTHER_TEST', 'Other test venue', 'Asia/Ho_Chi_Minh', '17:00:00', '05:00:00')`,
+      [otherVenueId, organizationId],
+    )
+    await createWaitlistEntry({ ...actor, venueId: otherVenueId }, {
+      guestName: 'Other venue', partySize: 2, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+    })
+    const entries = await listWaitlist(actor, '2030-10-24')
+    expect(entries.map((entry) => entry.id)).toEqual([first.id, second.id])
+  })
+
+  it('encrypts phone data and rejects duplicate active submissions without storing plaintext', async () => {
+    const phoneNumber = '0901234567'
+    const first = await createWaitlistEntry(actor, {
+      guestName: 'Encrypted phone', phoneNumber, partySize: 2,
+      businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+    })
+    expect(first.phoneLast3).toBe('567')
+    await expect(createWaitlistEntry(actor, {
+      guestName: 'Duplicate phone', phoneNumber, partySize: 2,
+      businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+    })).rejects.toMatchObject({ code: 'WAITLIST_DUPLICATE' })
+    const customer = await row(
+      `SELECT CAST(phone_ciphertext AS CHAR) AS ciphertext, phone_last3
+       FROM customers WHERE id = (SELECT customer_id FROM waitlist_entries WHERE id = ?)`,
+      [first.id],
+    )
+    expect(String(customer.ciphertext)).not.toContain(phoneNumber)
+    expect(customer.phone_last3).toBe('567')
+    const assigned = await seatWaitlistEntry(actor, {
+      entryId: first.id, expectedVersion: first.version, tableIds: [tableOneId],
+    })
+    const reservation = await row(
+      'SELECT customer_id, visit_id FROM reservations WHERE id = ?', [assigned.reservationId],
+    )
+    expect(Number(reservation.customer_id)).toBeGreaterThan(0)
+    expect(reservation.visit_id).toBeNull()
+  })
+
+  it('allows exactly one concurrent assignment and keeps audit/counter consistent', async () => {
+    const first = await createWaitlistEntry(actor, {
+      guestName: 'Concurrent one', partySize: 2, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+    })
+    const second = await createWaitlistEntry(actor, {
+      guestName: 'Concurrent two', partySize: 2, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+    })
+    const results = await Promise.allSettled([
+      seatWaitlistEntry(actor, { entryId: first.id, expectedVersion: first.version, tableIds: [tableTwoId] }),
+      seatWaitlistEntry(actor, { entryId: second.id, expectedVersion: second.version, tableIds: [tableTwoId] }),
+    ])
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    const [active] = await databasePool.execute<RowDataPacket[]>(
+      'SELECT id FROM table_allocations WHERE table_id = ? AND released_at IS NULL', [tableTwoId],
+    )
+    expect(active).toHaveLength(1)
+    const waiting = (await listWaitlist(actor, '2030-10-24')).filter((entry) => entry.status === 'WAITING')
+    expect(waiting).toHaveLength(1)
+    const [audits] = await databasePool.execute<RowDataPacket[]>(
+      "SELECT id FROM operation_log WHERE action = 'WAITLIST_ASSIGNED_TO_RESERVATION'",
+    )
+    expect(audits).toHaveLength(1)
+  })
+
+  it('rolls back booking, hold, allocation and waitlist transition when audit fails', async () => {
+    const entry = await createWaitlistEntry(actor, {
+      guestName: 'Rollback waitlist', partySize: 2, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+    })
+    await databasePool.query(
+      `ALTER TABLE operation_log ADD CONSTRAINT ck_test_reject_waitlist_assignment
+       CHECK (action <> 'WAITLIST_ASSIGNED_TO_RESERVATION')`,
+    )
+    try {
+      await expect(seatWaitlistEntry(actor, {
+        entryId: entry.id, expectedVersion: entry.version, tableIds: [tableTwoId],
+      })).rejects.toMatchObject({ code: 'ER_CHECK_CONSTRAINT_VIOLATED' })
+    } finally {
+      await databasePool.query('ALTER TABLE operation_log DROP CHECK ck_test_reject_waitlist_assignment')
+    }
+    const restored = (await listWaitlist(actor, '2030-10-24')).find((item) => item.id === entry.id)
+    expect(restored).toMatchObject({ status: 'WAITING', version: 1, reservationId: null })
+    const [reservations] = await databasePool.execute<RowDataPacket[]>("SELECT id FROM reservations WHERE contact_name = 'Rollback waitlist'")
+    const [allocations] = await databasePool.execute<RowDataPacket[]>('SELECT id FROM table_allocations WHERE table_id = ?', [tableTwoId])
+    expect(reservations).toHaveLength(0)
+    expect(allocations).toHaveLength(0)
   })
 
   it('transitions to automatic NO_SHOW exactly at 30 minutes and releases every HOLD allocation once', async () => {

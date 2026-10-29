@@ -26,6 +26,23 @@ const json = (value: unknown, status = 200) =>
 afterEach(() => vi.unstubAllGlobals())
 
 describe("HTTP booking endpoints", () => {
+  it("loads the plain-text daily export from the real backend endpoint", async () => {
+    const requests: string[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        requests.push(String(input))
+        return new Response("Danh sách bàn đặt 21Gam", {
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        })
+      }),
+    )
+    const api = new HttpBookingApi(new HttpClient("http://api.test"))
+    expect(await api.exportDailyText("2030-10-24")).toBe("Danh sách bàn đặt 21Gam")
+    expect(new URL(requests[0]!).pathname).toBe("/api/v1/bookings/export")
+    expect(new URL(requests[0]!).searchParams.get("date")).toBe("2030-10-24")
+  })
+
   it("uses list and search endpoints without duplicate fallback requests", async () => {
     const urls: string[] = []
     vi.stubGlobal(

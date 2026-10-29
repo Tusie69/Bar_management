@@ -33,6 +33,10 @@ function partySize(value: unknown): number {
   return parsed
 }
 
+function containsPhoneNumber(value: string): boolean {
+  return /\d{8,}/.test(value.replace(/[\s.\-()]/g, ''))
+}
+
 waitlistRouter.get('/', requireAuthentication, requirePermission('customer.view_masked'), async (request, response) => {
   const businessDate = validateCalendarDate(request.query.date)
   response.json({ businessDate, entries: await listWaitlist(requireAuthenticatedActor(request), businessDate) })
@@ -49,12 +53,19 @@ waitlistRouter.post('/', requireAuthentication, requireCsrfProtection, requirePe
   if (body.note !== undefined && (typeof body.note !== 'string' || body.note.trim().length > 500)) {
     throw new AppError(400, 'INVALID_NOTE', 'Ghi chú không được vượt quá 500 ký tự.')
   }
+  if (body.phoneNumber !== undefined && (typeof body.phoneNumber !== 'string' || body.phoneNumber.trim().length > 30)) {
+    throw new AppError(400, 'INVALID_PHONE_NUMBER', 'Số điện thoại không hợp lệ.')
+  }
   const note = typeof body.note === 'string' ? body.note.trim() : ''
+  if (note && containsPhoneNumber(note)) {
+    throw new AppError(422, 'PHONE_IN_NOTE_FORBIDDEN', 'Không ghi số điện thoại vào ghi chú.')
+  }
   response.status(201).json({ entry: await createWaitlistEntry(requireAuthenticatedActor(request), {
     guestName: body.guestName.trim(),
     partySize: partySize(body.partySize),
     businessDate: validateCalendarDate(body.businessDate),
     contactChannel: body.contactChannel as ContactChannel,
+    ...(typeof body.phoneNumber === 'string' && body.phoneNumber.trim() ? { phoneNumber: body.phoneNumber.trim() } : {}),
     ...(note ? { note } : {}),
   }) })
 })
@@ -64,7 +75,8 @@ waitlistRouter.post(
   requireAuthentication,
   requireCsrfProtection,
   requirePermission('waitlist.accept_offer'),
-  requirePermission('visit.walkin'),
+  requirePermission('reservation.create'),
+  requirePermission('table.assign'),
   async (request, response) => {
     const body = objectBody(request.body)
     if (!Array.isArray(body.tableIds)) throw new AppError(400, 'TABLES_REQUIRED', 'Danh sách bàn không hợp lệ.')

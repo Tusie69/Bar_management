@@ -21,6 +21,9 @@ async function cleanup() {
     "DELETE FROM table_allocations WHERE organization_id = ?",
     "DELETE FROM table_groups WHERE organization_id = ?",
     "DELETE FROM table_holds WHERE organization_id = ?",
+    "DELETE FROM waitlist_table_preferences WHERE organization_id = ?",
+    "DELETE FROM waitlist_contact_attempts WHERE organization_id = ?",
+    "DELETE FROM waitlist_entries WHERE organization_id = ?",
     "DELETE FROM reservations WHERE organization_id = ?",
     "DELETE FROM visits WHERE organization_id = ?",
     "DELETE FROM customers WHERE organization_id = ?",
@@ -55,10 +58,11 @@ async function verifyClean() {
       (SELECT COUNT(*) FROM users WHERE id = ?) +
       (SELECT COUNT(*) FROM memberships WHERE id = ?) +
       (SELECT COUNT(*) FROM auth_sessions WHERE user_id = ?) +
+      (SELECT COUNT(*) FROM waitlist_entries WHERE organization_id = ?) +
       (SELECT COUNT(*) FROM reservations WHERE organization_id = ?) +
       (SELECT COUNT(*) FROM table_groups WHERE organization_id = ?) +
       (SELECT COUNT(*) FROM table_adjacencies WHERE organization_id = ?) AS total`,
-    [organizationId, userId, membershipId, userId, organizationId, organizationId, organizationId],
+    [organizationId, userId, membershipId, userId, organizationId, organizationId, organizationId, organizationId],
   );
   if (Number(rows[0]?.total) !== 0)
     throw new Error("E2E fixture cleanup verification failed");
@@ -148,8 +152,8 @@ async function setup() {
   );
   await databasePool.execute(
     `INSERT INTO booking_sources (id, organization_id, code, name, sort_order)
-     VALUES (9501, ?, 'HOTLINE', 'Hotline', 1)`,
-    [organizationId],
+     VALUES (9501, ?, 'HOTLINE', 'Hotline', 1), (9502, ?, 'OTHER', 'Khác', 2)`,
+    [organizationId, organizationId],
   );
   console.log("phase2b-e2e-fixture=ready");
 }

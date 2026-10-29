@@ -1,8 +1,10 @@
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise'
 
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
+import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
+import { protectPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from '../bookings/phone-security.js'
 
 export type WaitlistStatus = 'WAITING' | 'CONTACTING' | 'OFFERED' | 'HOLD_ACTIVE' | 'SEATED' | 'DECLINED' | 'CANCELLED'
 export type ContactChannel = 'IN_PERSON' | 'PHONE_CALLBACK' | 'ZALO_THREAD' | 'FANPAGE_THREAD' | 'OTHER'
@@ -11,6 +13,7 @@ export interface WaitlistEntryView {
   id: number
   kind: 'ADVANCE_RESERVATION' | 'WALK_IN'
   guestName: string
+  phoneLast3: string | null
   partySize: number
   businessDate: string
   queuedAt: string
@@ -26,6 +29,7 @@ interface WaitlistRow extends RowDataPacket {
   id: number
   kind: 'ADVANCE_RESERVATION' | 'WALK_IN'
   guest_name: string
+  phone_last3: string | null
   resolved_party_size: number
   business_date: Date | string
   queued_at: Date | string
@@ -41,7 +45,9 @@ interface LockedWaitlistRow extends RowDataPacket {
   id: number
   kind: 'ADVANCE_RESERVATION' | 'WALK_IN'
   contact_name: string | null
+  customer_id: number | null
   party_size: number | null
+  note: string | null
   business_date: Date | string
   status: WaitlistStatus
   version: number
@@ -61,6 +67,7 @@ function toView(row: WaitlistRow): WaitlistEntryView {
     id: Number(row.id),
     kind: row.kind,
     guestName: row.guest_name,
+    phoneLast3: row.phone_last3,
     partySize: Number(row.resolved_party_size),
     businessDate: dateOnly(row.business_date),
     queuedAt: isoDateTime(row.queued_at),
@@ -75,6 +82,7 @@ function toView(row: WaitlistRow): WaitlistEntryView {
 
 const waitlistSelect = `SELECT w.id, w.kind,
   COALESCE(c.display_name, r.contact_name, w.contact_name, 'Khách chờ') AS guest_name,
+  COALESCE(c.phone_last3, r.phone_last3) AS phone_last3,
   COALESCE(r.party_size, w.party_size) AS resolved_party_size,
   w.business_date, w.queued_at, w.status, w.contact_channel,
   w.reservation_id, w.visit_id, w.note, w.version
@@ -87,8 +95,7 @@ export async function listWaitlist(actor: AuthenticatedActor, businessDate: stri
   const [rows] = await databasePool.execute<WaitlistRow[]>(
     `${waitlistSelect}
      WHERE w.organization_id = ? AND w.venue_id = ? AND w.business_date = ?
-     ORDER BY FIELD(w.status, 'WAITING','CONTACTING','OFFERED','HOLD_ACTIVE','SEATED','DECLINED','CANCELLED'),
-       w.priority_class, w.queued_at, w.id`,
+     ORDER BY w.queued_at, w.id`,
     [actor.organizationId, actor.venueId, businessDate],
   )
   return rows.map(toView)
@@ -100,27 +107,95 @@ export interface CreateWaitlistInput {
   businessDate: string
   contactChannel: ContactChannel
   note?: string
+  phoneNumber?: string
+}
+
+function phoneKeyRing(): PhoneKeyRing {
+  const encryptionKeyId = env.phone.activeEncryptionKeyId
+  const hmacKeyId = env.phone.activeHmacKeyId
+  if (encryptionKeyId === undefined || hmacKeyId === undefined) {
+    throw new AppError(503, 'PHONE_KEYS_UNAVAILABLE', 'Chức năng số điện thoại chưa được cấu hình.')
+  }
+  return {
+    activeEncryptionKeyId: encryptionKeyId,
+    encryptionKeys: env.phone.encryptionKeys,
+    activeHmacKeyId: hmacKeyId,
+    hmacKeys: env.phone.hmacKeys,
+  }
+}
+
+function protectedPhoneValues(phone: ProtectedPhone): [Buffer, number, Buffer, number, string] {
+  return [phone.ciphertext, phone.encryptionKeyId, phone.hmac, phone.hmacKeyId, phone.last3]
 }
 
 export async function createWaitlistEntry(
   actor: AuthenticatedActor,
   input: CreateWaitlistInput,
 ): Promise<WaitlistEntryView> {
-  const [result] = await databasePool.execute<ResultSetHeader>(
-    `INSERT INTO waitlist_entries
-      (organization_id, venue_id, kind, contact_name, party_size, preference_mode,
-       contact_channel, business_date, queued_at, note, created_by_user_id)
-     VALUES (?, ?, 'WALK_IN', ?, ?, 'ANY', ?, ?, UTC_TIMESTAMP(3), ?, ?)`,
-    [actor.organizationId, actor.venueId, input.guestName, input.partySize, input.contactChannel,
-      input.businessDate, input.note ?? null, actor.userId],
-  )
-  const [rows] = await databasePool.execute<WaitlistRow[]>(
-    `${waitlistSelect} WHERE w.organization_id = ? AND w.venue_id = ? AND w.id = ?`,
-    [actor.organizationId, actor.venueId, result.insertId],
-  )
-  const created = rows[0]
-  if (!created) throw new AppError(500, 'WAITLIST_READ_FAILED', 'Không đọc lại được khách vừa thêm vào danh sách chờ.')
-  return toView(created)
+  const connection = await databasePool.getConnection()
+  try {
+    await connection.beginTransaction()
+    let customerId: number | null = null
+    if (input.phoneNumber) {
+      const phone = protectPhoneNumber(input.phoneNumber, phoneKeyRing())
+      const [customers] = await connection.execute<(RowDataPacket & { id: number })[]>(
+        `SELECT id FROM customers WHERE organization_id = ? AND phone_hmac = ? AND status = 'ACTIVE' FOR UPDATE`,
+        [actor.organizationId, phone.hmac],
+      )
+      customerId = customers[0] ? Number(customers[0].id) : null
+      if (customerId === null) {
+        const [customer] = await connection.execute<ResultSetHeader>(
+          `INSERT INTO customers
+            (organization_id, display_name, name_search, phone_ciphertext, phone_key_id,
+             phone_hmac, phone_hmac_key_id, phone_last3, created_by_user_id)
+           VALUES (?, ?, LOWER(?), ?, ?, ?, ?, ?, ?)`,
+          [actor.organizationId, input.guestName, input.guestName, ...protectedPhoneValues(phone), actor.userId],
+        )
+        customerId = customer.insertId
+      }
+      const [duplicates] = await connection.execute<RowDataPacket[]>(
+        `SELECT id FROM waitlist_entries
+         WHERE organization_id = ? AND venue_id = ? AND business_date = ? AND customer_id = ?
+           AND status IN ('WAITING','CONTACTING','OFFERED','HOLD_ACTIVE')
+         LIMIT 1 FOR UPDATE`,
+        [actor.organizationId, actor.venueId, input.businessDate, customerId],
+      )
+      if (duplicates.length) {
+        throw new AppError(409, 'WAITLIST_DUPLICATE', 'Số điện thoại này đã có trong danh sách chờ hiện tại.')
+      }
+    }
+    const [result] = await connection.execute<ResultSetHeader>(
+      `INSERT INTO waitlist_entries
+        (organization_id, venue_id, kind, customer_id, contact_name, party_size, preference_mode,
+         contact_channel, business_date, queued_at, note, created_by_user_id)
+       VALUES (?, ?, 'WALK_IN', ?, ?, ?, 'ANY', ?, ?, UTC_TIMESTAMP(3), ?, ?)`,
+      [actor.organizationId, actor.venueId, customerId, customerId === null ? input.guestName : null,
+        input.partySize, input.contactChannel, input.businessDate, input.note ?? null, actor.userId],
+    )
+    const changeSequence = await nextVenueChangeSequence(connection, actor)
+    await connection.execute(
+      `INSERT INTO operation_log
+        (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
+         auth_session_id, action, entity_type, entity_id, entity_version_after, changes, reason_code, is_undoable)
+       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'WAITLIST_ADDED', 'waitlist_entry', ?, 1, ?, 'WALK_IN_WAITING', 0)`,
+      [actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
+        actor.authSessionId ?? null, result.insertId,
+        JSON.stringify([{ type: 'waitlist_added', kind: 'WALK_IN', partySize: input.partySize }])],
+    )
+    const [rows] = await connection.execute<WaitlistRow[]>(
+      `${waitlistSelect} WHERE w.organization_id = ? AND w.venue_id = ? AND w.id = ?`,
+      [actor.organizationId, actor.venueId, result.insertId],
+    )
+    const created = rows[0]
+    if (!created) throw new AppError(500, 'WAITLIST_READ_FAILED', 'Không đọc lại được khách vừa thêm vào danh sách chờ.')
+    await connection.commit()
+    return toView(created)
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
 }
 
 async function nextVenueChangeSequence(connection: PoolConnection, actor: AuthenticatedActor): Promise<string> {
@@ -148,12 +223,12 @@ export interface SeatWaitlistInput {
 export async function seatWaitlistEntry(
   actor: AuthenticatedActor,
   input: SeatWaitlistInput,
-): Promise<{ entry: WaitlistEntryView; visitId: number }> {
+): Promise<{ entry: WaitlistEntryView; reservationId: number }> {
   const connection = await databasePool.getConnection()
   try {
     await connection.beginTransaction()
     const [entryRows] = await connection.execute<LockedWaitlistRow[]>(
-      `SELECT id, kind, contact_name, party_size, business_date, status, version
+      `SELECT id, kind, customer_id, contact_name, party_size, note, business_date, status, version
        FROM waitlist_entries WHERE organization_id = ? AND venue_id = ? AND id = ? FOR UPDATE`,
       [actor.organizationId, actor.venueId, input.entryId],
     )
@@ -168,15 +243,15 @@ export async function seatWaitlistEntry(
     if (entry.status !== 'WAITING') {
       throw new AppError(409, 'WAITLIST_NOT_SEATABLE', 'Chỉ khách đang chờ mới có thể được gán bàn trực tiếp.')
     }
-    if (!entry.contact_name || entry.party_size === null) {
+    if ((!entry.contact_name && entry.customer_id === null) || entry.party_size === null) {
       throw new AppError(409, 'WAITLIST_DATA_INCOMPLETE', 'Thông tin khách chờ không đầy đủ.')
     }
 
     const tableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
     if (!tableIds.length) throw new AppError(400, 'TABLE_REQUIRED', 'Cần chọn ít nhất một bàn.')
     const placeholders = tableIds.map(() => '?').join(',')
-    const [tables] = await connection.execute<(RowDataPacket & { id: number; code: string; is_spare: number })[]>(
-      `SELECT id, code, is_spare FROM dining_tables
+    const [tables] = await connection.execute<(RowDataPacket & { id: number; code: string; is_spare: number; capacity: number })[]>(
+      `SELECT id, code, is_spare, capacity FROM dining_tables
        WHERE organization_id = ? AND venue_id = ? AND status = 'ACTIVE' AND id IN (${placeholders})
        ORDER BY id FOR UPDATE`,
       [actor.organizationId, actor.venueId, ...tableIds],
@@ -184,6 +259,10 @@ export async function seatWaitlistEntry(
     if (tables.length !== tableIds.length) throw new AppError(400, 'TABLE_NOT_FOUND', 'Có bàn không tồn tại hoặc ngừng hoạt động.')
     const spareTable = tables.find((table) => Boolean(table.is_spare))
     if (spareTable) throw new AppError(409, 'SPARE_TABLE_NOT_BOOKABLE', `Bàn ${spareTable.code} là bàn sơ cua và chưa được cấu hình để nhận khách.`)
+    const capacity = tables.reduce((total, table) => total + Number(table.capacity), 0)
+    if (capacity < Number(entry.party_size)) {
+      throw new AppError(409, 'INSUFFICIENT_TABLE_CAPACITY', `Bàn đã chọn chỉ có ${capacity} chỗ cho ${entry.party_size} khách.`)
+    }
     const businessDate = dateOnly(entry.business_date)
     const [conflicts] = await connection.execute<RowDataPacket[]>(
       `SELECT id FROM table_allocations
@@ -194,29 +273,45 @@ export async function seatWaitlistEntry(
     )
     if (conflicts.length) throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc sử dụng.')
 
-    const [visitResult] = await connection.execute<ResultSetHeader>(
-      `INSERT INTO visits
-        (organization_id, venue_id, origin, contact_name, guest_count, started_at,
-         business_date, created_by_user_id)
-       VALUES (?, ?, 'WALK_IN', ?, ?, UTC_TIMESTAMP(3), ?, ?)`,
-      [actor.organizationId, actor.venueId, entry.contact_name, entry.party_size, businessDate, actor.userId],
+    const [sourceRows] = await connection.execute<(RowDataPacket & { id: number })[]>(
+      `SELECT id FROM booking_sources WHERE organization_id = ? AND code = 'OTHER' AND is_active = 1 LIMIT 1`,
+      [actor.organizationId],
+    )
+    const source = sourceRows[0]
+    if (!source) throw new AppError(409, 'WAITLIST_BOOKING_SOURCE_MISSING', 'Cần cấu hình nguồn booking OTHER trước khi gán khách chờ.')
+    const [reservation] = await connection.execute<ResultSetHeader>(
+      `INSERT INTO reservations
+        (organization_id, venue_id, customer_id, contact_name, contact_name_search, source_id,
+         party_size, expected_at, business_date, status, note, created_by_user_id)
+       VALUES (?, ?, ?, ?, LOWER(?), ?, ?, UTC_TIMESTAMP(3), ?, 'BOOKED', ?, ?)`,
+      [actor.organizationId, actor.venueId, entry.customer_id,
+        entry.customer_id === null ? entry.contact_name : null,
+        entry.customer_id === null ? entry.contact_name : null,
+        source.id, entry.party_size, businessDate, entry.note, actor.userId],
+    )
+    const [hold] = await connection.execute<ResultSetHeader>(
+      `INSERT INTO table_holds
+        (organization_id, venue_id, hold_kind, reservation_id, starts_at, created_by_user_id)
+       VALUES (?, ?, 'RESERVATION', ?, UTC_TIMESTAMP(3), ?)`,
+      [actor.organizationId, actor.venueId, reservation.insertId, actor.userId],
     )
     const allocationIds: number[] = []
     for (const tableId of tableIds) {
       const [allocation] = await connection.execute<ResultSetHeader>(
         `INSERT INTO table_allocations
-          (organization_id, venue_id, table_id, kind, visit_id, starts_at, business_date, created_by_user_id)
-         VALUES (?, ?, ?, 'USAGE', ?, UTC_TIMESTAMP(3), ?, ?)`,
-        [actor.organizationId, actor.venueId, tableId, visitResult.insertId, businessDate, actor.userId],
+          (organization_id, venue_id, table_id, kind, hold_id, starts_at, business_date, created_by_user_id)
+         VALUES (?, ?, ?, 'HOLD', ?, UTC_TIMESTAMP(3), ?, ?)`,
+        [actor.organizationId, actor.venueId, tableId, hold.insertId, businessDate, actor.userId],
       )
       allocationIds.push(allocation.insertId)
     }
     const [entryUpdate] = await connection.execute<ResultSetHeader>(
       `UPDATE waitlist_entries
-       SET status = 'SEATED', visit_id = ?, closed_at = UTC_TIMESTAMP(3), closed_by_user_id = ?,
+       SET kind = 'ADVANCE_RESERVATION', reservation_id = ?, customer_id = NULL,
+           contact_name = NULL, party_size = NULL, status = 'HOLD_ACTIVE',
            updated_at = UTC_TIMESTAMP(3), version = version + 1
        WHERE organization_id = ? AND venue_id = ? AND id = ? AND status = 'WAITING' AND version = ?`,
-      [visitResult.insertId, actor.userId, actor.organizationId, actor.venueId, input.entryId, input.expectedVersion],
+      [reservation.insertId, actor.organizationId, actor.venueId, input.entryId, input.expectedVersion],
     )
     if (entryUpdate.affectedRows !== 1) throw new AppError(409, 'VERSION_CONFLICT', 'Khách chờ vừa được thay đổi. Vui lòng tải lại.')
 
@@ -226,11 +321,12 @@ export async function seatWaitlistEntry(
         (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
          auth_session_id, action, entity_type, entity_id, entity_version_before,
          entity_version_after, changes, reason_code, is_undoable)
-       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'WAITLIST_SEATED', 'waitlist_entry', ?, ?, ?, ?, 'STAFF_CONFIRMED', 0)`,
+       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'WAITLIST_ASSIGNED_TO_RESERVATION', 'waitlist_entry', ?, ?, ?, ?, 'STAFF_CONFIRMED', 0)`,
       [
         actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
         actor.authSessionId ?? null, input.entryId, input.expectedVersion, input.expectedVersion + 1,
-        JSON.stringify([{ type: 'waitlist_seated', visitId: visitResult.insertId, allocationIds, tableIds }]),
+        JSON.stringify([{ type: 'waitlist_assigned', reservationId: reservation.insertId, holdId: hold.insertId,
+          allocationIds, tableIds }]),
       ],
     )
 
@@ -241,7 +337,7 @@ export async function seatWaitlistEntry(
     const updated = updatedRows[0]
     if (!updated) throw new AppError(500, 'WAITLIST_READ_FAILED', 'Không đọc lại được khách vừa gán bàn.')
     await connection.commit()
-    return { entry: toView(updated), visitId: visitResult.insertId }
+    return { entry: toView(updated), reservationId: reservation.insertId }
   } catch (error) {
     await connection.rollback()
     throw error

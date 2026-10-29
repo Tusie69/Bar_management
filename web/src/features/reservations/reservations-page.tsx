@@ -1,4 +1,14 @@
-import { CalendarPlus, ChevronLeft, ChevronRight, LayoutList, LogIn, Search, SquareGanttChart, X } from "lucide-react"
+import {
+  CalendarPlus,
+  ChevronLeft,
+  ChevronRight,
+  LayoutList,
+  LogIn,
+  MessageSquareText,
+  Search,
+  SquareGanttChart,
+  X,
+} from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router"
 import { EmptyState, GuardedButton, MaskedPhone, TableCodes } from "@/components/common"
@@ -15,11 +25,13 @@ import { useElementWidth } from "@/hooks/use-element-width"
 import { useBusinessDate, useCatalog, useDayAllocations, useNow, useReservations } from "@/hooks/use-data"
 import { addDays, atBusinessTime, businessDateOf, fmtBusinessDate, fmtTime, MS, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { api } from "@/services"
+import { api, bookingApi } from "@/services"
+import { useCan } from "@/state/session"
 import { useUi } from "@/state/ui"
 import { GuestCountDialog } from "../floor/floor-dialogs"
 import { DateField } from "../floor/floor-toolbar"
 import { ReservationStatusChip } from "./reservation-status"
+import { ZaloBookingExport } from "./zalo-booking-export"
 
 type StatusFilter = "all" | "upcoming" | "late" | "unassigned" | "checked_in" | "closed"
 
@@ -39,7 +51,9 @@ export default function ReservationsPage() {
   const [filter, setFilter] = useState<StatusFilter>("all")
   const [source, setSource] = useState<"ALL" | BookingSourceCode>("ALL")
   const [view, setView] = useState<"list" | "timeline">("list")
+  const [exportOpen, setExportOpen] = useState(false)
   const ui = useUi()
+  const canExport = useCan("customer.view_masked")
   const list = useReservations(date, search)
   const catalog = useCatalog()
   const searching = search.trim().length > 0
@@ -100,6 +114,16 @@ export default function ReservationsPage() {
             ) : null}
           </div>
           <div className="ml-auto flex items-center gap-2">
+            {bookingApi ? (
+              <Button
+                variant="outline"
+                aria-label="Xuất text Zalo"
+                onClick={() => setExportOpen(true)}
+                disabled={!canExport}
+              >
+                <MessageSquareText /> <span className="hidden sm:inline">Xuất text Zalo</span>
+              </Button>
+            ) : null}
             <ToggleGroup
               type="single"
               variant="outline"
@@ -182,6 +206,7 @@ export default function ReservationsPage() {
           <Timeline date={date} reservations={list.data ?? []} tables={catalog.data?.tables ?? []} />
         )}
       </div>
+      <ZaloBookingExport businessDate={date} open={exportOpen} onOpenChange={setExportOpen} />
     </div>
   )
 }

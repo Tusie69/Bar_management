@@ -12,6 +12,9 @@
 export const FLOOR_W = 589
 export const FLOOR_H = 754
 
+/** UI-only virtual waitlist marker replacing the surveyed auxiliary block. */
+export const WAITLIST_MARKER = { x: 211, y: 441, width: 58, height: 42 } as const
+
 export type ZoneCode = "A" | "B" | "C" | "BAR"
 
 /** How chairs are drawn around a table top. UI-only, not part of the DDL. */

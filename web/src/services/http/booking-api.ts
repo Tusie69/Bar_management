@@ -33,6 +33,10 @@ export class HttpBookingApi {
     return response.bookings.map(mapBooking)
   }
 
+  exportDailyText(businessDate: BusinessDate): Promise<string> {
+    return this.client.get<string>(`/bookings/export?date=${encodeURIComponent(businessDate)}`)
+  }
+
   async detail(id: number): Promise<HttpBooking> {
     const response = await this.client.get<{ booking: BackendBookingPayload }>(`/bookings/${id}`, {
       reviver: dateReviver,

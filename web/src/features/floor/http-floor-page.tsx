@@ -1,24 +1,18 @@
-import {
-  AlertTriangle,
-  CalendarDays,
-  LayoutDashboard,
-  LogOut,
-  RefreshCw,
-  Server,
-  ShieldCheck,
-} from "lucide-react"
+import { AlertTriangle, CalendarDays, LayoutDashboard, LogOut, RefreshCw, Server, ShieldCheck } from "lucide-react"
+import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useCatalog, useFloorState, useNow } from "@/hooks/use-data"
-import { isApiError } from "@/services"
+import { activeWaitlistEntries, isApiError, waitlistApi } from "@/services"
 import { useSession } from "@/state/session"
 import { HttpBookingsPage } from "@/features/reservations/http-bookings-page"
 import { FloorCanvas } from "./floor-canvas"
 import { LayoutBookingOperations } from "./layout-booking-operations"
 import { LayoutTableMove } from "./layout-table-move"
 import { LayoutTableMerge } from "./layout-table-merge"
+import { LayoutWaitlistAssignment, LayoutWaitlistPanel } from "./layout-waitlist"
 import { useLayoutTableController } from "./use-layout-table-controller"
 import { useFloorModel } from "./use-floor-model"
 
@@ -34,11 +28,21 @@ export function HttpFloorPage() {
   const [pendingLogout, setPendingLogout] = useState(false)
   const [logoutError, setLogoutError] = useState<string | null>(null)
   const [page, setPage] = useState<"floor" | "bookings">("floor")
+  const [waitlistOpen, setWaitlistOpen] = useState(false)
   const layout = useLayoutTableController(model, permissions)
+  const businessDate = model.floor?.businessDate ?? ""
+  const waitlistQuery = useQuery({
+    queryKey: ["http-waitlist", businessDate],
+    queryFn: () => waitlistApi!.list(businessDate),
+    enabled: waitlistApi !== null && businessDate !== "" && permissions.includes("customer.view_masked"),
+    refetchInterval: 15_000,
+    retry: false,
+  })
+  const waitlistCount = activeWaitlistEntries(waitlistQuery.data ?? []).length
 
   if (!principal) return null
 
-  const refresh = () => Promise.all([catalogQuery.refetch(), floorQuery.refetch()])
+  const refresh = () => Promise.all([catalogQuery.refetch(), floorQuery.refetch(), waitlistQuery.refetch()])
   const error = catalogQuery.error ?? floorQuery.error
   const empty = !model.loading && !error && model.tables.length === 0
 
@@ -172,6 +176,9 @@ export function HttpFloorPage() {
                   onTableClick={layout.selectTable}
                   onBackgroundClick={layout.workflow.phase === "IDLE" ? layout.clearSelection : undefined}
                   ariaLabel="Sơ đồ bàn từ backend"
+                  waitlistCount={waitlistCount}
+                  waitlistSelected={waitlistOpen || layout.waitlistWorkflow.phase !== "IDLE"}
+                  onWaitlistClick={() => layout.waitlistWorkflow.phase === "IDLE" && setWaitlistOpen(true)}
                 />
                 {layout.table && layout.intent && model.floor ? (
                   <LayoutBookingOperations
@@ -204,6 +211,24 @@ export function HttpFloorPage() {
                   submitting={layout.startMergeSubmitting}
                   success={layout.markMergeSuccess}
                   fail={layout.markMergeError}
+                />
+                <LayoutWaitlistPanel
+                  open={waitlistOpen}
+                  onOpenChange={setWaitlistOpen}
+                  businessDate={businessDate}
+                  entries={waitlistQuery.data ?? []}
+                  loading={waitlistQuery.isLoading}
+                  error={waitlistQuery.error}
+                  beginAssignment={layout.beginWaitlistAssignment}
+                />
+                <LayoutWaitlistAssignment
+                  workflow={layout.waitlistWorkflow}
+                  model={model}
+                  cancel={layout.cancelWaitlist}
+                  back={layout.backWaitlist}
+                  submitting={layout.startWaitlistSubmitting}
+                  success={layout.markWaitlistSuccess}
+                  fail={layout.markWaitlistError}
                 />
               </>
             ) : null}

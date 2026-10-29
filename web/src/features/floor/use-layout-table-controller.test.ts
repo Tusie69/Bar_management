@@ -5,7 +5,9 @@ import {
   isValidMergeTarget,
   mergeWorkflowReducer,
   moveWorkflowReducer,
+  isValidWaitlistTarget,
   resolveLayoutTableIntent,
+  waitlistWorkflowReducer,
   type MoveContext,
 } from "./use-layout-table-controller"
 
@@ -35,6 +37,28 @@ const floorState = (patch: Partial<FloorTableState>): FloorTableState => ({
   ...patch,
 })
 
+describe("waitlist table assignment state machine", () => {
+  const context = { entryId: 18, version: 2, partySize: 4, displayName: "Khách chờ" }
+
+  it("requires selection and confirmation before submit, while cancel clears state", () => {
+    const selecting = waitlistWorkflowReducer({ phase: "IDLE" }, { type: "BEGIN", context })
+    expect(selecting.phase).toBe("SELECTING_WAITLIST_TABLE")
+    const confirming = waitlistWorkflowReducer(selecting, { type: "SELECT", tableId: 7 })
+    expect(confirming).toMatchObject({ phase: "CONFIRMING", targetTableId: 7 })
+    const submitting = waitlistWorkflowReducer(confirming, { type: "SUBMIT" })
+    expect(waitlistWorkflowReducer(submitting, { type: "SUCCEED" }).phase).toBe("SUCCESS")
+    expect(waitlistWorkflowReducer(confirming, { type: "CANCEL" })).toEqual({ phase: "IDLE" })
+  })
+
+  it("allows only active, free, non-spare tables with enough capacity", () => {
+    expect(isValidWaitlistTarget(table, floorState({}), 4)).toBe(true)
+    expect(isValidWaitlistTarget({ ...table, capacity: 2 }, floorState({}), 4)).toBe(false)
+    expect(isValidWaitlistTarget({ ...table, isSpare: true }, floorState({}), 4)).toBe(false)
+    expect(isValidWaitlistTarget({ ...table, status: "OUT_OF_SERVICE" }, floorState({ state: "oos" }), 4)).toBe(false)
+    expect(isValidWaitlistTarget(table, floorState({ state: "reserved" }), 4)).toBe(false)
+  })
+})
+
 describe("same-zone merge state machine", () => {
   const context: MoveContext = {
     entityKind: "visit",
@@ -47,7 +71,9 @@ describe("same-zone merge state machine", () => {
   it("allows any free table of the same kind and database zone", () => {
     const distantSameZone = { ...table, id: 99, code: "A99", x: 500, y: 500 }
     expect(isValidMergeTarget(distantSameZone, floorState({ tableId: 99 }), table)).toBe(true)
-    expect(isValidMergeTarget({ ...distantSameZone, zoneId: 2, zoneCode: "B" }, floorState({ tableId: 99 }), table)).toBe(false)
+    expect(
+      isValidMergeTarget({ ...distantSameZone, zoneId: 2, zoneCode: "B" }, floorState({ tableId: 99 }), table),
+    ).toBe(false)
     expect(isValidMergeTarget({ ...distantSameZone, kind: "BAR_SEAT" }, floorState({ tableId: 99 }), table)).toBe(false)
     expect(isValidMergeTarget(distantSameZone, floorState({ tableId: 99, state: "seated" }), table)).toBe(false)
   })
@@ -149,9 +175,9 @@ describe("layout table intent", () => {
     expect(resolveLayoutTableIntent({ ...table, status: "OUT_OF_SERVICE" }, undefined, permissions).kind).toBe(
       "blocked",
     )
-    expect(resolveLayoutTableIntent({ ...table, isSpare: true }, floorState({ state: "spare" }), permissions).kind).toBe(
-      "blocked",
-    )
+    expect(
+      resolveLayoutTableIntent({ ...table, isSpare: true }, floorState({ state: "spare" }), permissions).kind,
+    ).toBe("blocked")
   })
 
   it("blocks direct booking when either permission is missing", () => {

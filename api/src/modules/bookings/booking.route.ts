@@ -18,7 +18,7 @@ import {
   searchBookings,
   updateBooking,
 } from './booking.repository.js'
-import { formatBookingExport, listBookingExportItems } from './booking-export.js'
+import { formatDailyBookingText, getDailyBookingTextInput } from './booking-export.js'
 import { assertCurrentBusinessDate, validateCalendarDate } from './business-date.js'
 import { PhoneRevealRateLimiter } from './phone-rate-limit.js'
 
@@ -105,7 +105,7 @@ bookingRouter.get('/search', requireAuthentication, requirePermission('customer.
 
 bookingRouter.get('/export', requireAuthentication, requirePermission('customer.view_masked'), async (request, response) => {
   const date = businessDate(request.query.date)
-  const text = formatBookingExport(date, await listBookingExportItems(requireAuthenticatedActor(request), date))
+  const text = formatDailyBookingText(await getDailyBookingTextInput(requireAuthenticatedActor(request), date))
   response
     .status(200)
     .type('text/plain; charset=utf-8')

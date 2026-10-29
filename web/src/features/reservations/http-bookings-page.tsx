@@ -1,5 +1,15 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
-import { CalendarPlus, ChevronLeft, ChevronRight, Link2, Pencil, RefreshCw, Search, X } from "lucide-react"
+import {
+  CalendarPlus,
+  ChevronLeft,
+  ChevronRight,
+  Link2,
+  MessageSquareText,
+  Pencil,
+  RefreshCw,
+  Search,
+  X,
+} from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -29,6 +39,7 @@ import {
   type HttpBooking,
 } from "@/services"
 import { useCan } from "@/state/session"
+import { ZaloBookingExport } from "./zalo-booking-export"
 
 const bookingKeys = {
   all: ["http-bookings"] as const,
@@ -64,7 +75,9 @@ export function HttpBookingsPage() {
   const [editor, setEditor] = useState<{ mode: "create" | "edit"; booking?: HttpBooking } | null>(null)
   const [cancelTarget, setCancelTarget] = useState<HttpBooking | null>(null)
   const [assignmentTarget, setAssignmentTarget] = useState<HttpBooking | null>(null)
+  const [exportOpen, setExportOpen] = useState(false)
   const canCreate = useCan("reservation.create")
+  const canExport = useCan("customer.view_masked")
 
   useEffect(() => {
     if (!dateTouched.current) setDate(configuredToday)
@@ -148,6 +161,9 @@ export function HttpBookingsPage() {
           </div>
           <Button variant="outline" onClick={() => void list.refetch()} disabled={list.isFetching}>
             <RefreshCw className={list.isFetching ? "animate-spin" : ""} /> Làm mới
+          </Button>
+          <Button variant="outline" onClick={() => setExportOpen(true)} disabled={!canExport}>
+            <MessageSquareText /> Xuất text Zalo
           </Button>
           <Button onClick={() => setEditor({ mode: "create" })} disabled={!canCreate}>
             <CalendarPlus /> Tạo booking
@@ -272,6 +288,7 @@ export function HttpBookingsPage() {
           close={() => setAssignmentTarget(null)}
         />
       ) : null}
+      <ZaloBookingExport businessDate={date} open={exportOpen} onOpenChange={setExportOpen} />
     </section>
   )
 }
@@ -684,7 +701,9 @@ function BookingEditorBody({
             value={phone}
             maxLength={40}
             disabled={removePhone}
-            placeholder={booking?.phoneLast3 ? `Đã lưu ••• ${booking.phoneLast3}; để trống để giữ nguyên` : "Ví dụ 0987 654 321"}
+            placeholder={
+              booking?.phoneLast3 ? `Đã lưu ••• ${booking.phoneLast3}; để trống để giữ nguyên` : "Ví dụ 0987 654 321"
+            }
             onChange={(e) => setPhone(e.target.value)}
           />
           {booking?.phoneLast3 ? (

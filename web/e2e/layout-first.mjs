@@ -102,6 +102,32 @@ async function openAction(page, code) {
   return dialog
 }
 
+async function verifyBookingTextExport(page, copy = false) {
+  await page.goto(webUrl, { waitUntil: "networkidle" })
+  await page.getByRole("button", { name: "Booking", exact: true }).click()
+  await page.getByRole("button", { name: "Xuất text Zalo", exact: true }).waitFor()
+  await page.getByRole("button", { name: "Xuất text Zalo", exact: true }).click()
+  const dialog = page.getByRole("dialog")
+  const preview = dialog.getByLabel("Nội dung text booking")
+  await preview.waitFor()
+  const text = await preview.inputValue()
+  for (const expected of ["Danh sách bàn đặt 21Gam", "BC (Bàn Chờ +0)", "BÀN OUT", "A3", "BÀN HUỶ", "✅"]) {
+    if (!text.includes(expected)) throw new Error(`Booking export preview is missing ${expected}`)
+  }
+  if (/0987|\+849876|•••\s*321/.test(text)) throw new Error("Booking export preview leaked booking phone data")
+  if (copy) {
+    await dialog.getByRole("button", { name: "Sao chép", exact: true }).click()
+    await page.getByText("Đã sao chép nội dung. Bạn có thể dán thủ công vào Zalo.", { exact: true }).waitFor()
+    const clipboardText = await page.evaluate(() => navigator.clipboard.readText())
+    const normalizeNewlines = (value) => value.replace(/\r\n/g, "\n")
+    if (normalizeNewlines(clipboardText) !== normalizeNewlines(text)) {
+      throw new Error("Clipboard did not preserve the preview, emoji and line boundaries")
+    }
+  }
+  await page.keyboard.press("Escape")
+  await dialog.waitFor({ state: "hidden" })
+}
+
 try {
   runPnpm(["--filter", "@21gam/api", "exec", "tsx", "test/support/phase2b-e2e-fixture.ts", "setup"], credentialEnv)
   startPnpm(["--filter", "@21gam/api", "exec", "tsx", "src/server.ts"], {
@@ -124,10 +150,73 @@ try {
   const contextA = await browser.newContext({ viewport: { width: 1440, height: 900 } })
   const contextB = await browser.newContext({ viewport: { width: 390, height: 844 } })
   const contextTablet = await browser.newContext({ viewport: { width: 834, height: 1112 } })
+  await contextA.grantPermissions(["clipboard-read", "clipboard-write"], { origin: webUrl })
   const deviceA = await contextA.newPage()
   const deviceB = await contextB.newPage()
   const tablet = await contextTablet.newPage()
   await Promise.all([login(deviceA), login(deviceB), login(tablet)])
+
+  const waitlistDraft = `Draft ${Date.now()}`
+  await deviceB.getByRole("button", { name: "Bàn chờ, 0 nhóm đang chờ" }).click()
+  const mobileWaitlist = deviceB.getByRole("dialog")
+  await mobileWaitlist.getByLabel("Tên khách").fill(waitlistDraft)
+
+  const waitlistGuest = `Waitlist ${Date.now()}`
+  await deviceA.getByRole("button", { name: "Bàn chờ, 0 nhóm đang chờ" }).click()
+  const desktopWaitlist = deviceA.getByRole("dialog")
+  await desktopWaitlist.getByLabel("Tên khách").fill(waitlistGuest)
+  await desktopWaitlist.getByLabel("Số điện thoại (không bắt buộc)").fill("0901 234 567")
+  await desktopWaitlist.getByLabel("Ghi chú").fill("Khách đồng ý chờ")
+  await desktopWaitlist.getByRole("button", { name: "Thêm vào bàn chờ" }).click()
+  await desktopWaitlist.getByText("1 nhóm", { exact: true }).waitFor()
+  const waitlistAddedAt = Date.now()
+  await mobileWaitlist.getByText("1 nhóm", { exact: true }).waitFor({ timeout: 25_000 })
+  if ((await mobileWaitlist.getByLabel("Tên khách").inputValue()) !== waitlistDraft) {
+    throw new Error("Waitlist polling reset the in-progress form on device B")
+  }
+  const waitlistAddSyncMs = Date.now() - waitlistAddedAt
+  await mobileWaitlist.getByRole("button", { name: "Đóng" }).click()
+
+  let waitlistSeatRequests = 0
+  deviceA.on("request", (request) => {
+    if (/\/waitlist\/\d+\/seat$/.test(new URL(request.url()).pathname)) waitlistSeatRequests += 1
+  })
+  await desktopWaitlist.getByRole("button", { name: "Chọn bàn" }).click()
+  await deviceA.getByText("Chọn một bàn trống đủ sức chứa", { exact: true }).waitFor()
+  await table(deviceA, "B3", "Chưa đặt").click()
+  const cancelledWaitlistAssign = deviceA.getByRole("dialog")
+  await cancelledWaitlistAssign
+    .getByText("Bạn có chắc chắn muốn gán khách vào bàn này không?", { exact: true })
+    .waitFor()
+  await cancelledWaitlistAssign.getByRole("button", { name: "Hủy", exact: true }).click()
+  if (waitlistSeatRequests !== 0) throw new Error("Cancelling waitlist confirmation called the mutation endpoint")
+  await table(deviceA, "B3", "Chưa đặt").waitFor()
+  await deviceA.getByRole("button", { name: "Bàn chờ, 1 nhóm đang chờ" }).click()
+  const retryWaitlist = deviceA.getByRole("dialog")
+  await retryWaitlist.getByRole("button", { name: "Chọn bàn" }).click()
+  await table(deviceA, "B3", "Chưa đặt").click()
+  const confirmedWaitlistAssign = deviceA.getByRole("dialog")
+  const waitlistResponsePromise = deviceA.waitForResponse(
+    (response) =>
+      /\/waitlist\/\d+\/seat$/.test(new URL(response.url()).pathname) && response.request().method() === "POST",
+  )
+  await confirmedWaitlistAssign.getByRole("button", { name: "Xác nhận giữ bàn" }).click()
+  const waitlistResponse = await waitlistResponsePromise
+  if (waitlistResponse.status() !== 200) {
+    throw new Error(`Waitlist assignment failed with ${waitlistResponse.status()} ${await waitlistResponse.text()}`)
+  }
+  await deviceA.getByRole("button", { name: "Hoàn tất" }).click()
+  await deviceA.getByRole("button", { name: "Bàn chờ, 0 nhóm đang chờ" }).waitFor()
+  await table(deviceA, "B3", "Đang đặt").waitFor()
+  const waitlistAssignedAt = Date.now()
+  await deviceB.getByRole("button", { name: "Bàn chờ, 0 nhóm đang chờ" }).waitFor({ timeout: 25_000 })
+  await table(deviceB, "B3", "Đang đặt").waitFor({ timeout: 25_000 })
+  const waitlistAssignSyncMs = Date.now() - waitlistAssignedAt
+  await deviceA.reload({ waitUntil: "networkidle" })
+  await table(deviceA, "B3", "Đang đặt").waitFor()
+  await tablet.getByRole("button", { name: "Bàn chờ, 0 nhóm đang chờ" }).click()
+  await tablet.getByText("Chưa có khách đang chờ.", { exact: true }).waitFor()
+  await tablet.getByRole("dialog").getByRole("button", { name: "Đóng" }).click()
 
   await table(deviceA, "A10", "Bàn sơ cua").click()
   await deviceA.getByRole("dialog").getByText("Backend chưa cho phép đặt trực tiếp bàn sơ cua.").waitFor()
@@ -151,7 +240,10 @@ try {
   const menuB = await openAction(deviceB, "A1")
   await menuB.getByText(guestOne, { exact: true }).waitFor()
   const menuA = await openAction(deviceA, "A1")
-  for (const [page, menu] of [[deviceA, menuA], [deviceB, menuB]]) {
+  for (const [page, menu] of [
+    [deviceA, menuA],
+    [deviceB, menuB],
+  ]) {
     const revealResponse = page.waitForResponse(
       (response) => response.url().endsWith("/phone:reveal") && response.request().method() === "POST",
     )
@@ -237,7 +329,7 @@ try {
   const visitMenu = deviceB.getByRole("dialog").last()
   await visitMenu.getByRole("button", { name: "Ghép bàn" }).click()
   await deviceB.getByText("Chọn các bàn cùng khu", { exact: true }).waitFor()
-  if ((await table(deviceB, "B3", "Chưa đặt").getAttribute("aria-disabled")) !== "true") {
+  if ((await table(deviceB, "B3", "Đang đặt").getAttribute("aria-disabled")) !== "true") {
     throw new Error("Cross-zone table B3 was not disabled during merge selection")
   }
   await deviceB.getByRole("button", { name: "Hủy", exact: true }).click()
@@ -287,6 +379,10 @@ try {
   await table(deviceA, "A4", "Chưa đặt").waitFor({ timeout: 25_000 })
   const visitMoveSyncMs = Date.now() - visitMoveAt
 
+  await verifyBookingTextExport(deviceA, true)
+  await verifyBookingTextExport(deviceB)
+  await verifyBookingTextExport(tablet)
+
   await deviceA.keyboard.press("Escape")
   await deviceB.keyboard.press("Escape")
   await deviceA.getByRole("button", { name: "Đăng xuất", exact: true }).click()
@@ -307,6 +403,12 @@ try {
   console.log(
     JSON.stringify({
       loginTwoDevices: "PASS",
+      waitlistVirtualMarker: "PASS",
+      waitlistCreateAndFifo: "PASS",
+      waitlistFormPollingPreserved: "PASS",
+      waitlistCancelNoMutation: "PASS",
+      waitlistReservedNoVisit: "PASS",
+      waitlistTwoDeviceSync: "PASS",
       emptyTableDirectForm: "PASS",
       createAssign: "PASS",
       spareAndOosBlocked: "PASS",
@@ -327,10 +429,22 @@ try {
       cancelMergeConfirmation: "PASS",
       persistedGroupFloorState: "PASS",
       persistedGroupHighlight: "PASS",
+      bookingTextPreview: "PASS",
+      bookingTextClipboardExact: "PASS",
+      bookingTextPrivacy: "PASS",
       cancel: "PASS",
       checkIn: "PASS",
       secondDeviceNoRefresh: "PASS",
-      syncMs: { first: firstSyncMs, reassign: reassignSyncMs, cancel: cancelSyncMs, checkin: checkinSyncMs, merge: mergeSyncMs, visitMove: visitMoveSyncMs },
+      syncMs: {
+        waitlistAdd: waitlistAddSyncMs,
+        waitlistAssign: waitlistAssignSyncMs,
+        first: firstSyncMs,
+        reassign: reassignSyncMs,
+        cancel: cancelSyncMs,
+        checkin: checkinSyncMs,
+        merge: mergeSyncMs,
+        visitMove: visitMoveSyncMs,
+      },
       desktop: "PASS",
       mobile: "PASS",
       tablet: "PASS",
