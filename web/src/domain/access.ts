@@ -29,6 +29,7 @@ export type Permission =
   | "hold.release"
   | "customer.view_masked"
   | "customer.phone.reveal"
+  | "booking.phone.reveal"
   | "customer.anonymize"
   | "audit.read"
   | "report.read"
@@ -64,6 +65,7 @@ export const PERMISSION_MATRIX: Record<Permission, RoleCode[]> = {
   "hold.release": [OA, R],
   "customer.view_masked": [OA, R, CC, C],
   "customer.phone.reveal": [OA],
+  "booking.phone.reveal": [OA, R],
   "customer.anonymize": [OA],
   "audit.read": [OA],
   "report.read": [OA],
@@ -95,6 +97,7 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "hold.release": "Nhả giữ bàn",
   "customer.view_masked": "Xem khách (SĐT che)",
   "customer.phone.reveal": "Xem SĐT đầy đủ",
+  "booking.phone.reveal": "Mở SĐT của booking để gọi khách",
   "customer.anonymize": "Ẩn danh khách",
   "audit.read": "Xem nhật ký",
   "report.read": "Xem báo cáo",
@@ -145,7 +148,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
   },
   {
     title: "Khách & dữ liệu",
-    items: ["customer.view_masked", "customer.phone.reveal", "customer.anonymize", "audit.read", "report.read"],
+    items: ["customer.view_masked", "customer.phone.reveal", "booking.phone.reveal", "customer.anonymize", "audit.read", "report.read"],
   },
   { title: "Quản trị", items: ["venue.configure", "user.manage", "operation.undo"] },
 ]

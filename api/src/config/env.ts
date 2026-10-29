@@ -34,6 +34,23 @@ function readOptionalNumber(name: string): number | undefined {
   return value
 }
 
+function readKeyRing(name: string): ReadonlyMap<number, Buffer> {
+  const rawValue = process.env[name]
+  const result = new Map<number, Buffer>()
+  if (!rawValue) return result
+  for (const item of rawValue.split(',')) {
+    const separator = item.indexOf(':')
+    const keyId = Number(item.slice(0, separator))
+    const encoded = item.slice(separator + 1)
+    const key = Buffer.from(encoded, 'base64')
+    if (separator < 1 || !Number.isInteger(keyId) || keyId <= 0 || key.length !== 32) {
+      throw new Error(`${name} phải có dạng keyId:base64-32-byte, phân cách bằng dấu phẩy`)
+    }
+    result.set(keyId, key)
+  }
+  return result
+}
+
 function readOptionalUtcInstant(name: string): Date | undefined {
   const rawValue = process.env[name]
   if (rawValue === undefined || rawValue === '') return undefined
@@ -74,6 +91,24 @@ if (sessionSameSite === 'none' && !sessionCookieSecure) {
 const noShowWorkerEnabled = readBoolean('NO_SHOW_WORKER_ENABLED', false)
 const noShowSystemUserId = readOptionalNumber('NO_SHOW_SYSTEM_USER_ID')
 const noShowAutomationCutoff = readOptionalUtcInstant('NO_SHOW_AUTOMATION_CUTOFF')
+const phoneEncryptionKeys = readKeyRing('PHONE_ENCRYPTION_KEYS')
+const phoneHmacKeys = readKeyRing('PHONE_HMAC_KEYS')
+const phoneActiveEncryptionKeyId = readOptionalNumber('PHONE_ACTIVE_ENCRYPTION_KEY_ID')
+const phoneActiveHmacKeyId = readOptionalNumber('PHONE_ACTIVE_HMAC_KEY_ID')
+const phoneRevealRateLimitMax = readOptionalNumber('PHONE_REVEAL_RATE_LIMIT_MAX')
+const phoneRevealRateLimitWindowMs = readOptionalNumber('PHONE_REVEAL_RATE_LIMIT_WINDOW_MS')
+if ((phoneActiveEncryptionKeyId === undefined) !== (phoneActiveHmacKeyId === undefined)) {
+  throw new Error('Phải cấu hình đồng thời PHONE_ACTIVE_ENCRYPTION_KEY_ID và PHONE_ACTIVE_HMAC_KEY_ID')
+}
+if (phoneActiveEncryptionKeyId !== undefined && !phoneEncryptionKeys.has(phoneActiveEncryptionKeyId)) {
+  throw new Error('PHONE_ACTIVE_ENCRYPTION_KEY_ID không tồn tại trong PHONE_ENCRYPTION_KEYS')
+}
+if (phoneActiveHmacKeyId !== undefined && !phoneHmacKeys.has(phoneActiveHmacKeyId)) {
+  throw new Error('PHONE_ACTIVE_HMAC_KEY_ID không tồn tại trong PHONE_HMAC_KEYS')
+}
+if ((phoneRevealRateLimitMax === undefined) !== (phoneRevealRateLimitWindowMs === undefined)) {
+  throw new Error('Phải cấu hình đồng thời PHONE_REVEAL_RATE_LIMIT_MAX và PHONE_REVEAL_RATE_LIMIT_WINDOW_MS')
+}
 if (noShowWorkerEnabled && !noShowSystemUserId) {
   throw new Error('NO_SHOW_SYSTEM_USER_ID là bắt buộc khi NO_SHOW_WORKER_ENABLED=true')
 }
@@ -106,6 +141,14 @@ export const env = {
     intervalMs: readNumber('NO_SHOW_WORKER_INTERVAL_MS', 30_000),
     systemUserId: noShowSystemUserId,
     automationCutoff: noShowAutomationCutoff,
+  },
+  phone: {
+    activeEncryptionKeyId: phoneActiveEncryptionKeyId,
+    encryptionKeys: phoneEncryptionKeys,
+    activeHmacKeyId: phoneActiveHmacKeyId,
+    hmacKeys: phoneHmacKeys,
+    revealRateLimitMax: phoneRevealRateLimitMax,
+    revealRateLimitWindowMs: phoneRevealRateLimitWindowMs,
   },
 } as const
 

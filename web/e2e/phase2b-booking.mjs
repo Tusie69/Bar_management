@@ -115,6 +115,18 @@ try {
   await page.getByText("Chi tiết booking", { exact: true }).waitFor()
   await page.getByText(guestName, { exact: true }).first().waitFor()
 
+  await page.getByRole("button", { name: "Phân bàn", exact: true }).click()
+  dialog = page.getByRole("dialog").last()
+  const spareButton = dialog.getByRole("button", { name: /^A10 / })
+  const outOfServiceButton = dialog.getByRole("button", { name: /^A3 / })
+  if (!(await spareButton.isDisabled())) throw new Error("Spare table was selectable")
+  if (!(await outOfServiceButton.isDisabled())) throw new Error("Out-of-service table was selectable")
+  await dialog.getByRole("button", { name: /^A1 / }).click()
+  const assignConfirm = dialog.getByRole("button", { name: "Xác nhận phân bàn" })
+  await assignConfirm.click()
+  await assignConfirm.waitFor({ state: "hidden" })
+  await page.getByRole("dialog").filter({ hasText: "Chi tiết booking" }).getByText("A1", { exact: true }).waitFor()
+
   await page.keyboard.press("Escape")
   await page.getByText("Chi tiết booking", { exact: true }).waitFor({ state: "hidden" })
   await page.getByLabel("Tìm booking").fill(guestName)
@@ -126,6 +138,21 @@ try {
   await dialog.getByRole("button", { name: "Lưu qua backend" }).click()
   await page.getByText("Chi tiết booking", { exact: true }).waitFor()
   await page.getByText("5", { exact: true }).first().waitFor()
+
+  await page.getByRole("button", { name: "Đổi bàn", exact: true }).click()
+  dialog = page.getByRole("dialog").last()
+  await dialog.getByRole("button", { name: /^A1 / }).click()
+  await dialog.getByRole("button", { name: /^A2 / }).click()
+  const reassignConfirm = dialog.getByRole("button", { name: "Xác nhận đổi bàn" })
+  await reassignConfirm.click()
+  await reassignConfirm.waitFor({ state: "hidden" })
+  await page.getByRole("dialog").filter({ hasText: "Chi tiết booking" }).getByText("A2", { exact: true }).waitFor()
+
+  await page.reload({ waitUntil: "networkidle" })
+  await page.getByRole("button", { name: "Booking", exact: true }).click()
+  await page.getByLabel("Tìm booking").fill(guestName)
+  await page.getByText(guestName, { exact: true }).first().click()
+  await page.getByRole("dialog").getByText("A2", { exact: true }).waitFor()
 
   await page.getByRole("button", { name: "Hủy booking" }).click()
   dialog = page.getByRole("dialog").last()
@@ -155,6 +182,9 @@ try {
       search: "PASS",
       create: "PASS",
       detail: "PASS",
+      assign: "PASS",
+      reassign: "PASS",
+      assignmentPersistence: "PASS",
       update: "PASS",
       cancel: "PASS",
       reload: "PASS",

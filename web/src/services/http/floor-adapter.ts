@@ -30,6 +30,12 @@ export interface BackendCatalog {
   combinations: Array<Omit<Catalog["combinations"][number], "pendingConfirmation">>
 }
 
+export interface BackendFloorGroup {
+  id: number
+  symbolNo: number
+  tableIds: number[]
+}
+
 export interface BackendSource {
   code: string
   name: string
@@ -135,7 +141,7 @@ export function mapCatalog(payload: BackendCatalog, sources: BackendSource[]): C
   }
 }
 
-function bookingClaim(booking: BackendBooking, tableIds: number[]): ClaimView {
+function bookingClaim(booking: BackendBooking, tableIds: number[], group?: BackendFloorGroup): ClaimView {
   if (!includes(sourceCodes, booking.sourceCode)) {
     contractError("UNSUPPORTED_BOOKING_SOURCE", `Booking #${booking.id} có sourceCode không được hỗ trợ.`)
   }
@@ -153,8 +159,8 @@ function bookingClaim(booking: BackendBooking, tableIds: number[]): ClaimView {
     paid: false,
     origin: null,
     tableIds,
-    groupId: null,
-    symbolNo: null,
+    groupId: group?.id ?? null,
+    symbolNo: group?.symbolNo ?? null,
     warning: booking.displayStatus === "LATE" ? "late" : booking.displayStatus === "NO_SHOW" ? "noshow" : null,
     minutesLate: booking.minutesLate,
     sourceCode: booking.sourceCode as BookingSourceCode,
@@ -163,7 +169,7 @@ function bookingClaim(booking: BackendBooking, tableIds: number[]): ClaimView {
   }
 }
 
-function visitClaim(table: BackendTableState, tableIds: number[]): ClaimView | null {
+function visitClaim(table: BackendTableState, tableIds: number[], group?: BackendFloorGroup): ClaimView | null {
   const visit = table.activeVisit
   if (!visit) return null
   if (!includes(visitOrigins, visit.origin)) {
@@ -183,8 +189,8 @@ function visitClaim(table: BackendTableState, tableIds: number[]): ClaimView | n
     paid: visit.paid,
     origin: visit.origin as VisitOrigin,
     tableIds,
-    groupId: null,
-    symbolNo: null,
+    groupId: group?.id ?? null,
+    symbolNo: group?.symbolNo ?? null,
     warning: null,
     minutesLate: 0,
     sourceCode: null,
@@ -210,9 +216,11 @@ export function mapFloorState(
   tables: BackendTableState[],
   bookings: BackendBooking[],
   catalog: Catalog,
+  groups: BackendFloorGroup[] = [],
 ): FloorState {
   const tableIdByCode = new Map(catalog.tables.map((table) => [table.code, table.id]))
   const bookingByTableCode = new Map<string, BackendBooking>()
+  const groupByTableId = new Map(groups.flatMap((group) => group.tableIds.map((tableId) => [tableId, group] as const)))
   for (const booking of bookings) {
     if (booking.status !== "BOOKED") continue
     for (const code of booking.tableCodes) bookingByTableCode.set(code, booking)
@@ -226,14 +234,15 @@ export function mapFloorState(
         .filter((id): id is number => id !== undefined) ?? []
     const bookingTableIds =
       booking?.tableCodes.map((code) => tableIdByCode.get(code)).filter((id): id is number => id !== undefined) ?? []
+    const group = groupByTableId.get(table.id)
     return {
       tableId: table.id,
       state: tableState(table, booking),
       claim:
         table.state === "IN_USE"
-          ? visitClaim(table, visitTableIds)
+          ? visitClaim(table, visitTableIds, group)
           : table.state === "RESERVED" && booking
-            ? bookingClaim(booking, bookingTableIds)
+            ? bookingClaim(booking, bookingTableIds, group)
             : null,
     }
   })
@@ -242,8 +251,7 @@ export function mapFloorState(
     at,
     businessDate,
     tables: states,
-    // The backend does not expose persisted seating-group symbols in this read model yet.
-    groups: [],
+    groups,
     changeSeq: catalog.venue.changeSeq,
   }
 }

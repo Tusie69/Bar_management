@@ -2,6 +2,7 @@ import { Router } from 'express'
 
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
+import { env } from '../../config/env.js'
 import { AppError } from '../../errors/app-error.js'
 import {
   assignBookingTables,
@@ -12,13 +13,19 @@ import {
   getBookingById,
   listBookings,
   listBookingSources,
+  mergeBookingTables,
+  revealBookingPhone,
   searchBookings,
   updateBooking,
 } from './booking.repository.js'
 import { formatBookingExport, listBookingExportItems } from './booking-export.js'
 import { assertCurrentBusinessDate, validateCalendarDate } from './business-date.js'
+import { PhoneRevealRateLimiter } from './phone-rate-limit.js'
 
 export const bookingRouter = Router()
+const phoneRevealLimiter = env.phone.revealRateLimitMax && env.phone.revealRateLimitWindowMs
+  ? new PhoneRevealRateLimiter(env.phone.revealRateLimitMax, env.phone.revealRateLimitWindowMs)
+  : null
 
 function objectBody(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -54,6 +61,14 @@ function optionalText(value: unknown, maximum: number, code: string, message: st
 function bookingBody(value: unknown) {
   const body = objectBody(value)
   const note = optionalText(body.note, 500, 'INVALID_NOTE', 'Ghi chú không được vượt quá 500 ký tự.')
+  let phoneNumber: string | null | undefined
+  if (Object.prototype.hasOwnProperty.call(body, 'phoneNumber')) {
+    if (body.phoneNumber !== null && (typeof body.phoneNumber !== 'string' || body.phoneNumber.length > 40)) {
+      throw new AppError(422, 'INVALID_PHONE_NUMBER', 'Số điện thoại không hợp lệ.')
+    }
+    phoneNumber = body.phoneNumber === null ? null : body.phoneNumber.trim()
+    if (phoneNumber === '') phoneNumber = null
+  }
   return {
     guestName: requiredText(body.guestName, 120, 'INVALID_GUEST_NAME', 'Tên khách phải dài từ 1 đến 120 ký tự.'),
     partySize: positiveInteger(body.partySize, 'INVALID_PARTY_SIZE', 'Số khách không hợp lệ.'),
@@ -61,6 +76,7 @@ function bookingBody(value: unknown) {
     businessDate: businessDate(body.businessDate),
     sourceCode: requiredText(body.sourceCode, 30, 'INVALID_SOURCE', 'Nguồn đặt bàn không hợp lệ.'),
     ...(note === undefined ? {} : { note }),
+    ...(phoneNumber === undefined ? {} : { phoneNumber }),
     body,
   }
 }
@@ -125,6 +141,26 @@ bookingRouter.put('/:id', requireAuthentication, requireCsrfProtection, requireP
   ) })
 })
 
+bookingRouter.post(
+  '/:id/phone:reveal',
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission('booking.phone.reveal'),
+  async (request, response) => {
+    const id = positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.')
+    const actor = requireAuthenticatedActor(request)
+    if (!phoneRevealLimiter) {
+      throw new AppError(503, 'PHONE_REVEAL_POLICY_UNAVAILABLE', 'Chức năng gọi khách chưa được cấu hình đầy đủ.')
+    }
+    phoneRevealLimiter.assertAllowed(actor.userId, id)
+    const phoneNumber = await revealBookingPhone(actor, id)
+    response
+      .set('Cache-Control', 'no-store, private, max-age=0')
+      .set('Pragma', 'no-cache')
+      .json({ phoneNumber })
+  },
+)
+
 bookingRouter.post('/walk-ins', requireAuthentication, requireCsrfProtection, requirePermission('visit.walkin'), async (request, response) => {
   const body = objectBody(request.body)
   if (!Array.isArray(body.tableIds)) throw new AppError(400, 'TABLES_REQUIRED', 'Danh sách bàn không hợp lệ.')
@@ -147,6 +183,17 @@ bookingRouter.post('/:id/assign', requireAuthentication, requireCsrfProtection, 
     positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản booking không hợp lệ.'),
     tableIds,
   ) })
+})
+
+bookingRouter.post('/:id/merge', requireAuthentication, requireCsrfProtection, requirePermission('visit.combine'), async (request, response) => {
+  const body = objectBody(request.body)
+  if (!Array.isArray(body.tableIds)) throw new AppError(400, 'TABLES_REQUIRED', 'Danh sách bàn không hợp lệ.')
+  response.json(await mergeBookingTables(
+    requireAuthenticatedActor(request),
+    positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.'),
+    positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản booking không hợp lệ.'),
+    body.tableIds.map((id) => positiveInteger(id, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.')),
+  ))
 })
 
 bookingRouter.post('/:id/cancel', requireAuthentication, requireCsrfProtection, requirePermission('reservation.cancel'), async (request, response) => {

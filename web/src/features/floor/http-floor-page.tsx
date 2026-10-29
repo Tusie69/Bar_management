@@ -1,4 +1,12 @@
-import { AlertTriangle, CalendarDays, LayoutDashboard, LogOut, RefreshCw, Server, ShieldCheck } from "lucide-react"
+import {
+  AlertTriangle,
+  CalendarDays,
+  LayoutDashboard,
+  LogOut,
+  RefreshCw,
+  Server,
+  ShieldCheck,
+} from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -8,6 +16,10 @@ import { isApiError } from "@/services"
 import { useSession } from "@/state/session"
 import { HttpBookingsPage } from "@/features/reservations/http-bookings-page"
 import { FloorCanvas } from "./floor-canvas"
+import { LayoutBookingOperations } from "./layout-booking-operations"
+import { LayoutTableMove } from "./layout-table-move"
+import { LayoutTableMerge } from "./layout-table-merge"
+import { useLayoutTableController } from "./use-layout-table-controller"
 import { useFloorModel } from "./use-floor-model"
 
 export function HttpFloorPage() {
@@ -22,6 +34,7 @@ export function HttpFloorPage() {
   const [pendingLogout, setPendingLogout] = useState(false)
   const [logoutError, setLogoutError] = useState<string | null>(null)
   const [page, setPage] = useState<"floor" | "bookings">("floor")
+  const layout = useLayoutTableController(model, permissions)
 
   if (!principal) return null
 
@@ -145,18 +158,54 @@ export function HttpFloorPage() {
                 </div>
               </div>
             ) : model.catalog ? (
-              <FloorCanvas
-                tables={model.tables}
-                zones={model.catalog.zones}
-                mode="live"
-                states={model.states}
-                groups={model.floor?.groups ?? []}
-                selectedIds={[]}
-                zoneFocus={zone}
-                now={now}
-                onTableClick={() => undefined}
-                ariaLabel="Sơ đồ bàn từ backend"
-              />
+              <>
+                <FloorCanvas
+                  tables={model.tables}
+                  zones={model.catalog.zones}
+                  mode="live"
+                  states={model.states}
+                  groups={model.floor?.groups ?? []}
+                  selectedIds={layout.selectedIds}
+                  pickable={layout.pickable}
+                  zoneFocus={zone}
+                  now={now}
+                  onTableClick={layout.selectTable}
+                  onBackgroundClick={layout.workflow.phase === "IDLE" ? layout.clearSelection : undefined}
+                  ariaLabel="Sơ đồ bàn từ backend"
+                />
+                {layout.table && layout.intent && model.floor ? (
+                  <LayoutBookingOperations
+                    key={`${layout.table.id}-${layout.intent.kind}`}
+                    table={layout.table}
+                    intent={layout.intent}
+                    catalogTables={model.catalog.tables}
+                    sources={model.catalog.sources}
+                    businessDate={model.floor.businessDate}
+                    onClose={layout.clearSelection}
+                    onStartMove={layout.beginMove}
+                    onStartMerge={layout.beginMerge}
+                  />
+                ) : null}
+                <LayoutTableMove
+                  workflow={layout.workflow}
+                  model={model}
+                  cancel={layout.cancelOperation}
+                  back={layout.backToSelection}
+                  submitting={layout.startSubmitting}
+                  success={layout.markSuccess}
+                  fail={layout.markError}
+                />
+                <LayoutTableMerge
+                  workflow={layout.mergeWorkflow}
+                  model={model}
+                  cancel={layout.cancelMerge}
+                  confirm={layout.confirmMerge}
+                  back={layout.backMerge}
+                  submitting={layout.startMergeSubmitting}
+                  success={layout.markMergeSuccess}
+                  fail={layout.markMergeError}
+                />
+              </>
             ) : null}
           </div>
 

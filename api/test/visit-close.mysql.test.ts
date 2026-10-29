@@ -1,5 +1,5 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 
 import type { AuthenticatedActor } from '../src/auth/authenticated-actor.js'
 import { databasePool } from '../src/database/pool.js'
@@ -32,8 +32,7 @@ interface FixtureOptions {
   closed?: boolean
 }
 
-async function resetFixture(): Promise<void> {
-  const statements = [
+const cleanupStatements = [
     'DELETE FROM operation_log',
     'DELETE FROM table_allocations',
     'DELETE FROM table_groups',
@@ -56,8 +55,14 @@ async function resetFixture(): Promise<void> {
     'DELETE FROM booking_sources',
     'DELETE FROM venues',
     'DELETE FROM organizations',
-  ]
-  for (const sql of statements) await databasePool.execute(sql)
+]
+
+async function clearFixture(): Promise<void> {
+  for (const sql of cleanupStatements) await databasePool.execute(sql)
+}
+
+async function resetFixture(): Promise<void> {
+  await clearFixture()
 
   await databasePool.execute(
     'INSERT INTO organizations (id, code, name) VALUES (?, ?, ?)',
@@ -162,6 +167,7 @@ mysqlDescribe('closeVisit MySQL integration', () => {
   beforeEach(async () => {
     await resetFixture()
   })
+  afterAll(clearFixture)
 
   it('closes a checked-in reservation, releases one table and preserves history', async () => {
     const visitId = await createOpenVisit({ origin: 'RESERVATION', withReservation: true })

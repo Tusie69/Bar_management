@@ -7,7 +7,7 @@
  * mutations are safe to retry. Endpoints marked PROPOSED in
  * contracts.ts must be agreed with the backend team before use.
  */
-import type { ChangeEvent, SessionUser } from "@/domain/models"
+import type { SessionUser } from "@/domain/models"
 import { businessDateOf } from "@/lib/time"
 import type { GamApi } from "../contracts"
 import {
@@ -15,6 +15,7 @@ import {
   mapFloorState,
   type BackendBooking,
   type BackendCatalog,
+  type BackendFloorGroup,
   type BackendSource,
   type BackendTableState,
 } from "./floor-adapter"
@@ -29,7 +30,6 @@ function revive(_key: string, value: unknown) {
 
 export function createHttpApi(client: HttpClient, venueId: number): GamApi {
   let session: SessionUser | null = null
-  let lastSeq = 0
 
   const pathForVenue = (path: string) => path.replace(":venueId", String(venueId))
   const options = { reviver: revive }
@@ -60,41 +60,27 @@ export function createHttpApi(client: HttpClient, venueId: number): GamApi {
       session = user
     },
     listDemoUsers: () => (session ? [session] : []),
-    subscribe(listener: (e: ChangeEvent) => void) {
-      // db09: poll the change feed every 2.5s (WebSocket push can replace this).
-      const timer = setInterval(async () => {
-        try {
-          const feed = await get<{
-            latestSeq: number
-            events: { action: string; entityType: string }[]
-            truncated: boolean
-          }>(`/venues/:venueId/changes?since=${lastSeq}&limit=200`)
-          if (feed.latestSeq !== lastSeq) {
-            lastSeq = feed.latestSeq
-            listener({
-              latestSeq: feed.latestSeq,
-              action: feed.truncated ? "RESYNC" : "CHANGES",
-              entityType: "venue",
-              actorKind: "USER",
-              actorUserId: null,
-              summary: "",
-            })
-          }
-        } catch {
-          /* offline: keep last state, next poll retries */
-        }
-      }, 2500)
-      return () => clearInterval(timer)
+    subscribe() {
+      // The current backend does not expose a change-feed route. Floor State owns one
+      // bounded 15-second polling loop instead of issuing a second stream of silent 404s.
+      return () => undefined
     },
     getCatalog: loadCatalog,
     getFloorState: async (at) => {
       const businessDate = businessDateOf(at)
       const [catalog, tableResponse, bookingResponse] = await Promise.all([
         loadCatalog(),
-        get<{ businessDate: string; tables: BackendTableState[] }>(`/tables?date=${businessDate}`),
+        get<{ businessDate: string; tables: BackendTableState[]; groups: BackendFloorGroup[] }>(`/tables?date=${businessDate}`),
         get<{ businessDate: string; bookings: BackendBooking[] }>(`/bookings?date=${businessDate}`),
       ])
-      return mapFloorState(at, tableResponse.businessDate, tableResponse.tables, bookingResponse.bookings, catalog)
+      return mapFloorState(
+        at,
+        tableResponse.businessDate,
+        tableResponse.tables,
+        bookingResponse.bookings,
+        catalog,
+        tableResponse.groups,
+      )
     },
     getAvailability: (at, party) => get(`/venues/:venueId/availability?at=${at.toISOString()}&party=${party}`),
     getShiftOverview: () => get("/venues/:venueId/shift-overview"),

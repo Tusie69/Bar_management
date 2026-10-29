@@ -9,6 +9,7 @@ import type { GamApi } from "./contracts"
 import { AuthApi } from "./http/auth-api"
 import { HttpBookingApi } from "./http/booking-api"
 import { HttpClient } from "./http/http-client"
+import { HttpVisitApi } from "./http/visit-api"
 import { createHttpApi } from "./http/http-api"
 import type { DemoControls } from "./mock/server"
 
@@ -16,6 +17,7 @@ export const httpClient = runtimeConfig.apiMode === "http" ? new HttpClient(runt
 
 export const authApi = httpClient ? new AuthApi(httpClient) : null
 export const bookingApi = httpClient ? new HttpBookingApi(httpClient) : null
+export const visitApi = httpClient ? new HttpVisitApi(httpClient) : null
 
 let selectedApi: GamApi
 let selectedDemo: DemoControls | null = null
@@ -37,4 +39,5 @@ export const demo = selectedDemo
 export { clock } from "./clock"
 export * from "./contracts"
 export type { AuthSession, AuthenticatedUser } from "./http/auth-api"
-export type { BookingWriteFields, HttpBooking } from "./http/booking-adapter"
+export type { AssignmentTable, BookingWriteFields, HttpBooking } from "./http/booking-adapter"
+export { createAndAssignDirectBooking } from "./http/direct-booking"

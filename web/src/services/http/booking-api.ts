@@ -1,10 +1,14 @@
 import type { BusinessDate } from "@/lib/time"
 import type { HttpClient } from "./http-client"
 import {
+  assignmentPayload,
   cancelBookingPayload,
   createBookingPayload,
   fullUpdateBookingPayload,
   mapBooking,
+  mapAssignmentTable,
+  type AssignmentTable,
+  type BackendAssignmentTablePayload,
   type BackendBookingPayload,
   type BookingWriteFields,
   type HttpBooking,
@@ -61,5 +65,48 @@ export class HttpBookingApi {
       { reviver: dateReviver },
     )
     return mapBooking(response.booking)
+  }
+
+  async assignmentTables(businessDate: BusinessDate): Promise<AssignmentTable[]> {
+    const response = await this.client.get<{ tables: BackendAssignmentTablePayload[] }>(
+      `/tables?date=${businessDate}`,
+      { reviver: dateReviver },
+    )
+    return response.tables.map(mapAssignmentTable)
+  }
+
+  async assign(current: HttpBooking, tableIds: number[]): Promise<HttpBooking> {
+    return this.assignVersion(current.id, current.version, tableIds)
+  }
+
+  async assignVersion(id: number, version: number, tableIds: number[]): Promise<HttpBooking> {
+    const response = await this.client.post<{ booking: BackendBookingPayload }>(
+      `/bookings/${id}/assign`,
+      assignmentPayload(version, tableIds),
+      { reviver: dateReviver },
+    )
+    return mapBooking(response.booking)
+  }
+
+  async merge(id: number, version: number, tableIds: number[]): Promise<{ booking: HttpBooking; groupId: number }> {
+    const response = await this.client.post<{
+      booking: BackendBookingPayload
+      group: { id: number; symbolNo: number; tableIds: number[] }
+    }>(`/bookings/${id}/merge`, { version, tableIds }, { reviver: dateReviver })
+    return { booking: mapBooking(response.booking), groupId: response.group.id }
+  }
+
+  async checkIn(current: HttpBooking): Promise<HttpBooking> {
+    const response = await this.client.post<{ booking: BackendBookingPayload }>(
+      `/bookings/${current.id}/check-in`,
+      { version: current.version },
+      { reviver: dateReviver },
+    )
+    return mapBooking(response.booking)
+  }
+
+  async revealPhone(id: number): Promise<string> {
+    const response = await this.client.post<{ phoneNumber: string }>(`/bookings/${id}/phone:reveal`, {})
+    return response.phoneNumber
   }
 }

@@ -307,12 +307,13 @@ export function FloorCanvas(props: Props) {
           <Fixtures />
           <GroupThreads groups={groups} tableById={tableById} />
           {tables.map((t) => {
-            const dim = (focusZone && t.zoneCode !== focusZone) || (pickable && !pickable.has(t.id))
+            const dim = (focusZone && t.zoneCode !== focusZone) || (pickable && !pickable.has(t.id) && !selected.has(t.id))
             const common = {
               table: t,
               selected: selected.has(t.id),
               dim: !!dim,
               pickHint: !!pickable && pickable.has(t.id),
+              disabled: !!pickable && !pickable.has(t.id) && !selected.has(t.id),
               onActivate: handleTable,
             }
             if (mode === "availability") {
@@ -460,6 +461,7 @@ const Fixtures = memo(function Fixtures() {
 })
 
 function GroupThreads({ groups, tableById }: { groups: FloorGroup[]; tableById: Map<number, TableView> }) {
+  const colors = ["#7c3aed", "#0284c7", "#059669", "#d97706", "#db2777", "#4f46e5"]
   return (
     <g aria-hidden pointerEvents="none">
       {groups.map((g) => {
@@ -470,12 +472,14 @@ function GroupThreads({ groups, tableById }: { groups: FloorGroup[]; tableById: 
         return (
           <path
             key={g.id}
+            data-group-id={g.id}
+            data-group-symbol={g.symbolNo}
             d={d}
             fill="none"
-            stroke="var(--foreground)"
-            strokeOpacity={0.45}
-            strokeWidth={1.4}
-            strokeDasharray="0.1 3.6"
+            stroke={colors[(g.symbolNo - 1) % colors.length]}
+            strokeOpacity={0.9}
+            strokeWidth={2.2}
+            strokeDasharray="0.1 3.2"
             strokeLinecap="round"
           />
         )
@@ -491,6 +495,7 @@ interface GlyphBase {
   selected: boolean
   dim: boolean
   pickHint: boolean
+  disabled: boolean
   onActivate: (id: number) => void
 }
 
@@ -580,7 +585,7 @@ function describe(t: TableView, state: TableLiveState, fs?: FloorTableState) {
   const base = `${t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`}, ${STATE_META[state].label}`
   const c = fs?.claim
   if (!c) return base
-  return `${base}, ${c.displayName}, ${c.partySize} khách`
+  return `${base}, ${c.displayName}, ${c.partySize} khách${c.symbolNo ? `, nhóm ${c.symbolNo}` : ""}`
 }
 
 const LiveGlyph = memo(function LiveGlyph({
@@ -588,6 +593,7 @@ const LiveGlyph = memo(function LiveGlyph({
   selected,
   dim,
   pickHint,
+  disabled,
   onActivate,
   state: fs,
   now,
@@ -620,7 +626,8 @@ const LiveGlyph = memo(function LiveGlyph({
         tabIndex={dim ? -1 : 0}
         aria-label={describe(t, state, fs)}
         aria-pressed={selected}
-        className="cursor-pointer outline-none [&:focus-visible_.focus-ring]:opacity-100"
+        aria-disabled={disabled}
+        className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
         opacity={dim ? 0.3 : 1}
         onClick={() => onActivate(t.id)}
         onKeyDown={(e) => onKey(e, t.id, onActivate)}
@@ -680,7 +687,8 @@ const LiveGlyph = memo(function LiveGlyph({
       tabIndex={dim ? -1 : 0}
       aria-label={describe(t, state, fs)}
       aria-pressed={selected}
-      className="cursor-pointer outline-none [&:focus-visible_.focus-ring]:opacity-100"
+      aria-disabled={disabled}
+      className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
       opacity={dim ? 0.3 : 1}
       onClick={() => onActivate(t.id)}
       onKeyDown={(e) => onKey(e, t.id, onActivate)}

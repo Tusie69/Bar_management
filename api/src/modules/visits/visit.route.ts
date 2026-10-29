@@ -3,7 +3,7 @@ import { Router } from 'express'
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { AppError } from '../../errors/app-error.js'
-import { closeVisit, moveVisit, type CloseVisitMode, type ManualCloseReason } from './visit.repository.js'
+import { closeVisit, mergeVisitTables, moveVisit, type CloseVisitMode, type ManualCloseReason } from './visit.repository.js'
 
 export const visitRouter = Router()
 
@@ -51,6 +51,22 @@ visitRouter.post(
     ...(note ? { note } : {}),
   })
   response.json({ visit })
+  },
+)
+
+visitRouter.post(
+  '/:id/merge',
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission('visit.combine'),
+  async (request, response) => {
+    const body = objectBody(request.body)
+    if (!Array.isArray(body.tableIds)) throw new AppError(400, 'TABLES_REQUIRED', 'Danh sách bàn không hợp lệ.')
+    response.json(await mergeVisitTables(requireAuthenticatedActor(request), {
+      visitId: positiveInteger(request.params.id, 'INVALID_VISIT_ID', 'Mã lượt khách không hợp lệ.'),
+      expectedVersion: positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản lượt khách không hợp lệ.'),
+      tableIds: body.tableIds.map((value) => positiveInteger(value, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.')),
+    }))
   },
 )
 

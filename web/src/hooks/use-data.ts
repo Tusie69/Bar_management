@@ -63,6 +63,7 @@ export function useFloorState() {
     queryFn: () => api.getFloorState(clock.now()),
     placeholderData: keepPreviousData,
     refetchInterval: 15_000,
+    refetchIntervalInBackground: true,
     retry: api.mode === "mock" ? 1 : false,
   })
 }

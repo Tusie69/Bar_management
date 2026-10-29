@@ -141,6 +141,12 @@ export interface TableCatalogView {
   }>
 }
 
+export interface FloorGroupView {
+  id: number
+  symbolNo: number
+  tableIds: number[]
+}
+
 interface VenueCatalogRow extends RowDataPacket {
   id: number
   version: number
@@ -191,6 +197,12 @@ interface CombinationCatalogRow extends RowDataPacket {
   display_name: string
   member_ids: string | null
   capacity: number
+}
+
+interface FloorGroupRow extends RowDataPacket {
+  id: number
+  symbol_no: number
+  table_ids: string
 }
 
 export async function getTableCatalog(actor: AuthenticatedActor): Promise<TableCatalogView> {
@@ -290,6 +302,30 @@ export async function getTableCatalog(actor: AuthenticatedActor): Promise<TableC
       capacity: Number(combination.capacity),
     })),
   }
+}
+
+export async function listActiveTableGroups(
+  actor: AuthenticatedActor,
+  businessDate: string,
+): Promise<FloorGroupView[]> {
+  const [rows] = await databasePool.execute<FloorGroupRow[]>(
+    `SELECT g.id, g.symbol_no,
+       GROUP_CONCAT(a.table_id ORDER BY a.table_id SEPARATOR ',') AS table_ids
+     FROM table_groups AS g
+     JOIN table_allocations AS a
+       ON a.venue_id = g.venue_id AND a.group_id = g.id AND a.released_at IS NULL
+     WHERE g.organization_id = ? AND g.venue_id = ? AND g.business_date = ?
+       AND g.dissolved_at IS NULL
+     GROUP BY g.id, g.symbol_no
+     HAVING COUNT(*) >= 2
+     ORDER BY g.id`,
+    [actor.organizationId, actor.venueId, businessDate],
+  )
+  return rows.map((row) => ({
+    id: Number(row.id),
+    symbolNo: Number(row.symbol_no),
+    tableIds: row.table_ids.split(',').map(Number),
+  }))
 }
 
 export async function listTables(actor: AuthenticatedActor, businessDate: string): Promise<TableView[]> {
