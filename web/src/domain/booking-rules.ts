@@ -39,11 +39,15 @@ export const BOOKING_SLOTS: readonly string[] = (() => {
 
 export const isBookingSlot = (hhmm: string | null | undefined): hhmm is string => !!hhmm && BOOKING_SLOTS.includes(hhmm)
 
-/** "19:30" → "7:30 PM", "00:00" → "12:00 AM". */
-export function slotLabel(hhmm: string): string {
-  const [h, m] = hhmm.split(":").map(Number)
-  return `${h % 12 || 12}:${pad(m)} ${h < 12 ? "AM" : "PM"}`
+/** Backend-style window check: accepts any minute in 19:00–01:00, independent of the configured UI slot step. */
+export function isWithinBookingReceptionWindow(hhmm: string): boolean {
+  if (!/^\d{2}:\d{2}$/.test(hhmm)) return false
+  const minutes = toMin(hhmm)
+  return minutes >= toMin(BOOKING_FIRST_SLOT) || minutes <= toMin(BOOKING_LAST_SLOT)
 }
+
+/** Booking time is always displayed in the venue's 24-hour format. */
+export const slotLabel = (hhmm: string): string => hhmm
 
 export const bookingCalendarDate = (bd: BusinessDate, hhmm: string): BusinessDate =>
   isAfterMidnight(hhmm) ? addDays(bd, 1) : bd
@@ -91,7 +95,7 @@ export function validateBookingTime(
   graceMin = PAST_GRACE_MIN,
 ) {
   if (!hhmm) return "Chọn giờ đến."
-  if (!isBookingSlot(hhmm)) return "Giờ đặt bàn chỉ từ 7:00 PM đến 1:00 AM, mỗi 30 phút."
+  if (!isBookingSlot(hhmm)) return "Giờ đặt bàn chỉ từ 19:00 đến 01:00, theo các mốc 30 phút đang cấu hình."
   if (bookingInstant(bd, hhmm).getTime() < now.getTime() - graceMin * MS.MIN)
     return `${slotLabel(hhmm)} đã qua ở ngày này. Chọn lại giờ đến.`
   return null

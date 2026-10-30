@@ -8,6 +8,7 @@ import {
   bookingSlots,
   businessMinute,
   isBookingSlot,
+  isWithinBookingReceptionWindow,
   parseOtherGuests,
   slotLabel,
   validateBookingTime,
@@ -56,22 +57,20 @@ describe("booking slots", () => {
     expect(validateBookingTime(BD, "01:30", NOON)).not.toBeNull()
     expect(validateBookingTime(BD, "18:30", NOON)).not.toBeNull()
   })
-  it("labels in AM/PM", () => {
-    expect(BOOKING_SLOTS.map(slotLabel)).toEqual([
-      "7:00 PM",
-      "7:30 PM",
-      "8:00 PM",
-      "8:30 PM",
-      "9:00 PM",
-      "9:30 PM",
-      "10:00 PM",
-      "10:30 PM",
-      "11:00 PM",
-      "11:30 PM",
-      "12:00 AM",
-      "12:30 AM",
-      "1:00 AM",
-    ])
+  it.each([
+    ["19:00", true],
+    ["21:00", true],
+    ["23:30", true],
+    ["00:30", true],
+    ["01:00", true],
+    ["01:01", false],
+    ["10:00", false],
+    ["18:59", false],
+  ])("checks the backend reception window at %s", (time, allowed) => {
+    expect(isWithinBookingReceptionWindow(time)).toBe(allowed)
+  })
+  it("labels every slot in 24-hour format", () => {
+    expect(BOOKING_SLOTS.map(slotLabel)).toEqual(BOOKING_SLOTS)
   })
   it("TC-10 11:30 PM stays on the business date", () => {
     expect(bookingCalendarDate(BD, "23:30")).toBe(BD)

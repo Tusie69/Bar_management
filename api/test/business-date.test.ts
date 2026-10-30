@@ -4,8 +4,8 @@ import { assertCurrentBusinessDate, currentBusinessDate, validateBookingSchedule
 
 describe('booking business date validation', () => {
   it('keeps evening arrivals on the same business date', () => {
-    const result = validateBookingSchedule('2026-10-24T17:00:00+07:00', '2026-10-24')
-    expect(result.expectedAtUtc.toISOString()).toBe('2026-10-24T10:00:00.000Z')
+    const result = validateBookingSchedule('2026-10-24T19:00:00+07:00', '2026-10-24')
+    expect(result.expectedAtUtc.toISOString()).toBe('2026-10-24T12:00:00.000Z')
     expect(result.businessDate).toBe('2026-10-24')
   })
 
@@ -15,9 +15,24 @@ describe('booking business date validation', () => {
     expect(result.mysqlExpectedAt).toBe('2026-10-24 17:30:00.000')
   })
 
-  it.each(['05:00', '12:30', '16:59'])('rejects %s outside booking hours', (time) => {
-    expect(() => validateBookingSchedule(`2026-10-24T${time}:00+07:00`, '2026-10-24'))
-      .toThrowError(expect.objectContaining({ code: 'EXPECTED_AT_OUTSIDE_BUSINESS_HOURS' }))
+  it.each([
+    ['01:01', '2026-10-25'],
+    ['10:00', '2026-10-24'],
+    ['18:59', '2026-10-24'],
+  ])('rejects %s outside booking hours', (time, calendarDate) => {
+    expect(() => validateBookingSchedule(`${calendarDate}T${time}:00+07:00`, '2026-10-24'))
+      .toThrowError(expect.objectContaining({ code: 'EXPECTED_AT_OUTSIDE_BOOKING_WINDOW' }))
+  })
+
+  it.each([
+    ['19:00', '2026-10-24'],
+    ['21:00', '2026-10-24'],
+    ['23:30', '2026-10-24'],
+    ['00:30', '2026-10-25'],
+    ['01:00', '2026-10-25'],
+  ])('accepts booking boundary %s', (time, calendarDate) => {
+    expect(validateBookingSchedule(`${calendarDate}T${time}:00+07:00`, '2026-10-24').businessDate)
+      .toBe('2026-10-24')
   })
 
   it('rejects a business date that disagrees with an after-midnight arrival', () => {

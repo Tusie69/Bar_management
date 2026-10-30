@@ -319,7 +319,6 @@ export async function updateBooking(
   id: number,
   input: UpdateBookingInput,
 ): Promise<BookingView> {
-  const schedule = validateBookingSchedule(input.expectedAt, input.businessDate)
   const connection = await databasePool.getConnection()
   try {
     await connection.beginTransaction()
@@ -327,6 +326,20 @@ export async function updateBooking(
     if (reservation.status !== 'BOOKED') {
       throw new AppError(409, 'BOOKING_NOT_EDITABLE', 'Chỉ booking đang ở trạng thái BOOKED mới được chỉnh sửa.')
     }
+
+    const currentExpectedAt = reservation.expected_at
+    const currentBusinessDate = dateOnly(reservation.business_date)
+    const requestedExpectedAt = new Date(input.expectedAt)
+    const scheduleUnchanged = !Number.isNaN(requestedExpectedAt.getTime())
+      && requestedExpectedAt.getTime() === currentExpectedAt.getTime()
+      && input.businessDate === currentBusinessDate
+    const schedule = scheduleUnchanged
+      ? {
+          expectedAtUtc: currentExpectedAt,
+          mysqlExpectedAt: currentExpectedAt.toISOString().slice(0, 23).replace('T', ' '),
+          businessDate: currentBusinessDate,
+        }
+      : validateBookingSchedule(input.expectedAt, input.businessDate)
 
     const [sourceRows] = await connection.execute<(RowDataPacket & { id: number })[]>(
       'SELECT id FROM booking_sources WHERE organization_id = ? AND code = ? AND is_active = 1',
@@ -372,7 +385,6 @@ export async function updateBooking(
       )
     }
 
-    const currentExpectedAt = reservation.expected_at
     const scheduleChanged =
       currentExpectedAt.getTime() !== schedule.expectedAtUtc.getTime() ||
       dateOnly(reservation.business_date) !== schedule.businessDate

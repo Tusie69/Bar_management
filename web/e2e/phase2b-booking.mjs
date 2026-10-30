@@ -103,6 +103,13 @@ try {
   await page.getByText("Lễ tân E2E", { exact: false }).waitFor()
   await page.getByRole("button", { name: "Booking", exact: true }).click()
   await page.getByText("Chưa có booking", { exact: true }).waitFor()
+  const dateInput = page.getByLabel("Ngày nghiệp vụ")
+  const selectedDate = await dateInput.inputValue()
+  const nextDate = new Date(`${selectedDate}T12:00:00.000Z`)
+  nextDate.setUTCDate(nextDate.getUTCDate() + 1)
+  const bookingDate = nextDate.toISOString().slice(0, 10)
+  await dateInput.fill(bookingDate)
+  await page.getByText("Chưa có booking", { exact: true }).waitFor()
   const floorReadsBeforeMutations = floorReads
 
   const guestName = `Khách E2E ${Date.now()}`
@@ -110,8 +117,9 @@ try {
   let dialog = page.getByRole("dialog").last()
   await dialog.getByText("Tạo booking", { exact: true }).waitFor()
   await dialog.locator("input").first().fill(guestName)
+  if ((await dialog.locator('input[type="time"]').count()) !== 0) throw new Error("Native time picker is still present")
   await dialog.locator('input[type="number"]').fill("3")
-  await dialog.locator('input[type="time"]').fill("19:30")
+  await dialog.getByRole("radio", { name: /^19:30/ }).click()
   await dialog.getByLabel("Loại khách").selectOption("RETURNING")
   await dialog.getByRole("button", { name: "Lưu qua backend" }).click()
   await page.getByText("Chi tiết booking", { exact: true }).waitFor()
@@ -165,6 +173,7 @@ try {
   await secondPage.getByLabel("Mật khẩu").fill(password)
   await secondPage.getByRole("button", { name: "Đăng nhập", exact: true }).click()
   await secondPage.getByRole("button", { name: "Booking", exact: true }).click()
+  await secondPage.getByLabel("Ngày nghiệp vụ").fill(bookingDate)
   await secondPage.getByRole("button", { name: "Xuất text Zalo" }).click()
   const secondExport = secondPage.getByRole("dialog").getByLabel("Nội dung text booking")
   await secondExport.waitFor()
@@ -191,6 +200,7 @@ try {
 
   await page.reload({ waitUntil: "networkidle" })
   await page.getByRole("button", { name: "Booking", exact: true }).click()
+  await page.getByLabel("Ngày nghiệp vụ").fill(bookingDate)
   await page.getByLabel("Tìm booking").fill(guestName)
   await page.getByText(guestName, { exact: true }).first().click()
   await page.getByRole("dialog").getByText("A2 + A4", { exact: true }).waitFor()
@@ -204,6 +214,7 @@ try {
 
   await page.reload({ waitUntil: "networkidle" })
   await page.getByRole("button", { name: "Booking", exact: true }).click()
+  await page.getByLabel("Ngày nghiệp vụ").fill(bookingDate)
   await page.getByLabel("Tìm booking").fill(guestName)
   await page.getByText(guestName, { exact: true }).first().waitFor()
   await page.getByText("Đã hủy", { exact: true }).filter({ visible: true }).first().waitFor()

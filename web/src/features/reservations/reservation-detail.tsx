@@ -1,6 +1,7 @@
 import { ArrowRightLeft, ListPlus, LogIn, MapPinned, Pencil, TimerReset, XCircle } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router"
+import { BookingTimePicker } from "@/components/booking-pickers"
 import { GuardedButton, SectionTitle, Stepper, TableCodes } from "@/components/common"
 import { ConfirmAction } from "@/components/dialogs"
 import { RevealPhone } from "@/components/reveal-phone"
@@ -31,6 +32,7 @@ import {
   type WaitlistPreferenceMode,
 } from "@/domain/enums"
 import type { ReservationView } from "@/domain/models"
+import { isBookingSlot, validateBookingTime } from "@/domain/booking-rules"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAction } from "@/hooks/use-action"
 import { useCatalog, useNow, useOperations, useReservations } from "@/hooks/use-data"
@@ -40,7 +42,6 @@ import { api } from "@/services"
 import { useUi } from "@/state/ui"
 import { GuestCountDialog } from "../floor/floor-dialogs"
 import { ReservationStatusChip } from "./reservation-status"
-import { TimeField } from "../floor/floor-toolbar"
 
 const CANCEL_REASONS = (Object.keys(CLOSE_REASON_LABEL) as ReservationCloseReason[])
   .filter((r) => r !== "NO_SHOW_CONFIRMED")
@@ -348,6 +349,7 @@ function EditReservationDialog({
 
 function EditReservationBody({ r, close }: { r: ReservationView; close: () => void }) {
   const catalog = useCatalog()
+  const now = useNow(30_000)
   const { run, pending } = useAction()
   const [time, setTime] = useState(() => {
     const p = venueParts(r.expectedAt)
@@ -359,6 +361,9 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
   const [source, setSource] = useState<BookingSourceCode>(r.sourceCode)
   const [classification, setClassification] = useState<BookingClassification>(r.classification)
   const invalid = noteHasPhoneNumber(note)
+  const originalSchedule = time === fmtTime(r.expectedAt)
+  const timeError = originalSchedule ? null : validateBookingTime(r.businessDate, time, now)
+  const legacyTime = originalSchedule && !isBookingSlot(time) ? time : null
   return (
     <>
       <DialogHeader>
@@ -372,14 +377,18 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
         </div>
         <div className="flex flex-wrap items-end gap-4">
           <div className="grid gap-1.5">
-            <Label>Giờ đến</Label>
-            <TimeField value={time} onChange={setTime} />
-          </div>
-          <div className="grid gap-1.5">
             <Label>Số khách</Label>
             <Stepper value={party} onChange={setParty} label="số khách" />
           </div>
         </div>
+        <BookingTimePicker
+          date={r.businessDate}
+          value={time}
+          now={now}
+          onChange={setTime}
+          error={timeError}
+          legacyValue={legacyTime}
+        />
         <div className="grid gap-1.5">
           <Label htmlFor="ed-source">Nguồn</Label>
           <Select value={source} onValueChange={(v) => setSource(v as BookingSourceCode)}>
@@ -425,7 +434,7 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
           Quay lại
         </Button>
         <Button
-          disabled={pending || invalid || (!name.trim() && !r.phoneLast3)}
+          disabled={pending || invalid || !!timeError || (!name.trim() && !r.phoneLast3)}
           onClick={async () => {
             const res = await run(() =>
               api.updateReservation({

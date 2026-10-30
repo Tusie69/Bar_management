@@ -12,6 +12,7 @@ import {
 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
+import { BookingTimePicker } from "@/components/booking-pickers"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -28,6 +29,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea"
 import type { BookingSourceCode } from "@/domain/enums"
 import type { TableView } from "@/domain/models"
+import { defaultBookingSlot, isBookingSlot, validateBookingTime } from "@/domain/booking-rules"
 import { useCatalog, useNow } from "@/hooks/use-data"
 import { reportError } from "@/hooks/use-action"
 import { addDays, atBusinessTime, businessDateOf, fmtBusinessDate, fmtTime, type BusinessDate } from "@/lib/time"
@@ -270,7 +272,7 @@ export function HttpBookingsPage() {
       <BookingEditor
         editor={editor}
         sources={catalog.data?.sources ?? []}
-        defaultBusinessDate={configuredToday}
+        defaultBusinessDate={date}
         close={() => setEditor(null)}
         select={setSelectedId}
       />
@@ -570,7 +572,7 @@ export function BookingEditor({
 }) {
   return (
     <Dialog open={editor !== null} onOpenChange={(value) => !value && close()}>
-      <DialogContent>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
         {editor ? (
           <BookingEditorBody
             key={`${editor.mode}-${editor.booking?.id ?? "new"}`}
@@ -606,10 +608,13 @@ function BookingEditorBody({
   onPartial?: (booking: HttpBooking) => void
 }) {
   const booking = editor.booking
+  const now = useNow(30_000)
   const [name, setName] = useState(booking?.guestName ?? "")
   const [party, setParty] = useState(booking?.partySize ?? 2)
   const [date, setDate] = useState<BusinessDate>(booking?.businessDate ?? defaultBusinessDate)
-  const [time, setTime] = useState(booking ? fmtTime(booking.expectedAt) : "19:00")
+  const [time, setTime] = useState(
+    booking ? fmtTime(booking.expectedAt) : (defaultBookingSlot(defaultBusinessDate, now) ?? "19:00"),
+  )
   const [source, setSource] = useState<BookingSourceCode>(booking?.sourceCode ?? sources[0]?.code ?? "HOTLINE")
   const [classification, setClassification] = useState<BookingClassification>(booking?.classification ?? "UNCLASSIFIED")
   const [note, setNote] = useState(booking?.note ?? "")
@@ -617,11 +622,15 @@ function BookingEditorBody({
   const [removePhone, setRemovePhone] = useState(false)
   const [pending, setPending] = useState(false)
   const qc = useQueryClient()
+  const originalSchedule = !!booking && date === booking.businessDate && time === fmtTime(booking.expectedAt)
+  const legacyTime = originalSchedule && !isBookingSlot(time) ? time : null
+  const timeError = originalSchedule ? null : validateBookingTime(date, time, now)
   const valid =
     name.trim().length > 0 &&
     name.trim().length <= 120 &&
     Number.isSafeInteger(party) &&
     party > 0 &&
+    !timeError &&
     note.length <= 500 &&
     phone.length <= 40
   const submit = async () => {
@@ -752,14 +761,17 @@ function BookingEditorBody({
             <option value="RETURNING">Khách quen (O)</option>
           </select>
         </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Ngày nghiệp vụ">
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value as BusinessDate)} />
-          </Field>
-          <Field label="Giờ đến">
-            <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
-          </Field>
-        </div>
+        <Field label="Ngày nghiệp vụ">
+          <Input type="date" value={date} onChange={(e) => setDate(e.target.value as BusinessDate)} />
+        </Field>
+        <BookingTimePicker
+          date={date}
+          value={time}
+          now={now}
+          onChange={setTime}
+          error={timeError}
+          legacyValue={legacyTime}
+        />
         <Field label="Ghi chú">
           <Textarea value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} />
         </Field>

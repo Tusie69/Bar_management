@@ -86,10 +86,13 @@ async function createFromTable(page, code, guestName, party = 2, phoneNumber) {
   await dialog.getByText("Tạo booking", { exact: true }).waitFor()
   await dialog.getByText(`Bàn đã chọn: Bàn ${code}`, { exact: false }).waitFor()
   await dialog.locator("input").first().fill(guestName)
+  if ((await dialog.locator('input[type="time"]').count()) !== 0) throw new Error("Native time picker is still present")
   if (phoneNumber) await dialog.locator('input[type="tel"]').fill(phoneNumber)
   await dialog.locator('input[type="number"]').fill(String(party))
-  // Keep the fixture inside the venue's 17:00–05:00 operating window regardless of test run time.
-  await dialog.locator('input[type="time"]').fill("19:00")
+  // Keep the fixture inside the approved 19:00–01:00 booking window regardless of test run time.
+  const availableTime = dialog.locator('button[role="radio"]:not([disabled])').first()
+  if ((await availableTime.count()) !== 1) throw new Error("No valid booking time remains in the current shift")
+  await availableTime.click()
   await dialog.getByRole("button", { name: "Lưu qua backend" }).click()
   await dialog.waitFor({ state: "hidden" })
   await table(page, code, "Đang đặt").waitFor()
@@ -321,7 +324,13 @@ try {
   if (cancelResponse.status() !== 200) {
     throw new Error(`Expected cancel 200, received ${cancelResponse.status()} ${await cancelResponse.text()}`)
   }
-  await deviceB.getByRole("dialog").getByRole("button", { name: "Đóng", exact: true }).first().click()
+  const postCancelCreate = deviceB.getByRole("dialog").filter({
+    has: deviceB.getByRole("heading", { name: "Tạo booking" }),
+  })
+  await postCancelCreate
+    .locator('button:not([data-slot="dialog-close"])')
+    .filter({ hasText: /^Đóng$/ })
+    .click()
   const cancelAt = Date.now()
   await table(deviceB, "A2", "Chưa đặt").waitFor({ timeout: 25_000 })
   const cancelSyncMs = Date.now() - cancelAt

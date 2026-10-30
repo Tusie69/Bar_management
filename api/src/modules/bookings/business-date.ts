@@ -3,6 +3,8 @@ import { AppError } from '../../errors/app-error.js'
 export const bookingTimeZone = 'Asia/Ho_Chi_Minh'
 export const bookingDayStartHour = 17
 export const bookingDayCutoffHour = 5
+export const bookingReceptionStartMinutes = 19 * 60
+export const bookingReceptionEndMinutes = 1 * 60
 
 const calendarDatePattern = /^(\d{4})-(\d{2})-(\d{2})$/
 const expectedAtPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}:\d{2})$/
@@ -136,8 +138,13 @@ export function validateBookingSchedule(expectedAt: unknown, suppliedBusinessDat
       `Giờ khách đến phải biểu diễn đúng giờ địa phương ${bookingTimeZone}.`,
     )
   }
-  if (local.hour >= bookingDayCutoffHour && local.hour < bookingDayStartHour) {
-    throw new AppError(400, 'EXPECTED_AT_OUTSIDE_BUSINESS_HOURS', 'Giờ khách đến phải nằm trong khoảng 17:00–05:00.')
+  const localMinutes = local.hour * 60 + local.minute
+  if (localMinutes > bookingReceptionEndMinutes && localMinutes < bookingReceptionStartMinutes) {
+    throw new AppError(
+      400,
+      'EXPECTED_AT_OUTSIDE_BOOKING_WINDOW',
+      'Giờ nhận booking chỉ từ 19:00 đến 01:00 sáng hôm sau.',
+    )
   }
   const derivedBusinessDate = local.hour < bookingDayCutoffHour
     ? previousCalendarDate(local.year, local.month, local.day)

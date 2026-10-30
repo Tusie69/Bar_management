@@ -141,6 +141,7 @@ export function BookingTimePicker({
   onChange,
   error,
   gridClassName,
+  legacyValue,
 }: {
   date: BusinessDate
   value: string
@@ -149,6 +150,8 @@ export function BookingTimePicker({
   /** From validateBookingTime; shown under the grid. */
   error?: string | null
   gridClassName?: string
+  /** Existing out-of-window value: display it explicitly and preserve it until staff selects a valid slot. */
+  legacyValue?: string | null
 }) {
   const id = useId()
   const groups = bookingSlotGroups(date, now)
@@ -161,8 +164,14 @@ export function BookingTimePicker({
         <span id={`${id}-label`} className="text-xs text-tx-2">
           Giờ đến
         </span>
-        <span className="text-xs text-tx-3">7:00 PM đến 1:00 AM, mỗi 30 phút</span>
+        <span className="text-xs text-tx-3">19:00 đến 01:00 · mốc 30 phút hiện có</span>
       </div>
+      {legacyValue ? (
+        <p className="rounded-sm border border-st-late/40 bg-st-late-tint px-3 py-2 text-xs text-st-late-ink">
+          Giờ hiện tại {legacyValue} không nằm trong các mốc chọn hiện tại. Giờ này được giữ nguyên nếu chỉ sửa thông
+          tin khác; chọn một giờ bên dưới nếu muốn đổi lịch.
+        </p>
+      ) : null}
       {groups.map((g) => (
         <div key={g.key} role="radiogroup" aria-label={g.title} className="flex flex-col gap-1.5">
           <span className="tnum text-xs text-tx-3">{g.title}</span>

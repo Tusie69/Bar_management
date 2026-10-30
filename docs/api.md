@@ -8,6 +8,10 @@ Base URL môi trường phát triển: `http://localhost:3000/api/v1`.
 - Lỗi nghiệp vụ trả về `error.code` ổn định và `error.message` bằng tiếng Việt.
 - API dành cho Lễ tân không được trả số điện thoại đầy đủ.
 - Ngày nghiệp vụ chạy từ 17:00 đến 05:00 hôm sau và sẽ dùng trường `businessDate` theo định dạng `YYYY-MM-DD`.
+- Giờ nhận booking mới hoặc giờ booking được đổi chỉ trong 19:00–01:00 giờ Việt Nam, tính cả hai mốc. Backend
+  chấp nhận mọi phút trong cửa sổ này; UI dùng cấu hình hiện hữu 13 mốc cách nhau 30 phút. Quy tắc này không áp dụng
+  cho Walk-in. Khi sửa booking lịch sử có giờ ngoài cửa sổ, API cho phép giữ nguyên timestamp để sửa trường khác,
+  nhưng sẽ từ chối nếu client đổi giờ sang một giá trị ngoài cửa sổ.
 
 ## Health
 

@@ -319,9 +319,32 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     expect(created.expectedAt).toBe('2030-10-24T17:30:00.000Z')
   })
 
-  it.each(['05:00', '12:00', '16:59'])('rejects booking time %s outside the business window', async (time) => {
+  it.each(['01:01', '10:00', '18:59'])('rejects new booking time %s outside the reception window', async (time) => {
     await expect(createBooking(actor, bookingInput('2030-10-24', time)))
-      .rejects.toMatchObject({ code: 'EXPECTED_AT_OUTSIDE_BUSINESS_HOURS' })
+      .rejects.toMatchObject({ code: 'EXPECTED_AT_OUTSIDE_BOOKING_WINDOW' })
+  })
+
+  it('rejects changing a booking to an invalid time but preserves an unchanged legacy time', async () => {
+    const created = await createBooking(actor, bookingInput('2030-10-24', '19:00', 'Legacy guest'))
+    await databasePool.execute(
+      `UPDATE reservations SET expected_at = '2030-10-24 11:00:00.000' WHERE id = ?`,
+      [created.id],
+    )
+
+    const edited = await updateBooking(actor, created.id, {
+      ...bookingInput('2030-10-24', '18:00', 'Legacy guest renamed'),
+      expectedVersion: created.version,
+    })
+    expect(edited.guestName).toBe('Legacy guest renamed')
+    expect(edited.expectedAt).toBe('2030-10-24T11:00:00.000Z')
+
+    await expect(updateBooking(actor, created.id, {
+      ...bookingInput('2030-10-24', '18:59', 'Invalid schedule change'),
+      expectedVersion: edited.version,
+    })).rejects.toMatchObject({ code: 'EXPECTED_AT_OUTSIDE_BOOKING_WINDOW' })
+    const unchanged = await row('SELECT expected_at, version FROM reservations WHERE id = ?', [created.id])
+    expect((unchanged.expected_at as Date).toISOString()).toBe('2030-10-24T11:00:00.000Z')
+    expect(Number(unchanged.version)).toBe(edited.version)
   })
 
   it('moves an assigned booking to another business date without changing table, HOLD, or allocation IDs', async () => {

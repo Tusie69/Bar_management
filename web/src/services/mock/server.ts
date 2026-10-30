@@ -10,6 +10,7 @@
 import { foldVietnamese, NOTE_PHONE_ERROR, noteHasPhoneNumber, normalizePhone } from "@/lib/text"
 import { addDays, businessDateOf, fmtTime, MS, type BusinessDate } from "@/lib/time"
 import { roleCan, PERMISSION_LABEL, type Permission } from "@/domain/access"
+import { isWithinBookingReceptionWindow } from "@/domain/booking-rules"
 import {
   ROLE_LABEL,
   type AllocationReleaseReason,
@@ -720,6 +721,13 @@ export class MockGamApi implements GamApi, DemoControls {
       this.fail("Số khách phải từ 1 đến 500.")
     if (input.note && noteHasPhoneNumber(input.note)) this.fail(NOTE_PHONE_ERROR)
     if (input.expectedAt.getTime() < this.now.getTime() - 5 * MS.MIN) this.fail("Giờ đến đã qua.")
+    if (!isWithinBookingReceptionWindow(fmtTime(input.expectedAt))) {
+      throw new ApiError(
+        400,
+        "EXPECTED_AT_OUTSIDE_BOOKING_WINDOW",
+        "Giờ nhận booking chỉ từ 19:00 đến 01:00 sáng hôm sau.",
+      )
+    }
     const bd = businessDateOf(input.expectedAt)
     const tableIds = input.tableIds ?? []
     if (tableIds.length) this.maybeTriggerConflict(tableIds[0], bd, input.expectedAt)
@@ -802,6 +810,13 @@ export class MockGamApi implements GamApi, DemoControls {
       if (input.note !== undefined) row.note = input.note?.trim() || null
       if (input.classification !== undefined) row.customerClassification = input.classification
       if (input.expectedAt && input.expectedAt.getTime() !== row.expectedAt.getTime()) {
+        if (!isWithinBookingReceptionWindow(fmtTime(input.expectedAt))) {
+          throw new ApiError(
+            400,
+            "EXPECTED_AT_OUTSIDE_BOOKING_WINDOW",
+            "Giờ nhận booking chỉ từ 19:00 đến 01:00 sáng hôm sau.",
+          )
+        }
         const newBd = businessDateOf(input.expectedAt)
         notes.push(`giờ ${fmtTime(row.expectedAt)} → ${fmtTime(input.expectedAt)}`)
         const hold = activeReservationHold(this.db, r.id)
