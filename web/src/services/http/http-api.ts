@@ -9,7 +9,7 @@
  */
 import type { SessionUser } from "@/domain/models"
 import { businessDateOf } from "@/lib/time"
-import type { GamApi } from "../contracts"
+import { ApiError, type GamApi } from "../contracts"
 import {
   mapCatalog,
   mapFloorState,
@@ -66,13 +66,27 @@ export function createHttpApi(client: HttpClient, venueId: number): GamApi {
       return () => undefined
     },
     getCatalog: loadCatalog,
-    getFloorState: async (at) => {
-      const businessDate = businessDateOf(at)
+    getFloorState: async (at, selectedBusinessDate) => {
+      const businessDate = selectedBusinessDate ?? businessDateOf(at)
       const [catalog, tableResponse, bookingResponse] = await Promise.all([
         loadCatalog(),
-        get<{ businessDate: string; tables: BackendTableState[]; groups: BackendFloorGroup[] }>(`/tables?date=${businessDate}`),
+        get<{ businessDate: string; tables: BackendTableState[]; groups: BackendFloorGroup[] }>(
+          `/tables?date=${businessDate}`,
+        ),
         get<{ businessDate: string; bookings: BackendBooking[] }>(`/bookings?date=${businessDate}`),
       ])
+      if (tableResponse.businessDate !== businessDate || bookingResponse.businessDate !== businessDate) {
+        throw new ApiError(
+          502,
+          "BUSINESS_DATE_RESPONSE_MISMATCH",
+          "Backend trả về dữ liệu không cùng ngày nghiệp vụ đã yêu cầu.",
+          {
+            requested: businessDate,
+            tables: tableResponse.businessDate,
+            bookings: bookingResponse.businessDate,
+          },
+        )
+      }
       return mapFloorState(
         at,
         tableResponse.businessDate,

@@ -62,8 +62,8 @@ export class HttpWaitlistApi {
   async assign(
     entryId: number,
     version: number,
-    tableId: number,
-  ): Promise<{ entry: HttpWaitlistEntry; reservationId: number }> {
-    return this.client.post(`/waitlist/${entryId}/seat`, { version, tableIds: [tableId] }, { reviver: dateReviver })
+    tableIds: number[],
+  ): Promise<{ entry: HttpWaitlistEntry; reservationId: number; groupId: number | null }> {
+    return this.client.post(`/waitlist/${entryId}/seat`, { version, tableIds }, { reviver: dateReviver })
   }
 }

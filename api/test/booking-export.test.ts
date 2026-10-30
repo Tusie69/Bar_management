@@ -40,7 +40,7 @@ function input(bookings: DailyBookingTextItem[], options: Partial<DailyBookingTe
     bookings,
     waitlistCount: 0,
     outTables: [],
-    arrivalCutoff: null,
+    arrivalCutoff: { hour: 21, minute: 30, basis: null, atCutoff: null },
     ...options,
   }
 }
@@ -122,10 +122,34 @@ describe('daily Zalo booking text formatter', () => {
 
   it('reports unresolved statistics instead of fabricating zero values', () => {
     const text = formatDailyBookingText(input([booking(1, ['A1'])]))
-    expect(text).toContain('Khách vào trước 9h30: Chưa xác nhận nghiệp vụ')
-    expect(text).toContain('Khách vào sau 9h30: Chưa xác nhận nghiệp vụ')
+    expect(text).toContain('Khách vào trước 21:30: Chưa xác nhận nghiệp vụ')
+    expect(text).toContain('Khách vào sau 21:30: Chưa xác nhận nghiệp vụ')
     expect(text).toContain('Bàn khách quen O: Chưa xác nhận nghiệp vụ')
     expect(text).toContain('Bàn khách mới N: Chưa xác nhận nghiệp vụ')
+  })
+
+  it('classifies the confirmed 21:30 cutoff by expected_at with an explicit equality policy', () => {
+    const text = formatDailyBookingText(input([
+      booking(1, ['A1'], { partySize: 3, expectedAt: new Date('2026-10-31T14:29:00.000Z') }),
+      booking(2, ['A2'], { partySize: 4, expectedAt: new Date('2026-10-31T14:30:00.000Z') }),
+      booking(3, ['A3'], { partySize: 5, expectedAt: new Date('2026-10-31T14:31:00.000Z') }),
+    ], {
+      arrivalCutoff: { hour: 21, minute: 30, basis: 'EXPECTED_AT', atCutoff: 'AFTER' },
+    }))
+    expect(text).toContain('Khách vào trước 21:30: 3')
+    expect(text).toContain('Khách vào sau 21:30: 9')
+  })
+
+  it('can classify 21:30 using checked_in_at without counting missing check-ins', () => {
+    const text = formatDailyBookingText(input([
+      booking(1, ['A1'], { partySize: 2, checkedInAt: new Date('2026-10-31T14:20:00.000Z') }),
+      booking(2, ['A2'], { partySize: 7, checkedInAt: new Date('2026-10-31T14:40:00.000Z') }),
+      booking(3, ['A3'], { partySize: 9, checkedInAt: null }),
+    ], {
+      arrivalCutoff: { hour: 21, minute: 30, basis: 'CHECKED_IN_AT', atCutoff: 'BEFORE' },
+    }))
+    expect(text).toContain('Khách vào trước 21:30: 2')
+    expect(text).toContain('Khách vào sau 21:30: 7')
   })
 
   it('does not drop bookings from a catalog zone outside the confirmed fixed list', () => {

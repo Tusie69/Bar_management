@@ -35,6 +35,12 @@ describe("business date", () => {
     expect(businessDateOf(fromVenueLocal("2026-10-21", "17:00"))).toBe("2026-10-21")
     expect(businessDateOf(fromVenueLocal("2026-10-21", "04:59"))).toBe("2026-10-20")
   })
+
+  it("keeps the existing closed-hours default stable through 17:00", () => {
+    expect(businessDateOf(fromVenueLocal("2026-10-21", "05:00"))).toBe("2026-10-21")
+    expect(businessDateOf(fromVenueLocal("2026-10-21", "16:59"))).toBe("2026-10-21")
+    expect(businessDateOf(fromVenueLocal("2026-10-21", "17:00"))).toBe("2026-10-21")
+  })
 })
 
 describe("MockGamApi", () => {
@@ -65,6 +71,19 @@ describe("MockGamApi", () => {
     // Distinct symbols for concurrent groups
     const symbols = floor.groups.map((g) => g.symbolNo)
     expect(new Set(symbols).size).toBe(symbols.length)
+  })
+
+  it("does not mix an allocation into the next business date and keeps history queryable", async () => {
+    const catalog = await api.getCatalog()
+    const tableId = catalog.tables.find((table) => table.code === "B5")!.id
+    await api.seatWalkIn({ tableIds: [tableId], guestCount: 2 })
+    const current = await api.getFloorState(clock.now(), bd)
+    const nextBusinessDate = addDays(bd, 1)
+    const next = await api.getFloorState(atBusinessTime(nextBusinessDate, "19:00"), nextBusinessDate)
+    const history = await api.getFloorState(clock.now(), bd)
+    expect(current.tables.find((table) => table.tableId === tableId)?.state).toBe("seated")
+    expect(next.tables.find((table) => table.tableId === tableId)?.state).toBe("free")
+    expect(history.tables.find((table) => table.tableId === tableId)?.state).toBe("seated")
   })
 
   it("never auto-cancels after the 30' warning", async () => {

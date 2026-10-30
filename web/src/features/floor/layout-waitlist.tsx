@@ -237,6 +237,7 @@ interface AssignmentProps {
   workflow: WaitlistWorkflow
   model: FloorModel
   cancel: () => void
+  confirm: () => void
   back: () => void
   submitting: () => void
   success: () => void
@@ -247,6 +248,7 @@ export function LayoutWaitlistAssignment({
   workflow,
   model,
   cancel,
+  confirm,
   back,
   submitting,
   success,
@@ -254,20 +256,24 @@ export function LayoutWaitlistAssignment({
 }: AssignmentProps) {
   const queryClient = useQueryClient()
   if (workflow.phase === "IDLE") return null
-  const target = "targetTableId" in workflow ? model.byId.get(workflow.targetTableId) : null
+  const selectedTables = workflow.tableIds
+    .map((id) => model.byId.get(id))
+    .filter((table): table is NonNullable<typeof table> => table !== undefined)
+  const totalCapacity = selectedTables.reduce((total, table) => total + table.capacity, 0)
+  const tableCodes = selectedTables.map((table) => table.code).join(" + ")
 
   const submit = async () => {
-    if (workflow.phase !== "CONFIRMING" || !target || !waitlistApi) return
+    if (workflow.phase !== "CONFIRMING" || !workflow.tableIds.length || !waitlistApi) return
     submitting()
     try {
-      await waitlistApi.assign(workflow.context.entryId, workflow.context.version, target.id)
+      await waitlistApi.assign(workflow.context.entryId, workflow.context.version, workflow.tableIds)
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["http-waitlist"] }),
         queryClient.invalidateQueries({ queryKey: ["floor"] }),
         queryClient.invalidateQueries({ queryKey: ["http-bookings"] }),
       ])
       success()
-      toast.success(`Đã giữ bàn ${target.code} cho ${workflow.context.displayName}.`)
+      toast.success(`Đã giữ bàn ${tableCodes} cho ${workflow.context.displayName}.`)
     } catch (cause) {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["http-waitlist"] }),
@@ -288,7 +294,7 @@ export function LayoutWaitlistAssignment({
           )}
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold">
-              {workflow.phase === "SUCCESS" ? "Backend đã xác nhận giữ bàn" : "Chọn một bàn trống đủ sức chứa"}
+              {workflow.phase === "SUCCESS" ? "Backend đã xác nhận giữ bàn" : "Chọn một hoặc nhiều bàn cùng khu"}
             </p>
             <p className="truncate text-xs text-muted-foreground">
               {workflow.context.displayName} · {workflow.context.partySize} khách
@@ -303,6 +309,15 @@ export function LayoutWaitlistAssignment({
               </>
             )}
           </Button>
+          {workflow.phase === "SELECTING_WAITLIST_TABLE" ? (
+            <Button
+              size="sm"
+              disabled={!selectedTables.length || totalCapacity < workflow.context.partySize}
+              onClick={confirm}
+            >
+              Xác nhận {totalCapacity}/{workflow.context.partySize} chỗ
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
@@ -312,18 +327,22 @@ export function LayoutWaitlistAssignment({
             <DialogHeader>
               <DialogTitle>Bạn có chắc chắn muốn gán khách vào bàn này không?</DialogTitle>
               <DialogDescription>
-                {workflow.context.displayName} → bàn {target?.code}. Hệ thống sẽ tạo booking và giữ bàn. Chưa tạo visit
-                và chưa check-in khách.
+                {workflow.context.displayName} → bàn {tableCodes}. Hệ thống sẽ tạo một booking và giữ các bàn trong cùng
+                một transaction. Chưa tạo visit và chưa check-in khách.
               </DialogDescription>
             </DialogHeader>
             <p className="rounded-lg border bg-surface-1 p-3 text-sm">
-              <b>{workflow.context.displayName}</b> · {workflow.context.partySize} khách · Bàn {target?.code}
+              <b>{workflow.context.displayName}</b> · {workflow.context.partySize} khách · Bàn {tableCodes} · tổng sức
+              chứa {totalCapacity}
             </p>
             <DialogFooter>
               <Button variant="ghost" disabled={workflow.phase === "SUBMITTING"} onClick={cancel}>
                 Hủy
               </Button>
-              <Button disabled={workflow.phase === "SUBMITTING" || !target} onClick={() => void submit()}>
+              <Button
+                disabled={workflow.phase === "SUBMITTING" || !selectedTables.length}
+                onClick={() => void submit()}
+              >
                 {workflow.phase === "SUBMITTING" ? "Đang gán…" : "Xác nhận giữ bàn"}
               </Button>
             </DialogFooter>

@@ -43,19 +43,30 @@ describe("waitlist table assignment state machine", () => {
   it("requires selection and confirmation before submit, while cancel clears state", () => {
     const selecting = waitlistWorkflowReducer({ phase: "IDLE" }, { type: "BEGIN", context })
     expect(selecting.phase).toBe("SELECTING_WAITLIST_TABLE")
-    const confirming = waitlistWorkflowReducer(selecting, { type: "SELECT", tableId: 7 })
-    expect(confirming).toMatchObject({ phase: "CONFIRMING", targetTableId: 7 })
+    const selectedOne = waitlistWorkflowReducer(selecting, { type: "TOGGLE", tableId: 7 })
+    const selectedTwo = waitlistWorkflowReducer(selectedOne, { type: "TOGGLE", tableId: 8 })
+    expect(selectedTwo).toMatchObject({ phase: "SELECTING_WAITLIST_TABLE", tableIds: [7, 8] })
+    const confirming = waitlistWorkflowReducer(selectedTwo, { type: "CONFIRM" })
+    expect(confirming).toMatchObject({ phase: "CONFIRMING", tableIds: [7, 8] })
     const submitting = waitlistWorkflowReducer(confirming, { type: "SUBMIT" })
     expect(waitlistWorkflowReducer(submitting, { type: "SUCCEED" }).phase).toBe("SUCCESS")
     expect(waitlistWorkflowReducer(confirming, { type: "CANCEL" })).toEqual({ phase: "IDLE" })
   })
 
-  it("allows only active, free, non-spare tables with enough capacity", () => {
-    expect(isValidWaitlistTarget(table, floorState({}), 4)).toBe(true)
-    expect(isValidWaitlistTarget({ ...table, capacity: 2 }, floorState({}), 4)).toBe(false)
-    expect(isValidWaitlistTarget({ ...table, isSpare: true }, floorState({}), 4)).toBe(false)
-    expect(isValidWaitlistTarget({ ...table, status: "OUT_OF_SERVICE" }, floorState({ state: "oos" }), 4)).toBe(false)
-    expect(isValidWaitlistTarget(table, floorState({ state: "reserved" }), 4)).toBe(false)
+  it("allows multiple free tables only in the first selected table's zone and kind", () => {
+    expect(isValidWaitlistTarget({ ...table, capacity: 2 }, floorState({}), undefined)).toBe(true)
+    expect(isValidWaitlistTarget({ ...table, id: 8, capacity: 2 }, floorState({ tableId: 8 }), table)).toBe(true)
+    expect(
+      isValidWaitlistTarget({ ...table, id: 9, zoneId: 2, zoneCode: "B" }, floorState({ tableId: 9 }), table),
+    ).toBe(false)
+    expect(isValidWaitlistTarget({ ...table, id: 10, kind: "BAR_SEAT" }, floorState({ tableId: 10 }), table)).toBe(
+      false,
+    )
+    expect(isValidWaitlistTarget({ ...table, isSpare: true }, floorState({}), undefined)).toBe(false)
+    expect(isValidWaitlistTarget({ ...table, status: "OUT_OF_SERVICE" }, floorState({ state: "oos" }), undefined)).toBe(
+      false,
+    )
+    expect(isValidWaitlistTarget(table, floorState({ state: "reserved" }), undefined)).toBe(false)
   })
 })
 

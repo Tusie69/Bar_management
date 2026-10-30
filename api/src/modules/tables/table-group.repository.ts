@@ -11,6 +11,7 @@ export interface GroupTableRow extends RowDataPacket {
   is_spare: number
   status: string
   zone_id: number
+  is_bookable: number
 }
 
 async function lockMergeTables(
@@ -22,9 +23,13 @@ async function lockMergeTables(
   if (ids.length < 2) throw new AppError(400, 'MERGE_REQUIRES_MULTIPLE_TABLES', 'Cần chọn ít nhất hai bàn để ghép.')
   const placeholders = ids.map(() => '?').join(',')
   const [tables] = await connection.execute<GroupTableRow[]>(
-    `SELECT id, code, kind, capacity, is_spare, status, zone_id FROM dining_tables
-     WHERE organization_id = ? AND venue_id = ? AND id IN (${placeholders})
-     ORDER BY id FOR UPDATE`,
+    `SELECT dt.id, dt.code, dt.kind, dt.capacity, dt.is_spare, dt.status, dt.zone_id,
+       z.is_bookable
+     FROM dining_tables AS dt
+     JOIN zones AS z ON z.organization_id = dt.organization_id
+       AND z.venue_id = dt.venue_id AND z.id = dt.zone_id
+     WHERE dt.organization_id = ? AND dt.venue_id = ? AND dt.id IN (${placeholders})
+     ORDER BY dt.id FOR UPDATE`,
     [actor.organizationId, actor.venueId, ...ids],
   )
   if (tables.length !== ids.length || tables.some((table) => table.status !== 'ACTIVE')) {
@@ -36,6 +41,44 @@ async function lockMergeTables(
     throw new AppError(409, 'TABLE_KIND_MISMATCH', 'Không thể ghép bàn thường với ghế Bar.')
   }
   return { ids, tables }
+}
+
+export async function lockAndValidateWaitlistTables(
+  connection: PoolConnection,
+  actor: AuthenticatedActor,
+  tableIds: number[],
+): Promise<GroupTableRow[]> {
+  const ids = [...new Set(tableIds)].sort((left, right) => left - right)
+  if (!ids.length) throw new AppError(400, 'TABLE_REQUIRED', 'Cần chọn ít nhất một bàn.')
+  const placeholders = ids.map(() => '?').join(',')
+  const [tables] = await connection.execute<GroupTableRow[]>(
+    `SELECT dt.id, dt.code, dt.kind, dt.capacity, dt.is_spare, dt.status, dt.zone_id,
+       z.is_bookable
+     FROM dining_tables AS dt
+     JOIN zones AS z ON z.organization_id = dt.organization_id
+       AND z.venue_id = dt.venue_id AND z.id = dt.zone_id
+     WHERE dt.organization_id = ? AND dt.venue_id = ? AND dt.id IN (${placeholders})
+     ORDER BY dt.id FOR UPDATE`,
+    [actor.organizationId, actor.venueId, ...ids],
+  )
+  if (tables.length !== ids.length || tables.some((table) => table.status !== 'ACTIVE')) {
+    throw new AppError(400, 'TABLE_NOT_FOUND', 'Có bàn không tồn tại hoặc ngừng hoạt động.')
+  }
+  const nonBookable = tables.find((table) => !table.is_bookable)
+  if (nonBookable) {
+    throw new AppError(409, 'ZONE_NOT_BOOKABLE', `Khu của bàn ${nonBookable.code} không nhận booking.`)
+  }
+  const spare = tables.find((table) => Boolean(table.is_spare))
+  if (spare) {
+    throw new AppError(409, 'SPARE_TABLE_NOT_BOOKABLE', `Bàn ${spare.code} là bàn sơ cua và chưa được cấu hình để nhận khách.`)
+  }
+  if (new Set(tables.map((table) => Number(table.zone_id))).size !== 1) {
+    throw new AppError(409, 'TABLE_ZONE_MISMATCH', 'Chỉ có thể gán các bàn trong cùng một khu vực.')
+  }
+  if (tables.length > 1 && new Set(tables.map((table) => table.kind)).size !== 1) {
+    throw new AppError(409, 'TABLE_KIND_MISMATCH', 'Không thể ghép bàn thường với ghế Bar.')
+  }
+  return tables
 }
 
 export async function lockAndValidateSameZoneTables(

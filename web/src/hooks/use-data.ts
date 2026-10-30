@@ -12,7 +12,7 @@ import { useSession } from "@/state/session"
 
 export const qk = {
   catalog: ["catalog"] as const,
-  floor: (at: string) => ["floor", at] as const,
+  floor: (bd: string) => ["floor", bd] as const,
   availability: (at: string, party: number) => ["availability", at, party] as const,
   overview: ["overview"] as const,
   reservations: (bd: string, search: string) => ["reservations", bd, search] as const,
@@ -57,11 +57,12 @@ export function useCatalog() {
   })
 }
 
-export function useFloorState() {
+export function useFloorState(businessDate?: BusinessDate) {
+  const defaultBusinessDate = useBusinessDate()
+  const selectedBusinessDate = businessDate ?? defaultBusinessDate
   return useQuery({
-    queryKey: qk.floor("live"),
-    queryFn: () => api.getFloorState(clock.now()),
-    placeholderData: keepPreviousData,
+    queryKey: qk.floor(selectedBusinessDate),
+    queryFn: () => api.getFloorState(clock.now(), selectedBusinessDate),
     refetchInterval: 15_000,
     refetchIntervalInBackground: true,
     retry: api.mode === "mock" ? 1 : false,

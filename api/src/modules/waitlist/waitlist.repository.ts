@@ -5,6 +5,7 @@ import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
 import { protectPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from '../bookings/phone-security.js'
+import { createTableGroup, lockAndValidateWaitlistTables } from '../tables/table-group.repository.js'
 
 export type WaitlistStatus = 'WAITING' | 'CONTACTING' | 'OFFERED' | 'HOLD_ACTIVE' | 'SEATED' | 'DECLINED' | 'CANCELLED'
 export type ContactChannel = 'IN_PERSON' | 'PHONE_CALLBACK' | 'ZALO_THREAD' | 'FANPAGE_THREAD' | 'OTHER'
@@ -223,7 +224,7 @@ export interface SeatWaitlistInput {
 export async function seatWaitlistEntry(
   actor: AuthenticatedActor,
   input: SeatWaitlistInput,
-): Promise<{ entry: WaitlistEntryView; reservationId: number }> {
+): Promise<{ entry: WaitlistEntryView; reservationId: number; groupId: number | null }> {
   const connection = await databasePool.getConnection()
   try {
     await connection.beginTransaction()
@@ -250,15 +251,7 @@ export async function seatWaitlistEntry(
     const tableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
     if (!tableIds.length) throw new AppError(400, 'TABLE_REQUIRED', 'Cần chọn ít nhất một bàn.')
     const placeholders = tableIds.map(() => '?').join(',')
-    const [tables] = await connection.execute<(RowDataPacket & { id: number; code: string; is_spare: number; capacity: number })[]>(
-      `SELECT id, code, is_spare, capacity FROM dining_tables
-       WHERE organization_id = ? AND venue_id = ? AND status = 'ACTIVE' AND id IN (${placeholders})
-       ORDER BY id FOR UPDATE`,
-      [actor.organizationId, actor.venueId, ...tableIds],
-    )
-    if (tables.length !== tableIds.length) throw new AppError(400, 'TABLE_NOT_FOUND', 'Có bàn không tồn tại hoặc ngừng hoạt động.')
-    const spareTable = tables.find((table) => Boolean(table.is_spare))
-    if (spareTable) throw new AppError(409, 'SPARE_TABLE_NOT_BOOKABLE', `Bàn ${spareTable.code} là bàn sơ cua và chưa được cấu hình để nhận khách.`)
+    const tables = await lockAndValidateWaitlistTables(connection, actor, tableIds)
     const capacity = tables.reduce((total, table) => total + Number(table.capacity), 0)
     if (capacity < Number(entry.party_size)) {
       throw new AppError(409, 'INSUFFICIENT_TABLE_CAPACITY', `Bàn đã chọn chỉ có ${capacity} chỗ cho ${entry.party_size} khách.`)
@@ -295,13 +288,16 @@ export async function seatWaitlistEntry(
        VALUES (?, ?, 'RESERVATION', ?, UTC_TIMESTAMP(3), ?)`,
       [actor.organizationId, actor.venueId, reservation.insertId, actor.userId],
     )
+    const group = tableIds.length > 1
+      ? await createTableGroup(connection, actor, businessDate)
+      : null
     const allocationIds: number[] = []
     for (const tableId of tableIds) {
       const [allocation] = await connection.execute<ResultSetHeader>(
         `INSERT INTO table_allocations
-          (organization_id, venue_id, table_id, kind, hold_id, starts_at, business_date, created_by_user_id)
-         VALUES (?, ?, ?, 'HOLD', ?, UTC_TIMESTAMP(3), ?, ?)`,
-        [actor.organizationId, actor.venueId, tableId, hold.insertId, businessDate, actor.userId],
+          (organization_id, venue_id, table_id, kind, hold_id, group_id, starts_at, business_date, created_by_user_id)
+         VALUES (?, ?, ?, 'HOLD', ?, ?, UTC_TIMESTAMP(3), ?, ?)`,
+        [actor.organizationId, actor.venueId, tableId, hold.insertId, group?.id ?? null, businessDate, actor.userId],
       )
       allocationIds.push(allocation.insertId)
     }
@@ -326,7 +322,7 @@ export async function seatWaitlistEntry(
         actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
         actor.authSessionId ?? null, input.entryId, input.expectedVersion, input.expectedVersion + 1,
         JSON.stringify([{ type: 'waitlist_assigned', reservationId: reservation.insertId, holdId: hold.insertId,
-          allocationIds, tableIds }]),
+          groupId: group?.id ?? null, allocationIds, tableIds }]),
       ],
     )
 
@@ -337,7 +333,7 @@ export async function seatWaitlistEntry(
     const updated = updatedRows[0]
     if (!updated) throw new AppError(500, 'WAITLIST_READ_FAILED', 'Không đọc lại được khách vừa gán bàn.')
     await connection.commit()
-    return { entry: toView(updated), reservationId: reservation.insertId }
+    return { entry: toView(updated), reservationId: reservation.insertId, groupId: group?.id ?? null }
   } catch (error) {
     await connection.rollback()
     throw error

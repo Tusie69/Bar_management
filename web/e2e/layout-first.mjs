@@ -166,6 +166,7 @@ try {
   const desktopWaitlist = deviceA.getByRole("dialog")
   await desktopWaitlist.getByLabel("Tên khách").fill(waitlistGuest)
   await desktopWaitlist.getByLabel("Số điện thoại (không bắt buộc)").fill("0901 234 567")
+  await desktopWaitlist.getByRole("radio", { name: "5 khách" }).click()
   await desktopWaitlist.getByLabel("Ghi chú").fill("Khách đồng ý chờ")
   await desktopWaitlist.getByRole("button", { name: "Thêm vào bàn chờ" }).click()
   await desktopWaitlist.getByText("1 nhóm", { exact: true }).waitFor()
@@ -182,8 +183,13 @@ try {
     if (/\/waitlist\/\d+\/seat$/.test(new URL(request.url()).pathname)) waitlistSeatRequests += 1
   })
   await desktopWaitlist.getByRole("button", { name: "Chọn bàn" }).click()
-  await deviceA.getByText("Chọn một bàn trống đủ sức chứa", { exact: true }).waitFor()
+  await deviceA.getByText("Chọn một hoặc nhiều bàn cùng khu", { exact: true }).waitFor()
   await table(deviceA, "B3", "Chưa đặt").click()
+  if (await deviceA.getByRole("button", { name: "Xác nhận 4/5 chỗ" }).isEnabled()) {
+    throw new Error("Waitlist assignment allowed insufficient total capacity")
+  }
+  await table(deviceA, "B4", "Chưa đặt").click()
+  await deviceA.getByRole("button", { name: "Xác nhận 8/5 chỗ" }).click()
   const cancelledWaitlistAssign = deviceA.getByRole("dialog")
   await cancelledWaitlistAssign
     .getByText("Bạn có chắc chắn muốn gán khách vào bàn này không?", { exact: true })
@@ -191,10 +197,13 @@ try {
   await cancelledWaitlistAssign.getByRole("button", { name: "Hủy", exact: true }).click()
   if (waitlistSeatRequests !== 0) throw new Error("Cancelling waitlist confirmation called the mutation endpoint")
   await table(deviceA, "B3", "Chưa đặt").waitFor()
+  await table(deviceA, "B4", "Chưa đặt").waitFor()
   await deviceA.getByRole("button", { name: "Bàn chờ, 1 nhóm đang chờ" }).click()
   const retryWaitlist = deviceA.getByRole("dialog")
   await retryWaitlist.getByRole("button", { name: "Chọn bàn" }).click()
   await table(deviceA, "B3", "Chưa đặt").click()
+  await table(deviceA, "B4", "Chưa đặt").click()
+  await deviceA.getByRole("button", { name: "Xác nhận 8/5 chỗ" }).click()
   const confirmedWaitlistAssign = deviceA.getByRole("dialog")
   const waitlistResponsePromise = deviceA.waitForResponse(
     (response) =>
@@ -208,9 +217,11 @@ try {
   await deviceA.getByRole("button", { name: "Hoàn tất" }).click()
   await deviceA.getByRole("button", { name: "Bàn chờ, 0 nhóm đang chờ" }).waitFor()
   await table(deviceA, "B3", "Đang đặt").waitFor()
+  await table(deviceA, "B4", "Đang đặt").waitFor()
   const waitlistAssignedAt = Date.now()
   await deviceB.getByRole("button", { name: "Bàn chờ, 0 nhóm đang chờ" }).waitFor({ timeout: 25_000 })
   await table(deviceB, "B3", "Đang đặt").waitFor({ timeout: 25_000 })
+  await table(deviceB, "B4", "Đang đặt").waitFor({ timeout: 25_000 })
   const waitlistAssignSyncMs = Date.now() - waitlistAssignedAt
   await deviceA.reload({ waitUntil: "networkidle" })
   await table(deviceA, "B3", "Đang đặt").waitFor()
@@ -361,7 +372,7 @@ try {
   if (!/nhóm \d+/.test(await table(deviceA, "A1", "Đang sử dụng").getAttribute("aria-label"))) {
     throw new Error("Persisted group symbol was not restored through Floor State")
   }
-  const groupHighlight = deviceA.locator("[data-group-symbol]").first()
+  const groupHighlight = deviceA.locator("[data-group-symbol]:visible").first()
   await groupHighlight.waitFor()
   if (!(await groupHighlight.getAttribute("stroke"))) throw new Error("Persisted group highlight has no color")
 

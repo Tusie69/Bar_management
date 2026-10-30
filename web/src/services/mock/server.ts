@@ -615,9 +615,9 @@ export class MockGamApi implements GamApi, DemoControls {
     return catalog(this.db)
   }
 
-  async getFloorState(at: Date) {
+  async getFloorState(at: Date, businessDate?: BusinessDate) {
     await this.latency("q")
-    return floorState(this.db, at)
+    return floorState(this.db, at, businessDate)
   }
 
   async getAvailability(at: Date, partySize: number) {

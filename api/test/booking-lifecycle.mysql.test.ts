@@ -37,6 +37,7 @@ const userId = 9301
 const membershipId = 9301
 const tableOneId = 9301
 const tableTwoId = 9302
+const tableThreeId = 9304
 const sourceId = 9301
 const systemUserId = 9399
 const automationCutoff = new Date('2000-01-01T00:00:00.000Z')
@@ -110,16 +111,21 @@ async function resetFixture(): Promise<void> {
   )
   await databasePool.execute(
     `INSERT INTO zones (id, organization_id, venue_id, code, name)
-     VALUES (9301, ?, ?, 'MAIN', 'Main')`,
-    [organizationId, venueId],
+     VALUES (9301, ?, ?, 'MAIN', 'Main'), (9302, ?, ?, 'OTHER', 'Other')`,
+    [organizationId, venueId, organizationId, venueId],
   )
   await databasePool.execute(
     `INSERT INTO dining_tables
       (id, organization_id, venue_id, zone_id, code, display_name, kind, capacity, pos_x, pos_y)
      VALUES
       (?, ?, ?, 9301, 'T1', 'Table 1', 'TABLE', 4, 10, 10),
-      (?, ?, ?, 9301, 'T2', 'Table 2', 'TABLE', 4, 20, 20)`,
-    [tableOneId, organizationId, venueId, tableTwoId, organizationId, venueId],
+       (?, ?, ?, 9301, 'T2', 'Table 2', 'TABLE', 4, 20, 20),
+       (?, ?, ?, 9302, 'T4', 'Table 4', 'TABLE', 4, 30, 30)`,
+    [
+      tableOneId, organizationId, venueId,
+      tableTwoId, organizationId, venueId,
+      tableThreeId, organizationId, venueId,
+    ],
   )
   await databasePool.execute(
     `INSERT INTO booking_sources (id, organization_id, code, name, sort_order)
@@ -650,6 +656,61 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       [assigned.reservationId],
     )
     expect(hold).toMatchObject({ status: 'BOOKED', visit_id: null, kind: 'HOLD' })
+  })
+
+  it('assigns one waitlist booking to multiple same-zone tables with a persistent group', async () => {
+    const entry = await createWaitlistEntry(actor, {
+      guestName: 'Multi table waitlist', partySize: 8, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+    })
+    const assigned = await seatWaitlistEntry(actor, {
+      entryId: entry.id, expectedVersion: entry.version, tableIds: [tableTwoId, tableOneId],
+    })
+    expect(assigned.groupId).not.toBeNull()
+    const [reservations] = await databasePool.execute<RowDataPacket[]>(
+      "SELECT id FROM reservations WHERE contact_name = 'Multi table waitlist'",
+    )
+    expect(reservations).toHaveLength(1)
+    const [allocations] = await databasePool.execute<RowDataPacket[]>(
+      `SELECT table_id, group_id FROM table_allocations
+       WHERE hold_id = (SELECT id FROM table_holds WHERE reservation_id = ?) AND released_at IS NULL
+       ORDER BY table_id`,
+      [assigned.reservationId],
+    )
+    expect(allocations.map((allocation) => Number(allocation.table_id))).toEqual([tableOneId, tableTwoId])
+    expect(new Set(allocations.map((allocation) => Number(allocation.group_id)))).toEqual(new Set([assigned.groupId]))
+    const group = await row('SELECT business_date, dissolved_at FROM table_groups WHERE id = ?', [assigned.groupId!])
+    expect(databaseDate(group.business_date)).toBe('2030-10-24')
+    expect(group.dissolved_at).toBeNull()
+  })
+
+  it('rejects multi-table waitlist assignment across zones without partial mutation', async () => {
+    const entry = await createWaitlistEntry(actor, {
+      guestName: 'Cross zone waitlist', partySize: 5, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+    })
+    await expect(seatWaitlistEntry(actor, {
+      entryId: entry.id, expectedVersion: entry.version, tableIds: [tableOneId, tableThreeId],
+    })).rejects.toMatchObject({ code: 'TABLE_ZONE_MISMATCH' })
+    expect((await listWaitlist(actor, '2030-10-24')).find((item) => item.id === entry.id))
+      .toMatchObject({ status: 'WAITING', reservationId: null, version: 1 })
+    const [reservations] = await databasePool.execute<RowDataPacket[]>(
+      "SELECT id FROM reservations WHERE contact_name = 'Cross zone waitlist'",
+    )
+    expect(reservations).toHaveLength(0)
+  })
+
+  it('allows only one concurrent assignment of the same waitlist entry', async () => {
+    const entry = await createWaitlistEntry(actor, {
+      guestName: 'Same entry race', partySize: 5, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+    })
+    const attempts = await Promise.allSettled([
+      seatWaitlistEntry(actor, { entryId: entry.id, expectedVersion: entry.version, tableIds: [tableOneId, tableTwoId] }),
+      seatWaitlistEntry(actor, { entryId: entry.id, expectedVersion: entry.version, tableIds: [tableOneId, tableTwoId] }),
+    ])
+    expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1)
+    const [reservations] = await databasePool.execute<RowDataPacket[]>(
+      "SELECT id FROM reservations WHERE contact_name = 'Same entry race'",
+    )
+    expect(reservations).toHaveLength(1)
   })
 
   it('lists the real queue in FIFO order with id tie-breaker and venue scope', async () => {

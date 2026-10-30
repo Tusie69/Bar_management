@@ -1,10 +1,11 @@
 import { useMemo } from "react"
 import type { FloorTableState, TableLiveState, TableView } from "@/domain/models"
 import { useCatalog, useFloorState } from "@/hooks/use-data"
+import type { BusinessDate } from "@/lib/time"
 
-export function useFloorModel() {
+export function useFloorModel(businessDate?: BusinessDate) {
   const catalog = useCatalog()
-  const floor = useFloorState()
+  const floor = useFloorState(businessDate)
   return useMemo(() => {
     const tables = catalog.data?.tables ?? []
     const byId = new Map<number, TableView>(tables.map((t) => [t.id, t]))

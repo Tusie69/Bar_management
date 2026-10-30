@@ -1,10 +1,11 @@
 import { AlertTriangle, CalendarDays, LayoutDashboard, LogOut, RefreshCw, Server, ShieldCheck } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useCatalog, useFloorState, useNow } from "@/hooks/use-data"
+import { addDays, businessDateOf, type BusinessDate } from "@/lib/time"
 import { activeWaitlistEntries, isApiError, waitlistApi } from "@/services"
 import { useSession } from "@/state/session"
 import { HttpBookingsPage } from "@/features/reservations/http-bookings-page"
@@ -20,10 +21,14 @@ export function HttpFloorPage() {
   const principal = useSession((state) => state.principal)
   const permissions = useSession((state) => state.permissions)
   const logout = useSession((state) => state.logout)
-  const model = useFloorModel()
   const catalogQuery = useCatalog()
-  const floorQuery = useFloorState()
   const now = useNow(30_000)
+  const cutoffHour = Number(catalogQuery.data?.venue.businessDayCutoffLocal?.split(":")[0] ?? 5)
+  const currentBusinessDate = businessDateOf(now, cutoffHour)
+  const [selectedBusinessDate, setSelectedBusinessDate] = useState<BusinessDate>(() => businessDateOf(now))
+  const dateTouched = useRef(false)
+  const model = useFloorModel(selectedBusinessDate)
+  const floorQuery = useFloorState(selectedBusinessDate)
   const [zone, setZone] = useState<ZoneCode | "ALL">("ALL")
   const [pendingLogout, setPendingLogout] = useState(false)
   const [logoutError, setLogoutError] = useState<string | null>(null)
@@ -31,6 +36,15 @@ export function HttpFloorPage() {
   const [waitlistOpen, setWaitlistOpen] = useState(false)
   const layout = useLayoutTableController(model, permissions)
   const businessDate = model.floor?.businessDate ?? ""
+  useEffect(() => {
+    if (!dateTouched.current) setSelectedBusinessDate(currentBusinessDate)
+  }, [currentBusinessDate])
+
+  const changeBusinessDate = (next: BusinessDate, userSelected = true) => {
+    dateTouched.current = userSelected
+    setSelectedBusinessDate(next)
+    setWaitlistOpen(false)
+  }
   const waitlistQuery = useQuery({
     queryKey: ["http-waitlist", businessDate],
     queryFn: () => waitlistApi!.list(businessDate),
@@ -100,6 +114,24 @@ export function HttpFloorPage() {
       ) : (
         <section className="flex min-h-0 flex-1 flex-col gap-3 p-3 sm:p-4">
           <div className="flex flex-wrap items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => changeBusinessDate(addDays(selectedBusinessDate, -1))}>
+              Ngày trước
+            </Button>
+            <input
+              type="date"
+              value={selectedBusinessDate}
+              aria-label="Ngày nghiệp vụ của Layout"
+              onChange={(event) => changeBusinessDate(event.target.value as BusinessDate)}
+              className="h-9 rounded-md border bg-background px-3 text-sm"
+            />
+            <Button variant="ghost" size="sm" onClick={() => changeBusinessDate(addDays(selectedBusinessDate, 1))}>
+              Ngày sau
+            </Button>
+            {selectedBusinessDate !== currentBusinessDate ? (
+              <Button variant="outline" size="sm" onClick={() => changeBusinessDate(currentBusinessDate, false)}>
+                Ca mặc định
+              </Button>
+            ) : null}
             <div
               className="flex max-w-full gap-1 overflow-x-auto rounded-lg border bg-surface-1 p-1"
               role="tablist"
@@ -225,6 +257,7 @@ export function HttpFloorPage() {
                   workflow={layout.waitlistWorkflow}
                   model={model}
                   cancel={layout.cancelWaitlist}
+                  confirm={layout.confirmWaitlist}
                   back={layout.backWaitlist}
                   submitting={layout.startWaitlistSubmitting}
                   success={layout.markWaitlistSuccess}

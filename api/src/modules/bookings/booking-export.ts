@@ -51,7 +51,12 @@ export interface DailyBookingTextInput {
   bookings: DailyBookingTextItem[]
   waitlistCount: number
   outTables: Array<{ code: string; zoneCode: string; zoneName: string }>
-  arrivalCutoff: null | { hour: number; minute: number; basis: 'EXPECTED_AT' | 'CHECKED_IN_AT' }
+  arrivalCutoff: {
+    hour: 21
+    minute: 30
+    basis: 'EXPECTED_AT' | 'CHECKED_IN_AT' | null
+    atCutoff: 'BEFORE' | 'AFTER' | null
+  }
 }
 
 const ZONE_ORDER = ['A', 'B', 'C', 'BAR'] as const
@@ -173,8 +178,8 @@ function unknownStatistic(reason: string): string {
 }
 
 function arrivalCounts(input: DailyBookingTextInput, active: DailyBookingTextItem[]): { before: string; after: string } {
-  if (!input.arrivalCutoff) {
-    const missing = unknownStatistic('chưa rõ mốc 9h30 và nguồn thời gian')
+  if (!input.arrivalCutoff.basis || !input.arrivalCutoff.atCutoff) {
+    const missing = unknownStatistic('đã chốt 21:30; chưa chốt timestamp phân loại và cách tính đúng 21:30')
     return { before: missing, after: missing }
   }
   const cutoffMinutes = input.arrivalCutoff.hour * 60 + input.arrivalCutoff.minute
@@ -188,8 +193,10 @@ function arrivalCounts(input: DailyBookingTextInput, active: DailyBookingTextIte
     }).formatToParts(value)
     const hour = Number(parts.find((part) => part.type === 'hour')?.value)
     const minute = Number(parts.find((part) => part.type === 'minute')?.value)
-    if (hour * 60 + minute < cutoffMinutes) before += item.partySize
-    else after += item.partySize
+    const itemMinutes = hour * 60 + minute
+    if (itemMinutes < cutoffMinutes || (itemMinutes === cutoffMinutes && input.arrivalCutoff.atCutoff === 'BEFORE')) {
+      before += item.partySize
+    } else after += item.partySize
   }
   return { before: String(before), after: String(after) }
 }
@@ -245,8 +252,8 @@ export function formatDailyBookingText(input: DailyBookingTextInput): string {
   lines.push(
     '',
     'THỐNG KÊ',
-    `Khách vào trước 9h30: ${arrivals.before}`,
-    `Khách vào sau 9h30: ${arrivals.after}`,
+    `Khách vào trước 21:30: ${arrivals.before}`,
+    `Khách vào sau 21:30: ${arrivals.after}`,
     `Tổng bàn đặt: ${active.length}`,
     `Tổng khách đặt: ${active.reduce((total, item) => total + item.partySize, 0)}`,
     `Bàn khách quen O: ${returning}`,
@@ -329,8 +336,8 @@ export async function getDailyBookingTextInput(
       bookings: normalizeBookings(rows),
       waitlistCount: Number(waitlistRows[0]?.waiting_count ?? 0),
       outTables: outRows.map((row) => ({ code: row.code, zoneCode: row.zone_code, zoneName: row.zone_name })),
-      // US-07 deliberately leaves “9h30” and its timestamp basis unresolved.
-      arrivalCutoff: null,
+      // Product confirmed 9h30 means 21:30. Timestamp basis and exact-boundary bucket remain open.
+      arrivalCutoff: { hour: 21, minute: 30, basis: null, atCutoff: null },
     }
   } catch (error) {
     await connection.rollback()

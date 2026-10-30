@@ -54,7 +54,7 @@ Phản hồi `{ businessDate, entries }`. Mỗi entry gồm `id`, `kind`, `guest
 { "version": 1, "tableIds": [123] }
 ```
 
-Trong một transaction, backend khóa entry và bàn, kiểm tra version, trạng thái `WAITING`, capacity, bàn ACTIVE, bàn sơ cua và allocation conflict; sau đó tạo reservation `BOOKED`, `table_holds` loại `RESERVATION`, allocation `HOLD`, chuyển entry thành `ADVANCE_RESERVATION/HOLD_ACTIVE` và ghi audit `WAITLIST_ASSIGNED_TO_RESERVATION`. Không tạo active visit; Floor State vì vậy hiển thị bàn `RESERVED`. Mọi ghi thay đổi được rollback nếu một bước thất bại.
+Trong một transaction, backend khóa entry và bàn, kiểm tra version, trạng thái `WAITING`, tổng capacity, cùng khu, cùng loại bàn, khu được phép booking, bàn ACTIVE, bàn sơ cua và allocation conflict; sau đó tạo đúng một reservation `BOOKED`, một `table_holds` loại `RESERVATION`, một allocation `HOLD` cho mỗi bàn, và một `table_groups` dùng chung khi chọn nhiều bàn. Cuối cùng backend chuyển entry thành `ADVANCE_RESERVATION/HOLD_ACTIVE` và ghi audit `WAITLIST_ASSIGNED_TO_RESERVATION`. Không tạo active visit; Floor State vì vậy hiển thị các bàn `RESERVED` với cùng group/highlight. Mọi ghi thay đổi được rollback nếu một bước thất bại.
 
 Response: `{ entry, reservationId }`. Các lỗi chính: `VERSION_CONFLICT`, `WAITLIST_NOT_SEATABLE`, `INSUFFICIENT_TABLE_CAPACITY`, `TABLE_ALREADY_OCCUPIED`, `SPARE_TABLE_NOT_BOOKABLE`, `WAITLIST_BOOKING_SOURCE_MISSING`.
 

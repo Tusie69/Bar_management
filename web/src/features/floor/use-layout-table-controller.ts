@@ -22,15 +22,16 @@ export interface WaitlistAssignmentContext {
 
 export type WaitlistWorkflow =
   | { phase: "IDLE" }
-  | { phase: "SELECTING_WAITLIST_TABLE"; context: WaitlistAssignmentContext }
-  | { phase: "CONFIRMING"; context: WaitlistAssignmentContext; targetTableId: number }
-  | { phase: "SUBMITTING"; context: WaitlistAssignmentContext; targetTableId: number }
-  | { phase: "SUCCESS"; context: WaitlistAssignmentContext; targetTableId: number }
-  | { phase: "ERROR"; context: WaitlistAssignmentContext; targetTableId: number; message: string }
+  | { phase: "SELECTING_WAITLIST_TABLE"; context: WaitlistAssignmentContext; tableIds: number[] }
+  | { phase: "CONFIRMING"; context: WaitlistAssignmentContext; tableIds: number[] }
+  | { phase: "SUBMITTING"; context: WaitlistAssignmentContext; tableIds: number[] }
+  | { phase: "SUCCESS"; context: WaitlistAssignmentContext; tableIds: number[] }
+  | { phase: "ERROR"; context: WaitlistAssignmentContext; tableIds: number[]; message: string }
 
 type WaitlistAction =
   | { type: "BEGIN"; context: WaitlistAssignmentContext }
-  | { type: "SELECT"; tableId: number }
+  | { type: "TOGGLE"; tableId: number }
+  | { type: "CONFIRM" }
   | { type: "BACK" }
   | { type: "SUBMIT" }
   | { type: "SUCCEED" }
@@ -40,14 +41,23 @@ type WaitlistAction =
 export function waitlistWorkflowReducer(state: WaitlistWorkflow, action: WaitlistAction): WaitlistWorkflow {
   switch (action.type) {
     case "BEGIN":
-      return { phase: "SELECTING_WAITLIST_TABLE", context: action.context }
-    case "SELECT":
+      return { phase: "SELECTING_WAITLIST_TABLE", context: action.context, tableIds: [] }
+    case "TOGGLE":
       return state.phase === "SELECTING_WAITLIST_TABLE"
-        ? { phase: "CONFIRMING", context: state.context, targetTableId: action.tableId }
+        ? {
+            ...state,
+            tableIds: state.tableIds.includes(action.tableId)
+              ? state.tableIds.filter((id) => id !== action.tableId)
+              : [...state.tableIds, action.tableId],
+          }
+        : state
+    case "CONFIRM":
+      return state.phase === "SELECTING_WAITLIST_TABLE" && state.tableIds.length > 0
+        ? { phase: "CONFIRMING", context: state.context, tableIds: state.tableIds }
         : state
     case "BACK":
       return state.phase === "CONFIRMING" || state.phase === "ERROR"
-        ? { phase: "SELECTING_WAITLIST_TABLE", context: state.context }
+        ? { phase: "SELECTING_WAITLIST_TABLE", context: state.context, tableIds: state.tableIds }
         : state
     case "SUBMIT":
       return state.phase === "CONFIRMING" ? { ...state, phase: "SUBMITTING" } : state
@@ -234,9 +244,14 @@ export function isValidMergeTarget(
 export function isValidWaitlistTarget(
   table: TableView,
   state: FloorTableState | undefined,
-  partySize: number,
+  firstSelected: TableView | undefined,
 ): boolean {
-  return table.status === "ACTIVE" && !table.isSpare && state?.state === "free" && table.capacity >= partySize
+  return (
+    table.status === "ACTIVE" &&
+    !table.isSpare &&
+    state?.state === "free" &&
+    (!firstSelected || (table.zoneId === firstSelected.zoneId && table.kind === firstSelected.kind))
+  )
 }
 
 export function useLayoutTableController(model: FloorModel, permissions: readonly string[]) {
@@ -272,14 +287,13 @@ export function useLayoutTableController(model: FloorModel, permissions: readonl
   }, [mergeWorkflow, model.byId, model.states, model.tables])
   const waitlistPickable = useMemo(() => {
     if (waitlistWorkflow.phase !== "SELECTING_WAITLIST_TABLE") return null
+    const firstSelected = model.byId.get(waitlistWorkflow.tableIds[0] ?? -1)
     return new Set(
       model.tables
-        .filter((candidate) =>
-          isValidWaitlistTarget(candidate, model.states.get(candidate.id), waitlistWorkflow.context.partySize),
-        )
+        .filter((candidate) => isValidWaitlistTarget(candidate, model.states.get(candidate.id), firstSelected))
         .map((candidate) => candidate.id),
     )
-  }, [model.states, model.tables, waitlistWorkflow])
+  }, [model.byId, model.states, model.tables, waitlistWorkflow])
   const activePickable =
     waitlistWorkflow.phase === "SELECTING_WAITLIST_TABLE"
       ? waitlistPickable
@@ -290,7 +304,7 @@ export function useLayoutTableController(model: FloorModel, permissions: readonl
   const selectTable = useCallback(
     (tableId: number) => {
       if (waitlistWorkflow.phase === "SELECTING_WAITLIST_TABLE") {
-        if (waitlistPickable?.has(tableId)) dispatchWaitlist({ type: "SELECT", tableId })
+        if (waitlistPickable?.has(tableId)) dispatchWaitlist({ type: "TOGGLE", tableId })
         return
       }
       if (mergeWorkflow.phase === "SELECTING_MERGE_TARGETS") {
@@ -331,12 +345,9 @@ export function useLayoutTableController(model: FloorModel, permissions: readonl
 
   const normalGroupIds = state?.claim?.tableIds ?? (table ? [table.id] : [])
   const targetId = "targetTableId" in workflow ? workflow.targetTableId : null
-  const waitlistTargetId = "targetTableId" in waitlistWorkflow ? waitlistWorkflow.targetTableId : null
   const selectedIds =
     waitlistWorkflow.phase !== "IDLE"
-      ? waitlistTargetId === null
-        ? []
-        : [waitlistTargetId]
+      ? waitlistWorkflow.tableIds
       : mergeWorkflow.phase !== "IDLE"
         ? mergeWorkflow.tableIds
         : moveContext
@@ -370,6 +381,7 @@ export function useLayoutTableController(model: FloorModel, permissions: readonl
     markMergeSuccess: () => dispatchMerge({ type: "SUCCEED" }),
     markMergeError: (message: string) => dispatchMerge({ type: "FAIL", message }),
     cancelWaitlist: () => dispatchWaitlist({ type: "CANCEL" }),
+    confirmWaitlist: () => dispatchWaitlist({ type: "CONFIRM" }),
     backWaitlist: () => dispatchWaitlist({ type: "BACK" }),
     startWaitlistSubmitting: () => dispatchWaitlist({ type: "SUBMIT" }),
     markWaitlistSuccess: () => dispatchWaitlist({ type: "SUCCEED" }),

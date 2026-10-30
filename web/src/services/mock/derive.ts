@@ -191,13 +191,13 @@ function sourceCode(db: MockDb, sourceId: number): BookingSourceCode {
 
 /* ---------------- floor ---------------- */
 
-export function floorState(db: MockDb, now: Date): FloorState {
+export function floorState(db: MockDb, now: Date, selectedBusinessDate?: BusinessDate): FloorState {
   const venue = venueOf(db)
-  const bd = businessDateOf(now)
+  const bd = selectedBusinessDate ?? businessDateOf(now)
   const tables: FloorTableState[] = []
   for (const t of db.tables.values()) {
     if (t.status === "RETIRED") continue
-    const blocking = blockingAllocations(db, t.id, bd)
+    const blocking = blockingAllocations(db, t.id, bd, false)
     const usage = blocking.find((a) => a.kind === "USAGE")
     let state: TableLiveState = t.status === "OUT_OF_SERVICE" ? "oos" : t.isSpare ? "spare" : "free"
     let claim: ClaimView | null = null
@@ -206,7 +206,7 @@ export function floorState(db: MockDb, now: Date): FloorState {
     if (usage && usage.visitId) {
       const v = db.visits.get(usage.visitId)!
       state = "seated"
-      stale = v.businessDate < bd
+      stale = false
       claim = {
         kind: "visit",
         visitId: v.id,
@@ -297,7 +297,7 @@ export function floorState(db: MockDb, now: Date): FloorState {
     if (t.status === "OUT_OF_SERVICE") state = "oos"
     tables.push({ tableId: t.id, state, claim, staleFromPreviousDay: stale })
   }
-  const live = activeAllocations(db).filter((a) => a.businessDate === bd || (a.kind === "USAGE" && a.businessDate < bd))
+  const live = activeAllocations(db).filter((a) => a.businessDate === bd)
   const groups = [...db.groups.values()]
     .filter((g) => !g.dissolvedAt)
     .map((g) => ({

@@ -86,4 +86,33 @@ describe("Phase 2A HTTP API", () => {
     ])
     expect(requested.some((url) => url.includes("mock"))).toBe(false)
   })
+
+  it("queries an explicitly selected historical business date without mixing the current date", async () => {
+    const requestedDates: string[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const parsed = new URL(typeof input === "string" ? input : input.toString())
+        if (parsed.pathname === "/api/v1/tables/catalog") return json(catalog)
+        if (parsed.pathname === "/api/v1/bookings/sources") {
+          return json({ sources: [{ code: "HOTLINE", name: "Hotline" }] })
+        }
+        if (parsed.pathname === "/api/v1/tables") {
+          const date = parsed.searchParams.get("date")!
+          requestedDates.push(date)
+          return json({ businessDate: date, tables: [], groups: [] })
+        }
+        if (parsed.pathname === "/api/v1/bookings") {
+          const date = parsed.searchParams.get("date")!
+          requestedDates.push(date)
+          return json({ businessDate: date, bookings: [] })
+        }
+        return new Response(null, { status: 404 })
+      }),
+    )
+    const api = createHttpApi(new HttpClient("http://api.test"), 1)
+    const result = await api.getFloorState(new Date("2026-10-30T10:00:00.000Z"), "2026-10-29")
+    expect(result.businessDate).toBe("2026-10-29")
+    expect(requestedDates).toEqual(["2026-10-29", "2026-10-29"])
+  })
 })

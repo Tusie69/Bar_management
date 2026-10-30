@@ -193,7 +193,7 @@ export interface GamApi {
 
   // Queries
   getCatalog(): Promise<Catalog>
-  getFloorState(at: Date): Promise<FloorState>
+  getFloorState(at: Date, businessDate?: BusinessDate): Promise<FloorState>
   getAvailability(at: Date, partySize: number): Promise<AvailabilityResult>
   getShiftOverview(): Promise<ShiftOverview>
   listReservations(q: ReservationQuery): Promise<ReservationView[]>

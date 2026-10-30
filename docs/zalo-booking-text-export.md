@@ -33,6 +33,6 @@ Không suy diễn emoji từ tên khách, ghi chú, số lần booking hoặc nh
 ## Quy tắc còn mở
 
 Repository không có “Phụ lục file 03” hoặc mẫu anh Luân ngày 21/10. Vì vậy chưa thể chứng minh output khớp mẫu gốc.
-Các dòng trước/sau `9h30` hiển thị **Chưa xác nhận nghiệp vụ** cho tới khi Product Owner xác nhận mốc giờ, nguồn
+Mốc `9h30` đã được xác nhận là **21:30**. Các dòng trước/sau 21:30 vẫn hiển thị **Chưa xác nhận nghiệp vụ** cho tới khi Product Owner xác nhận nguồn
 timestamp và xử lý ranh giới. Các dòng khách quen O / khách mới N cũng hiển thị trạng thái này cho tới khi backend có
 classification chính thức. Không dùng số 0 giả cho các chỉ số chưa đủ dữ liệu.
