@@ -13,7 +13,9 @@ import {
   closeBooking,
   createBooking,
   createWalkIn,
+  getBookingById,
   updateBooking,
+  type BookingClassification,
   type BookingView,
 } from '../src/modules/bookings/booking.repository.js'
 import { closeVisit, moveVisit } from '../src/modules/visits/visit.repository.js'
@@ -134,7 +136,12 @@ async function resetFixture(): Promise<void> {
   )
 }
 
-function bookingInput(date = '2030-10-24', time = '21:00', guestName = 'Test guest') {
+function bookingInput(
+  date = '2030-10-24',
+  time = '21:00',
+  guestName = 'Test guest',
+  classification: BookingClassification = 'UNCLASSIFIED',
+) {
   const calendarDate = time < '05:00' ? '2030-10-25' : date
   return {
     guestName,
@@ -142,6 +149,7 @@ function bookingInput(date = '2030-10-24', time = '21:00', guestName = 'Test gue
     expectedAt: `${calendarDate}T${time}:00+07:00`,
     businessDate: date,
     sourceCode: 'HOTLINE',
+    classification,
     note: 'Initial note',
   }
 }
@@ -208,6 +216,31 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     )
     expect(allocations.map((allocation) => allocation.kind)).toEqual(['HOLD', 'USAGE'])
     expect(allocations.every((allocation) => allocation.released_at !== null)).toBe(true)
+  })
+
+  it('persists manual O/N classification, supports edits, and keeps legacy NULL rows unclassified', async () => {
+    const created = await createBooking(actor, bookingInput('2030-10-24', '20:00', 'Returning guest', 'RETURNING'))
+    expect(created.classification).toBe('RETURNING')
+    const reread = await row('SELECT customer_classification FROM reservations WHERE id = ?', [created.id])
+    expect(reread.customer_classification).toBe('RETURNING')
+
+    const updated = await updateBooking(actor, created.id, {
+      ...bookingInput('2030-10-24', '20:00', 'Returning guest', 'NEW'),
+      expectedVersion: created.version,
+    })
+    expect(updated.classification).toBe('NEW')
+    const operation = await row(
+      `SELECT changes FROM operation_log WHERE entity_type = 'reservation' AND entity_id = ? ORDER BY id DESC LIMIT 1`,
+      [created.id],
+    )
+    expect(JSON.stringify(operation.changes)).toContain('classification')
+
+    await databasePool.execute(
+      `UPDATE reservations SET customer_classification = NULL WHERE id = ?`,
+      [created.id],
+    )
+    expect((await request(app).get(`/api/v1/bookings/${created.id}`)).status).toBe(401)
+    await expect(getBookingById(actor, created.id)).resolves.toMatchObject({ classification: 'UNCLASSIFIED' })
   })
 
   it('edits information without replacing or modifying the existing HOLD/allocation identity', async () => {
@@ -438,6 +471,14 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       .set('Origin', env.webOrigin).set('X-CSRF-Token', careAuth.csrfToken).send(payload)
     expect(forbidden.status).toBe(403)
 
+    const invalidClassification = await receptionist.put(`/api/v1/bookings/${created.id}`)
+      .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken)
+      .send({ ...payload, classification: 'INFERRED_FROM_PHONE' })
+    expect(invalidClassification.status).toBe(400)
+    expect(JSON.parse(invalidClassification.text)).toMatchObject({
+      error: { code: 'INVALID_BOOKING_CLASSIFICATION' },
+    })
+
     const allowed = await receptionist.put(`/api/v1/bookings/${created.id}`)
       .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken).send(payload)
     expect(allowed.status).toBe(200)
@@ -445,11 +486,17 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken)
       .send({ version: waitlistBody.entry.version, tableIds: [tableOneId] })
     expect(seated.status).toBe(200)
+    const seatedBody = JSON.parse(seated.text) as { reservationId: number }
+    const waitlistReservation = await row(
+      'SELECT customer_classification FROM reservations WHERE id = ?',
+      [seatedBody.reservationId],
+    )
+    expect(waitlistReservation.customer_classification).toBe('UNCLASSIFIED')
   })
 
   it('protects masked search/detail/export and returns real booking data without full phone fields', async () => {
-    const created = await createBooking(actor, bookingInput('2030-10-24', '21:00', 'Nguyễn Minh Search'))
-    const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
+    const created = await createBooking(actor, bookingInput('2030-10-24', '21:00', 'Nguyễn Minh Search', 'RETURNING'))
+    const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId, tableTwoId])
     expect((await request(app).get('/api/v1/bookings/search?date=2030-10-24&q=Minh')).status).toBe(401)
 
     const receptionist = request.agent(app)
@@ -469,7 +516,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     const detail = await receptionist.get(`/api/v1/bookings/${assigned.id}`)
     expect(detail.status).toBe(200)
     expect((JSON.parse(detail.text) as { booking: BookingView }).booking).toMatchObject({
-      guestName: 'Nguyễn Minh Search', tableCodes: ['T1'], phoneLast3: null,
+      guestName: 'Nguyễn Minh Search', tableCodes: ['T1', 'T2'], phoneLast3: null,
     })
     expect(detail.text).not.toContain('phone_ciphertext')
     expect(detail.text).not.toContain('phone_hmac')
@@ -480,9 +527,13 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     await createWaitlistEntry(actor, {
       guestName: 'Export wait two', partySize: 3, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
     })
-    const cancelledDraft = await createBooking(actor, bookingInput('2030-10-24', '22:00', 'Export cancelled'))
-    const cancelledAssigned = await assignBookingTables(actor, cancelledDraft.id, cancelledDraft.version, [tableTwoId])
-    await closeBooking(actor, cancelledAssigned.id, cancelledAssigned.version, 'CANCELLED')
+    const atCutoff = await createBooking(actor, bookingInput('2030-10-24', '21:30', 'New at cutoff', 'NEW'))
+    const afterMidnight = await createBooking(actor, {
+      ...bookingInput('2030-10-24', '00:30', 'After midnight', 'UNCLASSIFIED'),
+      partySize: 2,
+    })
+    const cancelledDraft = await createBooking(actor, bookingInput('2030-10-24', '22:00', 'Export cancelled', 'NEW'))
+    await closeBooking(actor, cancelledDraft.id, cancelledDraft.version, 'CANCELLED')
     await databasePool.execute(
       `INSERT INTO dining_tables
         (id, organization_id, venue_id, zone_id, code, display_name, kind, capacity, status, pos_x, pos_y)
@@ -496,13 +547,20 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     expect(exported.headers['content-disposition']).toContain('21gam-bookings-2030-10-24.txt')
     expect(exported.text).toContain('Danh sách bàn đặt 21Gam thứ Năm, 24/10/2030')
     expect(exported.text).toContain('Nguyễn Minh Search')
-    expect(exported.text).toContain('T1: 21:00 · Nguyễn Minh Search · 4 khách')
+    expect(exported.text).toContain('T1+T2: 21:00 · Nguyễn Minh Search · 4 khách 🔥')
     expect(exported.text).toContain('BC (Bàn Chờ +2)')
     expect(exported.text).toMatch(/BÀN OUT\nT3/)
-    expect(exported.text).toMatch(/BÀN HUỶ\nT2: 22:00 · Export cancelled/)
-    expect(exported.text).toContain('Tổng bàn đặt: 1')
-    expect(exported.text).toContain('Tổng khách đặt: 4')
-    expect(exported.text).toContain('Bàn khách quen O: Chưa xác nhận nghiệp vụ')
+    expect(exported.text).toMatch(/BÀN HUỶ\nChưa gán: 22:00 · Export cancelled/)
+    expect(exported.text).toContain('Tổng bàn đặt: 3')
+    expect(exported.text).toContain('Tổng khách đặt: 10')
+    expect(exported.text).toContain('Khách vào trước 21:30: 4')
+    expect(exported.text).toContain('Khách vào sau 21:30: 6')
+    expect(exported.text).toContain('Bàn khách quen O: 1')
+    expect(exported.text).toContain('Bàn khách mới N: 1')
+    expect(exported.text).toContain('Bàn chưa phân loại: 1')
+    expect(exported.text.match(/Nguyễn Minh Search/g)).toHaveLength(1)
+    expect(atCutoff.classification).toBe('NEW')
+    expect(afterMidnight.businessDate).toBe('2030-10-24')
     expect(exported.text).not.toContain('phone')
   })
 

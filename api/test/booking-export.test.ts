@@ -40,7 +40,7 @@ function input(bookings: DailyBookingTextItem[], options: Partial<DailyBookingTe
     bookings,
     waitlistCount: 0,
     outTables: [],
-    arrivalCutoff: { hour: 21, minute: 30, basis: null, atCutoff: null },
+    arrivalCutoff: { hour: 21, minute: 30, basis: 'EXPECTED_AT', atCutoff: 'AFTER' },
     ...options,
   }
 }
@@ -120,36 +120,55 @@ describe('daily Zalo booking text formatter', () => {
     expect(text).not.toContain('0901234567')
   })
 
-  it('reports unresolved statistics instead of fabricating zero values', () => {
+  it('reports verified zero values and keeps unclassified bookings out of O/N', () => {
     const text = formatDailyBookingText(input([booking(1, ['A1'])]))
-    expect(text).toContain('Khách vào trước 21:30: Chưa xác nhận nghiệp vụ')
-    expect(text).toContain('Khách vào sau 21:30: Chưa xác nhận nghiệp vụ')
-    expect(text).toContain('Bàn khách quen O: Chưa xác nhận nghiệp vụ')
-    expect(text).toContain('Bàn khách mới N: Chưa xác nhận nghiệp vụ')
+    expect(text).toContain('Khách vào trước 21:30: 2')
+    expect(text).toContain('Khách vào sau 21:30: 0')
+    expect(text).toContain('Bàn khách quen O: 0')
+    expect(text).toContain('Bàn khách mới N: 0')
+    expect(text).toContain('Bàn chưa phân loại: 1')
   })
 
-  it('classifies the confirmed 21:30 cutoff by expected_at with an explicit equality policy', () => {
+  it('classifies every confirmed 21:30 expected_at boundary including post-midnight bookings', () => {
     const text = formatDailyBookingText(input([
-      booking(1, ['A1'], { partySize: 3, expectedAt: new Date('2026-10-31T14:29:00.000Z') }),
-      booking(2, ['A2'], { partySize: 4, expectedAt: new Date('2026-10-31T14:30:00.000Z') }),
-      booking(3, ['A3'], { partySize: 5, expectedAt: new Date('2026-10-31T14:31:00.000Z') }),
-    ], {
-      arrivalCutoff: { hour: 21, minute: 30, basis: 'EXPECTED_AT', atCutoff: 'AFTER' },
-    }))
+      booking(1, ['A1'], { partySize: 1, expectedAt: new Date('2026-10-31T13:00:00.000Z') }),
+      booking(2, ['A2'], { partySize: 2, expectedAt: new Date('2026-10-31T14:29:00.000Z') }),
+      booking(3, ['A3'], { partySize: 3, expectedAt: new Date('2026-10-31T14:30:00.000Z') }),
+      booking(4, ['A4'], { partySize: 4, expectedAt: new Date('2026-10-31T14:31:00.000Z') }),
+      booking(5, ['A5'], { partySize: 5, expectedAt: new Date('2026-10-31T16:59:00.000Z') }),
+      booking(6, ['A6'], { partySize: 6, expectedAt: new Date('2026-10-31T17:30:00.000Z') }),
+    ]))
     expect(text).toContain('Khách vào trước 21:30: 3')
-    expect(text).toContain('Khách vào sau 21:30: 9')
+    expect(text).toContain('Khách vào sau 21:30: 18')
   })
 
-  it('can classify 21:30 using checked_in_at without counting missing check-ins', () => {
+  it('uses expected_at even when check-in happens on the other side of the cutoff', () => {
     const text = formatDailyBookingText(input([
-      booking(1, ['A1'], { partySize: 2, checkedInAt: new Date('2026-10-31T14:20:00.000Z') }),
-      booking(2, ['A2'], { partySize: 7, checkedInAt: new Date('2026-10-31T14:40:00.000Z') }),
-      booking(3, ['A3'], { partySize: 9, checkedInAt: null }),
-    ], {
-      arrivalCutoff: { hour: 21, minute: 30, basis: 'CHECKED_IN_AT', atCutoff: 'BEFORE' },
-    }))
+      booking(1, ['A1'], {
+        partySize: 2,
+        expectedAt: new Date('2026-10-31T14:20:00.000Z'),
+        checkedInAt: new Date('2026-10-31T15:00:00.000Z'),
+      }),
+      booking(2, ['A2'], {
+        partySize: 7,
+        expectedAt: new Date('2026-10-31T14:40:00.000Z'),
+        checkedInAt: new Date('2026-10-31T14:00:00.000Z'),
+      }),
+    ]))
     expect(text).toContain('Khách vào trước 21:30: 2')
     expect(text).toContain('Khách vào sau 21:30: 7')
+  })
+
+  it('counts each multi-table booking once and aggregates manual O/N only', () => {
+    const text = formatDailyBookingText(input([
+      booking(1, ['A1', 'A2'], { metadata: { ...metadata, returningCustomer: true } }),
+      booking(2, ['B3'], { metadata: { ...metadata, returningCustomer: false } }),
+      booking(3, ['C4'], { metadata }),
+    ]))
+    expect(text).toContain('Tổng bàn đặt: 3')
+    expect(text).toContain('Bàn khách quen O: 1')
+    expect(text).toContain('Bàn khách mới N: 1')
+    expect(text).toContain('Bàn chưa phân loại: 1')
   })
 
   it('does not drop bookings from a catalog zone outside the confirmed fixed list', () => {

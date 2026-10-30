@@ -24,6 +24,10 @@ Base URL môi trường phát triển: `http://localhost:3000/api/v1`.
 | GET | `/waitlist?date=YYYY-MM-DD` | Danh sách chờ của venue theo FIFO (`queuedAt`, sau đó `id`) |
 | POST | `/waitlist` | Thêm khách walk-in vào danh sách chờ |
 | POST | `/waitlist/:id/seat` | Chuyển khách chờ thành booking và giữ một hoặc nhiều bàn |
+| GET | `/bookings?date=YYYY-MM-DD` | Danh sách booking, gồm classification thủ công |
+| POST | `/bookings` | Tạo booking |
+| PUT | `/bookings/:id` | Sửa booking với optimistic locking |
+| GET | `/bookings/export?date=YYYY-MM-DD` | Xuất text Zalo và thống kê theo ngày nghiệp vụ |
 
 ## Waitlist trên Floor Layout
 
@@ -54,13 +58,18 @@ Phản hồi `{ businessDate, entries }`. Mỗi entry gồm `id`, `kind`, `guest
 { "version": 1, "tableIds": [123] }
 ```
 
-Trong một transaction, backend khóa entry và bàn, kiểm tra version, trạng thái `WAITING`, tổng capacity, cùng khu, cùng loại bàn, khu được phép booking, bàn ACTIVE, bàn sơ cua và allocation conflict; sau đó tạo đúng một reservation `BOOKED`, một `table_holds` loại `RESERVATION`, một allocation `HOLD` cho mỗi bàn, và một `table_groups` dùng chung khi chọn nhiều bàn. Cuối cùng backend chuyển entry thành `ADVANCE_RESERVATION/HOLD_ACTIVE` và ghi audit `WAITLIST_ASSIGNED_TO_RESERVATION`. Không tạo active visit; Floor State vì vậy hiển thị các bàn `RESERVED` với cùng group/highlight. Mọi ghi thay đổi được rollback nếu một bước thất bại.
+Trong một transaction, backend khóa entry và bàn, kiểm tra version, trạng thái `WAITING`, tổng capacity, cùng khu, cùng loại bàn, khu được phép booking, bàn ACTIVE, bàn sơ cua và allocation conflict; sau đó tạo đúng một reservation `BOOKED` với `customer_classification = UNCLASSIFIED`, một `table_holds` loại `RESERVATION`, một allocation `HOLD` cho mỗi bàn, và một `table_groups` dùng chung khi chọn nhiều bàn. Cuối cùng backend chuyển entry thành `ADVANCE_RESERVATION/HOLD_ACTIVE` và ghi audit `WAITLIST_ASSIGNED_TO_RESERVATION`. Không tạo active visit; Floor State vì vậy hiển thị các bàn `RESERVED` với cùng group/highlight. Mọi ghi thay đổi được rollback nếu một bước thất bại.
 
 Response: `{ entry, reservationId }`. Các lỗi chính: `VERSION_CONFLICT`, `WAITLIST_NOT_SEATABLE`, `INSUFFICIENT_TABLE_CAPACITY`, `TABLE_ALREADY_OCCUPIED`, `SPARE_TABLE_NOT_BOOKABLE`, `WAITLIST_BOOKING_SOURCE_MISSING`.
 
-## API dự kiến tiếp theo
+## Booking classification
 
-Các endpoint dưới đây là hợp đồng đang nghiên cứu, chưa triển khai cho tới khi schema CSDL được duyệt.
+Payload tạo/sửa booking nhận `classification`: `RETURNING`, `NEW` hoặc `UNCLASSIFIED`. Trường không hợp lệ trả
+`INVALID_BOOKING_CLASSIFICATION`. Nếu client cũ bỏ qua trường này, create dùng `UNCLASSIFIED` còn update giữ nguyên
+giá trị hiện tại. Response list/detail luôn trả một trong ba giá trị; database `NULL` cũ được ánh xạ thành
+`UNCLASSIFIED`. Classification thuộc booking, không thuộc customer profile.
+
+## API booking
 
 | Phương thức | Đường dẫn | Mô tả |
 | --- | --- | --- |
@@ -75,5 +84,7 @@ Các endpoint dưới đây là hợp đồng đang nghiên cứu, chưa triển
 
 Yêu cầu session hợp lệ và quyền `customer.view_masked`. Response là `text/plain; charset=utf-8`, lấy booking,
 allocation, bàn `OUT_OF_SERVICE` và bộ đếm waitlist trong cùng một MySQL transaction read snapshot. Query và formatter
-không đọc/xuất số điện thoại, `phoneLast3`, ciphertext, HMAC hay customer ID. Endpoint chỉ trả text; không gửi sang Zalo.
+không đọc/xuất số điện thoại, `phoneLast3`, ciphertext, HMAC hay customer ID. Thống kê trước/sau cộng `party_size`
+theo `expected_at` với cutoff 21:30 giờ Việt Nam (`>=` thuộc nhóm sau); O/N đếm booking theo classification và báo
+riêng số `UNCLASSIFIED`. Endpoint chỉ trả text; không gửi sang Zalo.
 

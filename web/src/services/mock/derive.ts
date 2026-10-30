@@ -509,6 +509,7 @@ export function reservationView(db: MockDb, r: ReservationRow, now: Date): Reser
     partySize: r.partySize,
     expectedAt: r.expectedAt,
     businessDate: r.businessDate,
+    classification: r.customerClassification,
     status: r.status,
     sourceCode: sourceCode(db, r.sourceId),
     note: r.note,

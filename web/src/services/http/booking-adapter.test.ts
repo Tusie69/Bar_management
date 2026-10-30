@@ -17,6 +17,7 @@ const backendBooking = (patch: Partial<BackendBookingPayload> = {}): BackendBook
   partySize: 4,
   expectedAt: new Date("2030-10-24T14:00:00.000Z"),
   businessDate: "2030-10-24",
+  classification: "UNCLASSIFIED",
   status: "BOOKED",
   source: "Hotline",
   sourceCode: "HOTLINE",
@@ -50,6 +51,7 @@ describe("booking contract adapter", () => {
         expectedAt: new Date("2030-10-24T14:30:00.000Z"),
         businessDate: "2030-10-24",
         sourceCode: "HOTLINE",
+        classification: "RETURNING",
         note: "  Sinh nhật  ",
         phoneNumber: " 0987 654 321 ",
       }),
@@ -59,6 +61,7 @@ describe("booking contract adapter", () => {
       expectedAt: "2030-10-24T21:30:00+07:00",
       businessDate: "2030-10-24",
       sourceCode: "HOTLINE",
+      classification: "RETURNING",
       note: "Sinh nhật",
       phoneNumber: "0987 654 321",
     })
@@ -72,6 +75,7 @@ describe("booking contract adapter", () => {
       expectedAt: "2030-10-24T21:00:00+07:00",
       businessDate: "2030-10-24",
       sourceCode: "HOTLINE",
+      classification: "UNCLASSIFIED",
       note: "Ghi chú gốc",
       version: 3,
     })

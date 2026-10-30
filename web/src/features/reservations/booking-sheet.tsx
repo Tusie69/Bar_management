@@ -33,7 +33,7 @@ import {
   slotLabel,
   validateBookingTime,
 } from "@/domain/booking-rules"
-import { SOURCE_LABEL, type BookingSourceCode } from "@/domain/enums"
+import { SOURCE_LABEL, type BookingClassification, type BookingSourceCode } from "@/domain/enums"
 import { useAction } from "@/hooks/use-action"
 import { useAvailability, useNow } from "@/hooks/use-data"
 import { NOTE_PHONE_ERROR, isPlausibleVnPhone, noteHasPhoneNumber } from "@/lib/text"
@@ -55,6 +55,7 @@ const guestSchema = z
       .trim()
       .refine((v) => v === "" || isPlausibleVnPhone(v), "Số điện thoại 10 số, bắt đầu bằng 0"),
     sourceCode: z.string().min(1, "Chọn nguồn đặt"),
+    classification: z.enum(["RETURNING", "NEW", "UNCLASSIFIED"]),
     note: z
       .string()
       .max(500, "Tối đa 500 ký tự")
@@ -103,7 +104,7 @@ function BookingBody() {
 
   const form = useForm<GuestForm>({
     resolver: zodResolver(guestSchema),
-    defaultValues: { contactName: "", phone: "", sourceCode: "HOTLINE", note: "" },
+    defaultValues: { contactName: "", phone: "", sourceCode: "HOTLINE", classification: "UNCLASSIFIED", note: "" },
     mode: "onTouched",
   })
 
@@ -164,6 +165,7 @@ function BookingBody() {
         partySize: party,
         expectedAt: at,
         sourceCode: v.sourceCode as BookingSourceCode,
+        classification: v.classification as BookingClassification,
         note: v.note || undefined,
         tableIds: later ? [] : tables,
         overrideReason: o,
@@ -392,6 +394,21 @@ function BookingBody() {
                 </SelectContent>
               </Select>
             </Field>
+            <Field id="bk-classification" label="Loại khách">
+              <Select
+                value={v.classification}
+                onValueChange={(val) => form.setValue("classification", val as BookingClassification)}
+              >
+                <SelectTrigger id="bk-classification" className="h-11 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="UNCLASSIFIED">Chưa phân loại</SelectItem>
+                  <SelectItem value="NEW">Khách mới (N)</SelectItem>
+                  <SelectItem value="RETURNING">Khách quen (O)</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
             <Field
               id="bk-note"
               label="Ghi chú"
@@ -437,6 +454,16 @@ function BookingBody() {
                 v={v.phone ? <MaskedPhone last3={v.phone.replace(/\D/g, "").slice(-3)} /> : "Không có"}
               />
               <Summary k="Nguồn" v={SOURCE_LABEL[v.sourceCode as BookingSourceCode]} />
+              <Summary
+                k="Loại khách"
+                v={
+                  v.classification === "RETURNING"
+                    ? "Khách quen (O)"
+                    : v.classification === "NEW"
+                      ? "Khách mới (N)"
+                      : "Chưa phân loại"
+                }
+              />
               {v.note ? <Summary k="Ghi chú" v={v.note} /> : null}
             </dl>
             <p className="text-xs text-muted-foreground">

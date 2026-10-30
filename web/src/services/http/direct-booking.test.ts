@@ -16,6 +16,7 @@ const created: HttpBooking = {
   partySize: fields.partySize,
   expectedAt: fields.expectedAt,
   businessDate: fields.businessDate,
+  classification: "UNCLASSIFIED",
   status: "BOOKED",
   source: "Hotline",
   sourceCode: fields.sourceCode,

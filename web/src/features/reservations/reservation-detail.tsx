@@ -25,6 +25,7 @@ import {
   PREFERENCE_MODE_LABEL,
   RESERVATION_STATUS_LABEL,
   SOURCE_LABEL,
+  type BookingClassification,
   type BookingSourceCode,
   type ReservationCloseReason,
   type WaitlistPreferenceMode,
@@ -143,6 +144,16 @@ function Detail({ r }: { r: ReservationView }) {
           <Item k="Ngày kinh doanh" v={fmtBusinessDate(r.businessDate)} />
           <Item k="Số khách" v={`${r.partySize} khách`} />
           <Item k="Nguồn" v={SOURCE_LABEL[r.sourceCode]} />
+          <Item
+            k="Loại khách"
+            v={
+              r.classification === "RETURNING"
+                ? "Khách quen (O)"
+                : r.classification === "NEW"
+                  ? "Khách mới (N)"
+                  : "Chưa phân loại"
+            }
+          />
           <Item
             k="Bàn"
             v={
@@ -346,6 +357,7 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
   const [name, setName] = useState(r.displayName)
   const [note, setNote] = useState(r.note ?? "")
   const [source, setSource] = useState<BookingSourceCode>(r.sourceCode)
+  const [classification, setClassification] = useState<BookingClassification>(r.classification)
   const invalid = noteHasPhoneNumber(note)
   return (
     <>
@@ -384,6 +396,19 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
           </Select>
         </div>
         <div className="grid gap-1.5">
+          <Label htmlFor="ed-classification">Loại khách</Label>
+          <Select value={classification} onValueChange={(v) => setClassification(v as BookingClassification)}>
+            <SelectTrigger id="ed-classification" className="h-11 w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="UNCLASSIFIED">Chưa phân loại</SelectItem>
+              <SelectItem value="NEW">Khách mới (N)</SelectItem>
+              <SelectItem value="RETURNING">Khách quen (O)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-1.5">
           <Label htmlFor="ed-note">Ghi chú</Label>
           <Textarea
             id="ed-note"
@@ -410,6 +435,7 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
                 partySize: party,
                 expectedAt: atBusinessTime(r.businessDate, time),
                 sourceCode: source,
+                classification,
                 note,
               }),
             )

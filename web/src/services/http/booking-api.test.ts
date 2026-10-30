@@ -9,6 +9,7 @@ const booking = {
   partySize: 2,
   expectedAt: "2030-10-24T12:00:00.000Z",
   businessDate: "2030-10-24",
+  classification: "UNCLASSIFIED" as const,
   status: "BOOKED",
   source: "Hotline",
   sourceCode: "HOTLINE",

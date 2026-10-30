@@ -275,8 +275,8 @@ export async function seatWaitlistEntry(
     const [reservation] = await connection.execute<ResultSetHeader>(
       `INSERT INTO reservations
         (organization_id, venue_id, customer_id, contact_name, contact_name_search, source_id,
-         party_size, expected_at, business_date, status, note, created_by_user_id)
-       VALUES (?, ?, ?, ?, LOWER(?), ?, ?, UTC_TIMESTAMP(3), ?, 'BOOKED', ?, ?)`,
+         party_size, expected_at, business_date, customer_classification, status, note, created_by_user_id)
+       VALUES (?, ?, ?, ?, LOWER(?), ?, ?, UTC_TIMESTAMP(3), ?, 'UNCLASSIFIED', 'BOOKED', ?, ?)`,
       [actor.organizationId, actor.venueId, entry.customer_id,
         entry.customer_id === null ? entry.contact_name : null,
         entry.customer_id === null ? entry.contact_name : null,

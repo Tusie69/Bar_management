@@ -2,7 +2,7 @@ import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { databasePool } from '../../database/pool.js'
-import type { BookingStatus } from './booking.repository.js'
+import type { BookingClassification, BookingStatus } from './booking.repository.js'
 
 interface ExportRow extends RowDataPacket {
   id: number
@@ -11,6 +11,7 @@ interface ExportRow extends RowDataPacket {
   expected_at: Date
   checked_in_at: Date | null
   status: BookingStatus
+  customer_classification: BookingClassification | null
   allocation_id: number | null
   table_code: string | null
   zone_code: string | null
@@ -54,8 +55,8 @@ export interface DailyBookingTextInput {
   arrivalCutoff: {
     hour: 21
     minute: 30
-    basis: 'EXPECTED_AT' | 'CHECKED_IN_AT' | null
-    atCutoff: 'BEFORE' | 'AFTER' | null
+    basis: 'EXPECTED_AT'
+    atCutoff: 'AFTER'
   }
 }
 
@@ -173,30 +174,15 @@ function ordered(items: DailyBookingTextItem[], zone: string): DailyBookingTextI
   })
 }
 
-function unknownStatistic(reason: string): string {
-  return `Chưa xác nhận nghiệp vụ (${reason})`
-}
-
 function arrivalCounts(input: DailyBookingTextInput, active: DailyBookingTextItem[]): { before: string; after: string } {
-  if (!input.arrivalCutoff.basis || !input.arrivalCutoff.atCutoff) {
-    const missing = unknownStatistic('đã chốt 21:30; chưa chốt timestamp phân loại và cách tính đúng 21:30')
-    return { before: missing, after: missing }
-  }
-  const cutoffMinutes = input.arrivalCutoff.hour * 60 + input.arrivalCutoff.minute
+  const hour = String(input.arrivalCutoff.hour).padStart(2, '0')
+  const minute = String(input.arrivalCutoff.minute).padStart(2, '0')
+  const cutoff = new Date(`${input.businessDate}T${hour}:${minute}:00+07:00`).getTime()
   let before = 0
   let after = 0
   for (const item of active) {
-    const value = input.arrivalCutoff.basis === 'CHECKED_IN_AT' ? item.checkedInAt : item.expectedAt
-    if (!value) continue
-    const parts = new Intl.DateTimeFormat('en-GB', {
-      timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', hour12: false,
-    }).formatToParts(value)
-    const hour = Number(parts.find((part) => part.type === 'hour')?.value)
-    const minute = Number(parts.find((part) => part.type === 'minute')?.value)
-    const itemMinutes = hour * 60 + minute
-    if (itemMinutes < cutoffMinutes || (itemMinutes === cutoffMinutes && input.arrivalCutoff.atCutoff === 'BEFORE')) {
-      before += item.partySize
-    } else after += item.partySize
+    if (item.expectedAt.getTime() < cutoff) before += item.partySize
+    else after += item.partySize
   }
   return { before: String(before), after: String(after) }
 }
@@ -245,10 +231,9 @@ export function formatDailyBookingText(input: DailyBookingTextInput): string {
   if (noShows.length) lines.push('', 'KHÔNG ĐẾN', ...ordered(noShows, '').map(bookingLine))
 
   const arrivals = arrivalCounts(input, active)
-  const classificationsKnown = active.length > 0
-    && active.every((item) => item.metadata.returningCustomer !== null)
-  const returning = classificationsKnown ? String(active.filter((item) => item.metadata.returningCustomer).length) : unknownStatistic('backend chưa có phân loại khách')
-  const newCustomers = classificationsKnown ? String(active.filter((item) => item.metadata.returningCustomer === false).length) : unknownStatistic('backend chưa có phân loại khách')
+  const returning = active.filter((item) => item.metadata.returningCustomer === true).length
+  const newCustomers = active.filter((item) => item.metadata.returningCustomer === false).length
+  const unclassified = active.filter((item) => item.metadata.returningCustomer === null).length
   lines.push(
     '',
     'THỐNG KÊ',
@@ -258,6 +243,7 @@ export function formatDailyBookingText(input: DailyBookingTextInput): string {
     `Tổng khách đặt: ${active.reduce((total, item) => total + item.partySize, 0)}`,
     `Bàn khách quen O: ${returning}`,
     `Bàn khách mới N: ${newCustomers}`,
+    `Bàn chưa phân loại: ${unclassified}`,
     `Tổng khách đã đến: ${active.filter((item) => item.status === 'CHECKED_IN').reduce((total, item) => total + item.partySize, 0)}`,
   )
   return `${lines.join('\n').trimEnd()}\n`
@@ -266,7 +252,7 @@ export function formatDailyBookingText(input: DailyBookingTextInput): string {
 async function loadBookingRows(connection: PoolConnection, actor: AuthenticatedActor, businessDate: string) {
   const [rows] = await connection.execute<ExportRow[]>(
     `SELECT r.id, COALESCE(c.display_name, r.contact_name, 'Khách') AS guest_name,
-       r.party_size, r.expected_at, r.checked_in_at, r.status,
+       r.party_size, r.expected_at, r.checked_in_at, r.status, r.customer_classification,
        a.id AS allocation_id, dt.code AS table_code, z.code AS zone_code, z.name AS zone_name
      FROM reservations AS r
      LEFT JOIN customers AS c ON c.organization_id = r.organization_id AND c.id = r.customer_id
@@ -296,7 +282,15 @@ function normalizeBookings(rows: ExportRow[]): DailyBookingTextItem[] {
       item = {
         id: Number(row.id), guestName: row.guest_name, partySize: Number(row.party_size),
         expectedAt: row.expected_at, checkedInAt: row.checked_in_at, status: row.status, tables: [],
-        metadata: { bossTable: false, returningCustomer: null, designated: false, birthday: false, round: null },
+        metadata: {
+          bossTable: false,
+          returningCustomer: row.customer_classification === 'RETURNING'
+            ? true
+            : row.customer_classification === 'NEW' ? false : null,
+          designated: false,
+          birthday: false,
+          round: null,
+        },
       }
       items.set(item.id, item)
     }
@@ -336,8 +330,7 @@ export async function getDailyBookingTextInput(
       bookings: normalizeBookings(rows),
       waitlistCount: Number(waitlistRows[0]?.waiting_count ?? 0),
       outTables: outRows.map((row) => ({ code: row.code, zoneCode: row.zone_code, zoneName: row.zone_name })),
-      // Product confirmed 9h30 means 21:30. Timestamp basis and exact-boundary bucket remain open.
-      arrivalCutoff: { hour: 21, minute: 30, basis: null, atCutoff: null },
+      arrivalCutoff: { hour: 21, minute: 30, basis: 'EXPECTED_AT', atCutoff: 'AFTER' },
     }
   } catch (error) {
     await connection.rollback()

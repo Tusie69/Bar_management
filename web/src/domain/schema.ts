@@ -19,6 +19,7 @@ import type {
   HoldReleaseReason,
   HoldStatus,
   ReservationCloseReason,
+  BookingClassification,
   ReservationHoldPolicy,
   ReservationStatus,
   RoleCode,
@@ -220,6 +221,7 @@ export interface ReservationRow extends Versioned {
   partySize: number
   expectedAt: Date
   businessDate: BusinessDate
+  customerClassification: BookingClassification
   status: ReservationStatus
   note: string | null
   visitId: Id | null

@@ -11,6 +11,7 @@ export type CustomerStatus = "ACTIVE" | "MERGED" | "ANONYMIZED"
 export type ReservationHoldPolicy = "SEQUENTIAL" | "WINDOWED"
 
 export type ReservationStatus = "BOOKED" | "CHECKED_IN" | "CANCELLED" | "NO_SHOW"
+export type BookingClassification = "RETURNING" | "NEW" | "UNCLASSIFIED"
 export type ReservationCloseReason =
   "CUSTOMER_REQUEST" | "NO_SHOW_CONFIRMED" | "DUPLICATE" | "ENTRY_ERROR" | "VENUE_DECISION" | "OTHER"
 

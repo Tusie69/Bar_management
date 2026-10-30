@@ -17,6 +17,7 @@ import {
   revealBookingPhone,
   searchBookings,
   updateBooking,
+  type BookingClassification,
 } from './booking.repository.js'
 import { formatDailyBookingText, getDailyBookingTextInput } from './booking-export.js'
 import { assertCurrentBusinessDate, validateCalendarDate } from './business-date.js'
@@ -58,9 +59,16 @@ function optionalText(value: unknown, maximum: number, code: string, message: st
   return value.trim() || undefined
 }
 
+function optionalClassification(value: unknown): BookingClassification | undefined {
+  if (value === undefined) return undefined
+  if (value === 'RETURNING' || value === 'NEW' || value === 'UNCLASSIFIED') return value
+  throw new AppError(400, 'INVALID_BOOKING_CLASSIFICATION', 'Loại khách không hợp lệ.')
+}
+
 function bookingBody(value: unknown) {
   const body = objectBody(value)
   const note = optionalText(body.note, 500, 'INVALID_NOTE', 'Ghi chú không được vượt quá 500 ký tự.')
+  const classification = optionalClassification(body.classification)
   let phoneNumber: string | null | undefined
   if (Object.prototype.hasOwnProperty.call(body, 'phoneNumber')) {
     if (body.phoneNumber !== null && (typeof body.phoneNumber !== 'string' || body.phoneNumber.length > 40)) {
@@ -75,6 +83,7 @@ function bookingBody(value: unknown) {
     expectedAt: requiredText(body.expectedAt, 40, 'INVALID_EXPECTED_AT', 'Giờ khách đến không hợp lệ.'),
     businessDate: businessDate(body.businessDate),
     sourceCode: requiredText(body.sourceCode, 30, 'INVALID_SOURCE', 'Nguồn đặt bàn không hợp lệ.'),
+    ...(classification === undefined ? {} : { classification }),
     ...(note === undefined ? {} : { note }),
     ...(phoneNumber === undefined ? {} : { phoneNumber }),
     body,

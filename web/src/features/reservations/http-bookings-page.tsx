@@ -36,6 +36,7 @@ import {
   createAndAssignDirectBooking,
   type AssignmentTable,
   type BookingWriteFields,
+  type BookingClassification,
   type HttpBooking,
 } from "@/services"
 import { useCan } from "@/state/session"
@@ -610,6 +611,7 @@ function BookingEditorBody({
   const [date, setDate] = useState<BusinessDate>(booking?.businessDate ?? defaultBusinessDate)
   const [time, setTime] = useState(booking ? fmtTime(booking.expectedAt) : "19:00")
   const [source, setSource] = useState<BookingSourceCode>(booking?.sourceCode ?? sources[0]?.code ?? "HOTLINE")
+  const [classification, setClassification] = useState<BookingClassification>(booking?.classification ?? "UNCLASSIFIED")
   const [note, setNote] = useState(booking?.note ?? "")
   const [phone, setPhone] = useState("")
   const [removePhone, setRemovePhone] = useState(false)
@@ -632,6 +634,7 @@ function BookingEditorBody({
         expectedAt: atBusinessTime(date, time),
         businessDate: date,
         sourceCode: source,
+        classification,
         note,
         ...(phone.trim() ? { phoneNumber: phone } : booking && removePhone ? { phoneNumber: null } : {}),
       }
@@ -738,6 +741,17 @@ function BookingEditorBody({
             </select>
           </Field>
         </div>
+        <Field label="Loại khách">
+          <select
+            value={classification}
+            onChange={(e) => setClassification(e.target.value as BookingClassification)}
+            className="h-11 rounded-md border bg-background px-3"
+          >
+            <option value="UNCLASSIFIED">Chưa phân loại</option>
+            <option value="NEW">Khách mới (N)</option>
+            <option value="RETURNING">Khách quen (O)</option>
+          </select>
+        </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Ngày nghiệp vụ">
             <Input type="date" value={date} onChange={(e) => setDate(e.target.value as BusinessDate)} />

@@ -6,6 +6,7 @@
 import type { BusinessDate } from "@/lib/time"
 import type {
   BookingSourceCode,
+  BookingClassification,
   ContactAttemptChannel,
   ContactOutcome,
   DeadlineBasis,
@@ -216,6 +217,7 @@ export interface ReservationView {
   partySize: number
   expectedAt: Date
   businessDate: BusinessDate
+  classification: BookingClassification
   status: ReservationStatus
   sourceCode: BookingSourceCode
   note: string | null

@@ -568,6 +568,7 @@ export class MockGamApi implements GamApi, DemoControls {
             partySize: 2,
             expectedAt: at,
             businessDate: bd,
+            customerClassification: "UNCLASSIFIED",
             status: "BOOKED",
             note: null,
             visitId: null,
@@ -739,6 +740,7 @@ export class MockGamApi implements GamApi, DemoControls {
           partySize: input.partySize,
           expectedAt: input.expectedAt,
           businessDate: bd,
+          customerClassification: input.classification ?? "UNCLASSIFIED",
           status: "BOOKED",
           note: input.note?.trim() || null,
           visitId: null,
@@ -798,6 +800,7 @@ export class MockGamApi implements GamApi, DemoControls {
       if (input.sourceCode)
         row.sourceId = [...this.db.sources.values()].find((s) => s.code === input.sourceCode)?.id ?? row.sourceId
       if (input.note !== undefined) row.note = input.note?.trim() || null
+      if (input.classification !== undefined) row.customerClassification = input.classification
       if (input.expectedAt && input.expectedAt.getTime() !== row.expectedAt.getTime()) {
         const newBd = businessDateOf(input.expectedAt)
         notes.push(`giờ ${fmtTime(row.expectedAt)} → ${fmtTime(input.expectedAt)}`)

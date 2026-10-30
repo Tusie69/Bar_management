@@ -26,6 +26,7 @@ const common = {
 const credentialEnv = { ...common, E2E_USERNAME: username, E2E_PASSWORD: password }
 const children = []
 let browser
+let secondContext
 
 function run(command, args, env = common) {
   const result = spawnSync(command, args, { cwd: root, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
@@ -111,9 +112,23 @@ try {
   await dialog.locator("input").first().fill(guestName)
   await dialog.locator('input[type="number"]').fill("3")
   await dialog.locator('input[type="time"]').fill("19:30")
+  await dialog.getByLabel("Loại khách").selectOption("RETURNING")
   await dialog.getByRole("button", { name: "Lưu qua backend" }).click()
   await page.getByText("Chi tiết booking", { exact: true }).waitFor()
   await page.getByText(guestName, { exact: true }).first().waitFor()
+
+  await page.keyboard.press("Escape")
+  await page.getByText("Chi tiết booking", { exact: true }).waitFor({ state: "hidden" })
+  await page.getByRole("button", { name: "Xuất text Zalo" }).click()
+  dialog = page.getByRole("dialog").last()
+  const returningExport = dialog.getByLabel("Nội dung text booking")
+  await returningExport.waitFor()
+  if (!(await returningExport.inputValue()).includes("Bàn khách quen O: 1")) {
+    throw new Error("Returning classification was not reflected in Zalo export")
+  }
+  await page.keyboard.press("Escape")
+  await page.getByText(guestName, { exact: true }).first().click()
+  await page.getByText("Chi tiết booking", { exact: true }).waitFor()
 
   await page.getByRole("button", { name: "Phân bàn", exact: true }).click()
   dialog = page.getByRole("dialog").last()
@@ -134,10 +149,35 @@ try {
   await page.getByText(guestName, { exact: true }).first().click()
   await page.getByRole("button", { name: "Chỉnh sửa" }).click()
   dialog = page.getByRole("dialog").last()
+  if ((await dialog.getByLabel("Loại khách").inputValue()) !== "RETURNING") {
+    throw new Error("Returning classification was not persisted for edit")
+  }
   await dialog.locator('input[type="number"]').fill("5")
+  await dialog.getByLabel("Loại khách").selectOption("NEW")
   await dialog.getByRole("button", { name: "Lưu qua backend" }).click()
   await page.getByText("Chi tiết booking", { exact: true }).waitFor()
   await page.getByText("5", { exact: true }).first().waitFor()
+
+  secondContext = await browser.newContext({ viewport: { width: 390, height: 844 } })
+  const secondPage = await secondContext.newPage()
+  await secondPage.goto(webUrl, { waitUntil: "networkidle" })
+  await secondPage.getByLabel("Tên đăng nhập").fill(username)
+  await secondPage.getByLabel("Mật khẩu").fill(password)
+  await secondPage.getByRole("button", { name: "Đăng nhập", exact: true }).click()
+  await secondPage.getByRole("button", { name: "Booking", exact: true }).click()
+  await secondPage.getByRole("button", { name: "Xuất text Zalo" }).click()
+  const secondExport = secondPage.getByRole("dialog").getByLabel("Nội dung text booking")
+  await secondExport.waitFor()
+  const secondText = await secondExport.inputValue()
+  if (!secondText.includes("Bàn khách quen O: 0") || !secondText.includes("Bàn khách mới N: 1")) {
+    throw new Error("Second browser did not observe the updated O/N statistics")
+  }
+  if (!secondText.includes("Khách vào trước 21:30: 5")) {
+    throw new Error("Second browser did not observe expected_at statistics")
+  }
+  if (/0987|phone|ciphertext|hmac/i.test(secondText)) throw new Error("Sensitive phone data leaked in export")
+  await secondContext.close()
+  secondContext = null
 
   await page.getByRole("button", { name: "Đổi bàn", exact: true }).click()
   dialog = page.getByRole("dialog").last()
@@ -187,6 +227,9 @@ try {
       reassign: "PASS",
       assignmentPersistence: "PASS",
       update: "PASS",
+      classification: "PASS",
+      exportStatistics: "PASS",
+      twoBrowserSync: "PASS",
       cancel: "PASS",
       reload: "PASS",
       floorRefetch: "PASS",
@@ -194,6 +237,7 @@ try {
     }),
   )
 } finally {
+  if (secondContext) await secondContext.close()
   if (browser) await browser.close()
   stopChildren()
   try {

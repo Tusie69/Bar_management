@@ -41,7 +41,7 @@ export const demo = selectedDemo
 export { clock } from "./clock"
 export * from "./contracts"
 export type { AuthSession, AuthenticatedUser } from "./http/auth-api"
-export type { AssignmentTable, BookingWriteFields, HttpBooking } from "./http/booking-adapter"
+export type { AssignmentTable, BookingClassification, BookingWriteFields, HttpBooking } from "./http/booking-adapter"
 export type { HttpWaitlistEntry, HttpWaitlistStatus } from "./http/waitlist-api"
 export { activeWaitlistEntries } from "./http/waitlist-api"
 export { createAndAssignDirectBooking } from "./http/direct-booking"

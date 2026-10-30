@@ -15,6 +15,7 @@
 import type { BusinessDate } from "@/lib/time"
 import type {
   BookingSourceCode,
+  BookingClassification,
   ContactAttemptChannel,
   ContactOutcome,
   HoldReleaseReason,
@@ -90,6 +91,7 @@ export interface CreateReservationInput {
   note?: string
   tableIds?: number[]
   overrideReason?: string
+  classification?: BookingClassification
 }
 
 export interface UpdateReservationInput {
@@ -100,6 +102,7 @@ export interface UpdateReservationInput {
   expectedAt?: Date
   sourceCode?: BookingSourceCode
   note?: string | null
+  classification?: BookingClassification
 }
 
 export interface WalkInInput {

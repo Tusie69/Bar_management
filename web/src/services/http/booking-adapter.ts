@@ -5,9 +5,11 @@ import { ApiError } from "../contracts"
 const sourceCodes = ["HOTLINE", "FANPAGE", "ZALO", "SHAREHOLDER", "STAFF", "SOCIAL", "OTHER"] as const
 const statuses = ["BOOKED", "CHECKED_IN", "CANCELLED", "NO_SHOW"] as const
 const displayStatuses = ["UPCOMING", "WAITING", "LATE", "NO_SHOW", "CHECKED_IN", "CANCELLED"] as const
+const classifications = ["RETURNING", "NEW", "UNCLASSIFIED"] as const
 
 export type BookingStatus = (typeof statuses)[number]
 export type BookingDisplayStatus = (typeof displayStatuses)[number]
+export type BookingClassification = (typeof classifications)[number]
 
 export interface BackendBookingPayload {
   id: number
@@ -16,6 +18,7 @@ export interface BackendBookingPayload {
   partySize: number
   expectedAt: Date
   businessDate: string
+  classification: string
   status: string
   source: string
   sourceCode: string
@@ -34,6 +37,7 @@ export interface HttpBooking {
   partySize: number
   expectedAt: Date
   businessDate: BusinessDate
+  classification: BookingClassification
   status: BookingStatus
   source: string
   sourceCode: BookingSourceCode
@@ -53,6 +57,7 @@ export interface BookingWriteFields {
   sourceCode: BookingSourceCode
   note?: string | null
   phoneNumber?: string | null
+  classification?: BookingClassification
 }
 
 export interface BookingCreatePayload {
@@ -63,6 +68,7 @@ export interface BookingCreatePayload {
   sourceCode: BookingSourceCode
   note?: string
   phoneNumber?: string | null
+  classification?: BookingClassification
 }
 
 export interface BookingUpdatePayload extends BookingCreatePayload {
@@ -108,6 +114,9 @@ export function mapBooking(payload: BackendBookingPayload): HttpBooking {
   if (!includes(sourceCodes, payload.sourceCode)) {
     contractError("UNSUPPORTED_BOOKING_SOURCE", `Booking #${payload.id} có nguồn không được hỗ trợ.`)
   }
+  if (!includes(classifications, payload.classification)) {
+    contractError("UNSUPPORTED_BOOKING_CLASSIFICATION", `Booking #${payload.id} có loại khách không hợp lệ.`)
+  }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(payload.businessDate)) {
     contractError("INVALID_BUSINESS_DATE", `Booking #${payload.id} có ngày nghiệp vụ không hợp lệ.`)
   }
@@ -122,6 +131,7 @@ export function mapBooking(payload: BackendBookingPayload): HttpBooking {
     status: payload.status,
     displayStatus: payload.displayStatus,
     sourceCode: payload.sourceCode,
+    classification: payload.classification,
     tableCodes: [...payload.tableCodes],
   }
 }
@@ -149,6 +159,7 @@ function commonPayload(fields: BookingWriteFields): BookingCreatePayload {
     expectedAt: venueRfc3339(fields.expectedAt),
     businessDate: fields.businessDate,
     sourceCode: fields.sourceCode,
+    ...(fields.classification === undefined ? {} : { classification: fields.classification }),
     ...(note ? { note } : {}),
     ...(phoneNumber === undefined ? {} : { phoneNumber }),
   }
@@ -169,13 +180,14 @@ export function fullUpdateBookingPayload(
   fields: Partial<BookingWriteFields>,
 ): BookingUpdatePayload {
   const merged: BookingWriteFields = {
-      guestName: fields.guestName ?? current.guestName,
-      partySize: fields.partySize ?? current.partySize,
-      expectedAt: fields.expectedAt ?? current.expectedAt,
-      businessDate: fields.businessDate ?? current.businessDate,
-      sourceCode: fields.sourceCode ?? current.sourceCode,
-      note: fields.note === undefined ? current.note : fields.note,
-      ...(Object.prototype.hasOwnProperty.call(fields, "phoneNumber") ? { phoneNumber: fields.phoneNumber } : {}),
+    guestName: fields.guestName ?? current.guestName,
+    partySize: fields.partySize ?? current.partySize,
+    expectedAt: fields.expectedAt ?? current.expectedAt,
+    businessDate: fields.businessDate ?? current.businessDate,
+    sourceCode: fields.sourceCode ?? current.sourceCode,
+    classification: fields.classification ?? current.classification,
+    note: fields.note === undefined ? current.note : fields.note,
+    ...(Object.prototype.hasOwnProperty.call(fields, "phoneNumber") ? { phoneNumber: fields.phoneNumber } : {}),
   }
   return {
     ...commonPayload(merged),

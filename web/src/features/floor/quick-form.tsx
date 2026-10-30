@@ -28,7 +28,7 @@ import {
   slotLabel,
   validateBookingTime,
 } from "@/domain/booking-rules"
-import { SOURCE_LABEL, type BookingSourceCode } from "@/domain/enums"
+import { SOURCE_LABEL, type BookingClassification, type BookingSourceCode } from "@/domain/enums"
 import type { AvailabilityResult } from "@/domain/models"
 import { useAction } from "@/hooks/use-action"
 import { useNow } from "@/hooks/use-data"
@@ -80,6 +80,7 @@ export function QuickForm({
   const [name, setName] = useState("")
   const [note, setNote] = useState("")
   const [source, setSource] = useState<BookingSourceCode>("HOTLINE")
+  const [classification, setClassification] = useState<BookingClassification>("UNCLASSIFIED")
   const [tried, setTried] = useState(false)
   const [guest, setGuest] = useState<GuestValue>(() => guestValueFrom(draft.party))
 
@@ -147,6 +148,7 @@ export function QuickForm({
           partySize: party,
           expectedAt: at,
           sourceCode: source,
+          classification,
           note: note.trim() || undefined,
           tableIds: draft.tableIds,
           overrideReason: o,
@@ -257,6 +259,21 @@ export function QuickForm({
             />
             <FieldError>{shown.name}</FieldError>
           </div>
+          {isB ? (
+            <div className="flex flex-col gap-1.5">
+              <span className={label12}>Loại khách</span>
+              <Select value={classification} onValueChange={(v) => setClassification(v as BookingClassification)}>
+                <SelectTrigger className="h-11 w-full border-strong" aria-label="Loại khách">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="UNCLASSIFIED">Chưa phân loại</SelectItem>
+                  <SelectItem value="NEW">Khách mới (N)</SelectItem>
+                  <SelectItem value="RETURNING">Khách quen (O)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
         </section>
 
         <section className="flex flex-col gap-4">
