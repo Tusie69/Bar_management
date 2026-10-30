@@ -17,6 +17,7 @@ const venueId = env.venueId
 const otherVenueId = 9702
 const receptionistId = 9701
 const cashierId = 9702
+const ownerId = 9703
 const receptionistActor: AuthenticatedActor = {
   organizationId,
   venueId,
@@ -24,6 +25,7 @@ const receptionistActor: AuthenticatedActor = {
   membershipId: 9701,
   authSessionId: 9701,
 }
+const ownerActor: AuthenticatedActor = { organizationId, venueId, userId: ownerId, membershipId: ownerId }
 let passwordHash = ''
 interface AuthBody { csrfToken: string }
 interface RevealBody { phoneNumber: string }
@@ -68,20 +70,23 @@ async function resetFixture(): Promise<void> {
   await databasePool.execute(
     `INSERT INTO users (id, username, display_name, password_hash, status) VALUES
       (?, 'phone_reception', 'Phone reception', ?, 'ACTIVE'),
-      (?, 'phone_cashier', 'Phone cashier', ?, 'ACTIVE')`,
-    [receptionistId, passwordHash, cashierId, passwordHash],
+      (?, 'phone_cashier', 'Phone cashier', ?, 'ACTIVE'),
+      (?, 'phone_owner', 'Phone owner', ?, 'ACTIVE')`,
+    [receptionistId, passwordHash, cashierId, passwordHash, ownerId, passwordHash],
   )
   await databasePool.execute(
     `INSERT INTO memberships (id, organization_id, user_id, status) VALUES
-      (9701, ?, ?, 'ACTIVE'), (9702, ?, ?, 'ACTIVE')`,
-    [organizationId, receptionistId, organizationId, cashierId],
+      (9701, ?, ?, 'ACTIVE'), (9702, ?, ?, 'ACTIVE'), (9703, ?, ?, 'ACTIVE')`,
+    [organizationId, receptionistId, organizationId, cashierId, organizationId, ownerId],
   )
   await databasePool.execute(
     `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
      SELECT ?, 9701, id, ? FROM roles WHERE code = 'RECEPTIONIST'
      UNION ALL
-     SELECT ?, 9702, id, ? FROM roles WHERE code = 'CASHIER'`,
-    [organizationId, venueId, organizationId, venueId],
+     SELECT ?, 9702, id, ? FROM roles WHERE code = 'CASHIER'
+     UNION ALL
+     SELECT ?, 9703, id, ? FROM roles WHERE code = 'OWNER_ADMIN'`,
+    [organizationId, venueId, organizationId, venueId, organizationId, venueId],
   )
   await databasePool.execute(
     `INSERT INTO booking_sources (id, organization_id, code, name) VALUES (9701, ?, 'HOTLINE', 'Hotline')`,
@@ -127,7 +132,7 @@ mysqlDescribe('booking phone MySQL integration', () => {
       ...input('0912 345 678'), guestName: 'Updated phone', expectedVersion: retained.version,
     })
     expect(updated.phoneLast3).toBe('678')
-    expect(await revealBookingPhone(receptionistActor, created.id)).toBe('+84912345678')
+    expect(await revealBookingPhone(ownerActor, created.id)).toBe('+84912345678')
     const [audit] = await databasePool.execute<RowDataPacket[]>(
       `SELECT action, reason_code, changes FROM operation_log
        WHERE action = 'CUSTOMER_PHONE_REVEAL' AND entity_id = ?`, [created.id],
@@ -139,7 +144,7 @@ mysqlDescribe('booking phone MySQL integration', () => {
       ...input(null), guestName: 'Removed phone', expectedVersion: updated.version,
     })
     expect(removed.phoneLast3).toBeNull()
-    await expect(revealBookingPhone(receptionistActor, created.id)).rejects.toMatchObject({ status: 422 })
+    await expect(revealBookingPhone(ownerActor, created.id)).rejects.toMatchObject({ status: 422 })
   })
 
   it('enforces session, CSRF, role, venue scope, rate limit, and no-store headers', async () => {
@@ -148,11 +153,24 @@ mysqlDescribe('booking phone MySQL integration', () => {
 
     const receptionist = await login('phone_reception')
     expect((await receptionist.agent.post(`/api/v1/bookings/${created.id}/phone:reveal`).set('Origin', env.webOrigin)).status).toBe(403)
-    const reveal = await receptionist.agent.post(`/api/v1/bookings/${created.id}/phone:reveal`)
+    const deniedReceptionist = await receptionist.agent.post(`/api/v1/bookings/${created.id}/phone:reveal`)
       .set('Origin', env.webOrigin).set('X-CSRF-Token', receptionist.csrfToken).send({})
+    expect(deniedReceptionist.status).toBe(403)
+    const [deniedAudit] = await databasePool.execute<RowDataPacket[]>(
+      `SELECT id FROM operation_log WHERE action = 'CUSTOMER_PHONE_REVEAL'`,
+    )
+    expect(deniedAudit).toHaveLength(0)
+    const owner = await login('phone_owner')
+    const reveal = await owner.agent.post(`/api/v1/bookings/${created.id}/phone:reveal`)
+      .set('Origin', env.webOrigin).set('X-CSRF-Token', owner.csrfToken).send({})
     expect(reveal.status).toBe(200)
     expect(reveal.headers['cache-control']).toContain('no-store')
     expect((reveal.body as RevealBody).phoneNumber).toBe('+84987654321')
+    const [ownerAudit] = await databasePool.execute<RowDataPacket[]>(
+      `SELECT actor_user_id FROM operation_log WHERE action = 'CUSTOMER_PHONE_REVEAL' AND entity_id = ?`, [created.id],
+    )
+    expect(ownerAudit).toHaveLength(1)
+    expect(Number(ownerAudit[0]?.actor_user_id)).toBe(ownerId)
 
     const cashier = await login('phone_cashier')
     const denied = await cashier.agent.post(`/api/v1/bookings/${created.id}/phone:reveal`)
@@ -164,11 +182,11 @@ mysqlDescribe('booking phone MySQL integration', () => {
 
     const maximum = env.phone.revealRateLimitMax ?? 0
     for (let count = 1; count < maximum; count += 1) {
-      expect((await receptionist.agent.post(`/api/v1/bookings/${created.id}/phone:reveal`)
-        .set('Origin', env.webOrigin).set('X-CSRF-Token', receptionist.csrfToken).send({})).status).toBe(200)
+      expect((await owner.agent.post(`/api/v1/bookings/${created.id}/phone:reveal`)
+        .set('Origin', env.webOrigin).set('X-CSRF-Token', owner.csrfToken).send({})).status).toBe(200)
     }
-    expect((await receptionist.agent.post(`/api/v1/bookings/${created.id}/phone:reveal`)
-      .set('Origin', env.webOrigin).set('X-CSRF-Token', receptionist.csrfToken).send({})).status).toBe(429)
+    expect((await owner.agent.post(`/api/v1/bookings/${created.id}/phone:reveal`)
+      .set('Origin', env.webOrigin).set('X-CSRF-Token', owner.csrfToken).send({})).status).toBe(429)
   })
 
   it('does not return a phone when audit persistence fails', async () => {

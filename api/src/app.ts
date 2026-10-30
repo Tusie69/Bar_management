@@ -1,5 +1,5 @@
 import cors from 'cors'
-import express from 'express'
+import express, { type Express } from 'express'
 
 import { authRouter } from './auth/auth.route.js'
 import { requireTrustedOrigin } from './auth/auth.middleware.js'
@@ -12,7 +12,7 @@ import { visitRouter } from './modules/visits/visit.route.js'
 import { waitlistRouter } from './modules/waitlist/waitlist.route.js'
 import { healthRouter } from './routes/health.route.js'
 
-export const app = express()
+export const app: Express = express()
 
 app.disable('x-powered-by')
 app.use(cors({ origin: env.webOrigin, credentials: true }))
