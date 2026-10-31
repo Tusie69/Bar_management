@@ -6,6 +6,7 @@ import {
   Link2,
   MessageSquareText,
   Pencil,
+  Plus,
   RefreshCw,
   Search,
   X,
@@ -36,6 +37,7 @@ import { addDays, atBusinessTime, businessDateOf, fmtBusinessDate, fmtTime, type
 import {
   bookingApi,
   createAndAssignDirectBooking,
+  directBookingSelection,
   type AssignmentTable,
   type BookingWriteFields,
   type BookingClassification,
@@ -272,6 +274,7 @@ export function HttpBookingsPage() {
       <BookingEditor
         editor={editor}
         sources={catalog.data?.sources ?? []}
+        catalogTables={catalog.data?.tables ?? []}
         defaultBusinessDate={date}
         close={() => setEditor(null)}
         select={setSelectedId}
@@ -517,8 +520,7 @@ export function AssignmentDialog({
           </p>
           {selected.length && totalCapacity < booking.partySize ? (
             <p className="mt-1 text-amber-600">
-              Tổng sức chứa thấp hơn số khách. Backend hiện chưa có validation capacity; cần Product Owner xác nhận quy
-              tắc.
+              Tổng sức chứa thấp hơn số khách. Chọn thêm bàn cùng khu, cùng loại trước khi xác nhận.
             </p>
           ) : null}
           {unresolvedCodes.length ? (
@@ -533,7 +535,10 @@ export function AssignmentDialog({
             Đóng
           </Button>
           <Button
-            disabled={pending || states.isLoading || !selected.length || unchanged || unresolvedCodes.length > 0}
+            disabled={
+              pending || states.isLoading || !selected.length || unchanged ||
+              totalCapacity < booking.partySize || unresolvedCodes.length > 0
+            }
             onClick={() => void submit()}
           >
             {pending ? "Đang xác nhận…" : booking.tableCodes.length ? "Xác nhận đổi bàn" : "Xác nhận phân bàn"}
@@ -560,7 +565,14 @@ export function BookingEditor({
   close,
   select,
   directTable,
-  onPartial,
+  catalogTables = [],
+  open = true,
+  selectedTableIds,
+  onSelectExtraTables,
+  onBusinessDateChange,
+  selectingTables = false,
+  onCancelTableSelection,
+  onFinishTableSelection,
 }: {
   editor: { mode: "create" | "edit"; booking?: HttpBooking } | null
   sources: { code: BookingSourceCode; name: string }[]
@@ -568,36 +580,64 @@ export function BookingEditor({
   close: () => void
   select: (id: number) => void
   directTable?: TableView
-  onPartial?: (booking: HttpBooking) => void
+  catalogTables?: TableView[]
+  open?: boolean
+  selectedTableIds?: number[]
+  onSelectExtraTables?: () => void
+  onBusinessDateChange?: (date: BusinessDate) => void
+  selectingTables?: boolean
+  onCancelTableSelection?: () => void
+  onFinishTableSelection?: () => void
 }) {
+  if (!editor) return <Dialog open={false} />
   return (
-    <Dialog open={editor !== null} onOpenChange={(value) => !value && close()}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
-        {editor ? (
-          <BookingEditorBody
-            key={`${editor.mode}-${editor.booking?.id ?? "new"}`}
-            editor={editor}
-            sources={sources}
-            defaultBusinessDate={defaultBusinessDate}
-            close={close}
-            select={select}
-            directTable={directTable}
-            onPartial={onPartial}
-          />
-        ) : null}
-      </DialogContent>
-    </Dialog>
+    <BookingEditorSession
+      key={`${editor.mode}-${editor.booking?.id ?? "new"}-${directTable?.id ?? "standalone"}`}
+      editor={editor}
+      sources={sources}
+      defaultBusinessDate={defaultBusinessDate}
+      close={close}
+      select={select}
+      directTable={directTable}
+      catalogTables={catalogTables}
+      open={open}
+      selectedTableIds={selectedTableIds}
+      onSelectExtraTables={onSelectExtraTables}
+      onBusinessDateChange={onBusinessDateChange}
+      selectingTables={selectingTables}
+      onCancelTableSelection={onCancelTableSelection}
+      onFinishTableSelection={onFinishTableSelection}
+    />
   )
 }
 
-function BookingEditorBody({
+interface BookingEditorDraft {
+  name: string
+  party: number
+  date: BusinessDate
+  time: string
+  source: BookingSourceCode
+  classification: BookingClassification
+  note: string
+  phone: string
+  removePhone: boolean
+}
+
+function BookingEditorSession({
   editor,
   sources,
   defaultBusinessDate,
   close,
   select,
   directTable,
-  onPartial,
+  catalogTables,
+  open,
+  selectedTableIds,
+  onSelectExtraTables,
+  onBusinessDateChange,
+  selectingTables,
+  onCancelTableSelection,
+  onFinishTableSelection,
 }: {
   editor: { mode: "create" | "edit"; booking?: HttpBooking }
   sources: { code: BookingSourceCode; name: string }[]
@@ -605,23 +645,121 @@ function BookingEditorBody({
   close: () => void
   select: (id: number) => void
   directTable?: TableView
-  onPartial?: (booking: HttpBooking) => void
+  catalogTables: TableView[]
+  open: boolean
+  selectedTableIds?: number[]
+  onSelectExtraTables?: () => void
+  onBusinessDateChange?: (date: BusinessDate) => void
+  selectingTables: boolean
+  onCancelTableSelection?: () => void
+  onFinishTableSelection?: () => void
 }) {
   const booking = editor.booking
   const now = useNow(30_000)
-  const [name, setName] = useState(booking?.guestName ?? "")
-  const [party, setParty] = useState(booking?.partySize ?? 2)
-  const [date, setDate] = useState<BusinessDate>(booking?.businessDate ?? defaultBusinessDate)
-  const [time, setTime] = useState(
-    booking ? fmtTime(booking.expectedAt) : (defaultBookingSlot(defaultBusinessDate, now) ?? "19:00"),
+  const [draft, setDraft] = useState<BookingEditorDraft>(() => ({
+    name: booking?.guestName ?? "",
+    party: booking?.partySize ?? 2,
+    date: booking?.businessDate ?? defaultBusinessDate,
+    time: booking ? fmtTime(booking.expectedAt) : (defaultBookingSlot(defaultBusinessDate, now) ?? "19:00"),
+    source: booking?.sourceCode ?? sources[0]?.code ?? "HOTLINE",
+    classification: booking?.classification ?? "UNCLASSIFIED",
+    note: booking?.note ?? "",
+    phone: "",
+    removePhone: false,
+  }))
+  const updateDraft = <K extends keyof BookingEditorDraft>(key: K, value: BookingEditorDraft[K]) => {
+    setDraft((current) => ({ ...current, [key]: value }))
+  }
+  const effectiveTableIds = selectedTableIds ?? (directTable ? [directTable.id] : [])
+  const selectedTables = effectiveTableIds
+    .map((id) => catalogTables.find((table) => table.id === id))
+    .filter((table): table is TableView => table !== undefined)
+  const selectedCapacity = selectedTables.reduce((total, table) => total + table.capacity, 0)
+  return (
+    <>
+      <Dialog open={open} onOpenChange={(value) => !value && close()}>
+        <DialogContent className="max-h-[calc(100dvh-1rem)] overflow-y-auto p-4 sm:max-w-2xl sm:p-6">
+          <BookingEditorBody
+            editor={editor}
+            sources={sources}
+            close={close}
+            select={select}
+            directTable={directTable}
+            catalogTables={catalogTables}
+            selectedTableIds={effectiveTableIds}
+            onSelectExtraTables={onSelectExtraTables}
+            onBusinessDateChange={onBusinessDateChange}
+            now={now}
+            draft={draft}
+            updateDraft={updateDraft}
+          />
+        </DialogContent>
+      </Dialog>
+      {selectingTables ? (
+        <div className="fixed right-3 bottom-[max(1rem,env(safe-area-inset-bottom))] left-3 z-[60] grid max-h-[calc(100dvh-2rem)] gap-3 overflow-y-auto rounded-xl border bg-popover/95 p-3 shadow-float backdrop-blur sm:right-auto sm:left-1/2 sm:w-[min(560px,calc(100%-2rem))] sm:-translate-x-1/2">
+          <div className="min-w-0">
+            <p className="font-semibold">Chọn thêm bàn/ghế</p>
+            <p className="truncate text-sm text-muted-foreground">
+              Đã chọn: {selectedTables.map((table) => table.code).join(" + ")}
+            </p>
+            <p className="text-sm">Tổng sức chứa: {selectedCapacity}/{draft.party}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Button variant="outline" onClick={onCancelTableSelection}>Hủy chọn thêm</Button>
+            <Button onClick={onFinishTableSelection}>Xong</Button>
+          </div>
+        </div>
+      ) : null}
+    </>
   )
-  const [source, setSource] = useState<BookingSourceCode>(booking?.sourceCode ?? sources[0]?.code ?? "HOTLINE")
-  const [classification, setClassification] = useState<BookingClassification>(booking?.classification ?? "UNCLASSIFIED")
-  const [note, setNote] = useState(booking?.note ?? "")
-  const [phone, setPhone] = useState("")
-  const [removePhone, setRemovePhone] = useState(false)
+}
+
+function BookingEditorBody({
+  editor,
+  sources,
+  close,
+  select,
+  directTable,
+  catalogTables,
+  selectedTableIds,
+  onSelectExtraTables,
+  onBusinessDateChange,
+  now,
+  draft,
+  updateDraft,
+}: {
+  editor: { mode: "create" | "edit"; booking?: HttpBooking }
+  sources: { code: BookingSourceCode; name: string }[]
+  close: () => void
+  select: (id: number) => void
+  directTable?: TableView
+  catalogTables: TableView[]
+  selectedTableIds: number[]
+  onSelectExtraTables?: () => void
+  onBusinessDateChange?: (date: BusinessDate) => void
+  now: Date
+  draft: BookingEditorDraft
+  updateDraft: <K extends keyof BookingEditorDraft>(key: K, value: BookingEditorDraft[K]) => void
+}) {
+  const booking = editor.booking
+  const { name, party, date, time, source, classification, note, phone, removePhone } = draft
   const [pending, setPending] = useState(false)
   const qc = useQueryClient()
+  const directStates = useQuery({
+    queryKey: ["http-bookings", "assignment-tables", date],
+    queryFn: () => bookingApi!.assignmentTables(date),
+    enabled: bookingApi !== null && !!directTable && !booking,
+    retry: false,
+  })
+  const directSelection = directTable
+    ? directBookingSelection(catalogTables, directStates.data ?? [], directTable, selectedTableIds)
+    : null
+  const selectedDirectTables = directSelection?.selectedTables ?? []
+  const directCapacity = directSelection?.capacity ?? 0
+  const directSelectionAvailable = !!directTable &&
+    directSelection?.allAvailable === true
+  const directCapacityValid = !directTable || directCapacity >= party
+  const directContractValid = !directTable || selectedDirectTables.length === selectedTableIds.length
   const originalSchedule = !!booking && date === booking.businessDate && time === fmtTime(booking.expectedAt)
   const legacyTime = originalSchedule && !isBookingSlot(time) ? time : null
   const timeError = originalSchedule ? null : validateBookingTime(date, time, now)
@@ -649,21 +787,8 @@ function BookingEditorBody({
       }
       let saved: HttpBooking
       if (!booking && directTable) {
-        const result = await createAndAssignDirectBooking(bookingApi, fields, directTable.id)
-        saved = result.booking
-        if (result.outcome === "created-unassigned") {
-          await invalidateBookingData(qc, saved.id)
-          toast.warning(`Booking #${saved.id} đã được tạo nhưng chưa gán ${directTable.code}.`, {
-            description: `${errorMessage(result.assignmentError)} Mở booking này để phân bàn lại; hệ thống không tự hủy hoặc retry.`,
-          })
-          if (onPartial) {
-            onPartial(saved)
-            return
-          }
-          select(saved.id)
-          close()
-          return
-        }
+        if (!directCapacityValid || !directSelectionAvailable) return
+        saved = await createAndAssignDirectBooking(bookingApi, fields, selectedTableIds)
       } else {
         saved = booking ? await bookingApi.update(booking, fields) : await bookingApi.create(fields)
       }
@@ -672,7 +797,7 @@ function BookingEditorBody({
         booking
           ? "Đã cập nhật booking từ backend."
           : directTable
-            ? `Đã tạo booking và gán ${directTable.code}.`
+            ? `Đã tạo booking và gán ${selectedDirectTables.map((table) => table.code).join(" + ")}.`
             : "Backend đã tạo booking.",
       )
       select(saved.id)
@@ -690,20 +815,15 @@ function BookingEditorBody({
         <DialogTitle>{booking ? "Chỉnh sửa booking" : "Tạo booking"}</DialogTitle>
         <DialogDescription>
           {booking
-            ? "Frontend gửi full payload và version hiện tại; 409 sẽ không tự retry."
+            ? "Cập nhật thông tin booking hiện tại. Giờ cũ được giữ nguyên nếu bạn không chọn giờ khác."
             : directTable
-              ? `Đặt trực tiếp ${directTable.displayName}. Backend thực hiện create rồi assign bằng hai transaction riêng.`
-              : "Số điện thoại là tùy chọn và được backend mã hóa; thao tác gán bàn vẫn là transaction riêng."}
+              ? `Đặt trực tiếp · ${directTable.displayName} · ${directTable.capacity} chỗ`
+              : "Tạo booking mới và chọn giờ khách dự kiến đến."}
         </DialogDescription>
       </DialogHeader>
-      {directTable && !booking ? (
-        <p className="rounded-lg border bg-surface-1 px-3 py-2 text-sm">
-          Bàn đã chọn: <b>{directTable.displayName}</b> · {directTable.capacity} chỗ
-        </p>
-      ) : null}
       <div className="grid gap-3">
         <Field label="Tên khách">
-          <Input value={name} maxLength={120} onChange={(e) => setName(e.target.value)} />
+          <Input value={name} maxLength={120} placeholder="Nhập tên khách" onChange={(e) => updateDraft("name", e.target.value)} />
         </Field>
         <Field label="Số điện thoại (tùy chọn)">
           <Input
@@ -716,7 +836,7 @@ function BookingEditorBody({
             placeholder={
               booking?.phoneLast3 ? `Đã lưu ••• ${booking.phoneLast3}; để trống để giữ nguyên` : "Ví dụ 0987 654 321"
             }
-            onChange={(e) => setPhone(e.target.value)}
+            onChange={(e) => updateDraft("phone", e.target.value)}
           />
           {booking?.phoneLast3 ? (
             <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
@@ -724,8 +844,8 @@ function BookingEditorBody({
                 type="checkbox"
                 checked={removePhone}
                 onChange={(event) => {
-                  setRemovePhone(event.target.checked)
-                  if (event.target.checked) setPhone("")
+                  updateDraft("removePhone", event.target.checked)
+                  if (event.target.checked) updateDraft("phone", "")
                 }}
               />
               Xóa số điện thoại đang lưu
@@ -734,12 +854,12 @@ function BookingEditorBody({
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Số khách">
-            <Input type="number" min={1} value={party} onChange={(e) => setParty(Number(e.target.value))} />
+            <Input type="number" min={1} value={party} onChange={(e) => updateDraft("party", Number(e.target.value))} />
           </Field>
           <Field label="Nguồn">
             <select
               value={source}
-              onChange={(e) => setSource(e.target.value as BookingSourceCode)}
+              onChange={(e) => updateDraft("source", e.target.value as BookingSourceCode)}
               className="h-10 rounded-md border bg-background px-3"
             >
               {sources.map((item) => (
@@ -750,38 +870,83 @@ function BookingEditorBody({
             </select>
           </Field>
         </div>
-        <Field label="Loại khách">
-          <select
-            value={classification}
-            onChange={(e) => setClassification(e.target.value as BookingClassification)}
-            className="h-11 rounded-md border bg-background px-3"
-          >
-            <option value="UNCLASSIFIED">Chưa phân loại</option>
-            <option value="NEW">Khách mới (N)</option>
-            <option value="RETURNING">Khách quen (O)</option>
-          </select>
-        </Field>
-        <Field label="Ngày nghiệp vụ">
-          <Input type="date" value={date} onChange={(e) => setDate(e.target.value as BusinessDate)} />
-        </Field>
+        {directTable && !booking ? (
+          <div className="grid gap-2 rounded-lg border bg-surface-1 p-3">
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="font-semibold">Bàn/ghế đã chọn</span>
+              <span className={directCapacityValid ? "text-emerald-600" : "text-amber-600"}>
+                {directCapacity}/{party} chỗ
+              </span>
+            </div>
+            {directStates.isLoading ? (
+              <Skeleton className="h-16" />
+            ) : directStates.error ? (
+              <p role="alert" className="text-sm text-destructive">
+                Không tải được trạng thái bàn. Chưa thể tạo booking trực tiếp.
+              </p>
+            ) : <p className="text-sm font-medium">{selectedDirectTables.map((table) => table.code).join(" + ")}</p>}
+            {onSelectExtraTables ? (
+              <Button type="button" variant="outline" size="sm" className="justify-self-start" onClick={onSelectExtraTables}>
+                <Plus /> Thêm bàn/ghế
+              </Button>
+            ) : null}
+            {!directCapacityValid ? (
+              <p role="alert" className="text-sm text-amber-700">
+                {selectedDirectTables.map((table) => table.code).join(" + ")} chỉ đủ {directCapacity} chỗ cho {party} khách.
+                Chọn thêm bàn/ghế phù hợp hoặc điều chỉnh số khách.
+              </p>
+            ) : (!directSelectionAvailable || !directContractValid) && !directStates.isLoading ? (
+              <p role="alert" className="text-sm text-destructive">
+                Một bàn/ghế đã chọn không còn trống. Vui lòng chọn lại.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Loại khách">
+            <select
+              value={classification}
+              onChange={(e) => updateDraft("classification", e.target.value as BookingClassification)}
+              className="h-11 rounded-md border bg-background px-3"
+            >
+              <option value="UNCLASSIFIED">Chưa phân loại</option>
+              <option value="NEW">Khách mới (N)</option>
+              <option value="RETURNING">Khách quen (O)</option>
+            </select>
+          </Field>
+          <Field label="Ngày nghiệp vụ">
+            <Input type="date" value={date} onChange={(e) => {
+              const next = e.target.value as BusinessDate
+              updateDraft("date", next)
+              onBusinessDateChange?.(next)
+            }} />
+          </Field>
+        </div>
         <BookingTimePicker
           date={date}
           value={time}
           now={now}
-          onChange={setTime}
+          onChange={(value) => updateDraft("time", value)}
           error={timeError}
           legacyValue={legacyTime}
         />
-        <Field label="Ghi chú">
-          <Textarea value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} />
-        </Field>
+        <details className="rounded-lg border bg-surface-1 p-3">
+          <summary className="cursor-pointer text-sm font-semibold">Ghi chú{note ? " · đã nhập" : ""}</summary>
+          <Textarea className="mt-3" value={note} maxLength={500} onChange={(e) => updateDraft("note", e.target.value)} />
+        </details>
       </div>
       <DialogFooter>
-        <Button variant="ghost" onClick={close}>
-          Đóng
+        <Button variant="outline" onClick={close}>
+          {booking ? "Đóng" : "Hủy"}
         </Button>
-        <Button disabled={!valid || pending || sources.length === 0} onClick={() => void submit()}>
-          {pending ? "Đang lưu…" : "Lưu qua backend"}
+        <Button
+          disabled={
+            !valid || pending || sources.length === 0 ||
+            (!!directTable && !booking && (directStates.isLoading || !!directStates.error || !directCapacityValid || !directSelectionAvailable || !directContractValid))
+          }
+          onClick={() => void submit()}
+        >
+          {pending ? "Đang lưu…" : booking ? "Lưu thay đổi" : "Lưu booking"}
         </Button>
       </DialogFooter>
     </>

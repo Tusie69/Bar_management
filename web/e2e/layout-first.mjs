@@ -79,12 +79,21 @@ async function login(page) {
 }
 
 const table = (page, code, state) => page.getByRole("button", { name: new RegExp(`^Bàn ${code}, ${state}`) })
+const barSeat = (page, number, state) => page.getByRole("button", { name: new RegExp(`^Ghế Bar ${number}, ${state}`) })
+
+async function fillDirectBooking(dialog, guestName, party) {
+  await dialog.locator("input").first().fill(guestName)
+  await dialog.locator('input[type="number"]').fill(String(party))
+  const availableTime = dialog.locator('button[role="radio"]:not([disabled])').first()
+  if ((await availableTime.count()) !== 1) throw new Error("No valid booking time remains in the current shift")
+  await availableTime.click()
+}
 
 async function createFromTable(page, code, guestName, party = 2, phoneNumber) {
   await table(page, code, "Chưa đặt").click()
   const dialog = page.getByRole("dialog").last()
   await dialog.getByText("Tạo booking", { exact: true }).waitFor()
-  await dialog.getByText(`Bàn đã chọn: Bàn ${code}`, { exact: false }).waitFor()
+  await dialog.getByText(`Đặt trực tiếp · Bàn ${code} · 4 chỗ`, { exact: true }).waitFor()
   await dialog.locator("input").first().fill(guestName)
   if ((await dialog.locator('input[type="time"]').count()) !== 0) throw new Error("Native time picker is still present")
   if (phoneNumber) await dialog.locator('input[type="tel"]').fill(phoneNumber)
@@ -93,7 +102,7 @@ async function createFromTable(page, code, guestName, party = 2, phoneNumber) {
   const availableTime = dialog.locator('button[role="radio"]:not([disabled])').first()
   if ((await availableTime.count()) !== 1) throw new Error("No valid booking time remains in the current shift")
   await availableTime.click()
-  await dialog.getByRole("button", { name: "Lưu qua backend" }).click()
+  await dialog.getByRole("button", { name: "Lưu booking" }).click()
   await dialog.waitFor({ state: "hidden" })
   await table(page, code, "Đang đặt").waitFor()
 }
@@ -158,6 +167,76 @@ try {
   const deviceB = await contextB.newPage()
   const tablet = await contextTablet.newPage()
   await Promise.all([login(deviceA), login(deviceB), login(tablet)])
+
+  const singleBarGuest = `Bar single ${Date.now()}`
+  await barSeat(deviceA, 13, "Chưa đặt").click()
+  const singleBarDialog = deviceA.getByRole("dialog").last()
+  await singleBarDialog.getByText("Đặt trực tiếp · Ghế Bar 13 · 1 chỗ", { exact: true }).waitFor()
+  await fillDirectBooking(singleBarDialog, singleBarGuest, 1)
+  await singleBarDialog.getByRole("button", { name: "Lưu booking" }).click()
+  await singleBarDialog.waitFor({ state: "hidden" })
+  await barSeat(deviceA, 13, "Đang đặt").waitFor()
+
+  const pairedBarGuest = `Bar pair ${Date.now()}`
+  await barSeat(deviceA, 12, "Chưa đặt").click()
+  const pairedBarDialog = deviceA.getByRole("dialog").last()
+  await pairedBarDialog.getByText("Đặt trực tiếp · Ghế Bar 12 · 1 chỗ", { exact: true }).waitFor()
+  await fillDirectBooking(pairedBarDialog, pairedBarGuest, 2)
+  await pairedBarDialog.getByLabel("Loại khách").selectOption("RETURNING")
+  await pairedBarDialog.getByText("BAR12 chỉ đủ 1 chỗ cho 2 khách.", { exact: false }).waitFor()
+  const pairedSave = pairedBarDialog.getByRole("button", { name: "Lưu booking" })
+  if (await pairedSave.isEnabled()) throw new Error("BAR12 over-capacity direct booking was not blocked before request")
+  let directMutationCount = 0
+  deviceA.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/api/v1/bookings/direct")) directMutationCount += 1
+  })
+  await pairedBarDialog.getByRole("button", { name: "Thêm bàn/ghế" }).click()
+  await pairedBarDialog.waitFor({ state: "hidden" })
+  await deviceA.getByText("Chọn thêm bàn/ghế", { exact: true }).waitFor()
+  const directSelectionToolbar = deviceA.locator("div.fixed").filter({ hasText: "Chọn thêm bàn/ghế" })
+  const toolbarBox = await directSelectionToolbar.boundingBox()
+  const viewport = deviceA.viewportSize()
+  if (!toolbarBox || !viewport || toolbarBox.y < 0 || toolbarBox.y + toolbarBox.height > viewport.height) {
+    throw new Error(`Direct selection toolbar is outside the viewport: ${JSON.stringify({ toolbarBox, viewport })}`)
+  }
+  if ((await barSeat(deviceA, 12, "Chưa đặt").getAttribute("aria-pressed")) !== "true") {
+    throw new Error("Origin BAR12 is not highlighted in direct table selection")
+  }
+  await barSeat(deviceA, 12, "Chưa đặt").click()
+  if ((await barSeat(deviceA, 12, "Chưa đặt").getAttribute("aria-pressed")) !== "true") {
+    throw new Error("Origin BAR12 was removable")
+  }
+  await barSeat(deviceA, 11, "Chưa đặt").click()
+  await deviceA.getByText("Đã chọn: BAR12 + BAR11", { exact: true }).waitFor()
+  if (directMutationCount !== 0) throw new Error("Selecting an extra Bar seat mutated the backend")
+  await deviceA.getByRole("button", { name: "Hủy chọn thêm" }).click()
+  await pairedBarDialog.waitFor({ state: "visible" })
+  if ((await pairedBarDialog.locator("input").first().inputValue()) !== pairedBarGuest) {
+    throw new Error("Direct booking name draft was lost after cancelling extra selection")
+  }
+  if ((await pairedBarDialog.locator('input[type="number"]').inputValue()) !== "2") {
+    throw new Error("Direct booking party draft was lost after cancelling extra selection")
+  }
+  if ((await pairedBarDialog.getByLabel("Loại khách").inputValue()) !== "RETURNING") {
+    throw new Error("Direct booking classification draft was lost after cancelling extra selection")
+  }
+  await pairedBarDialog.getByRole("button", { name: "Thêm bàn/ghế" }).click()
+  await barSeat(deviceA, 11, "Chưa đặt").click()
+  await deviceA.getByText("Tổng sức chứa: 2/2", { exact: true }).waitFor()
+  await deviceA.getByRole("button", { name: "Xong", exact: true }).click()
+  await pairedBarDialog.waitFor({ state: "visible" })
+  await pairedBarDialog.getByText("BAR11 + BAR12", { exact: true }).waitFor()
+  if (!(await pairedSave.isEnabled())) throw new Error("Compatible BAR11 + BAR12 selection did not satisfy capacity")
+  await pairedSave.click()
+  await pairedBarDialog.waitFor({ state: "hidden" })
+  await barSeat(deviceA, 11, "Đang đặt").waitFor()
+  await barSeat(deviceA, 12, "Đang đặt").waitFor()
+  if (directMutationCount !== 1) throw new Error(`Expected one atomic direct booking mutation, received ${directMutationCount}`)
+  await deviceA.reload({ waitUntil: "networkidle" })
+  await barSeat(deviceA, 11, "Đang đặt").waitFor()
+  if (!/nhóm \d+/.test(await barSeat(deviceA, 11, "Đang đặt").getAttribute("aria-label"))) {
+    throw new Error("Direct multi-seat group did not persist after refresh")
+  }
 
   const waitlistDraft = `Draft ${Date.now()}`
   await deviceB.getByRole("button", { name: "Bàn chờ, 0 nhóm đang chờ" }).click()
@@ -267,7 +346,7 @@ try {
   await menuA.getByRole("button", { name: "Sửa booking" }).click()
   const editor = deviceA.getByRole("dialog").last()
   await editor.locator('input[type="number"]').fill("3")
-  await editor.getByRole("button", { name: "Lưu qua backend" }).click()
+  await editor.getByRole("button", { name: "Lưu thay đổi" }).click()
   await deviceA.getByText("Thao tác Bàn A1", { exact: true }).waitFor()
 
   await menuB.getByRole("button", { name: "Hủy booking" }).click()
@@ -288,6 +367,7 @@ try {
   await refreshedMenuA.getByRole("button", { name: "Chuyển bàn" }).click()
   await deviceA.getByText("Đang chọn bàn đích", { exact: true }).waitFor()
   await table(deviceA, "A2", "Chưa đặt").click()
+  await deviceA.getByRole("button", { name: "Tiếp tục", exact: true }).click()
   const firstConfirmation = deviceA.getByRole("dialog").last()
   await firstConfirmation.getByText("Xác nhận chuyển sang A2?", { exact: true }).waitFor()
   await firstConfirmation.getByRole("button", { name: "Quay lại chọn bàn" }).click()
@@ -298,6 +378,7 @@ try {
   const actualMoveMenu = await openAction(deviceA, "A1")
   await actualMoveMenu.getByRole("button", { name: "Chuyển bàn" }).click()
   await table(deviceA, "A2", "Chưa đặt").click()
+  await deviceA.getByRole("button", { name: "Tiếp tục", exact: true }).click()
   const confirmation = deviceA.getByRole("dialog").last()
   await confirmation.getByText("Xác nhận chuyển sang A2?", { exact: true }).waitFor()
   await confirmation.getByRole("button", { name: "Xác nhận chuyển bàn" }).click()
@@ -323,7 +404,7 @@ try {
   })
   await postCancelCreate
     .locator('button:not([data-slot="dialog-close"])')
-    .filter({ hasText: /^Đóng$/ })
+    .filter({ hasText: /^Hủy$/ })
     .click()
   const cancelAt = Date.now()
   await table(deviceB, "A2", "Chưa đặt").waitFor({ timeout: 25_000 })
@@ -383,6 +464,7 @@ try {
   const groupedVisitMenu = deviceB.getByRole("dialog").last()
   await groupedVisitMenu.getByRole("button", { name: "Chuyển bàn" }).click()
   await table(deviceB, "A2", "Chưa đặt").click()
+  await deviceB.getByRole("button", { name: "Tiếp tục", exact: true }).click()
   const visitConfirmation = deviceB.getByRole("dialog").last()
   await visitConfirmation.getByText("Xác nhận chuyển sang A2?", { exact: true }).waitFor()
   await visitConfirmation.getByRole("button", { name: "Xác nhận chuyển bàn" }).click()
@@ -424,6 +506,9 @@ try {
       waitlistReservedNoVisit: "PASS",
       waitlistTwoDeviceSync: "PASS",
       emptyTableDirectForm: "PASS",
+      directBarSingleSeat: "PASS",
+      directBarCapacityPreflight: "PASS",
+      directBarMultiSeatAtomic: "PASS",
       createAssign: "PASS",
       spareAndOosBlocked: "PASS",
       bookingActionMenu: "PASS",

@@ -206,11 +206,20 @@ export function HttpFloorPage() {
                   zoneFocus={zone}
                   now={now}
                   onTableClick={layout.selectTable}
-                  onBackgroundClick={layout.workflow.phase === "IDLE" ? layout.clearSelection : undefined}
+                  onBackgroundClick={
+                    layout.workflow.phase === "IDLE" &&
+                    layout.directBookingWorkflow.phase !== "SELECTING_DIRECT_BOOKING_TABLES"
+                      ? layout.clearSelection
+                      : undefined
+                  }
                   ariaLabel="Sơ đồ bàn từ backend"
                   waitlistCount={waitlistCount}
                   waitlistSelected={waitlistOpen || layout.waitlistWorkflow.phase !== "IDLE"}
-                  onWaitlistClick={() => layout.waitlistWorkflow.phase === "IDLE" && setWaitlistOpen(true)}
+                  onWaitlistClick={() =>
+                    layout.waitlistWorkflow.phase === "IDLE" &&
+                    layout.directBookingWorkflow.phase === "IDLE" &&
+                    setWaitlistOpen(true)
+                  }
                 />
                 {layout.table && layout.intent && model.floor ? (
                   <LayoutBookingOperations
@@ -220,15 +229,21 @@ export function HttpFloorPage() {
                     catalogTables={model.catalog.tables}
                     sources={model.catalog.sources}
                     businessDate={model.floor.businessDate}
-                    onClose={layout.clearSelection}
+                    onClose={layout.intent.kind === "create" ? layout.closeDirectBooking : layout.clearSelection}
                     onStartMove={layout.beginMove}
                     onStartMerge={layout.beginMerge}
+                    directBookingWorkflow={layout.directBookingWorkflow}
+                    onBeginDirectBookingSelection={layout.beginDirectBookingSelection}
+                    onCancelDirectBookingSelection={layout.cancelDirectBookingSelection}
+                    onFinishDirectBookingSelection={layout.finishDirectBookingSelection}
+                    onBusinessDateChange={(next) => changeBusinessDate(next)}
                   />
                 ) : null}
                 <LayoutTableMove
                   workflow={layout.workflow}
                   model={model}
                   cancel={layout.cancelOperation}
+                  confirm={layout.confirmMove}
                   back={layout.backToSelection}
                   submitting={layout.startSubmitting}
                   success={layout.markSuccess}

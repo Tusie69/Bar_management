@@ -18,21 +18,27 @@ interface Props {
   workflow: MoveWorkflow
   model: FloorModel
   cancel: () => void
+  confirm: () => void
   back: () => void
   submitting: () => void
   success: () => void
   fail: (message: string) => void
 }
 
-export function LayoutTableMove({ workflow, model, cancel, back, submitting, success, fail }: Props) {
+export function LayoutTableMove({ workflow, model, cancel, confirm, back, submitting, success, fail }: Props) {
   const queryClient = useQueryClient()
   if (workflow.phase === "IDLE") return null
 
   const sourceCodes = model.codes(workflow.context.sourceTableIds).join(" + ")
-  const target = "targetTableId" in workflow ? model.byId.get(workflow.targetTableId) : null
+  const targets = workflow.tableIds
+    .map((id) => model.byId.get(id))
+    .filter((table): table is NonNullable<typeof table> => table !== undefined)
+  const targetCodes = targets.map((table) => table.code).join(" + ")
+  const targetCapacity = targets.reduce((total, table) => total + table.capacity, 0)
+  const capacitySatisfied = targetCapacity >= workflow.context.partySize
 
   const submit = async () => {
-    if (workflow.phase !== "CONFIRMING" || !target) return
+    if (workflow.phase !== "CONFIRMING" || !targets.length || !capacitySatisfied) return
     submitting()
     try {
       if (workflow.context.entityKind === "booking") {
@@ -40,11 +46,11 @@ export function LayoutTableMove({ workflow, model, cancel, back, submitting, suc
         await bookingApi.assignVersion(
           workflow.context.entityId,
           workflow.context.version,
-          [target.id],
+          workflow.tableIds,
         )
       } else {
         if (!visitApi) throw new Error("Visit API chưa được cấu hình.")
-        await visitApi.move(workflow.context.entityId, workflow.context.version, [target.id])
+        await visitApi.move(workflow.context.entityId, workflow.context.version, workflow.tableIds)
       }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["floor"] }),
@@ -52,7 +58,7 @@ export function LayoutTableMove({ workflow, model, cancel, back, submitting, suc
         queryClient.invalidateQueries({ queryKey: ["http-bookings", "detail", workflow.context.entityId] }),
       ])
       success()
-      toast.success(`Đã chuyển ${sourceCodes} sang ${target.code} theo phản hồi backend.`)
+      toast.success(`Đã chuyển ${sourceCodes} sang ${targetCodes} theo phản hồi backend.`)
     } catch (cause) {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["floor"] }),
@@ -65,7 +71,7 @@ export function LayoutTableMove({ workflow, model, cancel, back, submitting, suc
   return (
     <>
       {(workflow.phase === "SELECTING_MOVE_TARGET" || workflow.phase === "SUCCESS") ? (
-        <div className="absolute top-3 right-3 left-3 z-20 flex flex-wrap items-center gap-2 rounded-xl border bg-background/95 p-3 shadow-lg backdrop-blur sm:left-1/2 sm:max-w-xl sm:-translate-x-1/2">
+        <div className="pointer-events-none absolute top-3 right-3 left-3 z-20 flex flex-wrap items-center gap-2 rounded-xl border bg-background/95 p-3 shadow-lg backdrop-blur sm:left-1/2 sm:max-w-xl sm:-translate-x-1/2">
           {workflow.phase === "SUCCESS" ? <CheckCircle2 className="size-5 text-emerald-600" /> : <ArrowRightLeft className="size-5 text-primary" />}
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold">
@@ -74,11 +80,19 @@ export function LayoutTableMove({ workflow, model, cancel, back, submitting, suc
             <p className="truncate text-xs text-muted-foreground">
               {workflow.context.displayName} · {sourceCodes} · {workflow.context.partySize} khách
             </p>
+            {workflow.phase === "SELECTING_MOVE_TARGET" ? (
+              <p className="text-xs text-muted-foreground">
+                Bàn đích: {targetCodes || "chưa chọn"} · sức chứa {targetCapacity}/{workflow.context.partySize}
+              </p>
+            ) : null}
           </div>
           {workflow.phase === "SUCCESS" ? (
-            <Button size="sm" onClick={cancel}>Hoàn tất</Button>
+            <Button className="pointer-events-auto" size="sm" onClick={cancel}>Hoàn tất</Button>
           ) : (
-            <Button variant="outline" size="sm" onClick={cancel}><X /> Hủy thao tác</Button>
+            <>
+              <Button className="pointer-events-auto" variant="outline" size="sm" onClick={cancel}><X /> Hủy thao tác</Button>
+              <Button className="pointer-events-auto" size="sm" disabled={!capacitySatisfied} onClick={confirm}>Tiếp tục</Button>
+            </>
           )}
         </div>
       ) : null}
@@ -87,9 +101,9 @@ export function LayoutTableMove({ workflow, model, cancel, back, submitting, suc
         <Dialog open onOpenChange={(open) => !open && workflow.phase === "CONFIRMING" && back()}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Xác nhận chuyển sang {target?.code}?</DialogTitle>
+              <DialogTitle>Xác nhận chuyển sang {targetCodes}?</DialogTitle>
               <DialogDescription>
-                {sourceCodes} → {target?.code}. Backend sẽ kiểm tra lại version, quyền, trạng thái, conflict và capacity trong transaction.
+                {sourceCodes} → {targetCodes}. Backend sẽ kiểm tra lại version, quyền, trạng thái, conflict và capacity trong transaction.
               </DialogDescription>
             </DialogHeader>
             <p className="rounded-lg border bg-surface-1 p-3 text-sm">
@@ -97,7 +111,7 @@ export function LayoutTableMove({ workflow, model, cancel, back, submitting, suc
             </p>
             <DialogFooter>
               <Button variant="ghost" disabled={workflow.phase === "SUBMITTING"} onClick={back}>Quay lại chọn bàn</Button>
-              <Button disabled={workflow.phase === "SUBMITTING" || !target} onClick={() => void submit()}>
+              <Button disabled={workflow.phase === "SUBMITTING" || !targets.length || !capacitySatisfied} onClick={() => void submit()}>
                 {workflow.phase === "SUBMITTING" ? "Đang chuyển…" : "Xác nhận chuyển bàn"}
               </Button>
             </DialogFooter>

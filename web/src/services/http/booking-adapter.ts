@@ -71,6 +71,10 @@ export interface BookingCreatePayload {
   classification?: BookingClassification
 }
 
+export interface DirectBookingCreatePayload extends BookingCreatePayload {
+  tableIds: number[]
+}
+
 export interface BookingUpdatePayload extends BookingCreatePayload {
   version: number
 }
@@ -173,6 +177,17 @@ function venueRfc3339(value: Date): string {
 
 export function createBookingPayload(fields: BookingWriteFields): BookingCreatePayload {
   return commonPayload(fields)
+}
+
+export function directBookingCreatePayload(
+  fields: BookingWriteFields,
+  tableIds: number[],
+): DirectBookingCreatePayload {
+  const uniqueTableIds = [...new Set(tableIds)]
+  if (!uniqueTableIds.length || uniqueTableIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+    throw new ApiError(400, "TABLE_REQUIRED", "Cần chọn ít nhất một bàn hợp lệ.")
+  }
+  return { ...commonPayload(fields), tableIds: uniqueTableIds }
 }
 
 export function fullUpdateBookingPayload(

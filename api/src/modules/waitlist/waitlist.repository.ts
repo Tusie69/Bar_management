@@ -5,7 +5,7 @@ import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
 import { protectPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from '../bookings/phone-security.js'
-import { createTableGroup, lockAndValidateWaitlistTables } from '../tables/table-group.repository.js'
+import { createTableGroup, lockAndValidateAssignableTables } from '../tables/table-group.repository.js'
 
 export type WaitlistStatus = 'WAITING' | 'CONTACTING' | 'OFFERED' | 'HOLD_ACTIVE' | 'SEATED' | 'DECLINED' | 'CANCELLED'
 export type ContactChannel = 'IN_PERSON' | 'PHONE_CALLBACK' | 'ZALO_THREAD' | 'FANPAGE_THREAD' | 'OTHER'
@@ -251,7 +251,7 @@ export async function seatWaitlistEntry(
     const tableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
     if (!tableIds.length) throw new AppError(400, 'TABLE_REQUIRED', 'Cần chọn ít nhất một bàn.')
     const placeholders = tableIds.map(() => '?').join(',')
-    const tables = await lockAndValidateWaitlistTables(connection, actor, tableIds)
+    const tables = await lockAndValidateAssignableTables(connection, actor, tableIds)
     const capacity = tables.reduce((total, table) => total + Number(table.capacity), 0)
     if (capacity < Number(entry.party_size)) {
       throw new AppError(409, 'INSUFFICIENT_TABLE_CAPACITY', `Bàn đã chọn chỉ có ${capacity} chỗ cho ${entry.party_size} khách.`)

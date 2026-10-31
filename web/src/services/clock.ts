@@ -7,18 +7,19 @@
  * from the clock menu. The HTTP implementation would use server time.
  */
 import { atBusinessTime, businessDateOf } from "@/lib/time"
+import { runtimeConfig } from "@/config/runtime"
 
 type Listener = () => void
 
 const SCENARIO_START = "21:30"
 
-class SimClock {
+export class SimClock {
   private offsetMs = 0
-  private simulated = true
+  private simulated = false
   private listeners = new Set<Listener>()
 
-  constructor() {
-    this.resetToScenario()
+  constructor(simulated = runtimeConfig.apiMode === "mock") {
+    if (simulated) this.resetToScenario()
   }
 
   now(): Date {

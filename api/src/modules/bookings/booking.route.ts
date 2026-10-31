@@ -7,6 +7,7 @@ import { AppError } from '../../errors/app-error.js'
 import {
   assignBookingTables,
   checkInBooking,
+  createAndAssignBooking,
   closeBooking,
   createBooking,
   createWalkIn,
@@ -137,6 +138,23 @@ bookingRouter.post('/', requireAuthentication, requireCsrfProtection, requirePer
   })
   response.status(201).json({ booking })
 })
+
+bookingRouter.post(
+  '/direct',
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission('reservation.create'),
+  requirePermission('table.assign'),
+  async (request, response) => {
+    const { body, ...input } = bookingBody(request.body)
+    if (!Array.isArray(body.tableIds)) throw new AppError(400, 'TABLES_REQUIRED', 'Danh sách bàn không hợp lệ.')
+    const tableIds = body.tableIds.map((id) => positiveInteger(id, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.'))
+    response.status(201).json({ booking: await createAndAssignBooking(requireAuthenticatedActor(request), {
+      ...input,
+      tableIds,
+    }) })
+  },
+)
 
 bookingRouter.put('/:id', requireAuthentication, requireCsrfProtection, requirePermission('reservation.update'), async (request, response) => {
   const { body, ...input } = bookingBody(request.body)

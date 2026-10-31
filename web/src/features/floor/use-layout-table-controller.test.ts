@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest"
 import type { FloorTableState, TableView } from "@/domain/models"
 import {
+  directBookingWorkflowReducer,
+  isValidDirectBookingTarget,
   isValidMoveTarget,
   isValidMergeTarget,
   mergeWorkflowReducer,
@@ -35,6 +37,39 @@ const floorState = (patch: Partial<FloorTableState>): FloorTableState => ({
   state: "free",
   claim: null,
   ...patch,
+})
+
+describe("direct booking table selection state machine", () => {
+  it("adds and removes extra seats but never removes the origin", () => {
+    const ready = directBookingWorkflowReducer({ phase: "IDLE" }, { type: "START", originTableId: 11 })
+    const selecting = directBookingWorkflowReducer(ready, { type: "BEGIN_EXTRA" })
+    const added = directBookingWorkflowReducer(selecting, { type: "TOGGLE", tableId: 12 })
+    expect(added).toMatchObject({ tableIds: [11, 12] })
+    expect(directBookingWorkflowReducer(added, { type: "TOGGLE", tableId: 11 })).toMatchObject({
+      tableIds: [11, 12],
+    })
+    expect(directBookingWorkflowReducer(added, { type: "TOGGLE", tableId: 12 })).toMatchObject({ tableIds: [11] })
+  })
+
+  it("restores the snapshot on cancel and keeps the selection on finish", () => {
+    const ready = { phase: "READY" as const, originTableId: 11, tableIds: [11, 12] }
+    const selecting = directBookingWorkflowReducer(ready, { type: "BEGIN_EXTRA" })
+    const changed = directBookingWorkflowReducer(selecting, { type: "TOGGLE", tableId: 13 })
+    expect(directBookingWorkflowReducer(changed, { type: "CANCEL_EXTRA" })).toEqual(ready)
+    expect(directBookingWorkflowReducer(changed, { type: "FINISH_EXTRA" })).toEqual({
+      phase: "READY",
+      originTableId: 11,
+      tableIds: [11, 12, 13],
+    })
+  })
+
+  it("accepts only free active non-spare tables in the origin zone and kind", () => {
+    expect(isValidDirectBookingTarget({ ...table, id: 8 }, floorState({ tableId: 8 }), table)).toBe(true)
+    expect(isValidDirectBookingTarget({ ...table, id: 8, zoneId: 2 }, floorState({ tableId: 8 }), table)).toBe(false)
+    expect(isValidDirectBookingTarget({ ...table, id: 8, kind: "BAR_SEAT" }, floorState({ tableId: 8 }), table)).toBe(false)
+    expect(isValidDirectBookingTarget({ ...table, id: 8, isSpare: true }, floorState({ tableId: 8 }), table)).toBe(false)
+    expect(isValidDirectBookingTarget({ ...table, id: 8 }, floorState({ tableId: 8, state: "reserved" }), table)).toBe(false)
+  })
 })
 
 describe("waitlist table assignment state machine", () => {
@@ -211,19 +246,22 @@ describe("two-step move state machine", () => {
 
   it("moves through selection, confirmation, submission and success", () => {
     const selecting = moveWorkflowReducer({ phase: "IDLE" }, { type: "BEGIN", context })
-    const confirming = moveWorkflowReducer(selecting, { type: "SELECT_TARGET", tableId: 9 })
+    const withFirstTarget = moveWorkflowReducer(selecting, { type: "TOGGLE_TARGET", tableId: 9 })
+    const withTwoTargets = moveWorkflowReducer(withFirstTarget, { type: "TOGGLE_TARGET", tableId: 10 })
+    const confirming = moveWorkflowReducer(withTwoTargets, { type: "CONFIRM" })
     const submitting = moveWorkflowReducer(confirming, { type: "SUBMIT" })
     expect(moveWorkflowReducer(submitting, { type: "SUCCEED" })).toMatchObject({
       phase: "SUCCESS",
-      targetTableId: 9,
+      tableIds: [9, 10],
     })
   })
 
   it("returns to selection after confirmation/error and cancel always clears stale state", () => {
-    const confirming = moveWorkflowReducer(
-      { phase: "SELECTING_MOVE_TARGET", context },
-      { type: "SELECT_TARGET", tableId: 9 },
+    const selecting = moveWorkflowReducer(
+      { phase: "SELECTING_MOVE_TARGET", context, tableIds: [] },
+      { type: "TOGGLE_TARGET", tableId: 9 },
     )
+    const confirming = moveWorkflowReducer(selecting, { type: "CONFIRM" })
     expect(moveWorkflowReducer(confirming, { type: "BACK" }).phase).toBe("SELECTING_MOVE_TARGET")
     const failed = moveWorkflowReducer(moveWorkflowReducer(confirming, { type: "SUBMIT" }), {
       type: "FAIL",
@@ -233,11 +271,22 @@ describe("two-step move state machine", () => {
     expect(moveWorkflowReducer(failed, { type: "CANCEL" })).toEqual({ phase: "IDLE" })
   })
 
-  it("allows only free, active, non-spare targets with enough capacity", () => {
+  it("allows multiple free targets across zones while keeping their kind consistent", () => {
     const target = { ...table, id: 9, capacity: 4 }
     expect(isValidMoveTarget(target, floorState({ tableId: 9 }), context)).toBe(true)
-    expect(isValidMoveTarget({ ...target, capacity: 2 }, floorState({ tableId: 9 }), context)).toBe(false)
+    expect(isValidMoveTarget({ ...target, capacity: 2 }, floorState({ tableId: 9 }), context)).toBe(true)
     expect(isValidMoveTarget(target, floorState({ tableId: 9, state: "seated" }), context)).toBe(false)
     expect(isValidMoveTarget({ ...target, isSpare: true }, floorState({ tableId: 9 }), context)).toBe(false)
+    expect(
+      isValidMoveTarget(
+        { ...target, id: 10, zoneId: 2, zoneCode: "B" },
+        floorState({ tableId: 10 }),
+        context,
+        target,
+      ),
+    ).toBe(true)
+    expect(
+      isValidMoveTarget({ ...target, id: 10, kind: "BAR_SEAT" }, floorState({ tableId: 10 }), context, target),
+    ).toBe(false)
   })
 })

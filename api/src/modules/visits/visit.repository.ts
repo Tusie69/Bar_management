@@ -6,7 +6,7 @@ import { AppError } from '../../errors/app-error.js'
 import {
   createTableGroup,
   dissolveUnusedGroups,
-  lockAndValidateConnectedTables,
+  lockAndValidateSameKindTables,
   lockAndValidateSameZoneTables,
 } from '../tables/table-group.repository.js'
 
@@ -302,7 +302,7 @@ export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput
     if (targetTables.length !== targetTableIds.length) {
       throw new AppError(400, 'TABLE_NOT_FOUND', 'Có bàn không tồn tại hoặc ngừng hoạt động.')
     }
-    if (targetTableIds.length > 1) await lockAndValidateConnectedTables(connection, actor, targetTableIds)
+    if (targetTableIds.length > 1) await lockAndValidateSameKindTables(connection, actor, targetTableIds)
     const spareTable = targetTables.find((table) => Boolean(table.is_spare))
     if (spareTable) throw new AppError(409, 'SPARE_TABLE_NOT_BOOKABLE', `Bàn ${spareTable.code} là bàn sơ cua và chưa được cấu hình để nhận khách.`)
     const totalCapacity = targetTables.reduce((total, table) => total + Number(table.capacity), 0)
@@ -339,18 +339,20 @@ export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput
     if (previousGroupIds.length > 1) {
       throw new AppError(409, 'GROUP_STATE_INCONSISTENT', 'Visit đang có nhiều group identity.')
     }
-    const retainedGroupId = targetTableIds.length > 1 ? previousGroupIds[0] ?? null : null
+    const targetGroupId = targetTableIds.length > 1
+      ? previousGroupIds[0] ?? (await createTableGroup(connection, actor, visitBusinessDate)).id
+      : null
     const newAllocationIds: number[] = []
     for (const tableId of targetTableIds) {
       const [allocationResult] = await connection.execute<ResultSetHeader>(
         `INSERT INTO table_allocations
           (organization_id, venue_id, table_id, kind, visit_id, group_id, starts_at, business_date, created_by_user_id)
          VALUES (?, ?, ?, 'USAGE', ?, ?, UTC_TIMESTAMP(3), ?, ?)`,
-        [actor.organizationId, actor.venueId, tableId, input.visitId, retainedGroupId, visitBusinessDate, actor.userId],
+        [actor.organizationId, actor.venueId, tableId, input.visitId, targetGroupId, visitBusinessDate, actor.userId],
       )
       newAllocationIds.push(allocationResult.insertId)
     }
-    await dissolveUnusedGroups(connection, actor, retainedGroupId === null ? previousGroupIds : [])
+    await dissolveUnusedGroups(connection, actor, targetGroupId === null ? previousGroupIds : [])
     const [visitUpdate] = await connection.execute<ResultSetHeader>(
       `UPDATE visits SET version = version + 1, updated_at = UTC_TIMESTAMP(3)
        WHERE organization_id = ? AND venue_id = ? AND id = ? AND ended_at IS NULL AND version = ?`,

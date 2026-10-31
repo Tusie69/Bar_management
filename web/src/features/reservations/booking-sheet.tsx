@@ -241,7 +241,6 @@ function BookingBody() {
                 now={now}
                 onChange={setTime}
                 error={timeError}
-                gridClassName="sm:grid-cols-5"
               />
             </section>
           </div>

@@ -23,7 +23,7 @@ import {
   BookingEditor,
   CancelBooking,
 } from "@/features/reservations/http-bookings-page"
-import type { LayoutTableIntent, MoveContext } from "./use-layout-table-controller"
+import type { DirectBookingWorkflow, LayoutTableIntent, MoveContext } from "./use-layout-table-controller"
 import { customerCallCapability } from "./customer-call"
 
 type Mode = "create" | "menu" | "edit" | "assign" | "cancel" | "checkin"
@@ -37,12 +37,30 @@ interface Props {
   onClose: () => void
   onStartMove: (context: MoveContext) => void
   onStartMerge: (context: MoveContext) => void
+  directBookingWorkflow: DirectBookingWorkflow
+  onBeginDirectBookingSelection: () => void
+  onCancelDirectBookingSelection: () => void
+  onFinishDirectBookingSelection: () => void
+  onBusinessDateChange: (date: BusinessDate) => void
 }
 
-export function LayoutBookingOperations({ table, intent, catalogTables, sources, businessDate, onClose, onStartMove, onStartMerge }: Props) {
+export function LayoutBookingOperations({
+  table,
+  intent,
+  catalogTables,
+  sources,
+  businessDate,
+  onClose,
+  onStartMove,
+  onStartMerge,
+  directBookingWorkflow,
+  onBeginDirectBookingSelection,
+  onCancelDirectBookingSelection,
+  onFinishDirectBookingSelection,
+  onBusinessDateChange,
+}: Props) {
   const [mode, setMode] = useState<Mode>(intent.kind === "create" ? "create" : "menu")
-  const [recoveryBooking, setRecoveryBooking] = useState<HttpBooking | null>(null)
-  const reservationId = intent.kind === "booking" ? intent.reservationId : recoveryBooking?.id ?? null
+  const reservationId = intent.kind === "booking" ? intent.reservationId : null
   const detail = useQuery({
     queryKey: ["http-bookings", "detail", reservationId ?? 0],
     queryFn: () => bookingApi!.detail(reservationId!),
@@ -50,7 +68,7 @@ export function LayoutBookingOperations({ table, intent, catalogTables, sources,
     retry: false,
     refetchOnMount: "always",
   })
-  const booking = recoveryBooking ?? detail.data ?? null
+  const booking = detail.data ?? null
 
   if (intent.kind === "blocked") {
     return <InformationDialog table={table} title="Không thể thao tác trực tiếp" body={intent.reason} onClose={onClose} />
@@ -69,19 +87,27 @@ export function LayoutBookingOperations({ table, intent, catalogTables, sources,
   }
 
   if (mode === "create") {
+    const directTableIds = directBookingWorkflow.phase === "IDLE" ? [table.id] : directBookingWorkflow.tableIds
+    const selectingExtra = directBookingWorkflow.phase === "SELECTING_DIRECT_BOOKING_TABLES"
     return (
-      <BookingEditor
-        editor={{ mode: "create" }}
-        sources={sources}
-        defaultBusinessDate={businessDate}
-        directTable={table}
-        close={onClose}
-        select={() => onClose()}
-        onPartial={(created) => {
-          setRecoveryBooking(created)
-          setMode("menu")
-        }}
-      />
+      <>
+        <BookingEditor
+          editor={{ mode: "create" }}
+          sources={sources}
+          defaultBusinessDate={businessDate}
+          directTable={table}
+          catalogTables={catalogTables}
+          selectedTableIds={directTableIds}
+          open={!selectingExtra}
+          onSelectExtraTables={onBeginDirectBookingSelection}
+          onBusinessDateChange={onBusinessDateChange}
+          selectingTables={selectingExtra}
+          onCancelTableSelection={onCancelDirectBookingSelection}
+          onFinishTableSelection={onFinishDirectBookingSelection}
+          close={onClose}
+          select={() => onClose()}
+        />
+      </>
     )
   }
 
@@ -121,7 +147,7 @@ export function LayoutBookingOperations({ table, intent, catalogTables, sources,
       booking={booking}
       loading={detail.isFetching}
       error={detail.error}
-      partial={recoveryBooking !== null}
+      partial={false}
       onClose={onClose}
       setMode={setMode}
       intent={intent.kind === "booking" ? intent : null}

@@ -43,7 +43,7 @@ async function lockMergeTables(
   return { ids, tables }
 }
 
-export async function lockAndValidateWaitlistTables(
+export async function lockAndValidateAssignableTables(
   connection: PoolConnection,
   actor: AuthenticatedActor,
   tableIds: number[],
@@ -89,6 +89,19 @@ export async function lockAndValidateSameZoneTables(
   const { tables } = await lockMergeTables(connection, actor, tableIds)
   if (new Set(tables.map((table) => Number(table.zone_id))).size !== 1) {
     throw new AppError(409, 'TABLE_ZONE_MISMATCH', 'Chỉ có thể ghép các bàn trong cùng một khu vực.')
+  }
+  return tables
+}
+
+export async function lockAndValidateSameKindTables(
+  connection: PoolConnection,
+  actor: AuthenticatedActor,
+  tableIds: number[],
+): Promise<GroupTableRow[]> {
+  const { tables } = await lockMergeTables(connection, actor, tableIds)
+  const nonBookable = tables.find((table) => !table.is_bookable)
+  if (nonBookable) {
+    throw new AppError(409, 'ZONE_NOT_BOOKABLE', `Khu của bàn ${nonBookable.code} không nhận khách.`)
   }
   return tables
 }

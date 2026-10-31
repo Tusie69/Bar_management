@@ -134,10 +134,34 @@ try {
   await dialog.getByText("Tạo booking", { exact: true }).waitFor()
   await dialog.locator("input").first().fill(guestName)
   if ((await dialog.locator('input[type="time"]').count()) !== 0) throw new Error("Native time picker is still present")
+  const timePicker = dialog.getByRole("radiogroup", { name: "Giờ khách dự kiến đến" })
+  const timeRadios = timePicker.getByRole("radio")
+  if ((await timeRadios.count()) !== 13) throw new Error("Horizontal time picker does not contain all 13 slots")
+  const slotTops = await timeRadios.evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().top)))
+  if (new Set(slotTops).size !== 1) throw new Error("Time slots are not rendered in one horizontal row")
+  const firstSlot = timePicker.getByRole("radio", { name: /^19:00/ })
+  await firstSlot.focus()
+  await firstSlot.press("ArrowRight")
+  if ((await timePicker.getByRole("radio", { name: /^19:30/ }).getAttribute("aria-checked")) !== "true") {
+    throw new Error("Arrow-key time selection did not update the selected slot")
+  }
+  const lastSlot = timePicker.getByRole("radio", { name: /^01:00/ })
+  await lastSlot.click()
+  await page.waitForFunction(
+    (element) => {
+      const parent = element?.parentElement
+      return !!element && !!parent && element.offsetLeft >= parent.scrollLeft - 1
+        && element.offsetLeft + element.offsetWidth <= parent.scrollLeft + parent.clientWidth + 1
+    },
+    await lastSlot.elementHandle(),
+  )
+  if (await dialog.evaluate((node) => node.scrollWidth > node.clientWidth + 1)) {
+    throw new Error("Horizontal picker caused modal overflow")
+  }
   await dialog.locator('input[type="number"]').fill("3")
   await dialog.getByRole("radio", { name: /^19:30/ }).click()
   await dialog.getByLabel("Loại khách").selectOption("RETURNING")
-  await dialog.getByRole("button", { name: "Lưu qua backend" }).click()
+  await dialog.getByRole("button", { name: "Lưu booking" }).click()
   await page.getByText("Chi tiết booking", { exact: true }).waitFor()
   await page.getByText(guestName, { exact: true }).first().waitFor()
 
@@ -178,11 +202,11 @@ try {
   }
   await dialog.locator('input[type="number"]').fill("5")
   await dialog.getByLabel("Loại khách").selectOption("NEW")
-  await dialog.getByRole("button", { name: "Lưu qua backend" }).click()
+  await dialog.getByRole("button", { name: "Lưu thay đổi" }).click()
   await page.getByText("Chi tiết booking", { exact: true }).waitFor()
   await page.getByText("5", { exact: true }).first().waitFor()
 
-  secondContext = await browser.newContext({ viewport: { width: 390, height: 844 } })
+  secondContext = await browser.newContext({ viewport: { width: 375, height: 812 }, hasTouch: true })
   const secondPage = await secondContext.newPage()
   await secondPage.goto(webUrl, { waitUntil: "networkidle" })
   await secondPage.getByLabel("Tên đăng nhập").fill(username)
@@ -190,6 +214,20 @@ try {
   await secondPage.getByRole("button", { name: "Đăng nhập", exact: true }).click()
   await secondPage.getByRole("button", { name: "Booking", exact: true }).click()
   await secondPage.getByLabel("Ngày nghiệp vụ").fill(bookingDate)
+  await secondPage.getByRole("button", { name: "Tạo booking" }).click()
+  const mobileDialog = secondPage.getByRole("dialog").last()
+  const mobileTimePicker = mobileDialog.getByRole("radiogroup", { name: "Giờ khách dự kiến đến" })
+  await mobileTimePicker.waitFor()
+  if (await mobileDialog.evaluate((node) => node.scrollWidth > node.clientWidth + 1)) {
+    throw new Error("Mobile booking modal has horizontal overflow")
+  }
+  const scrollBefore = await mobileTimePicker.evaluate((node) => node.scrollLeft)
+  await mobileTimePicker.hover()
+  await secondPage.mouse.wheel(400, 0)
+  await secondPage.waitForTimeout(100)
+  const scrollAfter = await mobileTimePicker.evaluate((node) => node.scrollLeft)
+  if (scrollAfter <= scrollBefore) throw new Error("Horizontal time picker did not respond to trackpad scrolling")
+  await secondPage.keyboard.press("Escape")
   await secondPage.getByRole("button", { name: "Xuất text Zalo" }).click()
   const secondExport = secondPage.getByRole("dialog").getByLabel("Nội dung text booking")
   await secondExport.waitFor()

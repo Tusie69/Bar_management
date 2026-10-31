@@ -60,7 +60,7 @@ describe("HTTP booking endpoints", () => {
     expect(new URL(urls[1]!).searchParams.get("q")).toBe("Khách API")
   })
 
-  it("uses detail, create, full PUT update and cancel response envelopes", async () => {
+  it("uses detail, create, atomic direct create, full PUT update and cancel response envelopes", async () => {
     const requests: { url: string; method: string; body: unknown }[] = []
     vi.stubGlobal(
       "fetch",
@@ -82,17 +82,26 @@ describe("HTTP booking endpoints", () => {
       businessDate: current.businessDate,
       sourceCode: "HOTLINE",
     })
+    await api.createAndAssign({
+      guestName: "Khách API",
+      partySize: 2,
+      expectedAt: current.expectedAt,
+      businessDate: current.businessDate,
+      sourceCode: "HOTLINE",
+    }, [11, 12])
     await api.update(current, { partySize: 3 })
     await api.cancel(current, "Khách gọi hủy")
 
     expect(requests.map(({ method, url }) => `${method} ${new URL(url).pathname}`)).toEqual([
       "GET /api/v1/bookings/7",
       "POST /api/v1/bookings",
+      "POST /api/v1/bookings/direct",
       "PUT /api/v1/bookings/7",
       "POST /api/v1/bookings/7/cancel",
     ])
-    expect(requests[2]?.body).toMatchObject({ guestName: "Khách API", partySize: 3, version: 1 })
-    expect(requests[3]?.body).toEqual({ version: 1, reasonNote: "Khách gọi hủy" })
+    expect(requests[2]?.body).toMatchObject({ guestName: "Khách API", partySize: 2, tableIds: [11, 12] })
+    expect(requests[3]?.body).toMatchObject({ guestName: "Khách API", partySize: 3, version: 1 })
+    expect(requests[4]?.body).toEqual({ version: 1, reasonNote: "Khách gọi hủy" })
   })
 
   it("reads table state for the booking date and assigns through the backend transaction", async () => {

@@ -70,6 +70,51 @@ export function waitlistWorkflowReducer(state: WaitlistWorkflow, action: Waitlis
   }
 }
 
+export type DirectBookingWorkflow =
+  | { phase: "IDLE" }
+  | { phase: "READY"; originTableId: number; tableIds: number[] }
+  | { phase: "SELECTING_DIRECT_BOOKING_TABLES"; originTableId: number; tableIds: number[]; snapshotTableIds: number[] }
+
+export type DirectBookingAction =
+  | { type: "START"; originTableId: number }
+  | { type: "BEGIN_EXTRA" }
+  | { type: "TOGGLE"; tableId: number }
+  | { type: "CANCEL_EXTRA" }
+  | { type: "FINISH_EXTRA" }
+  | { type: "RESET" }
+
+export function directBookingWorkflowReducer(
+  state: DirectBookingWorkflow,
+  action: DirectBookingAction,
+): DirectBookingWorkflow {
+  switch (action.type) {
+    case "START":
+      return { phase: "READY", originTableId: action.originTableId, tableIds: [action.originTableId] }
+    case "BEGIN_EXTRA":
+      return state.phase === "READY"
+        ? { ...state, phase: "SELECTING_DIRECT_BOOKING_TABLES", snapshotTableIds: [...state.tableIds] }
+        : state
+    case "TOGGLE":
+      if (state.phase !== "SELECTING_DIRECT_BOOKING_TABLES" || action.tableId === state.originTableId) return state
+      return {
+        ...state,
+        tableIds: state.tableIds.includes(action.tableId)
+          ? state.tableIds.filter((id) => id !== action.tableId)
+          : [...state.tableIds, action.tableId],
+      }
+    case "CANCEL_EXTRA":
+      return state.phase === "SELECTING_DIRECT_BOOKING_TABLES"
+        ? { phase: "READY", originTableId: state.originTableId, tableIds: [...state.snapshotTableIds] }
+        : state
+    case "FINISH_EXTRA":
+      return state.phase === "SELECTING_DIRECT_BOOKING_TABLES"
+        ? { phase: "READY", originTableId: state.originTableId, tableIds: [...state.tableIds] }
+        : state
+    case "RESET":
+      return { phase: "IDLE" }
+  }
+}
+
 export type MergeWorkflow =
   | { phase: "IDLE" }
   | { phase: "SELECTING_MERGE_TARGETS"; context: MergeContext; tableIds: number[] }
@@ -119,15 +164,16 @@ export function mergeWorkflowReducer(state: MergeWorkflow, action: MergeAction):
 
 export type MoveWorkflow =
   | { phase: "IDLE" }
-  | { phase: "SELECTING_MOVE_TARGET"; context: MoveContext }
-  | { phase: "CONFIRMING"; context: MoveContext; targetTableId: number }
-  | { phase: "SUBMITTING"; context: MoveContext; targetTableId: number }
-  | { phase: "SUCCESS"; context: MoveContext; targetTableId: number }
-  | { phase: "ERROR"; context: MoveContext; targetTableId: number; message: string }
+  | { phase: "SELECTING_MOVE_TARGET"; context: MoveContext; tableIds: number[] }
+  | { phase: "CONFIRMING"; context: MoveContext; tableIds: number[] }
+  | { phase: "SUBMITTING"; context: MoveContext; tableIds: number[] }
+  | { phase: "SUCCESS"; context: MoveContext; tableIds: number[] }
+  | { phase: "ERROR"; context: MoveContext; tableIds: number[]; message: string }
 
 export type MoveAction =
   | { type: "BEGIN"; context: MoveContext }
-  | { type: "SELECT_TARGET"; tableId: number }
+  | { type: "TOGGLE_TARGET"; tableId: number }
+  | { type: "CONFIRM" }
   | { type: "BACK" }
   | { type: "SUBMIT" }
   | { type: "SUCCEED" }
@@ -137,26 +183,35 @@ export type MoveAction =
 export function moveWorkflowReducer(state: MoveWorkflow, action: MoveAction): MoveWorkflow {
   switch (action.type) {
     case "BEGIN":
-      return { phase: "SELECTING_MOVE_TARGET", context: action.context }
-    case "SELECT_TARGET":
+      return { phase: "SELECTING_MOVE_TARGET", context: action.context, tableIds: [] }
+    case "TOGGLE_TARGET":
       return state.phase === "SELECTING_MOVE_TARGET"
-        ? { phase: "CONFIRMING", context: state.context, targetTableId: action.tableId }
+        ? {
+            ...state,
+            tableIds: state.tableIds.includes(action.tableId)
+              ? state.tableIds.filter((id) => id !== action.tableId)
+              : [...state.tableIds, action.tableId],
+          }
+        : state
+    case "CONFIRM":
+      return state.phase === "SELECTING_MOVE_TARGET" && state.tableIds.length > 0
+        ? { phase: "CONFIRMING", context: state.context, tableIds: state.tableIds }
         : state
     case "BACK":
       return state.phase === "CONFIRMING" || state.phase === "ERROR"
-        ? { phase: "SELECTING_MOVE_TARGET", context: state.context }
+        ? { phase: "SELECTING_MOVE_TARGET", context: state.context, tableIds: state.tableIds }
         : state
     case "SUBMIT":
       return state.phase === "CONFIRMING"
-        ? { phase: "SUBMITTING", context: state.context, targetTableId: state.targetTableId }
+        ? { phase: "SUBMITTING", context: state.context, tableIds: state.tableIds }
         : state
     case "SUCCEED":
       return state.phase === "SUBMITTING"
-        ? { phase: "SUCCESS", context: state.context, targetTableId: state.targetTableId }
+        ? { phase: "SUCCESS", context: state.context, tableIds: state.tableIds }
         : state
     case "FAIL":
       return state.phase === "SUBMITTING"
-        ? { phase: "ERROR", context: state.context, targetTableId: state.targetTableId, message: action.message }
+        ? { phase: "ERROR", context: state.context, tableIds: state.tableIds, message: action.message }
         : state
     case "CANCEL":
       return { phase: "IDLE" }
@@ -216,13 +271,18 @@ export function resolveLayoutTableIntent(
   return { kind: "create" }
 }
 
-export function isValidMoveTarget(table: TableView, state: FloorTableState | undefined, context: MoveContext): boolean {
+export function isValidMoveTarget(
+  table: TableView,
+  state: FloorTableState | undefined,
+  context: MoveContext,
+  firstTarget?: TableView,
+): boolean {
   return (
     !context.sourceTableIds.includes(table.id) &&
     table.status === "ACTIVE" &&
     !table.isSpare &&
     state?.state === "free" &&
-    table.capacity >= context.partySize
+    (!firstTarget || table.kind === firstTarget.kind)
   )
 }
 
@@ -254,24 +314,47 @@ export function isValidWaitlistTarget(
   )
 }
 
+export function isValidDirectBookingTarget(
+  table: TableView,
+  state: FloorTableState | undefined,
+  origin: TableView | undefined,
+): boolean {
+  return (
+    origin !== undefined &&
+    table.zoneId === origin.zoneId &&
+    table.kind === origin.kind &&
+    table.status === "ACTIVE" &&
+    !table.isSpare &&
+    state?.state === "free"
+  )
+}
+
 export function useLayoutTableController(model: FloorModel, permissions: readonly string[]) {
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null)
   const [workflow, dispatch] = useReducer(moveWorkflowReducer, { phase: "IDLE" })
   const [mergeWorkflow, dispatchMerge] = useReducer(mergeWorkflowReducer, { phase: "IDLE" })
   const [waitlistWorkflow, dispatchWaitlist] = useReducer(waitlistWorkflowReducer, { phase: "IDLE" })
+  const [directBookingWorkflow, dispatchDirectBooking] = useReducer(directBookingWorkflowReducer, { phase: "IDLE" })
   const permissionSet = useMemo(() => new Set(permissions), [permissions])
   const table = selectedTableId === null ? undefined : model.byId.get(selectedTableId)
   const state = selectedTableId === null ? undefined : model.states.get(selectedTableId)
-  const intent = table ? resolveLayoutTableIntent(table, state, permissionSet) : null
-  const moveContext = workflow.phase === "IDLE" ? null : workflow.context
+  const intent = table
+    ? directBookingWorkflow.phase !== "IDLE" && directBookingWorkflow.originTableId === table.id
+      ? { kind: "create" as const }
+      : resolveLayoutTableIntent(table, state, permissionSet)
+    : null
   const pickable = useMemo(() => {
     if (workflow.phase !== "SELECTING_MOVE_TARGET") return null
+    const firstTarget = model.byId.get(workflow.tableIds[0] ?? -1)
     return new Set(
       model.tables
-        .filter((candidate) => isValidMoveTarget(candidate, model.states.get(candidate.id), workflow.context))
+        .filter((candidate) =>
+          workflow.tableIds.includes(candidate.id) ||
+          isValidMoveTarget(candidate, model.states.get(candidate.id), workflow.context, firstTarget),
+        )
         .map((candidate) => candidate.id),
     )
-  }, [model.states, model.tables, workflow])
+  }, [model.byId, model.states, model.tables, workflow])
   const mergePickable = useMemo(() => {
     if (mergeWorkflow.phase !== "SELECTING_MERGE_TARGETS") return null
     const selected = new Set(mergeWorkflow.tableIds)
@@ -294,8 +377,23 @@ export function useLayoutTableController(model: FloorModel, permissions: readonl
         .map((candidate) => candidate.id),
     )
   }, [model.byId, model.states, model.tables, waitlistWorkflow])
+  const directBookingPickable = useMemo(() => {
+    if (directBookingWorkflow.phase !== "SELECTING_DIRECT_BOOKING_TABLES") return null
+    const origin = model.byId.get(directBookingWorkflow.originTableId)
+    return new Set(
+      model.tables
+        .filter((candidate) =>
+          (directBookingWorkflow.tableIds.includes(candidate.id) && candidate.id !== directBookingWorkflow.originTableId) ||
+          isValidDirectBookingTarget(candidate, model.states.get(candidate.id), origin),
+        )
+        .map((candidate) => candidate.id)
+        .filter((id) => id !== directBookingWorkflow.originTableId),
+    )
+  }, [directBookingWorkflow, model.byId, model.states, model.tables])
   const activePickable =
-    waitlistWorkflow.phase === "SELECTING_WAITLIST_TABLE"
+    directBookingWorkflow.phase === "SELECTING_DIRECT_BOOKING_TABLES"
+      ? directBookingPickable
+      : waitlistWorkflow.phase === "SELECTING_WAITLIST_TABLE"
       ? waitlistPickable
       : mergeWorkflow.phase === "SELECTING_MERGE_TARGETS"
         ? mergePickable
@@ -303,6 +401,10 @@ export function useLayoutTableController(model: FloorModel, permissions: readonl
 
   const selectTable = useCallback(
     (tableId: number) => {
+      if (directBookingWorkflow.phase === "SELECTING_DIRECT_BOOKING_TABLES") {
+        if (directBookingPickable?.has(tableId)) dispatchDirectBooking({ type: "TOGGLE", tableId })
+        return
+      }
       if (waitlistWorkflow.phase === "SELECTING_WAITLIST_TABLE") {
         if (waitlistPickable?.has(tableId)) dispatchWaitlist({ type: "TOGGLE", tableId })
         return
@@ -317,18 +419,44 @@ export function useLayoutTableController(model: FloorModel, permissions: readonl
         return
       }
       if (workflow.phase === "SELECTING_MOVE_TARGET") {
-        if (pickable?.has(tableId)) dispatch({ type: "SELECT_TARGET", tableId })
+        if (pickable?.has(tableId)) dispatch({ type: "TOGGLE_TARGET", tableId })
         return
       }
       if (workflow.phase !== "IDLE") return
+      const candidate = model.byId.get(tableId)
+      const candidateIntent = candidate
+        ? resolveLayoutTableIntent(candidate, model.states.get(tableId), permissionSet)
+        : null
       setSelectedTableId((current) => (current === tableId ? null : tableId))
+      if (candidateIntent?.kind === "create") dispatchDirectBooking({ type: "START", originTableId: tableId })
+      else dispatchDirectBooking({ type: "RESET" })
     },
-    [mergePickable, mergeWorkflow, pickable, waitlistPickable, waitlistWorkflow.phase, workflow.phase],
+    [
+      directBookingPickable,
+      directBookingWorkflow.phase,
+      mergePickable,
+      mergeWorkflow,
+      model.byId,
+      model.states,
+      permissionSet,
+      pickable,
+      waitlistPickable,
+      waitlistWorkflow.phase,
+      workflow.phase,
+    ],
   )
 
   const clearSelection = useCallback(() => {
-    if (workflow.phase === "IDLE") setSelectedTableId(null)
-  }, [workflow.phase])
+    if (
+      workflow.phase === "IDLE" &&
+      mergeWorkflow.phase === "IDLE" &&
+      waitlistWorkflow.phase === "IDLE" &&
+      directBookingWorkflow.phase !== "SELECTING_DIRECT_BOOKING_TABLES"
+    ) {
+      setSelectedTableId(null)
+      dispatchDirectBooking({ type: "RESET" })
+    }
+  }, [directBookingWorkflow.phase, mergeWorkflow.phase, waitlistWorkflow.phase, workflow.phase])
 
   const beginMove = useCallback((context: MoveContext) => {
     setSelectedTableId(null)
@@ -344,14 +472,15 @@ export function useLayoutTableController(model: FloorModel, permissions: readonl
   }, [])
 
   const normalGroupIds = state?.claim?.tableIds ?? (table ? [table.id] : [])
-  const targetId = "targetTableId" in workflow ? workflow.targetTableId : null
   const selectedIds =
-    waitlistWorkflow.phase !== "IDLE"
+    directBookingWorkflow.phase !== "IDLE"
+      ? directBookingWorkflow.tableIds
+      : waitlistWorkflow.phase !== "IDLE"
       ? waitlistWorkflow.tableIds
       : mergeWorkflow.phase !== "IDLE"
         ? mergeWorkflow.tableIds
-        : moveContext
-          ? [...new Set([...moveContext.sourceTableIds, ...(targetId === null ? [] : [targetId])])]
+        : workflow.phase !== "IDLE"
+          ? [...new Set([...workflow.context.sourceTableIds, ...workflow.tableIds])]
           : normalGroupIds
 
   return {
@@ -363,14 +492,23 @@ export function useLayoutTableController(model: FloorModel, permissions: readonl
     workflow,
     mergeWorkflow,
     waitlistWorkflow,
+    directBookingWorkflow,
     pickable: activePickable,
     selectTable,
     clearSelection,
     beginMove,
     beginMerge,
     beginWaitlistAssignment,
+    beginDirectBookingSelection: () => dispatchDirectBooking({ type: "BEGIN_EXTRA" }),
+    cancelDirectBookingSelection: () => dispatchDirectBooking({ type: "CANCEL_EXTRA" }),
+    finishDirectBookingSelection: () => dispatchDirectBooking({ type: "FINISH_EXTRA" }),
+    closeDirectBooking: () => {
+      dispatchDirectBooking({ type: "RESET" })
+      setSelectedTableId(null)
+    },
     cancelOperation: () => dispatch({ type: "CANCEL" }),
     backToSelection: () => dispatch({ type: "BACK" }),
+    confirmMove: () => dispatch({ type: "CONFIRM" }),
     startSubmitting: () => dispatch({ type: "SUBMIT" }),
     markSuccess: () => dispatch({ type: "SUCCEED" }),
     markError: (message: string) => dispatch({ type: "FAIL", message }),

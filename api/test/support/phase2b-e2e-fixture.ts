@@ -121,16 +121,25 @@ async function setup() {
   );
   await databasePool.execute(
     `INSERT INTO dining_tables
-      (id, organization_id, venue_id, zone_id, code, display_name, kind, capacity, pos_x, pos_y, width, height)
+      (id, organization_id, venue_id, zone_id, code, display_name, kind, capacity, seq_no, pos_x, pos_y, width, height)
      VALUES
-       (9501, ?, ?, 9501, 'A1', 'Bàn A1', 'TABLE', 4, 100, 100, 60, 40),
-       (9502, ?, ?, 9501, 'A2', 'Bàn A2', 'TABLE', 4, 200, 100, 60, 40),
-       (9503, ?, ?, 9501, 'A10', 'Bàn A10', 'TABLE', 4, 300, 100, 60, 40),
-       (9504, ?, ?, 9501, 'A3', 'Bàn A3', 'TABLE', 4, 400, 100, 60, 40),
-       (9505, ?, ?, 9501, 'A4', 'Bàn A4', 'TABLE', 4, 250, 180, 60, 40),
-       (9506, ?, ?, 9502, 'B3', 'Bàn B3', 'TABLE', 4, 500, 200, 60, 40),
-       (9507, ?, ?, 9502, 'B4', 'Bàn B4', 'TABLE', 4, 580, 200, 60, 40)`,
+       (9501, ?, ?, 9501, 'A1', 'Bàn A1', 'TABLE', 4, NULL, 100, 100, 60, 40),
+       (9502, ?, ?, 9501, 'A2', 'Bàn A2', 'TABLE', 4, NULL, 200, 100, 60, 40),
+       (9503, ?, ?, 9501, 'A10', 'Bàn A10', 'TABLE', 4, NULL, 300, 100, 60, 40),
+       (9504, ?, ?, 9501, 'A3', 'Bàn A3', 'TABLE', 4, NULL, 400, 100, 60, 40),
+       (9505, ?, ?, 9501, 'A4', 'Bàn A4', 'TABLE', 4, NULL, 250, 180, 60, 40),
+       (9506, ?, ?, 9502, 'B3', 'Bàn B3', 'TABLE', 4, NULL, 500, 200, 60, 40),
+       (9507, ?, ?, 9502, 'B4', 'Bàn B4', 'TABLE', 4, NULL, 580, 200, 60, 40),
+       (9508, ?, ?, 9501, 'BAR11', 'Ghế Bar 11', 'BAR_SEAT', 1, 11, 100, 260, 32, 32),
+       (9509, ?, ?, 9501, 'BAR12', 'Ghế Bar 12', 'BAR_SEAT', 1, 12, 150, 260, 32, 32),
+       (9510, ?, ?, 9501, 'BAR13', 'Ghế Bar 13', 'BAR_SEAT', 1, 13, 200, 260, 32, 32)`,
     [
+      organizationId,
+      venueId,
+      organizationId,
+      venueId,
+      organizationId,
+      venueId,
       organizationId,
       venueId,
       organizationId,
