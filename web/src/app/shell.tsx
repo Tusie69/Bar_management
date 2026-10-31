@@ -252,25 +252,29 @@ function ClockMenu() {
                 : "Đang dùng giờ thật của máy."}
             </p>
           </div>
-          <div className="grid grid-cols-3 gap-2">
-            <Button variant="outline" size="sm" onClick={() => clock.advance(5)}>
-              <FastForward /> 5'
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => clock.advance(15)}>
-              <FastForward /> 15'
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => clock.advance(30)}>
-              <FastForward /> 30'
-            </Button>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Button variant="ghost" size="sm" onClick={() => clock.resetToScenario()}>
-              <RotateCcw /> Về 21:30
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => clock.useRealTime()}>
-              Giờ thật
-            </Button>
-          </div>
+          {demo ? (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                <Button variant="outline" size="sm" onClick={() => clock.advance(5)}>
+                  <FastForward /> 5'
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => clock.advance(15)}>
+                  <FastForward /> 15'
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => clock.advance(30)}>
+                  <FastForward /> 30'
+                </Button>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Button variant="ghost" size="sm" onClick={() => clock.resetToScenario()}>
+                  <RotateCcw /> Về 21:30
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => clock.useRealTime()}>
+                  Giờ thật
+                </Button>
+              </div>
+            </>
+          ) : null}
           {demo ? <DemoTools armed={armed} setArmed={setArmed} busy={busy} setBusy={setBusy} /> : null}
         </div>
       </PopoverContent>

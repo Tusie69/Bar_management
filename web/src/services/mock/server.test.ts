@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { BAR_SEATS, POSITION_COUNT, TABLES } from "@/domain/venue-layout"
 import { addDays, atBusinessTime, businessDateOf, fromVenueLocal } from "@/lib/time"
 import { clock } from "../clock"
@@ -109,6 +109,61 @@ describe("MockGamApi", () => {
     expect((await api.listWaitlist(bd)).find((row) => row.id === entry.id)?.status).toBe("SEATED")
     const seated = await api.getFloorState(clock.now(), bd)
     expect(seated.groups.find((group) => group.id === assigned.groupId)?.tableIds.sort()).toEqual(ids.sort())
+  })
+
+  it("rolls back a direct booking and its customer when table assignment conflicts", async () => {
+    const table = (await api.getCatalog()).tables.find((row) => row.code === "B3")!
+    const before = await api.listReservations({ businessDate: bd })
+    const allocations = await api.listAllocations(bd)
+    const operations = await api.listOperations(100)
+    await expect(
+      api.createReservation({
+        contactName: "Atomic conflict guest",
+        phone: "0901112233",
+        partySize: 2,
+        expectedAt: atBusinessTime(bd, "23:00"),
+        sourceCode: "HOTLINE",
+        tableIds: [table.id],
+      }),
+    ).rejects.toMatchObject({ code: "TABLE_CONFLICT" })
+    expect(await api.listReservations({ businessDate: bd })).toEqual(before)
+    expect(await api.listAllocations(bd)).toEqual(allocations)
+    expect(await api.listOperations(100)).toEqual(operations)
+    expect(await api.searchCustomers("Atomic conflict guest")).toEqual([])
+  })
+
+  it("moves a visit to a complete destination set with version checks and stable group identity", async () => {
+    const catalog = await api.getCatalog()
+    const floor = await api.getFloorState(clock.now())
+    const free = catalog.tables
+      .filter(
+        (table) =>
+          table.kind === "TABLE" &&
+          catalog.zones.find((zone) => zone.id === table.zoneId)?.isBookable &&
+          !table.isSpare &&
+          floor.tables.find((row) => row.tableId === table.id)?.state === "free",
+      )
+      .slice(0, 2)
+    expect(free).toHaveLength(2)
+    const seated = await api.seatWalkIn({ tableIds: [free[0].id], guestCount: 2 })
+    const before = (await api.listVisits(bd)).find((row) => row.id === seated.visitId)!
+    const targetIds = free.map((table) => table.id)
+    await expect(
+      api.moveClaim({ claim: { visitId: before.id, version: before.version - 1 }, tableIds: targetIds }),
+    ).rejects.toMatchObject({ code: "VERSION_CONFLICT" })
+    await api.moveClaim({ claim: { visitId: before.id, version: before.version }, tableIds: targetIds })
+    const moved = await api.getFloorState(clock.now())
+    const claim = moved.tables.find((row) => row.tableId === targetIds[0])!.claim!
+    expect(claim).toMatchObject({ visitId: before.id, tableIds: targetIds, version: before.version + 1 })
+    expect(moved.groups.find((row) => row.id === claim.groupId)?.tableIds).toEqual(targetIds)
+    await api.moveClaim({ claim: { visitId: before.id, version: claim.version }, tableIds: [targetIds[0]] })
+    const single = await api.getFloorState(clock.now())
+    expect(single.groups.some((row) => row.id === claim.groupId)).toBe(false)
+    expect(single.tables.find((row) => row.tableId === targetIds[0])?.claim).toMatchObject({
+      visitId: before.id,
+      groupId: null,
+    })
+    expect(single.tables.find((row) => row.tableId === targetIds[1])?.claim).toBeNull()
   })
 
   it("assigns an advance waitlist entry without creating a duplicate reservation", async () => {
@@ -336,16 +391,76 @@ describe("MockGamApi", () => {
     expect(history.tables.find((table) => table.tableId === tableId)?.state).toBe("seated")
   })
 
-  it("keeps open grouped visits visible after the live business date rolls over until manual close", async () => {
+  it("auto-closes grouped visits at the cutoff while preserving history and selected-date isolation", async () => {
     const catalog = await api.getCatalog()
     const ids = ["B5", "B7"].map((code) => catalog.tables.find((table) => table.code === code)!.id)
     const seated = await api.seatWalkIn({ tableIds: ids, guestCount: 4 })
     const original = await api.getFloorState(clock.now(), bd)
     const group = original.groups.find((row) => row.tableIds.includes(ids[0]))!
+    const visit = (await api.listVisits(bd)).find((row) => row.id === seated.visitId)!
+    const cutoff = atBusinessTime(bd, "05:00")
+    const observed = vi.spyOn(clock, "now").mockReturnValue(new Date(cutoff.getTime() - 1))
+    try {
+      clock.advance(0)
+      expect((await api.getFloorState(clock.now(), bd)).groups.find((row) => row.id === group.id)).toEqual(group)
+      expect((await api.listVisits(bd)).find((row) => row.id === visit.id)?.endedAt).toBeNull()
+      observed.mockReturnValue(cutoff)
+      clock.advance(0)
+      const nextDate = addDays(bd, 1)
+      const floor = await api.getFloorState(clock.now(), nextDate)
+      expect(floor.tables.filter((row) => ids.includes(row.tableId))).toEqual(
+        expect.arrayContaining(
+          ids.map((tableId) => ({ tableId, state: "free", staleFromPreviousDay: false, claim: null })),
+        ),
+      )
+      expect(floor.groups.some((row) => row.id === group.id)).toBe(false)
+      const closed = (await api.listVisits(bd)).find((row) => row.id === visit.id)!
+      expect(closed).toMatchObject({ endedAt: cutoff, endReason: "BUSINESS_DAY_END", version: visit.version + 1 })
+      expect((await api.listVisits(nextDate)).some((row) => row.id === visit.id)).toBe(false)
+      expect(
+        (await api.listReservations({ businessDate: nextDate })).every((row) => row.businessDate === nextDate),
+      ).toBe(true)
+      expect((await api.listWaitlist(nextDate)).every((row) => row.businessDate === nextDate)).toBe(true)
+      const allocations = (await api.listAllocations(bd)).filter((row) => row.visitId === visit.id)
+      expect(allocations).toHaveLength(2)
+      expect(
+        allocations.every(
+          (row) => row.releasedAt?.getTime() === cutoff.getTime() && row.releaseReason === "BUSINESS_DAY_END",
+        ),
+      ).toBe(true)
+      const operations = (await api.listOperations(100)).filter(
+        (row) => row.action === "VISIT_AUTO_CLOSED_BUSINESS_DAY",
+      )
+      expect(operations.find((row) => row.entityId === visit.id)).toMatchObject({
+        actorKind: "SYSTEM",
+        actorName: "H\u1ec7 th\u1ed1ng",
+        isUndoable: false,
+      })
+      clock.advance(0)
+      expect((await api.listOperations(100)).filter((row) => row.action === "VISIT_AUTO_CLOSED_BUSINESS_DAY")).toEqual(
+        operations,
+      )
+      await expect(api.endVisit(visit.id, visit.version)).rejects.toMatchObject({ code: "VERSION_CONFLICT" })
+      await expect(api.undo(operations.find((row) => row.entityId === visit.id)!.id)).rejects.toMatchObject({
+        code: "NOT_UNDOABLE",
+      })
+    } finally {
+      observed.mockRestore()
+    }
+  })
+
+  it("retains carry-over claims and groups when the business-day worker is disabled", async () => {
+    const disabled = new MockGamApi({ businessDayWorkerEnabled: false })
+    const catalog = await disabled.getCatalog()
+    const ids = ["B5", "B7"].map((code) => catalog.tables.find((table) => table.code === code)!.id)
+    const seated = await disabled.seatWalkIn({ tableIds: ids, guestCount: 2 })
+    const original = await disabled.getFloorState(clock.now(), bd)
+    const group = original.groups.find((row) => row.tableIds.includes(ids[0]))!
+    const next = addDays(bd, 1)
+    const preview = await disabled.getFloorState(atBusinessTime(next, "19:00"), next)
+    expect(preview.tables.filter((row) => ids.includes(row.tableId)).every((row) => row.claim === null)).toBe(true)
     clock.advance(24 * 60)
-    const nextDate = businessDateOf(clock.now())
-    expect(nextDate).toBe(addDays(bd, 1))
-    const floor = await api.getFloorState(clock.now(), nextDate)
+    const floor = await disabled.getFloorState(clock.now(), next)
     for (const id of ids) {
       expect(floor.tables.find((row) => row.tableId === id)).toMatchObject({
         state: "seated",
@@ -354,24 +469,49 @@ describe("MockGamApi", () => {
       })
     }
     expect(floor.groups.find((row) => row.id === group.id)).toEqual(group)
-    expect((await api.listReservations({ businessDate: nextDate })).every((row) => row.businessDate === nextDate)).toBe(
-      true,
-    )
-    expect((await api.listWaitlist(nextDate)).every((row) => row.businessDate === nextDate)).toBe(true)
-    const history = await api.getFloorState(clock.now(), bd)
-    expect(history.tables.find((row) => row.tableId === ids[0])).toMatchObject({
-      state: "seated",
-      staleFromPreviousDay: false,
-    })
+    expect((await disabled.listVisits(bd)).find((row) => row.id === seated.visitId)?.endedAt).toBeNull()
     const claim = floor.tables.find((row) => row.tableId === ids[0])!.claim!
-    await api.endVisit(claim.visitId!, claim.version!)
-    const closed = await api.getFloorState(clock.now(), nextDate)
-    expect(
-      closed.tables
-        .filter((row) => ids.includes(row.tableId))
-        .every((row) => row.state === "free" && !row.staleFromPreviousDay && row.claim === null),
-    ).toBe(true)
+    await disabled.endVisit(seated.visitId, claim.version!)
+    const closed = await disabled.getFloorState(clock.now(), next)
+    expect(closed.tables.filter((row) => ids.includes(row.tableId)).every((row) => row.claim === null)).toBe(true)
     expect(closed.groups.some((row) => row.id === group.id)).toBe(false)
+  })
+
+  it("preserves checked-in reservations and seated waitlist history on automatic close", async () => {
+    const table = (await api.getCatalog()).tables.find((row) => row.code === "B5")!
+    const queued = await api.addWaitlist({
+      kind: "WALK_IN",
+      contactName: "Closing history",
+      partySize: 2,
+      channel: "IN_PERSON",
+      preferenceMode: "ANY",
+      preferences: [],
+    })
+    const entry = (await api.listWaitlist(bd)).find((row) => row.id === queued.entryId)!
+    const held = await api.seatWaitlist({
+      entryId: entry.id,
+      version: entry.version,
+      guestCount: 2,
+      tableIds: [table.id],
+    })
+    const reservation = (await api.listReservations({ businessDate: bd })).find((row) => row.id === held.reservationId)!
+    await api.checkIn({ reservationId: reservation.id, version: reservation.version, guestCount: 2 })
+    const before = (await api.listReservations({ businessDate: bd })).find((row) => row.id === reservation.id)!
+    const seated = (await api.listWaitlist(bd)).find((row) => row.id === entry.id)!
+    expect(before.status).toBe("CHECKED_IN")
+    expect(seated.status).toBe("SEATED")
+    clock.advance(24 * 60)
+    expect((await api.listReservations({ businessDate: bd })).find((row) => row.id === before.id)).toMatchObject({
+      id: before.id,
+      version: before.version,
+      status: "CHECKED_IN",
+      checkedInAt: before.checkedInAt,
+      visitId: before.visitId,
+      tableIds: [],
+    })
+    expect((await api.listWaitlist(bd)).find((row) => row.id === entry.id)).toEqual(seated)
+    expect((await api.listVisits(bd)).find((row) => row.id === before.visitId)?.endReason).toBe("BUSINESS_DAY_END")
+    expect((await api.getFloorState(clock.now())).tables.find((row) => row.tableId === table.id)?.claim).toBeNull()
   })
 
   it("never auto-cancels after the 30' warning", async () => {

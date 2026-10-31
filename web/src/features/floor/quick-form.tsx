@@ -37,6 +37,7 @@ import { addDays, businessDateOf, fmtBusinessDate, fmtDayMonth, fmtTime, MS } fr
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
+import { toast } from "sonner"
 import type { FloorModel } from "./use-floor-model"
 
 const PICKABLE = new Set(["available", "spare", "too_small"])
@@ -140,6 +141,12 @@ export function QuickForm({
     setTried(true)
     if (Object.keys(errors).length || blocked.length || party === null) return
     if (isB) {
+      if (draft.tableIds.length > 0 && short > 0) {
+        toast.error(
+          `Các bàn đã chọn chỉ có ${cap} chỗ cho ${party} khách. Chọn thêm bàn phù hợp hoặc bỏ chọn bàn để xếp sau.`,
+        )
+        return
+      }
       if (!at) return
       const r = await run((o) =>
         api.createReservation({
@@ -375,7 +382,7 @@ export function QuickForm({
                   {party === null
                     ? `Sức chứa ${cap} chỗ · nhập số khách để so sánh`
                     : short > 0
-                      ? `Sức chứa ${cap} chỗ · thiếu ${short} chỗ cho ${party} khách · cần Chủ quán duyệt`
+                      ? `Sức chứa ${cap} chỗ · thiếu ${short} chỗ cho ${party} khách · chọn thêm bàn hoặc bỏ chọn để xếp sau`
                       : `Sức chứa ${cap} chỗ · đủ cho ${party} khách`}
                 </span>
               )}

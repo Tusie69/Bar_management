@@ -366,6 +366,7 @@ function PickBanner({ model }: { model: ReturnType<typeof useFloorModel> }) {
   const cancel = useUi((s) => s.cancelPick)
   const [busy, setBusy] = useState(false)
   if (!pick) return null
+  const totalCapacity = selection.reduce((sum, id) => sum + (model.byId.get(id)?.capacity ?? 0), 0)
   return (
     <div
       className="absolute inset-x-3 top-3 z-10 mx-auto max-w-xl rounded-sm border border-strong bg-popover/97 p-3 shadow-float backdrop-blur"
@@ -378,7 +379,10 @@ function PickBanner({ model }: { model: ReturnType<typeof useFloorModel> }) {
           <p className="text-sm text-muted-foreground">{pick.hint}</p>
           <p className="mt-1 text-sm" aria-live="polite">
             {selection.length ? (
-              selection.map((id) => model.label(id)).join(" + ")
+              <>
+                <span className="font-medium">{selection.map((id) => model.label(id)).join(" + ")}</span>
+                <span className="text-muted-foreground font-normal"> · tổng sức chứa {totalCapacity} chỗ</span>
+              </>
             ) : (
               <span className="text-subtle">Chưa chọn bàn</span>
             )}

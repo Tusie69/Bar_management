@@ -88,6 +88,7 @@ export interface CreateReservationInput {
   expectedAt: Date
   sourceCode: BookingSourceCode
   note?: string
+  /** Selected tables are created with the booking atomically. Empty/omitted creates an unassigned booking. */
   tableIds?: number[]
   overrideReason?: string
   classification?: BookingClassification
@@ -119,13 +120,15 @@ export interface CheckInInput {
   overrideReason?: string
 }
 
-export interface MoveInput {
+export type MoveInput = {
   /** Visit or reservation whose claim moves. */
   claim: { visitId?: number; reservationId?: number; waitlistEntryId?: number; version?: number }
-  fromTableId: number
-  toTableId: number
   overrideReason?: string
-}
+} & (
+  | { fromTableId: number; toTableId: number; tableIds?: never }
+  /** Replace the complete destination set, including single-table to grouped moves. */
+  | { tableIds: number[]; fromTableId?: never; toTableId?: never }
+)
 
 export interface CombineInput {
   claim: { visitId?: number; reservationId?: number; version?: number }
@@ -276,6 +279,7 @@ export const REST_ENDPOINTS = {
   reservations: "GET /bookings?date=YYYY-MM-DD",
   exportDailyBookingText: "GET /bookings/export?date=YYYY-MM-DD",
   createReservation: "POST /bookings",
+  createDirectReservation: "POST /bookings/direct",
   updateReservation: "PUT /bookings/:id",
   assignTables: "POST /bookings/:id/assign",
   cancelReservation: "POST /bookings/:id/cancel",

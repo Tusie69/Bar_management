@@ -7,7 +7,13 @@ import { AppError } from '../../errors/app-error.js'
 import { validateBookingSchedule } from './business-date.js'
 import { deriveBookingTiming, type BookingDisplayStatus } from './booking-timing.js'
 import { protectPhoneNumber, revealPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from './phone-security.js'
-import { createTableGroup, dissolveUnusedGroups, lockAndValidateSameZoneTables } from '../tables/table-group.repository.js'
+import {
+  createTableGroup,
+  dissolveUnusedGroups,
+  lockAndValidateAssignableTables,
+  lockAndValidateSameKindTables,
+  lockAndValidateSameZoneTables,
+} from '../tables/table-group.repository.js'
 
 export type BookingStatus = 'BOOKED' | 'CHECKED_IN' | 'CANCELLED' | 'NO_SHOW'
 export type BookingClassification = 'RETURNING' | 'NEW' | 'UNCLASSIFIED'
@@ -187,6 +193,10 @@ export interface CreateBookingInput {
   classification?: BookingClassification
 }
 
+export interface CreateAndAssignBookingInput extends CreateBookingInput {
+  tableIds: number[]
+}
+
 function phoneKeyRing(): PhoneKeyRing {
   const encryptionKeyId = env.phone.activeEncryptionKeyId
   const hmacKeyId = env.phone.activeHmacKeyId
@@ -238,6 +248,123 @@ export async function createBooking(actor: AuthenticatedActor, input: CreateBook
     ],
   )
   return getBookingById(actor, result.insertId)
+}
+
+export async function createAndAssignBooking(
+  actor: AuthenticatedActor,
+  input: CreateAndAssignBookingInput,
+): Promise<BookingView> {
+  const schedule = validateBookingSchedule(input.expectedAt, input.businessDate)
+  const phone = typeof input.phoneNumber === 'string' ? protectPhoneNumber(input.phoneNumber, phoneKeyRing()) : null
+  const tableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
+  const connection = await databasePool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const [sourceRows] = await connection.execute<(RowDataPacket & { id: number })[]>(
+      'SELECT id FROM booking_sources WHERE organization_id = ? AND code = ? AND is_active = 1',
+      [actor.organizationId, input.sourceCode],
+    )
+    const source = sourceRows[0]
+    if (!source) throw new AppError(400, 'BOOKING_SOURCE_NOT_FOUND', 'Nguồn đặt bàn không hợp lệ.')
+
+    const tables = await lockAndValidateAssignableTables(connection, actor, tableIds)
+    const totalCapacity = tables.reduce((total, table) => total + Number(table.capacity), 0)
+    if (totalCapacity < input.partySize) {
+      throw new AppError(
+        409,
+        'INSUFFICIENT_TABLE_CAPACITY',
+        `Các bàn đã chọn chỉ có ${totalCapacity} chỗ cho ${input.partySize} khách.`,
+      )
+    }
+    const placeholders = tableIds.map(() => '?').join(',')
+    const [conflicts] = await connection.execute<RowDataPacket[]>(
+      `SELECT id FROM table_allocations
+       WHERE organization_id = ? AND venue_id = ? AND business_date = ?
+         AND released_at IS NULL AND table_id IN (${placeholders})
+       ORDER BY table_id, id FOR UPDATE`,
+      [actor.organizationId, actor.venueId, schedule.businessDate, ...tableIds],
+    )
+    if (conflicts.length) {
+      throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
+    }
+
+    const [reservation] = await connection.execute<ResultSetHeader>(
+      `INSERT INTO reservations
+        (organization_id, venue_id, contact_name, contact_name_search, phone_ciphertext, phone_key_id,
+         phone_hmac, phone_hmac_key_id, phone_last3, source_id, party_size,
+         expected_at, business_date, customer_classification, note, created_by_user_id)
+       VALUES (?, ?, ?, LOWER(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        actor.organizationId,
+        actor.venueId,
+        input.guestName,
+        input.guestName,
+        ...protectedPhoneValues(phone),
+        source.id,
+        input.partySize,
+        schedule.mysqlExpectedAt,
+        schedule.businessDate,
+        input.classification ?? 'UNCLASSIFIED',
+        input.note ?? null,
+        actor.userId,
+      ],
+    )
+    const [hold] = await connection.execute<ResultSetHeader>(
+      `INSERT INTO table_holds
+        (organization_id, venue_id, hold_kind, reservation_id, starts_at, created_by_user_id)
+       VALUES (?, ?, 'RESERVATION', ?, ?, ?)`,
+      [actor.organizationId, actor.venueId, reservation.insertId, schedule.mysqlExpectedAt, actor.userId],
+    )
+    const group = tableIds.length > 1
+      ? await createTableGroup(connection, actor, schedule.businessDate)
+      : null
+    const allocationIds: number[] = []
+    for (const tableId of tableIds) {
+      const [allocation] = await connection.execute<ResultSetHeader>(
+        `INSERT INTO table_allocations
+          (organization_id, venue_id, table_id, kind, hold_id, group_id, starts_at, business_date, created_by_user_id)
+         VALUES (?, ?, ?, 'HOLD', ?, ?, ?, ?, ?)`,
+        [
+          actor.organizationId,
+          actor.venueId,
+          tableId,
+          hold.insertId,
+          group?.id ?? null,
+          schedule.mysqlExpectedAt,
+          schedule.businessDate,
+          actor.userId,
+        ],
+      )
+      allocationIds.push(allocation.insertId)
+    }
+    const changeSequence = await nextVenueChangeSequence(connection, actor)
+    await connection.execute(
+      `INSERT INTO operation_log
+        (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
+         auth_session_id, action, entity_type, entity_id, entity_version_before,
+         entity_version_after, changes, reason_code, is_undoable)
+       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'RESERVATION_CREATED_AND_ASSIGNED', 'reservation', ?, NULL, 1, ?, 'DIRECT_TABLE_BOOKING', 0)`,
+      [
+        actor.organizationId,
+        actor.venueId,
+        changeSequence,
+        actor.userId,
+        actor.membershipId,
+        actor.authSessionId ?? null,
+        reservation.insertId,
+        JSON.stringify([{ type: 'reservation_created_and_assigned', holdId: hold.insertId,
+          groupId: group?.id ?? null, allocationIds, tableIds }]),
+      ],
+    )
+    const booking = await getBookingById(actor, reservation.insertId, connection)
+    await connection.commit()
+    return booking
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
 }
 
 interface LockedReservation extends RowDataPacket {
@@ -643,23 +770,11 @@ export async function assignBookingTables(
     const reservation = await lockReservation(connection, actor, id, expectedVersion)
     if (reservation.status !== 'BOOKED')
       throw new AppError(409, 'BOOKING_NOT_ASSIGNABLE', 'Chỉ đặt bàn đang chờ mới được gán bàn.')
-    const uniqueTableIds = [...new Set(tableIds)]
-    if (!uniqueTableIds.length) throw new AppError(400, 'TABLE_REQUIRED', 'Cần chọn ít nhất một bàn.')
+    const uniqueTableIds = [...new Set(tableIds)].sort((left, right) => left - right)
+    const tableRows = uniqueTableIds.length > 1
+      ? await lockAndValidateSameKindTables(connection, actor, uniqueTableIds)
+      : await lockAndValidateAssignableTables(connection, actor, uniqueTableIds)
     const placeholders = uniqueTableIds.map(() => '?').join(',')
-    const [tableRows] = await connection.execute<(RowDataPacket & { id: number; code: string; is_spare: number; capacity: number })[]>(
-      `SELECT id, code, is_spare, capacity FROM dining_tables WHERE venue_id = ? AND status = 'ACTIVE' AND id IN (${placeholders})
-       ORDER BY id FOR UPDATE`,
-      [actor.venueId, ...uniqueTableIds],
-    )
-    if (tableRows.length !== uniqueTableIds.length)
-      throw new AppError(400, 'TABLE_NOT_FOUND', 'Có bàn không tồn tại hoặc ngừng hoạt động.')
-    const spareTable = tableRows.find((table) => Boolean(table.is_spare))
-    if (spareTable)
-      throw new AppError(
-        409,
-        'SPARE_TABLE_NOT_BOOKABLE',
-        `Bàn ${spareTable.code} là bàn sơ cua và chưa được cấu hình để nhận booking.`,
-      )
     const totalCapacity = tableRows.reduce((total, table) => total + Number(table.capacity), 0)
     if (totalCapacity < Number(reservation.party_size)) {
       throw new AppError(
@@ -700,17 +815,21 @@ export async function assignBookingTables(
        VALUES (?, ?, 'RESERVATION', ?, ?, ?)`,
       [actor.organizationId, actor.venueId, id, reservation.expected_at, actor.userId],
     )
+    const group = requestedTableIds.length > 1
+      ? await createTableGroup(connection, actor, dateOnly(reservation.business_date))
+      : null
     const newAllocationIds: number[] = []
     for (const tableId of requestedTableIds) {
       const [allocationResult] = await connection.execute<ResultSetHeader>(
         `INSERT INTO table_allocations
-          (organization_id, venue_id, table_id, kind, hold_id, starts_at, business_date, created_by_user_id)
-         VALUES (?, ?, ?, 'HOLD', ?, ?, ?, ?)`,
+          (organization_id, venue_id, table_id, kind, hold_id, group_id, starts_at, business_date, created_by_user_id)
+         VALUES (?, ?, ?, 'HOLD', ?, ?, ?, ?, ?)`,
         [
           actor.organizationId,
           actor.venueId,
           tableId,
           holdResult.insertId,
+          group?.id ?? null,
           reservation.expected_at,
           dateOnly(reservation.business_date),
           actor.userId,
@@ -749,6 +868,7 @@ export async function assignBookingTables(
             previousAllocationIds: previousAllocations.map((allocation) => Number(allocation.id)),
             previousTableIds,
             holdId: holdResult.insertId,
+            groupId: group?.id ?? null,
             newAllocationIds,
             newTableIds: requestedTableIds,
           },

@@ -8,7 +8,7 @@
  *   the 30-second system job that raises late / no-show / hold warnings.
  */
 import { foldVietnamese, NOTE_PHONE_ERROR, noteHasPhoneNumber, normalizePhone } from "@/lib/text"
-import { businessDateOf, fmtTime, MS, type BusinessDate } from "@/lib/time"
+import { addDays, businessDateOf, fmtTime, fromVenueLocal, MS, type BusinessDate } from "@/lib/time"
 import { roleCan, PERMISSION_LABEL, type Permission } from "@/domain/access"
 import { isWithinBookingReceptionWindow } from "@/domain/booking-rules"
 import {
@@ -111,8 +111,10 @@ export class MockGamApi implements GamApi, DemoControls {
   private seq: number
   private listeners = new Set<(event: ChangeEvent) => void>()
   private armed = false
+  private readonly businessDayWorkerEnabled: boolean
 
-  constructor() {
+  constructor(options: { businessDayWorkerEnabled?: boolean } = {}) {
+    this.businessDayWorkerEnabled = options.businessDayWorkerEnabled ?? true
     this.db = seedDb(clock.now())
     this.seq = venueOf(this.db).changeSeq
     const first = DEMO_USERS[0]
@@ -1221,11 +1223,21 @@ export class MockGamApi implements GamApi, DemoControls {
   async moveClaim(input: MoveInput) {
     await this.latency("m")
     this.require(input.claim.visitId ? "visit.move" : "table.assign")
-    const { allocs, entity, at } = this.claimAllocations(input.claim)
-    const from = allocs.find((a) => a.tableId === input.fromTableId)
-    if (!from) this.fail("Bàn nguồn không thuộc nhóm khách này.")
-    if (allocs.some((a) => a.tableId === input.toTableId)) this.fail("Bàn đích đã thuộc nhóm khách này.")
-    this.maybeTriggerConflict(input.toTableId, from.businessDate, at)
+    const { allocs, entity, at, party } = this.claimAllocations(input.claim)
+    if (input.claim.version !== undefined) {
+      const current = (this.db[entity.col] as Map<number, { id: number; version: number }>).get(entity.id)!
+      this.checkVersion(entity.col, current, input.claim.version, "Bàn")
+    }
+    if (!allocs.length) this.fail("Không có bàn để đổi.", "INVALID_STATE")
+    if (!input.tableIds) {
+      if (!allocs.some((a) => a.tableId === input.fromTableId)) this.fail("Bàn nguồn không thuộc nhóm khách này.")
+      if (allocs.some((a) => a.tableId === input.toTableId)) this.fail("Bàn đích đã thuộc nhóm khách này.")
+    }
+    const targetIds = [
+      ...new Set(input.tableIds ?? allocs.map((a) => (a.tableId === input.fromTableId ? input.toTableId : a.tableId))),
+    ]
+    const first = allocs[0]
+    if (targetIds.length) this.maybeTriggerConflict(targetIds[0], first.businessDate, at)
     return this.commit(
       {
         action: "TABLE_MOVED",
@@ -1233,22 +1245,40 @@ export class MockGamApi implements GamApi, DemoControls {
         undoable: true,
       },
       (tx) => {
-        this.assertClaimable([input.toTableId], { bd: from.businessDate, at, overrideReason: input.overrideReason })
-        this.release(tx, from, "MOVED")
-        this.newAllocation(tx, {
-          tableId: input.toTableId,
-          kind: from.kind,
-          holdId: from.holdId,
-          visitId: from.visitId,
-          groupId: from.groupId,
-          startsAt: this.now,
-          bd: from.businessDate,
-          holdStart: at,
+        this.assertClaimable(targetIds, {
+          bd: first.businessDate,
+          at,
+          partySize: party,
+          ignore: (allocation) => allocs.some((a) => a.id === allocation.id),
+          overrideReason: input.overrideReason,
         })
+        if (new Set(targetIds.map((id) => this.db.tables.get(id)!.kind)).size > 1)
+          throw new ApiError(409, "TABLE_KIND_MISMATCH", "Không thể ghép bàn thường với ghế Bar.")
+        const groupId =
+          targetIds.length > 1
+            ? (allocs.find((a) => a.groupId)?.groupId ?? this.newGroup(tx, first.businessDate))
+            : null
+        allocs.forEach((allocation) => this.release(tx, allocation, "MOVED"))
+        for (const tableId of targetIds) {
+          this.newAllocation(tx, {
+            tableId,
+            kind: first.kind,
+            holdId: first.holdId,
+            visitId: first.visitId,
+            groupId,
+            startsAt: this.now,
+            bd: first.businessDate,
+            holdStart: at,
+          })
+        }
+        this.dissolveOrphanGroups(
+          tx,
+          allocs.map((a) => a.groupId),
+        )
         tx.edit(entity.col, entity.id)
         return {
           entityId: entity.id,
-          summary: `Đổi bàn ${this.codes([input.fromTableId])} → ${this.codes([input.toTableId])}`,
+          summary: `Đổi bàn ${this.codes(allocs.map((a) => a.tableId))} -> ${this.codes(targetIds)}`,
         }
       },
     )
@@ -2013,6 +2043,43 @@ export class MockGamApi implements GamApi, DemoControls {
     const now = this.now
     const bd = businessDateOf(now)
     const venue = this.venue
+    for (const visit of this.businessDayWorkerEnabled ? this.db.visits.values() : []) {
+      const cutoff = fromVenueLocal(addDays(visit.businessDate, 1), venue.businessDayCutoffLocal)
+      cutoff.setUTCSeconds(Number(venue.businessDayCutoffLocal.split(":")[2] ?? 0))
+      if (visit.endedAt || cutoff > now) continue
+      this.commit(
+        {
+          action: "VISIT_AUTO_CLOSED_BUSINESS_DAY",
+          entityType: "visit",
+          undoable: false,
+          actorUserId: 0,
+          reasonCode: "BUSINESS_DAY_END",
+        },
+        (tx) => {
+          const allocations = activeAllocations(this.db).filter((a) => a.kind === "USAGE" && a.visitId === visit.id)
+          for (const allocation of allocations) {
+            const row = tx.edit("allocations", allocation.id)
+            row.releasedAt = now
+            row.releasedByUserId = null
+            row.releaseReason = "BUSINESS_DAY_END"
+          }
+          for (const groupId of new Set(allocations.map((a) => a.groupId))) {
+            if (!groupId || activeAllocations(this.db).some((a) => a.groupId === groupId)) continue
+            const group = this.db.groups.get(groupId)
+            if (group && !group.dissolvedAt) {
+              const row = tx.edit("groups", groupId)
+              row.dissolvedAt = now
+              row.dissolvedByUserId = null
+            }
+          }
+          const row = tx.edit("visits", visit.id)
+          row.endedAt = now
+          row.endedByUserId = null
+          row.endReason = "BUSINESS_DAY_END"
+          return { entityId: visit.id, summary: `Tự đóng lượt #${visit.id} cuối ngày kinh doanh` }
+        },
+      )
+    }
     for (const r of this.db.reservations.values()) {
       if (r.status !== "BOOKED" || r.businessDate !== bd) continue
       const w = reservationWarning(venue, r, now)

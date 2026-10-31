@@ -14,7 +14,7 @@ export const GUEST_QUICK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const
 export const BOOKING_SLOT_STEP_MIN = 30
 export const BOOKING_FIRST_SLOT = "19:00"
 export const BOOKING_LAST_SLOT = "01:00"
-export const PAST_GRACE_MIN = 5
+export const PAST_GRACE_MIN = 0
 
 const DAY_START = 17 * 60
 const pad = (n: number) => String(n).padStart(2, "0")
@@ -80,6 +80,7 @@ export function bookingSlots(bd: BusinessDate, now: Date, graceMin = PAST_GRACE_
   })
 }
 
+/** Canonical mobile forms group slots across midnight while preserving venue-time ordering. */
 export function bookingSlotGroups(bd: BusinessDate, now: Date) {
   const all = bookingSlots(bd, now)
   const next = fmtDayMonth(addDays(bd, 1))

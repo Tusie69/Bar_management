@@ -91,6 +91,7 @@ if (sessionSameSite === 'none' && !sessionCookieSecure) {
 const noShowWorkerEnabled = readBoolean('NO_SHOW_WORKER_ENABLED', false)
 const noShowSystemUserId = readOptionalNumber('NO_SHOW_SYSTEM_USER_ID')
 const noShowAutomationCutoff = readOptionalUtcInstant('NO_SHOW_AUTOMATION_CUTOFF')
+const businessDayWorkerEnabled = readBoolean('BUSINESS_DAY_WORKER_ENABLED', true)
 const phoneEncryptionKeys = readKeyRing('PHONE_ENCRYPTION_KEYS')
 const phoneHmacKeys = readKeyRing('PHONE_HMAC_KEYS')
 const phoneActiveEncryptionKeyId = readOptionalNumber('PHONE_ACTIVE_ENCRYPTION_KEY_ID')
@@ -141,6 +142,10 @@ export const env = {
     intervalMs: readNumber('NO_SHOW_WORKER_INTERVAL_MS', 30_000),
     systemUserId: noShowSystemUserId,
     automationCutoff: noShowAutomationCutoff,
+  },
+  businessDayWorker: {
+    enabled: businessDayWorkerEnabled,
+    intervalMs: readNumber('BUSINESS_DAY_WORKER_INTERVAL_MS', 30_000),
   },
   phone: {
     activeEncryptionKeyId: phoneActiveEncryptionKeyId,

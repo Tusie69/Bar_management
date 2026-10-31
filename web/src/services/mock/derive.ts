@@ -724,6 +724,7 @@ const ACTION_LABEL: Record<string, string> = {
   CHECKED_IN: "Check-in",
   WALKIN_SEATED: "Nhận Walk-in",
   VISIT_ENDED: "Nhả bàn",
+  VISIT_AUTO_CLOSED_BUSINESS_DAY: "Tự đóng cuối ngày kinh doanh",
   VISIT_MARKED_PAID: "Đã thanh toán",
   VISIT_UPDATED: "Cập nhật lượt ghé",
   TABLES_COMBINED: "Ghép bàn",

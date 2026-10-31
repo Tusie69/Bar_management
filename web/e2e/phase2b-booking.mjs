@@ -95,6 +95,14 @@ try {
   })
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   let floorReads = 0
+  let validWaitlistReads = 0
+  let invalidWaitlistReads = 0
+  page.on("request", (request) => {
+    const url = new URL(request.url())
+    if (url.pathname !== "/api/v1/waitlist") return
+    if (url.searchParams.get("date")) validWaitlistReads += 1
+    else invalidWaitlistReads += 1
+  })
   page.on("response", (response) => {
     if (new URL(response.url()).pathname === "/api/v1/tables") floorReads += 1
   })
@@ -104,6 +112,14 @@ try {
   await page.getByLabel("Mật khẩu").fill(password)
   await page.getByRole("button", { name: "Đăng nhập", exact: true }).click()
   await page.getByText("Lễ tân E2E", { exact: false }).waitFor()
+  await waitUntil(() => validWaitlistReads >= 1, "Waitlist did not load after businessDate became available")
+  const waitlistReadsBeforePolling = validWaitlistReads
+  await waitUntil(
+    () => validWaitlistReads > waitlistReadsBeforePolling,
+    "Waitlist did not continue polling after businessDate became available",
+    18_000,
+  )
+  if (invalidWaitlistReads !== 0) throw new Error("Waitlist was requested with an empty businessDate")
 
   // Canonical navigation: "Đặt bàn" (/reservations)
   await page.getByRole("link", { name: "Đặt bàn" }).click()
@@ -119,6 +135,30 @@ try {
   let sheet = page.getByRole("dialog").last()
   await sheet.getByText("Đặt bàn mới", { exact: true }).waitFor()
   if ((await sheet.locator('input[type="time"]').count()) !== 0) throw new Error("Native time picker is still present")
+  const timePicker = sheet.getByRole("radiogroup", { name: "Giờ khách dự kiến đến" })
+  const timeRadios = timePicker.getByRole("radio")
+  if ((await timeRadios.count()) !== 13) throw new Error("Horizontal time picker does not contain all 13 slots")
+  const slotTops = await timeRadios.evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().top)))
+  if (new Set(slotTops).size !== 1) throw new Error("Time slots are not rendered in one horizontal row")
+  const firstSlot = timePicker.getByRole("radio", { name: /^19:00/ })
+  await firstSlot.focus()
+  await firstSlot.press("ArrowRight")
+  if ((await timePicker.getByRole("radio", { name: /^19:30/ }).getAttribute("aria-checked")) !== "true") {
+    throw new Error("Arrow-key time selection did not update the selected slot")
+  }
+  const lastSlot = timePicker.getByRole("radio", { name: /^01:00/ })
+  await lastSlot.click()
+  await page.waitForFunction(
+    (element) => {
+      const parent = element?.parentElement
+      return !!element && !!parent && element.offsetLeft >= parent.scrollLeft - 1
+        && element.offsetLeft + element.offsetWidth <= parent.scrollLeft + parent.clientWidth + 1
+    },
+    await lastSlot.elementHandle(),
+  )
+  if (await sheet.evaluate((node) => node.scrollWidth > node.clientWidth + 1)) {
+    throw new Error("Horizontal picker caused modal overflow")
+  }
 
   // Step 0: Thời gian & số khách
   await sheet.getByRole("radio", { name: "3 khách" }).click()
@@ -138,8 +178,6 @@ try {
   // Step 3: Xác nhận đặt bàn
   await sheet.getByRole("button", { name: "Xác nhận đặt bàn" }).click()
   await sheet.waitFor({ state: "hidden" })
-
-  // Open the newly created booking details
   await page.getByText(guestName, { exact: true }).first().waitFor()
   await page.getByText(guestName, { exact: true }).first().click()
   let detailSheet = page.getByRole("dialog").filter({ hasText: guestName })
@@ -217,6 +255,7 @@ try {
   // Second context: Mobile V1 (390x844)
   secondContext = await browser.newContext({
     viewport: { width: 390, height: 844 },
+    hasTouch: true,
     userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
   })
   const secondPage = await secondContext.newPage()
@@ -235,6 +274,23 @@ try {
   }
   const tomorrowDateLabel = (await tomorrowBtn.textContent())?.trim()
   if (!tomorrowDateLabel) throw new Error("Tomorrow date button missing label")
+
+  // Open mobile booking modal and verify horizontal time picker
+  await secondPage.getByRole("button", { name: "Đặt bàn mới" }).click()
+  const mobileDialog = secondPage.getByRole("dialog").last()
+  const mobileTimePicker = mobileDialog.getByRole("radiogroup", { name: "Giờ khách dự kiến đến" })
+  await mobileTimePicker.waitFor()
+  if (await mobileDialog.evaluate((node) => node.scrollWidth > node.clientWidth + 1)) {
+    throw new Error("Mobile booking modal has horizontal overflow")
+  }
+  const scrollBefore = await mobileTimePicker.evaluate((node) => node.scrollLeft)
+  await mobileTimePicker.hover()
+  await secondPage.mouse.wheel(400, 0)
+  await secondPage.waitForTimeout(100)
+  const scrollAfter = await mobileTimePicker.evaluate((node) => node.scrollLeft)
+  if (scrollAfter <= scrollBefore) throw new Error("Horizontal time picker did not respond to trackpad scrolling")
+  await secondPage.keyboard.press("Escape")
+  await mobileDialog.waitFor({ state: "hidden" })
 
   // Verify export request selects tomorrow's business date
   const exportRequestPromise = secondPage
@@ -335,6 +391,7 @@ try {
       cancel: "PASS",
       reload: "PASS",
       floorRefetch: "PASS",
+      waitlistPolling: "PASS",
       logout: "PASS",
     }),
   )

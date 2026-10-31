@@ -12,12 +12,14 @@ import {
   assignBookingTables,
   checkInBooking,
   closeBooking,
+  createAndAssignBooking,
   createBooking,
   createWalkIn,
   mergeBookingTables,
 } from '../src/modules/bookings/booking.repository.js'
-import { listActiveTableGroups } from '../src/modules/tables/table.repository.js'
-import { closeVisit, mergeVisitTables } from '../src/modules/visits/visit.repository.js'
+import { listActiveTableGroups, listTables } from '../src/modules/tables/table.repository.js'
+import { runBusinessDayEndSweep } from '../src/modules/visits/business-day.worker.js'
+import { closeVisit, mergeVisitTables, moveVisit } from '../src/modules/visits/visit.repository.js'
 
 const integrationEnabled = process.env.RUN_MYSQL_INTEGRATION === '1' && /_test$/.test(process.env.DB_NAME ?? '')
 const mysqlDescribe = integrationEnabled ? describe : describe.skip
@@ -196,6 +198,110 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     expect(history.at(-1)?.release_reason).toBe('MOVED')
   })
 
+  it('reassigns a booking to multiple same-kind tables across zones', async () => {
+    const created = await createBooking(actor, bookingInput('Cross-zone booking move'))
+    const moved = await assignBookingTables(actor, created.id, created.version, [tableOneId, tableB3Id])
+    expect(moved.tableCodes).toEqual(['A1', 'B3'])
+    expect(await activeTableIds(created.id)).toEqual([tableOneId, tableB3Id])
+    expect(await listActiveTableGroups(actor, '2030-10-24')).toHaveLength(1)
+  })
+
+  it('creates a direct Bar booking atomically for one seat and preserves classification and business date', async () => {
+    const created = await createAndAssignBooking(actor, {
+      ...bookingInput('Direct Bar one'),
+      partySize: 1,
+      classification: 'RETURNING',
+      tableIds: [barSeatOneId],
+    })
+    expect(created).toMatchObject({
+      guestName: 'Direct Bar one',
+      partySize: 1,
+      businessDate: '2030-10-24',
+      classification: 'RETURNING',
+      tableCodes: ['BAR01'],
+    })
+    expect(await activeTableIds(created.id)).toEqual([barSeatOneId])
+  })
+
+  it('rejects two guests on one Bar seat without creating an orphan booking', async () => {
+    await expect(createAndAssignBooking(actor, {
+      ...bookingInput('Direct Bar too large'),
+      partySize: 2,
+      tableIds: [barSeatTwoId],
+    })).rejects.toMatchObject({ code: 'INSUFFICIENT_TABLE_CAPACITY' })
+    const [rows] = await databasePool.execute<RowDataPacket[]>(
+      'SELECT id FROM reservations WHERE contact_name = ?', ['Direct Bar too large'],
+    )
+    expect(rows).toEqual([])
+  })
+
+  it('rejects direct selections across zones or table kinds without creating bookings', async () => {
+    await expect(createAndAssignBooking(actor, {
+      ...bookingInput('Direct cross zone'),
+      tableIds: [tableOneId, tableB3Id],
+    })).rejects.toMatchObject({ code: 'TABLE_ZONE_MISMATCH' })
+    await expect(createAndAssignBooking(actor, {
+      ...bookingInput('Direct mixed kind'),
+      tableIds: [tableOneId, barSeatOneId],
+    })).rejects.toMatchObject({ code: 'TABLE_ZONE_MISMATCH' })
+    const [rows] = await databasePool.execute<RowDataPacket[]>(
+      `SELECT id FROM reservations WHERE contact_name IN ('Direct cross zone', 'Direct mixed kind')`,
+    )
+    expect(rows).toEqual([])
+  })
+
+  it('creates one booking with a persisted group and two Bar allocations', async () => {
+    const created = await createAndAssignBooking(actor, {
+      ...bookingInput('Direct Bar pair'),
+      partySize: 2,
+      tableIds: [barSeatTwoId, barSeatOneId],
+    })
+    expect(created.tableCodes).toEqual(['BAR01', 'BAR02'])
+    const [rows] = await databasePool.execute<(RowDataPacket & { group_id: number; table_id: number })[]>(
+      `SELECT group_id, table_id FROM table_allocations
+       WHERE business_date = ? AND released_at IS NULL ORDER BY table_id`,
+      ['2030-10-24'],
+    )
+    expect(rows.map((row) => Number(row.table_id))).toEqual([barSeatOneId, barSeatTwoId])
+    expect(Number(rows[0]?.group_id)).toBeGreaterThan(0)
+    expect(Number(rows[1]?.group_id)).toBe(Number(rows[0]?.group_id))
+    expect(await listActiveTableGroups(actor, '2030-10-24')).toHaveLength(1)
+  })
+
+  it('allows only one concurrent direct booking for the same table', async () => {
+    const outcomes = await Promise.allSettled([
+      createAndAssignBooking(actor, { ...bookingInput('Direct race one'), tableIds: [tableOneId] }),
+      createAndAssignBooking(actor, { ...bookingInput('Direct race two'), tableIds: [tableOneId] }),
+    ])
+    expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1)
+    expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toHaveLength(1)
+    const [rows] = await databasePool.execute<RowDataPacket[]>(
+      `SELECT id FROM reservations WHERE contact_name IN ('Direct race one', 'Direct race two')`,
+    )
+    expect(rows).toHaveLength(1)
+  })
+
+  it('rolls back reservation, hold, group and allocations when direct booking audit fails', async () => {
+    await databasePool.query(
+      `ALTER TABLE operation_log ADD CONSTRAINT ck_test_reject_direct
+       CHECK (action <> 'RESERVATION_CREATED_AND_ASSIGNED')`,
+    )
+    try {
+      await expect(createAndAssignBooking(actor, {
+        ...bookingInput('Direct rollback'),
+        tableIds: [tableOneId, tableTwoId],
+      })).rejects.toMatchObject({ code: 'ER_CHECK_CONSTRAINT_VIOLATED' })
+    } finally {
+      await databasePool.query('ALTER TABLE operation_log DROP CHECK ck_test_reject_direct')
+    }
+    const [reservations] = await databasePool.execute<RowDataPacket[]>(
+      'SELECT id FROM reservations WHERE contact_name = ?', ['Direct rollback'],
+    )
+    expect(reservations).toEqual([])
+    expect(await listActiveTableGroups(actor, '2030-10-24')).toEqual([])
+    expect(await activeTableIds(0)).toEqual([])
+  })
+
   it('rejects missing, out-of-service, spare, unchanged, and terminal assignments', async () => {
     const created = await createBooking(actor, bookingInput('Validation guest'))
     await expect(assignBookingTables(actor, 999999, 1, [tableOneId]))
@@ -307,6 +413,120 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     expect(rows[0]?.dissolved_at).not.toBeNull()
   })
 
+  it('moves a six-person visit to multiple tables across zones without requiring adjacency configuration', async () => {
+    const walkIn = await createWalkIn(actor, {
+      guestName: 'Multi-table move',
+      partySize: 6,
+      businessDate: '2030-10-24',
+      tableIds: [tableOneId, tableTwoId],
+    })
+    const moved = await moveVisit(actor, {
+      visitId: walkIn.visitId,
+      expectedVersion: 1,
+      tableIds: [lowCapacityTableId, tableB3Id],
+    })
+    expect(moved.previousTables.map((table) => table.code)).toEqual(['A1', 'A2'])
+    expect(moved.tables.map((table) => table.code)).toEqual(['A4', 'B3'])
+    const [active] = await databasePool.execute<(RowDataPacket & { table_id: number; group_id: number })[]>(
+      `SELECT table_id, group_id FROM table_allocations
+       WHERE visit_id = ? AND kind = 'USAGE' AND released_at IS NULL ORDER BY table_id`,
+      [walkIn.visitId],
+    )
+    expect(active.map((row) => Number(row.table_id))).toEqual([lowCapacityTableId, tableB3Id])
+    expect(Number(active[0]?.group_id)).toBeGreaterThan(0)
+    expect(Number(active[1]?.group_id)).toBe(Number(active[0]?.group_id))
+    expect(await listActiveTableGroups(actor, '2030-10-24')).toHaveLength(1)
+  })
+
+  it('keeps an open visit visible across business dates and blocks moving another visit onto its table', async () => {
+    const previousDateVisit = await createWalkIn(actor, {
+      guestName: 'Still seated from previous date',
+      partySize: 4,
+      businessDate: '2030-10-23',
+      tableIds: [tableOneId],
+    })
+    const currentVisit = await createWalkIn(actor, {
+      guestName: 'Current date visit',
+      partySize: 4,
+      businessDate: '2030-10-24',
+      tableIds: [tableTwoId],
+    })
+
+    const currentFloor = await listTables(actor, '2030-10-24')
+    const occupiedFromPreviousDate = currentFloor.find((table) => table.id === tableOneId)
+    expect(occupiedFromPreviousDate?.state).toBe('IN_USE')
+    expect(occupiedFromPreviousDate?.activeVisit?.id).toBe(previousDateVisit.visitId)
+
+    await expect(moveVisit(actor, {
+      visitId: currentVisit.visitId,
+      expectedVersion: 1,
+      tableIds: [tableOneId],
+    })).rejects.toMatchObject({ code: 'TABLE_ALREADY_OCCUPIED' })
+  })
+
+  it('automatically closes an open visit and releases every table exactly at business-day end', async () => {
+    const walkIn = await createWalkIn(actor, {
+      guestName: 'End of business day',
+      partySize: 6,
+      businessDate: '2030-10-24',
+      tableIds: [tableOneId, tableTwoId],
+    })
+
+    expect(await runBusinessDayEndSweep({
+      organizationId,
+      venueId,
+      now: new Date('2030-10-24T21:59:59.999Z'),
+    })).toEqual({ closed: 0, skipped: 0 })
+
+    expect(await runBusinessDayEndSweep({
+      organizationId,
+      venueId,
+      now: new Date('2030-10-24T22:00:00.000Z'),
+    })).toEqual({ closed: 1, skipped: 0 })
+    expect(await runBusinessDayEndSweep({
+      organizationId,
+      venueId,
+      now: new Date('2030-10-24T22:00:01.000Z'),
+    })).toEqual({ closed: 0, skipped: 0 })
+
+    const [visitRows] = await databasePool.execute<(RowDataPacket & {
+      ended_at: Date | null
+      ended_by_user_id: number | null
+      end_reason: string | null
+      version: number
+    })[]>('SELECT ended_at, ended_by_user_id, end_reason, version FROM visits WHERE id = ?', [walkIn.visitId])
+    expect(visitRows[0]).toMatchObject({
+      ended_by_user_id: null,
+      end_reason: 'BUSINESS_DAY_END',
+      version: 2,
+    })
+    expect(visitRows[0]?.ended_at).not.toBeNull()
+
+    const [allocations] = await databasePool.execute<(RowDataPacket & {
+      released_at: Date | null
+      released_by_user_id: number | null
+      release_reason: string | null
+    })[]>(
+      `SELECT released_at, released_by_user_id, release_reason FROM table_allocations
+       WHERE visit_id = ? ORDER BY table_id`,
+      [walkIn.visitId],
+    )
+    expect(allocations).toHaveLength(2)
+    expect(allocations.every((row) => row.released_at !== null)).toBe(true)
+    expect(allocations.every((row) => row.released_by_user_id === null)).toBe(true)
+    expect(allocations.every((row) => row.release_reason === 'BUSINESS_DAY_END')).toBe(true)
+
+    const [auditRows] = await databasePool.execute<(RowDataPacket & { actor_kind: string; action: string })[]>(
+      `SELECT actor_kind, action FROM operation_log
+       WHERE entity_type = 'visit' AND entity_id = ?`,
+      [walkIn.visitId],
+    )
+    expect(auditRows).toEqual([{
+      actor_kind: 'SYSTEM',
+      action: 'VISIT_AUTO_CLOSED_BUSINESS_DAY',
+    }])
+  })
+
   it('merges Bar 1 + Bar 21 in the Bar zone and rejects a regular table mixed with a Bar seat', async () => {
     const walkIn = await createWalkIn(actor, {
       guestName: 'Bar merge',
@@ -370,6 +590,9 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
   it('enforces authentication, CSRF, table.assign and visit.combine at the routes', async () => {
     const created = await createBooking(actor, bookingInput('Route guest'))
     const payload = { version: created.version, tableIds: [tableOneId] }
+    const directPayload = { ...bookingInput('Route direct guest'), partySize: 1, tableIds: [barSeatOneId] }
+    expect((await request(app).post('/api/v1/bookings/direct')
+      .set('Origin', env.webOrigin).send(directPayload)).status).toBe(401)
     expect((await request(app).post(`/api/v1/bookings/${created.id}/assign`)
       .set('Origin', env.webOrigin).send(payload)).status).toBe(401)
 
@@ -378,6 +601,13 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
       username: 'assignment_reception', password,
     })).text) as AuthResponse
     expect(auth.permissions).toContain('table.assign')
+    expect((await receptionist.post('/api/v1/bookings/direct')
+      .set('Origin', env.webOrigin).send(directPayload)).status).toBe(403)
+    const directResponse = await receptionist.post('/api/v1/bookings/direct')
+      .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken).send(directPayload)
+    expect(directResponse.status).toBe(201)
+    const directBody = JSON.parse(directResponse.text) as { booking: { tableCodes: string[] } }
+    expect(directBody.booking.tableCodes).toEqual(['BAR01'])
     expect((await receptionist.post(`/api/v1/bookings/${created.id}/assign`)
       .set('Origin', env.webOrigin).send(payload)).status).toBe(403)
 

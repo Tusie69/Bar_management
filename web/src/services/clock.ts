@@ -13,17 +13,13 @@ type Listener = () => void
 
 const SCENARIO_START = "21:30"
 
-class SimClock {
+export class SimClock {
   private offsetMs = 0
-  private simulated = true
+  private simulated = false
   private listeners = new Set<Listener>()
 
-  constructor() {
-    if (runtimeConfig.apiMode === "http") {
-      this.useRealTime()
-    } else {
-      this.resetToScenario()
-    }
+  constructor(simulated = runtimeConfig.apiMode === "mock") {
+    if (simulated) this.resetToScenario()
   }
 
   now(): Date {

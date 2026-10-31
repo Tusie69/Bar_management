@@ -123,6 +123,8 @@ export function useWaitlist(bd: BusinessDate) {
     queryKey: qk.waitlist(bd),
     retry: api.mode === "mock" ? 1 : false,
     queryFn: () => api.listWaitlist(bd),
+    enabled: bd !== "",
+    placeholderData: keepPreviousData,
     refetchInterval: 15_000,
   })
 }

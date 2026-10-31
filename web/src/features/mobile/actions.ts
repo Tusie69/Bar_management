@@ -1,6 +1,7 @@
 import type { ClaimView, ReservationView } from "@/domain/models"
 import { useAction } from "@/hooks/use-action"
 import { api } from "@/services"
+import { toast } from "sonner"
 import { useM } from "./context"
 import { codesOf, tableText } from "./model"
 
@@ -24,25 +25,41 @@ export function useMobileActions() {
       multi: true,
       preselected: r.tableIds,
       confirmLabel: r.tableIds.length ? "Đổi bàn" : "Xếp bàn",
-      onConfirm: async (ids) => !!(await run((o) => api.assignTables(r.id, r.version, ids, o))),
+      onConfirm: async (ids) => {
+        const totalCapacity = ids.reduce((sum, id) => sum + (m.model.byId.get(id)?.capacity ?? 0), 0)
+        if (totalCapacity < r.partySize) {
+          toast.error(
+            `Tổng sức chứa (${totalCapacity}) thấp hơn số khách (${r.partySize}). Chọn thêm bàn cùng khu, cùng loại trước khi xác nhận.`,
+          )
+          return false
+        }
+        return !!(await run((o) => api.assignTables(r.id, r.version, ids, o)))
+      },
     })
 
-  const moveVisit = (claim: ClaimView, fromTableId: number) =>
+  const moveVisit = (claim: ClaimView, _fromTableId: number) =>
     m.startPick({
       title: `Đổi ${codesOf(claim.tableIds, m.model)} sang bàn mới`,
-      hint: "Chạm một bàn trống. Lịch sử bàn cũ được giữ nguyên.",
-      multi: false,
+      hint: `Chạm một hoặc nhiều bàn trống cho đoàn ${claim.partySize} khách. Lịch sử bàn cũ được giữ nguyên.`,
+      multi: true,
       exclude: claim.tableIds,
       confirmLabel: "Đổi bàn",
-      onConfirm: async ([to]) =>
-        !!(await run((o) =>
+      onConfirm: async (toIds) => {
+        const targetCapacity = toIds.reduce((sum, id) => sum + (m.model.byId.get(id)?.capacity ?? 0), 0)
+        if (targetCapacity < claim.partySize) {
+          toast.error(
+            `Các bàn đã chọn chỉ có ${targetCapacity} chỗ cho đoàn ${claim.partySize} khách. Chọn thêm bàn trước khi xác nhận.`,
+          )
+          return false
+        }
+        return !!(await run((o) =>
           api.moveClaim({
             claim: { visitId: claim.visitId!, version: claim.version },
-            fromTableId,
-            toTableId: to,
+            tableIds: toIds,
             overrideReason: o,
           }),
-        )),
+        ))
+      },
     })
 
   const combine = (claim: ClaimView) =>

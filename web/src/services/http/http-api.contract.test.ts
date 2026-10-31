@@ -137,7 +137,7 @@ beforeEach(() => {
       if (path.startsWith("/visits/"))
         return json({ visit: { id: 31, version: 6 }, group: { id: 1, symbolNo: 1, tableIds: [1, 2] } })
       if (path.startsWith("/tables/")) return json({ table: { id: 1, version: 5 } })
-      if (path === "/bookings" || /^\/bookings\/11(?:\/.*)?$/.test(path))
+      if (path === "/bookings" || path === "/bookings/direct" || /^\/bookings\/11(?:\/.*)?$/.test(path))
         return json({
           booking: {
             ...booking,
@@ -269,6 +269,15 @@ describe("canonical contract reads", () => {
 })
 
 describe("canonical contract writes", () => {
+  it("forwards a full destination set for grouped visit and booking moves", async () => {
+    tableState = "IN_USE"
+    await api.moveClaim({ claim: { visitId: 31, version: 1 }, tableIds: [1, 2] })
+    await api.moveClaim({ claim: { reservationId: 11, version: 1 }, tableIds: [2] })
+    expect(writes()).toEqual([
+      { method: "POST", path: "/visits/31/move", body: { version: 1, tableIds: [1, 2] } },
+      { method: "POST", path: "/bookings/11/assign", body: { version: 1, tableIds: [2] } },
+    ])
+  })
   it("keeps classification in both create and update payloads", async () => {
     await api.createReservation({
       contactName: "An",
@@ -310,7 +319,7 @@ describe("canonical contract writes", () => {
       contactChannel: "IN_PERSON",
     })
   })
-  it("creates then assigns with +07:00 and the preceding business date", async () => {
+  it("creates and assigns atomically with +07:00 and the preceding business date", async () => {
     const created = await api.createReservation({
       contactName: "An",
       phone: "0901234123",
@@ -323,7 +332,7 @@ describe("canonical contract writes", () => {
     expect(writes()).toEqual([
       {
         method: "POST",
-        path: "/bookings",
+        path: "/bookings/direct",
         body: {
           guestName: "An",
           phoneNumber: "0901234123",
@@ -331,21 +340,21 @@ describe("canonical contract writes", () => {
           expectedAt: "2026-10-30T01:30:00+07:00",
           businessDate: date,
           sourceCode: "HOTLINE",
+          tableIds: [1],
         },
       },
-      { method: "POST", path: "/bookings/11/assign", body: { version: 3, tableIds: [1] } },
     ])
   })
   it("does not assign a booking created without tables", async () => {
     await api.createReservation({ contactName: "An", partySize: 4, expectedAt: at, sourceCode: "HOTLINE" })
-    expect(writes()).toHaveLength(1)
+    expect(writes()).toEqual([expect.objectContaining({ path: "/bookings" })])
   })
-  it("preserves the created booking when assignment fails, with no retry", async () => {
-    failure = { path: "/bookings/11/assign", status: 409, code: "RESOURCE_CONFLICT" }
+  it("propagates atomic assignment failure without a fallback create or retry", async () => {
+    failure = { path: "/bookings/direct", status: 409, code: "RESOURCE_CONFLICT" }
     await expect(
       api.createReservation({ contactName: "An", partySize: 4, expectedAt: at, sourceCode: "HOTLINE", tableIds: [1] }),
-    ).rejects.toMatchObject({ status: 409, code: "BOOKING_CREATED_UNASSIGNED", details: { reservationId: 11 } })
-    expect(writes()).toHaveLength(2)
+    ).rejects.toMatchObject({ status: 409, code: "RESOURCE_CONFLICT" })
+    expect(writes()).toEqual([expect.objectContaining({ path: "/bookings/direct" })])
   })
   it("updates the complete body with the caller's stale version intact", async () => {
     await api.updateReservation({ id: 11, version: 1, partySize: 5, note: null })

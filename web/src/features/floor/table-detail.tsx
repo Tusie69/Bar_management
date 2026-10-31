@@ -74,6 +74,7 @@ import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useCan } from "@/state/session"
 import { useUi } from "@/state/ui"
+import { toast } from "sonner"
 import { ExtendHoldDialog, GuestCountDialog, SplitDialog } from "./floor-dialogs"
 import type { FloorModel } from "./use-floor-model"
 
@@ -381,7 +382,7 @@ function ClaimCard({ claim, children, model }: { claim: ClaimView; children?: Re
   )
 }
 
-function usePickActions(tableId: number, claim: ClaimView, model: FloorModel) {
+function usePickActions(_tableId: number, claim: ClaimView, model: FloorModel) {
   const ui = useUi()
   const { run } = useAction()
   const claimRef = claim.visitId
@@ -394,16 +395,23 @@ function usePickActions(tableId: number, claim: ClaimView, model: FloorModel) {
     move: () =>
       ui.startPick({
         intent: "move",
-        title: `Đổi ${model.label(tableId)} sang bàn mới`,
-        hint: "Chạm một bàn trống. Lịch sử bàn cũ được giữ nguyên.",
-        multi: false,
+        title: `Đổi ${codes} sang bàn mới`,
+        hint: `Chạm một hoặc nhiều bàn trống cho đoàn ${claim.partySize} khách. Lịch sử bàn cũ được giữ nguyên.`,
+        multi: true,
         excludeIds: claim.tableIds,
         confirmLabel: "Đổi bàn",
-        onConfirm: async ([to]) => {
+        onConfirm: async (toIds) => {
+          const targetCapacity = toIds.reduce((sum, id) => sum + (model.byId.get(id)?.capacity ?? 0), 0)
+          if (targetCapacity < claim.partySize) {
+            toast.error(
+              `Các bàn đã chọn chỉ có ${targetCapacity} chỗ cho đoàn ${claim.partySize} khách. Chọn thêm bàn trước khi xác nhận.`,
+            )
+            return false
+          }
           const r = await run((o) =>
-            api.moveClaim({ claim: claimRef, fromTableId: tableId, toTableId: to, overrideReason: o }),
+            api.moveClaim({ claim: claimRef, tableIds: toIds, overrideReason: o }),
           )
-          if (r) ui.selectTable(to)
+          if (r && toIds.length) ui.selectTable(toIds[0])
           return !!r
         },
       }),

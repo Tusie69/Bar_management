@@ -143,7 +143,7 @@ function BookingBody() {
 
   const canNext = [
     !timeError && guestCount(guest) !== null,
-    later || (tables.length > 0 && blockedSelected.length === 0),
+    later || (tables.length > 0 && blockedSelected.length === 0 && capacity >= party),
     true,
     true,
   ]
@@ -319,7 +319,12 @@ function BookingBody() {
                   <>
                     <span className="font-semibold">{tables.map((id) => model.label(id)).join(" + ")}</span> ·{" "}
                     {capacity} chỗ
-                    {capacity < party ? <span className="text-st-late"> · thiếu chỗ, cần Chủ quán duyệt</span> : null}
+                    {capacity < party ? (
+                      <span className="text-st-late-ink">
+                        {" "}
+                        · thiếu {party - capacity} chỗ cho {party} khách; chọn thêm bàn hoặc nhận trước xếp sau
+                      </span>
+                    ) : null}
                   </>
                 ) : (
                   "Chưa chọn vị trí."

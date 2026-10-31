@@ -36,6 +36,7 @@ import { isBookingSlot, validateBookingTime } from "@/domain/booking-rules"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAction } from "@/hooks/use-action"
 import { useCatalog, useNow, useOperations, useReservations } from "@/hooks/use-data"
+import { toast } from "sonner"
 import { NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
 import { atBusinessTime, businessDateOf, fmtBusinessDate, fmtTime, venueParts } from "@/lib/time"
 import { api } from "@/services"
@@ -103,18 +104,30 @@ function Detail({ r }: { r: ReservationView }) {
       hint: `Booking ${fmtTime(r.expectedAt)}${r.businessDate !== businessDateOf(now) ? ` ngày ${fmtBusinessDate(r.businessDate, "short")}` : ""}. Chạm một hoặc nhiều bàn trống.`,
       multi: true,
       confirmLabel: intent === "assign" ? "Phân bàn" : "Check-in",
-      onConfirm: async (ids) =>
-        intent === "assign"
-          ? !!(await run((o) => api.assignTables(r.id, r.version, ids, o)))
-          : !!(await run((o) =>
-              api.checkIn({
-                reservationId: r.id,
-                version: r.version,
-                guestCount: count ?? r.partySize,
-                tableIds: ids,
-                overrideReason: o,
-              }),
-            )),
+      onConfirm: async (ids) => {
+        if (intent === "assign") {
+          const totalCapacity = ids.reduce(
+            (sum, id) => sum + (catalog.data?.tables.find((t) => t.id === id)?.capacity ?? 0),
+            0,
+          )
+          if (totalCapacity < r.partySize) {
+            toast.error(
+              `Tổng sức chứa (${totalCapacity}) thấp hơn số khách (${r.partySize}). Chọn thêm bàn cùng khu, cùng loại trước khi xác nhận.`,
+            )
+            return false
+          }
+          return !!(await run((o) => api.assignTables(r.id, r.version, ids, o)))
+        }
+        return !!(await run((o) =>
+          api.checkIn({
+            reservationId: r.id,
+            version: r.version,
+            guestCount: count ?? r.partySize,
+            tableIds: ids,
+            overrideReason: o,
+          }),
+        ))
+      },
     })
   }
 

@@ -5,6 +5,7 @@ import {
   assignmentPayload,
   cancelBookingPayload,
   createBookingPayload,
+  directBookingCreatePayload,
   fullUpdateBookingPayload,
   mapBooking,
   mapAssignmentTable,
@@ -54,6 +55,15 @@ export class HttpBookingApi {
     const response = await this.client.post<{ booking: BackendBookingPayload }>(
       "/bookings",
       createBookingPayload(fields),
+      { reviver: dateReviver },
+    )
+    return mapBooking(response.booking)
+  }
+
+  async createAndAssign(fields: BookingWriteFields, tableIds: number[]): Promise<HttpBooking> {
+    const response = await this.client.post<{ booking: BackendBookingPayload }>(
+      "/bookings/direct",
+      directBookingCreatePayload(fields, tableIds),
       { reviver: dateReviver },
     )
     return mapBooking(response.booking)

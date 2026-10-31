@@ -141,32 +141,20 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     exportDailyBookingText: (date) => bookings.exportDailyText(date),
     createReservation: async (input) => {
       if (input.overrideReason) unsupported("phân bàn vượt quy tắc")
-      const created = await createAndAssignDirectBooking(
-        bookings,
-        {
-          guestName: input.contactName ?? "",
-          partySize: input.partySize,
-          expectedAt: input.expectedAt,
-          businessDate: businessDateOf(input.expectedAt),
-          sourceCode: input.sourceCode,
-          classification: input.classification,
-          note: input.note,
-          ...(input.phone === undefined ? {} : { phoneNumber: input.phone }),
-        },
-        input.tableIds ?? [],
-      )
-      if (created.outcome === "created-unassigned") {
-        throw new ApiError(
-          409,
-          "BOOKING_CREATED_UNASSIGNED",
-          `Đã tạo booking #${created.booking.id} nhưng chưa phân được bàn. Tải lại danh sách để phân bàn, không tạo lại booking.`,
-          {
-            reservationId: created.booking.id,
-            assignmentCode: created.assignmentError instanceof ApiError ? created.assignmentError.code : undefined,
-          },
-        )
+      const fields = {
+        guestName: input.contactName ?? "",
+        partySize: input.partySize,
+        expectedAt: input.expectedAt,
+        businessDate: businessDateOf(input.expectedAt),
+        sourceCode: input.sourceCode,
+        classification: input.classification,
+        note: input.note,
+        ...(input.phone === undefined ? {} : { phoneNumber: input.phone }),
       }
-      return { ...result("Đã tạo booking."), reservationId: created.booking.id }
+      const created = input.tableIds?.length
+        ? await createAndAssignDirectBooking(bookings, fields, input.tableIds)
+        : await bookings.create(fields)
+      return { ...result("Đã tạo booking."), reservationId: created.id }
     },
     updateReservation: async (input) => {
       const current = await bookings.detail(input.id)
@@ -231,18 +219,18 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
       if (input.overrideReason) unsupported("đổi bàn vượt quy tắc")
       if (input.claim.visitId) {
         const claim = await visitClaim(input.claim.visitId)
-        if (!claim.tableIds.includes(input.fromTableId))
+        if (!input.tableIds && !claim.tableIds.includes(input.fromTableId))
           throw new ApiError(409, "TABLE_CONFLICT", "Lượt khách đã đổi bàn. Hãy tải lại sơ đồ.")
         await visits.move(input.claim.visitId, input.claim.version ?? claim.version, [
-          ...new Set(claim.tableIds.map((id) => (id === input.fromTableId ? input.toTableId : id))),
+          ...new Set(input.tableIds ?? claim.tableIds.map((id) => (id === input.fromTableId ? input.toTableId : id))),
         ])
       } else if (input.claim.reservationId) {
         const booking = await bookings.detail(input.claim.reservationId)
         const ids = await idsForCodes(booking.tableCodes)
-        if (!ids.includes(input.fromTableId))
+        if (!input.tableIds && !ids.includes(input.fromTableId))
           throw new ApiError(409, "TABLE_CONFLICT", "Booking đã đổi bàn. Hãy tải lại sơ đồ.")
         await bookings.assignVersion(booking.id, input.claim.version ?? booking.version, [
-          ...new Set(ids.map((id) => (id === input.fromTableId ? input.toTableId : id))),
+          ...new Set(input.tableIds ?? ids.map((id) => (id === input.fromTableId ? input.toTableId : id))),
         ])
       } else unsupported("đổi bàn đang giữ từ danh sách chờ")
       return result("Đã đổi bàn.")

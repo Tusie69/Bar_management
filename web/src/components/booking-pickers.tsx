@@ -4,9 +4,15 @@
  * - GuestPicker: 1–10 in one tap, "Khác" for whole numbers above 10. 4 columns on phones, 6 from `sm`.
  * - BookingTimePicker: 13 slots 19:00 → 01:00 next morning, every 30', past slots disabled, never scrolls sideways.
  */
-import { useId } from "react"
-import { GUEST_QUICK, bookingSlotGroups, isBookingSlot, parseOtherGuests } from "@/domain/booking-rules"
-import { fmtDayMonth, type BusinessDate } from "@/lib/time"
+import { useId, useRef, type KeyboardEvent } from "react"
+import {
+  GUEST_QUICK,
+  bookingSlotGroups,
+  bookingSlots,
+  isBookingSlot,
+  parseOtherGuests,
+} from "@/domain/booking-rules"
+import { addDays, fmtDayMonth, venueDateString, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 const chip = (on: boolean) =>
@@ -155,16 +161,42 @@ export function BookingTimePicker({
 }) {
   const id = useId()
   const groups = bookingSlotGroups(date, now)
-  const past = groups[0].slots.filter((s) => s.disabled)
-  const allPast = groups.every((g) => g.slots.every((s) => s.disabled))
+  const allSlots = bookingSlots(date, now)
+  const past = allSlots.filter((s) => s.disabled)
+  const allPast = past.length === allSlots.length
   const valid = isBookingSlot(value) && !error
+  const selected = allSlots.find((slot) => slot.time === value)
+  const slotRefs = useRef(new Map<string, HTMLButtonElement>())
+
+  const selectWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>, time: string) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
+    event.preventDefault()
+    const enabled = allSlots.filter((slot) => !slot.disabled)
+    if (!enabled.length) return
+    const current = Math.max(0, enabled.findIndex((slot) => slot.time === time))
+    const next = event.key === "Home"
+      ? enabled[0]
+      : event.key === "End"
+        ? enabled[enabled.length - 1]
+        : enabled[Math.min(enabled.length - 1, Math.max(0, current + (event.key === "ArrowRight" ? 1 : -1)))]
+    onChange(next.time)
+    requestAnimationFrame(() => slotRefs.current.get(next.time)?.focus())
+  }
+
+  const today = venueDateString(now)
+  const selectedDayLabel = selected?.calendarDate === today
+    ? "Hôm nay"
+    : selected?.calendarDate === addDays(today, 1)
+      ? "Hôm sau"
+      : null
+
   return (
     <div className="flex flex-col gap-2.5">
       <div className="flex items-baseline justify-between gap-2">
         <span id={`${id}-label`} className="text-xs text-tx-2">
-          Giờ đến
+          Giờ khách dự kiến đến
         </span>
-        <span className="text-xs text-tx-3">19:00 đến 01:00 · mốc 30 phút hiện có</span>
+        <span className="tnum text-xs text-tx-3">19:00 đến 01:00 · mốc 30 phút hiện có</span>
       </div>
       {legacyValue ? (
         <p className="rounded-sm border border-st-late/40 bg-st-late-tint px-3 py-2 text-xs text-st-late-ink">
@@ -181,13 +213,23 @@ export function BookingTimePicker({
               return (
                 <button
                   key={s.time}
+                  ref={(node) => {
+                    if (node) slotRefs.current.set(s.time, node)
+                    else slotRefs.current.delete(s.time)
+                  }}
                   type="button"
                   role="radio"
                   aria-checked={on}
                   disabled={s.disabled}
-                  aria-label={`${s.label} (${s.time})${s.nextDay ? `, sáng ${fmtDayMonth(s.calendarDate)}` : ""}${s.disabled ? ", đã qua" : ""}`}
+                  tabIndex={
+                    on || (!isBookingSlot(value) && !s.disabled && allSlots.find((item) => !item.disabled)?.time === s.time)
+                      ? 0
+                      : -1
+                  }
+                  aria-label={`${s.label} (${s.time})${s.nextDay ? `, hôm sau ${fmtDayMonth(s.calendarDate)}` : ""}${s.disabled ? ", đã qua" : ""}`}
                   className={chip(on)}
                   onClick={() => onChange(s.time)}
+                  onKeyDown={(event) => selectWithKeyboard(event, s.time)}
                 >
                   {s.label}
                 </button>
@@ -196,10 +238,15 @@ export function BookingTimePicker({
           </div>
         </div>
       ))}
+      {selected ? (
+        <p className="tnum text-sm font-medium" aria-live="polite">
+          Đã chọn: {selected.label} — {fmtDayMonth(selected.calendarDate)}{selectedDayLabel ? ` (${selectedDayLabel})` : ""}
+        </p>
+      ) : null}
       {allPast ? (
         <span className="text-xs text-tx-2">Ca này đã hết giờ nhận đặt. Chọn ngày khác.</span>
       ) : past.length ? (
-        <span className="tnum text-xs text-tx-3">{`Hôm nay đã qua ${past[0].label} đến ${past[past.length - 1].label}.`}</span>
+        <span className="tnum text-xs text-tx-3">{`Đã qua ${past[0].label} đến ${past[past.length - 1].label}.`}</span>
       ) : null}
       {error && value ? (
         <span role="alert" className="text-xs text-st-noshow-ink">

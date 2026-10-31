@@ -34,6 +34,7 @@ async function flow(name, userId, fn) {
   await page.close()
 }
 const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"]`).first()
+const barSeat = (page, number) => page.locator(`[aria-label^="Ghế Bar ${number},"], [aria-label^="Ghế Bar ${number}:"]`).first()
 const expectLabel = async (loc, re) => {
   for (let i = 0; i < 25; i++) {
     if (re.test(await loc.getAttribute("aria-label"))) return
@@ -247,7 +248,7 @@ await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (deskt
   await seatDialog.getByRole("button", { name: "Xác nhận giữ bàn" }).click()
   await seatDialog.waitFor({ state: "hidden" })
 
-  await card.getByText("Đang giữ bàn").waitFor()
+  await card.getByText("Đang giữ bàn", { exact: true }).waitFor()
   await card.getByText("B7").first().waitFor()
 
   await card.getByRole("button", { name: "Khách đã tới, xếp chỗ" }).click()
@@ -421,6 +422,37 @@ await flow("mobile booking creation with classification and Zalo export (phone 3
   if (!text.includes("Bàn khách quen O: 1")) throw new Error("Classification not reflected in Zalo export")
   if (/0988|776655/i.test(text)) throw new Error("Sensitive phone leaked in export")
   await page.keyboard.press("Escape")
+})
+
+await flow("bar seat: single walk-in from table detail", 1, async (page) => {
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await barSeat(page, 13).click()
+  await page.getByRole("button", { name: /Mở Ghế Bar 13 cho 1 khách/ }).click()
+  await expectLabel(barSeat(page, 13), /Đang sử dụng/)
+})
+
+await flow("bar seat: multi-seat booking capacity check & group reservation", 1, async (page) => {
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await barSeat(page, 8).click()
+  await page.getByRole("button", { name: "Đặt trước" }).click()
+  // QuickForm opens with Bar 8 selected (capacity 1). Pick 2 guests to trigger capacity shortage.
+  await page.getByRole("radio", { name: "2 khách" }).click()
+  await page.getByText(/thiếu 1 chỗ cho 2 khách/).waitFor()
+
+  // Select adjacent bar seat 7 on the canvas to meet capacity
+  await barSeat(page, 7).click()
+  await page.getByText(/Sức chứa 2 chỗ · đủ cho 2 khách/).waitFor()
+
+  // Draft inputs
+  await page.locator("#qf-name").fill("Khách Bar Ghép")
+  await page.locator("#qf-phone").fill("0912345678")
+  await page.getByRole("button", { name: "Lưu đặt bàn" }).click()
+
+  // Both bar seats become reserved and grouped
+  await expectLabel(barSeat(page, 8), /Đang đặt/)
+  await expectLabel(barSeat(page, 7), /Đang đặt/)
+  await expectLabel(barSeat(page, 8), /nhóm \d+/)
+  await expectLabel(barSeat(page, 7), /nhóm \d+/)
 })
 
 console.log(results.join("\n"))

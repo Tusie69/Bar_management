@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils"
 import { api, isApiError } from "@/services"
 import { useCan } from "@/state/session"
 import { useUi } from "@/state/ui"
+import { toast } from "sonner"
 import { GuestCountDialog } from "../floor/floor-dialogs"
 import { DateField } from "../floor/floor-toolbar"
 import { ReservationStatusChip } from "./reservation-status"
@@ -298,7 +299,19 @@ function ReservationList({
               hint: `Booking ${fmtTime(r.expectedAt)} ${r.businessDate !== today ? fmtBusinessDate(r.businessDate, "short") : ""}. Chạm bàn trống.`,
               multi: true,
               confirmLabel: "Phân bàn",
-              onConfirm: async (ids) => !!(await run((o) => api.assignTables(r.id, r.version, ids, o))),
+              onConfirm: async (ids) => {
+                const totalCapacity = ids.reduce(
+                  (sum, id) => sum + (tables.find((t) => t.id === id)?.capacity ?? 0),
+                  0,
+                )
+                if (totalCapacity < r.partySize) {
+                  toast.error(
+                    `Tổng sức chứa (${totalCapacity}) thấp hơn số khách (${r.partySize}). Chọn thêm bàn cùng khu, cùng loại trước khi xác nhận.`,
+                  )
+                  return false
+                }
+                return !!(await run((o) => api.assignTables(r.id, r.version, ids, o)))
+              },
             })
           }}
         >
