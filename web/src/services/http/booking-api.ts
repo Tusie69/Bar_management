@@ -1,3 +1,4 @@
+import { ApiError } from "../contracts"
 import type { BusinessDate } from "@/lib/time"
 import type { HttpClient } from "./http-client"
 import {
@@ -29,7 +30,12 @@ export class HttpBookingApi {
     const path = query
       ? `/bookings/search?date=${businessDate}&q=${encodeURIComponent(query)}`
       : `/bookings?date=${businessDate}`
-    const response = await this.client.get<{ bookings: BackendBookingPayload[] }>(path, { reviver: dateReviver })
+    const response = await this.client.get<{ businessDate: string; bookings: BackendBookingPayload[] }>(path, {
+      reviver: dateReviver,
+    })
+    if (response.businessDate !== businessDate || response.bookings.some((row) => row.businessDate !== businessDate)) {
+      throw new ApiError(502, "BUSINESS_DATE_RESPONSE_MISMATCH", "Unexpected business date in bookings response.")
+    }
     return response.bookings.map(mapBooking)
   }
 
@@ -63,9 +69,22 @@ export class HttpBookingApi {
   }
 
   async cancel(current: HttpBooking, reasonNote?: string): Promise<HttpBooking> {
+    return this.cancelVersion(current.id, current.version, reasonNote)
+  }
+
+  async cancelVersion(id: number, version: number, reasonNote?: string): Promise<HttpBooking> {
     const response = await this.client.post<{ booking: BackendBookingPayload }>(
-      `/bookings/${current.id}/cancel`,
-      cancelBookingPayload(current.version, reasonNote),
+      `/bookings/${id}/cancel`,
+      cancelBookingPayload(version, reasonNote),
+      { reviver: dateReviver },
+    )
+    return mapBooking(response.booking)
+  }
+
+  async markNoShow(id: number, version: number): Promise<HttpBooking> {
+    const response = await this.client.post<{ booking: BackendBookingPayload }>(
+      `/bookings/${id}/no-show`,
+      { version },
       { reviver: dateReviver },
     )
     return mapBooking(response.booking)

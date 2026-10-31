@@ -58,6 +58,9 @@ describe("booking slots", () => {
     expect(validateBookingTime(BD, "18:30", NOON)).not.toBeNull()
   })
   it.each([
+    ["24:00", false],
+    ["19:60", false],
+    ["99:99", false],
     ["19:00", true],
     ["21:00", true],
     ["23:30", true],

@@ -5,19 +5,16 @@ import { defineConfig, loadEnv } from "vite"
 
 export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), "")
-  if (command === "build" && mode === "production") {
-    if (env.VITE_API_MODE !== "http") {
-      throw new Error("Production build yêu cầu VITE_API_MODE=http; mock hoặc fallback đều bị chặn.")
-    }
-    if (!env.VITE_API_BASE_URL?.trim()) {
-      throw new Error("Production build yêu cầu VITE_API_BASE_URL.")
+  if (command === "build") {
+    if (env.VITE_API_MODE !== "http") throw new Error("Production build yêu cầu VITE_API_MODE=http.")
+    if (!env.VITE_API_BASE_URL?.trim()) throw new Error("Production build yêu cầu VITE_API_BASE_URL.")
+    const url = env.VITE_API_BASE_URL.trim()
+    if (!url.startsWith("/") && !["http:", "https:"].includes(new URL(url).protocol)) {
+      throw new Error("VITE_API_BASE_URL phải dùng HTTP(S) hoặc đường dẫn cùng origin.")
     }
     const venueId = Number(env.VITE_VENUE_ID ?? 1)
-    if (!Number.isSafeInteger(venueId) || venueId <= 0) {
-      throw new Error("VITE_VENUE_ID phải là số nguyên dương.")
-    }
+    if (!Number.isSafeInteger(venueId) || venueId <= 0) throw new Error("VITE_VENUE_ID phải là số nguyên dương.")
   }
-
   return {
     plugins: [react(), tailwindcss()],
     resolve: {
@@ -41,7 +38,7 @@ export default defineConfig(({ command, mode }) => {
                 priority: 20,
               },
               { name: "vendor", test: /node_modules[\\/]/, priority: 10 },
-              // Development-only mock implementation. Production must use HTTP.
+              // Mock backend + seed: replaced by the HTTP client when VITE_API_MODE=http.
               { name: "mock-api", test: /src[\\/]services[\\/]mock[\\/]/, priority: 5 },
             ],
           },

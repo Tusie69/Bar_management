@@ -8,11 +8,13 @@ export type DirectBookingResult =
 export async function createAndAssignDirectBooking(
   api: Pick<HttpBookingApi, "create" | "assign">,
   fields: BookingWriteFields,
-  tableId: number,
+  tableId: number | number[],
 ): Promise<DirectBookingResult> {
+  const tableIds = Array.isArray(tableId) ? tableId : [tableId]
   const created = await api.create(fields)
+  if (!tableIds.length) return { outcome: "assigned", booking: created }
   try {
-    return { outcome: "assigned", booking: await api.assign(created, [tableId]) }
+    return { outcome: "assigned", booking: await api.assign(created, tableIds) }
   } catch (assignmentError) {
     return { outcome: "created-unassigned", booking: created, assignmentError }
   }

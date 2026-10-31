@@ -24,7 +24,11 @@ export function maskedPhone(last3: string | null | undefined): string {
 }
 
 export function initials(name: string): string {
-  const parts = name.trim().split(/\s+/)
+  // Drop a trailing note such as "(giả)" so "Lễ tân 1 (giả)" gives "1", not "(".
+  const parts = name
+    .replace(/\s*\(.*\)\s*$/, "")
+    .trim()
+    .split(/\s+/)
   if (parts.length === 0) return "?"
   const last = parts[parts.length - 1]
   return (last[0] ?? "?").toUpperCase()

@@ -8,7 +8,7 @@
  *   the 30-second system job that raises late / no-show / hold warnings.
  */
 import { foldVietnamese, NOTE_PHONE_ERROR, noteHasPhoneNumber, normalizePhone } from "@/lib/text"
-import { addDays, businessDateOf, fmtTime, MS, type BusinessDate } from "@/lib/time"
+import { businessDateOf, fmtTime, MS, type BusinessDate } from "@/lib/time"
 import { roleCan, PERMISSION_LABEL, type Permission } from "@/domain/access"
 import { isWithinBookingReceptionWindow } from "@/domain/booking-rules"
 import {
@@ -76,6 +76,7 @@ import {
 } from "./derive"
 import { DEMO_USERS, REMOTE_USER_ID, seedDb } from "./seed"
 import { Tx } from "./tx"
+import { formatDailyBookingText } from "./booking-export"
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const ACTIVE_ENTRY = ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"] as const
@@ -416,7 +417,12 @@ export class MockGamApi implements GamApi, DemoControls {
     }
   }
 
-  private createHoldForReservation(tx: Tx, r: ReservationRow, tableIds: number[]) {
+  private createHoldForReservation(
+    tx: Tx,
+    r: ReservationRow,
+    tableIds: number[],
+    existingGroupId: number | null = null,
+  ) {
     const hold = tx.insert("holds", {
       organizationId: ORG_ID,
       venueId: VENUE_ID,
@@ -441,7 +447,7 @@ export class MockGamApi implements GamApi, DemoControls {
       createdByUserId: this.session.id,
       createdAt: this.now,
     })
-    const groupId = tableIds.length > 1 ? this.newGroup(tx, r.businessDate) : null
+    const groupId = tableIds.length > 1 ? (existingGroupId ?? this.newGroup(tx, r.businessDate)) : null
     tableIds.forEach((tableId) =>
       this.newAllocation(tx, {
         tableId,
@@ -619,7 +625,7 @@ export class MockGamApi implements GamApi, DemoControls {
 
   async getFloorState(at: Date, businessDate?: BusinessDate) {
     await this.latency("q")
-    return floorState(this.db, at, businessDate)
+    return floorState(this.db, at, businessDate, businessDateOf(this.now))
   }
 
   async getAvailability(at: Date, partySize: number) {
@@ -638,17 +644,49 @@ export class MockGamApi implements GamApi, DemoControls {
     let rows = [...this.db.reservations.values()]
     if (search) {
       const m = searchMatches(this.db, search)
-      const from = addDays(q.businessDate, -7)
-      const to = addDays(q.businessDate, 7)
-      rows = rows
-        .filter((r) => r.businessDate >= from && r.businessDate <= to && m.reservation(r))
-        .slice(0, m.digits ? 20 : 50)
+      rows = rows.filter((r) => r.businessDate === q.businessDate && m.reservation(r)).slice(0, m.digits ? 20 : 50)
     } else {
       rows = rows.filter((r) => r.businessDate === q.businessDate)
     }
     return rows
       .sort((a, b) => a.expectedAt.getTime() - b.expectedAt.getTime())
       .map((r) => reservationView(this.db, r, this.now))
+  }
+
+  async exportDailyBookingText(bd: BusinessDate): Promise<string> {
+    this.require("customer.view_masked")
+    const reservations = await this.listReservations({ businessDate: bd })
+    const cat = catalog(this.db)
+    const tableInfo = (table: (typeof cat.tables)[number]) => ({
+      code: table.code,
+      zoneCode: table.zoneCode,
+      zoneName: cat.zones.find((zone) => zone.id === table.zoneId)?.name ?? table.zoneCode,
+    })
+    return formatDailyBookingText({
+      businessDate: bd,
+      bookings: reservations.map((row) => ({
+        id: row.id,
+        guestName: row.displayName,
+        partySize: row.partySize,
+        expectedAt: row.expectedAt,
+        checkedInAt: row.checkedInAt,
+        status: row.status,
+        tables: cat.tables.filter((table) => row.tableIds.includes(table.id)).map(tableInfo),
+        // shortcut: mock seed has no export metadata flags; extend its schema when those controls are added.
+        metadata: {
+          bossTable: false,
+          designated: false,
+          birthday: false,
+          round: null,
+          returningCustomer: row.classification === "RETURNING" ? true : row.classification === "NEW" ? false : null,
+        },
+      })),
+      waitlistCount: [...this.db.waitlist.values()].filter(
+        (entry) => entry.businessDate === bd && ["WAITING", "CONTACTING", "OFFERED"].includes(entry.status),
+      ).length,
+      outTables: cat.tables.filter((table) => table.status === "OUT_OF_SERVICE").map(tableInfo),
+      arrivalCutoff: { hour: 21, minute: 30, basis: "EXPECTED_AT", atCutoff: "AFTER" },
+    })
   }
 
   async listVisits(bd: BusinessDate) {
@@ -1380,7 +1418,7 @@ export class MockGamApi implements GamApi, DemoControls {
     if (input.preferences.length > 20) this.fail("Tối đa 20 lựa chọn ưu tiên.")
     if (input.preferenceMode !== "ANY" && input.preferences.length === 0)
       this.fail("Chọn ít nhất một khu/bàn mong muốn.")
-    let bd = businessDateOf(this.now)
+    let bd = input.businessDate ?? businessDateOf(this.now)
     let label = ""
     if (input.kind === "ADVANCE_RESERVATION") {
       const r = this.res(input.reservationId ?? 0)
@@ -1405,7 +1443,7 @@ export class MockGamApi implements GamApi, DemoControls {
           kind: input.kind,
           priorityClass: input.kind === "ADVANCE_RESERVATION" ? 1 : 2,
           reservationId: input.kind === "ADVANCE_RESERVATION" ? input.reservationId! : null,
-          customerId: null,
+          customerId: input.kind === "WALK_IN" ? this.upsertCustomer(tx, input.contactName, input.phone) : null,
           contactName: input.kind === "WALK_IN" ? input.contactName!.trim() : null,
           partySize: input.kind === "WALK_IN" ? input.partySize! : null,
           preferenceMode: input.preferenceMode,
@@ -1615,55 +1653,90 @@ export class MockGamApi implements GamApi, DemoControls {
 
   async seatWaitlist(input: SeatWaitlistInput) {
     await this.latency("m")
-    const e = this.entry(input.entryId)
-    this.require(e.kind === "ADVANCE_RESERVATION" ? "visit.checkin" : "visit.walkin")
-    this.checkVersion("waitlist", e, input.version, "Mục chờ")
-    if (!(ACTIVE_ENTRY as readonly string[]).includes(e.status)) this.fail("Mục chờ đã đóng.", "INVALID_STATE")
-    if (input.guestCount < 1) this.fail("Số khách phải từ 1.")
-    const bd = businessDateOf(this.now)
-    const hold = activeHoldForEntry(this.db, e.id)
-    const holdTables = hold ? holdTableIds(this.db, hold.id) : []
-    const target = input.tableIds?.length ? input.tableIds : holdTables
-    if (!target.length) this.fail("Chọn bàn cho khách.")
-    const sameTables = target.length === holdTables.length && target.every((t) => holdTables.includes(t))
-    const res = e.reservationId ? this.db.reservations.get(e.reservationId) : undefined
-    return this.commit({ action: "WAITLIST_SEATED", entityType: "waitlist_entry", undoable: true }, (tx) => {
-      this.assertClaimable(target, {
-        bd,
-        at: this.now,
-        ignore: (a) => !!hold && a.holdId === hold.id,
-        overrideReason: input.overrideReason,
-      })
-      const v = tx.insert("visits", {
-        organizationId: ORG_ID,
-        venueId: VENUE_ID,
-        origin: "WAITLIST",
-        customerId: res?.customerId ?? e.customerId,
-        contactName: res?.contactName ?? e.contactName,
-        guestCount: input.guestCount,
-        startedAt: this.now,
-        businessDate: bd,
-        endedAt: null,
-        endedByUserId: null,
-        endReason: null,
-        mergedIntoVisitId: null,
-        paidMarkedAt: null,
-        paidMarkedByUserId: null,
-        note: e.note,
-        createdByUserId: this.session.id,
-        createdAt: this.now,
-      })
-      this.convertHold(tx, hold, v.id, target, sameTables, bd)
-      this.closeEntrySeated(tx, e.id, v.id)
-      if (res && res.status === "BOOKED") {
-        const r = tx.edit("reservations", res.id)
-        r.status = "CHECKED_IN"
-        r.visitId = v.id
-        r.checkedInAt = this.now
-        r.checkedInByUserId = this.session.id
-      }
-      return { entityId: e.id, summary: `Khách chờ nhận bàn ${this.codes(target)} · ${input.guestCount} khách` }
-    })
+    this.require("waitlist.accept_offer")
+    this.require("reservation.create")
+    this.require("table.assign")
+    const entry = this.entry(input.entryId)
+    this.checkVersion("waitlist", entry, input.version, "Mục chờ")
+    const offer = activeHoldForEntry(this.db, entry.id)
+    const allowed =
+      entry.kind === "WALK_IN" ? ["WAITING", "HOLD_ACTIVE"] : ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"]
+    if (!allowed.includes(entry.status) || (entry.status === "HOLD_ACTIVE" && !offer))
+      throw new ApiError(409, "WAITLIST_NOT_SEATABLE", "Khách chờ không thể được gán bàn trực tiếp.")
+    const linked = entry.reservationId ? this.res(entry.reservationId) : null
+    if (linked && (linked.status !== "BOOKED" || linked.businessDate !== entry.businessDate))
+      throw new ApiError(409, "BUSINESS_DATE_MISMATCH", "Booking đã đổi. Vui lòng tải lại danh sách chờ.")
+    if (linked && activeReservationHold(this.db, linked.id))
+      throw new ApiError(409, "BOOKING_ALREADY_ASSIGNED", "Booking đã có bàn.")
+    const target = [...new Set(input.tableIds ?? (offer ? holdTableIds(this.db, offer.id) : []))]
+    const partySize = linked?.partySize ?? entry.partySize ?? 0
+    if (!partySize) throw new ApiError(409, "WAITLIST_DATA_INCOMPLETE", "Thiếu số khách trong mục chờ.")
+    if (new Set(target.map((id) => this.db.tables.get(id)?.zoneId)).size > 1)
+      throw new ApiError(409, "TABLE_ZONE_MISMATCH", "Các bàn cho khách chờ phải thuộc cùng một khu.")
+    return this.commit<{ reservationId: number; groupId: number | null }>(
+      { action: "WAITLIST_ASSIGNED_TO_RESERVATION", entityType: "waitlist_entry", undoable: false },
+      (tx) => {
+        this.assertClaimable(target, {
+          bd: entry.businessDate,
+          at: linked?.expectedAt ?? this.now,
+          partySize,
+          ignore: (a) => !!offer && a.holdId === offer.id,
+        })
+        const source = [...this.db.sources.values()].find((row) => row.code === "OTHER")
+        if (!source) throw new ApiError(409, "WAITLIST_BOOKING_SOURCE_MISSING", "Cần cấu hình nguồn booking OTHER.")
+        const reservation =
+          linked ??
+          tx.insert("reservations", {
+            organizationId: ORG_ID,
+            venueId: VENUE_ID,
+            customerId: entry.customerId,
+            contactName: entry.contactName,
+            contactNameSearch: entry.contactName ? foldVietnamese(entry.contactName) : null,
+            sourceId: source.id,
+            partySize,
+            expectedAt: this.now,
+            businessDate: entry.businessDate,
+            customerClassification: "UNCLASSIFIED",
+            status: "BOOKED",
+            note: entry.note,
+            visitId: null,
+            checkedInAt: null,
+            checkedInByUserId: null,
+            closedAt: null,
+            closedByUserId: null,
+            closeReasonCode: null,
+            closeReasonNote: null,
+            lateWarnedAt: null,
+            noShowWarnedAt: null,
+            createdByUserId: this.session.id,
+            createdAt: this.now,
+            updatedByUserId: null,
+            updatedAt: this.now,
+          })
+        const offerGroupId = offer
+          ? (activeAllocations(this.db).find((a) => a.holdId === offer.id && a.groupId)?.groupId ?? null)
+          : null
+        // Create the replacement first so releasing the offer keeps its group alive.
+        const hold = this.createHoldForReservation(tx, reservation, target, offerGroupId)
+        if (offer) this.releaseHoldInternal(tx, offer, "STAFF_REASSIGNED", "HOLD_RELEASED")
+        const groupId = activeAllocations(this.db).find((row) => row.holdId === hold.id)?.groupId ?? null
+        const row = tx.edit("waitlist", entry.id)
+        row.kind = "ADVANCE_RESERVATION"
+        row.reservationId = reservation.id
+        row.customerId = null
+        row.contactName = null
+        row.partySize = null
+        row.status = "HOLD_ACTIVE"
+        row.claimedByUserId = null
+        row.claimedAt = null
+        row.claimExpiresAt = null
+        return {
+          entityId: entry.id,
+          summary: `Đã gán bàn ${this.codes(target)} cho khách chờ`,
+          extra: { reservationId: reservation.id, groupId },
+        }
+      },
+    )
   }
 
   async cancelWaitlist(entryId: number, version: number, reason: WaitlistCloseReason, note?: string) {

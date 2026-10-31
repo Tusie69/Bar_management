@@ -148,7 +148,14 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
   },
   {
     title: "Khách & dữ liệu",
-    items: ["customer.view_masked", "customer.phone.reveal", "booking.phone.reveal", "customer.anonymize", "audit.read", "report.read"],
+    items: [
+      "customer.view_masked",
+      "customer.phone.reveal",
+      "booking.phone.reveal",
+      "customer.anonymize",
+      "audit.read",
+      "report.read",
+    ],
   },
   { title: "Quản trị", items: ["venue.configure", "user.manage", "operation.undo"] },
 ]

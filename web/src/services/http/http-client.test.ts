@@ -119,7 +119,14 @@ describe("HttpClient", () => {
 describe("AuthApi", () => {
   it("accepts login/me contracts and sends the returned CSRF token on logout", async () => {
     const session = {
-      user: { id: 7, username: "operator", displayName: "Operator", organizationId: 1, venueId: 1 },
+      user: {
+        id: 7,
+        username: "operator",
+        displayName: "Operator",
+        organizationId: 1,
+        venueId: 1,
+        roles: ["OWNER_ADMIN"],
+      },
       permissions: ["customer.view_masked"],
       csrfToken: "server-csrf",
       expiresAt: "2026-10-29T00:00:00.000Z",
@@ -142,6 +149,21 @@ describe("AuthApi", () => {
 
   it("rejects a malformed session response", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(json({ user: { id: 1 } })))
+    const auth = new AuthApi(new HttpClient("https://api.example.test"))
+    await expect(auth.me()).rejects.toMatchObject({ code: "INVALID_RESPONSE" })
+  })
+
+  it.each([undefined, "OWNER_ADMIN", ["OWNER_ADMIN", 7]])("rejects malformed role codes %j", async (roles) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        json({
+          user: { id: 7, username: "operator", displayName: "Operator", organizationId: 1, venueId: 1, roles },
+          permissions: [],
+          csrfToken: "csrf",
+        }),
+      ),
+    )
     const auth = new AuthApi(new HttpClient("https://api.example.test"))
     await expect(auth.me()).rejects.toMatchObject({ code: "INVALID_RESPONSE" })
   })

@@ -45,3 +45,5 @@ export type { AssignmentTable, BookingClassification, BookingWriteFields, HttpBo
 export type { HttpWaitlistEntry, HttpWaitlistStatus } from "./http/waitlist-api"
 export { activeWaitlistEntries } from "./http/waitlist-api"
 export { createAndAssignDirectBooking } from "./http/direct-booking"
+
+export { isNotSupported } from "./contracts"

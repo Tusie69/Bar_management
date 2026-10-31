@@ -6,6 +6,7 @@
  * immediately. Time keeps ticking in real time and can be fast-forwarded
  * from the clock menu. The HTTP implementation would use server time.
  */
+import { runtimeConfig } from "@/config/runtime"
 import { atBusinessTime, businessDateOf } from "@/lib/time"
 
 type Listener = () => void
@@ -18,7 +19,11 @@ class SimClock {
   private listeners = new Set<Listener>()
 
   constructor() {
-    this.resetToScenario()
+    if (runtimeConfig.apiMode === "http") {
+      this.useRealTime()
+    } else {
+      this.resetToScenario()
+    }
   }
 
   now(): Date {

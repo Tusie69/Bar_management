@@ -42,6 +42,8 @@ export const isBookingSlot = (hhmm: string | null | undefined): hhmm is string =
 /** Backend-style window check: accepts any minute in 19:00–01:00, independent of the configured UI slot step. */
 export function isWithinBookingReceptionWindow(hhmm: string): boolean {
   if (!/^\d{2}:\d{2}$/.test(hhmm)) return false
+  const [hour, minute] = hhmm.split(":").map(Number)
+  if (hour > 23 || minute > 59) return false
   const minutes = toMin(hhmm)
   return minutes >= toMin(BOOKING_FIRST_SLOT) || minutes <= toMin(BOOKING_LAST_SLOT)
 }
