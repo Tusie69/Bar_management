@@ -173,11 +173,12 @@ function useRowActions(model: FloorModel, live: boolean) {
         </>
       }
       initial={checkIn?.partySize ?? 2}
+      readOnly
       confirmLabel="Check-in"
-      onConfirm={async (count) => {
+      onConfirm={async () => {
         if (!checkIn) return
         const r = await run(() =>
-          api.checkIn({ reservationId: checkIn.id, version: checkIn.version, guestCount: count }),
+          api.checkIn({ reservationId: checkIn.id, version: checkIn.version, guestCount: checkIn.partySize }),
         )
         if (r) setCheckIn(null)
       }}
@@ -327,32 +328,43 @@ export function BookingList({
             return (
               <div
                 key={it.key}
-                role="button"
-                tabIndex={0}
-                aria-pressed={sel}
-                onClick={() => select(it)}
-                onKeyDown={onEnter(() => select(it))}
+                data-booking-card
+                onClick={(e) => {
+                  const target = e.target as HTMLElement
+                  const interactive = target.closest("button, a, input, select, textarea, [role=menuitem]")
+                  if (interactive && !interactive.closest("[data-booking-select]")) return
+                  select(it)
+                }}
                 className={cn(
-                  "grid shrink-0 cursor-pointer grid-cols-[64px_minmax(0,1fr)_auto] gap-2.5 rounded-sm border bg-surface-1 p-3 outline-none hover:border-strong focus-visible:ring-2 focus-visible:ring-primary",
+                  "grid shrink-0 cursor-pointer grid-cols-[64px_minmax(0,1fr)_auto] gap-2.5 rounded-sm border bg-surface-1 p-3 outline-none focus-within:ring-2 focus-within:ring-primary hover:border-strong",
                   sel && "border-primary bg-primary-tint",
                 )}
               >
-                <div className="flex flex-col gap-0.5">
-                  <span className="tnum text-sm font-semibold text-tx-strong">{fmtTime(it.at)}</span>
-                  <span className="text-xs text-tx-3">{it.cap}</span>
-                </div>
-                <div className="flex min-w-0 flex-col gap-1">
-                  <span className="truncate text-sm font-semibold text-tx-strong">{it.name}</span>
-                  <span className="tnum truncate text-xs text-tx-3">
-                    {it.phone} · {it.source}
-                  </span>
-                  <span className="flex items-center gap-1.5 text-xs whitespace-nowrap text-tx-2">
-                    <Users className="size-3.5 shrink-0" />
-                    <span className="tnum font-medium text-tx-1">{pad2(it.party)}</span>
-                    <span className="text-strong">·</span>
-                    <span className="truncate font-semibold text-tx-strong">{it.tables}</span>
-                  </span>
-                </div>
+                <button
+                  type="button"
+                  data-booking-select
+                  aria-pressed={sel}
+                  aria-label={`Booking ${it.name}, ${fmtTime(it.at)}, ${it.tables}`}
+                  onClick={() => select(it)}
+                  className="col-span-2 grid cursor-pointer grid-cols-[64px_minmax(0,1fr)] gap-2.5 text-left outline-none"
+                >
+                  <div className="flex flex-col gap-0.5">
+                    <span className="tnum text-sm font-semibold text-tx-strong">{fmtTime(it.at)}</span>
+                    <span className="text-xs text-tx-3">{it.cap}</span>
+                  </div>
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <span className="truncate text-sm font-semibold text-tx-strong">{it.name}</span>
+                    <span className="tnum truncate text-xs text-tx-3">
+                      {it.phone} · {it.source}
+                    </span>
+                    <span className="flex items-center gap-1.5 text-xs whitespace-nowrap text-tx-2">
+                      <Users className="size-3.5 shrink-0" />
+                      <span className="tnum font-medium text-tx-1">{pad2(it.party)}</span>
+                      <span className="text-strong">·</span>
+                      <span className="truncate font-semibold text-tx-strong">{it.tables}</span>
+                    </span>
+                  </div>
+                </button>
                 <div className="flex flex-col items-end justify-between gap-2">
                   <StatusTag it={it} />
                   <ActionButton a={actionOf(it)} />

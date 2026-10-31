@@ -29,6 +29,7 @@ export function useFloorModel(businessDate?: BusinessDate) {
     )
     return {
       loading: catalog.isLoading || floor.isLoading,
+      error: catalog.error || floor.error,
       catalog: catalog.data,
       floor: floor.data,
       tables,
@@ -39,7 +40,7 @@ export function useFloorModel(businessDate?: BusinessDate) {
       label,
       freeIds,
     }
-  }, [catalog.data, floor.data, catalog.isLoading, floor.isLoading])
+  }, [catalog.data, floor.data, catalog.isLoading, floor.isLoading, catalog.error, floor.error])
 }
 
 export type FloorModel = ReturnType<typeof useFloorModel>

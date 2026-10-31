@@ -38,6 +38,7 @@ export function RevealPhone({
   context?: { reservationId?: number; entryId?: number }
 }) {
   const allowed = useCan("customer.phone.reveal")
+  const canReveal = allowed && (api.mode === "http" ? !!context?.reservationId : !!customerId)
   const [open, setOpen] = useState(false)
   const [reason, setReason] = useState(REASONS[0].value)
   const [phone, setPhone] = useState<string | null>(null)
@@ -48,7 +49,7 @@ export function RevealPhone({
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       <span className="tnum text-sm">{phone ? formatVn(phone) : maskedPhone(last3)}</span>
-      {allowed && customerId ? (
+      {canReveal ? (
         phone ? (
           <Button variant="ghost" size="xs" onClick={() => setPhone(null)}>
             <EyeOff /> Ẩn
@@ -92,7 +93,8 @@ export function RevealPhone({
               onClick={async () => {
                 setBusy(true)
                 try {
-                  const res = await api.revealPhone(customerId!, reason, context ?? {})
+                  const targetId = api.mode === "http" ? context!.reservationId! : customerId!
+                  const res = await api.revealPhone(targetId, reason, context ?? {})
                   setPhone(res.phoneE164)
                   setOpen(false)
                 } catch (e) {

@@ -73,7 +73,7 @@ function Detail({ r }: { r: ReservationView }) {
   const ui = useUi()
   const navigate = useNavigate()
   const now = useNow(15_000)
-  const { run } = useAction()
+  const { run, pending } = useAction()
   const ops = useOperations(300)
   const [checkInOpen, setCheckInOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
@@ -167,7 +167,20 @@ function Detail({ r }: { r: ReservationView }) {
               )
             }
           />
-          <Item k="Tạo bởi" v={`${r.createdByName} · ${fmtTime(r.createdAt)}`} />
+          <Item
+            k="Tạo bởi"
+            v={
+              r.createdByName && r.createdAt ? (
+                `${r.createdByName} · ${fmtTime(r.createdAt)}`
+              ) : r.createdAt ? (
+                fmtTime(r.createdAt)
+              ) : r.createdByName ? (
+                r.createdByName
+              ) : (
+                <span className="text-muted-foreground">Chưa có dữ liệu</span>
+              )
+            }
+          />
           {r.status === "CANCELLED" || r.status === "NO_SHOW" ? (
             <Item
               k="Lý do đóng"
@@ -192,7 +205,7 @@ function Detail({ r }: { r: ReservationView }) {
                 permission="visit.checkin"
                 size="lg"
                 className="col-span-2"
-                disabled={!today}
+                disabled={!today || pending}
                 disabledReason={!today ? "Chỉ check-in trong ngày kinh doanh của booking" : null}
                 onClick={() => setCheckInOpen(true)}
               >
@@ -203,17 +216,27 @@ function Detail({ r }: { r: ReservationView }) {
                 permission="visit.checkin"
                 size="lg"
                 className="col-span-2"
-                disabled={!today}
+                disabled={!today || pending}
                 disabledReason={!today ? "Chỉ check-in trong ngày kinh doanh của booking" : null}
                 onClick={() => setCheckInOpen(true)}
               >
                 <LogIn /> Khách đã tới: chọn bàn và check-in
               </GuardedButton>
             )}
-            <GuardedButton permission="table.assign" variant="outline" onClick={() => pickOnFloor("assign")}>
+            <GuardedButton
+              permission="table.assign"
+              variant="outline"
+              disabled={pending}
+              onClick={() => pickOnFloor("assign")}
+            >
               {r.tableIds.length ? <ArrowRightLeft /> : <MapPinned />} {r.tableIds.length ? "Đổi bàn" : "Phân bàn"}
             </GuardedButton>
-            <GuardedButton permission="reservation.update" variant="outline" onClick={() => setEditOpen(true)}>
+            <GuardedButton
+              permission="reservation.update"
+              variant="outline"
+              disabled={pending}
+              onClick={() => setEditOpen(true)}
+            >
               <Pencil /> Sửa
             </GuardedButton>
             {!r.tableIds.length && !r.waitlistEntryId ? (
@@ -221,17 +244,24 @@ function Detail({ r }: { r: ReservationView }) {
                 permission="waitlist.create"
                 variant="outline"
                 className="col-span-2"
+                disabled={pending}
                 onClick={() => setWaitOpen(true)}
               >
                 <ListPlus /> Đưa vào danh sách chờ (đặt trước)
               </GuardedButton>
             ) : null}
-            <GuardedButton permission="reservation.cancel" variant="outline" onClick={() => setCancelOpen(true)}>
+            <GuardedButton
+              permission="reservation.cancel"
+              variant="outline"
+              disabled={pending}
+              onClick={() => setCancelOpen(true)}
+            >
               <XCircle /> Hủy booking
             </GuardedButton>
             <GuardedButton
               permission="reservation.mark_no_show"
               variant="outline"
+              disabled={pending}
               disabledReason={r.minutesLate >= noShowAfter ? null : `Chỉ bật sau ${noShowAfter} phút trễ`}
               onClick={() => setNoShowOpen(true)}
             >
@@ -274,14 +304,15 @@ function Detail({ r }: { r: ReservationView }) {
           r.tableIds.length ? <>Bàn {codes(r.tableIds).join(" + ")}</> : "Bước tiếp theo: chọn bàn trống trên sơ đồ."
         }
         initial={r.partySize}
+        readOnly
         confirmLabel={r.tableIds.length ? "Check-in" : "Chọn bàn"}
-        onConfirm={async (count) => {
+        onConfirm={async () => {
           if (!r.tableIds.length) {
             setCheckInOpen(false)
-            pickOnFloor("checkin", count)
+            pickOnFloor("checkin", r.partySize)
             return
           }
-          const res = await run(() => api.checkIn({ reservationId: r.id, version: r.version, guestCount: count }))
+          const res = await run(() => api.checkIn({ reservationId: r.id, version: r.version, guestCount: r.partySize }))
           if (res) setCheckInOpen(false)
         }}
       />
@@ -331,7 +362,7 @@ function Item({ k, v }: { k: string; v: React.ReactNode }) {
   )
 }
 
-function EditReservationDialog({
+export function EditReservationDialog({
   open,
   onOpenChange,
   r,
@@ -342,7 +373,9 @@ function EditReservationDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>{open ? <EditReservationBody r={r} close={() => onOpenChange(false)} /> : null}</DialogContent>
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 p-0 overflow-hidden sm:max-h-[min(90dvh,46rem)] sm:max-w-lg">
+        {open ? <EditReservationBody r={r} close={() => onOpenChange(false)} /> : null}
+      </DialogContent>
     </Dialog>
   )
 }
@@ -366,70 +399,72 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
   const legacyTime = originalSchedule && !isBookingSlot(time) ? time : null
   return (
     <>
-      <DialogHeader>
+      <DialogHeader className="shrink-0 p-6 pb-2 pr-14 text-left">
         <DialogTitle>Sửa booking</DialogTitle>
         <DialogDescription>Đổi giờ trong cùng ngày giữ nguyên bàn. Đổi sang ngày khác sẽ nhả bàn cũ.</DialogDescription>
       </DialogHeader>
-      <div className="grid gap-4">
-        <div className="grid gap-1.5">
-          <Label htmlFor="ed-name">Tên khách</Label>
-          <Input id="ed-name" className="h-11" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div className="flex flex-wrap items-end gap-4">
+      <div className="flex-1 overflow-y-auto overscroll-contain px-6 pt-1 pb-4">
+        <div className="grid gap-4">
           <div className="grid gap-1.5">
-            <Label>Số khách</Label>
-            <Stepper value={party} onChange={setParty} label="số khách" />
+            <Label htmlFor="ed-name">Tên khách</Label>
+            <Input id="ed-name" className="h-11" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="grid gap-1.5">
+              <Label>Số khách</Label>
+              <Stepper value={party} onChange={setParty} label="số khách" />
+            </div>
+          </div>
+          <BookingTimePicker
+            date={r.businessDate}
+            value={time}
+            now={now}
+            onChange={setTime}
+            error={timeError}
+            legacyValue={legacyTime}
+          />
+          <div className="grid gap-1.5">
+            <Label htmlFor="ed-source">Nguồn</Label>
+            <Select value={source} onValueChange={(v) => setSource(v as BookingSourceCode)}>
+              <SelectTrigger id="ed-source" className="h-11 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(catalog.data?.sources ?? []).map((s) => (
+                  <SelectItem key={s.code} value={s.code}>
+                    {SOURCE_LABEL[s.code]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="ed-classification">Loại khách</Label>
+            <Select value={classification} onValueChange={(v) => setClassification(v as BookingClassification)}>
+              <SelectTrigger id="ed-classification" className="h-11 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="UNCLASSIFIED">Chưa phân loại</SelectItem>
+                <SelectItem value="NEW">Khách mới (N)</SelectItem>
+                <SelectItem value="RETURNING">Khách quen (O)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="ed-note">Ghi chú</Label>
+            <Textarea
+              id="ed-note"
+              rows={2}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              aria-invalid={invalid}
+            />
+            {invalid ? <p className="text-sm text-destructive">{NOTE_PHONE_ERROR}</p> : null}
           </div>
         </div>
-        <BookingTimePicker
-          date={r.businessDate}
-          value={time}
-          now={now}
-          onChange={setTime}
-          error={timeError}
-          legacyValue={legacyTime}
-        />
-        <div className="grid gap-1.5">
-          <Label htmlFor="ed-source">Nguồn</Label>
-          <Select value={source} onValueChange={(v) => setSource(v as BookingSourceCode)}>
-            <SelectTrigger id="ed-source" className="h-11 w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {(catalog.data?.sources ?? []).map((s) => (
-                <SelectItem key={s.code} value={s.code}>
-                  {SOURCE_LABEL[s.code]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="ed-classification">Loại khách</Label>
-          <Select value={classification} onValueChange={(v) => setClassification(v as BookingClassification)}>
-            <SelectTrigger id="ed-classification" className="h-11 w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="UNCLASSIFIED">Chưa phân loại</SelectItem>
-              <SelectItem value="NEW">Khách mới (N)</SelectItem>
-              <SelectItem value="RETURNING">Khách quen (O)</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="ed-note">Ghi chú</Label>
-          <Textarea
-            id="ed-note"
-            rows={2}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            aria-invalid={invalid}
-          />
-          {invalid ? <p className="text-sm text-destructive">{NOTE_PHONE_ERROR}</p> : null}
-        </div>
       </div>
-      <DialogFooter>
+      <DialogFooter className="shrink-0 p-6 pt-3 border-t border-border">
         <Button variant="ghost" onClick={close}>
           Quay lại
         </Button>
@@ -444,8 +479,8 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
                 partySize: party,
                 expectedAt: atBusinessTime(r.businessDate, time),
                 sourceCode: source,
-                classification,
                 note,
+                classification,
               }),
             )
             if (res) close()
@@ -513,8 +548,8 @@ function AdvanceWaitlistBody({ r, close }: { r: ReservationView; close: () => vo
                 kind: "ADVANCE_RESERVATION",
                 reservationId: r.id,
                 channel: "ZALO_THREAD",
-                preferenceMode: mode,
-                preferences: mode === "ANY" ? [] : prefs,
+                preferenceMode: api.mode === "http" ? "ANY" : mode,
+                preferences: api.mode === "http" || mode === "ANY" ? [] : prefs,
               }),
             )
             if (res) close()
@@ -546,6 +581,17 @@ export function WaitlistPreferencePicker({
   zoneOptions: { code: ZoneCode; name: string }[]
   tables: { id: number; code: string }[]
 }) {
+  if (api.mode === "http") {
+    return (
+      <div className="grid gap-1.5">
+        <Label>Mong muốn</Label>
+        <p className="rounded-lg border bg-surface-1 px-3 py-2 text-xs text-muted-foreground">
+          Lựa chọn bàn ưu tiên chưa được backend hỗ trợ. Khách sẽ được lưu với mong muốn bất kỳ.
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div className="grid gap-4">
       <div className="grid gap-1.5">

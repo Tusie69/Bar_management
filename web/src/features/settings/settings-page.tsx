@@ -33,7 +33,7 @@ export default function SettingsPage() {
           </p>
         ) : null}
         <Tabs defaultValue="venue" className="gap-5">
-          <TabsList className="w-full justify-start overflow-x-auto sm:w-fit">
+          <TabsList className="no-scrollbar w-full touch-pan-x justify-start overflow-x-auto overscroll-x-contain sm:w-fit">
             <TabsTrigger value="venue" className="px-4">
               Vận hành
             </TabsTrigger>
@@ -289,7 +289,8 @@ function VenueForm({ v, readOnly }: { v: VenueConfig; readOnly: boolean }) {
         ) : null}
         <GuardedButton
           permission="venue.configure"
-          disabled={!dirty || pending}
+          disabled={!dirty || pending || api.mode === "http"}
+          disabledReason={api.mode === "http" ? "Backend v1 chưa hỗ trợ lưu cấu hình quán qua API." : undefined}
           onClick={() =>
             run(() =>
               api.updateVenueConfig({
@@ -345,7 +346,8 @@ function FloorSettings({ readOnly }: { readOnly: boolean }) {
               <Switch
                 id={`zone-${z.id}`}
                 checked={z.isBookable}
-                disabled={readOnly}
+                disabled={readOnly || api.mode === "http"}
+                title={api.mode === "http" ? "Backend v1 chưa hỗ trợ cấu hình khu vực." : undefined}
                 onCheckedChange={(on) =>
                   run(() => api.setZoneFlags(z.id, z.version, { isBookable: on, isWaitingArea: !on }))
                 }
@@ -422,7 +424,12 @@ function FloorSettings({ readOnly }: { readOnly: boolean }) {
                     <Switch
                       aria-label={`Đang phục vụ ${t.code}`}
                       checked={t.status === "ACTIVE"}
-                      disabled={readOnly}
+                      disabled={readOnly || api.mode === "http"}
+                      title={
+                        api.mode === "http"
+                          ? "Trạng thái bàn được cập nhật qua gán bàn, check-in và kết thúc lượt khách."
+                          : undefined
+                      }
                       onCheckedChange={(on) =>
                         run(() => api.setTableStatus(t.id, t.version, { status: on ? "ACTIVE" : "OUT_OF_SERVICE" }))
                       }

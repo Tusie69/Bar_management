@@ -185,7 +185,7 @@ export function BookingTimePicker({
                   role="radio"
                   aria-checked={on}
                   disabled={s.disabled}
-                  aria-label={`${s.label}${s.nextDay ? `, sáng ${fmtDayMonth(s.calendarDate)}` : ""}${s.disabled ? ", đã qua" : ""}`}
+                  aria-label={`${s.label} (${s.time})${s.nextDay ? `, sáng ${fmtDayMonth(s.calendarDate)}` : ""}${s.disabled ? ", đã qua" : ""}`}
                   className={chip(on)}
                   onClick={() => onChange(s.time)}
                 >
