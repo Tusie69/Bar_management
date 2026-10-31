@@ -875,6 +875,20 @@ export async function closeBooking(
       [actor.organizationId, actor.venueId, id],
     )
     await releaseActiveHold(connection, actor, id, status === 'NO_SHOW' ? 'NO_SHOW' : 'RESERVATION_CANCELLED')
+    const [entries] = await connection.execute<(RowDataPacket & { id: number; status: string; version: number })[]>(
+      `SELECT id, status, version FROM waitlist_entries WHERE organization_id = ? AND venue_id = ?
+       AND reservation_id = ? AND status NOT IN ('SEATED', 'DECLINED', 'CANCELLED') ORDER BY id FOR UPDATE`,
+      [actor.organizationId, actor.venueId, id],
+    )
+    await connection.execute(
+      `UPDATE waitlist_entries SET status = 'CANCELLED', closed_at = UTC_TIMESTAMP(3),
+         closed_by_user_id = ?, close_reason_code = 'RESERVATION_CANCELLED',
+         claimed_by_user_id = NULL, claimed_at = NULL, claim_expires_at = NULL,
+         updated_at = UTC_TIMESTAMP(3), version = version + 1
+       WHERE organization_id = ? AND venue_id = ? AND reservation_id = ?
+         AND status NOT IN ('SEATED', 'DECLINED', 'CANCELLED')`,
+      [actor.userId, actor.organizationId, actor.venueId, id],
+    )
     await dissolveUnusedGroups(connection, actor, activeAllocationRows.map((allocation) => allocation.group_id))
     const [updateResult] = await connection.execute<ResultSetHeader>(
       `UPDATE reservations SET status = ?, closed_at = UTC_TIMESTAMP(3), closed_by_user_id = ?,
@@ -895,6 +909,21 @@ export async function closeBooking(
     )
     if (updateResult.affectedRows !== 1)
       throw new AppError(409, 'VERSION_CONFLICT', 'Booking vừa được thay đổi. Vui lòng tải lại.')
+    for (const entry of entries) {
+      const sequence = await nextVenueChangeSequence(connection, actor)
+      await connection.execute(
+        `INSERT INTO operation_log
+         (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
+          auth_session_id, action, entity_type, entity_id, entity_version_before,
+          entity_version_after, changes, reason_code, is_undoable)
+         VALUES (?, ?, ?, 'USER', ?, ?, ?, 'WAITLIST_CANCELLED', 'waitlist_entry', ?, ?, ?, ?, 'RESERVATION_CANCELLED', 0)`,
+        [actor.organizationId, actor.venueId, sequence, actor.userId, actor.membershipId,
+          actor.authSessionId ?? null, entry.id, entry.version, entry.version + 1,
+          JSON.stringify([{ type: 'waitlist_cancelled', reservationId: id,
+            before: { status: entry.status, version: entry.version },
+            after: { status: 'CANCELLED', version: entry.version + 1 } }])],
+      )
+    }
     const changeSequence = await nextVenueChangeSequence(connection, actor)
     await connection.execute(
       `INSERT INTO operation_log
@@ -1017,6 +1046,31 @@ export async function checkInBooking(
        checked_in_by_user_id = ?, updated_by_user_id = ?, version = version + 1 WHERE id = ?`,
       [visitResult.insertId, actor.userId, actor.userId, id],
     )
+    const [entries] = await connection.execute<(RowDataPacket & { id: number; version: number })[]>(
+      `SELECT id, version FROM waitlist_entries WHERE organization_id = ? AND venue_id = ?
+       AND reservation_id = ? AND status NOT IN ('SEATED', 'DECLINED', 'CANCELLED') FOR UPDATE`,
+      [actor.organizationId, actor.venueId, id],
+    )
+    for (const entry of entries) {
+      await connection.execute(
+        `UPDATE waitlist_entries SET status = 'SEATED', visit_id = ?, closed_at = UTC_TIMESTAMP(3),
+         closed_by_user_id = ?, close_reason_code = 'SEATED_OTHERWISE',
+         claimed_by_user_id = NULL, claimed_at = NULL, claim_expires_at = NULL,
+         updated_at = UTC_TIMESTAMP(3), version = version + 1 WHERE id = ? AND venue_id = ?`,
+        [visitResult.insertId, actor.userId, entry.id, actor.venueId],
+      )
+      const sequence = await nextVenueChangeSequence(connection, actor)
+      await connection.execute(
+        `INSERT INTO operation_log
+         (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
+          auth_session_id, action, entity_type, entity_id, entity_version_before,
+          entity_version_after, changes, reason_code, is_undoable)
+         VALUES (?, ?, ?, 'USER', ?, ?, ?, 'WAITLIST_SEATED', 'waitlist_entry', ?, ?, ?, ?, 'SEATED_OTHERWISE', 0)`,
+        [actor.organizationId, actor.venueId, sequence, actor.userId, actor.membershipId,
+          actor.authSessionId ?? null, entry.id, entry.version, entry.version + 1,
+          JSON.stringify([{ type: 'waitlist_seated', reservationId: id, visitId: visitResult.insertId }])],
+      )
+    }
     await connection.commit()
   } catch (error) {
     await connection.rollback()

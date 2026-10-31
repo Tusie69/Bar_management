@@ -3,7 +3,7 @@ import { Router } from 'express'
 import { AppError } from '../errors/app-error.js'
 import { attachAuthentication, getAuthentication, requireAuthenticatedActor } from './authenticated-actor.js'
 import { requireAuthentication, requireCsrfProtection } from './auth.middleware.js'
-import { listPermissions, login, logoutSession } from './auth.service.js'
+import { listPermissions, listRoles, login, logoutSession } from './auth.service.js'
 import { clearSessionCookie, createCsrfToken, setSessionCookie } from './session-security.js'
 
 export const authRouter: Router = Router()
@@ -48,7 +48,10 @@ function recordFailure(key: string): void {
 async function authPayload(request: Parameters<typeof getAuthentication>[0]) {
   const authentication = getAuthentication(request)
   if (!authentication) throw new AppError(401, 'AUTHENTICATION_REQUIRED', 'Vui lòng đăng nhập để tiếp tục.')
-  const permissions = await listPermissions(authentication.actor)
+  const [permissions, roles] = await Promise.all([
+    listPermissions(authentication.actor),
+    listRoles(authentication.actor),
+  ])
   return {
     user: {
       id: authentication.actor.userId,
@@ -56,6 +59,7 @@ async function authPayload(request: Parameters<typeof getAuthentication>[0]) {
       displayName: authentication.displayName,
       organizationId: authentication.actor.organizationId,
       venueId: authentication.actor.venueId,
+      roles,
     },
     permissions,
     csrfToken: createCsrfToken(authentication.sessionToken),

@@ -16,6 +16,9 @@ export interface TableView {
   state: TableState | 'OUT_OF_SERVICE'
   isBackup: boolean
   version: number
+  staleFromPreviousDay: boolean
+  /** Oldest unreleased allocation date on or before the requested business date. */
+  allocationBusinessDate: string | null
   activeVisit: {
     id: number
     version: number
@@ -43,6 +46,8 @@ interface TableRow extends RowDataPacket {
   state: TableState | 'OUT_OF_SERVICE'
   is_spare: number
   version: number
+  stale_from_previous_day: number | string | null
+  allocation_business_date: string | null
   active_visit_id: number | null
   active_visit_version: number | null
   active_visit_table_codes: string | null
@@ -72,6 +77,8 @@ function toTableView(row: TableRow): TableView {
     state: row.state,
     isBackup: Boolean(row.is_spare),
     version: row.version,
+    staleFromPreviousDay: Number(row.stale_from_previous_day) === 1,
+    allocationBusinessDate: row.allocation_business_date,
     activeVisit:
       row.active_visit_id === null || row.active_visit_version === null
         ? null
@@ -313,8 +320,8 @@ export async function listActiveTableGroups(
        GROUP_CONCAT(a.table_id ORDER BY a.table_id SEPARATOR ',') AS table_ids
      FROM table_groups AS g
      JOIN table_allocations AS a
-       ON a.venue_id = g.venue_id AND a.group_id = g.id AND a.released_at IS NULL
-     WHERE g.organization_id = ? AND g.venue_id = ? AND g.business_date = ?
+       ON a.organization_id = g.organization_id AND a.venue_id = g.venue_id AND a.group_id = g.id AND a.released_at IS NULL
+     WHERE g.organization_id = ? AND g.venue_id = ? AND g.business_date <= ?
        AND g.dissolved_at IS NULL
      GROUP BY g.id, g.symbol_no
      HAVING COUNT(*) >= 2
@@ -341,7 +348,7 @@ export async function listTables(actor: AuthenticatedActor, businessDate: string
          WHEN COALESCE(a.has_hold, 0) = 1 THEN 'RESERVED'
          ELSE 'AVAILABLE'
        END AS state,
-       dt.is_spare, dt.version,
+       dt.is_spare, dt.version, a.stale_from_previous_day, a.allocation_business_date,
        a.active_visit_id, v.version AS active_visit_version,
        COALESCE(c.display_name, v.contact_name, 'Khách') AS active_visit_display_name,
        c.phone_last3 AS active_visit_phone_last3,
@@ -358,21 +365,23 @@ export async function listTables(actor: AuthenticatedActor, businessDate: string
            AND a2.kind = 'USAGE' AND a2.released_at IS NULL
        ) END AS active_visit_table_codes
      FROM dining_tables AS dt
-     JOIN zones AS z ON z.id = dt.zone_id AND z.venue_id = dt.venue_id
+     JOIN zones AS z ON z.organization_id = dt.organization_id AND z.id = dt.zone_id AND z.venue_id = dt.venue_id
      LEFT JOIN (
        SELECT table_id,
+         MAX(business_date < ?) AS stale_from_previous_day,
+         DATE_FORMAT(MIN(business_date), '%Y-%m-%d') AS allocation_business_date,
          MAX(kind = 'USAGE') AS has_usage,
          MAX(kind = 'HOLD') AS has_hold,
          MAX(CASE WHEN kind = 'USAGE' THEN visit_id END) AS active_visit_id
        FROM table_allocations
-       WHERE venue_id = ? AND business_date = ? AND released_at IS NULL
+       WHERE organization_id = ? AND venue_id = ? AND business_date <= ? AND released_at IS NULL
        GROUP BY table_id
      ) AS a ON a.table_id = dt.id
      LEFT JOIN visits AS v ON v.venue_id = dt.venue_id AND v.id = a.active_visit_id AND v.ended_at IS NULL
      LEFT JOIN customers AS c ON c.organization_id = v.organization_id AND c.id = v.customer_id
      WHERE dt.organization_id = ? AND dt.venue_id = ? AND dt.status <> 'RETIRED'
      ORDER BY z.sort_order, dt.id`,
-    [actor.venueId, businessDate, actor.organizationId, actor.venueId],
+    [businessDate, actor.organizationId, actor.venueId, businessDate, actor.organizationId, actor.venueId],
   )
   return rows.map(toTableView)
 }
@@ -385,20 +394,24 @@ export interface UpdateTableStateInput {
   reason?: string
 }
 
-export function updateTableState(input: UpdateTableStateInput): Promise<TableView> {
-  void input
-  return Promise.reject(
-    new AppError(
-      409,
-      'TABLE_STATE_DERIVED',
-      'Trạng thái bàn được cập nhật qua gán bàn, check-in và kết thúc lượt khách.',
-    ),
+export async function updateTableState(actor: AuthenticatedActor, input: UpdateTableStateInput): Promise<TableView> {
+  const [rows] = await databasePool.execute<(RowDataPacket & { version: number })[]>(
+    `SELECT version FROM dining_tables WHERE organization_id = ? AND venue_id = ? AND id = ? AND status <> 'RETIRED'`,
+    [actor.organizationId, actor.venueId, input.tableId],
   )
+  const table = rows[0]
+  if (!table) throw new AppError(404, 'TABLE_NOT_FOUND', 'Không tìm thấy bàn trong địa điểm hiện tại.')
+  if (input.expectedVersion !== undefined && table.version !== input.expectedVersion) {
+    throw new AppError(409, 'VERSION_CONFLICT', 'Bàn vừa được thay đổi. Vui lòng tải lại.')
+  }
+  // State is derived from allocations. Rejected writes create no operation log.
+  throw new AppError(409, 'TABLE_STATE_DERIVED', 'Trạng thái bàn được cập nhật qua gán bàn, check-in và kết thúc lượt khách.')
 }
 
 export interface ConfigureTableInput {
   tableId: number
-  isSpare: boolean
+  isSpare?: boolean
+  status?: 'ACTIVE' | 'OUT_OF_SERVICE'
   expectedVersion: number
   reason: string
 }
@@ -410,6 +423,7 @@ export async function configureTable(
   id: number
   code: string
   isBackup: boolean
+  status: 'ACTIVE' | 'OUT_OF_SERVICE'
   version: number
 }> {
   const connection = await databasePool.getConnection()
@@ -420,7 +434,7 @@ export async function configureTable(
         id: number
         code: string
         is_spare: number
-        status: string
+        status: 'ACTIVE' | 'OUT_OF_SERVICE'
         version: number
       })[]
     >(
@@ -432,8 +446,6 @@ export async function configureTable(
     )
     const table = rows[0]
     if (!table) throw new AppError(404, 'TABLE_NOT_FOUND', 'Không tìm thấy bàn trong địa điểm hiện tại.')
-    if (table.status !== 'ACTIVE')
-      throw new AppError(409, 'TABLE_NOT_ACTIVE', 'Chỉ có thể cấu hình bàn đang hoạt động.')
     if (Number(table.version) !== input.expectedVersion) {
       throw new AppError(409, 'VERSION_CONFLICT', 'Bàn vừa được thay đổi. Vui lòng tải lại.')
     }
@@ -450,14 +462,16 @@ export async function configureTable(
         'Không thể đổi cấu hình khi bàn còn HOLD hoặc đang được sử dụng.',
       )
     }
-    if (Boolean(table.is_spare) === input.isSpare) {
+    const isSpare = input.isSpare ?? Boolean(table.is_spare)
+    const status = input.status ?? table.status
+    if (Boolean(table.is_spare) === isSpare && table.status === status) {
       throw new AppError(409, 'TABLE_CONFIGURATION_UNCHANGED', 'Cấu hình bàn không thay đổi.')
     }
     const [updated] = await connection.execute<ResultSetHeader>(
       `UPDATE dining_tables
-       SET is_spare = ?, version = version + 1, updated_at = UTC_TIMESTAMP(3)
-       WHERE organization_id = ? AND venue_id = ? AND id = ? AND version = ? AND status = 'ACTIVE'`,
-      [input.isSpare ? 1 : 0, actor.organizationId, actor.venueId, input.tableId, input.expectedVersion],
+       SET is_spare = ?, status = ?, version = version + 1, updated_at = UTC_TIMESTAMP(3)
+       WHERE organization_id = ? AND venue_id = ? AND id = ? AND version = ?`,
+      [isSpare ? 1 : 0, status, actor.organizationId, actor.venueId, input.tableId, input.expectedVersion],
     )
     if (updated.affectedRows !== 1)
       throw new AppError(409, 'VERSION_CONFLICT', 'Bàn vừa được thay đổi. Vui lòng tải lại.')
@@ -491,9 +505,11 @@ export async function configureTable(
         input.expectedVersion + 1,
         JSON.stringify([
           {
-            type: 'table_spare_configuration',
+            type: 'table_configuration',
+            previousStatus: table.status,
+            status,
             previousIsSpare: Boolean(table.is_spare),
-            isSpare: input.isSpare,
+            isSpare,
           },
         ]),
         input.reason,
@@ -503,7 +519,8 @@ export async function configureTable(
     return {
       id: input.tableId,
       code: table.code,
-      isBackup: input.isSpare,
+      isBackup: isSpare,
+      status,
       version: input.expectedVersion + 1,
     }
   } catch (error) {
