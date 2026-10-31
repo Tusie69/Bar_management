@@ -92,6 +92,14 @@ try {
   browser = await chromium.launch()
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
   let floorReads = 0
+  let validWaitlistReads = 0
+  let invalidWaitlistReads = 0
+  page.on("request", (request) => {
+    const url = new URL(request.url())
+    if (url.pathname !== "/api/v1/waitlist") return
+    if (url.searchParams.get("date")) validWaitlistReads += 1
+    else invalidWaitlistReads += 1
+  })
   page.on("response", (response) => {
     if (new URL(response.url()).pathname === "/api/v1/tables") floorReads += 1
   })
@@ -101,6 +109,14 @@ try {
   await page.getByLabel("Mật khẩu").fill(password)
   await page.getByRole("button", { name: "Đăng nhập", exact: true }).click()
   await page.getByText("Lễ tân E2E", { exact: false }).waitFor()
+  await waitUntil(() => validWaitlistReads >= 1, "Waitlist did not load after businessDate became available")
+  const waitlistReadsBeforePolling = validWaitlistReads
+  await waitUntil(
+    () => validWaitlistReads > waitlistReadsBeforePolling,
+    "Waitlist did not continue polling after businessDate became available",
+    18_000,
+  )
+  if (invalidWaitlistReads !== 0) throw new Error("Waitlist was requested with an empty businessDate")
   await page.getByRole("button", { name: "Booking", exact: true }).click()
   await page.getByText("Chưa có booking", { exact: true }).waitFor()
   const dateInput = page.getByLabel("Ngày nghiệp vụ")
@@ -244,6 +260,7 @@ try {
       cancel: "PASS",
       reload: "PASS",
       floorRefetch: "PASS",
+      waitlistPolling: "PASS",
       logout: "PASS",
     }),
   )

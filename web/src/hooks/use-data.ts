@@ -104,6 +104,7 @@ export function useWaitlist(bd: BusinessDate) {
   return useQuery({
     queryKey: qk.waitlist(bd),
     queryFn: () => api.listWaitlist(bd),
+    enabled: bd !== "",
     placeholderData: keepPreviousData,
     refetchInterval: 15_000,
   })
