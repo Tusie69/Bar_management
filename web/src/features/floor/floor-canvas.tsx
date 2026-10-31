@@ -85,6 +85,7 @@ export function FloorCanvas(props: Props) {
   } = props
   const wrapRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
+  const measuredSize = useRef({ w: 0, h: 0 })
   /** A manual view only applies to the zone it was made in; otherwise the view is fitted. */
   const [userView, setUserView] = useState<{ zone: string; view: View } | null>(null)
   const pointers = useRef(new Map<number, { x: number; y: number }>())
@@ -103,10 +104,41 @@ export function FloorCanvas(props: Props) {
     if (!el) return
     const ro = new ResizeObserver(([entry]) => {
       const { width, height } = entry.contentRect
+      const previous = measuredSize.current
+      const changed = previous.w > 0 && previous.h > 0
+        && (Math.abs(previous.w - width) >= 1 || Math.abs(previous.h - height) >= 1)
+      measuredSize.current = { w: width, h: height }
+      if (changed) setUserView(null)
       setSize({ w: width, h: height })
     })
     ro.observe(el)
     return () => ro.disconnect()
+  }, [])
+
+  useEffect(() => {
+    let frame = 0
+    const refitWhenVisible = () => {
+      if (document.visibilityState === "hidden") return
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        const el = wrapRef.current
+        if (!el) return
+        const { width, height } = el.getBoundingClientRect()
+        measuredSize.current = { w: width, h: height }
+        setSize({ w: width, h: height })
+        setUserView(null)
+      })
+    }
+    const onVisibilityChange = () => refitWhenVisible()
+    window.addEventListener("focus", refitWhenVisible)
+    window.addEventListener("pageshow", refitWhenVisible)
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener("focus", refitWhenVisible)
+      window.removeEventListener("pageshow", refitWhenVisible)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
+    }
   }, [])
 
   const fitView = useMemo<View>(() => {
@@ -115,7 +147,7 @@ export function FloorCanvas(props: Props) {
     const b = zb
       ? { x: zb.x - 16, y: zb.y - 16, w: zb.w + 32, h: zb.h + 32 }
       : { x: 30, y: 30, w: FLOOR_W - 56, h: FLOOR_H - 30 }
-    const pad = compact ? 6 : PAD
+    const pad = compact ? 6 : size.w < 640 ? 8 : PAD
     const k = Math.min((size.w - pad * 2) / b.w, (size.h - pad * 2) / b.h)
     return { k, x: (size.w - b.w * k) / 2 - b.x * k, y: (size.h - b.h * k) / 2 - b.y * k }
   }, [size.w, size.h, zoneFocus, compact])
@@ -339,17 +371,17 @@ export function FloorCanvas(props: Props) {
 
       {!compact ? (
         <div
-          className="absolute right-3 bottom-3 flex flex-col overflow-hidden rounded-xl border bg-popover/95 shadow-float backdrop-blur"
+          className="absolute right-2 bottom-2 flex flex-col overflow-hidden rounded-lg border bg-popover/95 shadow-float backdrop-blur sm:right-3 sm:bottom-3 sm:rounded-xl"
           role="group"
           aria-label="Điều khiển thu phóng"
         >
-          <Button variant="ghost" size="icon" aria-label="Phóng to" onClick={() => zoomBy(1.25)}>
+          <Button className="size-9" variant="ghost" size="icon" aria-label="Phóng to" onClick={() => zoomBy(1.25)}>
             <Plus />
           </Button>
-          <Button variant="ghost" size="icon" aria-label="Thu nhỏ" onClick={() => zoomBy(0.8)}>
+          <Button className="size-9" variant="ghost" size="icon" aria-label="Thu nhỏ" onClick={() => zoomBy(0.8)}>
             <Minus />
           </Button>
-          <Button variant="ghost" size="icon" aria-label="Vừa màn hình" onClick={fitAll}>
+          <Button className="size-9" variant="ghost" size="icon" aria-label="Vừa màn hình" onClick={fitAll}>
             <Maximize />
           </Button>
         </div>

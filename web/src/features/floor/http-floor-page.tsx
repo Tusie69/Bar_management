@@ -1,4 +1,14 @@
-import { AlertTriangle, CalendarDays, LayoutDashboard, LogOut, RefreshCw, Server, ShieldCheck } from "lucide-react"
+import {
+  AlertTriangle,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  LayoutDashboard,
+  LogOut,
+  RefreshCw,
+  Server,
+  ShieldCheck,
+} from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
@@ -73,38 +83,48 @@ export function HttpFloorPage() {
   }
 
   return (
-    <main className="flex min-h-dvh flex-col bg-background text-foreground">
-      <header className="flex flex-wrap items-center gap-3 border-b bg-surface-1 px-4 py-3 sm:px-6">
-        <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground">
-          <Server className="size-5" />
+    <main className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground">
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-surface-1 px-2.5 sm:h-16 sm:gap-3 sm:px-5">
+        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary text-primary-foreground sm:size-9">
+          <Server className="size-4 sm:size-5" />
         </span>
-        <div className="min-w-0">
-          <p className="text-sm font-semibold">21GAM · {page === "floor" ? "Floor Map" : "Booking"}</p>
-          <p className="truncate text-xs text-muted-foreground">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[13px] font-semibold sm:text-sm">21GAM · {page === "floor" ? "Floor Map" : "Booking"}</p>
+          <p className="hidden truncate text-xs text-muted-foreground sm:block">
             {principal.displayName} · {model.catalog?.venue.name ?? `Venue #${principal.venueId}`}
           </p>
         </div>
-        <span className="ml-auto hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-muted-foreground sm:flex">
+        <span className="hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-muted-foreground lg:flex">
           <ShieldCheck className="size-3.5 text-emerald-500" /> Dữ liệu backend thật
         </span>
         <Button
           variant="outline"
-          size="sm"
+          size="icon-sm"
+          className="sm:w-auto sm:px-3"
+          aria-label="Làm mới dữ liệu"
           onClick={() => void refresh()}
           disabled={catalogQuery.isFetching || floorQuery.isFetching}
         >
-          <RefreshCw className={catalogQuery.isFetching || floorQuery.isFetching ? "animate-spin" : ""} /> Làm mới
+          <RefreshCw className={catalogQuery.isFetching || floorQuery.isFetching ? "animate-spin" : ""} />
+          <span className="hidden sm:inline">Làm mới</span>
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => void signOut()} disabled={pendingLogout}>
-          <LogOut /> {pendingLogout ? "Đang thoát…" : "Đăng xuất"}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="sm:w-auto sm:px-3"
+          aria-label={pendingLogout ? "Đang đăng xuất" : "Đăng xuất"}
+          onClick={() => void signOut()}
+          disabled={pendingLogout}
+        >
+          <LogOut /> <span className="hidden sm:inline">{pendingLogout ? "Đang thoát…" : "Đăng xuất"}</span>
         </Button>
       </header>
 
-      <nav className="flex gap-1 border-b bg-surface-1 px-4 py-2 sm:px-6" aria-label="Chức năng HTTP">
-        <Button variant={page === "floor" ? "secondary" : "ghost"} size="sm" onClick={() => setPage("floor")}>
+      <nav className="flex h-10 shrink-0 gap-1 border-b bg-surface-1 px-2.5 py-1 sm:h-11 sm:px-5" aria-label="Chức năng HTTP">
+        <Button className="h-8 px-2.5" variant={page === "floor" ? "secondary" : "ghost"} size="sm" onClick={() => setPage("floor")}>
           <LayoutDashboard /> Sơ đồ bàn
         </Button>
-        <Button variant={page === "bookings" ? "secondary" : "ghost"} size="sm" onClick={() => setPage("bookings")}>
+        <Button className="h-8 px-2.5" variant={page === "bookings" ? "secondary" : "ghost"} size="sm" onClick={() => setPage("bookings")}>
           <CalendarDays /> Booking
         </Button>
       </nav>
@@ -112,32 +132,48 @@ export function HttpFloorPage() {
       {page === "bookings" ? (
         <HttpBookingsPage />
       ) : (
-        <section className="flex min-h-0 flex-1 flex-col gap-3 p-3 sm:p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => changeBusinessDate(addDays(selectedBusinessDate, -1))}>
-              Ngày trước
-            </Button>
-            <input
-              type="date"
-              value={selectedBusinessDate}
-              aria-label="Ngày nghiệp vụ của Layout"
-              onChange={(event) => changeBusinessDate(event.target.value as BusinessDate)}
-              className="h-9 rounded-md border bg-background px-3 text-sm"
-            />
-            <Button variant="ghost" size="sm" onClick={() => changeBusinessDate(addDays(selectedBusinessDate, 1))}>
-              Ngày sau
-            </Button>
-            {selectedBusinessDate !== currentBusinessDate ? (
-              <Button variant="outline" size="sm" onClick={() => changeBusinessDate(currentBusinessDate, false)}>
-                Ca mặc định
+        <section className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-2 sm:gap-2.5 sm:p-3 lg:p-4">
+          <div className="flex shrink-0 flex-col gap-1.5 lg:flex-row lg:items-center lg:gap-2">
+            <div className="flex min-w-0 items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Ngày trước"
+                onClick={() => changeBusinessDate(addDays(selectedBusinessDate, -1))}
+              >
+                <ChevronLeft />
               </Button>
-            ) : null}
+              <input
+                type="date"
+                value={selectedBusinessDate}
+                aria-label="Ngày nghiệp vụ của Layout"
+                onChange={(event) => changeBusinessDate(event.target.value as BusinessDate)}
+                className="h-8 w-[142px] rounded-md border bg-background px-2 text-sm sm:w-[150px]"
+              />
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Ngày sau"
+                onClick={() => changeBusinessDate(addDays(selectedBusinessDate, 1))}
+              >
+                <ChevronRight />
+              </Button>
+              {selectedBusinessDate !== currentBusinessDate ? (
+                <Button className="h-8 px-2 text-xs" variant="outline" size="sm" onClick={() => changeBusinessDate(currentBusinessDate, false)}>
+                  Ca hiện tại
+                </Button>
+              ) : null}
+              <p className="ml-auto truncate text-[11px] text-muted-foreground sm:hidden" aria-live="polite">
+                {model.floor ? `${model.counts.seated ?? 0} dùng · ${model.counts.reserved ?? 0} giữ` : "Đang tải"}
+              </p>
+            </div>
             <div
-              className="flex max-w-full gap-1 overflow-x-auto rounded-lg border bg-surface-1 p-1"
+              className="flex min-w-0 max-w-full gap-0.5 overflow-x-auto rounded-lg border bg-surface-1 p-0.5"
               role="tablist"
               aria-label="Lọc khu"
             >
               <Button
+                className="h-8 shrink-0 px-2.5 text-xs"
                 variant={zone === "ALL" ? "secondary" : "ghost"}
                 size="sm"
                 role="tab"
@@ -149,6 +185,7 @@ export function HttpFloorPage() {
               {(model.catalog?.zones ?? []).map((item) => (
                 <Button
                   key={item.id}
+                  className="h-8 shrink-0 px-2.5 text-xs"
                   variant={zone === item.code ? "secondary" : "ghost"}
                   size="sm"
                   role="tab"
@@ -159,20 +196,20 @@ export function HttpFloorPage() {
                 </Button>
               ))}
             </div>
-            <p className="ml-auto text-xs text-muted-foreground" aria-live="polite">
+            <p className="ml-auto hidden shrink-0 text-xs text-muted-foreground sm:block" aria-live="polite">
               {model.floor
                 ? `${model.tables.length} vị trí · ${model.counts.seated ?? 0} đang dùng · ${model.counts.reserved ?? 0} đã giữ · ${model.counts.spare ?? 0} sơ cua`
                 : "Đang đồng bộ trạng thái bàn"}
             </p>
           </div>
 
-          <div className="relative h-[calc(100dvh-155px)] min-h-[520px] shrink-0 overflow-hidden rounded-xl border bg-surface-1 shadow-sm max-sm:h-[calc(100dvh-220px)] max-sm:min-h-[620px]">
+          <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border bg-surface-1 shadow-sm sm:rounded-xl">
             {model.loading ? (
-              <div className="grid h-full min-h-[520px] place-items-center p-5" aria-label="Đang tải sơ đồ bàn">
+              <div className="grid h-full place-items-center p-5" aria-label="Đang tải sơ đồ bàn">
                 <Skeleton className="h-full max-h-[720px] w-full max-w-[620px] rounded-xl" />
               </div>
             ) : error ? (
-              <div className="grid h-full min-h-[520px] place-items-center p-6">
+              <div className="grid h-full place-items-center p-6">
                 <div className="max-w-md text-center" role="alert">
                   <AlertTriangle className="mx-auto size-10 text-amber-500" />
                   <h1 className="mt-3 text-lg font-semibold">Không tải được sơ đồ bàn</h1>
@@ -185,7 +222,7 @@ export function HttpFloorPage() {
                 </div>
               </div>
             ) : empty ? (
-              <div className="grid h-full min-h-[520px] place-items-center p-6 text-center">
+              <div className="grid h-full place-items-center p-6 text-center">
                 <div>
                   <h1 className="text-lg font-semibold">Chưa có bàn để hiển thị</h1>
                   <p className="mt-2 text-sm text-muted-foreground">
