@@ -1,7 +1,7 @@
-import { Check, Eye, MousePointerClick, Radio, Search, X } from "lucide-react"
+import { AlertCircle, Check, Eye, MousePointerClick, Radio, Search, X } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
-import { Stepper } from "@/components/common"
+import { EmptyState, Stepper } from "@/components/common"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -10,6 +10,7 @@ import { useAvailability, useNow } from "@/hooks/use-data"
 import { useMediaQuery } from "@/hooks/use-media"
 import { atBusinessTime, businessDateOf, fmtBusinessDate, MS } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { isApiError } from "@/services"
 import { useUi } from "@/state/ui"
 import { AvailabilityPanel } from "./availability-panel"
 import { BookingList, BookingTable, LIST_TABS, useBookingItems, type ListTab } from "./booking-list"
@@ -235,7 +236,20 @@ export function FloorPage() {
 
           {view === "map" ? (
             <div className="relative min-h-0 flex-1 overflow-hidden rounded-sm border">
-              {model.loading || !model.catalog ? (
+              {model.error ? (
+                <div className="grid h-full place-items-center p-6">
+                  <EmptyState
+                    title="Lỗi tải dữ liệu sơ đồ bàn"
+                    icon={<AlertCircle className="size-6 text-destructive" />}
+                  >
+                    {isApiError(model.error)
+                      ? model.error.message
+                      : model.error instanceof Error
+                        ? model.error.message
+                        : "Không thể tải sơ đồ bàn"}
+                  </EmptyState>
+                </div>
+              ) : model.loading || !model.catalog ? (
                 <div className="grid h-full place-items-center p-6">
                   <Skeleton className="aspect-[589/754] h-full max-h-[640px]" />
                 </div>
@@ -326,7 +340,15 @@ export function FloorPage() {
               className="h-full"
               onClickCapture={(e) => {
                 const t = e.target as HTMLElement
-                if (t.closest("[role=button]") && !t.closest("button")) setTimeout(() => setListOpen(false), 0)
+                const isBookingCard = !!t.closest("[data-booking-card]")
+                const isAction =
+                  !!t.closest("button, a, input, select, textarea, [role=menuitem]") &&
+                  !t.closest("[data-booking-select]")
+                if (isBookingCard && !isAction) {
+                  setTimeout(() => setListOpen(false), 0)
+                } else if (t.closest("[role=button]") && !t.closest("button")) {
+                  setTimeout(() => setListOpen(false), 0)
+                }
               }}
             >
               {list}
@@ -344,6 +366,7 @@ function PickBanner({ model }: { model: ReturnType<typeof useFloorModel> }) {
   const cancel = useUi((s) => s.cancelPick)
   const [busy, setBusy] = useState(false)
   if (!pick) return null
+  const totalCapacity = selection.reduce((sum, id) => sum + (model.byId.get(id)?.capacity ?? 0), 0)
   return (
     <div
       className="absolute inset-x-3 top-3 z-10 mx-auto max-w-xl rounded-sm border border-strong bg-popover/97 p-3 shadow-float backdrop-blur"
@@ -356,7 +379,10 @@ function PickBanner({ model }: { model: ReturnType<typeof useFloorModel> }) {
           <p className="text-sm text-muted-foreground">{pick.hint}</p>
           <p className="mt-1 text-sm" aria-live="polite">
             {selection.length ? (
-              selection.map((id) => model.label(id)).join(" + ")
+              <>
+                <span className="font-medium">{selection.map((id) => model.label(id)).join(" + ")}</span>
+                <span className="text-muted-foreground font-normal"> · tổng sức chứa {totalCapacity} chỗ</span>
+              </>
             ) : (
               <span className="text-subtle">Chưa chọn bàn</span>
             )}

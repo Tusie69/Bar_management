@@ -134,6 +134,21 @@ export async function authenticateSession(sessionToken: string): Promise<Authent
   }
 }
 
+export async function listRoles(actor: AuthenticatedActor): Promise<string[]> {
+  const [rows] = await databasePool.execute<(RowDataPacket & { code: string })[]>(
+    `SELECT DISTINCT r.code
+     FROM memberships AS m
+     JOIN membership_roles AS mr
+       ON mr.organization_id = m.organization_id AND mr.membership_id = m.id
+     JOIN roles AS r ON r.id = mr.role_id
+     WHERE m.organization_id = ? AND m.id = ? AND m.user_id = ? AND m.status = 'ACTIVE'
+       AND mr.revoked_at IS NULL AND (mr.venue_id IS NULL OR mr.venue_id = ?)
+     ORDER BY r.code`,
+    [actor.organizationId, actor.membershipId, actor.userId, actor.venueId],
+  )
+  return rows.map((row) => row.code)
+}
+
 export async function listPermissions(actor: AuthenticatedActor): Promise<string[]> {
   const [rows] = await databasePool.execute<(RowDataPacket & { code: string })[]>(
     `SELECT DISTINCT p.code

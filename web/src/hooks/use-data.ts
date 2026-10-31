@@ -12,10 +12,11 @@ import { useSession } from "@/state/session"
 
 export const qk = {
   catalog: ["catalog"] as const,
-  floor: (bd: string) => ["floor", bd] as const,
+  floor: (at: string) => ["floor", at] as const,
   availability: (at: string, party: number) => ["availability", at, party] as const,
   overview: ["overview"] as const,
   reservations: (bd: string, search: string) => ["reservations", bd, search] as const,
+  bookingExport: (bd: string) => ["booking-export", bd] as const,
   visits: (bd: string) => ["visits", bd] as const,
   waitlist: (bd: string) => ["waitlist", bd] as const,
   customers: (q: string) => ["customers", q] as const,
@@ -51,27 +52,28 @@ export function useBusinessDate(): BusinessDate {
 export function useCatalog() {
   return useQuery({
     queryKey: qk.catalog,
+    retry: api.mode === "mock" ? 1 : false,
     queryFn: () => api.getCatalog(),
     staleTime: 60_000,
-    retry: api.mode === "mock" ? 1 : false,
   })
 }
 
 export function useFloorState(businessDate?: BusinessDate) {
-  const defaultBusinessDate = useBusinessDate()
-  const selectedBusinessDate = businessDate ?? defaultBusinessDate
+  const today = useBusinessDate()
+  const selectedDate = businessDate ?? today
   return useQuery({
-    queryKey: qk.floor(selectedBusinessDate),
-    queryFn: () => api.getFloorState(clock.now(), selectedBusinessDate),
+    queryKey: qk.floor(selectedDate),
+    retry: api.mode === "mock" ? 1 : false,
+    queryFn: () => api.getFloorState(clock.now(), selectedDate),
     refetchInterval: 15_000,
     refetchIntervalInBackground: true,
-    retry: api.mode === "mock" ? 1 : false,
   })
 }
 
 export function useAvailability(at: Date | null, party: number) {
   return useQuery({
     queryKey: qk.availability(at?.toISOString() ?? "none", party),
+    retry: api.mode === "mock" ? 1 : false,
     queryFn: () => api.getAvailability(at!, party),
     enabled: !!at,
     placeholderData: keepPreviousData,
@@ -81,6 +83,7 @@ export function useAvailability(at: Date | null, party: number) {
 export function useOverview() {
   return useQuery({
     queryKey: qk.overview,
+    retry: api.mode === "mock" ? 1 : false,
     queryFn: () => api.getShiftOverview(),
     refetchInterval: 15_000,
     placeholderData: keepPreviousData,
@@ -90,19 +93,35 @@ export function useOverview() {
 export function useReservations(bd: BusinessDate, search = "") {
   return useQuery({
     queryKey: qk.reservations(bd, search.trim()),
+    enabled: Boolean(bd),
+    retry: api.mode === "mock" ? 1 : false,
     queryFn: () => api.listReservations({ businessDate: bd, search }),
-    placeholderData: keepPreviousData,
-    refetchInterval: 20_000,
+    refetchInterval: 15_000,
+  })
+}
+
+export function useBookingExport(bd: BusinessDate, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.bookingExport(bd),
+    queryFn: () => api.exportDailyBookingText(bd),
+    enabled: enabled && Boolean(bd),
+    retry: false,
+    refetchInterval: enabled ? 15_000 : false,
   })
 }
 
 export function useVisits(bd: BusinessDate) {
-  return useQuery({ queryKey: qk.visits(bd), queryFn: () => api.listVisits(bd), placeholderData: keepPreviousData })
+  return useQuery({
+    retry: api.mode === "mock" ? 1 : false,
+    queryKey: qk.visits(bd),
+    queryFn: () => api.listVisits(bd),
+  })
 }
 
 export function useWaitlist(bd: BusinessDate) {
   return useQuery({
     queryKey: qk.waitlist(bd),
+    retry: api.mode === "mock" ? 1 : false,
     queryFn: () => api.listWaitlist(bd),
     enabled: bd !== "",
     placeholderData: keepPreviousData,
@@ -113,18 +132,25 @@ export function useWaitlist(bd: BusinessDate) {
 export function useCustomers(q: string) {
   return useQuery({
     queryKey: qk.customers(q.trim()),
+    retry: api.mode === "mock" ? 1 : false,
     queryFn: () => api.searchCustomers(q),
     placeholderData: keepPreviousData,
   })
 }
 
 export function useCustomer(id: number | null) {
-  return useQuery({ queryKey: qk.customer(id ?? 0), queryFn: () => api.getCustomer(id!), enabled: id !== null })
+  return useQuery({
+    retry: api.mode === "mock" ? 1 : false,
+    queryKey: qk.customer(id ?? 0),
+    queryFn: () => api.getCustomer(id!),
+    enabled: id !== null,
+  })
 }
 
 export function useOperations(limit = 40) {
   return useQuery({
     queryKey: qk.operations(limit),
+    retry: api.mode === "mock" ? 1 : false,
     queryFn: () => api.listOperations(limit),
     placeholderData: keepPreviousData,
   })
@@ -133,6 +159,7 @@ export function useOperations(limit = 40) {
 export function useTableHistory(tableId: number | null, bd: BusinessDate) {
   return useQuery({
     queryKey: qk.allocations(bd, tableId),
+    retry: api.mode === "mock" ? 1 : false,
     queryFn: () => api.listAllocations(bd, tableId!),
     enabled: tableId !== null,
   })
@@ -141,14 +168,15 @@ export function useTableHistory(tableId: number | null, bd: BusinessDate) {
 export function useDayAllocations(bd: BusinessDate) {
   return useQuery({
     queryKey: qk.allocations(bd, null),
+    retry: api.mode === "mock" ? 1 : false,
     queryFn: () => api.listAllocations(bd),
-    placeholderData: keepPreviousData,
   })
 }
 
 export function useReport(q: ReportQuery, enabled: boolean) {
   return useQuery({
     queryKey: qk.report(q),
+    retry: api.mode === "mock" ? 1 : false,
     queryFn: () => api.getReport(q),
     enabled,
     placeholderData: keepPreviousData,

@@ -138,8 +138,8 @@ export async function processBusinessDayEndCandidate(
       return 'SKIPPED'
     }
 
-    const [allocationRows] = await connection.execute<(RowDataPacket & { id: number; table_id: number })[]>(
-      `SELECT id, table_id FROM table_allocations
+    const [allocationRows] = await connection.execute<(RowDataPacket & { id: number; table_id: number; group_id: number | null })[]>(
+      `SELECT id, table_id, group_id FROM table_allocations
        WHERE organization_id = ? AND venue_id = ? AND visit_id = ?
          AND kind = 'USAGE' AND released_at IS NULL
        ORDER BY id FOR UPDATE`,
@@ -164,6 +164,23 @@ export async function processBusinessDayEndCandidate(
       return 'SKIPPED'
     }
 
+    const groupIds = [...new Set(allocationRows
+      .map((row) => row.group_id)
+      .filter((id): id is number => id !== null))].sort((left, right) => left - right)
+    for (const groupId of groupIds) {
+      await connection.execute(
+        `UPDATE table_groups AS g SET dissolved_at = ?, dissolved_by_user_id = NULL, dissolve_reason = 'BUSINESS_DAY_END'
+         WHERE g.organization_id = ? AND g.venue_id = ? AND g.id = ? AND g.dissolved_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM table_allocations AS a
+             WHERE a.organization_id = g.organization_id AND a.venue_id = g.venue_id
+               AND a.group_id = g.id AND a.released_at IS NULL
+           )`,
+        [timestamp, organizationId, venueId, groupId],
+      )
+    }
+    // Check-in already closed linked waitlist entries as SEATED with its own audit.
+    // Ending the visit preserves that terminal history and the CHECKED_IN reservation.
     const changeSequence = await nextSystemChangeSequence(connection, organizationId, venueId, now)
     await connection.execute(
       `INSERT INTO operation_log
@@ -179,6 +196,7 @@ export async function processBusinessDayEndCandidate(
           endedAt: now.toISOString(),
           allocationIds: allocationRows.map((row) => Number(row.id)),
           tableIds: allocationRows.map((row) => Number(row.table_id)),
+          groupIds: groupIds.map(Number),
         }])],
     )
     await connection.commit()

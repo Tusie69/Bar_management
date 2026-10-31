@@ -50,7 +50,7 @@ describe("HTTP booking endpoints", () => {
       "fetch",
       vi.fn(async (input: string | URL | Request) => {
         urls.push(String(input))
-        return json({ bookings: [booking] })
+        return json({ businessDate: booking.businessDate, bookings: [booking] })
       }),
     )
     const api = new HttpBookingApi(new HttpClient("http://api.test"))

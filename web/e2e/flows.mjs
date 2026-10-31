@@ -27,12 +27,14 @@ async function flow(name, userId, fn) {
     results.push(`PASS ${name}`)
   } catch (e) {
     failures++
+    console.error(`[${name}] ${e.stack || e.message}`)
     results.push(`FAIL ${name}: ${e.message.split("\n")[0]}`)
     await page.screenshot({ path: `e2e/.artifacts/fail-${name.replace(/\W+/g, "_")}.png` })
   }
   await page.close()
 }
 const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"]`).first()
+const barSeat = (page, number) => page.locator(`[aria-label^="Ghế Bar ${number},"], [aria-label^="Ghế Bar ${number}:"]`).first()
 const expectLabel = async (loc, re) => {
   for (let i = 0; i < 25; i++) {
     if (re.test(await loc.getAttribute("aria-label"))) return
@@ -93,7 +95,7 @@ await flow("booking flow end-to-end for tomorrow with table", 1, async (page) =>
   await page.goto(base + "/reservations", { waitUntil: "networkidle" })
   await page.getByRole("button", { name: /Đặt bàn mới/ }).click()
   await page.getByRole("button", { name: "Ngày mai" }).click()
-  await page.getByRole("radio", { name: /^(20:30|8:30 PM)$/ }).click()
+  await page.getByRole("radio", { name: "20:30" }).click()
   await page.getByRole("button", { name: /Tiếp/ }).click()
   await page.getByRole("button", { name: /^A0/ }).first().click()
   await page.getByRole("button", { name: /Tiếp/ }).click()
@@ -222,6 +224,235 @@ await flow("cancel booking requires confirmation with reason", 1, async (page) =
   await page.getByRole("button", { name: "Hủy booking" }).click()
   await page.getByRole("alertdialog").getByRole("button", { name: "Hủy booking" }).click()
   await expectLabel(table(page, "B4"), /Chưa đặt/)
+})
+
+await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (desktop)", 1, async (page) => {
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await page.getByRole("button", { name: /Mở điều khiển thời gian/ }).click()
+  await page.getByRole("button", { name: "Nạp lại dữ liệu mẫu" }).click()
+  await page.keyboard.press("Escape")
+
+  await page.goto(base + "/waitlist", { waitUntil: "networkidle" })
+  const card = page.locator("li", { hasText: "Nhóm áo xanh" }).first()
+  await card.waitFor()
+  await card.getByRole("button", { name: "Khách nhận bàn ngay" }).click()
+
+  const seatDialog = page.getByRole("dialog").filter({ hasText: "Gán giữ bàn cho khách" })
+  await seatDialog.waitFor()
+  if (await seatDialog.getByLabel("Tăng số khách").count()) {
+    throw new Error("Stepper increment control should not be present in seat waitlist dialog")
+  }
+  await seatDialog.getByText("4 khách", { exact: false }).waitFor()
+
+  await seatDialog.locator("button", { hasText: "B7" }).first().click()
+  await seatDialog.getByRole("button", { name: "Xác nhận giữ bàn" }).click()
+  await seatDialog.waitFor({ state: "hidden" })
+
+  await card.getByText("Đang giữ bàn", { exact: true }).waitFor()
+  await card.getByText("B7").first().waitFor()
+
+  await card.getByRole("button", { name: "Khách đã tới, xếp chỗ" }).click()
+  const checkInDialog = page.getByRole("dialog").filter({ hasText: "Xếp chỗ cho" }).last()
+  await checkInDialog.waitFor()
+  await checkInDialog.getByRole("button", { name: "Xếp chỗ", exact: true }).click()
+  await checkInDialog.waitFor({ state: "hidden" })
+  await page.getByText("Đã đóng trong ca").waitFor()
+})
+
+await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (phone 390px)", 1, async (page) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+
+  const cases = [
+    { kind: "WALK_IN", name: "Chị mặc váy đỏ" },
+    { kind: "ADVANCE_RESERVATION", name: "Lý Mỹ Anh" },
+  ]
+
+  for (const tc of cases) {
+    await page.goto(base + "/waitlist", { waitUntil: "networkidle" })
+    await page.evaluate(async () => {
+      const { demo } = await import("/src/services/index.ts")
+      demo?.reset()
+    })
+    await page.reload({ waitUntil: "networkidle" })
+
+    const dismissAlert = page.getByRole("button", { name: "Đã xem, xử lý sau" })
+    if (await dismissAlert.isVisible()) await dismissAlert.click()
+    const closeToast = page.getByRole("button", { name: "Đóng thông báo" })
+    if (await closeToast.isVisible()) await closeToast.click()
+
+    // 1. Establish reservation-backed direct assignment for target entry with B5+B7 (group)
+    const assignment = await page.evaluate(async (targetName) => {
+      const { api } = await import("/src/services/index.ts")
+      const bd = "2026-10-31"
+      const wl = await api.listWaitlist(bd)
+      const target = wl.find((e) => e.displayName === targetName)
+      if (!target) throw new Error(`Target waitlist entry ${targetName} not found`)
+
+      // Tables B5 (id 13) and B7 (id 10) in Zone B form a group
+      const seatRes = await api.seatWaitlist({
+        entryId: target.id,
+        version: target.version,
+        guestCount: target.partySize,
+        tableIds: [13, 10],
+      })
+
+      const updatedWl = await api.listWaitlist(bd)
+      const updatedEntry = updatedWl.find((e) => e.id === target.id)
+      const reservations = await api.listReservations({ businessDate: bd })
+      const booking = reservations.find((r) => r.id === seatRes.reservationId)
+      const visits = await api.listVisits(bd)
+      const bookingVisits = visits.filter((v) => v.id === booking?.visitId)
+
+      return {
+        targetId: target.id,
+        reservationId: seatRes.reservationId,
+        groupId: seatRes.groupId,
+        entry: updatedEntry,
+        booking,
+        bookingVisitsCount: bookingVisits.length,
+      }
+    }, tc.name)
+
+    // Assert reservation-backed lifecycle after assignment
+    if (!assignment.entry || assignment.entry.status !== "HOLD_ACTIVE") {
+      throw new Error(`Target ${tc.name} should be HOLD_ACTIVE after assignment`)
+    }
+    if (!assignment.entry.reservationId || assignment.entry.reservationId !== assignment.reservationId) {
+      throw new Error(`Target ${tc.name} missing reservationId after assignment`)
+    }
+    if (assignment.entry.hold !== null) {
+      throw new Error(`Target ${tc.name} should not have an offer hold after direct assignment`)
+    }
+    if (!assignment.booking || assignment.booking.status !== "BOOKED") {
+      throw new Error(`Booking for ${tc.name} should be BOOKED before arrival`)
+    }
+    if (assignment.bookingVisitsCount !== 0) {
+      throw new Error(`Booking for ${tc.name} should have zero visits before arrival`)
+    }
+
+    // 2. Pin mobile actions strictly to target entry's card
+    const card = page.locator("div.rounded-\\[18px\\]", { hasText: tc.name })
+    await card.getByText("Đang giữ bàn").waitFor()
+    await card.getByText("Đang giữ B5 + B7").waitFor()
+
+    // 3. Trigger arrival check-in on target card only
+    await card.getByRole("button", { name: "Khách nhận bàn (check-in)" }).click()
+    await card.getByText("Đã nhận bàn").first().waitFor()
+
+    // 4. Assert arrival check-in lifecycle and group preservation
+    const arrival = await page.evaluate(
+      async ({ targetId, reservationId }) => {
+        const { api } = await import("/src/services/index.ts")
+        const bd = "2026-10-31"
+        const wl = await api.listWaitlist(bd)
+        const entry = wl.find((e) => e.id === targetId)
+        const reservations = await api.listReservations({ businessDate: bd })
+        const booking = reservations.find((r) => r.id === reservationId)
+        const visits = await api.listVisits(bd)
+        const bookingVisits = visits.filter((v) => v.id === booking?.visitId)
+
+        return {
+          entry,
+          booking,
+          bookingVisits,
+        }
+      },
+      { targetId: assignment.targetId, reservationId: assignment.reservationId },
+    )
+
+    if (!arrival.entry || arrival.entry.status !== "SEATED") {
+      throw new Error(`Target ${tc.name} should be SEATED after arrival check-in`)
+    }
+    if (!arrival.booking || arrival.booking.status !== "CHECKED_IN") {
+      throw new Error(`Booking for ${tc.name} should be CHECKED_IN after arrival check-in`)
+    }
+    if (arrival.bookingVisits.length !== 1) {
+      throw new Error(`Exactly one visit should exist for ${tc.name} (found ${arrival.bookingVisits.length})`)
+    }
+    const visit = arrival.bookingVisits[0]
+    if (!visit.groupId) {
+      throw new Error(`Group should be preserved on visit for ${tc.name}`)
+    }
+    if (
+      !visit.tableIds.includes(13) ||
+      !visit.tableIds.includes(10) ||
+      visit.tableIds.length !== 2
+    ) {
+      throw new Error(`Visit tables [${visit.tableIds}] should preserve both B5 and B7 for ${tc.name}`)
+    }
+  }
+})
+
+await flow("mobile booking creation with classification and Zalo export (phone 390px)", 1, async (page) => {
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await page.getByRole("button", { name: /Mở điều khiển thời gian/ }).click()
+  await page.getByRole("button", { name: "Nạp lại dữ liệu mẫu" }).click()
+  await page.keyboard.press("Escape")
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto(base + "/reservations", { waitUntil: "networkidle" })
+
+  const dismissAlert = page.getByRole("button", { name: "Đã xem, xử lý sau" })
+  if (await dismissAlert.isVisible()) await dismissAlert.click()
+  const closeToast = page.getByRole("button", { name: "Đóng thông báo" })
+  if (await closeToast.isVisible()) await closeToast.click()
+
+  await page.getByRole("button", { name: "Tạo mới" }).click()
+  await page.getByRole("button", { name: "Tạo đặt trước" }).click()
+
+  await page.getByPlaceholder("Ví dụ: Chị Lan").fill("Khách Mobile E2E")
+  await page.getByPlaceholder("09xx xxx xxx").fill("0988776655")
+  await page.locator("#bk-classification").click()
+  await page.getByRole("option", { name: "Khách quen (O)" }).click()
+  await page.getByRole("button", { name: "Đặt bàn" }).click()
+
+  await page.getByText("Khách Mobile E2E").first().waitFor()
+
+  const dismissAlert2 = page.getByRole("button", { name: "Đã xem, xử lý sau" })
+  if (await dismissAlert2.isVisible()) await dismissAlert2.click()
+  const closeToast2 = page.getByRole("button", { name: "Đóng thông báo" })
+  if (await closeToast2.isVisible()) await closeToast2.click()
+
+  await page.getByRole("button", { name: "Xuất text Zalo" }).click()
+  const exportDialog = page.getByRole("dialog").last()
+  const exportInput = exportDialog.getByLabel("Nội dung text booking")
+  await exportInput.waitFor()
+  const text = await exportInput.inputValue()
+  if (!text.includes("Khách Mobile E2E")) throw new Error("Created booking missing from Zalo export")
+  if (!text.includes("Bàn khách quen O: 1")) throw new Error("Classification not reflected in Zalo export")
+  if (/0988|776655/i.test(text)) throw new Error("Sensitive phone leaked in export")
+  await page.keyboard.press("Escape")
+})
+
+await flow("bar seat: single walk-in from table detail", 1, async (page) => {
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await barSeat(page, 13).click()
+  await page.getByRole("button", { name: /Mở Ghế Bar 13 cho 1 khách/ }).click()
+  await expectLabel(barSeat(page, 13), /Đang sử dụng/)
+})
+
+await flow("bar seat: multi-seat booking capacity check & group reservation", 1, async (page) => {
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await barSeat(page, 8).click()
+  await page.getByRole("button", { name: "Đặt trước" }).click()
+  // QuickForm opens with Bar 8 selected (capacity 1). Pick 2 guests to trigger capacity shortage.
+  await page.getByRole("radio", { name: "2 khách" }).click()
+  await page.getByText(/thiếu 1 chỗ cho 2 khách/).waitFor()
+
+  // Select adjacent bar seat 7 on the canvas to meet capacity
+  await barSeat(page, 7).click()
+  await page.getByText(/Sức chứa 2 chỗ · đủ cho 2 khách/).waitFor()
+
+  // Draft inputs
+  await page.locator("#qf-name").fill("Khách Bar Ghép")
+  await page.locator("#qf-phone").fill("0912345678")
+  await page.getByRole("button", { name: "Lưu đặt bàn" }).click()
+
+  // Both bar seats become reserved and grouped
+  await expectLabel(barSeat(page, 8), /Đang đặt/)
+  await expectLabel(barSeat(page, 7), /Đang đặt/)
+  await expectLabel(barSeat(page, 8), /nhóm \d+/)
+  await expectLabel(barSeat(page, 7), /nhóm \d+/)
 })
 
 console.log(results.join("\n"))

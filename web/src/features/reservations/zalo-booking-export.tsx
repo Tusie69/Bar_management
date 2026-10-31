@@ -1,4 +1,3 @@
-import { useQuery } from "@tanstack/react-query"
 import { ClipboardCopy, RefreshCw } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
@@ -13,8 +12,8 @@ import {
 } from "@/components/ui/dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
+import { useBookingExport } from "@/hooks/use-data"
 import type { BusinessDate } from "@/lib/time"
-import { bookingApi } from "@/services"
 
 export function ZaloBookingExport({
   businessDate,
@@ -26,13 +25,7 @@ export function ZaloBookingExport({
   onOpenChange: (open: boolean) => void
 }) {
   const [copyError, setCopyError] = useState<string | null>(null)
-  const exportText = useQuery({
-    queryKey: ["http-booking-export", businessDate],
-    queryFn: () => bookingApi!.exportDailyText(businessDate),
-    enabled: open && bookingApi !== null,
-    retry: false,
-    refetchInterval: open ? 15_000 : false,
-  })
+  const exportText = useBookingExport(businessDate, open)
 
   const copy = async () => {
     if (!exportText.data) return

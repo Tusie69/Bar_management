@@ -8,6 +8,7 @@
  */
 import { create } from "zustand"
 import type { Permission } from "@/domain/access"
+import type { RoleCode } from "@/domain/enums"
 import { roleCan } from "@/domain/access"
 import type { SessionUser } from "@/domain/models"
 import { api, ApiError, authApi, httpClient, type AuthSession, type AuthenticatedUser } from "@/services"
@@ -75,7 +76,13 @@ const fallbackMockUser: SessionUser = initialUser ?? {
 let bootstrapPromise: Promise<void> | null = null
 
 function applyServerSession(session: AuthSession) {
+  // Presentation role: highest privilege first, independent of server array order.
+  // HTTP authorization continues to use server permissions, not this role.
+  const priority: RoleCode[] = ["OWNER_ADMIN", "CUSTOMER_CARE", "CASHIER", "RECEPTIONIST"]
+  const role = priority.find((candidate) => session.user.roles.includes(candidate))
+  if (!role) throw new ApiError(502, "INVALID_RESPONSE", "Server session has no supported role.")
   useSession.setState({
+    user: { id: session.user.id, displayName: session.user.displayName, role, deviceLabel: "" },
     principal: session.user,
     permissions: [...session.permissions],
     authStatus: "authenticated",
@@ -105,7 +112,7 @@ export const useSession = create<SessionState>((set, get) => ({
     save({ userId: get().user.id, theme })
   },
   bootstrap: async () => {
-    if (api.mode === "mock" || !authApi) return
+    if (api.mode === "mock" || !authApi || get().authStatus === "authenticated") return
     const currentAuthApi = authApi
     if (bootstrapPromise) return bootstrapPromise
     set({ authStatus: "loading", authError: null })

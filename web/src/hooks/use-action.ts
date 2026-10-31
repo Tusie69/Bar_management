@@ -7,7 +7,7 @@
  * - everything else -> error toast.
  */
 import { useQueryClient } from "@tanstack/react-query"
-import { useCallback, useState } from "react"
+import { useCallback, useRef, useState } from "react"
 import { toast } from "sonner"
 import type { MutationResult } from "@/domain/models"
 import { api, isApiError } from "@/services"
@@ -26,9 +26,9 @@ export const MOCK_NOTE = "Bản mô phỏng: chỉ cập nhật dữ liệu trê
 export function reportError(e: unknown) {
   const ui = useUi.getState()
   if (isApiError(e)) {
-    if (CONFLICT_TITLE[e.code]) {
+    if (e.status === 409 || CONFLICT_TITLE[e.code]) {
       ui.showConflict({
-        title: CONFLICT_TITLE[e.code],
+        title: CONFLICT_TITLE[e.code] ?? "Dữ liệu vừa thay đổi",
         message: e.message,
         by: typeof e.details.by === "string" ? e.details.by : undefined,
         hint:
@@ -53,7 +53,7 @@ export async function undoOperation(id: number, summary: string) {
   try {
     const res = await api.undo(id)
     ui.pushRedo({ id: res.operationId!, summary })
-    toast.success(`Đã hoàn tác: ${summary}`, { description: MOCK_NOTE })
+    toast.success(`Đã hoàn tác: ${summary}`, { description: api.mode === "mock" ? MOCK_NOTE : undefined })
     return true
   } catch (e) {
     reportError(e)
@@ -64,19 +64,22 @@ export async function undoOperation(id: number, summary: string) {
 export function useAction() {
   const qc = useQueryClient()
   const [pending, setPending] = useState(false)
+  const inFlight = useRef(false)
 
   const run = useCallback(
     async <T extends MutationResult>(
       fn: (overrideReason?: string) => Promise<T>,
       opts: { silent?: boolean } = {},
     ): Promise<T | null> => {
+      if (inFlight.current) return null
+      inFlight.current = true
       setPending(true)
       try {
         let result: T
         try {
           result = await fn()
         } catch (e) {
-          if (isApiError(e) && e.code === "OVERRIDE_REQUIRED") {
+          if (api.mode === "mock" && isApiError(e) && e.code === "OVERRIDE_REQUIRED") {
             const reason = await useUi.getState().askOverride(e.message)
             if (!reason) return null
             result = await fn(reason)
@@ -91,7 +94,7 @@ export function useAction() {
         }
         if (!opts.silent) {
           toast.success(result.summary, {
-            description: MOCK_NOTE,
+            description: api.mode === "mock" ? MOCK_NOTE : undefined,
             action:
               result.undoable && result.operationId
                 ? {
@@ -110,6 +113,7 @@ export function useAction() {
         reportError(e)
         return null
       } finally {
+        inFlight.current = false
         setPending(false)
         void qc.invalidateQueries()
       }

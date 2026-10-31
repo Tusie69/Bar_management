@@ -38,6 +38,7 @@ describe("direct layout booking flow", () => {
     zoneId,
     zoneCode: "BAR",
     kind,
+    seating: kind === "BAR_SEAT" ? "bar" : undefined,
     capacity: kind === "BAR_SEAT" ? 1 : 4,
     seqNo: kind === "BAR_SEAT" ? id : null,
     isSpare: false,
@@ -54,7 +55,10 @@ describe("direct layout booking flow", () => {
     const otherZone = table(13, "BAR13", 5)
     const regularTable = table(14, "A1", 4, "TABLE")
     const states = [bar11, bar12, otherZone, regularTable].map(({ id, code }) => ({
-      id, code, state: "AVAILABLE" as const, isSpare: false,
+      id,
+      code,
+      state: "AVAILABLE" as const,
+      isSpare: false,
     }))
     const oneSeat = directBookingSelection([bar11, bar12, otherZone, regularTable], states, bar12, [bar12.id])
     expect(oneSeat.capacity).toBe(1)

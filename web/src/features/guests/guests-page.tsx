@@ -36,6 +36,19 @@ import { api } from "@/services"
 import { useSession } from "@/state/session"
 
 export default function GuestsPage() {
+  if (api.mode === "http") {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center p-6">
+        <EmptyState icon={<Users />} title="Chưa hỗ trợ hồ sơ khách hàng">
+          Hệ thống backend v1 chưa hỗ trợ tìm kiếm và quản lý hồ sơ khách hàng.
+        </EmptyState>
+      </div>
+    )
+  }
+  return <GuestsContent />
+}
+
+function GuestsContent() {
   const [q, setQ] = useState("")
   const [picked, setSelected] = useState<number | null>(null)
   const list = useCustomers(q)

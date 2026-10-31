@@ -5,6 +5,7 @@ import {
   GUEST_QUICK,
   bookingCalendarDate,
   bookingInstant,
+  bookingSlotGroups,
   bookingSlots,
   businessMinute,
   isBookingSlot,
@@ -58,6 +59,9 @@ describe("booking slots", () => {
     expect(validateBookingTime(BD, "18:30", NOON)).not.toBeNull()
   })
   it.each([
+    ["24:00", false],
+    ["19:60", false],
+    ["99:99", false],
     ["19:00", true],
     ["21:00", true],
     ["23:30", true],
@@ -105,11 +109,20 @@ describe("booking slots", () => {
     ["2026-10-31T05:00:00.000Z", []],
     ["2026-10-31T12:15:00.000Z", ["19:00"]],
     ["2026-10-31T14:15:00.000Z", ["19:00", "19:30", "20:00", "20:30", "21:00"]],
-    ["2026-10-31T16:45:00.000Z", ["19:00", "19:30", "20:00", "20:30", "21:00", "21:30", "22:00", "22:30", "23:00", "23:30"]],
-    ["2026-10-31T17:30:00.000Z", ["19:00", "19:30", "20:00", "20:30", "21:00", "21:30", "22:00", "22:30", "23:00", "23:30", "00:00"]],
+    [
+      "2026-10-31T16:45:00.000Z",
+      ["19:00", "19:30", "20:00", "20:30", "21:00", "21:30", "22:00", "22:30", "23:00", "23:30"],
+    ],
+    [
+      "2026-10-31T17:30:00.000Z",
+      ["19:00", "19:30", "20:00", "20:30", "21:00", "21:30", "22:00", "22:30", "23:00", "23:30", "00:00"],
+    ],
   ])("uses the real slot instant at %s", (instant, disabled) => {
-    expect(bookingSlots("2026-10-31", new Date(instant)).filter((slot) => slot.disabled).map((slot) => slot.time))
-      .toEqual(disabled)
+    expect(
+      bookingSlots("2026-10-31", new Date(instant))
+        .filter((slot) => slot.disabled)
+        .map((slot) => slot.time),
+    ).toEqual(disabled)
   })
   it("keeps all slots enabled for a future business date", () => {
     expect(bookingSlots("2026-11-01", fromVenueLocal("2026-10-31", "23:45")).every((slot) => !slot.disabled)).toBe(true)
@@ -118,6 +131,15 @@ describe("booking slots", () => {
     const slots = bookingSlots("2026-10-31", fromVenueLocal("2026-11-01", "00:30"))
     expect(slots.find((slot) => slot.time === "00:30")?.disabled).toBe(false)
     expect(slots.find((slot) => slot.time === "01:00")?.disabled).toBe(false)
+  })
+  it("disables a slot immediately after its instant without a past-time grace", () => {
+    const now = new Date(fromVenueLocal(BD, "21:30").getTime() + 1)
+    expect(bookingSlots(BD, now).find((slot) => slot.time === "21:30")?.disabled).toBe(true)
+    expect(validateBookingTime(BD, "21:30", now)).not.toBeNull()
+    const groups = bookingSlotGroups(BD, now)
+    expect(groups[0].slots).toHaveLength(10)
+    expect(groups[1].slots.map((slot) => slot.time)).toEqual(["00:00", "00:30", "01:00"])
+    expect(groups[1].slots.every((slot) => slot.calendarDate === "2026-10-28" && !slot.disabled)).toBe(true)
   })
   it("returns identical availability for equivalent instants written with different timezone offsets", () => {
     const vietnam = new Date("2026-10-31T21:15:00+07:00")

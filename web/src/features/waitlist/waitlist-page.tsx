@@ -1,4 +1,5 @@
 import {
+  AlertCircle,
   Armchair,
   CalendarClock,
   Check,
@@ -26,7 +27,6 @@ import {
   GuardedButton,
   GuestAvatar,
   MaskedPhone,
-  PendingTag,
   SectionTitle,
   Stepper,
   TableCodes,
@@ -71,10 +71,11 @@ import type { WaitlistEntryView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAction } from "@/hooks/use-action"
 import { useBusinessDate, useNow, useReservations, useWaitlist } from "@/hooks/use-data"
+import { useDragScroll } from "@/hooks/use-drag-scroll"
 import { NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
 import { fmtCountdown, fmtElapsed, fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { api } from "@/services"
+import { api, isApiError } from "@/services"
 import { useCan, useSession } from "@/state/session"
 import { ExtendHoldDialog, GuestCountDialog } from "../floor/floor-dialogs"
 import { useFloorModel, type FloorModel } from "../floor/use-floor-model"
@@ -91,6 +92,7 @@ export default function WaitlistPage() {
   const focusTable = Number(params.get("table")) || null
   const [addOpen, setAddOpen] = useState(params.get("add") === "1")
   const [tableFocus, setTableFocus] = useState<number | null>(focusTable)
+  const freeTablesRef = useDragScroll<HTMLDivElement>()
 
   useEffect(() => {
     if (!focusEntry) return
@@ -125,7 +127,7 @@ export default function WaitlistPage() {
         t &&
         e.partySize <= t.capacity &&
         (e.preferenceMode !== "PREFERRED_ONLY" ||
-          e.preferences.some((p) => p.tableId === tableId || p.zoneCode === t.zoneCode)),
+          (e.preferences ?? []).some((p) => p.tableId === tableId || p.zoneCode === t.zoneCode)),
     )
   }
 
@@ -136,7 +138,7 @@ export default function WaitlistPage() {
           <div className="grid gap-2">
             <h2 className="text-2xl leading-tight font-extrabold tracking-tight">Danh sách chờ</h2>
             <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              Chỉ gợi ý, không tự xếp chỗ · ưu tiên giữa hai nhóm <PendingTag />
+              Chỉ gợi ý, không tự xếp chỗ · khách đặt trước được ưu tiên hơn Walk-in
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -158,7 +160,10 @@ export default function WaitlistPage() {
           <SectionTitle aside={<span className="hidden text-xs text-subtle sm:inline">chạm để lọc khách hợp bàn</span>}>
             Bàn trống · {freeTables.length}
           </SectionTitle>
-          <div className="-mx-1 flex scrollbar-thin gap-2 overflow-x-auto px-1 pb-1">
+          <div
+            ref={freeTablesRef}
+            className="-mx-1 no-scrollbar flex touch-pan-x gap-2 overflow-x-auto overscroll-x-contain px-1 pb-1 md:scrollbar-thin"
+          >
             {freeTables.length === 0 ? <p className="text-sm text-muted-foreground">Chưa có bàn trống.</p> : null}
             {freeTables.map((t) => {
               const n = fitFor(t.id).length
@@ -198,6 +203,14 @@ export default function WaitlistPage() {
             <Skeleton className="h-72" />
             <Skeleton className="h-72" />
           </div>
+        ) : waitlist.isError ? (
+          <EmptyState title="Lỗi tải danh sách chờ" icon={<AlertCircle className="size-6 text-destructive" />}>
+            {isApiError(waitlist.error)
+              ? waitlist.error.message
+              : waitlist.error instanceof Error
+                ? waitlist.error.message
+                : "Không thể tải danh sách chờ"}
+          </EmptyState>
         ) : (
           <div className="grid grid-cols-[minmax(0,1fr)] gap-5 lg:grid-cols-2">
             {lanes.map((lane) => (
@@ -300,8 +313,9 @@ function EntryCard({
 }) {
   const now = useNow(1000)
   const me = useSession((s) => s.user.id)
-  const isOwner = useCan("customer.phone.reveal")
+  const canReveal = useCan("customer.phone.reveal")
   const { run, pending } = useAction()
+  const { data: reservations } = useReservations(e.businessDate)
   const [contactOpen, setContactOpen] = useState(false)
   const [seatOpen, setSeatOpen] = useState(false)
   const [extendOpen, setExtendOpen] = useState(false)
@@ -311,6 +325,8 @@ function EntryCard({
   const claimLeft = e.claimExpiresAt ? e.claimExpiresAt.getTime() - now.getTime() : 0
   const overdue = !!e.hold && now > e.hold.deadlineAt
   const ChannelIcon = e.channel === "PHONE_CALLBACK" ? Phone : e.channel === "IN_PERSON" ? Hand : MessageCircle
+  const linkedRes = reservations?.find((r) => (e.reservationId ? r.id === e.reservationId : r.waitlistEntryId === e.id))
+  const heldCodes = linkedRes?.tableIds?.length ? model.codes(linkedRes.tableIds) : []
 
   return (
     <li
@@ -334,6 +350,15 @@ function EntryCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
             <p className="truncate text-base font-semibold">{e.displayName}</p>
+            <span
+              className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
+              style={{
+                background: e.kind === "ADVANCE_RESERVATION" ? "var(--st-reserved-tint)" : "var(--surface-2)",
+                color: e.kind === "ADVANCE_RESERVATION" ? "var(--st-reserved-ink)" : "var(--text-muted)",
+              }}
+            >
+              {e.kind === "ADVANCE_RESERVATION" ? "Đặt trước" : "Walk-in"}
+            </span>
             <span className="tnum inline-flex items-center gap-1 text-sm text-muted-foreground">
               <Users className="size-3.5" aria-hidden />
               {e.partySize}
@@ -355,7 +380,7 @@ function EntryCard({
                 <span className="tnum">{fmtTime(e.reservationExpectedAt)}</span>
               </span>
             ) : null}
-            {e.phoneLast3 && !(isOwner && e.customerId && (e.callbackRequested || e.channel === "PHONE_CALLBACK")) ? (
+            {e.phoneLast3 && !(canReveal && e.customerId && (e.callbackRequested || e.channel === "PHONE_CALLBACK")) ? (
               <MaskedPhone last3={e.phoneLast3} className="text-xs" />
             ) : null}
           </p>
@@ -367,20 +392,22 @@ function EntryCard({
       </div>
 
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-surface-2 px-2.5 text-muted-foreground">
-          <MapPin className="size-3.5 text-subtle" aria-hidden />
-          {e.preferences.length
-            ? e.preferences.map((p) => p.label).join(", ")
-            : PREFERENCE_MODE_LABEL[e.preferenceMode]}
-        </span>
-        {e.callbackRequested ? (
+        {(e.preferences?.length ?? 0) > 0 || e.preferenceMode ? (
+          <span className="inline-flex h-7 items-center gap-1.5 rounded-full bg-surface-2 px-2.5 text-muted-foreground">
+            <MapPin className="size-3.5 text-subtle" aria-hidden />
+            {e.preferences?.length
+              ? e.preferences.map((p) => p.label).join(", ")
+              : PREFERENCE_MODE_LABEL[e.preferenceMode!]}
+          </span>
+        ) : null}
+        {e.callbackRequested === true ? (
           <StateChip state="late" className="h-7">
             <PhoneForwarded className="size-3.5" /> Cần gọi lại
           </StateChip>
         ) : null}
       </div>
 
-      {isOwner && e.customerId && (e.callbackRequested || e.channel === "PHONE_CALLBACK") ? (
+      {canReveal && e.customerId && (e.callbackRequested || e.channel === "PHONE_CALLBACK") ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-2 px-3 py-2 text-sm">
           <Phone className="size-4 text-subtle" aria-hidden />
           <RevealPhone key={e.customerId} customerId={e.customerId} last3={e.phoneLast3} context={{ entryId: e.id }} />
@@ -420,6 +447,25 @@ function EntryCard({
             )}
           </span>
         </p>
+      ) : e.status === "HOLD_ACTIVE" ? (
+        <p
+          className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm"
+          style={{
+            background: "var(--st-reserved-tint)",
+            color: "var(--st-reserved-ink)",
+          }}
+        >
+          <Hourglass className="size-4 shrink-0" aria-hidden />
+          <span className="min-w-0">
+            {heldCodes.length ? (
+              <>
+                Giữ <TableCodes codes={heldCodes} className="[&>span]:text-[13px]" /> cho booking liên kết
+              </>
+            ) : (
+              "Đang giữ bàn cho booking liên kết"
+            )}
+          </span>
+        </p>
       ) : null}
       {e.note ? (
         <p className="flex gap-2 text-sm text-muted-foreground">
@@ -427,7 +473,12 @@ function EntryCard({
           {e.note}
         </p>
       ) : null}
-      {e.attempts.length ? (
+      {e.attempts === null ? (
+        <p className="flex items-center gap-1.5 text-xs text-subtle">
+          <History className="size-3.5 shrink-0" aria-hidden />
+          <span className="truncate">Lịch sử liên hệ chưa khả dụng</span>
+        </p>
+      ) : e.attempts.length > 0 ? (
         <p className="flex items-center gap-1.5 text-xs text-subtle">
           <History className="size-3.5 shrink-0" aria-hidden />
           <span className="truncate">
@@ -443,17 +494,31 @@ function EntryCard({
         {e.status === "HOLD_ACTIVE" ? (
           <>
             <GuardedButton
-              permission={e.kind === "ADVANCE_RESERVATION" ? "visit.checkin" : "visit.walkin"}
+              permission="visit.checkin"
               onClick={() => setSeatOpen(true)}
             >
               <Check /> Khách đã tới, xếp chỗ
             </GuardedButton>
-            <GuardedButton permission="hold.set_deadline" variant="outline" onClick={() => setExtendOpen(true)}>
-              <TimerReset /> Gia hạn
-            </GuardedButton>
-            <GuardedButton permission="hold.release" variant="outline" onClick={() => setReleaseOpen(true)}>
-              Nhả giữ
-            </GuardedButton>
+            {e.hold ? (
+              <>
+                <GuardedButton
+                  permission="hold.set_deadline"
+                  variant="outline"
+                  disabledReason={api.mode === "http" ? "Backend v1 chưa hỗ trợ gia hạn giữ bàn." : undefined}
+                  onClick={() => setExtendOpen(true)}
+                >
+                  <TimerReset /> Gia hạn
+                </GuardedButton>
+                <GuardedButton
+                  permission="hold.release"
+                  variant="outline"
+                  disabledReason={api.mode === "http" ? "Backend v1 chưa hỗ trợ nhả giữ bàn." : undefined}
+                  onClick={() => setReleaseOpen(true)}
+                >
+                  Nhả giữ
+                </GuardedButton>
+              </>
+            ) : null}
           </>
         ) : e.status === "CONTACTING" && mine ? (
           <>
@@ -462,34 +527,50 @@ function EntryCard({
             </GuardedButton>
             <Button
               variant="outline"
-              disabled={pending}
+              disabled={pending || api.mode === "http"}
+              title={api.mode === "http" ? "Backend v1 chưa hỗ trợ nhả quyền liên hệ." : undefined}
               onClick={() => run(() => api.releaseClaim(e.id, e.version), { silent: true })}
             >
               Thả
             </Button>
+            <GuardedButton
+              permission="table.assign"
+              variant="outline"
+              onClick={() => setSeatOpen(true)}
+            >
+              <Armchair /> {e.channel === "IN_PERSON" ? "Khách nhận bàn ngay" : "Gán giữ bàn"}
+            </GuardedButton>
           </>
         ) : (
           <>
-            <GuardedButton
-              permission="waitlist.claim"
-              variant={e.status === "CONTACTING" ? "outline" : "default"}
-              disabled={pending}
-              onClick={async () => {
-                const r = await run(() => api.claimWaitlist(e.id, e.version), { silent: true })
-                if (r) setContactOpen(true)
-              }}
-            >
-              <PhoneCall /> {e.status === "CONTACTING" ? "Đang có người liên hệ" : "Nhận liên hệ"}
-            </GuardedButton>
-            {e.channel === "IN_PERSON" ? (
+            {api.mode === "http" ? (
               <GuardedButton
-                permission={e.kind === "ADVANCE_RESERVATION" ? "visit.checkin" : "visit.walkin"}
+                permission="waitlist.record_contact"
                 variant="outline"
-                onClick={() => setSeatOpen(true)}
+                onClick={() => setContactOpen(true)}
               >
-                <Armchair /> Khách nhận bàn ngay
+                <PhoneCall /> Ghi liên hệ
               </GuardedButton>
-            ) : null}
+            ) : (
+              <GuardedButton
+                permission="waitlist.claim"
+                variant={e.status === "CONTACTING" ? "outline" : "default"}
+                disabled={pending}
+                onClick={async () => {
+                  const r = await run(() => api.claimWaitlist(e.id, e.version), { silent: true })
+                  if (r) setContactOpen(true)
+                }}
+              >
+                <PhoneCall /> {e.status === "CONTACTING" ? "Đang có người liên hệ" : "Nhận liên hệ"}
+              </GuardedButton>
+            )}
+            <GuardedButton
+              permission="table.assign"
+              variant={api.mode === "http" ? "default" : "outline"}
+              onClick={() => setSeatOpen(true)}
+            >
+              <Armchair /> {e.channel === "IN_PERSON" ? "Khách nhận bàn ngay" : "Gán giữ bàn"}
+            </GuardedButton>
           </>
         )}
       </div>
@@ -694,7 +775,7 @@ function ContactBody({ entry: e, model, presetTable, close }: EntryDialogProps &
   const [outcome, setOutcome] = useState<ContactOutcome>("ACCEPTED")
   const [tables, setTables] = useState<number[]>(presetTable ? [presetTable] : [])
   const [note, setNote] = useState(e.channel === "PHONE_CALLBACK" && !isOwner ? "Chuyển Chủ quán gọi" : "")
-  const needsTables = outcome === "ACCEPTED" || outcome === "OFFER_PENDING"
+  const needsTables = api.mode !== "http" && (outcome === "ACCEPTED" || outcome === "OFFER_PENDING")
   const invalid = noteHasPhoneNumber(note)
   const channels: ContactAttemptChannel[] = [
     "IN_PERSON",
@@ -814,19 +895,59 @@ function SeatDialog({
 }: EntryDialogProps & { open: boolean; onOpenChange: (o: boolean) => void }) {
   const { entry: e, model } = props
   const { run } = useAction()
-  if (e.hold) {
+  const { data: reservations } = useReservations(e.businessDate)
+  const isArrival = e.status === "HOLD_ACTIVE" || Boolean(e.hold)
+
+  if (isArrival) {
+    const res = reservations?.find((r) => (e.reservationId ? r.id === e.reservationId : r.waitlistEntryId === e.id))
+    const tableIds = res?.tableIds?.length ? res.tableIds : e.hold?.tableIds ?? []
+    const tableCodes = model.codes(tableIds)
+    const storedParty = e.partySize || res?.partySize || 1
+
     return (
       <GuestCountDialog
         open={open}
         onOpenChange={onOpenChange}
         title={`Xếp chỗ cho ${e.displayName}`}
         description={
-          <>Bàn đang giữ: {model.codes(e.hold.tableIds).join(" + ")}. Xác nhận khách đã có mặt và nhận bàn.</>
+          tableCodes.length > 0 ? (
+            <>
+              Bàn đang giữ: {tableCodes.join(" + ")}. Check-in booking liên kết để mở bàn và hoàn tất mục chờ.
+            </>
+          ) : (
+            <>Check-in booking liên kết để mở bàn và hoàn tất mục chờ.</>
+          )
         }
-        initial={e.partySize || 1}
+        initial={storedParty}
+        readOnly
         confirmLabel="Xếp chỗ"
-        onConfirm={async (n) => {
-          const r = await run(() => api.seatWaitlist({ entryId: e.id, version: e.version, guestCount: n }))
+        onConfirm={async () => {
+          const r = await run(async (o) => {
+            const list = await api.listReservations({ businessDate: e.businessDate })
+            let booking = list.find((b) => (e.reservationId ? b.id === e.reservationId : b.waitlistEntryId === e.id))
+            if (!booking && e.hold && !e.reservationId) {
+              const assigned = await api.seatWaitlist({
+                entryId: e.id,
+                version: e.version,
+                guestCount: storedParty,
+                tableIds: e.hold.tableIds,
+                overrideReason: o,
+              })
+              if (assigned?.reservationId) {
+                const updatedList = await api.listReservations({ businessDate: e.businessDate })
+                booking = updatedList.find((b) => b.id === assigned.reservationId)
+              }
+            }
+            if (!booking) {
+              throw new Error("Không tìm thấy thông tin đặt bàn liên kết.")
+            }
+            return api.checkIn({
+              reservationId: booking.id,
+              version: booking.version,
+              guestCount: storedParty,
+              overrideReason: o,
+            })
+          })
           if (r) onOpenChange(false)
         }}
       />
@@ -844,19 +965,22 @@ function SeatDialog({
 function SeatBody({ entry: e, model, presetTable, close }: EntryDialogProps & { close: () => void }) {
   const { run, pending } = useAction()
   const [tables, setTables] = useState<number[]>(presetTable ? [presetTable] : [])
-  const [count, setCount] = useState(e.partySize || 1)
+  const storedParty = e.partySize || 1
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Khách nhận bàn ngay · {e.displayName}</DialogTitle>
-        <DialogDescription>Chỉ dùng khi khách đang có mặt tại quán và đồng ý nhận bàn.</DialogDescription>
+        <DialogTitle>Gán giữ bàn cho khách · {e.displayName}</DialogTitle>
+        <DialogDescription>Hệ thống sẽ tạo booking và giữ bàn cho khách. Khách sẽ check-in sau từ booking.</DialogDescription>
       </DialogHeader>
       <div className="grid gap-4">
-        <div className="flex items-center gap-3">
+        <div className="grid gap-1.5 py-1">
           <Label>Số khách</Label>
-          <Stepper value={count} onChange={setCount} label="số khách" />
+          <div className="flex items-center justify-between rounded-xl border bg-surface-2 px-3.5 py-2.5 text-sm">
+            <span className="font-semibold text-foreground">{storedParty} khách</span>
+            <span className="text-xs text-muted-foreground">Đổi số khách cần sửa mục chờ trước</span>
+          </div>
         </div>
-        <TablePicker model={model} party={count} value={tables} onChange={setTables} />
+        <TablePicker model={model} party={storedParty} value={tables} onChange={setTables} />
       </div>
       <DialogFooter>
         <Button variant="ghost" onClick={close}>
@@ -869,7 +993,7 @@ function SeatBody({ entry: e, model, presetTable, close }: EntryDialogProps & { 
               api.seatWaitlist({
                 entryId: e.id,
                 version: e.version,
-                guestCount: count,
+                guestCount: storedParty,
                 tableIds: tables,
                 overrideReason: o,
               }),
@@ -877,7 +1001,7 @@ function SeatBody({ entry: e, model, presetTable, close }: EntryDialogProps & { 
             if (r) close()
           }}
         >
-          Khách đã nhận bàn
+          Xác nhận giữ bàn
         </Button>
       </DialogFooter>
     </>
@@ -904,6 +1028,7 @@ function AddWaitlistDialog({
 
 function AddWaitlistBody({ model, close }: { model: FloorModel; close: () => void }) {
   const bd = useBusinessDate()
+  const waitlist = useWaitlist(bd)
   const reservations = useReservations(bd)
   const { run, pending } = useAction()
   const [kind, setKind] = useState<WaitlistKind>("WALK_IN")
@@ -915,7 +1040,16 @@ function AddWaitlistBody({ model, close }: { model: FloorModel; close: () => voi
   const [tableId, setTableId] = useState("")
   const [resId, setResId] = useState("")
   const [note, setNote] = useState("")
-  const candidates = (reservations.data ?? []).filter((r) => r.status === "BOOKED" && r.subState === "CHO_PHAN_BAN")
+  const activeResIds = useMemo(
+    () =>
+      new Set(
+        (waitlist.data ?? []).filter((e) => ACTIVE.includes(e.status) && e.reservationId).map((e) => e.reservationId),
+      ),
+    [waitlist.data],
+  )
+  const candidates = (reservations.data ?? []).filter(
+    (r) => r.status === "BOOKED" && r.tableIds.length === 0 && !r.waitlistEntryId && !activeResIds.has(r.id),
+  )
   const prefs = [...(tableId ? [{ tableId: Number(tableId) }] : []), ...zones.map((z) => ({ zoneCode: z }))]
   const invalid = noteHasPhoneNumber(note) || noteHasPhoneNumber(name)
   const valid = kind === "WALK_IN" ? name.trim().length > 0 && party > 0 : !!resId
@@ -977,23 +1111,40 @@ function AddWaitlistBody({ model, close }: { model: FloorModel; close: () => voi
             </div>
           </>
         ) : (
-          <div className="grid gap-1.5">
-            <Label htmlFor="wl-res">Booking chưa có bàn (tối nay)</Label>
-            <Select value={resId} onValueChange={setResId}>
-              <SelectTrigger id="wl-res" className="h-11 w-full">
-                <SelectValue placeholder="Chọn booking" />
-              </SelectTrigger>
-              <SelectContent>
-                {candidates.map((r) => (
-                  <SelectItem key={r.id} value={String(r.id)}>
-                    {fmtTime(r.expectedAt)} · {r.displayName} · {r.partySize} khách
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {candidates.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Không có booking nào đang chờ phân bàn.</p>
-            ) : null}
+          <div className="grid gap-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="wl-res">Booking chưa có bàn (tối nay)</Label>
+              <Select value={resId} onValueChange={setResId}>
+                <SelectTrigger id="wl-res" className="h-11 w-full">
+                  <SelectValue placeholder="Chọn booking" />
+                </SelectTrigger>
+                <SelectContent>
+                  {candidates.map((r) => (
+                    <SelectItem key={r.id} value={String(r.id)}>
+                      {fmtTime(r.expectedAt)} · {r.displayName} · {r.partySize} khách
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {candidates.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Không có booking nào đang chờ phân bàn.</p>
+              ) : null}
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="wl-channel-res">Liên hệ qua</Label>
+              <Select value={channel} onValueChange={(v) => setChannel(v as WaitlistChannel)}>
+                <SelectTrigger id="wl-channel-res" className="h-11 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(WAITLIST_CHANNEL_LABEL) as WaitlistChannel[]).map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {WAITLIST_CHANNEL_LABEL[c]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         )}
         <WaitlistPreferencePicker
@@ -1035,16 +1186,16 @@ function AddWaitlistBody({ model, close }: { model: FloorModel; close: () => voi
                       contactName: name.trim(),
                       partySize: party,
                       channel,
-                      preferenceMode: mode,
-                      preferences: mode === "ANY" ? [] : prefs,
+                      preferenceMode: api.mode === "http" ? "ANY" : mode,
+                      preferences: api.mode === "http" || mode === "ANY" ? [] : prefs,
                       note: note || undefined,
                     }
                   : {
                       kind,
                       reservationId: Number(resId),
-                      channel: "ZALO_THREAD",
-                      preferenceMode: mode,
-                      preferences: mode === "ANY" ? [] : prefs,
+                      channel,
+                      preferenceMode: api.mode === "http" ? "ANY" : mode,
+                      preferences: api.mode === "http" || mode === "ANY" ? [] : prefs,
                       note: note || undefined,
                     },
               ),

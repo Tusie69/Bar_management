@@ -1,4 +1,5 @@
 import {
+  AlertCircle,
   CalendarPlus,
   ChevronLeft,
   ChevronRight,
@@ -21,13 +22,15 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { SOURCE_LABEL, type BookingSourceCode } from "@/domain/enums"
 import type { AllocationView, ReservationView, TableView } from "@/domain/models"
 import { useAction } from "@/hooks/use-action"
+import { useDragScroll } from "@/hooks/use-drag-scroll"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { useBusinessDate, useCatalog, useDayAllocations, useNow, useReservations } from "@/hooks/use-data"
 import { addDays, atBusinessTime, businessDateOf, fmtBusinessDate, fmtTime, MS, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { api, bookingApi } from "@/services"
+import { api, isApiError } from "@/services"
 import { useCan } from "@/state/session"
 import { useUi } from "@/state/ui"
+import { toast } from "sonner"
 import { GuestCountDialog } from "../floor/floor-dialogs"
 import { DateField } from "../floor/floor-toolbar"
 import { ReservationStatusChip } from "./reservation-status"
@@ -52,11 +55,12 @@ export default function ReservationsPage() {
   const [source, setSource] = useState<"ALL" | BookingSourceCode>("ALL")
   const [view, setView] = useState<"list" | "timeline">("list")
   const [exportOpen, setExportOpen] = useState(false)
-  const ui = useUi()
   const canExport = useCan("customer.view_masked")
+  const ui = useUi()
   const list = useReservations(date, search)
   const catalog = useCatalog()
   const searching = search.trim().length > 0
+  const tabListRef = useDragScroll<HTMLDivElement>()
 
   const rows = useMemo(
     () =>
@@ -114,16 +118,14 @@ export default function ReservationsPage() {
             ) : null}
           </div>
           <div className="ml-auto flex items-center gap-2">
-            {bookingApi ? (
-              <Button
-                variant="outline"
-                aria-label="Xuất text Zalo"
-                onClick={() => setExportOpen(true)}
-                disabled={!canExport}
-              >
-                <MessageSquareText /> <span className="hidden sm:inline">Xuất text Zalo</span>
-              </Button>
-            ) : null}
+            <Button
+              variant="outline"
+              aria-label="Xuất text Zalo"
+              onClick={() => setExportOpen(true)}
+              disabled={!canExport}
+            >
+              <MessageSquareText /> <span className="hidden sm:inline">Xuất text Zalo</span>
+            </Button>
             <ToggleGroup
               type="single"
               variant="outline"
@@ -149,7 +151,8 @@ export default function ReservationsPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div
-            className="-mx-1 flex max-w-full scrollbar-thin gap-1.5 overflow-x-auto px-1"
+            ref={tabListRef}
+            className="-mx-1 no-scrollbar flex max-w-full touch-pan-x gap-1.5 overflow-x-auto overscroll-x-contain px-1 md:scrollbar-thin"
             role="tablist"
             aria-label="Lọc trạng thái"
           >
@@ -200,6 +203,14 @@ export default function ReservationsPage() {
               <Skeleton key={i} className="h-12" />
             ))}
           </div>
+        ) : list.isError ? (
+          <EmptyState title="Lỗi tải danh sách booking" icon={<AlertCircle className="size-6 text-destructive" />}>
+            {isApiError(list.error)
+              ? list.error.message
+              : list.error instanceof Error
+                ? list.error.message
+                : "Không thể tải danh sách đặt bàn"}
+          </EmptyState>
         ) : view === "list" ? (
           <ReservationList rows={rows} tables={catalog.data?.tables ?? []} showDate={searching} />
         ) : (
@@ -288,7 +299,19 @@ function ReservationList({
               hint: `Booking ${fmtTime(r.expectedAt)} ${r.businessDate !== today ? fmtBusinessDate(r.businessDate, "short") : ""}. Chạm bàn trống.`,
               multi: true,
               confirmLabel: "Phân bàn",
-              onConfirm: async (ids) => !!(await run((o) => api.assignTables(r.id, r.version, ids, o))),
+              onConfirm: async (ids) => {
+                const totalCapacity = ids.reduce(
+                  (sum, id) => sum + (tables.find((t) => t.id === id)?.capacity ?? 0),
+                  0,
+                )
+                if (totalCapacity < r.partySize) {
+                  toast.error(
+                    `Tổng sức chứa (${totalCapacity}) thấp hơn số khách (${r.partySize}). Chọn thêm bàn cùng khu, cùng loại trước khi xác nhận.`,
+                  )
+                  return false
+                }
+                return !!(await run((o) => api.assignTables(r.id, r.version, ids, o)))
+              },
             })
           }}
         >
@@ -395,11 +418,12 @@ function ReservationList({
           </>
         }
         initial={checkIn?.partySize ?? 2}
+        readOnly
         confirmLabel="Check-in"
-        onConfirm={async (count) => {
+        onConfirm={async () => {
           if (!checkIn) return
           const r = await run(() =>
-            api.checkIn({ reservationId: checkIn.id, version: checkIn.version, guestCount: count }),
+            api.checkIn({ reservationId: checkIn.id, version: checkIn.version, guestCount: checkIn.partySize }),
           )
           if (r) setCheckIn(null)
         }}

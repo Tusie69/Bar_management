@@ -96,6 +96,12 @@ export function fmtTime(t: Date | null | undefined): string {
   return `${pad(p.hour)}:${pad(p.minute)}`
 }
 
+/** Mobile V1 shows 12h clock: "7:15 PM". */
+export function fmtTime12(t: Date): string {
+  const p = venueParts(t)
+  return `${p.hour % 12 || 12}:${pad(p.minute)} ${p.hour < 12 ? "AM" : "PM"}`
+}
+
 const WEEKDAYS = ["Chủ nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"]
 const WEEKDAYS_SHORT = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"]
 

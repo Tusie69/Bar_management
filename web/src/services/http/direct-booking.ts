@@ -10,11 +10,12 @@ export function directBookingSelection(
   selectedIds: number[],
 ) {
   const stateById = new Map(states.map((table) => [table.id, table]))
-  const compatibleTables = catalogTables.filter((table) =>
-    table.zoneId === directTable.zoneId &&
-    table.kind === directTable.kind &&
-    table.status === "ACTIVE" &&
-    !table.isSpare,
+  const compatibleTables = catalogTables.filter(
+    (table) =>
+      table.zoneId === directTable.zoneId &&
+      table.kind === directTable.kind &&
+      table.status === "ACTIVE" &&
+      !table.isSpare,
   )
   const selectedTables = compatibleTables.filter((table) => selectedIds.includes(table.id))
   return {

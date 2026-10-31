@@ -1,0 +1,180 @@
+@import "@fontsource/be-vietnam-pro/400.css";
+@import "@fontsource/be-vietnam-pro/500.css";
+@import "@fontsource/be-vietnam-pro/600.css";
+
+/*
+ * Mobile V1 tokens (< 768px), copied from "GAM Mobile Screen" round 2.
+ * Scoped to [data-gm] so Desktop/Tablet keep index.css. Light by default, html.dark = Service.
+ * Derived tokens (--card, --muted-foreground, --st-*-ink...) are re-declared here because
+ * custom properties resolve where they are declared.
+ */
+[data-gm] {
+  overscroll-behavior: none;
+  --radius: 12px;
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
+  --radius-3xl: 24px;
+  --radius-4xl: 28px;
+  --background: oklch(0.975 0.006 95);
+  --surface-1: oklch(1 0 0);
+  --surface-2: oklch(0.965 0.006 95);
+  --surface-3: oklch(0.935 0.008 95);
+  --foreground: oklch(0.22 0.01 80);
+  --text-muted: oklch(0.45 0.01 80);
+  --text-subtle: oklch(0.53 0.01 80);
+  --border: oklch(0.915 0.007 95);
+  --border-strong: oklch(0.85 0.009 95);
+  --primary: oklch(0.52 0.15 255);
+  --primary-foreground: oklch(0.99 0 0);
+  --primary-ink: oklch(0.48 0.15 255);
+  --primary-tint: oklch(0.52 0.15 255 / 0.09);
+  --st-reserved: oklch(0.55 0.13 250);
+  --st-late: oklch(0.6 0.13 65);
+  --st-noshow: oklch(0.56 0.17 27);
+  --st-seated: oklch(0.55 0.11 160);
+  --st-oos: oklch(0.62 0.005 80);
+  --st-reserved-tint: oklch(0.55 0.13 250 / 0.1);
+  --st-late-tint: oklch(0.65 0.13 70 / 0.15);
+  --st-noshow-tint: oklch(0.56 0.17 27 / 0.1);
+  --st-seated-tint: oklch(0.55 0.11 160 / 0.13);
+  --st-seated-fill: oklch(0.58 0.1 160);
+  --on-seated: oklch(0.99 0 0);
+  --floor: oklch(0.97 0.006 95);
+  --floor-zone: oklch(0.94 0.008 95);
+  --floor-wall: oklch(0.45 0.01 80);
+  --floor-fixture: oklch(0.91 0.008 95);
+  --table-line: oklch(0.55 0.01 80);
+  --shadow-xs: 0 1px 2px oklch(0.3 0.02 80 / 0.06);
+  --shadow-soft: 0 6px 16px -8px oklch(0.3 0.02 80 / 0.22);
+  --shadow-float: 0 1px 3px oklch(0.3 0.02 80 / 0.08), 0 18px 40px -16px oklch(0.3 0.02 80 / 0.28);
+  --scrim: oklch(0.25 0.01 80 / 0.38);
+  --hero-sky: oklch(0.955 0.022 205);
+  --hero-sun: oklch(0.975 0.035 90);
+  --hill-far: oklch(0.925 0.035 168);
+  --hill-mid: oklch(0.895 0.05 158);
+  --tree: oklch(0.83 0.065 156);
+  --glass: oklch(1 0 0 / 0.75);
+  --tx-1: #1f2937;
+  --tx-strong: #111827;
+  --tx-2: #4b5563;
+  --tx-3: #6b7280;
+}
+
+.dark [data-gm] {
+  --background: oklch(0.235 0.006 80);
+  --surface-1: oklch(0.275 0.007 80);
+  --surface-2: oklch(0.31 0.008 80);
+  --surface-3: oklch(0.345 0.009 80);
+  --foreground: oklch(0.93 0.01 90);
+  --text-muted: oklch(0.8 0.01 85);
+  --text-subtle: oklch(0.7 0.009 85);
+  --border: oklch(0.34 0.008 80);
+  --border-strong: oklch(0.43 0.009 80);
+  --primary: oklch(0.6 0.13 252);
+  --primary-foreground: oklch(0.99 0 0);
+  --primary-ink: oklch(0.8 0.09 250);
+  --primary-tint: oklch(0.62 0.13 252 / 0.2);
+  --st-reserved: oklch(0.74 0.1 245);
+  --st-late: oklch(0.8 0.12 80);
+  --st-noshow: oklch(0.69 0.145 25);
+  --st-seated: oklch(0.75 0.11 158);
+  --st-oos: oklch(0.6 0.005 80);
+  --st-reserved-tint: oklch(0.74 0.1 245 / 0.18);
+  --st-late-tint: oklch(0.8 0.12 80 / 0.17);
+  --st-noshow-tint: oklch(0.69 0.145 25 / 0.2);
+  --st-seated-tint: oklch(0.75 0.11 158 / 0.18);
+  --st-seated-fill: oklch(0.66 0.1 158);
+  --on-seated: oklch(0.18 0.02 158);
+  --floor: oklch(0.215 0.005 80);
+  --floor-zone: oklch(0.25 0.006 80);
+  --floor-wall: oklch(0.62 0.01 85);
+  --floor-fixture: oklch(0.285 0.007 80);
+  --table-line: oklch(0.62 0.008 85);
+  --shadow-xs: 0 1px 2px oklch(0 0 0 / 0.25);
+  --shadow-soft: 0 4px 14px -6px oklch(0 0 0 / 0.5);
+  --shadow-float: 0 1px 0 oklch(1 0 0 / 0.05) inset, 0 18px 40px -16px oklch(0 0 0 / 0.65);
+  --scrim: oklch(0.1 0.005 80 / 0.55);
+  --hero-sky: oklch(0.265 0.014 230);
+  --hero-sun: oklch(0.36 0.03 90);
+  --hill-far: oklch(0.28 0.018 175);
+  --hill-mid: oklch(0.3 0.024 162);
+  --tree: oklch(0.35 0.034 158);
+  --glass: oklch(0.275 0.007 80 / 0.72);
+  --tx-1: #eef0f2;
+  --tx-strong: #f7f8f9;
+  --tx-2: #cdd1d6;
+  --tx-3: #a1a7af;
+}
+
+[data-gm] {
+  --st-reserved-ink: color-mix(in oklab, var(--st-reserved) 75%, var(--tx-1));
+  --st-late-ink: color-mix(in oklab, var(--st-late) 70%, var(--tx-1));
+  --st-noshow-ink: color-mix(in oklab, var(--st-noshow) 75%, var(--tx-1));
+  --st-seated-ink: color-mix(in oklab, var(--st-seated) 72%, var(--tx-1));
+  --card: var(--surface-1);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface-1);
+  --popover-foreground: var(--foreground);
+  --muted: var(--surface-2);
+  --muted-foreground: var(--text-muted);
+  --secondary: var(--surface-2);
+  --accent: var(--surface-3);
+  --input: var(--border-strong);
+  --ring: var(--primary);
+  --destructive: var(--st-noshow);
+  --st-free: var(--table-line);
+  --font-ui: "Be Vietnam Pro", -apple-system, "SF Pro Text", "Segoe UI", sans-serif;
+  --top-safe: max(12px, env(safe-area-inset-top));
+  --nav-h: calc(56px + env(safe-area-inset-bottom));
+
+  background: var(--background);
+  color: var(--tx-1);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+[data-gm],
+[data-gm] * {
+  scrollbar-width: none;
+}
+[data-gm] *::-webkit-scrollbar {
+  display: none;
+}
+[data-gm] button:focus-visible,
+[data-gm] [role="button"]:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+[data-gm] input::placeholder,
+[data-gm] textarea::placeholder {
+  color: var(--tx-3);
+}
+
+[data-gm] .rounded-xs {
+  border-radius: 6px;
+}
+[data-gm] .rounded-sm {
+  border-radius: 8px;
+}
+[data-gm] .rounded-md {
+  border-radius: 10px;
+}
+[data-gm] .rounded-lg {
+  border-radius: 12px;
+}
+[data-gm] .rounded-xl {
+  border-radius: 14px;
+}
+[data-gm] .rounded-2xl {
+  border-radius: 18px;
+}
+[data-gm] .rounded-3xl {
+  border-radius: 24px;
+}
