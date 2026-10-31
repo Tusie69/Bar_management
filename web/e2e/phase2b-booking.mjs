@@ -111,7 +111,7 @@ try {
   await page.getByLabel("Tên đăng nhập").fill(username)
   await page.getByLabel("Mật khẩu").fill(password)
   await page.getByRole("button", { name: "Đăng nhập", exact: true }).click()
-  await page.getByText("Lễ tân E2E", { exact: false }).waitFor()
+  await page.getByRole("button", { name: /^Tài khoản: Lễ tân E2E/ }).waitFor()
   await waitUntil(() => validWaitlistReads >= 1, "Waitlist did not load after businessDate became available")
   const waitlistReadsBeforePolling = validWaitlistReads
   await waitUntil(
@@ -135,29 +135,25 @@ try {
   let sheet = page.getByRole("dialog").last()
   await sheet.getByText("Đặt bàn mới", { exact: true }).waitFor()
   if ((await sheet.locator('input[type="time"]').count()) !== 0) throw new Error("Native time picker is still present")
-  const timePicker = sheet.getByRole("radiogroup", { name: "Giờ khách dự kiến đến" })
-  const timeRadios = timePicker.getByRole("radio")
-  if ((await timeRadios.count()) !== 13) throw new Error("Horizontal time picker does not contain all 13 slots")
+  const timeGroups = sheet.getByRole("radiogroup").filter({ hasText: /Tối|Sáng hôm sau/ })
+  const timeRadios = timeGroups.getByRole("radio")
+  if ((await timeRadios.count()) !== 13) throw new Error(`Time picker does not contain all 13 slots across canonical groups (found ${await timeRadios.count()})`)
   const slotTops = await timeRadios.evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().top)))
-  if (new Set(slotTops).size !== 1) throw new Error("Time slots are not rendered in one horizontal row")
-  const firstSlot = timePicker.getByRole("radio", { name: /^19:00/ })
+  if (new Set(slotTops).size <= 1) throw new Error("Time slots are not rendered in a multi-row grid")
+  const firstSlot = sheet.getByRole("radio", { name: /^19:00/ })
   await firstSlot.focus()
   await firstSlot.press("ArrowRight")
-  if ((await timePicker.getByRole("radio", { name: /^19:30/ }).getAttribute("aria-checked")) !== "true") {
+  if ((await sheet.getByRole("radio", { name: /^19:30/ }).getAttribute("aria-checked")) !== "true") {
     throw new Error("Arrow-key time selection did not update the selected slot")
   }
-  const lastSlot = timePicker.getByRole("radio", { name: /^01:00/ })
+  const lastSlot = sheet.getByRole("radio", { name: /^01:00/ })
   await lastSlot.click()
-  await page.waitForFunction(
-    (element) => {
-      const parent = element?.parentElement
-      return !!element && !!parent && element.offsetLeft >= parent.scrollLeft - 1
-        && element.offsetLeft + element.offsetWidth <= parent.scrollLeft + parent.clientWidth + 1
-    },
-    await lastSlot.elementHandle(),
-  )
+  if ((await lastSlot.getAttribute("aria-checked")) !== "true") {
+    throw new Error("Clicking 01:00 slot did not select it")
+  }
+  await sheet.getByText(/Đã chọn:\s*01:00/i).waitFor()
   if (await sheet.evaluate((node) => node.scrollWidth > node.clientWidth + 1)) {
-    throw new Error("Horizontal picker caused modal overflow")
+    throw new Error("Time picker caused modal overflow")
   }
 
   // Step 0: Thời gian & số khách
@@ -183,7 +179,7 @@ try {
   let detailSheet = page.getByRole("dialog").filter({ hasText: guestName })
   await detailSheet.waitFor()
 
-  await page.keyboard.press("Escape")
+  await closeTopDialog(page)
   await detailSheet.waitFor({ state: "hidden" })
 
   // Verify Zalo export for RETURNING
@@ -194,7 +190,7 @@ try {
   if (!(await returningExport.inputValue()).includes("Bàn khách quen O: 1")) {
     throw new Error("Returning classification was not reflected in Zalo export")
   }
-  await page.keyboard.press("Escape")
+  await closeTopDialog(page)
   await dialog.waitFor({ state: "hidden" })
 
   // Table assignment on floor
@@ -207,7 +203,7 @@ try {
   await pickDialog.waitFor()
 
   const spareButton = page.getByRole("button", { name: /Bàn A10, Bàn sơ cua/ })
-  const outOfServiceButton = page.getByRole("button", { name: /Bàn A3, Ngưng hoạt động/ })
+  const outOfServiceButton = page.getByRole("button", { name: /Bàn A3, Ngưng phục vụ/ })
   if ((await spareButton.getAttribute("aria-disabled")) !== "true" && !(await spareButton.isDisabled())) {
     throw new Error("Spare table was selectable")
   }
@@ -226,7 +222,7 @@ try {
   detailSheet = page.getByRole("dialog").filter({ hasText: guestName })
   await detailSheet.getByText("A1", { exact: true }).waitFor()
 
-  await page.keyboard.press("Escape")
+  await closeTopDialog(page)
   await detailSheet.waitFor({ state: "hidden" })
 
   // Search and edit booking
@@ -275,22 +271,41 @@ try {
   const tomorrowDateLabel = (await tomorrowBtn.textContent())?.trim()
   if (!tomorrowDateLabel) throw new Error("Tomorrow date button missing label")
 
-  // Open mobile booking modal and verify horizontal time picker
-  await secondPage.getByRole("button", { name: "Đặt bàn mới" }).click()
-  const mobileDialog = secondPage.getByRole("dialog").last()
-  const mobileTimePicker = mobileDialog.getByRole("radiogroup", { name: "Giờ khách dự kiến đến" })
-  await mobileTimePicker.waitFor()
-  if (await mobileDialog.evaluate((node) => node.scrollWidth > node.clientWidth + 1)) {
-    throw new Error("Mobile booking modal has horizontal overflow")
+  // Open mobile booking creation through canonical controls
+  await secondPage.getByRole("button", { name: "Tạo mới" }).click()
+  const createSheet = secondPage.getByRole("dialog", { name: "Tạo mới" })
+  await createSheet.waitFor()
+  await createSheet.getByRole("button", { name: /Tạo đặt trước/ }).click()
+  await createSheet.waitFor({ state: "hidden" })
+
+  const mobileForm = secondPage.getByRole("dialog", { name: "Tạo đơn đặt bàn" })
+  await mobileForm.waitFor()
+  if (await mobileForm.evaluate((node) => node.scrollWidth > node.clientWidth + 1)) {
+    throw new Error("Mobile booking form has horizontal overflow")
   }
-  const scrollBefore = await mobileTimePicker.evaluate((node) => node.scrollLeft)
-  await mobileTimePicker.hover()
-  await secondPage.mouse.wheel(400, 0)
-  await secondPage.waitForTimeout(100)
-  const scrollAfter = await mobileTimePicker.evaluate((node) => node.scrollLeft)
-  if (scrollAfter <= scrollBefore) throw new Error("Horizontal time picker did not respond to trackpad scrolling")
-  await secondPage.keyboard.press("Escape")
-  await mobileDialog.waitFor({ state: "hidden" })
+
+  // Verify date-named time slot groups in mobile FormScreen
+  const mobileTimeGroups = mobileForm.getByRole("radiogroup").filter({ hasText: /Tối|Sáng hôm sau/ })
+  const mobileRadios = mobileTimeGroups.getByRole("radio")
+  if ((await mobileRadios.count()) !== 13) {
+    throw new Error(`Mobile form does not contain all 13 slots across date-named groups (found ${await mobileRadios.count()})`)
+  }
+
+  // Reachability and touch/selection verification for late slot
+  const mobileLastSlot = mobileForm.getByRole("radio", { name: /^01:00/ })
+  await mobileLastSlot.scrollIntoViewIfNeeded()
+  await mobileLastSlot.click()
+  if ((await mobileLastSlot.getAttribute("aria-checked")) !== "true") {
+    throw new Error("Slot 01:00 was not selectable in mobile form")
+  }
+
+  // Dismiss via canonical back/leave flow
+  await mobileForm.getByRole("button", { name: "Quay lại" }).click()
+  const leaveConfirm = secondPage.getByRole("alertdialog", { name: "Bỏ đơn đang nhập" })
+  if (await leaveConfirm.isVisible()) {
+    await leaveConfirm.getByRole("button", { name: "Bỏ đơn" }).click()
+  }
+  await mobileForm.waitFor({ state: "hidden" })
 
   // Verify export request selects tomorrow's business date
   const exportRequestPromise = secondPage
@@ -323,12 +338,21 @@ try {
   await detailSheet.waitFor()
   await detailSheet.getByRole("button", { name: "Đổi bàn", exact: true }).click()
 
-  const reassignDialog = page.getByRole("dialog", { name: /Phân bàn/ })
+  const reassignDialog = page.getByRole("dialog", { name: /Phân bàn|Đổi bàn/ })
   await reassignDialog.waitFor()
-  await page.getByRole("button", { name: /^Bàn A1,/ }).click()
-  await page.getByRole("button", { name: /^Bàn A2,/ }).click()
-  await page.getByRole("button", { name: /^Bàn A4,/ }).click()
-  const reassignConfirm = reassignDialog.getByRole("button", { name: "Phân bàn" })
+  const a1Btn = page.getByRole("button", { name: /^Bàn A1,/ })
+  if ((await a1Btn.getAttribute("aria-pressed")) === "true") {
+    await a1Btn.click()
+  }
+  const a2Btn = page.getByRole("button", { name: /^Bàn A2,/ })
+  if ((await a2Btn.getAttribute("aria-pressed")) !== "true") {
+    await a2Btn.click()
+  }
+  const a4Btn = page.getByRole("button", { name: /^Bàn A4,/ })
+  if ((await a4Btn.getAttribute("aria-pressed")) !== "true") {
+    await a4Btn.click()
+  }
+  const reassignConfirm = reassignDialog.getByRole("button", { name: /Phân bàn|Đổi bàn/ })
   await reassignConfirm.click()
   await reassignDialog.waitFor({ state: "hidden" })
 
@@ -410,4 +434,10 @@ try {
     console.error(cleanupError)
     process.exitCode = 1
   }
+}
+
+async function closeTopDialog(page) {
+  const close = page.getByRole("dialog").last().getByRole("button", { name: "Đóng", exact: true })
+  if (await close.count()) await close.first().click()
+  else await page.keyboard.press("Escape")
 }

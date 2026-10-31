@@ -33,7 +33,7 @@ async function flow(name, userId, fn) {
   }
   await page.close()
 }
-const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"]`).first()
+const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"]`).first()
 const barSeat = (page, number) => page.locator(`[aria-label^="Ghế Bar ${number},"], [aria-label^="Ghế Bar ${number}:"]`).first()
 const expectLabel = async (loc, re) => {
   for (let i = 0; i < 25; i++) {
@@ -282,8 +282,9 @@ await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (phone
 
     // 1. Establish reservation-backed direct assignment for target entry with B5+B7 (group)
     const assignment = await page.evaluate(async (targetName) => {
-      const { api } = await import("/src/services/index.ts")
-      const bd = "2026-10-31"
+      const { api, clock } = await import("/src/services/index.ts")
+      const { businessDateOf } = await import("/src/lib/time.ts")
+      const bd = businessDateOf(clock.now())
       const wl = await api.listWaitlist(bd)
       const target = wl.find((e) => e.displayName === targetName)
       if (!target) throw new Error(`Target waitlist entry ${targetName} not found`)
@@ -310,6 +311,7 @@ await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (phone
         entry: updatedEntry,
         booking,
         bookingVisitsCount: bookingVisits.length,
+        businessDate: bd,
       }
     }, tc.name)
 
@@ -341,9 +343,9 @@ await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (phone
 
     // 4. Assert arrival check-in lifecycle and group preservation
     const arrival = await page.evaluate(
-      async ({ targetId, reservationId }) => {
+      async ({ targetId, reservationId, businessDate }) => {
         const { api } = await import("/src/services/index.ts")
-        const bd = "2026-10-31"
+        const bd = businessDate
         const wl = await api.listWaitlist(bd)
         const entry = wl.find((e) => e.id === targetId)
         const reservations = await api.listReservations({ businessDate: bd })
@@ -357,7 +359,7 @@ await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (phone
           bookingVisits,
         }
       },
-      { targetId: assignment.targetId, reservationId: assignment.reservationId },
+      { targetId: assignment.targetId, reservationId: assignment.reservationId, businessDate: assignment.businessDate },
     )
 
     if (!arrival.entry || arrival.entry.status !== "SEATED") {
@@ -453,6 +455,193 @@ await flow("bar seat: multi-seat booking capacity check & group reservation", 1,
   await expectLabel(barSeat(page, 7), /Đang đặt/)
   await expectLabel(barSeat(page, 8), /nhóm \d+/)
   await expectLabel(barSeat(page, 7), /nhóm \d+/)
+})
+
+await flow("reservation assignment: date-aware availability in both directions (MD-01)", 1, async (page) => {
+  await page.goto(base + "/reservations", { waitUntil: "networkidle" })
+
+  // Advance to tomorrow
+  await page.getByRole("button", { name: "Ngày sau" }).click()
+
+  // Seed target bookings for tomorrow in the active in-memory mock instance
+  await page.evaluate(async () => {
+    const { api, clock } = await import("/src/services/index.ts")
+    const { businessDateOf, addDays, atBusinessTime } = await import("/src/lib/time.ts")
+    const today = businessDateOf(clock.now())
+    const tomorrow = addDays(today, 1)
+
+    // Direction 1: Table B7 (id 10) is free today, but held tomorrow at 22:00
+    await api.createReservation({
+      contactName: "Khách giữ B7 mai",
+      partySize: 4,
+      expectedAt: atBusinessTime(tomorrow, "22:00"),
+      sourceCode: "HOTLINE",
+      tableIds: [10],
+    })
+
+    // Tomorrow unassigned 3-person booking needing assignment
+    await api.createReservation({
+      contactName: "Khách phân bàn mai",
+      partySize: 3,
+      expectedAt: atBusinessTime(tomorrow, "22:00"),
+      sourceCode: "HOTLINE",
+    })
+  })
+
+  await page.getByText("Khách phân bàn mai").first().waitFor()
+  await page.getByText("Khách phân bàn mai").first().click()
+
+  let detail = page.getByRole("dialog").filter({ hasText: "Khách phân bàn mai" })
+  await detail.waitFor()
+  await detail.getByRole("button", { name: "Phân bàn", exact: true }).click()
+
+  // On floor picker: wait for availability query to settle: table A0 becomes available
+  const a0 = page.locator('[aria-label^="Bàn A0:"][aria-disabled="false"]').first()
+  await a0.waitFor()
+
+  // Direction 1: Table B7 held tomorrow must be disabled/unavailable
+  const b7 = page.locator('[aria-label^="Bàn B7:"]').first()
+  await b7.waitFor()
+  const b7Disabled = await b7.getAttribute("aria-disabled")
+  if (b7Disabled !== "true") throw new Error("Table B7 held tomorrow should be disabled during tomorrow assignment")
+
+  // Direction 2: Table A0 free tomorrow must be available
+  const a0Disabled = await a0.getAttribute("aria-disabled")
+  if (a0Disabled === "true") throw new Error("Table A0 free tomorrow should be available during tomorrow assignment")
+
+  // Select A0 and confirm initial assignment
+  await a0.click()
+  if ((await a0.getAttribute("aria-pressed")) !== "true") {
+    throw new Error("Table A0 was not selected after click")
+  }
+  await page.getByRole("button", { name: "Phân bàn" }).click()
+
+  // Verify assignment in details
+  await page.getByRole("link", { name: "Đặt bàn" }).click()
+  await page.waitForURL("**/reservations")
+  await page.getByRole("button", { name: "Ngày sau" }).click()
+  await page.getByRole("cell", { name: "Khách phân bàn mai" }).click()
+  detail = page.getByRole("dialog").filter({ hasText: "Khách phân bàn mai" })
+  await detail.getByText("A0", { exact: true }).waitFor()
+
+  // Reassignment retaining source table A0 and adding A2
+  await detail.getByRole("button", { name: "Đổi bàn", exact: true }).click()
+  const a2 = page.locator('[aria-label^="Bàn A2:"][aria-disabled="false"]').first()
+  await a2.waitFor()
+  await a2.click()
+  await page.getByRole("button", { name: /Phân bàn|Đổi bàn/ }).click()
+
+  // Verify reassignment in details
+  await page.getByRole("link", { name: "Đặt bàn" }).click()
+  await page.waitForURL("**/reservations")
+  await page.getByRole("button", { name: "Ngày sau" }).click()
+  await page.getByRole("cell", { name: "Khách phân bàn mai" }).click()
+  detail = page.getByRole("dialog").filter({ hasText: "Khách phân bàn mai" })
+  await detail.getByText("A0 + A2", { exact: true }).waitFor()
+  await page.keyboard.press("Escape")
+})
+
+await flow("direct booking: validate same zone and kind in floor quick-form and booking sheet (MD-05)", 1, async (page) => {
+  // 1. Floor quick-form validation
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await barSeat(page, 8).click()
+  await page.getByRole("button", { name: "Đặt trước" }).click()
+  // QuickForm is open with Ghế Bar 8 (BAR_SEAT in Zone D)
+  // Attempt to select Bàn B7 (TABLE in Zone B) on canvas: B7 is disabled
+  const b7Floor = table(page, "B7")
+  await b7Floor.waitFor()
+  const b7FloorDisabled = await b7Floor.getAttribute("aria-disabled")
+  if (b7FloorDisabled !== "true") {
+    throw new Error("Table B7 of different kind/zone should be disabled on floor in Bar 8 direct draft")
+  }
+  await b7Floor.click({ force: true })
+  const hasB7 = await page.getByRole("button", { name: /Bàn B7/ }).count()
+  if (hasB7 > 1) {
+    throw new Error("Table B7 of different kind/zone should not be added to Bar 8 direct draft")
+  }
+  await page.keyboard.press("Escape")
+
+  // 2. Booking sheet validation
+  await page.goto(base + "/reservations", { waitUntil: "networkidle" })
+  await page.getByRole("button", { name: "Đặt bàn mới" }).click()
+  const sheet = page.getByRole("dialog").last()
+  await sheet.getByText("Đặt bàn mới", { exact: true }).waitFor()
+  // Step 0: click Tiếp
+  await sheet.getByRole("button", { name: "Tiếp" }).click()
+  // Step 1: select first suggested table
+  const firstSuggestion = sheet.locator("section").filter({ hasText: "Gợi ý" }).getByRole("button").first()
+  await firstSuggestion.waitFor()
+  await firstSuggestion.click()
+
+  // Cross-kind/zone seat Ghế Bar 8 (Zone BAR, BAR_SEAT) must be disabled on canvas
+  const cross = sheet.locator('[aria-label^="Ghế Bar 8:"]').first()
+  await cross.waitFor()
+  const crossDisabled = await cross.getAttribute("aria-disabled")
+  if (crossDisabled !== "true") {
+    throw new Error("Cross-kind/zone seat Bar 8 should be disabled in booking sheet")
+  }
+  await cross.click({ force: true })
+  const crossPressed = await cross.getAttribute("aria-pressed")
+  if (crossPressed === "true") {
+    throw new Error("Cross-kind/zone seat Bar 8 should not be selected in booking sheet")
+  }
+  await page.keyboard.press("Escape")
+})
+
+await flow("booking pickers: keyboard navigation across expired selected slot (MD-04)", 1, async (page) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto(base + "/reservations", { waitUntil: "networkidle" })
+  await page.evaluate(async () => {
+    const { demo } = await import("/src/services/index.ts")
+    demo?.reset()
+  })
+  await page.reload({ waitUntil: "networkidle" })
+
+  const dismissAlert = page.getByRole("button", { name: "Đã xem, xử lý sau" })
+  if (await dismissAlert.isVisible()) await dismissAlert.click()
+  const closeToast = page.getByRole("button", { name: "Đóng thông báo" })
+  if (await closeToast.isVisible()) await closeToast.click()
+
+  // Open the first booking's edit dialog
+  await page.locator("article").first().click()
+  await page.getByRole("button", { name: "Sửa booking" }).click()
+  const editDialog = page.getByRole("dialog", { name: /Sửa booking/ })
+  await editDialog.waitFor()
+
+  // Advance scenario clock so that the booking's selected time slot is now past
+  await page.evaluate(async () => {
+    const { clock } = await import("/src/services/index.ts")
+    clock.advance(180) // advance 3 hours
+  })
+
+  // Verify roving tab stop: exactly one enabled slot has tabIndex=0
+  const enabledWithTabstop = await editDialog.getByRole("radio").evaluateAll((nodes) =>
+    nodes.filter((n) => !n.disabled && n.getAttribute("tabindex") === "0").map((n) => n.textContent?.trim())
+  )
+  if (enabledWithTabstop.length !== 1) {
+    throw new Error(`Expected exactly 1 enabled radio with tabIndex=0, found ${enabledWithTabstop.length}`)
+  }
+
+  // Keyboard navigation: focus stepper and press Tab into the time picker
+  await editDialog.getByRole("button", { name: "Tăng số khách" }).focus()
+  await page.keyboard.press("Tab")
+
+  const focusedRole = await page.evaluate(() => document.activeElement?.getAttribute("role"))
+  if (focusedRole !== "radio") {
+    throw new Error(`Tab from stepper did not land on time radio (focused ${focusedRole})`)
+  }
+
+  // Keyboard ArrowRight / Home / End navigation
+  await page.keyboard.press("ArrowRight")
+  await page.keyboard.press("Home")
+  await page.keyboard.press("End")
+
+  const lastChecked = await editDialog.getByRole("radio", { name: /^01:00/ }).getAttribute("aria-checked")
+  if (lastChecked !== "true") {
+    throw new Error("End key did not select the 01:00 slot")
+  }
+
+  await page.keyboard.press("Escape")
 })
 
 console.log(results.join("\n"))

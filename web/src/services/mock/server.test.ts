@@ -3,6 +3,7 @@ import { BAR_SEATS, POSITION_COUNT, TABLES } from "@/domain/venue-layout"
 import { addDays, atBusinessTime, businessDateOf, fromVenueLocal } from "@/lib/time"
 import { clock } from "../clock"
 import { ApiError } from "../contracts"
+import type { MockDb } from "./db"
 import { DEMO_USERS } from "./seed"
 import { MockGamApi } from "./server"
 
@@ -52,6 +53,140 @@ describe("MockGamApi", () => {
     api = new MockGamApi()
     api.setSession(receptionist)
     bd = businessDateOf(clock.now())
+  })
+
+  // Include released rows and operation history so a rejected mutation cannot
+  // hide an orphan hold/group or a partially released previous assignment.
+  function mutationState() {
+    const db = (api as unknown as { db: MockDb }).db
+    return structuredClone({
+      customers: db.customers,
+      reservations: db.reservations,
+      visits: db.visits,
+      waitlist: db.waitlist,
+      holds: db.holds,
+      groups: db.groups,
+      allocations: db.allocations,
+      operations: db.ops,
+      venue: db.venue,
+    })
+  }
+
+  it.each([
+    { codes: ["A0", "BAR11"], partySize: 2, code: "TABLE_ZONE_MISMATCH" },
+    { codes: ["A0", "B7"], partySize: 2, code: "TABLE_ZONE_MISMATCH" },
+    { codes: ["BAR11"], partySize: 2, code: "INSUFFICIENT_TABLE_CAPACITY" },
+    { codes: ["A10"], partySize: 2, code: "SPARE_TABLE_NOT_BOOKABLE" },
+  ])(
+    "atomically rejects direct booking $codes with $code even with owner override",
+    async ({ codes, partySize, code }) => {
+      api.setSession(owner)
+      const catalog = await api.getCatalog()
+      const tableIds = codes.map((code) => catalog.tables.find((table) => table.code === code)!.id)
+      const before = mutationState()
+      await expect(
+        api.createReservation({
+          contactName: "Rejected direct guest",
+          phone: "0901112233",
+          expectedAt: atBusinessTime(addDays(bd, 1), "23:00"),
+          sourceCode: "HOTLINE",
+          partySize,
+          tableIds,
+          overrideReason: "Owner approval cannot bypass HTTP rules",
+        }),
+      ).rejects.toMatchObject({ status: 409, code })
+      expect(mutationState()).toEqual(before)
+    },
+  )
+
+  it.each(["assignment", "reservation move", "visit move"] as const)(
+    "atomically rejects invalid %s destinations despite owner override",
+    async (operation) => {
+      api.setSession(owner)
+      const catalog = await api.getCatalog()
+      const ids = (codes: string[]) => codes.map((code) => catalog.tables.find((table) => table.code === code)!.id)
+      const created = await api.createReservation({
+        contactName: "Strict assignment guest",
+        partySize: 2,
+        expectedAt: atBusinessTime(bd, "23:00"),
+        sourceCode: "HOTLINE",
+        tableIds: ids(["B5", "B7"]),
+      })
+      const reservation = (await api.listReservations({ businessDate: bd })).find(
+        (row) => row.id === created.reservationId,
+      )!
+      if (operation === "visit move") {
+        await api.checkIn({ reservationId: reservation.id, version: reservation.version, guestCount: 2 })
+      }
+      const current = (await api.listReservations({ businessDate: bd })).find((row) => row.id === reservation.id)!
+      const visit =
+        operation === "visit move" ? (await api.listVisits(bd)).find((row) => row.id === current.visitId)! : null
+      const before = mutationState()
+      for (const [codes, code] of [
+        [["B5", "BAR18"], "TABLE_KIND_MISMATCH"],
+        [["BAR18"], "INSUFFICIENT_TABLE_CAPACITY"],
+        [["A10"], "SPARE_TABLE_NOT_BOOKABLE"],
+      ] as const) {
+        const tableIds = ids([...codes])
+        const request = visit
+          ? api.moveClaim({
+              claim: { visitId: visit.id, version: visit.version },
+              tableIds,
+              overrideReason: "Owner approval",
+            })
+          : operation === "reservation move"
+            ? api.moveClaim({
+                claim: { reservationId: reservation.id, version: reservation.version },
+                tableIds,
+                overrideReason: "Owner approval",
+              })
+            : api.assignTables(reservation.id, reservation.version, tableIds, "Owner approval")
+        await expect(request).rejects.toMatchObject({ status: 409, code })
+        expect(mutationState()).toEqual(before)
+      }
+    },
+  )
+
+  it("creates a same-zone Bar pair and permits cross-zone same-kind reassignment and movement", async () => {
+    const catalog = await api.getCatalog()
+    const ids = (codes: string[]) => codes.map((code) => catalog.tables.find((table) => table.code === code)!.id)
+    const pair = ids(["BAR18", "BAR19"])
+    const created = await api.createReservation({
+      contactName: "Compatible direct pair",
+      partySize: 2,
+      expectedAt: atBusinessTime(bd, "23:00"),
+      sourceCode: "HOTLINE",
+      tableIds: pair,
+    })
+    let row = (await api.listReservations({ businessDate: bd })).find((row) => row.id === created.reservationId)!
+    expect(row).toMatchObject({ tableIds: pair, status: "BOOKED", visitId: null })
+    expect(
+      (await api.getFloorState(clock.now(), bd)).groups.find((group) => group.tableIds.includes(pair[0]))?.tableIds,
+    ).toEqual(pair)
+    // Free the seeded A0 party through the public API before crossing zones.
+    const initialFloor = await api.getFloorState(clock.now(), bd)
+    const occupied = initialFloor.tables.find((table) => table.tableId === ids(["A0"])[0])!.claim!
+    await api.endVisit(occupied.visitId!, occupied.version)
+    const crossZone = ids(["A0", "B7"])
+    await api.assignTables(row.id, row.version, crossZone)
+    row = (await api.listReservations({ businessDate: bd })).find((item) => item.id === row.id)!
+    expect(row.tableIds).toEqual(crossZone)
+    await api.checkIn({ reservationId: row.id, version: row.version, guestCount: 2 })
+    row = (await api.listReservations({ businessDate: bd })).find((item) => item.id === row.id)!
+    const visit = (await api.listVisits(bd)).find((item) => item.id === row.visitId)!
+    const group = (await api.getFloorState(clock.now(), bd)).groups.find((item) =>
+      item.tableIds.includes(crossZone[0]),
+    )!
+    const destination = ids(["A0", "B5"])
+    await api.moveClaim({ claim: { visitId: visit.id, version: visit.version }, tableIds: destination })
+    const floor = await api.getFloorState(clock.now(), bd)
+    expect(floor.groups.find((item) => item.id === group.id)?.tableIds).toEqual(destination)
+    for (const tableId of destination) {
+      expect(floor.tables.find((table) => table.tableId === tableId)?.claim).toMatchObject({
+        visitId: visit.id,
+        groupId: group.id,
+      })
+    }
   })
 
   it("keeps classification in mock writes and exports privacy-filtered statistics", async () => {

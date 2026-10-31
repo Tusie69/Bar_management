@@ -82,15 +82,18 @@ describe("HTTP booking endpoints", () => {
       businessDate: current.businessDate,
       sourceCode: "HOTLINE",
     })
-    await api.createAndAssign({
-      guestName: "Khách API",
-      partySize: 2,
-      expectedAt: current.expectedAt,
-      businessDate: current.businessDate,
-      sourceCode: "HOTLINE",
-    }, [11, 12])
+    await api.createAndAssign(
+      {
+        guestName: "Khách API",
+        partySize: 2,
+        expectedAt: current.expectedAt,
+        businessDate: current.businessDate,
+        sourceCode: "HOTLINE",
+      },
+      [11, 12],
+    )
     await api.update(current, { partySize: 3 })
-    await api.cancel(current, "Khách gọi hủy")
+    await api.cancelVersion(current.id, current.version, "Khách gọi hủy")
 
     expect(requests.map(({ method, url }) => `${method} ${new URL(url).pathname}`)).toEqual([
       "GET /api/v1/bookings/7",
@@ -104,7 +107,7 @@ describe("HTTP booking endpoints", () => {
     expect(requests[4]?.body).toEqual({ version: 1, reasonNote: "Khách gọi hủy" })
   })
 
-  it("reads table state for the booking date and assigns through the backend transaction", async () => {
+  it("assigns through the backend transaction with the supplied booking version", async () => {
     const requests: { url: string; method: string; body: unknown }[] = []
     vi.stubGlobal(
       "fetch",
@@ -114,21 +117,19 @@ describe("HTTP booking endpoints", () => {
           method: init?.method ?? "GET",
           body: init?.body ? JSON.parse(String(init.body)) : null,
         })
-        const path = new URL(String(input)).pathname
-        if (path === "/api/v1/tables") {
-          return json({ tables: [{ id: 12, code: "A1", state: "AVAILABLE", isBackup: false }] })
-        }
         if (init?.method === "POST") return json({ booking: { ...booking, tableCodes: ["A1"], version: 2 } })
         return json({ booking })
       }),
     )
     const api = new HttpBookingApi(new HttpClient("http://api.test"))
     const current = await api.detail(7)
-    const tables = await api.assignmentTables("2030-10-24")
-    const assigned = await api.assign(current, [12])
+    const assigned = await api.assignVersion(current.id, current.version, [12])
 
-    expect(tables).toEqual([{ id: 12, code: "A1", state: "AVAILABLE", isSpare: false }])
     expect(assigned).toMatchObject({ tableCodes: ["A1"], version: 2 })
+    expect(requests.map(({ method, url }) => `${method} ${new URL(url).pathname}`)).toEqual([
+      "GET /api/v1/bookings/7",
+      "POST /api/v1/bookings/7/assign",
+    ])
     expect(requests.at(-1)).toMatchObject({
       method: "POST",
       body: { version: 1, tableIds: [12] },

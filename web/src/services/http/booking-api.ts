@@ -8,9 +8,6 @@ import {
   directBookingCreatePayload,
   fullUpdateBookingPayload,
   mapBooking,
-  mapAssignmentTable,
-  type AssignmentTable,
-  type BackendAssignmentTablePayload,
   type BackendBookingPayload,
   type BookingWriteFields,
   type HttpBooking,
@@ -78,10 +75,6 @@ export class HttpBookingApi {
     return mapBooking(response.booking)
   }
 
-  async cancel(current: HttpBooking, reasonNote?: string): Promise<HttpBooking> {
-    return this.cancelVersion(current.id, current.version, reasonNote)
-  }
-
   async cancelVersion(id: number, version: number, reasonNote?: string): Promise<HttpBooking> {
     const response = await this.client.post<{ booking: BackendBookingPayload }>(
       `/bookings/${id}/cancel`,
@@ -98,18 +91,6 @@ export class HttpBookingApi {
       { reviver: dateReviver },
     )
     return mapBooking(response.booking)
-  }
-
-  async assignmentTables(businessDate: BusinessDate): Promise<AssignmentTable[]> {
-    const response = await this.client.get<{ tables: BackendAssignmentTablePayload[] }>(
-      `/tables?date=${businessDate}`,
-      { reviver: dateReviver },
-    )
-    return response.tables.map(mapAssignmentTable)
-  }
-
-  async assign(current: HttpBooking, tableIds: number[]): Promise<HttpBooking> {
-    return this.assignVersion(current.id, current.version, tableIds)
   }
 
   async assignVersion(id: number, version: number, tableIds: number[]): Promise<HttpBooking> {

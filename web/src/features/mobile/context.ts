@@ -23,6 +23,10 @@ export interface TablePick {
   only?: number[]
   exclude?: number[]
   preselected?: number[]
+  targetDate?: BusinessDate
+  targetTime?: string
+  targetExpectedAt?: Date
+  targetParty?: number
   confirmLabel: string
   onConfirm: (ids: number[]) => Promise<boolean>
 }

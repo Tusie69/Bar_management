@@ -282,6 +282,34 @@ export class MockGamApi implements GamApi, DemoControls {
 
   /* ================= claim helpers ================= */
 
+  /** Booking endpoints and visit moves do not accept the demo walk-in overrides. */
+  private assertBookingTables(tableIds: number[], partySize: number, sameZone = false) {
+    if (!tableIds.length) throw new ApiError(400, "TABLE_REQUIRED", "Cần chọn ít nhất một bàn.")
+    const tables = tableIds.map((id) => this.db.tables.get(id))
+    if (tables.some((table) => !table || table.status !== "ACTIVE")) {
+      throw new ApiError(400, "TABLE_NOT_FOUND", "Có bàn không tồn tại hoặc ngừng hoạt động.")
+    }
+    const selected = tables.filter((table) => table !== undefined)
+    const nonBookable = selected.find((table) => !this.db.zones.get(table.zoneId)?.isBookable)
+    if (nonBookable) throw new ApiError(409, "ZONE_NOT_BOOKABLE", `Khu của bàn ${nonBookable.code} không nhận khách.`)
+    const spare = selected.find((table) => table.isSpare)
+    if (spare) throw new ApiError(409, "SPARE_TABLE_NOT_BOOKABLE", `Bàn ${spare.code} là bàn sơ cua.`)
+    if (sameZone && new Set(selected.map((table) => table.zoneId)).size > 1) {
+      throw new ApiError(409, "TABLE_ZONE_MISMATCH", "Chỉ có thể gán các bàn trong cùng một khu vực.")
+    }
+    if (new Set(selected.map((table) => table.kind)).size > 1) {
+      throw new ApiError(409, "TABLE_KIND_MISMATCH", "Không thể ghép bàn thường với ghế Bar.")
+    }
+    const capacity = selected.reduce((total, table) => total + table.capacity, 0)
+    if (capacity < partySize) {
+      throw new ApiError(
+        409,
+        "INSUFFICIENT_TABLE_CAPACITY",
+        `Các bàn đã chọn chỉ có ${capacity} chỗ cho ${partySize} khách.`,
+      )
+    }
+  }
+
   private assertClaimable(
     tableIds: number[],
     o: {
@@ -807,6 +835,7 @@ export class MockGamApi implements GamApi, DemoControls {
         })
         let summary = `Booking ${fmtTime(input.expectedAt)} · ${input.partySize} khách`
         if (tableIds.length) {
+          this.assertBookingTables(tableIds, input.partySize, true)
           this.assertClaimable(tableIds, {
             bd,
             at: input.expectedAt,
@@ -888,6 +917,7 @@ export class MockGamApi implements GamApi, DemoControls {
     if (tableIds.length) this.maybeTriggerConflict(tableIds[0], r.businessDate, r.expectedAt)
     return this.commit({ action: "TABLE_ASSIGNED", entityType: "reservation", undoable: true }, (tx) => {
       const hold = activeReservationHold(this.db, r.id)
+      this.assertBookingTables(tableIds, r.partySize)
       this.assertClaimable(tableIds, {
         bd: r.businessDate,
         at: r.expectedAt,
@@ -1245,6 +1275,7 @@ export class MockGamApi implements GamApi, DemoControls {
         undoable: true,
       },
       (tx) => {
+        if (input.claim.visitId || input.claim.reservationId) this.assertBookingTables(targetIds, party)
         this.assertClaimable(targetIds, {
           bd: first.businessDate,
           at,

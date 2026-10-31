@@ -292,14 +292,29 @@ function ReservationList({
           onClick={(e) => {
             e.stopPropagation()
             navigate("/floor")
-            ui.setFloorMode("live")
+            ui.setAvailability({
+              date: r.businessDate,
+              time: fmtTime(r.expectedAt),
+              party: r.partySize,
+            })
+            ui.setFloorMode(r.businessDate === today ? "live" : "availability")
             ui.startPick({
               intent: "assign",
+              targetDate: r.businessDate,
+              targetTime: fmtTime(r.expectedAt),
+              targetExpectedAt: r.expectedAt,
+              targetParty: r.partySize,
+              preselected: r.tableIds,
               title: `Phân bàn cho ${r.displayName} · ${r.partySize} khách`,
-              hint: `Booking ${fmtTime(r.expectedAt)} ${r.businessDate !== today ? fmtBusinessDate(r.businessDate, "short") : ""}. Chạm bàn trống.`,
+              hint: `Booking ${fmtTime(r.expectedAt)}${r.businessDate !== today ? ` ngày ${fmtBusinessDate(r.businessDate, "short")}` : ""}. Chạm bàn khả dụng.`,
               multi: true,
               confirmLabel: "Phân bàn",
               onConfirm: async (ids) => {
+                const kinds = new Set(ids.map((id) => tables.find((t) => t.id === id)?.kind).filter(Boolean))
+                if (kinds.size > 1) {
+                  toast.error("Không thể ghép bàn thường với ghế Bar.")
+                  return false
+                }
                 const totalCapacity = ids.reduce(
                   (sum, id) => sum + (tables.find((t) => t.id === id)?.capacity ?? 0),
                   0,

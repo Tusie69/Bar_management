@@ -2,7 +2,8 @@ import { X } from "lucide-react"
 import { useMemo } from "react"
 import type { TableLiveState } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
-import { fmtTime12, MS } from "@/lib/time"
+import { useAvailability } from "@/hooks/use-data"
+import { fmtBusinessDate, fmtTime12, MS } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
@@ -42,33 +43,65 @@ export function MapScreen({
   const m = useM()
   const zone = useUi((s) => s.zone)
   const setZone = useUi((s) => s.setZone)
+
+  const isAssignPick = !!pick?.targetExpectedAt
+  const pickAvail = useAvailability(isAssignPick ? pick.targetExpectedAt! : null, pick?.targetParty ?? 2)
+  const pickAvailMap = useMemo(
+    () => new Map((pickAvail.data?.tables ?? []).map((t) => [t.tableId, t])),
+    [pickAvail.data],
+  )
+
   const pickable = useMemo(() => {
     if (!pick) return null
+    if (isAssignPick) {
+      const availTables = pickAvail.data?.tables ?? []
+      const ids = new Set<number>()
+      for (const t of availTables) {
+        if (t.status === "available" || t.status === "spare" || t.status === "too_small") {
+          ids.add(t.tableId)
+        }
+      }
+      for (const id of pick.preselected ?? []) ids.add(id)
+      for (const id of pick.exclude ?? []) ids.delete(id)
+      return ids
+    }
     const ids = new Set(pick.only ?? [...m.model.freeIds, ...(pick.preselected ?? [])])
     for (const id of pick.exclude ?? []) ids.delete(id)
     return ids
-  }, [pick, m.model.freeIds])
+  }, [pick, isAssignPick, pickAvail.data, m.model.freeIds])
+
   const claimIds = selected ? (m.model.states.get(selected)?.claim?.tableIds ?? [selected]) : []
 
   return (
     <>
-      <PlainHeader title="Sơ đồ bàn" />
+      <PlainHeader
+        title={
+          pick?.targetDate
+            ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}`
+            : "Sơ đồ bàn"
+        }
+      />
       <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
         {m.model.catalog ? (
           <FloorCanvas
             className="absolute inset-0"
             tables={m.model.tables}
             zones={m.model.catalog.zones}
-            mode="live"
+            mode={isAssignPick ? "availability" : "live"}
             states={m.model.states}
-            groups={m.model.floor?.groups}
+            availability={isAssignPick ? pickAvailMap : undefined}
+            groups={isAssignPick ? [] : m.model.floor?.groups}
             selectedIds={pick ? pickSel : claimIds}
             pickable={pickable}
             zoneFocus={zone}
             now={m.now}
             onTableClick={(id) => (pick ? onPickToggle(id) : onSelect(id))}
             onBackgroundClick={() => (pick ? undefined : onSelect(null))}
-            ariaLabel="Sơ đồ bàn. Kéo để di chuyển, chụm hai ngón để phóng to"
+            ariaLabel={
+              isAssignPick
+                ? `Sơ đồ khả dụng lúc ${pick.targetTime} ngày ${fmtBusinessDate(pick.targetDate!, "short")}`
+                : "Sơ đồ bàn. Kéo để di chuyển, chụm hai ngón để phóng to"
+            }
           />
         ) : null}
 
@@ -77,6 +110,11 @@ export function MapScreen({
             <span className="flex min-w-0 flex-1 flex-col">
               <span className="text-[14px] font-semibold text-tx-strong">{pick.title}</span>
               <span className="text-[13px] text-pretty text-[var(--text-muted)]">{pick.hint}</span>
+              {pick.targetDate ? (
+                <span className="mt-0.5 text-[12px] font-medium text-primary">
+                  Lịch đặt: {pick.targetTime} · {fmtBusinessDate(pick.targetDate, "short")} ({pick.targetParty} khách)
+                </span>
+              ) : null}
             </span>
             <button
               type="button"
@@ -119,7 +157,14 @@ export function MapScreen({
         {pick ? (
           <div className="absolute inset-x-0 bottom-0 z-[12] flex flex-col gap-2.5 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-4 shadow-[var(--shadow-float)]">
             <span className="text-[13px] text-[var(--text-muted)]">
-              {pickSel.length ? `Đã chọn ${codesOf(pickSel, m.model)}` : "Chưa chọn bàn"}
+              {pickSel.length ? (
+                <>
+                  Đã chọn {codesOf(pickSel, m.model)} ·{" "}
+                  {pickSel.reduce((sum, id) => sum + (m.model.byId.get(id)?.capacity ?? 0), 0)} chỗ
+                </>
+              ) : (
+                "Chưa chọn bàn"
+              )}
             </span>
             <button
               type="button"

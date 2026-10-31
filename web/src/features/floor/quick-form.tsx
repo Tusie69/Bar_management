@@ -38,19 +38,50 @@ import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
 import { toast } from "sonner"
+import type { TableView } from "@/domain/models"
 import type { FloorModel } from "./use-floor-model"
 
 const PICKABLE = new Set(["available", "spare", "too_small"])
+
+export function checkDirectTableCompatibility(
+  tableIds: number[],
+  byId: Map<number, TableView>,
+): string | null {
+  if (tableIds.length <= 1) return null
+  const first = byId.get(tableIds[0])
+  if (!first) return null
+  for (let i = 1; i < tableIds.length; i++) {
+    const t = byId.get(tableIds[i])
+    if (!t) continue
+    if (t.zoneId !== first.zoneId) {
+      return "Chỉ có thể chọn các bàn trong cùng một khu vực."
+    }
+    if (t.kind !== first.kind) {
+      return "Không thể ghép bàn thường với ghế Bar."
+    }
+  }
+  return null
+}
 
 export function draftPickable(
   kind: "booking" | "walkin",
   id: number,
   model: FloorModel,
   availability: AvailabilityResult | undefined,
+  currentTableIds?: number[],
 ): boolean {
   if (kind === "walkin") return model.freeIds.has(id)
   const st = availability?.tables.find((t) => t.tableId === id)?.status
-  return !!st && PICKABLE.has(st)
+  if (!st || !PICKABLE.has(st)) return false
+  if (currentTableIds && currentTableIds.length > 0 && !currentTableIds.includes(id)) {
+    const first = model.byId.get(currentTableIds[0])
+    const candidate = model.byId.get(id)
+    if (first && candidate) {
+      if (candidate.zoneId !== first.zoneId) return false
+      if (candidate.kind !== first.kind) return false
+    }
+  }
+  return true
 }
 
 const label12 = "text-xs text-tx-2"
@@ -116,21 +147,26 @@ export function QuickForm({
         ? `Ngày mai · ${fmtDayMonth(bd)}`
         : fmtBusinessDate(bd).replace(", ", " · ")
 
-  const blocked = draft.tableIds.filter((id) => !draftPickable(draft.kind, id, model, availability))
+  const compatError = isB ? checkDirectTableCompatibility(draft.tableIds, model.byId) : null
+  const blocked = draft.tableIds.filter((id) => !draftPickable(draft.kind, id, model, availability, draft.tableIds))
   const cap = draft.tableIds.reduce((s, id) => s + (model.byId.get(id)?.capacity ?? 0), 0)
   const short = party === null ? 0 : party - cap
 
   // Best-fit free tables (same order as the old walk-in sheet) so a walk-in stays two taps.
   const zoneOk = new Set(model.catalog?.zones.filter((z) => z.isBookable).map((z) => z.id))
+  const selectedFirstTable = draft.tableIds.length > 0 ? model.byId.get(draft.tableIds[0]) : null
   const suggestions = model.tables
     .filter(
       (t) => t.kind === "TABLE" && zoneOk.has(t.zoneId) && t.capacity >= draft.party && !draft.tableIds.includes(t.id),
     )
-    .filter((t) =>
-      isB
+    .filter((t) => {
+      if (selectedFirstTable && (t.zoneId !== selectedFirstTable.zoneId || t.kind !== selectedFirstTable.kind)) {
+        return false
+      }
+      return isB
         ? availability?.tables.find((a) => a.tableId === t.id)?.status === "available"
-        : model.states.get(t.id)?.state === "free",
-    )
+        : model.states.get(t.id)?.state === "free"
+    })
     .sort((a, b) => a.capacity - b.capacity || a.code.localeCompare(b.code))
     .slice(0, 5)
 
@@ -139,8 +175,12 @@ export function QuickForm({
 
   const submit = async () => {
     setTried(true)
-    if (Object.keys(errors).length || blocked.length || party === null) return
+    if (Object.keys(errors).length || blocked.length || party === null || compatError) return
     if (isB) {
+      if (compatError) {
+        toast.error(compatError)
+        return
+      }
       if (draft.tableIds.length > 0 && short > 0) {
         toast.error(
           `Các bàn đã chọn chỉ có ${cap} chỗ cho ${party} khách. Chọn thêm bàn phù hợp hoặc bỏ chọn bàn để xếp sau.`,
@@ -377,6 +417,8 @@ export function QuickForm({
               </div>
               {blocked.length ? (
                 <FieldError>{`${blocked.map((id) => model.label(id)).join(", ")} không còn trống · bỏ chọn để tiếp tục`}</FieldError>
+              ) : compatError ? (
+                <FieldError>{compatError}</FieldError>
               ) : (
                 <span className={cn("tnum text-xs", short > 0 ? "text-st-late-ink" : "text-tx-2")}>
                   {party === null

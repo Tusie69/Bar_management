@@ -166,19 +166,24 @@ export function BookingTimePicker({
   const allPast = past.length === allSlots.length
   const valid = isBookingSlot(value) && !error
   const selected = allSlots.find((slot) => slot.time === value)
+  const enabledSlots = allSlots.filter((slot) => !slot.disabled)
+  const isSelectedEnabled = valid && enabledSlots.some((slot) => slot.time === value)
+  const rovingStopTime = isSelectedEnabled ? value : enabledSlots[0]?.time
   const slotRefs = useRef(new Map<string, HTMLButtonElement>())
 
   const selectWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>, time: string) => {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return
     event.preventDefault()
     const enabled = allSlots.filter((slot) => !slot.disabled)
     if (!enabled.length) return
-    const current = Math.max(0, enabled.findIndex((slot) => slot.time === time))
+    const current = enabled.findIndex((slot) => slot.time === time)
+    const baseIdx = current >= 0 ? current : 0
+    const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1
     const next = event.key === "Home"
       ? enabled[0]
       : event.key === "End"
         ? enabled[enabled.length - 1]
-        : enabled[Math.min(enabled.length - 1, Math.max(0, current + (event.key === "ArrowRight" ? 1 : -1)))]
+        : enabled[Math.min(enabled.length - 1, Math.max(0, baseIdx + step))]
     onChange(next.time)
     requestAnimationFrame(() => slotRefs.current.get(next.time)?.focus())
   }
@@ -221,11 +226,7 @@ export function BookingTimePicker({
                   role="radio"
                   aria-checked={on}
                   disabled={s.disabled}
-                  tabIndex={
-                    on || (!isBookingSlot(value) && !s.disabled && allSlots.find((item) => !item.disabled)?.time === s.time)
-                      ? 0
-                      : -1
-                  }
+                  tabIndex={!s.disabled && s.time === rovingStopTime ? 0 : -1}
                   aria-label={`${s.label} (${s.time})${s.nextDay ? `, hôm sau ${fmtDayMonth(s.calendarDate)}` : ""}${s.disabled ? ", đã qua" : ""}`}
                   className={chip(on)}
                   onClick={() => onChange(s.time)}

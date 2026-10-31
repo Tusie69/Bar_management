@@ -1,5 +1,6 @@
 import type { ClaimView, ReservationView } from "@/domain/models"
 import { useAction } from "@/hooks/use-action"
+import { fmtTime } from "@/lib/time"
 import { api } from "@/services"
 import { toast } from "sonner"
 import { useM } from "./context"
@@ -21,11 +22,20 @@ export function useMobileActions() {
   const assign = (r: ReservationView) =>
     m.startPick({
       title: `${r.tableIds.length ? "Đổi bàn" : "Xếp bàn"} cho ${r.displayName}`,
-      hint: `Chạm bàn trống cho ${r.partySize} khách. Chạm lại để bỏ chọn.`,
+      hint: `Chạm bàn khả dụng cho ${r.partySize} khách. Chạm lại để bỏ chọn.`,
       multi: true,
       preselected: r.tableIds,
+      targetDate: r.businessDate,
+      targetTime: fmtTime(r.expectedAt),
+      targetExpectedAt: r.expectedAt,
+      targetParty: r.partySize,
       confirmLabel: r.tableIds.length ? "Đổi bàn" : "Xếp bàn",
       onConfirm: async (ids) => {
+        const kinds = new Set(ids.map((id) => m.model.byId.get(id)?.kind).filter(Boolean))
+        if (kinds.size > 1) {
+          toast.error("Không thể ghép bàn thường với ghế Bar.")
+          return false
+        }
         const totalCapacity = ids.reduce((sum, id) => sum + (m.model.byId.get(id)?.capacity ?? 0), 0)
         if (totalCapacity < r.partySize) {
           toast.error(

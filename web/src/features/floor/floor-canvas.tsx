@@ -820,6 +820,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
   selected,
   dim,
   pickHint,
+  disabled,
   onActivate,
   avail,
 }: GlyphBase & { avail?: TableAvailability }) {
@@ -850,7 +851,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
       : status === "too_small"
         ? `${t.capacity} chỗ`
         : AVAIL_LABEL[status]
-  const desc = `${t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`}: ${avail?.reason ?? ""}`
+  const desc = `${t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`}: ${avail?.reason || AVAIL_LABEL[status] || ""}`
   const opacity = dim ? 0.3 : faded ? 0.45 : 1
   if (t.kind === "BAR_SEAT") {
     return (
@@ -860,7 +861,8 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
         tabIndex={dim ? -1 : 0}
         aria-label={desc}
         aria-pressed={selected}
-        className="cursor-pointer outline-none [&:focus-visible_.focus-ring]:opacity-100"
+        aria-disabled={disabled}
+        className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
         opacity={opacity}
         onClick={() => onActivate(t.id)}
         onKeyDown={(e) => onKey(e, t.id, onActivate)}
@@ -906,7 +908,8 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
       tabIndex={dim ? -1 : 0}
       aria-label={desc}
       aria-pressed={selected}
-      className="cursor-pointer outline-none [&:focus-visible_.focus-ring]:opacity-100"
+      aria-disabled={disabled}
+      className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
       opacity={opacity}
       onClick={() => onActivate(t.id)}
       onKeyDown={(e) => onKey(e, t.id, onActivate)}

@@ -94,18 +94,40 @@ function Detail({ r }: { r: ReservationView }) {
   const pickOnFloor = (intent: "assign" | "checkin", count?: number) => {
     ui.openReservation(null)
     navigate("/floor")
-    ui.setFloorMode("live")
+    if (intent === "assign") {
+      ui.setAvailability({
+        date: r.businessDate,
+        time: fmtTime(r.expectedAt),
+        party: r.partySize,
+      })
+      ui.setFloorMode(r.businessDate === businessDateOf(now) ? "live" : "availability")
+    } else {
+      ui.setFloorMode("live")
+    }
     ui.startPick({
       intent,
+      targetDate: r.businessDate,
+      targetTime: fmtTime(r.expectedAt),
+      targetExpectedAt: r.expectedAt,
+      targetParty: r.partySize,
+      preselected: r.tableIds,
       title:
         intent === "assign"
-          ? `Phân bàn cho ${r.displayName} · ${r.partySize} khách`
+          ? `${r.tableIds.length ? "Đổi bàn" : "Phân bàn"} cho ${r.displayName} · ${r.partySize} khách`
           : `Check-in ${r.displayName} vào bàn`,
-      hint: `Booking ${fmtTime(r.expectedAt)}${r.businessDate !== businessDateOf(now) ? ` ngày ${fmtBusinessDate(r.businessDate, "short")}` : ""}. Chạm một hoặc nhiều bàn trống.`,
+      hint:
+        intent === "assign"
+          ? `Booking ${fmtTime(r.expectedAt)}${r.businessDate !== businessDateOf(now) ? ` ngày ${fmtBusinessDate(r.businessDate, "short")}` : ""}. Chạm bàn khả dụng.`
+          : `Booking ${fmtTime(r.expectedAt)}. Chạm một hoặc nhiều bàn trống.`,
       multi: true,
-      confirmLabel: intent === "assign" ? "Phân bàn" : "Check-in",
+      confirmLabel: intent === "assign" ? (r.tableIds.length ? "Đổi bàn" : "Phân bàn") : "Check-in",
       onConfirm: async (ids) => {
         if (intent === "assign") {
+          const kinds = new Set(ids.map((id) => catalog.data?.tables.find((t) => t.id === id)?.kind).filter(Boolean))
+          if (kinds.size > 1) {
+            toast.error("Không thể ghép bàn thường với ghế Bar.")
+            return false
+          }
           const totalCapacity = ids.reduce(
             (sum, id) => sum + (catalog.data?.tables.find((t) => t.id === id)?.capacity ?? 0),
             0,
