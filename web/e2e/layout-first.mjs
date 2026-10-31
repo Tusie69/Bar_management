@@ -258,16 +258,10 @@ try {
     [deviceA, menuA],
     [deviceB, menuB],
   ]) {
-    const revealResponse = page.waitForResponse(
-      (response) => response.url().endsWith("/phone:reveal") && response.request().method() === "POST",
-    )
-    await menu.getByRole("button", { name: "Gọi khách" }).click()
-    const response = await revealResponse
-    if (response.status() !== 200) throw new Error(`Phone reveal failed with ${response.status()}`)
-    const dialerLink = menu.getByRole("link", { name: `Gọi ${guestOne}` })
-    await dialerLink.waitFor()
-    if ((await dialerLink.getAttribute("href")) !== "tel:+84987654321") {
-      throw new Error("Dialer handoff did not use the selected booking E.164 number")
+    const revealButton = menu.getByRole("button", { name: "Gọi khách" })
+    if (await revealButton.isEnabled()) throw new Error("Receptionist must not be able to reveal booking phone data")
+    if ((await page.getByRole("link", { name: `Gọi ${guestOne}` }).count()) !== 0) {
+      throw new Error("Receptionist unexpectedly received a tel: handoff")
     }
   }
   await menuA.getByRole("button", { name: "Sửa booking" }).click()
@@ -433,9 +427,8 @@ try {
       createAssign: "PASS",
       spareAndOosBlocked: "PASS",
       bookingActionMenu: "PASS",
-      phoneRevealDesktop: "PASS",
-      phoneRevealMobile: "PASS",
-      telUri: "PASS",
+      receptionistPhoneRevealDeniedDesktop: "PASS",
+      receptionistPhoneRevealDeniedMobile: "PASS",
       edit: "PASS",
       staleVersionConflict: "PASS",
       reassign: "PASS",

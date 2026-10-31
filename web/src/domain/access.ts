@@ -65,7 +65,7 @@ export const PERMISSION_MATRIX: Record<Permission, RoleCode[]> = {
   "hold.release": [OA, R],
   "customer.view_masked": [OA, R, CC, C],
   "customer.phone.reveal": [OA],
-  "booking.phone.reveal": [OA, R],
+  "booking.phone.reveal": [OA],
   "customer.anonymize": [OA],
   "audit.read": [OA],
   "report.read": [OA],

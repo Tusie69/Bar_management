@@ -7,6 +7,8 @@ Base URL môi trường phát triển: `http://localhost:3000/api/v1`.
 - JSON dùng UTF-8.
 - Lỗi nghiệp vụ trả về `error.code` ổn định và `error.message` bằng tiếng Việt.
 - API dành cho Lễ tân không được trả số điện thoại đầy đủ.
+- Mở số điện thoại booking yêu cầu đồng thời `booking.phone.reveal` và `customer.phone.reveal`; policy hiện tại chỉ
+  cấp cả hai quyền cho `OWNER_ADMIN`. Lễ tân chỉ nhận dữ liệu đã che và không được tạo liên kết `tel:` từ số đã lưu.
 - Ngày nghiệp vụ chạy từ 17:00 đến 05:00 hôm sau và sẽ dùng trường `businessDate` theo định dạng `YYYY-MM-DD`.
 - Giờ nhận booking mới hoặc giờ booking được đổi chỉ trong 19:00–01:00 giờ Việt Nam, tính cả hai mốc. Backend
   chấp nhận mọi phút trong cửa sổ này; UI dùng cấu hình hiện hữu 13 mốc cách nhau 30 phút. Quy tắc này không áp dụng

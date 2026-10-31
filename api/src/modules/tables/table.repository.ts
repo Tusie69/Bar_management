@@ -370,9 +370,9 @@ export async function listTables(actor: AuthenticatedActor, businessDate: string
      ) AS a ON a.table_id = dt.id
      LEFT JOIN visits AS v ON v.venue_id = dt.venue_id AND v.id = a.active_visit_id AND v.ended_at IS NULL
      LEFT JOIN customers AS c ON c.organization_id = v.organization_id AND c.id = v.customer_id
-     WHERE dt.venue_id = ? AND dt.status <> 'RETIRED'
+     WHERE dt.organization_id = ? AND dt.venue_id = ? AND dt.status <> 'RETIRED'
      ORDER BY z.sort_order, dt.id`,
-    [actor.venueId, businessDate, actor.venueId],
+    [actor.venueId, businessDate, actor.organizationId, actor.venueId],
   )
   return rows.map(toTableView)
 }

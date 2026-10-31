@@ -124,12 +124,12 @@ LEFT JOIN dining_tables AS dt ON dt.venue_id = r.venue_id AND dt.id = a.table_id
 export async function listBookings(actor: AuthenticatedActor, businessDate: string): Promise<BookingView[]> {
   const [rows] = await databasePool.execute<BookingRow[]>(
     `${bookingSelect}
-     WHERE r.venue_id = ? AND r.business_date = ?
+     WHERE r.organization_id = ? AND r.venue_id = ? AND r.business_date = ?
      GROUP BY r.id, c.display_name, r.contact_name, r.phone_last3, c.phone_last3, r.party_size, r.expected_at,
        r.business_date, r.customer_classification, r.status, bs.name, bs.code, r.note, r.version,
        v.late_warning_minutes, v.no_show_warning_minutes
      ORDER BY r.expected_at, r.id`,
-    [actor.venueId, businessDate],
+    [actor.organizationId, actor.venueId, businessDate],
   )
   return rows.map((row) => toBooking(row))
 }
@@ -165,11 +165,11 @@ export async function getBookingById(
 ): Promise<BookingView> {
   const [rows] = await connection.execute<BookingRow[]>(
     `${bookingSelect}
-     WHERE r.venue_id = ? AND r.id = ?
+     WHERE r.organization_id = ? AND r.venue_id = ? AND r.id = ?
      GROUP BY r.id, c.display_name, r.contact_name, r.phone_last3, c.phone_last3, r.party_size, r.expected_at,
        r.business_date, r.customer_classification, r.status, bs.name, bs.code, r.note, r.version,
        v.late_warning_minutes, v.no_show_warning_minutes`,
-    [actor.venueId, id],
+    [actor.organizationId, actor.venueId, id],
   )
   const row = rows[0]
   if (!row) throw new AppError(404, 'BOOKING_NOT_FOUND', 'Không tìm thấy đặt bàn.')

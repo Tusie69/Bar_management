@@ -7,6 +7,18 @@ import mysql from 'mysql2/promise'
 import { env } from '../config/env.js'
 
 const migrationsDirectory = path.resolve(process.cwd(), 'database', 'migrations')
+
+function migrationChecksums(sql: string): { canonical: string; accepted: Set<string> } {
+  const normalized = sql.replace(/\r\n/g, '\n')
+  const digest = (value: string) => createHash('sha256').update(value).digest('hex')
+  return {
+    canonical: digest(normalized),
+    // Existing databases may have recorded either checkout representation.
+    // Accept only line-ending-equivalent bytes; every other content change still fails closed.
+    accepted: new Set([digest(sql), digest(normalized), digest(normalized.replace(/\n/g, '\r\n'))]),
+  }
+}
+
 const connection = await mysql.createConnection({
   host: env.database.host,
   port: env.database.port,
@@ -33,14 +45,15 @@ try {
 
   for (const filename of filenames) {
     const sql = await readFile(path.join(migrationsDirectory, filename), 'utf8')
-    const checksum = createHash('sha256').update(sql).digest('hex')
+    const checksums = migrationChecksums(sql)
     const [rows] = await connection.execute<mysql.RowDataPacket[]>(
       'SELECT checksum FROM schema_migrations WHERE filename = ?',
       [filename],
     )
 
     if (rows[0]) {
-      if (rows[0].checksum !== checksum) {
+      const appliedChecksum: unknown = rows[0].checksum
+      if (typeof appliedChecksum !== 'string' || !checksums.accepted.has(appliedChecksum)) {
         throw new Error(`Migration đã bị thay đổi sau khi chạy: ${filename}`)
       }
       console.log(`Bỏ qua ${filename} (đã chạy)`)
@@ -51,7 +64,7 @@ try {
     await connection.query(sql)
     await connection.execute(
       'INSERT INTO schema_migrations (filename, checksum) VALUES (?, ?)',
-      [filename, checksum],
+      [filename, checksums.canonical],
     )
   }
 

@@ -11,7 +11,7 @@ import {
   type ContactChannel,
 } from './waitlist.repository.js'
 
-export const waitlistRouter = Router()
+export const waitlistRouter: Router = Router()
 const contactChannels = new Set<ContactChannel>(['IN_PERSON', 'PHONE_CALLBACK', 'ZALO_THREAD', 'FANPAGE_THREAD', 'OTHER'])
 
 function objectBody(value: unknown): Record<string, unknown> {

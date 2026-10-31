@@ -5,7 +5,7 @@ import { requireAuthentication, requireCsrfProtection, requirePermission } from 
 import { AppError } from '../../errors/app-error.js'
 import { closeVisit, mergeVisitTables, moveVisit, type CloseVisitMode, type ManualCloseReason } from './visit.repository.js'
 
-export const visitRouter = Router()
+export const visitRouter: Router = Router()
 
 const closeModes = new Set<CloseVisitMode>(['MANUAL', 'AFTER_PAYMENT'])
 const manualReasons = new Set<ManualCloseReason>(['GUEST_LEFT', 'ENTRY_ERROR'])

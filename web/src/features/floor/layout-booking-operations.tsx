@@ -159,7 +159,9 @@ function BookingActionMenu({
   const canCancel = useCan("reservation.cancel")
   const canCheckIn = useCan("visit.checkin")
   const canCombine = useCan("visit.combine")
-  const canRevealPhone = useCan("booking.phone.reveal")
+  const canRevealBookingPhone = useCan("booking.phone.reveal")
+  const canRevealCustomerPhone = useCan("customer.phone.reveal")
+  const canRevealPhone = canRevealBookingPhone && canRevealCustomerPhone
   const [revealedPhone, setRevealedPhone] = useState<string | null>(null)
   const [revealPending, setRevealPending] = useState(false)
   const [revealError, setRevealError] = useState<string | null>(null)

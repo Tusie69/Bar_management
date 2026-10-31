@@ -23,7 +23,7 @@ import { formatDailyBookingText, getDailyBookingTextInput } from './booking-expo
 import { assertCurrentBusinessDate, validateCalendarDate } from './business-date.js'
 import { PhoneRevealRateLimiter } from './phone-rate-limit.js'
 
-export const bookingRouter = Router()
+export const bookingRouter: Router = Router()
 const phoneRevealLimiter = env.phone.revealRateLimitMax && env.phone.revealRateLimitWindowMs
   ? new PhoneRevealRateLimiter(env.phone.revealRateLimitMax, env.phone.revealRateLimitWindowMs)
   : null
@@ -155,6 +155,7 @@ bookingRouter.post(
   requireAuthentication,
   requireCsrfProtection,
   requirePermission('booking.phone.reveal'),
+  requirePermission('customer.phone.reveal'),
   async (request, response) => {
     const id = positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.')
     const actor = requireAuthenticatedActor(request)

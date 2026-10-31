@@ -6,7 +6,7 @@ import { AppError } from '../../errors/app-error.js'
 import { configureTable, getTableCatalog, listActiveTableGroups, listTables, updateTableState } from './table.repository.js'
 import { isTableState } from './table-state.js'
 
-export const tableRouter = Router()
+export const tableRouter: Router = Router()
 
 function parseBusinessDate(value: unknown): string {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {

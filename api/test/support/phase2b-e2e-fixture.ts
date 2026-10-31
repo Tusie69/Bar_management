@@ -78,8 +78,8 @@ async function verifyPhoneAudit() {
      FROM operation_log WHERE organization_id = ? AND action = 'CUSTOMER_PHONE_REVEAL'`,
     [organizationId],
   );
-  if (Number(rows[0]?.total) < 2 || Number(rows[0]?.unsafe) !== 0)
-    throw new Error("Phone reveal audit verification failed");
+  if (Number(rows[0]?.total) !== 0 || Number(rows[0]?.unsafe) !== 0)
+    throw new Error("Denied phone reveal unexpectedly created an audit record");
   console.log(`phone-reveal-audit=${Number(rows[0]?.total)};plaintext=0`);
 }
 

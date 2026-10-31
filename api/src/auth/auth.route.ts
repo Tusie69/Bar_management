@@ -6,7 +6,7 @@ import { requireAuthentication, requireCsrfProtection } from './auth.middleware.
 import { listPermissions, login, logoutSession } from './auth.service.js'
 import { clearSessionCookie, createCsrfToken, setSessionCookie } from './session-security.js'
 
-export const authRouter = Router()
+export const authRouter: Router = Router()
 
 const loginWindowMs = 15 * 60 * 1000
 const maxLoginAttempts = 5
