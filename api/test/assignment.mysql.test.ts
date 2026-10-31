@@ -17,7 +17,8 @@ import {
   createWalkIn,
   mergeBookingTables,
 } from '../src/modules/bookings/booking.repository.js'
-import { listActiveTableGroups } from '../src/modules/tables/table.repository.js'
+import { listActiveTableGroups, listTables } from '../src/modules/tables/table.repository.js'
+import { runBusinessDayEndSweep } from '../src/modules/visits/business-day.worker.js'
 import { closeVisit, mergeVisitTables, moveVisit } from '../src/modules/visits/visit.repository.js'
 
 const integrationEnabled = process.env.RUN_MYSQL_INTEGRATION === '1' && /_test$/.test(process.env.DB_NAME ?? '')
@@ -435,6 +436,95 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     expect(Number(active[0]?.group_id)).toBeGreaterThan(0)
     expect(Number(active[1]?.group_id)).toBe(Number(active[0]?.group_id))
     expect(await listActiveTableGroups(actor, '2030-10-24')).toHaveLength(1)
+  })
+
+  it('keeps an open visit visible across business dates and blocks moving another visit onto its table', async () => {
+    const previousDateVisit = await createWalkIn(actor, {
+      guestName: 'Still seated from previous date',
+      partySize: 4,
+      businessDate: '2030-10-23',
+      tableIds: [tableOneId],
+    })
+    const currentVisit = await createWalkIn(actor, {
+      guestName: 'Current date visit',
+      partySize: 4,
+      businessDate: '2030-10-24',
+      tableIds: [tableTwoId],
+    })
+
+    const currentFloor = await listTables(actor, '2030-10-24')
+    const occupiedFromPreviousDate = currentFloor.find((table) => table.id === tableOneId)
+    expect(occupiedFromPreviousDate?.state).toBe('IN_USE')
+    expect(occupiedFromPreviousDate?.activeVisit?.id).toBe(previousDateVisit.visitId)
+
+    await expect(moveVisit(actor, {
+      visitId: currentVisit.visitId,
+      expectedVersion: 1,
+      tableIds: [tableOneId],
+    })).rejects.toMatchObject({ code: 'TABLE_ALREADY_OCCUPIED' })
+  })
+
+  it('automatically closes an open visit and releases every table exactly at business-day end', async () => {
+    const walkIn = await createWalkIn(actor, {
+      guestName: 'End of business day',
+      partySize: 6,
+      businessDate: '2030-10-24',
+      tableIds: [tableOneId, tableTwoId],
+    })
+
+    expect(await runBusinessDayEndSweep({
+      organizationId,
+      venueId,
+      now: new Date('2030-10-24T21:59:59.999Z'),
+    })).toEqual({ closed: 0, skipped: 0 })
+
+    expect(await runBusinessDayEndSweep({
+      organizationId,
+      venueId,
+      now: new Date('2030-10-24T22:00:00.000Z'),
+    })).toEqual({ closed: 1, skipped: 0 })
+    expect(await runBusinessDayEndSweep({
+      organizationId,
+      venueId,
+      now: new Date('2030-10-24T22:00:01.000Z'),
+    })).toEqual({ closed: 0, skipped: 0 })
+
+    const [visitRows] = await databasePool.execute<(RowDataPacket & {
+      ended_at: Date | null
+      ended_by_user_id: number | null
+      end_reason: string | null
+      version: number
+    })[]>('SELECT ended_at, ended_by_user_id, end_reason, version FROM visits WHERE id = ?', [walkIn.visitId])
+    expect(visitRows[0]).toMatchObject({
+      ended_by_user_id: null,
+      end_reason: 'BUSINESS_DAY_END',
+      version: 2,
+    })
+    expect(visitRows[0]?.ended_at).not.toBeNull()
+
+    const [allocations] = await databasePool.execute<(RowDataPacket & {
+      released_at: Date | null
+      released_by_user_id: number | null
+      release_reason: string | null
+    })[]>(
+      `SELECT released_at, released_by_user_id, release_reason FROM table_allocations
+       WHERE visit_id = ? ORDER BY table_id`,
+      [walkIn.visitId],
+    )
+    expect(allocations).toHaveLength(2)
+    expect(allocations.every((row) => row.released_at !== null)).toBe(true)
+    expect(allocations.every((row) => row.released_by_user_id === null)).toBe(true)
+    expect(allocations.every((row) => row.release_reason === 'BUSINESS_DAY_END')).toBe(true)
+
+    const [auditRows] = await databasePool.execute<(RowDataPacket & { actor_kind: string; action: string })[]>(
+      `SELECT actor_kind, action FROM operation_log
+       WHERE entity_type = 'visit' AND entity_id = ?`,
+      [walkIn.visitId],
+    )
+    expect(auditRows).toEqual([{
+      actor_kind: 'SYSTEM',
+      action: 'VISIT_AUTO_CLOSED_BUSINESS_DAY',
+    }])
   })
 
   it('merges Bar 1 + Bar 21 in the Bar zone and rejects a regular table mixed with a Bar seat', async () => {

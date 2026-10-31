@@ -318,10 +318,12 @@ export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput
     const visitBusinessDate = dateOnly(visit.business_date)
     const [conflicts] = await connection.execute<RowDataPacket[]>(
       `SELECT id FROM table_allocations
-       WHERE organization_id = ? AND venue_id = ? AND business_date = ? AND released_at IS NULL
-         AND table_id IN (${targetPlaceholders}) AND id NOT IN (${allocationPlaceholders})
+       WHERE organization_id = ? AND venue_id = ? AND released_at IS NULL
+         AND table_id IN (${targetPlaceholders})
+         AND (kind = 'USAGE' OR business_date = ?)
+         AND id NOT IN (${allocationPlaceholders})
        ORDER BY table_id, id FOR UPDATE`,
-      [actor.organizationId, actor.venueId, visitBusinessDate, ...targetTableIds, ...allocationIds],
+      [actor.organizationId, actor.venueId, ...targetTableIds, visitBusinessDate, ...allocationIds],
     )
     if (conflicts.length) throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn mới đang được giữ hoặc sử dụng.')
 

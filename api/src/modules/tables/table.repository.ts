@@ -365,7 +365,8 @@ export async function listTables(actor: AuthenticatedActor, businessDate: string
          MAX(kind = 'HOLD') AS has_hold,
          MAX(CASE WHEN kind = 'USAGE' THEN visit_id END) AS active_visit_id
        FROM table_allocations
-       WHERE venue_id = ? AND business_date = ? AND released_at IS NULL
+       WHERE venue_id = ? AND released_at IS NULL
+         AND (kind = 'USAGE' OR business_date = ?)
        GROUP BY table_id
      ) AS a ON a.table_id = dt.id
      LEFT JOIN visits AS v ON v.venue_id = dt.venue_id AND v.id = a.active_visit_id AND v.ended_at IS NULL
