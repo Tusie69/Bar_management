@@ -613,6 +613,36 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       .rejects.toMatchObject({ code: 'TABLE_ALREADY_OCCUPIED', message: 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.' })
   })
 
+  it('FX-03 rejects a phone number in the note on create, direct create and edit but keeps normal notes', async () => {
+    const receptionist = request.agent(app)
+    const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
+      username: 'booking_reception', password,
+    })
+    const auth = JSON.parse(login.text) as AuthResponse
+    const send = (method: 'post' | 'put', path: string, body: object) => receptionist[method](path)
+      .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken).send(body)
+    const phoneNote = { note: 'khách VIP 0987 654 321' }
+    const created = await createBooking(actor, bookingInput())
+    const responses = [
+      await send('post', '/api/v1/bookings', { ...bookingInput(), ...phoneNote }),
+      await send('post', '/api/v1/bookings/direct', { ...bookingInput(), ...phoneNote, tableIds: [tableOneId] }),
+      await send('put', `/api/v1/bookings/${created.id}`, { ...bookingInput(), ...phoneNote, version: created.version }),
+    ]
+    for (const response of responses) {
+      expect(response.status).toBe(422)
+      expect(JSON.parse(response.text)).toEqual({
+        error: { code: 'PHONE_IN_NOTE_FORBIDDEN', message: 'Không ghi số điện thoại vào ghi chú.' },
+      })
+    }
+    const count = await row('SELECT COUNT(*) AS total FROM reservations WHERE organization_id = ?', [organizationId])
+    expect(Number(count.total)).toBe(1)
+    const unchanged = await row('SELECT note, version FROM reservations WHERE id = ?', [created.id])
+    expect([unchanged.note, Number(unchanged.version)]).toEqual(['Initial note', created.version])
+
+    const normal = await send('post', '/api/v1/bookings', { ...bookingInput(), note: 'Sinh nhật 30 tuổi, đến 21:30' })
+    expect(normal.status).toBe(201)
+  })
+
   it('protects edit with authentication, CSRF, and reservation.update', async () => {
     const created = await createBooking(actor, bookingInput())
     const receptionist = request.agent(app)

@@ -22,6 +22,7 @@ import {
 } from './booking.repository.js'
 import { formatDailyBookingText, getDailyBookingTextInput } from './booking-export.js'
 import { assertCurrentBusinessDate, validateCalendarDate } from './business-date.js'
+import { assertNoPhoneInNote } from './note-validation.js'
 import { PhoneRevealRateLimiter } from './phone-rate-limit.js'
 
 export const bookingRouter: Router = Router()
@@ -69,6 +70,7 @@ function optionalClassification(value: unknown): BookingClassification | undefin
 function bookingBody(value: unknown) {
   const body = objectBody(value)
   const note = optionalText(body.note, 500, 'INVALID_NOTE', 'Ghi chú không được vượt quá 500 ký tự.')
+  assertNoPhoneInNote(note)
   const classification = optionalClassification(body.classification)
   let phoneNumber: string | null | undefined
   if (Object.prototype.hasOwnProperty.call(body, 'phoneNumber')) {

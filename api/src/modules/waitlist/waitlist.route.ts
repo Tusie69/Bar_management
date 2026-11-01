@@ -4,6 +4,7 @@ import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { AppError } from '../../errors/app-error.js'
 import { validateCalendarDate } from '../bookings/business-date.js'
+import { assertNoPhoneInNote } from '../bookings/note-validation.js'
 import {
   createWaitlistEntry,
   listWaitlist,
@@ -33,10 +34,6 @@ function partySize(value: unknown): number {
   return parsed
 }
 
-function containsPhoneNumber(value: string): boolean {
-  return /\d{8,}/.test(value.replace(/[\s.\-()]/g, ''))
-}
-
 waitlistRouter.get('/', requireAuthentication, requirePermission('customer.view_masked'), async (request, response) => {
   const businessDate = validateCalendarDate(request.query.date)
   response.json({ businessDate, entries: await listWaitlist(requireAuthenticatedActor(request), businessDate) })
@@ -57,9 +54,7 @@ waitlistRouter.post('/', requireAuthentication, requireCsrfProtection, requirePe
     throw new AppError(400, 'INVALID_PHONE_NUMBER', 'Số điện thoại không hợp lệ.')
   }
   const note = typeof body.note === 'string' ? body.note.trim() : ''
-  if (note && containsPhoneNumber(note)) {
-    throw new AppError(422, 'PHONE_IN_NOTE_FORBIDDEN', 'Không ghi số điện thoại vào ghi chú.')
-  }
+  assertNoPhoneInNote(note)
   response.status(201).json({ entry: await createWaitlistEntry(requireAuthenticatedActor(request), {
     guestName: body.guestName.trim(),
     partySize: partySize(body.partySize),
