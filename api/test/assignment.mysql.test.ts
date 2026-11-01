@@ -21,6 +21,9 @@ import { listActiveTableGroups, listTables } from '../src/modules/tables/table.r
 import { runBusinessDayEndSweep } from '../src/modules/visits/business-day.worker.js'
 import { closeVisit, mergeVisitTables, moveVisit } from '../src/modules/visits/visit.repository.js'
 
+// FX-01: check-in chỉ nhận booking của ca hiện tại → test chạy như đang ở 21:00 ca 24/10/2030.
+const shiftNow = new Date('2030-10-24T14:00:00.000Z')
+
 const integrationEnabled = process.env.RUN_MYSQL_INTEGRATION === '1' && /_test$/.test(process.env.DB_NAME ?? '')
 const mysqlDescribe = integrationEnabled ? describe : describe.skip
 const organizationId = 1
@@ -355,7 +358,7 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     expect(await listActiveTableGroups(actor, '2030-10-24')).toEqual([
       { id: merged.group.id, symbolNo: merged.group.symbolNo, tableIds: [tableOneId, tableA7Id] },
     ])
-    await checkInBooking(actor, merged.booking.id, merged.booking.version)
+    await checkInBooking(actor, merged.booking.id, merged.booking.version, shiftNow)
     const [usageRows] = await databasePool.execute<(RowDataPacket & { group_id: number })[]>(
       `SELECT group_id FROM table_allocations
        WHERE visit_id IS NOT NULL AND kind = 'USAGE' AND released_at IS NULL ORDER BY table_id`,

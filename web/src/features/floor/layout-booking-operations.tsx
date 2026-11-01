@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import type { BookingSourceCode } from "@/domain/enums"
 import type { TableView } from "@/domain/models"
 import { reportError } from "@/hooks/use-action"
-import { fmtTime, type BusinessDate } from "@/lib/time"
+import { businessDateOf, fmtTime, type BusinessDate } from "@/lib/time"
 import { bookingApi, type HttpBooking } from "@/services"
 import { useCan } from "@/state/session"
 import {
@@ -192,6 +192,8 @@ function BookingActionMenu({
   const [revealPending, setRevealPending] = useState(false)
   const [revealError, setRevealError] = useState<string | null>(null)
   const mutable = booking?.status === "BOOKED"
+  // FX-01: chỉ đón khách cho booking của ca hiện tại (API cũng chặn BOOKING_NOT_CURRENT_BUSINESS_DATE).
+  const isCurrentShift = booking?.businessDate === businessDateOf(new Date())
   const call = customerCallCapability({
     canRevealPhone,
     phoneLast3: booking?.phoneLast3 ?? null,
@@ -274,7 +276,8 @@ function BookingActionMenu({
               </Button>
               <Button
                 variant="outline"
-                disabled={!canCheckIn || !mutable || booking.tableCodes.length === 0}
+                disabled={!canCheckIn || !mutable || !isCurrentShift || booking.tableCodes.length === 0}
+                title={mutable && !isCurrentShift ? "Chỉ đón khách cho booking của ca hiện tại." : undefined}
                 onClick={() => setMode("checkin")}
               >
                 <LogIn /> Đón khách

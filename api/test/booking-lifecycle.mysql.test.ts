@@ -32,6 +32,9 @@ import {
   type WaitlistEntryView,
 } from '../src/modules/waitlist/waitlist.repository.js'
 
+// FX-01: check-in chỉ nhận booking của ca hiện tại → test chạy như đang ở 21:00 ca 24/10/2030.
+const shiftNow = new Date('2030-10-24T14:00:00.000Z')
+
 const integrationEnabled = process.env.RUN_MYSQL_INTEGRATION === '1' && /_test$/.test(process.env.DB_NAME ?? '')
 const mysqlDescribe = integrationEnabled ? describe : describe.skip
 const organizationId = env.organizationId
@@ -205,7 +208,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     expect(Number(holdAfter.hold_id)).toBe(Number(holdBefore.hold_id))
     expect(Number(holdAfter.allocation_id)).toBe(Number(holdBefore.allocation_id))
 
-    const checkedIn = await checkInBooking(actor, created.id, edited.version)
+    const checkedIn = await checkInBooking(actor, created.id, edited.version, shiftNow)
     const reservation = await row('SELECT visit_id FROM reservations WHERE id = ?', [created.id])
     const visitId = Number(reservation.visit_id)
     expect(checkedIn.status).toBe('CHECKED_IN')
@@ -424,7 +427,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     const assignedForCheckIn = await createAssignedBooking()
     const editCheckIn = await Promise.allSettled([
       updateBooking(actor, assignedForCheckIn.id, { ...bookingInput('2030-10-24', '21:15'), expectedVersion: assignedForCheckIn.version }),
-      checkInBooking(actor, assignedForCheckIn.id, assignedForCheckIn.version),
+      checkInBooking(actor, assignedForCheckIn.id, assignedForCheckIn.version, shiftNow),
     ])
     expect(editCheckIn.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
   })
@@ -434,7 +437,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     let finalBooking: BookingView
     if (status === 'CHECKED_IN') {
       const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
-      finalBooking = await checkInBooking(actor, created.id, assigned.version)
+      finalBooking = await checkInBooking(actor, created.id, assigned.version, shiftNow)
     } else {
       finalBooking = await closeBooking(actor, created.id, created.version, status)
     }
@@ -524,6 +527,75 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
           error: { code: 'BUSINESS_DATE_IN_PAST', message: 'Không thể đặt bàn cho ngày đã qua.' },
         })
       }
+    })
+  })
+
+  describe('FX-01 check-in only for the current business date', () => {
+    async function assertNotCheckedIn(id: number, version: number) {
+      const reservation = await row('SELECT status, version, visit_id FROM reservations WHERE id = ?', [id])
+      expect([reservation.status, Number(reservation.version), reservation.visit_id]).toEqual(['BOOKED', version, null])
+      const [visits] = await databasePool.execute<RowDataPacket[]>(
+        'SELECT id FROM visits WHERE organization_id = ?',
+        [organizationId],
+      )
+      expect(visits).toHaveLength(0)
+      const allocation = await row(
+        `SELECT a.kind, a.released_at, h.status AS hold_status FROM table_allocations a
+         JOIN table_holds h ON h.id = a.hold_id WHERE h.reservation_id = ?`,
+        [id],
+      )
+      expect([allocation.kind, allocation.released_at, allocation.hold_status]).toEqual(['HOLD', null, 'ACTIVE'])
+    }
+
+    it('rejects checking in a future booking and keeps its HOLD untouched', async () => {
+      const created = await createBooking(actor, bookingInput('2030-10-25'))
+      const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      await expect(checkInBooking(actor, assigned.id, assigned.version, shiftNow)).rejects.toMatchObject({
+        status: 409,
+        code: 'BOOKING_NOT_CURRENT_BUSINESS_DATE',
+        message: 'Chỉ đón khách cho booking của ca hiện tại.',
+      })
+      await assertNotCheckedIn(assigned.id, assigned.version)
+    })
+
+    it('rejects checking in a booking of a business date that already ended at 05:00', async () => {
+      const assigned = await createAssignedBooking()
+      const nextEvening = new Date('2030-10-25T14:00:00.000Z')
+      await expect(checkInBooking(actor, assigned.id, assigned.version, nextEvening))
+        .rejects.toMatchObject({ code: 'BOOKING_NOT_CURRENT_BUSINESS_DATE' })
+      const atFive = new Date('2030-10-24T22:00:00.000Z')
+      await expect(checkInBooking(actor, assigned.id, assigned.version, atFive))
+        .rejects.toMatchObject({ code: 'BOOKING_NOT_CURRENT_BUSINESS_DATE' })
+      await assertNotCheckedIn(assigned.id, assigned.version)
+    })
+
+    it('checks in an after-midnight arrival (00:30) during the same shift', async () => {
+      const created = await createBooking(actor, bookingInput('2030-10-24', '00:30'))
+      const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const at0040 = new Date('2030-10-24T17:40:00.000Z') // 00:40 ngày 25/10 giờ VN, vẫn là ca 24/10
+      const checkedIn = await checkInBooking(actor, assigned.id, assigned.version, at0040)
+      expect(checkedIn.status).toBe('CHECKED_IN')
+      const allocation = await row(
+        `SELECT kind FROM table_allocations WHERE table_id = ? AND released_at IS NULL`,
+        [tableOneId],
+      )
+      expect(allocation.kind).toBe('USAGE')
+    })
+
+    it('returns 409 BOOKING_NOT_CURRENT_BUSINESS_DATE through the HTTP route', async () => {
+      const assigned = await createAssignedBooking()
+      const receptionist = request.agent(app)
+      const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
+        username: 'booking_reception', password,
+      })
+      const auth = JSON.parse(login.text) as AuthResponse
+      const response = await receptionist.post(`/api/v1/bookings/${assigned.id}/check-in`)
+        .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken).send({ version: assigned.version })
+      expect(response.status).toBe(409)
+      expect(JSON.parse(response.text)).toEqual({
+        error: { code: 'BOOKING_NOT_CURRENT_BUSINESS_DATE', message: 'Chỉ đón khách cho booking của ca hiện tại.' },
+      })
+      await assertNotCheckedIn(assigned.id, assigned.version)
     })
   })
 
@@ -713,7 +785,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     const created = await createBooking(actor, bookingInput())
     const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId, tableTwoId])
     expect(assigned.tableCodes).toEqual(['T1', 'T2'])
-    const checkedIn = await checkInBooking(actor, assigned.id, assigned.version)
+    const checkedIn = await checkInBooking(actor, assigned.id, assigned.version, shiftNow)
     const reservation = await row('SELECT visit_id FROM reservations WHERE id = ?', [assigned.id])
     const visitId = Number(reservation.visit_id)
     const [openUsage] = await databasePool.execute<RowDataPacket[]>(
@@ -749,7 +821,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
 
   it('moves an active visit without closing it and keeps old USAGE history', async () => {
     const assigned = await createAssignedBooking(tableOneId)
-    await checkInBooking(actor, assigned.id, assigned.version)
+    await checkInBooking(actor, assigned.id, assigned.version, shiftNow)
     const reservation = await row('SELECT visit_id FROM reservations WHERE id = ?', [assigned.id])
     const visitId = Number(reservation.visit_id)
     const moved = await moveVisit(actor, { visitId, expectedVersion: 1, tableIds: [tableTwoId] })
@@ -771,7 +843,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
 
   it('rejects an active visit move with insufficient capacity and preserves the source allocation', async () => {
     const assigned = await createAssignedBooking(tableOneId)
-    await checkInBooking(actor, assigned.id, assigned.version)
+    await checkInBooking(actor, assigned.id, assigned.version, shiftNow)
     const reservation = await row('SELECT visit_id FROM reservations WHERE id = ?', [assigned.id])
     const visitId = Number(reservation.visit_id)
     await databasePool.execute('UPDATE dining_tables SET capacity = 2 WHERE id = ?', [tableTwoId])
@@ -1078,7 +1150,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
 
   it.each(['CHECKED_IN', 'CANCELLED'] as const)('never auto-closes a %s booking', async (terminalStatus) => {
     const assigned = await createAssignedBooking()
-    if (terminalStatus === 'CHECKED_IN') await checkInBooking(actor, assigned.id, assigned.version)
+    if (terminalStatus === 'CHECKED_IN') await checkInBooking(actor, assigned.id, assigned.version, shiftNow)
     else await closeBooking(actor, assigned.id, assigned.version, 'CANCELLED', 'Customer called')
     const result = await runNoShowSweep({
       organizationId,
@@ -1097,7 +1169,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     const [candidate] = await listNoShowCandidates(organizationId, venueId, new Date('2030-10-24T14:30:00Z'), automationCutoff)
     const results = await Promise.allSettled([
       processNoShowCandidate(organizationId, venueId, systemUserId, candidate!, new Date('2030-10-24T14:30:00Z'), automationCutoff),
-      checkInBooking(actor, assigned.id, assigned.version),
+      checkInBooking(actor, assigned.id, assigned.version, shiftNow),
     ])
     expect(results.some((result) => result.status === 'fulfilled')).toBe(true)
     const reservation = await row('SELECT status FROM reservations WHERE id = ?', [assigned.id])
