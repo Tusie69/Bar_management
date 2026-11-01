@@ -4,6 +4,7 @@ import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
+import { assertBusinessDateNotPast } from '../bookings/business-date.js'
 import { protectPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from '../bookings/phone-security.js'
 import { createTableGroup, lockAndValidateAssignableTables } from '../tables/table-group.repository.js'
 
@@ -133,6 +134,7 @@ export async function createWaitlistEntry(
   actor: AuthenticatedActor,
   input: CreateWaitlistInput,
 ): Promise<WaitlistEntryView> {
+  assertBusinessDateNotPast(input.businessDate)
   const connection = await databasePool.getConnection()
   try {
     await connection.beginTransaction()
@@ -244,6 +246,7 @@ export async function seatWaitlistEntry(
     if (entry.status !== 'WAITING') {
       throw new AppError(409, 'WAITLIST_NOT_SEATABLE', 'Chỉ khách đang chờ mới có thể được gán bàn trực tiếp.')
     }
+    assertBusinessDateNotPast(dateOnly(entry.business_date))
     if ((!entry.contact_name && entry.customer_id === null) || entry.party_size === null) {
       throw new AppError(409, 'WAITLIST_DATA_INCOMPLETE', 'Thông tin khách chờ không đầy đủ.')
     }
