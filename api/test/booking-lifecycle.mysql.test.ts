@@ -599,6 +599,20 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     })
   })
 
+  it('FX-02 seats a future waitlist entry on a table seated tonight but blocks it for the current shift', async () => {
+    await createWalkIn(actor, { guestName: 'Seated tonight', partySize: 2, businessDate: '2030-10-24', tableIds: [tableOneId] })
+    const future = await createWaitlistEntry(actor, {
+      guestName: 'Future waitlist', partySize: 2, businessDate: '2030-10-26', contactChannel: 'IN_PERSON',
+    })
+    const seated = await seatWaitlistEntry(actor, { entryId: future.id, expectedVersion: future.version, tableIds: [tableOneId] }, shiftNow)
+    expect(seated.entry.status).toBe('HOLD_ACTIVE')
+    const tonight = await createWaitlistEntry(actor, {
+      guestName: 'Tonight waitlist', partySize: 2, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+    })
+    await expect(seatWaitlistEntry(actor, { entryId: tonight.id, expectedVersion: tonight.version, tableIds: [tableOneId] }, shiftNow))
+      .rejects.toMatchObject({ code: 'TABLE_ALREADY_OCCUPIED', message: 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.' })
+  })
+
   it('protects edit with authentication, CSRF, and reservation.update', async () => {
     const created = await createBooking(actor, bookingInput())
     const receptionist = request.agent(app)

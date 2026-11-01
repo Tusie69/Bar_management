@@ -441,7 +441,7 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     expect(await listActiveTableGroups(actor, '2030-10-24')).toHaveLength(1)
   })
 
-  it('keeps an open visit visible across business dates and blocks moving another visit onto its table', async () => {
+  it('keeps a forgotten open visit visible on the current shift only and blocks moving another visit onto its table', async () => {
     const previousDateVisit = await createWalkIn(actor, {
       guestName: 'Still seated from previous date',
       partySize: 4,
@@ -455,16 +455,80 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
       tableIds: [tableTwoId],
     })
 
-    const currentFloor = await listTables(actor, '2030-10-24')
+    const currentFloor = await listTables(actor, '2030-10-24', shiftNow)
     const occupiedFromPreviousDate = currentFloor.find((table) => table.id === tableOneId)
     expect(occupiedFromPreviousDate?.state).toBe('IN_USE')
     expect(occupiedFromPreviousDate?.activeVisit?.id).toBe(previousDateVisit.visitId)
+    const previousFloor = await listTables(actor, '2030-10-23', shiftNow)
+    expect(previousFloor.find((table) => table.id === tableOneId)?.state).toBe('IN_USE')
+    expect(previousFloor.find((table) => table.id === tableTwoId)?.state).toBe('AVAILABLE')
+    const futureFloor = await listTables(actor, '2030-10-26', shiftNow)
+    expect([tableOneId, tableTwoId].map((id) => futureFloor.find((table) => table.id === id)?.state))
+      .toEqual(['AVAILABLE', 'AVAILABLE'])
 
     await expect(moveVisit(actor, {
       visitId: currentVisit.visitId,
       expectedVersion: 1,
       tableIds: [tableOneId],
     })).rejects.toMatchObject({ code: 'TABLE_ALREADY_OCCUPIED' })
+  })
+
+  describe('FX-02 one occupancy rule for the floor map and table holds', () => {
+    const futureInput = (guestName: string) => ({
+      ...bookingInput(guestName), expectedAt: '2030-10-26T21:00:00+07:00', businessDate: '2030-10-26',
+    })
+
+    it('shows tonight\'s seated guests only on the current shift and future holds only on their own date', async () => {
+      await createWalkIn(actor, { guestName: 'Seated tonight', partySize: 4, businessDate: '2030-10-24', tableIds: [tableOneId] })
+      await createAndAssignBooking(actor, { ...futureInput('Future hold'), tableIds: [tableTwoId] }, shiftNow)
+
+      const tonight = await listTables(actor, '2030-10-24', shiftNow)
+      const future = await listTables(actor, '2030-10-26', shiftNow)
+      const state = (floor: typeof tonight, id: number) => floor.find((table) => table.id === id)?.state
+      expect([state(tonight, tableOneId), state(tonight, tableTwoId)]).toEqual(['IN_USE', 'AVAILABLE'])
+      expect([state(future, tableOneId), state(future, tableTwoId)]).toEqual(['AVAILABLE', 'RESERVED'])
+      expect(future.find((table) => table.id === tableOneId)?.activeVisit).toBeNull()
+    })
+
+    it('gives direct booking and reassignment the same result on a table that is seated tonight', async () => {
+      await createWalkIn(actor, { guestName: 'Seated A1', partySize: 4, businessDate: '2030-10-24', tableIds: [tableOneId] })
+      await createWalkIn(actor, { guestName: 'Seated A2', partySize: 4, businessDate: '2030-10-24', tableIds: [tableTwoId] })
+
+      const futureDirect = await createAndAssignBooking(actor, { ...futureInput('Future direct'), tableIds: [tableOneId] }, shiftNow)
+      const futureBooking = await createAndAssignBooking(actor, { ...futureInput('Future move'), tableIds: [tableA7Id] }, shiftNow)
+      const futureMoved = await assignBookingTables(actor, futureBooking.id, futureBooking.version, [tableTwoId], shiftNow)
+      expect(futureDirect.tableCodes).toEqual(['A1'])
+      expect(futureMoved.tableCodes).toEqual(['A2'])
+
+      await expect(createAndAssignBooking(actor, { ...bookingInput('Tonight direct'), tableIds: [tableOneId] }, shiftNow))
+        .rejects.toMatchObject({ code: 'TABLE_ALREADY_OCCUPIED' })
+      const tonightBooking = await createAndAssignBooking(actor, { ...bookingInput('Tonight move'), tableIds: [tableA7Id] }, shiftNow)
+      await expect(assignBookingTables(actor, tonightBooking.id, tonightBooking.version, [tableTwoId], shiftNow))
+        .rejects.toMatchObject({ code: 'TABLE_ALREADY_OCCUPIED' })
+      expect(await activeTableIds(tonightBooking.id)).toEqual([tableA7Id])
+    })
+
+    it('blocks current-shift holds on a forgotten open visit from an older date but not future holds', async () => {
+      await createWalkIn(actor, { guestName: 'Forgotten', partySize: 4, businessDate: '2030-10-23', tableIds: [tableOneId] })
+      await expect(createAndAssignBooking(actor, { ...bookingInput('Tonight on forgotten'), tableIds: [tableOneId] }, shiftNow))
+        .rejects.toMatchObject({ code: 'TABLE_ALREADY_OCCUPIED' })
+      const tonight = await createBooking(actor, bookingInput('Tonight assign on forgotten'))
+      await expect(assignBookingTables(actor, tonight.id, tonight.version, [tableOneId], shiftNow))
+        .rejects.toMatchObject({ code: 'TABLE_ALREADY_OCCUPIED' })
+      const future = await createAndAssignBooking(actor, { ...futureInput('Future on forgotten'), tableIds: [tableOneId] }, shiftNow)
+      expect(future.tableCodes).toEqual(['A1'])
+    })
+
+    it('leaves the next business date clean after the 05:00 auto-close', async () => {
+      await createWalkIn(actor, { guestName: 'Closed at five', partySize: 4, businessDate: '2030-10-24', tableIds: [tableOneId] })
+      const atFive = new Date('2030-10-24T22:00:00.000Z')
+      expect(await runBusinessDayEndSweep({ organizationId, venueId, now: atFive })).toEqual({ closed: 1, skipped: 0 })
+      const nextDay = await listTables(actor, '2030-10-25', atFive)
+      const previous = await listTables(actor, '2030-10-24', atFive)
+      expect(nextDay.find((table) => table.id === tableOneId)?.state).toBe('AVAILABLE')
+      expect(previous.find((table) => table.id === tableOneId)?.state).toBe('AVAILABLE')
+      expect(nextDay.filter((table) => table.state === 'IN_USE')).toEqual([])
+    })
   })
 
   it('automatically closes an open visit and releases every table exactly at business-day end', async () => {

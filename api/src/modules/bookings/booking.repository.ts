@@ -14,6 +14,7 @@ import {
   lockAndValidateSameKindTables,
   lockAndValidateSameZoneTables,
 } from '../tables/table-group.repository.js'
+import { assertTablesFreeForBusinessDate } from '../tables/table-occupancy.js'
 
 export type BookingStatus = 'BOOKED' | 'CHECKED_IN' | 'CANCELLED' | 'NO_SHOW'
 export type BookingClassification = 'RETURNING' | 'NEW' | 'UNCLASSIFIED'
@@ -254,9 +255,10 @@ export async function createBooking(actor: AuthenticatedActor, input: CreateBook
 export async function createAndAssignBooking(
   actor: AuthenticatedActor,
   input: CreateAndAssignBookingInput,
+  now = new Date(),
 ): Promise<BookingView> {
   const schedule = validateBookingSchedule(input.expectedAt, input.businessDate)
-  assertBusinessDateNotPast(schedule.businessDate)
+  assertBusinessDateNotPast(schedule.businessDate, now)
   const phone = typeof input.phoneNumber === 'string' ? protectPhoneNumber(input.phoneNumber, phoneKeyRing()) : null
   const tableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
   const connection = await databasePool.getConnection()
@@ -278,17 +280,7 @@ export async function createAndAssignBooking(
         `Các bàn đã chọn chỉ có ${totalCapacity} chỗ cho ${input.partySize} khách.`,
       )
     }
-    const placeholders = tableIds.map(() => '?').join(',')
-    const [conflicts] = await connection.execute<RowDataPacket[]>(
-      `SELECT id FROM table_allocations
-       WHERE organization_id = ? AND venue_id = ? AND business_date = ?
-         AND released_at IS NULL AND table_id IN (${placeholders})
-       ORDER BY table_id, id FOR UPDATE`,
-      [actor.organizationId, actor.venueId, schedule.businessDate, ...tableIds],
-    )
-    if (conflicts.length) {
-      throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
-    }
+    await assertTablesFreeForBusinessDate(connection, actor, schedule.businessDate, tableIds, now)
 
     const [reservation] = await connection.execute<ResultSetHeader>(
       `INSERT INTO reservations
@@ -768,6 +760,7 @@ export async function assignBookingTables(
   id: number,
   expectedVersion: number,
   tableIds: number[],
+  now = new Date(),
 ): Promise<BookingView> {
   const connection = await databasePool.getConnection()
   try {
@@ -779,7 +772,6 @@ export async function assignBookingTables(
     const tableRows = uniqueTableIds.length > 1
       ? await lockAndValidateSameKindTables(connection, actor, uniqueTableIds)
       : await lockAndValidateAssignableTables(connection, actor, uniqueTableIds)
-    const placeholders = uniqueTableIds.map(() => '?').join(',')
     const totalCapacity = tableRows.reduce((total, table) => total + Number(table.capacity), 0)
     if (totalCapacity < Number(reservation.party_size)) {
       throw new AppError(
@@ -806,14 +798,7 @@ export async function assignBookingTables(
     }
     await releaseActiveHold(connection, actor, id, previousAllocations.length ? 'MOVED' : 'HOLD_RELEASED')
     await dissolveUnusedGroups(connection, actor, previousAllocations.map((allocation) => allocation.group_id))
-    const [conflicts] = await connection.execute<RowDataPacket[]>(
-      `SELECT table_id FROM table_allocations
-       WHERE venue_id = ? AND business_date = ? AND released_at IS NULL AND table_id IN (${placeholders})
-       FOR UPDATE`,
-      [actor.venueId, dateOnly(reservation.business_date), ...uniqueTableIds],
-    )
-    if (conflicts.length)
-      throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
+    await assertTablesFreeForBusinessDate(connection, actor, dateOnly(reservation.business_date), uniqueTableIds, now)
     const [holdResult] = await connection.execute<ResultSetHeader>(
       `INSERT INTO table_holds
         (organization_id, venue_id, hold_kind, reservation_id, starts_at, created_by_user_id)
