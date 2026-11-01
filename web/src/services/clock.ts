@@ -6,8 +6,8 @@
  * immediately. Time keeps ticking in real time and can be fast-forwarded
  * from the clock menu. The HTTP implementation would use server time.
  */
-import { atBusinessTime, businessDateOf } from "@/lib/time"
 import { runtimeConfig } from "@/config/runtime"
+import { atBusinessTime, businessDateOf } from "@/lib/time"
 
 type Listener = () => void
 

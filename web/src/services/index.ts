@@ -7,19 +7,13 @@
 import { runtimeConfig } from "@/config/runtime"
 import type { GamApi } from "./contracts"
 import { AuthApi } from "./http/auth-api"
-import { HttpBookingApi } from "./http/booking-api"
 import { HttpClient } from "./http/http-client"
-import { HttpVisitApi } from "./http/visit-api"
-import { HttpWaitlistApi } from "./http/waitlist-api"
 import { createHttpApi } from "./http/http-api"
 import type { DemoControls } from "./mock/server"
 
 export const httpClient = runtimeConfig.apiMode === "http" ? new HttpClient(runtimeConfig.apiBaseUrl) : null
 
 export const authApi = httpClient ? new AuthApi(httpClient) : null
-export const bookingApi = httpClient ? new HttpBookingApi(httpClient) : null
-export const visitApi = httpClient ? new HttpVisitApi(httpClient) : null
-export const waitlistApi = httpClient ? new HttpWaitlistApi(httpClient) : null
 
 let selectedApi: GamApi
 let selectedDemo: DemoControls | null = null
@@ -41,7 +35,3 @@ export const demo = selectedDemo
 export { clock } from "./clock"
 export * from "./contracts"
 export type { AuthSession, AuthenticatedUser } from "./http/auth-api"
-export type { AssignmentTable, BookingClassification, BookingWriteFields, HttpBooking } from "./http/booking-adapter"
-export type { HttpWaitlistEntry, HttpWaitlistStatus } from "./http/waitlist-api"
-export { activeWaitlistEntries } from "./http/waitlist-api"
-export { createAndAssignDirectBooking, directBookingSelection } from "./http/direct-booking"

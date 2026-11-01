@@ -21,7 +21,7 @@ interface ErrorResponse {
 }
 
 interface AuthResponse {
-  user: { username: string }
+  user: { username: string; roles: string[] }
   permissions: string[]
   csrfToken: string
 }
@@ -120,6 +120,7 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     const response = await login(agent, 'valid_user')
     expect(response.status).toBe(200)
     const body = responseBody<AuthResponse>(response)
+    expect(body.user.roles).toEqual(['RECEPTIONIST'])
     expect(body.permissions).toContain('visit.end')
     expect(body.csrfToken).toEqual(expect.any(String))
     expect(body).not.toHaveProperty('sessionToken')
@@ -128,6 +129,7 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     const me = await agent.get('/api/v1/auth/me')
     expect(me.status).toBe(200)
     expect(responseBody<AuthResponse>(me).user.username).toBe('valid_user')
+    expect(responseBody<AuthResponse>(me).user.roles).toEqual(['RECEPTIONIST'])
 
     const [rows] = await databasePool.execute<(RowDataPacket & { length: number })[]>(
       `SELECT OCTET_LENGTH(token_hash) AS length FROM auth_sessions AS s
@@ -135,6 +137,34 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
       ['valid_user'],
     )
     expect(Number(rows[0]?.length)).toBe(32)
+  })
+
+  it('returns current venue and organization-wide role codes, excluding foreign and revoked grants', async () => {
+    const fixture = await createUser('role_payload_user', { roleCode: 'OWNER_ADMIN' })
+    await grantRole(fixture.membershipId, 'CASHIER', otherVenueId)
+    await grantRole(fixture.membershipId, 'RECEPTIONIST')
+    await databasePool.execute(
+      `UPDATE membership_roles SET revoked_at = UTC_TIMESTAMP(3), revoked_by_user_id = ?
+       WHERE membership_id = ? AND role_id = (SELECT id FROM roles WHERE code = 'RECEPTIONIST')`,
+      [fixture.userId, fixture.membershipId],
+    )
+    await databasePool.execute(
+      `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
+       SELECT ?, ?, id, NULL FROM roles WHERE code = 'CUSTOMER_CARE'`,
+      [organizationId, fixture.membershipId],
+    )
+    const agent = request.agent(app)
+    const signedIn = await login(agent, 'role_payload_user')
+    expect(signedIn.status).toBe(200)
+    expect(responseBody<AuthResponse>(signedIn).user.roles).toEqual(['CUSTOMER_CARE', 'OWNER_ADMIN'])
+    await databasePool.execute(
+      `UPDATE membership_roles SET revoked_at = UTC_TIMESTAMP(3), revoked_by_user_id = ?
+       WHERE membership_id = ? AND role_id = (SELECT id FROM roles WHERE code = 'OWNER_ADMIN')`,
+      [fixture.userId, fixture.membershipId],
+    )
+    const me = await agent.get('/api/v1/auth/me')
+    expect(me.status).toBe(200)
+    expect(responseBody<AuthResponse>(me).user.roles).toEqual(['CUSTOMER_CARE'])
   })
 
   it('requires the correct session-bound CSRF token and invalidates it on logout', async () => {

@@ -79,22 +79,6 @@ export interface BookingUpdatePayload extends BookingCreatePayload {
   version: number
 }
 
-export type AssignmentTableState = "AVAILABLE" | "RESERVED" | "IN_USE" | "OUT_OF_SERVICE"
-
-export interface BackendAssignmentTablePayload {
-  id: number
-  code: string
-  state: string
-  isBackup: boolean
-}
-
-export interface AssignmentTable {
-  id: number
-  code: string
-  state: AssignmentTableState
-  isSpare: boolean
-}
-
 const includes = <T extends string>(values: readonly T[], value: string): value is T => values.includes(value as T)
 
 function contractError(code: string, message: string): never {
@@ -179,10 +163,7 @@ export function createBookingPayload(fields: BookingWriteFields): BookingCreateP
   return commonPayload(fields)
 }
 
-export function directBookingCreatePayload(
-  fields: BookingWriteFields,
-  tableIds: number[],
-): DirectBookingCreatePayload {
+export function directBookingCreatePayload(fields: BookingWriteFields, tableIds: number[]): DirectBookingCreatePayload {
   const uniqueTableIds = [...new Set(tableIds)]
   if (!uniqueTableIds.length || uniqueTableIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
     throw new ApiError(400, "TABLE_REQUIRED", "Cần chọn ít nhất một bàn hợp lệ.")
@@ -227,17 +208,4 @@ export function assignmentPayload(version: number, tableIds: number[]) {
     throw new ApiError(400, "TABLE_REQUIRED", "Cần chọn ít nhất một bàn hợp lệ.")
   }
   return { version, tableIds: uniqueTableIds }
-}
-
-export function mapAssignmentTable(payload: BackendAssignmentTablePayload): AssignmentTable {
-  const tableStates = ["AVAILABLE", "RESERVED", "IN_USE", "OUT_OF_SERVICE"] as const
-  if (!includes(tableStates, payload.state)) {
-    contractError("UNSUPPORTED_TABLE_STATE", `Bàn ${payload.code} có trạng thái không được hỗ trợ.`)
-  }
-  return {
-    id: Number(payload.id),
-    code: payload.code,
-    state: payload.state,
-    isSpare: Boolean(payload.isBackup),
-  }
 }

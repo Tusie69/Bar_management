@@ -41,8 +41,10 @@ import { addDays, businessDateOf, fmtBusinessDate, fmtDayMonth, type BusinessDat
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
+import { toast } from "sonner"
 import { FloorCanvas } from "../floor/floor-canvas"
 import { DateField } from "../floor/floor-toolbar"
+import { checkDirectTableCompatibility } from "../floor/quick-form"
 import { useFloorModel } from "../floor/use-floor-model"
 
 const STEPS = ["Thời gian", "Vị trí", "Khách", "Xác nhận"] as const
@@ -122,28 +124,75 @@ function BookingBody() {
     const s = availMap.get(id)?.status
     return s && s !== "available" && s !== "spare" && s !== "too_small"
   })
+  const compatError = checkDirectTableCompatibility(tables, model.byId)
 
+  const selectedFirst = tables.length > 0 ? model.byId.get(tables[0]) : null
   const suggestions = useMemo(
     () =>
       (availability.data?.tables ?? [])
         .filter((t) => t.status === "available")
         .map((t) => model.byId.get(t.tableId)!)
-        .filter((t) => t && t.kind === "TABLE" && t.capacity >= party)
+        .filter(
+          (t) =>
+            t &&
+            t.kind === "TABLE" &&
+            t.capacity >= party &&
+            (!selectedFirst || (t.zoneId === selectedFirst.zoneId && t.kind === selectedFirst.kind)),
+        )
         .sort((a, b) => a.capacity - b.capacity || a.code.localeCompare(b.code))
         .slice(0, 10),
-    [availability.data, model.byId, party],
+    [availability.data, model.byId, party, selectedFirst],
   )
 
   const toggle = (id: number) => {
     const s = availMap.get(id)?.status
     if (s && s !== "available" && s !== "spare" && s !== "too_small") return
+    if (!tables.includes(id) && tables.length > 0) {
+      const first = model.byId.get(tables[0])
+      const target = model.byId.get(id)
+      if (first && target) {
+        if (target.zoneId !== first.zoneId) {
+          toast.info("Chỉ có thể chọn các bàn trong cùng một khu vực")
+          return
+        }
+        if (target.kind !== first.kind) {
+          toast.info("Không thể ghép bàn thường với ghế Bar")
+          return
+        }
+      }
+    }
     setLater(false)
     setTables((t) => (t.includes(id) ? t.filter((x) => x !== id) : [...t, id]))
   }
 
+  const sheetPickable = useMemo(() => {
+    if (tables.length === 0) {
+      const set = new Set<number>()
+      for (const t of model.tables) {
+        const s = availMap.get(t.id)?.status
+        if (s === "available" || s === "spare" || s === "too_small") {
+          set.add(t.id)
+        }
+      }
+      return set
+    }
+    const first = model.byId.get(tables[0])
+    if (!first) return null
+    const set = new Set<number>()
+    for (const t of model.tables) {
+      if (t.zoneId === first.zoneId && t.kind === first.kind) {
+        const s = availMap.get(t.id)?.status
+        if (s === "available" || s === "spare" || s === "too_small" || tables.includes(t.id)) {
+          set.add(t.id)
+        }
+      }
+    }
+    return set
+  }, [tables, model.byId, model.tables, availMap])
+
   const canNext = [
     !timeError && guestCount(guest) !== null,
-    later || (tables.length > 0 && blockedSelected.length === 0),
+    later || (tables.length > 0 && blockedSelected.length === 0 && capacity >= party && !compatError),
     true,
     true,
   ]
@@ -157,6 +206,10 @@ function BookingBody() {
   }
 
   const submit = async () => {
+    if (!later && compatError) {
+      toast.error(compatError)
+      return
+    }
     const v = form.getValues()
     const r = await run((o) =>
       api.createReservation({
@@ -241,6 +294,7 @@ function BookingBody() {
                 now={now}
                 onChange={setTime}
                 error={timeError}
+                gridClassName="sm:grid-cols-5"
               />
             </section>
           </div>
@@ -265,6 +319,7 @@ function BookingBody() {
                   mode="availability"
                   availability={availMap}
                   selectedIds={tables}
+                  pickable={sheetPickable}
                   now={now}
                   onTableClick={toggle}
                   ariaLabel="Sơ đồ khả dụng để chọn vị trí"
@@ -318,7 +373,12 @@ function BookingBody() {
                   <>
                     <span className="font-semibold">{tables.map((id) => model.label(id)).join(" + ")}</span> ·{" "}
                     {capacity} chỗ
-                    {capacity < party ? <span className="text-st-late"> · thiếu chỗ, cần Chủ quán duyệt</span> : null}
+                    {capacity < party ? (
+                      <span className="text-st-late-ink">
+                        {" "}
+                        · thiếu {party - capacity} chỗ cho {party} khách; chọn thêm bàn hoặc nhận trước xếp sau
+                      </span>
+                    ) : null}
                   </>
                 ) : (
                   "Chưa chọn vị trí."
@@ -327,6 +387,11 @@ function BookingBody() {
               {blockedSelected.length ? (
                 <p className="text-sm text-destructive">
                   {blockedSelected.map((id) => model.label(id)).join(", ")} không còn khả dụng, bỏ chọn để tiếp tục.
+                </p>
+              ) : null}
+              {compatError ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {compatError}
                 </p>
               ) : null}
               <Button

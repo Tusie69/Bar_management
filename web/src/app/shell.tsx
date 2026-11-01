@@ -4,6 +4,7 @@ import {
   ChevronsUpDown,
   Clock4,
   FastForward,
+  LogOut,
   Menu,
   Moon,
   MonitorSmartphone,
@@ -53,6 +54,7 @@ import { ROLE_LABEL } from "@/domain/enums"
 import { reportError, undoOperation, MOCK_NOTE } from "@/hooks/use-action"
 import { useNow, useOverview, useReservations } from "@/hooks/use-data"
 import { businessDateOf, fmtBusinessDate, fmtTime } from "@/lib/time"
+import { initials } from "@/lib/text"
 import { cn } from "@/lib/utils"
 import { api, clock, demo } from "@/services"
 import { useSession } from "@/state/session"
@@ -66,17 +68,17 @@ import { NAV } from "./nav"
 
 export function AppShell() {
   // v2: on Điều phối the booking / walk-in forms live inline in the right column (quick-form.tsx).
-  const onFloor = useLocation().pathname.startsWith("/floor")
+  const path = useLocation().pathname
+  const onFloor = path.startsWith("/floor")
   return (
     <SidebarProvider defaultOpen={false} className="h-dvh min-h-0">
       <AppSidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar />
-        <main className="min-h-0 flex-1 overflow-hidden pb-[calc(64px+env(safe-area-inset-bottom))] md:pb-0">
+        <main className="min-h-0 flex-1 overflow-hidden">
           <Outlet />
         </main>
       </div>
-      <MobileNav />
       {onFloor ? null : <BookingSheet />}
       {onFloor ? null : <WalkInSheet />}
       <ReservationDetailSheet />
@@ -166,8 +168,13 @@ function SidebarCollapseButton() {
 function TopBar() {
   const { toggleSidebar } = useSidebar()
   const navigate = useNavigate()
+  const location = useLocation()
+  const pageTitle =
+    NAV.find((n) => location.pathname.startsWith(n.to))?.label ??
+    (location.pathname === "/overview" ? "Tổng quan" : "21GAM")
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background px-3 md:px-4">
+      <h1 className="sr-only">{pageTitle}</h1>
       <Button variant="ghost" size="icon" className="md:hidden" aria-label="Mở menu" onClick={toggleSidebar}>
         <Menu />
       </Button>
@@ -180,7 +187,7 @@ function TopBar() {
       <div className="flex items-center gap-1 md:gap-2">
         <SyncPill />
         <ClockMenu />
-        <UndoRedo />
+        {api.mode === "mock" ? <UndoRedo /> : null}
         <ThemeToggle />
         <AlertsBell />
         <Identity />
@@ -339,6 +346,11 @@ function DemoTools({
 }
 
 function UndoRedo() {
+  if (api.mode === "http") return null
+  return <UndoRedoContent />
+}
+
+function UndoRedoContent() {
   const undoStack = useUi((s) => s.undoStack)
   const redoStack = useUi((s) => s.redoStack)
   const canUndo = useSession((s) => roleCan(s.user.role, "operation.undo"))
@@ -435,7 +447,7 @@ function ThemeToggle() {
 }
 
 /** v2 bell: same alert source as the "Cần xử lý" tab, reachable from every page. */
-function AlertsBell() {
+export function AlertsBell({ className }: { className?: string }) {
   const model = useFloorModel()
   const now = useNow(15_000)
   const bd = model.floor?.businessDate ?? businessDateOf(now)
@@ -451,7 +463,7 @@ function AlertsBell() {
         <Button
           variant="outline"
           size="icon"
-          className="relative size-10 bg-transparent"
+          className={cn("relative size-10 bg-transparent", className)}
           aria-label={`Cần xử lý: ${alerts.length}`}
         >
           <Bell />
@@ -462,7 +474,7 @@ function AlertsBell() {
           ) : null}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-96 p-0">
+      <PopoverContent align="end" className="w-96 max-w-[calc(100vw-16px)] p-0">
         <div className="flex items-center gap-2 py-2.5 pr-2 pl-4">
           <span className="text-sm font-semibold">Cần xử lý</span>
           <span className="tnum text-xs text-tx-3">{alerts.length}</span>
@@ -512,113 +524,79 @@ function AlertsBell() {
 
 function Identity() {
   const user = useSession((s) => s.user)
+  const principal = useSession((s) => s.principal)
+  const displayName = api.mode === "http" ? (principal?.displayName ?? "Nhân viên") : user.displayName
+  const subtitle = api.mode === "http" ? ROLE_LABEL[user.role] : `${ROLE_LABEL[user.role]} · ${user.deviceLabel}`
+
   return (
     <div className="hidden items-center gap-2.5 pl-1 xl:flex">
       <span className="grid size-8 place-items-center rounded-full bg-surface-3 text-xs font-semibold">
-        {(user.displayName.split(" ").pop()?.[0] ?? "?").toUpperCase()}
+        {initials(displayName)}
       </span>
       <span className="leading-tight">
-        <span className="block text-sm font-semibold text-tx-strong">{user.displayName}</span>
-        <span className="block text-xs text-tx-3">
-          {ROLE_LABEL[user.role]} · {user.deviceLabel}
-        </span>
+        <span className="block text-sm font-semibold text-tx-strong">{displayName}</span>
+        <span className="block text-xs text-tx-3">{subtitle}</span>
       </span>
     </div>
   )
 }
 
 function AccountMenu() {
-  const { user, users, setUser, theme, setTheme } = useSession()
+  const { user, users, setUser, theme, setTheme, principal, logout } = useSession()
+  const displayName = api.mode === "http" ? (principal?.displayName ?? "Đã đăng nhập") : user.displayName
+  const subtitle =
+    api.mode === "http" ? (principal ? `@${principal.username}` : "") : `${user.displayName} · ${user.deviceLabel}`
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
           variant="outline"
           className="h-9 max-w-[220px] gap-2 bg-surface-1 pr-2 pl-2.5 text-sm font-medium"
-          aria-label={`Tài khoản: ${user.displayName}, ${ROLE_LABEL[user.role]}`}
+          aria-label={`Tài khoản: ${displayName}`}
         >
           <UserRound className="text-muted-foreground" />
-          <span className="truncate">{user.displayName}</span>
+          <span className="truncate">{displayName}</span>
           <ChevronDown className="size-3.5 text-subtle" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
         <DropdownMenuLabel className="font-normal">
-          <span className="block text-sm font-medium">
-            {user.displayName} · {user.deviceLabel}
+          <span className="block text-sm font-medium">{displayName}</span>
+          <span className="block text-xs text-muted-foreground">
+            {api.mode === "http" ? subtitle : "Đổi vai trò để thử phân quyền (demo)"}
           </span>
-          <span className="block text-xs text-muted-foreground">Đổi vai trò để thử phân quyền (demo)</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuRadioGroup
-          value={String(user.id)}
-          onValueChange={(v) => {
-            setUser(Number(v))
-            useUi.getState().clearHistory()
-          }}
-        >
-          {users.map((u) => (
-            <DropdownMenuRadioItem key={u.id} value={String(u.id)} className="h-11">
-              <span className="grid">
-                <span>{ROLE_LABEL[u.role]}</span>
-                <span className="text-xs text-muted-foreground">
-                  {u.displayName} · {u.deviceLabel}
+        {api.mode === "mock" ? (
+          <DropdownMenuRadioGroup
+            value={String(user.id)}
+            onValueChange={(v) => {
+              setUser(Number(v))
+              useUi.getState().clearHistory()
+            }}
+          >
+            {users.map((u) => (
+              <DropdownMenuRadioItem key={u.id} value={String(u.id)} className="h-11">
+                <span className="grid">
+                  <span>{ROLE_LABEL[u.role]}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {u.displayName} · {u.deviceLabel}
+                  </span>
                 </span>
-              </span>
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        ) : (
+          <DropdownMenuItem className="h-11 cursor-pointer" onSelect={() => void logout()}>
+            <LogOut className="mr-2 size-4" /> Đăng xuất
+          </DropdownMenuItem>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem className="h-11 sm:hidden" onSelect={() => setTheme(theme === "dark" ? "light" : "dark")}>
           {theme === "dark" ? <Sun /> : <Moon />} Giao diện {theme === "dark" ? "sáng" : "tối"}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
-  )
-}
-
-function MobileNav() {
-  const { setOpenMobile } = useSidebar()
-  const overview = useOverview()
-  return (
-    <nav
-      className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
-      aria-label="Điều hướng chính"
-    >
-      {NAV.filter((n) => n.mobile).map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          className={({ isActive }) =>
-            cn(
-              "relative flex h-16 flex-col items-center justify-center gap-1 text-xs",
-              isActive ? "text-primary-ink" : "text-tx-3",
-            )
-          }
-        >
-          {({ isActive }) => (
-            <>
-              <span className={cn("grid h-7 w-12 place-items-center rounded-sm", isActive && "bg-primary-tint")}>
-                <item.icon className="size-[18px]" />
-              </span>
-              {item.short}
-              {item.to === "/floor" && overview.data?.attention ? (
-                <span className="absolute top-2 right-[calc(50%-22px)] size-2 rounded-full bg-st-noshow" />
-              ) : null}
-            </>
-          )}
-        </NavLink>
-      ))}
-      <button
-        type="button"
-        onClick={() => setOpenMobile(true)}
-        className="flex h-16 flex-col items-center justify-center gap-1 text-xs text-tx-3"
-      >
-        <span className="grid h-7 w-12 place-items-center">
-          <Menu className="size-[18px]" />
-        </span>
-        Thêm
-      </button>
-    </nav>
   )
 }

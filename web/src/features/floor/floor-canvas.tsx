@@ -16,7 +16,7 @@ import type {
   ZoneView,
 } from "@/domain/models"
 import { symbolByNo } from "@/domain/symbols"
-import { FIXTURES, FLOOR_H, FLOOR_W, WAITLIST_MARKER, ZONES, zoneBounds, type ZoneCode } from "@/domain/venue-layout"
+import { FIXTURES, FLOOR_H, FLOOR_W, ZONES, zoneBounds, type ZoneCode } from "@/domain/venue-layout"
 import { fmtElapsed, fmtTime, MS } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { STATE_META } from "@/components/status-meta"
@@ -40,9 +40,6 @@ interface Props {
   compact?: boolean
   className?: string
   ariaLabel?: string
-  waitlistCount?: number
-  waitlistSelected?: boolean
-  onWaitlistClick?: () => void
 }
 
 interface View {
@@ -79,9 +76,6 @@ export function FloorCanvas(props: Props) {
     compact,
     className,
     ariaLabel,
-    waitlistCount,
-    waitlistSelected,
-    onWaitlistClick,
   } = props
   const wrapRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -259,9 +253,6 @@ export function FloorCanvas(props: Props) {
     if (pickable && !pickable.has(id)) return
     onTableClick(id)
   }
-  const handleWaitlist = () => {
-    if (!isSuppressed(suppressClick)) onWaitlistClick?.()
-  }
 
   const zoneOf = useMemo(() => new Map(zones.map((z) => [z.code, z])), [zones])
   const focusZone = zoneFocus === "ALL" ? null : zoneFocus
@@ -346,9 +337,6 @@ export function FloorCanvas(props: Props) {
             )
           })}
           <Fixtures />
-          {mode === "live" && onWaitlistClick ? (
-            <WaitlistMarker count={waitlistCount ?? 0} selected={!!waitlistSelected} onActivate={handleWaitlist} />
-          ) : null}
           <GroupThreads groups={groups} tableById={tableById} />
           {tables.map((t) => {
             const dim =
@@ -395,7 +383,7 @@ export function FloorCanvas(props: Props) {
 const Fixtures = memo(function Fixtures() {
   return (
     <g aria-hidden pointerEvents="none">
-      {FIXTURES.filter((f) => f.id !== "block-1").map((f) => {
+      {FIXTURES.map((f) => {
         switch (f.kind) {
           case "wall":
             return (
@@ -505,86 +493,7 @@ const Fixtures = memo(function Fixtures() {
   )
 })
 
-const WaitlistMarker = memo(function WaitlistMarker({
-  count,
-  selected,
-  onActivate,
-}: {
-  count: number
-  selected: boolean
-  onActivate: () => void
-}) {
-  const { x, y, width, height } = WAITLIST_MARKER
-  const activate = (event: KeyboardEvent<SVGGElement>) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault()
-      onActivate()
-    }
-  }
-  return (
-    <g
-      transform={`translate(${x} ${y})`}
-      role="button"
-      tabIndex={0}
-      aria-label={`Bàn chờ, ${count} nhóm đang chờ`}
-      aria-pressed={selected}
-      className="cursor-pointer outline-none [&:focus-visible_.waitlist-focus]:opacity-100"
-      onClick={(event) => {
-        event.stopPropagation()
-        onActivate()
-      }}
-      onKeyDown={activate}
-    >
-      <rect x={-width / 2 - 6} y={-height / 2 - 6} width={width + 12} height={height + 12} fill="transparent" />
-      <rect
-        className="waitlist-focus opacity-0"
-        x={-width / 2 - 4}
-        y={-height / 2 - 4}
-        width={width + 8}
-        height={height + 8}
-        rx={9}
-        fill="none"
-        stroke="var(--ring)"
-        strokeWidth={1.8}
-      />
-      <rect
-        x={-width / 2}
-        y={-height / 2}
-        width={width}
-        height={height}
-        rx={7}
-        fill={selected ? "var(--primary)" : "var(--surface-2)"}
-        stroke={selected ? "var(--primary)" : "var(--border-strong)"}
-        strokeWidth={1.4}
-      />
-      <path
-        d="M-19 -8 h11 M-19 -2 h11 M-19 4 h7"
-        stroke={selected ? "var(--primary-foreground)" : "var(--foreground)"}
-        strokeWidth={1.6}
-        strokeLinecap="round"
-      />
-      <text
-        x={3}
-        y={4}
-        textAnchor="middle"
-        fontSize={9}
-        fontWeight={700}
-        fill={selected ? "var(--primary-foreground)" : "var(--foreground)"}
-      >
-        CHỜ
-      </text>
-      <g transform="translate(24 -17)">
-        <circle r={10} fill="var(--st-reserved)" stroke="var(--background)" strokeWidth={1.5} />
-        <text y={3.4} textAnchor="middle" fontSize={9} fontWeight={800} fill="var(--st-reserved-ink)">
-          {count > 99 ? "99+" : count}
-        </text>
-      </g>
-    </g>
-  )
-})
-
 function GroupThreads({ groups, tableById }: { groups: FloorGroup[]; tableById: Map<number, TableView> }) {
-  const colors = ["#7c3aed", "#0284c7", "#059669", "#d97706", "#db2777", "#4f46e5"]
   return (
     <g aria-hidden pointerEvents="none">
       {groups.map((g) => {
@@ -599,10 +508,10 @@ function GroupThreads({ groups, tableById }: { groups: FloorGroup[]; tableById: 
             data-group-symbol={g.symbolNo}
             d={d}
             fill="none"
-            stroke={colors[(g.symbolNo - 1) % colors.length]}
-            strokeOpacity={0.9}
-            strokeWidth={2.2}
-            strokeDasharray="0.1 3.2"
+            stroke="var(--foreground)"
+            strokeOpacity={0.45}
+            strokeWidth={1.4}
+            strokeDasharray="0.1 3.6"
             strokeLinecap="round"
           />
         )
@@ -943,6 +852,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
   selected,
   dim,
   pickHint,
+  disabled,
   onActivate,
   avail,
 }: GlyphBase & { avail?: TableAvailability }) {
@@ -973,7 +883,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
       : status === "too_small"
         ? `${t.capacity} chỗ`
         : AVAIL_LABEL[status]
-  const desc = `${t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`}: ${avail?.reason ?? ""}`
+  const desc = `${t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`}: ${avail?.reason || AVAIL_LABEL[status] || ""}`
   const opacity = dim ? 0.3 : faded ? 0.45 : 1
   if (t.kind === "BAR_SEAT") {
     return (
@@ -983,7 +893,8 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
         tabIndex={dim ? -1 : 0}
         aria-label={desc}
         aria-pressed={selected}
-        className="cursor-pointer outline-none [&:focus-visible_.focus-ring]:opacity-100"
+        aria-disabled={disabled}
+        className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
         opacity={opacity}
         onClick={() => onActivate(t.id)}
         onKeyDown={(e) => onKey(e, t.id, onActivate)}
@@ -1029,7 +940,8 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
       tabIndex={dim ? -1 : 0}
       aria-label={desc}
       aria-pressed={selected}
-      className="cursor-pointer outline-none [&:focus-visible_.focus-ring]:opacity-100"
+      aria-disabled={disabled}
+      className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
       opacity={opacity}
       onClick={() => onActivate(t.id)}
       onKeyDown={(e) => onKey(e, t.id, onActivate)}

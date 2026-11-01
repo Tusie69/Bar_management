@@ -49,6 +49,7 @@ export class HttpClient {
   readonly root: string
   private readonly defaultTimeoutMs: number
   private csrfToken: string | null = null
+  private sessionRevisionValue = 0
   private unauthorizedHandler: SecurityHandler | null = null
   private csrfFailureHandler: SecurityHandler | null = null
 
@@ -59,6 +60,11 @@ export class HttpClient {
 
   setCsrfToken(token: string | null): void {
     this.csrfToken = token
+    this.sessionRevisionValue += 1
+  }
+
+  get sessionRevision(): number {
+    return this.sessionRevisionValue
   }
 
   setUnauthorizedHandler(handler: SecurityHandler): void {

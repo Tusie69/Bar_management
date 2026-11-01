@@ -43,10 +43,7 @@ const scenarios = [
     "booking",
     "/floor",
     async (p) => {
-      await p
-        .getByRole("button", { name: /Đặt bàn/ })
-        .first()
-        .click()
+      await p.getByRole("button", { name: "Tạo đặt bàn" }).first().click()
       await p.waitForTimeout(500)
     },
   ],

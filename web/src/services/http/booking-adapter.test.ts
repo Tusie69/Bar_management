@@ -6,7 +6,6 @@ import {
   createBookingPayload,
   fullUpdateBookingPayload,
   mapBooking,
-  mapAssignmentTable,
   type BackendBookingPayload,
 } from "./booking-adapter"
 
@@ -94,14 +93,5 @@ describe("booking contract adapter", () => {
   it("builds the assign payload with version and unique table IDs", () => {
     expect(assignmentPayload(3, [12, 12, 14])).toEqual({ version: 3, tableIds: [12, 14] })
     expect(() => assignmentPayload(3, [])).toThrowError(ApiError)
-  })
-
-  it("maps the backend table state and database spare flag without hardcoded table codes", () => {
-    expect(mapAssignmentTable({ id: 12, code: "X99", state: "AVAILABLE", isBackup: true })).toEqual({
-      id: 12,
-      code: "X99",
-      state: "AVAILABLE",
-      isSpare: true,
-    })
   })
 })

@@ -1,6 +1,6 @@
 import type { BookingSourceCode, VisitOrigin } from "@/domain/enums"
 import type { Catalog, ClaimView, FloorState, FloorTableState, TableLiveState } from "@/domain/models"
-import type { BusinessDate } from "@/lib/time"
+import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { ApiError } from "../contracts"
 
 const zoneCodes = ["A", "B", "C", "BAR"] as const
@@ -46,6 +46,8 @@ export interface BackendTableState {
   code: string
   state: "AVAILABLE" | "RESERVED" | "IN_USE" | "OUT_OF_SERVICE"
   isBackup: boolean
+  staleFromPreviousDay?: boolean
+  allocationBusinessDate?: string | null
   activeVisit: {
     id: number
     version: number
@@ -123,7 +125,7 @@ export function mapCatalog(payload: BackendCatalog, sources: BackendSource[]): C
       w: table.width,
       h: table.height,
       // Chair orientation is intentionally omitted: the schema does not store it.
-      ...(table.kind === "BAR_SEAT" ? { seating: "bar" as const } : {}),
+      seating: table.kind === "BAR_SEAT" ? ("bar" as const) : undefined,
     }
   })
 
@@ -131,12 +133,12 @@ export function mapCatalog(payload: BackendCatalog, sources: BackendSource[]): C
     venue: payload.venue,
     zones,
     tables,
-    combinations: payload.combinations,
+    combinations: payload.combinations.map((combination) => ({ ...combination, pendingConfirmation: null })),
     sources: sources.map((source) => {
       if (!includes(sourceCodes, source.code)) {
         contractError("UNSUPPORTED_BOOKING_SOURCE", `Backend trả về nguồn booking chưa được hỗ trợ '${source.code}'.`)
       }
-      return { code: source.code, name: source.name }
+      return { id: null, code: source.code, name: source.name }
     }),
   }
 }
@@ -237,6 +239,13 @@ export function mapFloorState(
     const group = groupByTableId.get(table.id)
     return {
       tableId: table.id,
+      // Prefer the allocation projection: startedAt can belong to a different
+      // business date. The fallback supports older servers during rollout.
+      staleFromPreviousDay:
+        table.staleFromPreviousDay ??
+        (table.allocationBusinessDate
+          ? table.allocationBusinessDate < businessDate
+          : Boolean(table.activeVisit && businessDateOf(table.activeVisit.startedAt) < businessDate)),
       state: tableState(table, booking),
       claim:
         table.state === "IN_USE"

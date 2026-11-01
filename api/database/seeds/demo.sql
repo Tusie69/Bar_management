@@ -28,7 +28,7 @@ START TRANSACTION;
 INSERT INTO _gam_seed_guard VALUES (
   IF(COALESCE(DATABASE() REGEXP '(_dev|_test)$', 0)
     AND (SELECT COUNT(*) FROM roles WHERE code IN ('OWNER_ADMIN','RECEPTIONIST','CUSTOMER_CARE','CASHIER')) = 4
-    AND (SELECT COUNT(*) FROM permissions) = 28
+    AND (SELECT COUNT(*) FROM permissions) IN (28, 29)
     AND (SELECT COUNT(*) FROM organizations) = 0
     AND (SELECT COUNT(*) FROM venues) = 0
     AND (SELECT COUNT(*) FROM users) = 0

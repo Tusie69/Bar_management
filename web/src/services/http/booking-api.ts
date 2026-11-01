@@ -1,3 +1,4 @@
+import { ApiError } from "../contracts"
 import type { BusinessDate } from "@/lib/time"
 import type { HttpClient } from "./http-client"
 import {
@@ -7,9 +8,6 @@ import {
   directBookingCreatePayload,
   fullUpdateBookingPayload,
   mapBooking,
-  mapAssignmentTable,
-  type AssignmentTable,
-  type BackendAssignmentTablePayload,
   type BackendBookingPayload,
   type BookingWriteFields,
   type HttpBooking,
@@ -30,7 +28,12 @@ export class HttpBookingApi {
     const path = query
       ? `/bookings/search?date=${businessDate}&q=${encodeURIComponent(query)}`
       : `/bookings?date=${businessDate}`
-    const response = await this.client.get<{ bookings: BackendBookingPayload[] }>(path, { reviver: dateReviver })
+    const response = await this.client.get<{ businessDate: string; bookings: BackendBookingPayload[] }>(path, {
+      reviver: dateReviver,
+    })
+    if (response.businessDate !== businessDate || response.bookings.some((row) => row.businessDate !== businessDate)) {
+      throw new ApiError(502, "BUSINESS_DATE_RESPONSE_MISMATCH", "Unexpected business date in bookings response.")
+    }
     return response.bookings.map(mapBooking)
   }
 
@@ -72,25 +75,22 @@ export class HttpBookingApi {
     return mapBooking(response.booking)
   }
 
-  async cancel(current: HttpBooking, reasonNote?: string): Promise<HttpBooking> {
+  async cancelVersion(id: number, version: number, reasonNote?: string): Promise<HttpBooking> {
     const response = await this.client.post<{ booking: BackendBookingPayload }>(
-      `/bookings/${current.id}/cancel`,
-      cancelBookingPayload(current.version, reasonNote),
+      `/bookings/${id}/cancel`,
+      cancelBookingPayload(version, reasonNote),
       { reviver: dateReviver },
     )
     return mapBooking(response.booking)
   }
 
-  async assignmentTables(businessDate: BusinessDate): Promise<AssignmentTable[]> {
-    const response = await this.client.get<{ tables: BackendAssignmentTablePayload[] }>(
-      `/tables?date=${businessDate}`,
+  async markNoShow(id: number, version: number): Promise<HttpBooking> {
+    const response = await this.client.post<{ booking: BackendBookingPayload }>(
+      `/bookings/${id}/no-show`,
+      { version },
       { reviver: dateReviver },
     )
-    return response.tables.map(mapAssignmentTable)
-  }
-
-  async assign(current: HttpBooking, tableIds: number[]): Promise<HttpBooking> {
-    return this.assignVersion(current.id, current.version, tableIds)
+    return mapBooking(response.booking)
   }
 
   async assignVersion(id: number, version: number, tableIds: number[]): Promise<HttpBooking> {

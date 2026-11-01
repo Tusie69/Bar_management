@@ -7,6 +7,7 @@ export interface AuthenticatedUser {
   displayName: string
   organizationId: number
   venueId: number
+  roles: string[]
 }
 
 export interface AuthSession {
@@ -27,6 +28,8 @@ function validSession(value: unknown): value is AuthSession {
     typeof user.displayName === "string" &&
     Number.isSafeInteger(user.organizationId) &&
     Number.isSafeInteger(user.venueId) &&
+    Array.isArray(user.roles) &&
+    user.roles.every((role) => typeof role === "string") &&
     Array.isArray(session.permissions) &&
     session.permissions.every((permission) => typeof permission === "string") &&
     typeof session.csrfToken === "string" &&

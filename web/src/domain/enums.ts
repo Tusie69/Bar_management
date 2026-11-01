@@ -16,7 +16,7 @@ export type ReservationCloseReason =
   "CUSTOMER_REQUEST" | "NO_SHOW_CONFIRMED" | "DUPLICATE" | "ENTRY_ERROR" | "VENUE_DECISION" | "OTHER"
 
 export type VisitOrigin = "RESERVATION" | "WALK_IN" | "WAITLIST"
-export type VisitEndReason = "GUEST_LEFT" | "MERGED" | "ENTRY_ERROR"
+export type VisitEndReason = "GUEST_LEFT" | "MERGED" | "ENTRY_ERROR" | "BUSINESS_DAY_END"
 
 export type WaitlistKind = "ADVANCE_RESERVATION" | "WALK_IN"
 export type WaitlistStatus = "WAITING" | "CONTACTING" | "OFFERED" | "HOLD_ACTIVE" | "SEATED" | "DECLINED" | "CANCELLED"
@@ -62,6 +62,7 @@ export type AllocationReleaseReason =
   | "SPLIT"
   | "MERGED"
   | "GUEST_LEFT"
+  | "BUSINESS_DAY_END"
   | "HOLD_RELEASED"
   | "RESERVATION_CANCELLED"
   | "NO_SHOW"
@@ -179,6 +180,7 @@ export const RELEASE_REASON_LABEL: Record<AllocationReleaseReason, string> = {
   SPLIT: "Tách bàn",
   MERGED: "Gộp lượt",
   GUEST_LEFT: "Khách rời, nhả bàn",
+  BUSINESS_DAY_END: "Tự đóng cuối ngày kinh doanh",
   HOLD_RELEASED: "Nhả giữ bàn",
   RESERVATION_CANCELLED: "Hủy booking",
   NO_SHOW: "Không đến",

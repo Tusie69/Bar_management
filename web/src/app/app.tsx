@@ -8,6 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { FloorPage } from "@/features/floor/floor-page"
 import { AuthBoundary } from "@/features/auth/auth-boundary"
 import { useRealtimeSync } from "@/hooks/use-data"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { AppShell } from "./shell"
 
 const OverviewPage = lazy(() => import("@/features/overview/overview-page"))
@@ -16,6 +17,8 @@ const WaitlistPage = lazy(() => import("@/features/waitlist/waitlist-page"))
 const GuestsPage = lazy(() => import("@/features/guests/guests-page"))
 const ReportsPage = lazy(() => import("@/features/reports/reports-page"))
 const SettingsPage = lazy(() => import("@/features/settings/settings-page"))
+// Phone (< 768px) gets its own app: Mobile V1. Desktop/Tablet keep AppShell.
+const MobileApp = lazy(() => import("@/features/mobile/mobile-app"))
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -33,12 +36,27 @@ function PageFallback() {
 
 const page = (el: React.ReactNode) => <Suspense fallback={<PageFallback />}>{el}</Suspense>
 
+function Root() {
+  return useIsMobile() ? page(<MobileApp />) : <AppShell />
+}
+
+// Phone opens the role home (Tiếp đón / Tổng quan). Deep links keep their route.
+function HomeIndex() {
+  return <Navigate to={useIsMobile() ? "/home" : "/floor"} replace />
+}
+
+/** /home exists on phone only. */
+function HomeRoute() {
+  return useIsMobile() ? null : <Navigate to="/floor" replace />
+}
+
 const router = createBrowserRouter([
   {
     path: "/",
-    element: <AppShell />,
+    element: <Root />,
     children: [
-      { index: true, element: <Navigate to="/floor" replace /> },
+      { index: true, element: <HomeIndex /> },
+      { path: "home", element: <HomeRoute /> },
       { path: "overview", element: page(<OverviewPage />) },
       { path: "floor", element: <FloorPage /> },
       { path: "reservations", element: page(<ReservationsPage />) },

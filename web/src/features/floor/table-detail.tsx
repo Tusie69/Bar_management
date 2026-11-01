@@ -74,6 +74,7 @@ import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useCan } from "@/state/session"
 import { useUi } from "@/state/ui"
+import { toast } from "sonner"
 import { ExtendHoldDialog, GuestCountDialog, SplitDialog } from "./floor-dialogs"
 import type { FloorModel } from "./use-floor-model"
 
@@ -88,6 +89,18 @@ const HOLD_REASONS = (
   label: HOLD_RELEASE_LABEL[value],
 }))
 
+const TABLE_OOS_REASONS = [
+  { value: "Bàn hỏng / bảo trì", label: "Bàn hỏng / bảo trì" },
+  { value: "Sự cố khu vực / vệ sinh", label: "Sự cố khu vực / vệ sinh" },
+  { value: "OTHER", label: "Khác" },
+]
+
+const TABLE_ACTIVE_REASONS = [
+  { value: "Đã khắc phục xong sự cố", label: "Đã khắc phục xong sự cố" },
+  { value: "Bảo trì hoàn tất", label: "Bảo trì hoàn tất" },
+  { value: "OTHER", label: "Lý do khác" },
+]
+
 export function TableDetail({ tableId, model, onBack }: { tableId: number; model: FloorModel; onBack: () => void }) {
   const t = model.byId.get(tableId)
   const fs = model.states.get(tableId)
@@ -96,6 +109,8 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
   const history = useTableHistory(tableId, bd)
   const isOwner = useCan("venue.configure")
   const { run } = useAction()
+  const [oosOpen, setOosOpen] = useState(false)
+  const [activeOpen, setActiveOpen] = useState(false)
 
   if (!t) return null
   const state = fs?.state ?? "free"
@@ -120,12 +135,13 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
               {t.status === "ACTIVE" ? (
                 <DropdownMenuItem
                   disabled={!!claim}
-                  onSelect={() => run(() => api.setTableStatus(t.id, t.version, { status: "OUT_OF_SERVICE" }))}
+                  title={claim ? "Bàn đang có khách hoặc đang được giữ." : undefined}
+                  onSelect={() => setOosOpen(true)}
                 >
                   <Ban /> Ngưng phục vụ
                 </DropdownMenuItem>
               ) : (
-                <DropdownMenuItem onSelect={() => run(() => api.setTableStatus(t.id, t.version, { status: "ACTIVE" }))}>
+                <DropdownMenuItem onSelect={() => setActiveOpen(true)}>
                   <Check /> Mở lại phục vụ
                 </DropdownMenuItem>
               )}
@@ -236,6 +252,48 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
           </section>
         </div>
       </div>
+      <ConfirmAction
+        open={oosOpen}
+        onOpenChange={setOosOpen}
+        title={`Ngưng phục vụ ${title}?`}
+        description="Bàn sẽ chuyển sang trạng thái ngưng phục vụ và không thể gán khách hoặc check-in. Thao tác được ghi vào nhật ký."
+        confirmLabel="Ngưng phục vụ"
+        destructive
+        reasons={TABLE_OOS_REASONS}
+        requireNoteFor="OTHER"
+        onConfirm={async (reason, note) => {
+          const formattedReason =
+            reason === "OTHER" ? note.trim() : note.trim() ? `${reason}: ${note.trim()}` : (reason ?? "")
+          if (!formattedReason) return
+          await run(() =>
+            api.setTableStatus(t.id, t.version, {
+              status: "OUT_OF_SERVICE",
+              reason: formattedReason,
+            }),
+          )
+        }}
+      />
+      <ConfirmAction
+        open={activeOpen}
+        onOpenChange={setActiveOpen}
+        title={`Mở lại phục vụ ${title}?`}
+        description="Bàn sẽ chuyển sang trạng thái hoạt động bình thường và sẵn sàng phục vụ khách. Thao tác được ghi vào nhật ký."
+        confirmLabel="Mở lại phục vụ"
+        destructive={false}
+        reasons={TABLE_ACTIVE_REASONS}
+        requireNoteFor="OTHER"
+        onConfirm={async (reason, note) => {
+          const formattedReason =
+            reason === "OTHER" ? note.trim() : note.trim() ? `${reason}: ${note.trim()}` : (reason ?? "")
+          if (!formattedReason) return
+          await run(() =>
+            api.setTableStatus(t.id, t.version, {
+              status: "ACTIVE",
+              reason: formattedReason,
+            }),
+          )
+        }}
+      />
     </div>
   )
 }
@@ -324,29 +382,36 @@ function ClaimCard({ claim, children, model }: { claim: ClaimView; children?: Re
   )
 }
 
-function usePickActions(tableId: number, claim: ClaimView, model: FloorModel) {
+function usePickActions(_tableId: number, claim: ClaimView, model: FloorModel) {
   const ui = useUi()
   const { run } = useAction()
   const claimRef = claim.visitId
-    ? { visitId: claim.visitId }
+    ? { visitId: claim.visitId, version: claim.version }
     : claim.reservationId && claim.kind === "reservation"
-      ? { reservationId: claim.reservationId }
-      : { waitlistEntryId: claim.waitlistEntryId ?? undefined }
+      ? { reservationId: claim.reservationId, version: claim.version }
+      : { waitlistEntryId: claim.waitlistEntryId ?? undefined, version: claim.version }
   const codes = claim.tableIds.map((id) => model.label(id)).join(" + ")
   return {
     move: () =>
       ui.startPick({
         intent: "move",
-        title: `Đổi ${model.label(tableId)} sang bàn mới`,
-        hint: "Chạm một bàn trống. Lịch sử bàn cũ được giữ nguyên.",
-        multi: false,
+        title: `Đổi ${codes} sang bàn mới`,
+        hint: `Chạm một hoặc nhiều bàn trống cho đoàn ${claim.partySize} khách. Lịch sử bàn cũ được giữ nguyên.`,
+        multi: true,
         excludeIds: claim.tableIds,
         confirmLabel: "Đổi bàn",
-        onConfirm: async ([to]) => {
+        onConfirm: async (toIds) => {
+          const targetCapacity = toIds.reduce((sum, id) => sum + (model.byId.get(id)?.capacity ?? 0), 0)
+          if (targetCapacity < claim.partySize) {
+            toast.error(
+              `Các bàn đã chọn chỉ có ${targetCapacity} chỗ cho đoàn ${claim.partySize} khách. Chọn thêm bàn trước khi xác nhận.`,
+            )
+            return false
+          }
           const r = await run((o) =>
-            api.moveClaim({ claim: claimRef, fromTableId: tableId, toTableId: to, overrideReason: o }),
+            api.moveClaim({ claim: claimRef, tableIds: toIds, overrideReason: o }),
           )
-          if (r) ui.selectTable(to)
+          if (r && toIds.length) ui.selectTable(toIds[0])
           return !!r
         },
       }),
@@ -361,7 +426,9 @@ function usePickActions(tableId: number, claim: ClaimView, model: FloorModel) {
         onConfirm: async (ids) =>
           !!(await run((o) =>
             api.combineTables({
-              claim: claim.visitId ? { visitId: claim.visitId } : { reservationId: claim.reservationId! },
+              claim: claim.visitId
+                ? { visitId: claim.visitId, version: claim.version }
+                : { reservationId: claim.reservationId!, version: claim.version },
               addTableIds: ids,
               overrideReason: o,
             }),
@@ -418,7 +485,12 @@ function SeatedSection({
           <Combine /> Ghép bàn
         </GuardedButton>
         {claim.groupId ? (
-          <GuardedButton permission="visit.split" variant="outline" onClick={() => setSplitOpen(true)}>
+          <GuardedButton
+            permission="visit.split"
+            variant="outline"
+            disabledReason={api.mode === "http" ? "Backend v1 chưa hỗ trợ tách nhóm bàn." : undefined}
+            onClick={() => setSplitOpen(true)}
+          >
             <Split /> Tách bàn
           </GuardedButton>
         ) : null}
@@ -426,6 +498,7 @@ function SeatedSection({
           <GuardedButton
             permission="visit.mark_paid"
             variant="outline"
+            disabledReason={api.mode === "http" ? "Backend v1 chưa hỗ trợ xác nhận thanh toán." : undefined}
             onClick={() => run(() => api.markPaid(claim.visitId!, claim.version))}
           >
             <CircleDollarSign /> Đã thanh toán
@@ -556,10 +629,11 @@ function ReservationSection({
           </>
         }
         initial={claim.partySize}
+        readOnly
         confirmLabel="Check-in"
-        onConfirm={async (count) => {
+        onConfirm={async () => {
           const r = await run(() =>
-            api.checkIn({ reservationId: claim.reservationId!, version: claim.version, guestCount: count }),
+            api.checkIn({ reservationId: claim.reservationId!, version: claim.version, guestCount: claim.partySize }),
           )
           if (r) setCheckInOpen(false)
         }}
@@ -654,7 +728,12 @@ function HoldSection({
         >
           <Check /> Khách đã tới, xếp chỗ
         </GuardedButton>
-        <GuardedButton permission="hold.set_deadline" variant="outline" onClick={() => setExtendOpen(true)}>
+        <GuardedButton
+          permission="hold.set_deadline"
+          variant="outline"
+          disabledReason={api.mode === "http" ? "Backend v1 chưa hỗ trợ gia hạn giữ bàn." : undefined}
+          onClick={() => setExtendOpen(true)}
+        >
           <TimerReset /> Gia hạn
         </GuardedButton>
         <GuardedButton permission="table.assign" variant="outline" onClick={pick.move}>
@@ -664,6 +743,7 @@ function HoldSection({
           permission="hold.release"
           variant="outline"
           className="col-span-2"
+          disabledReason={api.mode === "http" ? "Backend v1 chưa hỗ trợ nhả giữ bàn." : undefined}
           onClick={() => setReleaseOpen(true)}
         >
           <XCircle /> Nhả giữ bàn
@@ -836,6 +916,12 @@ function FreeSection({
                         <Clock3 className="size-3" aria-hidden />
                         {fmtTime(entry.queuedAt)}
                       </span>
+                      {entry.reservationExpectedAt ? (
+                        <span className="tnum inline-flex items-center gap-1">
+                          <CalendarClock className="size-3" aria-hidden />
+                          hẹn {fmtTime(entry.reservationExpectedAt)}
+                        </span>
+                      ) : null}
                       {!fits ? <span className="text-st-late-ink">thiếu chỗ</span> : null}
                     </p>
                   </div>
@@ -862,7 +948,7 @@ function FreeSection({
             })}
           </ul>
         )}
-        <p className="text-xs text-subtle">Chỉ gợi ý · thứ tự ưu tiên chờ PO duyệt</p>
+        <p className="text-xs text-subtle">Chỉ gợi ý · khách đặt trước được ưu tiên hơn Walk-in</p>
       </section>
       <GuestCountDialog
         open={!!seatEntry}
@@ -897,6 +983,10 @@ function suggestFor(entries: WaitlistEntryView[], tableId: number, zone: string,
       return e.preferences.some((p) => p.tableId === tableId || p.zoneCode === zone)
     })
     .map((e) => ({ entry: e, fits: e.partySize <= capacity }))
-    .sort((a, b) => Number(b.fits) - Number(a.fits) || a.entry.queuedAt.getTime() - b.entry.queuedAt.getTime())
+    .sort((a, b) => {
+      if (b.fits !== a.fits) return Number(b.fits) - Number(a.fits)
+      if (a.entry.kind !== b.entry.kind) return a.entry.kind === "ADVANCE_RESERVATION" ? -1 : 1
+      return a.entry.queuedAt.getTime() - b.entry.queuedAt.getTime()
+    })
     .slice(0, 4)
 }

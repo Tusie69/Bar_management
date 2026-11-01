@@ -1,16 +1,12 @@
 /**
  * API contract between the 21GAM frontend and the Express/MySQL backend.
  *
- * The UI only talks to `GamApi`. Today it is backed by an in-memory mock
- * (src/services/mock); `src/services/http/http-api.ts` shows how the same
- * interface maps onto REST. Endpoint paths follow database/09 and db08 where
- * those docs name them; the rest are PROPOSED and need sign-off by Nam/Tú.
+ * The UI talks to `GamApi`, selected as HTTP or development mock at runtime.
+ * The frozen integration contract defines the implemented backend capabilities.
  *
- * Conventions expected from the backend:
- * - Idempotency is part of the target contract, but the current backend does
- *   not enforce it yet; the HTTP client therefore never auto-retries writes.
- * - Writes send the entity `version` for optimistic locking.
- * - Errors: { status, code, message, details } with codes below.
+ * Transport: /api/v1, HttpOnly session cookie, memory-only CSRF token.
+ * Existing-entity writes carry a version and are never automatically retried.
+ * The backend does not enforce idempotency keys. Unsupported capabilities reject 501.
  */
 import type { BusinessDate } from "@/lib/time"
 import type {
@@ -48,7 +44,7 @@ import type {
 } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 
-type KnownApiErrorCode =
+export type KnownApiErrorCode =
   | "VALIDATION_FAILED"
   | "PERMISSION_DENIED"
   | "NOT_FOUND"
@@ -61,6 +57,7 @@ type KnownApiErrorCode =
   | "IDEMPOTENCY_KEY_REUSED"
   | "INVALID_STATE"
   | "OVERRIDE_REQUIRED"
+  | "NOT_SUPPORTED_BY_BACKEND"
 
 export type ApiErrorCode = KnownApiErrorCode | (string & {})
 
@@ -78,6 +75,8 @@ export class ApiError extends Error {
 }
 
 export const isApiError = (e: unknown): e is ApiError => e instanceof ApiError
+export const isNotSupported = (error: unknown): error is ApiError =>
+  isApiError(error) && error.status === 501 && error.code === "NOT_SUPPORTED_BY_BACKEND"
 
 /* ---------------- Inputs ---------------- */
 
@@ -89,6 +88,7 @@ export interface CreateReservationInput {
   expectedAt: Date
   sourceCode: BookingSourceCode
   note?: string
+  /** Selected tables are created with the booking atomically. Empty/omitted creates an unassigned booking. */
   tableIds?: number[]
   overrideReason?: string
   classification?: BookingClassification
@@ -120,16 +120,18 @@ export interface CheckInInput {
   overrideReason?: string
 }
 
-export interface MoveInput {
+export type MoveInput = {
   /** Visit or reservation whose claim moves. */
-  claim: { visitId?: number; reservationId?: number; waitlistEntryId?: number }
-  fromTableId: number
-  toTableId: number
+  claim: { visitId?: number; reservationId?: number; waitlistEntryId?: number; version?: number }
   overrideReason?: string
-}
+} & (
+  | { fromTableId: number; toTableId: number; tableIds?: never }
+  /** Replace the complete destination set, including single-table to grouped moves. */
+  | { tableIds: number[]; fromTableId?: never; toTableId?: never }
+)
 
 export interface CombineInput {
-  claim: { visitId?: number; reservationId?: number }
+  claim: { visitId?: number; reservationId?: number; version?: number }
   addTableIds: number[]
   overrideReason?: string
 }
@@ -142,6 +144,8 @@ export interface SplitInput {
 
 export interface AddWaitlistInput {
   kind: WaitlistKind
+  businessDate?: BusinessDate
+  phone?: string
   reservationId?: number
   contactName?: string
   partySize?: number
@@ -200,6 +204,7 @@ export interface GamApi {
   getAvailability(at: Date, partySize: number): Promise<AvailabilityResult>
   getShiftOverview(): Promise<ShiftOverview>
   listReservations(q: ReservationQuery): Promise<ReservationView[]>
+  exportDailyBookingText(businessDate: BusinessDate): Promise<string>
   listVisits(businessDate: BusinessDate): Promise<VisitView[]>
   listWaitlist(businessDate: BusinessDate): Promise<WaitlistEntryView[]>
   searchCustomers(query: string): Promise<CustomerSummary[]>
@@ -232,7 +237,7 @@ export interface GamApi {
   setTableStatus(
     tableId: number,
     version: number,
-    patch: { status?: "ACTIVE" | "OUT_OF_SERVICE"; isSpare?: boolean },
+    patch: { status?: "ACTIVE" | "OUT_OF_SERVICE"; isSpare?: boolean; reason?: string },
   ): Promise<MutationResult>
 
   // Waitlist
@@ -240,13 +245,15 @@ export interface GamApi {
   claimWaitlist(entryId: number, version: number): Promise<MutationResult>
   releaseClaim(entryId: number, version: number): Promise<MutationResult>
   recordContact(input: RecordContactInput): Promise<MutationResult>
-  seatWaitlist(input: SeatWaitlistInput): Promise<MutationResult>
+  /** Target backend assigns a reservation hold, with a group for multiple tables. */
+  seatWaitlist(input: SeatWaitlistInput): Promise<MutationResult & { reservationId: number; groupId: number | null }>
   cancelWaitlist(entryId: number, version: number, reason: WaitlistCloseReason, note?: string): Promise<MutationResult>
   setHoldDeadline(holdId: number, version: number, deadlineAt: Date, reason: string): Promise<MutationResult>
   releaseHold(holdId: number, version: number, reason: HoldReleaseReason, note?: string): Promise<MutationResult>
 
   // Customers
   revealPhone(
+    /** In HTTP mode this is the booking id; mock mode uses the customer id. */
     customerId: number,
     reasonCode: string,
     context: { reservationId?: number; entryId?: number },
@@ -264,47 +271,30 @@ export interface GamApi {
   ): Promise<MutationResult>
 }
 
-/**
- * Proposed REST mapping (documentation; consumed by http-api.ts).
- * PROPOSED = not yet in the database docs, to be agreed with backend.
- */
+/** Implemented backend paths, relative to /api/v1. */
 export const REST_ENDPOINTS = {
-  catalog: "GET /api/venues/:venueId/catalog", // PROPOSED
-  floorState: "GET /api/venues/:venueId/floor-state?at=ISO", // db09
-  availability: "GET /api/venues/:venueId/availability?at=ISO&party=N", // PROPOSED
-  changes: "GET /api/venues/:venueId/changes?since=SEQ&limit=200", // db09
-  overview: "GET /api/venues/:venueId/shift-overview?date=YYYY-MM-DD", // PROPOSED
-  reservations: "GET /api/venues/:venueId/reservations?date=YYYY-MM-DD&q=", // PROPOSED
-  createReservation: "POST /api/venues/:venueId/reservations",
-  updateReservation: "PATCH /api/reservations/:id",
-  assignTables: "POST /api/reservations/:id/assign",
-  cancelReservation: "POST /api/reservations/:id/cancel",
-  markNoShow: "POST /api/reservations/:id/no-show",
-  checkIn: "POST /api/reservations/:id/check-in",
-  walkIn: "POST /api/venues/:venueId/walk-ins",
-  move: "POST /api/floor/move",
-  combine: "POST /api/floor/combine",
-  split: "POST /api/table-groups/:id/split",
-  endVisit: "POST /api/visits/:id/end",
-  markPaid: "POST /api/visits/:id/paid",
-  waitlist: "GET /api/venues/:venueId/waitlist?date=YYYY-MM-DD",
-  addWaitlist: "POST /api/venues/:venueId/waitlist",
-  claim: "POST /api/waitlist/:id/claim",
-  releaseClaim: "POST /api/waitlist/:id/release-claim",
-  contact: "POST /api/waitlist/:id/contact-attempts",
-  seatWaitlist: "POST /api/waitlist/:id/seat",
-  cancelWaitlist: "POST /api/waitlist/:id/cancel",
-  holdDeadline: "POST /api/holds/:id/deadline",
-  releaseHold: "POST /api/holds/:id/release",
-  customers: "GET /api/customers?q=",
-  customer: "GET /api/customers/:id",
-  revealPhone: "POST /api/customers/:id/phone:reveal", // db08, Cache-Control: no-store
-  undo: "POST /api/operations/:id/undo", // db09
-  redo: "POST /api/operations/:id/redo", // db09
-  operations: "GET /api/venues/:venueId/operations?limit=N",
-  allocations: "GET /api/venues/:venueId/allocations?date=YYYY-MM-DD&table=ID", // PROPOSED
-  report: "GET /api/venues/:venueId/reports/usage?from=&to=&zone=",
-  venueConfig: "PATCH /api/venues/:venueId",
+  catalog: "GET /tables/catalog",
+  sources: "GET /bookings/sources",
+  floorState: "GET /tables?date=YYYY-MM-DD",
+  reservations: "GET /bookings?date=YYYY-MM-DD",
+  exportDailyBookingText: "GET /bookings/export?date=YYYY-MM-DD",
+  createReservation: "POST /bookings",
+  createDirectReservation: "POST /bookings/direct",
+  updateReservation: "PUT /bookings/:id",
+  assignTables: "POST /bookings/:id/assign",
+  cancelReservation: "POST /bookings/:id/cancel",
+  markNoShow: "POST /bookings/:id/no-show",
+  checkIn: "POST /bookings/:id/check-in",
+  walkIn: "POST /bookings/walk-ins",
+  move: "POST /visits/:id/move",
+  combine: "POST /visits/:id/merge",
+  endVisit: "POST /visits/:id/close",
+  waitlist: "GET /waitlist?date=YYYY-MM-DD",
+  addWaitlist: "POST /waitlist",
+  contact: "POST /waitlist/:id/contact-attempts",
+  seatWaitlist: "POST /waitlist/:id/seat",
+  cancelWaitlist: "POST /waitlist/:id/cancel",
+  revealPhone: "POST /bookings/:id/phone:reveal",
 } as const
 
 export const DEMO_ROLE_ORDER: RoleCode[] = ["RECEPTIONIST", "OWNER_ADMIN", "CUSTOMER_CARE", "CASHIER"]

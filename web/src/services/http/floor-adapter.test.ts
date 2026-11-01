@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { ApiError } from "../contracts"
+import { deriveAvailability } from "./canonical-adapter"
 import {
   mapCatalog,
   mapFloorState,
@@ -100,7 +101,7 @@ describe("Phase 2A floor adapter", () => {
     const catalog = mapCatalog(catalogPayload, sources)
 
     expect(catalog.venue.name).toBe("21GAM")
-    expect(catalog.sources).toEqual([{ code: "HOTLINE", name: "Hotline" }])
+    expect(catalog.sources).toEqual([{ id: null, code: "HOTLINE", name: "Hotline" }])
     expect(catalog.tables.find((table) => table.code === "A10")?.isSpare).toBe(true)
     expect(catalog.tables.find((table) => table.code === "A2")?.status).toBe("OUT_OF_SERVICE")
     expect(catalog.tables[0]).toMatchObject({ x: 80, y: 654, w: 46, h: 32 })
@@ -178,5 +179,103 @@ describe("Phase 2A floor adapter", () => {
     )
 
     expect(floor.tables[0]).toMatchObject({ state: "spare", claim: null })
+  })
+
+  it("preserves stale holds and groups and excludes them from available tables", () => {
+    const catalog = mapCatalog(catalogPayload, sources)
+    const at = new Date("2026-10-30T13:00:00.000Z")
+    const groups = [{ id: 9, symbolNo: 2, tableIds: [1, 2] }]
+    const floor = mapFloorState(
+      at,
+      "2026-10-30",
+      [
+        backendTable({
+          id: 1,
+          code: "A1",
+          state: "RESERVED",
+          staleFromPreviousDay: true,
+          allocationBusinessDate: "2026-10-29",
+        }),
+        backendTable({
+          id: 2,
+          code: "A10",
+          state: "RESERVED",
+          isBackup: true,
+          staleFromPreviousDay: true,
+          allocationBusinessDate: "2026-10-29",
+        }),
+      ],
+      [],
+      catalog,
+      groups,
+    )
+
+    expect(floor.tables).toEqual([
+      { tableId: 1, state: "reserved", staleFromPreviousDay: true, claim: null },
+      { tableId: 2, state: "reserved", staleFromPreviousDay: true, claim: null },
+    ])
+    expect(floor.groups).toEqual(groups)
+    expect(
+      deriveAvailability(at, 2, floor, [], catalog)
+        .tables.slice(0, 2)
+        .map((table) => table.status),
+    ).toEqual(["reserved", "reserved"])
+  })
+
+  it("uses allocation business dates for stale visits instead of inferring from startedAt", () => {
+    const catalog = mapCatalog(catalogPayload, sources)
+    const at = new Date("2026-10-30T13:00:00.000Z")
+    const floor = mapFloorState(
+      at,
+      "2026-10-30",
+      [
+        backendTable({
+          id: 1,
+          code: "A1",
+          state: "IN_USE",
+          staleFromPreviousDay: true,
+          allocationBusinessDate: "2026-10-29",
+          activeVisit: {
+            id: 20,
+            version: 1,
+            tableCodes: ["A1"],
+            displayName: "Prior shift",
+            phoneLast3: null,
+            guestCount: 2,
+            startedAt: at,
+            origin: "WALK_IN",
+            paid: false,
+            note: null,
+          },
+        }),
+      ],
+      [],
+      catalog,
+    )
+
+    expect(floor.tables[0]).toMatchObject({ state: "seated", staleFromPreviousDay: true, claim: { visitId: 20 } })
+    expect(deriveAvailability(at, 2, floor, [], catalog).tables[0]?.status).toBe("occupied_unknown_end")
+  })
+
+  it("does not mark same-day allocations or released tables stale", () => {
+    const catalog = mapCatalog(catalogPayload, sources)
+    const floor = mapFloorState(
+      new Date("2026-10-30T13:00:00.000Z"),
+      "2026-10-30",
+      [
+        backendTable({
+          id: 1,
+          code: "A1",
+          state: "RESERVED",
+          staleFromPreviousDay: false,
+          allocationBusinessDate: "2026-10-30",
+        }),
+        backendTable({ id: 2, code: "A10", staleFromPreviousDay: false, allocationBusinessDate: null }),
+      ],
+      [],
+      catalog,
+    )
+    expect(floor.tables.map((table) => table.staleFromPreviousDay)).toEqual([false, false])
+    expect(floor.tables[1]?.state).toBe("free")
   })
 })
