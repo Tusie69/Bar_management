@@ -74,7 +74,7 @@
   --text-subtle: oklch(0.7 0.009 85);
   --border: oklch(0.34 0.008 80);
   --border-strong: oklch(0.43 0.009 80);
-  --primary: oklch(0.6 0.13 252);
+  --primary: oklch(0.56 0.14 252);
   --primary-foreground: oklch(0.99 0 0);
   --primary-ink: oklch(0.8 0.09 250);
   --primary-tint: oklch(0.62 0.13 252 / 0.2);
