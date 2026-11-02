@@ -71,6 +71,16 @@ function stopChildren() {
   }
 }
 
+const table = (page, code) =>
+  page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"]`).first()
+
+const bookingRow = (page, guestName) => page.getByRole("row").filter({ hasText: guestName }).first()
+
+async function activateTable(tableButton) {
+  await tableButton.focus()
+  await tableButton.press("Enter")
+}
+
 try {
   runPnpm(["--filter", "@21gam/api", "exec", "tsx", "test/support/phase2b-e2e-fixture.ts", "setup"], credentialEnv)
   startPnpm(["--filter", "@21gam/api", "exec", "tsx", "src/server.ts"], {
@@ -174,8 +184,8 @@ try {
   // Step 3: Xác nhận đặt bàn
   await sheet.getByRole("button", { name: "Xác nhận đặt bàn" }).click()
   await sheet.waitFor({ state: "hidden" })
-  await page.getByText(guestName, { exact: true }).first().waitFor()
-  await page.getByText(guestName, { exact: true }).first().click()
+  await bookingRow(page, guestName).waitFor()
+  await bookingRow(page, guestName).click()
   let detailSheet = page.getByRole("dialog").filter({ hasText: guestName })
   await detailSheet.waitFor()
 
@@ -194,7 +204,7 @@ try {
   await dialog.waitFor({ state: "hidden" })
 
   // Table assignment on floor
-  await page.getByText(guestName, { exact: true }).first().click()
+  await bookingRow(page, guestName).click()
   detailSheet = page.getByRole("dialog").filter({ hasText: guestName })
   await detailSheet.waitFor()
   await detailSheet.getByRole("button", { name: "Phân bàn", exact: true }).click()
@@ -202,8 +212,8 @@ try {
   const pickDialog = page.getByRole("dialog", { name: /Phân bàn/ })
   await pickDialog.waitFor()
 
-  const spareButton = page.getByRole("button", { name: /Bàn A10, Bàn sơ cua/ })
-  const outOfServiceButton = page.getByRole("button", { name: /Bàn A3, Ngưng phục vụ/ })
+  const spareButton = table(page, "A10")
+  const outOfServiceButton = table(page, "A3")
   if ((await spareButton.getAttribute("aria-disabled")) !== "true" && !(await spareButton.isDisabled())) {
     throw new Error("Spare table was selectable")
   }
@@ -211,14 +221,17 @@ try {
     throw new Error("Out-of-service table was selectable")
   }
 
-  await page.getByRole("button", { name: /^Bàn A1,/ }).click()
+  await activateTable(table(page, "A1"))
   const assignConfirm = pickDialog.getByRole("button", { name: "Phân bàn" })
   await assignConfirm.click()
   await pickDialog.waitFor({ state: "hidden" })
 
   // Verify assigned table in details
   await page.getByRole("link", { name: "Đặt bàn" }).click()
-  await page.getByText(guestName, { exact: true }).first().click()
+  // Returning from the Floor route remounts the canonical reservations page on
+  // today's business date. The booking created above belongs to tomorrow.
+  await page.getByRole("button", { name: "Ngày sau" }).click()
+  await bookingRow(page, guestName).click()
   detailSheet = page.getByRole("dialog").filter({ hasText: guestName })
   await detailSheet.getByText("A1", { exact: true }).waitFor()
 
@@ -227,8 +240,8 @@ try {
 
   // Search and edit booking
   await page.getByLabel("Tìm booking").fill(guestName)
-  await page.getByText(guestName, { exact: true }).first().waitFor()
-  await page.getByText(guestName, { exact: true }).first().click()
+  await bookingRow(page, guestName).waitFor()
+  await bookingRow(page, guestName).click()
   detailSheet = page.getByRole("dialog").filter({ hasText: guestName })
   await detailSheet.waitFor()
   await detailSheet.getByRole("button", { name: "Sửa" }).click()
@@ -247,6 +260,8 @@ try {
   await editDialog.waitFor({ state: "hidden" })
 
   await detailSheet.getByText("5 khách", { exact: true }).waitFor()
+  await closeTopDialog(page)
+  await detailSheet.waitFor({ state: "hidden" })
 
   // Second context: Mobile V1 (390x844)
   secondContext = await browser.newContext({
@@ -259,7 +274,7 @@ try {
   await secondPage.getByLabel("Tên đăng nhập").fill(username)
   await secondPage.getByLabel("Mật khẩu").fill(password)
   await secondPage.getByRole("button", { name: "Đăng nhập", exact: true }).click()
-  await secondPage.getByRole("button", { name: "Danh sách" }).click()
+  await secondPage.getByRole("button", { name: "Danh sách", exact: true }).click()
   // Select tomorrow's tab on mobile by scoping to date controls
   const todayBtn = secondPage.getByRole("button", { name: "Hôm nay" })
   await todayBtn.waitFor()
@@ -333,31 +348,32 @@ try {
   // Reassign tables (Đổi bàn)
   await page.getByRole("link", { name: "Đặt bàn" }).click()
   await page.getByLabel("Tìm booking").fill(guestName)
-  await page.getByText(guestName, { exact: true }).first().click()
+  await bookingRow(page, guestName).click()
   detailSheet = page.getByRole("dialog").filter({ hasText: guestName })
   await detailSheet.waitFor()
   await detailSheet.getByRole("button", { name: "Đổi bàn", exact: true }).click()
 
   const reassignDialog = page.getByRole("dialog", { name: /Phân bàn|Đổi bàn/ })
   await reassignDialog.waitFor()
-  const a1Btn = page.getByRole("button", { name: /^Bàn A1,/ })
+  const a1Btn = table(page, "A1")
   if ((await a1Btn.getAttribute("aria-pressed")) === "true") {
-    await a1Btn.click()
+    await activateTable(a1Btn)
   }
-  const a2Btn = page.getByRole("button", { name: /^Bàn A2,/ })
+  const a2Btn = table(page, "A2")
   if ((await a2Btn.getAttribute("aria-pressed")) !== "true") {
-    await a2Btn.click()
+    await activateTable(a2Btn)
   }
-  const a4Btn = page.getByRole("button", { name: /^Bàn A4,/ })
+  const a4Btn = table(page, "A4")
   if ((await a4Btn.getAttribute("aria-pressed")) !== "true") {
-    await a4Btn.click()
+    await activateTable(a4Btn)
   }
   const reassignConfirm = reassignDialog.getByRole("button", { name: /Phân bàn|Đổi bàn/ })
   await reassignConfirm.click()
   await reassignDialog.waitFor({ state: "hidden" })
 
   await page.getByRole("link", { name: "Đặt bàn" }).click()
-  await page.getByText(guestName, { exact: true }).first().click()
+  await page.getByRole("button", { name: "Ngày sau" }).click()
+  await bookingRow(page, guestName).click()
   detailSheet = page.getByRole("dialog").filter({ hasText: guestName })
   await detailSheet.getByText("A2 + A4", { exact: true }).waitFor()
 
@@ -366,7 +382,7 @@ try {
   await page.getByRole("link", { name: "Đặt bàn" }).click()
   await page.getByRole("button", { name: "Ngày sau" }).click()
   await page.getByLabel("Tìm booking").fill(guestName)
-  await page.getByText(guestName, { exact: true }).first().click()
+  await bookingRow(page, guestName).click()
   detailSheet = page.getByRole("dialog").filter({ hasText: guestName })
   await detailSheet.getByText("A2 + A4", { exact: true }).waitFor()
 

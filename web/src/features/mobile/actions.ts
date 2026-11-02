@@ -1,4 +1,5 @@
 import type { ClaimView, ReservationView } from "@/domain/models"
+import { validateBookingCheckInDate } from "@/domain/booking-rules"
 import { useAction } from "@/hooks/use-action"
 import { fmtTime } from "@/lib/time"
 import { api } from "@/services"
@@ -117,8 +118,14 @@ export function useMobileActions() {
     combine,
     split,
     endVisit,
-    checkIn: (r: ReservationView) =>
-      run(() => api.checkIn({ reservationId: r.id, version: r.version, guestCount: r.partySize })),
+    checkIn: (r: ReservationView) => {
+      const error = validateBookingCheckInDate(r.businessDate, m.now)
+      if (error) {
+        toast.error(error)
+        return Promise.resolve(null)
+      }
+      return run(() => api.checkIn({ reservationId: r.id, version: r.version, guestCount: r.partySize }))
+    },
     move: (r: ReservationView) => {
       const c = r.status === "CHECKED_IN" ? visitClaim(r) : null
       return c ? moveVisit(c, r.tableIds[0]) : assign(r)

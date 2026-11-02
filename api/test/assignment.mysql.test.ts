@@ -40,6 +40,7 @@ const tableC1Id = 9610
 const tableC2Id = 9611
 const barSeat21Id = 9612
 const actor: AuthenticatedActor = { organizationId, venueId, userId, membershipId }
+const checkInNow = new Date('2030-10-24T19:00:00+07:00')
 const password = randomBytes(24).toString('base64url')
 let passwordHash = ''
 
@@ -210,6 +211,7 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     const created = await createAndAssignBooking(actor, {
       ...bookingInput('Direct Bar one'),
       partySize: 1,
+      phoneNumber: '0987 654 321',
       classification: 'RETURNING',
       tableIds: [barSeatOneId],
     })
@@ -218,9 +220,15 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
       partySize: 1,
       businessDate: '2030-10-24',
       classification: 'RETURNING',
+      phoneLast3: '321',
       tableCodes: ['BAR01'],
     })
     expect(await activeTableIds(created.id)).toEqual([barSeatOneId])
+    const [stored] = await databasePool.execute<(RowDataPacket & { phone_ciphertext: Buffer })[]>(
+      'SELECT phone_ciphertext FROM reservations WHERE id = ?', [created.id],
+    )
+    expect(stored[0]?.phone_ciphertext).toBeInstanceOf(Buffer)
+    expect(stored[0]?.phone_ciphertext.toString('utf8')).not.toContain('987654321')
   })
 
   it('rejects two guests on one Bar seat without creating an orphan booking', async () => {
@@ -233,6 +241,17 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
       'SELECT id FROM reservations WHERE contact_name = ?', ['Direct Bar too large'],
     )
     expect(rows).toEqual([])
+  })
+
+  it('rejects a past direct booking before creating a reservation or allocation', async () => {
+    await expect(createAndAssignBooking(actor, {
+      ...bookingInput('Past direct booking'), tableIds: [tableOneId],
+    }, new Date('2030-10-25T19:00:00+07:00'))).rejects.toMatchObject({ code: 'EXPECTED_AT_IN_PAST' })
+    const [reservations] = await databasePool.execute<RowDataPacket[]>(
+      'SELECT id FROM reservations WHERE contact_name = ?', ['Past direct booking'],
+    )
+    expect(reservations).toHaveLength(0)
+    expect(await activeTableIds(0)).toEqual([])
   })
 
   it('rejects direct selections across zones or table kinds without creating bookings', async () => {
@@ -355,7 +374,7 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     expect(await listActiveTableGroups(actor, '2030-10-24')).toEqual([
       { id: merged.group.id, symbolNo: merged.group.symbolNo, tableIds: [tableOneId, tableA7Id] },
     ])
-    await checkInBooking(actor, merged.booking.id, merged.booking.version)
+    await checkInBooking(actor, merged.booking.id, merged.booking.version, checkInNow)
     const [usageRows] = await databasePool.execute<(RowDataPacket & { group_id: number })[]>(
       `SELECT group_id FROM table_allocations
        WHERE visit_id IS NOT NULL AND kind = 'USAGE' AND released_at IS NULL ORDER BY table_id`,

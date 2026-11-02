@@ -128,7 +128,7 @@ export function FloorPage() {
       const availTables = pickAvail.data?.tables ?? []
       const pickableSet = new Set<number>()
       for (const t of availTables) {
-        if (t.status === "available" || t.status === "spare" || t.status === "too_small") {
+        if (t.status === "available" || t.status === "too_small") {
           pickableSet.add(t.tableId)
         }
       }

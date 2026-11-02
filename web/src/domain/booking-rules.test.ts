@@ -12,6 +12,7 @@ import {
   isWithinBookingReceptionWindow,
   parseOtherGuests,
   slotLabel,
+  validateBookingCheckInDate,
   validateBookingTime,
 } from "./booking-rules"
 
@@ -27,6 +28,35 @@ describe("guest count", () => {
   it("TC-04 Khác rejects 10", () => expect(parseOtherGuests("10").ok).toBe(false))
   it("TC-05 Khác rejects 0, negatives, decimals, letters, empty", () => {
     for (const v of ["0", "-3", "12.5", "12,5", "abc", "1e2", ""]) expect(parseOtherGuests(v).ok).toBe(false)
+  })
+})
+
+describe("booking check-in business date", () => {
+  it("allows guests arriving early in the current business date", () => {
+    expect(validateBookingCheckInDate("2026-10-29", fromVenueLocal("2026-10-29", "19:00"))).toBeNull()
+  })
+
+  it("rejects a future business date and keeps the previous date after midnight", () => {
+    expect(validateBookingCheckInDate("2026-10-30", fromVenueLocal("2026-10-29", "19:00"))).not.toBeNull()
+    expect(validateBookingCheckInDate("2026-10-29", fromVenueLocal("2026-10-30", "00:30"))).toBeNull()
+  })
+
+  it("reports no active check-in shift during 05:00–17:00", () => {
+    expect(validateBookingCheckInDate("2026-10-30", fromVenueLocal("2026-10-30", "12:00")))
+      .toContain("05:00–17:00")
+  })
+
+  it.each([
+    ["2026-10-29", "18:00", "2026-10-29", true],
+    ["2026-10-29", "23:30", "2026-10-30", false],
+    ["2026-10-30", "00:30", "2026-10-29", true],
+    ["2026-10-30", "04:59", "2026-10-29", true],
+    ["2026-10-30", "05:00", "2026-10-29", false],
+    ["2026-10-30", "12:00", "2026-10-30", false],
+    ["2026-10-30", "16:59", "2026-10-30", false],
+    ["2026-10-30", "17:00", "2026-10-30", true],
+  ])("applies the official boundary %s %s", (calendarDate, time, businessDate, accepted) => {
+    expect(validateBookingCheckInDate(businessDate, fromVenueLocal(calendarDate, time)) === null).toBe(accepted)
   })
 })
 

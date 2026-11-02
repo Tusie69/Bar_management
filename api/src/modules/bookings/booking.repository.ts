@@ -4,7 +4,8 @@ import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
-import { validateBookingSchedule } from './business-date.js'
+import { assertNoteHasNoPhoneNumber, redactPhoneNumbersInNote } from '../../security/note-privacy.js'
+import { assertCheckInBusinessDate, validateBookingSchedule } from './business-date.js'
 import { deriveBookingTiming, type BookingDisplayStatus } from './booking-timing.js'
 import { protectPhoneNumber, revealPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from './phone-security.js'
 import {
@@ -105,7 +106,7 @@ function toBooking(row: BookingRow, now = new Date()): BookingView {
     source: row.source_name,
     sourceCode: row.source_code,
     tableCodes: row.table_codes ? row.table_codes.split(',') : [],
-    note: row.note,
+    note: redactPhoneNumbersInNote(row.note),
     version: row.version,
     ...timing,
   }
@@ -188,7 +189,7 @@ export interface CreateBookingInput {
   expectedAt: string
   businessDate: string
   sourceCode: string
-  note?: string
+  note?: string | null
   phoneNumber?: string | null
   classification?: BookingClassification
 }
@@ -217,8 +218,13 @@ function protectedPhoneValues(phone: ProtectedPhone | null): [Buffer | null, num
     : [null, null, null, null, null]
 }
 
-export async function createBooking(actor: AuthenticatedActor, input: CreateBookingInput): Promise<BookingView> {
-  const schedule = validateBookingSchedule(input.expectedAt, input.businessDate)
+export async function createBooking(
+  actor: AuthenticatedActor,
+  input: CreateBookingInput,
+  now = new Date(),
+): Promise<BookingView> {
+  assertNoteHasNoPhoneNumber(input.note)
+  const schedule = validateBookingSchedule(input.expectedAt, input.businessDate, now)
   const phone = typeof input.phoneNumber === 'string' ? protectPhoneNumber(input.phoneNumber, phoneKeyRing()) : null
   const [sourceRows] = await databasePool.execute<(RowDataPacket & { id: number })[]>(
     'SELECT id FROM booking_sources WHERE organization_id = ? AND code = ? AND is_active = 1',
@@ -253,8 +259,10 @@ export async function createBooking(actor: AuthenticatedActor, input: CreateBook
 export async function createAndAssignBooking(
   actor: AuthenticatedActor,
   input: CreateAndAssignBookingInput,
+  now = new Date(),
 ): Promise<BookingView> {
-  const schedule = validateBookingSchedule(input.expectedAt, input.businessDate)
+  assertNoteHasNoPhoneNumber(input.note)
+  const schedule = validateBookingSchedule(input.expectedAt, input.businessDate, now)
   const phone = typeof input.phoneNumber === 'string' ? protectPhoneNumber(input.phoneNumber, phoneKeyRing()) : null
   const tableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
   const connection = await databasePool.getConnection()
@@ -415,7 +423,8 @@ interface ActiveHoldAllocationRow extends RowDataPacket {
   planned_until: Date | null
 }
 
-export interface UpdateBookingInput extends CreateBookingInput {
+export interface UpdateBookingInput extends Omit<CreateBookingInput, 'note'> {
+  note?: string | null
   expectedVersion: number
 }
 
@@ -445,6 +454,7 @@ export async function updateBooking(
   actor: AuthenticatedActor,
   id: number,
   input: UpdateBookingInput,
+  now = new Date(),
 ): Promise<BookingView> {
   const connection = await databasePool.getConnection()
   try {
@@ -466,7 +476,9 @@ export async function updateBooking(
           mysqlExpectedAt: currentExpectedAt.toISOString().slice(0, 23).replace('T', ' '),
           businessDate: currentBusinessDate,
         }
-      : validateBookingSchedule(input.expectedAt, input.businessDate)
+      : validateBookingSchedule(input.expectedAt, input.businessDate, now)
+    if (input.note !== undefined) assertNoteHasNoPhoneNumber(input.note)
+    const resolvedNote = input.note === undefined ? reservation.note : input.note
 
     const [sourceRows] = await connection.execute<(RowDataPacket & { id: number })[]>(
       'SELECT id FROM booking_sources WHERE organization_id = ? AND code = ? AND is_active = 1',
@@ -527,7 +539,7 @@ export async function updateBooking(
     if (reservation.contact_name !== input.guestName) changedFields.push('guestName')
     if (Number(reservation.party_size) !== input.partySize) changedFields.push('partySize')
     if (Number(reservation.source_id) !== Number(source.id)) changedFields.push('sourceCode')
-    if ((reservation.note ?? '') !== (input.note ?? '')) changedFields.push('note')
+    if ((reservation.note ?? '') !== (resolvedNote ?? '')) changedFields.push('note')
     const classification = input.classification ?? reservation.customer_classification ?? 'UNCLASSIFIED'
     if ((reservation.customer_classification ?? 'UNCLASSIFIED') !== classification) changedFields.push('classification')
     const phone = input.phoneNumber === undefined
@@ -609,7 +621,7 @@ export async function updateBooking(
         schedule.mysqlExpectedAt,
         schedule.businessDate,
         classification,
-        input.note ?? null,
+        resolvedNote ?? null,
         actor.userId,
         ...phoneValues,
         actor.organizationId,
@@ -980,6 +992,7 @@ export async function closeBooking(
   status: 'CANCELLED' | 'NO_SHOW',
   closeReasonNote?: string,
 ): Promise<BookingView> {
+  assertNoteHasNoPhoneNumber(closeReasonNote)
   const connection = await databasePool.getConnection()
   try {
     await connection.beginTransaction()
@@ -1088,6 +1101,7 @@ export async function checkInBooking(
   actor: AuthenticatedActor,
   id: number,
   expectedVersion: number,
+  now = new Date(),
 ): Promise<BookingView> {
   const connection = await databasePool.getConnection()
   try {
@@ -1095,6 +1109,7 @@ export async function checkInBooking(
     const reservation = await lockReservation(connection, actor, id, expectedVersion)
     if (reservation.status !== 'BOOKED')
       throw new AppError(409, 'BOOKING_NOT_CHECKIN', 'Chỉ đặt bàn đang chờ mới được check-in.')
+    assertCheckInBusinessDate(dateOnly(reservation.business_date), now)
     const [allocationRows] = await connection.execute<(RowDataPacket & { table_id: number; hold_id: number; group_id: number | null })[]>(
       `SELECT a.table_id, a.hold_id, a.group_id FROM table_allocations AS a
        JOIN table_holds AS h ON h.venue_id = a.venue_id AND h.id = a.hold_id

@@ -21,6 +21,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { SOURCE_LABEL, type BookingSourceCode } from "@/domain/enums"
 import type { AllocationView, ReservationView, TableView } from "@/domain/models"
+import { validateBookingCheckInDate } from "@/domain/booking-rules"
 import { useAction } from "@/hooks/use-action"
 import { useDragScroll } from "@/hooks/use-drag-scroll"
 import { useElementWidth } from "@/hooks/use-element-width"
@@ -267,7 +268,9 @@ function ReservationList({
 
   const action = (r: ReservationView) => {
     if (r.status !== "BOOKED") return null
-    if (r.tableIds.length && r.businessDate === today) {
+    if (r.tableIds.length) {
+      const checkInError = validateBookingCheckInDate(r.businessDate, now)
+      if (checkInError) return null
       return (
         <GuardedButton
           permission="visit.checkin"

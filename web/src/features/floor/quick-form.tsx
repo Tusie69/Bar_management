@@ -41,7 +41,7 @@ import { toast } from "sonner"
 import type { TableView } from "@/domain/models"
 import type { FloorModel } from "./use-floor-model"
 
-const PICKABLE = new Set(["available", "spare", "too_small"])
+const PICKABLE = new Set(["available", "too_small"])
 
 export function checkDirectTableCompatibility(
   tableIds: number[],
@@ -283,6 +283,7 @@ export function QuickForm({
                 className={cn(inputCls, "tnum")}
                 inputMode="tel"
                 autoComplete="off"
+                maxLength={20}
                 placeholder="0xxx xxx xxx"
                 value={phone}
                 aria-invalid={!!shown.phone}

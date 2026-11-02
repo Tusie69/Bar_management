@@ -19,6 +19,7 @@ import {
   type BookingView,
 } from '../src/modules/bookings/booking.repository.js'
 import { closeVisit, moveVisit } from '../src/modules/visits/visit.repository.js'
+import { listTables } from '../src/modules/tables/table.repository.js'
 import {
   listNoShowCandidates,
   processNoShowCandidate,
@@ -44,6 +45,7 @@ const sourceId = 9301
 const systemUserId = 9399
 const automationCutoff = new Date('2000-01-01T00:00:00.000Z')
 const actor: AuthenticatedActor = { organizationId, venueId, userId, membershipId }
+const checkInNow = new Date('2030-10-24T19:00:00+07:00')
 const password = 'Booking integration password'
 let passwordHash = ''
 
@@ -204,7 +206,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     expect(Number(holdAfter.hold_id)).toBe(Number(holdBefore.hold_id))
     expect(Number(holdAfter.allocation_id)).toBe(Number(holdBefore.allocation_id))
 
-    const checkedIn = await checkInBooking(actor, created.id, edited.version)
+    const checkedIn = await checkInBooking(actor, created.id, edited.version, checkInNow)
     const reservation = await row('SELECT visit_id FROM reservations WHERE id = ?', [created.id])
     const visitId = Number(reservation.visit_id)
     expect(checkedIn.status).toBe('CHECKED_IN')
@@ -216,6 +218,105 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     )
     expect(allocations.map((allocation) => allocation.kind)).toEqual(['HOLD', 'USAGE'])
     expect(allocations.every((allocation) => allocation.released_at !== null)).toBe(true)
+  })
+
+  it('rejects a future-business-date check-in before creating a visit or converting the hold', async () => {
+    const assigned = await createAssignedBooking()
+    await expect(checkInBooking(
+      actor,
+      assigned.id,
+      assigned.version,
+      new Date('2030-10-23T19:00:00+07:00'),
+    )).rejects.toMatchObject({ code: 'BOOKING_BUSINESS_DATE_NOT_CURRENT' })
+    const reservation = await row('SELECT status, visit_id FROM reservations WHERE id = ?', [assigned.id])
+    expect(reservation).toMatchObject({ status: 'BOOKED', visit_id: null })
+    const hold = await row('SELECT status FROM table_holds WHERE reservation_id = ?', [assigned.id])
+    expect(hold.status).toBe('ACTIVE')
+    const [visits] = await databasePool.execute<RowDataPacket[]>(
+      'SELECT id FROM visits WHERE contact_name = ?', ['Test guest'],
+    )
+    expect(visits).toHaveLength(0)
+  })
+
+  it('redacts a historical phone in booking responses and preserves the raw note when other fields change', async () => {
+    const created = await createBooking(actor, bookingInput())
+    const historicalNote = 'Khách dặn gọi 0987 654 321 khi tới'
+    await databasePool.execute('UPDATE reservations SET note = ? WHERE id = ?', [historicalNote, created.id])
+    const redacted = await getBookingById(actor, created.id)
+    expect(redacted.note).toBe('Khách dặn gọi •••• ••• 321 khi tới')
+    const { note: _unchangedNote, ...withoutNote } = bookingInput('2030-10-24', '21:00', 'Renamed guest')
+    void _unchangedNote
+    await updateBooking(actor, created.id, { ...withoutNote, expectedVersion: redacted.version })
+    const stored = await row('SELECT note FROM reservations WHERE id = ?', [created.id])
+    expect(stored.note).toBe(historicalNote)
+  })
+
+  it('redacts historical phone numbers from waitlist and Floor State responses', async () => {
+    const entry = await createWaitlistEntry(actor, {
+      guestName: 'Historical waitlist', partySize: 2, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+    })
+    await databasePool.execute(
+      'UPDATE waitlist_entries SET note = ? WHERE id = ?', ['Nhắn 0901.234.567', entry.id],
+    )
+    expect((await listWaitlist(actor, '2030-10-24')).find((item) => item.id === entry.id)?.note)
+      .toBe('Nhắn •••• ••• 567')
+
+    const walkIn = await createWalkIn(actor, {
+      guestName: 'Historical visit', partySize: 2, businessDate: '2030-10-24', tableIds: [tableOneId],
+    })
+    await databasePool.execute(
+      'UPDATE visits SET note = ? WHERE id = ?', ['Liên hệ +84 912 345 678', walkIn.visitId],
+    )
+    const active = (await listTables(actor, '2030-10-24')).find((table) => table.id === tableOneId)?.activeVisit
+    expect(active?.note).toBe('Liên hệ •••• ••• 678')
+  })
+
+  it('rejects a new phone number in booking and waitlist notes without writing records', async () => {
+    await expect(createBooking(actor, {
+      ...bookingInput(), guestName: 'Unsafe booking', note: 'Gọi 0987 654 321',
+    })).rejects.toMatchObject({ code: 'PHONE_IN_NOTE_FORBIDDEN' })
+    await expect(createWaitlistEntry(actor, {
+      guestName: 'Unsafe waitlist', partySize: 2, businessDate: '2030-10-24',
+      contactChannel: 'IN_PERSON', note: '+84 987 654 321',
+    })).rejects.toMatchObject({ code: 'PHONE_IN_NOTE_FORBIDDEN' })
+    const [reservations] = await databasePool.execute<RowDataPacket[]>(
+      "SELECT id FROM reservations WHERE contact_name = 'Unsafe booking'",
+    )
+    const [waitlist] = await databasePool.execute<RowDataPacket[]>(
+      "SELECT id FROM waitlist_entries WHERE contact_name = 'Unsafe waitlist'",
+    )
+    expect(reservations).toHaveLength(0)
+    expect(waitlist).toHaveLength(0)
+  })
+
+  it('rejects a phone number in a cancellation note without closing the booking', async () => {
+    const created = await createBooking(actor, bookingInput())
+    await expect(closeBooking(
+      actor,
+      created.id,
+      created.version,
+      'CANCELLED',
+      'Khách gọi từ 0987 654 321',
+    )).rejects.toMatchObject({ code: 'PHONE_IN_NOTE_FORBIDDEN' })
+    const stored = await row('SELECT status, close_reason_note, version FROM reservations WHERE id = ?', [created.id])
+    expect(stored.status).toBe('BOOKED')
+    expect(stored.close_reason_note).toBeNull()
+    expect(Number(stored.version)).toBe(created.version)
+  })
+
+  it('keeps an unchanged historical schedule but rejects changing it to another past instant', async () => {
+    const created = await createBooking(actor, bookingInput(), new Date('2030-10-24T12:00:00+07:00'))
+    const historicalNow = new Date('2030-10-25T19:00:00+07:00')
+    const retained = await updateBooking(actor, created.id, {
+      ...bookingInput('2030-10-24', '21:00', 'Historical rename'), expectedVersion: created.version,
+    }, historicalNow)
+    expect(retained.expectedAt).toBe(created.expectedAt)
+    await expect(updateBooking(actor, retained.id, {
+      ...bookingInput('2030-10-24', '22:00', 'Past reschedule'), expectedVersion: retained.version,
+    }, historicalNow)).rejects.toMatchObject({ code: 'EXPECTED_AT_IN_PAST' })
+    const stored = await row('SELECT contact_name, expected_at, version FROM reservations WHERE id = ?', [created.id])
+    expect(stored.contact_name).toBe('Historical rename')
+    expect(Number(stored.version)).toBe(retained.version)
   })
 
   it('persists manual O/N classification, supports edits, and keeps legacy NULL rows unclassified', async () => {
@@ -423,7 +524,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     const assignedForCheckIn = await createAssignedBooking()
     const editCheckIn = await Promise.allSettled([
       updateBooking(actor, assignedForCheckIn.id, { ...bookingInput('2030-10-24', '21:15'), expectedVersion: assignedForCheckIn.version }),
-      checkInBooking(actor, assignedForCheckIn.id, assignedForCheckIn.version),
+      checkInBooking(actor, assignedForCheckIn.id, assignedForCheckIn.version, checkInNow),
     ])
     expect(editCheckIn.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
   })
@@ -433,7 +534,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     let finalBooking: BookingView
     if (status === 'CHECKED_IN') {
       const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
-      finalBooking = await checkInBooking(actor, created.id, assigned.version)
+      finalBooking = await checkInBooking(actor, created.id, assigned.version, checkInNow)
     } else {
       finalBooking = await closeBooking(actor, created.id, created.version, status)
     }
@@ -629,7 +730,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     const created = await createBooking(actor, bookingInput())
     const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId, tableTwoId])
     expect(assigned.tableCodes).toEqual(['T1', 'T2'])
-    const checkedIn = await checkInBooking(actor, assigned.id, assigned.version)
+    const checkedIn = await checkInBooking(actor, assigned.id, assigned.version, checkInNow)
     const reservation = await row('SELECT visit_id FROM reservations WHERE id = ?', [assigned.id])
     const visitId = Number(reservation.visit_id)
     const [openUsage] = await databasePool.execute<RowDataPacket[]>(
@@ -665,7 +766,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
 
   it('moves an active visit without closing it and keeps old USAGE history', async () => {
     const assigned = await createAssignedBooking(tableOneId)
-    await checkInBooking(actor, assigned.id, assigned.version)
+    await checkInBooking(actor, assigned.id, assigned.version, checkInNow)
     const reservation = await row('SELECT visit_id FROM reservations WHERE id = ?', [assigned.id])
     const visitId = Number(reservation.visit_id)
     const moved = await moveVisit(actor, { visitId, expectedVersion: 1, tableIds: [tableTwoId] })
@@ -687,7 +788,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
 
   it('rejects an active visit move with insufficient capacity and preserves the source allocation', async () => {
     const assigned = await createAssignedBooking(tableOneId)
-    await checkInBooking(actor, assigned.id, assigned.version)
+    await checkInBooking(actor, assigned.id, assigned.version, checkInNow)
     const reservation = await row('SELECT visit_id FROM reservations WHERE id = ?', [assigned.id])
     const visitId = Number(reservation.visit_id)
     await databasePool.execute('UPDATE dining_tables SET capacity = 2 WHERE id = ?', [tableTwoId])
@@ -994,7 +1095,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
 
   it.each(['CHECKED_IN', 'CANCELLED'] as const)('never auto-closes a %s booking', async (terminalStatus) => {
     const assigned = await createAssignedBooking()
-    if (terminalStatus === 'CHECKED_IN') await checkInBooking(actor, assigned.id, assigned.version)
+    if (terminalStatus === 'CHECKED_IN') await checkInBooking(actor, assigned.id, assigned.version, checkInNow)
     else await closeBooking(actor, assigned.id, assigned.version, 'CANCELLED', 'Customer called')
     const result = await runNoShowSweep({
       organizationId,
@@ -1013,7 +1114,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     const [candidate] = await listNoShowCandidates(organizationId, venueId, new Date('2030-10-24T14:30:00Z'), automationCutoff)
     const results = await Promise.allSettled([
       processNoShowCandidate(organizationId, venueId, systemUserId, candidate!, new Date('2030-10-24T14:30:00Z'), automationCutoff),
-      checkInBooking(actor, assigned.id, assigned.version),
+      checkInBooking(actor, assigned.id, assigned.version, checkInNow),
     ])
     expect(results.some((result) => result.status === 'fulfilled')).toBe(true)
     const reservation = await row('SELECT status FROM reservations WHERE id = ?', [assigned.id])

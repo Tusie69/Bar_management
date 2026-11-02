@@ -122,7 +122,7 @@ function BookingBody() {
   const capacity = tables.reduce((s, id) => s + (model.byId.get(id)?.capacity ?? 0), 0)
   const blockedSelected = tables.filter((id) => {
     const s = availMap.get(id)?.status
-    return s && s !== "available" && s !== "spare" && s !== "too_small"
+    return s && s !== "available" && s !== "too_small"
   })
   const compatError = checkDirectTableCompatibility(tables, model.byId)
 
@@ -146,7 +146,7 @@ function BookingBody() {
 
   const toggle = (id: number) => {
     const s = availMap.get(id)?.status
-    if (s && s !== "available" && s !== "spare" && s !== "too_small") return
+    if (s && s !== "available" && s !== "too_small") return
     if (!tables.includes(id) && tables.length > 0) {
       const first = model.byId.get(tables[0])
       const target = model.byId.get(id)
@@ -170,7 +170,7 @@ function BookingBody() {
       const set = new Set<number>()
       for (const t of model.tables) {
         const s = availMap.get(t.id)?.status
-        if (s === "available" || s === "spare" || s === "too_small") {
+        if (s === "available" || s === "too_small") {
           set.add(t.id)
         }
       }
@@ -182,7 +182,7 @@ function BookingBody() {
     for (const t of model.tables) {
       if (t.zoneId === first.zoneId && t.kind === first.kind) {
         const s = availMap.get(t.id)?.status
-        if (s === "available" || s === "spare" || s === "too_small" || tables.includes(t.id)) {
+        if (s === "available" || s === "too_small" || tables.includes(t.id)) {
           set.add(t.id)
         }
       }
@@ -437,6 +437,7 @@ function BookingBody() {
                 className="h-11"
                 inputMode="tel"
                 autoComplete="off"
+                maxLength={20}
                 {...form.register("phone")}
                 placeholder="09xx xxx xxx"
               />

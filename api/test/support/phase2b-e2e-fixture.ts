@@ -1,4 +1,4 @@
-import type { RowDataPacket } from "mysql2/promise";
+import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 
 import { hashPassword } from "../../src/auth/password.js";
 import { env } from "../../src/config/env.js";
@@ -7,13 +7,38 @@ import { databasePool } from "../../src/database/pool.js";
 const mode = process.argv[2];
 if (!/_test$/.test(env.database.name))
   throw new Error("Refusing E2E fixture: DB_NAME must end in _test");
-if (!["setup", "cleanup", "verify-clean", "verify-phone-audit"].includes(mode ?? ""))
-  throw new Error("Expected setup, cleanup, verify-clean, or verify-phone-audit");
+if (!["setup", "cleanup", "verify-clean", "verify-phone-audit", "inject-historical-note", "verify-historical-note"].includes(mode ?? ""))
+  throw new Error("Unsupported E2E fixture command");
 
 const organizationId = 1;
 const venueId = 1;
 const userId = 9501;
 const membershipId = 9501;
+const historicalNote = "Khách dặn gọi 0987 654 321 khi tới";
+
+async function injectHistoricalNote(guestName: string | undefined) {
+  if (!guestName) throw new Error("Historical-note guest name is required");
+  const [result] = await databasePool.execute<ResultSetHeader>(
+    `UPDATE reservations SET note = ?
+     WHERE organization_id = ? AND venue_id = ? AND contact_name = ?`,
+    [historicalNote, organizationId, venueId, guestName],
+  );
+  if (result.affectedRows !== 1) throw new Error("Historical-note fixture did not match exactly one booking");
+  console.log("historical-note-injected=1");
+}
+
+async function verifyHistoricalNote(guestName: string | undefined) {
+  if (!guestName) throw new Error("Renamed historical-note guest is required");
+  const [rows] = await databasePool.execute<(RowDataPacket & { note: string })[]>(
+    `SELECT note FROM reservations
+     WHERE organization_id = ? AND venue_id = ? AND contact_name = ?`,
+    [organizationId, venueId, guestName],
+  );
+  if (rows.length !== 1 || rows[0]?.note !== historicalNote) {
+    throw new Error("Editing another field overwrote the historical note");
+  }
+  console.log("historical-note-preserved=1");
+}
 
 async function cleanup() {
   const statements = [
@@ -174,7 +199,9 @@ try {
   if (mode === "setup") await setup();
   else if (mode === "cleanup") await cleanup();
   else if (mode === "verify-clean") await verifyClean();
-  else await verifyPhoneAudit();
+  else if (mode === "verify-phone-audit") await verifyPhoneAudit();
+  else if (mode === "inject-historical-note") await injectHistoricalNote(process.argv[3]);
+  else await verifyHistoricalNote(process.argv[3]);
 } finally {
   await databasePool.end();
 }

@@ -3,6 +3,7 @@ import { Router } from 'express'
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { AppError } from '../../errors/app-error.js'
+import { assertNoteHasNoPhoneNumber } from '../../security/note-privacy.js'
 import { validateCalendarDate } from '../bookings/business-date.js'
 import {
   createWaitlistEntry,
@@ -38,10 +39,6 @@ function partySize(value: unknown): number {
   return parsed
 }
 
-function containsPhoneNumber(value: string): boolean {
-  return /\d{8,}/.test(value.replace(/[\s.\-()]/g, ''))
-}
-
 waitlistRouter.get('/', requireAuthentication, requirePermission('customer.view_masked'), async (request, response) => {
   const businessDate = validateCalendarDate(request.query.date)
   response.json({ businessDate, entries: await listWaitlist(requireAuthenticatedActor(request), businessDate) })
@@ -69,13 +66,11 @@ waitlistRouter.post('/', requireAuthentication, requireCsrfProtection, requirePe
   if (body.note !== undefined && (typeof body.note !== 'string' || body.note.trim().length > 500)) {
     throw new AppError(400, 'INVALID_NOTE', 'Ghi chú không được vượt quá 500 ký tự.')
   }
-  if (body.phoneNumber !== undefined && (typeof body.phoneNumber !== 'string' || body.phoneNumber.trim().length > 30)) {
-    throw new AppError(400, 'INVALID_PHONE_NUMBER', 'Số điện thoại không hợp lệ.')
+  if (body.phoneNumber !== undefined && (typeof body.phoneNumber !== 'string' || body.phoneNumber.trim().length > 20)) {
+    throw new AppError(422, 'INVALID_PHONE_NUMBER', 'Số điện thoại không hợp lệ.')
   }
   const note = typeof body.note === 'string' ? body.note.trim() : ''
-  if (note && containsPhoneNumber(note)) {
-    throw new AppError(422, 'PHONE_IN_NOTE_FORBIDDEN', 'Không ghi số điện thoại vào ghi chú.')
-  }
+  assertNoteHasNoPhoneNumber(note)
   response.status(201).json({ entry: await createWaitlistEntry(requireAuthenticatedActor(request), {
     ...(kind === 'ADVANCE_RESERVATION'
       ? { kind, reservationId: positiveInteger(body.reservationId, 'INVALID_RESERVATION_ID', 'Mã booking không hợp lệ.') }
@@ -93,9 +88,7 @@ function mutationInput(request: { params: { id?: unknown }; body: unknown }) {
     throw new AppError(400, 'INVALID_NOTE', 'Ghi chú không được vượt quá 300 ký tự.')
   }
   const note = typeof body.note === 'string' ? body.note.trim() : ''
-  if (note && containsPhoneNumber(note)) {
-    throw new AppError(422, 'PHONE_IN_NOTE_FORBIDDEN', 'Không ghi số điện thoại vào ghi chú.')
-  }
+  assertNoteHasNoPhoneNumber(note)
   return {
     body,
     input: {

@@ -3,6 +3,7 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise'
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
+import { redactPhoneNumbersInNote } from '../../security/note-privacy.js'
 import type { TableState } from './table-state.js'
 
 export interface TableView {
@@ -92,7 +93,7 @@ function toTableView(row: TableRow): TableView {
             startedAt: isoDateTime(row.active_visit_started_at!),
             origin: row.active_visit_origin!,
             paid: Boolean(row.active_visit_paid),
-            note: row.active_visit_note,
+            note: redactPhoneNumbersInNote(row.active_visit_note),
           },
   }
 }

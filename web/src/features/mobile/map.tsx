@@ -57,7 +57,7 @@ export function MapScreen({
       const availTables = pickAvail.data?.tables ?? []
       const ids = new Set<number>()
       for (const t of availTables) {
-        if (t.status === "available" || t.status === "spare" || t.status === "too_small") {
+        if (t.status === "available" || t.status === "too_small") {
           ids.add(t.tableId)
         }
       }

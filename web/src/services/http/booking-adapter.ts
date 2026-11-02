@@ -1,4 +1,5 @@
 import type { BookingSourceCode } from "@/domain/enums"
+import { isPlausibleVnPhone } from "@/lib/text"
 import { venueParts, type BusinessDate } from "@/lib/time"
 import { ApiError } from "../contracts"
 
@@ -137,7 +138,7 @@ function commonPayload(fields: BookingWriteFields): BookingCreatePayload {
   }
   const note = fields.note?.trim()
   const phoneNumber = typeof fields.phoneNumber === "string" ? fields.phoneNumber.trim() : fields.phoneNumber
-  if (typeof phoneNumber === "string" && (!phoneNumber || phoneNumber.length > 40)) {
+  if (typeof phoneNumber === "string" && !isPlausibleVnPhone(phoneNumber)) {
     throw new ApiError(422, "INVALID_PHONE_NUMBER", "Số điện thoại không hợp lệ.")
   }
   if (note && note.length > 500) throw new ApiError(400, "INVALID_NOTE", "Ghi chú không được vượt quá 500 ký tự.")
@@ -175,6 +176,8 @@ export function fullUpdateBookingPayload(
   current: HttpBooking,
   fields: Partial<BookingWriteFields>,
 ): BookingUpdatePayload {
+  // Canonical callers use null for "unchanged". A string (including "") is an intentional edit.
+  const editedNote = typeof fields.note === "string" ? fields.note.trim() : undefined
   const merged: BookingWriteFields = {
     guestName: fields.guestName ?? current.guestName,
     partySize: fields.partySize ?? current.partySize,
@@ -182,11 +185,11 @@ export function fullUpdateBookingPayload(
     businessDate: fields.businessDate ?? current.businessDate,
     sourceCode: fields.sourceCode ?? current.sourceCode,
     classification: fields.classification ?? current.classification,
-    note: fields.note === undefined ? current.note : fields.note,
     ...(Object.prototype.hasOwnProperty.call(fields, "phoneNumber") ? { phoneNumber: fields.phoneNumber } : {}),
   }
   return {
     ...commonPayload(merged),
+    ...(editedNote === undefined ? {} : { note: editedNote }),
     version: current.version,
   }
 }

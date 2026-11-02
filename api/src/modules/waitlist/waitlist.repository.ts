@@ -4,6 +4,7 @@ import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
+import { assertNoteHasNoPhoneNumber, redactPhoneNumbersInNote } from '../../security/note-privacy.js'
 import { protectPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from '../bookings/phone-security.js'
 import { createTableGroup, dissolveUnusedGroups, lockAndValidateAssignableTables } from '../tables/table-group.repository.js'
 
@@ -101,7 +102,7 @@ function toView(row: WaitlistRow): WaitlistEntryView {
     reservationId: row.reservation_id === null ? null : Number(row.reservation_id),
     reservationExpectedAt: row.reservation_expected_at === null ? null : isoDateTime(row.reservation_expected_at),
     visitId: row.visit_id === null ? null : Number(row.visit_id),
-    note: row.note,
+    note: redactPhoneNumbersInNote(row.note),
     version: row.version,
   }
 }
@@ -156,6 +157,7 @@ export async function createWaitlistEntry(
   actor: AuthenticatedActor,
   input: CreateWaitlistInput,
 ): Promise<WaitlistEntryView> {
+  assertNoteHasNoPhoneNumber(input.note)
   const connection = await databasePool.getConnection()
   try {
     await connection.beginTransaction()

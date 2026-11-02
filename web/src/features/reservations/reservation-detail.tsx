@@ -32,7 +32,7 @@ import {
   type WaitlistPreferenceMode,
 } from "@/domain/enums"
 import type { ReservationView } from "@/domain/models"
-import { isBookingSlot, validateBookingTime } from "@/domain/booking-rules"
+import { isBookingSlot, validateBookingCheckInDate, validateBookingTime } from "@/domain/booking-rules"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAction } from "@/hooks/use-action"
 import { useCatalog, useNow, useOperations, useReservations } from "@/hooks/use-data"
@@ -86,7 +86,7 @@ function Detail({ r }: { r: ReservationView }) {
       const t = catalog.data?.tables.find((x) => x.id === id)
       return t ? (t.kind === "BAR_SEAT" ? `Bar ${t.seqNo}` : t.code) : `#${id}`
     })
-  const today = businessDateOf(now) === r.businessDate
+  const checkInError = validateBookingCheckInDate(r.businessDate, now)
   const booked = r.status === "BOOKED"
   const noShowAfter = catalog.data?.venue.noShowWarningMinutes ?? 30
   const history = (ops.data ?? []).filter((o) => o.entityType === "reservation" && o.entityId === r.id)
@@ -240,8 +240,8 @@ function Detail({ r }: { r: ReservationView }) {
                 permission="visit.checkin"
                 size="lg"
                 className="col-span-2"
-                disabled={!today || pending}
-                disabledReason={!today ? "Chỉ check-in trong ngày kinh doanh của booking" : null}
+                disabled={Boolean(checkInError) || pending}
+                disabledReason={checkInError}
                 onClick={() => setCheckInOpen(true)}
               >
                 <LogIn /> Check-in {codes(r.tableIds).join(" + ")}
@@ -251,8 +251,8 @@ function Detail({ r }: { r: ReservationView }) {
                 permission="visit.checkin"
                 size="lg"
                 className="col-span-2"
-                disabled={!today || pending}
-                disabledReason={!today ? "Chỉ check-in trong ngày kinh doanh của booking" : null}
+                disabled={Boolean(checkInError) || pending}
+                disabledReason={checkInError}
                 onClick={() => setCheckInOpen(true)}
               >
                 <LogIn /> Khách đã tới: chọn bàn và check-in

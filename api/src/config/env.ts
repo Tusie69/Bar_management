@@ -63,6 +63,11 @@ function readOptionalUtcInstant(name: string): Date | undefined {
 }
 
 const nodeEnv = process.env.NODE_ENV ?? 'development'
+const databaseName = readString('DB_NAME', 'gam21_platform_dev')
+const e2eFixedNow = readOptionalUtcInstant('E2E_FIXED_NOW')
+if (e2eFixedNow && (nodeEnv !== 'test' || !/_test$/.test(databaseName))) {
+  throw new Error('E2E_FIXED_NOW chỉ được phép khi NODE_ENV=test và DB_NAME kết thúc bằng _test')
+}
 const webOrigin = readString('WEB_ORIGIN', 'http://localhost:5173')
 if (webOrigin === '*' || webOrigin.includes(',')) {
   throw new Error('WEB_ORIGIN phải là một origin cụ thể, không được dùng wildcard hoặc danh sách')
@@ -133,7 +138,7 @@ export const env = {
   database: {
     host: readString('DB_HOST', '127.0.0.1'),
     port: readNumber('DB_PORT', 3306),
-    name: readString('DB_NAME', 'gam21_platform_dev'),
+    name: databaseName,
     user: readString('DB_USER', 'gam21'),
     password: readString('DB_PASSWORD', 'gam21_dev'),
   },
@@ -154,6 +159,9 @@ export const env = {
     hmacKeys: phoneHmacKeys,
     revealRateLimitMax: phoneRevealRateLimitMax,
     revealRateLimitWindowMs: phoneRevealRateLimitWindowMs,
+  },
+  test: {
+    fixedNow: e2eFixedNow,
   },
 } as const
 
