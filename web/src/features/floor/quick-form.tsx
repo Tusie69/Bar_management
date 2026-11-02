@@ -9,6 +9,7 @@
  */
 import { X } from "lucide-react"
 import { useState } from "react"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   BookingTimePicker,
   GuestPicker,
@@ -113,7 +114,8 @@ export function QuickForm({
   const [name, setName] = useState("")
   const [note, setNote] = useState("")
   const [source, setSource] = useState<BookingSourceCode>("HOTLINE")
-  const [classification, setClassification] = useState<BookingClassification>("UNCLASSIFIED")
+  const [classification, setClassification] = useState<BookingClassification>("NEW")
+  const [isBirthday, setIsBirthday] = useState(false)
   const [tried, setTried] = useState(false)
   const [guest, setGuest] = useState<GuestValue>(() => guestValueFrom(draft.party))
 
@@ -208,6 +210,8 @@ export function QuickForm({
           expectedAt: at,
           sourceCode: source,
           classification,
+          guestType: classification === "RETURNING" ? "REGULAR" : "NEW",
+          isBirthday,
           note: note.trim() || undefined,
           tableIds: draft.tableIds,
           overrideReason: o,
@@ -344,6 +348,12 @@ export function QuickForm({
         </section>
 
         <section className="flex flex-col gap-4">
+          {isB ? (
+            <label className="flex min-h-11 items-center gap-3 text-sm">
+              <Checkbox checked={isBirthday} onCheckedChange={(checked) => setIsBirthday(checked === true)} />
+              Sinh nhật
+            </label>
+          ) : null}
           <span className="text-sm font-semibold text-primary-ink">Số khách &amp; thời gian</span>
           <GuestPicker value={guest} onChange={onGuest} showErrors={tried} />
           {isB ? (

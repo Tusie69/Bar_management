@@ -606,6 +606,8 @@ export class MockGamApi implements GamApi, DemoControls {
             expectedAt: at,
             businessDate: bd,
             customerClassification: "UNCLASSIFIED",
+            isBirthday: false,
+            lateConfirmedAt: null,
             status: "BOOKED",
             note: null,
             visitId: null,
@@ -706,7 +708,7 @@ export class MockGamApi implements GamApi, DemoControls {
         metadata: {
           bossTable: false,
           designated: false,
-          birthday: false,
+          birthday: row.isBirthday,
           round: null,
           returningCustomer: row.classification === "RETURNING" ? true : row.classification === "NEW" ? false : null,
         },
@@ -816,7 +818,9 @@ export class MockGamApi implements GamApi, DemoControls {
           partySize: input.partySize,
           expectedAt: input.expectedAt,
           businessDate: bd,
-          customerClassification: input.classification ?? "UNCLASSIFIED",
+          customerClassification: input.classification ?? (input.guestType === "REGULAR" ? "RETURNING" : "NEW"),
+          isBirthday: input.isBirthday ?? false,
+          lateConfirmedAt: null,
           status: "BOOKED",
           note: input.note?.trim() || null,
           visitId: null,
@@ -878,6 +882,9 @@ export class MockGamApi implements GamApi, DemoControls {
         row.sourceId = [...this.db.sources.values()].find((s) => s.code === input.sourceCode)?.id ?? row.sourceId
       if (input.note !== undefined) row.note = input.note?.trim() || null
       if (input.classification !== undefined) row.customerClassification = input.classification
+      else if (input.guestType !== undefined)
+        row.customerClassification = input.guestType === "REGULAR" ? "RETURNING" : "NEW"
+      if (input.isBirthday !== undefined) row.isBirthday = input.isBirthday
       if (input.expectedAt && input.expectedAt.getTime() !== row.expectedAt.getTime()) {
         if (!isWithinBookingReceptionWindow(fmtTime(input.expectedAt))) {
           throw new ApiError(
@@ -1758,6 +1765,8 @@ export class MockGamApi implements GamApi, DemoControls {
             expectedAt: this.now,
             businessDate: entry.businessDate,
             customerClassification: "UNCLASSIFIED",
+            isBirthday: false,
+            lateConfirmedAt: null,
             status: "BOOKED",
             note: entry.note,
             visitId: null,

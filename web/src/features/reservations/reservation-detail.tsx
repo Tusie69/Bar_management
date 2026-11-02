@@ -1,5 +1,6 @@
 import { ArrowRightLeft, ListPlus, LogIn, MapPinned, Pencil, TimerReset, XCircle } from "lucide-react"
 import { useMemo, useState } from "react"
+import { Checkbox } from "@/components/ui/checkbox"
 import { useNavigate } from "react-router"
 import { BookingTimePicker } from "@/components/booking-pickers"
 import { GuardedButton, SectionTitle, Stepper, TableCodes } from "@/components/common"
@@ -179,6 +180,7 @@ function Detail({ r }: { r: ReservationView }) {
           <Item k="Giờ đến" v={<span className="text-base font-semibold">{fmtTime(r.expectedAt)}</span>} />
           <Item k="Ngày kinh doanh" v={fmtBusinessDate(r.businessDate)} />
           <Item k="Số khách" v={`${r.partySize} khách`} />
+          <Item k="Sinh nhật" v={r.isBirthday ? "Có" : "Không"} />
           <Item k="Nguồn" v={SOURCE_LABEL[r.sourceCode]} />
           <Item
             k="Loại khách"
@@ -408,7 +410,7 @@ export function EditReservationDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 p-0 overflow-hidden sm:max-h-[min(90dvh,46rem)] sm:max-w-lg">
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-h-[min(90dvh,46rem)] sm:max-w-lg">
         {open ? <EditReservationBody r={r} close={() => onOpenChange(false)} /> : null}
       </DialogContent>
     </Dialog>
@@ -428,13 +430,14 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
   const [note, setNote] = useState(r.note ?? "")
   const [source, setSource] = useState<BookingSourceCode>(r.sourceCode)
   const [classification, setClassification] = useState<BookingClassification>(r.classification)
+  const [isBirthday, setIsBirthday] = useState(r.isBirthday)
   const invalid = noteHasPhoneNumber(note)
   const originalSchedule = time === fmtTime(r.expectedAt)
   const timeError = originalSchedule ? null : validateBookingTime(r.businessDate, time, now)
   const legacyTime = originalSchedule && !isBookingSlot(time) ? time : null
   return (
     <>
-      <DialogHeader className="shrink-0 p-6 pb-2 pr-14 text-left">
+      <DialogHeader className="shrink-0 p-6 pr-14 pb-2 text-left">
         <DialogTitle>Sửa booking</DialogTitle>
         <DialogDescription>Đổi giờ trong cùng ngày giữ nguyên bàn. Đổi sang ngày khác sẽ nhả bàn cũ.</DialogDescription>
       </DialogHeader>
@@ -487,6 +490,10 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
             </Select>
           </div>
           <div className="grid gap-1.5">
+            <label className="flex min-h-11 items-center gap-3 text-sm">
+              <Checkbox checked={isBirthday} onCheckedChange={(checked) => setIsBirthday(checked === true)} />
+              Sinh nhật
+            </label>
             <Label htmlFor="ed-note">Ghi chú</Label>
             <Textarea
               id="ed-note"
@@ -499,7 +506,7 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
           </div>
         </div>
       </div>
-      <DialogFooter className="shrink-0 p-6 pt-3 border-t border-border">
+      <DialogFooter className="shrink-0 border-t border-border p-6 pt-3">
         <Button variant="ghost" onClick={close}>
           Quay lại
         </Button>
@@ -516,6 +523,8 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
                 sourceCode: source,
                 note,
                 classification,
+                guestType: classification === "RETURNING" ? "REGULAR" : "NEW",
+                isBirthday,
               }),
             )
             if (res) close()

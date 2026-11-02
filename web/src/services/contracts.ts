@@ -92,6 +92,8 @@ export interface CreateReservationInput {
   tableIds?: number[]
   overrideReason?: string
   classification?: BookingClassification
+  guestType?: "REGULAR" | "NEW"
+  isBirthday?: boolean
 }
 
 export interface UpdateReservationInput {
@@ -103,6 +105,8 @@ export interface UpdateReservationInput {
   sourceCode?: BookingSourceCode
   note?: string | null
   classification?: BookingClassification
+  guestType?: "REGULAR" | "NEW"
+  isBirthday?: boolean
 }
 
 export interface WalkInInput {

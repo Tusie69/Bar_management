@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto"
+import { mkdir } from "node:fs/promises"
 import { spawn, spawnSync } from "node:child_process"
 import { chromium } from "@playwright/test"
 
@@ -15,7 +16,7 @@ const password = randomBytes(24).toString("base64url")
 const common = {
   ...process.env,
   DB_HOST: "127.0.0.1",
-  DB_PORT: "3306",
+  DB_PORT: process.env.DB_PORT ?? "3306",
   DB_NAME: databaseName,
   DB_USER: process.env.DB_USER ?? "gam21",
   DB_PASSWORD: process.env.DB_PASSWORD ?? "gam21_dev",
@@ -71,8 +72,7 @@ function stopChildren() {
   }
 }
 
-const table = (page, code) =>
-  page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"]`).first()
+const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"]`).first()
 
 const bookingRow = (page, guestName) => page.getByRole("row").filter({ hasText: guestName }).first()
 
@@ -82,21 +82,25 @@ async function activateTable(tableButton) {
 }
 
 try {
+  await mkdir(new URL(".artifacts/", import.meta.url), { recursive: true })
   runPnpm(["--filter", "@21gam/api", "exec", "tsx", "test/support/phase2b-e2e-fixture.ts", "setup"], credentialEnv)
   startPnpm(["--filter", "@21gam/api", "exec", "tsx", "src/server.ts"], {
     ...common,
-    PORT: "3101",
+    PORT: new URL(apiUrl).port,
     WEB_ORIGIN: webUrl,
     SESSION_CSRF_SECRET: randomBytes(32).toString("hex"),
     SESSION_COOKIE_SECURE: "false",
     SESSION_COOKIE_SAME_SITE: "lax",
   })
-  startPnpm(["--filter", "@21gam/web", "exec", "vite", "--host", "127.0.0.1", "--port", "5174"], {
-    ...process.env,
-    VITE_API_MODE: "http",
-    VITE_API_BASE_URL: apiUrl,
-    VITE_VENUE_ID: "1",
-  })
+  startPnpm(
+    ["--filter", "@21gam/web", "exec", "vite", "--host", "127.0.0.1", "--port", new URL(webUrl).port, "--strictPort"],
+    {
+      ...process.env,
+      VITE_API_MODE: "http",
+      VITE_API_BASE_URL: apiUrl,
+      VITE_VENUE_ID: "1",
+    },
+  )
   await Promise.all([waitFor(`${apiUrl}/api/v1/health`), waitFor(webUrl)])
 
   browser = await chromium.launch({
@@ -147,8 +151,13 @@ try {
   if ((await sheet.locator('input[type="time"]').count()) !== 0) throw new Error("Native time picker is still present")
   const timeGroups = sheet.getByRole("radiogroup").filter({ hasText: /Tối|Sáng hôm sau/ })
   const timeRadios = timeGroups.getByRole("radio")
-  if ((await timeRadios.count()) !== 13) throw new Error(`Time picker does not contain all 13 slots across canonical groups (found ${await timeRadios.count()})`)
-  const slotTops = await timeRadios.evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().top)))
+  if ((await timeRadios.count()) !== 13)
+    throw new Error(
+      `Time picker does not contain all 13 slots across canonical groups (found ${await timeRadios.count()})`,
+    )
+  const slotTops = await timeRadios.evaluateAll((nodes) =>
+    nodes.map((node) => Math.round(node.getBoundingClientRect().top)),
+  )
   if (new Set(slotTops).size <= 1) throw new Error("Time slots are not rendered in a multi-row grid")
   const firstSlot = sheet.getByRole("radio", { name: /^19:00/ })
   await firstSlot.focus()
@@ -179,6 +188,7 @@ try {
   await sheet.locator("#bk-name").fill(guestName)
   await sheet.getByLabel("Loại khách").click()
   await page.getByRole("option", { name: "Khách quen (O)" }).click()
+  await sheet.getByRole("checkbox", { name: "Sinh nhật" }).check()
   await sheet.getByRole("button", { name: "Tiếp" }).click()
 
   // Step 3: Xác nhận đặt bàn
@@ -248,6 +258,19 @@ try {
 
   let editDialog = page.getByRole("dialog", { name: /Sửa booking/ })
   await editDialog.waitFor()
+  if (!(await editDialog.getByRole("checkbox", { name: "Sinh nhật" }).isChecked())) {
+    throw new Error("Birthday was not persisted for edit")
+  }
+  await page.setViewportSize({ width: 768, height: 1024 })
+  if (await editDialog.evaluate((node) => node.scrollWidth > node.clientWidth + 1)) {
+    throw new Error("Tablet edit form has horizontal overflow")
+  }
+  await editDialog.getByRole("checkbox", { name: "Sinh nhật" }).scrollIntoViewIfNeeded()
+  await page.screenshot({
+    animations: "disabled",
+    path: new URL(".artifacts/na14-tablet-edit.png", import.meta.url).pathname.replace(/^\/(\w:)/, "$1"),
+  })
+  await page.setViewportSize({ width: 1440, height: 900 })
   if (!(await editDialog.getByLabel("Loại khách").textContent()).includes("Khách quen (O)")) {
     throw new Error("Returning classification was not persisted for edit")
   }
@@ -303,7 +326,9 @@ try {
   const mobileTimeGroups = mobileForm.getByRole("radiogroup").filter({ hasText: /Tối|Sáng hôm sau/ })
   const mobileRadios = mobileTimeGroups.getByRole("radio")
   if ((await mobileRadios.count()) !== 13) {
-    throw new Error(`Mobile form does not contain all 13 slots across date-named groups (found ${await mobileRadios.count()})`)
+    throw new Error(
+      `Mobile form does not contain all 13 slots across date-named groups (found ${await mobileRadios.count()})`,
+    )
   }
 
   // Reachability and touch/selection verification for late slot
@@ -342,6 +367,51 @@ try {
     throw new Error("Second browser did not observe expected_at statistics")
   }
   if (/0987|phone|ciphertext|hmac/i.test(secondText)) throw new Error("Sensitive phone data leaked in export")
+  await closeTopDialog(secondPage)
+  await secondExport.waitFor({ state: "hidden" })
+
+  // NA-14: create on mobile, then edit and reopen through the real API/database.
+  await secondPage.getByRole("button", { name: "Tạo mới" }).click()
+  await secondPage
+    .getByRole("dialog", { name: "Tạo mới" })
+    .getByRole("button", { name: /Tạo đặt trước/ })
+    .click()
+  const metadataForm = secondPage.getByRole("dialog", { name: "Tạo đơn đặt bàn" })
+  const mobileName = `NA14 mobile ${Date.now()}`
+  await metadataForm.getByRole("radio", { name: /^01:00/ }).click()
+  await metadataForm.getByLabel("Tên khách", { exact: true }).fill(mobileName)
+  await metadataForm.getByLabel("Loại khách").click()
+  await secondPage.getByRole("option", { name: "Khách quen (O)" }).click()
+  await metadataForm.getByRole("checkbox", { name: "Sinh nhật" }).check()
+  await metadataForm.getByRole("checkbox", { name: "Sinh nhật" }).scrollIntoViewIfNeeded()
+  await secondPage.screenshot({
+    animations: "disabled",
+    path: new URL(".artifacts/na14-mobile-create.png", import.meta.url).pathname.replace(/^\/(\w:)/, "$1"),
+  })
+  if (await metadataForm.evaluate((node) => node.scrollWidth > node.clientWidth + 1))
+    throw new Error("Mobile metadata overflow")
+  await metadataForm.getByRole("button", { name: "Đặt bàn", exact: true }).click()
+  await metadataForm.waitFor({ state: "hidden" })
+  await secondPage.getByRole("button", { name: "Danh sách", exact: true }).click()
+  await todayBtn.click()
+  await secondPage.getByText(mobileName, { exact: true }).click()
+  await secondPage.getByRole("button", { name: "Sửa booking", exact: true }).click()
+  const mobileEdit = secondPage.getByRole("dialog", { name: /Sửa booking/ })
+  if (!(await mobileEdit.getByRole("checkbox", { name: "Sinh nhật" }).isChecked()))
+    throw new Error("Mobile birthday lost")
+  if (!(await mobileEdit.getByLabel("Loại khách").textContent()).includes("Khách quen"))
+    throw new Error("Mobile guest type lost")
+  await mobileEdit.getByRole("checkbox", { name: "Sinh nhật" }).uncheck()
+  await mobileEdit.getByRole("button", { name: "Lưu thay đổi" }).click()
+  await mobileEdit.waitFor({ state: "hidden" })
+  await secondPage.getByRole("button", { name: "Sửa booking", exact: true }).click()
+  if (await mobileEdit.getByRole("checkbox", { name: "Sinh nhật" }).isChecked())
+    throw new Error("Mobile birthday toggle not persisted")
+  await mobileEdit.getByRole("checkbox", { name: "Sinh nhật" }).scrollIntoViewIfNeeded()
+  await secondPage.screenshot({
+    animations: "disabled",
+    path: new URL(".artifacts/na14-mobile-edit.png", import.meta.url).pathname.replace(/^\/(\w:)/, "$1"),
+  })
   await secondContext.close()
   secondContext = null
 
@@ -426,6 +496,9 @@ try {
       assignmentPersistence: "PASS",
       update: "PASS",
       classification: "PASS",
+      bookingMetadata: "PASS",
+      mobileMetadata: "PASS",
+      tabletMetadata: "PASS",
       exportStatistics: "PASS",
       twoBrowserSync: "PASS",
       cancel: "PASS",

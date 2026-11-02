@@ -307,6 +307,8 @@ export function seedDb(now: Date): MockDb {
       expectedAt,
       businessDate: p.bd,
       customerClassification: "UNCLASSIFIED",
+      isBirthday: false,
+      lateConfirmedAt: null,
       status: p.status,
       note: p.note ?? null,
       visitId: p.visitId ?? null,

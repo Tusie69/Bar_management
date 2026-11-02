@@ -11,6 +11,7 @@ import { tableRouter } from './modules/tables/table.route.js'
 import { visitRouter } from './modules/visits/visit.route.js'
 import { waitlistRouter } from './modules/waitlist/waitlist.route.js'
 import { healthRouter } from './routes/health.route.js'
+import { venueSettingsRouter } from './modules/venues/venue-settings.route.js'
 
 export const app: Express = express()
 
@@ -25,6 +26,7 @@ app.use('/api/v1/tables', tableRouter)
 app.use('/api/v1/bookings', bookingRouter)
 app.use('/api/v1/visits', visitRouter)
 app.use('/api/v1/waitlist', waitlistRouter)
+app.use('/api/v1/venues', venueSettingsRouter)
 
 app.use(notFoundHandler)
 app.use(errorHandler)

@@ -197,12 +197,16 @@ describe("MockGamApi", () => {
       expectedAt: atBusinessTime(bd, "23:00"),
       sourceCode: "HOTLINE",
       classification: "RETURNING",
+      guestType: "REGULAR",
+      isBirthday: true,
     })
     let row = (await api.listReservations({ businessDate: bd })).find((r) => r.id === created.reservationId)!
     expect(row.classification).toBe("RETURNING")
+    expect(row).toMatchObject({ guestType: "REGULAR", isBirthday: true, lateConfirmedAt: null })
     await api.updateReservation({ id: row.id, version: row.version, classification: "NEW" })
     row = (await api.listReservations({ businessDate: bd })).find((r) => r.id === row.id)!
     expect(row.classification).toBe("NEW")
+    expect(row).toMatchObject({ guestType: "NEW", isBirthday: true, lateConfirmedAt: null })
     const exported = await api.exportDailyBookingText(bd)
     expect(exported).toContain("Export guest")
     expect(exported).toContain("THỐNG KÊ")

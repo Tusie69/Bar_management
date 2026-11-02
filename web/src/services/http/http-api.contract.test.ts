@@ -370,6 +370,7 @@ describe("canonical contract writes", () => {
           businessDate: date,
           sourceCode: "HOTLINE",
           classification: "UNCLASSIFIED",
+          isBirthday: false,
         },
       },
     ])

@@ -20,6 +20,9 @@ export interface BackendBookingPayload {
   expectedAt: Date
   businessDate: string
   classification: string
+  guestType?: "REGULAR" | "NEW"
+  isBirthday?: boolean
+  lateConfirmedAt?: Date | null
   status: string
   source: string
   sourceCode: string
@@ -39,6 +42,9 @@ export interface HttpBooking {
   expectedAt: Date
   businessDate: BusinessDate
   classification: BookingClassification
+  guestType: "REGULAR" | "NEW"
+  isBirthday: boolean
+  lateConfirmedAt: Date | null
   status: BookingStatus
   source: string
   sourceCode: BookingSourceCode
@@ -59,6 +65,8 @@ export interface BookingWriteFields {
   note?: string | null
   phoneNumber?: string | null
   classification?: BookingClassification
+  guestType?: "REGULAR" | "NEW"
+  isBirthday?: boolean
 }
 
 export interface BookingCreatePayload {
@@ -70,6 +78,8 @@ export interface BookingCreatePayload {
   note?: string
   phoneNumber?: string | null
   classification?: BookingClassification
+  guestType?: "REGULAR" | "NEW"
+  isBirthday?: boolean
 }
 
 export interface DirectBookingCreatePayload extends BookingCreatePayload {
@@ -94,6 +104,14 @@ function requireDate(value: Date, id: number): Date {
 }
 
 export function mapBooking(payload: BackendBookingPayload): HttpBooking {
+  const guestType = payload.guestType ?? (payload.classification === "RETURNING" ? "REGULAR" : "NEW")
+  if (
+    !["REGULAR", "NEW"].includes(guestType) ||
+    guestType !== (payload.classification === "RETURNING" ? "REGULAR" : "NEW") ||
+    (payload.isBirthday !== undefined && typeof payload.isBirthday !== "boolean")
+  ) {
+    contractError("INVALID_BOOKING_METADATA", `Booking #${payload.id} có metadata không hợp lệ.`)
+  }
   if (!includes(statuses, payload.status)) {
     contractError("UNSUPPORTED_BOOKING_STATUS", `Booking #${payload.id} có trạng thái không được hỗ trợ.`)
   }
@@ -121,6 +139,9 @@ export function mapBooking(payload: BackendBookingPayload): HttpBooking {
     displayStatus: payload.displayStatus,
     sourceCode: payload.sourceCode,
     classification: payload.classification,
+    guestType,
+    isBirthday: payload.isBirthday ?? false,
+    lateConfirmedAt: payload.lateConfirmedAt == null ? null : requireDate(payload.lateConfirmedAt, payload.id),
     tableCodes: [...payload.tableCodes],
   }
 }
@@ -149,6 +170,8 @@ function commonPayload(fields: BookingWriteFields): BookingCreatePayload {
     businessDate: fields.businessDate,
     sourceCode: fields.sourceCode,
     ...(fields.classification === undefined ? {} : { classification: fields.classification }),
+    ...(fields.guestType === undefined ? {} : { guestType: fields.guestType }),
+    ...(fields.isBirthday === undefined ? {} : { isBirthday: fields.isBirthday }),
     ...(note ? { note } : {}),
     ...(phoneNumber === undefined ? {} : { phoneNumber }),
   }
@@ -184,7 +207,13 @@ export function fullUpdateBookingPayload(
     expectedAt: fields.expectedAt ?? current.expectedAt,
     businessDate: fields.businessDate ?? current.businessDate,
     sourceCode: fields.sourceCode ?? current.sourceCode,
-    classification: fields.classification ?? current.classification,
+    ...(fields.classification !== undefined
+      ? { classification: fields.classification }
+      : fields.guestType === undefined
+        ? { classification: current.classification }
+        : {}),
+    ...(fields.guestType === undefined ? {} : { guestType: fields.guestType }),
+    isBirthday: fields.isBirthday ?? current.isBirthday,
     ...(Object.prototype.hasOwnProperty.call(fields, "phoneNumber") ? { phoneNumber: fields.phoneNumber } : {}),
   }
   return {

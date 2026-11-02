@@ -388,7 +388,7 @@ try {
   await jsonRequest(context, "POST", "/bookings/direct", {
     guestName: "NA11 arrival",
     partySize: 2,
-    expectedAt: `${today}T21:00:00+07:00`,
+    expectedAt: `${today}T23:00:00+07:00`,
     businessDate: today,
     sourceCode: "HOTLINE",
     tableIds: [9505],
