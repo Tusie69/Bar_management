@@ -91,7 +91,7 @@ export function ReceptionControls({
               <button
                 key={row.id}
                 type="button"
-                className="min-h-11 rounded-sm border bg-surface-1 px-3 text-left"
+                className="min-h-11 rounded-sm border bg-surface-1 px-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => onOpenBooking(row.id, row.businessDate)}
               >
                 {row.displayName} · ***{row.phoneLast3} ·{" "}

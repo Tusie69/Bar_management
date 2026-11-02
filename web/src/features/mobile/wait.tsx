@@ -256,8 +256,10 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
             onClick={primary.go}
             disabled={!primary.go || pending}
             className={cn(
-              "h-11 flex-1 rounded-xl border border-primary text-[14px] font-medium",
-              primary.go ? "bg-primary text-primary-foreground" : "bg-transparent text-[var(--text-muted)] opacity-60",
+              "h-11 flex-1 rounded-xl border text-[14px] font-medium transition-colors",
+              primary.go
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-strong bg-transparent text-[var(--text-muted)] opacity-60 cursor-not-allowed",
             )}
           >
             {primary.label}

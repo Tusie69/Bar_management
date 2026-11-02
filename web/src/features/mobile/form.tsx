@@ -39,7 +39,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const m = useM()
   const uid = useId()
   const { run, pending } = useAction()
-  const preset = req.tableIds ?? []
+  const preset = useMemo(() => req.tableIds ?? [], [req.tableIds])
   const [mode, setMode] = useState(req.mode)
   const [party, setParty] = useState(
     preset.length
@@ -87,6 +87,9 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const availability = useAvailability(isBooking && checked && guests ? at : null, guests ?? 1)
   const avail = availability.isPlaceholderData ? undefined : availability.data
   const walkInDateError = !isBooking && bd !== m.today ? "Walk-in chỉ áp dụng cho ngày kinh doanh hiện tại." : null
+  const isChecking = Boolean(
+    isBooking && checked && !!choice && !!guests && at && (availability.isFetching || !avail) && !availability.isError,
+  )
   const selectionError =
     choice && m.role === "RECEPTIONIST"
       ? choice.ids.some((id) => !isReceptionBookableTable(m.model.byId.get(id), m.model.catalog?.zones ?? []))
@@ -94,18 +97,18 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
         : guests && choice.ids.reduce((sum, id) => sum + (m.model.byId.get(id)?.capacity ?? 0), 0) < guests
           ? "Bàn đã chọn không đủ chỗ. Vui lòng chọn thêm hoặc đổi bàn."
           : isBooking && at
-            ? availability.isFetching || !avail
-              ? availability.isError
-                ? "Không thể kiểm tra bàn đã chọn. Vui lòng thử lại."
-                : "Đang kiểm tra lại bàn đã chọn..."
-              : choice.ids.some(
+            ? availability.isError
+              ? "Không thể kiểm tra bàn đã chọn. Vui lòng thử lại."
+              : !avail || availability.isFetching
+                ? null
+                : choice.ids.some(
                     (id) =>
                       !["available", "too_small"].includes(
                         avail.tables.find((row) => row.tableId === id)?.status ?? "",
                       ),
                   )
-                ? "Bàn đã chọn không còn trống vào giờ này. Vui lòng chọn bàn khác."
-                : null
+                  ? "Bàn đã chọn không còn trống vào giờ này. Vui lòng chọn bàn khác."
+                  : null
             : !isBooking && choice.ids.some((id) => m.model.states.get(id)?.state !== "free")
               ? "Bàn đã chọn không còn trống. Vui lòng chọn bàn khác."
               : null
@@ -170,7 +173,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   })
 
   const submit = async () => {
-    if (!canSubmit) return
+    if (!canSubmit || isChecking) return
     if (
       guests === null ||
       (isBooking ? guestMissing || !phoneOk || !at : false) ||
@@ -235,7 +238,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
       aria-label="Tạo đơn đặt bàn"
       className="fixed inset-0 z-[40] flex flex-col overflow-hidden bg-background"
     >
-      <header className="shrink-0 border-b border-border bg-background px-4 pt-[var(--top-safe)] pb-3">
+      <div className="shrink-0 border-b border-border bg-background px-4 pt-[var(--top-safe)] pb-3">
         <div className="-ml-2.5 flex h-11 items-center gap-1">
           <button
             type="button"
@@ -265,7 +268,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             ]}
           />
         </div>
-      </header>
+      </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pt-4 pb-6">
         <section className="flex flex-col gap-3">
@@ -641,11 +644,15 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
           <span role="alert" className="text-[13px] text-st-noshow-ink">
             {selectionError || walkInDateError}
           </span>
+        ) : isChecking ? (
+          <span className="text-[13px] text-[var(--text-muted)]">
+            Đang kiểm tra lại bàn đã chọn...
+          </span>
         ) : null}
         <button
           type="button"
           onClick={() => void submit()}
-          disabled={pending || !canSubmit}
+          disabled={pending || !canSubmit || isChecking}
           aria-busy={pending}
           className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground active:brightness-90 disabled:opacity-70"
         >

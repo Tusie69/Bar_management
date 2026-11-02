@@ -131,7 +131,7 @@ export function MapScreen({
           title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"}
         />
       )}
-      <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
+      <main className="relative min-h-0 flex-1 bg-[var(--floor)]">
         {m.model.catalog ? (
           <FloorCanvas
             className="absolute inset-0"
@@ -228,7 +228,7 @@ export function MapScreen({
             </button>
           </div>
         ) : null}
-      </div>
+      </main>
     </>
   )
 }

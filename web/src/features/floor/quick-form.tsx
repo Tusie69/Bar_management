@@ -246,7 +246,12 @@ export function QuickForm({
   }
 
   const tab = (on: boolean) =>
-    cn("h-[38px] rounded-sm text-sm", on ? "bg-primary-tint font-medium text-primary-ink" : "text-tx-2 hover:text-tx-1")
+    cn(
+      "h-[38px] rounded-sm text-sm transition-colors",
+      on
+        ? "bg-primary-tint font-medium text-primary-ink"
+        : "text-tx-2 hover:text-tx-1 disabled:opacity-40 disabled:pointer-events-none",
+    )
 
   return (
     <div className="flex h-full min-h-0 flex-col" aria-label={isB ? "Tạo đặt bàn" : "Mở bàn Walk-in"} role="form">

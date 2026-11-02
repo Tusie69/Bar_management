@@ -1,5 +1,5 @@
 import { AlertCircle, Check, Eye, MousePointerClick, Radio, Search, X } from "lucide-react"
-import { lazy, Suspense, useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { EmptyState, Stepper } from "@/components/common"
 import { Button } from "@/components/ui/button"
@@ -26,8 +26,7 @@ import { draftPickable, QuickForm } from "./quick-form"
 import { ShiftPanel } from "./shift-panel"
 import { TableDetail } from "./table-detail"
 import { useFloorModel } from "./use-floor-model"
-
-const WaitlistPage = lazy(() => import("../waitlist/waitlist-page"))
+import WaitlistPage from "../waitlist/waitlist-page"
 
 const ZONE_TABS: { value: ZoneCode | "ALL"; label: string }[] = [
   { value: "ALL", label: "Tất cả" },
@@ -122,7 +121,7 @@ export function FloorPage() {
   )
   const draftAt = useMemo(
     () => (draft?.kind === "booking" ? atBusinessTime(draft.date, draft.time) : null),
-    [draft?.kind, draft?.date, draft?.time],
+    [draft],
   )
   const draftAvail = useAvailability(draftAt, draft?.party ?? 2)
   const draftAvailability = receptionist && draftAvail.isPlaceholderData ? undefined : draftAvail.data
@@ -501,12 +500,12 @@ export function FloorPage() {
             </SheetContent>
           </Sheet>
           <Sheet open={waitOpen} onOpenChange={setWaitOpen}>
-            <SheetContent className="w-full gap-0 overflow-hidden p-0 sm:max-w-[920px]">
-              <SheetTitle className="px-6 pt-5">Bàn chờ ảo</SheetTitle>
-              <SheetDescription className="px-6">Ngày kinh doanh {fmtBusinessDate(date)}</SheetDescription>
-              <Suspense fallback={<Skeleton className="m-6 h-24" />}>
+            <SheetContent className="flex flex-col w-full gap-0 overflow-hidden p-0 sm:max-w-[920px]">
+              <SheetTitle className="sr-only">Bàn chờ ảo</SheetTitle>
+              <SheetDescription className="sr-only">Ngày kinh doanh {fmtBusinessDate(date)}</SheetDescription>
+              <div className="min-h-0 flex-1 overflow-y-auto">
                 <WaitlistPage businessDate={date} />
-              </Suspense>
+              </div>
             </SheetContent>
           </Sheet>
         </>
