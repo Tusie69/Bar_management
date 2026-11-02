@@ -1,17 +1,24 @@
 import { X } from "lucide-react"
 import { useMemo } from "react"
 import type { TableLiveState } from "@/domain/models"
+import type { Permission } from "@/domain/access"
+import { validateBookingCheckInDate } from "@/domain/booking-rules"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAvailability } from "@/hooks/use-data"
 import { fmtBusinessDate, fmtTime12, MS } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
+import { initials } from "@/lib/text"
+import { useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
 import { FloorCanvas } from "../floor/floor-canvas"
+import { ReceptionControls, ReceptionDatePicker } from "../floor/reception-controls"
+import { canStartTableBooking, isReceptionBookableTable } from "../floor/reception-rules"
+import { useReceptionSearch } from "@/hooks/use-reception-search"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
-import { codesOf, duration, type Tone, toneStyle } from "./model"
-import { PlainHeader } from "./ui"
+import { codesOf, duration, isOpenEntry, type Tone, toneStyle } from "./model"
+import { BellButton, PlainHeader } from "./ui"
 
 const ZONE_TABS: [ZoneCode | "ALL", string][] = [
   ["ALL", "Tất cả"],
@@ -41,6 +48,9 @@ export function MapScreen({
   pickBusy: boolean
 }) {
   const m = useM()
+  const user = useSession((state) => state.user)
+  const receptionist = m.role === "RECEPTIONIST"
+  const search = useReceptionSearch(m.businessDate, receptionist)
   const zone = useUi((s) => s.zone)
   const setZone = useUi((s) => s.setZone)
 
@@ -53,34 +63,74 @@ export function MapScreen({
 
   const pickable = useMemo(() => {
     if (!pick) return null
+    const validCatalog = (id: number) =>
+      !receptionist ||
+      (!!m.model.states.get(id) && isReceptionBookableTable(m.model.byId.get(id), m.model.catalog?.zones ?? []))
     if (isAssignPick) {
-      const availTables = pickAvail.data?.tables ?? []
+      const availTables = pickAvail.isPlaceholderData ? [] : (pickAvail.data?.tables ?? [])
       const ids = new Set<number>()
       for (const t of availTables) {
-        if (t.status === "available" || t.status === "too_small") {
+        if ((t.status === "available" || t.status === "too_small") && validCatalog(t.tableId)) {
           ids.add(t.tableId)
         }
       }
-      for (const id of pick.preselected ?? []) ids.add(id)
+      for (const id of pick.preselected ?? []) if (validCatalog(id)) ids.add(id)
       for (const id of pick.exclude ?? []) ids.delete(id)
       return ids
     }
     const ids = new Set(pick.only ?? [...m.model.freeIds, ...(pick.preselected ?? [])])
+    if (receptionist)
+      for (const id of ids) {
+        const retained = pick.only?.includes(id) || pick.preselected?.includes(id)
+        if (
+          !validCatalog(id) ||
+          (!retained &&
+            !canStartTableBooking(m.model.byId.get(id), m.model.states.get(id), m.model.catalog?.zones ?? []))
+        )
+          ids.delete(id)
+      }
     for (const id of pick.exclude ?? []) ids.delete(id)
     return ids
-  }, [pick, isAssignPick, pickAvail.data, m.model.freeIds])
+  }, [pick, isAssignPick, pickAvail.data, pickAvail.isPlaceholderData, m.model, receptionist])
 
   const claimIds = selected ? (m.model.states.get(selected)?.claim?.tableIds ?? [selected]) : []
 
   return (
     <>
-      <PlainHeader
-        title={
-          pick?.targetDate
-            ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}`
-            : "Sơ đồ bàn"
-        }
-      />
+      {receptionist ? (
+        <header className="z-[5] shrink-0 bg-background px-4 pt-[var(--top-safe)]">
+          <div className="flex h-[52px] items-center gap-3">
+            <button
+              type="button"
+              onClick={m.openAccount}
+              aria-label="Tài khoản và giao diện"
+              className="grid size-10 shrink-0 place-items-center rounded-full bg-[var(--glass)] text-[15px] font-semibold text-tx-strong shadow-[var(--shadow-xs)]"
+            >
+              {initials(user.displayName).slice(0, 1)}
+            </button>
+            <h1 className="m-0 min-w-0 flex-1 truncate text-[22px] font-semibold tracking-[-0.01em] text-tx-strong">
+              Sơ đồ bàn
+            </h1>
+            {!pick ? <ReceptionDatePicker onDateChange={() => onSelect(null)} /> : null}
+            <BellButton />
+          </div>
+          {!pick ? (
+            <div className="pb-3">
+              <ReceptionControls
+                search={search}
+                waitCount={(m.waitlist ?? []).filter(isOpenEntry).length}
+                onWaitlist={() => m.go("wait")}
+                onCount={m.openCount}
+                onOpenBooking={m.openDetail}
+              />
+            </div>
+          ) : null}
+        </header>
+      ) : (
+        <PlainHeader
+          title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"}
+        />
+      )}
       <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
         {m.model.catalog ? (
           <FloorCanvas
@@ -91,7 +141,7 @@ export function MapScreen({
             states={m.model.states}
             availability={isAssignPick ? pickAvailMap : undefined}
             groups={isAssignPick ? [] : m.model.floor?.groups}
-            selectedIds={pick ? pickSel : claimIds}
+            selectedIds={pick ? pickSel : [...new Set([...claimIds, ...search.tableIds])]}
             pickable={pickable}
             zoneFocus={zone}
             now={m.now}
@@ -100,7 +150,9 @@ export function MapScreen({
             ariaLabel={
               isAssignPick
                 ? `Sơ đồ khả dụng lúc ${pick.targetTime} ngày ${fmtBusinessDate(pick.targetDate!, "short")}`
-                : "Sơ đồ bàn. Kéo để di chuyển, chụm hai ngón để phóng to"
+                : receptionist
+                  ? `Sơ đồ bàn ngày ${m.businessDate}. Kéo để di chuyển, chụm hai ngón để phóng to`
+                  : "Sơ đồ bàn. Kéo để di chuyển, chụm hai ngón để phóng to"
             }
           />
         ) : null}
@@ -168,7 +220,7 @@ export function MapScreen({
             </span>
             <button
               type="button"
-              disabled={!pickSel.length || pickBusy}
+              disabled={!pickSel.length || pickBusy || (receptionist && pickSel.some((id) => !pickable?.has(id)))}
               onClick={onPickConfirm}
               className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground disabled:opacity-50"
             >
@@ -200,6 +252,8 @@ interface Action {
   primary?: boolean
   danger?: boolean
   wide?: boolean
+  permission?: Permission
+  disabled?: boolean
 }
 
 /** Bottom sheet over the lower half; the map stays visible and other tables stay tappable. */
@@ -226,9 +280,15 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
     when = `Booking ${fmtTime12(c.startsAt)}${left < 0 ? `, trễ ${-left} phút` : `, còn ${left} phút`}`
     actions = r
       ? [
-          { label: "Khách đã đến", primary: true, go: () => void a.checkIn(r) },
+          {
+            label: "Khách đã đến",
+            permission: "visit.checkin",
+            disabled: !!validateBookingCheckInDate(r.businessDate, m.now),
+            primary: true,
+            go: () => void a.checkIn(r),
+          },
           { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
-          { label: "Đổi bàn", go: () => a.assign(r) },
+          { label: "Đổi bàn", permission: "table.assign", go: () => a.assign(r) },
           { label: "Đổi trạng thái", go: () => m.openStatus(r) },
         ]
       : []
@@ -236,12 +296,12 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
     who = `${c.displayName}, ${c.partySize} khách`
     when = `Đang ngồi từ ${fmtTime12(c.startsAt)}, ${duration(m.now.getTime() - c.startsAt.getTime())}`
     actions = [
-      { label: "Đổi bàn", go: () => a.moveVisit(c, id) },
+      { label: "Đổi bàn", permission: "visit.move", go: () => a.moveVisit(c, id) },
       c.tableIds.length > 1 && c.groupId && api.mode !== "http"
-        ? { label: "Tách bàn", go: () => a.split(c, id) }
-        : { label: "Ghép bàn", go: () => a.combine(c) },
-      ...(c.reservationId ? [{ label: "Xem booking", go: () => m.openDetail(c.reservationId!, m.today) }] : []),
-      { label: "Nhả bàn", danger: true, wide: !c.reservationId, go: () => a.endVisit(c) },
+        ? { label: "Tách bàn", permission: "visit.split", go: () => a.split(c, id) }
+        : { label: "Ghép bàn", permission: "visit.combine", go: () => a.combine(c) },
+      ...(c.reservationId ? [{ label: "Xem booking", go: () => m.openDetail(c.reservationId!, m.businessDate) }] : []),
+      { label: "Nhả bàn", permission: "visit.end", danger: true, wide: !c.reservationId, go: () => a.endVisit(c) },
     ]
   } else if (c?.kind === "waitlist_hold") {
     who = `${c.displayName}, ${c.partySize} khách`
@@ -252,20 +312,41 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
       ? "Bàn sơ cua chỉ mở khi quản lý chấp nhận vượt quy tắc."
       : "Bàn sơ cua. Cần Chủ quán/Admin mở vượt quy tắc."
     actions = m.isOwner
-      ? [{ label: "Mở bàn vượt quy tắc", wide: true, go: () => m.openForm({ mode: "walkin", tableIds: [id] }) }]
+      ? [
+          {
+            label: "Mở bàn vượt quy tắc",
+            permission: "table.assign_override",
+            wide: true,
+            go: () => m.openForm({ mode: "walkin", tableIds: [id] }),
+          },
+        ]
       : []
   } else if (st === "oos") {
     info = "Bàn đang ngưng phục vụ."
+  } else if (fs && st !== "free") {
+    info = fs.staleFromPreviousDay
+      ? "Bàn chưa được nhả từ ngày trước. Kiểm tra phân bổ trước khi thao tác."
+      : "Bàn đang được giữ hoặc sử dụng, chưa có thông tin trong ngày đã chọn. Kiểm tra phân bổ trước khi thao tác."
+  } else if (m.role === "RECEPTIONIST" && (!fs || !zone?.isBookable || zone.isWaitingArea)) {
+    info = !fs ? "Chưa tải được trạng thái bàn." : "Khu vực này không nhận đặt bàn."
   } else {
     info = zone?.isWaitingArea ? `${zone.name} là khu chờ, không nhận đặt trước.` : "Bàn đang trống lúc này."
     actions = [
-      { label: "Mở bàn Walk-in", primary: true, go: () => m.openForm({ mode: "walkin", tableIds: [id] }) },
+      {
+        label: "Mở bàn Walk-in",
+        permission: "visit.walkin",
+        disabled: m.businessDate !== m.today,
+        primary: true,
+        go: () => m.openForm({ mode: "walkin", tableIds: [id] }),
+      },
       {
         label: "Tạo đặt trước",
+        permission: "reservation.create",
         go: () => m.openForm({ mode: "booking", tableIds: zone?.isBookable ? [id] : [] }),
       },
     ]
   }
+  actions = actions.filter((action) => !action.permission || m.can(action.permission))
 
   return (
     <div
@@ -312,7 +393,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
               key={x.label}
               type="button"
               onClick={x.go}
-              disabled={a.pending}
+              disabled={a.pending || x.disabled}
               className={cn(
                 "h-12 rounded-xl border text-[15px] font-medium",
                 x.wide && "col-span-2",

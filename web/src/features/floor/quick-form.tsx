@@ -37,16 +37,15 @@ import { addDays, businessDateOf, fmtBusinessDate, fmtDayMonth, fmtTime, MS } fr
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
+import { useSession } from "@/state/session"
 import { toast } from "sonner"
 import type { TableView } from "@/domain/models"
 import type { FloorModel } from "./use-floor-model"
+import { isReceptionBookableTable } from "./reception-rules"
 
 const PICKABLE = new Set(["available", "too_small"])
 
-export function checkDirectTableCompatibility(
-  tableIds: number[],
-  byId: Map<number, TableView>,
-): string | null {
+export function checkDirectTableCompatibility(tableIds: number[], byId: Map<number, TableView>): string | null {
   if (tableIds.length <= 1) return null
   const first = byId.get(tableIds[0])
   if (!first) return null
@@ -107,6 +106,8 @@ export function QuickForm({
   const draft = ui.draft!
   const now = useNow(30_000)
   const today = businessDateOf(now)
+  const receptionist = useSession((state) => state.user.role === "RECEPTIONIST")
+  const walkInAllowed = !receptionist || model.floor?.businessDate === today
   const { run, pending } = useAction()
   const [phone, setPhone] = useState("")
   const [name, setName] = useState("")
@@ -140,6 +141,7 @@ export function QuickForm({
   }
 
   const dates = Array.from({ length: 7 }, (_, i) => addDays(today, i))
+  if (!dates.includes(draft.date)) dates.push(draft.date)
   const dateLabel = (bd: string, i: number) =>
     i === 0
       ? `Hôm nay · ${fmtDayMonth(bd)}`
@@ -148,7 +150,12 @@ export function QuickForm({
         : fmtBusinessDate(bd).replace(", ", " · ")
 
   const compatError = isB ? checkDirectTableCompatibility(draft.tableIds, model.byId) : null
-  const blocked = draft.tableIds.filter((id) => !draftPickable(draft.kind, id, model, availability, draft.tableIds))
+  const blocked = draft.tableIds.filter(
+    (id) =>
+      !draftPickable(draft.kind, id, model, availability, draft.tableIds) ||
+      (receptionist &&
+        (!model.states.get(id) || !isReceptionBookableTable(model.byId.get(id), model.catalog?.zones ?? []))),
+  )
   const cap = draft.tableIds.reduce((s, id) => s + (model.byId.get(id)?.capacity ?? 0), 0)
   const short = party === null ? 0 : party - cap
 
@@ -156,6 +163,10 @@ export function QuickForm({
   const zoneOk = new Set(model.catalog?.zones.filter((z) => z.isBookable).map((z) => z.id))
   const selectedFirstTable = draft.tableIds.length > 0 ? model.byId.get(draft.tableIds[0]) : null
   const suggestions = model.tables
+    .filter(
+      (table) =>
+        !receptionist || (!!model.states.get(table.id) && isReceptionBookableTable(table, model.catalog?.zones ?? [])),
+    )
     .filter(
       (t) => t.kind === "TABLE" && zoneOk.has(t.zoneId) && t.capacity >= draft.party && !draft.tableIds.includes(t.id),
     )
@@ -175,6 +186,7 @@ export function QuickForm({
 
   const submit = async () => {
     setTried(true)
+    if (!isB && !walkInAllowed) return
     if (Object.keys(errors).length || blocked.length || party === null || compatError) return
     if (isB) {
       if (compatError) {
@@ -264,8 +276,10 @@ export function QuickForm({
             type="button"
             role="tab"
             aria-selected={!isB}
+            disabled={!walkInAllowed}
+            title={!walkInAllowed ? "Walk-in chỉ áp dụng cho ngày kinh doanh hiện tại." : undefined}
             className={tab(!isB)}
-            onClick={() => ui.switchDraft("walkin")}
+            onClick={() => walkInAllowed && ui.switchDraft("walkin")}
           >
             Walk-in
           </button>

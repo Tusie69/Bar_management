@@ -15,6 +15,8 @@
     "e2e": "node e2e/flows.mjs",
     "e2e:auth": "node e2e/auth.mjs",
     "e2e:phase2b": "node e2e/phase2b-booking.mjs",
+    "e2e:na11": "node e2e/na11-http.mjs",
+    "e2e:na11:visual": "node e2e/na11-visual.mjs",
     "a11y": "node e2e/a11y.mjs",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
   },

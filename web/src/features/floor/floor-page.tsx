@@ -1,17 +1,22 @@
 import { AlertCircle, Check, Eye, MousePointerClick, Radio, Search, X } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { lazy, Suspense, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { EmptyState, Stepper } from "@/components/common"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { ZoneCode } from "@/domain/venue-layout"
-import { useAvailability, useNow } from "@/hooks/use-data"
+import { useAvailability, useNow, useWaitlist } from "@/hooks/use-data"
 import { useMediaQuery } from "@/hooks/use-media"
 import { atBusinessTime, businessDateOf, fmtBusinessDate, MS } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { isApiError } from "@/services"
 import { useUi } from "@/state/ui"
+import { useCan, useSession } from "@/state/session"
+import { ReceptionControls } from "./reception-controls"
+import { useReceptionSearch } from "@/hooks/use-reception-search"
+import { ZaloBookingExport } from "../reservations/zalo-booking-export"
+import { canStartTableBooking, isReceptionBookableTable } from "./reception-rules"
 import { AvailabilityPanel } from "./availability-panel"
 import { BookingList, BookingTable, LIST_TABS, useBookingItems, type ListTab } from "./booking-list"
 import { FloorCanvas } from "./floor-canvas"
@@ -21,6 +26,8 @@ import { draftPickable, QuickForm } from "./quick-form"
 import { ShiftPanel } from "./shift-panel"
 import { TableDetail } from "./table-detail"
 import { useFloorModel } from "./use-floor-model"
+
+const WaitlistPage = lazy(() => import("../waitlist/waitlist-page"))
 
 const ZONE_TABS: { value: ZoneCode | "ALL"; label: string }[] = [
   { value: "ALL", label: "Tất cả" },
@@ -68,9 +75,17 @@ function Segmented<T extends string>({
 
 /** Điều phối (v2): toolbar · booking list | workspace (list / timeline / map) | shift or table panel. */
 export function FloorPage() {
-  const model = useFloorModel()
   const ui = useUi()
   const now = useNow(1000)
+  const receptionist = useSession((state) => state.user.role === "RECEPTIONIST")
+  const currentDate = businessDateOf(now)
+  const selectedDate = ui.floorMode === "live" ? currentDate : ui.availDate
+  const model = useFloorModel(receptionist ? selectedDate : undefined)
+  const canCreate = useCan("reservation.create")
+  const search = useReceptionSearch(selectedDate, receptionist)
+  const waitlist = useWaitlist(receptionist ? selectedDate : "")
+  const [waitOpen, setWaitOpen] = useState(false)
+  const [countOpen, setCountOpen] = useState(false)
   const wide = useMediaQuery("(min-width: 1024px)")
   const xl = useMediaQuery("(min-width: 1280px)")
   const [listOpen, setListOpen] = useState(false)
@@ -92,11 +107,11 @@ export function FloorPage() {
       return { key: availKey, ids: typeof next === "function" ? next(prev) : next }
     })
 
-  const live = ui.floorMode === "live"
+  const live = receptionist || ui.floorMode === "live"
   const today = model.floor?.businessDate ?? businessDateOf(now)
-  const date = live ? today : ui.availDate
+  const date = receptionist ? selectedDate : live ? today : ui.availDate
   const draft = ui.draft
-  const view = ui.pick || draft ? "map" : ui.view
+  const view = receptionist || ui.pick || draft ? "map" : ui.view
   const feed = useBookingItems(model, date, live, Math.floor(now.getTime() / MS.MIN))
 
   const availAt = useMemo(() => atBusinessTime(ui.availDate, ui.availTime), [ui.availDate, ui.availTime])
@@ -110,9 +125,10 @@ export function FloorPage() {
     [draft?.kind, draft?.date, draft?.time],
   )
   const draftAvail = useAvailability(draftAt, draft?.party ?? 2)
+  const draftAvailability = receptionist && draftAvail.isPlaceholderData ? undefined : draftAvail.data
   const draftAvailMap = useMemo(
-    () => new Map((draftAvail.data?.tables ?? []).map((t) => [t.tableId, t])),
-    [draftAvail.data],
+    () => new Map((draftAvailability?.tables ?? []).map((t) => [t.tableId, t])),
+    [draftAvailability],
   )
 
   const isPickAssign = ui.pick?.intent === "assign" && !!ui.pick.targetExpectedAt
@@ -124,18 +140,21 @@ export function FloorPage() {
 
   const pickable = useMemo(() => {
     if (!ui.pick) return null
+    const validCatalog = (id: number) =>
+      !receptionist ||
+      (!!model.states.get(id) && isReceptionBookableTable(model.byId.get(id), model.catalog?.zones ?? []))
     if (ui.pick.intent === "assign" && ui.pick.targetExpectedAt) {
-      const availTables = pickAvail.data?.tables ?? []
+      const availTables = pickAvail.isPlaceholderData ? [] : (pickAvail.data?.tables ?? [])
       const pickableSet = new Set<number>()
       for (const t of availTables) {
-        if (t.status === "available" || t.status === "too_small") {
+        if ((t.status === "available" || t.status === "too_small") && validCatalog(t.tableId)) {
           pickableSet.add(t.tableId)
         }
       }
       // Allow booking's own retained tables on reassignment
       if (ui.pick.preselected) {
         for (const id of ui.pick.preselected) {
-          pickableSet.add(id)
+          if (validCatalog(id)) pickableSet.add(id)
         }
       }
       if (ui.pick.excludeIds) {
@@ -146,9 +165,13 @@ export function FloorPage() {
       return pickableSet
     }
     const set = new Set(model.freeIds)
+    if (receptionist)
+      for (const id of set) {
+        if (!canStartTableBooking(model.byId.get(id), model.states.get(id), model.catalog?.zones ?? [])) set.delete(id)
+      }
     ui.pick.excludeIds?.forEach((id) => set.delete(id))
     return set
-  }, [ui.pick, model.freeIds, pickAvail.data])
+  }, [ui.pick, model, pickAvail.data, pickAvail.isPlaceholderData, receptionist])
 
   const draftBookingPickable = useMemo(() => {
     const bookingDraft = draft?.kind === "booking" ? draft : null
@@ -156,7 +179,10 @@ export function FloorPage() {
     if (bookingDraft.tableIds.length === 0) {
       const set = new Set<number>()
       for (const t of model.tables) {
-        if (draftPickable("booking", t.id, model, draftAvail.data)) {
+        if (
+          (!receptionist || (!!model.states.get(t.id) && isReceptionBookableTable(t, model.catalog?.zones ?? []))) &&
+          draftPickable("booking", t.id, model, draftAvailability)
+        ) {
           set.add(t.id)
         }
       }
@@ -167,13 +193,16 @@ export function FloorPage() {
     const set = new Set<number>()
     for (const t of model.tables) {
       if (t.zoneId === first.zoneId && t.kind === first.kind) {
-        if (draftPickable("booking", t.id, model, draftAvail.data, bookingDraft.tableIds)) {
+        if (
+          (!receptionist || (!!model.states.get(t.id) && isReceptionBookableTable(t, model.catalog?.zones ?? []))) &&
+          draftPickable("booking", t.id, model, draftAvailability, bookingDraft.tableIds)
+        ) {
           set.add(t.id)
         }
       }
     }
     return set
-  }, [draft, model, draftAvail.data])
+  }, [draft, model, draftAvailability, receptionist])
 
   const selectedIds = draft
     ? draft.tableIds
@@ -202,7 +231,11 @@ export function FloorPage() {
           }
         }
       }
-      if (draftPickable(draft.kind, id, model, draftAvail.data, draft.tableIds))
+      if (
+        (!receptionist ||
+          (!!model.states.get(id) && isReceptionBookableTable(model.byId.get(id), model.catalog?.zones ?? []))) &&
+        draftPickable(draft.kind, id, model, draftAvailability, draft.tableIds)
+      )
         return ui.toggleDraftTable(id)
       return toast.info(`${model.label(id)}: không trống · chọn vị trí trống`)
     }
@@ -211,6 +244,18 @@ export function FloorPage() {
         return toast.info(`${model.label(id)}: không khả dụng vào giờ đã chọn`)
       }
       return ui.togglePick(id)
+    }
+    if (receptionist) {
+      const table = model.byId.get(id)
+      const state = model.states.get(id)
+      if (!state) return toast.info("Chưa tải được trạng thái bàn. Vui lòng thử lại.")
+      if (canCreate && canStartTableBooking(table, state, model.catalog?.zones ?? [])) {
+        return ui.openBooking({ tableIds: [id], date: selectedDate })
+      }
+      if (state.state === "free" || state.state === "spare" || state.state === "oos") {
+        return toast.info("Bàn này hiện không nhận đặt bàn.")
+      }
+      return ui.selectTable(ui.selectedTableId === id ? null : id)
     }
     if (!live) {
       const status = availMap.get(id)?.status
@@ -222,7 +267,7 @@ export function FloorPage() {
   }
 
   const panel = draft ? (
-    <QuickForm model={model} availability={draftAvail.data} />
+    <QuickForm model={model} availability={draftAvailability} />
   ) : !live ? (
     <AvailabilityPanel
       model={model}
@@ -238,8 +283,9 @@ export function FloorPage() {
   )
 
   // v2: the timeline gets the full width until a row is picked.
-  const showRight = wide && (!!draft || view !== "timeline" || !live || !!ui.selectedTableId)
-  const bottomOpen = !wide && (!!draft || (live && !!ui.selectedTableId && !ui.pick) || (!live && availSel.length > 0))
+  const showRight = !receptionist && wide && (!!draft || view !== "timeline" || !live || !!ui.selectedTableId)
+  const bottomOpen =
+    !receptionist && !wide && (!!draft || (live && !!ui.selectedTableId && !ui.pick) || (!live && availSel.length > 0))
   const bookingDraft = draft?.kind === "booking" ? draft : null
 
   const counts = model.counts
@@ -258,7 +304,24 @@ export function FloorPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <FloorToolbar onOpenList={xl ? undefined : () => setListOpen(true)} />
+      {!receptionist ? <FloorToolbar onOpenList={xl ? undefined : () => setListOpen(true)} /> : null}
+      {receptionist ? (
+        <div className="shrink-0 border-b px-4 py-3">
+          <ReceptionControls
+            search={search}
+            waitCount={
+              waitlist.isPlaceholderData
+                ? 0
+                : (waitlist.data ?? []).filter((row) =>
+                    ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"].includes(row.status),
+                  ).length
+            }
+            onWaitlist={() => setWaitOpen(true)}
+            onCount={() => setCountOpen(true)}
+            onOpenBooking={ui.openReservation}
+          />
+        </div>
+      ) : null}
       {!live && !ui.pick ? (
         <div
           className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-dashed border-strong bg-surface-1 px-4 py-1.5 text-sm"
@@ -283,7 +346,7 @@ export function FloorPage() {
       ) : null}
 
       <div className="relative flex min-h-0 flex-1">
-        {xl && view !== "list" ? (
+        {!receptionist && xl && view !== "list" ? (
           <aside className="w-1/4 max-w-[336px] min-w-[288px] shrink-0 border-r" aria-label="Danh sách booking">
             {list}
           </aside>
@@ -301,7 +364,7 @@ export function FloorPage() {
             ) : (
               <Segmented label="Lọc khu" value={ui.zone} onChange={ui.setZone} options={ZONE_TABS} />
             )}
-            {live && view === "map" && !ui.pick && !draft ? (
+            {!receptionist && live && view === "map" && !ui.pick && !draft ? (
               <Button variant="ghost" size="sm" onClick={() => ui.setFloorMode("availability")}>
                 <Search /> Xem khả dụng
               </Button>
@@ -332,11 +395,19 @@ export function FloorPage() {
                 <FloorCanvas
                   tables={model.tables}
                   zones={model.catalog.zones}
-                  mode={bookingDraft ? "availability" : isPickAssign ? "availability" : draft ? "live" : ui.floorMode}
+                  mode={
+                    bookingDraft
+                      ? "availability"
+                      : isPickAssign
+                        ? "availability"
+                        : draft || receptionist
+                          ? "live"
+                          : ui.floorMode
+                  }
                   states={model.states}
                   availability={bookingDraft ? draftAvailMap : isPickAssign ? pickAvailMap : availMap}
                   groups={live && !bookingDraft && !isPickAssign ? model.floor?.groups : []}
-                  selectedIds={selectedIds}
+                  selectedIds={ui.pick || draft ? selectedIds : [...new Set([...selectedIds, ...search.tableIds])]}
                   pickable={bookingDraft ? draftBookingPickable : draft ? null : pickable}
                   zoneFocus={ui.zone}
                   now={now}
@@ -353,7 +424,7 @@ export function FloorPage() {
                   }
                 />
               )}
-              <PickBanner model={model} />
+              <PickBanner model={model} allowed={receptionist ? pickable : null} />
               {draft ? (
                 <div
                   className="pointer-events-none absolute top-3 left-1/2 z-10 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-2 rounded-sm border border-strong bg-popover/95 px-3 py-2 text-sm shadow-float backdrop-blur"
@@ -408,7 +479,39 @@ export function FloorPage() {
         ) : null}
       </div>
 
-      {!xl ? (
+      {receptionist ? (
+        <>
+          <ZaloBookingExport businessDate={date} open={countOpen} onOpenChange={setCountOpen} />
+          <Sheet
+            modal={!draft}
+            open={!!(draft || ui.selectedTableId) && !ui.pick}
+            onOpenChange={(open) => {
+              if (!open && !draft) ui.selectTable(null)
+            }}
+          >
+            <SheetContent
+              className="w-full gap-0 p-0 sm:max-w-[420px]"
+              showCloseButton={!draft}
+              onPointerDownOutside={(event) => draft && event.preventDefault()}
+              onEscapeKeyDown={(event) => draft && event.preventDefault()}
+            >
+              <SheetTitle className="sr-only">{draft ? "Tạo đặt bàn" : "Chi tiết bàn"}</SheetTitle>
+              <SheetDescription className="sr-only">Thao tác ngay trên sơ đồ ngày {date}</SheetDescription>
+              {panel}
+            </SheetContent>
+          </Sheet>
+          <Sheet open={waitOpen} onOpenChange={setWaitOpen}>
+            <SheetContent className="w-full gap-0 overflow-hidden p-0 sm:max-w-[920px]">
+              <SheetTitle className="px-6 pt-5">Bàn chờ ảo</SheetTitle>
+              <SheetDescription className="px-6">Ngày kinh doanh {fmtBusinessDate(date)}</SheetDescription>
+              <Suspense fallback={<Skeleton className="m-6 h-24" />}>
+                <WaitlistPage businessDate={date} />
+              </Suspense>
+            </SheetContent>
+          </Sheet>
+        </>
+      ) : null}
+      {!receptionist && !xl ? (
         <Sheet open={listOpen} onOpenChange={setListOpen}>
           <SheetContent side="left" className="w-[min(92vw,360px)] gap-0 p-0">
             <SheetTitle className="sr-only">Danh sách booking</SheetTitle>
@@ -437,7 +540,7 @@ export function FloorPage() {
   )
 }
 
-function PickBanner({ model }: { model: ReturnType<typeof useFloorModel> }) {
+function PickBanner({ model, allowed }: { model: ReturnType<typeof useFloorModel>; allowed: Set<number> | null }) {
   const pick = useUi((s) => s.pick)
   const selection = useUi((s) => s.pickSelection)
   const cancel = useUi((s) => s.cancelPick)
@@ -464,7 +567,7 @@ function PickBanner({ model }: { model: ReturnType<typeof useFloorModel> }) {
             {selection.length ? (
               <>
                 <span className="font-medium">{selection.map((id) => model.label(id)).join(" + ")}</span>
-                <span className="text-muted-foreground font-normal"> · tổng sức chứa {totalCapacity} chỗ</span>
+                <span className="font-normal text-muted-foreground"> · tổng sức chứa {totalCapacity} chỗ</span>
               </>
             ) : (
               <span className="text-subtle">Chưa chọn bàn</span>
@@ -476,7 +579,7 @@ function PickBanner({ model }: { model: ReturnType<typeof useFloorModel> }) {
             <X />
           </Button>
           <Button
-            disabled={!selection.length || busy}
+            disabled={!selection.length || busy || (!!allowed && selection.some((id) => !allowed.has(id)))}
             onClick={async () => {
               setBusy(true)
               try {

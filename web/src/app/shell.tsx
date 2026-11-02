@@ -61,6 +61,7 @@ import { useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
 import { useShiftAlerts } from "@/features/floor/alerts"
 import { useFloorModel } from "@/features/floor/use-floor-model"
+import { ReceptionDatePicker } from "@/features/floor/reception-controls"
 import { WalkInSheet } from "@/features/floor/walk-in-sheet"
 import { BookingSheet } from "@/features/reservations/booking-sheet"
 import { ReservationDetailSheet } from "@/features/reservations/reservation-detail"
@@ -115,7 +116,11 @@ function AppSidebar() {
         <nav aria-label="Điều hướng chính">
           <SidebarGroup className="p-3">
             <SidebarMenu className="gap-1">
-              {NAV.filter((n) => !n.permission || roleCan(user.role, n.permission)).map((item) => (
+              {NAV.filter(
+                (n) =>
+                  (user.role !== "RECEPTIONIST" || n.to === "/floor") &&
+                  (!n.permission || roleCan(user.role, n.permission)),
+              ).map((item) => (
                 <SidebarMenuItem key={item.to}>
                   <SidebarMenuButton
                     asChild
@@ -128,7 +133,7 @@ function AppSidebar() {
                       <span>{item.label}</span>
                     </NavLink>
                   </SidebarMenuButton>
-                  {badges[item.to] ? (
+                  {badges[item.to] && user.role !== "RECEPTIONIST" ? (
                     <SidebarMenuBadge className="tnum group-data-[collapsible=icon]:top-0.5 group-data-[collapsible=icon]:right-0.5 group-data-[collapsible=icon]:flex! group-data-[collapsible=icon]:h-4 group-data-[collapsible=icon]:min-w-4 group-data-[collapsible=icon]:rounded-full group-data-[collapsible=icon]:bg-st-noshow group-data-[collapsible=icon]:px-1 group-data-[collapsible=icon]:text-[11px] group-data-[collapsible=icon]:text-white">
                       {badges[item.to]}
                     </SidebarMenuBadge>
@@ -169,6 +174,7 @@ function TopBar() {
   const { toggleSidebar } = useSidebar()
   const navigate = useNavigate()
   const location = useLocation()
+  const receptionist = useSession((state) => state.user.role === "RECEPTIONIST")
   const pageTitle =
     NAV.find((n) => location.pathname.startsWith(n.to))?.label ??
     (location.pathname === "/overview" ? "Tổng quan" : "21GAM")
@@ -180,17 +186,20 @@ function TopBar() {
       </Button>
       <div className="mr-auto flex min-w-0 items-center gap-2">
         <AccountMenu />
-        <Button className="hidden h-9 px-3 sm:inline-flex" onClick={() => navigate("/reservations")}>
-          Theo dõi đơn đặt bàn
-        </Button>
+        {!receptionist ? (
+          <Button className="hidden h-9 px-3 sm:inline-flex" onClick={() => navigate("/reservations")}>
+            Theo dõi đơn đặt bàn
+          </Button>
+        ) : null}
       </div>
       <div className="flex items-center gap-1 md:gap-2">
-        <SyncPill />
+        {!receptionist ? <SyncPill /> : null}
         <ClockMenu />
         {api.mode === "mock" ? <UndoRedo /> : null}
         <ThemeToggle />
+        {receptionist ? <ReceptionDatePicker /> : null}
         <AlertsBell />
-        <Identity />
+        {!receptionist ? <Identity /> : null}
       </div>
     </header>
   )
@@ -448,13 +457,15 @@ function ThemeToggle() {
 
 /** v2 bell: same alert source as the "Cần xử lý" tab, reachable from every page. */
 export function AlertsBell({ className }: { className?: string }) {
-  const model = useFloorModel()
+  const ui = useUi()
+  const receptionist = useSession((state) => state.user.role === "RECEPTIONIST")
   const now = useNow(15_000)
-  const bd = model.floor?.businessDate ?? businessDateOf(now)
+  const selectedDate = receptionist && ui.floorMode !== "live" ? ui.availDate : businessDateOf(now)
+  const model = useFloorModel(receptionist ? selectedDate : undefined)
+  const bd = model.floor?.businessDate ?? selectedDate
   const reservations = useReservations(bd)
   const booked = useMemo(() => (reservations.data ?? []).filter((r) => r.status === "BOOKED"), [reservations.data])
   const alerts = useShiftAlerts(model, booked, now)
-  const ui = useUi()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   return (
@@ -464,7 +475,7 @@ export function AlertsBell({ className }: { className?: string }) {
           variant="outline"
           size="icon"
           className={cn("relative size-10 bg-transparent", className)}
-          aria-label={`Cần xử lý: ${alerts.length}`}
+          aria-label={`${receptionist ? "Thông báo" : "Cần xử lý"}: ${alerts.length}`}
         >
           <Bell />
           {alerts.length ? (
@@ -476,7 +487,7 @@ export function AlertsBell({ className }: { className?: string }) {
       </PopoverTrigger>
       <PopoverContent align="end" className="w-96 max-w-[calc(100vw-16px)] p-0">
         <div className="flex items-center gap-2 py-2.5 pr-2 pl-4">
-          <span className="text-sm font-semibold">Cần xử lý</span>
+          <span className="text-sm font-semibold">{receptionist ? "Thông báo" : "Cần xử lý"}</span>
           <span className="tnum text-xs text-tx-3">{alerts.length}</span>
           <Button variant="ghost" size="icon-sm" className="ml-auto" aria-label="Đóng" onClick={() => setOpen(false)}>
             <X />

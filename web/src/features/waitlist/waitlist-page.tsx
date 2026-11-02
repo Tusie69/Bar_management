@@ -73,7 +73,7 @@ import { useAction } from "@/hooks/use-action"
 import { useBusinessDate, useNow, useReservations, useWaitlist } from "@/hooks/use-data"
 import { useDragScroll } from "@/hooks/use-drag-scroll"
 import { NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
-import { fmtCountdown, fmtElapsed, fmtTime } from "@/lib/time"
+import { fmtCountdown, fmtElapsed, fmtTime, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api, isApiError } from "@/services"
 import { useCan, useSession } from "@/state/session"
@@ -83,10 +83,11 @@ import { WaitlistPreferencePicker } from "../reservations/reservation-detail"
 
 const ACTIVE = ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"]
 
-export default function WaitlistPage() {
-  const bd = useBusinessDate()
+export default function WaitlistPage({ businessDate }: { businessDate?: BusinessDate }) {
+  const today = useBusinessDate()
+  const bd = businessDate ?? today
   const waitlist = useWaitlist(bd)
-  const model = useFloorModel()
+  const model = useFloorModel(bd)
   const [params, setParams] = useSearchParams()
   const focusEntry = Number(params.get("entry")) || null
   const focusTable = Number(params.get("table")) || null
@@ -102,8 +103,9 @@ export default function WaitlistPage() {
       scroller.scrollTop += el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 120
   }, [focusEntry, waitlist.data])
 
-  const active = (waitlist.data ?? []).filter((e) => ACTIVE.includes(e.status))
-  const closed = (waitlist.data ?? []).filter((e) => !ACTIVE.includes(e.status))
+  const entries = waitlist.isPlaceholderData ? [] : (waitlist.data ?? [])
+  const active = entries.filter((e) => ACTIVE.includes(e.status))
+  const closed = entries.filter((e) => !ACTIVE.includes(e.status))
   const lanes: { kind: WaitlistKind; items: WaitlistEntryView[] }[] = [
     { kind: "ADVANCE_RESERVATION", items: active.filter((e) => e.kind === "ADVANCE_RESERVATION") },
     { kind: "WALK_IN", items: active.filter((e) => e.kind === "WALK_IN") },
@@ -150,7 +152,12 @@ export default function WaitlistPage() {
               n={active.filter((e) => e.status === "HOLD_ACTIVE").length}
               label="đang giữ bàn"
             />
-            <GuardedButton permission="waitlist.create" onClick={() => setAddOpen(true)}>
+            <GuardedButton
+              permission="waitlist.create"
+              disabled={bd !== today}
+              title={bd !== today ? "Chỉ thêm khách chờ cho ca hiện tại" : undefined}
+              onClick={() => setAddOpen(true)}
+            >
               <ListPlus /> Thêm khách chờ
             </GuardedButton>
           </div>
@@ -198,7 +205,7 @@ export default function WaitlistPage() {
           </div>
         </section>
 
-        {waitlist.isLoading ? (
+        {waitlist.isLoading || waitlist.isPlaceholderData ? (
           <div className="grid gap-4 lg:grid-cols-2">
             <Skeleton className="h-72" />
             <Skeleton className="h-72" />
@@ -493,10 +500,7 @@ function EntryCard({
       <div className="flex flex-wrap gap-2">
         {e.status === "HOLD_ACTIVE" ? (
           <>
-            <GuardedButton
-              permission="visit.checkin"
-              onClick={() => setSeatOpen(true)}
-            >
+            <GuardedButton permission="visit.checkin" onClick={() => setSeatOpen(true)}>
               <Check /> Khách đã tới, xếp chỗ
             </GuardedButton>
             {e.hold ? (
@@ -533,11 +537,7 @@ function EntryCard({
             >
               Thả
             </Button>
-            <GuardedButton
-              permission="table.assign"
-              variant="outline"
-              onClick={() => setSeatOpen(true)}
-            >
+            <GuardedButton permission="table.assign" variant="outline" onClick={() => setSeatOpen(true)}>
               <Armchair /> {e.channel === "IN_PERSON" ? "Khách nhận bàn ngay" : "Gán giữ bàn"}
             </GuardedButton>
           </>
@@ -900,7 +900,7 @@ function SeatDialog({
 
   if (isArrival) {
     const res = reservations?.find((r) => (e.reservationId ? r.id === e.reservationId : r.waitlistEntryId === e.id))
-    const tableIds = res?.tableIds?.length ? res.tableIds : e.hold?.tableIds ?? []
+    const tableIds = res?.tableIds?.length ? res.tableIds : (e.hold?.tableIds ?? [])
     const tableCodes = model.codes(tableIds)
     const storedParty = e.partySize || res?.partySize || 1
 
@@ -911,9 +911,7 @@ function SeatDialog({
         title={`Xếp chỗ cho ${e.displayName}`}
         description={
           tableCodes.length > 0 ? (
-            <>
-              Bàn đang giữ: {tableCodes.join(" + ")}. Check-in booking liên kết để mở bàn và hoàn tất mục chờ.
-            </>
+            <>Bàn đang giữ: {tableCodes.join(" + ")}. Check-in booking liên kết để mở bàn và hoàn tất mục chờ.</>
           ) : (
             <>Check-in booking liên kết để mở bàn và hoàn tất mục chờ.</>
           )
@@ -970,7 +968,9 @@ function SeatBody({ entry: e, model, presetTable, close }: EntryDialogProps & { 
     <>
       <DialogHeader>
         <DialogTitle>Gán giữ bàn cho khách · {e.displayName}</DialogTitle>
-        <DialogDescription>Hệ thống sẽ tạo booking và giữ bàn cho khách. Khách sẽ check-in sau từ booking.</DialogDescription>
+        <DialogDescription>
+          Hệ thống sẽ tạo booking và giữ bàn cho khách. Khách sẽ check-in sau từ booking.
+        </DialogDescription>
       </DialogHeader>
       <div className="grid gap-4">
         <div className="grid gap-1.5 py-1">

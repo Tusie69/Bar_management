@@ -19,6 +19,7 @@ import { isPlausibleVnPhone, NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/
 import { addDays, fmtBusinessDate, fmtDayMonth } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
+import { isReceptionBookableTable } from "../floor/reception-rules"
 import { useM, type FormRequest } from "./context"
 import { codesOf } from "./model"
 import { Seg } from "./ui"
@@ -40,11 +41,20 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const { run, pending } = useAction()
   const preset = req.tableIds ?? []
   const [mode, setMode] = useState(req.mode)
-  const [party, setParty] = useState(preset.length ? Math.min(8, preset.length * 4) : 4)
+  const [party, setParty] = useState(
+    preset.length
+      ? Math.min(
+          8,
+          preset.reduce((sum, id) => sum + (m.model.byId.get(id)?.capacity ?? 0), 0),
+        )
+      : 4,
+  )
   const [isOther, setIsOther] = useState(false)
   const [otherText, setOtherText] = useState("")
-  const [dateIdx, setDateIdx] = useState(0)
-  const [slot, setSlot] = useState<string | null>(() => defaultBookingSlot(m.today, m.now))
+  const [dateIdx, setDateIdx] = useState(() =>
+    Math.max(0, Math.round((new Date(req.date ?? m.today).getTime() - new Date(m.today).getTime()) / 86_400_000)),
+  )
+  const [slot, setSlot] = useState<string | null>(() => defaultBookingSlot(req.date ?? m.today, m.now))
   const [checked, setChecked] = useState(preset.length > 0)
   const [choice, setChoice] = useState<Option | null>(
     preset.length ? { key: "preset", ids: preset, label: codesOf(preset, m.model), sub: "" } : null,
@@ -74,12 +84,38 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const errTime = isBooking && !!timeErr && (tried || !!slot)
   const errGuest = tried && (guestMissing || !phoneOk)
 
-  const avail = useAvailability(isBooking && checked && guests ? at : null, guests ?? 1).data
+  const availability = useAvailability(isBooking && checked && guests ? at : null, guests ?? 1)
+  const avail = availability.isPlaceholderData ? undefined : availability.data
+  const walkInDateError = !isBooking && bd !== m.today ? "Walk-in chỉ áp dụng cho ngày kinh doanh hiện tại." : null
+  const selectionError =
+    choice && m.role === "RECEPTIONIST"
+      ? choice.ids.some((id) => !isReceptionBookableTable(m.model.byId.get(id), m.model.catalog?.zones ?? []))
+        ? "Bàn đã chọn không nhận đặt bàn. Vui lòng chọn bàn khác."
+        : guests && choice.ids.reduce((sum, id) => sum + (m.model.byId.get(id)?.capacity ?? 0), 0) < guests
+          ? "Bàn đã chọn không đủ chỗ. Vui lòng chọn thêm hoặc đổi bàn."
+          : isBooking && at
+            ? availability.isFetching || !avail
+              ? availability.isError
+                ? "Không thể kiểm tra bàn đã chọn. Vui lòng thử lại."
+                : "Đang kiểm tra lại bàn đã chọn..."
+              : choice.ids.some(
+                    (id) =>
+                      !["available", "too_small"].includes(
+                        avail.tables.find((row) => row.tableId === id)?.status ?? "",
+                      ),
+                  )
+                ? "Bàn đã chọn không còn trống vào giờ này. Vui lòng chọn bàn khác."
+                : null
+            : !isBooking && choice.ids.some((id) => m.model.states.get(id)?.state !== "free")
+              ? "Bàn đã chọn không còn trống. Vui lòng chọn bàn khác."
+              : null
+      : null
   const options = useMemo<Option[]>(() => {
     if (!checked || !guests) return []
     const bookable = new Set(m.model.catalog?.zones.filter((z) => z.isBookable).map((z) => z.id))
     const fits = m.model.tables
       .filter((t) => t.kind === "TABLE" && t.capacity >= guests && bookable.has(t.zoneId))
+      .filter((t) => m.role !== "RECEPTIONIST" || isReceptionBookableTable(t, m.model.catalog?.zones ?? []))
       .filter((t) =>
         isBooking
           ? avail?.tables.find((x) => x.tableId === t.id)?.status === "available"
@@ -115,23 +151,33 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
     if (preset.length && !list.some((o) => o.ids.join() === preset.join()))
       list.unshift({ key: "preset", ids: preset, label: codesOf(preset, m.model), sub: "Chọn từ sơ đồ" })
     return list
-  }, [checked, guests, isBooking, avail, m.model, preset])
+  }, [checked, guests, isBooking, avail, m.model, m.role, preset])
 
   const reset = () => {
-    setChecked(false)
-    setChoice(null)
+    // Changing booking inputs revalidates the current table; only an explicit table choice removes it.
+    setChecked(!!choice)
   }
+  const canSubmit = m.can(isBooking ? "reservation.create" : choice ? "visit.walkin" : "waitlist.create")
   const touch = () => setDirty(true)
   const tableLabel = choice ? `Bàn ${choice.label}` : isBooking ? "chưa chọn bàn" : "chưa có bàn"
   const groups = isBooking ? bookingSlotGroups(bd, m.now) : []
   const past = groups.length ? groups[0].slots.filter((s) => s.disabled) : []
-  const days = Array.from({ length: 7 }, (_, i) => {
+  const dayOffsets = Array.from({ length: 7 }, (_, i) => i)
+  if (dateIdx > 6) dayOffsets.push(dateIdx)
+  const days = dayOffsets.map((i) => {
     const [wd, dm] = fmtBusinessDate(addDays(m.today, i), "short").split(", ")
-    return { top: i === 0 ? "Hôm nay" : wd, day: dm }
+    return { offset: i, top: i === 0 ? "Hôm nay" : wd, day: dm }
   })
 
   const submit = async () => {
-    if (guests === null || (isBooking ? guestMissing || !phoneOk || !at : false) || noteBad) {
+    if (!canSubmit) return
+    if (
+      guests === null ||
+      (isBooking ? guestMissing || !phoneOk || !at : false) ||
+      noteBad ||
+      selectionError ||
+      walkInDateError
+    ) {
       setTried(true)
       return
     }
@@ -206,13 +252,16 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             label="Loại đơn"
             value={mode}
             onChange={(k) => {
+              if (k === "walkin" && bd !== m.today) return
               setMode(k)
               setTried(false)
               if (!preset.length) reset()
             }}
             opts={[
-              ["booking", "Đặt trước"],
-              ["walkin", "Walk-in"],
+              ...(m.can("reservation.create") ? [["booking", "Đặt trước"] as ["booking", string]] : []),
+              ...(bd === m.today && (m.can("visit.walkin") || m.can("waitlist.create"))
+                ? [["walkin", "Walk-in"] as ["walkin", string]]
+                : []),
             ]}
           />
         </div>
@@ -313,15 +362,15 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                 <div className="flex flex-col gap-2 border-t border-border pt-3.5">
                   <span className="text-[14px] text-tx-2">Ngày</span>
                   <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-0.5">
-                    {days.map((d, i) => {
-                      const on = dateIdx === i
+                    {days.map((d) => {
+                      const on = dateIdx === d.offset
                       return (
                         <button
-                          key={i}
+                          key={d.offset}
                           type="button"
                           aria-pressed={on}
                           onClick={() => {
-                            setDateIdx(i)
+                            setDateIdx(d.offset)
                             reset()
                             touch()
                           }}
@@ -585,13 +634,18 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
       <footer className="flex shrink-0 flex-col gap-2 border-t border-border bg-surface-1 px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
         <span className="truncate text-[13px] text-[var(--text-muted)]">
           {isBooking
-            ? `${dateIdx === 0 ? "Hôm nay" : `${days[dateIdx].top} ${days[dateIdx].day}`}, ${slotText || "chưa chọn giờ"}, ${guests ?? "?"} khách, ${tableLabel}`
+            ? `${dateIdx === 0 ? "Hôm nay" : fmtBusinessDate(bd, "short")}, ${slotText || "chưa chọn giờ"}, ${guests ?? "?"} khách, ${tableLabel}`
             : `Walk-in, ${guests ?? "?"} khách, ${tableLabel}`}
         </span>
+        {selectionError || walkInDateError ? (
+          <span role="alert" className="text-[13px] text-st-noshow-ink">
+            {selectionError || walkInDateError}
+          </span>
+        ) : null}
         <button
           type="button"
           onClick={() => void submit()}
-          disabled={pending}
+          disabled={pending || !canSubmit}
           aria-busy={pending}
           className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground active:brightness-90 disabled:opacity-70"
         >

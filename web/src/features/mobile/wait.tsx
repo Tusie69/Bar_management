@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react"
-import { toast } from "sonner"
 import { PREFERENCE_MODE_LABEL, WAITLIST_STATUS_LABEL } from "@/domain/enums"
 import type { TableView, WaitlistEntryView } from "@/domain/models"
 import { useAction } from "@/hooks/use-action"
@@ -14,7 +13,7 @@ import { card, CardSkeleton, EmptyBox, PlainHeader, Seg, useKeepScroll } from ".
 
 type Kind = "all" | "ADVANCE_RESERVATION" | "WALK_IN"
 
-export function WaitScreen() {
+export function WaitScreen({ embedded = false }: { embedded?: boolean }) {
   const m = useM()
   const [kind, setKind] = useState<Kind>("all")
   const ref = useKeepScroll("wait")
@@ -30,21 +29,23 @@ export function WaitScreen() {
   const shown = all.filter((e) => kind === "all" || e.kind === kind)
   return (
     <>
-      <PlainHeader title="Đơn chờ">
-        <div className="pt-1 pb-3">
-          <Seg
-            small
-            label="Loại chờ"
-            value={kind}
-            onChange={setKind}
-            opts={[
-              ["all", `Tất cả ${all.length}`],
-              ["ADVANCE_RESERVATION", "Đặt trước"],
-              ["WALK_IN", "Walk-in"],
-            ]}
-          />
-        </div>
-      </PlainHeader>
+      {!embedded ? (
+        <PlainHeader title="Đơn chờ">
+          <div className="pt-1 pb-3">
+            <Seg
+              small
+              label="Loại chờ"
+              value={kind}
+              onChange={setKind}
+              opts={[
+                ["all", `Tất cả ${all.length}`],
+                ["ADVANCE_RESERVATION", "Đặt trước"],
+                ["WALK_IN", "Walk-in"],
+              ]}
+            />
+          </div>
+        </PlainHeader>
+      ) : null}
       <div ref={ref} className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-1 pb-6">
         {m.waitlistError ? (
           <EmptyBox
@@ -112,7 +113,9 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
       ? PREFERENCE_MODE_LABEL[e.preferenceMode]
       : null
 
-  const linkedRes = m.reservations?.find((r) => (e.reservationId ? r.id === e.reservationId : r.waitlistEntryId === e.id))
+  const linkedRes = m.reservations?.find((r) =>
+    e.reservationId ? r.id === e.reservationId : r.waitlistEntryId === e.id,
+  )
   const tableCodes = e.hold?.tableIds
     ? codesOf(e.hold.tableIds, m.model)
     : linkedRes?.tableIds.length
@@ -218,8 +221,7 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
           }
   } else if (e.status === "CONTACTING" || e.status === "OFFERED") {
     primary = {
-      label: "Ghi kết quả liên hệ",
-      go: () => toast.info("Ghi kết quả liên hệ trên Tablet hoặc Desktop ở V1"),
+      label: "Ghi liên hệ trên Tablet/Desktop",
     }
     if (e.claimedBy?.userId === me && api.mode !== "http")
       secondary = {

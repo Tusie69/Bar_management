@@ -154,9 +154,11 @@ export function DetailScreen({
     r.status === "CHECKED_IN"
       ? { label: "Xem trên sơ đồ", go: showMap }
       : r.status === "BOOKED"
-        ? r.tableIds.length
+        ? r.tableIds.length && m.can("visit.checkin") && r.businessDate === m.today
           ? { label: "Khách đã đến", go: () => void a.checkIn(r) }
-          : { label: "Xếp bàn", go: () => a.assign(r) }
+          : !r.tableIds.length && m.can("table.assign")
+            ? { label: "Xếp bàn", go: () => a.assign(r) }
+            : null
         : null
 
   return (

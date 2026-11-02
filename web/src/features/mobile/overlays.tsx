@@ -2,11 +2,13 @@ import { CalendarPlus, Clock, ListPlus, TriangleAlert, UserPlus, X, type LucideI
 import type { ReactNode } from "react"
 import { useNavigate } from "react-router"
 import { roleCan, type Permission } from "@/domain/access"
+import { validateBookingCheckInDate } from "@/domain/booking-rules"
 import { ROLE_LABEL } from "@/domain/enums"
 import type { ReservationView } from "@/domain/models"
 import { fmtTime12 } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useSession } from "@/state/session"
+import { api } from "@/services"
 import { NAV } from "@/app/nav"
 import type { Alert } from "../floor/alerts"
 import { useMobileActions } from "./actions"
@@ -95,7 +97,7 @@ export function CreateSheet({ onClose }: { onClose: () => void }) {
   return (
     <BottomSheet label="Tạo mới" onClose={onClose}>
       {items
-        .filter((i) => roleCan(m.role, i.permission))
+        .filter((i) => m.can(i.permission))
         .map((i) => (
           <SheetItem key={i.label} icon={i.icon} label={i.label} sub={i.sub} onClick={i.go} />
         ))}
@@ -143,10 +145,13 @@ export function AlertsSheet({
 
 /** Demo user, theme and the pages that are not in the tab bar (Khách, Báo cáo, Cài đặt). */
 export function AccountSheet({ onClose }: { onClose: () => void }) {
-  const { user, users, theme, setUser, setTheme } = useSession()
+  const { user, users, theme, setUser, setTheme, permissions, logout } = useSession()
   const navigate = useNavigate()
-  const more = NAV.filter((n) => ["/guests", "/reports", "/settings"].includes(n.to)).filter(
-    (n) => !n.permission || roleCan(user.role, n.permission),
+  const more = NAV.filter(
+    (n) => user.role !== "RECEPTIONIST" && ["/guests", "/reports", "/settings"].includes(n.to),
+  ).filter(
+    (n) =>
+      !n.permission || (api.mode === "http" ? permissions.includes(n.permission) : roleCan(user.role, n.permission)),
   )
   return (
     <BottomSheet label="Tài khoản" onClose={onClose}>
@@ -159,8 +164,8 @@ export function AccountSheet({ onClose }: { onClose: () => void }) {
           ["dark", "Tối"],
         ]}
       />
-      <span className="pt-2 text-[13px] text-[var(--text-muted)]">Người dùng demo</span>
-      {users.map((u) => (
+      {api.mode === "mock" ? <span className="pt-2 text-[13px] text-[var(--text-muted)]">Người dùng demo</span> : null}
+      {(api.mode === "mock" ? users : []).map((u) => (
         <button
           key={u.id}
           type="button"
@@ -178,6 +183,15 @@ export function AccountSheet({ onClose }: { onClose: () => void }) {
           <span className="text-[13px] text-[var(--text-muted)]">{ROLE_LABEL[u.role]}</span>
         </button>
       ))}
+      {api.mode === "http" ? (
+        <button
+          type="button"
+          onClick={() => void logout()}
+          className="h-12 rounded-xl border border-strong text-[15px] font-medium text-tx-1"
+        >
+          Đăng xuất
+        </button>
+      ) : null}
       {more.length ? <span className="pt-2 text-[13px] text-[var(--text-muted)]">Trang khác</span> : null}
       {more.map((n) => (
         <SheetItem
@@ -203,13 +217,27 @@ export function StatusDialog({ r, onClose }: { r: ReservationView; onClose: () =
     onClose()
     void fn()
   }
-  const opts: { label: string; dot: string; sub?: string; disabled?: boolean; go: () => void }[] =
+  const opts: {
+    label: string
+    dot: string
+    permission: Permission
+    sub?: string
+    disabled?: boolean
+    go: () => void
+  }[] =
     r.status === "BOOKED"
       ? [
-          { label: "Khách đã đến (check-in)", dot: "var(--st-seated-fill)", go: close(() => a.checkIn(r)) },
-          { label: "Đổi bàn", dot: "var(--st-reserved)", go: close(() => a.move(r)) },
+          {
+            label: "Khách đã đến (check-in)",
+            permission: "visit.checkin",
+            disabled: !!validateBookingCheckInDate(r.businessDate, m.now),
+            dot: "var(--st-seated-fill)",
+            go: close(() => a.checkIn(r)),
+          },
+          { label: "Đổi bàn", permission: "table.assign", dot: "var(--st-reserved)", go: close(() => a.move(r)) },
           {
             label: "Khách không đến",
+            permission: "reservation.mark_no_show",
             dot: "var(--st-noshow)",
             disabled: r.warning !== "noshow",
             sub:
@@ -218,14 +246,25 @@ export function StatusDialog({ r, onClose }: { r: ReservationView; onClose: () =
                 : `Chỉ dùng sau mốc ${m.th.noshow} phút${late ? `, hiện trễ ${late} phút` : ""}`,
             go: close(() => a.noShow(r)),
           },
-          { label: "Hủy booking", dot: "var(--st-oos)", go: close(() => a.cancel(r)) },
+          {
+            label: "Hủy booking",
+            permission: "reservation.cancel",
+            dot: "var(--st-oos)",
+            go: close(() => a.cancel(r)),
+          },
         ]
       : r.status === "CHECKED_IN"
         ? [
-            { label: "Đổi bàn", dot: "var(--st-reserved)", go: close(() => a.move(r)) },
-            { label: "Nhả bàn khi khách rời", dot: "var(--st-oos)", go: close(() => a.release(r)) },
+            { label: "Đổi bàn", permission: "visit.move", dot: "var(--st-reserved)", go: close(() => a.move(r)) },
+            {
+              label: "Nhả bàn khi khách rời",
+              permission: "visit.end",
+              dot: "var(--st-oos)",
+              go: close(() => a.release(r)),
+            },
           ]
         : []
+  const allowed = opts.filter((option) => m.can(option.permission))
   return (
     <div
       role="dialog"
@@ -238,7 +277,7 @@ export function StatusDialog({ r, onClose }: { r: ReservationView; onClose: () =
           {r.displayName}, {fmtTime12(r.expectedAt)}, {tableText(r.tableIds, m.model)}
         </span>
       </div>
-      {opts.map((o, i) => (
+      {allowed.map((o, i) => (
         <button
           key={o.label}
           type="button"
@@ -256,8 +295,10 @@ export function StatusDialog({ r, onClose }: { r: ReservationView; onClose: () =
           </span>
         </button>
       ))}
-      {!opts.length ? (
-        <span className="px-5 py-4 text-[14px] text-[var(--text-muted)]">Booking đã đóng, không còn thao tác.</span>
+      {!allowed.length ? (
+        <span className="px-5 py-4 text-[14px] text-[var(--text-muted)]">
+          Không có thao tác phù hợp với trạng thái và quyền hiện tại.
+        </span>
       ) : null}
       <button
         type="button"
@@ -329,6 +370,7 @@ export function Alert30({ r, onAck }: { r: ReservationView; onAck: () => void })
       <div className="flex flex-col gap-2">
         <button
           type="button"
+          disabled={!m.can("visit.checkin") || !!validateBookingCheckInDate(r.businessDate, m.now)}
           onClick={() => {
             onAck()
             void a.checkIn(r)
@@ -339,6 +381,7 @@ export function Alert30({ r, onAck }: { r: ReservationView; onAck: () => void })
         </button>
         <button
           type="button"
+          disabled={!m.can("reservation.mark_no_show")}
           onClick={() => {
             onAck()
             a.noShow(r)
