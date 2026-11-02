@@ -40,7 +40,7 @@ mysqlDescribe('E2E carry-over allocation projections', () => {
 
   it('keeps earlier visits occupied with their identity even when started_at has a different date', async () => {
     const booking = await heldBooking()
-    await checkInBooking(actor, booking.id, booking.version)
+    await checkInBooking(actor, booking.id, booking.version, new Date(`${businessDate}T13:00:00Z`))
     await databasePool.execute('UPDATE visits SET started_at = ?', [`${nextDate} 13:00:00`])
     expect((await floor(nextDate)).tables[0]).toMatchObject({ state: 'IN_USE', staleFromPreviousDay: true,
       allocationBusinessDate: businessDate, activeVisit: { displayName: 'Carry-over guest', tableCodes: ['A1'] } })

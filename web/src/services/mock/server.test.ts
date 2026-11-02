@@ -487,7 +487,9 @@ describe("MockGamApi", () => {
   })
 
   it("derives every live state from the seed", async () => {
-    const floor = await api.getFloorState(clock.now())
+    const now = clock.now()
+    const floor = await api.getFloorState(now)
+    expect(await api.getFloorState(now, bd)).toEqual(floor)
     const cat = await api.getCatalog()
     const stateOf = (code: string) =>
       floor.tables.find((t) => t.tableId === cat.tables.find((x) => x.code === code)!.id)!.state

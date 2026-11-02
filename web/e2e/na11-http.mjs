@@ -364,6 +364,25 @@ try {
     result: "PASS",
   })
 
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await table(page, "B3").focus()
+  await table(page, "B3").press("Enter")
+  const desktopDraft = page.getByRole("dialog").last()
+  await desktopDraft.getByLabel("Tên khách", { exact: true }).fill("NA11 preserved draft")
+  await expect(table(page, "B4")).toHaveAttribute("aria-disabled", "false")
+  await table(page, "B4").focus()
+  await table(page, "B4").press("Enter")
+  await expect(desktopDraft.getByRole("button", { name: "Bỏ B3", exact: true })).toBeVisible()
+  await expect(desktopDraft.getByRole("button", { name: "Bỏ B4", exact: true })).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(desktopDraft).toBeVisible()
+  await expect(desktopDraft.getByLabel("Tên khách", { exact: true })).toHaveValue("NA11 preserved draft")
+  await desktopDraft.getByRole("button", { name: "Hủy", exact: true }).click()
+  results.push({
+    check: "desktop map multi-selection and Escape retain draft fields until explicit cancel",
+    result: "PASS",
+  })
+
   await page.setViewportSize({ width: 390, height: 844 })
   await chooseDate(page, today)
   await jsonRequest(context, "POST", "/bookings/direct", {
@@ -398,6 +417,13 @@ try {
   await page.getByRole("button", { name: "Ghép bàn", exact: true }).click()
   await expect(table(page, "B3")).toHaveAttribute("aria-label", /nhóm \d+/)
   await expect(table(page, "B4")).toHaveAttribute("aria-label", /nhóm \d+/)
+  await page.keyboard.press("Escape")
+  await page.getByRole("button", { name: "Đếm khách", exact: true }).click()
+  const guestCountText = page.getByLabel("Nội dung text booking")
+  await expect(guestCountText).toHaveValue(/Tổng khách đặt: 2(?:\r?\n|$)/)
+  await expect(guestCountText).toHaveValue(/Tổng khách đã đến: 2(?:\r?\n|$)/)
+  await expect(guestCountText).not.toHaveValue(/NA11 walk-in/)
+  await closeDialog(page)
   results.push({
     check: "real receptionist check-in / walk-in / move / merge through existing map actions",
     result: "PASS",

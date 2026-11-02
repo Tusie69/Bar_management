@@ -102,6 +102,8 @@ mysqlDescribe('Wave 2 owner-approved integration', () => {
   })
 
   it.each(['WAITING', 'CONTACTING', 'OFFERED'])('assigns an advance %s entry to grouped holds, then check-in creates its visit', async (status) => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(`${businessDate}T12:00:00Z`))
     const booking = await createBooking(actor, bookingInput)
     await databasePool.execute(
       `INSERT INTO dining_tables (id, organization_id, venue_id, zone_id, code, display_name, kind, capacity)
@@ -168,8 +170,8 @@ mysqlDescribe('Wave 2 owner-approved integration', () => {
         [terminal, actor.userId, terminal === 'SEATED' ? seatedVisit.visitId : null, entry.id],
       )
     }
-    // End the synthetic visit so the reservation can own a grouped hold.
-    await databasePool.execute("UPDATE table_allocations SET released_at = UTC_TIMESTAMP(3), released_by_user_id = ?, release_reason = 'GUEST_LEFT' WHERE visit_id = ?",
+    // End this synthetic visit at its start so VM clock drift cannot invalidate fixture setup.
+    await databasePool.execute("UPDATE table_allocations SET released_at = starts_at, released_by_user_id = ?, release_reason = 'GUEST_LEFT' WHERE visit_id = ?",
       [actor.userId, seatedVisit.visitId])
     const entry = await createWaitlistEntry(actor, input)
     const unrelated = await createBooking(actor, bookingInput)
@@ -266,6 +268,8 @@ mysqlDescribe('Wave 2 owner-approved integration', () => {
   })
 
   it('closes the advance entry as SEATED_OTHERWISE when checking in through the booking route', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(`${businessDate}T12:00:00Z`))
     const booking = await createBooking(actor, bookingInput)
     const session = await login()
     const created = await session.agent.post('/api/v1/waitlist').set('Origin', env.webOrigin)
