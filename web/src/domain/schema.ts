@@ -222,6 +222,8 @@ export interface ReservationRow extends Versioned {
   expectedAt: Date
   businessDate: BusinessDate
   customerClassification: BookingClassification
+  isBirthday: boolean
+  lateConfirmedAt: Date | null
   status: ReservationStatus
   note: string | null
   visitId: Id | null

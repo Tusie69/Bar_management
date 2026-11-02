@@ -102,6 +102,8 @@ mysqlDescribe('Wave 2 owner-approved integration', () => {
   })
 
   it.each(['WAITING', 'CONTACTING', 'OFFERED'])('assigns an advance %s entry to grouped holds, then check-in creates its visit', async (status) => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(`${businessDate}T12:00:00Z`))
     const booking = await createBooking(actor, bookingInput)
     await databasePool.execute(
       `INSERT INTO dining_tables (id, organization_id, venue_id, zone_id, code, display_name, kind, capacity)
@@ -266,6 +268,8 @@ mysqlDescribe('Wave 2 owner-approved integration', () => {
   })
 
   it('closes the advance entry as SEATED_OTHERWISE when checking in through the booking route', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(`${businessDate}T12:00:00Z`))
     const booking = await createBooking(actor, bookingInput)
     const session = await login()
     const created = await session.agent.post('/api/v1/waitlist').set('Origin', env.webOrigin)

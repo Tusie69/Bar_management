@@ -1,5 +1,5 @@
 import type { RowDataPacket } from 'mysql2/promise'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { env } from '../src/config/env.js'
 import { databasePool } from '../src/database/pool.js'
@@ -13,7 +13,12 @@ const cutoff = new Date('2030-10-24T22:00:00.000Z')
 
 mysqlDescribe('business-day auto-close reconciles canonical floor and waitlist HTTP flow', () => {
   beforeAll(initializeFixture)
-  beforeEach(resetFixture)
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(`${businessDate}T12:00:00Z`))
+    await resetFixture()
+  })
+  afterEach(() => vi.useRealTimers())
   afterAll(clearFixture)
 
   async function checkedInAdvanceEntry() {

@@ -47,6 +47,8 @@ export interface VenueConfig {
   reservationWindowMinutes: number | null
   groupSymbolCount: number
   changeSeq: number
+  /** Present on NA-14 servers; optional while older deployments are upgraded. */
+  settings?: { quick_times: string[]; upcoming_minutes: number; no_show_minutes: number }
 }
 
 export interface ZoneView {
@@ -216,6 +218,9 @@ export interface ReservationView {
   expectedAt: Date
   businessDate: BusinessDate
   classification: BookingClassification
+  guestType: "REGULAR" | "NEW"
+  isBirthday: boolean
+  lateConfirmedAt: Date | null
   status: ReservationStatus
   sourceCode: BookingSourceCode
   note: string | null

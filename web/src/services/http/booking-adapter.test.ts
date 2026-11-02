@@ -30,6 +30,28 @@ const backendBooking = (patch: Partial<BackendBookingPayload> = {}): BackendBook
 })
 
 describe("booking contract adapter", () => {
+  it("preserves NA-14 metadata and leaves late confirmation out of edit requests", () => {
+    const confirmedAt = new Date("2030-10-24T14:05:00.123Z")
+    const current = mapBooking(
+      backendBooking({
+        classification: "RETURNING",
+        guestType: "REGULAR",
+        isBirthday: true,
+        lateConfirmedAt: confirmedAt,
+      }),
+    )
+    expect(current).toMatchObject({ guestType: "REGULAR", isBirthday: true, lateConfirmedAt: confirmedAt })
+    const unchanged = fullUpdateBookingPayload(current, { partySize: 6 })
+    expect(unchanged).toMatchObject({ classification: "RETURNING", isBirthday: true })
+    expect(unchanged).not.toHaveProperty("lateConfirmedAt")
+    expect(fullUpdateBookingPayload(current, { guestType: "NEW", isBirthday: false })).toMatchObject({
+      guestType: "NEW",
+      isBirthday: false,
+    })
+    expect(fullUpdateBookingPayload(current, { guestType: "NEW" })).not.toHaveProperty("classification")
+    expect(() => mapBooking(backendBooking({ classification: "RETURNING", guestType: "NEW" }))).toThrowError(ApiError)
+    expect(() => mapBooking(backendBooking({ lateConfirmedAt: new Date("invalid") }))).toThrowError(ApiError)
+  })
   it("maps only fields present in the backend booking view", () => {
     const result = mapBooking(backendBooking())
     expect(result).toMatchObject({ id: 42, guestName: "Khách backend", tableCodes: ["A1"], version: 3 })
@@ -75,6 +97,7 @@ describe("booking contract adapter", () => {
       businessDate: "2030-10-24",
       sourceCode: "HOTLINE",
       classification: "UNCLASSIFIED",
+      isBirthday: false,
       version: 3,
     })
   })
@@ -82,14 +105,16 @@ describe("booking contract adapter", () => {
   it.each(["+84987654321", "0084987654321", "1234567890", "09876543210"])(
     "rejects invalid booking phone input %s",
     (phoneNumber) => {
-      expect(() => createBookingPayload({
-        guestName: "Anh Minh",
-        partySize: 3,
-        expectedAt: new Date("2030-10-24T14:30:00.000Z"),
-        businessDate: "2030-10-24",
-        sourceCode: "HOTLINE",
-        phoneNumber,
-      })).toThrowError(ApiError)
+      expect(() =>
+        createBookingPayload({
+          guestName: "Anh Minh",
+          partySize: 3,
+          expectedAt: new Date("2030-10-24T14:30:00.000Z"),
+          businessDate: "2030-10-24",
+          sourceCode: "HOTLINE",
+          phoneNumber,
+        }),
+      ).toThrowError(ApiError)
     },
   )
 

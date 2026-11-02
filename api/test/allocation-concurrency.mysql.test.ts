@@ -35,7 +35,7 @@ mysqlDescribe('HTTP allocation concurrency on MySQL', () => {
 
   it.each([1, 2, 3])('permits exactly one booking assign versus walk-in (run %s)', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
-    vi.setSystemTime(new Date(`${businessDate}T14:00:00Z`))
+    vi.setSystemTime(new Date(`${businessDate}T12:00:00Z`))
     const booking = await createBooking(actor, bookingInput)
     const [assigner, walker] = await Promise.all([login(), login()])
     const results = await Promise.all([

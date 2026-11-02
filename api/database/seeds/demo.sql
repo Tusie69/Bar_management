@@ -58,6 +58,13 @@ INSERT INTO organizations (id, code, name) VALUES
   (1, 'GAM21', '21GAM (giả)'), (2, 'DEMO2', 'Tổ chức khác (giả)');
 INSERT INTO venues (id, organization_id, code, name) VALUES
   (1, 1, '21GAM', '21GAM (giả)'), (2, 2, 'DEMO2', 'Venue khác (giả)');
+-- NA-14 defaults; no permission or role changes.
+INSERT INTO venue_settings (organization_id,venue_id,`key`,`value`)
+SELECT organization_id,id,'quick_times',JSON_ARRAY('21:00','21:30','22:00','22:30') FROM venues;
+INSERT INTO venue_settings (organization_id,venue_id,`key`,`value`)
+SELECT organization_id,id,'upcoming_minutes',CAST('10' AS JSON) FROM venues;
+INSERT INTO venue_settings (organization_id,venue_id,`key`,`value`)
+SELECT organization_id,id,'no_show_minutes',CAST(no_show_warning_minutes AS JSON) FROM venues;
 INSERT INTO users (id, username, display_name, password_hash, status) VALUES
   (1, 'demo_reception1', 'Lễ tân 1 (giả)', '!DEMO_NO_LOGIN', 'DISABLED'),
   (2, 'demo_reception2', 'Lễ tân 2 (giả)', '!DEMO_NO_LOGIN', 'DISABLED'),
@@ -322,6 +329,12 @@ INSERT INTO operation_log
   (1,1,7,@day+INTERVAL 1282 MINUTE,'SYSTEM',NULL,'HOLD_DEADLINE_WARNING','table_hold',7),
   (1,1,8,@day+INTERVAL 1285 MINUTE,'SYSTEM',NULL,'RESERVATION_NO_SHOW_WARNING','reservation',7);
 UPDATE venues SET change_seq=8 WHERE id=1;
+
+-- NA-14 scenarios, scoped to this synthetic venue. RBAC/FX-10 guard stays unchanged.
+UPDATE reservations SET customer_classification='NEW', guest_type='NEW' WHERE venue_id=1 AND id=5;
+UPDATE reservations SET customer_classification='RETURNING', guest_type='REGULAR' WHERE venue_id=1 AND id IN (6,7);
+UPDATE reservations SET is_birthday=1 WHERE venue_id=1 AND id=7;
+UPDATE reservations SET late_confirmed_at=@scenario-INTERVAL 2 MINUTE WHERE venue_id=1 AND id=5;
 
 -- Small self-check before commit: catalogue, status coverage, owner links,
 -- business dates, overlap, and the overdue hold that must STILL occupy A1.

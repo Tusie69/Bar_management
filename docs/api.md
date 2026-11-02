@@ -82,13 +82,15 @@ Spare configuration is persistent rather than per-day. `reason` is required, at 
   "sourceCode":"HOTLINE",
   "note":"Ghi chú tùy chọn",
   "phoneNumber":"0987654321",
-  "classification":"NEW"
+  "classification":"NEW",
+  "guestType":"NEW",
+  "isBirthday":false
 }
 ```
 
 `guestName` is required (1-120 characters), `partySize` 1-500, `sourceCode` must exist and be active, `note` at most 500 characters. `phoneNumber` is optional: omitted on update retains the existing phone; null or blank removes it; a nonblank value is validated and encrypted. Update sends the complete booking fields, not a partial patch. Cancel `reasonNote` is at most 300 characters.
 
-`BookingView` is `{id,guestName,phoneLast3,partySize,expectedAt,businessDate,classification,status,source,sourceCode,tableCodes,note,version,displayStatus,minutesLate,autoNoShowDue}`. `status` is `BOOKED`, `CHECKED_IN`, `CANCELLED` or `NO_SHOW`. Search matches guest names or exactly three trailing phone digits. List, detail, search and mutation responses never contain a full stored phone or cryptographic fields. Export contains no phone fields, including suffixes.
+`BookingView` is `{id,guestName,phoneLast3,partySize,expectedAt,businessDate,classification,guestType,isBirthday,lateConfirmedAt,status,source,sourceCode,tableCodes,note,version,displayStatus,minutesLate,autoNoShowDue}`. `status` is `BOOKED`, `CHECKED_IN`, `CANCELLED` or `NO_SHOW`. Search matches guest names or exactly three trailing phone digits. List, detail, search and mutation responses never contain a full stored phone or cryptographic fields. Export contains no phone fields, including suffixes.
 
 Booking creation does not allocate tables or create a visit. Assign creates/replaces a hold; check-in requires an assigned booking and converts the hold to a visit/usage allocation. Cancel/no-show are explicit staff actions for `BOOKED` reservations and release their holds. Warnings after 15 and 30 minutes do not cancel or release anything. `NO_SHOW_WORKER_ENABLED` remains false.
 
@@ -98,10 +100,53 @@ Merges preserve existing tables, add at least one table, require compatible kind
 
 Walk-ins require the current business date during operating hours; errors are `WALK_IN_OUTSIDE_BUSINESS_HOURS` or `BUSINESS_DATE_NOT_CURRENT`. A reservation for another date does not authorize a walk-in for that date.
 
+## NA-14 booking metadata and venue settings
+
+NA-14 extends existing `/bookings`, `/bookings/direct`, `PUT /bookings/:id`, list, detail, search and all booking mutation responses. No new permissions are added.
+
+| Field | JSON type | Create without field | Update without field |
+| --- | --- | --- | --- |
+| `guestType` | `"REGULAR"` or `"NEW"` | `NEW`, unless legacy `classification` was supplied | Retain current classification/type |
+| `isBirthday` | boolean | `false` | Retain current flag |
+| `lateConfirmedAt` | UTC ISO string or null, response only | SQL NULL | Retain current timestamp |
+
+`isBirthday` describes this booking, never the customer's date of birth. `lateConfirmedAt` is reserved for TU-12's explicit staff action: its future endpoint must set the server's UTC clock, check permissions/status/version and write the existing venue change sequence/audit in one transaction. That action/endpoint is not implemented by NA-14. Sending `lateConfirmedAt` (including null) to ordinary create/update returns 400 `LATE_CONFIRMATION_READ_ONLY`.
+
+Example create (add `tableIds` for `/bookings/direct`, or `version` for PUT):
+
+```json
+{"guestName":"Khách Sprint 2","partySize":4,"expectedAt":"2030-10-24T21:00:00+07:00","businessDate":"2030-10-24","sourceCode":"HOTLINE","guestType":"REGULAR","isBirthday":true}
+```
+
+Example metadata returned inside `{ "booking": ... }`:
+
+```json
+{"id":42,"classification":"RETURNING","guestType":"REGULAR","isBirthday":true,"lateConfirmedAt":null,"version":1}
+```
+
+Compatibility: storage `customer_classification` remains authoritative. Shared repository logic writes it and `guest_type` atomically; a DB CHECK prevents disagreement. `RETURNING` maps to `REGULAR`; `NEW`, `UNCLASSIFIED` and legacy NULL map to `NEW`. Legacy classification is preserved in migration, and still returned as `UNCLASSIFIED` for NULL. New clients should send `guestType`; old clients may keep sending `classification`. Sending both with inconsistent meanings returns 400 `CONFLICTING_GUEST_TYPE`; invalid type returns `INVALID_GUEST_TYPE`; non-boolean birthday returns `INVALID_BIRTHDAY`. SQL integrations must write the mapped classification and guest type together. Do not use phone/customer history to infer either field.
+
+### `GET /venues/:id/settings`
+
+Requires session and `customer.view_masked`; `id` must equal the session's venue. Another venue (even in the same organization) returns 404. There is no settings write endpoint in NA-14. Settings are also returned at `GET /tables/catalog` as `venue.settings`, preserved by the web catalog adapter:
+
+```json
+{"venueId":1,"settings":{"quick_times":["21:00","21:30","22:00","22:30"],"upcoming_minutes":10,"no_show_minutes":30}}
+```
+
+- `quick_times`: 1-24 unique valid `HH:mm` values. UI still applies the booking reception window and business-date rules before offering/submitting a time.
+- `upcoming_minutes`: JSON integer 1-720; invalid/missing values fall back to 10.
+- `no_show_minutes`: JSON integer 1-720 and greater than the venue's existing `late_warning_minutes`. Valid settings take priority; otherwise use `venues.no_show_warning_minutes`. Catalog `noShowWarningMinutes`, booking timing and the existing opt-in no-show worker all use this same effective threshold.
+- Invalid/missing quick times fall back to the four defaults above. Existing values are never overwritten during initialization. Venue provisioning can call `initializeVenueSettings(actor, connection)` inside its transaction; first settings/catalog/booking read also initializes missing keys for a new venue. No trigger or elevated MySQL routine privileges are required.
+- Existing venues retain customized no-show thresholds when migrated, rather than resetting to 30. Once a valid settings row exists, editing only the legacy venue column no longer changes the effective threshold. Future settings administration must write `venue_settings` with session tenant checks and `venue.configure`.
+- Reading settings never cancels a booking or releases a table. `NO_SHOW_WORKER_ENABLED` defaults to false and still requires its separate system principal and automation cutoff if explicitly enabled.
+
+Handoff: TU-11 consumes `upcoming_minutes`; TU-12 owns the future late-confirmation action and reads `lateConfirmedAt`; TU-15 can count `guestType` and use `isBirthday` (birthday now also reaches the existing Zalo export); TU-16 reads `quick_times` from settings, without hardcoding them in booking logic. Existing legacy O/N export continues reporting historical `UNCLASSIFIED` separately. Web instants are revived to `Date`; normal writes intentionally omit `lateConfirmedAt`. Refetch/polling and phone masking keep their existing contracts.
+
 ## Booking classification
 
 Payload tạo/sửa booking nhận `classification`: `RETURNING`, `NEW` hoặc `UNCLASSIFIED`. Trường không hợp lệ trả
-`INVALID_BOOKING_CLASSIFICATION`. Nếu client cũ bỏ qua trường này, create dùng `UNCLASSIFIED` còn update giữ nguyên
+`INVALID_BOOKING_CLASSIFICATION`. Nếu client cũ bỏ qua cả classification và guestType, create dùng `NEW` còn update giữ nguyên
 giá trị hiện tại. Response list/detail luôn trả một trong ba giá trị; database `NULL` cũ được ánh xạ thành
 `UNCLASSIFIED`. Classification thuộc booking, không thuộc customer profile.
 

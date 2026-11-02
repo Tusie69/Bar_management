@@ -1,4 +1,5 @@
 import { ChevronLeft } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
 import { useId, useMemo, useState } from "react"
 import {
   bookingCalendarDate,
@@ -52,7 +53,8 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const [phone, setPhone] = useState("")
   const [name, setName] = useState("")
   const [source, setSource] = useState<BookingSourceCode>("HOTLINE")
-  const [classification, setClassification] = useState<BookingClassification>("UNCLASSIFIED")
+  const [classification, setClassification] = useState<BookingClassification>("NEW")
+  const [isBirthday, setIsBirthday] = useState(false)
   const [note, setNote] = useState("")
   const [tried, setTried] = useState(false)
   const [dirty, setDirty] = useState(false)
@@ -145,6 +147,8 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             expectedAt: at!,
             sourceCode: source,
             classification,
+            guestType: classification === "RETURNING" ? "REGULAR" : "NEW",
+            isBirthday,
             note: note.trim() || undefined,
             tableIds: ids,
             overrideReason: o,
@@ -560,6 +564,18 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                   </SelectContent>
                 </Select>
               </div>
+            ) : null}
+            {isBooking ? (
+              <label className="flex min-h-12 items-center gap-3 text-sm">
+                <Checkbox
+                  checked={isBirthday}
+                  onCheckedChange={(checked) => {
+                    setIsBirthday(checked === true)
+                    touch()
+                  }}
+                />
+                Sinh nhật
+              </label>
             ) : null}
             {isBooking || !choice ? (
               <label className="flex flex-col gap-1.5">

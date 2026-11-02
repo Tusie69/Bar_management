@@ -2,6 +2,7 @@ import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/prom
 
 import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
+import { getVenueSettings } from '../venues/venue-settings.repository.js'
 
 export interface NoShowCandidate {
   id: number
@@ -79,6 +80,7 @@ export async function listNoShowCandidates(
   now: Date,
   automationCutoff: Date,
 ): Promise<NoShowCandidate[]> {
+  const settings = await getVenueSettings({ organizationId, venueId })
   const [rows] = await databasePool.execute<(RowDataPacket & {
     id: number
     version: number
@@ -90,9 +92,9 @@ export async function listNoShowCandidates(
      JOIN venues AS v ON v.organization_id = r.organization_id AND v.id = r.venue_id
      WHERE r.organization_id = ? AND r.venue_id = ? AND r.status = 'BOOKED'
        AND r.created_at >= ?
-       AND TIMESTAMPADD(MINUTE, v.no_show_warning_minutes, r.expected_at) <= ?
+       AND TIMESTAMPADD(MINUTE, ?, r.expected_at) <= ?
      ORDER BY r.expected_at, r.id`,
-    [organizationId, venueId, mysqlDateTime(automationCutoff), mysqlDateTime(now)],
+    [organizationId, venueId, mysqlDateTime(automationCutoff), settings.no_show_minutes, mysqlDateTime(now)],
   )
   return rows.map((row) => ({
     id: Number(row.id),
@@ -123,6 +125,7 @@ export async function processNoShowCandidate(
       [organizationId, venueId, candidate.id],
     )
     const reservation = reservationRows[0]
+    const settings = await getVenueSettings({ organizationId, venueId }, connection)
     const expectedAt = reservation?.expected_at instanceof Date ? reservation.expected_at : new Date(0)
     const unchanged = reservation
       && reservation.status === 'BOOKED'
@@ -130,7 +133,7 @@ export async function processNoShowCandidate(
       && expectedAt.getTime() === candidate.expectedAt.getTime()
       && reservation.created_at.getTime() === candidate.createdAt.getTime()
       && reservation.created_at.getTime() >= automationCutoff.getTime()
-      && expectedAt.getTime() + Number(reservation.no_show_warning_minutes) * 60_000 <= now.getTime()
+      && expectedAt.getTime() + settings.no_show_minutes * 60_000 <= now.getTime()
     if (!unchanged) {
       await connection.rollback()
       return 'SKIPPED'

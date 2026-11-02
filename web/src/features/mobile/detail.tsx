@@ -114,6 +114,7 @@ export function DetailScreen({
           ),
         },
         { k: "Nguồn đặt", v: SOURCE_LABEL[r.sourceCode] },
+        { k: "Sinh nhật", v: r.isBirthday ? "Có" : "Không" },
         {
           k: "Loại khách",
           v:
