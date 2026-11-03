@@ -10,8 +10,8 @@ import fs from "node:fs"
 fs.mkdirSync("e2e/.artifacts", { recursive: true })
 let failures = 0
 const results = []
-async function flow(name, userId, fn) {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+async function flow(name, userId, fn, pageOptions = {}) {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, ...pageOptions })
   const errors = []
   page.on("pageerror", (e) => errors.push(e.message))
   page.on("console", (m) => {
@@ -63,6 +63,37 @@ await flow("inline walk-in suggests a table (3 taps)", 1, async (page) => {
   await page.getByRole("button", { name: "Mở bàn ngay" }).click()
   await expectLabel(table(page, "B5"), /Đang sử dụng/)
 })
+
+await flow(
+  "mobile walk-in selects multiple Bar seats on the canonical map",
+  1,
+  async (page) => {
+    await page.goto(base + "/home", { waitUntil: "networkidle" })
+    const deferAlert = page.getByRole("button", { name: "Đã xem, xử lý sau" })
+    if (await deferAlert.isVisible()) await deferAlert.click()
+    await page.getByRole("button", { name: "Tạo mới", exact: true }).click()
+    const create = page.getByRole("dialog", { name: "Tạo mới" })
+    await create.getByRole("button", { name: "Mở bàn Walk-in" }).click()
+    const form = page.getByRole("dialog", { name: "Tạo đơn đặt bàn" })
+    await form.getByRole("radio", { name: "2 khách" }).click()
+    await form.getByRole("button", { name: "Xem bàn trống lúc này" }).click()
+
+    const map = form.getByRole("group", { name: "Sơ đồ bàn để chọn trực tiếp cho khách Walk-in" })
+    await map.waitFor()
+    if (await form.getByRole("radiogroup", { name: "Bàn trống" }).count()) {
+      throw new Error("Walk-in still renders the legacy table-chip list")
+    }
+
+    const first = map.locator('[aria-label^="Ghế Bar"][aria-disabled="false"][aria-pressed="false"]').first()
+    await first.click()
+    const second = map.locator('[aria-label^="Ghế Bar"][aria-disabled="false"][aria-pressed="false"]').first()
+    await second.click()
+    await form.getByText("Sức chứa: 2/2 chỗ · Đã đủ chỗ", { exact: true }).waitFor()
+    const open = form.getByRole("button", { name: /^Mở bàn Bar/ })
+    if (await open.isDisabled()) throw new Error("Walk-in action stayed disabled after enough Bar seats were selected")
+  },
+  { viewport: { width: 390, height: 844 }, hasTouch: true },
+)
 
 await flow("check-in reserved booking A5", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
@@ -453,8 +484,18 @@ await flow("bar seat: multi-seat booking capacity check & group reservation", 1,
   // Both bar seats become reserved and grouped
   await expectLabel(barSeat(page, 8), /Đang đặt/)
   await expectLabel(barSeat(page, 7), /Đang đặt/)
-  await expectLabel(barSeat(page, 8), /nhóm \d+/)
-  await expectLabel(barSeat(page, 7), /nhóm \d+/)
+  await expectLabel(barSeat(page, 8), /nhóm ◆[A-Z]+/)
+  await expectLabel(barSeat(page, 7), /nhóm ◆[A-Z]+/)
+  if (await page.locator("path[data-group-id]").count()) throw new Error("Group connector must be hidden by default")
+  await barSeat(page, 8).click()
+  if ((await barSeat(page, 7).getAttribute("data-group-highlighted")) !== "true") {
+    throw new Error("Selecting one group member must highlight the other member")
+  }
+  if ((await page.locator("path[data-group-id]").count()) !== 1) {
+    throw new Error("Only the selected group connector should be visible")
+  }
+  await barSeat(page, 8).click()
+  if (await page.locator("path[data-group-id]").count()) throw new Error("Deselecting must hide the group connector")
 })
 
 await flow("reservation assignment: date-aware availability in both directions (MD-01)", 1, async (page) => {

@@ -93,6 +93,26 @@ export class HttpBookingApi {
     return mapBooking(response.booking)
   }
 
+  async confirmLate(id: number, version: number): Promise<{
+    bookingId: number
+    lateConfirmed: true
+    lateConfirmedAt: Date
+    version: number
+    changeSeq: string
+  }> {
+    return this.client.post<{
+      bookingId: number
+      lateConfirmed: true
+      lateConfirmedAt: Date
+      version: number
+      changeSeq: string
+    }>(
+      `/bookings/${id}/late-confirm`,
+      { version },
+      { reviver: dateReviver },
+    )
+  }
+
   async assignVersion(id: number, version: number, tableIds: number[]): Promise<HttpBooking> {
     const response = await this.client.post<{ booking: BackendBookingPayload }>(
       `/bookings/${id}/assign`,

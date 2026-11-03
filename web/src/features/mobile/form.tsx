@@ -19,9 +19,16 @@ import { isPlausibleVnPhone, NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/
 import { addDays, fmtBusinessDate, fmtDayMonth } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
+import { FloorCanvas } from "../floor/floor-canvas"
 import { useM, type FormRequest } from "./context"
 import { codesOf } from "./model"
 import { Seg } from "./ui"
+import {
+  selectedCapacity,
+  walkInBlockReason,
+  walkInPickableIds,
+  walkInSelectionIssues,
+} from "./walk-in-selection"
 
 interface Option {
   key: string
@@ -38,7 +45,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const m = useM()
   const uid = useId()
   const { run, pending } = useAction()
-  const preset = req.tableIds ?? []
+  const preset = useMemo(() => req.tableIds ?? [], [req.tableIds])
   const [mode, setMode] = useState(req.mode)
   const [party, setParty] = useState(preset.length ? Math.min(8, preset.length * 4) : 4)
   const [isOther, setIsOther] = useState(false)
@@ -57,6 +64,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const [tried, setTried] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [confirmLeave, setConfirmLeave] = useState(false)
+  const [selectionMessage, setSelectionMessage] = useState<string | null>(null)
 
   const isBooking = mode === "booking"
   const bd = addDays(m.today, dateIdx)
@@ -76,15 +84,11 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
 
   const avail = useAvailability(isBooking && checked && guests ? at : null, guests ?? 1).data
   const options = useMemo<Option[]>(() => {
-    if (!checked || !guests) return []
+    if (!checked || !guests || !isBooking) return []
     const bookable = new Set(m.model.catalog?.zones.filter((z) => z.isBookable).map((z) => z.id))
     const fits = m.model.tables
       .filter((t) => t.kind === "TABLE" && t.capacity >= guests && bookable.has(t.zoneId))
-      .filter((t) =>
-        isBooking
-          ? avail?.tables.find((x) => x.tableId === t.id)?.status === "available"
-          : m.model.states.get(t.id)?.state === "free",
-      )
+      .filter((t) => avail?.tables.find((x) => x.tableId === t.id)?.status === "available")
       .sort((a, b) => a.capacity - b.capacity || a.code.localeCompare(b.code))
       .slice(0, 6)
       .map((t) => ({
@@ -93,33 +97,50 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
         label: t.code,
         sub: `${t.capacity} chỗ${isBooking ? "" : ", trống"}`,
       }))
-    const combos = isBooking
-      ? (avail?.combinations ?? [])
-          .filter((c) => c.available && c.capacity >= guests)
-          .slice(0, 2)
-          .flatMap((c) => {
-            const v = m.model.catalog?.combinations.find((x) => x.id === c.combinationId)
-            return v
-              ? [
-                  {
-                    key: `c${v.id}`,
-                    ids: v.memberIds,
-                    label: v.displayName,
-                    sub: `${codesOf(v.memberIds, m.model)}, ${c.capacity} chỗ`,
-                  },
-                ]
-              : []
-          })
-      : []
+    const combos = (avail?.combinations ?? [])
+      .filter((c) => c.available && c.capacity >= guests)
+      .slice(0, 2)
+      .flatMap((c) => {
+        const v = m.model.catalog?.combinations.find((x) => x.id === c.combinationId)
+        return v
+          ? [
+              {
+                key: `c${v.id}`,
+                ids: v.memberIds,
+                label: v.displayName,
+                sub: `${codesOf(v.memberIds, m.model)}, ${c.capacity} chỗ`,
+              },
+            ]
+          : []
+      })
     const list = [...fits, ...combos]
     if (preset.length && !list.some((o) => o.ids.join() === preset.join()))
       list.unshift({ key: "preset", ids: preset, label: codesOf(preset, m.model), sub: "Chọn từ sơ đồ" })
     return list
   }, [checked, guests, isBooking, avail, m.model, preset])
 
+  const selectedWalkInIds = useMemo(() => (!isBooking ? (choice?.ids ?? []) : []), [choice, isBooking])
+  const bookableZoneIds = useMemo(
+    () => new Set(m.model.catalog?.zones.filter((zone) => zone.isBookable).map((zone) => zone.id) ?? []),
+    [m.model.catalog],
+  )
+  const walkInPickable = useMemo(
+    () => walkInPickableIds(m.model.tables, m.model.states, bookableZoneIds, selectedWalkInIds),
+    [m.model.tables, m.model.states, bookableZoneIds, selectedWalkInIds],
+  )
+  const walkInCapacity = selectedCapacity(selectedWalkInIds, m.model.byId)
+  const walkInIssues = walkInSelectionIssues(
+    selectedWalkInIds,
+    m.model.byId,
+    m.model.states,
+    bookableZoneIds,
+  )
+  const walkInReady = !!guests && selectedWalkInIds.length > 0 && walkInCapacity >= guests && walkInIssues.length === 0
+
   const reset = () => {
     setChecked(false)
     setChoice(null)
+    setSelectionMessage(null)
   }
   const touch = () => setDirty(true)
   const tableLabel = choice ? `Bàn ${choice.label}` : isBooking ? "chưa chọn bàn" : "chưa có bàn"
@@ -130,12 +151,46 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
     return { top: i === 0 ? "Hôm nay" : wd, day: dm }
   })
 
+  const toggleWalkInTable = (id: number) => {
+    const current = selectedWalkInIds
+    const selected = current.includes(id)
+    const table = m.model.byId.get(id)
+    if (!selected && table) {
+      const anchor = current.length ? m.model.byId.get(current[0]) : undefined
+      const reason = walkInBlockReason(table, m.model.states.get(id), bookableZoneIds, anchor)
+      if (reason) {
+        setSelectionMessage(reason)
+        return
+      }
+    }
+    const next = selected ? current.filter((tableId) => tableId !== id) : [...current, id]
+    setChoice(next.length ? { key: "map", ids: next, label: codesOf(next, m.model), sub: "" } : null)
+    setSelectionMessage(null)
+    touch()
+  }
+
+  const explainBlockedWalkInTable = (id: number) => {
+    const table = m.model.byId.get(id)
+    if (!table) return setSelectionMessage(`Bàn #${id} không còn trong sơ đồ.`)
+    const anchor = selectedWalkInIds.length ? m.model.byId.get(selectedWalkInIds[0]) : undefined
+    setSelectionMessage(
+      walkInBlockReason(table, m.model.states.get(id), bookableZoneIds, anchor) ?? `${m.model.label(id)} không thể chọn.`,
+    )
+  }
+
   const submit = async () => {
     if (guests === null || (isBooking ? guestMissing || !phoneOk || !at : false) || noteBad) {
       setTried(true)
       return
     }
     const ids = choice?.ids ?? []
+    if (!isBooking && ids.length && !walkInReady) {
+      setTried(true)
+      setSelectionMessage(
+        walkInIssues[0] ?? `Mới chọn ${walkInCapacity}/${guests} chỗ. Chạm thêm bàn hoặc ghế phù hợp trên sơ đồ.`,
+      )
+      return
+    }
     const ok = isBooking
       ? await run((o) =>
           api.createReservation({
@@ -414,38 +469,98 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                 {isBooking ? slotText : "Lúc này"}, {guests ?? "?"} khách
               </span>
             </div>
-            {options.length ? (
-              <div role="radiogroup" aria-label="Bàn trống" className="flex flex-wrap gap-2">
-                {options.map((o) => {
-                  const on = choice?.key === o.key || (choice?.key === "preset" && o.ids.join() === choice.ids.join())
-                  return (
-                    <button
-                      key={o.key}
-                      type="button"
-                      role="radio"
-                      aria-checked={on}
-                      onClick={() => {
-                        setChoice(on ? null : o)
-                        touch()
-                      }}
-                      className={cn(
-                        "flex min-h-12 flex-col items-start justify-center rounded-[14px] border px-3.5 py-1 text-tx-1",
-                        on ? "border-primary bg-primary-tint" : "border-border bg-surface-1",
-                      )}
-                    >
-                      <span className={cn("text-[15px] font-semibold", on ? "text-primary-ink" : "text-tx-strong")}>
-                        {o.label}
-                      </span>
-                      {o.sub ? <span className="text-xs text-[var(--text-muted)]">{o.sub}</span> : null}
-                    </button>
-                  )
-                })}
-              </div>
+            {isBooking ? (
+              options.length ? (
+                <div role="radiogroup" aria-label="Bàn trống" className="flex flex-wrap gap-2">
+                  {options.map((o) => {
+                    const on = choice?.key === o.key || (choice?.key === "preset" && o.ids.join() === choice.ids.join())
+                    return (
+                      <button
+                        key={o.key}
+                        type="button"
+                        role="radio"
+                        aria-checked={on}
+                        onClick={() => {
+                          setChoice(on ? null : o)
+                          touch()
+                        }}
+                        className={cn(
+                          "flex min-h-12 flex-col items-start justify-center rounded-[14px] border px-3.5 py-1 text-tx-1",
+                          on ? "border-primary bg-primary-tint" : "border-border bg-surface-1",
+                        )}
+                      >
+                        <span
+                          className={cn("text-[15px] font-semibold", on ? "text-primary-ink" : "text-tx-strong")}
+                        >
+                          {o.label}
+                        </span>
+                        {o.sub ? <span className="text-xs text-[var(--text-muted)]">{o.sub}</span> : null}
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="rounded-[14px] bg-st-late-tint px-4 py-3.5 text-[14px] text-pretty text-tx-1">
+                  Không còn bàn trống cho {guests} khách lúc {slotText}. Vẫn có thể lưu booking chưa có bàn.
+                </div>
+              )
             ) : (
-              <div className="rounded-[14px] bg-st-late-tint px-4 py-3.5 text-[14px] text-pretty text-tx-1">
-                {isBooking
-                  ? `Không còn bàn trống cho ${guests} khách lúc ${slotText}. Vẫn có thể lưu booking chưa có bàn.`
-                  : `Không có bàn trống cho ${guests} khách. Lưu đơn này sẽ thêm khách vào danh sách chờ.`}
+              <div className="flex flex-col gap-3">
+                <p className="m-0 text-[13px] text-pretty text-tx-2">
+                  Chạm trực tiếp lên bàn hoặc ghế trống. Nếu chưa đủ chỗ, tiếp tục chọn thêm trong cùng khu và cùng loại.
+                </p>
+                <div className="relative h-[min(58dvh,500px)] min-h-[360px] overflow-hidden rounded-2xl border border-border bg-floor">
+                  {m.model.catalog ? (
+                    <FloorCanvas
+                      className="absolute inset-0"
+                      tables={m.model.tables}
+                      zones={m.model.catalog.zones}
+                      mode="live"
+                      states={m.model.states}
+                      groups={m.model.floor?.groups}
+                      selectedIds={selectedWalkInIds}
+                      pickable={walkInPickable}
+                      now={m.now}
+                      onTableClick={toggleWalkInTable}
+                      onBlockedTableClick={explainBlockedWalkInTable}
+                      onBackgroundClick={() => setSelectionMessage(null)}
+                      ariaLabel="Sơ đồ bàn để chọn trực tiếp cho khách Walk-in"
+                    />
+                  ) : (
+                    <div className="grid h-full place-items-center px-6 text-center text-sm text-subtle">
+                      Đang tải sơ đồ bàn…
+                    </div>
+                  )}
+                </div>
+                <div
+                  className={cn(
+                    "flex flex-col gap-1 rounded-[14px] border px-4 py-3",
+                    walkInReady ? "border-primary bg-primary-tint" : "border-border bg-surface-1",
+                  )}
+                  role="status"
+                  aria-live="polite"
+                >
+                  <span className="text-[14px] font-semibold text-tx-strong">
+                    {selectedWalkInIds.length ? `Đã chọn: ${codesOf(selectedWalkInIds, m.model)}` : "Chưa chọn bàn"}
+                  </span>
+                  <span className={cn("text-[13px]", walkInReady ? "text-primary-ink" : "text-tx-2")}>
+                    Sức chứa: {walkInCapacity}/{guests ?? "?"} chỗ
+                    {walkInReady
+                      ? " · Đã đủ chỗ"
+                      : selectedWalkInIds.length
+                        ? ` · Cần thêm ${Math.max(0, (guests ?? 0) - walkInCapacity)} chỗ`
+                        : ""}
+                  </span>
+                  {walkInIssues[0] || selectionMessage ? (
+                    <span className="text-[13px] text-st-noshow-ink" role="alert">
+                      {walkInIssues[0] ?? selectionMessage}
+                    </span>
+                  ) : walkInPickable.size === 0 ? (
+                    <span className="text-[13px] text-st-late-ink">
+                      Không có bàn hợp lệ lúc này. Không chọn bàn để thêm khách vào danh sách chờ.
+                    </span>
+                  ) : null}
+                </div>
               </div>
             )}
             <span className="text-xs text-pretty text-subtle">
@@ -591,7 +706,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
         <button
           type="button"
           onClick={() => void submit()}
-          disabled={pending}
+          disabled={pending || (!isBooking && selectedWalkInIds.length > 0 && !walkInReady)}
           aria-busy={pending}
           className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground active:brightness-90 disabled:opacity-70"
         >
@@ -600,7 +715,9 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             : isBooking
               ? "Đặt bàn"
               : choice
-                ? `Mở bàn ${choice.label}`
+                ? walkInReady
+                  ? `Mở bàn ${choice.label}`
+                  : `Chọn thêm bàn · ${walkInCapacity}/${guests ?? "?"} chỗ`
                 : "Thêm vào danh sách chờ"}
         </button>
       </footer>

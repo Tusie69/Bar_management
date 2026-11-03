@@ -6,12 +6,13 @@ const expectedAt = '2026-10-24T14:00:00.000Z'
 
 describe('booking display timing', () => {
   it.each([
-    ['2026-10-24T13:59:59.999Z', 'UPCOMING', 0, false],
-    ['2026-10-24T14:00:00.000Z', 'WAITING', 0, false],
-    ['2026-10-24T14:14:59.999Z', 'WAITING', 14, false],
-    ['2026-10-24T14:15:00.000Z', 'LATE', 15, false],
+    ['2026-10-24T13:49:59.999Z', 'UPCOMING', 0, false],
+    ['2026-10-24T13:50:00.000Z', 'UPCOMING', 0, false],
+    ['2026-10-24T14:00:00.000Z', 'UPCOMING', 0, false],
+    ['2026-10-24T14:15:00.000Z', 'UPCOMING', 15, false],
+    ['2026-10-24T14:15:00.001Z', 'LATE', 15, false],
     ['2026-10-24T14:29:59.999Z', 'LATE', 29, false],
-    ['2026-10-24T14:30:00.000Z', 'LATE', 30, true],
+    ['2026-10-24T14:30:00.000Z', 'NO_SHOW', 30, false],
   ] as const)('derives the boundary at %s', (now, displayStatus, minutesLate, autoNoShowDue) => {
     expect(deriveBookingTiming('BOOKED', expectedAt, new Date(now))).toEqual({
       displayStatus,

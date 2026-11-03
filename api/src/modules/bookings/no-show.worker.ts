@@ -2,6 +2,7 @@ import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/prom
 
 import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
+import { applicationNow } from '../../time/application-clock.js'
 
 export interface NoShowCandidate {
   id: number
@@ -10,7 +11,7 @@ export interface NoShowCandidate {
   createdAt: Date
 }
 
-export type NoShowProcessResult = 'CLOSED' | 'SKIPPED'
+export type NoShowProcessResult = 'WARNED' | 'SKIPPED'
 
 interface LockedCandidateRow extends RowDataPacket {
   id: number
@@ -21,6 +22,7 @@ interface LockedCandidateRow extends RowDataPacket {
   expected_at: Date
   created_at: Date
   no_show_warning_minutes: number
+  no_show_warned_at: Date | null
 }
 
 function mysqlDateTime(value: Date): string {
@@ -89,6 +91,7 @@ export async function listNoShowCandidates(
      FROM reservations AS r
      JOIN venues AS v ON v.organization_id = r.organization_id AND v.id = r.venue_id
      WHERE r.organization_id = ? AND r.venue_id = ? AND r.status = 'BOOKED'
+       AND r.no_show_warned_at IS NULL
        AND r.created_at >= ?
        AND TIMESTAMPADD(MINUTE, v.no_show_warning_minutes, r.expected_at) <= ?
      ORDER BY r.expected_at, r.id`,
@@ -116,7 +119,7 @@ export async function processNoShowCandidate(
     await assertSystemPrincipal(connection, systemUserId)
     const [reservationRows] = await connection.execute<LockedCandidateRow[]>(
       `SELECT r.id, r.organization_id, r.venue_id, r.status, r.version, r.expected_at, r.created_at,
-         v.no_show_warning_minutes
+         r.no_show_warned_at, v.no_show_warning_minutes
        FROM reservations AS r
        JOIN venues AS v ON v.organization_id = r.organization_id AND v.id = r.venue_id
        WHERE r.organization_id = ? AND r.venue_id = ? AND r.id = ? FOR UPDATE`,
@@ -129,6 +132,7 @@ export async function processNoShowCandidate(
       && Number(reservation.version) === candidate.version
       && expectedAt.getTime() === candidate.expectedAt.getTime()
       && reservation.created_at.getTime() === candidate.createdAt.getTime()
+      && reservation.no_show_warned_at === null
       && reservation.created_at.getTime() >= automationCutoff.getTime()
       && expectedAt.getTime() + Number(reservation.no_show_warning_minutes) * 60_000 <= now.getTime()
     if (!unchanged) {
@@ -136,43 +140,12 @@ export async function processNoShowCandidate(
       return 'SKIPPED'
     }
 
-    const [allocationRows] = await connection.execute<(RowDataPacket & { id: number; table_id: number })[]>(
-      `SELECT a.id, a.table_id FROM table_allocations AS a
-       JOIN table_holds AS h ON h.organization_id = a.organization_id AND h.venue_id = a.venue_id AND h.id = a.hold_id
-       WHERE h.organization_id = ? AND h.venue_id = ? AND h.reservation_id = ?
-         AND h.status = 'ACTIVE' AND a.released_at IS NULL
-       ORDER BY a.id FOR UPDATE`,
-      [organizationId, venueId, candidate.id],
-    )
-    const [holdRows] = await connection.execute<(RowDataPacket & { id: number })[]>(
-      `SELECT id FROM table_holds
-       WHERE organization_id = ? AND venue_id = ? AND reservation_id = ? AND status = 'ACTIVE'
-       ORDER BY id FOR UPDATE`,
-      [organizationId, venueId, candidate.id],
-    )
-
-    await connection.execute(
-      `UPDATE table_allocations AS a
-       JOIN table_holds AS h ON h.organization_id = a.organization_id AND h.venue_id = a.venue_id AND h.id = a.hold_id
-       SET a.released_at = ?, a.released_by_user_id = ?, a.release_reason = 'NO_SHOW'
-       WHERE h.organization_id = ? AND h.venue_id = ? AND h.reservation_id = ?
-         AND h.status = 'ACTIVE' AND a.released_at IS NULL`,
-      [mysqlDateTime(now), systemUserId, organizationId, venueId, candidate.id],
-    )
-    await connection.execute(
-      `UPDATE table_holds SET status = 'RELEASED', released_at = ?, released_by_user_id = ?,
-         release_reason_code = 'CUSTOMER_NO_SHOW'
-       WHERE organization_id = ? AND venue_id = ? AND reservation_id = ? AND status = 'ACTIVE'`,
-      [mysqlDateTime(now), systemUserId, organizationId, venueId, candidate.id],
-    )
     const [updateResult] = await connection.execute<ResultSetHeader>(
-      `UPDATE reservations SET status = 'NO_SHOW', closed_at = ?, closed_by_user_id = ?,
-         close_reason_code = 'NO_SHOW_CONFIRMED', close_reason_note = 'Automatic no-show timeout',
-         no_show_warned_at = ?, updated_by_user_id = ?, updated_at = ?, version = version + 1
+      `UPDATE reservations SET no_show_warned_at = ?, updated_at = ?
        WHERE organization_id = ? AND venue_id = ? AND id = ? AND status = 'BOOKED'
-         AND version = ? AND expected_at = ?`,
-      [mysqlDateTime(now), systemUserId, mysqlDateTime(now), systemUserId, mysqlDateTime(now),
-        organizationId, venueId, candidate.id, candidate.version, mysqlDateTime(candidate.expectedAt)],
+         AND version = ? AND expected_at = ? AND no_show_warned_at IS NULL`,
+      [mysqlDateTime(now), mysqlDateTime(now), organizationId, venueId, candidate.id,
+        candidate.version, mysqlDateTime(candidate.expectedAt)],
     )
     if (updateResult.affectedRows !== 1) {
       await connection.rollback()
@@ -185,20 +158,18 @@ export async function processNoShowCandidate(
         (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
          auth_session_id, action, entity_type, entity_id, entity_version_before,
          entity_version_after, changes, reason_code, is_undoable)
-       VALUES (?, ?, ?, 'SYSTEM', NULL, NULL, NULL, 'RESERVATION_AUTO_NO_SHOW',
-         'reservation', ?, ?, ?, ?, 'AUTO_TIMEOUT', 0)`,
-      [organizationId, venueId, changeSequence, candidate.id, candidate.version, candidate.version + 1,
+       VALUES (?, ?, ?, 'SYSTEM', NULL, NULL, NULL, 'RESERVATION_NO_SHOW_WARNING',
+         'reservation', ?, ?, ?, ?, 'MANUAL_REVIEW_REQUIRED', 0)`,
+      [organizationId, venueId, changeSequence, candidate.id, candidate.version, candidate.version,
         JSON.stringify([{
-          type: 'automatic_no_show',
+          type: 'manual_no_show_warning',
           expectedAt: candidate.expectedAt.toISOString(),
-          closedAt: now.toISOString(),
-          holdIds: holdRows.map((row) => Number(row.id)),
-          allocations: allocationRows.map((row) => ({ id: Number(row.id), tableId: Number(row.table_id) })),
-          releaseUserId: systemUserId,
+          warnedAt: now.toISOString(),
+          policy: 'MANUAL',
         }])],
     )
     await connection.commit()
-    return 'CLOSED'
+    return 'WARNED'
   } catch (error) {
     await connection.rollback()
     throw error
@@ -213,8 +184,8 @@ export async function runNoShowSweep(options: {
   systemUserId: number
   now?: Date
   automationCutoff: Date
-}): Promise<{ closed: number; skipped: number }> {
-  const now = options.now ?? new Date()
+}): Promise<{ warned: number; skipped: number }> {
+  const now = options.now ?? applicationNow()
   await validateNoShowSystemPrincipal(options.systemUserId)
   const candidates = await listNoShowCandidates(
     options.organizationId,
@@ -222,7 +193,7 @@ export async function runNoShowSweep(options: {
     now,
     options.automationCutoff,
   )
-  let closed = 0
+  let warned = 0
   let skipped = 0
   for (const candidate of candidates) {
     const result = await processNoShowCandidate(
@@ -233,10 +204,10 @@ export async function runNoShowSweep(options: {
       now,
       options.automationCutoff,
     )
-    if (result === 'CLOSED') closed += 1
+    if (result === 'WARNED') warned += 1
     else skipped += 1
   }
-  return { closed, skipped }
+  return { warned, skipped }
 }
 
 export function startNoShowWorker(): () => void {

@@ -106,6 +106,7 @@ export interface TableCatalogView {
     timezone: string
     businessDayStartLocal: string
     businessDayCutoffLocal: string
+    upcomingWarningMinutes: number
     lateWarningMinutes: number
     noShowWarningMinutes: number
     waitlistHoldDefaultMinutes: number
@@ -162,6 +163,7 @@ interface VenueCatalogRow extends RowDataPacket {
   timezone: string
   business_day_start_local: string
   business_day_cutoff_local: string
+  upcoming_warning_minutes: number
   late_warning_minutes: number
   no_show_warning_minutes: number
   waitlist_hold_default_minutes: number
@@ -218,7 +220,7 @@ export async function getTableCatalog(actor: AuthenticatedActor): Promise<TableC
     `SELECT id, version, name, timezone,
        TIME_FORMAT(business_day_start_local, '%H:%i:%s') AS business_day_start_local,
        TIME_FORMAT(business_day_cutoff_local, '%H:%i:%s') AS business_day_cutoff_local,
-       late_warning_minutes, no_show_warning_minutes, waitlist_hold_default_minutes,
+       upcoming_warning_minutes, late_warning_minutes, no_show_warning_minutes, waitlist_hold_default_minutes,
        waitlist_claim_lease_seconds, reservation_hold_policy, reservation_window_minutes,
        group_symbol_count, change_seq
      FROM venues
@@ -268,6 +270,7 @@ export async function getTableCatalog(actor: AuthenticatedActor): Promise<TableC
       timezone: venue.timezone,
       businessDayStartLocal: venue.business_day_start_local,
       businessDayCutoffLocal: venue.business_day_cutoff_local,
+      upcomingWarningMinutes: venue.upcoming_warning_minutes,
       lateWarningMinutes: venue.late_warning_minutes,
       noShowWarningMinutes: venue.no_show_warning_minutes,
       waitlistHoldDefaultMinutes: venue.waitlist_hold_default_minutes,

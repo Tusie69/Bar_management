@@ -995,7 +995,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     expect(allocations).toHaveLength(0)
   })
 
-  it('transitions to automatic NO_SHOW exactly at 30 minutes and releases every HOLD allocation once', async () => {
+  it('warns at 30 minutes without closing the booking or releasing grouped HOLD allocations', async () => {
     const created = await createBooking(actor, bookingInput())
     const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId, tableTwoId])
     expect(await listNoShowCandidates(organizationId, venueId, new Date('2030-10-24T14:29:59.999Z'), automationCutoff)).toHaveLength(0)
@@ -1015,25 +1015,27 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       now: new Date('2030-10-24T14:31:00.000Z'),
       automationCutoff,
     })
-    expect(first).toEqual({ closed: 1, skipped: 0 })
-    expect(second).toEqual({ closed: 0, skipped: 0 })
+    expect(first).toEqual({ warned: 1, skipped: 0 })
+    expect(second).toEqual({ warned: 0, skipped: 0 })
 
     const reservation = await row(
       'SELECT status, version, closed_by_user_id, no_show_warned_at FROM reservations WHERE id = ?',
       [assigned.id],
     )
-    expect(reservation.status).toBe('NO_SHOW')
-    expect(Number(reservation.version)).toBe(assigned.version + 1)
-    expect(Number(reservation.closed_by_user_id)).toBe(systemUserId)
+    expect(reservation.status).toBe('BOOKED')
+    expect(Number(reservation.version)).toBe(assigned.version)
+    expect(reservation.closed_by_user_id).toBeNull()
     expect(reservation.no_show_warned_at).not.toBeNull()
-    const [allocations] = await databasePool.execute<(RowDataPacket & { released_at: Date | null; released_by_user_id: number })[]>(
-      'SELECT released_at, released_by_user_id FROM table_allocations WHERE hold_id IS NOT NULL ORDER BY id',
+    const [allocations] = await databasePool.execute<(RowDataPacket & { released_at: Date | null })[]>(
+      'SELECT released_at FROM table_allocations WHERE hold_id IS NOT NULL ORDER BY id',
     )
     expect(allocations).toHaveLength(2)
-    expect(allocations.every((allocation) => allocation.released_at !== null && Number(allocation.released_by_user_id) === systemUserId)).toBe(true)
+    expect(allocations.every((allocation) => allocation.released_at === null)).toBe(true)
+    const hold = await row('SELECT status, released_at FROM table_holds WHERE reservation_id = ?', [assigned.id])
+    expect(hold).toMatchObject({ status: 'ACTIVE', released_at: null })
     const audit = await row(
       `SELECT actor_kind, actor_user_id, change_seq FROM operation_log
-       WHERE action = 'RESERVATION_AUTO_NO_SHOW' AND entity_id = ?`,
+       WHERE action = 'RESERVATION_NO_SHOW_WARNING' AND entity_id = ?`,
       [assigned.id],
     )
     expect(audit.actor_kind).toBe('SYSTEM')
@@ -1064,11 +1066,13 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       now,
       automationCutoff: cutoff,
     })
-    expect(result).toEqual({ closed: 1, skipped: 0 })
+    expect(result).toEqual({ warned: 1, skipped: 0 })
     const protectedRow = await row('SELECT status, version FROM reservations WHERE id = ?', [protectedBooking.id])
     const eligibleRow = await row('SELECT status, version FROM reservations WHERE id = ?', [eligibleBooking.id])
     expect(protectedRow).toMatchObject({ status: 'BOOKED', version: protectedBooking.version })
-    expect(eligibleRow).toMatchObject({ status: 'NO_SHOW', version: eligibleBooking.version + 1 })
+    expect(eligibleRow).toMatchObject({ status: 'BOOKED', version: eligibleBooking.version })
+    expect((await row('SELECT no_show_warned_at FROM reservations WHERE id = ?', [eligibleBooking.id])).no_show_warned_at)
+      .not.toBeNull()
   })
 
   it('skips a stale candidate when expectedAt was edited after the scan', async () => {
@@ -1104,7 +1108,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       now: new Date('2030-10-24T15:00:00Z'),
       automationCutoff,
     })
-    expect(result).toEqual({ closed: 0, skipped: 0 })
+    expect(result).toEqual({ warned: 0, skipped: 0 })
     const reservation = await row('SELECT status FROM reservations WHERE id = ?', [assigned.id])
     expect(reservation.status).toBe(terminalStatus)
   })
@@ -1118,12 +1122,11 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     ])
     expect(results.some((result) => result.status === 'fulfilled')).toBe(true)
     const reservation = await row('SELECT status FROM reservations WHERE id = ?', [assigned.id])
-    expect(['NO_SHOW', 'CHECKED_IN']).toContain(reservation.status)
+    expect(reservation.status).toBe('CHECKED_IN')
     const [activeAllocations] = await databasePool.execute<(RowDataPacket & { kind: string })[]>(
       'SELECT kind FROM table_allocations WHERE released_at IS NULL',
     )
-    if (reservation.status === 'NO_SHOW') expect(activeAllocations).toHaveLength(0)
-    else expect(activeAllocations.map((allocation) => allocation.kind)).toEqual(['USAGE'])
+    expect(activeAllocations.map((allocation) => allocation.kind)).toEqual(['USAGE'])
   })
 
   it('is idempotent and race-safe against manual no-show', async () => {
@@ -1136,7 +1139,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     const reservation = await row('SELECT status FROM reservations WHERE id = ?', [assigned.id])
     expect(reservation.status).toBe('NO_SHOW')
     const [closeAudits] = await databasePool.execute<RowDataPacket[]>(
-      `SELECT id FROM operation_log WHERE entity_id = ? AND action IN ('RESERVATION_AUTO_NO_SHOW', 'RESERVATION_NO_SHOW')`,
+      `SELECT id FROM operation_log WHERE entity_id = ? AND action = 'RESERVATION_NO_SHOW'`,
       [assigned.id],
     )
     expect(closeAudits).toHaveLength(1)

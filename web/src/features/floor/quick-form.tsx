@@ -70,9 +70,13 @@ export function draftPickable(
   availability: AvailabilityResult | undefined,
   currentTableIds?: number[],
 ): boolean {
-  if (kind === "walkin") return model.freeIds.has(id)
-  const st = availability?.tables.find((t) => t.tableId === id)?.status
-  if (!st || !PICKABLE.has(st)) return false
+  if (kind === "walkin") {
+    const table = model.byId.get(id)
+    if (!table || table.isSpare || table.status !== "ACTIVE" || model.states.get(id)?.state !== "free") return false
+  } else {
+    const st = availability?.tables.find((t) => t.tableId === id)?.status
+    if (!st || !PICKABLE.has(st)) return false
+  }
   if (currentTableIds && currentTableIds.length > 0 && !currentTableIds.includes(id)) {
     const first = model.byId.get(currentTableIds[0])
     const candidate = model.byId.get(id)

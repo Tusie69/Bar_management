@@ -8,12 +8,21 @@ export interface BookingTiming {
   autoNoShowDue: boolean
 }
 
+export interface BookingTimingThresholds {
+  upcomingMinutes: number
+  lateAfterMinutes: number
+  noShowAfterMinutes: number
+}
+
 export function deriveBookingTiming(
   status: BookingStatus,
   expectedAt: Date | string,
   now: Date,
-  lateMinutes = 15,
-  noShowMinutes = 30,
+  thresholds: BookingTimingThresholds = {
+    upcomingMinutes: 10,
+    lateAfterMinutes: 15,
+    noShowAfterMinutes: 30,
+  },
 ): BookingTiming {
   if (status !== 'BOOKED') {
     return {
@@ -25,15 +34,22 @@ export function deriveBookingTiming(
 
   const expected = expectedAt instanceof Date ? expectedAt : new Date(expectedAt)
   const elapsedMilliseconds = now.getTime() - expected.getTime()
-  if (elapsedMilliseconds < 0) {
+  const minutesLate = Math.max(0, Math.floor(elapsedMilliseconds / 60_000))
+  if (elapsedMilliseconds < -thresholds.upcomingMinutes * 60_000) {
+    // Keep the legacy enum stable: BOOKED is represented as UPCOMING until Phase 2
+    // introduces the atomic floor projection with its dedicated displayState.
     return { displayStatus: 'UPCOMING', minutesLate: 0, autoNoShowDue: false }
   }
-
-  const minutesLate = Math.floor(elapsedMilliseconds / 60_000)
+  if (elapsedMilliseconds >= thresholds.noShowAfterMinutes * 60_000) {
+    return { displayStatus: 'NO_SHOW', minutesLate, autoNoShowDue: false }
+  }
+  if (elapsedMilliseconds > thresholds.lateAfterMinutes * 60_000) {
+    return { displayStatus: 'LATE', minutesLate, autoNoShowDue: false }
+  }
   return {
-    displayStatus: minutesLate < lateMinutes ? 'WAITING' : 'LATE',
+    displayStatus: 'UPCOMING',
     minutesLate,
-    // This flag only says the worker is due. It never presents a BOOKED row as NO_SHOW.
-    autoNoShowDue: minutesLate >= noShowMinutes,
+    // Manual policy: crossing the display threshold never authorizes automatic closure.
+    autoNoShowDue: false,
   }
 }

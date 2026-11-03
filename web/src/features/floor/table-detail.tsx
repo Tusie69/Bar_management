@@ -49,6 +49,7 @@ import {
 import { ConfirmAction } from "@/components/dialogs"
 import { StateChip } from "@/components/status"
 import { STATE_META } from "@/components/status-meta"
+import { groupCode } from "./floor-visual-rules"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
@@ -69,7 +70,7 @@ import type { ClaimView, WaitlistEntryView } from "@/domain/models"
 import { symbolByNo } from "@/domain/symbols"
 import { useAction } from "@/hooks/use-action"
 import { useNow, useTableHistory, useWaitlist } from "@/hooks/use-data"
-import { fmtCountdown, fmtElapsed, fmtTime } from "@/lib/time"
+import { businessDateOf, fmtCountdown, fmtElapsed, fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useCan } from "@/state/session"
@@ -348,6 +349,8 @@ function Note({
 
 function ClaimCard({ claim, children, model }: { claim: ClaimView; children?: React.ReactNode; model: FloorModel }) {
   const sym = symbolByNo(claim.symbolNo)
+  const flags = claim.flags ?? []
+  const displayCode = claim.groupDisplayCode ?? groupCode(claim.symbolNo)
   return (
     <div className="grid gap-4 rounded-2xl border bg-surface-1 p-4">
       <div className="flex items-center gap-3">
@@ -364,6 +367,17 @@ function ClaimCard({ claim, children, model }: { claim: ClaimView; children?: Re
           {claim.partySize}
         </span>
       </div>
+      {flags.length || displayCode ? (
+        <div className="flex flex-wrap gap-1.5 text-xs">
+          {flags.includes("RETURNING") ? <span className="rounded-full border px-2 py-1">🔥 Khách quen</span> : null}
+          {flags.includes("NEW") ? <span className="rounded-full border px-2 py-1">🆕 Khách mới</span> : null}
+          {displayCode ? (
+            <span className="rounded-full border px-2 py-1 font-semibold">
+              Nhóm {displayCode} · {claim.tableIds.map((id) => model.label(id)).join(" + ")}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       <dl className="grid grid-cols-2 gap-x-3 gap-y-2.5 border-t pt-3.5">
         <Fact icon={Armchair} label="Bàn">
           <span title={sym ? `Ký hiệu ghép: ${sym.name}` : undefined}>
@@ -408,9 +422,7 @@ function usePickActions(_tableId: number, claim: ClaimView, model: FloorModel) {
             )
             return false
           }
-          const r = await run((o) =>
-            api.moveClaim({ claim: claimRef, tableIds: toIds, overrideReason: o }),
-          )
+          const r = await run((o) => api.moveClaim({ claim: claimRef, tableIds: toIds, overrideReason: o }))
           if (r && toIds.length) ui.selectTable(toIds[0])
           return !!r
         },
@@ -553,7 +565,7 @@ function ReservationSection({
   model: FloorModel
   now: Date
 }) {
-  const { run } = useAction()
+  const { run, pending } = useAction()
   const pick = usePickActions(tableId, claim, model)
   const [checkInOpen, setCheckInOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
@@ -561,6 +573,10 @@ function ReservationSection({
   const ui = useUi()
   const venue = model.catalog?.venue
   const canNoShow = claim.minutesLate >= (venue?.noShowWarningMinutes ?? 30)
+  const canConfirmLate = model.floor?.businessDate === businessDateOf(now)
+    && now.getTime() >= claim.startsAt.getTime()
+    && !canNoShow
+    && !claim.lateConfirmedAt
   const today = claim.startsAt.getTime() - now.getTime() < 12 * 3600_000
   return (
     <>
@@ -587,6 +603,12 @@ function ReservationSection({
           </Note>
         </div>
       ) : null}
+      {claim.lateConfirmedAt ? (
+        <Note icon={BadgeCheck} tone="late">
+          <span className="font-semibold" style={{ color: STATE_META.late_confirmed.ink }}>Khách đã báo sẽ tới muộn</span>
+          <span className="block text-muted-foreground">Bàn vẫn được giữ; có thể check-in khi khách đến.</span>
+        </Note>
+      ) : null}
       <div className="grid grid-cols-2 gap-2">
         <GuardedButton
           permission="visit.checkin"
@@ -600,6 +622,14 @@ function ReservationSection({
         </GuardedButton>
         <GuardedButton permission="table.assign" variant="outline" onClick={pick.move}>
           <ArrowRightLeft /> Đổi bàn
+        </GuardedButton>
+        <GuardedButton
+          permission="reservation.update"
+          variant="outline"
+          disabledReason={pending ? "Đang ghi nhận..." : canConfirmLate ? null : claim.lateConfirmedAt ? "Đã ghi nhận khách tới muộn" : "Chỉ bật sau giờ hẹn và trước ngưỡng Không đến"}
+          onClick={() => run(() => api.confirmLate(claim.reservationId!, claim.version))}
+        >
+          <BadgeCheck /> Tới muộn
         </GuardedButton>
         <GuardedButton permission="visit.combine" variant="outline" onClick={pick.combine}>
           <Combine /> Ghép bàn
@@ -664,8 +694,8 @@ function ReservationSection({
         title="Xác nhận khách không đến?"
         description={
           <>
-            Đã trễ {claim.minutesLate} phút. Booking chuyển sang Không đến và bàn được nhả. Có thể hoàn tác nếu chưa ai
-            dùng bàn.
+            Đây là thao tác xử lý thủ công. Booking chuyển sang Không đến và bàn được nhả; hệ thống không tự nhả bàn chỉ
+            vì đã quá ngưỡng cảnh báo. Có thể hoàn tác nếu chưa ai dùng bàn.
           </>
         }
         confirmLabel="Xác nhận không đến"

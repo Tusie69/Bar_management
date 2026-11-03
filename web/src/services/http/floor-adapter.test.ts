@@ -3,9 +3,13 @@ import { ApiError } from "../contracts"
 import { deriveAvailability } from "./canonical-adapter"
 import {
   mapCatalog,
+  mapFloorProjection,
   mapFloorState,
+  projectionState,
   type BackendBooking,
   type BackendCatalog,
+  type BackendFloorProjection,
+  type BackendFloorTableProjection,
   type BackendTableState,
 } from "./floor-adapter"
 
@@ -17,6 +21,7 @@ const catalogPayload: BackendCatalog = {
     timezone: "Asia/Ho_Chi_Minh",
     businessDayStartLocal: "17:00:00",
     businessDayCutoffLocal: "05:00:00",
+    upcomingWarningMinutes: 10,
     lateWarningMinutes: 15,
     noShowWarningMinutes: 30,
     waitlistHoldDefaultMinutes: 30,
@@ -97,6 +102,135 @@ function backendTable(
 }
 
 describe("Phase 2A floor adapter", () => {
+  it("maps every server display state and keeps spare independent from occupancy", () => {
+    const projected = (displayState: BackendFloorTableProjection["displayState"], isSpare = false) =>
+      projectionState({ displayState, isSpare, claim: null } as BackendFloorTableProjection)
+
+    expect(projected("EMPTY")).toBe("free")
+    expect(projected("EMPTY", true)).toBe("spare")
+    expect(projected("BOOKED", true)).toBe("reserved")
+    expect(projected("UPCOMING")).toBe("upcoming")
+    expect(projected("LATE")).toBe("late")
+    expect(projected("LATE_CONFIRMED")).toBe("late_confirmed")
+    expect(projected("NO_SHOW")).toBe("noshow")
+    expect(projected("IN_USE")).toBe("seated")
+    expect(projected("OUT_OF_SERVICE")).toBe("oos")
+  })
+
+  it("maps the atomic NO_SHOW group projection without browser timing or private fields", () => {
+    const catalog = mapCatalog(catalogPayload, sources)
+    const claim = {
+      kind: "RESERVATION" as const,
+      reservationId: 11,
+      visitId: null,
+      waitlistEntryId: null,
+      holdId: 41,
+      guestName: "Khách đặt",
+      phoneLast3: "123",
+      partySize: 6,
+      turnNo: null,
+      flags: ["RETURNING" as const],
+      groupId: 9,
+      groupDisplayCode: "◆AA",
+      groupMemberTableIds: [1, 2],
+      startsAt: new Date("2026-10-28T12:30:00.000Z"),
+      deadlineAt: null,
+      holdOverdue: false,
+      paid: false,
+      origin: null,
+      sourceCode: "HOTLINE",
+      version: 3,
+      phoneNumber: "+84901234123",
+      note: "must not cross the adapter",
+    }
+    const projection: BackendFloorProjection = {
+      businessDate: "2026-10-28",
+      serverNow: "2026-10-28T13:00:00.000Z",
+      changeSeq: "12",
+      groups: [{ id: 9, symbolNo: 27, displayCode: "◆AA", tableIds: [1, 2] }],
+      tables: [1, 2].map((tableId) => ({
+        tableId,
+        tableCode: tableId === 1 ? "A1" : "A10",
+        catalogStatus: "ACTIVE",
+        isSpare: false,
+        displayState: "NO_SHOW",
+        arrivalPhase: "NO_SHOW",
+        arrivalTime: claim.startsAt,
+        minutesLate: 30,
+        claim,
+        groupId: 9,
+        groupDisplayCode: "◆AA",
+        groupMemberTableIds: [1, 2],
+        staleFromPreviousDay: false,
+      })),
+    }
+    const floor = mapFloorProjection(projection, catalog)
+    expect(floor.at).toEqual(new Date(projection.serverNow))
+    expect(floor.changeSeq).toBe(12)
+    expect(floor.tables.map((table) => table.state)).toEqual(["noshow", "noshow"])
+    expect(floor.tables[0]?.claim).toMatchObject({
+      reservationId: 11,
+      phoneLast3: "123",
+      tableIds: [1, 2],
+      symbolNo: 27,
+      groupDisplayCode: "◆AA",
+      flags: ["RETURNING"],
+      note: null,
+    })
+    expect(floor.tables[0]?.claim).not.toHaveProperty("phoneNumber")
+  })
+
+  it("keeps an overdue waitlist hold occupied without mapping it to NO_SHOW", () => {
+    const catalog = mapCatalog(catalogPayload, sources)
+    const projection: BackendFloorProjection = {
+      businessDate: "2026-10-28",
+      serverNow: "2026-10-28T13:00:00.000Z",
+      changeSeq: "13",
+      groups: [],
+      tables: [
+        {
+          tableId: 1,
+          tableCode: "A1",
+          catalogStatus: "ACTIVE",
+          isSpare: false,
+          displayState: "BOOKED",
+          arrivalPhase: null,
+          arrivalTime: null,
+          minutesLate: 0,
+          claim: {
+            kind: "WAITLIST_HOLD",
+            reservationId: null,
+            visitId: null,
+            waitlistEntryId: 22,
+            holdId: 42,
+            guestName: "Khách chờ",
+            phoneLast3: null,
+            partySize: 2,
+            turnNo: null,
+            flags: [],
+            groupId: null,
+            groupDisplayCode: null,
+            groupMemberTableIds: [],
+            startsAt: new Date("2026-10-28T12:30:00.000Z"),
+            deadlineAt: new Date("2026-10-28T12:45:00.000Z"),
+            holdOverdue: true,
+            paid: false,
+            origin: null,
+            sourceCode: null,
+            version: 1,
+          },
+          groupId: null,
+          groupDisplayCode: null,
+          groupMemberTableIds: [],
+          staleFromPreviousDay: false,
+        },
+      ],
+    }
+    expect(mapFloorProjection(projection, catalog).tables[0]).toMatchObject({
+      state: "hold_overdue",
+      claim: { kind: "waitlist_hold", waitlistEntryId: 22 },
+    })
+  })
   it("maps persisted catalog geometry, source codes, spare and out-of-service configuration", () => {
     const catalog = mapCatalog(catalogPayload, sources)
 

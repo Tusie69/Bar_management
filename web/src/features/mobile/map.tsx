@@ -3,11 +3,12 @@ import { useMemo } from "react"
 import type { TableLiveState } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAvailability } from "@/hooks/use-data"
-import { fmtBusinessDate, fmtTime12, MS } from "@/lib/time"
+import { fmtBusinessDate, fmtTime12 } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
 import { FloorCanvas } from "../floor/floor-canvas"
+import { groupCode } from "../floor/floor-visual-rules"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
 import { codesOf, duration, type Tone, toneStyle } from "./model"
@@ -70,16 +71,10 @@ export function MapScreen({
     return ids
   }, [pick, isAssignPick, pickAvail.data, m.model.freeIds])
 
-  const claimIds = selected ? (m.model.states.get(selected)?.claim?.tableIds ?? [selected]) : []
-
   return (
     <>
       <PlainHeader
-        title={
-          pick?.targetDate
-            ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}`
-            : "Sơ đồ bàn"
-        }
+        title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"}
       />
       <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
         {m.model.catalog ? (
@@ -91,7 +86,7 @@ export function MapScreen({
             states={m.model.states}
             availability={isAssignPick ? pickAvailMap : undefined}
             groups={isAssignPick ? [] : m.model.floor?.groups}
-            selectedIds={pick ? pickSel : claimIds}
+            selectedIds={pick ? pickSel : selected ? [selected] : []}
             pickable={pickable}
             zoneFocus={zone}
             now={m.now}
@@ -185,7 +180,9 @@ const STATE_TEXT = (st: TableLiveState, late: number, noshow: number): [string, 
   ({
     free: ["Trống", null],
     reserved: ["Đã đặt", "reserved"],
+    upcoming: ["Sắp đến", "reserved"],
     late: [`Trễ ${late} phút`, "late"],
+    late_confirmed: [`Đã báo muộn · ${late} phút`, "late"],
     noshow: [`Trễ ${noshow} phút`, "noshow"],
     seated: ["Có khách", "seated"],
     hold: ["Đang giữ", "reserved"],
@@ -221,12 +218,14 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
   let info = ""
   let actions: Action[] = []
   if (c?.kind === "reservation") {
-    const left = Math.floor((c.startsAt.getTime() - m.now.getTime()) / MS.MIN)
     who = `${c.displayName}, ${c.partySize} khách`
-    when = `Booking ${fmtTime12(c.startsAt)}${left < 0 ? `, trễ ${-left} phút` : `, còn ${left} phút`}`
+    when = `Booking ${fmtTime12(c.startsAt)}${st === "late" || st === "late_confirmed" || st === "noshow" ? `, trễ ${c.minutesLate} phút` : st === "upcoming" ? ", sắp đến" : ", đã đặt"}`
     actions = r
       ? [
           { label: "Khách đã đến", primary: true, go: () => void a.checkIn(r) },
+          ...(!r.lateConfirmedAt && r.businessDate === m.today && m.now.getTime() >= r.expectedAt.getTime() && r.minutesLate < m.th.noshow
+            ? [{ label: "Tới muộn", go: () => a.confirmLate(r) }]
+            : []),
           { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
           { label: "Đổi bàn", go: () => a.assign(r) },
           { label: "Đổi trạng thái", go: () => m.openStatus(r) },
@@ -299,8 +298,21 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
         <div className="flex flex-col gap-0.5 rounded-[14px] bg-surface-2 px-3.5 py-3">
           <span className="text-base font-medium text-tx-strong">{who}</span>
           <span className="text-[13px] text-tx-2">{when}</span>
+          {c?.phoneLast3 ? <span className="text-[13px] text-[var(--text-muted)]">SĐT: ••• {c.phoneLast3}</span> : null}
+          {c?.flags?.length ? (
+            <span className="text-[13px] text-[var(--text-muted)]">
+              {c.flags.includes("RETURNING") ? "🔥 Khách quen" : ""}
+              {c.flags.includes("RETURNING") && c.flags.includes("NEW") ? " · " : ""}
+              {c.flags.includes("NEW") ? "🆕 Khách mới" : ""}
+            </span>
+          ) : null}
           {c && c.tableIds.length > 1 ? (
-            <span className="text-[13px] text-[var(--text-muted)]">Nhóm: {codesOf(c.tableIds, m.model)}</span>
+            <span className="text-[13px] text-[var(--text-muted)]">
+              Nhóm {c.groupDisplayCode ?? groupCode(c.symbolNo) ?? "ghép"}: {codesOf(c.tableIds, m.model)}
+            </span>
+          ) : null}
+          {st === "noshow" ? (
+            <span className="text-[13px] font-medium text-st-noshow-ink">Chờ lễ tân xử lý; bàn vẫn được giữ.</span>
           ) : null}
         </div>
       ) : null}

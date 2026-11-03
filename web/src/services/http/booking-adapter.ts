@@ -29,6 +29,7 @@ export interface BackendBookingPayload {
   displayStatus: string
   minutesLate: number
   autoNoShowDue: boolean
+  lateConfirmedAt?: Date | null
 }
 
 export interface HttpBooking {
@@ -48,6 +49,7 @@ export interface HttpBooking {
   displayStatus: BookingDisplayStatus
   minutesLate: number
   autoNoShowDue: boolean
+  lateConfirmedAt?: Date | null
 }
 
 export interface BookingWriteFields {

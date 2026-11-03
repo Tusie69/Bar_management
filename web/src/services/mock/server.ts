@@ -616,6 +616,8 @@ export class MockGamApi implements GamApi, DemoControls {
             closeReasonCode: null,
             closeReasonNote: null,
             lateWarnedAt: null,
+            lateConfirmedAt: null,
+            lateConfirmedByUserId: null,
             noShowWarnedAt: null,
             createdByUserId: remote.id,
             createdAt: this.now,
@@ -827,6 +829,8 @@ export class MockGamApi implements GamApi, DemoControls {
           closeReasonCode: null,
           closeReasonNote: null,
           lateWarnedAt: null,
+          lateConfirmedAt: null,
+          lateConfirmedByUserId: null,
           noShowWarnedAt: null,
           createdByUserId: this.session.id,
           createdAt: this.now,
@@ -1056,6 +1060,35 @@ export class MockGamApi implements GamApi, DemoControls {
           entityId: r.id,
           summary: `Xác nhận không đến · booking ${fmtTime(r.expectedAt)}${tables.length ? ` · nhả ${this.codes(tables)}` : ""}`,
         }
+      },
+    )
+  }
+
+  async confirmLate(id: number, version: number) {
+    await this.latency("m")
+    this.require("reservation.update")
+    const r = this.res(id)
+    if (r.status !== "BOOKED" || r.visitId) this.fail("Booking không còn ở trạng thái chờ khách.", "INVALID_STATE")
+    if (r.businessDate !== businessDateOf(this.now)) this.fail("Booking không thuộc ca hiện tại.", "INVALID_STATE")
+    if (!activeReservationHold(this.db, r.id)) this.fail("Booking không còn giữ bàn hợp lệ.", "INVALID_STATE")
+    if (r.lateConfirmedAt) {
+      if (version !== r.version - 1) this.checkVersion("reservations", r, version, "Booking")
+      return { operationId: null, changeSeq: null, undoable: false, summary: "Khách đã được ghi nhận tới muộn." }
+    }
+    this.checkVersion("reservations", r, version, "Booking")
+    const elapsed = this.now.getTime() - r.expectedAt.getTime()
+    if (elapsed < 0) this.fail("Chỉ xác nhận tới muộn sau giờ hẹn.", "INVALID_STATE")
+    if (elapsed >= this.venue.noShowWarningMinutes * 60_000)
+      this.fail("Cách xử lý sau ngưỡng không đến đang chờ phê duyệt.", "INVALID_STATE")
+    return this.commit(
+      { action: "RESERVATION_LATE_CONFIRMED", entityType: "reservation", undoable: false, reasonCode: "CUSTOMER_CONFIRMED_LATE" },
+      (tx) => {
+        const row = tx.edit("reservations", r.id)
+        row.lateConfirmedAt = this.now
+        row.lateConfirmedByUserId = this.session.id
+        row.updatedByUserId = this.session.id
+        row.updatedAt = this.now
+        return { entityId: r.id, summary: `Đã ghi nhận ${r.contactName ?? "khách"} sẽ tới muộn` }
       },
     )
   }
@@ -1768,6 +1801,8 @@ export class MockGamApi implements GamApi, DemoControls {
             closeReasonCode: null,
             closeReasonNote: null,
             lateWarnedAt: null,
+            lateConfirmedAt: null,
+            lateConfirmedByUserId: null,
             noShowWarnedAt: null,
             createdByUserId: this.session.id,
             createdAt: this.now,
@@ -2020,6 +2055,8 @@ export class MockGamApi implements GamApi, DemoControls {
     const v = this.venue
     this.checkVersion("venue", v, patch.version, "Cấu hình quán")
     const next = { ...v, ...Object.fromEntries(Object.entries(patch).filter(([, val]) => val !== undefined)) }
+    if (next.upcomingWarningMinutes < 1 || next.upcomingWarningMinutes > 240)
+      this.fail("Mốc sắp đến phải từ 1 đến 240 phút.")
     if (next.lateWarningMinutes < 1) this.fail("Mốc đến muộn phải từ 1 phút.")
     if (next.noShowWarningMinutes <= next.lateWarningMinutes) this.fail("Mốc không đến phải lớn hơn mốc đến muộn.")
     if (next.waitlistHoldDefaultMinutes < 1 || next.waitlistHoldDefaultMinutes > 240)
@@ -2038,6 +2075,7 @@ export class MockGamApi implements GamApi, DemoControls {
     if (next.groupSymbolCount < maxUsed) this.fail(`Đang dùng ký hiệu số ${maxUsed}, không giảm thấp hơn.`)
     const result = this.commit({ action: "VENUE_CONFIG_UPDATED", entityType: "venue", undoable: true }, (tx) => {
       const row = tx.edit("venue", v.id)
+      row.upcomingWarningMinutes = next.upcomingWarningMinutes
       row.lateWarningMinutes = next.lateWarningMinutes
       row.noShowWarningMinutes = next.noShowWarningMinutes
       row.waitlistHoldDefaultMinutes = next.waitlistHoldDefaultMinutes

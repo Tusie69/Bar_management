@@ -9,6 +9,7 @@ import { applicationNow } from '../../time/application-clock.js'
 import {
   assignBookingTables,
   checkInBooking,
+  confirmBookingLate,
   createAndAssignBooking,
   closeBooking,
   createBooking,
@@ -255,6 +256,16 @@ bookingRouter.post('/:id/no-show', requireAuthentication, requireCsrfProtection,
     positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản booking không hợp lệ.'),
     'NO_SHOW',
   ) })
+})
+
+bookingRouter.post('/:id/late-confirm', requireAuthentication, requireCsrfProtection, requirePermission('reservation.update'), async (request, response) => {
+  const body = objectBody(request.body)
+  response.json(await confirmBookingLate(
+    requireAuthenticatedActor(request),
+    positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.'),
+    positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản booking không hợp lệ.'),
+    applicationNow(),
+  ))
 })
 
 bookingRouter.post('/:id/check-in', requireAuthentication, requireCsrfProtection, requirePermission('visit.checkin'), async (request, response) => {

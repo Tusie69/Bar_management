@@ -19,7 +19,7 @@ import { GuestCountDialog } from "./floor-dialogs"
 import type { FloorModel } from "./use-floor-model"
 
 export type ListTab = "attn" | "upcoming" | "all"
-type Tone = Extract<TableLiveState, "reserved" | "late" | "noshow" | "seated" | "hold" | "hold_overdue">
+type Tone = Extract<TableLiveState, "reserved" | "upcoming" | "late" | "noshow" | "seated" | "hold" | "hold_overdue">
 
 export interface BookingItem {
   key: string

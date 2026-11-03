@@ -452,7 +452,7 @@ describe("MockGamApi", () => {
     expect(assigned.groupId).toBeNull()
     const floor = await api.getFloorState(clock.now(), bd)
     expect(floor.tables.find((row) => row.tableId === ids[0])).toMatchObject({
-      state: "reserved",
+      state: "upcoming",
       claim: { reservationId: assigned.reservationId },
     })
     expect(floor.tables.find((row) => row.tableId === ids[1])).toMatchObject({ state: "free", claim: null })
@@ -494,7 +494,7 @@ describe("MockGamApi", () => {
     expect(stateOf("A3")).toBe("seated")
     expect(stateOf("B3")).toBe("late")
     expect(stateOf("A6")).toBe("noshow")
-    expect(stateOf("A5")).toBe("reserved")
+    expect(stateOf("A5")).toBe("upcoming")
     expect(stateOf("A4")).toBe("hold")
     expect(stateOf("A1")).toBe("hold_overdue")
     expect(stateOf("A10")).toBe("spare")

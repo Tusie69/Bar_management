@@ -46,6 +46,7 @@ const catalog = {
     timezone: "Asia/Ho_Chi_Minh",
     businessDayStartLocal: "17:00",
     businessDayCutoffLocal: "05:00",
+    upcomingWarningMinutes: 10,
     lateWarningMinutes: 15,
     noShowWarningMinutes: 30,
     waitlistHoldDefaultMinutes: 30,
@@ -82,10 +83,12 @@ let calls: Call[]
 let api: GamApi
 let tableState: "AVAILABLE" | "RESERVED" | "IN_USE"
 let failure: { path: string; status: number; code: string } | null
+let floorSequence: number
 
 beforeEach(() => {
   calls = []
   tableState = "AVAILABLE"
+  floorSequence = 0
   failure = null
   vi.spyOn(clock, "now").mockReturnValue(at)
   vi.stubGlobal(
@@ -102,27 +105,39 @@ beforeEach(() => {
       if (path.startsWith("/tables?"))
         return json({
           businessDate: parsed.searchParams.get("date"),
+          serverNow: new Date(at.getTime() + floorSequence * 1000).toISOString(),
+          changeSeq: String(floorSequence++),
           groups: [],
           tables: [1, 2].map((id) => ({
-            id,
-            code: `A${id}`,
-            state: id === 1 ? tableState : "AVAILABLE",
-            isBackup: false,
-            activeVisit:
-              id === 1 && tableState === "IN_USE"
+            tableId: id,
+            tableCode: `A${id}`,
+            catalogStatus: "ACTIVE",
+            isSpare: false,
+            displayState: id !== 1 || tableState === "AVAILABLE" ? "EMPTY" : tableState === "IN_USE" ? "IN_USE" : "BOOKED",
+            arrivalPhase: null,
+            arrivalTime: id === 1 && tableState === "RESERVED" ? at.toISOString() : null,
+            minutesLate: 0,
+            claim: id !== 1 || tableState === "AVAILABLE"
+              ? null
+              : tableState === "IN_USE"
                 ? {
-                    id: 31,
-                    version: 5,
-                    tableCodes: ["A1"],
-                    displayName: "Visit",
-                    phoneLast3: null,
-                    guestCount: 4,
-                    startedAt: "2026-10-29T13:00:00.000Z",
-                    origin: "WALK_IN",
-                    paid: false,
-                    note: null,
+                    kind: "VISIT", reservationId: null, visitId: 31, waitlistEntryId: null, holdId: null,
+                    guestName: "Visit", phoneLast3: null, partySize: 4, turnNo: null, flags: [],
+                    groupId: null, groupDisplayCode: null, groupMemberTableIds: [],
+                    startsAt: "2026-10-29T13:00:00.000Z", deadlineAt: null, holdOverdue: false,
+                    paid: false, origin: "WALK_IN", sourceCode: null, version: 5,
                   }
-                : null,
+                : {
+                    kind: "RESERVATION", reservationId: 11, visitId: null, waitlistEntryId: null, holdId: 41,
+                    guestName: "An", phoneLast3: "123", partySize: 4, turnNo: null, flags: [],
+                    groupId: null, groupDisplayCode: null, groupMemberTableIds: [],
+                    startsAt: at.toISOString(), deadlineAt: null, holdOverdue: false,
+                    paid: false, origin: null, sourceCode: "HOTLINE", version: 3,
+                  },
+            groupId: null,
+            groupDisplayCode: null,
+            groupMemberTableIds: [],
+            staleFromPreviousDay: false,
           })),
         })
       if (path.startsWith("/bookings?") || path.startsWith("/bookings/search?"))
@@ -181,7 +196,12 @@ describe("canonical contract reads", () => {
         return json({ businessDate: "1999-01-01", bookings: [], tables: [], entries: [] })
       return original(input, init)
     })
-    await expect(resource === "waitlist" ? api.listWaitlist(date) : api.getFloorState(at, date)).rejects.toMatchObject({
+    const request = resource === "waitlist"
+      ? api.listWaitlist(date)
+      : resource === "bookings"
+        ? api.listReservations({ businessDate: date })
+        : api.getFloorState(at, date)
+    await expect(request).rejects.toMatchObject({
       status: 502,
       code: "BUSINESS_DATE_RESPONSE_MISMATCH",
     })
@@ -190,7 +210,6 @@ describe("canonical contract reads", () => {
     expect((await api.getFloorState(at, "2026-11-10")).businessDate).toBe("2026-11-10")
     expect(calls.filter((call) => /^(\/tables\?|\/bookings\?)/.test(call.path)).map((call) => call.path)).toEqual([
       "/tables?date=2026-11-10",
-      "/bookings?date=2026-11-10",
     ])
   })
   it("maps catalog, bookings/search and waitlist without inventing identities or dates", async () => {
@@ -394,6 +413,7 @@ describe("canonical contract writes", () => {
       body: { version: 3, reasonNote: "Cancelled" },
     },
     { name: "no-show", run: (api) => api.markNoShow(11, 3), path: "/bookings/11/no-show", body: { version: 3 } },
+    { name: "late confirm", run: (api) => api.confirmLate(11, 3), path: "/bookings/11/late-confirm", body: { version: 3 } },
     {
       name: "walk-in",
       run: (api) => api.seatWalkIn({ tableIds: [2], guestCount: 4, contactName: "An" }),

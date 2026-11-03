@@ -15,11 +15,19 @@ import type {
   TableView,
   ZoneView,
 } from "@/domain/models"
-import { symbolByNo } from "@/domain/symbols"
 import { FIXTURES, FLOOR_H, FLOOR_W, ZONES, zoneBounds, type ZoneCode } from "@/domain/venue-layout"
 import { fmtElapsed, fmtTime, MS } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { STATE_META } from "@/components/status-meta"
+import {
+  activeGroupForSelection,
+  connectorIsSafe,
+  glyphLevel,
+  groupCode,
+  supportedFlags,
+  tableCanActivate,
+  type ClaimViewFlags,
+} from "./floor-visual-rules"
 
 export type CanvasMode = "live" | "availability"
 
@@ -36,6 +44,8 @@ interface Props {
   zoneFocus?: ZoneCode | "ALL"
   now: Date
   onTableClick: (tableId: number) => void
+  /** Reports a tap on a dimmed table without activating it. */
+  onBlockedTableClick?: (tableId: number) => void
   onBackgroundClick?: () => void
   compact?: boolean
   className?: string
@@ -72,6 +82,7 @@ export function FloorCanvas(props: Props) {
     zoneFocus = "ALL",
     now,
     onTableClick,
+    onBlockedTableClick,
     onBackgroundClick,
     compact,
     className,
@@ -99,8 +110,8 @@ export function FloorCanvas(props: Props) {
     const ro = new ResizeObserver(([entry]) => {
       const { width, height } = entry.contentRect
       const previous = measuredSize.current
-      const changed = previous.w > 0 && previous.h > 0
-        && (Math.abs(previous.w - width) >= 1 || Math.abs(previous.h - height) >= 1)
+      const changed =
+        previous.w > 0 && previous.h > 0 && (Math.abs(previous.w - width) >= 1 || Math.abs(previous.h - height) >= 1)
       measuredSize.current = { w: width, h: height }
       if (changed) setUserView(null)
       setSize({ w: width, h: height })
@@ -248,16 +259,29 @@ export function FloorCanvas(props: Props) {
     }
   }
 
+  const selected = useMemo(() => new Set(selectedIds), [selectedIds])
+  const activeGroup = useMemo(
+    () => activeGroupForSelection(groups, selectedIds, mode === "live"),
+    [groups, mode, selectedIds],
+  )
+  const highlighted = useMemo(
+    () => new Set(activeGroup ? [...selectedIds, ...activeGroup.tableIds] : selectedIds),
+    [activeGroup, selectedIds],
+  )
+
   const handleTable = (id: number) => {
     if (isSuppressed(suppressClick)) return
-    if (pickable && !pickable.has(id)) return
+    // A remotely occupied selection must remain tappable so the operator can deselect it.
+    if (!tableCanActivate(id, pickable, selected)) {
+      onBlockedTableClick?.(id)
+      return
+    }
     onTableClick(id)
   }
 
   const zoneOf = useMemo(() => new Map(zones.map((z) => [z.code, z])), [zones])
   const focusZone = zoneFocus === "ALL" ? null : zoneFocus
   const tableById = useMemo(() => new Map(tables.map((t) => [t.id, t])), [tables])
-  const selected = useMemo(() => new Set(selectedIds), [selectedIds])
 
   return (
     <div
@@ -337,13 +361,14 @@ export function FloorCanvas(props: Props) {
             )
           })}
           <Fixtures />
-          <GroupThreads groups={groups} tableById={tableById} />
+          <GroupThreads groups={activeGroup ? [activeGroup] : []} tableById={tableById} />
           {tables.map((t) => {
             const dim =
               (focusZone && t.zoneCode !== focusZone) || (pickable && !pickable.has(t.id) && !selected.has(t.id))
             const common = {
               table: t,
               selected: selected.has(t.id),
+              groupHighlighted: highlighted.has(t.id) && !selected.has(t.id),
               dim: !!dim,
               pickHint: !!pickable && pickable.has(t.id),
               disabled: !!pickable && !pickable.has(t.id) && !selected.has(t.id),
@@ -356,6 +381,8 @@ export function FloorCanvas(props: Props) {
           })}
         </g>
       </svg>
+
+      {mode === "live" ? <FloorLegend /> : null}
 
       {!compact ? (
         <div
@@ -500,12 +527,13 @@ function GroupThreads({ groups, tableById }: { groups: FloorGroup[]; tableById: 
         const pts = g.tableIds.map((id) => tableById.get(id)).filter(Boolean) as TableView[]
         if (pts.length < 2) return null
         const ordered = [...pts].sort((a, b) => a.y - b.y || a.x - b.x)
+        if (!connectorIsSafe(ordered, [...tableById.values()])) return null
         const d = ordered.map((p, i) => `${i === 0 ? "M" : "L"}${p.x} ${p.y}`).join(" ")
         return (
           <path
             key={g.id}
             data-group-id={g.id}
-            data-group-symbol={g.symbolNo}
+            data-group-code={g.displayCode ?? groupCode(g.symbolNo)}
             d={d}
             fill="none"
             stroke="var(--foreground)"
@@ -525,6 +553,7 @@ function GroupThreads({ groups, tableById }: { groups: FloorGroup[]; tableById: 
 interface GlyphBase {
   table: TableView
   selected: boolean
+  groupHighlighted: boolean
   dim: boolean
   pickHint: boolean
   disabled: boolean
@@ -579,13 +608,67 @@ function Chairs({ t, color }: { t: TableView; color: string }) {
   )
 }
 
-function SymbolBadge({ no, x, y }: { no: number | null; x: number; y: number }) {
-  const sym = symbolByNo(no)
-  if (!sym) return null
+function GroupBadge({
+  code,
+  x,
+  y,
+  compact = false,
+}: {
+  code: string | null | undefined
+  x: number
+  y: number
+  compact?: boolean
+}) {
+  if (!code) return null
+  const width = Math.max(compact ? 17 : 21, code.length * (compact ? 4.8 : 5.5) + 7)
   return (
-    <g transform={`translate(${x} ${y})`} aria-hidden>
-      <circle r={8} fill="var(--background)" stroke="var(--foreground)" strokeWidth={0.9} />
-      <path d={sym.path} transform="translate(-5.2 -5.2) scale(0.65)" fill="var(--foreground)" />
+    <g transform={`translate(${x} ${y})`} aria-hidden pointerEvents="none">
+      <rect
+        x={-width / 2}
+        y={-5.5}
+        width={width}
+        height={11}
+        rx={5.5}
+        fill="var(--background)"
+        stroke="var(--foreground)"
+        strokeWidth={0.9}
+      />
+      <text y={2.5} textAnchor="middle" fontSize={compact ? 6.5 : 7.2} fontWeight={800} fill="var(--foreground)">
+        {code}
+      </text>
+    </g>
+  )
+}
+
+function CustomerBadges({
+  flags,
+  x,
+  y,
+  expanded = false,
+}: {
+  flags: ClaimViewFlags
+  x: number
+  y: number
+  expanded?: boolean
+}) {
+  const visible = supportedFlags(flags)
+  if (!visible.length) return null
+  const shown = expanded ? visible.slice(0, 2) : visible.slice(0, 1)
+  return (
+    <g transform={`translate(${x} ${y})`} aria-hidden pointerEvents="none">
+      {shown.map((flag, index) => (
+        <g key={flag} transform={`translate(${index * 12} 0)`}>
+          <circle r={5.7} fill="var(--background)" stroke="var(--border-strong)" strokeWidth={0.8} />
+          <text y={2.8} textAnchor="middle" fontSize={7.2}>
+            {flag === "RETURNING" ? "🔥" : "🆕"}
+          </text>
+        </g>
+      ))}
+      {!expanded && visible.length > 1 ? (
+        <text x={7} y={6} fontSize={5.2} fontWeight={800} fill="var(--foreground)">
+          +{visible.length - 1}
+        </text>
+      ) : null}
     </g>
   )
 }
@@ -596,8 +679,10 @@ function liveLabel(state: TableLiveState, fs: FloorTableState | undefined, t: Ta
     case "seated":
       return c ? `${c.partySize}·${fmtElapsed(now.getTime() - c.startsAt.getTime())}` : ""
     case "reserved":
+    case "upcoming":
       return c ? fmtTime(c.startsAt) : ""
     case "late":
+    case "late_confirmed":
     case "noshow":
       return c ? `+${c.minutesLate}'` : ""
     case "hold":
@@ -616,13 +701,17 @@ function liveLabel(state: TableLiveState, fs: FloorTableState | undefined, t: Ta
 function describe(t: TableView, state: TableLiveState, fs?: FloorTableState) {
   const base = `${t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`}, ${STATE_META[state].label}`
   const c = fs?.claim
-  if (!c) return base
-  return `${base}, ${c.displayName}, ${c.partySize} khách${c.symbolNo ? `, nhóm ${c.symbolNo}` : ""}`
+  const spare = t.isSpare ? ", bàn sơ cua" : ""
+  if (!c) return `${base}${spare}`
+  const flagLabels = supportedFlags(c.flags ?? []).map((flag) => (flag === "RETURNING" ? "khách quen" : "khách mới"))
+  const code = c.groupDisplayCode ?? groupCode(c.symbolNo)
+  return `${base}${spare}, ${c.displayName}, ${c.partySize} khách${flagLabels.length ? `, ${flagLabels.join(", ")}` : ""}${code ? `, nhóm ${code}, ${c.tableIds.length} bàn` : ""}`
 }
 
 const LiveGlyph = memo(function LiveGlyph({
   table: t,
   selected,
+  groupHighlighted,
   dim,
   pickHint,
   disabled,
@@ -633,7 +722,7 @@ const LiveGlyph = memo(function LiveGlyph({
   const state: TableLiveState = fs?.state ?? "free"
   const meta = STATE_META[state]
   const seated = state === "seated"
-  const dashed = state === "spare" || state === "hold" || state === "hold_overdue"
+  const dashed = state === "late" || state === "late_confirmed" || state === "spare" || state === "hold" || state === "hold_overdue"
   const stroke = state === "free" ? "var(--table-line)" : meta.color
   const fill = seated
     ? "var(--st-seated-fill)"
@@ -649,6 +738,8 @@ const LiveGlyph = memo(function LiveGlyph({
       : meta.ink
   const label = liveLabel(state, fs, t, now)
   const claim = fs?.claim
+  const code = claim?.groupDisplayCode ?? groupCode(claim?.symbolNo)
+  const flags = claim?.flags ?? []
 
   if (t.kind === "BAR_SEAT") {
     return (
@@ -659,6 +750,7 @@ const LiveGlyph = memo(function LiveGlyph({
         aria-label={describe(t, state, fs)}
         aria-pressed={selected}
         aria-disabled={disabled}
+        data-group-highlighted={groupHighlighted || undefined}
         className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
         opacity={dim ? 0.3 : 1}
         onClick={() => onActivate(t.id)}
@@ -675,6 +767,8 @@ const LiveGlyph = memo(function LiveGlyph({
         />
         {selected ? (
           <circle r={14.5} fill="none" stroke="var(--ring)" strokeWidth={2.2} />
+        ) : groupHighlighted ? (
+          <circle r={14.5} fill="none" stroke="var(--ring)" strokeWidth={1.7} strokeDasharray="3 1.5" />
         ) : pickHint ? (
           <circle
             r={14.5}
@@ -704,8 +798,11 @@ const LiveGlyph = memo(function LiveGlyph({
         >
           {t.seqNo}
         </text>
-        {claim?.symbolNo ? <SymbolBadge no={claim.symbolNo} x={9} y={-9} /> : null}
+        <CustomerBadges flags={flags} x={-14} y={(t.seqNo ?? 0) % 2 ? -12 : 12} />
+        <GroupBadge code={code} x={14} y={(t.seqNo ?? 0) % 2 ? 12 : -12} compact />
+        {state === "late_confirmed" ? <LateConfirmedMark x={0} y={-13} /> : null}
         {claim?.paid ? <PaidDot x={-9} y={9} /> : null}
+        {t.isSpare ? <SpareMark x={0} y={13} /> : null}
       </g>
     )
   }
@@ -720,6 +817,7 @@ const LiveGlyph = memo(function LiveGlyph({
       aria-label={describe(t, state, fs)}
       aria-pressed={selected}
       aria-disabled={disabled}
+      data-group-highlighted={groupHighlighted || undefined}
       className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
       opacity={dim ? 0.3 : 1}
       onClick={() => onActivate(t.id)}
@@ -748,6 +846,18 @@ const LiveGlyph = memo(function LiveGlyph({
           fill="none"
           stroke="var(--ring)"
           strokeWidth={2.2}
+        />
+      ) : groupHighlighted ? (
+        <rect
+          x={-hw - 7}
+          y={-hh - 7}
+          width={t.w + 14}
+          height={t.h + 14}
+          rx={8}
+          fill="none"
+          stroke="var(--ring)"
+          strokeWidth={1.7}
+          strokeDasharray="4 2"
         />
       ) : pickHint ? (
         <rect
@@ -802,12 +912,64 @@ const LiveGlyph = memo(function LiveGlyph({
           {label}
         </text>
       ) : null}
-      {claim?.symbolNo ? <SymbolBadge no={claim.symbolNo} x={hw} y={-hh} /> : null}
+      <CustomerBadges flags={flags} x={-hw} y={-hh} expanded={glyphLevel(t) === "expanded"} />
+      <GroupBadge code={code} x={hw} y={-hh} />
+      {state === "late_confirmed" ? <LateConfirmedMark x={0} y={-hh} /> : null}
       {claim?.paid ? <PaidDot x={-hw} y={hh} /> : null}
       {fs?.staleFromPreviousDay ? <StaleMark x={-hw} y={-hh} /> : null}
+      {t.isSpare ? <SpareMark x={hw} y={hh} /> : null}
     </g>
   )
 })
+
+function SpareMark({ x, y }: { x: number; y: number }) {
+  return (
+    <g transform={`translate(${x} ${y})`} aria-hidden pointerEvents="none">
+      <circle r={5.5} fill="var(--background)" stroke="var(--table-line)" strokeWidth={0.9} strokeDasharray="2 1" />
+      <text y={2.2} textAnchor="middle" fontSize={6} fontWeight={800} fill="var(--foreground)">
+        S
+      </text>
+    </g>
+  )
+}
+
+function LateConfirmedMark({ x, y }: { x: number; y: number }) {
+  return (
+    <g transform={`translate(${x} ${y})`} aria-hidden pointerEvents="none">
+      <circle r={5.5} fill="var(--background)" stroke="var(--st-late)" strokeWidth={1.1} />
+      <path d="M-2.5 0 L-0.5 2 L3 -2" fill="none" stroke="var(--st-late-ink)" strokeWidth={1.4} strokeLinecap="round" />
+    </g>
+  )
+}
+
+function FloorLegend() {
+  const states: TableLiveState[] = ["free", "reserved", "upcoming", "late", "late_confirmed", "noshow", "seated", "oos"]
+  return (
+    <div
+      className="pointer-events-none absolute bottom-2 left-2 z-[2] max-w-[calc(100%-64px)] rounded-lg border bg-popover/94 p-1.5 shadow-float backdrop-blur"
+      aria-label="Chú giải trạng thái bàn"
+    >
+      <div className="flex flex-wrap gap-x-2 gap-y-1 text-[10px] leading-none sm:text-[11px]">
+        {states.map((state) => (
+          <span key={state} className="inline-flex items-center gap-1 whitespace-nowrap">
+            <span
+              className="size-2 rounded-full border"
+              style={{ background: STATE_META[state].tint, borderColor: STATE_META[state].color }}
+              aria-hidden
+            />
+            {STATE_META[state].short}
+          </span>
+        ))}
+        <span className="inline-flex items-center gap-1 whitespace-nowrap">
+          <span className="font-bold" aria-hidden>
+            S
+          </span>
+          Sơ cua
+        </span>
+      </div>
+    </div>
+  )
+}
 
 function PaidDot({ x, y }: { x: number; y: number }) {
   return (

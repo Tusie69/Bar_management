@@ -94,6 +94,10 @@ if (sessionSameSite === 'none' && !sessionCookieSecure) {
   throw new Error('SESSION_COOKIE_SECURE phải là true khi SESSION_COOKIE_SAME_SITE=none')
 }
 const noShowWorkerEnabled = readBoolean('NO_SHOW_WORKER_ENABLED', false)
+const noShowPolicyMode = process.env.NO_SHOW_POLICY_MODE ?? 'MANUAL'
+if (noShowPolicyMode !== 'MANUAL') {
+  throw new Error('NO_SHOW_POLICY_MODE chỉ hỗ trợ MANUAL; hệ thống không tự đóng hoặc giải phóng booking quá hạn')
+}
 const noShowSystemUserId = readOptionalNumber('NO_SHOW_SYSTEM_USER_ID')
 const noShowAutomationCutoff = readOptionalUtcInstant('NO_SHOW_AUTOMATION_CUTOFF')
 const businessDayWorkerEnabled = readBoolean('BUSINESS_DAY_WORKER_ENABLED', true)
@@ -144,6 +148,7 @@ export const env = {
   },
   noShowWorker: {
     enabled: noShowWorkerEnabled,
+    policyMode: noShowPolicyMode as 'MANUAL',
     intervalMs: readNumber('NO_SHOW_WORKER_INTERVAL_MS', 30_000),
     systemUserId: noShowSystemUserId,
     automationCutoff: noShowAutomationCutoff,

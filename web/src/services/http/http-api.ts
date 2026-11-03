@@ -1,5 +1,5 @@
 /** Canonical GamApi backed exclusively by the frozen /api/v1 contract. */
-import type { Catalog, ClaimView, MutationResult, SessionUser } from "@/domain/models"
+import type { Catalog, ClaimView, FloorState, MutationResult, SessionUser } from "@/domain/models"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { clock } from "../clock"
 import { ApiError, type GamApi } from "../contracts"
@@ -14,11 +14,10 @@ import {
 } from "./canonical-adapter"
 import {
   mapCatalog,
-  mapFloorState,
+  mapFloorProjection,
   type BackendCatalog,
-  type BackendFloorGroup,
+  type BackendFloorProjection,
   type BackendSource,
-  type BackendTableState,
 } from "./floor-adapter"
 import { HttpVisitApi } from "./visit-api"
 import type { HttpClient } from "./http-client"
@@ -44,10 +43,12 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
   let catalogLoad: Promise<Catalog> | null = null
   let catalogGeneration = 0
   let catalogSessionRevision = client.sessionRevision
+  const latestFloorByDate = new Map<BusinessDate, FloorState>()
   const invalidateCatalog = () => {
     catalogGeneration += 1
     cachedCatalog = null
     catalogLoad = null
+    latestFloorByDate.clear()
   }
   // Scope reference data to this adapter/session; live allocations are always fetched.
   const loadCatalog = async () => {
@@ -79,19 +80,33 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     }
     return structuredClone(await catalogLoad)
   }
-  const snapshot = async (at: Date, date: BusinessDate = businessDateOf(at)) => {
-    const [catalog, tables, rows] = await Promise.all([
+  const floor = async (date: BusinessDate) => {
+    const [catalog, projection] = await Promise.all([
       loadCatalog(),
-      get<{ businessDate: string; tables: BackendTableState[]; groups?: BackendFloorGroup[] }>(`/tables?date=${date}`),
-      bookings.list(date),
+      get<BackendFloorProjection>(`/tables?date=${date}`),
     ])
-    if (tables.businessDate !== date) {
+    if (projection.businessDate !== date) {
       throw new ApiError(502, "BUSINESS_DATE_RESPONSE_MISMATCH", "Unexpected business date in floor response.")
     }
+    const mapped = mapFloorProjection(projection, catalog)
+    const latest = latestFloorByDate.get(date)
+    if (latest && (mapped.changeSeq < latest.changeSeq
+      || (mapped.changeSeq === latest.changeSeq && mapped.at.getTime() < latest.at.getTime()))) {
+      return structuredClone(latest)
+    }
+    latestFloorByDate.set(date, structuredClone(mapped))
+    return mapped
+  }
+  const snapshot = async (at: Date, date: BusinessDate = businessDateOf(at)) => {
+    const [catalog, floorState, rows] = await Promise.all([
+      loadCatalog(),
+      floor(date),
+      bookings.list(date),
+    ])
     return {
       catalog,
       bookings: rows,
-      floor: mapFloorState(at, tables.businessDate, tables.tables, rows, catalog, tables.groups),
+      floor: floorState,
     }
   }
   const listWaitlist = async (date: BusinessDate) => {
@@ -123,7 +138,7 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     listDemoUsers: () => (session ? [session] : []),
     subscribe: () => () => undefined,
     getCatalog: loadCatalog,
-    getFloorState: async (at, date) => (await snapshot(at, date)).floor,
+    getFloorState: async (at, date = businessDateOf(at)) => floor(date),
     getAvailability: async (at, party) => {
       const data = await snapshot(at)
       return deriveAvailability(at, party, data.floor, data.bookings, data.catalog)
@@ -185,6 +200,10 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     markNoShow: async (id, version) => {
       await bookings.markNoShow(id, version)
       return result("Đã xác nhận khách không đến.")
+    },
+    confirmLate: async (id, version) => {
+      await bookings.confirmLate(id, version)
+      return result("Đã ghi nhận khách sẽ tới muộn.")
     },
     checkIn: async (input) => {
       if (input.overrideReason) unsupported("check-in vượt quy tắc")

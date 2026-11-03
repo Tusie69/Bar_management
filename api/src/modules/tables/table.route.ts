@@ -3,7 +3,8 @@ import { Router } from 'express'
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { AppError } from '../../errors/app-error.js'
-import { configureTable, getTableCatalog, listActiveTableGroups, listTables, updateTableState } from './table.repository.js'
+import { getFloorProjection } from './floor-projection.repository.js'
+import { configureTable, getTableCatalog, updateTableState } from './table.repository.js'
 import { isTableState } from './table-state.js'
 
 export const tableRouter: Router = Router()
@@ -29,11 +30,7 @@ function parseBody(value: unknown): Record<string, unknown> {
 tableRouter.get('/', requireAuthentication, requirePermission('customer.view_masked'), async (request, response) => {
   const businessDate = parseBusinessDate(request.query.date)
   const actor = requireAuthenticatedActor(request)
-  const [tables, groups] = await Promise.all([
-    listTables(actor, businessDate),
-    listActiveTableGroups(actor, businessDate),
-  ])
-  response.json({ businessDate, tables, groups })
+  response.json(await getFloorProjection(actor, businessDate))
 })
 
 tableRouter.get(

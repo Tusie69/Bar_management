@@ -136,6 +136,7 @@ function VenueSettings({ readOnly }: { readOnly: boolean }) {
 }
 
 const formFrom = (v: VenueConfig) => ({
+  upcoming: v.upcomingWarningMinutes,
   late: v.lateWarningMinutes,
   noShow: v.noShowWarningMinutes,
   hold: v.waitlistHoldDefaultMinutes,
@@ -150,6 +151,7 @@ function VenueForm({ v, readOnly }: { v: VenueConfig; readOnly: boolean }) {
   const [form, setForm] = useState(() => formFrom(v))
   const set = <K extends keyof typeof form>(k: K, val: (typeof form)[K]) => setForm((f) => ({ ...f, [k]: val }))
   const dirty =
+    form.upcoming !== v.upcomingWarningMinutes ||
     form.late !== v.lateWarningMinutes ||
     form.noShow !== v.noShowWarningMinutes ||
     form.hold !== v.waitlistHoldDefaultMinutes ||
@@ -167,6 +169,18 @@ function VenueForm({ v, readOnly }: { v: VenueConfig; readOnly: boolean }) {
           <span className="text-sm">
             {v.businessDayStartLocal.slice(0, 5)} → {v.businessDayCutoffLocal.slice(0, 5)} · {v.timezone}
           </span>
+        </Row>
+        <Row label="Cửa sổ sắp đến" hint="Bắt đầu hiển thị Sắp đến trước giờ hẹn; mặc định 10 phút.">
+          <NumberField
+            id="upcoming"
+            label="Cửa sổ sắp đến"
+            value={form.upcoming}
+            onChange={(x) => set("upcoming", x)}
+            unit="phút"
+            disabled={readOnly}
+            min={1}
+            max={240}
+          />
         </Row>
         <Row label="Cảnh báo đến muộn" hint="Chỉ hiển thị cảnh báo, không đổi trạng thái booking.">
           <NumberField
@@ -295,6 +309,7 @@ function VenueForm({ v, readOnly }: { v: VenueConfig; readOnly: boolean }) {
             run(() =>
               api.updateVenueConfig({
                 version: v.version,
+                upcomingWarningMinutes: form.upcoming,
                 lateWarningMinutes: form.late,
                 noShowWarningMinutes: form.noShow,
                 waitlistHoldDefaultMinutes: form.hold,

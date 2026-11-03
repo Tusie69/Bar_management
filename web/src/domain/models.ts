@@ -39,6 +39,7 @@ export interface VenueConfig {
   timezone: string
   businessDayStartLocal: string
   businessDayCutoffLocal: string
+  upcomingWarningMinutes: number
   lateWarningMinutes: number
   noShowWarningMinutes: number
   waitlistHoldDefaultMinutes: number
@@ -103,7 +104,7 @@ export interface Catalog {
 /* ---------------- Floor ---------------- */
 
 export type TableLiveState =
-  "free" | "reserved" | "late" | "noshow" | "seated" | "hold" | "hold_overdue" | "oos" | "spare"
+  "free" | "reserved" | "upcoming" | "late" | "late_confirmed" | "noshow" | "seated" | "hold" | "hold_overdue" | "oos" | "spare"
 
 export type BookingWarning = "late" | "noshow" | null
 
@@ -124,11 +125,15 @@ export interface ClaimView {
   tableIds: number[]
   groupId: number | null
   symbolNo: number | null
+  groupDisplayCode?: string | null
+  turnNo?: number | null
+  flags?: Array<"NEW" | "RETURNING">
   warning: BookingWarning
   minutesLate: number
   sourceCode: BookingSourceCode | null
   note: string | null
   version: number
+  lateConfirmedAt?: Date | null
 }
 
 export interface FloorTableState {
@@ -163,6 +168,8 @@ export interface AllocationView {
 export interface FloorGroup {
   id: number
   symbolNo: number
+  /** Authoritative, stable label supplied by the floor projection (for example ◆A). */
+  displayCode?: string
   tableIds: number[]
 }
 
@@ -233,6 +240,7 @@ export interface ReservationView {
   closeReasonNote: string | null
   createdAt: Date | null
   createdByName: string
+  lateConfirmedAt: Date | null
 }
 
 export interface VisitView {

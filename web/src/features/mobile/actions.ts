@@ -141,6 +141,13 @@ export function useMobileActions() {
         label: "Không đến",
         run: () => run(() => api.markNoShow(r.id, r.version)),
       }),
+    confirmLate: (r: ReservationView) =>
+      m.ask({
+        title: `Ghi nhận ${r.displayName} sẽ tới muộn?`,
+        body: "Booking và bàn vẫn được giữ. Thao tác này không phải check-in.",
+        label: "Tới muộn",
+        run: () => run(() => api.confirmLate(r.id, r.version)),
+      }),
     cancel: (r: ReservationView) =>
       m.ask({
         title: `Hủy booking của ${r.displayName}?`,

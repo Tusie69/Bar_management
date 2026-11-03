@@ -175,6 +175,7 @@ export interface SeatWaitlistInput {
 
 export interface VenueConfigPatch {
   version: number
+  upcomingWarningMinutes?: number
   lateWarningMinutes?: number
   noShowWarningMinutes?: number
   waitlistHoldDefaultMinutes?: number
@@ -225,6 +226,7 @@ export interface GamApi {
   ): Promise<MutationResult>
   cancelReservation(id: number, version: number, reason: ReservationCloseReason, note?: string): Promise<MutationResult>
   markNoShow(id: number, version: number): Promise<MutationResult>
+  confirmLate(id: number, version: number): Promise<MutationResult>
   checkIn(input: CheckInInput): Promise<MutationResult>
 
   // Floor

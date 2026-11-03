@@ -5,7 +5,8 @@ import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
 import { assertNoteHasNoPhoneNumber, redactPhoneNumbersInNote } from '../../security/note-privacy.js'
-import { assertCheckInBusinessDate, validateBookingSchedule } from './business-date.js'
+import { applicationNow } from '../../time/application-clock.js'
+import { assertCheckInBusinessDate, currentBusinessDate, validateBookingSchedule } from './business-date.js'
 import { deriveBookingTiming, type BookingDisplayStatus } from './booking-timing.js'
 import { protectPhoneNumber, revealPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from './phone-security.js'
 import {
@@ -36,6 +37,7 @@ export interface BookingView {
   displayStatus: BookingDisplayStatus
   minutesLate: number
   autoNoShowDue: boolean
+  lateConfirmedAt: string | null
 }
 
 export interface BookingSourceView {
@@ -72,8 +74,10 @@ interface BookingRow extends RowDataPacket {
   table_codes: string | null
   note: string | null
   version: number
+  upcoming_warning_minutes: number
   late_warning_minutes: number
   no_show_warning_minutes: number
+  late_confirmed_at: Date | string | null
 }
 
 function isoDateTime(value: Date | string): string {
@@ -86,13 +90,16 @@ function dateOnly(value: Date | string): string {
   return String(value).slice(0, 10)
 }
 
-function toBooking(row: BookingRow, now = new Date()): BookingView {
+function toBooking(row: BookingRow, now = applicationNow()): BookingView {
   const timing = deriveBookingTiming(
     row.status,
     isoDateTime(row.expected_at),
     now,
-    Number(row.late_warning_minutes),
-    Number(row.no_show_warning_minutes),
+    {
+      upcomingMinutes: Number(row.upcoming_warning_minutes),
+      lateAfterMinutes: Number(row.late_warning_minutes),
+      noShowAfterMinutes: Number(row.no_show_warning_minutes),
+    },
   )
   return {
     id: Number(row.id),
@@ -108,6 +115,7 @@ function toBooking(row: BookingRow, now = new Date()): BookingView {
     tableCodes: row.table_codes ? row.table_codes.split(',') : [],
     note: redactPhoneNumbersInNote(row.note),
     version: row.version,
+    lateConfirmedAt: row.late_confirmed_at === null ? null : isoDateTime(row.late_confirmed_at),
     ...timing,
   }
 }
@@ -116,8 +124,8 @@ const bookingSelect = `SELECT
   r.id, COALESCE(c.display_name, r.contact_name, 'Khách') AS guest_name,
   COALESCE(r.phone_last3, c.phone_last3) AS phone_last3, r.party_size, r.expected_at, r.business_date,
   r.customer_classification, r.status,
-  bs.name AS source_name, bs.code AS source_code, r.note, r.version,
-  v.late_warning_minutes, v.no_show_warning_minutes,
+  bs.name AS source_name, bs.code AS source_code, r.note, r.version, r.late_confirmed_at,
+  v.upcoming_warning_minutes, v.late_warning_minutes, v.no_show_warning_minutes,
   GROUP_CONCAT(DISTINCT dt.code ORDER BY dt.id SEPARATOR ',') AS table_codes
 FROM reservations AS r
 JOIN venues AS v ON v.organization_id = r.organization_id AND v.id = r.venue_id
@@ -134,7 +142,7 @@ export async function listBookings(actor: AuthenticatedActor, businessDate: stri
      WHERE r.organization_id = ? AND r.venue_id = ? AND r.business_date = ?
      GROUP BY r.id, c.display_name, r.contact_name, r.phone_last3, c.phone_last3, r.party_size, r.expected_at,
        r.business_date, r.customer_classification, r.status, bs.name, bs.code, r.note, r.version,
-       v.late_warning_minutes, v.no_show_warning_minutes
+       v.upcoming_warning_minutes, v.late_warning_minutes, v.no_show_warning_minutes
      ORDER BY r.expected_at, r.id`,
     [actor.organizationId, actor.venueId, businessDate],
   )
@@ -157,7 +165,7 @@ export async function searchBookings(
        )
      GROUP BY r.id, c.display_name, r.contact_name, r.phone_last3, c.phone_last3, r.party_size, r.expected_at,
        r.business_date, r.customer_classification, r.status, bs.name, bs.code, r.note, r.version,
-       v.late_warning_minutes, v.no_show_warning_minutes
+       v.upcoming_warning_minutes, v.late_warning_minutes, v.no_show_warning_minutes
      ORDER BY r.expected_at, r.id
      LIMIT 100`,
     [actor.organizationId, actor.venueId, businessDate, normalizedQuery, phoneLast3, phoneLast3],
@@ -175,7 +183,7 @@ export async function getBookingById(
      WHERE r.organization_id = ? AND r.venue_id = ? AND r.id = ?
      GROUP BY r.id, c.display_name, r.contact_name, r.phone_last3, c.phone_last3, r.party_size, r.expected_at,
        r.business_date, r.customer_classification, r.status, bs.name, bs.code, r.note, r.version,
-       v.late_warning_minutes, v.no_show_warning_minutes`,
+       v.upcoming_warning_minutes, v.late_warning_minutes, v.no_show_warning_minutes`,
     [actor.organizationId, actor.venueId, id],
   )
   const row = rows[0]
@@ -1214,6 +1222,160 @@ export async function checkInBooking(
     connection.release()
   }
   return getBookingById(actor, id)
+}
+
+interface LateConfirmReservationRow extends RowDataPacket {
+  id: number
+  status: BookingStatus
+  version: number
+  expected_at: Date | string
+  business_date: Date | string
+  visit_id: number | null
+  late_confirmed_at: Date | string | null
+  late_confirmed_by_user_id: number | null
+  no_show_warning_minutes: number
+}
+
+export interface LateConfirmationResult {
+  bookingId: number
+  lateConfirmed: true
+  lateConfirmedAt: string
+  version: number
+  changeSeq: string
+}
+
+/**
+ * Records a customer's late-arrival confirmation without releasing their hold.
+ * The reservation row and active claim are locked so the mutation, audit row and
+ * venue sequence are one atomic change. An exact replay of the successful input
+ * version is returned without creating another change.
+ */
+export async function confirmBookingLate(
+  actor: AuthenticatedActor,
+  id: number,
+  expectedVersion: number,
+  now = applicationNow(),
+): Promise<LateConfirmationResult> {
+  const connection = await databasePool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const [rows] = await connection.execute<LateConfirmReservationRow[]>(
+      `SELECT r.id, r.status, r.version, r.expected_at, r.business_date, r.visit_id,
+         r.late_confirmed_at, r.late_confirmed_by_user_id, v.no_show_warning_minutes
+       FROM reservations AS r
+       JOIN venues AS v ON v.organization_id = r.organization_id AND v.id = r.venue_id
+       WHERE r.organization_id = ? AND r.venue_id = ? AND r.id = ? FOR UPDATE`,
+      [actor.organizationId, actor.venueId, id],
+    )
+    const reservation = rows[0]
+    if (!reservation) throw new AppError(404, 'BOOKING_NOT_FOUND', 'Không tìm thấy đặt bàn.')
+    if (reservation.status !== 'BOOKED' || reservation.visit_id !== null) {
+      throw new AppError(409, 'BOOKING_NOT_LATE_CONFIRMABLE', 'Booking không còn ở trạng thái chờ khách.')
+    }
+
+    let activeBusinessDate: string
+    try {
+      activeBusinessDate = currentBusinessDate(now)
+    } catch {
+      throw new AppError(409, 'LATE_CONFIRM_OUTSIDE_BUSINESS_HOURS', 'Không có ca đang hoạt động để xác nhận tới muộn.')
+    }
+    if (dateOnly(reservation.business_date) !== activeBusinessDate) {
+      throw new AppError(409, 'BOOKING_BUSINESS_DATE_NOT_CURRENT', 'Chỉ xác nhận booking thuộc ngày nghiệp vụ hiện tại.')
+    }
+
+    const [claims] = await connection.execute<(RowDataPacket & { hold_id: number })[]>(
+      `SELECT h.id AS hold_id
+       FROM table_holds AS h
+       JOIN table_allocations AS a ON a.organization_id = h.organization_id AND a.venue_id = h.venue_id
+         AND a.hold_id = h.id AND a.kind = 'HOLD' AND a.released_at IS NULL
+         AND a.business_date = ?
+       WHERE h.organization_id = ? AND h.venue_id = ? AND h.reservation_id = ?
+         AND h.status = 'ACTIVE'
+       LIMIT 1 FOR UPDATE`,
+      [activeBusinessDate, actor.organizationId, actor.venueId, id],
+    )
+    if (!claims[0]) {
+      throw new AppError(409, 'BOOKING_ACTIVE_CLAIM_REQUIRED', 'Booking không còn giữ bàn hợp lệ.')
+    }
+
+    if (reservation.late_confirmed_at !== null) {
+      const [auditRows] = await connection.execute<(RowDataPacket & { id: number; change_seq: string })[]>(
+        `SELECT id, change_seq FROM operation_log
+         WHERE organization_id = ? AND venue_id = ? AND action = 'RESERVATION_LATE_CONFIRMED'
+           AND entity_type = 'reservation' AND entity_id = ?
+           AND entity_version_before = ? AND entity_version_after = ?
+         LIMIT 1`,
+        [actor.organizationId, actor.venueId, id, expectedVersion, reservation.version],
+      )
+      if (!auditRows[0]) {
+        throw new AppError(409, 'VERSION_CONFLICT', 'Đặt bàn vừa được thay đổi. Vui lòng tải lại.')
+      }
+      await connection.commit()
+      return {
+        bookingId: id,
+        lateConfirmed: true,
+        lateConfirmedAt: isoDateTime(reservation.late_confirmed_at),
+        version: reservation.version,
+        changeSeq: String(auditRows[0].change_seq),
+      }
+    }
+
+    if (reservation.version !== expectedVersion) {
+      throw new AppError(409, 'VERSION_CONFLICT', 'Đặt bàn vừa được thay đổi. Vui lòng tải lại.')
+    }
+    const expectedAt = reservation.expected_at instanceof Date
+      ? reservation.expected_at
+      : new Date(`${reservation.expected_at}Z`)
+    const elapsedMs = now.getTime() - expectedAt.getTime()
+    if (Number.isNaN(expectedAt.getTime()) || elapsedMs < 0) {
+      throw new AppError(409, 'BOOKING_NOT_LATE', 'Chỉ xác nhận tới muộn sau giờ hẹn.')
+    }
+    if (elapsedMs >= Number(reservation.no_show_warning_minutes) * 60_000) {
+      throw new AppError(
+        409,
+        'LATE_CONFIRM_NO_SHOW_THRESHOLD_REACHED',
+        'Không thể xác nhận tới muộn khi booking đã đạt ngưỡng Không đến.',
+      )
+    }
+
+    const confirmedAt = now.toISOString().slice(0, 23).replace('T', ' ')
+    const [update] = await connection.execute<ResultSetHeader>(
+      `UPDATE reservations
+       SET late_confirmed_at = ?, late_confirmed_by_user_id = ?, updated_by_user_id = ?,
+         updated_at = ?, version = version + 1
+       WHERE organization_id = ? AND venue_id = ? AND id = ? AND status = 'BOOKED'
+         AND visit_id IS NULL AND version = ? AND late_confirmed_at IS NULL`,
+      [confirmedAt, actor.userId, actor.userId, confirmedAt, actor.organizationId, actor.venueId, id, expectedVersion],
+    )
+    if (update.affectedRows !== 1) {
+      throw new AppError(409, 'VERSION_CONFLICT', 'Đặt bàn vừa được thay đổi. Vui lòng tải lại.')
+    }
+    const sequence = await nextVenueChangeSequence(connection, actor)
+    await connection.execute(
+      `INSERT INTO operation_log
+       (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
+        auth_session_id, action, entity_type, entity_id, entity_version_before,
+        entity_version_after, changes, reason_code, is_undoable)
+       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'RESERVATION_LATE_CONFIRMED', 'reservation', ?, ?, ?, ?,
+        'CUSTOMER_CONFIRMED_LATE', 0)`,
+      [actor.organizationId, actor.venueId, sequence, actor.userId, actor.membershipId,
+        actor.authSessionId ?? null, id, expectedVersion, expectedVersion + 1,
+        JSON.stringify([{ type: 'late_confirmed', confirmedAt: now.toISOString() }])],
+    )
+    await connection.commit()
+    return {
+      bookingId: id,
+      lateConfirmed: true,
+      lateConfirmedAt: now.toISOString(),
+      version: expectedVersion + 1,
+      changeSeq: sequence,
+    }
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
 }
 
 export interface CreateWalkInInput {

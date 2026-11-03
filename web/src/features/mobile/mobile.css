@@ -33,13 +33,15 @@
   --primary-ink: oklch(0.48 0.15 255);
   --primary-tint: oklch(0.52 0.15 255 / 0.09);
   --st-reserved: oklch(0.55 0.13 250);
-  --st-late: oklch(0.6 0.13 65);
-  --st-noshow: oklch(0.56 0.17 27);
+  --st-upcoming: oklch(0.68 0.14 85);
+  --st-late: oklch(0.57 0.19 28);
+  --st-noshow: oklch(0.43 0.16 25);
   --st-seated: oklch(0.55 0.11 160);
   --st-oos: oklch(0.62 0.005 80);
   --st-reserved-tint: oklch(0.55 0.13 250 / 0.1);
-  --st-late-tint: oklch(0.65 0.13 70 / 0.15);
-  --st-noshow-tint: oklch(0.56 0.17 27 / 0.1);
+  --st-upcoming-tint: oklch(0.72 0.14 85 / 0.2);
+  --st-late-tint: oklch(0.57 0.19 28 / 0.13);
+  --st-noshow-tint: oklch(0.43 0.16 25 / 0.16);
   --st-seated-tint: oklch(0.55 0.11 160 / 0.13);
   --st-seated-fill: oklch(0.58 0.1 160);
   --on-seated: oklch(0.99 0 0);
@@ -79,13 +81,16 @@
   --primary-ink: oklch(0.8 0.09 250);
   --primary-tint: oklch(0.62 0.13 252 / 0.2);
   --st-reserved: oklch(0.74 0.1 245);
-  --st-late: oklch(0.8 0.12 80);
-  --st-noshow: oklch(0.69 0.145 25);
+  --st-upcoming: oklch(0.82 0.13 88);
+  --st-late: oklch(0.72 0.17 27);
+  --st-noshow: oklch(0.61 0.15 24);
   --st-seated: oklch(0.75 0.11 158);
   --st-oos: oklch(0.6 0.005 80);
   --st-reserved-tint: oklch(0.74 0.1 245 / 0.18);
-  --st-late-tint: oklch(0.8 0.12 80 / 0.17);
-  --st-noshow-tint: oklch(0.69 0.145 25 / 0.2);
+  --st-upcoming-tint: oklch(0.82 0.13 88 / 0.2);
+  --st-late-tint: oklch(0.72 0.17 27 / 0.18);
+  --st-noshow-tint: oklch(0.61 0.15 24 / 0.24);
+  --st-noshow-ink: oklch(0.86 0.075 25);
   --st-seated-tint: oklch(0.75 0.11 158 / 0.18);
   --st-seated-fill: oklch(0.66 0.1 158);
   --on-seated: oklch(0.18 0.02 158);
@@ -112,6 +117,7 @@
 
 [data-gm] {
   --st-reserved-ink: color-mix(in oklab, var(--st-reserved) 75%, var(--tx-1));
+  --st-upcoming-ink: color-mix(in oklab, var(--st-upcoming) 72%, var(--tx-1));
   --st-late-ink: color-mix(in oklab, var(--st-late) 70%, var(--tx-1));
   --st-noshow-ink: color-mix(in oklab, var(--st-noshow) 75%, var(--tx-1));
   --st-seated-ink: color-mix(in oklab, var(--st-seated) 72%, var(--tx-1));

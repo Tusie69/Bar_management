@@ -13,6 +13,7 @@ const catalog = {
     timezone: "Asia/Ho_Chi_Minh",
     businessDayStartLocal: "17:00:00",
     businessDayCutoffLocal: "05:00:00",
+    upcomingWarningMinutes: 10,
     lateWarningMinutes: 15,
     noShowWarningMinutes: 30,
     waitlistHoldDefaultMinutes: 30,
@@ -45,6 +46,14 @@ const catalog = {
   combinations: [],
 }
 
+const emptyProjection = (businessDate: string | null, tables: unknown[] = []) => ({
+  businessDate,
+  serverNow: "2026-10-28T13:00:00.000Z",
+  changeSeq: "4",
+  tables,
+  groups: [],
+})
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.useRealTimers()
@@ -64,10 +73,21 @@ describe("Phase 2A HTTP API", () => {
           return json({ sources: [{ code: "HOTLINE", name: "Hotline" }] })
         }
         if (parsed.pathname === "/api/v1/tables") {
-          return json({
-            businessDate: parsed.searchParams.get("date"),
-            tables: [{ id: 1, code: "A1", state: "AVAILABLE", isBackup: false, activeVisit: null }],
-          })
+          return json(emptyProjection(parsed.searchParams.get("date"), [{
+            tableId: 1,
+            tableCode: "A1",
+            catalogStatus: "ACTIVE",
+            isSpare: false,
+            displayState: "EMPTY",
+            arrivalPhase: null,
+            arrivalTime: null,
+            minutesLate: 0,
+            claim: null,
+            groupId: null,
+            groupDisplayCode: null,
+            groupMemberTableIds: [],
+            staleFromPreviousDay: false,
+          }]))
         }
         if (parsed.pathname === "/api/v1/bookings") {
           return json({ businessDate: parsed.searchParams.get("date"), bookings: [] })
@@ -82,7 +102,6 @@ describe("Phase 2A HTTP API", () => {
     expect(result.businessDate).toBe("2026-10-28")
     expect(result.tables).toEqual([{ tableId: 1, state: "free", claim: null, staleFromPreviousDay: false }])
     expect(requested.map((url) => new URL(url).pathname).sort()).toEqual([
-      "/api/v1/bookings",
       "/api/v1/bookings/sources",
       "/api/v1/tables",
       "/api/v1/tables/catalog",
@@ -111,7 +130,7 @@ function cacheFixture() {
         return json(payload)
       }
       if (url.pathname.endsWith("/bookings/sources")) return json({ sources: [{ code: "HOTLINE", name: "Hotline" }] })
-      if (url.pathname.endsWith("/tables")) return json({ businessDate: url.searchParams.get("date"), tables: [] })
+      if (url.pathname.endsWith("/tables")) return json(emptyProjection(url.searchParams.get("date")))
       if (url.pathname.endsWith("/bookings")) return json({ businessDate: url.searchParams.get("date"), bookings: [] })
       if (url.pathname.endsWith("/waitlist")) return json({ businessDate: url.searchParams.get("date"), entries: [] })
       return new Response(null, { status: 404 })
@@ -131,6 +150,129 @@ function cacheFixture() {
 }
 
 describe("HTTP catalog cache", () => {
+  it("rejects a stale floor response by changeSeq without recomputing client state", async () => {
+    let floorCall = 0
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const url = new URL(input)
+        if (url.pathname.endsWith("/tables/catalog")) return json(catalog)
+        if (url.pathname.endsWith("/bookings/sources")) return json({ sources: [{ code: "HOTLINE", name: "Hotline" }] })
+        if (url.pathname.endsWith("/tables")) {
+          floorCall += 1
+          const stale = floorCall === 2
+          return json({
+            ...emptyProjection(url.searchParams.get("date"), [{
+              tableId: 1,
+              tableCode: "A1",
+              catalogStatus: "ACTIVE",
+              isSpare: false,
+              displayState: stale ? "EMPTY" : "NO_SHOW",
+              arrivalPhase: stale ? null : "NO_SHOW",
+              arrivalTime: stale ? null : "2026-10-28T12:30:00.000Z",
+              minutesLate: stale ? 0 : 30,
+              claim: stale ? null : {
+                kind: "RESERVATION",
+                reservationId: 11,
+                visitId: null,
+                waitlistEntryId: null,
+                holdId: 41,
+                guestName: "Khách",
+                phoneLast3: "123",
+                partySize: 2,
+                turnNo: null,
+                flags: [],
+                groupId: null,
+                groupDisplayCode: null,
+                groupMemberTableIds: [],
+                startsAt: "2026-10-28T12:30:00.000Z",
+                deadlineAt: null,
+                holdOverdue: false,
+                paid: false,
+                origin: null,
+                sourceCode: "HOTLINE",
+                version: 1,
+              },
+              groupId: null,
+              groupDisplayCode: null,
+              groupMemberTableIds: [],
+              staleFromPreviousDay: false,
+            }]),
+            serverNow: stale ? "2026-10-28T12:59:00.000Z" : "2026-10-28T13:00:00.000Z",
+            changeSeq: stale ? "4" : "5",
+          })
+        }
+        return new Response(null, { status: 404 })
+      }),
+    )
+    const api = createHttpApi(new HttpClient("http://api.test"), 1)
+    const first = await api.getFloorState(new Date("2026-10-28T13:00:00Z"), "2026-10-28")
+    const second = await api.getFloorState(new Date("2026-10-28T13:01:00Z"), "2026-10-28")
+    expect(first.tables[0]?.state).toBe("noshow")
+    expect(second).toEqual(first)
+  })
+
+  it("accepts a newer serverNow with the same changeSeq so Option A can cross the time threshold", async () => {
+    let floorCall = 0
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const url = new URL(input)
+        if (url.pathname.endsWith("/tables/catalog")) return json(catalog)
+        if (url.pathname.endsWith("/bookings/sources")) return json({ sources: [{ code: "HOTLINE", name: "Hotline" }] })
+        if (url.pathname.endsWith("/tables")) {
+          floorCall += 1
+          const noShow = floorCall === 2
+          return json({
+            ...emptyProjection(url.searchParams.get("date"), [{
+              tableId: 1,
+              tableCode: "A1",
+              catalogStatus: "ACTIVE",
+              isSpare: false,
+              displayState: noShow ? "NO_SHOW" : "LATE_CONFIRMED",
+              arrivalPhase: noShow ? "NO_SHOW" : "LATE_CONFIRMED",
+              arrivalTime: "2026-10-28T12:30:00.000Z",
+              minutesLate: noShow ? 30 : 29,
+              claim: {
+                kind: "RESERVATION",
+                reservationId: 11,
+                visitId: null,
+                waitlistEntryId: null,
+                holdId: 41,
+                guestName: "Khách",
+                phoneLast3: "123",
+                partySize: 2,
+                turnNo: null,
+                flags: [],
+                groupId: null,
+                groupDisplayCode: null,
+                groupMemberTableIds: [],
+                startsAt: "2026-10-28T12:30:00.000Z",
+                deadlineAt: null,
+                holdOverdue: false,
+                paid: false,
+                origin: null,
+                sourceCode: "HOTLINE",
+                version: 2,
+                lateConfirmedAt: "2026-10-28T12:42:00.000Z",
+              },
+              groupId: null,
+              groupDisplayCode: null,
+              groupMemberTableIds: [],
+              staleFromPreviousDay: false,
+            }]),
+            serverNow: noShow ? "2026-10-28T13:00:00.000Z" : "2026-10-28T12:59:59.000Z",
+            changeSeq: "5",
+          })
+        }
+        return new Response(null, { status: 404 })
+      }),
+    )
+    const api = createHttpApi(new HttpClient("http://api.test"), 1)
+    expect((await api.getFloorState(new Date(), "2026-10-28")).tables[0]?.state).toBe("late_confirmed")
+    expect((await api.getFloorState(new Date(), "2026-10-28")).tables[0]?.state).toBe("noshow")
+  })
+
   it("shares concurrent catalog loads across floor, bookings and overview", async () => {
     const { api, paths } = cacheFixture()
     await Promise.all([
@@ -275,7 +417,6 @@ describe("HTTP catalog cache", () => {
     vi.advanceTimersByTime(15_000)
     await poll()
     expect(paths.sort()).toEqual([
-      "/bookings",
       "/bookings",
       "/bookings",
       "/tables",
