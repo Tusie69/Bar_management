@@ -7,7 +7,6 @@ import { AppError } from '../../errors/app-error.js'
 import { assertBusinessDateNotPast } from '../bookings/business-date.js'
 import { protectPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from '../bookings/phone-security.js'
 import { createTableGroup, lockAndValidateAssignableTables } from '../tables/table-group.repository.js'
-import { assertTablesFreeForBusinessDate } from '../tables/table-occupancy.js'
 
 export type WaitlistStatus = 'WAITING' | 'CONTACTING' | 'OFFERED' | 'HOLD_ACTIVE' | 'SEATED' | 'DECLINED' | 'CANCELLED'
 export type ContactChannel = 'IN_PERSON' | 'PHONE_CALLBACK' | 'ZALO_THREAD' | 'FANPAGE_THREAD' | 'OTHER'
@@ -227,7 +226,6 @@ export interface SeatWaitlistInput {
 export async function seatWaitlistEntry(
   actor: AuthenticatedActor,
   input: SeatWaitlistInput,
-  now = new Date(),
 ): Promise<{ entry: WaitlistEntryView; reservationId: number; groupId: number | null }> {
   const connection = await databasePool.getConnection()
   try {
@@ -248,20 +246,28 @@ export async function seatWaitlistEntry(
     if (entry.status !== 'WAITING') {
       throw new AppError(409, 'WAITLIST_NOT_SEATABLE', 'Chỉ khách đang chờ mới có thể được gán bàn trực tiếp.')
     }
-    assertBusinessDateNotPast(dateOnly(entry.business_date), now)
+    assertBusinessDateNotPast(dateOnly(entry.business_date))
     if ((!entry.contact_name && entry.customer_id === null) || entry.party_size === null) {
       throw new AppError(409, 'WAITLIST_DATA_INCOMPLETE', 'Thông tin khách chờ không đầy đủ.')
     }
 
     const tableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
     if (!tableIds.length) throw new AppError(400, 'TABLE_REQUIRED', 'Cần chọn ít nhất một bàn.')
+    const placeholders = tableIds.map(() => '?').join(',')
     const tables = await lockAndValidateAssignableTables(connection, actor, tableIds)
     const capacity = tables.reduce((total, table) => total + Number(table.capacity), 0)
     if (capacity < Number(entry.party_size)) {
       throw new AppError(409, 'INSUFFICIENT_TABLE_CAPACITY', `Bàn đã chọn chỉ có ${capacity} chỗ cho ${entry.party_size} khách.`)
     }
     const businessDate = dateOnly(entry.business_date)
-    await assertTablesFreeForBusinessDate(connection, actor, businessDate, tableIds, now)
+    const [conflicts] = await connection.execute<RowDataPacket[]>(
+      `SELECT id FROM table_allocations
+       WHERE organization_id = ? AND venue_id = ? AND business_date = ?
+         AND released_at IS NULL AND table_id IN (${placeholders})
+       ORDER BY table_id, id FOR UPDATE`,
+      [actor.organizationId, actor.venueId, businessDate, ...tableIds],
+    )
+    if (conflicts.length) throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc sử dụng.')
 
     const [sourceRows] = await connection.execute<(RowDataPacket & { id: number })[]>(
       `SELECT id FROM booking_sources WHERE organization_id = ? AND code = 'OTHER' AND is_active = 1 LIMIT 1`,
