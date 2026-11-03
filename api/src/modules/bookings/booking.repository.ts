@@ -4,7 +4,7 @@ import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
-import { assertBusinessDateNotPast, businessDateAt, validateBookingSchedule } from './business-date.js'
+import { assertBusinessDateNotPast, validateBookingSchedule } from './business-date.js'
 import { deriveBookingTiming, type BookingDisplayStatus } from './booking-timing.js'
 import { protectPhoneNumber, revealPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from './phone-security.js'
 import {
@@ -1064,7 +1064,6 @@ export async function checkInBooking(
   actor: AuthenticatedActor,
   id: number,
   expectedVersion: number,
-  now = new Date(),
 ): Promise<BookingView> {
   const connection = await databasePool.getConnection()
   try {
@@ -1072,10 +1071,6 @@ export async function checkInBooking(
     const reservation = await lockReservation(connection, actor, id, expectedVersion)
     if (reservation.status !== 'BOOKED')
       throw new AppError(409, 'BOOKING_NOT_CHECKIN', 'Chỉ đặt bàn đang chờ mới được check-in.')
-    // FX-01: Đón khách = khách đã có mặt → chỉ cho booking thuộc ngày nghiệp vụ hiện tại (mốc 05:00).
-    if (dateOnly(reservation.business_date) !== businessDateAt(now)) {
-      throw new AppError(409, 'BOOKING_NOT_CURRENT_BUSINESS_DATE', 'Chỉ đón khách cho booking của ca hiện tại.')
-    }
     const [allocationRows] = await connection.execute<(RowDataPacket & { table_id: number; hold_id: number; group_id: number | null })[]>(
       `SELECT a.table_id, a.hold_id, a.group_id FROM table_allocations AS a
        JOIN table_holds AS h ON h.venue_id = a.venue_id AND h.id = a.hold_id
