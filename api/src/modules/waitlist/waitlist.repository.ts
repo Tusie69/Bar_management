@@ -5,6 +5,7 @@ import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
 import { assertNoteHasNoPhoneNumber, redactPhoneNumbersInNote } from '../../security/note-privacy.js'
+import { assertBusinessDateNotPast } from '../bookings/business-date.js'
 import { protectPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from '../bookings/phone-security.js'
 import { createTableGroup, dissolveUnusedGroups, lockAndValidateAssignableTables } from '../tables/table-group.repository.js'
 
@@ -156,8 +157,10 @@ function protectedPhoneValues(phone: ProtectedPhone): [Buffer, number, Buffer, n
 export async function createWaitlistEntry(
   actor: AuthenticatedActor,
   input: CreateWaitlistInput,
+  now = new Date(),
 ): Promise<WaitlistEntryView> {
   assertNoteHasNoPhoneNumber(input.note)
+  assertBusinessDateNotPast(input.businessDate, now)
   const connection = await databasePool.getConnection()
   try {
     await connection.beginTransaction()
@@ -426,6 +429,7 @@ export async function recordWaitlistContact(actor: AuthenticatedActor, input: Re
 export async function seatWaitlistEntry(
   actor: AuthenticatedActor,
   input: SeatWaitlistInput,
+  now = new Date(),
 ): Promise<{ entry: WaitlistEntryView; reservationId: number; groupId: number | null }> {
   const connection = await databasePool.getConnection()
   try {
@@ -473,6 +477,7 @@ export async function seatWaitlistEntry(
     if (entry.kind === 'WALK_IN' ? entry.status !== 'WAITING' : !['WAITING', 'CONTACTING', 'OFFERED'].includes(entry.status)) {
       throw new AppError(409, 'WAITLIST_NOT_SEATABLE', 'Khách chờ không thể được gán bàn trực tiếp.')
     }
+    assertBusinessDateNotPast(dateOnly(entry.business_date), now)
     if ((entry.kind === 'WALK_IN' && !entry.contact_name && entry.customer_id === null) || entry.party_size === null) {
       throw new AppError(409, 'WAITLIST_DATA_INCOMPLETE', 'Thông tin khách chờ không đầy đủ.')
     }

@@ -544,6 +544,51 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       .rejects.toMatchObject({ code: 'BOOKING_NOT_EDITABLE' })
   })
 
+  describe('FX-18 blocks the waitlist for a past business date', () => {
+    const pastDate = '2020-10-24'
+    const waitlistInput = (businessDate: string, guestName = 'FX-18 waitlist') => ({
+      guestName, partySize: 2, businessDate, contactChannel: 'IN_PERSON' as const,
+    })
+
+    it('rejects creating a waitlist entry for a past date without writing rows', async () => {
+      await expect(createWaitlistEntry(actor, waitlistInput(pastDate)))
+        .rejects.toMatchObject({ status: 409, code: 'BUSINESS_DATE_IN_PAST' })
+      const count = await row('SELECT COUNT(*) AS total FROM waitlist_entries WHERE organization_id = ?', [organizationId])
+      expect(Number(count.total)).toBe(0)
+      const future = await createWaitlistEntry(actor, waitlistInput('2030-10-24', 'FX-18 future waitlist'))
+      expect(future.businessDate).toBe('2030-10-24')
+    })
+
+    it('rejects seating a waiting entry whose business date has passed', async () => {
+      const entry = await createWaitlistEntry(actor, waitlistInput('2030-10-24', 'Stale waitlist'))
+      await databasePool.execute('UPDATE waitlist_entries SET business_date = ? WHERE id = ?', [pastDate, entry.id])
+      await expect(seatWaitlistEntry(actor, {
+        entryId: entry.id, expectedVersion: entry.version, tableIds: [tableOneId],
+      })).rejects.toMatchObject({ code: 'BUSINESS_DATE_IN_PAST' })
+      const after = await row('SELECT status, version FROM waitlist_entries WHERE id = ?', [entry.id])
+      expect([after.status, Number(after.version)]).toEqual(['WAITING', entry.version])
+      const [allocations] = await databasePool.execute<RowDataPacket[]>(
+        'SELECT id FROM table_allocations WHERE organization_id = ?',
+        [organizationId],
+      )
+      expect(allocations).toHaveLength(0)
+    })
+
+    it('returns 409 BUSINESS_DATE_IN_PAST through POST /waitlist', async () => {
+      const receptionist = request.agent(app)
+      const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
+        username: 'booking_reception', password,
+      })
+      const auth = JSON.parse(login.text) as AuthResponse
+      const response = await receptionist.post('/api/v1/waitlist')
+        .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken).send(waitlistInput(pastDate, 'Past route waitlist'))
+      expect(response.status).toBe(409)
+      expect(JSON.parse(response.text)).toEqual({
+        error: { code: 'BUSINESS_DATE_IN_PAST', message: 'Không thể đặt bàn cho ngày đã qua.' },
+      })
+    })
+  })
+
   it('protects edit with authentication, CSRF, and reservation.update', async () => {
     const created = await createBooking(actor, bookingInput())
     const receptionist = request.agent(app)
