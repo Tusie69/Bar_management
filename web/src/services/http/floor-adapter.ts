@@ -1,6 +1,6 @@
 import type { BookingSourceCode, VisitOrigin } from "@/domain/enums"
 import type { Catalog, ClaimView, FloorState, FloorTableState, TableLiveState } from "@/domain/models"
-import type { BusinessDate } from "@/lib/time"
+import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { ApiError } from "../contracts"
 
 const zoneCodes = ["A", "B", "C", "BAR"] as const
@@ -33,7 +33,58 @@ export interface BackendCatalog {
 export interface BackendFloorGroup {
   id: number
   symbolNo: number
+  displayCode?: string
   tableIds: number[]
+}
+
+export type BackendDisplayState = "EMPTY" | "BOOKED" | "UPCOMING" | "LATE" | "LATE_CONFIRMED" | "NO_SHOW" | "IN_USE" | "OUT_OF_SERVICE"
+
+export interface BackendFloorClaimProjection {
+  kind: "RESERVATION" | "VISIT" | "WAITLIST_HOLD"
+  reservationId: number | null
+  visitId: number | null
+  waitlistEntryId: number | null
+  holdId: number | null
+  guestName: string
+  phoneLast3: string | null
+  partySize: number
+  turnNo: number | null
+  flags: Array<"NEW" | "RETURNING">
+  groupId: number | null
+  groupDisplayCode: string | null
+  groupMemberTableIds: number[]
+  startsAt: Date
+  deadlineAt: Date | null
+  holdOverdue: boolean
+  paid: boolean
+  origin: string | null
+  sourceCode: string | null
+  version: number
+  lateConfirmedAt?: Date | null
+}
+
+export interface BackendFloorTableProjection {
+  tableId: number
+  tableCode: string
+  catalogStatus: "ACTIVE" | "OUT_OF_SERVICE"
+  isSpare: boolean
+  displayState: BackendDisplayState
+  arrivalPhase: "SCHEDULED" | "ARRIVING" | "WAITING" | "LATE" | "LATE_CONFIRMED" | "NO_SHOW" | null
+  arrivalTime: Date | null
+  minutesLate: number
+  claim: BackendFloorClaimProjection | null
+  groupId: number | null
+  groupDisplayCode: string | null
+  groupMemberTableIds: number[]
+  staleFromPreviousDay: boolean
+}
+
+export interface BackendFloorProjection {
+  businessDate: string
+  serverNow: string
+  changeSeq: string
+  tables: BackendFloorTableProjection[]
+  groups: BackendFloorGroup[]
 }
 
 export interface BackendSource {
@@ -46,6 +97,8 @@ export interface BackendTableState {
   code: string
   state: "AVAILABLE" | "RESERVED" | "IN_USE" | "OUT_OF_SERVICE"
   isBackup: boolean
+  staleFromPreviousDay?: boolean
+  allocationBusinessDate?: string | null
   activeVisit: {
     id: number
     version: number
@@ -123,7 +176,7 @@ export function mapCatalog(payload: BackendCatalog, sources: BackendSource[]): C
       w: table.width,
       h: table.height,
       // Chair orientation is intentionally omitted: the schema does not store it.
-      ...(table.kind === "BAR_SEAT" ? { seating: "bar" as const } : {}),
+      seating: table.kind === "BAR_SEAT" ? ("bar" as const) : undefined,
     }
   })
 
@@ -131,12 +184,12 @@ export function mapCatalog(payload: BackendCatalog, sources: BackendSource[]): C
     venue: payload.venue,
     zones,
     tables,
-    combinations: payload.combinations,
+    combinations: payload.combinations.map((combination) => ({ ...combination, pendingConfirmation: null })),
     sources: sources.map((source) => {
       if (!includes(sourceCodes, source.code)) {
         contractError("UNSUPPORTED_BOOKING_SOURCE", `Backend trả về nguồn booking chưa được hỗ trợ '${source.code}'.`)
       }
-      return { code: source.code, name: source.name }
+      return { id: null, code: source.code, name: source.name }
     }),
   }
 }
@@ -237,6 +290,13 @@ export function mapFloorState(
     const group = groupByTableId.get(table.id)
     return {
       tableId: table.id,
+      // Prefer the allocation projection: startedAt can belong to a different
+      // business date. The fallback supports older servers during rollout.
+      staleFromPreviousDay:
+        table.staleFromPreviousDay ??
+        (table.allocationBusinessDate
+          ? table.allocationBusinessDate < businessDate
+          : Boolean(table.activeVisit && businessDateOf(table.activeVisit.startedAt) < businessDate)),
       state: tableState(table, booking),
       claim:
         table.state === "IN_USE"
@@ -253,5 +313,106 @@ export function mapFloorState(
     tables: states,
     groups,
     changeSeq: catalog.venue.changeSeq,
+  }
+}
+
+export function projectionState(table: BackendFloorTableProjection): TableLiveState {
+  if (table.displayState === "OUT_OF_SERVICE") return "oos"
+  if (table.displayState === "IN_USE") return "seated"
+  if (table.claim?.kind === "WAITLIST_HOLD") return table.claim.holdOverdue ? "hold_overdue" : "hold"
+  if (table.displayState === "LATE") return "late"
+  if (table.displayState === "LATE_CONFIRMED") return "late_confirmed"
+  if (table.displayState === "NO_SHOW") return "noshow"
+  if (table.displayState === "UPCOMING") return "upcoming"
+  if (table.displayState === "BOOKED") return "reserved"
+  return table.isSpare ? "spare" : "free"
+}
+
+function projectionClaim(table: BackendFloorTableProjection, group?: BackendFloorGroup): ClaimView | null {
+  const claim = table.claim
+  if (!claim) return null
+  if (claim.origin !== null && !includes(visitOrigins, claim.origin)) {
+    contractError("UNSUPPORTED_VISIT_ORIGIN", `Visit #${claim.visitId ?? "?"} có origin không được hỗ trợ.`)
+  }
+  if (claim.sourceCode !== null && !includes(sourceCodes, claim.sourceCode)) {
+    contractError("UNSUPPORTED_BOOKING_SOURCE", `Claim của bàn ${table.tableCode} có sourceCode không được hỗ trợ.`)
+  }
+  const tableIds = claim.groupMemberTableIds.length ? claim.groupMemberTableIds : [table.tableId]
+  return {
+    kind: claim.kind === "VISIT" ? "visit" : claim.kind === "WAITLIST_HOLD" ? "waitlist_hold" : "reservation",
+    visitId: claim.visitId,
+    reservationId: claim.reservationId,
+    waitlistEntryId: claim.waitlistEntryId,
+    holdId: claim.holdId,
+    displayName: claim.guestName,
+    phoneLast3: claim.phoneLast3,
+    partySize: claim.partySize,
+    startsAt: validDate(claim.startsAt, `startsAt của bàn ${table.tableCode}`),
+    deadlineAt: claim.deadlineAt === null ? null : validDate(claim.deadlineAt, `deadlineAt của bàn ${table.tableCode}`),
+    paid: claim.paid,
+    origin: claim.origin as VisitOrigin | null,
+    tableIds,
+    groupId: claim.groupId,
+    symbolNo: group?.symbolNo ?? null,
+    groupDisplayCode: claim.groupDisplayCode,
+    turnNo: claim.turnNo,
+    flags: [...claim.flags],
+    warning: table.displayState === "LATE" ? "late" : table.displayState === "NO_SHOW" ? "noshow" : null,
+    minutesLate: table.minutesLate,
+    sourceCode: claim.sourceCode as BookingSourceCode | null,
+    // Floor projection intentionally never carries raw notes.
+    note: null,
+    version: claim.version,
+    lateConfirmedAt: claim.lateConfirmedAt ?? null,
+  }
+}
+
+function safeChangeSequence(value: string): number {
+  if (!/^\d+$/.test(value)) contractError("INVALID_CHANGE_SEQUENCE", "Backend trả về changeSeq không hợp lệ.")
+  const sequence = Number(value)
+  if (!Number.isSafeInteger(sequence))
+    contractError("UNSAFE_CHANGE_SEQUENCE", "changeSeq vượt giới hạn an toàn của trình duyệt.")
+  return sequence
+}
+
+/** Maps only server-derived projection fields; no browser clock or booking-list inference is used. */
+export function mapFloorProjection(payload: BackendFloorProjection, catalog: Catalog): FloorState {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(payload.businessDate)) {
+    contractError("INVALID_BUSINESS_DATE", "Backend trả về businessDate không hợp lệ.")
+  }
+  const serverNow = new Date(payload.serverNow)
+  if (Number.isNaN(serverNow.getTime())) contractError("INVALID_SERVER_NOW", "Backend trả về serverNow không hợp lệ.")
+  const catalogIds = new Set(catalog.tables.map((table) => table.id))
+  const groupsById = new Map(payload.groups.map((group) => [group.id, group]))
+  const seenTableIds = new Set<number>()
+  const tables = payload.tables.map((table): FloorTableState => {
+    if (!catalogIds.has(table.tableId)) contractError("UNKNOWN_TABLE", `Projection chứa bàn lạ #${table.tableId}.`)
+    if (seenTableIds.has(table.tableId)) contractError("DUPLICATE_TABLE", `Projection lặp bàn #${table.tableId}.`)
+    seenTableIds.add(table.tableId)
+    const group = table.groupId === null ? undefined : groupsById.get(table.groupId)
+    if (
+      table.groupId !== null &&
+      (!group || group.displayCode !== table.groupDisplayCode || !group.tableIds.includes(table.tableId))
+    ) {
+      contractError("INCONSISTENT_FLOOR_GROUP", `Nhóm của bàn ${table.tableCode} không nhất quán.`)
+    }
+    return {
+      tableId: table.tableId,
+      state: projectionState(table),
+      claim: projectionClaim(table, group),
+      staleFromPreviousDay: Boolean(table.staleFromPreviousDay),
+    }
+  })
+  return {
+    at: serverNow,
+    businessDate: payload.businessDate as BusinessDate,
+    tables,
+    groups: payload.groups.map((group) => ({
+      id: group.id,
+      symbolNo: group.symbolNo,
+      displayCode: group.displayCode,
+      tableIds: [...group.tableIds],
+    })),
+    changeSeq: safeChangeSequence(payload.changeSeq),
   }
 }

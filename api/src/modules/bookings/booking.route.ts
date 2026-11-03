@@ -4,9 +4,12 @@ import { requireAuthentication, requireCsrfProtection, requirePermission } from 
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { env } from '../../config/env.js'
 import { AppError } from '../../errors/app-error.js'
+import { assertNoteHasNoPhoneNumber } from '../../security/note-privacy.js'
+import { applicationNow } from '../../time/application-clock.js'
 import {
   assignBookingTables,
   checkInBooking,
+  confirmBookingLate,
   createAndAssignBooking,
   closeBooking,
   createBooking,
@@ -66,13 +69,15 @@ function optionalClassification(value: unknown): BookingClassification | undefin
   throw new AppError(400, 'INVALID_BOOKING_CLASSIFICATION', 'Loại khách không hợp lệ.')
 }
 
-function bookingBody(value: unknown) {
+function bookingBody(value: unknown, mode: 'create' | 'update') {
   const body = objectBody(value)
   const note = optionalText(body.note, 500, 'INVALID_NOTE', 'Ghi chú không được vượt quá 500 ký tự.')
+  const noteProvided = Object.prototype.hasOwnProperty.call(body, 'note')
+  if (noteProvided) assertNoteHasNoPhoneNumber(note)
   const classification = optionalClassification(body.classification)
   let phoneNumber: string | null | undefined
   if (Object.prototype.hasOwnProperty.call(body, 'phoneNumber')) {
-    if (body.phoneNumber !== null && (typeof body.phoneNumber !== 'string' || body.phoneNumber.length > 40)) {
+    if (body.phoneNumber !== null && (typeof body.phoneNumber !== 'string' || body.phoneNumber.length > 20)) {
       throw new AppError(422, 'INVALID_PHONE_NUMBER', 'Số điện thoại không hợp lệ.')
     }
     phoneNumber = body.phoneNumber === null ? null : body.phoneNumber.trim()
@@ -85,7 +90,9 @@ function bookingBody(value: unknown) {
     businessDate: businessDate(body.businessDate),
     sourceCode: requiredText(body.sourceCode, 30, 'INVALID_SOURCE', 'Nguồn đặt bàn không hợp lệ.'),
     ...(classification === undefined ? {} : { classification }),
-    ...(note === undefined ? {} : { note }),
+    ...(mode === 'update'
+      ? noteProvided ? { note: note ?? null } : {}
+      : note === undefined ? {} : { note }),
     ...(phoneNumber === undefined ? {} : { phoneNumber }),
     body,
   }
@@ -131,11 +138,11 @@ bookingRouter.get('/:id', requireAuthentication, requirePermission('customer.vie
 })
 
 bookingRouter.post('/', requireAuthentication, requireCsrfProtection, requirePermission('reservation.create'), async (request, response) => {
-  const { body: _body, ...input } = bookingBody(request.body)
+  const { body: _body, ...input } = bookingBody(request.body, 'create')
   void _body
   const booking = await createBooking(requireAuthenticatedActor(request), {
     ...input,
-  })
+  }, applicationNow())
   response.status(201).json({ booking })
 })
 
@@ -146,18 +153,18 @@ bookingRouter.post(
   requirePermission('reservation.create'),
   requirePermission('table.assign'),
   async (request, response) => {
-    const { body, ...input } = bookingBody(request.body)
+    const { body, ...input } = bookingBody(request.body, 'create')
     if (!Array.isArray(body.tableIds)) throw new AppError(400, 'TABLES_REQUIRED', 'Danh sách bàn không hợp lệ.')
     const tableIds = body.tableIds.map((id) => positiveInteger(id, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.'))
     response.status(201).json({ booking: await createAndAssignBooking(requireAuthenticatedActor(request), {
       ...input,
       tableIds,
-    }) })
+    }, applicationNow()) })
   },
 )
 
 bookingRouter.put('/:id', requireAuthentication, requireCsrfProtection, requirePermission('reservation.update'), async (request, response) => {
-  const { body, ...input } = bookingBody(request.body)
+  const { body, ...input } = bookingBody(request.body, 'update')
   response.json({ booking: await updateBooking(
     requireAuthenticatedActor(request),
     positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.'),
@@ -165,6 +172,7 @@ bookingRouter.put('/:id', requireAuthentication, requireCsrfProtection, requireP
       ...input,
       expectedVersion: positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản booking không hợp lệ.'),
     },
+    applicationNow(),
   ) })
 })
 
@@ -194,7 +202,7 @@ bookingRouter.post('/walk-ins', requireAuthentication, requireCsrfProtection, re
   if (!Array.isArray(body.tableIds)) throw new AppError(400, 'TABLES_REQUIRED', 'Danh sách bàn không hợp lệ.')
   const result = await createWalkIn(requireAuthenticatedActor(request), {
     partySize: positiveInteger(body.partySize, 'INVALID_PARTY_SIZE', 'Số khách không hợp lệ.'),
-    businessDate: assertCurrentBusinessDate(body.businessDate),
+    businessDate: assertCurrentBusinessDate(body.businessDate, applicationNow()),
     tableIds: body.tableIds.map((id) => positiveInteger(id, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.')),
     ...(typeof body.guestName === 'string' && body.guestName.trim() ? { guestName: body.guestName.trim() } : {}),
   })
@@ -230,6 +238,7 @@ bookingRouter.post('/:id/cancel', requireAuthentication, requireCsrfProtection, 
     throw new AppError(400, 'INVALID_CANCEL_NOTE', 'Lý do hủy không được vượt quá 300 ký tự.')
   }
   const reasonNote = typeof body.reasonNote === 'string' ? body.reasonNote.trim() : ''
+  assertNoteHasNoPhoneNumber(reasonNote)
   response.json({ booking: await closeBooking(
     requireAuthenticatedActor(request),
     positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.'),
@@ -249,11 +258,22 @@ bookingRouter.post('/:id/no-show', requireAuthentication, requireCsrfProtection,
   ) })
 })
 
+bookingRouter.post('/:id/late-confirm', requireAuthentication, requireCsrfProtection, requirePermission('reservation.update'), async (request, response) => {
+  const body = objectBody(request.body)
+  response.json(await confirmBookingLate(
+    requireAuthenticatedActor(request),
+    positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.'),
+    positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản booking không hợp lệ.'),
+    applicationNow(),
+  ))
+})
+
 bookingRouter.post('/:id/check-in', requireAuthentication, requireCsrfProtection, requirePermission('visit.checkin'), async (request, response) => {
   const body = objectBody(request.body)
   response.json({ booking: await checkInBooking(
     requireAuthenticatedActor(request),
     positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.'),
     positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản booking không hợp lệ.'),
+    applicationNow(),
   ) })
 })

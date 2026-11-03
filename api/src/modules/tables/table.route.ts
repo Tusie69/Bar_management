@@ -3,7 +3,8 @@ import { Router } from 'express'
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { AppError } from '../../errors/app-error.js'
-import { configureTable, getTableCatalog, listActiveTableGroups, listTables, updateTableState } from './table.repository.js'
+import { getFloorProjection } from './floor-projection.repository.js'
+import { configureTable, getTableCatalog, updateTableState } from './table.repository.js'
 import { isTableState } from './table-state.js'
 
 export const tableRouter: Router = Router()
@@ -29,11 +30,7 @@ function parseBody(value: unknown): Record<string, unknown> {
 tableRouter.get('/', requireAuthentication, requirePermission('customer.view_masked'), async (request, response) => {
   const businessDate = parseBusinessDate(request.query.date)
   const actor = requireAuthenticatedActor(request)
-  const [tables, groups] = await Promise.all([
-    listTables(actor, businessDate),
-    listActiveTableGroups(actor, businessDate),
-  ])
-  response.json({ businessDate, tables, groups })
+  response.json(await getFloorProjection(actor, businessDate))
 })
 
 tableRouter.get(
@@ -78,7 +75,7 @@ tableRouter.patch(
       throw new AppError(400, 'EMPTY_UPDATE', 'Cần gửi trạng thái bàn.')
     }
 
-    const table = await updateTableState({
+    const table = await updateTableState(requireAuthenticatedActor(request), {
       tableId,
       businessDate,
       ...(state === undefined ? {} : { state }),
@@ -99,8 +96,12 @@ tableRouter.patch(
     if (!Number.isSafeInteger(tableId) || tableId <= 0)
       throw new AppError(400, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.')
     const body = parseBody(request.body as unknown)
-    if (typeof body.isSpare !== 'boolean')
+    if (body.isSpare !== undefined && typeof body.isSpare !== 'boolean')
       throw new AppError(400, 'INVALID_BACKUP_FLAG', 'Cờ bàn sơ cua phải là true hoặc false.')
+    if (body.status !== undefined && body.status !== 'ACTIVE' && body.status !== 'OUT_OF_SERVICE')
+      throw new AppError(400, 'INVALID_TABLE_STATUS', 'Table status must be ACTIVE or OUT_OF_SERVICE.')
+    if (body.isSpare === undefined && body.status === undefined)
+      throw new AppError(400, 'EMPTY_UPDATE', 'Provide isSpare or status.')
     if (!Number.isSafeInteger(body.version) || Number(body.version) < 1)
       throw new AppError(400, 'INVALID_VERSION', 'Phiên bản bàn không hợp lệ.')
     if (typeof body.reason !== 'string' || !body.reason.trim())
@@ -110,7 +111,8 @@ tableRouter.patch(
     response.json({
       table: await configureTable(requireAuthenticatedActor(request), {
         tableId,
-        isSpare: body.isSpare,
+        ...(typeof body.isSpare === 'boolean' ? { isSpare: body.isSpare } : {}),
+        ...(body.status === 'ACTIVE' || body.status === 'OUT_OF_SERVICE' ? { status: body.status } : {}),
         expectedVersion: Number(body.version),
         reason: body.reason.trim(),
       }),

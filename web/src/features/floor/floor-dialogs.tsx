@@ -38,6 +38,7 @@ interface GuestCountProps {
   title: string
   description: React.ReactNode
   initial: number
+  readOnly?: boolean
   confirmLabel: string
   onConfirm: (count: number) => Promise<unknown>
 }
@@ -58,10 +59,12 @@ function GuestCountBody({
   title,
   description,
   initial,
+  readOnly = false,
   confirmLabel,
   onConfirm,
   onCancel,
 }: GuestCountProps & { onCancel: () => void }) {
+  const isReadOnly = readOnly || /check-in/i.test(title)
   const [count, setCount] = useState(initial)
   const [busy, run] = useBusy()
   return (
@@ -72,18 +75,28 @@ function GuestCountBody({
           <div className="text-[15px] text-muted-foreground">{description}</div>
         </DialogDescription>
       </DialogHeader>
-      <div className="grid gap-3">
-        <Label>Số khách thực tế</Label>
-        <div className="flex flex-wrap items-center gap-3">
-          <Stepper value={count} onChange={setCount} label="số khách" max={60} />
-          <QuickCounts value={count} onChange={setCount} options={[1, 2, 3, 4, 6, 8]} />
+      {isReadOnly ? (
+        <div className="grid gap-1.5 py-1">
+          <Label>Số khách</Label>
+          <div className="flex items-center justify-between rounded-xl border bg-surface-2 px-3.5 py-2.5 text-sm">
+            <span className="font-semibold text-foreground">{initial} khách</span>
+            <span className="text-xs text-muted-foreground">Đổi số khách cần sửa booking trước</span>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="grid gap-3">
+          <Label>Số khách thực tế</Label>
+          <div className="flex flex-wrap items-center gap-3">
+            <Stepper value={count} onChange={setCount} label="số khách" max={60} />
+            <QuickCounts value={count} onChange={setCount} options={[1, 2, 3, 4, 6, 8]} />
+          </div>
+        </div>
+      )}
       <DialogFooter>
         <Button variant="ghost" onClick={onCancel}>
           Quay lại
         </Button>
-        <Button disabled={busy} onClick={() => run(() => onConfirm(count))}>
+        <Button disabled={busy} onClick={() => run(() => onConfirm(isReadOnly ? initial : count))}>
           {confirmLabel}
         </Button>
       </DialogFooter>

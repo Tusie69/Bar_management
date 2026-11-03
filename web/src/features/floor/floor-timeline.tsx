@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef } from "react"
-import { GroupSymbolIcon } from "@/components/common"
+import { EmptyState, GroupSymbolIcon } from "@/components/common"
 import { STATE_META } from "@/components/status-meta"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { AllocationView, TableView } from "@/domain/models"
@@ -7,6 +7,7 @@ import type { ZoneCode } from "@/domain/venue-layout"
 import { useDayAllocations } from "@/hooks/use-data"
 import { atBusinessTime, fmtTime, minutesBetween, MS, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { api } from "@/services"
 import { useUi } from "@/state/ui"
 import type { FloorModel } from "./use-floor-model"
 
@@ -49,6 +50,16 @@ export function FloorTimeline({
       scrolledFor.current = date
     }
   })
+
+  if (api.mode === "http") {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center p-6">
+        <EmptyState title="Chưa hỗ trợ dòng thời gian">
+          Dữ liệu lịch sử sử dụng bàn (allocations) chưa được backend v1 hỗ trợ.
+        </EmptyState>
+      </div>
+    )
+  }
 
   if (!model.catalog || allocations.isLoading) return <Skeleton className="min-h-0 flex-1" />
 

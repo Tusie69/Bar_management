@@ -30,3 +30,7 @@ e2e/.artifacts
 .ds-sync/
 ds-bundle/
 .design-sync/
+# Local environment (keep .env.example tracked)
+.env
+.env.*
+!.env.example

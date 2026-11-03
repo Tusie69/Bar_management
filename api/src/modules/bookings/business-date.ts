@@ -25,6 +25,11 @@ export interface BookingSchedule {
   localDateTime: LocalDateTime
 }
 
+export interface CheckInBusinessDate {
+  businessDate: string
+  currentBusinessDate: string
+}
+
 function pad(value: number, length = 2): string {
   return String(value).padStart(length, '0')
 }
@@ -100,7 +105,11 @@ function localPartsAt(date: Date): LocalDateTime {
   }
 }
 
-export function validateBookingSchedule(expectedAt: unknown, suppliedBusinessDate: unknown): BookingSchedule {
+export function validateBookingSchedule(
+  expectedAt: unknown,
+  suppliedBusinessDate: unknown,
+  now = new Date(),
+): BookingSchedule {
   const businessDate = validateCalendarDate(suppliedBusinessDate)
   if (typeof expectedAt !== 'string') {
     throw new AppError(400, 'INVALID_EXPECTED_AT', 'Giờ khách đến phải là thời gian RFC3339 có offset.')
@@ -156,10 +165,38 @@ export function validateBookingSchedule(expectedAt: unknown, suppliedBusinessDat
       'Ngày làm việc không khớp với giờ khách đến theo ca 17:00–05:00.',
     )
   }
+  if (expectedAtUtc.getTime() < now.getTime()) {
+    throw new AppError(409, 'EXPECTED_AT_IN_PAST', 'Không thể đặt booking vào thời điểm đã qua.')
+  }
   return {
     expectedAtUtc,
     mysqlExpectedAt: expectedAtUtc.toISOString().slice(0, 23).replace('T', ' '),
     businessDate,
     localDateTime: local,
   }
+}
+
+export function assertCheckInBusinessDate(value: unknown, now = new Date()): CheckInBusinessDate {
+  const businessDate = validateCalendarDate(value)
+  let current: string
+  try {
+    current = currentBusinessDate(now)
+  } catch (error) {
+    if (error instanceof AppError && error.code === 'WALK_IN_OUTSIDE_BUSINESS_HOURS') {
+      throw new AppError(
+        409,
+        'CHECK_IN_OUTSIDE_BUSINESS_HOURS',
+        'Không có ca check-in đang hoạt động trong khoảng 05:00–17:00.',
+      )
+    }
+    throw error
+  }
+  if (businessDate !== current) {
+    throw new AppError(
+      409,
+      'BOOKING_BUSINESS_DATE_NOT_CURRENT',
+      'Chỉ được check-in booking thuộc ngày nghiệp vụ hiện tại.',
+    )
+  }
+  return { businessDate, currentBusinessDate: current }
 }

@@ -8,7 +8,7 @@
  * - The business day itself stays 17:00 → 05:00 (lib/time.ts). 00:00–01:00 slots use the next calendar
  *   date but keep the selected business date; the API derives business_date from expectedAt.
  */
-import { addDays, atBusinessTime, MS, type BusinessDate } from "@/lib/time"
+import { addDays, atBusinessTime, fmtDayMonth, MS, venueDateString, venueParts, type BusinessDate } from "@/lib/time"
 
 export const GUEST_QUICK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const
 export const BOOKING_SLOT_STEP_MIN = 30
@@ -42,6 +42,8 @@ export const isBookingSlot = (hhmm: string | null | undefined): hhmm is string =
 /** Backend-style window check: accepts any minute in 19:00–01:00, independent of the configured UI slot step. */
 export function isWithinBookingReceptionWindow(hhmm: string): boolean {
   if (!/^\d{2}:\d{2}$/.test(hhmm)) return false
+  const [hour, minute] = hhmm.split(":").map(Number)
+  if (hour > 23 || minute > 59) return false
   const minutes = toMin(hhmm)
   return minutes >= toMin(BOOKING_FIRST_SLOT) || minutes <= toMin(BOOKING_LAST_SLOT)
 }
@@ -78,6 +80,16 @@ export function bookingSlots(bd: BusinessDate, now: Date, graceMin = PAST_GRACE_
   })
 }
 
+/** Canonical mobile forms group slots across midnight while preserving venue-time ordering. */
+export function bookingSlotGroups(bd: BusinessDate, now: Date) {
+  const all = bookingSlots(bd, now)
+  const next = fmtDayMonth(addDays(bd, 1))
+  return [
+    { key: "evening", title: `Tối ${fmtDayMonth(bd)}`, slots: all.filter((s) => !s.nextDay) },
+    { key: "late", title: `Sáng hôm sau, ${next}`, slots: all.filter((s) => s.nextDay) },
+  ] as const
+}
+
 /** Null when valid. Availability (table conflicts) is NOT decided here; the server stays the final check. */
 export function validateBookingTime(
   bd: BusinessDate,
@@ -94,6 +106,17 @@ export function validateBookingTime(
 
 export const defaultBookingSlot = (bd: BusinessDate, now: Date): string | null =>
   bookingSlots(bd, now).find((s) => !s.disabled)?.time ?? null
+
+/** Null only when the booking belongs to the active 17:00–05:00 shift. */
+export function validateBookingCheckInDate(bd: BusinessDate, now: Date): string | null {
+  const parts = venueParts(now)
+  if (parts.hour >= 5 && parts.hour < 17) {
+    return "Không có ca check-in đang hoạt động trong khoảng 05:00–17:00."
+  }
+  const calendarDate = venueDateString(now)
+  const currentBusinessDate = parts.hour < 5 ? addDays(calendarDate, -1) : calendarDate
+  return bd === currentBusinessDate ? null : "Chỉ được check-in booking thuộc ngày nghiệp vụ hiện tại."
+}
 
 export type GuestParse = { ok: true; value: number; error: null } | { ok: false; value: number | null; error: string }
 

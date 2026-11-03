@@ -21,6 +21,11 @@ export interface PickRequest {
   /** Tables that cannot be chosen (e.g. the source of a move). */
   excludeIds?: number[]
   preselected?: number[]
+  /** Target booking context for reservation assignment. */
+  targetDate?: BusinessDate
+  targetTime?: string
+  targetExpectedAt?: Date
+  targetParty?: number
   /** Return true to close pick mode. */
   onConfirm: (tableIds: number[]) => Promise<boolean> | boolean
 }
@@ -157,7 +162,19 @@ export const useUi = create<UiState>((set, get) => ({
     })),
   setZone: (zone) => set({ zone }),
   selectTable: (selectedTableId) => set({ selectedTableId }),
-  startPick: (pick) => set({ pick, pickSelection: pick.preselected ?? [], view: "map" }),
+  startPick: (pick) =>
+    set((s) => ({
+      pick,
+      pickSelection: pick.preselected ?? [],
+      view: "map",
+      availDate: pick.targetDate ?? s.availDate,
+      availTime: pick.targetTime ?? s.availTime,
+      availParty: pick.targetParty ?? s.availParty,
+      floorMode:
+        pick.intent === "assign" && pick.targetDate && pick.targetDate !== businessDateOf(clock.now())
+          ? "availability"
+          : s.floorMode,
+    })),
   togglePick: (id) => {
     const { pick, pickSelection } = get()
     if (!pick) return

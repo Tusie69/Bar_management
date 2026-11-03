@@ -45,6 +45,7 @@ export function venueConfig(db: MockDb): VenueConfig {
     timezone: v.timezone,
     businessDayStartLocal: v.businessDayStartLocal,
     businessDayCutoffLocal: v.businessDayCutoffLocal,
+    upcomingWarningMinutes: v.upcomingWarningMinutes,
     lateWarningMinutes: v.lateWarningMinutes,
     noShowWarningMinutes: v.noShowWarningMinutes,
     waitlistHoldDefaultMinutes: v.waitlistHoldDefaultMinutes,
@@ -145,6 +146,22 @@ export function groupSymbolNo(db: MockDb, groupId: number | null): number | null
   return g && !g.dissolvedAt ? g.symbolNo : null
 }
 
+function groupDisplayCode(db: MockDb, groupId: number | null): string | null {
+  const symbolNo = groupSymbolNo(db, groupId)
+  if (!symbolNo) return null
+  let n = symbolNo
+  let letters = ""
+  while (n > 0) {
+    n -= 1
+    letters = String.fromCharCode(65 + (n % 26)) + letters
+    n = Math.floor(n / 26)
+  }
+  return `◆${letters}`
+}
+
+const classificationFlags = (classification: string | null | undefined): Array<"NEW" | "RETURNING"> =>
+  classification === "NEW" || classification === "RETURNING" ? [classification] : []
+
 export function activeReservationHold(db: MockDb, reservationId: number): TableHoldRow | null {
   for (const h of db.holds.values()) {
     if (h.status === "ACTIVE" && h.holdKind === "RESERVATION" && h.reservationId === reservationId) return h
@@ -191,13 +208,20 @@ function sourceCode(db: MockDb, sourceId: number): BookingSourceCode {
 
 /* ---------------- floor ---------------- */
 
-export function floorState(db: MockDb, now: Date, selectedBusinessDate?: BusinessDate): FloorState {
+export function floorState(
+  db: MockDb,
+  now: Date,
+  selectedBusinessDate?: BusinessDate,
+  liveBusinessDate = businessDateOf(now),
+): FloorState {
   const venue = venueOf(db)
   const bd = selectedBusinessDate ?? businessDateOf(now)
+  // A future preview timestamp must not turn carry-over on before the live clock rolls over.
+  const includeStale = bd === liveBusinessDate
   const tables: FloorTableState[] = []
   for (const t of db.tables.values()) {
     if (t.status === "RETIRED") continue
-    const blocking = blockingAllocations(db, t.id, bd, false)
+    const blocking = blockingAllocations(db, t.id, bd, includeStale)
     const usage = blocking.find((a) => a.kind === "USAGE")
     let state: TableLiveState = t.status === "OUT_OF_SERVICE" ? "oos" : t.isSpare ? "spare" : "free"
     let claim: ClaimView | null = null
@@ -206,7 +230,7 @@ export function floorState(db: MockDb, now: Date, selectedBusinessDate?: Busines
     if (usage && usage.visitId) {
       const v = db.visits.get(usage.visitId)!
       state = "seated"
-      stale = false
+      stale = usage.businessDate < bd
       claim = {
         kind: "visit",
         visitId: v.id,
@@ -223,6 +247,7 @@ export function floorState(db: MockDb, now: Date, selectedBusinessDate?: Busines
         tableIds: visitTableIds(db, v.id),
         groupId: usage.groupId,
         symbolNo: groupSymbolNo(db, usage.groupId),
+        groupDisplayCode: groupDisplayCode(db, usage.groupId),
         warning: null,
         minutesLate: 0,
         sourceCode: null,
@@ -259,6 +284,8 @@ export function floorState(db: MockDb, now: Date, selectedBusinessDate?: Busines
             tableIds: holdTableIds(db, hold.id),
             groupId: holdAlloc.groupId,
             symbolNo: groupSymbolNo(db, holdAlloc.groupId),
+            groupDisplayCode: groupDisplayCode(db, holdAlloc.groupId),
+            flags: res ? classificationFlags(res.customerClassification) : [],
             warning: res ? reservationWarning(venue, res, now).warning : null,
             minutesLate: 0,
             sourceCode: null,
@@ -268,7 +295,17 @@ export function floorState(db: MockDb, now: Date, selectedBusinessDate?: Busines
         } else if (hold.reservationId) {
           const r = db.reservations.get(hold.reservationId)!
           const w = reservationWarning(venue, r, now)
-          state = w.warning === "noshow" ? "noshow" : w.warning === "late" ? "late" : "reserved"
+          const minutesUntil = Math.floor((r.expectedAt.getTime() - now.getTime()) / MS.MIN)
+          state =
+            w.warning === "noshow"
+              ? "noshow"
+              : r.lateConfirmedAt && now.getTime() >= r.expectedAt.getTime()
+                ? "late_confirmed"
+              : w.warning === "late"
+                ? "late"
+                : minutesUntil <= venue.upcomingWarningMinutes && w.minutesLate <= venue.lateWarningMinutes
+                  ? "upcoming"
+                  : "reserved"
           claim = {
             kind: "reservation",
             visitId: null,
@@ -285,11 +322,14 @@ export function floorState(db: MockDb, now: Date, selectedBusinessDate?: Busines
             tableIds: holdTableIds(db, hold.id),
             groupId: holdAlloc.groupId,
             symbolNo: groupSymbolNo(db, holdAlloc.groupId),
+            groupDisplayCode: groupDisplayCode(db, holdAlloc.groupId),
+            flags: classificationFlags(r.customerClassification),
             warning: w.warning,
             minutesLate: w.minutesLate,
             sourceCode: sourceCode(db, r.sourceId),
             note: r.note,
             version: r.version,
+            lateConfirmedAt: r.lateConfirmedAt,
           }
         }
       }
@@ -297,12 +337,15 @@ export function floorState(db: MockDb, now: Date, selectedBusinessDate?: Busines
     if (t.status === "OUT_OF_SERVICE") state = "oos"
     tables.push({ tableId: t.id, state, claim, staleFromPreviousDay: stale })
   }
-  const live = activeAllocations(db).filter((a) => a.businessDate === bd)
+  const live = activeAllocations(db).filter(
+    (a) => a.businessDate === bd || (includeStale && a.kind === "USAGE" && a.businessDate < bd),
+  )
   const groups = [...db.groups.values()]
     .filter((g) => !g.dissolvedAt)
     .map((g) => ({
       id: g.id,
       symbolNo: g.symbolNo,
+      displayCode: groupDisplayCode(db, g.id)!,
       tableIds: live.filter((a) => a.groupId === g.id).map((a) => a.tableId),
     }))
     .filter((g) => g.tableIds.length > 1)
@@ -527,6 +570,7 @@ export function reservationView(db: MockDb, r: ReservationRow, now: Date): Reser
     closeReasonNote: r.closeReasonNote,
     createdAt: r.createdAt,
     createdByName: creator?.displayName ?? "Hệ thống",
+    lateConfirmedAt: r.lateConfirmedAt,
   }
 }
 
@@ -715,6 +759,7 @@ const ACTION_LABEL: Record<string, string> = {
   CHECKED_IN: "Check-in",
   WALKIN_SEATED: "Nhận Walk-in",
   VISIT_ENDED: "Nhả bàn",
+  VISIT_AUTO_CLOSED_BUSINESS_DAY: "Tự đóng cuối ngày kinh doanh",
   VISIT_MARKED_PAID: "Đã thanh toán",
   VISIT_UPDATED: "Cập nhật lượt ghé",
   TABLES_COMBINED: "Ghép bàn",

@@ -1,4 +1,5 @@
 import type { BookingSourceCode } from "@/domain/enums"
+import { isPlausibleVnPhone } from "@/lib/text"
 import { venueParts, type BusinessDate } from "@/lib/time"
 import { ApiError } from "../contracts"
 
@@ -28,6 +29,7 @@ export interface BackendBookingPayload {
   displayStatus: string
   minutesLate: number
   autoNoShowDue: boolean
+  lateConfirmedAt?: Date | null
 }
 
 export interface HttpBooking {
@@ -47,6 +49,7 @@ export interface HttpBooking {
   displayStatus: BookingDisplayStatus
   minutesLate: number
   autoNoShowDue: boolean
+  lateConfirmedAt?: Date | null
 }
 
 export interface BookingWriteFields {
@@ -77,22 +80,6 @@ export interface DirectBookingCreatePayload extends BookingCreatePayload {
 
 export interface BookingUpdatePayload extends BookingCreatePayload {
   version: number
-}
-
-export type AssignmentTableState = "AVAILABLE" | "RESERVED" | "IN_USE" | "OUT_OF_SERVICE"
-
-export interface BackendAssignmentTablePayload {
-  id: number
-  code: string
-  state: string
-  isBackup: boolean
-}
-
-export interface AssignmentTable {
-  id: number
-  code: string
-  state: AssignmentTableState
-  isSpare: boolean
 }
 
 const includes = <T extends string>(values: readonly T[], value: string): value is T => values.includes(value as T)
@@ -153,7 +140,7 @@ function commonPayload(fields: BookingWriteFields): BookingCreatePayload {
   }
   const note = fields.note?.trim()
   const phoneNumber = typeof fields.phoneNumber === "string" ? fields.phoneNumber.trim() : fields.phoneNumber
-  if (typeof phoneNumber === "string" && (!phoneNumber || phoneNumber.length > 40)) {
+  if (typeof phoneNumber === "string" && !isPlausibleVnPhone(phoneNumber)) {
     throw new ApiError(422, "INVALID_PHONE_NUMBER", "Số điện thoại không hợp lệ.")
   }
   if (note && note.length > 500) throw new ApiError(400, "INVALID_NOTE", "Ghi chú không được vượt quá 500 ký tự.")
@@ -179,10 +166,7 @@ export function createBookingPayload(fields: BookingWriteFields): BookingCreateP
   return commonPayload(fields)
 }
 
-export function directBookingCreatePayload(
-  fields: BookingWriteFields,
-  tableIds: number[],
-): DirectBookingCreatePayload {
+export function directBookingCreatePayload(fields: BookingWriteFields, tableIds: number[]): DirectBookingCreatePayload {
   const uniqueTableIds = [...new Set(tableIds)]
   if (!uniqueTableIds.length || uniqueTableIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
     throw new ApiError(400, "TABLE_REQUIRED", "Cần chọn ít nhất một bàn hợp lệ.")
@@ -194,6 +178,8 @@ export function fullUpdateBookingPayload(
   current: HttpBooking,
   fields: Partial<BookingWriteFields>,
 ): BookingUpdatePayload {
+  // Canonical callers use null for "unchanged". A string (including "") is an intentional edit.
+  const editedNote = typeof fields.note === "string" ? fields.note.trim() : undefined
   const merged: BookingWriteFields = {
     guestName: fields.guestName ?? current.guestName,
     partySize: fields.partySize ?? current.partySize,
@@ -201,11 +187,11 @@ export function fullUpdateBookingPayload(
     businessDate: fields.businessDate ?? current.businessDate,
     sourceCode: fields.sourceCode ?? current.sourceCode,
     classification: fields.classification ?? current.classification,
-    note: fields.note === undefined ? current.note : fields.note,
     ...(Object.prototype.hasOwnProperty.call(fields, "phoneNumber") ? { phoneNumber: fields.phoneNumber } : {}),
   }
   return {
     ...commonPayload(merged),
+    ...(editedNote === undefined ? {} : { note: editedNote }),
     version: current.version,
   }
 }
@@ -227,17 +213,4 @@ export function assignmentPayload(version: number, tableIds: number[]) {
     throw new ApiError(400, "TABLE_REQUIRED", "Cần chọn ít nhất một bàn hợp lệ.")
   }
   return { version, tableIds: uniqueTableIds }
-}
-
-export function mapAssignmentTable(payload: BackendAssignmentTablePayload): AssignmentTable {
-  const tableStates = ["AVAILABLE", "RESERVED", "IN_USE", "OUT_OF_SERVICE"] as const
-  if (!includes(tableStates, payload.state)) {
-    contractError("UNSUPPORTED_TABLE_STATE", `Bàn ${payload.code} có trạng thái không được hỗ trợ.`)
-  }
-  return {
-    id: Number(payload.id),
-    code: payload.code,
-    state: payload.state,
-    isSpare: Boolean(payload.isBackup),
-  }
 }

@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle, ShieldCheck } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import {
@@ -27,10 +28,15 @@ import { useUi } from "@/state/ui"
 
 /** Global conflict dialog (409s): who changed what, and what to do next. */
 export function ConflictDialog() {
+  const qc = useQueryClient()
   const conflict = useUi((s) => s.conflict)
   const close = useUi((s) => s.closeConflict)
+  const handleClose = () => {
+    void qc.invalidateQueries()
+    close()
+  }
   return (
-    <AlertDialog open={!!conflict} onOpenChange={(open) => !open && close()}>
+    <AlertDialog open={!!conflict} onOpenChange={(open) => !open && handleClose()}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <div className="mb-1 grid size-10 place-items-center rounded-full bg-st-late-tint text-st-late">
@@ -48,7 +54,7 @@ export function ConflictDialog() {
         ) : null}
         {conflict?.hint ? <p className="text-sm text-muted-foreground">{conflict.hint}</p> : null}
         <AlertDialogFooter>
-          <AlertDialogAction onClick={close}>Đã hiểu, xem dữ liệu mới</AlertDialogAction>
+          <AlertDialogAction onClick={handleClose}>Đã hiểu, xem dữ liệu mới</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

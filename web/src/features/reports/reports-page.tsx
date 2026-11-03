@@ -9,11 +9,25 @@ import type { ReportQuery } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useBusinessDate, useReport } from "@/hooks/use-data"
 import { addDays, fmtBusinessDate, fmtDayMonth } from "@/lib/time"
+import { api } from "@/services"
 import { useCan } from "@/state/session"
 
 type Range = "today" | "7" | "30"
 
 export default function ReportsPage() {
+  if (api.mode === "http") {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center p-6">
+        <EmptyState title="Chưa hỗ trợ báo cáo" icon={<Lock />} className="h-full">
+          Tính năng báo cáo và thống kê chi tiết chưa được backend v1 hỗ trợ.
+        </EmptyState>
+      </div>
+    )
+  }
+  return <ReportsContent />
+}
+
+function ReportsContent() {
   const allowed = useCan("report.read")
   const today = useBusinessDate()
   const [range, setRange] = useState<Range>("7")

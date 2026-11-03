@@ -33,7 +33,7 @@ export default function SettingsPage() {
           </p>
         ) : null}
         <Tabs defaultValue="venue" className="gap-5">
-          <TabsList className="w-full justify-start overflow-x-auto sm:w-fit">
+          <TabsList className="no-scrollbar w-full touch-pan-x justify-start overflow-x-auto overscroll-x-contain sm:w-fit">
             <TabsTrigger value="venue" className="px-4">
               Vận hành
             </TabsTrigger>
@@ -136,6 +136,7 @@ function VenueSettings({ readOnly }: { readOnly: boolean }) {
 }
 
 const formFrom = (v: VenueConfig) => ({
+  upcoming: v.upcomingWarningMinutes,
   late: v.lateWarningMinutes,
   noShow: v.noShowWarningMinutes,
   hold: v.waitlistHoldDefaultMinutes,
@@ -150,6 +151,7 @@ function VenueForm({ v, readOnly }: { v: VenueConfig; readOnly: boolean }) {
   const [form, setForm] = useState(() => formFrom(v))
   const set = <K extends keyof typeof form>(k: K, val: (typeof form)[K]) => setForm((f) => ({ ...f, [k]: val }))
   const dirty =
+    form.upcoming !== v.upcomingWarningMinutes ||
     form.late !== v.lateWarningMinutes ||
     form.noShow !== v.noShowWarningMinutes ||
     form.hold !== v.waitlistHoldDefaultMinutes ||
@@ -167,6 +169,18 @@ function VenueForm({ v, readOnly }: { v: VenueConfig; readOnly: boolean }) {
           <span className="text-sm">
             {v.businessDayStartLocal.slice(0, 5)} → {v.businessDayCutoffLocal.slice(0, 5)} · {v.timezone}
           </span>
+        </Row>
+        <Row label="Cửa sổ sắp đến" hint="Bắt đầu hiển thị Sắp đến trước giờ hẹn; mặc định 10 phút.">
+          <NumberField
+            id="upcoming"
+            label="Cửa sổ sắp đến"
+            value={form.upcoming}
+            onChange={(x) => set("upcoming", x)}
+            unit="phút"
+            disabled={readOnly}
+            min={1}
+            max={240}
+          />
         </Row>
         <Row label="Cảnh báo đến muộn" hint="Chỉ hiển thị cảnh báo, không đổi trạng thái booking.">
           <NumberField
@@ -289,11 +303,13 @@ function VenueForm({ v, readOnly }: { v: VenueConfig; readOnly: boolean }) {
         ) : null}
         <GuardedButton
           permission="venue.configure"
-          disabled={!dirty || pending}
+          disabled={!dirty || pending || api.mode === "http"}
+          disabledReason={api.mode === "http" ? "Backend v1 chưa hỗ trợ lưu cấu hình quán qua API." : undefined}
           onClick={() =>
             run(() =>
               api.updateVenueConfig({
                 version: v.version,
+                upcomingWarningMinutes: form.upcoming,
                 lateWarningMinutes: form.late,
                 noShowWarningMinutes: form.noShow,
                 waitlistHoldDefaultMinutes: form.hold,
@@ -345,7 +361,8 @@ function FloorSettings({ readOnly }: { readOnly: boolean }) {
               <Switch
                 id={`zone-${z.id}`}
                 checked={z.isBookable}
-                disabled={readOnly}
+                disabled={readOnly || api.mode === "http"}
+                title={api.mode === "http" ? "Backend v1 chưa hỗ trợ cấu hình khu vực." : undefined}
                 onCheckedChange={(on) =>
                   run(() => api.setZoneFlags(z.id, z.version, { isBookable: on, isWaitingArea: !on }))
                 }
@@ -422,7 +439,12 @@ function FloorSettings({ readOnly }: { readOnly: boolean }) {
                     <Switch
                       aria-label={`Đang phục vụ ${t.code}`}
                       checked={t.status === "ACTIVE"}
-                      disabled={readOnly}
+                      disabled={readOnly || api.mode === "http"}
+                      title={
+                        api.mode === "http"
+                          ? "Trạng thái bàn được cập nhật qua gán bàn, check-in và kết thúc lượt khách."
+                          : undefined
+                      }
                       onCheckedChange={(on) =>
                         run(() => api.setTableStatus(t.id, t.version, { status: on ? "ACTIVE" : "OUT_OF_SERVICE" }))
                       }

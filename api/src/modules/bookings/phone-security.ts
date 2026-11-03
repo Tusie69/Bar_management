@@ -2,7 +2,6 @@ import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:
 
 import { AppError } from '../../errors/app-error.js'
 
-const vietnameseSubscriber = /^[35789]\d{8}$/
 const e164 = /^\+[1-9]\d{7,14}$/
 
 export interface PhoneKeyRing {
@@ -22,18 +21,19 @@ export interface ProtectedPhone {
 
 export function normalizePhoneNumber(input: string): string {
   const trimmed = input.trim()
-  if (!trimmed || /[^+\d\s().-]/.test(trimmed)) {
+  if (!trimmed || /[^\d\s().-]/.test(trimmed)) {
     throw new AppError(422, 'INVALID_PHONE_NUMBER', 'Số điện thoại không hợp lệ.')
   }
-  let compact = trimmed.replace(/[\s().-]/g, '')
-  if (compact.startsWith('0084')) compact = `+84${compact.slice(4)}`
-  else if (compact.startsWith('0')) compact = `+84${compact.slice(1)}`
-
-  if (!e164.test(compact)) throw new AppError(422, 'INVALID_PHONE_NUMBER', 'Số điện thoại không hợp lệ.')
-  if (compact.startsWith('+84') && !vietnameseSubscriber.test(compact.slice(3))) {
-    throw new AppError(422, 'INVALID_PHONE_NUMBER', 'Số điện thoại Việt Nam không hợp lệ.')
+  const compact = trimmed.replace(/[\s().-]/g, '')
+  if (!/^0\d{9}$/.test(compact)) {
+    throw new AppError(422, 'INVALID_PHONE_NUMBER', 'Số điện thoại phải gồm 10 số và bắt đầu bằng 0.')
   }
-  return compact
+  return `+84${compact.slice(1)}`
+}
+
+function validateStoredPhoneNumber(value: string): string {
+  if (!e164.test(value)) throw new AppError(500, 'PHONE_CIPHERTEXT_INVALID', 'Không thể mở số điện thoại đã lưu.')
+  return value
 }
 
 export function protectPhoneNumber(phoneNumber: string, keys: PhoneKeyRing): ProtectedPhone {
@@ -63,7 +63,7 @@ export function revealPhoneNumber(ciphertext: Buffer, keyId: number, keys: Phone
     const encrypted = ciphertext.subarray(12, ciphertext.length - 16)
     const decipher = createDecipheriv('aes-256-gcm', key, nonce)
     decipher.setAuthTag(tag)
-    return normalizePhoneNumber(Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8'))
+    return validateStoredPhoneNumber(Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8'))
   } catch (error) {
     if (error instanceof AppError) throw error
     throw new AppError(500, 'PHONE_DECRYPTION_FAILED', 'Không thể mở số điện thoại đã lưu.')

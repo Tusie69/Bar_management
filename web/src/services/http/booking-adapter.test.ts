@@ -6,7 +6,6 @@ import {
   createBookingPayload,
   fullUpdateBookingPayload,
   mapBooking,
-  mapAssignmentTable,
   type BackendBookingPayload,
 } from "./booking-adapter"
 
@@ -76,15 +75,36 @@ describe("booking contract adapter", () => {
       businessDate: "2030-10-24",
       sourceCode: "HOTLINE",
       classification: "UNCLASSIFIED",
-      note: "Ghi chú gốc",
       version: 3,
     })
   })
+
+  it.each(["+84987654321", "0084987654321", "1234567890", "09876543210"])(
+    "rejects invalid booking phone input %s",
+    (phoneNumber) => {
+      expect(() => createBookingPayload({
+        guestName: "Anh Minh",
+        partySize: 3,
+        expectedAt: new Date("2030-10-24T14:30:00.000Z"),
+        businessDate: "2030-10-24",
+        sourceCode: "HOTLINE",
+        phoneNumber,
+      })).toThrowError(ApiError)
+    },
+  )
 
   it("distinguishes omitted phone from an explicit delete", () => {
     const current = mapBooking(backendBooking())
     expect(fullUpdateBookingPayload(current, { partySize: 5 })).not.toHaveProperty("phoneNumber")
     expect(fullUpdateBookingPayload(current, { phoneNumber: null })).toMatchObject({ phoneNumber: null })
+  })
+
+  it("does not write a redacted historical note unless the user intentionally changes it", () => {
+    const current = mapBooking(backendBooking({ note: "Gọi •••• ••• 321" }))
+    expect(fullUpdateBookingPayload(current, { partySize: 5 })).not.toHaveProperty("note")
+    expect(fullUpdateBookingPayload(current, { note: "Ghi chú mới" })).toMatchObject({ note: "Ghi chú mới" })
+    expect(fullUpdateBookingPayload(current, { note: null })).not.toHaveProperty("note")
+    expect(fullUpdateBookingPayload(current, { note: "" })).toMatchObject({ note: "" })
   })
 
   it("sends only version and the backend-supported reasonNote when cancelling", () => {
@@ -94,14 +114,5 @@ describe("booking contract adapter", () => {
   it("builds the assign payload with version and unique table IDs", () => {
     expect(assignmentPayload(3, [12, 12, 14])).toEqual({ version: 3, tableIds: [12, 14] })
     expect(() => assignmentPayload(3, [])).toThrowError(ApiError)
-  })
-
-  it("maps the backend table state and database spare flag without hardcoded table codes", () => {
-    expect(mapAssignmentTable({ id: 12, code: "X99", state: "AVAILABLE", isBackup: true })).toEqual({
-      id: 12,
-      code: "X99",
-      state: "AVAILABLE",
-      isSpare: true,
-    })
   })
 })

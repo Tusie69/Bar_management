@@ -6,8 +6,8 @@
  * immediately. Time keeps ticking in real time and can be fast-forwarded
  * from the clock menu. The HTTP implementation would use server time.
  */
-import { atBusinessTime, businessDateOf } from "@/lib/time"
 import { runtimeConfig } from "@/config/runtime"
+import { atBusinessTime, businessDateOf } from "@/lib/time"
 
 type Listener = () => void
 
@@ -16,14 +16,18 @@ const SCENARIO_START = "21:30"
 export class SimClock {
   private offsetMs = 0
   private simulated = false
+  private fixedNowMs: number | null = null
   private listeners = new Set<Listener>()
 
-  constructor(simulated = runtimeConfig.apiMode === "mock") {
-    if (simulated) this.resetToScenario()
+  constructor(simulated = runtimeConfig.apiMode === "mock", fixedNow = runtimeConfig.testFixedNow) {
+    if (fixedNow) {
+      this.fixedNowMs = fixedNow.getTime()
+      this.simulated = true
+    } else if (simulated) this.resetToScenario()
   }
 
   now(): Date {
-    return new Date(Date.now() + this.offsetMs)
+    return new Date((this.fixedNowMs ?? Date.now()) + this.offsetMs)
   }
 
   get isSimulated() {
@@ -36,6 +40,7 @@ export class SimClock {
   }
 
   resetToScenario() {
+    this.fixedNowMs = null
     const bd = businessDateOf(new Date())
     this.offsetMs = atBusinessTime(bd, SCENARIO_START).getTime() - Date.now()
     this.simulated = true
@@ -43,6 +48,7 @@ export class SimClock {
   }
 
   useRealTime() {
+    this.fixedNowMs = null
     this.offsetMs = 0
     this.simulated = false
     this.emit()

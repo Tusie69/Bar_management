@@ -3,6 +3,7 @@ import { Router } from 'express'
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { AppError } from '../../errors/app-error.js'
+import { assertNoteHasNoPhoneNumber } from '../../security/note-privacy.js'
 import { closeVisit, mergeVisitTables, moveVisit, type CloseVisitMode, type ManualCloseReason } from './visit.repository.js'
 
 export const visitRouter: Router = Router()
@@ -42,6 +43,7 @@ visitRouter.post(
   }
   const note = typeof body.note === 'string' ? body.note.trim() : ''
   if (note.length > 500) throw new AppError(400, 'NOTE_TOO_LONG', 'Ghi chú không được vượt quá 500 ký tự.')
+  assertNoteHasNoPhoneNumber(note)
 
   const visit = await closeVisit(actor, {
     visitId: positiveInteger(request.params.id, 'INVALID_VISIT_ID', 'Mã lượt khách không hợp lệ.'),
@@ -85,6 +87,7 @@ visitRouter.post(
     }
     const note = typeof body.note === 'string' ? body.note.trim() : ''
     if (note.length > 500) throw new AppError(400, 'NOTE_TOO_LONG', 'Ghi chú không được vượt quá 500 ký tự.')
+    assertNoteHasNoPhoneNumber(note)
     response.json({ visit: await moveVisit(actor, {
       visitId: positiveInteger(request.params.id, 'INVALID_VISIT_ID', 'Mã lượt khách không hợp lệ.'),
       expectedVersion: positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản lượt khách không hợp lệ.'),

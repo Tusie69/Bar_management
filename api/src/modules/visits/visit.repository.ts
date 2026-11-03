@@ -3,6 +3,7 @@ import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/prom
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
+import { assertNoteHasNoPhoneNumber } from '../../security/note-privacy.js'
 import {
   createTableGroup,
   dissolveUnusedGroups,
@@ -117,6 +118,7 @@ export async function closeVisit(
   actor: AuthenticatedActor,
   input: CloseVisitInput,
 ): Promise<ClosedVisitView> {
+  assertNoteHasNoPhoneNumber(input.note)
   const connection = await databasePool.getConnection()
   try {
     await connection.beginTransaction()
@@ -254,6 +256,7 @@ export interface MovedVisitView {
 }
 
 export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput): Promise<MovedVisitView> {
+  assertNoteHasNoPhoneNumber(input.note)
   const connection = await databasePool.getConnection()
   try {
     await connection.beginTransaction()
@@ -411,6 +414,7 @@ export async function mergeVisitTables(
   actor: AuthenticatedActor,
   input: MoveVisitInput,
 ): Promise<{ visit: MovedVisitView; group: { id: number; symbolNo: number; tableIds: number[] } }> {
+  assertNoteHasNoPhoneNumber(input.note)
   const connection = await databasePool.getConnection()
   const requested = [...new Set(input.tableIds)].sort((a, b) => a - b)
   try {

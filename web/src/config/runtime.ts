@@ -4,6 +4,7 @@ export interface RuntimeConfig {
   apiMode: ApiMode
   apiBaseUrl: string
   venueId: number
+  testFixedNow: Date | null
 }
 
 function parseApiMode(): ApiMode {
@@ -42,9 +43,35 @@ function parseVenueId(): number {
 }
 
 const apiMode = parseApiMode()
+const apiBaseUrl = parseBaseUrl(apiMode)
+
+function parseTestFixedNow(): Date | null {
+  const raw = import.meta.env.VITE_E2E_FIXED_NOW?.trim()
+  if (!raw) return null
+  let apiUrl: URL
+  try {
+    apiUrl = new URL(apiBaseUrl)
+  } catch {
+    throw new Error("VITE_E2E_FIXED_NOW yêu cầu API URL loopback tuyệt đối.")
+  }
+  if (
+    import.meta.env.MODE !== "test" ||
+    apiMode !== "http" ||
+    !["127.0.0.1", "localhost", "::1"].includes(apiUrl.hostname)
+  ) {
+    throw new Error("VITE_E2E_FIXED_NOW chỉ được phép trong Vite test mode với HTTP API loopback.")
+  }
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(raw)) {
+    throw new Error("VITE_E2E_FIXED_NOW phải là UTC ISO-8601 có hậu tố Z.")
+  }
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) throw new Error("VITE_E2E_FIXED_NOW không hợp lệ.")
+  return parsed
+}
 
 export const runtimeConfig: RuntimeConfig = {
   apiMode,
-  apiBaseUrl: parseBaseUrl(apiMode),
+  apiBaseUrl,
   venueId: parseVenueId(),
+  testFixedNow: parseTestFixedNow(),
 }

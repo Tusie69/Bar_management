@@ -198,4 +198,50 @@ mysqlDescribe('booking phone MySQL integration', () => {
     )
     expect(rows).toHaveLength(0)
   })
+  it('accepts a fake phone over HTTP and only exposes its last three digits in list and search', async () => {
+    const receptionist = await login('phone_reception')
+    const created = await receptionist.agent.post('/api/v1/bookings')
+      .set('Origin', env.webOrigin).set('X-CSRF-Token', receptionist.csrfToken)
+      .send(input('0900000123'))
+    expect(created.status).toBe(201)
+    const booking = (created.body as { booking: { id: number; phoneLast3: string } }).booking
+    expect(booking.phoneLast3).toBe('123')
+    const [stored] = await databasePool.execute<(RowDataPacket & { phone_ciphertext: Buffer })[]>(
+      'SELECT phone_ciphertext FROM reservations WHERE id = ?', [booking.id],
+    )
+    expect(stored[0]?.phone_ciphertext).toBeInstanceOf(Buffer)
+    expect(stored[0]?.phone_ciphertext.includes(Buffer.from('0900000123'))).toBe(false)
+    expect(stored[0]?.phone_ciphertext.includes(Buffer.from('+84900000123'))).toBe(false)
+
+    for (const endpoint of ['/api/v1/bookings', '/api/v1/bookings/search']) {
+      const response = await receptionist.agent.get(endpoint).query({ date: '2030-10-24', q: '123' })
+      expect(response.status).toBe(200)
+      const body = response.body as { bookings: { id: number; phoneLast3: string }[] }
+      expect(body.bookings.find(item => item.id === booking.id)?.phoneLast3).toBe('123')
+      expect(response.text.includes('0900000123')).toBe(false)
+      expect(response.text.includes('+84900000123')).toBe(false)
+      expect(response.text.includes('phoneNumber')).toBe(false)
+      expect(response.text.includes('phone_ciphertext')).toBe(false)
+      expect(response.text.includes('phone_hash')).toBe(false)
+    }
+
+    const denied = await receptionist.agent.post(`/api/v1/bookings/${booking.id}/phone:reveal`)
+      .set('Origin', env.webOrigin).set('X-CSRF-Token', receptionist.csrfToken).send({})
+    expect(denied.status).toBe(403)
+    const owner = await login('phone_owner')
+    const revealed = await owner.agent.post(`/api/v1/bookings/${booking.id}/phone:reveal`)
+      .set('Origin', env.webOrigin).set('X-CSRF-Token', owner.csrfToken).send({})
+    expect(revealed.status).toBe(200)
+    expect(revealed.headers['cache-control']).toContain('no-store')
+    expect(revealed.headers.pragma).toBe('no-cache')
+    expect((revealed.body as RevealBody).phoneNumber === '+84900000123').toBe(true)
+    const [audit] = await databasePool.execute<RowDataPacket[]>(
+      `SELECT actor_user_id, changes FROM operation_log WHERE action = 'CUSTOMER_PHONE_REVEAL' AND entity_id = ?`,
+      [booking.id],
+    )
+    expect(audit).toHaveLength(1)
+    expect(Number(audit[0]?.actor_user_id)).toBe(ownerId)
+    expect(JSON.stringify(audit).includes('0900000123')).toBe(false)
+    expect(JSON.stringify(audit).includes('+84900000123')).toBe(false)
+  })
 })

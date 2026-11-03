@@ -39,6 +39,7 @@ export interface VenueConfig {
   timezone: string
   businessDayStartLocal: string
   businessDayCutoffLocal: string
+  upcomingWarningMinutes: number
   lateWarningMinutes: number
   noShowWarningMinutes: number
   waitlistHoldDefaultMinutes: number
@@ -74,8 +75,7 @@ export interface TableView {
   y: number
   w: number
   h: number
-  /** Optional because the current database stores geometry, but not chair orientation. */
-  seating?: SeatingStyle | "bar"
+  seating: SeatingStyle | "bar" | undefined
 }
 
 export interface CombinationView {
@@ -84,13 +84,11 @@ export interface CombinationView {
   displayName: string
   memberIds: number[]
   capacity: number
-  /** Mock/product-review metadata; absent when the database has no equivalent field. */
-  pendingConfirmation?: boolean
+  pendingConfirmation: boolean | null
 }
 
 export interface BookingSourceView {
-  /** The current read API exposes the stable code/name pair, not its internal database id. */
-  id?: number
+  id: number | null
   code: BookingSourceCode
   name: string
 }
@@ -106,7 +104,7 @@ export interface Catalog {
 /* ---------------- Floor ---------------- */
 
 export type TableLiveState =
-  "free" | "reserved" | "late" | "noshow" | "seated" | "hold" | "hold_overdue" | "oos" | "spare"
+  "free" | "reserved" | "upcoming" | "late" | "late_confirmed" | "noshow" | "seated" | "hold" | "hold_overdue" | "oos" | "spare"
 
 export type BookingWarning = "late" | "noshow" | null
 
@@ -127,11 +125,15 @@ export interface ClaimView {
   tableIds: number[]
   groupId: number | null
   symbolNo: number | null
+  groupDisplayCode?: string | null
+  turnNo?: number | null
+  flags?: Array<"NEW" | "RETURNING">
   warning: BookingWarning
   minutesLate: number
   sourceCode: BookingSourceCode | null
   note: string | null
   version: number
+  lateConfirmedAt?: Date | null
 }
 
 export interface FloorTableState {
@@ -139,8 +141,7 @@ export interface FloorTableState {
   state: TableLiveState
   claim: ClaimView | null
   /** Seated but the business day already rolled over: "bàn chưa nhả từ hôm trước". */
-  /** Absent when the backend read model cannot determine carry-over occupancy. */
-  staleFromPreviousDay?: boolean
+  staleFromPreviousDay: boolean
 }
 
 /** One row of table_allocations, resolved for display (history + timeline). */
@@ -167,6 +168,8 @@ export interface AllocationView {
 export interface FloorGroup {
   id: number
   symbolNo: number
+  /** Authoritative, stable label supplied by the floor projection (for example ◆A). */
+  displayCode?: string
   tableIds: number[]
 }
 
@@ -186,6 +189,8 @@ export interface TableAvailability {
   status: AvailabilityStatus
   reason: string
   claimStartsAt: Date | null
+  /** Informational only; no seating duration is inferred. */
+  bookingConflicts?: { reservationId: number; expectedAt: Date }[]
 }
 
 export interface CombinationAvailability {
@@ -233,8 +238,9 @@ export interface ReservationView {
   closedAt: Date | null
   closeReasonCode: ReservationCloseReason | null
   closeReasonNote: string | null
-  createdAt: Date
+  createdAt: Date | null
   createdByName: string
+  lateConfirmedAt: Date | null
 }
 
 export interface VisitView {
@@ -296,7 +302,7 @@ export interface WaitlistEntryView {
   phoneLast3: string | null
   customerId: number | null
   partySize: number
-  preferenceMode: WaitlistPreferenceMode
+  preferenceMode: WaitlistPreferenceMode | null
   preferences: WaitlistPreferenceView[]
   channel: WaitlistChannel
   businessDate: BusinessDate
@@ -308,9 +314,9 @@ export interface WaitlistEntryView {
   hold: WaitlistHoldView | null
   reservationId: number | null
   reservationExpectedAt: Date | null
-  attempts: ContactAttemptView[]
+  attempts: ContactAttemptView[] | null
   note: string | null
-  callbackRequested: boolean
+  callbackRequested: boolean | null
   closedAt: Date | null
 }
 
@@ -339,7 +345,7 @@ export interface CustomerProfile extends CustomerSummary {
 }
 
 export interface PhoneReveal {
-  customerId: number
+  customerId: number | null
   phoneE164: string
   revealedAt: Date
 }
@@ -367,7 +373,7 @@ export interface OperationView {
 
 export interface MutationResult {
   operationId: number | null
-  changeSeq: number
+  changeSeq: number | null
   summary: string
   undoable: boolean
 }
@@ -392,8 +398,8 @@ export interface ShiftOverview {
   checkedInReservations: number
   seatedGuests: number
   seatedVisits: number
-  visitsTonight: number
-  guestsTonight: number
+  visitsTonight: number | null
+  guestsTonight: number | null
   tablesInUse: number
   tablesTotal: number
   barSeatsInUse: number
@@ -401,7 +407,7 @@ export interface ShiftOverview {
   attention: number
   waitlistAdvance: number
   waitlistWalkIn: number
-  byHour: { hour: string; expected: number; seated: number }[]
+  byHour: { hour: string; expected: number; seated: number | null }[]
   byZone: { zone: ZoneCode; name: string; inUse: number; total: number }[]
 }
 

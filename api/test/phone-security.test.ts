@@ -22,14 +22,22 @@ function keys(): PhoneKeyRing {
 describe('booking phone security', () => {
   it.each([
     ['0987 654 321', '+84987654321'],
-    ['+84 (987) 654-321', '+84987654321'],
-    ['0084987654321', '+84987654321'],
-    ['+12025550123', '+12025550123'],
-  ])('normalizes %s without guessing unknown country codes', (input, expected) => {
+    ['0987.654.321', '+84987654321'],
+    ['(0987) 654-321', '+84987654321'],
+  ])('normalizes valid local input %s for encrypted storage', (input, expected) => {
     expect(normalizePhoneNumber(input)).toBe(expected)
   })
 
-  it.each(['javascript:alert(1)', '123456789', '+84123456789', '+84abc987654321'])('rejects %s', (input) => {
+  it.each([
+    'javascript:alert(1)',
+    '123456789',
+    '1234567890',
+    '+84987654321',
+    '0084987654321',
+    '+12025550123',
+    '09876543210',
+    '0987abc654321',
+  ])('rejects non-local or non-10-digit input %s', (input) => {
     expect(() => normalizePhoneNumber(input)).toThrow(AppError)
   })
 
@@ -41,6 +49,14 @@ describe('booking phone security', () => {
     expect(first.hmac.equals(second.hmac)).toBe(true)
     expect(first.last3).toBe('321')
     expect(revealPhoneNumber(first.ciphertext, first.encryptionKeyId, ring)).toBe('+84987654321')
+  })
+
+  it('fails closed when an active encryption or HMAC key is unavailable', () => {
+    const ring = keys()
+    expect(() => protectPhoneNumber('0987654321', { ...ring, encryptionKeys: new Map() }))
+      .toThrowError(/chưa được cấu hình/)
+    expect(() => protectPhoneNumber('0987654321', { ...ring, hmacKeys: new Map() }))
+      .toThrowError(/chưa được cấu hình/)
   })
 
   it('fails closed for a wrong key and an invalid authentication tag', () => {

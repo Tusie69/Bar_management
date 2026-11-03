@@ -167,10 +167,10 @@ function WalkInBody() {
           <UserPlus /> Mở bàn cho {party} khách
         </GuardedButton>
         <div className="grid grid-cols-2 gap-2">
-          <GuardedButton permission="visit.walkin" variant="outline" onClick={pickOnMap}>
+          <GuardedButton permission="visit.walkin" variant="outline" disabled={pending} onClick={pickOnMap}>
             <MapPinned /> Chọn trên sơ đồ
           </GuardedButton>
-          <GuardedButton permission="waitlist.create" variant="outline" onClick={toWaitlist}>
+          <GuardedButton permission="waitlist.create" variant="outline" disabled={pending} onClick={toWaitlist}>
             <ListPlus /> Vào danh sách chờ
           </GuardedButton>
         </div>

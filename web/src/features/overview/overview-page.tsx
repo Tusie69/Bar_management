@@ -1,4 +1,4 @@
-import { ArrowUpRight, CalendarPlus, History, UserPlus } from "lucide-react"
+import { AlertCircle, ArrowUpRight, CalendarPlus, History, UserPlus } from "lucide-react"
 import { useMemo } from "react"
 import { useNavigate } from "react-router"
 import { BarChart } from "@/components/bar-chart"
@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useNow, useOperations, useOverview, useReservations } from "@/hooks/use-data"
 import { fmtBusinessDate, fmtTime, MS, venueParts } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { api, isApiError } from "@/services"
 import { useUi } from "@/state/ui"
 import { useShiftAlerts } from "../floor/alerts"
 import { useFloorModel } from "../floor/use-floor-model"
@@ -27,6 +28,21 @@ export default function OverviewPage() {
   const o = overview.data
   const nowHour = String(venueParts(now).hour).padStart(2, "0")
   const next60 = booked.filter((r) => r.expectedAt.getTime() - now.getTime() <= 60 * MS.MIN).slice(0, 8)
+
+  if (overview.isError) {
+    const msg = isApiError(overview.error)
+      ? overview.error.message
+      : overview.error instanceof Error
+        ? overview.error.message
+        : "Không thể tải thông tin ca vận hành"
+    return (
+      <div className="flex h-full items-center justify-center p-6">
+        <EmptyState title="Lỗi tải ca vận hành" icon={<AlertCircle className="size-6 text-destructive" />}>
+          {msg}
+        </EmptyState>
+      </div>
+    )
+  }
 
   if (!o) {
     return (
@@ -88,8 +104,15 @@ export default function OverviewPage() {
             <p className="eyebrow">Ca vận hành</p>
             <h2 className="mt-1 text-2xl font-extrabold tracking-tight md:text-[28px]">{fmtBusinessDate(bd)}</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              17:00 → 05:00 · cập nhật lúc <span className="tnum">{fmtTime(now)}</span> · {o.visitsTonight} lượt ghé,{" "}
-              {o.guestsTonight} khách từ đầu ca
+              17:00 → 05:00 · cập nhật lúc <span className="tnum">{fmtTime(now)}</span>
+              {o.visitsTonight !== null && o.guestsTonight !== null ? (
+                <>
+                  {" "}
+                  · {o.visitsTonight} lượt ghé, {o.guestsTonight} khách từ đầu ca
+                </>
+              ) : (
+                <> · Chưa có dữ liệu lượt ghé từ đầu ca</>
+              )}
             </p>
           </div>
           <div className="flex gap-2">
@@ -134,19 +157,29 @@ export default function OverviewPage() {
         <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
           <section className="grid min-w-0 content-start gap-3 rounded-2xl border p-4 md:p-5">
             <SectionTitle aside={<span className="text-xs text-subtle">khách theo giờ</span>}>Nhịp ca</SectionTitle>
-            <BarChart
-              ariaLabel="Số khách dự kiến theo booking và số khách đã ngồi, theo từng giờ trong ca"
-              series={["Dự kiến (booking)", "Đã ngồi"]}
-              data={o.byHour.map((h) => ({
-                key: h.hour,
-                label: `${h.hour}h`,
-                values: [h.expected, h.seated],
-                highlight: h.hour === nowHour,
-              }))}
-              marker={{ key: nowHour, label: "bây giờ" }}
-              unit=" khách"
-              height={210}
-            />
+            {(() => {
+              const hasSeated = o.byHour.some((h) => h.seated !== null)
+              return (
+                <>
+                  <BarChart
+                    ariaLabel="Số khách dự kiến theo booking và số khách đã ngồi, theo từng giờ trong ca"
+                    series={hasSeated ? ["Dự kiến (booking)", "Đã ngồi"] : ["Dự kiến (booking)"]}
+                    data={o.byHour.map((h) => ({
+                      key: h.hour,
+                      label: `${h.hour}h`,
+                      values: hasSeated ? [h.expected ?? 0, h.seated ?? 0] : [h.expected ?? 0],
+                      highlight: h.hour === nowHour,
+                    }))}
+                    marker={{ key: nowHour, label: "bây giờ" }}
+                    unit=" khách"
+                    height={210}
+                  />
+                  {!hasSeated ? (
+                    <p className="text-xs text-muted-foreground">Chưa có dữ liệu lượt khách theo giờ</p>
+                  ) : null}
+                </>
+              )
+            })()}
             <div className="grid gap-2 border-t pt-4">
               <SectionTitle>Theo khu</SectionTitle>
               <ul className="grid gap-2.5 sm:grid-cols-2">
@@ -269,27 +302,33 @@ export default function OverviewPage() {
           >
             Hoạt động gần đây
           </SectionTitle>
-          <ol className="grid gap-x-8 gap-y-1 md:grid-cols-2">
-            {(ops.data ?? []).map((op) => (
-              <li
-                key={op.id}
-                className="grid grid-cols-[3.25rem_1fr] gap-2 border-b border-dashed py-2 text-sm last:border-0 md:[&:nth-last-child(2)]:border-0"
-              >
-                <span className="tnum text-xs text-subtle">{fmtTime(op.occurredAt)}</span>
-                <span className="min-w-0">
-                  <span className="block truncate">
-                    <span className="font-medium">{op.actionLabel}</span> · {op.summary}
+          {api.mode === "http" ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">
+              Nhật ký hoạt động (operation_log) chưa được backend v1 hỗ trợ.
+            </p>
+          ) : (
+            <ol className="grid gap-x-8 gap-y-1 md:grid-cols-2">
+              {(ops.data ?? []).map((op) => (
+                <li
+                  key={op.id}
+                  className="grid grid-cols-[3.25rem_1fr] gap-2 border-b border-dashed py-2 text-sm last:border-0 md:[&:nth-last-child(2)]:border-0"
+                >
+                  <span className="tnum text-xs text-subtle">{fmtTime(op.occurredAt)}</span>
+                  <span className="min-w-0">
+                    <span className="block truncate">
+                      <span className="font-medium">{op.actionLabel}</span> · {op.summary}
+                    </span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {op.actorKind === "SYSTEM"
+                        ? "Hệ thống (cảnh báo tự động)"
+                        : `${op.actorName}${op.deviceLabel ? ` · ${op.deviceLabel}` : ""}`}
+                      {op.compensatedBy ? " · đã hoàn tác" : ""}
+                    </span>
                   </span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {op.actorKind === "SYSTEM"
-                      ? "Hệ thống (cảnh báo tự động)"
-                      : `${op.actorName}${op.deviceLabel ? ` · ${op.deviceLabel}` : ""}`}
-                    {op.compensatedBy ? " · đã hoàn tác" : ""}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ol>
+                </li>
+              ))}
+            </ol>
+          )}
         </section>
       </div>
     </div>

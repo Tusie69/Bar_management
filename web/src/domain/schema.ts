@@ -120,6 +120,7 @@ export interface VenueRow extends Versioned {
   timezone: string
   businessDayStartLocal: string // "17:00:00"
   businessDayCutoffLocal: string // "05:00:00"
+  upcomingWarningMinutes: number
   lateWarningMinutes: number
   noShowWarningMinutes: number
   waitlistHoldDefaultMinutes: number
@@ -232,6 +233,8 @@ export interface ReservationRow extends Versioned {
   closeReasonCode: ReservationCloseReason | null
   closeReasonNote: string | null
   lateWarnedAt: Date | null
+  lateConfirmedAt: Date | null
+  lateConfirmedByUserId: Id | null
   noShowWarnedAt: Date | null
   createdByUserId: Id
   createdAt: Date

@@ -33,7 +33,7 @@
   --tx-strong: #111827;
   --tx-head: #374151;
   --tx-2: #4b5563;
-  --tx-3: #6b7280;
+  --tx-3: #596171;
 
   --border: oklch(0.885 0.008 100);
   --border-strong: oklch(0.8 0.01 100);
@@ -60,14 +60,16 @@
   --brand: oklch(0.5 0.085 75);
 
   --st-reserved: oklch(0.52 0.14 250);
-  --st-late: oklch(0.54 0.13 65);
-  --st-noshow: oklch(0.53 0.18 27);
+  --st-upcoming: oklch(0.68 0.14 85);
+  --st-late: oklch(0.57 0.19 28);
+  --st-noshow: oklch(0.43 0.16 25);
   --st-seated: oklch(0.52 0.12 160);
   --st-oos: oklch(0.58 0.005 80);
   --st-free: var(--table-line);
   --st-reserved-tint: oklch(0.52 0.14 250 / 0.1);
-  --st-late-tint: oklch(0.6 0.13 65 / 0.14);
-  --st-noshow-tint: oklch(0.53 0.18 27 / 0.1);
+  --st-upcoming-tint: oklch(0.72 0.14 85 / 0.2);
+  --st-late-tint: oklch(0.57 0.19 28 / 0.13);
+  --st-noshow-tint: oklch(0.43 0.16 25 / 0.16);
   --st-seated-tint: oklch(0.52 0.12 160 / 0.14);
   --st-seated-fill: oklch(0.52 0.12 160);
   --on-seated: oklch(0.99 0 0);
@@ -76,6 +78,7 @@
 
   /* oklab, not oklch: oklch mixing shifted the reserved hue toward violet. */
   --st-reserved-ink: color-mix(in oklab, var(--st-reserved) 72%, var(--tx-1));
+  --st-upcoming-ink: color-mix(in oklab, var(--st-upcoming) 72%, var(--tx-1));
   --st-late-ink: color-mix(in oklab, var(--st-late) 72%, var(--tx-1));
   --st-noshow-ink: color-mix(in oklab, var(--st-noshow) 72%, var(--tx-1));
   --st-seated-ink: color-mix(in oklab, var(--st-seated) 72%, var(--tx-1));
@@ -120,17 +123,20 @@
   --primary-foreground: oklch(0.99 0 0);
   --primary-ink: oklch(0.77 0.1 250);
   --primary-tint: oklch(0.62 0.14 252 / 0.2);
-  --destructive: oklch(0.69 0.145 25);
+  --destructive: oklch(0.73 0.145 25);
   --brand: oklch(0.83 0.075 88);
 
   --st-reserved: oklch(0.74 0.1 245);
-  --st-late: oklch(0.8 0.12 80);
-  --st-noshow: oklch(0.69 0.145 25);
+  --st-upcoming: oklch(0.82 0.13 88);
+  --st-late: oklch(0.72 0.17 27);
+  --st-noshow: oklch(0.61 0.15 24);
   --st-seated: oklch(0.75 0.11 158);
   --st-oos: oklch(0.58 0.005 80);
   --st-reserved-tint: oklch(0.74 0.1 245 / 0.18);
-  --st-late-tint: oklch(0.8 0.12 80 / 0.17);
-  --st-noshow-tint: oklch(0.69 0.145 25 / 0.2);
+  --st-upcoming-tint: oklch(0.82 0.13 88 / 0.2);
+  --st-late-tint: oklch(0.72 0.17 27 / 0.18);
+  --st-noshow-tint: oklch(0.61 0.15 24 / 0.24);
+  --st-noshow-ink: oklch(0.86 0.075 25);
   --st-seated-tint: oklch(0.75 0.11 158 / 0.18);
   --st-seated-fill: oklch(0.69 0.1 158);
   --on-seated: oklch(0.2 0.02 158);
@@ -184,12 +190,15 @@
   --color-floor: var(--floor);
 
   --color-st-reserved: var(--st-reserved);
+  --color-st-upcoming: var(--st-upcoming);
   --color-st-late: var(--st-late);
   --color-st-noshow: var(--st-noshow);
   --color-st-seated: var(--st-seated);
   --color-st-oos: var(--st-oos);
   --color-st-reserved-tint: var(--st-reserved-tint);
   --color-st-reserved-ink: var(--st-reserved-ink);
+  --color-st-upcoming-tint: var(--st-upcoming-tint);
+  --color-st-upcoming-ink: var(--st-upcoming-ink);
   --color-st-late-ink: var(--st-late-ink);
   --color-st-noshow-ink: var(--st-noshow-ink);
   --color-st-seated-ink: var(--st-seated-ink);
@@ -258,6 +267,22 @@
   }
 }
 
+@utility no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 @layer utilities {
   .tnum {
     font-variant-numeric: tabular-nums;
@@ -273,6 +298,14 @@
   .scrollbar-thin {
     scrollbar-width: thin;
     scrollbar-color: var(--border-strong) transparent;
+  }
+  .no-scrollbar,
+  .scrollbar-none {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+    &::-webkit-scrollbar {
+      display: none;
+    }
   }
   .touch-none-pan {
     touch-action: none;
