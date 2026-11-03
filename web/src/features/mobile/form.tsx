@@ -15,6 +15,7 @@ import { SOURCE_LABEL, type BookingClassification, type BookingSourceCode } from
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useAvailability } from "@/hooks/use-data"
 import { useAction } from "@/hooks/use-action"
+import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { isPlausibleVnPhone, NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
 import { addDays, fmtBusinessDate, fmtDayMonth } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -178,6 +179,8 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
     )
   }
 
+  // FX-04: 1 mã chống trùng cho lần mở form; đổi mã sau mỗi lần tạo thành công.
+  const [idempotencyKey, renewIdempotencyKey] = useIdempotencyKey()
   const submit = async () => {
     if (guests === null || (isBooking ? guestMissing || !phoneOk || !at : false) || noteBad) {
       setTried(true)
@@ -203,6 +206,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             note: note.trim() || undefined,
             tableIds: ids,
             overrideReason: o,
+            idempotencyKey,
           }),
         )
       : ids.length
@@ -212,6 +216,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
               guestCount: guests,
               contactName: name.trim() || undefined,
               overrideReason: o,
+              idempotencyKey,
             }),
           )
         : await run(() =>
@@ -223,9 +228,13 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
               preferenceMode: "ANY",
               preferences: [],
               note: note.trim() || undefined,
+              idempotencyKey,
             }),
           )
-    if (ok) onClose()
+    if (ok) {
+      renewIdempotencyKey()
+      onClose()
+    }
   }
 
   const pickChip = (on: boolean, off = false) =>

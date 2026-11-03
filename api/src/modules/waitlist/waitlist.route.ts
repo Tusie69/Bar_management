@@ -3,6 +3,7 @@ import { Router } from 'express'
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { AppError } from '../../errors/app-error.js'
+import { idempotent } from '../../middleware/idempotency.js'
 import { assertNoteHasNoPhoneNumber } from '../../security/note-privacy.js'
 import { applicationNow } from '../../time/application-clock.js'
 import { validateCalendarDate } from '../bookings/business-date.js'
@@ -45,7 +46,7 @@ waitlistRouter.get('/', requireAuthentication, requirePermission('customer.view_
   response.json({ businessDate, entries: await listWaitlist(requireAuthenticatedActor(request), businessDate) })
 })
 
-waitlistRouter.post('/', requireAuthentication, requireCsrfProtection, requirePermission('waitlist.create'), async (request, response) => {
+waitlistRouter.post('/', requireAuthentication, requireCsrfProtection, requirePermission('waitlist.create'), idempotent('waitlist.create'), async (request, response) => {
   const body = objectBody(request.body)
   const kind = body.kind ?? 'WALK_IN'
   if (kind !== 'WALK_IN' && kind !== 'ADVANCE_RESERVATION') {

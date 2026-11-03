@@ -6,7 +6,9 @@
  *
  * Transport: /api/v1, HttpOnly session cookie, memory-only CSRF token.
  * Existing-entity writes carry a version and are never automatically retried.
- * The backend does not enforce idempotency keys. Unsupported capabilities reject 501.
+ * Create endpoints (booking, direct booking, walk-in, waitlist) accept an optional Idempotency-Key
+ * (FX-04): a repeated create with the same key replays the first successful result. Unsupported
+ * capabilities reject 501.
  */
 import type { BusinessDate } from "@/lib/time"
 import type {
@@ -92,6 +94,8 @@ export interface CreateReservationInput {
   tableIds?: number[]
   overrideReason?: string
   classification?: BookingClassification
+  /** FX-04: mã chống trùng của lần mở form; gửi lại cùng mã thì máy chủ trả lại kết quả cũ. */
+  idempotencyKey?: string
 }
 
 export interface UpdateReservationInput {
@@ -110,6 +114,8 @@ export interface WalkInInput {
   guestCount: number
   contactName?: string
   overrideReason?: string
+  /** FX-04: mã chống trùng của lần mở form; gửi lại cùng mã thì máy chủ trả lại kết quả cũ. */
+  idempotencyKey?: string
 }
 
 export interface CheckInInput {
@@ -153,6 +159,8 @@ export interface AddWaitlistInput {
   preferenceMode: WaitlistPreferenceMode
   preferences: { tableId?: number; combinationId?: number; zoneCode?: ZoneCode }[]
   note?: string
+  /** FX-04: mã chống trùng của lần mở form; gửi lại cùng mã thì máy chủ trả lại kết quả cũ. */
+  idempotencyKey?: string
 }
 
 export interface RecordContactInput {

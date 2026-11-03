@@ -74,6 +74,7 @@ async function clearOperationalData(): Promise<void> {
     'DELETE FROM auth_sessions',
     'DELETE FROM membership_roles',
     'DELETE FROM memberships',
+    'DELETE FROM idempotency_keys',
     'DELETE FROM users',
     'DELETE FROM booking_sources',
     'DELETE FROM venues',
@@ -586,6 +587,130 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       expect(JSON.parse(response.text)).toEqual({
         error: { code: 'BUSINESS_DATE_IN_PAST', message: 'Không thể đặt bàn cho ngày đã qua.' },
       })
+    })
+  })
+
+  describe('FX-04 Idempotency-Key prevents duplicate creates', () => {
+    async function loginAs(username: string) {
+      const agent = request.agent(app)
+      const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password })
+      const auth = JSON.parse(login.text) as AuthResponse
+      return (path: string, body: object, key?: string) => {
+        const call = agent.post(path).set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken)
+        return (key ? call.set('Idempotency-Key', key) : call).send(body)
+      }
+    }
+    async function createReceptionist(username: string): Promise<void> {
+      const [user] = await databasePool.execute<ResultSetHeader>(
+        `INSERT INTO users (username, display_name, password_hash, status) VALUES (?, ?, ?, 'ACTIVE')`,
+        [username, username, passwordHash],
+      )
+      const [membership] = await databasePool.execute<ResultSetHeader>(
+        'INSERT INTO memberships (organization_id, user_id, status) VALUES (?, ?, \'ACTIVE\')',
+        [organizationId, user.insertId],
+      )
+      await databasePool.execute(
+        `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
+         SELECT ?, ?, id, ? FROM roles WHERE code = 'RECEPTIONIST'`,
+        [organizationId, membership.insertId, venueId],
+      )
+    }
+    const countRows = async (table: 'reservations' | 'waitlist_entries' | 'idempotency_keys') =>
+      Number((await row(`SELECT COUNT(*) AS total FROM ${table} WHERE organization_id = ?`, [organizationId])).total)
+    const bookingId = (response: { text: string }) => (JSON.parse(response.text) as { booking: BookingView }).booking.id
+
+    it('creates one booking for three concurrent requests with the same key and replays the same id', async () => {
+      const send = await loginAs('booking_reception')
+      const payload = { ...bookingInput(), guestName: 'Bấm lưu 3 lần' }
+      const responses = await Promise.all([1, 2, 3].map(() => send('/api/v1/bookings', payload, 'fx04-same-key-0001')))
+      expect(responses.map((response) => response.status)).toEqual([201, 201, 201])
+      expect(new Set(responses.map(bookingId)).size).toBe(1)
+      expect(responses.filter((response) => response.headers['idempotent-replayed'] === 'true')).toHaveLength(2)
+      expect(await countRows('reservations')).toBe(1)
+
+      const other = await send('/api/v1/bookings', payload, 'fx04-other-key-0002')
+      expect(other.status).toBe(201)
+      expect(bookingId(other)).not.toBe(bookingId(responses[0]!))
+      expect(await countRows('reservations')).toBe(2)
+    })
+
+    it('makes concurrent direct bookings and waitlist entries with the same key succeed once and replay', async () => {
+      const send = await loginAs('booking_reception')
+      const direct = await Promise.all([1, 2, 3].map(() => send(
+        '/api/v1/bookings/direct', { ...bookingInput(), tableIds: [tableOneId] }, 'fx04-direct-key-01',
+      )))
+      expect(direct.map((response) => response.status)).toEqual([201, 201, 201])
+      expect(new Set(direct.map(bookingId)).size).toBe(1)
+      const waitlist = await Promise.all([1, 2].map(() => send('/api/v1/waitlist', {
+        guestName: 'Chờ bấm 2 lần', partySize: 2, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+      }, 'fx04-waitlist-key-1')))
+      expect(waitlist.map((response) => response.status)).toEqual([201, 201])
+      const entryIds = waitlist.map((response) => (JSON.parse(response.text) as { entry: WaitlistEntryView }).entry.id)
+      expect(entryIds[0]).toBe(entryIds[1])
+      expect([await countRows('reservations'), await countRows('waitlist_entries')]).toEqual([1, 1])
+    })
+
+    it('rejects reusing a successful key for different content or another endpoint', async () => {
+      const send = await loginAs('booking_reception')
+      expect((await send('/api/v1/bookings', bookingInput(), 'fx04-reuse-key-01')).status).toBe(201)
+      const changed = await send('/api/v1/bookings', { ...bookingInput(), guestName: 'Khác nội dung' }, 'fx04-reuse-key-01')
+      const otherRoute = await send('/api/v1/waitlist', {
+        guestName: 'Khác đường', partySize: 2, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+      }, 'fx04-reuse-key-01')
+      for (const response of [changed, otherRoute]) {
+        expect(response.status).toBe(422)
+        expect(JSON.parse(response.text)).toEqual({
+          error: { code: 'IDEMPOTENCY_KEY_REUSED', message: 'Mã chống trùng đã được dùng cho một yêu cầu khác.' },
+        })
+      }
+      expect([await countRows('reservations'), await countRows('waitlist_entries')]).toEqual([1, 0])
+    })
+
+    it('does not remember failed attempts so the same form can be fixed and saved again', async () => {
+      const send = await loginAs('booking_reception')
+      const failed = await send('/api/v1/bookings', { ...bookingInput(), note: 'gọi 0987654321' }, 'fx04-retry-key-01')
+      expect(failed.status).toBe(422)
+      const walkIn = await send('/api/v1/bookings/walk-ins', {
+        partySize: 2, businessDate: '2030-10-24', tableIds: [tableTwoId],
+      }, 'fx04-walkin-key-01')
+      expect(walkIn.status).toBe(409)
+      expect(await countRows('idempotency_keys')).toBe(0)
+      const fixed = await send('/api/v1/bookings', bookingInput(), 'fx04-retry-key-01')
+      expect(fixed.status).toBe(201)
+      expect(fixed.headers['idempotent-replayed']).toBeUndefined()
+      expect(await countRows('idempotency_keys')).toBe(1)
+    })
+
+    it('never replays another user\'s result, expires keys after 24 hours, keeps no-key requests unchanged and validates the key', async () => {
+      await createReceptionist('booking_reception_two')
+      const first = await loginAs('booking_reception')
+      const second = await loginAs('booking_reception_two')
+      const a = await first('/api/v1/bookings', bookingInput(), 'fx04-shared-key-01')
+      const b = await second('/api/v1/bookings', bookingInput(), 'fx04-shared-key-01')
+      expect(a.status).toBe(201)
+      expect(b.status).toBe(422)
+      expect(JSON.parse(b.text)).toMatchObject({ error: { code: 'IDEMPOTENCY_KEY_REUSED' } })
+      expect(b.text).not.toContain(String(bookingId(a)))
+      const own = await second('/api/v1/bookings', bookingInput(), 'fx04-second-key-1')
+      expect(own.status).toBe(201)
+      expect(bookingId(own)).not.toBe(bookingId(a))
+
+      await databasePool.execute(
+        `UPDATE idempotency_keys SET created_at = UTC_TIMESTAMP(3) - INTERVAL 25 HOUR,
+           expires_at = UTC_TIMESTAMP(3) - INTERVAL 1 HOUR WHERE idem_key = 'fx04-shared-key-01'`,
+      )
+      const afterExpiry = await first('/api/v1/bookings', { ...bookingInput(), guestName: 'Sau 24 giờ' }, 'fx04-shared-key-01')
+      expect(afterExpiry.status).toBe(201)
+      expect(bookingId(afterExpiry)).not.toBe(bookingId(a))
+
+      const noKey = await Promise.all([1, 2].map(() => first('/api/v1/bookings', { ...bookingInput(), guestName: 'Không mã' })))
+      expect(noKey.map((response) => response.status)).toEqual([201, 201])
+      expect(await countRows('reservations')).toBe(5)
+
+      const invalid = await first('/api/v1/bookings', bookingInput(), 'bad key!')
+      expect(invalid.status).toBe(400)
+      expect(JSON.parse(invalid.text)).toMatchObject({ error: { code: 'INVALID_IDEMPOTENCY_KEY' } })
+      expect(await countRows('reservations')).toBe(5)
     })
   })
 

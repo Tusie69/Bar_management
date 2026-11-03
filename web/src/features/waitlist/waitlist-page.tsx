@@ -72,6 +72,7 @@ import type { ZoneCode } from "@/domain/venue-layout"
 import { useAction } from "@/hooks/use-action"
 import { useBusinessDate, useNow, useReservations, useWaitlist } from "@/hooks/use-data"
 import { useDragScroll } from "@/hooks/use-drag-scroll"
+import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
 import { fmtCountdown, fmtElapsed, fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -1053,6 +1054,8 @@ function AddWaitlistBody({ model, close }: { model: FloorModel; close: () => voi
   const prefs = [...(tableId ? [{ tableId: Number(tableId) }] : []), ...zones.map((z) => ({ zoneCode: z }))]
   const invalid = noteHasPhoneNumber(note) || noteHasPhoneNumber(name)
   const valid = kind === "WALK_IN" ? name.trim().length > 0 && party > 0 : !!resId
+  // FX-04: 1 mã chống trùng cho lần mở form; đổi mã sau mỗi lần tạo thành công.
+  const [idempotencyKey, renewIdempotencyKey] = useIdempotencyKey()
   return (
     <>
       <DialogHeader>
@@ -1189,6 +1192,7 @@ function AddWaitlistBody({ model, close }: { model: FloorModel; close: () => voi
                       preferenceMode: api.mode === "http" ? "ANY" : mode,
                       preferences: api.mode === "http" || mode === "ANY" ? [] : prefs,
                       note: note || undefined,
+                      idempotencyKey,
                     }
                   : {
                       kind,
@@ -1197,10 +1201,14 @@ function AddWaitlistBody({ model, close }: { model: FloorModel; close: () => voi
                       preferenceMode: api.mode === "http" ? "ANY" : mode,
                       preferences: api.mode === "http" || mode === "ANY" ? [] : prefs,
                       note: note || undefined,
+                      idempotencyKey,
                     },
               ),
             )
-            if (r) close()
+            if (r) {
+              renewIdempotencyKey()
+              close()
+            }
           }}
         >
           Thêm vào danh sách chờ

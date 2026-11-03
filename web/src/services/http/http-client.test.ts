@@ -27,6 +27,20 @@ describe("HttpClient", () => {
     )
   })
 
+  it("sends the Idempotency-Key header only when a create passes one (FX-04)", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => json({ ok: true }, 201))
+    vi.stubGlobal("fetch", fetchMock)
+    const client = new HttpClient("https://api.example.test")
+    client.setCsrfToken("csrf-secret")
+
+    await client.post("/bookings", { guestName: "A" }, { idempotencyKey: "form-key-0001" })
+    await client.get("/bookings?date=2026-11-01", { idempotencyKey: "ignored-on-get" })
+    const createInit = fetchMock.mock.calls[0]?.[1] as RequestInit
+    const readInit = fetchMock.mock.calls[1]?.[1] as RequestInit
+    expect(createInit.headers).toMatchObject({ "Idempotency-Key": "form-key-0001", "x-csrf-token": "csrf-secret" })
+    expect(readInit.headers).not.toHaveProperty("Idempotency-Key")
+  })
+
   it("adds an in-memory CSRF token to writes without claiming idempotency", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     vi.stubGlobal("fetch", fetchMock)

@@ -48,20 +48,20 @@ export class HttpBookingApi {
     return mapBooking(response.booking)
   }
 
-  async create(fields: BookingWriteFields): Promise<HttpBooking> {
+  async create(fields: BookingWriteFields, idempotencyKey?: string): Promise<HttpBooking> {
     const response = await this.client.post<{ booking: BackendBookingPayload }>(
       "/bookings",
       createBookingPayload(fields),
-      { reviver: dateReviver },
+      { reviver: dateReviver, idempotencyKey },
     )
     return mapBooking(response.booking)
   }
 
-  async createAndAssign(fields: BookingWriteFields, tableIds: number[]): Promise<HttpBooking> {
+  async createAndAssign(fields: BookingWriteFields, tableIds: number[], idempotencyKey?: string): Promise<HttpBooking> {
     const response = await this.client.post<{ booking: BackendBookingPayload }>(
       "/bookings/direct",
       directBookingCreatePayload(fields, tableIds),
-      { reviver: dateReviver },
+      { reviver: dateReviver, idempotencyKey },
     )
     return mapBooking(response.booking)
   }

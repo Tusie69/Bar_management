@@ -70,6 +70,7 @@ import type { ClaimView, WaitlistEntryView } from "@/domain/models"
 import { symbolByNo } from "@/domain/symbols"
 import { useAction } from "@/hooks/use-action"
 import { useNow, useTableHistory, useWaitlist } from "@/hooks/use-data"
+import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { businessDateOf, fmtCountdown, fmtElapsed, fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
@@ -850,6 +851,8 @@ function FreeSection({
   )
   const [seatEntry, setSeatEntry] = useState<WaitlistEntryView | null>(null)
 
+  // FX-04: 1 mã chống trùng cho lần mở form; đổi mã sau mỗi lần tạo thành công.
+  const [idempotencyKey, renewIdempotencyKey] = useIdempotencyKey()
   if (waitingArea) {
     return <Note icon={Info}>Khu chờ, chưa nhận khách ngồi (chờ PO duyệt). Chủ quán đổi được trong Cài đặt.</Note>
   }
@@ -882,9 +885,13 @@ function FreeSection({
                 guestCount: count,
                 contactName: name || undefined,
                 overrideReason: o,
+                idempotencyKey,
               }),
             )
-            if (r) setName("")
+            if (r) {
+              renewIdempotencyKey()
+              setName("")
+            }
           }}
         >
           Mở bàn · {count} khách

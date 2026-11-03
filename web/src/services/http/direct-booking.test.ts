@@ -33,9 +33,9 @@ describe("direct layout booking flow", () => {
     const api = {
       createAndAssign: vi.fn(async () => ({ ...created, tableCodes: ["A7", "A8"] })),
     }
-    const result = await createAndAssignDirectBooking(api, fields, [7, 8])
+    const result = await createAndAssignDirectBooking(api, fields, [7, 8], "form-key-0001")
     expect(api.createAndAssign).toHaveBeenCalledOnce()
-    expect(api.createAndAssign).toHaveBeenCalledWith(fields, [7, 8])
+    expect(api.createAndAssign).toHaveBeenCalledWith(fields, [7, 8], "form-key-0001")
     expect(result.tableCodes).toEqual(["A7", "A8"])
   })
 

@@ -4,6 +4,7 @@ import { requireAuthentication, requireCsrfProtection, requirePermission } from 
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { env } from '../../config/env.js'
 import { AppError } from '../../errors/app-error.js'
+import { idempotent } from '../../middleware/idempotency.js'
 import { assertNoteHasNoPhoneNumber } from '../../security/note-privacy.js'
 import { applicationNow } from '../../time/application-clock.js'
 import {
@@ -137,7 +138,7 @@ bookingRouter.get('/:id', requireAuthentication, requirePermission('customer.vie
   ) })
 })
 
-bookingRouter.post('/', requireAuthentication, requireCsrfProtection, requirePermission('reservation.create'), async (request, response) => {
+bookingRouter.post('/', requireAuthentication, requireCsrfProtection, requirePermission('reservation.create'), idempotent('booking.create'), async (request, response) => {
   const { body: _body, ...input } = bookingBody(request.body, 'create')
   void _body
   const booking = await createBooking(requireAuthenticatedActor(request), {
@@ -152,6 +153,7 @@ bookingRouter.post(
   requireCsrfProtection,
   requirePermission('reservation.create'),
   requirePermission('table.assign'),
+  idempotent('booking.direct'),
   async (request, response) => {
     const { body, ...input } = bookingBody(request.body, 'create')
     if (!Array.isArray(body.tableIds)) throw new AppError(400, 'TABLES_REQUIRED', 'Danh sách bàn không hợp lệ.')
@@ -197,7 +199,7 @@ bookingRouter.post(
   },
 )
 
-bookingRouter.post('/walk-ins', requireAuthentication, requireCsrfProtection, requirePermission('visit.walkin'), async (request, response) => {
+bookingRouter.post('/walk-ins', requireAuthentication, requireCsrfProtection, requirePermission('visit.walkin'), idempotent('booking.walk_in'), async (request, response) => {
   const body = objectBody(request.body)
   if (!Array.isArray(body.tableIds)) throw new AppError(400, 'TABLES_REQUIRED', 'Danh sách bàn không hợp lệ.')
   const result = await createWalkIn(requireAuthenticatedActor(request), {

@@ -5,6 +5,8 @@ type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 interface RequestOptions {
   reviver?: (key: string, value: unknown) => unknown
   timeoutMs?: number
+  /** FX-04: mã chống trùng cho request tạo; gửi lại cùng mã thì máy chủ trả lại kết quả cũ. */
+  idempotencyKey?: string
 }
 
 type SecurityHandler = () => void
@@ -81,6 +83,7 @@ export class HttpClient {
     const headers: Record<string, string> = { Accept: "application/json" }
     if (body !== undefined) headers["Content-Type"] = "application/json"
     if (method !== "GET" && this.csrfToken) headers["x-csrf-token"] = this.csrfToken
+    if (method !== "GET" && options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey
 
     try {
       const response = await fetch(`${this.root}${path.startsWith("/") ? path : `/${path}`}`, {
