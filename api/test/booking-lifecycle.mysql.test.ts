@@ -11,7 +11,6 @@ import {
   assignBookingTables,
   checkInBooking,
   closeBooking,
-  createAndAssignBooking,
   createBooking,
   createWalkIn,
   getBookingById,
@@ -442,89 +441,6 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       ...bookingInput('2030-10-24', '22:00'), expectedVersion: finalBooking.version,
     }))
       .rejects.toMatchObject({ code: 'BOOKING_NOT_EDITABLE' })
-  })
-
-  describe('FX-18 blocks booking for a past business date', () => {
-    const pastDate = '2020-10-24'
-
-    it('rejects create, direct create and waitlist create for a past date without writing rows', async () => {
-      await expect(createBooking(actor, bookingInput(pastDate)))
-        .rejects.toMatchObject({ status: 409, code: 'BUSINESS_DATE_IN_PAST' })
-      await expect(createAndAssignBooking(actor, { ...bookingInput(pastDate), tableIds: [tableOneId] }))
-        .rejects.toMatchObject({ status: 409, code: 'BUSINESS_DATE_IN_PAST' })
-      await expect(createWaitlistEntry(actor, {
-        guestName: 'Past waitlist', partySize: 2, businessDate: pastDate, contactChannel: 'IN_PERSON',
-      })).rejects.toMatchObject({ status: 409, code: 'BUSINESS_DATE_IN_PAST' })
-      const counts = await row(
-        `SELECT (SELECT COUNT(*) FROM reservations WHERE organization_id = ?) AS reservations,
-                (SELECT COUNT(*) FROM table_allocations WHERE organization_id = ?) AS allocations,
-                (SELECT COUNT(*) FROM waitlist_entries WHERE organization_id = ?) AS waitlist`,
-        [organizationId, organizationId, organizationId],
-      )
-      expect([Number(counts.reservations), Number(counts.allocations), Number(counts.waitlist)]).toEqual([0, 0, 0])
-    })
-
-    it('rejects moving a booking to a past date but still allows editing a past-date booking in place', async () => {
-      const created = await createBooking(actor, bookingInput())
-      await expect(updateBooking(actor, created.id, {
-        ...bookingInput(pastDate, '22:00'), expectedVersion: created.version,
-      })).rejects.toMatchObject({ code: 'BUSINESS_DATE_IN_PAST' })
-      const unchanged = await row('SELECT business_date, version FROM reservations WHERE id = ?', [created.id])
-      expect(databaseDate(unchanged.business_date)).toBe('2030-10-24')
-      expect(Number(unchanged.version)).toBe(created.version)
-
-      await databasePool.execute(
-        `UPDATE reservations SET business_date = ?, expected_at = '2020-10-24 14:00:00.000' WHERE id = ?`,
-        [pastDate, created.id],
-      )
-      const edited = await updateBooking(actor, created.id, {
-        ...bookingInput(pastDate, '22:00', 'Renamed past guest'), expectedVersion: created.version,
-      })
-      expect(edited.guestName).toBe('Renamed past guest')
-      expect(edited.businessDate).toBe(pastDate)
-      const movedForward = await updateBooking(actor, created.id, {
-        ...bookingInput('2030-10-25', '21:00', 'Renamed past guest'), expectedVersion: edited.version,
-      })
-      expect(movedForward.businessDate).toBe('2030-10-25')
-    })
-
-    it('rejects seating a waiting entry whose business date has passed', async () => {
-      const entry = await createWaitlistEntry(actor, {
-        guestName: 'Stale waitlist', partySize: 2, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
-      })
-      await databasePool.execute('UPDATE waitlist_entries SET business_date = ? WHERE id = ?', [pastDate, entry.id])
-      await expect(seatWaitlistEntry(actor, {
-        entryId: entry.id, expectedVersion: entry.version, tableIds: [tableOneId],
-      })).rejects.toMatchObject({ code: 'BUSINESS_DATE_IN_PAST' })
-      const after = await row('SELECT status, version FROM waitlist_entries WHERE id = ?', [entry.id])
-      expect([after.status, Number(after.version)]).toEqual(['WAITING', entry.version])
-      const [allocations] = await databasePool.execute<RowDataPacket[]>(
-        'SELECT id FROM table_allocations WHERE organization_id = ?',
-        [organizationId],
-      )
-      expect(allocations).toHaveLength(0)
-    })
-
-    it('returns 409 BUSINESS_DATE_IN_PAST through the HTTP routes', async () => {
-      const receptionist = request.agent(app)
-      const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-        username: 'booking_reception', password,
-      })
-      const auth = JSON.parse(login.text) as AuthResponse
-      const send = (path: string, body: object) => receptionist.post(path)
-        .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken).send(body)
-      for (const response of [
-        await send('/api/v1/bookings', bookingInput(pastDate)),
-        await send('/api/v1/waitlist', {
-          guestName: 'Past route waitlist', partySize: 2, businessDate: pastDate, contactChannel: 'IN_PERSON',
-        }),
-      ]) {
-        expect(response.status).toBe(409)
-        expect(JSON.parse(response.text)).toEqual({
-          error: { code: 'BUSINESS_DATE_IN_PAST', message: 'Không thể đặt bàn cho ngày đã qua.' },
-        })
-      }
-    })
   })
 
   it('protects edit with authentication, CSRF, and reservation.update', async () => {

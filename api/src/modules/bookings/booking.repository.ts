@@ -4,7 +4,7 @@ import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
-import { assertBusinessDateNotPast, validateBookingSchedule } from './business-date.js'
+import { validateBookingSchedule } from './business-date.js'
 import { deriveBookingTiming, type BookingDisplayStatus } from './booking-timing.js'
 import { protectPhoneNumber, revealPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from './phone-security.js'
 import {
@@ -219,7 +219,6 @@ function protectedPhoneValues(phone: ProtectedPhone | null): [Buffer | null, num
 
 export async function createBooking(actor: AuthenticatedActor, input: CreateBookingInput): Promise<BookingView> {
   const schedule = validateBookingSchedule(input.expectedAt, input.businessDate)
-  assertBusinessDateNotPast(schedule.businessDate)
   const phone = typeof input.phoneNumber === 'string' ? protectPhoneNumber(input.phoneNumber, phoneKeyRing()) : null
   const [sourceRows] = await databasePool.execute<(RowDataPacket & { id: number })[]>(
     'SELECT id FROM booking_sources WHERE organization_id = ? AND code = ? AND is_active = 1',
@@ -256,7 +255,6 @@ export async function createAndAssignBooking(
   input: CreateAndAssignBookingInput,
 ): Promise<BookingView> {
   const schedule = validateBookingSchedule(input.expectedAt, input.businessDate)
-  assertBusinessDateNotPast(schedule.businessDate)
   const phone = typeof input.phoneNumber === 'string' ? protectPhoneNumber(input.phoneNumber, phoneKeyRing()) : null
   const tableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
   const connection = await databasePool.getConnection()
@@ -469,9 +467,6 @@ export async function updateBooking(
           businessDate: currentBusinessDate,
         }
       : validateBookingSchedule(input.expectedAt, input.businessDate)
-    // FX-18: chỉ chặn khi chuyển booking sang một ngày nghiệp vụ khác mà ngày đó đã qua;
-    // sửa nội dung/giờ trong chính ngày cũ vẫn được (Hưng chốt 01/11).
-    if (schedule.businessDate !== currentBusinessDate) assertBusinessDateNotPast(schedule.businessDate)
 
     const [sourceRows] = await connection.execute<(RowDataPacket & { id: number })[]>(
       'SELECT id FROM booking_sources WHERE organization_id = ? AND code = ? AND is_active = 1',

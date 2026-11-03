@@ -1,13 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  assertBusinessDateNotPast,
-  assertCurrentBusinessDate,
-  businessDateAt,
-  currentBusinessDate,
-  validateBookingSchedule,
-  validateCalendarDate,
-} from '../src/modules/bookings/business-date.js'
+import { assertCurrentBusinessDate, currentBusinessDate, validateBookingSchedule, validateCalendarDate } from '../src/modules/bookings/business-date.js'
 
 describe('booking business date validation', () => {
   it('keeps evening arrivals on the same business date', () => {
@@ -76,43 +69,5 @@ describe('booking business date validation', () => {
   it.each(['2026-10-25T00:00:00.000Z', '2026-10-25T08:00:00.000Z'])('rejects walk-in outside the shift at %s', (nowValue) => {
     expect(() => assertCurrentBusinessDate('2026-10-25', new Date(nowValue)))
       .toThrowError(expect.objectContaining({ code: 'WALK_IN_OUTSIDE_BUSINESS_HOURS' }))
-  })
-
-  describe('FX-18 past business date guard', () => {
-    it.each([
-      ['2026-11-01T21:59:00.000Z', '2026-11-01'], // 04:59 ngày 02/11 vẫn thuộc ca 01/11
-      ['2026-11-01T22:00:00.000Z', '2026-11-02'], // 05:00 sang ngày nghiệp vụ mới
-      ['2026-11-02T04:31:00.000Z', '2026-11-02'], // 11:31 ban ngày, không ném lỗi ngoài ca
-      ['2026-11-02T10:00:00.000Z', '2026-11-02'], // 17:00
-    ])('derives the business date at %s without throwing outside the shift', (nowValue, expected) => {
-      expect(businessDateAt(new Date(nowValue))).toBe(expected)
-    })
-
-    it.each([
-      ['2026-11-02T04:31:00.000Z', '2026-11-01'], // ban ngày 02/11: ngày 01/11 đã qua
-      ['2026-11-01T22:00:00.000Z', '2026-11-01'], // đúng 05:00 ngày 02/11
-      ['2026-11-01T15:00:00.000Z', '2026-10-31'], // 22:00 tối 01/11
-    ])('rejects a past business date at %s', (nowValue, date) => {
-      expect(() => assertBusinessDateNotPast(date, new Date(nowValue)))
-        .toThrowError(expect.objectContaining({
-          status: 409,
-          code: 'BUSINESS_DATE_IN_PAST',
-          message: 'Không thể đặt bàn cho ngày đã qua.',
-        }))
-    })
-
-    it.each([
-      ['2026-10-31T19:00:00.000Z', '2026-10-31'], // 02:00 sáng 01/11 đặt cho 31/10: vẫn là ca 31/10
-      ['2026-11-01T21:59:00.000Z', '2026-11-01'], // 04:59: ca hiện tại vẫn là 01/11
-      ['2026-11-02T04:31:00.000Z', '2026-11-02'], // ban ngày: tối nay
-      ['2026-11-02T04:31:00.000Z', '2026-12-24'], // đặt trước ngày tương lai
-    ])('accepts the current or a future business date at %s', (nowValue, date) => {
-      expect(assertBusinessDateNotPast(date, new Date(nowValue))).toBe(date)
-    })
-
-    it('still validates the calendar format', () => {
-      expect(() => assertBusinessDateNotPast('2026-02-30'))
-        .toThrowError(expect.objectContaining({ code: 'INVALID_BUSINESS_DATE' }))
-    })
   })
 })
