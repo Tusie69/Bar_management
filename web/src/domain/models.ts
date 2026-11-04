@@ -48,6 +48,7 @@ export interface VenueConfig {
   reservationWindowMinutes: number | null
   groupSymbolCount: number
   changeSeq: number
+  settings?: { quick_times: string[]; upcoming_minutes: number; no_show_minutes: number }
 }
 
 export interface ZoneView {
@@ -127,7 +128,7 @@ export interface ClaimView {
   symbolNo: number | null
   groupDisplayCode?: string | null
   turnNo?: number | null
-  flags?: Array<"NEW" | "RETURNING">
+  flags?: Array<"BIRTHDAY" | "NEW" | "RETURNING">
   warning: BookingWarning
   minutesLate: number
   sourceCode: BookingSourceCode | null
@@ -223,6 +224,8 @@ export interface ReservationView {
   expectedAt: Date
   businessDate: BusinessDate
   classification: BookingClassification
+  guestType: "REGULAR" | "NEW" | null
+  isBirthday: boolean
   status: ReservationStatus
   sourceCode: BookingSourceCode
   note: string | null

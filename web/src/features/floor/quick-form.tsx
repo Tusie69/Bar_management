@@ -19,6 +19,7 @@ import {
 } from "@/components/booking-pickers"
 import { GuardedButton } from "@/components/common"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { Permission } from "@/domain/access"
 import {
@@ -117,6 +118,7 @@ export function QuickForm({
   const [note, setNote] = useState("")
   const [source, setSource] = useState<BookingSourceCode>("HOTLINE")
   const [classification, setClassification] = useState<BookingClassification>("UNCLASSIFIED")
+  const [isBirthday, setIsBirthday] = useState(false)
   const [tried, setTried] = useState(false)
   const [guest, setGuest] = useState<GuestValue>(() => guestValueFrom(draft.party))
 
@@ -200,6 +202,8 @@ export function QuickForm({
           expectedAt: at,
           sourceCode: source,
           classification,
+          guestType: classification === "RETURNING" ? "REGULAR" : classification === "NEW" ? "NEW" : null,
+          isBirthday,
           note: note.trim() || undefined,
           tableIds: draft.tableIds,
           overrideReason: o,
@@ -324,6 +328,10 @@ export function QuickForm({
                   <SelectItem value="RETURNING">Khách quen (O)</SelectItem>
                 </SelectContent>
               </Select>
+              <label className="flex min-h-11 items-center gap-3 text-sm">
+                <Checkbox checked={isBirthday} onCheckedChange={(checked) => setIsBirthday(checked === true)} />
+                Sinh nhật
+              </label>
             </div>
           ) : null}
         </section>

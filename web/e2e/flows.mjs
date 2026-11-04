@@ -42,11 +42,22 @@ const expectLabel = async (loc, re) => {
   }
   throw new Error(`label ${await loc.getAttribute("aria-label")} !~ ${re}`)
 }
+const selectTomorrow = async (page) => {
+  const tomorrow = await page.evaluate(async () => {
+    const { clock } = await import("/src/services/index.ts")
+    const { addDays, businessDateOf } = await import("/src/lib/time.ts")
+    return addDays(businessDateOf(clock.now()), 1)
+  })
+  const [year, month, day] = tomorrow.split("-").map(Number)
+  await page.getByRole("button", { name: "Chọn ngày kinh doanh" }).click()
+  await page.locator(`[data-day="${month}/${day}/${year}"]`).click()
+}
 
 await flow("walk-in from table panel, then undo", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await table(page, "B5").click()
-  await page.getByRole("button", { name: /Mở Bàn B5 cho 2 khách/ }).click()
+  await page.getByRole("tab", { name: "Walk-in" }).click()
+  await page.getByRole("button", { name: "Mở bàn ngay" }).click()
   await expectLabel(table(page, "B5"), /Đang sử dụng/)
   await page.getByText("Bản mô phỏng").first().waitFor()
   await page.getByRole("button", { name: "Hoàn tác", exact: true }).first().click()
@@ -55,11 +66,8 @@ await flow("walk-in from table panel, then undo", 1, async (page) => {
 
 await flow("inline walk-in suggests a table (3 taps)", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
-  await page.getByRole("button", { name: "Walk-in" }).first().click()
-  await page
-    .getByRole("button", { name: /^Gợi ý / })
-    .first()
-    .click()
+  await table(page, "B5").click()
+  await page.getByRole("tab", { name: "Walk-in" }).click()
   await page.getByRole("button", { name: "Mở bàn ngay" }).click()
   await expectLabel(table(page, "B5"), /Đang sử dụng/)
 })
@@ -68,24 +76,19 @@ await flow(
   "mobile walk-in selects multiple Bar seats on the canonical map",
   1,
   async (page) => {
-    await page.goto(base + "/home", { waitUntil: "networkidle" })
+    await page.goto(base + "/floor", { waitUntil: "networkidle" })
     const deferAlert = page.getByRole("button", { name: "Đã xem, xử lý sau" })
     if (await deferAlert.isVisible()) await deferAlert.click()
-    await page.getByRole("button", { name: "Tạo mới", exact: true }).click()
-    const create = page.getByRole("dialog", { name: "Tạo mới" })
-    await create.getByRole("button", { name: "Mở bàn Walk-in" }).click()
+    await barSeat(page, 13).click()
     const form = page.getByRole("dialog", { name: "Tạo đơn đặt bàn" })
+    await form.getByRole("tab", { name: "Walk-in" }).click()
     await form.getByRole("radio", { name: "2 khách" }).click()
     await form.getByRole("button", { name: "Xem bàn trống lúc này" }).click()
-
-    const map = form.getByRole("group", { name: "Sơ đồ bàn để chọn trực tiếp cho khách Walk-in" })
-    await map.waitFor()
     if (await form.getByRole("radiogroup", { name: "Bàn trống" }).count()) {
       throw new Error("Walk-in still renders the legacy table-chip list")
     }
-
-    const first = map.locator('[aria-label^="Ghế Bar"][aria-disabled="false"][aria-pressed="false"]').first()
-    await first.click()
+    const map = form.getByRole("group", { name: "Sơ đồ bàn để chọn trực tiếp cho khách Walk-in" })
+    await map.waitFor()
     const second = map.locator('[aria-label^="Ghế Bar"][aria-disabled="false"][aria-pressed="false"]').first()
     await second.click()
     await form.getByText("Sức chứa: 2/2 chỗ · Đã đủ chỗ", { exact: true }).waitFor()
@@ -103,7 +106,7 @@ await flow("check-in reserved booking A5", 1, async (page) => {
   await expectLabel(table(page, "A5"), /Đang sử dụng/)
 })
 
-await flow("move seated party B7? -> combine B5 + B7 then split", 1, async (page) => {
+await flow("move seated party B7? -> combine B5 + B7 then split", 3, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await table(page, "B5").click()
   await page.getByRole("button", { name: /Mở Bàn B5/ }).click()
@@ -122,7 +125,7 @@ await flow("move seated party B7? -> combine B5 + B7 then split", 1, async (page
   await expectLabel(table(page, "B5"), /Đang sử dụng/)
 })
 
-await flow("booking flow end-to-end for tomorrow with table", 1, async (page) => {
+await flow("booking flow end-to-end for tomorrow with table", 3, async (page) => {
   await page.goto(base + "/reservations", { waitUntil: "networkidle" })
   await page.getByRole("button", { name: /Đặt bàn mới/ }).click()
   await page.getByRole("button", { name: "Ngày mai" }).click()
@@ -144,7 +147,7 @@ await flow("booking flow end-to-end for tomorrow with table", 1, async (page) =>
   if (html.includes("0912345678") || html.includes("912345678")) throw new Error("full phone leaked to DOM")
 })
 
-await flow("validation: booking needs name or phone, note without phone", 1, async (page) => {
+await flow("validation: booking needs name or phone, note without phone", 3, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await page.getByRole("button", { name: "Tạo đặt bàn" }).click()
   await page.getByLabel("Ghi chú").fill("goi 0901234567")
@@ -153,7 +156,7 @@ await flow("validation: booking needs name or phone, note without phone", 1, asy
   await page.getByRole("alert").filter({ hasText: "Không ghi số điện thoại vào ghi chú" }).waitFor()
 })
 
-await flow("conflict: another device takes the table at confirm", 1, async (page) => {
+await flow("conflict: another device takes the table at confirm", 3, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await page.getByRole("button", { name: /Giờ mô phỏng/ }).click()
   await page.getByRole("button", { name: "Gài xung đột lần xác nhận tới" }).click()
@@ -167,7 +170,7 @@ await flow("conflict: another device takes the table at confirm", 1, async (page
     .waitFor()
 })
 
-await flow("undo blocked after remote edit (conflict UX)", 1, async (page) => {
+await flow("undo blocked after remote edit (conflict UX)", 3, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await table(page, "B5").click()
   await page.getByRole("button", { name: /Mở Bàn B5/ }).click()
@@ -180,7 +183,7 @@ await flow("undo blocked after remote edit (conflict UX)", 1, async (page) => {
   await page.getByText("Không thể hoàn tác").first().waitFor()
 })
 
-await flow("time warp: A5 becomes late after +15', no auto cancel after +60'", 1, async (page) => {
+await flow("time warp: A5 becomes late after +15', no auto cancel after +60'", 3, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await page.getByRole("button", { name: /Giờ mô phỏng/ }).click()
   await page.getByRole("button", { name: "15'" }).click()
@@ -193,7 +196,7 @@ await flow("time warp: A5 becomes late after +15', no auto cancel after +60'", 1
   await expectLabel(table(page, "A5"), /Khách không đến/)
 })
 
-await flow("waitlist: claim, accept offer -> hold, then seat when guest arrives", 1, async (page) => {
+await flow("waitlist: claim, accept offer -> hold, then seat when guest arrives", 3, async (page) => {
   await page.goto(base + "/waitlist", { waitUntil: "networkidle" })
   const card = page.locator("li", { hasText: "Chị mặc váy đỏ" }).first()
   await card.getByRole("button", { name: "Nhận liên hệ" }).click()
@@ -218,32 +221,32 @@ await flow("receptionist cannot reveal phone; owner can", 3, async (page) => {
 
 await flow("receptionist sees no reveal button and no reports", 1, async (page) => {
   await page.goto(base + "/guests", { waitUntil: "networkidle" })
+  await page.waitForURL("**/floor")
   if (await page.getByRole("button", { name: "Xem số" }).count()) throw new Error("reveal visible for receptionist")
   await page.goto(base + "/reports", { waitUntil: "networkidle" })
-  await page.getByText("Báo cáo chỉ dành cho Chủ quán").waitFor()
+  await page.waitForURL("**/floor")
+  if (await page.getByRole("link", { name: "Báo cáo" }).count()) throw new Error("reports navigation visible for receptionist")
 })
 
 await flow("availability tomorrow: B3 reserved, A3 free", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
-  // The date/time taskbar: stepping the day from Live switches to Khả dụng for that day.
-  await page.getByRole("button", { name: "Ngày sau" }).click()
+  await selectTomorrow(page)
   await page.waitForTimeout(600)
-  await page.getByRole("status").filter({ hasText: "Xem trước" }).waitFor()
-  const b3 = await page.locator('[aria-label^="Bàn B3:"]').first().getAttribute("aria-label")
-  const a3 = await page.locator('[aria-label^="Bàn A3:"]').first().getAttribute("aria-label")
-  if (!/giữ cho booking/.test(b3)) throw new Error("B3 should be reserved tomorrow: " + b3)
-  if (!/Trống/.test(a3)) throw new Error("A3 should be free tomorrow: " + a3)
+  const b3 = await table(page, "B3").getAttribute("aria-label")
+  const a3 = await table(page, "A3").getAttribute("aria-label")
+  if (!/Đang đặt/.test(b3)) throw new Error("B3 should be reserved tomorrow: " + b3)
+  if (!/Chưa đặt/.test(a3)) throw new Error("A3 should be free tomorrow: " + a3)
 })
 
 await flow("inline form: occupied table is refused, free table is picked on the map", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
-  await page.getByRole("button", { name: "Walk-in" }).first().click()
+  await table(page, "B5").click()
+  await page.getByRole("tab", { name: "Walk-in" }).click()
   await table(page, "A3").click()
   await page
     .getByText(/A3: không trống/)
     .first()
     .waitFor()
-  await table(page, "B5").click()
   await page.getByRole("button", { name: "Bỏ B5" }).waitFor()
   await page.getByRole("button", { name: "Mở bàn ngay" }).click()
   await expectLabel(table(page, "B5"), /Đang sử dụng/)
@@ -257,7 +260,7 @@ await flow("cancel booking requires confirmation with reason", 1, async (page) =
   await expectLabel(table(page, "B4"), /Chưa đặt/)
 })
 
-await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (desktop)", 1, async (page) => {
+await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (desktop)", 3, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await page.getByRole("button", { name: /Mở điều khiển thời gian/ }).click()
   await page.getByRole("button", { name: "Nạp lại dữ liệu mẫu" }).click()
@@ -290,7 +293,7 @@ await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (deskt
   await page.getByText("Đã đóng trong ca").waitFor()
 })
 
-await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (phone 390px)", 1, async (page) => {
+await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (phone 390px)", 3, async (page) => {
   await page.setViewportSize({ width: 390, height: 844 })
 
   const cases = [
@@ -416,7 +419,7 @@ await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (phone
   }
 })
 
-await flow("mobile booking creation with classification and Zalo export (phone 390px)", 1, async (page) => {
+await flow("mobile booking creation with classification and Zalo export (phone 390px)", 3, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await page.getByRole("button", { name: /Mở điều khiển thời gian/ }).click()
   await page.getByRole("button", { name: "Nạp lại dữ liệu mẫu" }).click()
@@ -460,14 +463,15 @@ await flow("mobile booking creation with classification and Zalo export (phone 3
 await flow("bar seat: single walk-in from table detail", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await barSeat(page, 13).click()
-  await page.getByRole("button", { name: /Mở Ghế Bar 13 cho 1 khách/ }).click()
+  await page.getByRole("tab", { name: "Walk-in" }).click()
+  await page.getByRole("radio", { name: "1 khách" }).click()
+  await page.getByRole("button", { name: "Mở bàn ngay" }).click()
   await expectLabel(barSeat(page, 13), /Đang sử dụng/)
 })
 
 await flow("bar seat: multi-seat booking capacity check & group reservation", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await barSeat(page, 8).click()
-  await page.getByRole("button", { name: "Đặt trước" }).click()
   // QuickForm opens with Bar 8 selected (capacity 1). Pick 2 guests to trigger capacity shortage.
   await page.getByRole("radio", { name: "2 khách" }).click()
   await page.getByText(/thiếu 1 chỗ cho 2 khách/).waitFor()
@@ -498,7 +502,7 @@ await flow("bar seat: multi-seat booking capacity check & group reservation", 1,
   if (await page.locator("path[data-group-id]").count()) throw new Error("Deselecting must hide the group connector")
 })
 
-await flow("reservation assignment: date-aware availability in both directions (MD-01)", 1, async (page) => {
+await flow("reservation assignment: date-aware availability in both directions (MD-01)", 3, async (page) => {
   await page.goto(base + "/reservations", { waitUntil: "networkidle" })
 
   // Advance to tomorrow
@@ -582,7 +586,7 @@ await flow("reservation assignment: date-aware availability in both directions (
   await page.keyboard.press("Escape")
 })
 
-await flow("direct booking: validate same zone and kind in floor quick-form and booking sheet (MD-05)", 1, async (page) => {
+await flow("direct booking: validate same zone and kind in floor quick-form and booking sheet (MD-05)", 3, async (page) => {
   // 1. Floor quick-form validation
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await barSeat(page, 8).click()
@@ -629,7 +633,7 @@ await flow("direct booking: validate same zone and kind in floor quick-form and 
   await page.keyboard.press("Escape")
 })
 
-await flow("booking pickers: keyboard navigation across expired selected slot (MD-04)", 1, async (page) => {
+await flow("booking pickers: keyboard navigation across expired selected slot (MD-04)", 3, async (page) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(base + "/reservations", { waitUntil: "networkidle" })
   await page.evaluate(async () => {

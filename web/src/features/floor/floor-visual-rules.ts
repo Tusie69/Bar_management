@@ -1,7 +1,7 @@
 import type { FloorGroup, TableView } from "@/domain/models"
 
 export type GlyphLevel = "compact" | "standard" | "expanded"
-export type ClaimViewFlags = Array<"NEW" | "RETURNING">
+export type ClaimViewFlags = Array<"BIRTHDAY" | "NEW" | "RETURNING">
 
 export function glyphLevel(table: Pick<TableView, "kind" | "w" | "h">): GlyphLevel {
   if (table.kind === "BAR_SEAT" || Math.min(table.w, table.h) < 25) return "compact"
@@ -21,7 +21,9 @@ export function groupCode(symbolNo: number | null | undefined) {
 }
 
 export function supportedFlags(flags: ClaimViewFlags): ClaimViewFlags {
-  return flags.filter((flag, index) => (flag === "RETURNING" || flag === "NEW") && flags.indexOf(flag) === index)
+  return flags.filter(
+    (flag, index) => (flag === "BIRTHDAY" || flag === "RETURNING" || flag === "NEW") && flags.indexOf(flag) === index,
+  )
 }
 
 export function activeGroupForSelection(groups: FloorGroup[], selectedIds: number[], live: boolean) {

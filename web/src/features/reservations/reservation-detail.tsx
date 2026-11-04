@@ -7,6 +7,7 @@ import { ConfirmAction } from "@/components/dialogs"
 import { RevealPhone } from "@/components/reveal-phone"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -190,6 +191,7 @@ function Detail({ r }: { r: ReservationView }) {
                   : "Chưa phân loại"
             }
           />
+          <Item k="Đặc điểm" v={r.isBirthday ? "🎂 Sinh nhật" : "Không có"} />
           <Item
             k="Bàn"
             v={
@@ -428,6 +430,7 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
   const [note, setNote] = useState(r.note ?? "")
   const [source, setSource] = useState<BookingSourceCode>(r.sourceCode)
   const [classification, setClassification] = useState<BookingClassification>(r.classification)
+  const [isBirthday, setIsBirthday] = useState(r.isBirthday)
   const invalid = noteHasPhoneNumber(note)
   const originalSchedule = time === fmtTime(r.expectedAt)
   const timeError = originalSchedule ? null : validateBookingTime(r.businessDate, time, now)
@@ -473,6 +476,10 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
               </SelectContent>
             </Select>
           </div>
+          <label className="flex min-h-11 items-center gap-3 text-sm">
+            <Checkbox checked={isBirthday} onCheckedChange={(checked) => setIsBirthday(checked === true)} />
+            Sinh nhật
+          </label>
           <div className="grid gap-1.5">
             <Label htmlFor="ed-classification">Loại khách</Label>
             <Select value={classification} onValueChange={(v) => setClassification(v as BookingClassification)}>
@@ -516,6 +523,8 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
                 sourceCode: source,
                 note,
                 classification,
+                guestType: classification === "RETURNING" ? "REGULAR" : classification === "NEW" ? "NEW" : null,
+                isBirthday,
               }),
             )
             if (res) close()

@@ -6,12 +6,16 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { ZoneCode } from "@/domain/venue-layout"
-import { useAvailability, useNow } from "@/hooks/use-data"
+import { useAvailability, useNow, useWaitlist } from "@/hooks/use-data"
+import { useReceptionSearch } from "@/hooks/use-reception-search"
 import { useMediaQuery } from "@/hooks/use-media"
 import { atBusinessTime, businessDateOf, fmtBusinessDate, MS } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { isApiError } from "@/services"
 import { useUi } from "@/state/ui"
+import { useCan, useSession } from "@/state/session"
+import { ZaloBookingExport } from "../reservations/zalo-booking-export"
+import WaitlistPage from "../waitlist/waitlist-page"
 import { AvailabilityPanel } from "./availability-panel"
 import { BookingList, BookingTable, LIST_TABS, useBookingItems, type ListTab } from "./booking-list"
 import { FloorCanvas } from "./floor-canvas"
@@ -21,6 +25,8 @@ import { draftPickable, QuickForm } from "./quick-form"
 import { ShiftPanel } from "./shift-panel"
 import { TableDetail } from "./table-detail"
 import { useFloorModel } from "./use-floor-model"
+import { ReceptionControls } from "./reception-controls"
+import { canStartTableBooking } from "./reception-rules"
 
 const ZONE_TABS: { value: ZoneCode | "ALL"; label: string }[] = [
   { value: "ALL", label: "Tất cả" },
@@ -68,9 +74,17 @@ function Segmented<T extends string>({
 
 /** Điều phối (v2): toolbar · booking list | workspace (list / timeline / map) | shift or table panel. */
 export function FloorPage() {
-  const model = useFloorModel()
   const ui = useUi()
   const now = useNow(1000)
+  const receptionist = useSession((state) => state.user.role === "RECEPTIONIST")
+  const currentDate = businessDateOf(now)
+  const selectedDate = receptionist && ui.floorMode !== "live" ? ui.availDate : currentDate
+  const model = useFloorModel(receptionist ? selectedDate : undefined)
+  const canCreate = useCan("reservation.create")
+  const search = useReceptionSearch(selectedDate, receptionist)
+  const waitlist = useWaitlist(receptionist ? selectedDate : "")
+  const [waitOpen, setWaitOpen] = useState(false)
+  const [countOpen, setCountOpen] = useState(false)
   const wide = useMediaQuery("(min-width: 1024px)")
   const xl = useMediaQuery("(min-width: 1280px)")
   const [listOpen, setListOpen] = useState(false)
@@ -92,11 +106,11 @@ export function FloorPage() {
       return { key: availKey, ids: typeof next === "function" ? next(prev) : next }
     })
 
-  const live = ui.floorMode === "live"
+  const live = receptionist || ui.floorMode === "live"
   const today = model.floor?.businessDate ?? businessDateOf(now)
-  const date = live ? today : ui.availDate
+  const date = receptionist ? selectedDate : live ? today : ui.availDate
   const draft = ui.draft
-  const view = ui.pick || draft ? "map" : ui.view
+  const view = receptionist || ui.pick || draft ? "map" : ui.view
   const feed = useBookingItems(model, date, live, Math.floor(now.getTime() / MS.MIN))
 
   const availAt = useMemo(() => atBusinessTime(ui.availDate, ui.availTime), [ui.availDate, ui.availTime])
@@ -212,6 +226,15 @@ export function FloorPage() {
       }
       return ui.togglePick(id)
     }
+    if (receptionist) {
+      const table = model.byId.get(id)
+      const state = model.states.get(id)
+      if (!state) return toast.info("Chưa tải được trạng thái bàn. Vui lòng thử lại.")
+      if (canCreate && canStartTableBooking(table, state, model.catalog?.zones ?? [])) {
+        return ui.openBooking({ tableIds: [id], date: selectedDate })
+      }
+      return ui.selectTable(ui.selectedTableId === id ? null : id)
+    }
     if (!live) {
       const status = availMap.get(id)?.status
       if (status !== "available" && status !== "spare" && status !== "too_small") return
@@ -258,7 +281,22 @@ export function FloorPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <FloorToolbar onOpenList={xl ? undefined : () => setListOpen(true)} />
+      {!receptionist ? <FloorToolbar onOpenList={xl ? undefined : () => setListOpen(true)} /> : null}
+      {receptionist ? (
+        <div className="shrink-0 border-b px-4 py-3">
+          <ReceptionControls
+            search={search}
+            waitCount={
+              waitlist.isPlaceholderData
+                ? 0
+                : (waitlist.data ?? []).filter((row) => ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"].includes(row.status)).length
+            }
+            onWaitlist={() => setWaitOpen(true)}
+            onCount={() => setCountOpen(true)}
+            onOpenBooking={ui.openReservation}
+          />
+        </div>
+      ) : null}
       {!live && !ui.pick ? (
         <div
           className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-dashed border-strong bg-surface-1 px-4 py-1.5 text-sm"
@@ -332,11 +370,19 @@ export function FloorPage() {
                 <FloorCanvas
                   tables={model.tables}
                   zones={model.catalog.zones}
-                  mode={bookingDraft ? "availability" : isPickAssign ? "availability" : draft ? "live" : ui.floorMode}
+                  mode={
+                    bookingDraft
+                      ? "availability"
+                      : isPickAssign
+                        ? "availability"
+                        : draft || receptionist
+                          ? "live"
+                          : ui.floorMode
+                  }
                   states={model.states}
                   availability={bookingDraft ? draftAvailMap : isPickAssign ? pickAvailMap : availMap}
                   groups={live && !bookingDraft && !isPickAssign ? model.floor?.groups : []}
-                  selectedIds={selectedIds}
+                  selectedIds={ui.pick || draft ? selectedIds : [...new Set([...selectedIds, ...search.tableIds])]}
                   pickable={bookingDraft ? draftBookingPickable : draft ? null : pickable}
                   zoneFocus={ui.zone}
                   now={now}
@@ -408,7 +454,20 @@ export function FloorPage() {
         ) : null}
       </div>
 
-      {!xl ? (
+      {receptionist ? (
+        <>
+          <ZaloBookingExport businessDate={date} open={countOpen} onOpenChange={setCountOpen} />
+          <Sheet open={waitOpen} onOpenChange={setWaitOpen}>
+            <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-[920px]">
+              <SheetTitle className="sr-only">Bàn chờ ảo</SheetTitle>
+              <SheetDescription className="sr-only">Ngày kinh doanh {fmtBusinessDate(date)}</SheetDescription>
+              <div className="min-h-0 flex-1 overflow-y-auto"><WaitlistPage businessDate={date} /></div>
+            </SheetContent>
+          </Sheet>
+        </>
+      ) : null}
+
+      {!receptionist && !xl ? (
         <Sheet open={listOpen} onOpenChange={setListOpen}>
           <SheetContent side="left" className="w-[min(92vw,360px)] gap-0 p-0">
             <SheetTitle className="sr-only">Danh sách booking</SheetTitle>

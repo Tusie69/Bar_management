@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { lazy, Suspense } from "react"
-import { createBrowserRouter, Navigate, RouterProvider } from "react-router"
+import { createBrowserRouter, Navigate, RouterProvider, useLocation } from "react-router"
 import { ConflictDialog, OverrideDialog } from "@/components/dialogs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Toaster } from "@/components/ui/sonner"
@@ -10,6 +10,7 @@ import { AuthBoundary } from "@/features/auth/auth-boundary"
 import { useRealtimeSync } from "@/hooks/use-data"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { AppShell } from "./shell"
+import { useSession } from "@/state/session"
 
 const OverviewPage = lazy(() => import("@/features/overview/overview-page"))
 const ReservationsPage = lazy(() => import("@/features/reservations/reservations-page"))
@@ -37,7 +38,11 @@ function PageFallback() {
 const page = (el: React.ReactNode) => <Suspense fallback={<PageFallback />}>{el}</Suspense>
 
 function Root() {
-  return useIsMobile() ? page(<MobileApp />) : <AppShell />
+  const mobile = useIsMobile()
+  const location = useLocation()
+  const role = useSession((state) => state.user.role)
+  if (role === "RECEPTIONIST" && location.pathname !== "/floor") return <Navigate to="/floor" replace />
+  return mobile ? page(<MobileApp />) : <AppShell />
 }
 
 // Phone opens the role home (Tiếp đón / Tổng quan). Deep links keep their route.

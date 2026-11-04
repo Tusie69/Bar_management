@@ -49,7 +49,7 @@ export interface BackendFloorClaimProjection {
   phoneLast3: string | null
   partySize: number
   turnNo: number | null
-  flags: Array<"NEW" | "RETURNING">
+  flags: Array<"BIRTHDAY" | "NEW" | "RETURNING">
   groupId: number | null
   groupDisplayCode: string | null
   groupMemberTableIds: number[]

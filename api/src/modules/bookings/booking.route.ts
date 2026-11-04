@@ -26,6 +26,7 @@ import {
 import { formatDailyBookingText, getDailyBookingTextInput } from './booking-export.js'
 import { assertCurrentBusinessDate, validateCalendarDate } from './business-date.js'
 import { PhoneRevealRateLimiter } from './phone-rate-limit.js'
+import { resolveBookingMetadata, type GuestType } from './booking-metadata.js'
 
 export const bookingRouter: Router = Router()
 const phoneRevealLimiter = env.phone.revealRateLimitMax && env.phone.revealRateLimitWindowMs
@@ -75,6 +76,17 @@ function bookingBody(value: unknown, mode: 'create' | 'update') {
   const noteProvided = Object.prototype.hasOwnProperty.call(body, 'note')
   if (noteProvided) assertNoteHasNoPhoneNumber(note)
   const classification = optionalClassification(body.classification)
+  const guestType = body.guestType as GuestType | null | undefined
+  resolveBookingMetadata({
+    ...(guestType === undefined ? {} : { guestType }),
+    ...(classification === undefined ? {} : { classification }),
+  })
+  if (body.isBirthday !== undefined && typeof body.isBirthday !== 'boolean') {
+    throw new AppError(400, 'INVALID_BIRTHDAY', 'Sinh nhật phải là giá trị boolean.')
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'lateConfirmedAt')) {
+    throw new AppError(400, 'LATE_CONFIRMATION_READ_ONLY', 'Thời điểm tới muộn chỉ được ghi qua thao tác nghiệp vụ riêng.')
+  }
   let phoneNumber: string | null | undefined
   if (Object.prototype.hasOwnProperty.call(body, 'phoneNumber')) {
     if (body.phoneNumber !== null && (typeof body.phoneNumber !== 'string' || body.phoneNumber.length > 20)) {
@@ -90,6 +102,8 @@ function bookingBody(value: unknown, mode: 'create' | 'update') {
     businessDate: businessDate(body.businessDate),
     sourceCode: requiredText(body.sourceCode, 30, 'INVALID_SOURCE', 'Nguồn đặt bàn không hợp lệ.'),
     ...(classification === undefined ? {} : { classification }),
+    ...(guestType === undefined ? {} : { guestType }),
+    ...(body.isBirthday === undefined ? {} : { isBirthday: body.isBirthday }),
     ...(mode === 'update'
       ? noteProvided ? { note: note ?? null } : {}
       : note === undefined ? {} : { note }),

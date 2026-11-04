@@ -11,7 +11,7 @@ import {
 } from './table-display-state.js'
 
 export type FloorClaimKind = 'RESERVATION' | 'VISIT' | 'WAITLIST_HOLD'
-export type FloorCustomerFlag = 'NEW' | 'RETURNING'
+export type FloorCustomerFlag = 'BIRTHDAY' | 'NEW' | 'RETURNING'
 
 export interface FloorClaimProjection {
   kind: FloorClaimKind
@@ -137,6 +137,7 @@ interface ProjectionRow extends RowDataPacket {
   reservation_party_size: number | null
   reservation_phone_last3: string | null
   reservation_classification: 'NEW' | 'RETURNING' | 'UNCLASSIFIED' | null
+  reservation_is_birthday: number | null
   reservation_source_code: string | null
   reservation_late_confirmed_at: Date | string | null
   linked_waitlist_entry_id: number | null
@@ -153,6 +154,7 @@ interface ProjectionRow extends RowDataPacket {
   offer_reservation_party_size: number | null
   offer_reservation_phone_last3: string | null
   offer_reservation_classification: 'NEW' | 'RETURNING' | 'UNCLASSIFIED' | null
+  offer_reservation_is_birthday: number | null
   active_visit_id: number | null
   visit_version: number | null
   visit_contact_name: string | null
@@ -186,10 +188,14 @@ export function groupDisplayCode(symbolNo: number): string {
   return `◆${letters}`
 }
 
-function classificationFlags(
+function customerFlags(
   classification: 'NEW' | 'RETURNING' | 'UNCLASSIFIED' | null,
+  isBirthday: number | null,
 ): FloorCustomerFlag[] {
-  return classification === 'NEW' || classification === 'RETURNING' ? [classification] : []
+  const flags: FloorCustomerFlag[] = []
+  if (isBirthday) flags.push('BIRTHDAY')
+  if (classification === 'NEW' || classification === 'RETURNING') flags.push(classification)
+  return flags
 }
 
 function isActiveWaitlistStatus(status: string | null): boolean {
@@ -266,7 +272,10 @@ function buildClaim(
       phoneLast3: directOffer ? row.offer_reservation_phone_last3 ?? row.offer_phone_last3 : row.reservation_phone_last3,
       partySize: Number(directOffer ? row.offer_reservation_party_size ?? row.offer_party_size : row.reservation_party_size),
       turnNo: null,
-      flags: classificationFlags(directOffer ? row.offer_reservation_classification : row.reservation_classification),
+      flags: customerFlags(
+        directOffer ? row.offer_reservation_classification : row.reservation_classification,
+        directOffer ? row.offer_reservation_is_birthday : row.reservation_is_birthday,
+      ),
       groupId,
       groupDisplayCode: displayCode,
       groupMemberTableIds: memberIds,
@@ -291,7 +300,7 @@ function buildClaim(
     phoneLast3: row.reservation_phone_last3,
     partySize: Number(row.reservation_party_size),
     turnNo: null,
-    flags: classificationFlags(row.reservation_classification),
+    flags: customerFlags(row.reservation_classification, row.reservation_is_birthday),
     groupId,
     groupDisplayCode: displayCode,
     groupMemberTableIds: memberIds,
@@ -336,7 +345,8 @@ async function readProjection(
        r.expected_at AS reservation_expected_at, r.business_date AS reservation_business_date,
        COALESCE(rc.display_name, r.contact_name) AS reservation_contact_name,
        r.party_size AS reservation_party_size, COALESCE(r.phone_last3, rc.phone_last3) AS reservation_phone_last3,
-       r.customer_classification AS reservation_classification, bs.code AS reservation_source_code,
+       r.customer_classification AS reservation_classification, r.is_birthday AS reservation_is_birthday,
+       bs.code AS reservation_source_code,
        r.late_confirmed_at AS reservation_late_confirmed_at,
        lw.id AS linked_waitlist_entry_id, lw.status AS linked_waitlist_status, lw.version AS linked_waitlist_version,
        ow.id AS offer_waitlist_entry_id, ow.status AS offer_waitlist_status, ow.version AS offer_waitlist_version,
@@ -346,6 +356,7 @@ async function readProjection(
        orr.party_size AS offer_reservation_party_size,
        COALESCE(orr.phone_last3, orc.phone_last3) AS offer_reservation_phone_last3,
        orr.customer_classification AS offer_reservation_classification,
+       orr.is_birthday AS offer_reservation_is_birthday,
        v.id AS active_visit_id, v.version AS visit_version, v.contact_name AS visit_contact_name,
        vc.display_name AS visit_customer_name, vc.phone_last3 AS visit_phone_last3,
        v.guest_count AS visit_guest_count, v.started_at AS visit_started_at,

@@ -660,7 +660,7 @@ function CustomerBadges({
         <g key={flag} transform={`translate(${index * 12} 0)`}>
           <circle r={5.7} fill="var(--background)" stroke="var(--border-strong)" strokeWidth={0.8} />
           <text y={2.8} textAnchor="middle" fontSize={7.2}>
-            {flag === "RETURNING" ? "🔥" : "🆕"}
+            {flag === "BIRTHDAY" ? "🎂" : flag === "RETURNING" ? "🔥" : "🆕"}
           </text>
         </g>
       ))}
@@ -703,7 +703,9 @@ function describe(t: TableView, state: TableLiveState, fs?: FloorTableState) {
   const c = fs?.claim
   const spare = t.isSpare ? ", bàn sơ cua" : ""
   if (!c) return `${base}${spare}`
-  const flagLabels = supportedFlags(c.flags ?? []).map((flag) => (flag === "RETURNING" ? "khách quen" : "khách mới"))
+  const flagLabels = supportedFlags(c.flags ?? []).map((flag) =>
+    flag === "BIRTHDAY" ? "sinh nhật" : flag === "RETURNING" ? "khách quen" : "khách mới",
+  )
   const code = c.groupDisplayCode ?? groupCode(c.symbolNo)
   return `${base}${spare}, ${c.displayName}, ${c.partySize} khách${flagLabels.length ? `, ${flagLabels.join(", ")}` : ""}${code ? `, nhóm ${code}, ${c.tableIds.length} bàn` : ""}`
 }

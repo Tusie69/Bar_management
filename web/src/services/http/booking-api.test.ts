@@ -10,6 +10,8 @@ const booking = {
   expectedAt: "2030-10-24T12:00:00.000Z",
   businessDate: "2030-10-24",
   classification: "UNCLASSIFIED" as const,
+  guestType: null,
+  isBirthday: false,
   status: "BOOKED",
   source: "Hotline",
   sourceCode: "HOTLINE",

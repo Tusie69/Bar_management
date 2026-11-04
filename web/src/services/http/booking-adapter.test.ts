@@ -75,6 +75,8 @@ describe("booking contract adapter", () => {
       businessDate: "2030-10-24",
       sourceCode: "HOTLINE",
       classification: "UNCLASSIFIED",
+      guestType: null,
+      isBirthday: false,
       version: 3,
     })
   })

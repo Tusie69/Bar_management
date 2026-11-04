@@ -4,6 +4,7 @@ import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
 import { redactPhoneNumbersInNote } from '../../security/note-privacy.js'
+import { getVenueSettings, type VenueSettings } from '../venues/venue-settings.repository.js'
 import type { TableState } from './table-state.js'
 
 export interface TableView {
@@ -115,6 +116,7 @@ export interface TableCatalogView {
     reservationWindowMinutes: number | null
     groupSymbolCount: number
     changeSeq: number
+    settings: VenueSettings
   }
   zones: Array<{
     id: number
@@ -229,6 +231,7 @@ export async function getTableCatalog(actor: AuthenticatedActor): Promise<TableC
   )
   const venue = venueRows[0]
   if (!venue) throw new AppError(404, 'VENUE_NOT_FOUND', 'Không tìm thấy địa điểm vận hành.')
+  const settings = await getVenueSettings(actor)
 
   const [zoneRows] = await databasePool.execute<ZoneCatalogRow[]>(
     `SELECT id, version, code, name, is_bookable, is_waiting_area
@@ -279,6 +282,7 @@ export async function getTableCatalog(actor: AuthenticatedActor): Promise<TableC
       reservationWindowMinutes: venue.reservation_window_minutes,
       groupSymbolCount: venue.group_symbol_count,
       changeSeq: Number(venue.change_seq),
+      settings,
     },
     zones: zoneRows.map((zone) => ({
       id: Number(zone.id),

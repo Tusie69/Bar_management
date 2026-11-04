@@ -819,6 +819,10 @@ export class MockGamApi implements GamApi, DemoControls {
           expectedAt: input.expectedAt,
           businessDate: bd,
           customerClassification: input.classification ?? "UNCLASSIFIED",
+          guestType:
+            input.guestType
+            ?? (input.classification === "RETURNING" ? "REGULAR" : input.classification === "NEW" ? "NEW" : null),
+          isBirthday: input.isBirthday ?? false,
           status: "BOOKED",
           note: input.note?.trim() || null,
           visitId: null,
@@ -882,6 +886,10 @@ export class MockGamApi implements GamApi, DemoControls {
         row.sourceId = [...this.db.sources.values()].find((s) => s.code === input.sourceCode)?.id ?? row.sourceId
       if (input.note !== undefined) row.note = input.note?.trim() || null
       if (input.classification !== undefined) row.customerClassification = input.classification
+      if (input.guestType !== undefined) row.guestType = input.guestType
+      else if (input.classification !== undefined)
+        row.guestType = input.classification === "RETURNING" ? "REGULAR" : input.classification === "NEW" ? "NEW" : null
+      if (input.isBirthday !== undefined) row.isBirthday = input.isBirthday
       if (input.expectedAt && input.expectedAt.getTime() !== row.expectedAt.getTime()) {
         if (!isWithinBookingReceptionWindow(fmtTime(input.expectedAt))) {
           throw new ApiError(

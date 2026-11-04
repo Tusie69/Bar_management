@@ -7,12 +7,16 @@ import { fmtBusinessDate, fmtTime12 } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
+import { initials } from "@/lib/text"
+import { useSession } from "@/state/session"
+import { useReceptionSearch } from "@/hooks/use-reception-search"
 import { FloorCanvas } from "../floor/floor-canvas"
 import { groupCode } from "../floor/floor-visual-rules"
+import { ReceptionControls, ReceptionDatePicker } from "../floor/reception-controls"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
-import { codesOf, duration, type Tone, toneStyle } from "./model"
-import { PlainHeader } from "./ui"
+import { codesOf, duration, isOpenEntry, type Tone, toneStyle } from "./model"
+import { BellButton, PlainHeader } from "./ui"
 
 const ZONE_TABS: [ZoneCode | "ALL", string][] = [
   ["ALL", "Tất cả"],
@@ -42,6 +46,9 @@ export function MapScreen({
   pickBusy: boolean
 }) {
   const m = useM()
+  const user = useSession((state) => state.user)
+  const receptionist = m.role === "RECEPTIONIST"
+  const search = useReceptionSearch(m.businessDate, receptionist)
   const zone = useUi((s) => s.zone)
   const setZone = useUi((s) => s.setZone)
 
@@ -72,10 +79,32 @@ export function MapScreen({
   }, [pick, isAssignPick, pickAvail.data, m.model.freeIds])
 
   return (
-    <>
-      <PlainHeader
-        title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"}
-      />
+    <main className="contents">
+      {receptionist ? (
+        <header className="z-[5] shrink-0 bg-background px-4 pt-[var(--top-safe)]">
+          <div className="flex h-[52px] items-center gap-3">
+            <button type="button" onClick={m.openAccount} aria-label="Tài khoản và giao diện" className="grid size-10 shrink-0 place-items-center rounded-full bg-[var(--glass)] text-[15px] font-semibold text-tx-strong shadow-[var(--shadow-xs)]">
+              {initials(user.displayName).slice(0, 1)}
+            </button>
+            <h1 className="m-0 min-w-0 flex-1 truncate text-[22px] font-semibold text-tx-strong">Sơ đồ bàn</h1>
+            {!pick ? <ReceptionDatePicker onDateChange={() => onSelect(null)} /> : null}
+            <BellButton />
+          </div>
+          {!pick ? (
+            <div className="pb-3">
+              <ReceptionControls
+                search={search}
+                waitCount={(m.waitlist ?? []).filter(isOpenEntry).length}
+                onWaitlist={() => m.go("wait")}
+                onCount={m.openCount}
+                onOpenBooking={m.openDetail}
+              />
+            </div>
+          ) : null}
+        </header>
+      ) : (
+        <PlainHeader title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"} />
+      )}
       <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
         {m.model.catalog ? (
           <FloorCanvas
@@ -86,7 +115,7 @@ export function MapScreen({
             states={m.model.states}
             availability={isAssignPick ? pickAvailMap : undefined}
             groups={isAssignPick ? [] : m.model.floor?.groups}
-            selectedIds={pick ? pickSel : selected ? [selected] : []}
+            selectedIds={pick ? pickSel : [...new Set([...(selected ? [selected] : []), ...search.tableIds])]}
             pickable={pickable}
             zoneFocus={zone}
             now={m.now}
@@ -172,7 +201,7 @@ export function MapScreen({
           </div>
         ) : null}
       </div>
-    </>
+    </main>
   )
 }
 

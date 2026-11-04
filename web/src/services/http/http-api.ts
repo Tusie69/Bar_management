@@ -163,6 +163,8 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
         businessDate: businessDateOf(input.expectedAt),
         sourceCode: input.sourceCode,
         classification: input.classification,
+        guestType: input.guestType,
+        isBirthday: input.isBirthday,
         note: input.note,
         ...(input.phone === undefined ? {} : { phoneNumber: input.phone }),
       }
@@ -183,6 +185,8 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
             : { expectedAt: input.expectedAt, businessDate: businessDateOf(input.expectedAt) }),
           ...(input.sourceCode === undefined ? {} : { sourceCode: input.sourceCode }),
           ...(input.classification === undefined ? {} : { classification: input.classification }),
+          ...(input.guestType === undefined ? {} : { guestType: input.guestType }),
+          ...(input.isBirthday === undefined ? {} : { isBirthday: input.isBirthday }),
           ...(input.note === undefined ? {} : { note: input.note }),
         },
       )

@@ -389,6 +389,8 @@ describe("canonical contract writes", () => {
           businessDate: date,
           sourceCode: "HOTLINE",
           classification: "UNCLASSIFIED",
+          guestType: null,
+          isBirthday: false,
         },
       },
     ])

@@ -13,6 +13,7 @@ import {
 } from "@/domain/booking-rules"
 import { SOURCE_LABEL, type BookingClassification, type BookingSourceCode } from "@/domain/enums"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Checkbox } from "@/components/ui/checkbox"
 import { useAvailability } from "@/hooks/use-data"
 import { useAction } from "@/hooks/use-action"
 import { isPlausibleVnPhone, NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
@@ -50,7 +51,9 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const [party, setParty] = useState(preset.length ? Math.min(8, preset.length * 4) : 4)
   const [isOther, setIsOther] = useState(false)
   const [otherText, setOtherText] = useState("")
-  const [dateIdx, setDateIdx] = useState(0)
+  const [dateIdx, setDateIdx] = useState(() =>
+    req.date ? Math.max(0, Math.round((Date.parse(`${req.date}T00:00:00Z`) - Date.parse(`${m.today}T00:00:00Z`)) / 86_400_000)) : 0,
+  )
   const [slot, setSlot] = useState<string | null>(() => defaultBookingSlot(m.today, m.now))
   const [checked, setChecked] = useState(preset.length > 0)
   const [choice, setChoice] = useState<Option | null>(
@@ -60,6 +63,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const [name, setName] = useState("")
   const [source, setSource] = useState<BookingSourceCode>("HOTLINE")
   const [classification, setClassification] = useState<BookingClassification>("UNCLASSIFIED")
+  const [isBirthday, setIsBirthday] = useState(false)
   const [note, setNote] = useState("")
   const [tried, setTried] = useState(false)
   const [dirty, setDirty] = useState(false)
@@ -138,17 +142,20 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const walkInReady = !!guests && selectedWalkInIds.length > 0 && walkInCapacity >= guests && walkInIssues.length === 0
 
   const reset = () => {
-    setChecked(false)
-    setChoice(null)
+    // Revalidate the existing map selection when date/time/party changes.
+    // Only an explicit table toggle or cancel should discard the user's choice.
+    setChecked(!!choice)
     setSelectionMessage(null)
   }
   const touch = () => setDirty(true)
   const tableLabel = choice ? `Bàn ${choice.label}` : isBooking ? "chưa chọn bàn" : "chưa có bàn"
   const groups = isBooking ? bookingSlotGroups(bd, m.now) : []
   const past = groups.length ? groups[0].slots.filter((s) => s.disabled) : []
-  const days = Array.from({ length: 7 }, (_, i) => {
+  const dayOffsets = Array.from({ length: 7 }, (_, i) => i)
+  if (dateIdx > 6) dayOffsets.push(dateIdx)
+  const days = dayOffsets.map((i) => {
     const [wd, dm] = fmtBusinessDate(addDays(m.today, i), "short").split(", ")
-    return { top: i === 0 ? "Hôm nay" : wd, day: dm }
+    return { offset: i, top: i === 0 ? "Hôm nay" : wd, day: dm }
   })
 
   const toggleWalkInTable = (id: number) => {
@@ -200,6 +207,8 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             expectedAt: at!,
             sourceCode: source,
             classification,
+            guestType: classification === "RETURNING" ? "REGULAR" : classification === "NEW" ? "NEW" : null,
+            isBirthday,
             note: note.trim() || undefined,
             tableIds: ids,
             overrideReason: o,
@@ -244,7 +253,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
       aria-label="Tạo đơn đặt bàn"
       className="fixed inset-0 z-[40] flex flex-col overflow-hidden bg-background"
     >
-      <header className="shrink-0 border-b border-border bg-background px-4 pt-[var(--top-safe)] pb-3">
+      <div className="shrink-0 border-b border-border bg-background px-4 pt-[var(--top-safe)] pb-3">
         <div className="-ml-2.5 flex h-11 items-center gap-1">
           <button
             type="button"
@@ -271,7 +280,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             ]}
           />
         </div>
-      </header>
+      </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pt-4 pb-6">
         <section className="flex flex-col gap-3">
@@ -368,15 +377,15 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                 <div className="flex flex-col gap-2 border-t border-border pt-3.5">
                   <span className="text-[14px] text-tx-2">Ngày</span>
                   <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-0.5">
-                    {days.map((d, i) => {
-                      const on = dateIdx === i
+                    {days.map((d) => {
+                      const on = dateIdx === d.offset
                       return (
                         <button
-                          key={i}
+                          key={d.offset}
                           type="button"
                           aria-pressed={on}
                           onClick={() => {
-                            setDateIdx(i)
+                            setDateIdx(d.offset)
                             reset()
                             touch()
                           }}
@@ -674,6 +683,16 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                     <SelectItem value="RETURNING">Khách quen (O)</SelectItem>
                   </SelectContent>
                 </Select>
+                <label className="flex min-h-12 items-center gap-3 text-sm">
+                  <Checkbox
+                    checked={isBirthday}
+                    onCheckedChange={(checked) => {
+                      setIsBirthday(checked === true)
+                      touch()
+                    }}
+                  />
+                  Sinh nhật
+                </label>
               </div>
             ) : null}
             {isBooking || !choice ? (
@@ -700,7 +719,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
       <footer className="flex shrink-0 flex-col gap-2 border-t border-border bg-surface-1 px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
         <span className="truncate text-[13px] text-[var(--text-muted)]">
           {isBooking
-            ? `${dateIdx === 0 ? "Hôm nay" : `${days[dateIdx].top} ${days[dateIdx].day}`}, ${slotText || "chưa chọn giờ"}, ${guests ?? "?"} khách, ${tableLabel}`
+            ? `${dateIdx === 0 ? "Hôm nay" : fmtBusinessDate(bd, "short")}, ${slotText || "chưa chọn giờ"}, ${guests ?? "?"} khách, ${tableLabel}`
             : `Walk-in, ${guests ?? "?"} khách, ${tableLabel}`}
         </span>
         <button

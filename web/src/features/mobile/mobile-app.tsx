@@ -5,16 +5,23 @@
  * Other routes (Khách, Báo cáo, Cài đặt) render their Desktop page inside this shell.
  */
 import { Clock4, LayoutDashboard, List, ListOrdered, Map as MapIcon, Plus, type LucideIcon } from "lucide-react"
-import { Suspense, useEffect, useMemo, useState } from "react"
+import { Suspense, useEffect, useMemo, useState, type CSSProperties } from "react"
 import { Outlet, useLocation, useNavigate } from "react-router"
 import type { ReservationView } from "@/domain/models"
 import { useNow, useReservations, useWaitlist } from "@/hooks/use-data"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useSession } from "@/state/session"
+import { roleCan } from "@/domain/access"
+import { api } from "@/services"
+import { useUi } from "@/state/ui"
+import { toast } from "sonner"
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { NAV } from "@/app/nav"
 import { useShiftAlerts } from "../floor/alerts"
 import { useFloorModel } from "../floor/use-floor-model"
+import { canStartTableBooking } from "../floor/reception-rules"
+import { ZaloBookingExport } from "../reservations/zalo-booking-export"
 import { MobileContext, type Confirm, type FormRequest, type MobileCtx, type TablePick, type Tab } from "./context"
 import { DetailScreen } from "./detail"
 import { FormScreen } from "./form"
@@ -44,17 +51,21 @@ export default function MobileApp() {
   const navigate = useNavigate()
   const tab: Tab | null = TAB_OF[loc.pathname] ?? null
   const role = useSession((s) => s.user.role)
+  const permissions = useSession((s) => s.permissions)
   const isOwner = role === "OWNER_ADMIN"
-  const model = useFloorModel()
+  const isReceptionist = role === "RECEPTIONIST"
+  const ui = useUi()
   const now = useNow(15_000)
-  const today = model.floor?.businessDate ?? businessDateOf(now)
-  const reservations = useReservations(today).data
-  const waitlistQuery = useWaitlist(today)
-  const waitlist = waitlistQuery.data
+  const today = businessDateOf(now)
+  const selectedDate = isReceptionist && ui.floorMode !== "live" ? ui.availDate : today
+  const model = useFloorModel(selectedDate)
+  const reservations = useReservations(selectedDate).data
+  const waitlistQuery = useWaitlist(selectedDate)
+  const waitlist = waitlistQuery.isPlaceholderData ? undefined : waitlistQuery.data
   const venue = model.catalog?.venue
   const th = { late: venue?.lateWarningMinutes ?? 15, noshow: venue?.noShowWarningMinutes ?? 30 }
 
-  const [overlay, setOverlay] = useState<null | "create" | "alerts" | "account">(null)
+  const [overlay, setOverlay] = useState<null | "create" | "alerts" | "account" | "wait" | "count">(null)
   const [statusFor, setStatusFor] = useState<ReservationView | null>(null)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [detail, setDetail] = useState<{ id: number; bd: BusinessDate } | null>(null)
@@ -96,6 +107,10 @@ export default function MobileApp() {
   }, [statusFor, overlay, tableSel])
 
   const go = (t: Tab) => {
+    if (isReceptionist && t === "wait") {
+      setOverlay("wait")
+      return
+    }
     setOverlay(null)
     if (t !== "map") setTableSel(null)
     if (PATH[t] !== loc.pathname) navigate(PATH[t])
@@ -105,8 +120,10 @@ export default function MobileApp() {
     model,
     now,
     today,
+    businessDate: selectedDate,
     role,
     isOwner,
+    can: (permission) => (api.mode === "http" ? permissions.includes(permission) : roleCan(role, permission)),
     th,
     reservations,
     waitlist,
@@ -118,15 +135,20 @@ export default function MobileApp() {
       setOverlay("alerts")
     },
     openAccount: () => setOverlay("account"),
+    openCount: () => setOverlay("count"),
     openDetail: (id, bd) => {
       setOverlay(null)
       setDetail({ id, bd })
     },
     openStatus: (r) => setStatusFor(reservations?.find((x) => x.id === r.id) ?? r),
     openForm: (f) => {
+      if (f.mode === "walkin" && (f.date ?? selectedDate) !== today) {
+        toast.info("Walk-in chỉ áp dụng cho ngày kinh doanh hiện tại.")
+        return
+      }
       setOverlay(null)
       setTableSel(null)
-      setForm(f)
+      setForm({ ...f, date: f.date ?? selectedDate })
     },
     openTable: (id) => {
       setDetail(null)
@@ -154,7 +176,7 @@ export default function MobileApp() {
 
   return (
     <MobileContext.Provider value={ctx}>
-      <div data-gm className="fixed inset-0 h-dvh w-full touch-manipulation overflow-hidden">
+      <div data-gm style={isReceptionist ? ({ "--nav-h": "0px" } as CSSProperties) : undefined} className="fixed inset-0 h-dvh w-full touch-manipulation overflow-hidden">
         <div className="absolute inset-x-0 top-0 bottom-[var(--nav-h)] flex flex-col overflow-hidden">
           {tab === "home" ? (
             <HomeScreen />
@@ -163,7 +185,17 @@ export default function MobileApp() {
           ) : tab === "map" ? (
             <MapScreen
               selected={tableSel}
-              onSelect={setTableSel}
+              onSelect={(id) => {
+                if (id && isReceptionist) {
+                  const state = model.states.get(id)
+                  if (!state) return void toast.info("Chưa tải được trạng thái bàn. Vui lòng thử lại.")
+                  if (ctx.can("reservation.create") && canStartTableBooking(model.byId.get(id), state, model.catalog?.zones ?? [])) {
+                    ctx.openForm({ mode: "booking", tableIds: [id], date: selectedDate })
+                    return
+                  }
+                }
+                setTableSel(id)
+              }}
               pick={pick}
               pickSel={pickSel}
               onPickToggle={(id) =>
@@ -195,13 +227,13 @@ export default function MobileApp() {
           )}
         </div>
 
-        <BottomNav
+        {!isReceptionist ? <BottomNav
           tab={tab}
           isOwner={isOwner}
           waitBadge={(waitlist ?? []).filter(isOpenEntry).length}
           onCreate={() => setOverlay("create")}
           go={go}
-        />
+        /> : null}
 
         {tab === "map" && tableSel && !pick && !detail && !form ? (
           <TableSheet id={tableSel} onClose={() => setTableSel(null)} />
@@ -227,7 +259,7 @@ export default function MobileApp() {
           />
         ) : null}
 
-        {overlay || statusFor || confirm || (alert30 && !busy) ? (
+        {(overlay && overlay !== "wait" && overlay !== "count") || statusFor || confirm || (alert30 && !busy) ? (
           <Scrim
             onClick={() => {
               if (confirm || (alert30 && !overlay && !statusFor)) return
@@ -238,13 +270,21 @@ export default function MobileApp() {
         ) : null}
         {overlay === "create" ? <CreateSheet onClose={() => setOverlay(null)} /> : null}
         {overlay === "account" ? <AccountSheet onClose={() => setOverlay(null)} /> : null}
+        <ZaloBookingExport businessDate={selectedDate} open={overlay === "count"} onOpenChange={(open) => !open && setOverlay(null)} />
+        <Sheet open={overlay === "wait"} onOpenChange={(open) => !open && setOverlay(null)}>
+          <SheetContent data-gm side="bottom" className="h-[85dvh] gap-0 overflow-hidden p-0">
+            <SheetTitle className="px-4 pt-5 text-lg">Bàn chờ ảo</SheetTitle>
+            <SheetDescription className="px-4 pb-3 text-xs">Khách chờ trong ngày kinh doanh đã chọn.</SheetDescription>
+            <WaitScreen />
+          </SheetContent>
+        </Sheet>
         {overlay === "alerts" ? (
           <AlertsSheet
             alerts={alerts}
             onClose={() => setOverlay(null)}
             onOpen={(a) => {
               setOverlay(null)
-              if (a.reservationId) setDetail({ id: a.reservationId, bd: today })
+              if (a.reservationId) setDetail({ id: a.reservationId, bd: selectedDate })
               else if (a.tableId) ctx.openTable(a.tableId)
             }}
           />

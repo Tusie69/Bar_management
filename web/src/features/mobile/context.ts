@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react"
 import type { RoleCode } from "@/domain/enums"
+import type { Permission } from "@/domain/access"
 import type { ReservationView, WaitlistEntryView } from "@/domain/models"
 import type { BusinessDate } from "@/lib/time"
 import type { FloorModel } from "../floor/use-floor-model"
@@ -34,14 +35,17 @@ export interface TablePick {
 export interface FormRequest {
   mode: "booking" | "walkin"
   tableIds?: number[]
+  date?: BusinessDate
 }
 
 export interface MobileCtx {
   model: FloorModel
   now: Date
   today: BusinessDate
+  businessDate: BusinessDate
   role: RoleCode
   isOwner: boolean
+  can: (permission: Permission) => boolean
   th: Thresholds
   reservations: ReservationView[] | undefined
   waitlist: WaitlistEntryView[] | undefined
@@ -50,6 +54,7 @@ export interface MobileCtx {
   go: (tab: Tab) => void
   openAlerts: () => void
   openAccount: () => void
+  openCount: () => void
   openDetail: (id: number, bd: BusinessDate) => void
   openStatus: (r: ReservationView) => void
   openForm: (f: FormRequest) => void

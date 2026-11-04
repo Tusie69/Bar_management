@@ -23,6 +23,8 @@ export function mapReservation(booking: HttpBooking, catalog: Catalog): Reservat
     expectedAt: booking.expectedAt,
     businessDate: booking.businessDate,
     classification: booking.classification,
+    guestType: booking.guestType,
+    isBirthday: booking.isBirthday,
     status: booking.status,
     sourceCode: booking.sourceCode,
     note: booking.note,

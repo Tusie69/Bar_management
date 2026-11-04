@@ -8,6 +8,11 @@ import { assertNoteHasNoPhoneNumber, redactPhoneNumbersInNote } from '../../secu
 import { applicationNow } from '../../time/application-clock.js'
 import { assertCheckInBusinessDate, currentBusinessDate, validateBookingSchedule } from './business-date.js'
 import { deriveBookingTiming, type BookingDisplayStatus } from './booking-timing.js'
+import {
+  resolveBookingMetadata,
+  type BookingClassification,
+  type GuestType,
+} from './booking-metadata.js'
 import { protectPhoneNumber, revealPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from './phone-security.js'
 import {
   createTableGroup,
@@ -18,7 +23,7 @@ import {
 } from '../tables/table-group.repository.js'
 
 export type BookingStatus = 'BOOKED' | 'CHECKED_IN' | 'CANCELLED' | 'NO_SHOW'
-export type BookingClassification = 'RETURNING' | 'NEW' | 'UNCLASSIFIED'
+export type { BookingClassification } from './booking-metadata.js'
 
 export interface BookingView {
   id: number
@@ -28,6 +33,8 @@ export interface BookingView {
   expectedAt: string
   businessDate: string
   classification: BookingClassification
+  guestType: GuestType | null
+  isBirthday: boolean
   status: BookingStatus
   source: string
   sourceCode: string
@@ -68,6 +75,8 @@ interface BookingRow extends RowDataPacket {
   expected_at: Date | string
   business_date: Date | string
   customer_classification: BookingClassification | null
+  guest_type: GuestType | null
+  is_birthday: number
   status: BookingStatus
   source_name: string
   source_code: string
@@ -109,6 +118,8 @@ function toBooking(row: BookingRow, now = applicationNow()): BookingView {
     expectedAt: isoDateTime(row.expected_at),
     businessDate: dateOnly(row.business_date),
     classification: row.customer_classification ?? 'UNCLASSIFIED',
+    guestType: row.guest_type,
+    isBirthday: Boolean(row.is_birthday),
     status: row.status,
     source: row.source_name,
     sourceCode: row.source_code,
@@ -123,7 +134,7 @@ function toBooking(row: BookingRow, now = applicationNow()): BookingView {
 const bookingSelect = `SELECT
   r.id, COALESCE(c.display_name, r.contact_name, 'Khách') AS guest_name,
   COALESCE(r.phone_last3, c.phone_last3) AS phone_last3, r.party_size, r.expected_at, r.business_date,
-  r.customer_classification, r.status,
+  r.customer_classification, r.guest_type, r.is_birthday, r.status,
   bs.name AS source_name, bs.code AS source_code, r.note, r.version, r.late_confirmed_at,
   v.upcoming_warning_minutes, v.late_warning_minutes, v.no_show_warning_minutes,
   GROUP_CONCAT(DISTINCT dt.code ORDER BY dt.id SEPARATOR ',') AS table_codes
@@ -141,7 +152,7 @@ export async function listBookings(actor: AuthenticatedActor, businessDate: stri
     `${bookingSelect}
      WHERE r.organization_id = ? AND r.venue_id = ? AND r.business_date = ?
      GROUP BY r.id, c.display_name, r.contact_name, r.phone_last3, c.phone_last3, r.party_size, r.expected_at,
-       r.business_date, r.customer_classification, r.status, bs.name, bs.code, r.note, r.version,
+       r.business_date, r.customer_classification, r.guest_type, r.is_birthday, r.status, bs.name, bs.code, r.note, r.version,
        v.upcoming_warning_minutes, v.late_warning_minutes, v.no_show_warning_minutes
      ORDER BY r.expected_at, r.id`,
     [actor.organizationId, actor.venueId, businessDate],
@@ -164,7 +175,7 @@ export async function searchBookings(
          OR (? IS NOT NULL AND COALESCE(r.phone_last3, c.phone_last3) = ?)
        )
      GROUP BY r.id, c.display_name, r.contact_name, r.phone_last3, c.phone_last3, r.party_size, r.expected_at,
-       r.business_date, r.customer_classification, r.status, bs.name, bs.code, r.note, r.version,
+       r.business_date, r.customer_classification, r.guest_type, r.is_birthday, r.status, bs.name, bs.code, r.note, r.version,
        v.upcoming_warning_minutes, v.late_warning_minutes, v.no_show_warning_minutes
      ORDER BY r.expected_at, r.id
      LIMIT 100`,
@@ -182,7 +193,7 @@ export async function getBookingById(
     `${bookingSelect}
      WHERE r.organization_id = ? AND r.venue_id = ? AND r.id = ?
      GROUP BY r.id, c.display_name, r.contact_name, r.phone_last3, c.phone_last3, r.party_size, r.expected_at,
-       r.business_date, r.customer_classification, r.status, bs.name, bs.code, r.note, r.version,
+       r.business_date, r.customer_classification, r.guest_type, r.is_birthday, r.status, bs.name, bs.code, r.note, r.version,
        v.upcoming_warning_minutes, v.late_warning_minutes, v.no_show_warning_minutes`,
     [actor.organizationId, actor.venueId, id],
   )
@@ -200,6 +211,8 @@ export interface CreateBookingInput {
   note?: string | null
   phoneNumber?: string | null
   classification?: BookingClassification
+  guestType?: GuestType | null
+  isBirthday?: boolean
 }
 
 export interface CreateAndAssignBookingInput extends CreateBookingInput {
@@ -232,6 +245,7 @@ export async function createBooking(
   now = new Date(),
 ): Promise<BookingView> {
   assertNoteHasNoPhoneNumber(input.note)
+  const metadata = resolveBookingMetadata(input)
   const schedule = validateBookingSchedule(input.expectedAt, input.businessDate, now)
   const phone = typeof input.phoneNumber === 'string' ? protectPhoneNumber(input.phoneNumber, phoneKeyRing()) : null
   const [sourceRows] = await databasePool.execute<(RowDataPacket & { id: number })[]>(
@@ -244,8 +258,8 @@ export async function createBooking(
     `INSERT INTO reservations
       (organization_id, venue_id, contact_name, contact_name_search, phone_ciphertext, phone_key_id,
        phone_hmac, phone_hmac_key_id, phone_last3, source_id, party_size,
-       expected_at, business_date, customer_classification, note, created_by_user_id)
-     VALUES (?, ?, ?, LOWER(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       expected_at, business_date, customer_classification, guest_type, is_birthday, note, created_by_user_id)
+     VALUES (?, ?, ?, LOWER(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       actor.organizationId,
       actor.venueId,
@@ -256,7 +270,9 @@ export async function createBooking(
       input.partySize,
       schedule.mysqlExpectedAt,
       schedule.businessDate,
-      input.classification ?? 'UNCLASSIFIED',
+      metadata.classification,
+      metadata.guestType,
+      input.isBirthday ?? false,
       input.note ?? null,
       actor.userId,
     ],
@@ -270,6 +286,7 @@ export async function createAndAssignBooking(
   now = new Date(),
 ): Promise<BookingView> {
   assertNoteHasNoPhoneNumber(input.note)
+  const metadata = resolveBookingMetadata(input)
   const schedule = validateBookingSchedule(input.expectedAt, input.businessDate, now)
   const phone = typeof input.phoneNumber === 'string' ? protectPhoneNumber(input.phoneNumber, phoneKeyRing()) : null
   const tableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
@@ -308,8 +325,8 @@ export async function createAndAssignBooking(
       `INSERT INTO reservations
         (organization_id, venue_id, contact_name, contact_name_search, phone_ciphertext, phone_key_id,
          phone_hmac, phone_hmac_key_id, phone_last3, source_id, party_size,
-         expected_at, business_date, customer_classification, note, created_by_user_id)
-       VALUES (?, ?, ?, LOWER(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         expected_at, business_date, customer_classification, guest_type, is_birthday, note, created_by_user_id)
+       VALUES (?, ?, ?, LOWER(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         actor.organizationId,
         actor.venueId,
@@ -320,7 +337,9 @@ export async function createAndAssignBooking(
         input.partySize,
         schedule.mysqlExpectedAt,
         schedule.businessDate,
-        input.classification ?? 'UNCLASSIFIED',
+        metadata.classification,
+        metadata.guestType,
+        input.isBirthday ?? false,
         input.note ?? null,
         actor.userId,
       ],
@@ -392,6 +411,8 @@ interface LockedReservation extends RowDataPacket {
   expected_at: Date
   business_date: Date | string
   customer_classification: BookingClassification | null
+  guest_type: GuestType | null
+  is_birthday: number
   customer_id: number | null
   contact_name: string | null
   party_size: number
@@ -408,7 +429,7 @@ async function lockReservation(
 ): Promise<LockedReservation> {
   const [rows] = await connection.execute<LockedReservation[]>(
     `SELECT id, organization_id, venue_id, status, version, expected_at, business_date,
-       customer_classification, customer_id, contact_name, party_size, source_id, note, phone_hmac
+       customer_classification, guest_type, is_birthday, customer_id, contact_name, party_size, source_id, note, phone_hmac
      FROM reservations
      WHERE organization_id = ? AND venue_id = ? AND id = ? FOR UPDATE`,
     [actor.organizationId, actor.venueId, id],
@@ -548,8 +569,10 @@ export async function updateBooking(
     if (Number(reservation.party_size) !== input.partySize) changedFields.push('partySize')
     if (Number(reservation.source_id) !== Number(source.id)) changedFields.push('sourceCode')
     if ((reservation.note ?? '') !== (resolvedNote ?? '')) changedFields.push('note')
-    const classification = input.classification ?? reservation.customer_classification ?? 'UNCLASSIFIED'
-    if ((reservation.customer_classification ?? 'UNCLASSIFIED') !== classification) changedFields.push('classification')
+    const metadata = resolveBookingMetadata(input, reservation.customer_classification ?? 'UNCLASSIFIED')
+    if ((reservation.customer_classification ?? 'UNCLASSIFIED') !== metadata.classification) changedFields.push('classification')
+    const isBirthday = input.isBirthday ?? Boolean(reservation.is_birthday)
+    if (isBirthday !== Boolean(reservation.is_birthday)) changedFields.push('isBirthday')
     const phone = input.phoneNumber === undefined
       ? undefined
       : typeof input.phoneNumber === 'string'
@@ -618,7 +641,7 @@ export async function updateBooking(
     const [updateResult] = await connection.execute<ResultSetHeader>(
       `UPDATE reservations
        SET contact_name = ?, contact_name_search = LOWER(?), party_size = ?, source_id = ?,
-           expected_at = ?, business_date = ?, customer_classification = ?, note = ?, updated_by_user_id = ?,
+           expected_at = ?, business_date = ?, customer_classification = ?, guest_type = ?, is_birthday = ?, note = ?, updated_by_user_id = ?,
            updated_at = UTC_TIMESTAMP(3), version = version + 1${phoneSql}
        WHERE organization_id = ? AND venue_id = ? AND id = ? AND status = 'BOOKED' AND version = ?`,
       [
@@ -628,7 +651,9 @@ export async function updateBooking(
         source.id,
         schedule.mysqlExpectedAt,
         schedule.businessDate,
-        classification,
+        metadata.classification,
+        metadata.guestType,
+        isBirthday,
         resolvedNote ?? null,
         actor.userId,
         ...phoneValues,

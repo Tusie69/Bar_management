@@ -82,14 +82,41 @@ const scenarios = [
       await p.waitForTimeout(500)
     },
   ],
+  ["reception-floor", "/floor", idle, 1],
+  [
+    "reception-walkin",
+    "/floor",
+    async (p) => {
+      await p.locator('[aria-label^="Bàn B5,"]').first().click()
+      await p.getByRole("tab", { name: "Walk-in" }).click()
+      await p.waitForTimeout(500)
+    },
+    1,
+  ],
+  ["reception-mobile-floor", "/floor", idle, 1, { viewport: { width: 390, height: 844 }, hasTouch: true }],
+  [
+    "reception-mobile-walkin",
+    "/floor",
+    async (p) => {
+      const deferAlert = p.getByRole("button", { name: "Đã xem, xử lý sau" })
+      if (await deferAlert.isVisible()) await deferAlert.click()
+      await p.locator('[aria-label^="Ghế Bar 13,"]').first().click()
+      const form = p.getByRole("dialog", { name: "Tạo đơn đặt bàn" })
+      await form.getByRole("tab", { name: "Walk-in" }).click()
+      await form.getByRole("radio", { name: "2 khách" }).click()
+      await form.getByRole("button", { name: "Xem bàn trống lúc này" }).click()
+      await p.waitForTimeout(500)
+    },
+    1,
+    { viewport: { width: 390, height: 844 }, hasTouch: true },
+  ],
 ]
 for (const theme of ["dark", "light"]) {
-  for (const [name, route, act] of scenarios) {
-    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
-    // userId 3 = Chủ quán (owner) so every page, including reports, is reachable.
+  for (const [name, route, act, userId = 3, pageOptions = {}] of scenarios) {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, ...pageOptions })
     await page.addInitScript(
-      ([t]) => localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 3, theme: t })),
-      [theme],
+      ([t, uid]) => localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: uid, theme: t })),
+      [theme, userId],
     )
     await page.goto(base + route, { waitUntil: "networkidle" })
     await page.waitForTimeout(600)

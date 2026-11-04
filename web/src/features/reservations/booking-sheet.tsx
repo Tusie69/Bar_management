@@ -20,6 +20,7 @@ import {
 } from "@/components/booking-pickers"
 import { MaskedPhone, PendingTag, SectionTitle } from "@/components/common"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -58,6 +59,7 @@ const guestSchema = z
       .refine((v) => v === "" || isPlausibleVnPhone(v), "Số điện thoại 10 số, bắt đầu bằng 0"),
     sourceCode: z.string().min(1, "Chọn nguồn đặt"),
     classification: z.enum(["RETURNING", "NEW", "UNCLASSIFIED"]),
+    isBirthday: z.boolean(),
     note: z
       .string()
       .max(500, "Tối đa 500 ký tự")
@@ -106,7 +108,7 @@ function BookingBody() {
 
   const form = useForm<GuestForm>({
     resolver: zodResolver(guestSchema),
-    defaultValues: { contactName: "", phone: "", sourceCode: "HOTLINE", classification: "UNCLASSIFIED", note: "" },
+    defaultValues: { contactName: "", phone: "", sourceCode: "HOTLINE", classification: "UNCLASSIFIED", isBirthday: false, note: "" },
     mode: "onTouched",
   })
 
@@ -219,6 +221,8 @@ function BookingBody() {
         expectedAt: at,
         sourceCode: v.sourceCode as BookingSourceCode,
         classification: v.classification as BookingClassification,
+        guestType: v.classification === "RETURNING" ? "REGULAR" : v.classification === "NEW" ? "NEW" : null,
+        isBirthday: v.isBirthday,
         note: v.note || undefined,
         tableIds: later ? [] : tables,
         overrideReason: o,
@@ -426,6 +430,13 @@ function BookingBody() {
                 placeholder="Ví dụ: Nguyễn Minh Anh"
               />
             </Field>
+            <label className="flex min-h-11 items-center gap-3 text-sm">
+              <Checkbox
+                checked={v.isBirthday}
+                onCheckedChange={(checked) => form.setValue("isBirthday", checked === true)}
+              />
+              Sinh nhật
+            </label>
             <Field
               id="bk-phone"
               label="Số điện thoại"

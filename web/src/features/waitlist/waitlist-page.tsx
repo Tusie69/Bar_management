@@ -73,7 +73,7 @@ import { useAction } from "@/hooks/use-action"
 import { useBusinessDate, useNow, useReservations, useWaitlist } from "@/hooks/use-data"
 import { useDragScroll } from "@/hooks/use-drag-scroll"
 import { NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
-import { fmtCountdown, fmtElapsed, fmtTime } from "@/lib/time"
+import { fmtCountdown, fmtElapsed, fmtTime, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api, isApiError } from "@/services"
 import { useCan, useSession } from "@/state/session"
@@ -83,10 +83,11 @@ import { WaitlistPreferencePicker } from "../reservations/reservation-detail"
 
 const ACTIVE = ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"]
 
-export default function WaitlistPage() {
-  const bd = useBusinessDate()
+export default function WaitlistPage({ businessDate }: { businessDate?: BusinessDate }) {
+  const today = useBusinessDate()
+  const bd = businessDate ?? today
   const waitlist = useWaitlist(bd)
-  const model = useFloorModel()
+  const model = useFloorModel(bd)
   const [params, setParams] = useSearchParams()
   const focusEntry = Number(params.get("entry")) || null
   const focusTable = Number(params.get("table")) || null
