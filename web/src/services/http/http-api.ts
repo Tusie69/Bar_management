@@ -38,7 +38,8 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
   const bookings = new HttpBookingApi(client)
   const visits = new HttpVisitApi(client)
   const get = <T>(path: string) => client.get<T>(path, { reviver: revive })
-  const post = <T>(path: string, body: unknown) => client.post<T>(path, body, { reviver: revive })
+  const post = <T>(path: string, body: unknown, idempotencyKey?: string) =>
+    client.post<T>(path, body, { reviver: revive, idempotencyKey })
   let cachedCatalog: { value: Catalog; expiresAt: number } | null = null
   let catalogLoad: Promise<Catalog> | null = null
   let catalogGeneration = 0
@@ -169,8 +170,8 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
         ...(input.phone === undefined ? {} : { phoneNumber: input.phone }),
       }
       const created = input.tableIds?.length
-        ? await createAndAssignDirectBooking(bookings, fields, input.tableIds)
-        : await bookings.create(fields)
+        ? await createAndAssignDirectBooking(bookings, fields, input.tableIds, input.idempotencyKey)
+        : await bookings.create(fields, input.idempotencyKey)
       return { ...result("Đã tạo booking."), reservationId: created.id }
     },
     updateReservation: async (input) => {
@@ -235,7 +236,7 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
         businessDate: businessDateOf(clock.now()),
         tableIds: input.tableIds,
         ...(input.contactName ? { guestName: input.contactName } : {}),
-      })
+      }, input.idempotencyKey)
       return { ...result("Đã nhận khách walk-in."), visitId: response.visitId }
     },
     moveClaim: async (input) => {
@@ -322,7 +323,7 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
         ...body,
         contactChannel: input.channel,
         ...(input.note === undefined ? {} : { note: input.note }),
-      })
+      }, input.idempotencyKey)
       return { ...result("Đã thêm khách vào danh sách chờ."), entryId: response.entry.id }
     },
     seatWaitlist: async (input) => {

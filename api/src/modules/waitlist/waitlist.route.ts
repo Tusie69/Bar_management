@@ -3,7 +3,9 @@ import { Router } from 'express'
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { AppError } from '../../errors/app-error.js'
+import { idempotent } from '../../middleware/idempotency.js'
 import { assertNoteHasNoPhoneNumber } from '../../security/note-privacy.js'
+import { applicationNow } from '../../time/application-clock.js'
 import { validateCalendarDate } from '../bookings/business-date.js'
 import {
   createWaitlistEntry,
@@ -44,7 +46,7 @@ waitlistRouter.get('/', requireAuthentication, requirePermission('customer.view_
   response.json({ businessDate, entries: await listWaitlist(requireAuthenticatedActor(request), businessDate) })
 })
 
-waitlistRouter.post('/', requireAuthentication, requireCsrfProtection, requirePermission('waitlist.create'), async (request, response) => {
+waitlistRouter.post('/', requireAuthentication, requireCsrfProtection, requirePermission('waitlist.create'), idempotent('waitlist.create'), async (request, response) => {
   const body = objectBody(request.body)
   const kind = body.kind ?? 'WALK_IN'
   if (kind !== 'WALK_IN' && kind !== 'ADVANCE_RESERVATION') {
@@ -79,7 +81,7 @@ waitlistRouter.post('/', requireAuthentication, requireCsrfProtection, requirePe
     businessDate: validateCalendarDate(body.businessDate),
     contactChannel: body.contactChannel as ContactChannel,
     ...(note ? { note } : {}),
-  }) })
+  }, applicationNow()) })
 })
 
 function mutationInput(request: { params: { id?: unknown }; body: unknown }) {
@@ -131,6 +133,6 @@ waitlistRouter.post(
       entryId: positiveInteger(request.params.id, 'INVALID_WAITLIST_ID', 'Mã khách chờ không hợp lệ.'),
       expectedVersion: positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản khách chờ không hợp lệ.'),
       tableIds: body.tableIds.map((value) => positiveInteger(value, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.')),
-    }))
+    }, applicationNow()))
   },
 )

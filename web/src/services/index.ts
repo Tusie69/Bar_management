@@ -35,3 +35,4 @@ export const demo = selectedDemo
 export { clock } from "./clock"
 export * from "./contracts"
 export type { AuthSession, AuthenticatedUser } from "./http/auth-api"
+export { newIdempotencyKey } from "./http/idempotency"

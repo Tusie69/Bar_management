@@ -5,6 +5,7 @@ export async function createAndAssignDirectBooking(
   api: Pick<HttpBookingApi, "createAndAssign">,
   fields: BookingWriteFields,
   tableIds: number[],
+  idempotencyKey?: string,
 ): Promise<HttpBooking> {
-  return api.createAndAssign(fields, tableIds)
+  return api.createAndAssign(fields, tableIds, idempotencyKey)
 }

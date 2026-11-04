@@ -64,14 +64,35 @@ export function validateCalendarDate(value: unknown): string {
   return value
 }
 
+/**
+ * Ngày nghiệp vụ tại thời điểm `now`, không ném lỗi ngoài ca: trước 05:00 thuộc ngày hôm trước,
+ * từ 05:00 trở đi là ngày lịch hiện tại (kể cả khoảng 05:00–17:00 chờ ca tối).
+ */
+export function businessDateAt(now = new Date()): string {
+  const local = localPartsAt(now)
+  return local.hour < bookingDayCutoffHour
+    ? previousCalendarDate(local.year, local.month, local.day)
+    : formatCalendarDate(local.year, local.month, local.day)
+}
+
 export function currentBusinessDate(now = new Date()): string {
   const local = localPartsAt(now)
   if (local.hour >= bookingDayCutoffHour && local.hour < bookingDayStartHour) {
     throw new AppError(409, 'WALK_IN_OUTSIDE_BUSINESS_HOURS', 'Walk-in chỉ được nhận trong ca 17:00–05:00.')
   }
-  return local.hour < bookingDayCutoffHour
-    ? previousCalendarDate(local.year, local.month, local.day)
-    : formatCalendarDate(local.year, local.month, local.day)
+  return businessDateAt(now)
+}
+
+/**
+ * FX-18: chặn thêm/gán Bàn chờ cho ngày nghiệp vụ đã qua (mốc 05:00). Booking đã được chặn chặt hơn
+ * bởi EXPECTED_AT_IN_PAST trong validateBookingSchedule; Bàn chờ không có giờ đến nên kiểm theo ngày.
+ */
+export function assertBusinessDateNotPast(value: string, now = new Date()): string {
+  const supplied = validateCalendarDate(value)
+  if (supplied < businessDateAt(now)) {
+    throw new AppError(409, 'BUSINESS_DATE_IN_PAST', 'Không thể đặt bàn cho ngày đã qua.')
+  }
+  return supplied
 }
 
 export function assertCurrentBusinessDate(value: unknown, now = new Date()): string {

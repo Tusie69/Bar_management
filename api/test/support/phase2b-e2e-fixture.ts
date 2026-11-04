@@ -55,6 +55,7 @@ async function cleanup() {
     "DELETE FROM auth_sessions WHERE user_id = ?",
     "DELETE FROM membership_roles WHERE organization_id = ?",
     "DELETE FROM memberships WHERE organization_id = ?",
+    "DELETE FROM idempotency_keys WHERE organization_id = ?",
     "DELETE FROM table_adjacencies WHERE organization_id = ?",
     "DELETE FROM users WHERE id = ?",
     "DELETE FROM dining_tables WHERE organization_id = ?",

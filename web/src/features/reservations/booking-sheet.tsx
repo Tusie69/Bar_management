@@ -37,6 +37,7 @@ import {
 import { SOURCE_LABEL, type BookingClassification, type BookingSourceCode } from "@/domain/enums"
 import { useAction } from "@/hooks/use-action"
 import { useAvailability, useNow } from "@/hooks/use-data"
+import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { NOTE_PHONE_ERROR, isPlausibleVnPhone, noteHasPhoneNumber } from "@/lib/text"
 import { addDays, businessDateOf, fmtBusinessDate, fmtDayMonth, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -207,6 +208,8 @@ function BookingBody() {
     setStep((s) => Math.min(3, s + 1))
   }
 
+  // FX-04: 1 mã chống trùng cho lần mở form; đổi mã sau mỗi lần tạo thành công.
+  const [idempotencyKey, renewIdempotencyKey] = useIdempotencyKey()
   const submit = async () => {
     if (!later && compatError) {
       toast.error(compatError)
@@ -226,9 +229,13 @@ function BookingBody() {
         note: v.note || undefined,
         tableIds: later ? [] : tables,
         overrideReason: o,
+        idempotencyKey,
       }),
     )
-    if (r) ui.closeBooking()
+    if (r) {
+      renewIdempotencyKey()
+      ui.closeBooking()
+    }
     else setStep((s) => (s === 3 ? 1 : s))
   }
 

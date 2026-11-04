@@ -37,6 +37,7 @@ import { isBookingSlot, validateBookingCheckInDate, validateBookingTime } from "
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAction } from "@/hooks/use-action"
 import { useCatalog, useNow, useOperations, useReservations } from "@/hooks/use-data"
+import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { toast } from "sonner"
 import { NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
 import { atBusinessTime, businessDateOf, fmtBusinessDate, fmtTime, venueParts } from "@/lib/time"
@@ -561,6 +562,8 @@ function AdvanceWaitlistBody({ r, close }: { r: ReservationView; close: () => vo
   const [tableId, setTableId] = useState<string>("")
   const bookableZones = useMemo(() => (catalog.data?.zones ?? []).filter((z) => z.isBookable), [catalog.data])
   const prefs = [...(tableId ? [{ tableId: Number(tableId) }] : []), ...zones.map((z) => ({ zoneCode: z }))]
+  // FX-04: 1 mã chống trùng cho lần mở form; đổi mã sau mỗi lần tạo thành công.
+  const [idempotencyKey, renewIdempotencyKey] = useIdempotencyKey()
   return (
     <>
       <DialogHeader>
@@ -594,9 +597,13 @@ function AdvanceWaitlistBody({ r, close }: { r: ReservationView; close: () => vo
                 channel: "ZALO_THREAD",
                 preferenceMode: api.mode === "http" ? "ANY" : mode,
                 preferences: api.mode === "http" || mode === "ANY" ? [] : prefs,
+                idempotencyKey,
               }),
             )
-            if (res) close()
+            if (res) {
+              renewIdempotencyKey()
+              close()
+            }
           }}
         >
           Thêm vào danh sách chờ

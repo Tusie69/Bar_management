@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { useAction } from "@/hooks/use-action"
+import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
@@ -54,11 +55,14 @@ function WalkInBody() {
 
   const toggle = (id: number) => setPicked(chosen.includes(id) ? chosen.filter((x) => x !== id) : [...chosen, id])
 
+  // FX-04: 1 mã chống trùng cho lần mở form; đổi mã sau mỗi lần tạo thành công.
+  const [idempotencyKey, renewIdempotencyKey] = useIdempotencyKey()
   const seat = async () => {
     const r = await run((o) =>
-      api.seatWalkIn({ tableIds: chosen, guestCount: party, contactName: name || undefined, overrideReason: o }),
+      api.seatWalkIn({ tableIds: chosen, guestCount: party, contactName: name || undefined, overrideReason: o, idempotencyKey }),
     )
     if (r) {
+      renewIdempotencyKey()
       ui.closeWalkIn()
       if (chosen[0]) ui.selectTable(chosen[0])
     }
@@ -75,7 +79,7 @@ function WalkInBody() {
       confirmLabel: "Mở bàn",
       onConfirm: async (ids) =>
         !!(await run((o) =>
-          api.seatWalkIn({ tableIds: ids, guestCount: party, contactName: name || undefined, overrideReason: o }),
+          api.seatWalkIn({ tableIds: ids, guestCount: party, contactName: name || undefined, overrideReason: o, idempotencyKey }),
         )),
     })
   }
@@ -90,9 +94,13 @@ function WalkInBody() {
         channel: "IN_PERSON",
         preferenceMode: "ANY",
         preferences: [],
+        idempotencyKey,
       }),
     )
-    if (r) ui.closeWalkIn()
+    if (r) {
+      renewIdempotencyKey()
+      ui.closeWalkIn()
+    }
   }
 
   return (

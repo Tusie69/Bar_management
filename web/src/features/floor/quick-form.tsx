@@ -33,6 +33,7 @@ import { SOURCE_LABEL, type BookingClassification, type BookingSourceCode } from
 import type { AvailabilityResult } from "@/domain/models"
 import { useAction } from "@/hooks/use-action"
 import { useNow } from "@/hooks/use-data"
+import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { NOTE_PHONE_ERROR, isPlausibleVnPhone, noteHasPhoneNumber } from "@/lib/text"
 import { addDays, businessDateOf, fmtBusinessDate, fmtDayMonth, fmtTime, MS } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -179,6 +180,8 @@ export function QuickForm({
   const submitLabel = isB ? "Lưu đặt bàn" : draft.tableIds.length ? "Mở bàn ngay" : "Thêm vào danh sách chờ"
   const permission: Permission = isB ? "reservation.create" : draft.tableIds.length ? "visit.walkin" : "waitlist.create"
 
+  // FX-04: 1 mã chống trùng cho lần mở form; đổi mã sau mỗi lần tạo thành công.
+  const [idempotencyKey, renewIdempotencyKey] = useIdempotencyKey()
   const submit = async () => {
     setTried(true)
     if (Object.keys(errors).length || blocked.length || party === null || compatError) return
@@ -207,9 +210,13 @@ export function QuickForm({
           note: note.trim() || undefined,
           tableIds: draft.tableIds,
           overrideReason: o,
+          idempotencyKey,
         }),
       )
-      if (r) close()
+      if (r) {
+        renewIdempotencyKey()
+        close()
+      }
       return
     }
     if (draft.tableIds.length) {
@@ -220,9 +227,11 @@ export function QuickForm({
           guestCount: party,
           contactName: name.trim() || undefined,
           overrideReason: o,
+          idempotencyKey,
         }),
       )
       if (r) {
+        renewIdempotencyKey()
         close()
         ui.selectTable(ids[0])
       }
@@ -236,9 +245,13 @@ export function QuickForm({
         channel: "IN_PERSON",
         preferenceMode: "ANY",
         preferences: [],
+        idempotencyKey,
       }),
     )
-    if (r) close()
+    if (r) {
+      renewIdempotencyKey()
+      close()
+    }
   }
 
   const tab = (on: boolean) =>
