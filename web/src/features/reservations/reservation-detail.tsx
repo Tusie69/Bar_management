@@ -44,6 +44,7 @@ import { atBusinessTime, businessDateOf, fmtBusinessDate, fmtTime, venueParts } 
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
 import { GuestCountDialog } from "../floor/floor-dialogs"
+import { CallCustomerControl } from "../bookings/call-customer"
 import { ReservationStatusChip } from "./reservation-status"
 
 const CANCEL_REASONS = (Object.keys(CLOSE_REASON_LABEL) as ReservationCloseReason[])
@@ -238,6 +239,12 @@ function Detail({ r }: { r: ReservationView }) {
 
         {booked ? (
           <div className="mt-5 grid grid-cols-2 gap-2">
+            <CallCustomerControl
+              bookingId={r.id}
+              bookingVersion={r.version}
+              canCall={r.canCall === true}
+              className="col-span-2"
+            />
             {r.tableIds.length ? (
               <GuardedButton
                 permission="visit.checkin"

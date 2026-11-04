@@ -196,6 +196,56 @@ await flow("time warp: A5 becomes late after +15', no auto cancel after +60'", 3
   await expectLabel(table(page, "A5"), /Khách không đến/)
 })
 
+await flow("call customer: mobile opens tel flow and keeps a manual outcome action", 3, async (page) => {
+  await page.addInitScript(() => {
+    const click = HTMLAnchorElement.prototype.click
+    HTMLAnchorElement.prototype.click = function () {
+      if (this.href.startsWith("tel:")) {
+        window.__lastTelUri = this.href
+        return
+      }
+      return click.call(this)
+    }
+  })
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await page.evaluate(async () => {
+    const { demo } = await import("/src/services/index.ts")
+    demo?.reset()
+  })
+  await page.reload({ waitUntil: "networkidle" })
+  const blockingAlert = page.getByRole("alertdialog")
+  if (await blockingAlert.count()) {
+    await blockingAlert.getByRole("button", { name: "Đã xem, xử lý sau", exact: true }).click()
+  }
+  await table(page, "A5").click()
+  for (const width of [360, 375, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : width === 375 ? 812 : 800 })
+    await page.getByRole("button", { name: "Gọi khách", exact: true }).waitFor()
+  }
+  await page.screenshot({ path: "e2e/.artifacts/call-customer-mobile-390.png" })
+  await page.getByRole("button", { name: "Gọi khách", exact: true }).click()
+  await page.getByRole("button", { name: "Ghi kết quả cuộc gọi", exact: true }).click()
+  const outcome = page.getByRole("dialog", { name: "Kết quả cuộc gọi" })
+  await outcome.getByRole("button", { name: "Không nghe máy", exact: true }).click()
+  await outcome.waitFor({ state: "hidden" })
+}, {
+  viewport: { width: 390, height: 844 },
+  userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+})
+
+await flow("call customer: tablet explains that direct calling is unavailable", 3, async (page) => {
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await page.evaluate(async () => {
+    const { demo } = await import("/src/services/index.ts")
+    demo?.reset()
+  })
+  await page.reload({ waitUntil: "networkidle" })
+  await table(page, "A5").click()
+  await page.getByRole("button", { name: "Gọi khách", exact: true }).click()
+  await page.getByText("Thiết bị này không hỗ trợ gọi trực tiếp", { exact: true }).waitFor()
+  await page.screenshot({ path: "e2e/.artifacts/call-customer-tablet-768.png" })
+}, { viewport: { width: 768, height: 1024 } })
+
 await flow("waitlist: claim, accept offer -> hold, then seat when guest arrives", 3, async (page) => {
   await page.goto(base + "/waitlist", { waitUntil: "networkidle" })
   const card = page.locator("li", { hasText: "Chị mặc váy đỏ" }).first()

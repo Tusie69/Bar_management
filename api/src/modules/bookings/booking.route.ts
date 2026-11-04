@@ -11,6 +11,8 @@ import {
   assignBookingTables,
   checkInBooking,
   confirmBookingLate,
+  initiateBookingCall,
+  recordBookingCallOutcome,
   createAndAssignBooking,
   closeBooking,
   createBooking,
@@ -178,6 +180,38 @@ bookingRouter.post(
     }, applicationNow()) })
   },
 )
+
+bookingRouter.post('/:id/call', requireAuthentication, requireCsrfProtection, requirePermission('booking.phone.reveal'), async (request, response) => {
+  objectBody(request.body)
+  const result = await initiateBookingCall(
+    requireAuthenticatedActor(request),
+    positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.'),
+    applicationNow(),
+  )
+  response
+    .set('Cache-Control', 'no-store, private, max-age=0')
+    .set('Pragma', 'no-cache')
+    .status(201)
+    .json(result)
+})
+
+bookingRouter.post('/:id/calls/:callId/outcome', requireAuthentication, requireCsrfProtection, requirePermission('booking.phone.reveal'), async (request, response) => {
+  const body = objectBody(request.body)
+  const outcome = body.outcome
+  if (outcome !== 'CONTACTED' && outcome !== 'NO_ANSWER' && outcome !== 'LATE_CONFIRMED') {
+    throw new AppError(400, 'INVALID_CALL_OUTCOME', 'Kết quả cuộc gọi không hợp lệ.')
+  }
+  response.json(await recordBookingCallOutcome(
+    requireAuthenticatedActor(request),
+    positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.'),
+    positiveInteger(request.params.callId, 'INVALID_CALL_ID', 'Mã lần gọi không hợp lệ.'),
+    outcome,
+    body.bookingVersion === undefined
+      ? undefined
+      : positiveInteger(body.bookingVersion, 'INVALID_VERSION', 'Phiên bản booking không hợp lệ.'),
+    applicationNow(),
+  ))
+})
 
 bookingRouter.put('/:id', requireAuthentication, requireCsrfProtection, requirePermission('reservation.update'), async (request, response) => {
   const { body, ...input } = bookingBody(request.body, 'update')

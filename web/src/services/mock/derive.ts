@@ -330,6 +330,9 @@ export function floorState(
             note: r.note,
             version: r.version,
             lateConfirmedAt: r.lateConfirmedAt,
+            canCall:
+              customerOf(db, r.customerId)?.phoneLast3 != null
+              && (state === "upcoming" || state === "late" || state === "late_confirmed"),
           }
         }
       }

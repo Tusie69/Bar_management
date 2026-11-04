@@ -35,6 +35,7 @@ export interface FloorClaimProjection {
   sourceCode: string | null
   version: number
   lateConfirmedAt: string | null
+  canCall: boolean
 }
 
 export interface FloorTableProjection {
@@ -249,6 +250,7 @@ function buildClaim(
       sourceCode: null,
       version: Number(row.visit_version),
       lateConfirmedAt: null,
+      canCall: false,
     }
   }
 
@@ -287,6 +289,7 @@ function buildClaim(
       sourceCode: directOffer ? null : row.reservation_source_code,
       version: Number(directOffer ? row.offer_waitlist_version : row.linked_waitlist_version),
       lateConfirmedAt: null,
+      canCall: false,
     }
   }
 
@@ -312,6 +315,7 @@ function buildClaim(
     sourceCode: row.reservation_source_code,
     version: Number(row.reservation_version),
     lateConfirmedAt: row.reservation_late_confirmed_at === null ? null : isoDateTime(row.reservation_late_confirmed_at),
+    canCall: false,
   }
 }
 
@@ -449,6 +453,12 @@ async function readProjection(
         noShowAfterMinutes: Number(venue.no_show_warning_minutes),
       },
     })
+    if (claim?.kind === 'RESERVATION') {
+      claim.canCall = claim.phoneLast3 !== null
+        && (derived.displayState === 'UPCOMING'
+          || derived.displayState === 'LATE'
+          || derived.displayState === 'LATE_CONFIRMED')
+    }
     const allocationDate = dateOnly(selected?.allocation_business_date ?? null)
     const groupId = claim?.groupId ?? null
     const groupCode = claim?.groupDisplayCode ?? null

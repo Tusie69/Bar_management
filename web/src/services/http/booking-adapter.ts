@@ -32,6 +32,7 @@ export interface BackendBookingPayload {
   minutesLate: number
   autoNoShowDue: boolean
   lateConfirmedAt?: Date | null
+  canCall?: boolean
 }
 
 export interface HttpBooking {
@@ -54,6 +55,7 @@ export interface HttpBooking {
   minutesLate: number
   autoNoShowDue: boolean
   lateConfirmedAt?: Date | null
+  canCall?: boolean
 }
 
 export interface BookingWriteFields {
@@ -138,6 +140,7 @@ export function mapBooking(payload: BackendBookingPayload): HttpBooking {
     classification: payload.classification,
     guestType,
     isBirthday: payload.isBirthday ?? false,
+    canCall: payload.canCall ?? false,
     tableCodes: [...payload.tableCodes],
   }
 }

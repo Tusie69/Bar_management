@@ -23,7 +23,7 @@ export async function initializeFixture(): Promise<void> {
 export async function clearFixture(): Promise<void> {
   if (env.database.name !== 'gam21_platform_it_test') throw new Error('Refusing destructive fixture outside integration database')
   await measureFixture('clearFixture', async () => {
-    for (const table of ['operation_log', 'table_allocations', 'table_groups', 'table_holds',
+    for (const table of ['booking_call_logs', 'operation_log', 'table_allocations', 'table_groups', 'table_holds',
       'waitlist_table_preferences', 'waitlist_contact_attempts', 'waitlist_entries', 'reservations', 'visits',
       'customers', 'table_combination_members', 'table_combinations', 'table_adjacencies', 'dining_tables',
       'zones', 'floors', 'auth_sessions', 'membership_roles', 'memberships', 'idempotency_keys', 'users',

@@ -33,6 +33,7 @@ interface FixtureOptions {
 }
 
 const cleanupStatements = [
+    'DELETE FROM booking_call_logs',
     'DELETE FROM operation_log',
     'DELETE FROM table_allocations',
     'DELETE FROM table_groups',

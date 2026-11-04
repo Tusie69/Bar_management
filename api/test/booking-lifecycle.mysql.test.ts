@@ -14,12 +14,15 @@ import {
   createBooking,
   createWalkIn,
   getBookingById,
+  initiateBookingCall,
+  recordBookingCallOutcome,
   updateBooking,
   type BookingClassification,
   type BookingView,
 } from '../src/modules/bookings/booking.repository.js'
 import { closeVisit, moveVisit } from '../src/modules/visits/visit.repository.js'
 import { listTables } from '../src/modules/tables/table.repository.js'
+import { getFloorProjection } from '../src/modules/tables/floor-projection.repository.js'
 import {
   listNoShowCandidates,
   processNoShowCandidate,
@@ -56,6 +59,7 @@ interface AuthResponse {
 
 async function clearOperationalData(): Promise<void> {
   const statements = [
+    'DELETE FROM booking_call_logs',
     'DELETE FROM operation_log',
     'DELETE FROM table_allocations',
     'DELETE FROM table_groups',
@@ -609,6 +613,113 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         [organizationId],
       )
       expect(Number(allocationCount.total)).toBe(0)
+    })
+  })
+
+  describe('TU call customer workflow', () => {
+    it('projects server-derived canCall without exposing the full phone', async () => {
+      const created = await createBooking(actor, {
+        ...bookingInput('2030-10-24', '19:10', 'Projection call guest'),
+        phoneNumber: '0901234567',
+      })
+      await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const projection = await getFloorProjection(actor, '2030-10-24')
+      const claim = projection.tables.find((table) => table.tableId === tableOneId)?.claim
+      expect(claim).toMatchObject({ reservationId: created.id, phoneLast3: '567', canCall: true })
+      expect(JSON.stringify(projection)).not.toContain('+84901234567')
+      expect(JSON.stringify(projection)).not.toContain('phone_ciphertext')
+      expect(JSON.stringify(projection)).not.toContain('phone_hmac')
+    })
+
+    it('enforces server eligibility, writes one log per accepted call and keeps result retries idempotent', async () => {
+      const created = await createBooking(actor, { ...bookingInput(), phoneNumber: '0901234567' })
+      const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      await expect(initiateBookingCall(actor, created.id, new Date('2030-10-24T20:49:00+07:00')))
+        .rejects.toMatchObject({ code: 'BOOKING_CALL_NOT_ALLOWED' })
+
+      const first = await initiateBookingCall(actor, created.id, new Date('2030-10-24T20:50:00+07:00'))
+      const second = await initiateBookingCall(actor, created.id, new Date('2030-10-24T20:51:00+07:00'))
+      expect(first.telUri).toBe('tel:+84901234567')
+      expect(second.callId).not.toBe(first.callId)
+      const result = await recordBookingCallOutcome(
+        actor, created.id, first.callId, 'CONTACTED', undefined, new Date('2030-10-24T20:52:00+07:00'),
+      )
+      const replay = await recordBookingCallOutcome(
+        actor, created.id, first.callId, 'CONTACTED', undefined, new Date('2030-10-24T20:53:00+07:00'),
+      )
+      expect(replay.outcomeAt).toBe(result.outcomeAt)
+      expect(Number((await row('SELECT COUNT(*) AS total FROM booking_call_logs WHERE reservation_id = ?', [created.id])).total)).toBe(2)
+      expect(assigned.canCall).toBe(false)
+    })
+
+    it('records Tới muộn through TU-12 and rejects a stale state transition', async () => {
+      const created = await createBooking(actor, { ...bookingInput(), phoneNumber: '0901234567' })
+      const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const call = await initiateBookingCall(actor, created.id, new Date('2030-10-24T21:16:00+07:00'))
+      const result = await recordBookingCallOutcome(
+        actor, created.id, call.callId, 'LATE_CONFIRMED', assigned.version, new Date('2030-10-24T21:16:00+07:00'),
+      )
+      expect(result.lateConfirmation).toMatchObject({ bookingId: created.id, lateConfirmed: true })
+      const stored = await row('SELECT outcome FROM booking_call_logs WHERE id = ?', [call.callId])
+      expect(stored.outcome).toBe('LATE_CONFIRMED')
+      const booking = await getBookingById(actor, created.id)
+      expect(booking.lateConfirmedAt).not.toBeNull()
+
+      const checkedIn = await checkInBooking(actor, created.id, booking.version, new Date('2030-10-24T21:17:00+07:00'))
+      expect(checkedIn.status).toBe('CHECKED_IN')
+      await expect(initiateBookingCall(actor, created.id, new Date('2030-10-24T21:18:00+07:00')))
+        .rejects.toMatchObject({ code: 'BOOKING_CALL_NOT_ALLOWED' })
+    })
+
+    it('does not expose the call route without authentication or the existing sensitive permission', async () => {
+      expect((await request(app).post('/api/v1/bookings/1/call').set('Origin', env.webOrigin).send({})).status).toBe(401)
+      const receptionist = request.agent(app)
+      const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
+        username: 'booking_reception', password,
+      })
+      const auth = JSON.parse(login.text) as AuthResponse
+      const response = await receptionist.post('/api/v1/bookings/1/call')
+        .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken).send({})
+      expect(response.status).toBe(403)
+      expect(response.text).not.toContain('tel:')
+    })
+
+    it('accepts the controlled HTTP call flow for an authorized owner without a phone in the request', async () => {
+      const created = await createBooking(actor, {
+        ...bookingInput('2030-10-24', '19:10', 'HTTP call guest'),
+        phoneNumber: '0901234567',
+      })
+      await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const [owner] = await databasePool.execute<ResultSetHeader>(
+        `INSERT INTO users (username, display_name, password_hash, status)
+         VALUES ('booking_owner', 'Booking owner', ?, 'ACTIVE')`,
+        [passwordHash],
+      )
+      const [membership] = await databasePool.execute<ResultSetHeader>(
+        `INSERT INTO memberships (organization_id, user_id, status) VALUES (?, ?, 'ACTIVE')`,
+        [organizationId, owner.insertId],
+      )
+      await databasePool.execute(
+        `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
+         SELECT ?, ?, id, ? FROM roles WHERE code = 'OWNER_ADMIN'`,
+        [organizationId, membership.insertId, venueId],
+      )
+      const ownerAgent = request.agent(app)
+      const login = await ownerAgent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
+        username: 'booking_owner', password,
+      })
+      const auth = JSON.parse(login.text) as AuthResponse
+      const call = await ownerAgent.post(`/api/v1/bookings/${created.id}/call`)
+        .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken).send({})
+      const callBody = JSON.parse(call.text) as { callId: number; bookingId: number; telUri: string }
+      expect(call.status).toBe(201)
+      expect(callBody).toMatchObject({ bookingId: created.id, telUri: 'tel:+84901234567' })
+      expect(call.headers['cache-control']).toContain('no-store')
+      const outcome = await ownerAgent.post(`/api/v1/bookings/${created.id}/calls/${callBody.callId}/outcome`)
+        .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken).send({ outcome: 'CONTACTED' })
+      const outcomeBody = JSON.parse(outcome.text) as { callId: number; outcome: string }
+      expect(outcome.status).toBe(200)
+      expect(outcomeBody).toMatchObject({ callId: callBody.callId, outcome: 'CONTACTED' })
     })
   })
 

@@ -8,6 +8,7 @@ import { assertNoteHasNoPhoneNumber, redactPhoneNumbersInNote } from '../../secu
 import { applicationNow } from '../../time/application-clock.js'
 import { assertCheckInBusinessDate, currentBusinessDate, validateBookingSchedule } from './business-date.js'
 import { deriveBookingTiming, type BookingDisplayStatus } from './booking-timing.js'
+import { canCallBooking } from './booking-call.js'
 import {
   resolveBookingMetadata,
   type BookingClassification,
@@ -45,6 +46,7 @@ export interface BookingView {
   minutesLate: number
   autoNoShowDue: boolean
   lateConfirmedAt: string | null
+  canCall: boolean
 }
 
 export interface BookingSourceView {
@@ -110,13 +112,14 @@ function toBooking(row: BookingRow, now = applicationNow()): BookingView {
       noShowAfterMinutes: Number(row.no_show_warning_minutes),
     },
   )
+  const businessDate = dateOnly(row.business_date)
   return {
     id: Number(row.id),
     guestName: row.guest_name,
     phoneLast3: row.phone_last3,
     partySize: row.party_size,
     expectedAt: isoDateTime(row.expected_at),
-    businessDate: dateOnly(row.business_date),
+    businessDate,
     classification: row.customer_classification ?? 'UNCLASSIFIED',
     guestType: row.guest_type,
     isBirthday: Boolean(row.is_birthday),
@@ -127,6 +130,20 @@ function toBooking(row: BookingRow, now = applicationNow()): BookingView {
     note: redactPhoneNumbersInNote(row.note),
     version: row.version,
     lateConfirmedAt: row.late_confirmed_at === null ? null : isoDateTime(row.late_confirmed_at),
+    canCall: canCallBooking({
+      status: row.status,
+      expectedAt: isoDateTime(row.expected_at),
+      businessDate,
+      lateConfirmedAt: row.late_confirmed_at,
+      hasPhone: row.phone_last3 !== null,
+      hasActiveClaim: Boolean(row.table_codes),
+      now,
+      thresholds: {
+        upcomingMinutes: Number(row.upcoming_warning_minutes),
+        lateAfterMinutes: Number(row.late_warning_minutes),
+        noShowAfterMinutes: Number(row.no_show_warning_minutes),
+      },
+    }),
     ...timing,
   }
 }
@@ -729,6 +746,178 @@ interface RevealPhoneRow extends RowDataPacket {
   customer_id: number | null
   phone_ciphertext: Buffer | null
   phone_key_id: number | null
+}
+
+export type BookingCallOutcome = 'CONTACTED' | 'NO_ANSWER' | 'LATE_CONFIRMED'
+
+interface BookingCallRow extends RowDataPacket {
+  id: number
+  status: BookingStatus
+  version: number
+  expected_at: Date | string
+  business_date: Date | string
+  late_confirmed_at: Date | string | null
+  phone_ciphertext: Buffer | null
+  phone_key_id: number | null
+  upcoming_warning_minutes: number
+  late_warning_minutes: number
+  no_show_warning_minutes: number
+  has_active_claim: number
+}
+
+interface StoredCallRow extends RowDataPacket {
+  id: number
+  reservation_id: number
+  outcome: BookingCallOutcome | null
+  outcome_at: Date | string | null
+}
+
+export interface BookingCallStartResult {
+  callId: number
+  bookingId: number
+  initiatedAt: string
+  telUri: string
+}
+
+export interface BookingCallOutcomeResult {
+  callId: number
+  bookingId: number
+  outcome: BookingCallOutcome
+  outcomeAt: string
+  lateConfirmation: LateConfirmationResult | null
+}
+
+export async function initiateBookingCall(
+  actor: AuthenticatedActor,
+  id: number,
+  now = applicationNow(),
+): Promise<BookingCallStartResult> {
+  const connection = await databasePool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const [rows] = await connection.execute<BookingCallRow[]>(
+      `SELECT r.id, r.status, r.version, r.expected_at, r.business_date, r.late_confirmed_at,
+         COALESCE(r.phone_ciphertext, c.phone_ciphertext) AS phone_ciphertext,
+         COALESCE(r.phone_key_id, c.phone_key_id) AS phone_key_id,
+         v.upcoming_warning_minutes, v.late_warning_minutes, v.no_show_warning_minutes,
+         EXISTS(
+           SELECT 1 FROM table_holds h
+           JOIN table_allocations a ON a.organization_id = h.organization_id AND a.venue_id = h.venue_id
+             AND a.hold_id = h.id AND a.kind = 'HOLD' AND a.released_at IS NULL
+           WHERE h.organization_id = r.organization_id AND h.venue_id = r.venue_id
+             AND h.reservation_id = r.id AND h.status = 'ACTIVE'
+         ) AS has_active_claim
+       FROM reservations r
+       JOIN venues v ON v.organization_id = r.organization_id AND v.id = r.venue_id
+       LEFT JOIN customers c ON c.organization_id = r.organization_id AND c.id = r.customer_id
+       WHERE r.organization_id = ? AND r.venue_id = ? AND r.id = ? FOR UPDATE`,
+      [actor.organizationId, actor.venueId, id],
+    )
+    const booking = rows[0]
+    if (!booking) throw new AppError(404, 'BOOKING_NOT_FOUND', 'Không tìm thấy đặt bàn.')
+    if (dateOnly(booking.business_date) !== currentBusinessDate(now)) {
+      throw new AppError(409, 'BOOKING_BUSINESS_DATE_NOT_CURRENT', 'Chỉ gọi booking thuộc ngày nghiệp vụ hiện tại.')
+    }
+    const eligible = canCallBooking({
+      status: booking.status,
+      expectedAt: isoDateTime(booking.expected_at),
+      businessDate: dateOnly(booking.business_date),
+      lateConfirmedAt: booking.late_confirmed_at,
+      hasPhone: booking.phone_ciphertext !== null && booking.phone_key_id !== null,
+      hasActiveClaim: Boolean(booking.has_active_claim),
+      now,
+      thresholds: {
+        upcomingMinutes: Number(booking.upcoming_warning_minutes),
+        lateAfterMinutes: Number(booking.late_warning_minutes),
+        noShowAfterMinutes: Number(booking.no_show_warning_minutes),
+      },
+    })
+    if (!eligible) throw new AppError(409, 'BOOKING_CALL_NOT_ALLOWED', 'Booking chưa đủ điều kiện gọi khách.')
+    if (!booking.phone_ciphertext || booking.phone_key_id === null) {
+      throw new AppError(422, 'BOOKING_PHONE_UNAVAILABLE', 'Booking không có số điện thoại hợp lệ.')
+    }
+    const phone = revealPhoneNumber(booking.phone_ciphertext, Number(booking.phone_key_id), phoneKeyRing())
+    const initiatedAt = now.toISOString()
+    const mysqlNow = initiatedAt.slice(0, 23).replace('T', ' ')
+    const [insert] = await connection.execute<ResultSetHeader>(
+      `INSERT INTO booking_call_logs
+       (organization_id, venue_id, reservation_id, initiated_by_user_id, initiated_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [actor.organizationId, actor.venueId, id, actor.userId, mysqlNow],
+    )
+    await connection.execute(
+      `INSERT INTO operation_log
+       (organization_id, venue_id, actor_kind, actor_user_id, actor_membership_id, auth_session_id,
+        action, entity_type, entity_id, changes, reason_code, is_undoable)
+       VALUES (?, ?, 'USER', ?, ?, ?, 'BOOKING_CALL_INITIATED', 'reservation', ?, ?, 'CALL_CUSTOMER', 0)`,
+      [actor.organizationId, actor.venueId, actor.userId, actor.membershipId, actor.authSessionId ?? null,
+        id, JSON.stringify([{ type: 'booking_call', callId: insert.insertId }])],
+    )
+    await connection.commit()
+    return { callId: insert.insertId, bookingId: id, initiatedAt, telUri: `tel:${phone}` }
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
+}
+
+export async function recordBookingCallOutcome(
+  actor: AuthenticatedActor,
+  bookingId: number,
+  callId: number,
+  outcome: BookingCallOutcome,
+  expectedBookingVersion: number | undefined,
+  now = applicationNow(),
+): Promise<BookingCallOutcomeResult> {
+  const connection = await databasePool.getConnection()
+  try {
+    await connection.beginTransaction()
+    const [rows] = await connection.execute<StoredCallRow[]>(
+      `SELECT id, reservation_id, outcome, outcome_at FROM booking_call_logs
+       WHERE organization_id = ? AND venue_id = ? AND reservation_id = ? AND id = ? FOR UPDATE`,
+      [actor.organizationId, actor.venueId, bookingId, callId],
+    )
+    const existing = rows[0]
+    if (!existing) throw new AppError(404, 'BOOKING_CALL_NOT_FOUND', 'Không tìm thấy lần gọi khách.')
+    if (existing.outcome !== null) {
+      if (existing.outcome !== outcome) {
+        throw new AppError(409, 'BOOKING_CALL_OUTCOME_CONFLICT', 'Lần gọi này đã có kết quả khác.')
+      }
+      await connection.commit()
+      return {
+        callId, bookingId, outcome,
+        outcomeAt: isoDateTime(existing.outcome_at!),
+        lateConfirmation: null,
+      }
+    }
+
+    let lateConfirmation: LateConfirmationResult | null = null
+    if (outcome === 'LATE_CONFIRMED') {
+      if (!expectedBookingVersion) {
+        throw new AppError(400, 'INVALID_VERSION', 'Phiên bản booking không hợp lệ.')
+      }
+      // Keep the call row locked while TU-12 validates and commits the state transition.
+      // Competing outcome requests therefore cannot record a different result first.
+      lateConfirmation = await confirmBookingLate(actor, bookingId, expectedBookingVersion, now)
+    }
+
+    const outcomeAt = now.toISOString()
+    const mysqlNow = outcomeAt.slice(0, 23).replace('T', ' ')
+    await connection.execute(
+      `UPDATE booking_call_logs SET outcome = ?, outcome_by_user_id = ?, outcome_at = ?
+       WHERE organization_id = ? AND venue_id = ? AND reservation_id = ? AND id = ?`,
+      [outcome, actor.userId, mysqlNow, actor.organizationId, actor.venueId, bookingId, callId],
+    )
+    await connection.commit()
+    return { callId, bookingId, outcome, outcomeAt, lateConfirmation }
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
 }
 
 export async function revealBookingPhone(actor: AuthenticatedActor, id: number): Promise<string> {

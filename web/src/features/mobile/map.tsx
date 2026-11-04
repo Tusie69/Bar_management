@@ -11,6 +11,7 @@ import { initials } from "@/lib/text"
 import { useSession } from "@/state/session"
 import { useReceptionSearch } from "@/hooks/use-reception-search"
 import { FloorCanvas } from "../floor/floor-canvas"
+import { CallCustomerControl } from "../bookings/call-customer"
 import { groupCode } from "../floor/floor-visual-rules"
 import { ReceptionControls, ReceptionDatePicker } from "../floor/reception-controls"
 import { useMobileActions } from "./actions"
@@ -348,6 +349,14 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
       {info ? <span className="text-[13px] text-pretty text-[var(--text-muted)]">{info}</span> : null}
       {actions.length ? (
         <div className="grid grid-cols-2 gap-2">
+          {c?.kind === "reservation" && c.reservationId ? (
+            <CallCustomerControl
+              bookingId={c.reservationId}
+              bookingVersion={c.version}
+              canCall={c.canCall === true}
+              className="col-span-2"
+            />
+          ) : null}
           {actions.map((x) => (
             <button
               key={x.label}

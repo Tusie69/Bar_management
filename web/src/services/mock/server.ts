@@ -1101,6 +1101,32 @@ export class MockGamApi implements GamApi, DemoControls {
     )
   }
 
+  async startBookingCall(id: number) {
+    await this.latency("q")
+    this.require("booking.phone.reveal")
+    const r = this.res(id)
+    const customer = r.customerId ? this.db.customers.get(r.customerId) : null
+    if (!customer?.phoneE164) this.fail("Booking không có số điện thoại hợp lệ.", "VALIDATION_FAILED")
+    return {
+      callId: Date.now(),
+      bookingId: id,
+      initiatedAt: new Date(this.now),
+      telUri: `tel:${customer.phoneE164}`,
+    }
+  }
+
+  async recordBookingCallOutcome(
+    bookingId: number,
+    _callId: number,
+    outcome: "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED",
+    bookingVersion?: number,
+  ) {
+    if (outcome === "LATE_CONFIRMED") return this.confirmLate(bookingId, bookingVersion ?? 0)
+    await this.latency("q")
+    this.require("booking.phone.reveal")
+    return { operationId: null, changeSeq: null, undoable: false, summary: "Đã ghi kết quả cuộc gọi." }
+  }
+
   async checkIn(input: CheckInInput) {
     await this.latency("m")
     this.require("visit.checkin")
