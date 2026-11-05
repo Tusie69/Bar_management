@@ -44,7 +44,7 @@ export function StatusLegend({ tables = [], states, className }: StatusLegendPro
     { key: "free", label: "Trống", count: counts.free, colorVar: "var(--table-line)" },
     { key: "reserved", label: "Đã đặt", count: counts.reserved, colorVar: "var(--st-reserved)" },
     { key: "upcoming", label: "Sắp tới", count: counts.upcoming, colorVar: "var(--st-upcoming)" },
-    { key: "noshow", label: "Không đến", count: counts.noshow, colorVar: "var(--st-noshow)" },
+    { key: "noshow", label: "Không tới", count: counts.noshow, colorVar: "var(--st-noshow)" },
     { key: "seated", label: "Có khách", count: counts.seated, colorVar: "var(--st-seated)" },
     { key: "spare", label: "Sơ cua", count: counts.spare, colorVar: "var(--table-line)", isDashed: true },
   ]
@@ -176,7 +176,7 @@ export function StatusLegend({ tables = [], states, className }: StatusLegendPro
             </div>
 
             <p className="text-[11px] leading-relaxed text-muted-foreground">
-              Không đến và Tới muộn dùng chung màu. Tới muộn là hành động/metadata, không phải màu trạng thái thứ hai. Mặc định ẩn chú giải icon dưới nút ⓘ để không che bàn; chú giải màu bàn vẫn luôn hiển thị.
+              Không tới và Tới muộn dùng chung màu. Tới muộn là hành động/metadata, không phải màu trạng thái thứ hai. Mặc định ẩn chú giải icon dưới nút ⓘ để không che bàn; chú giải màu bàn vẫn luôn hiển thị.
             </p>
 
             <button

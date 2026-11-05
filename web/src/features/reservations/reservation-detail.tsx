@@ -303,7 +303,7 @@ function Detail({ r }: { r: ReservationView }) {
               disabledReason={r.minutesLate >= noShowAfter ? null : `Chỉ bật sau ${noShowAfter} phút trễ`}
               onClick={() => setNoShowOpen(true)}
             >
-              <TimerReset /> Không đến
+              <TimerReset /> Không tới
             </GuardedButton>
           </div>
         ) : null}
@@ -374,13 +374,13 @@ function Detail({ r }: { r: ReservationView }) {
       <ConfirmAction
         open={noShowOpen}
         onOpenChange={setNoShowOpen}
-        title="Xác nhận khách không đến?"
+        title="Xác nhận khách không tới?"
         description={
           <>
-            Đã trễ {r.minutesLate} phút. Booking chuyển sang Không đến{r.tableIds.length ? " và bàn được nhả" : ""}.
+            Đã trễ {r.minutesLate} phút. Booking chuyển sang Không tới{r.tableIds.length ? " và bàn được nhả" : ""}.
           </>
         }
-        confirmLabel="Xác nhận không đến"
+        confirmLabel="Xác nhận không tới"
         onConfirm={async () => {
           await run(() => api.markNoShow(r.id, r.version))
         }}

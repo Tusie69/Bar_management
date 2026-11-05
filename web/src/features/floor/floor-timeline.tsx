@@ -176,7 +176,7 @@ export function FloorTimeline({
     const tone = a.warning ?? "reserved"
     const m = STATE_META[tone]
     const late = Math.max(0, minutesBetween(a.startsAt, now))
-    const word = tone === "late" || tone === "noshow" ? `Không đến · ${late}'` : "Đã đặt"
+    const word = tone === "late" || tone === "noshow" ? `Không tới · ${late}'` : "Đã đặt"
     return (
       <Fragment key={a.allocationId}>
         {a.warning && nowX !== null && nowX > x0 ? (

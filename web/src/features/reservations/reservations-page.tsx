@@ -42,10 +42,10 @@ type StatusFilter = "all" | "upcoming" | "late" | "unassigned" | "checked_in" | 
 const FILTERS: { value: StatusFilter; label: string; test: (r: ReservationView) => boolean }[] = [
   { value: "all", label: "Tất cả", test: () => true },
   { value: "upcoming", label: "Sắp đến", test: (r) => r.status === "BOOKED" && !r.warning },
-  { value: "late", label: "Không đến", test: (r) => r.status === "BOOKED" && !!r.warning },
+  { value: "late", label: "Không tới", test: (r) => r.status === "BOOKED" && !!r.warning },
   { value: "unassigned", label: "Chưa có bàn", test: (r) => r.status === "BOOKED" && r.subState !== "DANG_GIU_BAN" },
   { value: "checked_in", label: "Đã check-in", test: (r) => r.status === "CHECKED_IN" },
-  { value: "closed", label: "Hủy / không đến", test: (r) => r.status === "CANCELLED" || r.status === "NO_SHOW" },
+  { value: "closed", label: "Hủy / không tới", test: (r) => r.status === "CANCELLED" || r.status === "NO_SHOW" },
 ]
 
 export default function ReservationsPage() {

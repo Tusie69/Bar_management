@@ -600,7 +600,7 @@ function EntryCard({
             open={releaseOpen}
             onOpenChange={setReleaseOpen}
             title="Nhả giữ bàn?"
-            description="Bàn trở về trống. Khách quay lại danh sách chờ, trừ khi chọn “Khách không đến”."
+            description="Bàn trở về trống. Khách quay lại danh sách chờ, trừ khi chọn “Khách không tới”."
             confirmLabel="Nhả giữ"
             reasons={(
               ["CUSTOMER_NO_SHOW", "CUSTOMER_CANCELLED", "STAFF_REASSIGNED", "OTHER"] as HoldReleaseReason[]

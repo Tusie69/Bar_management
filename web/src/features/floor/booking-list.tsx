@@ -66,7 +66,7 @@ export function useBookingItems(model: FloorModel, bd: BusinessDate, live: boole
           tone === "seated"
             ? `Đến ${fmtTime(r.checkedInAt)}`
             : tone === "late" || tone === "noshow"
-              ? `Không đến · ${r.minutesLate}'`
+              ? `Không tới · ${r.minutesLate}'`
               : r.subState === "CHO_PHAN_BAN"
                 ? "Chờ phân bàn"
                 : "Đã đặt",

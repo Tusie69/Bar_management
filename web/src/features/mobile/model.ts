@@ -30,7 +30,7 @@ export function toneOf(r: ReservationView): Tone {
 
 export function chipOf(r: ReservationView, now: Date): string {
   if (r.status === "CHECKED_IN") return "Đã nhận bàn"
-  if (r.status === "NO_SHOW") return "Không đến"
+  if (r.status === "NO_SHOW") return "Không tới"
   if (r.status === "CANCELLED") return "Đã hủy"
   const late = lateOf(r, now)
   return late ? `Trễ ${late} phút` : "Sắp đến"

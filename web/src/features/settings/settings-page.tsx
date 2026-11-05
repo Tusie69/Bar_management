@@ -195,13 +195,13 @@ function VenueForm({ v, readOnly }: { v: VenueConfig; readOnly: boolean }) {
           />
         </Row>
         <Row
-          label="Cảnh báo không đến"
-          hint="Không tự hủy booking, không tự nhả bàn. Nút Xác nhận không đến chỉ bật sau mốc này."
+          label="Cảnh báo không tới"
+          hint="Không tự hủy booking, không tự nhả bàn. Nút Xác nhận không tới chỉ bật sau mốc này."
           pending
         >
           <NumberField
             id="noshow"
-            label="Cảnh báo không đến"
+            label="Cảnh báo không tới"
             value={form.noShow}
             onChange={(x) => set("noShow", x)}
             unit="phút"

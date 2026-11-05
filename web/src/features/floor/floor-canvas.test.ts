@@ -385,13 +385,13 @@ describe("StatusLegend counts and deduplication (Item 8)", () => {
 
   it("the three states (late, late_confirmed, noshow) give the same label and color", () => {
     // Label, short label, and color tokens must be identical
-    expect(STATE_META.late.label).toBe("Không đến")
-    expect(STATE_META.late_confirmed.label).toBe("Không đến")
-    expect(STATE_META.noshow.label).toBe("Không đến")
+    expect(STATE_META.late.label).toBe("Không tới")
+    expect(STATE_META.late_confirmed.label).toBe("Không tới")
+    expect(STATE_META.noshow.label).toBe("Không tới")
 
-    expect(STATE_META.late.short).toBe("Không đến")
-    expect(STATE_META.late_confirmed.short).toBe("Không đến")
-    expect(STATE_META.noshow.short).toBe("Không đến")
+    expect(STATE_META.late.short).toBe("Không tới")
+    expect(STATE_META.late_confirmed.short).toBe("Không tới")
+    expect(STATE_META.noshow.short).toBe("Không tới")
 
     expect(STATE_META.late.color).toBe("var(--st-noshow)")
     expect(STATE_META.late_confirmed.color).toBe("var(--st-noshow)")
@@ -410,7 +410,7 @@ describe("StatusLegend counts and deduplication (Item 8)", () => {
     expect(STATE_META.hold_overdue.short).toBe("Quá hạn")
   })
 
-  it("maps late, late_confirmed, and noshow into the combined Không đến (noshow) chip", () => {
+  it("maps late, late_confirmed, and noshow into the combined Không tới (noshow) chip", () => {
     const tables: TableView[] = [
       createTable(1, 100, 100, 40, 30, "A"),
       createTable(2, 100, 150, 40, 30, "A"),
@@ -623,7 +623,7 @@ describe("StatusLegend counts and deduplication (Item 8)", () => {
     expect(counts.noshow).toBe(2)
   })
 
-  it("counts hold_overdue under the combined Không đến (noshow) chip while preserving its business state", () => {
+  it("counts hold_overdue under the combined Không tới (noshow) chip while preserving its business state", () => {
     const tables: TableView[] = [createTable(1, 100, 100, 40, 30, "A")]
     const states = new Map<number, FloorTableState>([
       [

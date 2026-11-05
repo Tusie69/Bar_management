@@ -399,7 +399,7 @@ export function QuickForm({
                     ? `${slotLabel(draft.time)} là sáng ${fmtDayMonth(bookingCalendarDate(draft.date, draft.time))}, vẫn thuộc ngày kinh doanh ${fmtDayMonth(draft.date)}. `
                     : ""}
                   {venue
-                    ? `Cảnh báo đến muộn lúc ${fmtTime(new Date(at.getTime() + venue.lateWarningMinutes * MS.MIN))} · không đến lúc ${fmtTime(new Date(at.getTime() + venue.noShowWarningMinutes * MS.MIN))}`
+                    ? `Cảnh báo đến muộn lúc ${fmtTime(new Date(at.getTime() + venue.lateWarningMinutes * MS.MIN))} · không tới lúc ${fmtTime(new Date(at.getTime() + venue.noShowWarningMinutes * MS.MIN))}`
                     : ""}
                 </span>
               ) : null}
