@@ -832,6 +832,7 @@ await flow("booking pickers: keyboard navigation across expired selected slot (M
 })
 
 console.log(results.join("\n"))
-console.log(failures ? `\n${failures} FAILED` : "\nALL PASSED")
 await browser.close()
-process.exit(failures ? 1 : 0)
+await import("./milestone-a.mjs")
+console.log(failures || process.exitCode ? "\nFAILED" : "\nALL PASSED")
+process.exit(failures ? 1 : (process.exitCode ?? 0))

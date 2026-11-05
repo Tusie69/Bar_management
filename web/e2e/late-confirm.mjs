@@ -45,7 +45,7 @@ for (const item of cases) {
   })
   const label = await table.getAttribute("aria-label")
   if (!label?.includes("Không tới (đã báo tới muộn)")) throw new Error(`${item.name}: state did not update: ${label}`)
-  if (item.width < 768) await expect(page.getByText(/^Đã báo muộn ·/)).toBeVisible()
+  if (item.width < 768) await expect(page.getByText("Không tới · đã báo muộn · 15 phút", { exact: true })).toBeVisible()
   const state = () => page.evaluate(async () => {
     const { api, clock } = await import("/src/services/index.ts")
     const catalog = await api.getCatalog()
