@@ -342,7 +342,7 @@ export function FloorPage() {
               ) : (
                 <Segmented label="Lọc khu" value={ui.zone} onChange={ui.setZone} options={ZONE_TABS} />
               )}
-              {live && view === "map" && !ui.pick && !draft ? (
+              {!receptionist && live && view === "map" && !ui.pick && !draft ? (
                 <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1 px-2 text-xs" onClick={() => ui.setFloorMode("availability")}>
                   <Search className="size-3.5" /> Xem khả dụng
                 </Button>
