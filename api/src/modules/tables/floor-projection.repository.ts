@@ -3,6 +3,7 @@ import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
+import { businessDateAt } from '../bookings/business-date.js'
 import { applicationNow } from '../../time/application-clock.js'
 import {
   deriveTableDisplayState,
@@ -325,6 +326,8 @@ async function readProjection(
   businessDate: string,
   now: Date,
 ): Promise<FloorProjection> {
+  // Preserve real carry-over on current/past views; future planning sees only exact-date USAGE.
+  const currentBusinessDate = businessDateAt(now)
   const [venueRows] = await connection.execute<VenueProjectionRow[]>(
     `SELECT change_seq, upcoming_warning_minutes, late_warning_minutes, no_show_warning_minutes
      FROM venues WHERE organization_id = ? AND id = ? AND status = 'ACTIVE'`,
@@ -370,7 +373,9 @@ async function readProjection(
      JOIN zones AS z ON z.organization_id = dt.organization_id AND z.venue_id = dt.venue_id AND z.id = dt.zone_id
      LEFT JOIN table_allocations AS a ON a.organization_id = dt.organization_id AND a.venue_id = dt.venue_id
        AND a.table_id = dt.id AND a.released_at IS NULL
-       AND ((a.kind = 'USAGE' AND a.business_date <= ?) OR (a.kind = 'HOLD' AND a.business_date = ?))
+       AND ((a.kind = 'USAGE' AND a.business_date <= ?
+         AND (? <= ? OR a.business_date = ?))
+         OR (a.kind = 'HOLD' AND a.business_date = ?))
      LEFT JOIN table_groups AS g ON g.organization_id = a.organization_id AND g.venue_id = a.venue_id
        AND g.id = a.group_id AND g.dissolved_at IS NULL
      LEFT JOIN visits AS v ON a.kind = 'USAGE' AND v.organization_id = a.organization_id
@@ -393,7 +398,18 @@ async function readProjection(
      WHERE dt.organization_id = ? AND dt.venue_id = ? AND dt.status <> 'RETIRED'
      ORDER BY dt.id, CASE WHEN a.kind = 'USAGE' THEN 0 ELSE 1 END,
        a.business_date DESC, a.id DESC`,
-    [businessDate, businessDate, businessDate, businessDate, businessDate, actor.organizationId, actor.venueId],
+    [
+      businessDate,
+      businessDate,
+      currentBusinessDate,
+      businessDate,
+      businessDate,
+      businessDate,
+      businessDate,
+      businessDate,
+      actor.organizationId,
+      actor.venueId,
+    ],
   )
 
   const rowsByTable = new Map<number, ProjectionRow[]>()
