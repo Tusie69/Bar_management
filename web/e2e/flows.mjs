@@ -55,7 +55,7 @@ const selectTomorrow = async (page) => {
 const expectOccupied = async (loc, guests) => {
   await expectLabel(loc, new RegExp(`Có khách,.*\\b${guests} khách(?:,|$)`))
   if (/\d+\s*(?:phút|giờ|['’′])/.test(await loc.textContent())) throw new Error("Occupied glyph still shows elapsed time")
-  if ((await loc.getAttribute("aria-label")).startsWith("Bàn ") && !(await loc.textContent()).includes(`${guests} khách`)) {
+  if ((await loc.getAttribute("aria-label")).startsWith("Bàn ") && !(await loc.locator("text").allTextContents()).includes(`${guests} khách`)) {
     throw new Error(`Occupied table must display ${guests} khách`)
   }
 }
