@@ -49,7 +49,7 @@ function Segmented<T extends string>({
   label: string
 }) {
   return (
-    <div role="tablist" aria-label={label} className="flex gap-0.5 rounded-sm border bg-surface-1 p-[3px]">
+    <div role="tablist" aria-label={label} className="flex gap-0.5 rounded-sm border bg-surface-1 p-[2px]">
       {options.map((o) => {
         const on = o.value === value
         return (
@@ -60,7 +60,7 @@ function Segmented<T extends string>({
             aria-selected={on}
             onClick={() => onChange(o.value)}
             className={cn(
-              "flex h-[34px] items-center gap-1.5 rounded-sm px-3 text-sm whitespace-nowrap",
+              "flex h-[30px] items-center gap-1 rounded-sm px-2.5 text-xs sm:text-sm whitespace-nowrap",
               on ? "bg-primary-tint font-medium text-primary-ink" : "text-tx-2 hover:text-tx-1",
             )}
           >
@@ -284,7 +284,7 @@ export function FloorPage() {
     <div className="flex h-full min-h-0 flex-col">
       {!receptionist ? <FloorToolbar onOpenList={xl ? undefined : () => setListOpen(true)} /> : null}
       {receptionist ? (
-        <div className="shrink-0 border-b px-4 py-3">
+        <div className="shrink-0 border-b px-4 py-2">
           <ReceptionControls
             search={search}
             waitCount={
@@ -329,24 +329,26 @@ export function FloorPage() {
           </aside>
         ) : null}
 
-        <section className="flex min-w-0 flex-1 flex-col gap-3 px-4 pt-3.5 pb-4" aria-label="Không gian làm việc">
-          <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-3">
-            {view === "list" ? (
-              <Segmented
-                label="Lọc booking"
-                value={tab}
-                onChange={setTab}
-                options={LIST_TABS.map((t) => ({ value: t.id, label: t.label, count: feed[t.id].length }))}
-              />
-            ) : (
-              <Segmented label="Lọc khu" value={ui.zone} onChange={ui.setZone} options={ZONE_TABS} />
-            )}
-            {live && view === "map" && !ui.pick && !draft ? (
-              <Button variant="ghost" size="sm" onClick={() => ui.setFloorMode("availability")}>
-                <Search /> Xem khả dụng
-              </Button>
-            ) : null}
-            <span className="tnum ml-auto text-xs whitespace-nowrap text-tx-2">{summary}</span>
+        <section className="flex min-w-0 flex-1 flex-col gap-2 p-3 sm:px-4 sm:pt-2.5 sm:pb-3" aria-label="Không gian làm việc">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
+            <div className="flex shrink-0 items-center gap-2">
+              {view === "list" ? (
+                <Segmented
+                  label="Lọc booking"
+                  value={tab}
+                  onChange={setTab}
+                  options={LIST_TABS.map((t) => ({ value: t.id, label: t.label, count: feed[t.id].length }))}
+                />
+              ) : (
+                <Segmented label="Lọc khu" value={ui.zone} onChange={ui.setZone} options={ZONE_TABS} />
+              )}
+              {live && view === "map" && !ui.pick && !draft ? (
+                <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1 px-2 text-xs" onClick={() => ui.setFloorMode("availability")}>
+                  <Search className="size-3.5" /> Xem khả dụng
+                </Button>
+              ) : null}
+            </div>
+            <span className="tnum text-xs whitespace-nowrap text-tx-2 sm:ml-auto">{summary}</span>
           </div>
 
           {view === "map" && !ui.pick && !draft ? (
@@ -354,7 +356,7 @@ export function FloorPage() {
           ) : null}
 
           {view === "map" ? (
-            <div className="relative min-h-0 flex-1 overflow-hidden rounded-sm border">
+            <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-border/60">
               {model.error ? (
                 <div className="grid h-full place-items-center p-6">
                   <EmptyState

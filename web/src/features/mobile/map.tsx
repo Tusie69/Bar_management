@@ -80,7 +80,7 @@ export function MapScreen({
     <main className="contents">
       {receptionist ? (
         <header className="z-[5] shrink-0 bg-background px-4 pt-[var(--top-safe)]">
-          <div className="flex h-[52px] items-center gap-3">
+          <div className="flex h-[48px] items-center gap-3">
             <button
               type="button"
               onClick={m.openAccount}
@@ -93,7 +93,7 @@ export function MapScreen({
             <BellButton />
           </div>
           {!pick ? (
-            <div className="pb-2">
+            <div className="pb-1.5">
               <ReceptionControls
                 search={search}
                 waitCount={(m.waitlist ?? []).filter(isOpenEntry).length}
@@ -109,7 +109,7 @@ export function MapScreen({
         <PlainHeader title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"} />
       )}
       {!pick ? (
-        <div className="z-[4] shrink-0 flex flex-col gap-2 bg-background px-3 pt-0.5 pb-2">
+        <div className="z-[4] shrink-0 flex flex-col gap-1.5 bg-background px-4 pt-0 pb-1.5">
           <div
             role="tablist"
             aria-label="Lọc khu"
@@ -125,7 +125,7 @@ export function MapScreen({
                   aria-selected={on}
                   onClick={() => setZone(k)}
                   className={cn(
-                    "flex-1 flex h-[38px] min-w-0 shrink-0 items-center justify-center rounded-[11px] px-2 text-[13px] whitespace-nowrap",
+                    "flex-1 flex h-[38px] min-w-0 shrink-0 items-center justify-center rounded-[11px] px-1 text-[13px] whitespace-nowrap",
                     on ? "bg-tx-strong font-semibold text-background" : "font-medium text-tx-2",
                   )}
                 >

@@ -52,63 +52,63 @@ export function StatusLegend({ tables = [], states, className }: StatusLegendPro
 
   return (
     <Popover open={popoverOpen} onOpenChange={onOpenChange}>
-    <div
-      className={cn(
-        "relative rounded-xl border border-border/70 bg-card/95 p-2 shadow-sm backdrop-blur select-none",
-        className,
-      )}
-      role="region"
-      aria-label="Chú giải trạng thái bàn"
-    >
-      {/* Title & Popover Button */}
-      <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
-        <span className="text-[10px] font-bold tracking-wider text-muted-foreground uppercase">
-          Trạng thái · Số bàn / ghế
-        </span>
-        <PopoverTrigger asChild>
-          <button
-            ref={triggerRef}
-            type="button"
-            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            aria-label="Ký hiệu: mở bảng chú giải ký hiệu khách và nhóm bàn"
-          >
-            <Info className="size-3.5 shrink-0" />
-            <span>Ký hiệu</span>
-          </button>
-        </PopoverTrigger>
-      </div>
+      <div
+        className={cn(
+          "relative rounded-xl border border-border/70 bg-card/95 p-1.5 shadow-2xs backdrop-blur select-none sm:p-2",
+          className,
+        )}
+        role="region"
+        aria-label="Chú giải trạng thái bàn"
+      >
+        {/* Title & Popover Button */}
+        <div className="mb-1 flex items-center justify-between gap-2 px-0.5">
+          <span className="text-[10px] font-bold tracking-wider text-muted-foreground uppercase sm:text-[11px]">
+            Trạng thái · Số bàn / ghế
+          </span>
+          <PopoverTrigger asChild>
+            <button
+              ref={triggerRef}
+              type="button"
+              className="inline-flex min-h-[44px] items-center gap-1 rounded -my-2.5 px-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              aria-label="Ký hiệu: mở bảng chú giải ký hiệu khách và nhóm bàn"
+            >
+              <Info className="size-3.5 shrink-0" />
+              <span>Ký hiệu</span>
+            </button>
+          </PopoverTrigger>
+        </div>
 
-      {/* Chips row */}
-      <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
-        {CHIPS.map((chip) => (
-          <div
-            key={chip.key}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-background/80 px-2 py-0.5 text-[10px] leading-none sm:text-[11px] text-foreground shadow-2xs"
-          >
-            {chip.isDashed ? (
-              <span
-                className="size-2.5 shrink-0 rounded-xs border border-dashed"
-                style={{ borderColor: chip.colorVar }}
-                aria-hidden
-              />
-            ) : chip.key === "free" ? (
-              <span
-                className="size-2.5 shrink-0 rounded-xs border"
-                style={{ borderColor: chip.colorVar, background: "transparent" }}
-                aria-hidden
-              />
-            ) : (
-              <span
-                className="size-2.5 shrink-0 rounded-xs"
-                style={{ background: chip.colorVar }}
-                aria-hidden
-              />
-            )}
-            <span className="text-muted-foreground">{chip.label}</span>
-            <span className="font-bold">{chip.count}</span>
-          </div>
-        ))}
-      </div>
+        {/* Chips: 4-column grid on mobile (max 2 rows), 1 compact row on desktop if it fits */}
+        <div className="grid grid-cols-4 gap-0.5 sm:flex sm:flex-wrap sm:items-center sm:gap-0.5 lg:gap-1">
+          {CHIPS.map((chip) => (
+            <div
+              key={chip.key}
+              className="flex min-w-0 items-center gap-0.5 rounded-md border border-border/60 bg-background/80 px-1 py-0.5 text-[10px] leading-none text-foreground shadow-2xs sm:text-[10px] md:text-[10.5px]"
+            >
+              {chip.isDashed ? (
+                <span
+                  className="size-2 shrink-0 rounded-xs border border-dashed sm:size-2.5"
+                  style={{ borderColor: chip.colorVar }}
+                  aria-hidden
+                />
+              ) : chip.key === "free" ? (
+                <span
+                  className="size-2 shrink-0 rounded-xs border sm:size-2.5"
+                  style={{ borderColor: chip.colorVar, background: "transparent" }}
+                  aria-hidden
+                />
+              ) : (
+                <span
+                  className="size-2 shrink-0 rounded-xs sm:size-2.5"
+                  style={{ background: chip.colorVar }}
+                  aria-hidden
+                />
+              )}
+              <span className="whitespace-nowrap text-muted-foreground">{chip.label}</span>
+              <span className="ml-auto font-bold">{chip.count}</span>
+            </div>
+          ))}
+        </div>
 
       {/* Popover dialog: portalled by the house Popover (Radix) - focus, Esc, outside and placement */}
       <PopoverContent
