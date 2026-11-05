@@ -29,14 +29,13 @@ import { Textarea } from "@/components/ui/textarea"
 import {
   bookingCalendarDate,
   bookingInstant,
-  defaultBookingSlot,
   isAfterMidnight,
   slotLabel,
   validateBookingTime,
 } from "@/domain/booking-rules"
 import { SOURCE_LABEL, type BookingClassification, type BookingSourceCode } from "@/domain/enums"
 import { useAction } from "@/hooks/use-action"
-import { useAvailability, useNow } from "@/hooks/use-data"
+import { useAvailability, useNow, useVenueSettings } from "@/hooks/use-data"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { NOTE_PHONE_ERROR, isPlausibleVnPhone, noteHasPhoneNumber } from "@/lib/text"
 import { addDays, businessDateOf, fmtBusinessDate, fmtDayMonth, type BusinessDate } from "@/lib/time"
@@ -87,18 +86,15 @@ function BookingBody() {
   const ui = useUi()
   const model = useFloorModel()
   const now = useNow(30_000)
+  const quickTimes = useVenueSettings().data?.quickTimes ?? []
   const today = businessDateOf(now)
   const { run, pending } = useAction()
 
   const prefill = ui.bookingPrefill
   const [step, setStep] = useState(0)
   const [date, setDate] = useState<BusinessDate>(prefill.date ?? today)
-  const [time, setTime] = useState(() => {
-    const wanted = prefill.time ?? ui.availTime
-    const d = prefill.date ?? today
-    if (!validateBookingTime(d, wanted, now)) return wanted
-    return defaultBookingSlot(d, now) ?? "19:00"
-  })
+  // Preserve the caller's value while venue settings load; validation can update without mutating the draft.
+  const [time, setTime] = useState(() => prefill.time ?? ui.availTime)
   const [guest, setGuest] = useState<GuestValue>(() =>
     guestValueFrom(prefill.party ?? (prefill.tableIds?.length ? Math.min(8, prefill.tableIds.length * 4) : 2)),
   )
@@ -109,12 +105,19 @@ function BookingBody() {
 
   const form = useForm<GuestForm>({
     resolver: zodResolver(guestSchema),
-    defaultValues: { contactName: "", phone: "", sourceCode: "HOTLINE", classification: "UNCLASSIFIED", isBirthday: false, note: "" },
+    defaultValues: {
+      contactName: "",
+      phone: "",
+      sourceCode: "HOTLINE",
+      classification: "UNCLASSIFIED",
+      isBirthday: false,
+      note: "",
+    },
     mode: "onTouched",
   })
 
   // Re-derived every render: changing the date re-checks the slot without silently replacing it.
-  const timeError = validateBookingTime(date, time, now)
+  const timeError = validateBookingTime(date, time, now, undefined, quickTimes)
   const at = useMemo(() => bookingInstant(date, time), [date, time])
   const nextDayNote = isAfterMidnight(time) ? ` (sáng ${fmtDayMonth(bookingCalendarDate(date, time))})` : ""
   const availability = useAvailability(step >= 1 ? at : null, party)
@@ -235,8 +238,7 @@ function BookingBody() {
     if (r) {
       renewIdempotencyKey()
       ui.closeBooking()
-    }
-    else setStep((s) => (s === 3 ? 1 : s))
+    } else setStep((s) => (s === 3 ? 1 : s))
   }
 
   const v = useWatch({ control: form.control }) as GuestForm
@@ -303,6 +305,7 @@ function BookingBody() {
                 date={date}
                 value={time}
                 now={now}
+                quickTimes={quickTimes}
                 onChange={setTime}
                 error={timeError}
                 gridClassName="sm:grid-cols-5"

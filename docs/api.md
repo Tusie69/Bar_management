@@ -34,6 +34,21 @@ Common status codes: 400 `INVALID_*` validation, 401 `AUTHENTICATION_REQUIRED` /
 
 `user` contains `{id,username,displayName,organizationId,venueId,roles}`; `roles` contains the active membership role codes for this venue. Raw session tokens are never included in JSON. Login is limited after five failed attempts for the same IP/username in a 15-minute window.
 
+## Venue settings
+
+| Method | Path | Access | Request / response |
+| --- | --- | --- | --- |
+| GET | `/settings` | Authenticated session | `{quickTimes:string[],upcomingMinutes:number,noShowMinutes:number}` |
+| PUT | `/settings` | Session + CSRF + `venue.configure` | Full body and response use the same camelCase shape |
+
+Both endpoints derive organization and venue exclusively from the authenticated actor. There is no venue selector in the URL or body. `GET` is read-only, sends `Cache-Control: no-store`, never initializes missing rows and uses `['21:00','21:30','22:00','22:30']` only as the fallback when the venue has no valid `quick_times` row. The existing `GET /venues/:id/settings` compatibility endpoint and its snake_case wrapper remain unchanged.
+
+`PUT` requires exactly `quickTimes`, `upcomingMinutes` and `noShowMinutes`; unknown or missing fields return 400. `quickTimes` contains 1–24 unique `HH:mm` values inside 19:00–01:00 inclusive. `upcomingMinutes` is an integer from 1 through 240. `noShowMinutes` is an unsigned-smallint value and must also remain greater than the venue's unchanged `late_warning_minutes`. Invalid settings use `INVALID_SETTINGS_PAYLOAD`, `INVALID_QUICK_TIMES`, `INVALID_UPCOMING_MINUTES` or `INVALID_NO_SHOW_MINUTES`. Seeded roles grant `venue.configure` only to `OWNER_ADMIN`; the backend checks the permission itself, so a read-only admin or staff role receives 403 while any separately provisioned super-admin role must explicitly have the same permission.
+
+The update locks the venue and writes `venue_settings.quick_times`, `venues.upcoming_warning_minutes`, `venues.no_show_warning_minutes`, the venue version/change sequence and a redacted `VENUE_SETTINGS_UPDATED` audit in one transaction. `late_warning_minutes` is not modified. Failure of any write rolls everything back. Other venues are unaffected. Each committed update bumps `change_seq`; current floor polling and the settings query's 15-second polling refetch server-derived state without introducing another realtime channel. The booking forms show the database quick times as shortcuts while retaining all existing 30-minute choices and never replace the time already entered by the user.
+
+Floor Projection, booking views and TU-Call continue to read thresholds directly from `venues`. Changing `upcomingMinutes` therefore changes the server-side `UPCOMING` and `canCall` boundary. Changing `noShowMinutes` changes the visual no-show warning and the TU-12 cutoff. It never automatically changes the persisted booking to `NO_SHOW`, cancels a hold or releases a table; manual no-show behavior remains authoritative.
+
 ## Tables and catalog
 
 | Method | Path | Permission | Request / response |
@@ -95,7 +110,7 @@ Spare configuration is persistent rather than per-day. `reason` is required, at 
 
 `guestName` is required (1-120 characters), `partySize` 1-500, `sourceCode` must exist and be active, `note` at most 500 characters. `phoneNumber` is optional: omitted on update retains the existing phone; null or blank removes it; a nonblank value is validated and encrypted. Update sends the complete booking fields, not a partial patch. Cancel `reasonNote` is at most 300 characters.
 
-`BookingView` is `{id,guestName,phoneLast3,partySize,expectedAt,businessDate,classification,status,source,sourceCode,tableCodes,note,version,displayStatus,minutesLate,autoNoShowDue,canCall}`. `status` is `BOOKED`, `CHECKED_IN`, `CANCELLED` or `NO_SHOW`. For an active `BOOKED` reservation, display timing uses the venue thresholds: the 10-minute pre-arrival window and the first 15 minutes after `expectedAt` are `UPCOMING`, more than 15 minutes is `LATE`, and 30 minutes is `NO_SHOW`. Display `NO_SHOW` is non-terminal: `status` stays `BOOKED`, allocations and holds remain active, and `autoNoShowDue` stays false until an authorized user performs the manual no-show action. Search matches guest names or exactly three trailing phone digits. List, detail, search and mutation responses never contain a full stored phone or cryptographic fields. Export contains no phone fields, including suffixes.
+`BookingView` is `{id,guestName,phoneLast3,partySize,expectedAt,businessDate,classification,status,source,sourceCode,tableCodes,note,version,displayStatus,minutesLate,autoNoShowDue,canCall}`. `status` is `BOOKED`, `CHECKED_IN`, `CANCELLED` or `NO_SHOW`. For an active `BOOKED` reservation, display timing uses the current venue thresholds: `upcoming_warning_minutes` controls the pre-arrival window, `late_warning_minutes` controls the late boundary and `no_show_warning_minutes` controls the visual no-show boundary. Their seeded defaults are 10/15/30 minutes. Display `NO_SHOW` is non-terminal: `status` stays `BOOKED`, allocations and holds remain active, and `autoNoShowDue` stays false until an authorized user performs the manual no-show action. Search matches guest names or exactly three trailing phone digits. List, detail, search and mutation responses never contain a full stored phone or cryptographic fields. Export contains no phone fields, including suffixes.
 
 Booking creation does not allocate tables or create a visit. Assign creates/replaces a hold; check-in requires an assigned booking and converts the hold to a visit/usage allocation. Cancel/no-show are explicit staff actions for `BOOKED` reservations and release their holds. Warnings after 15 and 30 minutes do not cancel or release anything. `NO_SHOW_WORKER_ENABLED` remains false.
 
@@ -113,7 +128,7 @@ Walk-ins require the current business date during operating hours; errors are `W
 
 ### Calling a booking contact (TU)
 
-The atomic Floor Projection and `BookingView` expose only `canCall` plus the existing `phoneLast3`. The server computes `canCall`; clients must not infer it from their device clock. It is true only for a current-business-date `BOOKED` reservation with a valid encrypted phone, an active table claim, and a server-derived state of `UPCOMING`, `LATE` or `LATE_CONFIRMED`. The pre-arrival boundary uses the venue `upcoming_warning_minutes` setting (currently 10 minutes). `NO_SHOW`, checked-in, closed, unassigned and phone-less bookings are not callable.
+The atomic Floor Projection and `BookingView` expose only `canCall` plus the existing `phoneLast3`. The server computes `canCall`; clients must not infer it from their device clock. It is true only for a current-business-date `BOOKED` reservation with a valid encrypted phone, an active table claim, and a server-derived state of `UPCOMING`, `LATE` or `LATE_CONFIRMED`. The pre-arrival boundary uses the venue `upcoming_warning_minutes` setting (default 10 minutes and dynamically updateable through `/settings`). `NO_SHOW`, checked-in, closed, unassigned and phone-less bookings are not callable.
 
 `POST /bookings/:id/call` accepts no phone number. Because its RFC 3966 `tel:` response contains the full number, it uses the same fail-closed disclosure policy, per-user/booking rate limiter, dual `booking.phone.reveal` + `customer.phone.reveal` permissions and actor venue scope as `phone:reveal`. The server then rechecks all call eligibility conditions using `applicationNow()`, decrypts the phone only after acceptance, creates one `booking_call_logs` row, and returns the private/no-store response. Neither the URI nor the full number is written to `operation_log`, the floor projection, normal application logs or browser storage. A `tel:` URI necessarily exposes the number to the receiving browser/phone application and may be visible in browser developer tools. FX-20 LAN calling is not implemented.
 

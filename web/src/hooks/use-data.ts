@@ -12,6 +12,7 @@ import { useSession } from "@/state/session"
 
 export const qk = {
   catalog: ["catalog"] as const,
+  settings: ["settings"] as const,
   floor: (at: string) => ["floor", at] as const,
   availability: (at: string, party: number) => ["availability", at, party] as const,
   overview: ["overview"] as const,
@@ -55,6 +56,16 @@ export function useCatalog() {
     retry: api.mode === "mock" ? 1 : false,
     queryFn: () => api.getCatalog(),
     staleTime: 60_000,
+  })
+}
+
+export function useVenueSettings() {
+  return useQuery({
+    queryKey: qk.settings,
+    retry: api.mode === "mock" ? 1 : false,
+    queryFn: () => api.getVenueSettings(),
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: true,
   })
 }
 

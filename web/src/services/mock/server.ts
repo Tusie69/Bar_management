@@ -44,6 +44,7 @@ import {
   type SplitInput,
   type UpdateReservationInput,
   type VenueConfigPatch,
+  type VenueSettingsUpdate,
   type WalkInInput,
 } from "../contracts"
 import { ORG_ID, VENUE_ID, type CollectionName, type MockAllocation, type MockDb, type MockOperation } from "./db"
@@ -111,6 +112,7 @@ export class MockGamApi implements GamApi, DemoControls {
   private seq: number
   private listeners = new Set<(event: ChangeEvent) => void>()
   private armed = false
+  private quickTimes = ["21:00", "21:30", "22:00", "22:30"]
   private readonly businessDayWorkerEnabled: boolean
 
   constructor(options: { businessDayWorkerEnabled?: boolean } = {}) {
@@ -655,6 +657,15 @@ export class MockGamApi implements GamApi, DemoControls {
     return catalog(this.db)
   }
 
+  async getVenueSettings() {
+    await this.latency("q")
+    return {
+      quickTimes: [...this.quickTimes],
+      upcomingMinutes: this.venue.upcomingWarningMinutes,
+      noShowMinutes: this.venue.noShowWarningMinutes,
+    }
+  }
+
   async getFloorState(at: Date, businessDate?: BusinessDate) {
     await this.latency("q")
     return floorState(this.db, at, businessDate, businessDateOf(this.now))
@@ -820,8 +831,8 @@ export class MockGamApi implements GamApi, DemoControls {
           businessDate: bd,
           customerClassification: input.classification ?? "UNCLASSIFIED",
           guestType:
-            input.guestType
-            ?? (input.classification === "RETURNING" ? "REGULAR" : input.classification === "NEW" ? "NEW" : null),
+            input.guestType ??
+            (input.classification === "RETURNING" ? "REGULAR" : input.classification === "NEW" ? "NEW" : null),
           isBirthday: input.isBirthday ?? false,
           status: "BOOKED",
           note: input.note?.trim() || null,
@@ -1089,7 +1100,12 @@ export class MockGamApi implements GamApi, DemoControls {
     if (elapsed >= this.venue.noShowWarningMinutes * 60_000)
       this.fail("Cách xử lý sau ngưỡng không đến đang chờ phê duyệt.", "INVALID_STATE")
     return this.commit(
-      { action: "RESERVATION_LATE_CONFIRMED", entityType: "reservation", undoable: false, reasonCode: "CUSTOMER_CONFIRMED_LATE" },
+      {
+        action: "RESERVATION_LATE_CONFIRMED",
+        entityType: "reservation",
+        undoable: false,
+        reasonCode: "CUSTOMER_CONFIRMED_LATE",
+      },
       (tx) => {
         const row = tx.edit("reservations", r.id)
         row.lateConfirmedAt = this.now
@@ -2129,6 +2145,30 @@ export class MockGamApi implements GamApi, DemoControls {
     return { ...result, venue: venueConfig(this.db) }
   }
 
+  async updateVenueSettings(input: VenueSettingsUpdate) {
+    await this.latency("m")
+    this.require("venue.configure")
+    if (
+      input.quickTimes.length < 1 ||
+      input.quickTimes.length > 24 ||
+      new Set(input.quickTimes).size !== input.quickTimes.length ||
+      input.quickTimes.some(
+        (time) => !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time) || !isWithinBookingReceptionWindow(time),
+      )
+    )
+      this.fail("Cần 1–24 giờ nhanh HH:mm không trùng trong cửa sổ 19:00–01:00.")
+    if (input.upcomingMinutes < 1 || input.upcomingMinutes > 240) this.fail("Mốc sắp đến phải từ 1 đến 240 phút.")
+    if (input.noShowMinutes <= this.venue.lateWarningMinutes) this.fail("Mốc không đến phải lớn hơn mốc đến muộn.")
+    this.quickTimes = [...input.quickTimes]
+    this.commit({ action: "VENUE_SETTINGS_UPDATED", entityType: "venue", undoable: false }, (tx) => {
+      const row = tx.edit("venue", this.venue.id)
+      row.upcomingWarningMinutes = input.upcomingMinutes
+      row.noShowWarningMinutes = input.noShowMinutes
+      return { entityId: row.id, summary: "Cập nhật cấu hình quán" }
+    })
+    return this.getVenueSettings()
+  }
+
   async setZoneFlags(zoneId: number, version: number, flags: { isBookable: boolean; isWaitingArea: boolean }) {
     await this.latency("m")
     this.require("venue.configure")
@@ -2255,6 +2295,7 @@ export class MockGamApi implements GamApi, DemoControls {
 
   reset() {
     this.db = seedDb(clock.now())
+    this.quickTimes = ["21:00", "21:30", "22:00", "22:30"]
     this.seq = venueOf(this.db).changeSeq
     this.emit({
       latestSeq: this.seq,

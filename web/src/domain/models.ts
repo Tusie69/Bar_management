@@ -51,6 +51,12 @@ export interface VenueConfig {
   settings?: { quick_times: string[]; upcoming_minutes: number; no_show_minutes: number }
 }
 
+export interface VenueSettingsView {
+  quickTimes: string[]
+  upcomingMinutes: number
+  noShowMinutes: number
+}
+
 export interface ZoneView {
   id: number
   version: number
@@ -105,7 +111,17 @@ export interface Catalog {
 /* ---------------- Floor ---------------- */
 
 export type TableLiveState =
-  "free" | "reserved" | "upcoming" | "late" | "late_confirmed" | "noshow" | "seated" | "hold" | "hold_overdue" | "oos" | "spare"
+  | "free"
+  | "reserved"
+  | "upcoming"
+  | "late"
+  | "late_confirmed"
+  | "noshow"
+  | "seated"
+  | "hold"
+  | "hold_overdue"
+  | "oos"
+  | "spare"
 
 export type BookingWarning = "late" | "noshow" | null
 
