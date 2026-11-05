@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { FloorTableState, TableView } from "@/domain/models"
+import { BAR_SEATS, FIXTURES, FLOOR_H, FLOOR_W, TABLES } from "@/domain/venue-layout"
 import {
   activeGroupForSelection,
   calculateStatusCounts,
@@ -44,53 +45,193 @@ const createTable = (
   }) as TableView
 
 describe("floor camera fit bounds (Item 2 & 8)", () => {
-  const tables: TableView[] = [
+  const sampleTables: TableView[] = [
     createTable(1, 100, 200, 40, 30, "A"),
     createTable(2, 120, 260, 40, 30, "A"),
     createTable(3, 300, 400, 50, 40, "B"),
     createTable(4, 320, 450, 50, 40, "B"),
   ]
 
-  it("calculates camera fit bounds from real table coordinates for a specific zone", () => {
-    // Zone A:
-    // table 1: x=100 (hw=20 => minX=80, maxX=120), y=200 (hh=15 => minY=185, maxY=215)
-    // table 2: x=120 (hw=20 => minX=100, maxX=140), y=260 (hh=15 => minY=245, maxY=275)
-    // Zone A minX=80, maxX=140 (w=60), minY=185, maxY=275 (h=90)
-    // padding=24: x=80-24=56, y=185-24=161, w=60+48=108, h=90+48=138
-    const bounds = computeZoneBounds(tables, "A", 24)
-    expect(bounds).toEqual({
-      x: 56,
-      y: 161,
-      w: 108,
-      h: 138,
-    })
+  const realTables: TableView[] = [
+    ...TABLES.map(
+      (t, i) =>
+        ({
+          id: i + 1,
+          version: 1,
+          code: t.code,
+          displayName: `Bàn ${t.code}`,
+          zoneId: 1,
+          zoneCode: t.zone,
+          kind: "TABLE",
+          capacity: t.capacity,
+          seqNo: null,
+          isSpare: t.isSpare,
+          status: "ACTIVE",
+          x: t.x,
+          y: t.y,
+          w: t.w,
+          h: t.h,
+          seating: t.seating,
+        }) as TableView,
+    ),
+    ...BAR_SEATS.map(
+      (s, i) =>
+        ({
+          id: TABLES.length + i + 1,
+          version: 1,
+          code: `BAR${String(s.no).padStart(2, "0")}`,
+          displayName: `Ghế ${s.no}`,
+          zoneId: 2,
+          zoneCode: "BAR",
+          kind: "BAR_SEAT",
+          capacity: 1,
+          seqNo: s.no,
+          isSpare: false,
+          status: "ACTIVE",
+          x: s.x,
+          y: s.y,
+          w: 21,
+          h: 21,
+          seating: "pairs-tb",
+        }) as TableView,
+    ),
+  ]
+
+  it("calculates ALL bounds containing the floor frame, every fixture and the doors", () => {
+    const allBounds = computeZoneBounds(realTables, "ALL", 0)
+    expect(allBounds).not.toBeNull()
+
+    // 1. Contains the floor frame rect (x:20, y:20, w:FLOOR_W-40, h:FLOOR_H-20)
+    const frame = { x: 20, y: 20, w: FLOOR_W - 40, h: FLOOR_H - 20 }
+    expect(allBounds!.x).toBeLessThanOrEqual(frame.x)
+    expect(allBounds!.y).toBeLessThanOrEqual(frame.y)
+    expect(allBounds!.x + allBounds!.w).toBeGreaterThanOrEqual(frame.x + frame.w)
+    expect(allBounds!.y + allBounds!.h).toBeGreaterThanOrEqual(frame.y + frame.h)
+
+    // 2. Contains every fixture (including wall stroke and entrance)
+    for (const f of FIXTURES) {
+      if (f.kind === "wall") {
+        expect(allBounds!.x).toBeLessThanOrEqual(32 - 1.2)
+        expect(allBounds!.x + allBounds!.w).toBeGreaterThanOrEqual(560 + 1.2)
+        expect(allBounds!.y).toBeLessThanOrEqual(32 - 1.2)
+        expect(allBounds!.y + allBounds!.h).toBeGreaterThanOrEqual(738 + 1.2)
+      } else if (f.kind === "entrance") {
+        expect(allBounds!.x).toBeLessThanOrEqual(268)
+        expect(allBounds!.x + allBounds!.w).toBeGreaterThanOrEqual(328)
+        expect(allBounds!.y + allBounds!.h).toBeGreaterThanOrEqual(751)
+      } else if (f.kind === "bar-counter") {
+        expect(allBounds!.x).toBeLessThanOrEqual(396)
+        expect(allBounds!.x + allBounds!.w).toBeGreaterThanOrEqual(552)
+      } else if (f.kind === "back-bar") {
+        expect(allBounds!.x).toBeLessThanOrEqual(488)
+        expect(allBounds!.x + allBounds!.w).toBeGreaterThanOrEqual(552)
+      }
+    }
+
+    // 3. Contains all tables and seats
+    for (const t of realTables) {
+      const hw = (t.w || 22) / 2
+      const hh = (t.h || 22) / 2
+      expect(allBounds!.x).toBeLessThanOrEqual(t.x - hw)
+      expect(allBounds!.x + allBounds!.w).toBeGreaterThanOrEqual(t.x + hw)
+      expect(allBounds!.y).toBeLessThanOrEqual(t.y - hh)
+      expect(allBounds!.y + allBounds!.h).toBeGreaterThanOrEqual(t.y + hh)
+    }
   })
 
-  it("calculates camera fit bounds for ALL from all tables", () => {
-    // Overall: minX=80 (t1), maxX=345 (t4: 320+25), minY=185 (t1), maxY=470 (t4: 450+20)
-    // w = 345 - 80 = 265, h = 470 - 185 = 285
-    // padding=20: x=60, y=165, w=305, h=325
-    const bounds = computeZoneBounds(tables, "ALL", 20)
-    expect(bounds).toEqual({
-      x: 60,
-      y: 165,
-      w: 305,
-      h: 325,
-    })
+  it("ensures zone Bar bounds contains bar counter and back-bar fixtures", () => {
+    const barBounds = computeZoneBounds(realTables, "BAR", 12)
+    expect(barBounds).not.toBeNull()
+
+    // Must contain QUẬY BAR (396..552, 404..722)
+    expect(barBounds!.x).toBeLessThanOrEqual(396 - 0.6)
+    expect(barBounds!.x + barBounds!.w).toBeGreaterThanOrEqual(552 + 0.6)
+    expect(barBounds!.y).toBeLessThanOrEqual(404 - 0.6)
+    expect(barBounds!.y + barBounds!.h).toBeGreaterThanOrEqual(722 + 0.6)
+
+    // Must contain KHU PHA CHẾ (back bar)
+    expect(barBounds!.x + barBounds!.w).toBeGreaterThanOrEqual(552)
+    expect(barBounds!.y).toBeLessThanOrEqual(444)
+    expect(barBounds!.y + barBounds!.h).toBeGreaterThanOrEqual(716)
+
+    // Must contain all 21 bar seats
+    const barSeats = realTables.filter((t) => t.zoneCode === "BAR")
+    expect(barSeats.length).toBe(21)
+    for (const s of barSeats) {
+      expect(barBounds!.x).toBeLessThanOrEqual(s.x - s.w / 2)
+      expect(barBounds!.x + barBounds!.w).toBeGreaterThanOrEqual(s.x + s.w / 2)
+      expect(barBounds!.y).toBeLessThanOrEqual(s.y - s.h / 2)
+      expect(barBounds!.y + barBounds!.h).toBeGreaterThanOrEqual(s.y + s.h / 2)
+    }
+  })
+
+  it("ensures transformed floor frame stays inside viewports at 360, 390, 768, and 1280 widths", () => {
+    const allBounds = computeZoneBounds(realTables, "ALL", 0)!
+    const frame = { x: 20, y: 20, w: FLOOR_W - 40, h: FLOOR_H - 20 }
+
+    const viewports = [
+      { w: 360, h: 800, isPhone: true },
+      { w: 390, h: 844, isPhone: true },
+      { w: 768, h: 1024, isPhone: false },
+      { w: 1280, h: 800, isPhone: false },
+    ]
+
+    for (const vp of viewports) {
+      let k: number
+      let x: number
+      let y: number
+
+      if (vp.isPhone) {
+        const padH = 16
+        const scaleX = (vp.w - padH * 2) / allBounds.w
+        const scaleY = (vp.h - 16) / allBounds.h
+        const isWidthLimited = scaleX <= scaleY
+        expect(isWidthLimited).toBe(true)
+
+        k = scaleX
+        x = padH - allBounds.x * k
+        y = -allBounds.y * k
+      } else {
+        const pad = 18
+        k = Math.min((vp.w - pad * 2) / allBounds.w, (vp.h - pad * 2) / allBounds.h)
+        x = (vp.w - allBounds.w * k) / 2 - allBounds.x * k
+        y = (vp.h - allBounds.h * k) / 2 - allBounds.y * k
+      }
+
+      // Check transformed frame edges on screen
+      const frameLeft = x + frame.x * k
+      const frameRight = x + (frame.x + frame.w) * k
+      const frameTop = y + frame.y * k
+      const frameBottom = y + (frame.y + frame.h) * k
+
+      // Must stay strictly within viewport
+      expect(frameLeft).toBeGreaterThanOrEqual(0)
+      expect(frameRight).toBeLessThanOrEqual(vp.w)
+      expect(frameTop).toBeGreaterThanOrEqual(0)
+      expect(frameBottom).toBeLessThanOrEqual(vp.h)
+
+      // On phones, horizontal padding is exactly 16px
+      if (vp.isPhone) {
+        expect(Math.round(frameLeft)).toBe(16)
+        expect(Math.round(vp.w - frameRight)).toBe(16)
+        // Top alignment on phones: frameTop is exactly 0
+        expect(Math.round(frameTop)).toBe(0)
+      }
+    }
   })
 
   it("returns null for an empty zone to allow fallback handling", () => {
-    const bounds = computeZoneBounds(tables, "C", 24)
+    const bounds = computeZoneBounds(sampleTables, "C", 24)
     expect(bounds).toBeNull()
   })
 
   it("returns full default floor bounds for ALL when table list is empty", () => {
-    const bounds = computeZoneBounds([], "ALL", 24)
+    const bounds = computeZoneBounds([], "ALL", 0)
     expect(bounds).toEqual({
       x: 20,
       y: 20,
       w: 549,
-      h: 714,
+      h: 734,
     })
   })
 })

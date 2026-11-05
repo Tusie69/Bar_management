@@ -183,16 +183,67 @@ export function FloorCanvas(props: Props) {
   // Camera fit bounds computed from the REAL tables and bar seats coordinates
   const fitView = useMemo<View>(() => {
     if (!size.w || !size.h) return { k: 1, x: 0, y: 0 }
-    const computed = computeZoneBounds(tables, zoneFocus, compact ? 12 : 24)
-    const b = computed ?? {
+    const isAll = zoneFocus === "ALL"
+    const b = computeZoneBounds(tables, zoneFocus, isAll ? 0 : compact ? 12 : 24) ?? {
       x: 20,
       y: 20,
       w: FLOOR_W - 40,
       h: FLOOR_H - 20,
     }
-    const pad = compact ? 6 : size.w < 640 ? 8 : PAD
+
+    const isPhone =
+      !compact &&
+      (size.w <= 480 ||
+        (typeof window !== "undefined" && window.innerWidth < 640 && size.w < 640))
+
+    if (isPhone) {
+      if (isAll) {
+        // Horizontal padding on phones so floor frame lines up with tabs and legend edges (16px at 360/390)
+        // Use largest scale that fits
+        const padH = 16
+        const scaleX = (size.w - padH * 2) / b.w
+        const scaleY = (size.h - 16) / b.h
+        const isWidthLimited = scaleX <= scaleY
+
+        if (isWidthLimited) {
+          const k = scaleX
+          // Aligns the floor to the top of the viewport instead of centering, so slack goes below
+          // Center horizontally with exactly 16px padding on left and right
+          return {
+            k,
+            x: padH - b.x * k,
+            y: -b.y * k,
+          }
+        }
+        const k = Math.min(scaleX, scaleY)
+        return {
+          k,
+          x: (size.w - b.w * k) / 2 - b.x * k,
+          y: (size.h - b.h * k) / 2 - b.y * k,
+        }
+      }
+
+      // Zone zoom on phone
+      const pad = 12
+      const scaleX = (size.w - pad * 2) / b.w
+      const scaleY = (size.h - pad * 2) / b.h
+      const k = Math.min(scaleX, scaleY)
+      const isWidthLimited = scaleX <= scaleY
+      return {
+        k,
+        x: (size.w - b.w * k) / 2 - b.x * k,
+        y: isWidthLimited ? pad - b.y * k : (size.h - b.h * k) / 2 - b.y * k,
+      }
+    }
+
+    // Desktop or compact mode: center
+    const pad = compact ? 6 : PAD
     const k = Math.min((size.w - pad * 2) / b.w, (size.h - pad * 2) / b.h)
-    return { k, x: (size.w - b.w * k) / 2 - b.x * k, y: (size.h - b.h * k) / 2 - b.y * k }
+    return {
+      k,
+      x: (size.w - b.w * k) / 2 - b.x * k,
+      y: (size.h - b.h * k) / 2 - b.y * k,
+    }
   }, [size.w, size.h, zoneFocus, tables, compact])
 
   const view = userView && userView.zone === zoneFocus ? userView.view : fitView
@@ -207,10 +258,7 @@ export function FloorCanvas(props: Props) {
     [zoneFocus, fitView],
   )
 
-  const baseK = useMemo(
-    () => (size.w && size.h ? Math.min((size.w - PAD * 2) / FLOOR_W, (size.h - PAD * 2) / FLOOR_H) : 1),
-    [size],
-  )
+  const baseK = useMemo(() => fitView.k, [fitView.k])
 
   const zoomBy = useCallback(
     (factor: number, cx = size.w / 2, cy = size.h / 2) => {
@@ -332,19 +380,19 @@ export function FloorCanvas(props: Props) {
     const a10 = tables.find((t) => t.code === "A10")
 
     const maxKhuAX = khuATables.length
-      ? Math.max(...khuATables.map((t) => t.x + (t.w || 40) / 2))
-      : 165
+      ? Math.max(...khuATables.map((t) => t.x + (t.w || 46) / 2))
+      : 103
     const minBarX = barTables.length
       ? Math.min(...barTables.map((t) => t.x - (t.w || 22) / 2))
-      : 350
+      : 342
 
-    const posX = Math.round((maxKhuAX + minBarX) / 2) // ~250
+    const posX = Math.round((maxKhuAX + minBarX) / 2) // ~222
 
     const maxKhuBY = khuBTables.length
       ? Math.max(...khuBTables.map((t) => t.y + (t.h || 30) / 2))
-      : 345
-    const a10TopY = a10 ? a10.y - (a10.h || 38) / 2 : 665
-    const posY = Math.round((maxKhuBY + a10TopY) / 2) // ~450-480
+      : 306
+    const a10TopY = a10 ? a10.y - (a10.h || 38) / 2 : 666
+    const posY = Math.round((maxKhuBY + a10TopY) / 2) // ~486
 
     return { x: posX, y: posY }
   }, [tables])

@@ -1,5 +1,5 @@
 import type { FloorGroup, FloorTableState, TableLiveState, TableView } from "@/domain/models"
-import type { ZoneCode } from "@/domain/venue-layout"
+import { FIXTURES, FLOOR_H, FLOOR_W, type ZoneCode } from "@/domain/venue-layout"
 
 export type GlyphLevel = "compact" | "standard" | "expanded"
 export type ClaimViewFlags = Array<"BIRTHDAY" | "NEW" | "RETURNING" | "VIP" | "DESIGNATED">
@@ -177,16 +177,60 @@ export interface Bounds {
 export function computeZoneBounds(
   tables: TableView[],
   zone: ZoneCode | "ALL",
-  padding = 24,
+  padding?: number,
 ): Bounds | null {
   if (zone === "ALL") {
-    if (!tables.length) {
-      return { x: 20, y: 20, w: 549, h: 714 }
+    const pad = padding !== undefined ? padding : 0
+
+    // Floor frame rect: x=20, y=20, w=FLOOR_W-40 (549), h=FLOOR_H-20 (734)
+    let minX = 20
+    let minY = 20
+    let maxX = 20 + FLOOR_W - 40 // 569
+    let maxY = 20 + FLOOR_H - 20 // 754
+
+    // Union with outer wall, entrance doors + label, and all fixtures
+    for (const f of FIXTURES) {
+      if (f.kind === "wall") {
+        minX = Math.min(minX, 32 - 1.2)
+        maxX = Math.max(maxX, 560 + 1.2)
+        minY = Math.min(minY, 32 - 1.2)
+        maxY = Math.max(maxY, 738 + 1.2)
+      } else if (f.kind === "entrance") {
+        minX = Math.min(minX, 268 - 0.45)
+        maxX = Math.max(maxX, 328 + 0.45)
+        minY = Math.min(minY, 708 - 0.45)
+        maxY = Math.max(maxY, 738 + 0.45)
+        if (f.labelAt) {
+          minX = Math.min(minX, f.labelAt.x - 20)
+          maxX = Math.max(maxX, f.labelAt.x + 20)
+          minY = Math.min(minY, f.labelAt.y - 8)
+          maxY = Math.max(maxY, f.labelAt.y + 3)
+        }
+      } else if (f.kind === "bar-counter") {
+        minX = Math.min(minX, 396 - 0.6)
+        maxX = Math.max(maxX, 552 + 0.6)
+        minY = Math.min(minY, 404 - 0.6)
+        maxY = Math.max(maxY, 722 + 0.6)
+      } else if (f.kind === "back-bar") {
+        minX = Math.min(minX, 540 - 0.4)
+        maxX = Math.max(maxX, 552 + 0.4)
+        minY = Math.min(minY, 444 - 0.4)
+        maxY = Math.max(maxY, 716 + 0.4)
+        if (f.labelAt) {
+          minX = Math.min(minX, f.labelAt.x - 35)
+          maxX = Math.max(maxX, f.labelAt.x + 35)
+          minY = Math.min(minY, f.labelAt.y - 6)
+          maxY = Math.max(maxY, f.labelAt.y + 6)
+        }
+      } else if (f.kind === "sofa") {
+        minX = Math.min(minX, 44)
+        maxX = Math.max(maxX, 54)
+        minY = Math.min(minY, 362)
+        maxY = Math.max(maxY, 716)
+      }
     }
-    let minX = Infinity
-    let minY = Infinity
-    let maxX = -Infinity
-    let maxY = -Infinity
+
+    // Union with all tables and seats
     for (const t of tables) {
       const hw = (t.w || 22) / 2
       const hh = (t.h || 22) / 2
@@ -195,16 +239,18 @@ export function computeZoneBounds(
       minY = Math.min(minY, t.y - hh)
       maxY = Math.max(maxY, t.y + hh)
     }
+
     return {
-      x: minX - padding,
-      y: minY - padding,
-      w: maxX - minX + padding * 2,
-      h: maxY - minY + padding * 2,
+      x: minX - pad,
+      y: minY - pad,
+      w: maxX - minX + pad * 2,
+      h: maxY - minY + pad * 2,
     }
   }
 
+  const pad = padding !== undefined ? padding : 24
   const inZone = tables.filter((t) => t.zoneCode === zone)
-  if (!inZone.length) {
+  if (!inZone.length && zone !== "BAR") {
     return null
   }
 
@@ -221,10 +267,47 @@ export function computeZoneBounds(
     maxY = Math.max(maxY, t.y + hh)
   }
 
+  // Include zone fixtures and labels
+  if (zone === "BAR") {
+    // Bar counter: QUẦY BAR
+    minX = Math.min(minX, 396 - 0.6)
+    maxX = Math.max(maxX, 552 + 0.6)
+    minY = Math.min(minY, 404 - 0.6)
+    maxY = Math.max(maxY, 722 + 0.6)
+    // Back bar: KHU PHA CHẾ
+    minX = Math.min(minX, 453)
+    maxX = Math.max(maxX, 552.4)
+    minY = Math.min(minY, 443.6)
+    maxY = Math.max(maxY, 716.4)
+  } else if (zone === "A") {
+    // Khu A label
+    minX = Math.min(minX, 62)
+    maxX = Math.max(maxX, 62 + 35)
+    minY = Math.min(minY, 726 - 8)
+    maxY = Math.max(maxY, 726 + 2)
+    // Sofa along Khu A
+    minX = Math.min(minX, 44)
+    maxX = Math.max(maxX, 54)
+    minY = Math.min(minY, 362)
+    maxY = Math.max(maxY, 716)
+  } else if (zone === "B") {
+    // Khu B label
+    minX = Math.min(minX, 62)
+    maxX = Math.max(maxX, 62 + 35)
+    minY = Math.min(minY, 194 - 8)
+    maxY = Math.max(maxY, 194 + 2)
+  } else if (zone === "C") {
+    // Khu C label
+    minX = Math.min(minX, 442 - 40)
+    maxX = Math.max(maxX, 442)
+    minY = Math.min(minY, 84 - 8)
+    maxY = Math.max(maxY, 84 + 14)
+  }
+
   return {
-    x: minX - padding,
-    y: minY - padding,
-    w: maxX - minX + padding * 2,
-    h: maxY - minY + padding * 2,
+    x: minX - pad,
+    y: minY - pad,
+    w: maxX - minX + pad * 2,
+    h: maxY - minY + pad * 2,
   }
 }
