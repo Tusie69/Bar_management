@@ -37,9 +37,7 @@ export function bookingTableBadge(
       case "upcoming":
         return "Sắp đến"
       case "late":
-        return "Trễ giờ"
       case "late_confirmed":
-        return "Trễ có xác nhận"
       case "noshow":
         return "Không tới"
       case "seated":

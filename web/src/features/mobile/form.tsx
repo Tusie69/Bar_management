@@ -625,18 +625,12 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                           setSelectionMessage(null)
                           touch()
                         }}
-                        className="self-start text-[13px] font-medium text-primary underline active:opacity-70"
+                        className="self-start text-[13px] font-medium text-primary-ink underline active:opacity-70"
                       >
                         Bỏ chọn bàn này
                       </button>
                     ) : null}
                   </div>
-                ) : null}
-
-                {selectionMessage ? (
-                  <span role="alert" className="text-[13px] text-st-noshow-ink">
-                    {selectionMessage}
-                  </span>
                 ) : null}
 
                 {options.length ? (

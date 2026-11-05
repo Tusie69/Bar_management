@@ -114,7 +114,8 @@ describe("S2 G4 - booking table selection & preset availability", () => {
       { state: "reserved", expectedBadge: "Đã được giữ", expectedReasonRegex: /đã được giữ/ },
       { state: "hold", expectedBadge: "Đang được giữ", expectedReasonRegex: /đang được giữ/ },
       { state: "upcoming", expectedBadge: "Sắp đến", expectedReasonRegex: /sắp đến/ },
-      { state: "late_confirmed", expectedBadge: "Trễ có xác nhận", expectedReasonRegex: /đã xác nhận/ },
+      { state: "late", expectedBadge: "Không tới", expectedReasonRegex: /đến muộn/ },
+      { state: "late_confirmed", expectedBadge: "Không tới", expectedReasonRegex: /đã xác nhận/ },
       { state: "noshow", expectedBadge: "Không tới", expectedReasonRegex: /không tới/ },
       { state: "seated", expectedBadge: "Đang có khách", expectedReasonRegex: /đang có khách/ },
     ]

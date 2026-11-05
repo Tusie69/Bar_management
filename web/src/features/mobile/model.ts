@@ -25,6 +25,7 @@ export function toneOf(r: ReservationView): Tone {
   if (r.status === "CHECKED_IN") return "seated"
   if (r.status === "NO_SHOW") return "noshow"
   if (r.status === "CANCELLED") return null
+  if (r.warning === "late" || r.warning === "noshow") return "noshow"
   return r.warning ?? "reserved"
 }
 
@@ -33,7 +34,13 @@ export function chipOf(r: ReservationView, now: Date): string {
   if (r.status === "NO_SHOW") return "Không tới"
   if (r.status === "CANCELLED") return "Đã hủy"
   const late = lateOf(r, now)
-  return late ? `Trễ ${late} phút` : "Sắp đến"
+  if (late) {
+    if (r.lateConfirmedAt) {
+      return `Không tới · đã báo muộn · ${late} phút`
+    }
+    return `Không tới · ${late} phút`
+  }
+  return "Sắp đến"
 }
 
 export function subOf(r: ReservationView, now: Date, th: Thresholds): string {
