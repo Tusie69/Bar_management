@@ -60,6 +60,65 @@ const expectOccupied = async (loc, guests) => {
   }
 }
 
+// UI-FIX regression: check the visible geometry, including clipping ancestors.
+for (const theme of ["dark", "light"]) {
+  for (const [width, height] of [[360, 800], [390, 844], [768, 1024], [1024, 800], [1280, 800], [1440, 900]]) {
+    await flow(`floor bounds and controls ${theme} ${width}`, 1, async (page) => {
+      await page.addInitScript((theme) => localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme })), theme)
+      await page.goto(base + "/floor", { waitUntil: "networkidle" })
+      for (let i = 0; i < 10; i++) {
+        const dismiss = page.getByRole("button", { name: /Đã xem.*xử lý sau|Đã xem, nhắc sau|Để sau|Đóng thông báo/ }).first()
+        if (!await dismiss.isVisible()) break
+        await dismiss.click()
+      }
+      for (const phase of ["load", "Tất cả"]) {
+        if (phase === "Tất cả") {
+          await page.getByRole("tab", { name: "Bar", exact: true }).click()
+          await page.getByRole("tab", { name: "Tất cả", exact: true }).click()
+        }
+        await page.evaluate(() => document.fonts.ready)
+        await page.waitForTimeout(400)
+        if ([360, 390, 768, 1280].includes(width)) {
+          const outside = await page.locator('svg[role="group"]').evaluate((svg) => {
+            const canvas = svg.getBoundingClientRect()
+            const camera = svg.querySelector(":scope > g")
+            const labels = [...camera.querySelectorAll("text")]
+            const parts = [["floor frame", camera.querySelector(":scope > rect")]]
+            for (const name of ["QUẦY BAR", "KHU PHA CHẾ", "LỐI VÀO"]) {
+              const label = labels.find((el) => el.textContent.trim() === name)
+              parts.push([name, label], [`${name} fixture`, label?.parentElement.querySelector("path")])
+            }
+            return parts.flatMap(([name, el]) => {
+              if (!el) return [`${name} missing`]
+              const r = el.getBoundingClientRect()
+              return r.width <= 0 || r.height <= 0 || r.left < canvas.left - 0.1 || r.top < canvas.top - 0.1 || r.right > canvas.right + 0.1 || r.bottom > canvas.bottom + 0.1
+                ? [`${name} outside canvas: ${JSON.stringify({ left: r.left, top: r.top, right: r.right, bottom: r.bottom, canvas: canvas.toJSON() })}`] : []
+            })
+          })
+          if (outside.length) throw new Error(`${phase}: ${outside.join("; ")}`)
+        }
+        const forbidden = page.getByRole("button", { name: /zoom|full\s*screen|phóng to|thu nhỏ|toàn màn hình|^[+−-]$/i })
+          .or(page.getByRole("group", { name: /zoom|full\s*screen|thu phóng|toàn màn hình/i }))
+        if (await forbidden.count()) throw new Error(`${phase}: zoom/fullscreen control present`)
+        if (width >= 768) {
+          const clipping = await page.getByRole("button", { name: "Xem khả dụng", exact: true }).evaluate((button) => {
+            const r = button.getBoundingClientRect()
+            if (button.scrollWidth > button.clientWidth) return "label scrollWidth exceeds clientWidth"
+            for (let el = button.parentElement; el; el = el.parentElement) {
+              const style = getComputedStyle(el)
+              const box = el.getBoundingClientRect()
+              if (/(auto|hidden|scroll|clip)/.test(style.overflowX) && (el.scrollWidth > el.clientWidth || r.left < box.left - 0.1 || r.right > box.right + 0.1)) return "ancestor clips Xem khả dụng horizontally"
+              if (/(auto|hidden|scroll|clip)/.test(style.overflowY) && (r.top < box.top - 0.1 || r.bottom > box.bottom + 0.1)) return "ancestor clips Xem khả dụng vertically"
+            }
+            return null
+          })
+          if (clipping) throw new Error(`${phase}: ${clipping}`)
+        }
+      }
+    }, { viewport: { width, height }, reducedMotion: "reduce", hasTouch: width < 768 })
+  }
+}
+
 await flow("walk-in from table panel, then undo", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await table(page, "B5").click()
