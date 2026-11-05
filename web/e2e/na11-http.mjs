@@ -36,6 +36,7 @@ const output = new URL(".artifacts/na11/http/", import.meta.url)
 await mkdir(output, { recursive: true })
 const children = []
 const results = []
+const checkInNetwork = []
 let browser
 let activePage
 function run(args) {
@@ -170,6 +171,14 @@ try {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, locale: "en-US" })
   const page = await context.newPage()
   activePage = page
+  page.on("request", request => {
+    if (new URL(request.url()).pathname.endsWith("/check-in"))
+      checkInNetwork.push({ event: "request", method: request.method(), at: Date.now() })
+  })
+  page.on("response", response => {
+    if (new URL(response.url()).pathname.endsWith("/check-in"))
+      checkInNetwork.push({ event: "response", status: response.status(), at: Date.now() })
+  })
   const errors = []
   page.on("pageerror", (error) => errors.push(error.message))
   await login(page)
@@ -420,10 +429,18 @@ try {
   })
   await expect(table(page, "A4")).toHaveAttribute("aria-label", /Đã đặt|Đang đặt/, { timeout: 20_000 })
   await table(page, "A4").tap()
+  const checkInStarted = Date.now()
+  const checkInResponse = page.waitForResponse(response =>
+    response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/check-in"),
+  )
   await page.getByRole("button", { name: "Khách đã đến", exact: true }).click()
+  const checkedIn = await checkInResponse
+  expect(checkedIn.status()).toBe(200)
+  expect((await checkedIn.json()).booking.status).toBe("CHECKED_IN")
   await expect(table(page, "A4")).toHaveAttribute("aria-label", /Có khách,.*\b2 khách(?:,|$)/)
   await expect(table(page, "A4").locator("text")).toContainText([/^A4$/, /^2 khách$/])
   await expect(table(page, "A4")).not.toContainText(/\d+\s*(?:phút|giờ|['’′])/)
+  checkInNetwork.push({ event: "A4 visible seated", elapsedMs: Date.now() - checkInStarted })
   await page.keyboard.press("Escape")
   await table(page, "B3").tap()
   const walkForm = bookingForm(page)
@@ -508,6 +525,7 @@ try {
   throw error
 } finally {
   await writeFile(new URL("results.json", output), JSON.stringify(results, null, 2))
+  await writeFile(new URL("checkin-network.json", output), JSON.stringify(checkInNetwork, null, 2))
   if (browser) await browser.close()
   for (const { child, log } of children.reverse()) {
     if (child.pid)

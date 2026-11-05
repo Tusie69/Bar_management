@@ -1,4 +1,5 @@
-import { chromium } from "@playwright/test"
+import { chromium, expect } from "@playwright/test"
+import assert from "node:assert/strict"
 
 const base = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5173"
 const browser = await chromium.launch(
@@ -40,10 +41,18 @@ for (const item of cases) {
   await table.waitFor()
   await page.waitForFunction(() => {
     const node = document.querySelector('[aria-label^="Bàn B3,"], [aria-label^="Bàn B3:"]')
-    return node?.getAttribute("aria-label")?.includes("Đã báo tới muộn")
+    return node?.getAttribute("aria-label")?.includes("Không tới (đã báo tới muộn)")
   })
   const label = await table.getAttribute("aria-label")
-  if (!label?.includes("Đã báo tới muộn")) throw new Error(`${item.name}: state did not update: ${label}`)
+  if (!label?.includes("Không tới (đã báo tới muộn)")) throw new Error(`${item.name}: state did not update: ${label}`)
+  if (item.width < 768) await expect(page.getByText(/^Đã báo muộn ·/)).toBeVisible()
+  const state = () => page.evaluate(async () => {
+    const { api, clock } = await import("/src/services/index.ts")
+    const catalog = await api.getCatalog()
+    const id = catalog.tables.find(t => t.code === "B3").id
+    return (await api.getFloorState(clock.now())).tables.find(t => t.tableId === id).state
+  })
+  assert.equal(await state(), "late_confirmed")
 
   if (item.name === "mobile-dark") {
     await page.evaluate(async () => {
@@ -52,18 +61,20 @@ for (const item of cases) {
     })
     await page.waitForFunction(() => {
       const node = document.querySelector('[aria-label^="Bàn B3,"], [aria-label^="Bàn B3:"]')
-      return node?.getAttribute("aria-label")?.includes("Khách không đến")
+      return node?.getAttribute("aria-label")?.includes("Không tới")
     }, undefined, { timeout: 20_000 })
     const afterThreshold = await table.getAttribute("aria-label")
-    if (!afterThreshold?.includes("Khách không đến")) throw new Error(`Option A did not switch to NO_SHOW: ${afterThreshold}`)
+    if (!afterThreshold?.includes("Không tới")) throw new Error(`Option A did not switch to NO_SHOW: ${afterThreshold}`)
+    assert.equal(await state(), "noshow", "Option A threshold must still override late confirmation")
 
     const deferNoShow = page.getByRole("button", { name: "Đã xem, xử lý sau" })
     if (await deferNoShow.isVisible()) await deferNoShow.click()
     await page.getByRole("button", { name: "Khách đã đến", exact: true }).click()
     await page.waitForFunction(() => {
       const node = document.querySelector('[aria-label^="Bàn B3,"], [aria-label^="Bàn B3:"]')
-      return node?.getAttribute("aria-label")?.includes("Đang sử dụng")
+      return node?.getAttribute("aria-label")?.includes("Có khách")
     })
+    assert.equal(await state(), "seated", "arrival still checks the booking in")
   }
   await page.close()
   console.log(`PASS ${item.name}`)
