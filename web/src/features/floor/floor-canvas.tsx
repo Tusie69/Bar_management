@@ -370,6 +370,7 @@ export function FloorCanvas(props: Props) {
 
   const zoneOf = useMemo(() => new Map(zones.map((z) => [z.code, z])), [zones])
   const focusZone = zoneFocus === "ALL" ? null : zoneFocus
+  const isAllZone = zoneFocus === "ALL"
   const tableById = useMemo(() => new Map(tables.map((t) => [t.id, t])), [tables])
 
   // Compute waitlist marker position in floor space between Khu A and the bar
@@ -506,8 +507,8 @@ export function FloorCanvas(props: Props) {
           <Fixtures />
           <GroupThreads groups={activeGroup ? [activeGroup] : []} tableById={tableById} />
 
-          {/* Waitlist marker button anchored to floor space */}
-          {onOpenWaitlist ? (
+          {/* Waitlist marker button anchored to floor space for Zone Tất cả */}
+          {onOpenWaitlist && isAllZone ? (
             <foreignObject
               x={waitlistPos.x - 72}
               y={waitlistPos.y - 20}
@@ -570,6 +571,31 @@ export function FloorCanvas(props: Props) {
             className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-900 shadow-xs hover:bg-slate-100 active:scale-95 transition-transform"
           >
             Thu về toàn bộ
+          </button>
+        </div>
+      ) : null}
+
+      {/* Floating HTML overlay waitlist marker for Zone Khu A/B/C/Bar (outside camera transform) */}
+      {onOpenWaitlist && !isAllZone ? (
+        <div className="pointer-events-auto absolute bottom-3 right-3 z-10">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpenWaitlist()
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            aria-label={
+              waitingCount !== undefined
+                ? `Bàn chờ, ${waitingCount} khách đang chờ`
+                : "Bàn chờ"
+            }
+            className="group flex h-10 items-center justify-center gap-2 rounded-full border border-border/80 bg-background/95 px-3 py-1.5 text-foreground shadow-lg backdrop-blur transition-transform hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-[#1e232d]/95 dark:border-slate-700/80"
+          >
+            <List className="size-4 shrink-0 text-foreground" />
+            <span className="text-xs font-bold whitespace-nowrap">
+              {waitingCount && waitingCount > 0 ? `Bàn chờ +${waitingCount}` : "Bàn chờ"}
+            </span>
           </button>
         </div>
       ) : null}

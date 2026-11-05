@@ -1,7 +1,10 @@
+import { createElement } from "react"
+import { renderToString } from "react-dom/server"
 import { describe, expect, it } from "vitest"
-import type { FloorTableState, TableView } from "@/domain/models"
-import { BAR_SEATS, FIXTURES, FLOOR_H, FLOOR_W, TABLES } from "@/domain/venue-layout"
+import type { FloorTableState, TableView, ZoneView } from "@/domain/models"
+import { BAR_SEATS, FIXTURES, FLOOR_H, FLOOR_W, TABLES, ZONES } from "@/domain/venue-layout"
 import { STATE_META } from "@/components/status-meta"
+import { FloorCanvas } from "./floor-canvas"
 import {
   activeGroupForSelection,
   calculateStatusCounts,
@@ -714,5 +717,142 @@ describe("adaptive floor visual rules legacy compatibility", () => {
     const pickable = new Set([8])
     expect(tableCanActivate(7, pickable, new Set([7]))).toBe(true)
     expect(tableCanActivate(9, pickable, new Set([7]))).toBe(false)
+  })
+})
+
+describe("waitlist marker display per zone mode (Section MARKER)", () => {
+  const dummyZones: ZoneView[] = ZONES.map((z, i) => ({
+    id: i + 1,
+    version: 1,
+    code: z.code,
+    name: z.name,
+    isBookable: true,
+    isWaitingArea: false,
+    displayOrder: i + 1,
+  }))
+
+  const sampleTables: TableView[] = [
+    createTable(1, 100, 200, 40, 30, "A"),
+    createTable(2, 120, 260, 40, 30, "A"),
+    createTable(3, 300, 400, 50, 40, "B"),
+    createTable(4, 320, 450, 50, 40, "B"),
+  ]
+
+  const countMarkers = (html: string) => (html.match(/aria-label="Bàn chờ/g) || []).length
+
+  it("renders SVG camera marker when zoneFocus is ALL, and no HTML overlay", () => {
+    const html = renderToString(
+      createElement(FloorCanvas, {
+        tables: sampleTables,
+        zones: dummyZones,
+        mode: "live",
+        selectedIds: [],
+        zoneFocus: "ALL",
+        now: new Date("2026-11-04T14:30:00Z"),
+        onTableClick: () => {},
+        waitingCount: 5,
+        onOpenWaitlist: () => {},
+      }),
+    )
+
+    // Exactly one marker in output
+    expect(countMarkers(html)).toBe(1)
+    // Rendered inside SVG foreignObject camera group
+    expect(html).toContain("<foreignObject")
+    expect(html).toContain("Bàn chờ +5")
+    expect(html).toContain('aria-label="Bàn chờ, 5 khách đang chờ"')
+    // No floating HTML overlay
+    expect(html).not.toContain("pointer-events-auto absolute bottom-3 right-3 z-10")
+  })
+
+  it("renders floating HTML overlay when zoneFocus is a specific zone, and no SVG foreignObject", () => {
+    const zonesToTest = ["A", "B", "C", "BAR"] as const
+    for (const zone of zonesToTest) {
+      const html = renderToString(
+        createElement(FloorCanvas, {
+          tables: sampleTables,
+          zones: dummyZones,
+          mode: "live",
+          selectedIds: [],
+          zoneFocus: zone,
+          now: new Date("2026-11-04T14:30:00Z"),
+          onTableClick: () => {},
+          waitingCount: 3,
+          onOpenWaitlist: () => {},
+        }),
+      )
+
+      // Exactly one marker rendered at any moment (never both)
+      expect(countMarkers(html)).toBe(1)
+      // Floating HTML overlay used outside camera transform
+      expect(html).toContain("pointer-events-auto absolute bottom-3 right-3 z-10")
+      expect(html).toContain("Bàn chờ +3")
+      expect(html).toContain('aria-label="Bàn chờ, 3 khách đang chờ"')
+      // No SVG foreignObject marker
+      expect(html).not.toContain("<foreignObject")
+    }
+  })
+
+  it("renders no marker if onOpenWaitlist is not provided", () => {
+    const htmlAll = renderToString(
+      createElement(FloorCanvas, {
+        tables: sampleTables,
+        zones: dummyZones,
+        mode: "live",
+        selectedIds: [],
+        zoneFocus: "ALL",
+        now: new Date("2026-11-04T14:30:00Z"),
+        onTableClick: () => {},
+        waitingCount: 5,
+      }),
+    )
+    expect(countMarkers(htmlAll)).toBe(0)
+
+    const htmlZone = renderToString(
+      createElement(FloorCanvas, {
+        tables: sampleTables,
+        zones: dummyZones,
+        mode: "live",
+        selectedIds: [],
+        zoneFocus: "A",
+        now: new Date("2026-11-04T14:30:00Z"),
+        onTableClick: () => {},
+        waitingCount: 5,
+      }),
+    )
+    expect(countMarkers(htmlZone)).toBe(0)
+  })
+
+  it("preserves accessible name and count when waitingCount is 0 or undefined", () => {
+    const htmlZero = renderToString(
+      createElement(FloorCanvas, {
+        tables: sampleTables,
+        zones: dummyZones,
+        mode: "live",
+        selectedIds: [],
+        zoneFocus: "B",
+        now: new Date("2026-11-04T14:30:00Z"),
+        onTableClick: () => {},
+        waitingCount: 0,
+        onOpenWaitlist: () => {},
+      }),
+    )
+    expect(htmlZero).toContain('aria-label="Bàn chờ, 0 khách đang chờ"')
+    expect(htmlZero).toContain("Bàn chờ</span>")
+
+    const htmlUndefined = renderToString(
+      createElement(FloorCanvas, {
+        tables: sampleTables,
+        zones: dummyZones,
+        mode: "live",
+        selectedIds: [],
+        zoneFocus: "BAR",
+        now: new Date("2026-11-04T14:30:00Z"),
+        onTableClick: () => {},
+        onOpenWaitlist: () => {},
+      }),
+    )
+    expect(htmlUndefined).toContain('aria-label="Bàn chờ"')
+    expect(htmlUndefined).toContain("Bàn chờ</span>")
   })
 })
