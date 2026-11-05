@@ -33,7 +33,8 @@ export function CallCustomerControl({
   canCall: boolean
   className?: string
 }) {
-  const allowed = useCan("booking.phone.reveal")
+  const allowedToRecord = useCan("booking.phone.reveal")
+  const allowedToReveal = useCan("customer.phone.reveal")
   const queryClient = useQueryClient()
   const [pending, setPending] = useState(false)
   const [outcomeOpen, setOutcomeOpen] = useState(false)
@@ -50,7 +51,9 @@ export function CallCustomerControl({
     return () => document.removeEventListener("visibilitychange", onVisibility)
   }, [callId])
 
-  if (!canCall || !allowed) return null
+  const canStartCall = canCall && allowedToRecord && allowedToReveal
+  const hasPendingOutcome = callId !== null && allowedToRecord
+  if (!canStartCall && !hasPendingOutcome) return null
 
   const start = async () => {
     if (!supportsDirectPhoneCall()) {
@@ -102,7 +105,7 @@ export function CallCustomerControl({
     <>
       {callId === null ? (
         <GuardedButton
-          permission="booking.phone.reveal"
+          permission="customer.phone.reveal"
           type="button"
           variant="outline"
           className={className}

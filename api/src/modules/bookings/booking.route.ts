@@ -28,13 +28,17 @@ import {
 } from './booking.repository.js'
 import { formatDailyBookingText, getDailyBookingTextInput } from './booking-export.js'
 import { assertCurrentBusinessDate, validateCalendarDate } from './business-date.js'
-import { PhoneRevealRateLimiter } from './phone-rate-limit.js'
+import { assertPhoneDisclosureAllowed, PhoneRevealRateLimiter } from './phone-rate-limit.js'
 import { resolveBookingMetadata, type GuestType } from './booking-metadata.js'
 
 export const bookingRouter: Router = Router()
 const phoneRevealLimiter = env.phone.revealRateLimitMax && env.phone.revealRateLimitWindowMs
   ? new PhoneRevealRateLimiter(env.phone.revealRateLimitMax, env.phone.revealRateLimitWindowMs)
   : null
+
+function assertPhoneDisclosurePolicy(actor: ReturnType<typeof requireAuthenticatedActor>, bookingId: number): void {
+  assertPhoneDisclosureAllowed(phoneRevealLimiter, actor.userId, bookingId)
+}
 
 function objectBody(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -181,11 +185,20 @@ bookingRouter.post(
   },
 )
 
-bookingRouter.post('/:id/call', requireAuthentication, requireCsrfProtection, requirePermission('booking.phone.reveal'), async (request, response) => {
+bookingRouter.post(
+  '/:id/call',
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission('booking.phone.reveal'),
+  requirePermission('customer.phone.reveal'),
+  async (request, response) => {
   objectBody(request.body)
+  const id = positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.')
+  const actor = requireAuthenticatedActor(request)
+  assertPhoneDisclosurePolicy(actor, id)
   const result = await initiateBookingCall(
-    requireAuthenticatedActor(request),
-    positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.'),
+    actor,
+    id,
     applicationNow(),
   )
   response
@@ -193,7 +206,8 @@ bookingRouter.post('/:id/call', requireAuthentication, requireCsrfProtection, re
     .set('Pragma', 'no-cache')
     .status(201)
     .json(result)
-})
+  },
+)
 
 bookingRouter.post('/:id/calls/:callId/outcome', requireAuthentication, requireCsrfProtection, requirePermission('booking.phone.reveal'), async (request, response) => {
   const body = objectBody(request.body)
@@ -235,10 +249,7 @@ bookingRouter.post(
   async (request, response) => {
     const id = positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.')
     const actor = requireAuthenticatedActor(request)
-    if (!phoneRevealLimiter) {
-      throw new AppError(503, 'PHONE_REVEAL_POLICY_UNAVAILABLE', 'Chức năng gọi khách chưa được cấu hình đầy đủ.')
-    }
-    phoneRevealLimiter.assertAllowed(actor.userId, id)
+    assertPhoneDisclosurePolicy(actor, id)
     const phoneNumber = await revealBookingPhone(actor, id)
     response
       .set('Cache-Control', 'no-store, private, max-age=0')

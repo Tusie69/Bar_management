@@ -173,6 +173,27 @@ async function row(sql: string, values: (string | number)[]): Promise<RowDataPac
   return result
 }
 
+async function createHttpUserWithRole(username: string, roleCode: string) {
+  const [user] = await databasePool.execute<ResultSetHeader>(
+    `INSERT INTO users (username, display_name, password_hash, status)
+     VALUES (?, ?, ?, 'ACTIVE')`,
+    [username, username, passwordHash],
+  )
+  const [membership] = await databasePool.execute<ResultSetHeader>(
+    `INSERT INTO memberships (organization_id, user_id, status) VALUES (?, ?, 'ACTIVE')`,
+    [organizationId, user.insertId],
+  )
+  await databasePool.execute(
+    `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
+     SELECT ?, ?, id, ? FROM roles WHERE code = ?`,
+    [organizationId, membership.insertId, venueId, roleCode],
+  )
+  const agent = request.agent(app)
+  const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password })
+  expect(login.status).toBe(200)
+  return { agent, auth: JSON.parse(login.text) as AuthResponse }
+}
+
 function databaseDate(value: unknown): string {
   return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10)
 }
@@ -671,6 +692,83 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         .rejects.toMatchObject({ code: 'BOOKING_CALL_NOT_ALLOWED' })
     })
 
+    it('records a new Tới muộn call outcome for an already confirmed booking using its current version', async () => {
+      const created = await createBooking(actor, { ...bookingInput(), phoneNumber: '0901234567' })
+      const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const firstCall = await initiateBookingCall(actor, created.id, new Date('2030-10-24T21:16:00+07:00'))
+      const first = await recordBookingCallOutcome(
+        actor, created.id, firstCall.callId, 'LATE_CONFIRMED', assigned.version,
+        new Date('2030-10-24T21:16:00+07:00'),
+      )
+      const secondCall = await initiateBookingCall(actor, created.id, new Date('2030-10-24T21:17:00+07:00'))
+      const second = await recordBookingCallOutcome(
+        actor, created.id, secondCall.callId, 'LATE_CONFIRMED', first.lateConfirmation!.version,
+        new Date('2030-10-24T21:17:00+07:00'),
+      )
+
+      expect(second.lateConfirmation).toMatchObject({
+        bookingId: created.id,
+        version: first.lateConfirmation!.version,
+        changeSeq: first.lateConfirmation!.changeSeq,
+      })
+      expect(Number((await row(
+        `SELECT COUNT(*) AS total FROM operation_log
+         WHERE action = 'RESERVATION_LATE_CONFIRMED' AND entity_id = ?`,
+        [created.id],
+      )).total)).toBe(1)
+      expect(Number((await row(
+        `SELECT COUNT(*) AS total FROM booking_call_logs
+         WHERE reservation_id = ? AND outcome = 'LATE_CONFIRMED'`,
+        [created.id],
+      )).total)).toBe(2)
+    })
+
+    it('keeps a late call outcome unrecorded when the current booking version is stale', async () => {
+      const created = await createBooking(actor, { ...bookingInput(), phoneNumber: '0901234567' })
+      const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const firstCall = await initiateBookingCall(actor, created.id, new Date('2030-10-24T21:16:00+07:00'))
+      await recordBookingCallOutcome(
+        actor, created.id, firstCall.callId, 'LATE_CONFIRMED', assigned.version,
+        new Date('2030-10-24T21:16:00+07:00'),
+      )
+      const secondCall = await initiateBookingCall(actor, created.id, new Date('2030-10-24T21:17:00+07:00'))
+
+      await expect(recordBookingCallOutcome(
+        actor, created.id, secondCall.callId, 'LATE_CONFIRMED', assigned.version,
+        new Date('2030-10-24T21:17:00+07:00'),
+      )).rejects.toMatchObject({ code: 'VERSION_CONFLICT' })
+      const stored = await row('SELECT outcome, outcome_at FROM booking_call_logs WHERE id = ?', [secondCall.callId])
+      expect(stored.outcome).toBeNull()
+      expect(stored.outcome_at).toBeNull()
+    })
+
+    it('atomically serializes ten concurrent late outcome retries without exhausting the pool', async () => {
+      const created = await createBooking(actor, { ...bookingInput(), phoneNumber: '0901234567' })
+      const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const call = await initiateBookingCall(actor, created.id, new Date('2030-10-24T21:16:00+07:00'))
+      const concurrent = Promise.all(Array.from({ length: 10 }, () => recordBookingCallOutcome(
+        actor, created.id, call.callId, 'LATE_CONFIRMED', assigned.version,
+        new Date('2030-10-24T21:16:00+07:00'),
+      )))
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Concurrent call outcomes timed out')), 5_000)
+      })
+      const results = await Promise.race([concurrent, timeout]).finally(() => {
+        if (timer) clearTimeout(timer)
+      })
+
+      expect(results).toHaveLength(10)
+      expect(new Set(results.map(result => result.outcomeAt)).size).toBe(1)
+      expect(Number((await row(
+        `SELECT COUNT(*) AS total FROM operation_log
+         WHERE action = 'RESERVATION_LATE_CONFIRMED' AND entity_id = ?`,
+        [created.id],
+      )).total)).toBe(1)
+      expect((await row('SELECT outcome FROM booking_call_logs WHERE id = ?', [call.callId])).outcome)
+        .toBe('LATE_CONFIRMED')
+    })
+
     it('does not expose the call route without authentication or the existing sensitive permission', async () => {
       expect((await request(app).post('/api/v1/bookings/1/call').set('Origin', env.webOrigin).send({})).status).toBe(401)
       const receptionist = request.agent(app)
@@ -682,6 +780,70 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken).send({})
       expect(response.status).toBe(403)
       expect(response.text).not.toContain('tel:')
+    })
+
+    it('requires both phone permissions before the call route can disclose a tel URI', async () => {
+      const created = await createBooking(actor, { ...bookingInput(), phoneNumber: '0901234567' })
+      await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const roleCode = 'TEST_BOOKING_PHONE_ONLY'
+      await databasePool.execute(
+        `INSERT INTO roles (code, name, is_system) VALUES (?, 'Booking phone only test', 0)
+         ON DUPLICATE KEY UPDATE name = VALUES(name)`,
+        [roleCode],
+      )
+      await databasePool.execute(
+        `INSERT IGNORE INTO role_permissions (role_id, permission_id)
+         SELECT r.id, p.id FROM roles r JOIN permissions p ON p.code = 'booking.phone.reveal'
+         WHERE r.code = ?`,
+        [roleCode],
+      )
+      try {
+        const limited = await createHttpUserWithRole('booking_phone_only', roleCode)
+        const response = await limited.agent.post(`/api/v1/bookings/${created.id}/call`)
+          .set('Origin', env.webOrigin).set('X-CSRF-Token', limited.auth.csrfToken).send({})
+        expect(response.status).toBe(403)
+        expect(response.text).not.toContain('tel:')
+        expect(Number((await row(
+          'SELECT COUNT(*) AS total FROM booking_call_logs WHERE reservation_id = ?',
+          [created.id],
+        )).total)).toBe(0)
+      } finally {
+        await databasePool.execute(
+          `DELETE mr FROM membership_roles mr JOIN roles r ON r.id = mr.role_id WHERE r.code = ?`,
+          [roleCode],
+        )
+        await databasePool.execute(
+          `DELETE rp FROM role_permissions rp JOIN roles r ON r.id = rp.role_id WHERE r.code = ?`,
+          [roleCode],
+        )
+        await databasePool.execute('DELETE FROM roles WHERE code = ?', [roleCode])
+      }
+    })
+
+    it('applies the existing phone disclosure rate limit and venue scope to starting calls', async () => {
+      const created = await createBooking(actor, {
+        ...bookingInput('2030-10-24', '19:10', 'Rate-limited call guest'),
+        phoneNumber: '0901234567',
+      })
+      await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const owner = await createHttpUserWithRole('booking_rate_owner', 'OWNER_ADMIN')
+      const statuses: number[] = []
+      for (let count = 0; count < (env.phone.revealRateLimitMax ?? 0) + 1; count += 1) {
+        const response = await owner.agent.post(`/api/v1/bookings/${created.id}/call`)
+          .set('Origin', env.webOrigin).set('X-CSRF-Token', owner.auth.csrfToken).send({})
+        statuses.push(response.status)
+        if (response.status !== 201) expect(response.text).not.toContain('tel:')
+      }
+      expect(statuses).toEqual([201, 201, 201, 429])
+      expect(Number((await row(
+        'SELECT COUNT(*) AS total FROM booking_call_logs WHERE reservation_id = ?',
+        [created.id],
+      )).total)).toBe(3)
+      await expect(initiateBookingCall(
+        { ...actor, venueId: venueId + 999 },
+        created.id,
+        new Date('2030-10-24T21:16:00+07:00'),
+      )).rejects.toMatchObject({ code: 'BOOKING_NOT_FOUND' })
     })
 
     it('accepts the controlled HTTP call flow for an authorized owner without a phone in the request', async () => {

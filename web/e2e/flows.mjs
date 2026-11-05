@@ -224,6 +224,19 @@ await flow("call customer: mobile opens tel flow and keeps a manual outcome acti
   }
   await page.screenshot({ path: "e2e/.artifacts/call-customer-mobile-390.png" })
   await page.getByRole("button", { name: "Gọi khách", exact: true }).click()
+  await page.evaluate(async () => {
+    const { clock } = await import("/src/services/index.ts")
+    clock.advance(60)
+  })
+  await page.waitForTimeout(16_000)
+  await page.getByRole("button", { name: "Ghi kết quả cuộc gọi", exact: true }).waitFor()
+  await page.getByRole("button", { name: "Gọi khách", exact: true }).waitFor({ state: "detached" })
+  for (let index = 0; index < 20; index += 1) {
+    const noShowAlert = page.getByRole("alertdialog")
+    if (!(await noShowAlert.isVisible().catch(() => false))) break
+    await noShowAlert.getByRole("button", { name: "Đã xem, xử lý sau", exact: true }).click()
+    await page.waitForTimeout(100)
+  }
   await page.getByRole("button", { name: "Ghi kết quả cuộc gọi", exact: true }).click()
   const outcome = page.getByRole("dialog", { name: "Kết quả cuộc gọi" })
   await outcome.getByRole("button", { name: "Không nghe máy", exact: true }).click()
