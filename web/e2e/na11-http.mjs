@@ -195,23 +195,34 @@ try {
     await expect(page.getByRole("navigation", { name: /Điều hướng.*(mobile|di động)/i })).toHaveCount(0)
     await expect(page.getByRole("link", { name: "Đặt bàn", exact: true })).toHaveCount(0)
     const dateBox = await calendar(page).boundingBox()
+    const searchBox = await page.getByRole("textbox", { name: "Tìm 3 số cuối SĐT" }).boundingBox()
+    const countBox = await page.getByRole("button", { name: "Đếm khách", exact: true }).boundingBox()
     const bellBox = await page
       .getByRole("button", { name: /Thông báo/ })
       .first()
       .boundingBox()
     if (
       !dateBox ||
+      !searchBox ||
+      !countBox ||
       !bellBox ||
-      Math.abs(dateBox.y + dateBox.height / 2 - bellBox.y - bellBox.height / 2) > 16 ||
-      bellBox.x - dateBox.x - dateBox.width > 30
+      Math.abs(dateBox.y + dateBox.height / 2 - searchBox.y - searchBox.height / 2) > 1 ||
+      Math.abs(dateBox.y + dateBox.height / 2 - countBox.y - countBox.height / 2) > 1 ||
+      dateBox.x < searchBox.x + searchBox.width ||
+      countBox.x < dateBox.x + dateBox.width ||
+      dateBox.x - searchBox.x - searchBox.width > 16 ||
+      countBox.x - dateBox.x - dateBox.width > 16 ||
+      bellBox.y + bellBox.height > dateBox.y
     )
-      throw new Error(`Calendar is not beside alerts at ${width}`)
+      throw new Error(`Search, calendar and guest count must share the toolbar below alerts at ${width}`)
+    await expect(page.getByRole("group", { name: "Điều khiển thu phóng" })).toHaveCount(0)
+    await expect(page.getByRole("button", { name: /Phóng to|Thu nhỏ/ })).toHaveCount(0)
+    await expect(page.getByRole("region", { name: "Chú giải trạng thái bàn", exact: true })).toHaveCount(1)
+    await expect(calendar(page).locator("../..").getByRole("button", { name: /Bàn chờ/ })).toHaveCount(0)
     if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1))
       throw new Error(`Overflow at ${width}`)
-    await page
-      .getByRole("button", { name: /Bàn chờ/ })
-      .first()
-      .click()
+    await page.locator('svg button[aria-label^="Bàn chờ"]').click()
+    await expect(page.getByRole("dialog", { name: "Bàn chờ ảo", exact: true })).toBeVisible()
     await expect(page.getByText("NA11 waiting guest", { exact: true }).first()).toBeVisible()
     await closeDialog(page)
     await page.getByRole("button", { name: "Đếm khách", exact: true }).click()
@@ -410,14 +421,18 @@ try {
   await expect(table(page, "A4")).toHaveAttribute("aria-label", /Đã đặt|Đang đặt/, { timeout: 20_000 })
   await table(page, "A4").tap()
   await page.getByRole("button", { name: "Khách đã đến", exact: true }).click()
-  await expect(table(page, "A4")).toHaveAttribute("aria-label", /Đang sử dụng/)
+  await expect(table(page, "A4")).toHaveAttribute("aria-label", /Có khách,.*2 khách(?:,|$)/)
+  await expect(table(page, "A4").locator("text")).toContainText(["A4", "2 khách"])
+  await expect(table(page, "A4")).not.toContainText(/\d+\s*(?:phút|giờ|['’′])/)
   await page.keyboard.press("Escape")
   await table(page, "B3").tap()
   const walkForm = bookingForm(page)
   await walkForm.getByRole("tab", { name: "Walk-in", exact: true }).click()
   await walkForm.getByLabel("Tên khách", { exact: true }).fill("NA11 walk-in")
   await walkForm.getByRole("button", { name: /^Mở bàn B3$/ }).click()
-  await expect(table(page, "B3")).toHaveAttribute("aria-label", /Đang sử dụng/)
+  await expect(table(page, "B3")).toHaveAttribute("aria-label", /Có khách,.*4 khách(?:,|$)/)
+  await expect(table(page, "B3").locator("text")).toContainText(["B3", "4 khách"])
+  await expect(table(page, "B3")).not.toContainText(/\d+\s*(?:phút|giờ|['’′])/)
   await table(page, "B3").tap()
   await page.getByRole("button", { name: "Đổi bàn", exact: true }).click()
   await table(page, "B4").focus()
@@ -429,8 +444,9 @@ try {
   await page.getByRole("button", { name: "Ghép bàn", exact: true }).click()
   await table(page, "B3").tap()
   await page.getByRole("button", { name: "Ghép bàn", exact: true }).click()
-  await expect(table(page, "B3")).toHaveAttribute("aria-label", /nhóm ◆A, 2 bàn/)
-  await expect(table(page, "B4")).toHaveAttribute("aria-label", /nhóm ◆A, 2 bàn/)
+  await expect(table(page, "B3")).toHaveAttribute("aria-label", /nhóm G\d{2,}, 2 bàn/)
+  const groupCode = (await table(page, "B3").getAttribute("aria-label")).match(/nhóm (G\d{2,})/)[1]
+  await expect(table(page, "B4")).toHaveAttribute("aria-label", new RegExp(`nhóm ${groupCode}, 2 bàn`))
   await page.keyboard.press("Escape")
   await page.getByRole("button", { name: "Đếm khách", exact: true }).click()
   const guestCountText = page.getByLabel("Nội dung text booking")
