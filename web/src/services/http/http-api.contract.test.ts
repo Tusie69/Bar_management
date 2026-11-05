@@ -101,6 +101,16 @@ beforeEach(() => {
       if (failure?.path === path)
         return json({ error: { code: failure.code, message: "Máy chủ từ chối." } }, failure.status)
       if (path === "/tables/catalog") return json(catalog)
+      if (path === "/settings")
+        return json(
+          init.method === "PUT"
+            ? body
+            : {
+                quickTimes: ["21:00", "21:30", "22:00", "22:30"],
+                upcomingMinutes: 10,
+                noShowMinutes: 30,
+              },
+        )
       if (path === "/bookings/sources") return json({ sources: [{ code: "HOTLINE", name: "Hotline" }] })
       if (path.startsWith("/tables?"))
         return json({
@@ -113,27 +123,59 @@ beforeEach(() => {
             tableCode: `A${id}`,
             catalogStatus: "ACTIVE",
             isSpare: false,
-            displayState: id !== 1 || tableState === "AVAILABLE" ? "EMPTY" : tableState === "IN_USE" ? "IN_USE" : "BOOKED",
+            displayState:
+              id !== 1 || tableState === "AVAILABLE" ? "EMPTY" : tableState === "IN_USE" ? "IN_USE" : "BOOKED",
             arrivalPhase: null,
             arrivalTime: id === 1 && tableState === "RESERVED" ? at.toISOString() : null,
             minutesLate: 0,
-            claim: id !== 1 || tableState === "AVAILABLE"
-              ? null
-              : tableState === "IN_USE"
-                ? {
-                    kind: "VISIT", reservationId: null, visitId: 31, waitlistEntryId: null, holdId: null,
-                    guestName: "Visit", phoneLast3: null, partySize: 4, turnNo: null, flags: [],
-                    groupId: null, groupDisplayCode: null, groupMemberTableIds: [],
-                    startsAt: "2026-10-29T13:00:00.000Z", deadlineAt: null, holdOverdue: false,
-                    paid: false, origin: "WALK_IN", sourceCode: null, version: 5,
-                  }
-                : {
-                    kind: "RESERVATION", reservationId: 11, visitId: null, waitlistEntryId: null, holdId: 41,
-                    guestName: "An", phoneLast3: "123", partySize: 4, turnNo: null, flags: [],
-                    groupId: null, groupDisplayCode: null, groupMemberTableIds: [],
-                    startsAt: at.toISOString(), deadlineAt: null, holdOverdue: false,
-                    paid: false, origin: null, sourceCode: "HOTLINE", version: 3,
-                  },
+            claim:
+              id !== 1 || tableState === "AVAILABLE"
+                ? null
+                : tableState === "IN_USE"
+                  ? {
+                      kind: "VISIT",
+                      reservationId: null,
+                      visitId: 31,
+                      waitlistEntryId: null,
+                      holdId: null,
+                      guestName: "Visit",
+                      phoneLast3: null,
+                      partySize: 4,
+                      turnNo: null,
+                      flags: [],
+                      groupId: null,
+                      groupDisplayCode: null,
+                      groupMemberTableIds: [],
+                      startsAt: "2026-10-29T13:00:00.000Z",
+                      deadlineAt: null,
+                      holdOverdue: false,
+                      paid: false,
+                      origin: "WALK_IN",
+                      sourceCode: null,
+                      version: 5,
+                    }
+                  : {
+                      kind: "RESERVATION",
+                      reservationId: 11,
+                      visitId: null,
+                      waitlistEntryId: null,
+                      holdId: 41,
+                      guestName: "An",
+                      phoneLast3: "123",
+                      partySize: 4,
+                      turnNo: null,
+                      flags: [],
+                      groupId: null,
+                      groupDisplayCode: null,
+                      groupMemberTableIds: [],
+                      startsAt: at.toISOString(),
+                      deadlineAt: null,
+                      holdOverdue: false,
+                      paid: false,
+                      origin: null,
+                      sourceCode: "HOTLINE",
+                      version: 3,
+                    },
             groupId: null,
             groupDisplayCode: null,
             groupMemberTableIds: [],
@@ -178,6 +220,14 @@ afterEach(() => {
 const writes = () => calls.filter((call) => call.method !== "GET")
 
 describe("canonical contract reads", () => {
+  it("reads the authenticated venue settings contract", async () => {
+    expect(await api.getVenueSettings()).toEqual({
+      quickTimes: ["21:00", "21:30", "22:00", "22:30"],
+      upcomingMinutes: 10,
+      noShowMinutes: 30,
+    })
+    expect(calls).toEqual([{ method: "GET", path: "/settings", body: undefined }])
+  })
   it("exposes classification on canonical reservations", async () => {
     expect((await api.listReservations({ businessDate: date }))[0].classification).toBe("UNCLASSIFIED")
   })
@@ -200,11 +250,12 @@ describe("canonical contract reads", () => {
         return json({ businessDate: "1999-01-01", bookings: [], tables: [], entries: [] })
       return original(input, init)
     })
-    const request = resource === "waitlist"
-      ? api.listWaitlist(date)
-      : resource === "bookings"
-        ? api.listReservations({ businessDate: date })
-        : api.getFloorState(at, date)
+    const request =
+      resource === "waitlist"
+        ? api.listWaitlist(date)
+        : resource === "bookings"
+          ? api.listReservations({ businessDate: date })
+          : api.getFloorState(at, date)
     await expect(request).rejects.toMatchObject({
       status: 502,
       code: "BUSINESS_DATE_RESPONSE_MISMATCH",
@@ -292,6 +343,11 @@ describe("canonical contract reads", () => {
 })
 
 describe("canonical contract writes", () => {
+  it("updates only the supported venue settings contract", async () => {
+    const input = { quickTimes: ["20:15", "00:15"], upcomingMinutes: 15, noShowMinutes: 45 }
+    expect(await api.updateVenueSettings(input)).toEqual(input)
+    expect(writes()).toEqual([{ method: "PUT", path: "/settings", body: input }])
+  })
   it("starts a call without sending a phone and records the selected outcome against the same call", async () => {
     const call = await api.startBookingCall(11)
     expect(call).toMatchObject({ callId: 71, bookingId: 11, telUri: "tel:+84901234123" })
@@ -434,7 +490,12 @@ describe("canonical contract writes", () => {
       body: { version: 3, reasonNote: "Cancelled" },
     },
     { name: "no-show", run: (api) => api.markNoShow(11, 3), path: "/bookings/11/no-show", body: { version: 3 } },
-    { name: "late confirm", run: (api) => api.confirmLate(11, 3), path: "/bookings/11/late-confirm", body: { version: 3 } },
+    {
+      name: "late confirm",
+      run: (api) => api.confirmLate(11, 3),
+      path: "/bookings/11/late-confirm",
+      body: { version: 3 },
+    },
     {
       name: "walk-in",
       run: (api) => api.seatWalkIn({ tableIds: [2], guestCount: 4, contactName: "An" }),

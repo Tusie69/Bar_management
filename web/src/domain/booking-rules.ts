@@ -39,6 +39,9 @@ export const BOOKING_SLOTS: readonly string[] = (() => {
 
 export const isBookingSlot = (hhmm: string | null | undefined): hhmm is string => !!hhmm && BOOKING_SLOTS.includes(hhmm)
 
+export const isConfiguredQuickTime = (hhmm: string | null | undefined, quickTimes: readonly string[]): hhmm is string =>
+  !!hhmm && quickTimes.includes(hhmm) && isWithinBookingReceptionWindow(hhmm)
+
 /** Backend-style window check: accepts any minute in 19:00–01:00, independent of the configured UI slot step. */
 export function isWithinBookingReceptionWindow(hhmm: string): boolean {
   if (!/^\d{2}:\d{2}$/.test(hhmm)) return false
@@ -80,6 +83,25 @@ export function bookingSlots(bd: BusinessDate, now: Date, graceMin = PAST_GRACE_
   })
 }
 
+export function configuredQuickSlots(
+  bd: BusinessDate,
+  now: Date,
+  quickTimes: readonly string[],
+  graceMin = PAST_GRACE_MIN,
+): BookingSlot[] {
+  return quickTimes.filter(isWithinBookingReceptionWindow).map((time) => {
+    const past = bookingInstant(bd, time).getTime() < now.getTime() - graceMin * MS.MIN
+    return {
+      time,
+      label: slotLabel(time),
+      nextDay: isAfterMidnight(time),
+      calendarDate: bookingCalendarDate(bd, time),
+      disabled: past,
+      reason: past ? "Đã qua" : null,
+    }
+  })
+}
+
 /** Canonical mobile forms group slots across midnight while preserving venue-time ordering. */
 export function bookingSlotGroups(bd: BusinessDate, now: Date) {
   const all = bookingSlots(bd, now)
@@ -96,9 +118,11 @@ export function validateBookingTime(
   hhmm: string | null | undefined,
   now: Date,
   graceMin = PAST_GRACE_MIN,
+  quickTimes: readonly string[] = [],
 ) {
   if (!hhmm) return "Chọn giờ đến."
-  if (!isBookingSlot(hhmm)) return "Giờ đặt bàn chỉ từ 19:00 đến 01:00, theo các mốc 30 phút đang cấu hình."
+  if (!isBookingSlot(hhmm) && !isConfiguredQuickTime(hhmm, quickTimes))
+    return "Giờ đặt bàn chỉ từ 19:00 đến 01:00, theo mốc 30 phút hoặc giờ nhanh của quán."
   if (bookingInstant(bd, hhmm).getTime() < now.getTime() - graceMin * MS.MIN)
     return `${slotLabel(hhmm)} đã qua ở ngày này. Chọn lại giờ đến.`
   return null

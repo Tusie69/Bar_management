@@ -41,6 +41,7 @@ import type {
   SessionUser,
   ShiftOverview,
   VenueConfig,
+  VenueSettingsView,
   VisitView,
   WaitlistEntryView,
 } from "@/domain/models"
@@ -197,6 +198,12 @@ export interface VenueConfigPatch {
   groupSymbolCount?: number
 }
 
+export interface VenueSettingsUpdate {
+  quickTimes: string[]
+  upcomingMinutes: number
+  noShowMinutes: number
+}
+
 export interface ReservationQuery {
   businessDate: BusinessDate
   search?: string
@@ -213,6 +220,7 @@ export interface GamApi {
 
   // Queries
   getCatalog(): Promise<Catalog>
+  getVenueSettings(): Promise<VenueSettingsView>
   getFloorState(at: Date, businessDate?: BusinessDate): Promise<FloorState>
   getAvailability(at: Date, partySize: number): Promise<AvailabilityResult>
   getShiftOverview(): Promise<ShiftOverview>
@@ -285,6 +293,7 @@ export interface GamApi {
   undo(operationId: number): Promise<MutationResult>
   redo(undoOperationId: number): Promise<MutationResult>
   updateVenueConfig(patch: VenueConfigPatch): Promise<MutationResult & { venue: VenueConfig }>
+  updateVenueSettings(input: VenueSettingsUpdate): Promise<VenueSettingsView>
   setZoneFlags(
     zoneId: number,
     version: number,
@@ -294,6 +303,7 @@ export interface GamApi {
 
 /** Implemented backend paths, relative to /api/v1. */
 export const REST_ENDPOINTS = {
+  settings: "GET, PUT /settings",
   catalog: "GET /tables/catalog",
   sources: "GET /bookings/sources",
   floorState: "GET /tables?date=YYYY-MM-DD",

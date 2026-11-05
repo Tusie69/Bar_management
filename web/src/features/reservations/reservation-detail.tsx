@@ -36,7 +36,7 @@ import type { ReservationView } from "@/domain/models"
 import { isBookingSlot, validateBookingCheckInDate, validateBookingTime } from "@/domain/booking-rules"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAction } from "@/hooks/use-action"
-import { useCatalog, useNow, useOperations, useReservations } from "@/hooks/use-data"
+import { useCatalog, useNow, useOperations, useReservations, useVenueSettings } from "@/hooks/use-data"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { toast } from "sonner"
 import { NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
@@ -418,7 +418,7 @@ export function EditReservationDialog({
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 p-0 overflow-hidden sm:max-h-[min(90dvh,46rem)] sm:max-w-lg">
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-h-[min(90dvh,46rem)] sm:max-w-lg">
         {open ? <EditReservationBody r={r} close={() => onOpenChange(false)} /> : null}
       </DialogContent>
     </Dialog>
@@ -428,6 +428,7 @@ export function EditReservationDialog({
 function EditReservationBody({ r, close }: { r: ReservationView; close: () => void }) {
   const catalog = useCatalog()
   const now = useNow(30_000)
+  const quickTimes = useVenueSettings().data?.quickTimes ?? []
   const { run, pending } = useAction()
   const [time, setTime] = useState(() => {
     const p = venueParts(r.expectedAt)
@@ -441,11 +442,11 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
   const [isBirthday, setIsBirthday] = useState(r.isBirthday)
   const invalid = noteHasPhoneNumber(note)
   const originalSchedule = time === fmtTime(r.expectedAt)
-  const timeError = originalSchedule ? null : validateBookingTime(r.businessDate, time, now)
+  const timeError = originalSchedule ? null : validateBookingTime(r.businessDate, time, now, undefined, quickTimes)
   const legacyTime = originalSchedule && !isBookingSlot(time) ? time : null
   return (
     <>
-      <DialogHeader className="shrink-0 p-6 pb-2 pr-14 text-left">
+      <DialogHeader className="shrink-0 p-6 pr-14 pb-2 text-left">
         <DialogTitle>Sửa booking</DialogTitle>
         <DialogDescription>Đổi giờ trong cùng ngày giữ nguyên bàn. Đổi sang ngày khác sẽ nhả bàn cũ.</DialogDescription>
       </DialogHeader>
@@ -465,6 +466,7 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
             date={r.businessDate}
             value={time}
             now={now}
+            quickTimes={quickTimes}
             onChange={setTime}
             error={timeError}
             legacyValue={legacyTime}
@@ -514,7 +516,7 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
           </div>
         </div>
       </div>
-      <DialogFooter className="shrink-0 p-6 pt-3 border-t border-border">
+      <DialogFooter className="shrink-0 border-t border-border p-6 pt-3">
         <Button variant="ghost" onClick={close}>
           Quay lại
         </Button>

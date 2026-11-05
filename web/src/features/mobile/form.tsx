@@ -4,6 +4,7 @@ import {
   bookingCalendarDate,
   bookingInstant,
   bookingSlotGroups,
+  configuredQuickSlots,
   defaultBookingSlot,
   GUEST_QUICK,
   isAfterMidnight,
@@ -14,7 +15,7 @@ import {
 import { SOURCE_LABEL, type BookingClassification, type BookingSourceCode } from "@/domain/enums"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { useAvailability } from "@/hooks/use-data"
+import { useAvailability, useVenueSettings } from "@/hooks/use-data"
 import { useAction } from "@/hooks/use-action"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { isPlausibleVnPhone, NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
@@ -25,12 +26,7 @@ import { FloorCanvas } from "../floor/floor-canvas"
 import { useM, type FormRequest } from "./context"
 import { codesOf } from "./model"
 import { Seg } from "./ui"
-import {
-  selectedCapacity,
-  walkInBlockReason,
-  walkInPickableIds,
-  walkInSelectionIssues,
-} from "./walk-in-selection"
+import { selectedCapacity, walkInBlockReason, walkInPickableIds, walkInSelectionIssues } from "./walk-in-selection"
 
 interface Option {
   key: string
@@ -47,13 +43,16 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const m = useM()
   const uid = useId()
   const { run, pending } = useAction()
+  const quickTimes = useVenueSettings().data?.quickTimes ?? []
   const preset = useMemo(() => req.tableIds ?? [], [req.tableIds])
   const [mode, setMode] = useState(req.mode)
   const [party, setParty] = useState(preset.length ? Math.min(8, preset.length * 4) : 4)
   const [isOther, setIsOther] = useState(false)
   const [otherText, setOtherText] = useState("")
   const [dateIdx, setDateIdx] = useState(() =>
-    req.date ? Math.max(0, Math.round((Date.parse(`${req.date}T00:00:00Z`) - Date.parse(`${m.today}T00:00:00Z`)) / 86_400_000)) : 0,
+    req.date
+      ? Math.max(0, Math.round((Date.parse(`${req.date}T00:00:00Z`) - Date.parse(`${m.today}T00:00:00Z`)) / 86_400_000))
+      : 0,
   )
   const [slot, setSlot] = useState<string | null>(() => defaultBookingSlot(m.today, m.now))
   const [checked, setChecked] = useState(preset.length > 0)
@@ -75,7 +74,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const bd = addDays(m.today, dateIdx)
   const other = isOther ? parseOtherGuests(otherText) : null
   const guests = isOther ? (other?.ok ? other.value : null) : party
-  const timeErr = isBooking ? validateBookingTime(bd, slot, m.now) : null
+  const timeErr = isBooking ? validateBookingTime(bd, slot, m.now, undefined, quickTimes) : null
   const at = isBooking && slot && !timeErr ? bookingInstant(bd, slot) : null
   const nextDay = !!at && !!slot && isAfterMidnight(slot)
   const slotText =
@@ -134,12 +133,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
     [m.model.tables, m.model.states, bookableZoneIds, selectedWalkInIds],
   )
   const walkInCapacity = selectedCapacity(selectedWalkInIds, m.model.byId)
-  const walkInIssues = walkInSelectionIssues(
-    selectedWalkInIds,
-    m.model.byId,
-    m.model.states,
-    bookableZoneIds,
-  )
+  const walkInIssues = walkInSelectionIssues(selectedWalkInIds, m.model.byId, m.model.states, bookableZoneIds)
   const walkInReady = !!guests && selectedWalkInIds.length > 0 && walkInCapacity >= guests && walkInIssues.length === 0
 
   const reset = () => {
@@ -151,6 +145,11 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const touch = () => setDirty(true)
   const tableLabel = choice ? `Bàn ${choice.label}` : isBooking ? "chưa chọn bàn" : "chưa có bàn"
   const groups = isBooking ? bookingSlotGroups(bd, m.now) : []
+  const quickSlots = isBooking
+    ? configuredQuickSlots(bd, m.now, quickTimes).filter(
+        (candidate) => !groups.some((group) => group.slots.some((slotOption) => slotOption.time === candidate.time)),
+      )
+    : []
   const past = groups.length ? groups[0].slots.filter((s) => s.disabled) : []
   const dayOffsets = Array.from({ length: 7 }, (_, i) => i)
   if (dateIdx > 6) dayOffsets.push(dateIdx)
@@ -182,7 +181,8 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
     if (!table) return setSelectionMessage(`Bàn #${id} không còn trong sơ đồ.`)
     const anchor = selectedWalkInIds.length ? m.model.byId.get(selectedWalkInIds[0]) : undefined
     setSelectionMessage(
-      walkInBlockReason(table, m.model.states.get(id), bookableZoneIds, anchor) ?? `${m.model.label(id)} không thể chọn.`,
+      walkInBlockReason(table, m.model.states.get(id), bookableZoneIds, anchor) ??
+        `${m.model.label(id)} không thể chọn.`,
     )
   }
 
@@ -417,6 +417,37 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                     <span className="text-[14px] text-tx-2">Giờ đến</span>
                     <span className="text-xs text-subtle">7:00 PM đến 1:00 AM, mỗi 30 phút</span>
                   </div>
+                  {quickSlots.length ? (
+                    <div role="radiogroup" aria-label="Giờ nhanh theo cấu hình quán" className="flex flex-col gap-2">
+                      <span className="text-[13px] text-[var(--text-muted)]">Giờ nhanh theo cấu hình quán</span>
+                      <div className="grid grid-cols-4 gap-2">
+                        {quickSlots.map((quickSlot) => {
+                          const on = !!at && slot === quickSlot.time
+                          return (
+                            <button
+                              key={quickSlot.time}
+                              type="button"
+                              role="radio"
+                              aria-checked={on}
+                              disabled={quickSlot.disabled}
+                              aria-label={`${quickSlot.label}, giờ nhanh${quickSlot.nextDay ? `, sáng ${fmtDayMonth(quickSlot.calendarDate)}` : ""}${quickSlot.disabled ? ", đã qua" : ""}`}
+                              onClick={() => {
+                                setSlot(quickSlot.time)
+                                reset()
+                                touch()
+                              }}
+                              className={cn(
+                                "h-11 min-w-0 rounded-full px-0.5 text-[13px] whitespace-nowrap tabular-nums",
+                                pickChip(on, quickSlot.disabled),
+                              )}
+                            >
+                              {quickSlot.label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
                   {groups.map((g) => (
                     <div key={g.key} role="radiogroup" aria-label={g.title} className="flex flex-col gap-2">
                       <span className="text-[13px] text-[var(--text-muted)]">{g.title}</span>
@@ -431,7 +462,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                               aria-checked={on}
                               aria-disabled={s.disabled}
                               disabled={s.disabled}
-                              aria-label={`${s.label}${s.nextDay ? `, sáng ${fmtDayMonth(s.calendarDate)}` : ""}${s.disabled ? ", đã qua" : ""}`}
+                              aria-label={`${s.label}${quickTimes.includes(s.time) ? ", giờ nhanh" : ""}${s.nextDay ? `, sáng ${fmtDayMonth(s.calendarDate)}` : ""}${s.disabled ? ", đã qua" : ""}`}
                               onClick={() => {
                                 setSlot(s.time)
                                 reset()
@@ -507,9 +538,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                           on ? "border-primary bg-primary-tint" : "border-border bg-surface-1",
                         )}
                       >
-                        <span
-                          className={cn("text-[15px] font-semibold", on ? "text-primary-ink" : "text-tx-strong")}
-                        >
+                        <span className={cn("text-[15px] font-semibold", on ? "text-primary-ink" : "text-tx-strong")}>
                           {o.label}
                         </span>
                         {o.sub ? <span className="text-xs text-[var(--text-muted)]">{o.sub}</span> : null}
@@ -525,7 +554,8 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             ) : (
               <div className="flex flex-col gap-3">
                 <p className="m-0 text-[13px] text-pretty text-tx-2">
-                  Chạm trực tiếp lên bàn hoặc ghế trống. Nếu chưa đủ chỗ, tiếp tục chọn thêm trong cùng khu và cùng loại.
+                  Chạm trực tiếp lên bàn hoặc ghế trống. Nếu chưa đủ chỗ, tiếp tục chọn thêm trong cùng khu và cùng
+                  loại.
                 </p>
                 <div className="relative h-[min(58dvh,500px)] min-h-[360px] overflow-hidden rounded-2xl border border-border bg-floor">
                   {m.model.catalog ? (

@@ -32,7 +32,7 @@ import {
 import { SOURCE_LABEL, type BookingClassification, type BookingSourceCode } from "@/domain/enums"
 import type { AvailabilityResult } from "@/domain/models"
 import { useAction } from "@/hooks/use-action"
-import { useNow } from "@/hooks/use-data"
+import { useNow, useVenueSettings } from "@/hooks/use-data"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { NOTE_PHONE_ERROR, isPlausibleVnPhone, noteHasPhoneNumber } from "@/lib/text"
 import { addDays, businessDateOf, fmtBusinessDate, fmtDayMonth, fmtTime, MS } from "@/lib/time"
@@ -45,10 +45,7 @@ import type { FloorModel } from "./use-floor-model"
 
 const PICKABLE = new Set(["available", "too_small"])
 
-export function checkDirectTableCompatibility(
-  tableIds: number[],
-  byId: Map<number, TableView>,
-): string | null {
+export function checkDirectTableCompatibility(tableIds: number[], byId: Map<number, TableView>): string | null {
   if (tableIds.length <= 1) return null
   const first = byId.get(tableIds[0])
   if (!first) return null
@@ -112,6 +109,7 @@ export function QuickForm({
   const ui = useUi()
   const draft = ui.draft!
   const now = useNow(30_000)
+  const quickTimes = useVenueSettings().data?.quickTimes ?? []
   const today = businessDateOf(now)
   const { run, pending } = useAction()
   const [phone, setPhone] = useState("")
@@ -126,7 +124,7 @@ export function QuickForm({
   const isB = draft.kind === "booking"
   const close = isB ? ui.closeBooking : ui.closeWalkIn
   // Re-derived every render: changing the date re-checks the slot without silently replacing it.
-  const timeError = isB ? validateBookingTime(draft.date, draft.time, now) : null
+  const timeError = isB ? validateBookingTime(draft.date, draft.time, now, undefined, quickTimes) : null
   const at = isB && !timeError ? bookingInstant(draft.date, draft.time) : null
   const party = guestCount(guest)
   const venue = model.catalog?.venue
@@ -390,6 +388,7 @@ export function QuickForm({
                 date={draft.date}
                 value={draft.time}
                 now={now}
+                quickTimes={quickTimes}
                 onChange={(time) => ui.setDraft({ time })}
                 error={tried || draft.time ? timeError : null}
               />

@@ -10,7 +10,7 @@ import { bookingRouter } from './modules/bookings/booking.route.js'
 import { tableRouter } from './modules/tables/table.route.js'
 import { visitRouter } from './modules/visits/visit.route.js'
 import { waitlistRouter } from './modules/waitlist/waitlist.route.js'
-import { venueSettingsRouter } from './modules/venues/venue-settings.route.js'
+import { settingsRouter, venueSettingsRouter } from './modules/venues/venue-settings.route.js'
 import { healthRouter } from './routes/health.route.js'
 
 export const app: Express = express()
@@ -26,6 +26,7 @@ app.use('/api/v1/tables', tableRouter)
 app.use('/api/v1/bookings', bookingRouter)
 app.use('/api/v1/visits', visitRouter)
 app.use('/api/v1/waitlist', waitlistRouter)
+app.use('/api/v1/settings', settingsRouter)
 app.use('/api/v1/venues', venueSettingsRouter)
 
 app.use(notFoundHandler)

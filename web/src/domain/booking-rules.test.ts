@@ -8,6 +8,8 @@ import {
   bookingSlotGroups,
   bookingSlots,
   businessMinute,
+  configuredQuickSlots,
+  isConfiguredQuickTime,
   isBookingSlot,
   isWithinBookingReceptionWindow,
   parseOtherGuests,
@@ -42,8 +44,7 @@ describe("booking check-in business date", () => {
   })
 
   it("reports no active check-in shift during 05:00–17:00", () => {
-    expect(validateBookingCheckInDate("2026-10-30", fromVenueLocal("2026-10-30", "12:00")))
-      .toContain("05:00–17:00")
+    expect(validateBookingCheckInDate("2026-10-30", fromVenueLocal("2026-10-30", "12:00"))).toContain("05:00–17:00")
   })
 
   it.each([
@@ -87,6 +88,14 @@ describe("booking slots", () => {
     expect(isBookingSlot("19:15")).toBe(false)
     expect(validateBookingTime(BD, "01:30", NOON)).not.toBeNull()
     expect(validateBookingTime(BD, "18:30", NOON)).not.toBeNull()
+  })
+  it("adds venue quick times without removing canonical choices or changing an entered value", () => {
+    const quickTimes = ["20:15", "22:45", "00:15"]
+    expect(isConfiguredQuickTime("20:15", quickTimes)).toBe(true)
+    expect(validateBookingTime(BD, "20:15", NOON, undefined, quickTimes)).toBeNull()
+    expect(configuredQuickSlots(BD, NOON, quickTimes).map((slot) => slot.time)).toEqual(quickTimes)
+    expect(bookingSlots(BD, NOON).map((slot) => slot.time)).toEqual(BOOKING_SLOTS)
+    expect(validateBookingTime(BD, "20:15", NOON, undefined, ["21:15"])).not.toBeNull()
   })
   it.each([
     ["24:00", false],

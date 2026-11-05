@@ -1,5 +1,5 @@
 /** Canonical GamApi backed exclusively by the frozen /api/v1 contract. */
-import type { Catalog, ClaimView, FloorState, MutationResult, SessionUser } from "@/domain/models"
+import type { Catalog, ClaimView, FloorState, MutationResult, SessionUser, VenueSettingsView } from "@/domain/models"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { clock } from "../clock"
 import { ApiError, type GamApi } from "../contracts"
@@ -40,6 +40,7 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
   const get = <T>(path: string) => client.get<T>(path, { reviver: revive })
   const post = <T>(path: string, body: unknown, idempotencyKey?: string) =>
     client.post<T>(path, body, { reviver: revive, idempotencyKey })
+  const put = <T>(path: string, body: unknown) => client.put<T>(path, body, { reviver: revive })
   let cachedCatalog: { value: Catalog; expiresAt: number } | null = null
   let catalogLoad: Promise<Catalog> | null = null
   let catalogGeneration = 0
@@ -91,19 +92,18 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     }
     const mapped = mapFloorProjection(projection, catalog)
     const latest = latestFloorByDate.get(date)
-    if (latest && (mapped.changeSeq < latest.changeSeq
-      || (mapped.changeSeq === latest.changeSeq && mapped.at.getTime() < latest.at.getTime()))) {
+    if (
+      latest &&
+      (mapped.changeSeq < latest.changeSeq ||
+        (mapped.changeSeq === latest.changeSeq && mapped.at.getTime() < latest.at.getTime()))
+    ) {
       return structuredClone(latest)
     }
     latestFloorByDate.set(date, structuredClone(mapped))
     return mapped
   }
   const snapshot = async (at: Date, date: BusinessDate = businessDateOf(at)) => {
-    const [catalog, floorState, rows] = await Promise.all([
-      loadCatalog(),
-      floor(date),
-      bookings.list(date),
-    ])
+    const [catalog, floorState, rows] = await Promise.all([loadCatalog(), floor(date), bookings.list(date)])
     return {
       catalog,
       bookings: rows,
@@ -139,6 +139,7 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     listDemoUsers: () => (session ? [session] : []),
     subscribe: () => () => undefined,
     getCatalog: loadCatalog,
+    getVenueSettings: () => get<VenueSettingsView>("/settings"),
     getFloorState: async (at, date = businessDateOf(at)) => floor(date),
     getAvailability: async (at, party) => {
       const data = await snapshot(at)
@@ -236,12 +237,16 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     },
     seatWalkIn: async (input) => {
       if (input.overrideReason) unsupported("nhận khách vượt quy tắc")
-      const response = await post<{ visitId: number }>("/bookings/walk-ins", {
-        partySize: input.guestCount,
-        businessDate: businessDateOf(clock.now()),
-        tableIds: input.tableIds,
-        ...(input.contactName ? { guestName: input.contactName } : {}),
-      }, input.idempotencyKey)
+      const response = await post<{ visitId: number }>(
+        "/bookings/walk-ins",
+        {
+          partySize: input.guestCount,
+          businessDate: businessDateOf(clock.now()),
+          tableIds: input.tableIds,
+          ...(input.contactName ? { guestName: input.contactName } : {}),
+        },
+        input.idempotencyKey,
+      )
       return { ...result("Đã nhận khách walk-in."), visitId: response.visitId }
     },
     moveClaim: async (input) => {
@@ -324,11 +329,15 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
           ...(input.phone === undefined ? {} : { phoneNumber: input.phone }),
         }
       }
-      const response = await post<{ entry: BackendWaitlistEntry }>("/waitlist", {
-        ...body,
-        contactChannel: input.channel,
-        ...(input.note === undefined ? {} : { note: input.note }),
-      }, input.idempotencyKey)
+      const response = await post<{ entry: BackendWaitlistEntry }>(
+        "/waitlist",
+        {
+          ...body,
+          contactChannel: input.channel,
+          ...(input.note === undefined ? {} : { note: input.note }),
+        },
+        input.idempotencyKey,
+      )
       return { ...result("Đã thêm khách vào danh sách chờ."), entryId: response.entry.id }
     },
     seatWaitlist: async (input) => {
@@ -383,7 +392,12 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     updateCustomerNotes: rejectUnsupported("ghi chú hồ sơ khách"),
     undo: rejectUnsupported("hoàn tác"),
     redo: rejectUnsupported("làm lại"),
-    updateVenueConfig: rejectUnsupported("cấu hình quán"),
+    updateVenueConfig: rejectUnsupported("cấu hình quán mở rộng"),
+    updateVenueSettings: async (input) => {
+      const settings = await put<VenueSettingsView>("/settings", input)
+      invalidateCatalog()
+      return settings
+    },
     setZoneFlags: rejectUnsupported("cấu hình khu"),
   }
 }

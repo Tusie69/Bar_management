@@ -9,6 +9,8 @@ import {
   GUEST_QUICK,
   bookingSlotGroups,
   bookingSlots,
+  configuredQuickSlots,
+  isConfiguredQuickTime,
   isBookingSlot,
   parseOtherGuests,
 } from "@/domain/booking-rules"
@@ -148,6 +150,7 @@ export function BookingTimePicker({
   error,
   gridClassName,
   legacyValue,
+  quickTimes = [],
 }: {
   date: BusinessDate
   value: string
@@ -158,14 +161,18 @@ export function BookingTimePicker({
   gridClassName?: string
   /** Existing out-of-window value: display it explicitly and preserve it until staff selects a valid slot. */
   legacyValue?: string | null
+  /** Venue-configured shortcuts. The canonical 30-minute choices remain available. */
+  quickTimes?: readonly string[]
 }) {
   const id = useId()
   const groups = bookingSlotGroups(date, now)
   const allSlots = bookingSlots(date, now)
+  const quickSlots = configuredQuickSlots(date, now, quickTimes)
+  const extraQuickSlots = quickSlots.filter((slot) => !isBookingSlot(slot.time))
   const past = allSlots.filter((s) => s.disabled)
   const allPast = past.length === allSlots.length
-  const valid = isBookingSlot(value) && !error
-  const selected = allSlots.find((slot) => slot.time === value)
+  const valid = (isBookingSlot(value) || isConfiguredQuickTime(value, quickTimes)) && !error
+  const selected = [...quickSlots, ...allSlots].find((slot) => slot.time === value)
   const enabledSlots = allSlots.filter((slot) => !slot.disabled)
   const isSelectedEnabled = valid && enabledSlots.some((slot) => slot.time === value)
   const rovingStopTime = isSelectedEnabled ? value : enabledSlots[0]?.time
@@ -179,21 +186,19 @@ export function BookingTimePicker({
     const current = enabled.findIndex((slot) => slot.time === time)
     const baseIdx = current >= 0 ? current : 0
     const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1
-    const next = event.key === "Home"
-      ? enabled[0]
-      : event.key === "End"
-        ? enabled[enabled.length - 1]
-        : enabled[Math.min(enabled.length - 1, Math.max(0, baseIdx + step))]
+    const next =
+      event.key === "Home"
+        ? enabled[0]
+        : event.key === "End"
+          ? enabled[enabled.length - 1]
+          : enabled[Math.min(enabled.length - 1, Math.max(0, baseIdx + step))]
     onChange(next.time)
     requestAnimationFrame(() => slotRefs.current.get(next.time)?.focus())
   }
 
   const today = venueDateString(now)
-  const selectedDayLabel = selected?.calendarDate === today
-    ? "Hôm nay"
-    : selected?.calendarDate === addDays(today, 1)
-      ? "Hôm sau"
-      : null
+  const selectedDayLabel =
+    selected?.calendarDate === today ? "Hôm nay" : selected?.calendarDate === addDays(today, 1) ? "Hôm sau" : null
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -208,6 +213,30 @@ export function BookingTimePicker({
           Giờ hiện tại {legacyValue} không nằm trong các mốc chọn hiện tại. Giờ này được giữ nguyên nếu chỉ sửa thông
           tin khác; chọn một giờ bên dưới nếu muốn đổi lịch.
         </p>
+      ) : null}
+      {extraQuickSlots.length ? (
+        <div role="radiogroup" aria-label="Giờ nhanh theo cấu hình quán" className="flex flex-col gap-1.5">
+          <span className="text-xs text-tx-3">Giờ nhanh theo cấu hình quán</span>
+          <div className={cn("grid grid-cols-4 gap-2 sm:gap-1.5", gridClassName)}>
+            {extraQuickSlots.map((slot) => {
+              const on = valid && value === slot.time
+              return (
+                <button
+                  key={slot.time}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  disabled={slot.disabled}
+                  aria-label={`${slot.label}, giờ nhanh${slot.nextDay ? `, hôm sau ${fmtDayMonth(slot.calendarDate)}` : ""}${slot.disabled ? ", đã qua" : ""}`}
+                  className={chip(on)}
+                  onClick={() => onChange(slot.time)}
+                >
+                  {slot.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
       ) : null}
       {groups.map((g) => (
         <div key={g.key} role="radiogroup" aria-label={g.title} className="flex flex-col gap-1.5">
@@ -227,7 +256,7 @@ export function BookingTimePicker({
                   aria-checked={on}
                   disabled={s.disabled}
                   tabIndex={!s.disabled && s.time === rovingStopTime ? 0 : -1}
-                  aria-label={`${s.label} (${s.time})${s.nextDay ? `, hôm sau ${fmtDayMonth(s.calendarDate)}` : ""}${s.disabled ? ", đã qua" : ""}`}
+                  aria-label={`${s.label} (${s.time})${quickTimes.includes(s.time) ? ", giờ nhanh" : ""}${s.nextDay ? `, hôm sau ${fmtDayMonth(s.calendarDate)}` : ""}${s.disabled ? ", đã qua" : ""}`}
                   className={chip(on)}
                   onClick={() => onChange(s.time)}
                   onKeyDown={(event) => selectWithKeyboard(event, s.time)}
@@ -241,7 +270,8 @@ export function BookingTimePicker({
       ))}
       {selected ? (
         <p className="tnum text-sm font-medium" aria-live="polite">
-          Đã chọn: {selected.label} — {fmtDayMonth(selected.calendarDate)}{selectedDayLabel ? ` (${selectedDayLabel})` : ""}
+          Đã chọn: {selected.label} — {fmtDayMonth(selected.calendarDate)}
+          {selectedDayLabel ? ` (${selectedDayLabel})` : ""}
         </p>
       ) : null}
       {allPast ? (
