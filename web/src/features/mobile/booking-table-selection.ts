@@ -5,8 +5,8 @@ const occupiedLiveReason: Partial<Record<FloorTableState["state"], string>> = {
   hold: "đang được giữ",
   hold_overdue: "đang được giữ",
   upcoming: "đang giữ cho khách sắp đến",
-  late: "đang giữ cho khách đến muộn",
-  late_confirmed: "đang giữ cho khách đến muộn (đã xác nhận)",
+  late: "đang giữ cho khách không tới",
+  late_confirmed: "đang giữ cho khách không tới (đã xác nhận)",
   noshow: "đang giữ cho khách không tới",
   seated: "đang có khách",
   oos: "ngưng phục vụ",
@@ -107,6 +107,16 @@ export function bookingTableBlockReason(
       return `${label} chưa nhả từ hôm trước.`
     }
     if (liveState.state !== "free") {
+      const min = liveState.claim?.minutesLate
+      const minSuffix = min && min > 0 ? ` · ${min} phút` : ""
+      if (
+        liveState.state === "late" ||
+        liveState.state === "late_confirmed" ||
+        liveState.state === "noshow"
+      ) {
+        const base = occupiedLiveReason[liveState.state]
+        return `${label} ${base}${minSuffix}.`
+      }
       const desc = occupiedLiveReason[liveState.state] ?? "không còn trống"
       return `${label} ${desc}.`
     }

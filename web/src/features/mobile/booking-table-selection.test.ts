@@ -114,7 +114,7 @@ describe("S2 G4 - booking table selection & preset availability", () => {
       { state: "reserved", expectedBadge: "Đã được giữ", expectedReasonRegex: /đã được giữ/ },
       { state: "hold", expectedBadge: "Đang được giữ", expectedReasonRegex: /đang được giữ/ },
       { state: "upcoming", expectedBadge: "Sắp đến", expectedReasonRegex: /sắp đến/ },
-      { state: "late", expectedBadge: "Không tới", expectedReasonRegex: /đến muộn/ },
+      { state: "late", expectedBadge: "Không tới", expectedReasonRegex: /không tới/ },
       { state: "late_confirmed", expectedBadge: "Không tới", expectedReasonRegex: /đã xác nhận/ },
       { state: "noshow", expectedBadge: "Không tới", expectedReasonRegex: /không tới/ },
       { state: "seated", expectedBadge: "Đang có khách", expectedReasonRegex: /đang có khách/ },
@@ -329,5 +329,34 @@ describe("S2 G4 - booking table selection & preset availability", () => {
     )
     expect(issues.length).toBeGreaterThan(0)
     expect(issues[0]).toMatch(/Đã giữ cho booking ngày mai/)
+  })
+
+  it("8. G4 warning reasons retain 'không tới', minutes, and confirmation note", () => {
+    const table = createTable({ id: 1, code: "B5", capacity: 4 })
+    const bookableZones = new Set([1])
+
+    const lateLive = createLiveState("late", {
+      claim: { minutesLate: 15 } as any,
+    })
+    const reasonLate = bookingTableBlockReason(table, lateLive, undefined, bookableZones, true, 4)
+    expect(reasonLate).toContain("không tới")
+    expect(reasonLate).toContain("15 phút")
+    expect(reasonLate).not.toContain("đến muộn")
+
+    const lateConfLive = createLiveState("late_confirmed", {
+      claim: { minutesLate: 16, lateConfirmedAt: new Date() } as any,
+    })
+    const reasonConf = bookingTableBlockReason(table, lateConfLive, undefined, bookableZones, true, 4)
+    expect(reasonConf).toContain("không tới")
+    expect(reasonConf).toContain("đã xác nhận")
+    expect(reasonConf).toContain("16 phút")
+    expect(reasonConf).not.toContain("đến muộn")
+
+    const noshowLive = createLiveState("noshow", {
+      claim: { minutesLate: 30 } as any,
+    })
+    const reasonNoshow = bookingTableBlockReason(table, noshowLive, undefined, bookableZones, true, 4)
+    expect(reasonNoshow).toContain("không tới")
+    expect(reasonNoshow).toContain("30 phút")
   })
 })
