@@ -984,7 +984,7 @@ export class MockGamApi implements GamApi, DemoControls {
     const r = this.res(id)
     this.checkVersion("reservations", r, version, "Booking")
     if (r.status !== "BOOKED") this.fail("Booking không còn ở trạng thái Đã đặt.", "INVALID_STATE")
-    if (reason === "NO_SHOW_CONFIRMED") this.fail("Dùng thao tác Xác nhận không đến.")
+    if (reason === "NO_SHOW_CONFIRMED") this.fail("Dùng thao tác Xác nhận không tới.")
     if (reason === "OTHER" && !note?.trim()) this.fail("Ghi rõ lý do khác.")
     if (note && noteHasPhoneNumber(note)) this.fail(NOTE_PHONE_ERROR)
     return this.commit(
@@ -1051,7 +1051,7 @@ export class MockGamApi implements GamApi, DemoControls {
     const { minutesLate } = reservationWarning(this.venue, r, this.now)
     if (minutesLate < this.venue.noShowWarningMinutes) {
       this.fail(
-        `Chỉ xác nhận không đến sau ${this.venue.noShowWarningMinutes} phút (hiện trễ ${minutesLate}'). Trước mốc này, nếu khách báo hủy hãy dùng Hủy booking.`,
+        `Chỉ xác nhận không tới sau ${this.venue.noShowWarningMinutes} phút (hiện trễ ${minutesLate}'). Trước mốc này, nếu khách báo hủy hãy dùng Hủy booking.`,
         "INVALID_STATE",
       )
     }
@@ -1066,7 +1066,7 @@ export class MockGamApi implements GamApi, DemoControls {
         row.closeReasonCode = "NO_SHOW_CONFIRMED"
         return {
           entityId: r.id,
-          summary: `Xác nhận không đến · booking ${fmtTime(r.expectedAt)}${tables.length ? ` · nhả ${this.codes(tables)}` : ""}`,
+          summary: `Xác nhận không tới · booking ${fmtTime(r.expectedAt)}${tables.length ? ` · nhả ${this.codes(tables)}` : ""}`,
         }
       },
     )
@@ -1087,7 +1087,7 @@ export class MockGamApi implements GamApi, DemoControls {
     const elapsed = this.now.getTime() - r.expectedAt.getTime()
     if (elapsed < 0) this.fail("Chỉ xác nhận tới muộn sau giờ hẹn.", "INVALID_STATE")
     if (elapsed >= this.venue.noShowWarningMinutes * 60_000)
-      this.fail("Cách xử lý sau ngưỡng không đến đang chờ phê duyệt.", "INVALID_STATE")
+      this.fail("Cách xử lý sau ngưỡng không tới đang chờ phê duyệt.", "INVALID_STATE")
     return this.commit(
       { action: "RESERVATION_LATE_CONFIRMED", entityType: "reservation", undoable: false, reasonCode: "CUSTOMER_CONFIRMED_LATE" },
       (tx) => {
@@ -2066,7 +2066,7 @@ export class MockGamApi implements GamApi, DemoControls {
     if (next.upcomingWarningMinutes < 1 || next.upcomingWarningMinutes > 240)
       this.fail("Mốc sắp đến phải từ 1 đến 240 phút.")
     if (next.lateWarningMinutes < 1) this.fail("Mốc đến muộn phải từ 1 phút.")
-    if (next.noShowWarningMinutes <= next.lateWarningMinutes) this.fail("Mốc không đến phải lớn hơn mốc đến muộn.")
+    if (next.noShowWarningMinutes <= next.lateWarningMinutes) this.fail("Mốc không tới phải lớn hơn mốc đến muộn.")
     if (next.waitlistHoldDefaultMinutes < 1 || next.waitlistHoldDefaultMinutes > 240)
       this.fail("Thời gian giữ bàn từ 1 đến 240 phút.")
     if (next.waitlistClaimLeaseSeconds < 30 || next.waitlistClaimLeaseSeconds > 3600)
