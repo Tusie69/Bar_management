@@ -593,12 +593,12 @@ function ReservationSection({
       </ClaimCard>
       {claim.warning ? (
         <div role="status">
-          <Note icon={AlarmClock} tone={claim.warning === "noshow" ? "noshow" : "late"}>
+          <Note icon={AlarmClock} tone="noshow">
             <span
               className="font-semibold"
-              style={{ color: STATE_META[claim.warning === "noshow" ? "noshow" : "late"].ink }}
+              style={{ color: STATE_META.noshow.ink }}
             >
-              {claim.warning === "noshow" ? "Chưa đến" : "Đến muộn"} · trễ {claim.minutesLate}'
+              Không đến · trễ {claim.minutesLate}'
             </span>
             <span className="block text-muted-foreground">Chỉ cảnh báo, bàn vẫn giữ.</span>
           </Note>

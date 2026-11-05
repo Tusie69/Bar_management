@@ -30,7 +30,7 @@ export function formatOccupiedLabel(partySize: number): string {
   return `${partySize} khách`
 }
 
-export type LegendStatusKey = "free" | "reserved" | "upcoming" | "late" | "noshow" | "seated" | "spare"
+export type LegendStatusKey = "free" | "reserved" | "upcoming" | "noshow" | "seated" | "spare"
 
 export function calculateStatusCounts(
   tables: (TableView & { state?: TableLiveState; liveState?: TableLiveState; claim?: any })[],
@@ -40,7 +40,6 @@ export function calculateStatusCounts(
     free: 0,
     reserved: 0,
     upcoming: 0,
-    late: 0,
     noshow: 0,
     seated: 0,
     spare: 0,
@@ -54,14 +53,17 @@ export function calculateStatusCounts(
     const claim = fs?.claim ?? t.claim
 
     let key: LegendStatusKey
-    if (rawState === "late" || rawState === "late_confirmed" || rawState === "hold_overdue") {
-      key = "late"
+    if (
+      rawState === "late" ||
+      rawState === "late_confirmed" ||
+      rawState === "noshow" ||
+      rawState === "hold_overdue"
+    ) {
+      key = "noshow"
     } else if (rawState === "reserved" || rawState === "hold") {
       key = "reserved"
     } else if (rawState === "upcoming") {
       key = "upcoming"
-    } else if (rawState === "noshow") {
-      key = "noshow"
     } else if (rawState === "seated") {
       key = "seated"
     } else if (rawState === "spare" || (t.isSpare && rawState === "free")) {

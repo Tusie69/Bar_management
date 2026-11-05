@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { FloorTableState, TableView } from "@/domain/models"
 import { BAR_SEATS, FIXTURES, FLOOR_H, FLOOR_W, TABLES } from "@/domain/venue-layout"
+import { STATE_META } from "@/components/status-meta"
 import {
   activeGroupForSelection,
   calculateStatusCounts,
@@ -379,10 +380,38 @@ describe("StatusLegend counts and deduplication (Item 8)", () => {
     expect(counts.free).toBe(1)
   })
 
-  it("maps late_confirmed to Quá giờ (late)", () => {
+  it("the three states (late, late_confirmed, noshow) give the same label and color", () => {
+    // Label, short label, and color tokens must be identical
+    expect(STATE_META.late.label).toBe("Không đến")
+    expect(STATE_META.late_confirmed.label).toBe("Không đến")
+    expect(STATE_META.noshow.label).toBe("Không đến")
+
+    expect(STATE_META.late.short).toBe("Không đến")
+    expect(STATE_META.late_confirmed.short).toBe("Không đến")
+    expect(STATE_META.noshow.short).toBe("Không đến")
+
+    expect(STATE_META.late.color).toBe("var(--st-noshow)")
+    expect(STATE_META.late_confirmed.color).toBe("var(--st-noshow)")
+    expect(STATE_META.noshow.color).toBe("var(--st-noshow)")
+
+    expect(STATE_META.late.ink).toBe("var(--st-noshow-ink)")
+    expect(STATE_META.late_confirmed.ink).toBe("var(--st-noshow-ink)")
+    expect(STATE_META.noshow.ink).toBe("var(--st-noshow-ink)")
+
+    expect(STATE_META.late.tint).toBe("var(--st-noshow-tint)")
+    expect(STATE_META.late_confirmed.tint).toBe("var(--st-noshow-tint)")
+    expect(STATE_META.noshow.tint).toBe("var(--st-noshow-tint)")
+
+    // hold_overdue (Quá hạn) is a different business state and keeps its own label
+    expect(STATE_META.hold_overdue.label).toBe("Quá hạn giữ, chờ xử lý")
+    expect(STATE_META.hold_overdue.short).toBe("Quá hạn")
+  })
+
+  it("maps late, late_confirmed, and noshow into the combined Không đến (noshow) chip", () => {
     const tables: TableView[] = [
       createTable(1, 100, 100, 40, 30, "A"),
       createTable(2, 100, 150, 40, 30, "A"),
+      createTable(3, 100, 200, 40, 30, "A"),
     ]
 
     const states = new Map<number, FloorTableState>([
@@ -447,11 +476,187 @@ describe("StatusLegend counts and deduplication (Item 8)", () => {
           },
         },
       ],
+      [
+        3,
+        {
+          tableId: 3,
+          state: "noshow",
+          staleFromPreviousDay: false,
+          claim: {
+            kind: "reservation",
+            visitId: null,
+            reservationId: 3,
+            waitlistEntryId: null,
+            holdId: null,
+            displayName: "Khách 3",
+            phoneLast3: "111",
+            partySize: 2,
+            startsAt: new Date(),
+            deadlineAt: null,
+            paid: false,
+            origin: null,
+            tableIds: [3],
+            groupId: null,
+            symbolNo: null,
+            warning: "noshow",
+            minutesLate: 35,
+            sourceCode: null,
+            note: null,
+            version: 1,
+          },
+        },
+      ],
     ])
 
     const counts = calculateStatusCounts(tables, states)
-    // Both late and late_confirmed map into Quá giờ (late)
-    expect(counts.late).toBe(2)
+    // All three states (late, late_confirmed, noshow) sum into the combined noshow chip
+    expect(counts.noshow).toBe(3)
+  })
+
+  it("legend count equals their sum with a group counted once", () => {
+    const tables: TableView[] = [
+      createTable(1, 100, 100, 40, 30, "A"),
+      createTable(2, 100, 150, 40, 30, "A"),
+      createTable(3, 100, 200, 40, 30, "A"),
+    ]
+
+    const states = new Map<number, FloorTableState>([
+      [
+        1,
+        {
+          tableId: 1,
+          state: "late",
+          staleFromPreviousDay: false,
+          claim: {
+            kind: "reservation",
+            visitId: null,
+            reservationId: 1,
+            waitlistEntryId: null,
+            holdId: null,
+            displayName: "Nhóm VIP",
+            phoneLast3: "456",
+            partySize: 6,
+            startsAt: new Date(),
+            deadlineAt: null,
+            paid: false,
+            origin: null,
+            tableIds: [1, 2],
+            groupId: 99,
+            symbolNo: 99,
+            warning: "late",
+            minutesLate: 15,
+            sourceCode: null,
+            note: null,
+            version: 1,
+          },
+        },
+      ],
+      [
+        2,
+        {
+          tableId: 2,
+          state: "late_confirmed",
+          staleFromPreviousDay: false,
+          claim: {
+            kind: "reservation",
+            visitId: null,
+            reservationId: 1,
+            waitlistEntryId: null,
+            holdId: null,
+            displayName: "Nhóm VIP",
+            phoneLast3: "456",
+            partySize: 6,
+            startsAt: new Date(),
+            deadlineAt: null,
+            paid: false,
+            origin: null,
+            tableIds: [1, 2],
+            groupId: 99,
+            symbolNo: 99,
+            warning: "late",
+            minutesLate: 15,
+            sourceCode: null,
+            note: null,
+            version: 1,
+            lateConfirmedAt: new Date(),
+          },
+        },
+      ],
+      [
+        3,
+        {
+          tableId: 3,
+          state: "noshow",
+          staleFromPreviousDay: false,
+          claim: {
+            kind: "reservation",
+            visitId: null,
+            reservationId: 3,
+            waitlistEntryId: null,
+            holdId: null,
+            displayName: "Khách lẻ",
+            phoneLast3: "789",
+            partySize: 2,
+            startsAt: new Date(),
+            deadlineAt: null,
+            paid: false,
+            origin: null,
+            tableIds: [3],
+            groupId: null,
+            symbolNo: null,
+            warning: "noshow",
+            minutesLate: 35,
+            sourceCode: null,
+            note: null,
+            version: 1,
+          },
+        },
+      ],
+    ])
+
+    const counts = calculateStatusCounts(tables, states)
+    // Tables 1 & 2 share group grp-99 -> counts as 1. Table 3 is standalone -> counts as 1.
+    // Total noshow count = 2 (sum with group dedup applied)
+    expect(counts.noshow).toBe(2)
+  })
+
+  it("counts hold_overdue under the combined Không đến (noshow) chip while preserving its business state", () => {
+    const tables: TableView[] = [createTable(1, 100, 100, 40, 30, "A")]
+    const states = new Map<number, FloorTableState>([
+      [
+        1,
+        {
+          tableId: 1,
+          state: "hold_overdue",
+          staleFromPreviousDay: false,
+          claim: {
+            kind: "waitlist_hold",
+            visitId: null,
+            reservationId: null,
+            waitlistEntryId: 10,
+            holdId: 1,
+            displayName: "Khách chờ",
+            phoneLast3: "333",
+            partySize: 2,
+            startsAt: new Date(),
+            deadlineAt: new Date(Date.now() - 300_000),
+            paid: false,
+            origin: null,
+            tableIds: [1],
+            groupId: null,
+            symbolNo: null,
+            warning: null,
+            minutesLate: 5,
+            sourceCode: null,
+            note: null,
+            version: 1,
+          },
+        },
+      ],
+    ])
+
+    const counts = calculateStatusCounts(tables, states)
+    expect(counts.noshow).toBe(1)
   })
 
   it("counts spare tables as Sơ cua", () => {

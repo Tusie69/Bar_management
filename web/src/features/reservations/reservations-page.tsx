@@ -42,7 +42,7 @@ type StatusFilter = "all" | "upcoming" | "late" | "unassigned" | "checked_in" | 
 const FILTERS: { value: StatusFilter; label: string; test: (r: ReservationView) => boolean }[] = [
   { value: "all", label: "Tất cả", test: () => true },
   { value: "upcoming", label: "Sắp đến", test: (r) => r.status === "BOOKED" && !r.warning },
-  { value: "late", label: "Muộn / chưa đến", test: (r) => r.status === "BOOKED" && !!r.warning },
+  { value: "late", label: "Không đến", test: (r) => r.status === "BOOKED" && !!r.warning },
   { value: "unassigned", label: "Chưa có bàn", test: (r) => r.status === "BOOKED" && r.subState !== "DANG_GIU_BAN" },
   { value: "checked_in", label: "Đã check-in", test: (r) => r.status === "CHECKED_IN" },
   { value: "closed", label: "Hủy / không đến", test: (r) => r.status === "CANCELLED" || r.status === "NO_SHOW" },
@@ -652,7 +652,7 @@ function Timeline({
                     </button>
                   )
                 }
-                const tone = a.warning === "noshow" ? "noshow" : a.warning === "late" ? "late" : "reserved"
+                const tone = a.warning ? "noshow" : "reserved"
                 return (
                   <button
                     key={a.allocationId}

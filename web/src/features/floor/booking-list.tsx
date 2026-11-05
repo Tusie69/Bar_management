@@ -65,13 +65,11 @@ export function useBookingItems(model: FloorModel, bd: BusinessDate, live: boole
         status:
           tone === "seated"
             ? `Đến ${fmtTime(r.checkedInAt)}`
-            : tone === "late"
-              ? `Muộn ${r.minutesLate}'`
-              : tone === "noshow"
-                ? `Không đến · ${r.minutesLate}'`
-                : r.subState === "CHO_PHAN_BAN"
-                  ? "Chờ phân bàn"
-                  : "Đã đặt",
+            : tone === "late" || tone === "noshow"
+              ? `Không đến · ${r.minutesLate}'`
+              : r.subState === "CHO_PHAN_BAN"
+                ? "Chờ phân bàn"
+                : "Đã đặt",
         tone,
         tableId: r.tableIds[0] ?? null,
         reservation: r,

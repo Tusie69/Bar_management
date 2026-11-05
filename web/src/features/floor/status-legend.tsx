@@ -44,7 +44,6 @@ export function StatusLegend({ tables = [], states, className }: StatusLegendPro
     { key: "free", label: "Trống", count: counts.free, colorVar: "var(--table-line)" },
     { key: "reserved", label: "Đã đặt", count: counts.reserved, colorVar: "var(--st-reserved)" },
     { key: "upcoming", label: "Sắp tới", count: counts.upcoming, colorVar: "var(--st-upcoming)" },
-    { key: "late", label: "Quá giờ", count: counts.late, colorVar: "var(--st-late)" },
     { key: "noshow", label: "Không đến", count: counts.noshow, colorVar: "var(--st-noshow)" },
     { key: "seated", label: "Có khách", count: counts.seated, colorVar: "var(--st-seated)" },
     { key: "spare", label: "Sơ cua", count: counts.spare, colorVar: "var(--table-line)", isDashed: true },
@@ -78,8 +77,8 @@ export function StatusLegend({ tables = [], states, className }: StatusLegendPro
           </PopoverTrigger>
         </div>
 
-        {/* Chips: 4-column grid on mobile (max 2 rows), 1 compact row on desktop if it fits */}
-        <div className="grid grid-cols-4 gap-0.5 sm:flex sm:flex-wrap sm:items-center sm:gap-0.5 lg:gap-1">
+        {/* Chips: 3-column grid on mobile (exact 2 rows of 3), 1 compact row on desktop if it fits */}
+        <div className="grid grid-cols-3 gap-0.5 sm:flex sm:flex-wrap sm:items-center sm:gap-0.5 lg:gap-1">
           {CHIPS.map((chip) => (
             <div
               key={chip.key}
@@ -177,7 +176,7 @@ export function StatusLegend({ tables = [], states, className }: StatusLegendPro
             </div>
 
             <p className="text-[11px] leading-relaxed text-muted-foreground">
-              Quá giờ và Tới muộn dùng chung màu. Tới muộn là hành động/metadata, không phải màu trạng thái thứ hai. Mặc định ẩn chú giải icon dưới nút ⓘ để không che bàn; chú giải màu bàn vẫn luôn hiển thị.
+              Không đến và Tới muộn dùng chung màu. Tới muộn là hành động/metadata, không phải màu trạng thái thứ hai. Mặc định ẩn chú giải icon dưới nút ⓘ để không che bàn; chú giải màu bàn vẫn luôn hiển thị.
             </p>
 
             <button

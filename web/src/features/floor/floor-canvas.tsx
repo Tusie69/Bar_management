@@ -835,7 +835,9 @@ function liveLabel(state: TableLiveState, fs: FloorTableState | undefined, t: Ta
 }
 
 function describe(t: TableView, state: TableLiveState, fs?: FloorTableState) {
-  const base = `${t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`}, ${STATE_META[state].label}`
+  const lateConfirmed = state === "late_confirmed" || !!fs?.claim?.lateConfirmedAt
+  const statusLabel = `${STATE_META[state].label}${lateConfirmed ? " (đã báo tới muộn)" : ""}`
+  const base = `${t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`}, ${statusLabel}`
   const c = fs?.claim
   const spare = t.isSpare ? ", bàn sơ cua" : ""
   if (!c) return `${base}${spare}`
