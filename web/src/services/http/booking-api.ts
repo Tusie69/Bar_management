@@ -113,6 +113,22 @@ export class HttpBookingApi {
     )
   }
 
+  async startCall(id: number): Promise<{ callId: number; bookingId: number; initiatedAt: Date; telUri: string }> {
+    return this.client.post(`/bookings/${id}/call`, {}, { reviver: dateReviver })
+  }
+
+  async recordCallOutcome(
+    bookingId: number,
+    callId: number,
+    outcome: "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED",
+    bookingVersion?: number,
+  ): Promise<void> {
+    await this.client.post(`/bookings/${bookingId}/calls/${callId}/outcome`, {
+      outcome,
+      ...(bookingVersion === undefined ? {} : { bookingVersion }),
+    }, { reviver: dateReviver })
+  }
+
   async assignVersion(id: number, version: number, tableIds: number[]): Promise<HttpBooking> {
     const response = await this.client.post<{ booking: BackendBookingPayload }>(
       `/bookings/${id}/assign`,

@@ -78,6 +78,7 @@ import { useCan } from "@/state/session"
 import { useUi } from "@/state/ui"
 import { toast } from "sonner"
 import { ExtendHoldDialog, GuestCountDialog, SplitDialog } from "./floor-dialogs"
+import { CallCustomerControl } from "../bookings/call-customer"
 import type { FloorModel } from "./use-floor-model"
 
 const CANCEL_REASONS = (Object.keys(CLOSE_REASON_LABEL) as ReservationCloseReason[])
@@ -611,6 +612,12 @@ function ReservationSection({
         </Note>
       ) : null}
       <div className="grid grid-cols-2 gap-2">
+        <CallCustomerControl
+          bookingId={claim.reservationId!}
+          bookingVersion={claim.version}
+          canCall={claim.canCall === true}
+          className="col-span-2"
+        />
         <GuardedButton
           permission="visit.checkin"
           size="lg"

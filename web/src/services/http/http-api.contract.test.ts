@@ -148,6 +148,10 @@ beforeEach(() => {
       if (path.startsWith("/waitlist?")) return json({ businessDate: date, entries: [entry] })
       if (path === "/bookings/walk-ins") return json({ visitId: 31 })
       if (path.endsWith("phone:reveal")) return json({ phoneNumber: "+84901234123" })
+      if (path === "/bookings/11/call")
+        return json({ callId: 71, bookingId: 11, initiatedAt: at.toISOString(), telUri: "tel:+84901234123" }, 201)
+      if (path === "/bookings/11/calls/71/outcome")
+        return json({ callId: 71, bookingId: 11, outcome: body.outcome, outcomeAt: at.toISOString() })
       if (path === "/waitlist" || path.startsWith("/waitlist/")) return json({ entry, reservationId: 11, groupId: 1 })
       if (path.startsWith("/visits/"))
         return json({ visit: { id: 31, version: 6 }, group: { id: 1, symbolNo: 1, tableIds: [1, 2] } })
@@ -288,6 +292,21 @@ describe("canonical contract reads", () => {
 })
 
 describe("canonical contract writes", () => {
+  it("starts a call without sending a phone and records the selected outcome against the same call", async () => {
+    const call = await api.startBookingCall(11)
+    expect(call).toMatchObject({ callId: 71, bookingId: 11, telUri: "tel:+84901234123" })
+    await api.recordBookingCallOutcome(11, 71, "LATE_CONFIRMED", 3)
+    expect(writes()).toEqual([
+      { method: "POST", path: "/bookings/11/call", body: {} },
+      {
+        method: "POST",
+        path: "/bookings/11/calls/71/outcome",
+        body: { outcome: "LATE_CONFIRMED", bookingVersion: 3 },
+      },
+    ])
+    expect(JSON.stringify(writes())).not.toContain("+84901234123")
+  })
+
   it("forwards a full destination set for grouped visit and booking moves", async () => {
     tableState = "IN_USE"
     await api.moveClaim({ claim: { visitId: 31, version: 1 }, tableIds: [1, 2] })

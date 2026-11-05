@@ -135,6 +135,7 @@ export interface ClaimView {
   note: string | null
   version: number
   lateConfirmedAt?: Date | null
+  canCall?: boolean
 }
 
 export interface FloorTableState {
@@ -244,6 +245,7 @@ export interface ReservationView {
   createdAt: Date | null
   createdByName: string
   lateConfirmedAt: Date | null
+  canCall?: boolean
 }
 
 export interface VisitView {

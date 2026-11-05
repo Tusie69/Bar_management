@@ -210,6 +210,11 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
       await bookings.confirmLate(id, version)
       return result("Đã ghi nhận khách sẽ tới muộn.")
     },
+    startBookingCall: (id) => bookings.startCall(id),
+    recordBookingCallOutcome: async (bookingId, callId, outcome, bookingVersion) => {
+      await bookings.recordCallOutcome(bookingId, callId, outcome, bookingVersion)
+      return result(outcome === "LATE_CONFIRMED" ? "Đã ghi nhận khách sẽ tới muộn." : "Đã ghi kết quả cuộc gọi.")
+    },
     checkIn: async (input) => {
       if (input.overrideReason) unsupported("check-in vượt quy tắc")
       let current = await bookings.detail(input.reservationId)

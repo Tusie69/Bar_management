@@ -48,6 +48,7 @@ export function mapReservation(booking: HttpBooking, catalog: Catalog): Reservat
     createdAt: null,
     createdByName: "Chưa có dữ liệu người tạo",
     lateConfirmedAt: booking.lateConfirmedAt ?? null,
+    canCall: booking.canCall,
   }
 }
 

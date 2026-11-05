@@ -32,6 +32,7 @@ interface RevealBody { phoneNumber: string }
 
 async function clearFixture(): Promise<void> {
   for (const statement of [
+    'DELETE FROM booking_call_logs',
     'DELETE FROM operation_log',
     'DELETE FROM table_allocations',
     'DELETE FROM table_groups',

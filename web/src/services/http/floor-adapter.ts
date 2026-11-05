@@ -61,6 +61,7 @@ export interface BackendFloorClaimProjection {
   sourceCode: string | null
   version: number
   lateConfirmedAt?: Date | null
+  canCall?: boolean
 }
 
 export interface BackendFloorTableProjection {
@@ -364,6 +365,7 @@ function projectionClaim(table: BackendFloorTableProjection, group?: BackendFloo
     note: null,
     version: claim.version,
     lateConfirmedAt: claim.lateConfirmedAt ?? null,
+    canCall: claim.canCall ?? false,
   }
 }
 

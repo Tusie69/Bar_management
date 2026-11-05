@@ -49,6 +49,7 @@ async function cleanup() {
     "DELETE FROM waitlist_table_preferences WHERE organization_id = ?",
     "DELETE FROM waitlist_contact_attempts WHERE organization_id = ?",
     "DELETE FROM waitlist_entries WHERE organization_id = ?",
+    "DELETE FROM booking_call_logs WHERE organization_id = ?",
     "DELETE FROM reservations WHERE organization_id = ?",
     "DELETE FROM visits WHERE organization_id = ?",
     "DELETE FROM customers WHERE organization_id = ?",
