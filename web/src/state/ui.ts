@@ -84,6 +84,7 @@ interface UiState {
   availTime: string
   availParty: number
   zone: ZoneCode | "ALL"
+  zoneRefitTick: number
   selectedTableId: number | null
   pick: PickRequest | null
   pickSelection: number[]
@@ -105,6 +106,7 @@ interface UiState {
   setView: (view: FloorView) => void
   setAvailability: (patch: Partial<{ date: BusinessDate; time: string; party: number }>) => void
   setZone: (zone: ZoneCode | "ALL") => void
+  refitZone: () => void
   selectTable: (id: number | null) => void
   startPick: (req: PickRequest) => void
   togglePick: (id: number) => void
@@ -138,6 +140,7 @@ export const useUi = create<UiState>((set, get) => ({
   availTime: defaultTime(),
   availParty: 2,
   zone: "ALL",
+  zoneRefitTick: 0,
   selectedTableId: null,
   pick: null,
   pickSelection: [],
@@ -160,7 +163,8 @@ export const useUi = create<UiState>((set, get) => ({
       availTime: patch.time ?? s.availTime,
       availParty: patch.party ?? s.availParty,
     })),
-  setZone: (zone) => set({ zone }),
+  setZone: (zone) => set((s) => ({ zone, zoneRefitTick: s.zoneRefitTick + 1 })),
+  refitZone: () => set((s) => ({ zoneRefitTick: s.zoneRefitTick + 1 })),
   selectTable: (selectedTableId) => set({ selectedTableId }),
   startPick: (pick) =>
     set((s) => ({

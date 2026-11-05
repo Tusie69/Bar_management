@@ -11,6 +11,7 @@ export function useFloorModel(businessDate?: BusinessDate) {
     const byId = new Map<number, TableView>(tables.map((t) => [t.id, t]))
     const states = new Map<number, FloorTableState>((floor.data?.tables ?? []).map((t) => [t.tableId, t]))
     const counts = {} as Record<TableLiveState, number>
+    // Physical positions: one per table/seat state. Merged-group dedup lives only in StatusLegend.
     for (const s of states.values()) counts[s.state] = (counts[s.state] ?? 0) + 1
     const codes = (ids: number[]) => ids.map((id) => byId.get(id)?.code ?? `#${id}`)
     const label = (id: number) => {
