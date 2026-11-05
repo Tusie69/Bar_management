@@ -43,7 +43,7 @@
   --st-late-tint: oklch(0.57 0.19 28 / 0.13);
   --st-noshow-tint: oklch(0.43 0.16 25 / 0.16);
   --st-seated-tint: oklch(0.55 0.11 160 / 0.13);
-  --st-seated-fill: oklch(0.58 0.1 160);
+  --st-seated-fill: oklch(0.50 0.12 160);
   --on-seated: oklch(0.99 0 0);
   --floor: oklch(0.97 0.006 95);
   --floor-zone: oklch(0.94 0.008 95);
@@ -116,9 +116,9 @@
 }
 
 [data-gm] {
-  --st-reserved-ink: color-mix(in oklab, var(--st-reserved) 75%, var(--tx-1));
-  --st-upcoming-ink: color-mix(in oklab, var(--st-upcoming) 72%, var(--tx-1));
-  --st-late-ink: color-mix(in oklab, var(--st-late) 70%, var(--tx-1));
+  --st-reserved-ink: color-mix(in oklab, var(--st-reserved) 60%, var(--tx-1));
+  --st-upcoming-ink: color-mix(in oklab, var(--st-upcoming) 35%, var(--tx-1));
+  --st-late-ink: color-mix(in oklab, var(--st-late) 55%, var(--tx-1));
   --st-noshow-ink: color-mix(in oklab, var(--st-noshow) 75%, var(--tx-1));
   --st-seated-ink: color-mix(in oklab, var(--st-seated) 72%, var(--tx-1));
   --card: var(--surface-1);
@@ -183,4 +183,9 @@
 }
 [data-gm] .rounded-3xl {
   border-radius: 24px;
+}
+
+/* StatusLegend responsive fit at 360px */
+[data-gm] [role="region"][aria-label="Chú giải trạng thái bàn"] {
+  max-width: 100%;
 }

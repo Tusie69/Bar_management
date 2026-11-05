@@ -19,6 +19,7 @@ import WaitlistPage from "../waitlist/waitlist-page"
 import { AvailabilityPanel } from "./availability-panel"
 import { BookingList, BookingTable, LIST_TABS, useBookingItems, type ListTab } from "./booking-list"
 import { FloorCanvas } from "./floor-canvas"
+import { StatusLegend } from "./status-legend"
 import { FloorTimeline } from "./floor-timeline"
 import { FloorToolbar, TimeField } from "./floor-toolbar"
 import { draftPickable, QuickForm } from "./quick-form"
@@ -294,6 +295,7 @@ export function FloorPage() {
             onWaitlist={() => setWaitOpen(true)}
             onCount={() => setCountOpen(true)}
             onOpenBooking={ui.openReservation}
+            onDateChange={() => ui.selectTable(null)}
           />
         </div>
       ) : null}
@@ -347,6 +349,10 @@ export function FloorPage() {
             <span className="tnum ml-auto text-xs whitespace-nowrap text-tx-2">{summary}</span>
           </div>
 
+          {view === "map" && !ui.pick && !draft ? (
+            <StatusLegend tables={model.tables} states={model.states} />
+          ) : null}
+
           {view === "map" ? (
             <div className="relative min-h-0 flex-1 overflow-hidden rounded-sm border">
               {model.error ? (
@@ -397,6 +403,8 @@ export function FloorPage() {
                           ? "Sơ đồ bàn, trạng thái hiện tại"
                           : `Sơ đồ khả dụng lúc ${ui.availTime}`
                   }
+                  waitingCount={receptionist ? (waitlist.isPlaceholderData ? 0 : (waitlist.data ?? []).filter((row) => ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"].includes(row.status)).length) : undefined}
+                  onOpenWaitlist={receptionist ? () => setWaitOpen(true) : undefined}
                 />
               )}
               <PickBanner model={model} />

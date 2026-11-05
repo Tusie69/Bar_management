@@ -1,4 +1,4 @@
-import { X } from "lucide-react"
+import { Menu, X } from "lucide-react"
 import { useMemo } from "react"
 import type { TableLiveState } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
@@ -7,12 +7,11 @@ import { fmtBusinessDate, fmtTime12 } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
-import { initials } from "@/lib/text"
-import { useSession } from "@/state/session"
 import { useReceptionSearch } from "@/hooks/use-reception-search"
 import { FloorCanvas } from "../floor/floor-canvas"
+import { StatusLegend } from "../floor/status-legend"
 import { groupCode } from "../floor/floor-visual-rules"
-import { ReceptionControls, ReceptionDatePicker } from "../floor/reception-controls"
+import { ReceptionControls } from "../floor/reception-controls"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
 import { codesOf, duration, isOpenEntry, type Tone, toneStyle } from "./model"
@@ -46,7 +45,6 @@ export function MapScreen({
   pickBusy: boolean
 }) {
   const m = useM()
-  const user = useSession((state) => state.user)
   const receptionist = m.role === "RECEPTIONIST"
   const search = useReceptionSearch(m.businessDate, receptionist)
   const zone = useUi((s) => s.zone)
@@ -83,21 +81,26 @@ export function MapScreen({
       {receptionist ? (
         <header className="z-[5] shrink-0 bg-background px-4 pt-[var(--top-safe)]">
           <div className="flex h-[52px] items-center gap-3">
-            <button type="button" onClick={m.openAccount} aria-label="Tài khoản và giao diện" className="grid size-10 shrink-0 place-items-center rounded-full bg-[var(--glass)] text-[15px] font-semibold text-tx-strong shadow-[var(--shadow-xs)]">
-              {initials(user.displayName).slice(0, 1)}
+            <button
+              type="button"
+              onClick={m.openAccount}
+              aria-label="Menu"
+              className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-surface-1 text-tx-strong shadow-[var(--shadow-xs)]"
+            >
+              <Menu className="size-5" />
             </button>
             <h1 className="m-0 min-w-0 flex-1 truncate text-[22px] font-semibold text-tx-strong">Sơ đồ bàn</h1>
-            {!pick ? <ReceptionDatePicker onDateChange={() => onSelect(null)} /> : null}
             <BellButton />
           </div>
           {!pick ? (
-            <div className="pb-3">
+            <div className="pb-2">
               <ReceptionControls
                 search={search}
                 waitCount={(m.waitlist ?? []).filter(isOpenEntry).length}
                 onWaitlist={() => m.go("wait")}
                 onCount={m.openCount}
                 onOpenBooking={m.openDetail}
+                onDateChange={() => onSelect(null)}
               />
             </div>
           ) : null}
@@ -105,6 +108,35 @@ export function MapScreen({
       ) : (
         <PlainHeader title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"} />
       )}
+      {!pick ? (
+        <div className="z-[4] shrink-0 flex flex-col gap-2 bg-background px-3 pt-0.5 pb-2">
+          <div
+            role="tablist"
+            aria-label="Lọc khu"
+            className="flex max-w-full w-full gap-0.5 overflow-x-auto rounded-[14px] border border-border bg-surface-1 p-[3px] shadow-[var(--shadow-xs)]"
+          >
+            {ZONE_TABS.map(([k, label]) => {
+              const on = zone === k
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  role="tab"
+                  aria-selected={on}
+                  onClick={() => setZone(k)}
+                  className={cn(
+                    "flex-1 flex h-[38px] min-w-0 shrink-0 items-center justify-center rounded-[11px] px-2 text-[13px] whitespace-nowrap",
+                    on ? "bg-tx-strong font-semibold text-background" : "font-medium text-tx-2",
+                  )}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+          <StatusLegend tables={m.model.tables} states={m.model.states} />
+        </div>
+      ) : null}
       <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
         {m.model.catalog ? (
           <FloorCanvas
@@ -119,6 +151,8 @@ export function MapScreen({
             pickable={pickable}
             zoneFocus={zone}
             now={m.now}
+            waitingCount={(m.waitlist ?? []).filter(isOpenEntry).length}
+            onOpenWaitlist={() => m.go("wait")}
             onTableClick={(id) => (pick ? onPickToggle(id) : onSelect(id))}
             onBackgroundClick={() => (pick ? undefined : onSelect(null))}
             ariaLabel={
@@ -149,34 +183,7 @@ export function MapScreen({
               <X className="size-5" />
             </button>
           </div>
-        ) : (
-          <div className="absolute inset-x-3 top-2.5 z-[6] flex justify-center">
-            <div
-              role="tablist"
-              aria-label="Lọc khu"
-              className="flex max-w-full gap-0.5 overflow-x-auto rounded-[14px] border border-border bg-surface-1 p-[3px] shadow-[var(--shadow-xs)]"
-            >
-              {ZONE_TABS.map(([k, label]) => {
-                const on = zone === k
-                return (
-                  <button
-                    key={k}
-                    type="button"
-                    role="tab"
-                    aria-selected={on}
-                    onClick={() => setZone(k)}
-                    className={cn(
-                      "flex h-[38px] shrink-0 items-center rounded-[11px] px-[13px] text-[13px] whitespace-nowrap",
-                      on ? "bg-tx-strong font-semibold text-background" : "font-medium text-tx-2",
-                    )}
-                  >
-                    {label}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        )}
+        ) : null}
 
         {pick ? (
           <div className="absolute inset-x-0 bottom-0 z-[12] flex flex-col gap-2.5 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-4 shadow-[var(--shadow-float)]">
