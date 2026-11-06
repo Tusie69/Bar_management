@@ -377,6 +377,23 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     expect([Number(counts[0]?.visits), Number(counts[0]?.allocations)]).toEqual([1, 1])
   })
 
+  it('WALK-09 permits only one concurrent direct booking or Walk-in on the same table', async () => {
+    const outcomes = await Promise.allSettled([
+      createAndAssignBooking(actor, { ...bookingInput('Direct race'), tableIds: [tableOneId] }),
+      createWalkIn(actor, { guestName: 'Walk-in race', partySize: 2,
+        businessDate: '2030-10-24', tableIds: [tableOneId] }),
+    ])
+    expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1)
+    expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toHaveLength(1)
+    const [counts] = await databasePool.execute<RowDataPacket[]>(
+      `SELECT (SELECT COUNT(*) FROM visits) visits,
+        (SELECT COUNT(*) FROM reservations) reservations,
+        (SELECT COUNT(*) FROM table_allocations WHERE released_at IS NULL) allocations`,
+    )
+    expect(Number(counts[0]?.visits) + Number(counts[0]?.reservations)).toBe(1)
+    expect(Number(counts[0]?.allocations)).toBe(1)
+  })
+
   it('WALK-15 rolls back Visit, group, allocations and change sequence when audit insertion fails', async () => {
     await databasePool.query(
       `ALTER TABLE operation_log ADD CONSTRAINT ck_test_reject_walkin CHECK (action <> 'WALK_IN_CREATED')`,

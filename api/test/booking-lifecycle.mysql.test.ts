@@ -488,6 +488,26 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     }
   })
 
+  it('WALK-17 keeps a 00:30 Walk-in on the previous business date through HTTP', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2030-10-24T17:30:00.000Z'))
+    try {
+      const agent = request.agent(app)
+      const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin)
+        .send({ username: 'booking_reception', password, portal: 'receptionist' })
+      const auth = JSON.parse(login.text) as AuthResponse
+      const response = await agent.post('/api/v1/bookings/walk-ins').set('Origin', env.webOrigin)
+        .set('X-CSRF-Token', auth.csrfToken)
+        .send({ partySize: 2, businessDate: '2030-10-24', tableIds: [tableOneId] })
+      expect(response.status).toBe(201)
+      const visitId = (JSON.parse(response.text) as { visitId: number }).visitId
+      const visit = await row('SELECT business_date FROM visits WHERE id = ?', [visitId])
+      expect(databaseDate(visit.business_date)).toBe('2030-10-24')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('stores 00:30 on the next calendar day under the previous business date', async () => {
     const created = await createBooking(actor, bookingInput('2030-10-24', '00:30'))
     expect(created.businessDate).toBe('2030-10-24')
