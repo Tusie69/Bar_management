@@ -84,7 +84,7 @@ export default function OverviewPage() {
     {
       label: "Cần chú ý",
       value: o.attention,
-      hint: "muộn · không đến · quá hạn",
+      hint: "muộn · không tới · quá hạn",
       tone: o.attention ? "alert" : undefined,
       to: "/floor",
     },

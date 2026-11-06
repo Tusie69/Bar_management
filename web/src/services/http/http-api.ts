@@ -206,7 +206,7 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     },
     markNoShow: async (id, version) => {
       await bookings.markNoShow(id, version)
-      return result("Đã xác nhận khách không đến.")
+      return result("Đã xác nhận khách không tới.")
     },
     confirmLate: async (id, version) => {
       await bookings.confirmLate(id, version)

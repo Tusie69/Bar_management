@@ -61,7 +61,6 @@ import { useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
 import { useShiftAlerts } from "@/features/floor/alerts"
 import { useFloorModel } from "@/features/floor/use-floor-model"
-import { ReceptionDatePicker } from "@/features/floor/reception-controls"
 import { WalkInSheet } from "@/features/floor/walk-in-sheet"
 import { BookingSheet } from "@/features/reservations/booking-sheet"
 import { ReservationDetailSheet } from "@/features/reservations/reservation-detail"
@@ -195,7 +194,6 @@ function TopBar() {
         <ClockMenu />
         {api.mode === "mock" ? <UndoRedo /> : null}
         <ThemeToggle />
-        {receptionist ? <ReceptionDatePicker /> : null}
         <AlertsBell />
         {!receptionist ? <Identity /> : null}
       </div>

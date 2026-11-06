@@ -112,6 +112,7 @@ export interface AuthSessionRow {
 /* ---------------- Venue / floorplan ---------------- */
 
 export interface VenueRow extends Versioned {
+  settings?: { quick_times: string[]; upcoming_minutes: number; no_show_minutes: number }
   id: Id
   organizationId: Id
   code: string

@@ -14,6 +14,11 @@ export const GUEST_QUICK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const
 export const BOOKING_SLOT_STEP_MIN = 15
 export const BOOKING_FIRST_SLOT = "19:00"
 export const BOOKING_LAST_SLOT = "01:00"
+export const BOOKING_MINUTE_STEP = BOOKING_SLOT_STEP_MIN
+export const BOOKING_HOURS = ["19", "20", "21", "22", "23", "00", "01"] as const
+export const BOOKING_MINUTES = Array.from({ length: 60 / BOOKING_MINUTE_STEP }, (_, i) =>
+  String(i * BOOKING_MINUTE_STEP).padStart(2, "0"),
+)
 export const PAST_GRACE_MIN = 0
 
 const DAY_START = 17 * 60
@@ -50,6 +55,14 @@ export function isWithinBookingReceptionWindow(hhmm: string): boolean {
   const minutes = toMin(hhmm)
   return minutes >= toMin(BOOKING_FIRST_SLOT) || minutes <= toMin(BOOKING_LAST_SLOT)
 }
+
+/** Any wheel value: inside 19:00–01:00 and on the 15-minute step. */
+export function isBookingTime(hhmm: string | null | undefined): hhmm is string {
+  return !!hhmm && isWithinBookingReceptionWindow(hhmm) && toMin(hhmm) % BOOKING_MINUTE_STEP === 0
+}
+
+/** Venue quick times (TU-16) that the wheel can represent. Never falls back to hardcoded values. */
+export const usableQuickTimes = (times: readonly string[] | undefined): string[] => (times ?? []).filter(isBookingTime)
 
 /** Booking time is always displayed in the venue's 24-hour format. */
 export const slotLabel = (hhmm: string): string => hhmm

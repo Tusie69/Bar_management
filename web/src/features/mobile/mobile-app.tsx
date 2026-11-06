@@ -20,7 +20,7 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/
 import { NAV } from "@/app/nav"
 import { useShiftAlerts } from "../floor/alerts"
 import { useFloorModel } from "../floor/use-floor-model"
-import { canStartTableBooking } from "../floor/reception-rules"
+import { canStartTableBooking, isWaitingForTable } from "../floor/reception-rules"
 import { ZaloBookingExport } from "../reservations/zalo-booking-export"
 import { MobileContext, type Confirm, type FormRequest, type MobileCtx, type TablePick, type Tab } from "./context"
 import { DetailScreen } from "./detail"
@@ -83,7 +83,8 @@ export default function MobileApp() {
   const handle = (key: string) => setHandled((s) => new Set(s).add(key))
   const alert30 = booked.find((r) => r.warning === "noshow" && !handled.has(`n${r.id}`)) ?? null
   const toast15 = booked.find((r) => r.warning === "late" && !handled.has(`l${r.id}`)) ?? null
-  const busy = !!(overlay || statusFor || confirm || detail || form || pick)
+  const busy = !!(overlay || statusFor || confirm || detail || form || pick || ui.draft)
+  const keyboardSafeHeight = useKeyboardSafeHeight()
 
   // Role switch resets to the role's home, like a fresh login.
   useEffect(() => {
@@ -92,6 +93,8 @@ export default function MobileApp() {
     setForm(null)
     setPick(null)
     setTableSel(null)
+    const { draft, closeBooking, closeWalkIn } = useUi.getState()
+    if (draft) (draft.kind === "booking" ? closeBooking : closeWalkIn)()
   }, [role])
 
   // Escape closes the top layer. The 30' alert and confirmations need an explicit choice.
@@ -148,6 +151,11 @@ export default function MobileApp() {
       }
       setOverlay(null)
       setTableSel(null)
+      if (isReceptionist) {
+        if (f.mode === "walkin") ui.openWalkIn(f.tableIds)
+        else ui.openBooking({ tableIds: f.tableIds, date: f.date ?? selectedDate, toWaitlist: f.toWaitlist })
+        return
+      }
       setForm({ ...f, date: f.date ?? selectedDate })
     },
     openTable: (id) => {
@@ -176,7 +184,16 @@ export default function MobileApp() {
 
   return (
     <MobileContext.Provider value={ctx}>
-      <div data-gm style={isReceptionist ? ({ "--nav-h": "0px" } as CSSProperties) : undefined} className="fixed inset-0 h-dvh w-full touch-manipulation overflow-hidden">
+      <div
+        data-gm
+        style={
+          {
+            ...(isReceptionist ? { "--nav-h": "0px" } : {}),
+            ...(keyboardSafeHeight ? { height: keyboardSafeHeight } : {}),
+          } as CSSProperties
+        }
+        className="fixed inset-0 h-dvh w-full touch-manipulation overflow-hidden"
+      >
         <div className="absolute inset-x-0 top-0 bottom-[var(--nav-h)] flex flex-col overflow-hidden">
           {tab === "home" ? (
             <HomeScreen />
@@ -235,7 +252,7 @@ export default function MobileApp() {
           go={go}
         /> : null}
 
-        {tab === "map" && tableSel && !pick && !detail && !form ? (
+        {tab === "map" && tableSel && !pick && !detail && !form && !ui.draft ? (
           <TableSheet id={tableSel} onClose={() => setTableSel(null)} />
         ) : null}
         {detail ? (
@@ -273,9 +290,11 @@ export default function MobileApp() {
         <ZaloBookingExport businessDate={selectedDate} open={overlay === "count"} onOpenChange={(open) => !open && setOverlay(null)} />
         <Sheet open={overlay === "wait"} onOpenChange={(open) => !open && setOverlay(null)}>
           <SheetContent data-gm side="bottom" className="h-[85dvh] gap-0 overflow-hidden p-0">
-            <SheetTitle className="px-4 pt-5 text-lg">Bàn chờ ảo</SheetTitle>
-            <SheetDescription className="px-4 pb-3 text-xs">Khách chờ trong ngày kinh doanh đã chọn.</SheetDescription>
-            <WaitScreen />
+            <SheetTitle className="px-4 pt-5 text-lg">
+              Bàn chờ ảo <span aria-hidden>({(waitlist ?? []).filter(isWaitingForTable).length})</span>
+            </SheetTitle>
+            <SheetDescription className="px-4 pb-2 text-xs">Ai đặt trước nằm trên. Chưa giữ bàn thật.</SheetDescription>
+            <WaitScreen embedded />
           </SheetContent>
         </Sheet>
         {overlay === "alerts" ? (
@@ -303,6 +322,19 @@ export default function MobileApp() {
       </div>
     </MobileContext.Provider>
   )
+}
+
+/** iOS keeps the layout viewport under the keyboard; Android follows interactive-widget in index.html. */
+function useKeyboardSafeHeight() {
+  const [height, setHeight] = useState<number | null>(null)
+  useEffect(() => {
+    const viewport = window.visualViewport
+    if (!viewport) return
+    const update = () => setHeight(viewport.scale === 1 && viewport.height < window.innerHeight - 1 ? viewport.height : null)
+    viewport.addEventListener("resize", update)
+    return () => viewport.removeEventListener("resize", update)
+  }, [])
+  return height
 }
 
 interface NavItem {

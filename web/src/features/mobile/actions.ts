@@ -136,9 +136,9 @@ export function useMobileActions() {
     },
     noShow: (r: ReservationView) =>
       m.ask({
-        title: `Xác nhận ${r.displayName} không đến?`,
-        body: "Booking chuyển sang Không đến và bàn được nhả. Thao tác được ghi vào nhật ký và có thể hoàn tác.",
-        label: "Không đến",
+        title: `Xác nhận ${r.displayName} không tới?`,
+        body: "Booking chuyển sang Không tới và bàn được nhả. Thao tác được ghi vào nhật ký và có thể hoàn tác.",
+        label: "Không tới",
         run: () => run(() => api.markNoShow(r.id, r.version)),
       }),
     confirmLate: (r: ReservationView) =>

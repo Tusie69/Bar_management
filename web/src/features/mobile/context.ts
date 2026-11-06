@@ -29,6 +29,8 @@ export interface TablePick {
   targetExpectedAt?: Date
   targetParty?: number
   confirmLabel: string
+  /** R9: asks in words once a table is chosen, e.g. "Chuyển Lan vào A6?". */
+  question?: (codes: string) => string
   onConfirm: (ids: number[]) => Promise<boolean>
 }
 
@@ -36,6 +38,7 @@ export interface FormRequest {
   mode: "booking" | "walkin"
   tableIds?: number[]
   date?: BusinessDate
+  toWaitlist?: boolean
 }
 
 export interface MobileCtx {

@@ -47,6 +47,8 @@ export interface BookingPrefill {
   date?: BusinessDate
   time?: string
   party?: number
+  /** Flow B: an advance booking without a table goes straight into Bàn chờ. */
+  toWaitlist?: boolean
 }
 
 /** v2 inline form on Điều phối (right column). Tables are picked on the map. */
@@ -56,6 +58,9 @@ export interface QuickDraft {
   time: string
   party: number
   tableIds: number[]
+  toWaitlist?: boolean
+  /** "Đổi bàn": the next table tapped replaces the selection instead of joining it. */
+  replacing?: boolean
 }
 
 export interface UndoItem {
@@ -84,6 +89,7 @@ interface UiState {
   availTime: string
   availParty: number
   zone: ZoneCode | "ALL"
+  zoneRefitTick: number
   selectedTableId: number | null
   pick: PickRequest | null
   pickSelection: number[]
@@ -105,6 +111,7 @@ interface UiState {
   setView: (view: FloorView) => void
   setAvailability: (patch: Partial<{ date: BusinessDate; time: string; party: number }>) => void
   setZone: (zone: ZoneCode | "ALL") => void
+  refitZone: () => void
   selectTable: (id: number | null) => void
   startPick: (req: PickRequest) => void
   togglePick: (id: number) => void
@@ -138,6 +145,7 @@ export const useUi = create<UiState>((set, get) => ({
   availTime: defaultTime(),
   availParty: 2,
   zone: "ALL",
+  zoneRefitTick: 0,
   selectedTableId: null,
   pick: null,
   pickSelection: [],
@@ -160,7 +168,8 @@ export const useUi = create<UiState>((set, get) => ({
       availTime: patch.time ?? s.availTime,
       availParty: patch.party ?? s.availParty,
     })),
-  setZone: (zone) => set({ zone }),
+  setZone: (zone) => set((s) => ({ zone, zoneRefitTick: s.zoneRefitTick + 1 })),
+  refitZone: () => set((s) => ({ zoneRefitTick: s.zoneRefitTick + 1 })),
   selectTable: (selectedTableId) => set({ selectedTableId }),
   startPick: (pick) =>
     set((s) => ({
@@ -213,6 +222,7 @@ export const useUi = create<UiState>((set, get) => ({
           bookingPrefill.party ??
           (bookingPrefill.tableIds?.length ? Math.min(8, bookingPrefill.tableIds.length * 4) : 4),
         tableIds: bookingPrefill.tableIds ?? [],
+        toWaitlist: bookingPrefill.toWaitlist,
       },
     }),
   closeBooking: () => set({ bookingOpen: false, draft: null }),
@@ -241,9 +251,12 @@ export const useUi = create<UiState>((set, get) => ({
         ? {
             draft: {
               ...s.draft,
-              tableIds: s.draft.tableIds.includes(id)
-                ? s.draft.tableIds.filter((x) => x !== id)
-                : [...s.draft.tableIds, id],
+              replacing: false,
+              tableIds: s.draft.replacing
+                ? [id]
+                : s.draft.tableIds.includes(id)
+                  ? s.draft.tableIds.filter((x) => x !== id)
+                  : [...s.draft.tableIds, id],
             },
           }
         : {},

@@ -4,7 +4,7 @@ const occupiedReason: Partial<Record<FloorTableState["state"], string>> = {
   reserved: "đã được đặt trước",
   upcoming: "đang giữ cho khách sắp đến",
   late: "đang giữ cho khách đến muộn",
-  noshow: "đang chờ xử lý khách không đến",
+  noshow: "đang chờ xử lý khách không tới",
   seated: "đang có khách",
   hold: "đang được giữ",
   hold_overdue: "đang giữ quá hạn và cần xử lý",

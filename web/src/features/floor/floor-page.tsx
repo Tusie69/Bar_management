@@ -1,4 +1,4 @@
-import { AlertCircle, Check, Eye, MousePointerClick, Radio, Search, X } from "lucide-react"
+import { AlertCircle, Check, Eye, Radio, Search, X } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { EmptyState, Stepper } from "@/components/common"
@@ -22,12 +22,13 @@ import { FloorCanvas } from "./floor-canvas"
 import { StatusLegend } from "./status-legend"
 import { FloorTimeline } from "./floor-timeline"
 import { FloorToolbar, TimeField } from "./floor-toolbar"
-import { draftPickable, QuickForm } from "./quick-form"
+import { QuickForm } from "./quick-form"
+import { useBookingDraft } from "./use-booking-draft"
 import { ShiftPanel } from "./shift-panel"
 import { TableDetail } from "./table-detail"
 import { useFloorModel } from "./use-floor-model"
 import { ReceptionControls } from "./reception-controls"
-import { canStartTableBooking } from "./reception-rules"
+import { canStartTableBooking, isWaitingForTable } from "./reception-rules"
 
 const ZONE_TABS: { value: ZoneCode | "ALL"; label: string }[] = [
   { value: "ALL", label: "Tất cả" },
@@ -49,7 +50,7 @@ function Segmented<T extends string>({
   label: string
 }) {
   return (
-    <div role="tablist" aria-label={label} className="flex gap-0.5 rounded-sm border bg-surface-1 p-[3px]">
+    <div role="tablist" aria-label={label} className="flex gap-0.5 rounded-sm border bg-surface-1 p-[2px]">
       {options.map((o) => {
         const on = o.value === value
         return (
@@ -60,7 +61,7 @@ function Segmented<T extends string>({
             aria-selected={on}
             onClick={() => onChange(o.value)}
             className={cn(
-              "flex h-[34px] items-center gap-1.5 rounded-sm px-3 text-sm whitespace-nowrap",
+              "flex h-[30px] items-center gap-1 rounded-sm px-2.5 text-xs sm:text-sm whitespace-nowrap",
               on ? "bg-primary-tint font-medium text-primary-ink" : "text-tx-2 hover:text-tx-1",
             )}
           >
@@ -78,7 +79,6 @@ export function FloorPage() {
   const ui = useUi()
   const now = useNow(1000)
   const receptionist = useSession((state) => state.user.role === "RECEPTIONIST")
-  const zone = receptionist ? "ALL" : ui.zone
   const currentDate = businessDateOf(now)
   const selectedDate = receptionist && ui.floorMode !== "live" ? ui.availDate : currentDate
   const model = useFloorModel(receptionist ? selectedDate : undefined)
@@ -121,28 +121,26 @@ export function FloorPage() {
     () => new Map((availability.data?.tables ?? []).map((t) => [t.tableId, t])),
     [availability.data],
   )
-  const draftAt = useMemo(
-    () => (draft?.kind === "booking" ? atBusinessTime(draft.date, draft.time) : null),
-    [draft?.kind, draft?.date, draft?.time],
-  )
-  const draftAvail = useAvailability(draftAt, draft?.party ?? 2)
-  const draftSnapshot = draftAvail.isPlaceholderData || draftAvail.isError ? undefined : draftAvail.data
-  const draftAvailMap = useMemo(
-    () => new Map((draftSnapshot?.tables ?? []).map((t) => [t.tableId, t])),
-    [draftSnapshot],
-  )
+  const {
+    availability: draftAvail,
+    availabilityMap: draftAvailMap,
+    status: draftAvailStatus,
+    pickable: draftBookingPickable,
+    onTableClick: onDraftTableClick,
+  } = useBookingDraft(model)
 
   const isPickAssign = ui.pick?.intent === "assign" && !!ui.pick.targetExpectedAt
   const pickAvail = useAvailability(isPickAssign ? ui.pick!.targetExpectedAt! : null, ui.pick?.targetParty ?? 2)
+  const pickSnapshot = pickAvail.isPlaceholderData || pickAvail.isError ? undefined : pickAvail.data
   const pickAvailMap = useMemo(
-    () => new Map((pickAvail.data?.tables ?? []).map((t) => [t.tableId, t])),
-    [pickAvail.data],
+    () => new Map((pickSnapshot?.tables ?? []).map((t) => [t.tableId, t])),
+    [pickSnapshot],
   )
 
   const pickable = useMemo(() => {
     if (!ui.pick) return null
     if (ui.pick.intent === "assign" && ui.pick.targetExpectedAt) {
-      const availTables = pickAvail.data?.tables ?? []
+      const availTables = pickSnapshot?.tables ?? []
       const pickableSet = new Set<number>()
       for (const t of availTables) {
         if (t.status === "available" || t.status === "too_small") {
@@ -165,32 +163,7 @@ export function FloorPage() {
     const set = new Set(model.freeIds)
     ui.pick.excludeIds?.forEach((id) => set.delete(id))
     return set
-  }, [ui.pick, model.freeIds, pickAvail.data])
-
-  const draftBookingPickable = useMemo(() => {
-    const bookingDraft = draft?.kind === "booking" ? draft : null
-    if (!bookingDraft) return null
-    if (bookingDraft.tableIds.length === 0) {
-      const set = new Set<number>()
-      for (const t of model.tables) {
-        if (draftPickable("booking", t.id, model, draftSnapshot)) {
-          set.add(t.id)
-        }
-      }
-      return set
-    }
-    const first = model.byId.get(bookingDraft.tableIds[0])
-    if (!first) return null
-    const set = new Set<number>()
-    for (const t of model.tables) {
-      if (t.zoneId === first.zoneId && t.kind === first.kind) {
-        if (draftPickable("booking", t.id, model, draftSnapshot, bookingDraft.tableIds)) {
-          set.add(t.id)
-        }
-      }
-    }
-    return set
-  }, [draft, model, draftSnapshot])
+  }, [ui.pick, model.freeIds, pickSnapshot])
 
   const selectedIds = draft
     ? draft.tableIds
@@ -203,25 +176,7 @@ export function FloorPage() {
           : []
 
   const onTableClick = (id: number) => {
-    if (draft) {
-      if (draft.tableIds.includes(id)) {
-        return ui.toggleDraftTable(id)
-      }
-      if (draft.kind === "booking" && draft.tableIds.length > 0) {
-        const first = model.byId.get(draft.tableIds[0])
-        const target = model.byId.get(id)
-        if (first && target) {
-          if (target.zoneId !== first.zoneId) {
-            return toast.info("Chỉ có thể chọn các bàn trong cùng một khu vực")
-          }
-          if (target.kind !== first.kind) {
-            return toast.info("Không thể ghép bàn thường với ghế Bar")
-          }
-        }
-      }
-      if (draftPickable(draft.kind, id, model, draftSnapshot, draft.tableIds)) return ui.toggleDraftTable(id)
-      return toast.info(`${model.label(id)}: không trống · chọn vị trí trống`)
-    }
+    if (draft) return onDraftTableClick(id)
     if (ui.pick) {
       if (pickable && !pickable.has(id) && !ui.pickSelection.includes(id)) {
         return toast.info(`${model.label(id)}: không khả dụng vào giờ đã chọn`)
@@ -247,7 +202,13 @@ export function FloorPage() {
   }
 
   const panel = draft ? (
-    <QuickForm model={model} availability={draftSnapshot} />
+    <QuickForm
+      model={model}
+      availability={draftAvailStatus === "ready" ? draftAvail.data : undefined}
+      availabilityStatus={draftAvailStatus}
+      onRetryAvailability={() => void draftAvail.refetch()}
+      compact={!wide}
+    />
   ) : !live ? (
     <AvailabilityPanel
       model={model}
@@ -285,18 +246,12 @@ export function FloorPage() {
     <div className="flex h-full min-h-0 flex-col">
       {!receptionist ? <FloorToolbar onOpenList={xl ? undefined : () => setListOpen(true)} /> : null}
       {receptionist ? (
-        <div className="shrink-0 border-b px-4 py-3">
+        <div className="shrink-0 border-b px-4 py-2">
           <ReceptionControls
             search={search}
-            waitCount={
-              waitlist.isPlaceholderData
-                ? 0
-                : (waitlist.data ?? []).filter((row) =>
-                    ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"].includes(row.status),
-                  ).length
-            }
-            onWaitlist={() => setWaitOpen(true)}
             onCount={() => setCountOpen(true)}
+            onOpenBooking={ui.openReservation}
+            onDateChange={() => ui.selectTable(null)}
           />
         </div>
       ) : null}
@@ -323,39 +278,47 @@ export function FloorPage() {
         </div>
       ) : null}
 
-      <div className="relative flex min-h-0 flex-1">
-        {xl && view !== "list" ? (
+      <div className={cn("relative flex min-h-0 flex-1", !wide && draft && "flex-col")}>
+        {/* NA-11: the receptionist works from the floor alone, without the Cần xử lý / Sắp đến lists. */}
+        {xl && view !== "list" && !receptionist ? (
           <aside className="w-1/4 max-w-[336px] min-w-[288px] shrink-0 border-r" aria-label="Danh sách booking">
             {list}
           </aside>
         ) : null}
 
-        <section className="flex min-w-0 flex-1 flex-col gap-2 px-3 pt-2 pb-3 sm:px-4" aria-label="Không gian làm việc">
-          <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-3">
-            {view === "list" ? (
-              <Segmented
-                label="Lọc booking"
-                value={tab}
-                onChange={setTab}
-                options={LIST_TABS.map((t) => ({ value: t.id, label: t.label, count: feed[t.id].length }))}
-              />
-            ) : !receptionist ? (
-              <Segmented label="Lọc khu" value={zone} onChange={ui.setZone} options={ZONE_TABS} />
-            ) : null}
-            {!receptionist && live && view === "map" && !ui.pick && !draft ? (
-              <Button variant="ghost" size="sm" onClick={() => ui.setFloorMode("availability")}>
-                <Search /> Xem khả dụng
-              </Button>
-            ) : null}
-            <span className="tnum ml-auto text-xs whitespace-nowrap text-tx-2">{summary}</span>
+        <section className="flex min-w-0 flex-1 flex-col gap-2 p-3 sm:px-4 sm:pt-2.5 sm:pb-3" aria-label="Không gian làm việc">
+          {/* The receptionist always works on the whole floor, so only draft context needs this row. */}
+          {!receptionist || bookingDraft || isPickAssign ? (
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
+            <div className="flex shrink-0 items-center gap-2">
+              {view === "list" ? (
+                <Segmented
+                  label="Lọc booking"
+                  value={tab}
+                  onChange={setTab}
+                  options={LIST_TABS.map((t) => ({ value: t.id, label: t.label, count: feed[t.id].length }))}
+                />
+              ) : receptionist ? null : (
+                <Segmented label="Lọc khu" value={ui.zone} onChange={ui.setZone} options={ZONE_TABS} />
+              )}
+              {!receptionist && live && view === "map" && !ui.pick && !draft ? (
+                <Button variant="ghost" size="sm" className="h-8 shrink-0 gap-1 px-2 text-xs" onClick={() => ui.setFloorMode("availability")}>
+                  <Search className="size-3.5" /> Xem khả dụng
+                </Button>
+              ) : null}
+            </div>
+            <span className="tnum text-xs whitespace-nowrap text-tx-2 sm:ml-auto">{summary}</span>
           </div>
+          ) : null}
 
-          {view === "map" && live && !ui.pick && !draft && model.tables.length ? (
+          {view === "map" && !ui.pick && !draft ? (
             <StatusLegend tables={model.tables} states={model.states} />
           ) : null}
 
+          {view === "map" ? <PickBanner model={model} /> : null}
+
           {view === "map" ? (
-            <div className="relative min-h-0 flex-1 overflow-hidden rounded-sm border">
+            <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-border/60">
               {model.error ? (
                 <div className="grid h-full place-items-center p-6">
                   <EmptyState
@@ -392,9 +355,10 @@ export function FloorPage() {
                   selectedIds={selectedIds}
                   searchHighlightedIds={!ui.pick && !draft ? search.tableIds : []}
                   pickable={bookingDraft ? draftBookingPickable : draft ? null : pickable}
-                  zoneFocus={zone}
+                  zoneFocus={receptionist ? "ALL" : ui.zone}
                   now={now}
                   onTableClick={onTableClick}
+                  onBlockedTableClick={draft ? onDraftTableClick : undefined}
                   onBackgroundClick={() => !ui.pick && !draft && live && ui.selectTable(null)}
                   ariaLabel={
                     bookingDraft
@@ -405,27 +369,10 @@ export function FloorPage() {
                           ? "Sơ đồ bàn, trạng thái hiện tại"
                           : `Sơ đồ khả dụng lúc ${ui.availTime}`
                   }
+                  waitingCount={!draft && !ui.pick ? (waitlist.isPlaceholderData ? 0 : (waitlist.data ?? []).filter(isWaitingForTable).length) : undefined}
+                  onOpenWaitlist={!draft && !ui.pick ? () => setWaitOpen(true) : undefined}
                 />
               )}
-              {receptionist && !ui.pick && !draft ? (
-                <Button variant="outline" size="sm" className="absolute top-2 right-2 min-h-10 bg-popover" onClick={() => setWaitOpen(true)}>
-                  Mở Bàn chờ từ sơ đồ
-                </Button>
-              ) : null}
-              <PickBanner model={model} />
-              {draft ? (
-                <div
-                  className="pointer-events-none absolute top-3 left-1/2 z-10 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-2 rounded-sm border border-strong bg-popover/95 px-3 py-2 text-sm shadow-float backdrop-blur"
-                  aria-live="polite"
-                >
-                  <MousePointerClick className="size-4 shrink-0 text-primary-ink" aria-hidden />
-                  <span className="truncate">
-                    {draft.tableIds.length
-                      ? `Đã chọn ${draft.tableIds.map((id) => model.label(id)).join(", ")} · chạm để thêm hoặc bỏ`
-                      : "Chạm vị trí trống để gán bàn cho đơn"}
-                  </span>
-                </div>
-              ) : null}
             </div>
           ) : view === "timeline" ? (
             <FloorTimeline model={model} date={date} now={now} zone={ui.zone} live={live} />
@@ -445,7 +392,10 @@ export function FloorPage() {
 
         {bottomOpen ? (
           <section
-            className="absolute inset-x-0 bottom-0 z-20 flex max-h-[62%] animate-in flex-col overflow-hidden rounded-t-sm border-t border-strong bg-popover shadow-float duration-200 slide-in-from-bottom-6"
+            className={cn(
+              "z-20 flex animate-in flex-col overflow-hidden border-t border-strong bg-popover shadow-float duration-200 slide-in-from-bottom-6",
+              draft ? "relative max-h-[60%] shrink-0 rounded-t-lg" : "absolute inset-x-0 bottom-0 max-h-[62%] rounded-t-sm",
+            )}
             aria-label="Chi tiết"
           >
             <div className="flex justify-center pt-2" aria-hidden>
@@ -462,25 +412,23 @@ export function FloorPage() {
                 <X />
               </Button>
             ) : null}
-            <div className="min-h-0 flex-1">{panel}</div>
+            <div className="flex min-h-0 flex-1 flex-col">{panel}</div>
           </section>
         ) : null}
       </div>
 
-      {receptionist ? (
-        <>
-          <ZaloBookingExport businessDate={date} open={countOpen} onOpenChange={setCountOpen} />
+      <>
+          {receptionist ? <ZaloBookingExport businessDate={date} open={countOpen} onOpenChange={setCountOpen} /> : null}
           <Sheet open={waitOpen} onOpenChange={setWaitOpen}>
             <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-[920px]">
               <SheetTitle className="sr-only">Bàn chờ ảo</SheetTitle>
               <SheetDescription className="sr-only">Ngày kinh doanh {fmtBusinessDate(date)}</SheetDescription>
               <div className="min-h-0 flex-1 overflow-y-auto">
-                <WaitlistPage businessDate={date} />
+                <WaitlistPage businessDate={date} onLeaveToFloor={() => setWaitOpen(false)} />
               </div>
             </SheetContent>
           </Sheet>
-        </>
-      ) : null}
+      </>
 
       {!receptionist && !xl ? (
         <Sheet open={listOpen} onOpenChange={setListOpen}>
@@ -521,7 +469,7 @@ function PickBanner({ model }: { model: ReturnType<typeof useFloorModel> }) {
   const isAssign = pick.intent === "assign" && !!pick.targetDate
   return (
     <div
-      className="absolute inset-x-3 top-3 z-10 mx-auto max-w-xl rounded-sm border border-strong bg-popover/97 p-3 shadow-float backdrop-blur"
+      className="z-10 w-full shrink-0 rounded-sm border border-strong bg-popover p-3"
       role="dialog"
       aria-label={pick.title}
     >

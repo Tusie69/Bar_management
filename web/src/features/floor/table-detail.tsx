@@ -597,12 +597,12 @@ function ReservationSection({
       </ClaimCard>
       {claim.warning ? (
         <div role="status">
-          <Note icon={AlarmClock} tone={claim.warning === "noshow" ? "noshow" : "late"}>
+          <Note icon={AlarmClock} tone="noshow">
             <span
               className="font-semibold"
-              style={{ color: STATE_META[claim.warning === "noshow" ? "noshow" : "late"].ink }}
+              style={{ color: STATE_META.noshow.ink }}
             >
-              {claim.warning === "noshow" ? "Chưa đến" : "Đến muộn"} · trễ {claim.minutesLate}'
+              Không tới · trễ {claim.minutesLate}'
             </span>
             <span className="block text-muted-foreground">Chỉ cảnh báo, bàn vẫn giữ.</span>
           </Note>
@@ -639,15 +639,7 @@ function ReservationSection({
         <GuardedButton
           permission="reservation.update"
           variant="outline"
-          disabledReason={
-            pending
-              ? "Đang ghi nhận..."
-              : canConfirmLate
-                ? null
-                : claim.lateConfirmedAt
-                  ? "Đã ghi nhận khách tới muộn"
-                  : "Chỉ bật sau giờ hẹn và trước ngưỡng Không đến"
-          }
+          disabledReason={pending ? "Đang ghi nhận..." : canConfirmLate ? null : claim.lateConfirmedAt ? "Đã ghi nhận khách tới muộn" : "Chỉ bật sau giờ hẹn và trước ngưỡng Không tới"}
           onClick={() => run(() => api.confirmLate(claim.reservationId!, claim.version))}
         >
           <BadgeCheck /> Tới muộn
@@ -664,7 +656,7 @@ function ReservationSection({
           disabledReason={canNoShow ? null : `Chỉ bật sau ${noShowMinutes} phút trễ (chờ PO duyệt DR-05)`}
           onClick={() => setNoShowOpen(true)}
         >
-          <TimerReset /> Không đến
+          <TimerReset /> Không tới
         </GuardedButton>
       </div>
       <GuestCountDialog
@@ -710,14 +702,14 @@ function ReservationSection({
       <ConfirmAction
         open={noShowOpen}
         onOpenChange={setNoShowOpen}
-        title="Xác nhận khách không đến?"
+        title="Xác nhận khách không tới?"
         description={
           <>
-            Đây là thao tác xử lý thủ công. Booking chuyển sang Không đến và bàn được nhả; hệ thống không tự nhả bàn chỉ
+            Đây là thao tác xử lý thủ công. Booking chuyển sang Không tới và bàn được nhả; hệ thống không tự nhả bàn chỉ
             vì đã quá ngưỡng cảnh báo. Có thể hoàn tác nếu chưa ai dùng bàn.
           </>
         }
-        confirmLabel="Xác nhận không đến"
+        confirmLabel="Xác nhận không tới"
         onConfirm={async () => {
           const r = await run(() => api.markNoShow(claim.reservationId!, claim.version))
           if (r) ui.selectTable(null)
@@ -827,7 +819,7 @@ function HoldSection({
         description={
           <>
             Bàn {claim.tableIds.map((id) => model.label(id)).join(" + ")} trở về trống. Khách quay lại danh sách chờ,
-            trừ khi chọn lý do “Khách không đến”.
+            trừ khi chọn lý do “Khách không tới”.
           </>
         }
         confirmLabel="Nhả giữ bàn"

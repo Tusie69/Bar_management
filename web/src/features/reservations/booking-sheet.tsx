@@ -308,7 +308,6 @@ function BookingBody() {
                 quickTimes={quickTimes}
                 onChange={setTime}
                 error={timeError}
-                gridClassName="sm:grid-cols-5"
               />
             </section>
           </div>

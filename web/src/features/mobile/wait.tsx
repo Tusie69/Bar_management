@@ -3,18 +3,19 @@ import { toast } from "sonner"
 import { PREFERENCE_MODE_LABEL, WAITLIST_STATUS_LABEL } from "@/domain/enums"
 import type { TableView, WaitlistEntryView } from "@/domain/models"
 import { useAction } from "@/hooks/use-action"
-import { fmtTime12, MS } from "@/lib/time"
+import { fmtTime, MS } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api, isApiError } from "@/services"
 import { useCan, useSession } from "@/state/session"
 import type { FloorModel } from "../floor/use-floor-model"
+import { assignWaitlistTables } from "../waitlist/assign-waitlist"
 import { useM } from "./context"
 import { codesOf, isOpenEntry, type Tone, toneStyle } from "./model"
 import { card, CardSkeleton, EmptyBox, PlainHeader, Seg, useKeepScroll } from "./ui"
 
 type Kind = "all" | "ADVANCE_RESERVATION" | "WALK_IN"
 
-export function WaitScreen() {
+export function WaitScreen({ embedded = false }: { embedded?: boolean }) {
   const m = useM()
   const [kind, setKind] = useState<Kind>("all")
   const ref = useKeepScroll("wait")
@@ -28,23 +29,28 @@ export function WaitScreen() {
     [m.waitlist],
   )
   const shown = all.filter((e) => kind === "all" || e.kind === kind)
+  const kindFilter = (
+    <Seg
+      small
+      label="Loại chờ"
+      value={kind}
+      onChange={setKind}
+      opts={[
+        ["all", `Tất cả ${all.length}`],
+        ["ADVANCE_RESERVATION", "Đặt trước"],
+        ["WALK_IN", "Walk-in"],
+      ]}
+    />
+  )
   return (
     <>
-      <PlainHeader title="Đơn chờ">
-        <div className="pt-1 pb-3">
-          <Seg
-            small
-            label="Loại chờ"
-            value={kind}
-            onChange={setKind}
-            opts={[
-              ["all", `Tất cả ${all.length}`],
-              ["ADVANCE_RESERVATION", "Đặt trước"],
-              ["WALK_IN", "Walk-in"],
-            ]}
-          />
-        </div>
-      </PlainHeader>
+      {embedded ? (
+        <div className="px-4 pb-3">{kindFilter}</div>
+      ) : (
+        <PlainHeader title="Đơn chờ">
+          <div className="pt-1 pb-3">{kindFilter}</div>
+        </PlainHeader>
+      )}
       <div ref={ref} className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-1 pb-6">
         {m.waitlistError ? (
           <EmptyBox
@@ -62,9 +68,27 @@ export function WaitScreen() {
         ) : shown.length ? (
           shown.map((e) => <WaitCard key={e.id} e={e} />)
         ) : (
-          <EmptyBox title="Không có khách đang chờ" body="Khách walk-in chưa có bàn sẽ hiện ở đây." />
+          <EmptyBox title="Không có khách đang chờ" body="Booking chưa xếp bàn và khách Walk-in chưa có bàn sẽ hiện ở đây." />
         )}
       </div>
+      {embedded ? (
+        <div className="grid shrink-0 grid-cols-[2fr_1fr] gap-2 border-t border-border px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
+          <button
+            type="button"
+            onClick={() => m.openForm({ mode: "booking", tableIds: [], toWaitlist: true })}
+            className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground active:brightness-90"
+          >
+            Nhận booking
+          </button>
+          <button
+            type="button"
+            onClick={() => m.openForm({ mode: "walkin", tableIds: [] })}
+            className="h-[52px] rounded-[14px] border border-strong text-[15px] font-medium text-tx-1"
+          >
+            Walk-in
+          </button>
+        </div>
+      ) : null}
     </>
   )
 }
@@ -102,9 +126,9 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
 
   const time =
     e.kind === "WALK_IN"
-      ? `đến ${fmtTime12(e.queuedAt)}, chờ ${Math.max(0, Math.floor((m.now.getTime() - e.queuedAt.getTime()) / MS.MIN))} phút`
+      ? `đến ${fmtTime(e.queuedAt)}, chờ ${Math.max(0, Math.floor((m.now.getTime() - e.queuedAt.getTime()) / MS.MIN))} phút`
       : e.reservationExpectedAt
-        ? `hẹn ${fmtTime12(e.reservationExpectedAt)}`
+        ? `hẹn ${fmtTime(e.reservationExpectedAt)}`
         : ""
   const pref = e.preferences.length
     ? e.preferences.map((p) => p.label).join(", ")
@@ -129,7 +153,7 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
         : closed
           ? "Đã rời danh sách"
           : fit
-            ? `Bàn ${fit.code} đang trống, vừa ${party} khách`
+            ? `Gợi ý: bàn ${fit.code} đang trống, vừa ${party} khách`
             : e.kind === "ADVANCE_RESERVATION"
               ? "Đã đặt trước nhưng chưa có bàn"
               : `Chưa có bàn trống cho ${party} khách`
@@ -148,48 +172,43 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
       label: "Hủy mục chờ",
       run: () => run(() => api.cancelWaitlist(e.id, e.version, "CUSTOMER_WITHDREW")),
     })
-  // Offer = in HTTP, direct table assignment via seatWaitlist; in mock, claim + recordContact with offeredTableIds.
-  const offer = (t: TableView) =>
-    api.mode === "http"
-      ? run((o) =>
-          api.seatWaitlist({
-            entryId: e.id,
-            version: e.version,
-            guestCount: party,
-            tableIds: [t.id],
-            ...(arrived ? { arrived: true } : {}),
-            overrideReason: o,
-          }),
-        )
-      : run(async (o) => {
-          if (!o) await api.claimWaitlist(e.id, e.version)
-          const fresh = (await api.listWaitlist(e.businessDate)).find((x) => x.id === e.id) ?? e
-          return api.recordContact({
-            entryId: e.id,
-            version: fresh.version,
-            channel: "IN_PERSON",
-            outcome: "ACCEPTED",
-            offeredTableIds: [t.id],
-            overrideReason: o,
-          })
-        })
+  // R9: Chuyển bàn -> chạm bàn -> xác nhận. Present Walk-ins open a Visit; advance reservations hold tables.
+  const transfer = () => {
+    const expected = e.kind === "ADVANCE_RESERVATION" ? e.reservationExpectedAt : null
+    m.startPick({
+      title: `Chuyển ${e.displayName} vào bàn`,
+      hint: `Chạm bàn trống cho ${party} khách. Chạm lại để bỏ chọn.`,
+      multi: true,
+      ...(expected
+        ? {
+            targetDate: e.businessDate,
+            targetTime: fmtTime(expected),
+            targetExpectedAt: expected,
+            targetParty: party,
+          }
+        : {}),
+      confirmLabel: arrived ? "Xác nhận mở bàn" : "Xác nhận chuyển bàn",
+      question: (codes) => arrived ? `Mở bàn ${codes} cho ${e.displayName}?` : `Chuyển ${e.displayName} vào ${codes}?`,
+      onConfirm: async (ids) => {
+        const kinds = new Set(ids.map((id) => m.model.byId.get(id)?.kind).filter(Boolean))
+        if (kinds.size > 1) {
+          toast.error("Không thể ghép bàn thường với ghế Bar.")
+          return false
+        }
+        const capacity = ids.reduce((sum, id) => sum + (m.model.byId.get(id)?.capacity ?? 0), 0)
+        if (capacity < party) {
+          toast.error(`Các bàn đã chọn chỉ có ${capacity} chỗ cho ${party} khách. Chọn thêm bàn trước khi xác nhận.`)
+          return false
+        }
+        return !!(await run((o) => assignWaitlistTables(e, ids, o)))
+      },
+    })
+  }
 
   let primary: { label: string; go?: () => void } | null = null
   let secondary: { label: string; go: () => void } | null = null
   if (e.status === "WAITING") {
-    primary = fit
-      ? {
-          label: arrived ? `Mở bàn ${fit.code}` : `Đề nghị bàn ${fit.code}`,
-          go: !canAct ? undefined : arrived
-            ? () => m.ask({
-                title: `Mở bàn ${fit.code} cho ${e.displayName}?`,
-                body: "Xác nhận khách đang có mặt để mở bàn ngay.",
-                label: "Xác nhận mở bàn",
-                run: async () => { await offer(fit) },
-              })
-            : () => void offer(fit),
-        }
-      : { label: "Chưa có bàn phù hợp" }
+    primary = { label: "Chuyển bàn", go: canAct ? transfer : undefined }
     secondary = canCancel ? { label: "Hủy", go: cancel } : null
   } else if (e.status === "HOLD_ACTIVE") {
     primary = canCheckin
