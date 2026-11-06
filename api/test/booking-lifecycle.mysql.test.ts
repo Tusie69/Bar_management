@@ -1,6 +1,6 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise'
 import request from 'supertest'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { app } from '../src/app.js'
 import type { AuthenticatedActor } from '../src/auth/authenticated-actor.js'
@@ -655,9 +655,15 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
   })
 
   describe('TU call customer workflow', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2030-10-24T12:05:00.000Z'))
+    })
+    afterEach(() => vi.useRealTimers())
+
     it('projects server-derived canCall without exposing the full phone', async () => {
       const created = await createBooking(actor, {
-        ...bookingInput('2030-10-24', '19:10', 'Projection call guest'),
+        ...bookingInput('2030-10-24', '19:15', 'Projection call guest'),
         phoneNumber: '0901234567',
       })
       await assignBookingTables(actor, created.id, created.version, [tableOneId])
@@ -829,7 +835,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
 
     it('applies the existing phone disclosure rate limit and venue scope to starting calls', async () => {
       const created = await createBooking(actor, {
-        ...bookingInput('2030-10-24', '19:10', 'Rate-limited call guest'),
+        ...bookingInput('2030-10-24', '19:15', 'Rate-limited call guest'),
         phoneNumber: '0901234567',
       })
       await assignBookingTables(actor, created.id, created.version, [tableOneId])
@@ -855,7 +861,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
 
     it('accepts the controlled HTTP call flow for an authorized owner without a phone in the request', async () => {
       const created = await createBooking(actor, {
-        ...bookingInput('2030-10-24', '19:10', 'HTTP call guest'),
+        ...bookingInput('2030-10-24', '19:15', 'HTTP call guest'),
         phoneNumber: '0901234567',
       })
       await assignBookingTables(actor, created.id, created.version, [tableOneId])
@@ -893,6 +899,8 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
   })
 
   describe('FX-04 Idempotency-Key prevents duplicate creates', () => {
+    afterEach(() => vi.useRealTimers())
+
     async function loginAs(username: string) {
       const agent = request.agent(app)
       const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin)
@@ -938,6 +946,8 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     })
 
     it('makes concurrent direct bookings, walk-ins and waitlist entries with the same key succeed once and replay', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2030-10-24T12:00:00.000Z'))
       const send = await loginAs('booking_reception')
       const direct = await Promise.all([1, 2, 3].map(() => send(
         '/api/v1/bookings/direct', { ...bookingInput(), tableIds: [tableOneId] }, 'fx04-direct-key-01',

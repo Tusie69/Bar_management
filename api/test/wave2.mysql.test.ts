@@ -18,7 +18,10 @@ const advanceBody = (reservationId: number) => ({ kind: 'ADVANCE_RESERVATION', r
 
 mysqlDescribe('Wave 2 owner-approved integration', () => {
   beforeAll(initializeFixture)
-  beforeEach(resetFixture)
+  beforeEach(async () => {
+    await resetFixture()
+    vi.spyOn(applicationClock, 'applicationNow').mockReturnValue(new Date('2030-10-24T12:00:00.000Z'))
+  })
   afterEach(() => {
     vi.useRealTimers()
     vi.restoreAllMocks()
