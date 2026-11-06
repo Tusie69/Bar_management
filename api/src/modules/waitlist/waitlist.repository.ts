@@ -159,12 +159,14 @@ export async function createWaitlistEntry(
   actor: AuthenticatedActor,
   input: CreateWaitlistInput,
   now = new Date(),
+  transaction?: PoolConnection,
 ): Promise<WaitlistEntryView> {
   assertNoteHasNoPhoneNumber(input.note)
   assertBusinessDateNotPast(input.businessDate, now)
-  const connection = await databasePool.getConnection()
+  const connection = transaction ?? await databasePool.getConnection()
+  const ownsTransaction = transaction === undefined
   try {
-    await connection.beginTransaction()
+    if (ownsTransaction) await connection.beginTransaction()
     if (input.kind === 'ADVANCE_RESERVATION') {
       const [reservations] = await connection.execute<(RowDataPacket & { status: string; business_date: Date | string })[]>(
         `SELECT status, business_date FROM reservations
@@ -250,13 +252,13 @@ export async function createWaitlistEntry(
     )
     const created = rows[0]
     if (!created) throw new AppError(500, 'WAITLIST_READ_FAILED', 'Không đọc lại được khách vừa thêm vào danh sách chờ.')
-    await connection.commit()
+    if (ownsTransaction) await connection.commit()
     return toView(created)
   } catch (error) {
-    await connection.rollback()
+    if (ownsTransaction) await connection.rollback()
     throw error
   } finally {
-    connection.release()
+    if (ownsTransaction) connection.release()
   }
 }
 

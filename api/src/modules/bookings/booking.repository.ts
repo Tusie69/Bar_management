@@ -261,18 +261,20 @@ export async function createBooking(
   actor: AuthenticatedActor,
   input: CreateBookingInput,
   now = new Date(),
+  transaction?: PoolConnection,
 ): Promise<BookingView> {
   assertNoteHasNoPhoneNumber(input.note)
   const metadata = resolveBookingMetadata(input)
   const schedule = validateBookingSchedule(input.expectedAt, input.businessDate, now)
   const phone = typeof input.phoneNumber === 'string' ? protectPhoneNumber(input.phoneNumber, phoneKeyRing()) : null
-  const [sourceRows] = await databasePool.execute<(RowDataPacket & { id: number })[]>(
+  const executor = transaction ?? databasePool
+  const [sourceRows] = await executor.execute<(RowDataPacket & { id: number })[]>(
     'SELECT id FROM booking_sources WHERE organization_id = ? AND code = ? AND is_active = 1',
     [actor.organizationId, input.sourceCode],
   )
   const source = sourceRows[0]
   if (!source) throw new AppError(400, 'BOOKING_SOURCE_NOT_FOUND', 'Nguồn đặt bàn không hợp lệ.')
-  const [result] = await databasePool.execute<ResultSetHeader>(
+  const [result] = await executor.execute<ResultSetHeader>(
     `INSERT INTO reservations
       (organization_id, venue_id, contact_name, contact_name_search, phone_ciphertext, phone_key_id,
        phone_hmac, phone_hmac_key_id, phone_last3, source_id, party_size,
@@ -295,22 +297,24 @@ export async function createBooking(
       actor.userId,
     ],
   )
-  return getBookingById(actor, result.insertId)
+  return getBookingById(actor, result.insertId, executor)
 }
 
 export async function createAndAssignBooking(
   actor: AuthenticatedActor,
   input: CreateAndAssignBookingInput,
   now = new Date(),
+  transaction?: PoolConnection,
 ): Promise<BookingView> {
   assertNoteHasNoPhoneNumber(input.note)
   const metadata = resolveBookingMetadata(input)
   const schedule = validateBookingSchedule(input.expectedAt, input.businessDate, now)
   const phone = typeof input.phoneNumber === 'string' ? protectPhoneNumber(input.phoneNumber, phoneKeyRing()) : null
   const tableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
-  const connection = await databasePool.getConnection()
+  const connection = transaction ?? await databasePool.getConnection()
+  const ownsTransaction = transaction === undefined
   try {
-    await connection.beginTransaction()
+    if (ownsTransaction) await connection.beginTransaction()
     const [sourceRows] = await connection.execute<(RowDataPacket & { id: number })[]>(
       'SELECT id FROM booking_sources WHERE organization_id = ? AND code = ? AND is_active = 1',
       [actor.organizationId, input.sourceCode],
@@ -410,13 +414,13 @@ export async function createAndAssignBooking(
       ],
     )
     const booking = await getBookingById(actor, reservation.insertId, connection)
-    await connection.commit()
+    if (ownsTransaction) await connection.commit()
     return booking
   } catch (error) {
-    await connection.rollback()
+    if (ownsTransaction) await connection.rollback()
     throw error
   } finally {
-    connection.release()
+    if (ownsTransaction) connection.release()
   }
 }
 
@@ -1631,10 +1635,15 @@ export interface CreateWalkInInput {
   tableIds: number[]
 }
 
-export async function createWalkIn(actor: AuthenticatedActor, input: CreateWalkInInput): Promise<{ visitId: number }> {
-  const connection = await databasePool.getConnection()
+export async function createWalkIn(
+  actor: AuthenticatedActor,
+  input: CreateWalkInInput,
+  transaction?: PoolConnection,
+): Promise<{ visitId: number }> {
+  const connection = transaction ?? await databasePool.getConnection()
+  const ownsTransaction = transaction === undefined
   try {
-    await connection.beginTransaction()
+    if (ownsTransaction) await connection.beginTransaction()
     const uniqueTableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
     if (!uniqueTableIds.length) throw new AppError(400, 'TABLE_REQUIRED', 'Cần chọn ít nhất một bàn cho khách walk-in.')
     const placeholders = uniqueTableIds.map(() => '?').join(',')
@@ -1673,12 +1682,12 @@ export async function createWalkIn(actor: AuthenticatedActor, input: CreateWalkI
         [actor.organizationId, actor.venueId, tableId, visitResult.insertId, input.businessDate, actor.userId],
       )
     }
-    await connection.commit()
+    if (ownsTransaction) await connection.commit()
     return { visitId: visitResult.insertId }
   } catch (error) {
-    await connection.rollback()
+    if (ownsTransaction) await connection.rollback()
     throw error
   } finally {
-    connection.release()
+    if (ownsTransaction) connection.release()
   }
 }

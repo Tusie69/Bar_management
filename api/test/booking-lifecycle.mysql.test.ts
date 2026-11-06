@@ -7,6 +7,7 @@ import type { AuthenticatedActor } from '../src/auth/authenticated-actor.js'
 import { hashPassword } from '../src/auth/password.js'
 import { env } from '../src/config/env.js'
 import { databasePool } from '../src/database/pool.js'
+import { injectIdempotencyFaultForTest } from '../src/middleware/idempotency.js'
 import {
   assignBookingTables,
   checkInBooking,
@@ -968,6 +969,128 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       expect(entryIds[0]).toBe(entryIds[1])
       expect([await countRows('reservations'), await countRows('visits'), await countRows('waitlist_entries')])
         .toEqual([1, 1, 1])
+    })
+
+    it('atomically rolls back every protected domain mutation when idempotency completion fails', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2030-10-24T12:00:00.000Z'))
+      const send = await loginAs('booking_reception')
+      const requests = [
+        ['/api/v1/bookings', { ...bookingInput(), guestName: 'Atomic booking' }, 'ba002-booking-fail'],
+        ['/api/v1/bookings/direct', {
+          ...bookingInput(), guestName: 'Atomic direct', tableIds: [tableOneId],
+        }, 'ba002-direct-fail'],
+        ['/api/v1/bookings/walk-ins', {
+          guestName: 'Atomic walk-in', partySize: 2, businessDate: '2030-10-24', tableIds: [tableTwoId],
+        }, 'ba002-walkin-fail'],
+        ['/api/v1/waitlist', {
+          guestName: 'Atomic waitlist', partySize: 2, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+        }, 'ba002-waitlist-fail'],
+      ] as const
+
+      for (const [path, body, key] of requests) {
+        injectIdempotencyFaultForTest(key, 'FAIL_COMPLETION')
+        const failed = await send(path, body, key)
+        expect(failed.status).toBe(500)
+        expect(JSON.parse(failed.text)).toMatchObject({ error: { code: 'IDEMPOTENCY_FINALIZATION_FAILED' } })
+        expect([
+          await countRows('reservations'), await countRows('visits'), await countRows('waitlist_entries'),
+          await countRows('idempotency_keys'),
+        ]).toEqual([0, 0, 0, 0])
+        const rolledBackEffects = await row(
+          'SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log) AS audits',
+          [],
+        )
+        expect([
+          Number(rolledBackEffects.holds), Number(rolledBackEffects.allocations), Number(rolledBackEffects.audits),
+        ]).toEqual([0, 0, 0])
+        expect(Number((await row('SELECT change_seq FROM venues WHERE id = ?', [venueId])).change_seq)).toBe(0)
+      }
+
+      const retried = []
+      for (const [path, body, key] of requests) retried.push(await send(path, body, key))
+      expect(retried.map((response) => response.status)).toEqual([201, 201, 201, 201])
+      expect([
+        await countRows('reservations'), await countRows('visits'), await countRows('waitlist_entries'),
+        await countRows('idempotency_keys'),
+      ]).toEqual([2, 1, 1, 4])
+      const effects = await row(
+        'SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log) AS audits',
+        [],
+      )
+      expect([Number(effects.holds), Number(effects.allocations), Number(effects.audits)]).toEqual([1, 2, 2])
+      expect(Number((await row('SELECT change_seq FROM venues WHERE id = ?', [venueId])).change_seq)).toBe(2)
+    })
+
+    it('rolls back the direct booking when MySQL rejects the idempotency response update', async () => {
+      const send = await loginAs('booking_reception')
+      await databasePool.query(`ALTER TABLE idempotency_keys
+        ADD CONSTRAINT ck_ba002_reject_completed CHECK (response_status IS NULL)`)
+      let failed
+      try {
+        failed = await send('/api/v1/bookings/direct', {
+          ...bookingInput(), guestName: 'Constraint rollback', tableIds: [tableOneId],
+        }, 'ba002-constraint-fail')
+      } finally {
+        await databasePool.query('ALTER TABLE idempotency_keys DROP CHECK ck_ba002_reject_completed')
+      }
+      expect(failed.status).toBe(500)
+      expect([
+        await countRows('reservations'), await countRows('idempotency_keys'),
+        Number((await row('SELECT COUNT(*) AS total FROM table_holds', [])).total),
+        Number((await row('SELECT COUNT(*) AS total FROM table_allocations', [])).total),
+        Number((await row('SELECT COUNT(*) AS total FROM operation_log', [])).total),
+      ]).toEqual([0, 0, 0, 0, 0])
+      expect(Number((await row('SELECT change_seq FROM venues WHERE id = ?', [venueId])).change_seq)).toBe(0)
+
+      const retry = await send('/api/v1/bookings/direct', {
+        ...bookingInput(), guestName: 'Constraint rollback', tableIds: [tableOneId],
+      }, 'ba002-constraint-fail')
+      expect(retry.status).toBe(201)
+      expect([await countRows('reservations'), await countRows('idempotency_keys')]).toEqual([1, 1])
+    })
+
+    it('recovers after the database connection is lost before the shared commit', async () => {
+      const send = await loginAs('booking_reception')
+      const key = 'ba002-connection-fail'
+      injectIdempotencyFaultForTest(key, 'DROP_CONNECTION_BEFORE_COMMIT')
+      const failed = await send('/api/v1/bookings', {
+        ...bookingInput(), guestName: 'Connection retry',
+      }, key)
+      expect(failed.status).toBe(500)
+      expect([await countRows('reservations'), await countRows('idempotency_keys')]).toEqual([0, 0])
+
+      const retry = await send('/api/v1/bookings', {
+        ...bookingInput(), guestName: 'Connection retry',
+      }, key)
+      expect(retry.status).toBe(201)
+      expect([await countRows('reservations'), await countRows('idempotency_keys')]).toEqual([1, 1])
+    })
+
+    it('replays the committed direct booking after the original HTTP response is lost', async () => {
+      const send = await loginAs('booking_reception')
+      const key = 'ba002-lost-response'
+      const payload = { ...bookingInput(), guestName: 'Lost response', tableIds: [tableOneId] }
+      injectIdempotencyFaultForTest(key, 'DROP_RESPONSE_AFTER_COMMIT')
+      let transportFailure: unknown
+      try {
+        await send('/api/v1/bookings/direct', payload, key)
+      } catch (error) {
+        transportFailure = error
+      }
+      expect(transportFailure).toBeDefined()
+      expect([await countRows('reservations'), await countRows('idempotency_keys')]).toEqual([1, 1])
+
+      const replay = await send('/api/v1/bookings/direct', payload, key)
+      expect(replay.status).toBe(201)
+      expect(replay.headers['idempotent-replayed']).toBe('true')
+      expect([await countRows('reservations'), await countRows('idempotency_keys')]).toEqual([1, 1])
+      const effects = await row(
+        'SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log) AS audits',
+        [],
+      )
+      expect([Number(effects.holds), Number(effects.allocations), Number(effects.audits)]).toEqual([1, 1, 1])
+      expect(Number((await row('SELECT change_seq FROM venues WHERE id = ?', [venueId])).change_seq)).toBe(1)
     })
 
     it('rejects reusing a successful key for different content or another endpoint', async () => {

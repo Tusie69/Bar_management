@@ -4,7 +4,7 @@ import { requireAuthentication, requireCsrfProtection, requirePermission } from 
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { env } from '../../config/env.js'
 import { AppError } from '../../errors/app-error.js'
-import { idempotent } from '../../middleware/idempotency.js'
+import { idempotent, idempotencyTransaction } from '../../middleware/idempotency.js'
 import { assertNoteHasNoPhoneNumber } from '../../security/note-privacy.js'
 import { applicationNow } from '../../time/application-clock.js'
 import {
@@ -187,7 +187,7 @@ bookingRouter.post('/', requireAuthentication, requireCsrfProtection, requirePer
   void _body
   const booking = await createBooking(requireAuthenticatedActor(request), {
     ...input,
-  }, applicationNow())
+  }, applicationNow(), idempotencyTransaction(response))
   response.status(201).json({ booking })
 })
 
@@ -205,7 +205,7 @@ bookingRouter.post(
     response.status(201).json({ booking: await createAndAssignBooking(requireAuthenticatedActor(request), {
       ...input,
       tableIds,
-    }, applicationNow()) })
+    }, applicationNow(), idempotencyTransaction(response)) })
   },
 )
 
@@ -290,7 +290,7 @@ bookingRouter.post('/walk-ins', requireAuthentication, requireCsrfProtection, re
     businessDate: assertCurrentBusinessDate(body.businessDate, applicationNow()),
     tableIds: body.tableIds.map((id) => positiveInteger(id, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.')),
     ...(typeof body.guestName === 'string' && body.guestName.trim() ? { guestName: body.guestName.trim() } : {}),
-  })
+  }, idempotencyTransaction(response))
   response.status(201).json(result)
 })
 

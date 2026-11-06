@@ -4,7 +4,7 @@ import { hasPermission } from '../../auth/auth.service.js'
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { AppError } from '../../errors/app-error.js'
-import { idempotent } from '../../middleware/idempotency.js'
+import { idempotent, idempotencyTransaction } from '../../middleware/idempotency.js'
 import { assertNoteHasNoPhoneNumber } from '../../security/note-privacy.js'
 import { applicationNow } from '../../time/application-clock.js'
 import { validateCalendarDate } from '../bookings/business-date.js'
@@ -82,7 +82,7 @@ waitlistRouter.post('/', requireAuthentication, requireCsrfProtection, requirePe
     businessDate: validateCalendarDate(body.businessDate),
     contactChannel: body.contactChannel as ContactChannel,
     ...(note ? { note } : {}),
-  }, applicationNow()) })
+  }, applicationNow(), idempotencyTransaction(response)) })
 })
 
 function mutationInput(request: { params: { id?: unknown }; body: unknown }) {
