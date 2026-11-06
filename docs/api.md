@@ -28,11 +28,15 @@ Common status codes: 400 `INVALID_*` validation, 401 `AUTHENTICATION_REQUIRED` /
 | Method | Path | Access | Response |
 | --- | --- | --- | --- |
 | GET | `/health` | Public | `{ok:true}`; process liveness, not a database check |
-| POST | `/auth/login` | Trusted origin | Body `{username,password}`; returns `{user,permissions,csrfToken,expiresAt}` and session cookie |
-| GET | `/auth/me` | Session | `{user,permissions,csrfToken}` |
+| POST | `/auth/login` | Trusted origin | Body `{username,password,portal}`; returns `{user,permissions,csrfToken,portal,expiresAt}` and session cookie |
+| GET | `/auth/me` | Session | `{user,permissions,csrfToken,portal}` |
 | POST | `/auth/logout` | Session + CSRF | 204, no body |
 
-`user` contains `{id,username,displayName,organizationId,venueId,roles}`; `roles` contains the active membership role codes for this venue. Raw session tokens are never included in JSON. Login is limited after five failed attempts for the same IP/username in a 15-minute window.
+`portal` is one of `admin`, `receptionist`, `customer-care` or `cashier`. The server verifies the password before checking portal eligibility, creates no session for a denied portal and stores the verified portal on the server-side session. Current conservative mapping is `admin → OWNER_ADMIN`, `receptionist → RECEPTIONIST`, `customer-care → CUSTOMER_CARE`, `cashier → CASHIER`. A multi-role account receives only roles and permissions mapped to the selected portal; the request value never grants a role. Changing a client URL cannot change the session portal. Invalid portal is `INVALID_PORTAL` (400); valid credentials at a disallowed portal are `PORTAL_ACCESS_DENIED` (403).
+
+`user` contains `{id,username,displayName,organizationId,venueId,roles}`; `roles` contains only the active role codes eligible for the session portal and venue. Raw session tokens are never included in JSON. Login is limited after five failed credential attempts for the same IP/username in a 15-minute window. `/auth/me` restores the same portal after refresh. Disabled users, suspended memberships, expired/revoked sessions, or revocation of the last role eligible for the session portal make the next authenticated request return 401. Logout revokes the database session and clears the HttpOnly cookie. Migration `0012_add_auth_session_portal.sql` revokes legacy active sessions that had no server-verified portal instead of assigning one heuristically.
+
+The current API schema does not contain `SUPER_ADMIN`, a read-only admin role, Service/Waiter, Bar or Warehouse roles. Their portal mapping remains `[?]` pending an approved NA-07 matrix; no role, permission or grant is synthesized by TU-07. See `docs/security/tu07-tu08-audit.md` for the endpoint RBAC and TU-08 audit.
 
 ## Tables and catalog
 

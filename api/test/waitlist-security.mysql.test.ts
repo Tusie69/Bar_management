@@ -49,7 +49,7 @@ mysqlDescribe('waitlist mutations and route security integration', () => {
       expect(result.status, `CSRF ${method} ${path}`).toBe(403)
       expect((result.body as { error: { code: string } }).error.code).toBe('CSRF_TOKEN_INVALID')
     }
-    // Keep an active, venue-scoped role with zero permissions, without changing seeded RBAC.
+    // Replacing the portal role invalidates the portal-bound session on the next request.
     const [role] = await databasePool.execute<ResultSetHeader>(
       "INSERT INTO roles (code, name) VALUES ('INTEGRATION_NO_PERMISSIONS', 'No permissions')",
     )
@@ -58,8 +58,8 @@ mysqlDescribe('waitlist mutations and route security integration', () => {
       for (const [method, path] of protectedRoutes) {
         const result = await session.agent[method](`/api/v1${path}`).set('Origin', env.webOrigin)
           .set('X-CSRF-Token', session.csrfToken).send({})
-        expect(result.status, `${method} ${path}`).toBe(403)
-        expect((result.body as { error: { code: string } }).error.code).toBe('PERMISSION_DENIED')
+        expect(result.status, `${method} ${path}`).toBe(401)
+        expect((result.body as { error: { code: string } }).error.code).toBe('SESSION_INVALID')
       }
     } finally {
       await databasePool.execute('DELETE FROM membership_roles WHERE role_id = ?', [role.insertId])

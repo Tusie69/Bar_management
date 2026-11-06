@@ -1,6 +1,7 @@
 import { Router } from 'express'
 
 import { AppError } from '../errors/app-error.js'
+import { isAuthPortal } from './auth-portal.js'
 import { attachAuthentication, getAuthentication, requireAuthenticatedActor } from './authenticated-actor.js'
 import { requireAuthentication, requireCsrfProtection } from './auth.middleware.js'
 import { listPermissions, listRoles, login, logoutSession } from './auth.service.js'
@@ -63,6 +64,7 @@ async function authPayload(request: Parameters<typeof getAuthentication>[0]) {
     },
     permissions,
     csrfToken: createCsrfToken(authentication.sessionToken),
+    portal: authentication.portal,
   }
 }
 
@@ -74,11 +76,14 @@ authRouter.post('/login', async (request, response) => {
   if (typeof body.password !== 'string' || !body.password || body.password.length > 1024) {
     throw new AppError(400, 'INVALID_PASSWORD', 'Mật khẩu không hợp lệ.')
   }
+  if (!isAuthPortal(body.portal)) {
+    throw new AppError(400, 'INVALID_PORTAL', 'Cổng đăng nhập không hợp lệ.')
+  }
   const username = body.username.trim()
   const key = attemptKey(request.ip, username)
   assertLoginAllowed(key)
   try {
-    const result = await login(username, body.password, request.header('user-agent'))
+    const result = await login(username, body.password, body.portal, request.header('user-agent'))
     attempts.delete(key)
     setSessionCookie(response, result.authentication.sessionToken)
     attachAuthentication(request, result.authentication)

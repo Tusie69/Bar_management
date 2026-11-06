@@ -440,7 +440,7 @@ try {
   if (!session?.httpOnly) throw new Error("Session cookie is missing or not HttpOnly")
   await page.getByLabel(/Tài khoản:/).click()
   await page.getByRole("menuitem", { name: "Đăng xuất" }).click()
-  await page.getByText("Đăng nhập 21GAM", { exact: true }).waitFor()
+  await page.getByText("Đăng nhập Lễ tân", { exact: true }).waitFor()
 
   console.log(
     JSON.stringify({

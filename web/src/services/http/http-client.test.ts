@@ -143,6 +143,7 @@ describe("AuthApi", () => {
       },
       permissions: ["customer.view_masked"],
       csrfToken: "server-csrf",
+      portal: "admin" as const,
       expiresAt: "2026-10-29T00:00:00.000Z",
     }
     const fetchMock = vi
@@ -154,11 +155,16 @@ describe("AuthApi", () => {
     const client = new HttpClient("https://api.example.test")
     const auth = new AuthApi(client)
 
-    await expect(auth.login("operator", "password")).resolves.toEqual(session)
+    await expect(auth.login("operator", "password", "admin")).resolves.toEqual(session)
     await expect(auth.me()).resolves.toEqual(session)
     await expect(auth.logout()).resolves.toBeUndefined()
     const logoutInit = fetchMock.mock.calls[2]?.[1] as RequestInit
     expect(logoutInit.headers).toMatchObject({ "x-csrf-token": "server-csrf" })
+    expect(JSON.parse(String((fetchMock.mock.calls[0]![1] as RequestInit).body))).toEqual({
+      username: "operator",
+      password: "password",
+      portal: "admin",
+    })
   })
 
   it("rejects a malformed session response", async () => {

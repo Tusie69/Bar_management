@@ -89,7 +89,10 @@ async function populateFixture(): Promise<void> {
 
 export async function login(username = 'integration_reception') {
   const agent = request.agent(app)
-  const response = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password })
+  const portal = username === 'integration_owner'
+    ? 'admin'
+    : username === 'integration_care' ? 'customer-care' : 'receptionist'
+  const response = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password, portal })
   if (response.status !== 200) throw new Error(`Fixture login failed: ${response.status}`)
   return { agent, csrfToken: (response.body as { csrfToken: string }).csrfToken }
 }

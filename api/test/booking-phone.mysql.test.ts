@@ -106,7 +106,8 @@ function input(phoneNumber?: string | null) {
 
 async function login(username: string) {
   const agent = request.agent(app)
-  const response = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password })
+  const portal = username === 'phone_owner' ? 'admin' : username === 'phone_cashier' ? 'cashier' : 'receptionist'
+  const response = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password, portal })
   expect(response.status).toBe(200)
   return { agent, csrfToken: (response.body as AuthBody).csrfToken }
 }
