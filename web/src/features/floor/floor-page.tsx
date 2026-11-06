@@ -77,6 +77,7 @@ export function FloorPage() {
   const ui = useUi()
   const now = useNow(1000)
   const receptionist = useSession((state) => state.user.role === "RECEPTIONIST")
+  const zone = receptionist ? "ALL" : ui.zone
   const currentDate = businessDateOf(now)
   const selectedDate = receptionist && ui.floorMode !== "live" ? ui.availDate : currentDate
   const model = useFloorModel(receptionist ? selectedDate : undefined)
@@ -336,10 +337,10 @@ export function FloorPage() {
                 onChange={setTab}
                 options={LIST_TABS.map((t) => ({ value: t.id, label: t.label, count: feed[t.id].length }))}
               />
-            ) : (
-              <Segmented label="Lọc khu" value={ui.zone} onChange={ui.setZone} options={ZONE_TABS} />
-            )}
-            {live && view === "map" && !ui.pick && !draft ? (
+            ) : !receptionist ? (
+              <Segmented label="Lọc khu" value={zone} onChange={ui.setZone} options={ZONE_TABS} />
+            ) : null}
+            {!receptionist && live && view === "map" && !ui.pick && !draft ? (
               <Button variant="ghost" size="sm" onClick={() => ui.setFloorMode("availability")}>
                 <Search /> Xem khả dụng
               </Button>
@@ -385,7 +386,7 @@ export function FloorPage() {
                   selectedIds={selectedIds}
                   searchHighlightedIds={!ui.pick && !draft ? search.tableIds : []}
                   pickable={bookingDraft ? draftBookingPickable : draft ? null : pickable}
-                  zoneFocus={ui.zone}
+                  zoneFocus={zone}
                   now={now}
                   onTableClick={onTableClick}
                   onBackgroundClick={() => !ui.pick && !draft && live && ui.selectTable(null)}
