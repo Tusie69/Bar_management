@@ -1,6 +1,7 @@
 import type { Request } from 'express'
 
 import { AppError } from '../errors/app-error.js'
+import type { AuthPortal } from './auth-portal.js'
 
 export interface AuthenticatedActor {
   userId: number
@@ -8,6 +9,8 @@ export interface AuthenticatedActor {
   organizationId: number
   venueId: number
   authSessionId?: number
+  /** Present on every HTTP-authenticated actor. Optional only for internal repository callers. */
+  portal?: AuthPortal
 }
 
 export interface AuthenticatedSession {
@@ -15,6 +18,7 @@ export interface AuthenticatedSession {
   username: string
   displayName: string
   sessionToken: string
+  portal: AuthPortal
 }
 
 interface RequestWithAuthentication extends Request {

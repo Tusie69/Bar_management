@@ -5,12 +5,14 @@ import { Button } from "@/components/ui/button"
 import { api } from "@/services"
 import { useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
-import { LoginPage } from "./login-page"
+import { LoginPage, PortalUnderConstruction } from "./login-page"
+import { DEFAULT_AUTH_PORTAL, portalFromPath, unavailablePortalFromPath } from "@/domain/auth-portal"
 
 export function AuthBoundary({ children }: { children: ReactNode }) {
   const status = useSession((state) => state.authStatus)
   const error = useSession((state) => state.authError)
   const bootstrap = useSession((state) => state.bootstrap)
+  const sessionPortal = useSession((state) => state.portal)
   const queryClient = useQueryClient()
 
   useEffect(() => {
@@ -27,7 +29,13 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
 
   if (api.mode === "mock") return children
   if (status === "authenticated") return children
-  if (status === "anonymous") return <LoginPage />
+  if (status === "anonymous") {
+    const pathname = typeof window === "undefined" ? "" : window.location.pathname
+    const unavailablePortal = unavailablePortalFromPath(pathname)
+    if (unavailablePortal) return <PortalUnderConstruction label={unavailablePortal} />
+    const routePortal = portalFromPath(pathname)
+    return <LoginPage portal={routePortal ?? sessionPortal ?? DEFAULT_AUTH_PORTAL} />
+  }
   if (status === "error") {
     return (
       <main className="grid min-h-dvh place-items-center bg-background p-4">

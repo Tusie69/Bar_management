@@ -31,7 +31,8 @@ const suffix = String(env.organizationId)
 
 async function login(username) {
   const agent = request.agent(app)
-  const response = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password })
+  const portal = username.includes('_owner_') ? 'admin' : 'receptionist'
+  const response = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password, portal })
   assert.ok(response.status === 200, 'Synthetic login failed')
   return { agent, csrfToken: response.body.csrfToken }
 }

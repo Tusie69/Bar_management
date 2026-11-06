@@ -1,4 +1,5 @@
 import { ApiError } from "../contracts"
+import { isAuthPortal, type AuthPortal } from "@/domain/auth-portal"
 import type { HttpClient } from "./http-client"
 
 export interface AuthenticatedUser {
@@ -15,6 +16,7 @@ export interface AuthSession {
   permissions: string[]
   csrfToken: string
   expiresAt?: string
+  portal: AuthPortal
 }
 
 function validSession(value: unknown): value is AuthSession {
@@ -33,7 +35,8 @@ function validSession(value: unknown): value is AuthSession {
     Array.isArray(session.permissions) &&
     session.permissions.every((permission) => typeof permission === "string") &&
     typeof session.csrfToken === "string" &&
-    session.csrfToken,
+    session.csrfToken &&
+    isAuthPortal(session.portal),
   )
 }
 
@@ -52,8 +55,8 @@ export class AuthApi {
     return value
   }
 
-  async login(username: string, password: string): Promise<AuthSession> {
-    const result = await this.client.post<unknown>("/auth/login", { username, password })
+  async login(username: string, password: string, portal: AuthPortal): Promise<AuthSession> {
+    const result = await this.client.post<unknown>("/auth/login", { username, password, portal })
     return this.accept(result)
   }
 

@@ -189,7 +189,10 @@ async function createHttpUserWithRole(username: string, roleCode: string) {
     [organizationId, membership.insertId, venueId, roleCode],
   )
   const agent = request.agent(app)
-  const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password })
+  const portal = roleCode === 'OWNER_ADMIN' ? 'admin'
+    : roleCode === 'CUSTOMER_CARE' ? 'customer-care'
+      : roleCode === 'CASHIER' ? 'cashier' : 'receptionist'
+  const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password, portal })
   expect(login.status).toBe(200)
   return { agent, auth: JSON.parse(login.text) as AuthResponse }
 }
@@ -603,7 +606,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     it('returns 409 BUSINESS_DATE_IN_PAST through POST /waitlist', async () => {
       const receptionist = request.agent(app)
       const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-        username: 'booking_reception', password,
+        username: 'booking_reception', password, portal: 'receptionist',
       })
       const auth = JSON.parse(login.text) as AuthResponse
       const response = await receptionist.post('/api/v1/waitlist')
@@ -619,7 +622,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       await databasePool.execute('UPDATE waitlist_entries SET business_date = ? WHERE id = ?', [pastDate, entry.id])
       const receptionist = request.agent(app)
       const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-        username: 'booking_reception', password,
+        username: 'booking_reception', password, portal: 'receptionist',
       })
       const auth = JSON.parse(login.text) as AuthResponse
       const response = await receptionist.post(`/api/v1/waitlist/${entry.id}/seat`)
@@ -773,7 +776,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       expect((await request(app).post('/api/v1/bookings/1/call').set('Origin', env.webOrigin).send({})).status).toBe(401)
       const receptionist = request.agent(app)
       const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-        username: 'booking_reception', password,
+        username: 'booking_reception', password, portal: 'receptionist',
       })
       const auth = JSON.parse(login.text) as AuthResponse
       const response = await receptionist.post('/api/v1/bookings/1/call')
@@ -785,20 +788,13 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     it('requires both phone permissions before the call route can disclose a tel URI', async () => {
       const created = await createBooking(actor, { ...bookingInput(), phoneNumber: '0901234567' })
       await assignBookingTables(actor, created.id, created.version, [tableOneId])
-      const roleCode = 'TEST_BOOKING_PHONE_ONLY'
-      await databasePool.execute(
-        `INSERT INTO roles (code, name, is_system) VALUES (?, 'Booking phone only test', 0)
-         ON DUPLICATE KEY UPDATE name = VALUES(name)`,
-        [roleCode],
-      )
       await databasePool.execute(
         `INSERT IGNORE INTO role_permissions (role_id, permission_id)
          SELECT r.id, p.id FROM roles r JOIN permissions p ON p.code = 'booking.phone.reveal'
-         WHERE r.code = ?`,
-        [roleCode],
+         WHERE r.code = 'RECEPTIONIST'`,
       )
       try {
-        const limited = await createHttpUserWithRole('booking_phone_only', roleCode)
+        const limited = await createHttpUserWithRole('booking_phone_only', 'RECEPTIONIST')
         const response = await limited.agent.post(`/api/v1/bookings/${created.id}/call`)
           .set('Origin', env.webOrigin).set('X-CSRF-Token', limited.auth.csrfToken).send({})
         expect(response.status).toBe(403)
@@ -809,14 +805,11 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         )).total)).toBe(0)
       } finally {
         await databasePool.execute(
-          `DELETE mr FROM membership_roles mr JOIN roles r ON r.id = mr.role_id WHERE r.code = ?`,
-          [roleCode],
+          `DELETE rp FROM role_permissions rp
+           JOIN roles r ON r.id = rp.role_id
+           JOIN permissions p ON p.id = rp.permission_id
+           WHERE r.code = 'RECEPTIONIST' AND p.code = 'booking.phone.reveal'`,
         )
-        await databasePool.execute(
-          `DELETE rp FROM role_permissions rp JOIN roles r ON r.id = rp.role_id WHERE r.code = ?`,
-          [roleCode],
-        )
-        await databasePool.execute('DELETE FROM roles WHERE code = ?', [roleCode])
       }
     })
 
@@ -868,7 +861,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       )
       const ownerAgent = request.agent(app)
       const login = await ownerAgent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-        username: 'booking_owner', password,
+        username: 'booking_owner', password, portal: 'admin',
       })
       const auth = JSON.parse(login.text) as AuthResponse
       const call = await ownerAgent.post(`/api/v1/bookings/${created.id}/call`)
@@ -888,7 +881,8 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
   describe('FX-04 Idempotency-Key prevents duplicate creates', () => {
     async function loginAs(username: string) {
       const agent = request.agent(app)
-      const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password })
+      const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin)
+        .send({ username, password, portal: 'receptionist' })
       const auth = JSON.parse(login.text) as AuthResponse
       return (path: string, body: object, key?: string) => {
         const call = agent.post(path).set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken)
@@ -1020,7 +1014,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     const created = await createBooking(actor, bookingInput())
     const receptionist = request.agent(app)
     const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-      username: 'booking_reception', password,
+      username: 'booking_reception', password, portal: 'receptionist',
     })
     const auth = JSON.parse(login.text) as AuthResponse
     const sources = await receptionist.get('/api/v1/bookings/sources')
@@ -1056,7 +1050,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     )
     const care = request.agent(app)
     const careAuth = JSON.parse((await care.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-      username: 'booking_care', password,
+      username: 'booking_care', password, portal: 'customer-care',
     })).text) as AuthResponse
     expect(careAuth.permissions).not.toContain('reservation.update')
     const waitlistForbidden = await care.post(`/api/v1/waitlist/${waitlistBody.entry.id}/seat`)
@@ -1097,7 +1091,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
 
     const receptionist = request.agent(app)
     const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-      username: 'booking_reception', password,
+      username: 'booking_reception', password, portal: 'receptionist',
     })
     const auth = JSON.parse(login.text) as AuthResponse
     expect(auth.permissions).toContain('customer.view_masked')

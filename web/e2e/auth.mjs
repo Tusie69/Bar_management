@@ -79,6 +79,7 @@ const session = () => ({
           "operation.undo",
         ],
   csrfToken: "csrf-from-server",
+  portal: currentUser === "owner" ? "admin" : "receptionist",
   expiresAt: "2026-10-29T00:00:00.000Z",
 })
 
@@ -107,6 +108,14 @@ await page.route("**/api/v1/**", async (route) => {
         status: 401,
         headers,
         json: { error: { code: "INVALID_CREDENTIALS", message: "Tên đăng nhập hoặc mật khẩu không hợp lệ." } },
+      })
+    }
+    const allowedPortal = body.username === "owner" ? "admin" : "receptionist"
+    if (body.portal !== allowedPortal) {
+      return route.fulfill({
+        status: 403,
+        headers,
+        json: { error: { code: "PORTAL_ACCESS_DENIED", message: "Tài khoản không được phép đăng nhập tại cổng này." } },
       })
     }
     currentUser = body.username
@@ -200,9 +209,47 @@ await page.route("**/api/v1/**", async (route) => {
       headers,
       json: {
         businessDate: reqDate,
+        serverNow: new Date().toISOString(),
+        changeSeq: "1",
         tables: [
-          { id: 1, code: "A1", state: "AVAILABLE", isBackup: false, activeVisit: null },
-          { id: 2, code: "A10", state: "AVAILABLE", isBackup: true, activeVisit: null },
+          {
+            tableId: 1,
+            tableCode: "A1",
+            catalogStatus: "ACTIVE",
+            isSpare: false,
+            displayState: "EMPTY",
+            arrivalPhase: null,
+            arrivalTime: null,
+            minutesLate: 0,
+            claim: null,
+            groupId: null,
+            groupDisplayCode: null,
+            groupMemberTableIds: [],
+            id: 1,
+            code: "A1",
+            state: "AVAILABLE",
+            isBackup: false,
+            activeVisit: null,
+          },
+          {
+            tableId: 2,
+            tableCode: "A10",
+            catalogStatus: "ACTIVE",
+            isSpare: true,
+            displayState: "EMPTY",
+            arrivalPhase: null,
+            arrivalTime: null,
+            minutesLate: 0,
+            claim: null,
+            groupId: null,
+            groupDisplayCode: null,
+            groupMemberTableIds: [],
+            id: 2,
+            code: "A10",
+            state: "AVAILABLE",
+            isBackup: true,
+            activeVisit: null,
+          },
         ],
         groups: [],
       },
@@ -220,8 +267,25 @@ await page.route("**/api/v1/**", async (route) => {
 const expectText = async (text) => page.getByText(text, { exact: false }).first().waitFor()
 
 try {
+  for (const viewport of [
+    { width: 360, height: 800 },
+    { width: 375, height: 812 },
+    { width: 390, height: 844 },
+    { width: 768, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport)
+    await page.goto(`${base}/receptionist/login`, { waitUntil: "networkidle" })
+    await expectText("Đăng nhập Lễ tân")
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)
+    if (overflow) throw new Error(`Portal login overflows at ${viewport.width}px`)
+  }
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto(`${base}/warehouse/login`, { waitUntil: "networkidle" })
+  await expectText("Cổng Kho đang xây dựng")
+  await page.setViewportSize({ width: 1280, height: 800 })
+
   await page.goto(base, { waitUntil: "networkidle" })
-  await expectText("Đăng nhập 21GAM")
+  await expectText("Đăng nhập Lễ tân")
 
   await page.getByLabel("Tên đăng nhập").fill("operator")
   await page.getByLabel("Mật khẩu").fill("wrong")
@@ -231,7 +295,12 @@ try {
   await page.getByLabel("Mật khẩu").fill("correct-password")
   await page.getByRole("button", { name: "Đăng nhập", exact: true }).click()
   await page.getByLabel(/Tài khoản: Lễ tân/).waitFor()
-  await page.getByLabel("Sơ đồ bàn, trạng thái hiện tại").waitFor()
+  try {
+    await page.getByLabel("Sơ đồ bàn, trạng thái hiện tại").waitFor({ timeout: 10_000 })
+  } catch (error) {
+    console.error(`Auth E2E floor diagnostic url=${page.url()} body=${(await page.locator("body").innerText()).slice(0, 1500)}`)
+    throw error
+  }
   await page.getByRole("button", { name: /Bàn A10, Bàn sơ cua/ }).waitFor()
 
   await page.reload({ waitUntil: "networkidle" })
@@ -239,8 +308,15 @@ try {
 
   await page.getByLabel(/Tài khoản: Lễ tân/).click()
   await page.getByRole("menuitem", { name: "Đăng xuất" }).click()
-  await expectText("Đăng nhập 21GAM")
+  await expectText("Đăng nhập Lễ tân")
   if (!csrfSeenOnLogout) throw new Error("Logout did not send x-csrf-token")
+
+  await page.goto(`${base}/admin/login`, { waitUntil: "networkidle" })
+  await expectText("Đăng nhập Quản trị")
+  await page.getByLabel("Tên đăng nhập").fill("operator")
+  await page.getByLabel("Mật khẩu").fill("correct-password")
+  await page.getByRole("button", { name: "Đăng nhập", exact: true }).click()
+  await expectText("Tài khoản không được phép đăng nhập tại cổng này")
 
   await page.getByLabel("Tên đăng nhập").fill("owner")
   await page.getByLabel("Mật khẩu").fill("correct-password")
@@ -251,7 +327,7 @@ try {
 
   signedIn = false
   await page.reload({ waitUntil: "networkidle" })
-  await expectText("Đăng nhập 21GAM")
+  await expectText("Đăng nhập Lễ tân")
 
   networkDown = true
   await page.reload({ waitUntil: "domcontentloaded" })

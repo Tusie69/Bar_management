@@ -618,7 +618,7 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
 
     const receptionist = request.agent(app)
     const auth = JSON.parse((await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-      username: 'assignment_reception', password,
+      username: 'assignment_reception', password, portal: 'receptionist',
     })).text) as AuthResponse
     expect(auth.permissions).toContain('table.assign')
     expect((await receptionist.post('/api/v1/bookings/direct')
@@ -647,7 +647,7 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     )
     const care = request.agent(app)
     const careAuth = JSON.parse((await care.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-      username: 'assignment_care', password,
+      username: 'assignment_care', password, portal: 'customer-care',
     })).text) as AuthResponse
     expect(careAuth.permissions).not.toContain('table.assign')
     expect((await care.post(`/api/v1/bookings/${created.id}/assign`)
