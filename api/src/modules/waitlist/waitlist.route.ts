@@ -1,5 +1,6 @@
 import { Router } from 'express'
 
+import { hasPermission } from '../../auth/auth.service.js'
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { AppError } from '../../errors/app-error.js'
@@ -129,7 +130,15 @@ waitlistRouter.post(
   async (request, response) => {
     const body = objectBody(request.body)
     if (!Array.isArray(body.tableIds)) throw new AppError(400, 'TABLES_REQUIRED', 'Danh sách bàn không hợp lệ.')
-    response.json(await seatWaitlistEntry(requireAuthenticatedActor(request), {
+    if (body.arrived !== undefined && typeof body.arrived !== 'boolean') {
+      throw new AppError(400, 'INVALID_ARRIVED', 'Xác nhận khách đã đến phải là true hoặc false.')
+    }
+    const actor = requireAuthenticatedActor(request)
+    if (body.arrived && !await hasPermission(actor, 'visit.walkin')) {
+      throw new AppError(403, 'PERMISSION_DENIED', 'Tài khoản không có quyền mở bàn Walk-in.')
+    }
+    response.json(await seatWaitlistEntry(actor, {
+      arrived: body.arrived === true,
       entryId: positiveInteger(request.params.id, 'INVALID_WAITLIST_ID', 'Mã khách chờ không hợp lệ.'),
       expectedVersion: positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản khách chờ không hợp lệ.'),
       tableIds: body.tableIds.map((value) => positiveInteger(value, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.')),

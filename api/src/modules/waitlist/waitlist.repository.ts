@@ -6,7 +6,7 @@ import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
 import { assertNoteHasNoPhoneNumber, redactPhoneNumbersInNote } from '../../security/note-privacy.js'
 import { normalizeSearchText } from '../../lib/search-text.js'
-import { assertBusinessDateNotPast } from '../bookings/business-date.js'
+import { assertBusinessDateNotPast, assertCheckInBusinessDate } from '../bookings/business-date.js'
 import { protectPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from '../bookings/phone-security.js'
 import { createTableGroup, dissolveUnusedGroups, lockAndValidateAssignableTables } from '../tables/table-group.repository.js'
 
@@ -277,6 +277,7 @@ async function nextVenueChangeSequence(connection: PoolConnection, actor: Authen
 }
 
 export interface SeatWaitlistInput {
+  arrived?: boolean
   entryId: number
   expectedVersion: number
   tableIds: number[]
@@ -427,11 +428,27 @@ export async function recordWaitlistContact(actor: AuthenticatedActor, input: Re
   }
 }
 
+interface SeatWaitlistResult {
+  entry: WaitlistEntryView
+  reservationId: number | null
+  groupId: number | null
+}
+
+export function seatWaitlistEntry(
+  actor: AuthenticatedActor,
+  input: SeatWaitlistInput & { arrived?: false },
+  now?: Date,
+): Promise<SeatWaitlistResult & { reservationId: number }>
+export function seatWaitlistEntry(
+  actor: AuthenticatedActor,
+  input: SeatWaitlistInput,
+  now?: Date,
+): Promise<SeatWaitlistResult>
 export async function seatWaitlistEntry(
   actor: AuthenticatedActor,
   input: SeatWaitlistInput,
   now = new Date(),
-): Promise<{ entry: WaitlistEntryView; reservationId: number; groupId: number | null }> {
+): Promise<SeatWaitlistResult> {
   const connection = await databasePool.getConnection()
   try {
     await connection.beginTransaction()
@@ -500,6 +517,56 @@ export async function seatWaitlistEntry(
       [actor.organizationId, actor.venueId, businessDate, ...tableIds],
     )
     if (conflicts.length) throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc sử dụng.')
+
+    if (input.arrived) {
+      if (entry.kind !== 'WALK_IN') {
+        throw new AppError(409, 'WAITLIST_NOT_WALK_IN', 'Khách đặt trước cần check-in từ booking.')
+      }
+      assertCheckInBusinessDate(businessDate, now)
+      const startedAt = now.toISOString().slice(0, 23).replace('T', ' ')
+      const group = tableIds.length > 1 ? await createTableGroup(connection, actor, businessDate) : null
+      const [visit] = await connection.execute<ResultSetHeader>(
+        `INSERT INTO visits
+          (organization_id, venue_id, origin, customer_id, contact_name, guest_count,
+           started_at, business_date, note, created_by_user_id)
+         VALUES (?, ?, 'WAITLIST', ?, ?, ?, ?, ?, ?, ?)`,
+        [actor.organizationId, actor.venueId, entry.customer_id, entry.contact_name,
+          entry.party_size, startedAt, businessDate, entry.note, actor.userId],
+      )
+      for (const tableId of tableIds) {
+        await connection.execute(
+          `INSERT INTO table_allocations
+            (organization_id, venue_id, table_id, kind, visit_id, group_id, starts_at, business_date, created_by_user_id)
+           VALUES (?, ?, ?, 'USAGE', ?, ?, ?, ?, ?)`,
+          [actor.organizationId, actor.venueId, tableId, visit.insertId, group?.id ?? null,
+            startedAt, businessDate, actor.userId],
+        )
+      }
+      await connection.execute(
+        `UPDATE waitlist_entries SET status = 'SEATED', visit_id = ?, closed_at = ?,
+           closed_by_user_id = ?, version = version + 1, updated_at = UTC_TIMESTAMP(3)
+         WHERE organization_id = ? AND venue_id = ? AND id = ?`,
+        [visit.insertId, startedAt, actor.userId, actor.organizationId, actor.venueId, entry.id],
+      )
+      const changeSequence = await nextVenueChangeSequence(connection, actor)
+      await connection.execute(
+        `INSERT INTO operation_log
+          (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
+           auth_session_id, action, entity_type, entity_id, entity_version_before,
+           entity_version_after, changes, reason_code, is_undoable)
+         VALUES (?, ?, ?, 'USER', ?, ?, ?, 'WAITLIST_SEATED', 'waitlist_entry', ?, ?, ?, ?, 'STAFF_CONFIRMED', 0)`,
+        [actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
+          actor.authSessionId ?? null, entry.id, input.expectedVersion, input.expectedVersion + 1,
+          JSON.stringify([{ type: 'waitlist_seated', visitId: visit.insertId, groupId: group?.id ?? null, tableIds }])],
+      )
+      const [rows] = await connection.execute<WaitlistRow[]>(
+        `${waitlistSelect} WHERE w.organization_id = ? AND w.venue_id = ? AND w.id = ?`,
+        [actor.organizationId, actor.venueId, entry.id],
+      )
+      if (!rows[0]) throw new AppError(500, 'WAITLIST_READ_FAILED', 'Không đọc lại được khách vừa gán bàn.')
+      await connection.commit()
+      return { entry: toView(rows[0]), reservationId: null, groupId: group?.id ?? null }
+    }
 
     let reservationId = Number(entry.reservation_id)
     if (entry.kind === 'WALK_IN') {
