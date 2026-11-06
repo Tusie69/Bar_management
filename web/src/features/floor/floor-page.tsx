@@ -286,6 +286,8 @@ export function FloorPage() {
         ) : null}
 
         <section className="flex min-w-0 flex-1 flex-col gap-2 p-3 sm:px-4 sm:pt-2.5 sm:pb-3" aria-label="Không gian làm việc">
+          {/* The receptionist always works on the whole floor, so only draft context needs this row. */}
+          {!receptionist || bookingDraft || isPickAssign ? (
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
             <div className="flex shrink-0 items-center gap-2">
               {view === "list" ? (
@@ -295,7 +297,7 @@ export function FloorPage() {
                   onChange={setTab}
                   options={LIST_TABS.map((t) => ({ value: t.id, label: t.label, count: feed[t.id].length }))}
                 />
-              ) : (
+              ) : receptionist ? null : (
                 <Segmented label="Lọc khu" value={ui.zone} onChange={ui.setZone} options={ZONE_TABS} />
               )}
               {!receptionist && live && view === "map" && !ui.pick && !draft ? (
@@ -306,6 +308,7 @@ export function FloorPage() {
             </div>
             <span className="tnum text-xs whitespace-nowrap text-tx-2 sm:ml-auto">{summary}</span>
           </div>
+          ) : null}
 
           {view === "map" && !ui.pick && !draft ? (
             <StatusLegend tables={model.tables} states={model.states} />
@@ -350,7 +353,7 @@ export function FloorPage() {
                   groups={live && !bookingDraft && !isPickAssign ? model.floor?.groups : []}
                   selectedIds={ui.pick || draft ? selectedIds : [...new Set([...selectedIds, ...search.tableIds])]}
                   pickable={bookingDraft ? draftBookingPickable : draft ? null : pickable}
-                  zoneFocus={ui.zone}
+                  zoneFocus={receptionist ? "ALL" : ui.zone}
                   now={now}
                   onTableClick={onTableClick}
                   onBlockedTableClick={draft ? onDraftTableClick : undefined}

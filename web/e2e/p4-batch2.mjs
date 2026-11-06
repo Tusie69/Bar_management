@@ -107,16 +107,17 @@ try {
     await page.getByRole("button", { name: "Về Live", exact: true }).click()
     await expect(page.getByRole("group", { name: "Sơ đồ bàn, trạng thái hiện tại", exact: true })).toBeVisible()
   })
-  for (const width of [390, 1280]) {
-    await run(`waiting marker zones ${width}`, 1, width, async page => {
+  for (const [userId, width] of [[1, 390], [1, 1280], [3, 390]]) {
+    await run(`waiting marker user ${userId} ${width}`, userId, width, async page => {
       const waiting = await page.evaluate(async () => {
         const { api, clock } = await import("/src/services/index.ts")
         const { businessDateOf } = await import("/src/lib/time.ts")
         return (await api.listWaitlist(businessDateOf(clock.now()))).filter(row => ["WAITING", "CONTACTING", "OFFERED"].includes(row.status))
       })
       assert(waiting.length > 0, "nonzero real waiting fixture")
-      for (const zone of ["Tất cả", "Khu A", "Khu B", "Khu C", "Bar"]) {
-        await page.getByRole("tab", { name: zone, exact: true }).click()
+      if (userId === 1) await expect(page.getByRole("tablist", { name: "Lọc khu" })).toHaveCount(0)
+      for (const zone of userId === 1 ? ["Tất cả"] : ["Tất cả", "Khu A", "Khu B", "Khu C", "Bar"]) {
+        if (userId !== 1) await page.getByRole("tab", { name: zone, exact: true }).click()
         const marker = page.getByRole("button", { name: /^Bàn chờ(?:,|$)/ })
         await expect(marker).toHaveCount(1)
         await expect(marker).toHaveAttribute("aria-label", `Bàn chờ, ${waiting.length} khách đang chờ`)
@@ -134,12 +135,14 @@ try {
           assert(Math.abs(before.x - after.x) < 1 && Math.abs(before.y - after.y) < 1, `${zone}: overlay stays fixed during pan`)
           await expect(marker).toBeInViewport({ ratio: 1 })
         }
-        await marker.click()
-        const sheet = page.getByRole("dialog", { name: "Bàn chờ ảo", exact: true })
-        await expect(sheet).toBeVisible()
-        await expect(sheet).toContainText(waiting[0].displayName)
-        await page.keyboard.press("Escape")
-        await expect(sheet).toBeHidden()
+        if (userId === 1) {
+          await marker.click()
+          const sheet = page.getByRole("dialog", { name: "Bàn chờ ảo", exact: true })
+          await expect(sheet).toBeVisible()
+          await expect(sheet).toContainText(waiting[0].displayName)
+          await page.keyboard.press("Escape")
+          await expect(sheet).toBeHidden()
+        }
         await expect(page.getByRole("button", { name: /zoom|full\s*screen|phóng to|thu nhỏ|toàn màn hình|^[+−-]$/i })).toHaveCount(0)
         await expect(page.getByRole("group", { name: /zoom|thu phóng|toàn màn hình/i })).toHaveCount(0)
       }

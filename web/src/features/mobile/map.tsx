@@ -115,32 +115,35 @@ export function MapScreen({
           title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"}
         />
       )}
-      {!pick ? (
+      {!pick && !(receptionist && draft) ? (
         <div className="z-[4] flex shrink-0 flex-col gap-1.5 bg-background px-4 pt-0 pb-1.5">
-          <div
-            role="tablist"
-            aria-label="Lọc khu"
-            className="flex w-full max-w-full gap-0.5 overflow-x-auto rounded-[14px] border border-border bg-surface-1 p-[3px] shadow-[var(--shadow-xs)]"
-          >
-            {ZONE_TABS.map(([k, label]) => {
-              const on = zone === k
-              return (
-                <button
-                  key={k}
-                  type="button"
-                  role="tab"
-                  aria-selected={on}
-                  onClick={() => setZone(k)}
-                  className={cn(
-                    "flex h-[38px] min-w-0 flex-1 shrink-0 items-center justify-center rounded-[11px] px-1 text-[13px] whitespace-nowrap",
-                    on ? "bg-tx-strong font-semibold text-background" : "font-medium text-tx-2",
-                  )}
-                >
-                  {label}
-                </button>
-              )
-            })}
-          </div>
+          {/* The receptionist always works on the whole floor; zone tabs stay for other roles. */}
+          {receptionist ? null : (
+            <div
+              role="tablist"
+              aria-label="Lọc khu"
+              className="flex w-full max-w-full gap-0.5 overflow-x-auto rounded-[14px] border border-border bg-surface-1 p-[3px] shadow-[var(--shadow-xs)]"
+            >
+              {ZONE_TABS.map(([k, label]) => {
+                const on = zone === k
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    role="tab"
+                    aria-selected={on}
+                    onClick={() => setZone(k)}
+                    className={cn(
+                      "flex h-[38px] min-w-0 flex-1 shrink-0 items-center justify-center rounded-[11px] px-1 text-[13px] whitespace-nowrap",
+                      on ? "bg-tx-strong font-semibold text-background" : "font-medium text-tx-2",
+                    )}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+          )}
           {draft ? null : <StatusLegend tables={m.model.tables} states={m.model.states} />}
         </div>
       ) : null}
@@ -184,7 +187,7 @@ export function MapScreen({
                   : [...new Set([...(selected ? [selected] : []), ...search.tableIds])]
             }
             pickable={d.bookingDraft ? d.pickable : draft ? null : pickable}
-            zoneFocus={zone}
+            zoneFocus={receptionist ? "ALL" : zone}
             now={m.now}
             waitingCount={draft || pick ? undefined : waitingCount}
             onOpenWaitlist={draft || pick ? undefined : () => m.go("wait")}

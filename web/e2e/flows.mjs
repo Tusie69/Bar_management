@@ -73,7 +73,8 @@ for (const theme of ["dark", "light"]) {
           if (!await dismiss.isVisible()) break
           await dismiss.click()
         }
-        for (const phase of ["load", "Tất cả"]) {
+        if (userId === 1) assert.equal(await page.getByRole("tablist", { name: "Lọc khu" }).count(), 0, "Receptionist has no zone tabs")
+        for (const phase of userId === 1 ? ["load"] : ["load", "Tất cả"]) {
           if (phase === "Tất cả") {
             await page.getByRole("tab", { name: "Bar", exact: true }).click()
             await page.getByRole("tab", { name: "Tất cả", exact: true }).click()

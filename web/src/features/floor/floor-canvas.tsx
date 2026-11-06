@@ -521,9 +521,9 @@ export function FloorCanvas(props: Props) {
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation()
-                  onOpenWaitlist()
+                  // The marker sits mid-floor: a finger landing on it must still pan and pinch.
+                  if (!isSuppressed(suppressClick)) onOpenWaitlist()
                 }}
-                onPointerDown={(e) => e.stopPropagation()}
                 aria-label={
                   waitingCount !== undefined
                     ? `Bàn chờ, ${waitingCount} khách đang chờ`
