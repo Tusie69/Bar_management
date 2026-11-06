@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto"
 import { spawn, spawnSync } from "node:child_process"
+import { fileURLToPath } from "node:url"
 import { chromium } from "@playwright/test"
 
-const root = new URL("../../", import.meta.url).pathname.replace(/^\/(\w:)/, "$1")
+const root = fileURLToPath(new URL("../../", import.meta.url))
 const apiUrl = process.env.API_BASE_URL ?? "http://127.0.0.1:3101"
 const webUrl = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5174"
 const databaseName = process.env.DB_NAME ?? "gam21_platform_test"
@@ -35,7 +36,7 @@ let secondContext
 
 function run(command, args, env = common) {
   const result = spawnSync(command, args, { cwd: root, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
-  if (result.status !== 0) throw new Error(`${command} failed: ${result.stderr || result.stdout}`)
+  if (result.status !== 0) throw new Error(`${command} failed: ${result.error?.message || result.stderr || result.stdout}`)
   return result.stdout.trim()
 }
 
@@ -211,8 +212,8 @@ try {
   if ((await form.locator('input[type="time"]').count()) !== 0) throw new Error("Native time picker is still present")
   const timeGroups = form.getByRole("radiogroup").filter({ hasText: /Tối|Sáng hôm sau/ })
   const timeRadios = timeGroups.getByRole("radio")
-  if ((await timeRadios.count()) !== 13) {
-    throw new Error(`Time picker does not contain all 13 canonical slots (found ${await timeRadios.count()})`)
+  if ((await timeRadios.count()) !== 25) {
+    throw new Error(`Time picker does not contain all 25 canonical slots (found ${await timeRadios.count()})`)
   }
   const slotTops = await timeRadios.evaluateAll((nodes) =>
     nodes.map((node) => Math.round(node.getBoundingClientRect().top)),
@@ -392,8 +393,8 @@ try {
   }
   const mobileTimeGroups = mobileForm.getByRole("radiogroup").filter({ hasText: /Tối|Sáng hôm sau/ })
   const mobileRadios = mobileTimeGroups.getByRole("radio")
-  if ((await mobileRadios.count()) !== 13) {
-    throw new Error(`Mobile form does not contain all 13 slots (found ${await mobileRadios.count()})`)
+  if ((await mobileRadios.count()) !== 25) {
+    throw new Error(`Mobile form does not contain all 25 slots (found ${await mobileRadios.count()})`)
   }
   const mobileLastSlot = mobileForm.getByRole("radio", { name: /^01:00/ })
   await mobileLastSlot.scrollIntoViewIfNeeded()

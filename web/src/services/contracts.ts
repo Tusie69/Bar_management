@@ -180,6 +180,7 @@ export interface RecordContactInput {
 }
 
 export interface SeatWaitlistInput {
+  arrived?: boolean
   entryId: number
   version: number
   guestCount: number
@@ -277,7 +278,7 @@ export interface GamApi {
   releaseClaim(entryId: number, version: number): Promise<MutationResult>
   recordContact(input: RecordContactInput): Promise<MutationResult>
   /** Target backend assigns a reservation hold, with a group for multiple tables. */
-  seatWaitlist(input: SeatWaitlistInput): Promise<MutationResult & { reservationId: number; groupId: number | null }>
+  seatWaitlist(input: SeatWaitlistInput): Promise<MutationResult & { reservationId: number | null; groupId: number | null }>
   cancelWaitlist(entryId: number, version: number, reason: WaitlistCloseReason, note?: string): Promise<MutationResult>
   setHoldDeadline(holdId: number, version: number, deadlineAt: Date, reason: string): Promise<MutationResult>
   releaseHold(holdId: number, version: number, reason: HoldReleaseReason, note?: string): Promise<MutationResult>

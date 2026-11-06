@@ -2,7 +2,7 @@
  * Shared booking pickers for every booking form (Điều phối inline form, Đặt bàn sheet, mobile).
  * Rules live in domain/booking-rules.ts:
  * - GuestPicker: 1–10 in one tap, "Khác" for whole numbers above 10. 4 columns on phones, 6 from `sm`.
- * - BookingTimePicker: 13 slots 19:00 → 01:00 next morning, every 30', past slots disabled, never scrolls sideways.
+ * - BookingTimePicker: 25 slots 19:00 → 01:00 next morning, every 15', past slots disabled, never scrolls sideways.
  */
 import { useId, useRef, type KeyboardEvent } from "react"
 import {
@@ -161,14 +161,13 @@ export function BookingTimePicker({
   gridClassName?: string
   /** Existing out-of-window value: display it explicitly and preserve it until staff selects a valid slot. */
   legacyValue?: string | null
-  /** Venue-configured shortcuts. The canonical 30-minute choices remain available. */
+  /** Venue-configured shortcuts. The canonical 15-minute choices remain available. */
   quickTimes?: readonly string[]
 }) {
   const id = useId()
   const groups = bookingSlotGroups(date, now)
   const allSlots = bookingSlots(date, now)
   const quickSlots = configuredQuickSlots(date, now, quickTimes)
-  const extraQuickSlots = quickSlots.filter((slot) => !isBookingSlot(slot.time))
   const past = allSlots.filter((s) => s.disabled)
   const allPast = past.length === allSlots.length
   const valid = (isBookingSlot(value) || isConfiguredQuickTime(value, quickTimes)) && !error
@@ -206,37 +205,13 @@ export function BookingTimePicker({
         <span id={`${id}-label`} className="text-xs text-tx-2">
           Giờ khách dự kiến đến
         </span>
-        <span className="tnum text-xs text-tx-3">19:00 đến 01:00 · mốc 30 phút hiện có</span>
+        <span className="tnum text-xs text-tx-3">19:00 đến 01:00 · mốc 15 phút</span>
       </div>
       {legacyValue ? (
         <p className="rounded-sm border border-st-late/40 bg-st-late-tint px-3 py-2 text-xs text-st-late-ink">
           Giờ hiện tại {legacyValue} không nằm trong các mốc chọn hiện tại. Giờ này được giữ nguyên nếu chỉ sửa thông
           tin khác; chọn một giờ bên dưới nếu muốn đổi lịch.
         </p>
-      ) : null}
-      {extraQuickSlots.length ? (
-        <div role="radiogroup" aria-label="Giờ nhanh theo cấu hình quán" className="flex flex-col gap-1.5">
-          <span className="text-xs text-tx-3">Giờ nhanh theo cấu hình quán</span>
-          <div className={cn("grid grid-cols-4 gap-2 sm:gap-1.5", gridClassName)}>
-            {extraQuickSlots.map((slot) => {
-              const on = valid && value === slot.time
-              return (
-                <button
-                  key={slot.time}
-                  type="button"
-                  role="radio"
-                  aria-checked={on}
-                  disabled={slot.disabled}
-                  aria-label={`${slot.label}, giờ nhanh${slot.nextDay ? `, hôm sau ${fmtDayMonth(slot.calendarDate)}` : ""}${slot.disabled ? ", đã qua" : ""}`}
-                  className={chip(on)}
-                  onClick={() => onChange(slot.time)}
-                >
-                  {slot.label}
-                </button>
-              )
-            })}
-          </div>
-        </div>
       ) : null}
       {groups.map((g) => (
         <div key={g.key} role="radiogroup" aria-label={g.title} className="flex flex-col gap-1.5">

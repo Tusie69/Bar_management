@@ -194,6 +194,9 @@ beforeEach(() => {
         return json({ callId: 71, bookingId: 11, initiatedAt: at.toISOString(), telUri: "tel:+84901234123" }, 201)
       if (path === "/bookings/11/calls/71/outcome")
         return json({ callId: 71, bookingId: 11, outcome: body.outcome, outcomeAt: at.toISOString() })
+      if (path === "/waitlist/21/seat" && (body as { arrived?: boolean })?.arrived) {
+        return json({ entry: { ...entry, status: "SEATED", visitId: 31 }, reservationId: null, groupId: null })
+      }
       if (path === "/waitlist" || path.startsWith("/waitlist/")) return json({ entry, reservationId: 11, groupId: 1 })
       if (path.startsWith("/visits/"))
         return json({ visit: { id: 31, version: 6 }, group: { id: 1, symbolNo: 1, tableIds: [1, 2] } })
@@ -393,6 +396,13 @@ describe("canonical contract writes", () => {
       undoable: false,
     })
     expect(writes()).toEqual([{ method: "POST", path: "/waitlist/21/seat", body: { version: 2, tableIds: [1, 2] } }])
+  })
+  it("sends explicit arrival for walk-in seating without a reservation", async () => {
+    const result = await api.seatWaitlist({ entryId: 21, version: 2, guestCount: 4, tableIds: [1], arrived: true })
+    expect(result).toMatchObject({ reservationId: null, groupId: null })
+    expect(writes()).toEqual([
+      { method: "POST", path: "/waitlist/21/seat", body: { version: 2, tableIds: [1], arrived: true } },
+    ])
   })
   it("forwards the selected walk-in waitlist date and phone only on create", async () => {
     await api.addWaitlist({

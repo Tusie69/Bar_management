@@ -22,6 +22,7 @@ import { isPlausibleVnPhone, NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/
 import { addDays, fmtBusinessDate, fmtDayMonth } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
+import { bookingTableCanSelect } from "./booking-table-selection"
 import { FloorCanvas } from "../floor/floor-canvas"
 import { useM, type FormRequest } from "./context"
 import { codesOf } from "./model"
@@ -86,7 +87,22 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const errTime = isBooking && !!timeErr && (tried || !!slot)
   const errGuest = tried && (guestMissing || !phoneOk)
 
-  const avail = useAvailability(isBooking && checked && guests ? at : null, guests ?? 1).data
+  const availability = useAvailability(isBooking && checked && guests ? at : null, guests ?? 1)
+  const avail = availability.isPlaceholderData || availability.isError ? undefined : availability.data
+  const availabilityMap = useMemo(() => new Map((avail?.tables ?? []).map((table) => [table.tableId, table])), [avail])
+  const bookingIds = isBooking ? choice?.ids ?? [] : []
+  const bookingAnchor = m.model.byId.get(bookingIds[0])
+  const bookingPickable = new Set(m.model.tables.filter((table) =>
+    bookingTableCanSelect(table, availabilityMap.get(table.id), bookingAnchor),
+  ).map((table) => table.id))
+  const bookingCapacity = selectedCapacity(bookingIds, m.model.byId)
+  const bookingSelectionError = !bookingIds.length ? null : !avail
+    ? "Chưa xác minh được bàn cho giờ và ngày đã chọn."
+    : bookingIds.some((id) => !bookingPickable.has(id))
+      ? "Bàn đã chọn không còn khả dụng. Chọn lại trên sơ đồ."
+      : guests && bookingCapacity < guests
+        ? `Mới chọn ${bookingCapacity}/${guests} chỗ. Chạm thêm bàn phù hợp trên sơ đồ.`
+        : null
   const options = useMemo<Option[]>(() => {
     if (!checked || !guests || !isBooking) return []
     const bookable = new Set(m.model.catalog?.zones.filter((z) => z.isBookable).map((z) => z.id))
@@ -158,6 +174,13 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
     return { offset: i, top: i === 0 ? "Hôm nay" : wd, day: dm }
   })
 
+  const toggleBookingTable = (id: number) => {
+    const next = bookingIds.includes(id) ? bookingIds.filter((tableId) => tableId !== id) : [...bookingIds, id]
+    setChoice(next.length ? { key: "booking-map", ids: next, label: codesOf(next, m.model), sub: "" } : null)
+    setSelectionMessage(null)
+    touch()
+  }
+
   const toggleWalkInTable = (id: number) => {
     const current = selectedWalkInIds
     const selected = current.includes(id)
@@ -189,7 +212,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   // FX-04: 1 mã chống trùng cho lần mở form; đổi mã sau mỗi lần tạo thành công.
   const [idempotencyKey, renewIdempotencyKey] = useIdempotencyKey()
   const submit = async () => {
-    if (guests === null || (isBooking ? guestMissing || !phoneOk || !at : false) || noteBad) {
+    if (guests === null || (isBooking ? guestMissing || !phoneOk || !at || !!bookingSelectionError : false) || noteBad) {
       setTried(true)
       return
     }
@@ -415,7 +438,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                 <div className="flex flex-col gap-2 border-t border-border pt-3.5">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-[14px] text-tx-2">Giờ đến</span>
-                    <span className="text-xs text-subtle">7:00 PM đến 1:00 AM, mỗi 30 phút</span>
+                    <span className="text-xs text-subtle">19:00 đến 01:00, mỗi 15 phút</span>
                   </div>
                   {quickSlots.length ? (
                     <div role="radiogroup" aria-label="Giờ nhanh theo cấu hình quán" className="flex flex-col gap-2">
@@ -518,6 +541,35 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                 {isBooking ? slotText : "Lúc này"}, {guests ?? "?"} khách
               </span>
             </div>
+            {isBooking && m.model.catalog ? (
+              <>
+                <div className="relative h-[min(50dvh,440px)] min-h-64 overflow-hidden rounded-2xl border bg-floor">
+                  <FloorCanvas
+                    className="absolute inset-0"
+                    tables={m.model.tables}
+                    zones={m.model.catalog.zones}
+                    mode="availability"
+                    availability={availabilityMap}
+                    selectedIds={bookingIds}
+                    pickable={bookingPickable}
+                    now={m.now}
+                    onTableClick={toggleBookingTable}
+                    onBlockedTableClick={(id) => setSelectionMessage(
+                      availabilityMap.get(id)?.reason ?? "Bàn này chưa khả dụng cho lịch đã chọn.",
+                    )}
+                    ariaLabel="Sơ đồ chọn bàn đặt trước"
+                  />
+                </div>
+                {bookingSelectionError || selectionMessage ? (
+                  <p role="status" className="m-0 text-sm text-st-late-ink">{bookingSelectionError ?? selectionMessage}</p>
+                ) : null}
+                {availability.isError ? (
+                  <button type="button" className="min-h-11 rounded-xl border" onClick={() => void availability.refetch()}>
+                    Tải lại bàn khả dụng
+                  </button>
+                ) : null}
+              </>
+            ) : null}
             {isBooking ? (
               options.length ? (
                 <div role="radiogroup" aria-label="Bàn trống" className="flex flex-wrap gap-2">
@@ -764,7 +816,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
         <button
           type="button"
           onClick={() => void submit()}
-          disabled={pending || (!isBooking && selectedWalkInIds.length > 0 && !walkInReady)}
+          disabled={pending || (isBooking ? !!bookingSelectionError : selectedWalkInIds.length > 0 && !walkInReady)}
           aria-busy={pending}
           className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground active:brightness-90 disabled:opacity-70"
         >

@@ -116,7 +116,7 @@ function DynamicVenueSettingsForm({
     <section className="mb-6 rounded-2xl border px-4 md:px-5" aria-label="Cấu hình động theo quán">
       <Row
         label="Giờ nhanh đặt bàn"
-        hint="Nhập 1–24 giờ HH:mm, cách nhau bằng dấu phẩy. Các mốc 30 phút hiện có vẫn được giữ."
+        hint="Nhập 1–24 giờ HH:mm, cách nhau bằng dấu phẩy. Biểu mẫu đặt bàn dùng mốc 15 phút. Giờ nhanh lệch mốc được giữ trong cấu hình."
       >
         <Input
           aria-label="Giờ nhanh đặt bàn"

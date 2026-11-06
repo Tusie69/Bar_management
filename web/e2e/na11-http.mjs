@@ -191,6 +191,8 @@ try {
     await page.setViewportSize({ width, height })
     await page.goto(`${webUrl}/floor`, { waitUntil: "networkidle" })
     await table(page, "A1").waitFor()
+    await expect(page.getByRole("list", { name: "Chú giải trạng thái bàn" })).toBeVisible()
+    await expect(page.getByRole("tablist", { name: "Lọc khu" })).toHaveCount(0)
     await expect(page.getByRole("button", { name: "Tạo mới", exact: true })).toHaveCount(0)
     await expect(page.getByRole("navigation", { name: /Điều hướng.*(mobile|di động)/i })).toHaveCount(0)
     await expect(page.getByRole("link", { name: "Đặt bàn", exact: true })).toHaveCount(0)
@@ -208,10 +210,11 @@ try {
       throw new Error(`Calendar is not beside alerts at ${width}`)
     if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1))
       throw new Error(`Overflow at ${width}`)
-    await page
-      .getByRole("button", { name: /Bàn chờ/ })
-      .first()
-      .click()
+    if (width === 1280) {
+      await page.getByRole("button", { name: "Mở Bàn chờ từ sơ đồ" }).click()
+    } else {
+      await page.getByRole("button", { name: /Bàn chờ/ }).first().click()
+    }
     await expect(page.getByText("NA11 waiting guest", { exact: true }).first()).toBeVisible()
     await closeDialog(page)
     await page.getByRole("button", { name: "Đếm khách", exact: true }).click()
@@ -251,7 +254,7 @@ try {
   await dateRead
   await table(page, "A1").tap()
   const form = bookingForm(page)
-  const name = "NA11 mobile booking"
+  const name = "NA11 Nguyễn Văn An"
   await form.getByLabel("Tên khách", { exact: true }).fill(name)
   await form.getByLabel("Số điện thoại", { exact: true }).fill("0987654789")
   await form.getByRole("radio", { name: /^21:00/ }).click()
@@ -314,6 +317,11 @@ try {
   await search.fill("7899")
   expect((await search.inputValue()).length).toBeLessThanOrEqual(3)
   await search.fill("")
+  await page.getByRole("button", { name: "Chuyển sang tìm theo tên" }).click()
+  await page.getByRole("textbox", { name: "Tìm theo tên khách" }).fill("nguyen van an")
+  await expect(table(page, "A1")).toHaveAttribute("data-search-highlighted", "true")
+  await expect(table(page, "A2")).not.toHaveAttribute("data-search-highlighted", "true")
+  await page.getByRole("button", { name: "Chuyển sang tìm theo SĐT" }).click()
   await page
     .getByRole("button", { name: /Bàn chờ/ })
     .first()

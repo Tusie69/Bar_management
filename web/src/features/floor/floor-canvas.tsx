@@ -26,6 +26,7 @@ import {
   groupCode,
   supportedFlags,
   tableCanActivate,
+  wholeFloorBounds,
   type ClaimViewFlags,
 } from "./floor-visual-rules"
 
@@ -154,11 +155,11 @@ export function FloorCanvas(props: Props) {
     const zb = zoneFocus === "ALL" ? null : zoneBounds(zoneFocus)
     const b = zb
       ? { x: zb.x - 16, y: zb.y - 16, w: zb.w + 32, h: zb.h + 32 }
-      : { x: 30, y: 30, w: FLOOR_W - 56, h: FLOOR_H - 30 }
+      : wholeFloorBounds(tables, FLOOR_W, FLOOR_H)
     const pad = compact ? 6 : size.w < 640 ? 8 : PAD
-    const k = Math.min((size.w - pad * 2) / b.w, (size.h - pad * 2) / b.h)
+    const k = Math.min(Math.max(1, size.w - pad * 2) / b.w, Math.max(1, size.h - pad * 2) / b.h)
     return { k, x: (size.w - b.w * k) / 2 - b.x * k, y: (size.h - b.h * k) / 2 - b.y * k }
-  }, [size.w, size.h, zoneFocus, compact])
+  }, [size.w, size.h, zoneFocus, compact, tables])
 
   const view = userView && userView.zone === zoneFocus ? userView.view : fitView
   const setView = useCallback(

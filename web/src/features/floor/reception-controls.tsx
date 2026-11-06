@@ -37,27 +37,32 @@ export function ReceptionControls({
   onWaitlist: () => void
   onCount: () => void
 }) {
-  const searching = search.suffix.length === 3 && (search.debounced !== search.suffix || search.query.isFetching)
-  const result = search.debounced === search.suffix ? search.query.data : undefined
+  const { searching, result } = search
+  const byName = search.mode === "name"
   const matchedWaitlist = result?.summary.waitlistCount ?? 0
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <div className="flex min-w-0 items-center gap-2">
         <div className="relative min-w-0 flex-1">
-          <Search
-            className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
+          <button
+            type="button"
+            className="absolute inset-y-0 left-0 grid w-10 place-items-center rounded-sm text-muted-foreground focus-visible:ring-2"
+            aria-label={byName ? "Chuyển sang tìm theo SĐT" : "Chuyển sang tìm theo tên"}
+            title={byName ? "Tìm theo 3 số cuối" : "Tìm theo tên khách"}
+            onClick={search.toggleMode}
+          >
+            <Search className="size-4" aria-hidden />
+          </button>
           <Input
-            value={search.suffix}
-            inputMode="numeric"
-            pattern="[0-9]{3}"
-            maxLength={3}
+            value={search.value}
+            inputMode={byName ? "text" : "numeric"}
+            pattern={byName ? undefined : "[0-9]{3}"}
+            maxLength={byName ? 120 : 3}
             autoComplete="off"
-            aria-label="Tìm 3 số cuối SĐT"
-            placeholder="3 số cuối SĐT"
+            aria-label={byName ? "Tìm theo tên khách" : "Tìm 3 số cuối SĐT"}
+            placeholder={byName ? "Tên khách" : "3 số cuối SĐT"}
             className="h-11 min-w-0 bg-surface-1 pl-9 text-sm"
-            onChange={(event) => search.setSuffix(event.target.value.replace(/\D/g, "").slice(0, 3))}
+            onChange={(event) => search.setValue(byName ? event.target.value : event.target.value.replace(/\D/g, "").slice(0, 3))}
           />
         </div>
         <Button
@@ -89,18 +94,18 @@ export function ReceptionControls({
           <span className="hidden text-sm sm:inline">Đếm khách</span>
         </Button>
       </div>
-      {search.suffix.length === 3 ? (
+      {search.active ? (
         <div className="flex flex-wrap gap-1.5 text-xs" aria-live="polite">
           {searching ? (
             <span>Đang tìm…</span>
-          ) : search.query.error ? (
+          ) : search.error ? (
             <span role="alert">Không tải được kết quả. Thử lại sau.</span>
           ) : result?.summary.totalCount ? (
             <span data-testid="reception-search-summary">
               {result.summary.totalCount} khách khớp · {search.tableIds.length} bàn được đánh dấu
             </span>
           ) : (
-            <span>Không có khách khớp 3 số cuối trong ngày đã chọn.</span>
+            <span>Không có khách khớp trong ngày đã chọn.</span>
           )}
         </div>
       ) : null}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { TableView } from "@/domain/models"
+import type { FloorTableState, TableView } from "@/domain/models"
 import {
   activeGroupForSelection,
   connectorIsSafe,
@@ -7,11 +7,26 @@ import {
   groupCode,
   supportedFlags,
   tableCanActivate,
+  countFloorStates,
+  wholeFloorBounds,
 } from "./floor-visual-rules"
 
 const table = (id: number, x: number, y: number, w = 40, h = 30) => ({ id, x, y, w, h, kind: "TABLE" }) as TableView
 
 describe("adaptive floor visual rules", () => {
+  it("fits the full frame and any table beyond it", () => {
+    expect(wholeFloorBounds([], 589, 754)).toEqual({ x: 20, y: 20, w: 549, h: 734 })
+    expect(wholeFloorBounds([table(1, 580, 748)], 589, 754)).toEqual({ x: 20, y: 20, w: 580, h: 743 })
+  })
+
+  it("keeps late, no-show and overdue hold distinct in the legend", () => {
+    const tables = [table(1, 0, 0), table(2, 10, 10), table(3, 20, 20)]
+    const states = new Map([
+      [1, { state: "late" }], [2, { state: "noshow" }], [3, { state: "hold_overdue" }],
+    ] as [number, FloorTableState][])
+    expect([...countFloorStates(tables, states)]).toEqual([["late", 1], ["noshow", 1], ["hold_overdue", 1]])
+  })
+
   it("keeps group display codes deterministic beyond Z", () => {
     expect(groupCode(1)).toBe("◆A")
     expect(groupCode(26)).toBe("◆Z")

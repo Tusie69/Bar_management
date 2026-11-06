@@ -137,7 +137,9 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
   const canAssign = useCan("table.assign")
   const canClaim = useCan("waitlist.claim")
   const canCancel = useCan("waitlist.cancel")
-  const canAct = api.mode === "http" ? canAssign : canClaim
+  const canOpenWalkIn = useCan("visit.walkin")
+  const arrived = api.mode === "http" && e.kind === "WALK_IN"
+  const canAct = api.mode === "http" ? canAssign && (!arrived || canOpenWalkIn) : canClaim
 
   const cancel = () =>
     m.ask({
@@ -155,6 +157,7 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
             version: e.version,
             guestCount: party,
             tableIds: [t.id],
+            ...(arrived ? { arrived: true } : {}),
             overrideReason: o,
           }),
         )
@@ -175,7 +178,17 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
   let secondary: { label: string; go: () => void } | null = null
   if (e.status === "WAITING") {
     primary = fit
-      ? { label: `Đề nghị bàn ${fit.code}`, go: canAct ? () => void offer(fit) : undefined }
+      ? {
+          label: arrived ? `Mở bàn ${fit.code}` : `Đề nghị bàn ${fit.code}`,
+          go: !canAct ? undefined : arrived
+            ? () => m.ask({
+                title: `Mở bàn ${fit.code} cho ${e.displayName}?`,
+                body: "Xác nhận khách đang có mặt để mở bàn ngay.",
+                label: "Xác nhận mở bàn",
+                run: async () => { await offer(fit) },
+              })
+            : () => void offer(fit),
+        }
       : { label: "Chưa có bàn phù hợp" }
     secondary = canCancel ? { label: "Hủy", go: cancel } : null
   } else if (e.status === "HOLD_ACTIVE") {

@@ -343,15 +343,16 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     },
     seatWaitlist: async (input) => {
       if (input.overrideReason) unsupported("nhận khách chờ vượt quy tắc")
-      const response = await post<{ reservationId: number; groupId: number | null }>(
+      const response = await post<{ reservationId: number | null; groupId: number | null }>(
         `/waitlist/${input.entryId}/seat`,
         {
           version: input.version,
           tableIds: input.tableIds ?? [],
+          ...(input.arrived ? { arrived: true } : {}),
         },
       )
       return {
-        ...result("Đã gán bàn cho khách chờ."),
+        ...result(input.arrived ? "Đã mở bàn cho khách chờ." : "Đã gán bàn cho khách chờ."),
         reservationId: response.reservationId,
         groupId: response.groupId,
       }

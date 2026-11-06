@@ -1,4 +1,4 @@
-import type { FloorGroup, TableView } from "@/domain/models"
+import type { FloorGroup, FloorTableState, TableLiveState, TableView } from "@/domain/models"
 
 export type GlyphLevel = "compact" | "standard" | "expanded"
 export type ClaimViewFlags = Array<"BIRTHDAY" | "NEW" | "RETURNING">
@@ -55,4 +55,28 @@ export function connectorIsSafe(group: TableView[], all: TableView[]) {
     }
   }
   return true
+}
+
+/** Fit the visible frame and any catalogue tables extending beyond it. */
+export function wholeFloorBounds(tables: readonly TableView[], floorWidth: number, floorHeight: number) {
+  let left = 20
+  let top = 20
+  let right = floorWidth - 20
+  let bottom = floorHeight
+  for (const table of tables) {
+    left = Math.min(left, table.x - table.w / 2)
+    right = Math.max(right, table.x + table.w / 2)
+    top = Math.min(top, table.y - table.h / 2)
+    bottom = Math.max(bottom, table.y + table.h / 2)
+  }
+  return { x: left, y: top, w: right - left, h: bottom - top }
+}
+
+export function countFloorStates(tables: readonly TableView[], states: ReadonlyMap<number, FloorTableState>) {
+  const counts = new Map<TableLiveState, number>()
+  for (const table of tables) {
+    const state = states.get(table.id)?.state ?? (table.isSpare ? "spare" : "free")
+    counts.set(state, (counts.get(state) ?? 0) + 1)
+  }
+  return counts
 }

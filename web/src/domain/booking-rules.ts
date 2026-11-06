@@ -3,15 +3,15 @@
  *
  * - Guests: quick-pick 1–10, "Khác" for whole numbers above 10 (no upper limit until one is approved;
  *   note the mock server still caps partySize at 500).
- * - Arrival: 19:00 of the selected business date to 01:00 next morning, every 30 minutes, both ends
- *   included (13 slots). Walk-in arrival is "now" and is NOT limited by these slots.
+ * - Arrival: 19:00 of the selected business date to 01:00 next morning, every 15 minutes, both ends
+ *   included (25 slots). Walk-in arrival is "now" and is NOT limited by these slots.
  * - The business day itself stays 17:00 → 05:00 (lib/time.ts). 00:00–01:00 slots use the next calendar
  *   date but keep the selected business date; the API derives business_date from expectedAt.
  */
 import { addDays, atBusinessTime, fmtDayMonth, MS, venueDateString, venueParts, type BusinessDate } from "@/lib/time"
 
 export const GUEST_QUICK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const
-export const BOOKING_SLOT_STEP_MIN = 30
+export const BOOKING_SLOT_STEP_MIN = 15
 export const BOOKING_FIRST_SLOT = "19:00"
 export const BOOKING_LAST_SLOT = "01:00"
 export const PAST_GRACE_MIN = 0
@@ -40,9 +40,9 @@ export const BOOKING_SLOTS: readonly string[] = (() => {
 export const isBookingSlot = (hhmm: string | null | undefined): hhmm is string => !!hhmm && BOOKING_SLOTS.includes(hhmm)
 
 export const isConfiguredQuickTime = (hhmm: string | null | undefined, quickTimes: readonly string[]): hhmm is string =>
-  !!hhmm && quickTimes.includes(hhmm) && isWithinBookingReceptionWindow(hhmm)
+  !!hhmm && quickTimes.includes(hhmm) && isBookingSlot(hhmm)
 
-/** Backend-style window check: accepts any minute in 19:00–01:00, independent of the configured UI slot step. */
+/** Backend-style window check: accepts any minute in 19:00–01:00, independent of the booking slot step. */
 export function isWithinBookingReceptionWindow(hhmm: string): boolean {
   if (!/^\d{2}:\d{2}$/.test(hhmm)) return false
   const [hour, minute] = hhmm.split(":").map(Number)
@@ -89,7 +89,7 @@ export function configuredQuickSlots(
   quickTimes: readonly string[],
   graceMin = PAST_GRACE_MIN,
 ): BookingSlot[] {
-  return quickTimes.filter(isWithinBookingReceptionWindow).map((time) => {
+  return quickTimes.filter(isBookingSlot).map((time) => {
     const past = bookingInstant(bd, time).getTime() < now.getTime() - graceMin * MS.MIN
     return {
       time,
@@ -122,7 +122,7 @@ export function validateBookingTime(
 ) {
   if (!hhmm) return "Chọn giờ đến."
   if (!isBookingSlot(hhmm) && !isConfiguredQuickTime(hhmm, quickTimes))
-    return "Giờ đặt bàn chỉ từ 19:00 đến 01:00, theo mốc 30 phút hoặc giờ nhanh của quán."
+    return "Giờ đặt bàn chỉ từ 19:00 đến 01:00, theo mốc 15 phút."
   if (bookingInstant(bd, hhmm).getTime() < now.getTime() - graceMin * MS.MIN)
     return `${slotLabel(hhmm)} đã qua ở ngày này. Chọn lại giờ đến.`
   return null

@@ -19,6 +19,7 @@ import WaitlistPage from "../waitlist/waitlist-page"
 import { AvailabilityPanel } from "./availability-panel"
 import { BookingList, BookingTable, LIST_TABS, useBookingItems, type ListTab } from "./booking-list"
 import { FloorCanvas } from "./floor-canvas"
+import { StatusLegend } from "./status-legend"
 import { FloorTimeline } from "./floor-timeline"
 import { FloorToolbar, TimeField } from "./floor-toolbar"
 import { draftPickable, QuickForm } from "./quick-form"
@@ -125,9 +126,10 @@ export function FloorPage() {
     [draft?.kind, draft?.date, draft?.time],
   )
   const draftAvail = useAvailability(draftAt, draft?.party ?? 2)
+  const draftSnapshot = draftAvail.isPlaceholderData || draftAvail.isError ? undefined : draftAvail.data
   const draftAvailMap = useMemo(
-    () => new Map((draftAvail.data?.tables ?? []).map((t) => [t.tableId, t])),
-    [draftAvail.data],
+    () => new Map((draftSnapshot?.tables ?? []).map((t) => [t.tableId, t])),
+    [draftSnapshot],
   )
 
   const isPickAssign = ui.pick?.intent === "assign" && !!ui.pick.targetExpectedAt
@@ -171,7 +173,7 @@ export function FloorPage() {
     if (bookingDraft.tableIds.length === 0) {
       const set = new Set<number>()
       for (const t of model.tables) {
-        if (draftPickable("booking", t.id, model, draftAvail.data)) {
+        if (draftPickable("booking", t.id, model, draftSnapshot)) {
           set.add(t.id)
         }
       }
@@ -182,13 +184,13 @@ export function FloorPage() {
     const set = new Set<number>()
     for (const t of model.tables) {
       if (t.zoneId === first.zoneId && t.kind === first.kind) {
-        if (draftPickable("booking", t.id, model, draftAvail.data, bookingDraft.tableIds)) {
+        if (draftPickable("booking", t.id, model, draftSnapshot, bookingDraft.tableIds)) {
           set.add(t.id)
         }
       }
     }
     return set
-  }, [draft, model, draftAvail.data])
+  }, [draft, model, draftSnapshot])
 
   const selectedIds = draft
     ? draft.tableIds
@@ -217,7 +219,7 @@ export function FloorPage() {
           }
         }
       }
-      if (draftPickable(draft.kind, id, model, draftAvail.data, draft.tableIds)) return ui.toggleDraftTable(id)
+      if (draftPickable(draft.kind, id, model, draftSnapshot, draft.tableIds)) return ui.toggleDraftTable(id)
       return toast.info(`${model.label(id)}: không trống · chọn vị trí trống`)
     }
     if (ui.pick) {
@@ -245,7 +247,7 @@ export function FloorPage() {
   }
 
   const panel = draft ? (
-    <QuickForm model={model} availability={draftAvail.data} />
+    <QuickForm model={model} availability={draftSnapshot} />
   ) : !live ? (
     <AvailabilityPanel
       model={model}
@@ -328,7 +330,7 @@ export function FloorPage() {
           </aside>
         ) : null}
 
-        <section className="flex min-w-0 flex-1 flex-col gap-3 px-4 pt-3.5 pb-4" aria-label="Không gian làm việc">
+        <section className="flex min-w-0 flex-1 flex-col gap-2 px-3 pt-2 pb-3 sm:px-4" aria-label="Không gian làm việc">
           <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-3">
             {view === "list" ? (
               <Segmented
@@ -347,6 +349,10 @@ export function FloorPage() {
             ) : null}
             <span className="tnum ml-auto text-xs whitespace-nowrap text-tx-2">{summary}</span>
           </div>
+
+          {view === "map" && live && !ui.pick && !draft && model.tables.length ? (
+            <StatusLegend tables={model.tables} states={model.states} />
+          ) : null}
 
           {view === "map" ? (
             <div className="relative min-h-0 flex-1 overflow-hidden rounded-sm border">
@@ -401,6 +407,11 @@ export function FloorPage() {
                   }
                 />
               )}
+              {receptionist && !ui.pick && !draft ? (
+                <Button variant="outline" size="sm" className="absolute top-2 right-2 min-h-10 bg-popover" onClick={() => setWaitOpen(true)}>
+                  Mở Bàn chờ từ sơ đồ
+                </Button>
+              ) : null}
               <PickBanner model={model} />
               {draft ? (
                 <div

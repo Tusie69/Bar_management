@@ -11,6 +11,7 @@ import { initials } from "@/lib/text"
 import { useSession } from "@/state/session"
 import { useReceptionSearch } from "@/hooks/use-reception-search"
 import { FloorCanvas } from "../floor/floor-canvas"
+import { StatusLegend } from "../floor/status-legend"
 import { CallCustomerControl } from "../bookings/call-customer"
 import { groupCode } from "../floor/floor-visual-rules"
 import { ReceptionControls, ReceptionDatePicker } from "../floor/reception-controls"
@@ -50,7 +51,7 @@ export function MapScreen({
   const user = useSession((state) => state.user)
   const receptionist = m.role === "RECEPTIONIST"
   const search = useReceptionSearch(m.businessDate, receptionist)
-  const zone = useUi((s) => s.zone)
+  const zone = useUi((s) => receptionist ? "ALL" : s.zone)
   const setZone = useUi((s) => s.setZone)
 
   const isAssignPick = !!pick?.targetExpectedAt
@@ -112,6 +113,7 @@ export function MapScreen({
           title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"}
         />
       )}
+      {!pick && m.model.tables.length ? <StatusLegend tables={m.model.tables} states={m.model.states} /> : null}
       <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
         {m.model.catalog ? (
           <FloorCanvas
@@ -157,7 +159,7 @@ export function MapScreen({
               <X className="size-5" />
             </button>
           </div>
-        ) : (
+        ) : !receptionist ? (
           <div className="absolute inset-x-3 top-2.5 z-[6] flex justify-center">
             <div
               role="tablist"
@@ -184,7 +186,7 @@ export function MapScreen({
               })}
             </div>
           </div>
-        )}
+        ) : null}
 
         {pick ? (
           <div className="absolute inset-x-0 bottom-0 z-[12] flex flex-col gap-2.5 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-4 shadow-[var(--shadow-float)]">

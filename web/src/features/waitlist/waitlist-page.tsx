@@ -968,11 +968,13 @@ function SeatBody({ entry: e, model, presetTable, close }: EntryDialogProps & { 
   const { run, pending } = useAction()
   const [tables, setTables] = useState<number[]>(presetTable ? [presetTable] : [])
   const storedParty = e.partySize || 1
+  const canOpenWalkIn = useCan("visit.walkin")
+  const arrived = api.mode === "http" && e.kind === "WALK_IN"
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Gán giữ bàn cho khách · {e.displayName}</DialogTitle>
-        <DialogDescription>Hệ thống sẽ tạo booking và giữ bàn cho khách. Khách sẽ check-in sau từ booking.</DialogDescription>
+        <DialogTitle>{arrived ? "Mở bàn cho khách đã đến" : "Gán giữ bàn cho khách"} · {e.displayName}</DialogTitle>
+        <DialogDescription>{arrived ? "Xác nhận khách đang có mặt để mở bàn ngay." : "Hệ thống sẽ giữ bàn cho khách. Khách sẽ check-in sau từ booking."}</DialogDescription>
       </DialogHeader>
       <div className="grid gap-4">
         <div className="grid gap-1.5 py-1">
@@ -989,7 +991,7 @@ function SeatBody({ entry: e, model, presetTable, close }: EntryDialogProps & { 
           Quay lại
         </Button>
         <Button
-          disabled={pending || tables.length === 0}
+          disabled={pending || tables.length === 0 || (arrived && !canOpenWalkIn)}
           onClick={async () => {
             const r = await run((o) =>
               api.seatWaitlist({
@@ -997,13 +999,14 @@ function SeatBody({ entry: e, model, presetTable, close }: EntryDialogProps & { 
                 version: e.version,
                 guestCount: storedParty,
                 tableIds: tables,
+                ...(arrived ? { arrived: true } : {}),
                 overrideReason: o,
               }),
             )
             if (r) close()
           }}
         >
-          Xác nhận giữ bàn
+          {arrived ? "Xác nhận mở bàn" : "Xác nhận giữ bàn"}
         </Button>
       </DialogFooter>
     </>

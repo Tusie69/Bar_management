@@ -205,7 +205,7 @@ export const useUi = create<UiState>((set, get) => ({
       draft: {
         kind: "booking",
         date: bookingPrefill.date ?? businessDateOf(clock.now()),
-        // Booking arrival must be one of the 13 slots (19:00 → 01:00, 30'). Availability mode keeps defaultTime().
+        // Booking arrival must be a quarter-hour slot (19:00 → 01:00). Availability mode keeps defaultTime().
         time: isBookingSlot(bookingPrefill.time)
           ? bookingPrefill.time
           : (defaultBookingSlot(bookingPrefill.date ?? businessDateOf(clock.now()), clock.now()) ?? "19:00"),
