@@ -78,13 +78,23 @@ import { fmtCountdown, fmtElapsed, fmtTime, type BusinessDate } from "@/lib/time
 import { cn } from "@/lib/utils"
 import { api, isApiError } from "@/services"
 import { useCan, useSession } from "@/state/session"
+import { useUi } from "@/state/ui"
+import { assignWaitlistTables } from "./assign-waitlist"
 import { ExtendHoldDialog, GuestCountDialog } from "../floor/floor-dialogs"
 import { useFloorModel, type FloorModel } from "../floor/use-floor-model"
 import { WaitlistPreferencePicker } from "../reservations/reservation-detail"
 
 const ACTIVE = ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"]
 
-export default function WaitlistPage({ businessDate }: { businessDate?: BusinessDate }) {
+export default function WaitlistPage({
+  businessDate,
+  onLeaveToFloor,
+}: {
+  businessDate?: BusinessDate
+  /** Set on the receptionist's floor sheet: actions continue on the map, so the sheet must close first. */
+  onLeaveToFloor?: () => void
+}) {
+  const openBooking = useUi((s) => s.openBooking)
   const today = useBusinessDate()
   const bd = businessDate ?? today
   const waitlist = useWaitlist(bd)
@@ -152,7 +162,22 @@ export default function WaitlistPage({ businessDate }: { businessDate?: Business
               n={active.filter((e) => e.status === "HOLD_ACTIVE").length}
               label="đang giữ bàn"
             />
-            <GuardedButton permission="waitlist.create" onClick={() => setAddOpen(true)}>
+            {onLeaveToFloor ? (
+              <GuardedButton
+                permission="reservation.create"
+                onClick={() => {
+                  onLeaveToFloor()
+                  openBooking({ tableIds: [], date: businessDate, toWaitlist: true })
+                }}
+              >
+                <CalendarClock /> Nhận booking
+              </GuardedButton>
+            ) : null}
+            <GuardedButton
+              permission="waitlist.create"
+              variant={onLeaveToFloor ? "outline" : "default"}
+              onClick={() => setAddOpen(true)}
+            >
               <ListPlus /> Thêm khách chờ
             </GuardedButton>
           </div>
@@ -243,6 +268,7 @@ export default function WaitlistPage({ businessDate }: { businessDate?: Business
                   <ol className="grid gap-2">
                     {lane.items.map((e, i) => (
                       <EntryCard
+                        onLeaveToFloor={onLeaveToFloor}
                         key={e.id}
                         entry={e}
                         index={i + 1}
@@ -305,6 +331,7 @@ function EntryCard({
   highlighted,
   dimmed,
   presetTable,
+  onLeaveToFloor,
 }: {
   entry: WaitlistEntryView
   index: number
@@ -312,10 +339,13 @@ function EntryCard({
   highlighted: boolean
   dimmed: boolean
   presetTable: number | null
+  onLeaveToFloor?: () => void
 }) {
+  const startPick = useUi((s) => s.startPick)
   const now = useNow(1000)
   const me = useSession((s) => s.user.id)
   const canReveal = useCan("customer.phone.reveal")
+  const canOpenWalkIn = useCan("visit.walkin")
   const { run, pending } = useAction()
   const { data: reservations } = useReservations(e.businessDate)
   const [contactOpen, setContactOpen] = useState(false)
@@ -566,9 +596,37 @@ function EntryCard({
                 <PhoneCall /> {e.status === "CONTACTING" ? "Đang có người liên hệ" : "Nhận liên hệ"}
               </GuardedButton>
             )}
+            {onLeaveToFloor && e.status === "WAITING" ? (
+              <GuardedButton
+                permission={api.mode === "http" ? "table.assign" : "waitlist.claim"}
+                disabled={pending || (api.mode === "http" && e.kind === "WALK_IN" && !canOpenWalkIn)}
+                onClick={() => {
+                  const expected = e.kind === "ADVANCE_RESERVATION" ? e.reservationExpectedAt : null
+                  onLeaveToFloor()
+                  startPick({
+                    intent: expected ? "assign" : "seat-waitlist",
+                    title: `Chuyển ${e.displayName} vào bàn`,
+                    hint: `Chạm bàn trống cho ${e.partySize || 1} khách rồi xác nhận.`,
+                    multi: true,
+                    confirmLabel: e.kind === "WALK_IN" ? "Xác nhận mở bàn" : "Xác nhận chuyển bàn",
+                    ...(expected
+                      ? {
+                          targetDate: e.businessDate,
+                          targetTime: fmtTime(expected),
+                          targetExpectedAt: expected,
+                          targetParty: e.partySize || 1,
+                        }
+                      : {}),
+                    onConfirm: async (ids) => !!(await run((o) => assignWaitlistTables(e, ids, o))),
+                  })
+                }}
+              >
+                <Armchair /> Chuyển bàn
+              </GuardedButton>
+            ) : null}
             <GuardedButton
               permission="table.assign"
-              variant={api.mode === "http" ? "default" : "outline"}
+              variant={api.mode === "http" && !onLeaveToFloor ? "default" : "outline"}
               onClick={() => setSeatOpen(true)}
             >
               <Armchair /> {e.channel === "IN_PERSON" ? "Khách nhận bàn ngay" : "Gán giữ bàn"}
@@ -600,7 +658,7 @@ function EntryCard({
             open={releaseOpen}
             onOpenChange={setReleaseOpen}
             title="Nhả giữ bàn?"
-            description="Bàn trở về trống. Khách quay lại danh sách chờ, trừ khi chọn “Khách không đến”."
+            description="Bàn trở về trống. Khách quay lại danh sách chờ, trừ khi chọn “Khách không tới”."
             confirmLabel="Nhả giữ"
             reasons={(
               ["CUSTOMER_NO_SHOW", "CUSTOMER_CANCELLED", "STAFF_REASSIGNED", "OTHER"] as HoldReleaseReason[]

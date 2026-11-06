@@ -209,7 +209,7 @@ export function StatusDialog({ r, onClose }: { r: ReservationView; onClose: () =
           { label: "Khách đã đến (check-in)", dot: "var(--st-seated-fill)", go: close(() => a.checkIn(r)) },
           { label: "Đổi bàn", dot: "var(--st-reserved)", go: close(() => a.move(r)) },
           {
-            label: "Khách không đến",
+            label: "Khách không tới",
             dot: "var(--st-noshow)",
             disabled: r.warning !== "noshow",
             sub:
@@ -345,7 +345,7 @@ export function Alert30({ r, onAck }: { r: ReservationView; onAck: () => void })
           }}
           className="h-[50px] rounded-[14px] border border-strong text-[15px] font-medium text-st-noshow-ink"
         >
-          Xác nhận không đến
+          Xác nhận không tới
         </button>
         <button type="button" onClick={onAck} className="h-11 rounded-xl text-[14px] text-tx-2">
           Đã xem, xử lý sau

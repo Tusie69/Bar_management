@@ -7,7 +7,7 @@ import { databasePool } from "../../src/database/pool.js";
 const mode = process.argv[2];
 if (!/_test$/.test(env.database.name))
   throw new Error("Refusing E2E fixture: DB_NAME must end in _test");
-if (!["setup", "cleanup", "verify-clean", "verify-phone-audit", "inject-historical-note", "verify-historical-note"].includes(mode ?? ""))
+if (!["setup", "cleanup", "verify-clean", "verify-phone-audit", "inject-historical-note", "verify-historical-note", "set-quick-times"].includes(mode ?? ""))
   throw new Error("Unsupported E2E fixture command");
 
 const organizationId = 1;
@@ -63,6 +63,7 @@ async function cleanup() {
     "DELETE FROM zones WHERE organization_id = ?",
     "DELETE FROM floors WHERE organization_id = ?",
     "DELETE FROM booking_sources WHERE organization_id = ?",
+    "DELETE FROM venue_settings WHERE organization_id = ?",
     "DELETE FROM venues WHERE organization_id = ?",
     "DELETE FROM organizations WHERE id = ?",
   ];
@@ -202,6 +203,14 @@ try {
   else if (mode === "cleanup") await cleanup();
   else if (mode === "verify-clean") await verifyClean();
   else if (mode === "verify-phone-audit") await verifyPhoneAudit();
+  else if (mode === "set-quick-times") {
+    const quickTimes = process.argv[3];
+    if (!quickTimes) throw new Error("Missing quick-times JSON");
+    await databasePool.execute(
+      "INSERT INTO venue_settings (organization_id, venue_id, `key`, value) VALUES (?, ?, 'quick_times', ?) ON DUPLICATE KEY UPDATE value = ?",
+      [organizationId, venueId, quickTimes, quickTimes],
+    );
+  }
   else if (mode === "inject-historical-note") await injectHistoricalNote(process.argv[3]);
   else await verifyHistoricalNote(process.argv[3]);
 } finally {

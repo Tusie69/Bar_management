@@ -54,6 +54,7 @@ export function venueConfig(db: MockDb): VenueConfig {
     reservationWindowMinutes: v.reservationWindowMinutes,
     groupSymbolCount: v.groupSymbolCount,
     changeSeq: v.changeSeq,
+    settings: v.settings,
   }
 }
 
@@ -747,9 +748,9 @@ const ACTION_LABEL: Record<string, string> = {
   RESERVATION_UPDATED: "Sửa booking",
   TABLE_ASSIGNED: "Phân bàn",
   RESERVATION_CANCELLED: "Hủy booking",
-  RESERVATION_NO_SHOW: "Xác nhận không đến",
+  RESERVATION_NO_SHOW: "Xác nhận không tới",
   RESERVATION_LATE_WARNING: "Cảnh báo đến muộn",
-  RESERVATION_NO_SHOW_WARNING: "Cảnh báo không đến",
+  RESERVATION_NO_SHOW_WARNING: "Cảnh báo không tới",
   WAITLIST_ADDED: "Thêm danh sách chờ",
   WAITLIST_CLAIMED: "Nhận liên hệ",
   WAITLIST_CLAIM_RELEASED: "Thả liên hệ",

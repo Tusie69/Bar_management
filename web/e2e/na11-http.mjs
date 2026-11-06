@@ -36,6 +36,7 @@ const output = new URL(".artifacts/na11/http/", import.meta.url)
 await mkdir(output, { recursive: true })
 const children = []
 const results = []
+const checkInNetwork = []
 let browser
 let activePage
 function run(args) {
@@ -170,6 +171,14 @@ try {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, locale: "en-US" })
   const page = await context.newPage()
   activePage = page
+  page.on("request", request => {
+    if (new URL(request.url()).pathname.endsWith("/check-in"))
+      checkInNetwork.push({ event: "request", method: request.method(), at: Date.now() })
+  })
+  page.on("response", response => {
+    if (new URL(response.url()).pathname.endsWith("/check-in"))
+      checkInNetwork.push({ event: "response", status: response.status(), at: Date.now() })
+  })
   const errors = []
   page.on("pageerror", (error) => errors.push(error.message))
   await login(page)
@@ -191,30 +200,40 @@ try {
     await page.setViewportSize({ width, height })
     await page.goto(`${webUrl}/floor`, { waitUntil: "networkidle" })
     await table(page, "A1").waitFor()
-    await expect(page.getByRole("list", { name: "Chú giải trạng thái bàn" })).toBeVisible()
+    await expect(page.getByRole("region", { name: "Chú giải trạng thái bàn", exact: true })).toBeVisible()
     await expect(page.getByRole("tablist", { name: "Lọc khu" })).toHaveCount(0)
     await expect(page.getByRole("button", { name: "Tạo mới", exact: true })).toHaveCount(0)
     await expect(page.getByRole("navigation", { name: /Điều hướng.*(mobile|di động)/i })).toHaveCount(0)
     await expect(page.getByRole("link", { name: "Đặt bàn", exact: true })).toHaveCount(0)
     const dateBox = await calendar(page).boundingBox()
+    const searchBox = await page.getByRole("textbox", { name: "Tìm 3 số cuối SĐT" }).boundingBox()
+    const countBox = await page.getByRole("button", { name: "Đếm khách", exact: true }).boundingBox()
     const bellBox = await page
       .getByRole("button", { name: /Thông báo/ })
       .first()
       .boundingBox()
     if (
       !dateBox ||
+      !searchBox ||
+      !countBox ||
       !bellBox ||
-      Math.abs(dateBox.y + dateBox.height / 2 - bellBox.y - bellBox.height / 2) > 16 ||
-      bellBox.x - dateBox.x - dateBox.width > 30
+      Math.abs(dateBox.y + dateBox.height / 2 - searchBox.y - searchBox.height / 2) > 1 ||
+      Math.abs(dateBox.y + dateBox.height / 2 - countBox.y - countBox.height / 2) > 1 ||
+      dateBox.x < searchBox.x + searchBox.width ||
+      countBox.x < dateBox.x + dateBox.width ||
+      dateBox.x - searchBox.x - searchBox.width > 16 ||
+      countBox.x - dateBox.x - dateBox.width > 16 ||
+      bellBox.y + bellBox.height > dateBox.y
     )
-      throw new Error(`Calendar is not beside alerts at ${width}`)
+      throw new Error(`Search, calendar and guest count must share the toolbar below alerts at ${width}`)
+    await expect(page.getByRole("group", { name: "Điều khiển thu phóng" })).toHaveCount(0)
+    await expect(page.getByRole("button", { name: /Phóng to|Thu nhỏ/ })).toHaveCount(0)
+    await expect(page.getByRole("region", { name: "Chú giải trạng thái bàn", exact: true })).toHaveCount(1)
+    await expect(calendar(page).locator("../..").getByRole("button", { name: /Bàn chờ/ })).toHaveCount(0)
     if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1))
       throw new Error(`Overflow at ${width}`)
-    if (width === 1280) {
-      await page.getByRole("button", { name: "Mở Bàn chờ từ sơ đồ" }).click()
-    } else {
-      await page.getByRole("button", { name: /Bàn chờ/ }).first().click()
-    }
+    await expect(page.getByRole("button", { name: /Bàn chờ/ })).toHaveCount(1)
+    await page.getByRole("button", { name: /Bàn chờ/ }).click()
     await expect(page.getByText("NA11 waiting guest", { exact: true }).first()).toBeVisible()
     await closeDialog(page)
     await page.getByRole("button", { name: "Đếm khách", exact: true }).click()
@@ -257,7 +276,7 @@ try {
   const name = "NA11 Nguyễn Văn An"
   await form.getByLabel("Tên khách", { exact: true }).fill(name)
   await form.getByLabel("Số điện thoại", { exact: true }).fill("0987654789")
-  await form.getByRole("radio", { name: /^21:00/ }).click()
+  await form.getByRole("group", { name: "Giờ nhanh" }).getByRole("button", { name: "21:00" }).click()
   const birthday = form.getByRole("checkbox", { name: "Sinh nhật", exact: true })
   const metadataEnabled = (await birthday.count()) > 0
   if (process.env.NA11_REQUIRE_NA14 === "1" && !metadataEnabled)
@@ -272,7 +291,7 @@ try {
       response.request().method() === "POST" &&
       /^\/api\/v1\/bookings(?:\/direct)?$/.test(new URL(response.url()).pathname),
   )
-  await form.getByRole("button", { name: /^(Đặt bàn|Xác nhận đặt bàn)$/ }).click()
+  await form.getByRole("button", { name: /^(Đặt bàn|Xác nhận đặt bàn)( A1)?$/ }).click()
   const createdResponse = await creation
   expect(new URL(createdResponse.url()).pathname).toBe("/api/v1/bookings/direct")
   expect(createdResponse.status()).toBe(201)
@@ -383,7 +402,7 @@ try {
     if (await futureForm.evaluate((node) => node.scrollWidth > node.clientWidth + 1))
       throw new Error(`Far-future form overflow at ${width}`)
     await futureForm
-      .getByRole("button", { name: /^(Quay lại|Hủy)$/ })
+      .getByRole("button", { name: /^(Quay lại|Hủy|Đóng form)$/ })
       .first()
       .click()
     await expect(calendar(page)).toContainText("15/11")
@@ -424,15 +443,28 @@ try {
   })
   await expect(table(page, "A4")).toHaveAttribute("aria-label", /Đã đặt|Đang đặt/, { timeout: 20_000 })
   await table(page, "A4").tap()
+  const checkInStarted = Date.now()
+  const checkInResponse = page.waitForResponse(response =>
+    response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/check-in"),
+  )
   await page.getByRole("button", { name: "Khách đã đến", exact: true }).click()
-  await expect(table(page, "A4")).toHaveAttribute("aria-label", /Đang sử dụng/)
+  const checkedIn = await checkInResponse
+  expect(checkedIn.status()).toBe(200)
+  expect((await checkedIn.json()).booking.status).toBe("CHECKED_IN")
+  await expect(table(page, "A4")).toHaveAttribute("aria-label", /Có khách,.*\b2 khách(?:,|$)/)
+  await expect(table(page, "A4").locator("text")).toContainText([/^A4$/, /^2 khách$/])
+  await expect(table(page, "A4")).not.toContainText(/\d+\s*(?:phút|giờ|['’′])/)
+  checkInNetwork.push({ event: "A4 visible seated", elapsedMs: Date.now() - checkInStarted })
   await page.keyboard.press("Escape")
   await table(page, "B3").tap()
   const walkForm = bookingForm(page)
   await walkForm.getByRole("tab", { name: "Walk-in", exact: true }).click()
-  await walkForm.getByLabel("Tên khách", { exact: true }).fill("NA11 walk-in")
-  await walkForm.getByRole("button", { name: /^Mở bàn B3$/ }).click()
-  await expect(table(page, "B3")).toHaveAttribute("aria-label", /Đang sử dụng/)
+  const walkInSheet = page.getByRole("form", { name: "Mở bàn Walk-in B3", exact: true })
+  await walkInSheet.getByLabel(/Tên hoặc đặc điểm/).fill("NA11 walk-in")
+  await walkInSheet.getByRole("button", { name: "Mở bàn ngay", exact: true }).click()
+  await expect(table(page, "B3")).toHaveAttribute("aria-label", /Có khách,.*\b4 khách(?:,|$)/)
+  await expect(table(page, "B3").locator("text")).toContainText([/^B3$/, /^4 khách$/])
+  await expect(table(page, "B3")).not.toContainText(/\d+\s*(?:phút|giờ|['’′])/)
   await table(page, "B3").tap()
   await page.getByRole("button", { name: "Đổi bàn", exact: true }).click()
   await table(page, "B4").focus()
@@ -444,8 +476,9 @@ try {
   await page.getByRole("button", { name: "Ghép bàn", exact: true }).click()
   await table(page, "B3").tap()
   await page.getByRole("button", { name: "Ghép bàn", exact: true }).click()
-  await expect(table(page, "B3")).toHaveAttribute("aria-label", /nhóm ◆A, 2 bàn/)
-  await expect(table(page, "B4")).toHaveAttribute("aria-label", /nhóm ◆A, 2 bàn/)
+  await expect(table(page, "B3")).toHaveAttribute("aria-label", /nhóm G\d{2,}, 2 bàn/)
+  const groupCode = (await table(page, "B3").getAttribute("aria-label")).match(/nhóm (G\d{2,})/)[1]
+  await expect(table(page, "B4")).toHaveAttribute("aria-label", new RegExp(`nhóm ${groupCode}, 2 bàn`))
   await page.keyboard.press("Escape")
   await page.getByRole("button", { name: "Đếm khách", exact: true }).click()
   const guestCountText = page.getByLabel("Nội dung text booking")
@@ -507,6 +540,7 @@ try {
   throw error
 } finally {
   await writeFile(new URL("results.json", output), JSON.stringify(results, null, 2))
+  await writeFile(new URL("checkin-network.json", output), JSON.stringify(checkInNetwork, null, 2))
   if (browser) await browser.close()
   for (const { child, log } of children.reverse()) {
     if (child.pid)

@@ -2,6 +2,7 @@
 // Run against a dev server:  npm run dev  ->  npm run e2e
 // Env: E2E_BASE_URL (default http://127.0.0.1:5173), PW_CHROMIUM_PATH (optional custom Chromium binary).
 import { chromium } from "@playwright/test"
+import assert from "node:assert/strict"
 const base = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5173"
 const browser = await chromium.launch(
   process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {},
@@ -53,13 +54,83 @@ const selectTomorrow = async (page) => {
   await page.getByRole("button", { name: "Chọn ngày kinh doanh" }).click()
   await page.locator(`[data-day="${month}/${day}/${year}"]`).click()
 }
+const expectOccupied = async (loc, guests) => {
+  await expectLabel(loc, new RegExp(`Có khách,.*\\b${guests} khách(?:,|$)`))
+  if (/\d+\s*(?:phút|giờ|['’′])/.test(await loc.textContent())) throw new Error("Occupied glyph still shows elapsed time")
+  if ((await loc.getAttribute("aria-label")).startsWith("Bàn ") && !(await loc.locator("text").allTextContents()).includes(`${guests} khách`)) {
+    throw new Error(`Occupied table must display ${guests} khách`)
+  }
+}
+
+// UI-FIX regression: check the visible geometry, including clipping ancestors.
+for (const theme of ["dark", "light"]) {
+  for (const [width, height] of [[360, 800], [390, 844], [768, 1024], [1024, 800], [1280, 800], [1440, 900]]) {
+    for (const userId of width >= 768 ? [1, 3] : [1]) {
+      await flow(`floor bounds and controls ${theme} ${width} user ${userId}`, userId, async (page) => {
+        await page.addInitScript(({ theme, userId }) => localStorage.setItem("21gam.session.v1", JSON.stringify({ userId, theme })), { theme, userId })
+        await page.goto(base + "/floor", { waitUntil: "networkidle" })
+        for (let i = 0; i < 10; i++) {
+          const dismiss = page.getByRole("button", { name: /Đã xem.*xử lý sau|Đã xem, nhắc sau|Để sau|Đóng thông báo/ }).first()
+          if (!await dismiss.isVisible()) break
+          await dismiss.click()
+        }
+        if (userId === 1) assert.equal(await page.getByRole("tablist", { name: "Lọc khu" }).count(), 0, "Receptionist has no zone tabs")
+        for (const phase of userId === 1 ? ["load"] : ["load", "Tất cả"]) {
+          if (phase === "Tất cả") {
+            await page.getByRole("tab", { name: "Bar", exact: true }).click()
+            await page.getByRole("tab", { name: "Tất cả", exact: true }).click()
+          }
+          await page.evaluate(() => document.fonts.ready)
+          await page.waitForTimeout(400)
+          if ([360, 390, 768, 1280].includes(width)) {
+            const outside = await page.locator('svg[role="group"]').evaluate((svg) => {
+              const canvas = svg.getBoundingClientRect()
+              const camera = svg.querySelector(":scope > g")
+              const labels = [...camera.querySelectorAll("text")]
+              const parts = [["floor frame", camera.querySelector(":scope > rect")]]
+              for (const name of ["QUẦY BAR", "KHU PHA CHẾ", "LỐI VÀO"]) {
+                const label = labels.find((el) => el.textContent.trim() === name)
+                parts.push([name, label], [`${name} fixture`, label?.parentElement.querySelector("path")])
+              }
+              return parts.flatMap(([name, el]) => {
+                if (!el) return [`${name} missing`]
+                const r = el.getBoundingClientRect()
+                return r.width <= 0 || r.height <= 0 || r.left < canvas.left - 0.1 || r.top < canvas.top - 0.1 || r.right > canvas.right + 0.1 || r.bottom > canvas.bottom + 0.1
+                  ? [`${name} outside canvas: ${JSON.stringify({ left: r.left, top: r.top, right: r.right, bottom: r.bottom, canvas: canvas.toJSON() })}`] : []
+              })
+            })
+            if (outside.length) throw new Error(`${phase}: ${outside.join("; ")}`)
+          }
+          const forbidden = page.getByRole("button", { name: /zoom|full\s*screen|phóng to|thu nhỏ|toàn màn hình|^[+−-]$/i })
+            .or(page.getByRole("group", { name: /zoom|full\s*screen|thu phóng|toàn màn hình/i }))
+          if (await forbidden.count()) throw new Error(`${phase}: zoom/fullscreen control present`)
+          if (width >= 768 && userId === 1) assert.equal(await page.getByRole("button", { name: "Xem khả dụng", exact: true }).count(), 0, "Receptionist has no availability button")
+          if (width >= 768 && userId === 3) {
+            const clipping = await page.getByRole("button", { name: "Xem khả dụng", exact: true }).evaluate((button) => {
+              const r = button.getBoundingClientRect()
+              if (button.scrollWidth > button.clientWidth) return "label scrollWidth exceeds clientWidth"
+              for (let el = button.parentElement; el; el = el.parentElement) {
+                const style = getComputedStyle(el)
+                const box = el.getBoundingClientRect()
+                if (/(auto|hidden|scroll|clip)/.test(style.overflowX) && (el.scrollWidth > el.clientWidth || r.left < box.left - 0.1 || r.right > box.right + 0.1)) return "ancestor clips Xem khả dụng horizontally"
+                if (/(auto|hidden|scroll|clip)/.test(style.overflowY) && (r.top < box.top - 0.1 || r.bottom > box.bottom + 0.1)) return "ancestor clips Xem khả dụng vertically"
+              }
+              return null
+            })
+            if (clipping) throw new Error(`${phase}: ${clipping}`)
+          }
+        }
+      }, { viewport: { width, height }, reducedMotion: "reduce", hasTouch: width < 768 })
+    }
+  }
+}
 
 await flow("walk-in from table panel, then undo", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await table(page, "B5").click()
   await page.getByRole("tab", { name: "Walk-in" }).click()
   await page.getByRole("button", { name: "Mở bàn ngay" }).click()
-  await expectLabel(table(page, "B5"), /Đang sử dụng/)
+  await expectOccupied(table(page, "B5"), 4)
   await page.getByText("Bản mô phỏng").first().waitFor()
   await page.getByRole("button", { name: "Hoàn tác", exact: true }).first().click()
   await expectLabel(table(page, "B5"), /Chưa đặt/)
@@ -70,7 +141,7 @@ await flow("inline walk-in suggests a table (3 taps)", 1, async (page) => {
   await table(page, "B5").click()
   await page.getByRole("tab", { name: "Walk-in" }).click()
   await page.getByRole("button", { name: "Mở bàn ngay" }).click()
-  await expectLabel(table(page, "B5"), /Đang sử dụng/)
+  await expectOccupied(table(page, "B5"), 4)
 })
 
 await flow(
@@ -81,20 +152,19 @@ await flow(
     const deferAlert = page.getByRole("button", { name: "Đã xem, xử lý sau" })
     if (await deferAlert.isVisible()) await deferAlert.click()
     await barSeat(page, 13).click()
-    const form = page.getByRole("dialog", { name: "Tạo đơn đặt bàn" })
+    const form = page.getByRole("form", { name: /^(Tạo đặt bàn|Mở bàn Walk-in)/ })
     await form.getByRole("tab", { name: "Walk-in" }).click()
     await form.getByRole("radio", { name: "2 khách" }).click()
-    await form.getByRole("button", { name: "Xem bàn trống lúc này" }).click()
     if (await form.getByRole("radiogroup", { name: "Bàn trống" }).count()) {
       throw new Error("Walk-in still renders the legacy table-chip list")
     }
-    const map = form.getByRole("group", { name: "Sơ đồ bàn để chọn trực tiếp cho khách Walk-in" })
-    await map.waitFor()
-    const second = map.locator('[aria-label^="Ghế Bar"][aria-disabled="false"][aria-pressed="false"]').first()
-    await second.click()
-    await form.getByText("Sức chứa: 2/2 chỗ · Đã đủ chỗ", { exact: true }).waitFor()
-    const open = form.getByRole("button", { name: /^Mở bàn Bar/ })
-    if (await open.isDisabled()) throw new Error("Walk-in action stayed disabled after enough Bar seats were selected")
+    // One seat is not enough: the sheet says so and hands the map back instead of submitting.
+    await form.getByRole("button", { name: "Thiếu 1 chỗ · Chọn thêm bàn" }).click()
+    await barSeat(page, 15).click()
+    await form.getByText("Bar 13 + Bar 15 đang trống · 2 chỗ, đủ 2 khách").waitFor()
+    if (await form.getByRole("button", { name: "Mở bàn ngay" }).isDisabled()) {
+      throw new Error("Walk-in action stayed disabled after enough Bar seats were selected")
+    }
   },
   { viewport: { width: 390, height: 844 }, hasTouch: true },
 )
@@ -104,33 +174,35 @@ await flow("check-in reserved booking A5", 1, async (page) => {
   await table(page, "A5").click()
   await page.getByRole("button", { name: /Check-in A5/ }).click()
   await page.getByRole("dialog").getByRole("button", { name: "Check-in", exact: true }).click()
-  await expectLabel(table(page, "A5"), /Đang sử dụng/)
+  await expectOccupied(table(page, "A5"), 3)
 })
 
 await flow("move seated party B7? -> combine B5 + B7 then split", 3, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await table(page, "B5").click()
   await page.getByRole("button", { name: /Mở Bàn B5/ }).click()
-  await expectLabel(table(page, "B5"), /Đang sử dụng/)
+  await expectOccupied(table(page, "B5"), 2)
   await page.getByRole("button", { name: "Ghép bàn" }).click()
   await table(page, "B7").click()
   await page
     .getByRole("dialog", { name: /Ghép thêm/ })
     .getByRole("button", { name: "Ghép bàn" })
     .click()
-  await expectLabel(table(page, "B7"), /Đang sử dụng/)
+  await expectOccupied(table(page, "B7"), 2)
   await page.getByRole("button", { name: "Tách bàn" }).click()
   await page.getByRole("dialog").getByRole("checkbox").nth(1).click()
   await page.getByRole("button", { name: /Tách và nhả B7/ }).click()
   await expectLabel(table(page, "B7"), /Chưa đặt/)
-  await expectLabel(table(page, "B5"), /Đang sử dụng/)
+  await expectOccupied(table(page, "B5"), 2)
 })
 
 await flow("booking flow end-to-end for tomorrow with table", 3, async (page) => {
   await page.goto(base + "/reservations", { waitUntil: "networkidle" })
   await page.getByRole("button", { name: /Đặt bàn mới/ }).click()
   await page.getByRole("button", { name: "Ngày mai" }).click()
-  await page.getByRole("radio", { name: "20:30" }).click()
+  await page.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).click()
+  await page.locator('[data-wheel="Giờ"] [data-value="20"]').click()
+  await page.locator('[data-wheel="Phút"] [data-value="30"]').click()
   await page.getByRole("button", { name: /Tiếp/ }).click()
   await page.getByRole("button", { name: /^A0/ }).first().click()
   await page.getByRole("button", { name: /Tiếp/ }).click()
@@ -175,7 +247,7 @@ await flow("undo blocked after remote edit (conflict UX)", 3, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await table(page, "B5").click()
   await page.getByRole("button", { name: /Mở Bàn B5/ }).click()
-  await expectLabel(table(page, "B5"), /Đang sử dụng/)
+  await expectOccupied(table(page, "B5"), 2)
   await page.getByRole("button", { name: /Giờ mô phỏng/ }).click()
   await page.getByRole("button", { name: "iPad cửa thao tác ngay" }).click()
   await page.keyboard.press("Escape")
@@ -185,16 +257,24 @@ await flow("undo blocked after remote edit (conflict UX)", 3, async (page) => {
 })
 
 await flow("time warp: A5 becomes late after +15', no auto cancel after +60'", 3, async (page) => {
+  const state = () => page.evaluate(async () => {
+    const { api, clock } = await import("/src/services/index.ts")
+    const catalog = await api.getCatalog()
+    const id = catalog.tables.find(t => t.code === "A5").id
+    return (await api.getFloorState(clock.now())).tables.find(t => t.tableId === id).state
+  })
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await page.getByRole("button", { name: /Giờ mô phỏng/ }).click()
   await page.getByRole("button", { name: "15'" }).click()
   await page.keyboard.press("Escape")
-  await expectLabel(table(page, "A5"), /Đến muộn/)
+  await expectLabel(table(page, "A5"), /Không tới/)
+  assert.equal(await state(), "late")
   await page.getByRole("button", { name: /Giờ mô phỏng/ }).click()
   await page.getByRole("button", { name: "30'" }).click()
   await page.getByRole("button", { name: "30'" }).click()
   await page.keyboard.press("Escape")
-  await expectLabel(table(page, "A5"), /Khách không đến/)
+  await expectLabel(table(page, "A5"), /Không tới/)
+  assert.equal(await state(), "noshow", "warning must keep the booking and table held")
 })
 
 await flow(
@@ -324,7 +404,7 @@ await flow("inline form: occupied table is refused, free table is picked on the 
     .waitFor()
   await page.getByRole("button", { name: "Bỏ B5" }).waitFor()
   await page.getByRole("button", { name: "Mở bàn ngay" }).click()
-  await expectLabel(table(page, "B5"), /Đang sử dụng/)
+  await expectOccupied(table(page, "B5"), 4)
 })
 
 await flow("cancel booking requires confirmation with reason", 1, async (page) => {
@@ -537,7 +617,7 @@ await flow("bar seat: single walk-in from table detail", 1, async (page) => {
   await page.getByRole("tab", { name: "Walk-in" }).click()
   await page.getByRole("radio", { name: "1 khách" }).click()
   await page.getByRole("button", { name: "Mở bàn ngay" }).click()
-  await expectLabel(barSeat(page, 13), /Đang sử dụng/)
+  await expectOccupied(barSeat(page, 13), 1)
 })
 
 await flow("bar seat: multi-seat booking capacity check & group reservation", 1, async (page) => {
@@ -549,18 +629,19 @@ await flow("bar seat: multi-seat booking capacity check & group reservation", 1,
 
   // Select adjacent bar seat 7 on the canvas to meet capacity
   await barSeat(page, 7).click()
-  await page.getByText(/Sức chứa 2 chỗ · đủ cho 2 khách/).waitFor()
+  await page.getByText(/2 chỗ, đủ 2 khách/).waitFor()
 
   // Draft inputs
   await page.locator("#qf-name").fill("Khách Bar Ghép")
   await page.locator("#qf-phone").fill("0912345678")
-  await page.getByRole("button", { name: "Lưu đặt bàn" }).click()
+  await page.getByRole("button", { name: /^Đặt bàn Bar 8 \+ Bar 7$/ }).click()
 
   // Both bar seats become reserved and grouped
   await expectLabel(barSeat(page, 8), /Đang đặt/)
   await expectLabel(barSeat(page, 7), /Đang đặt/)
-  await expectLabel(barSeat(page, 8), /nhóm ◆[A-Z]+/)
-  await expectLabel(barSeat(page, 7), /nhóm ◆[A-Z]+/)
+  await expectLabel(barSeat(page, 8), /nhóm G\d{2,}, 2 bàn/)
+  const groupCode = (await barSeat(page, 8).getAttribute("aria-label")).match(/nhóm (G\d{2,})/)[1]
+  await expectLabel(barSeat(page, 7), new RegExp(`nhóm ${groupCode}, 2 bàn`))
   if (await page.locator("path[data-group-id]").count()) throw new Error("Group connector must be hidden by default")
   await barSeat(page, 8).click()
   if ((await barSeat(page, 7).getAttribute("data-group-highlighted")) !== "true") {
@@ -635,8 +716,8 @@ await flow("reservation assignment: date-aware availability in both directions (
   // Verify assignment in details
   await page.getByRole("link", { name: "Đặt bàn" }).click()
   await page.waitForURL("**/reservations")
-  await page.getByRole("button", { name: "Ngày sau" }).click()
-  await page.getByRole("cell", { name: "Khách phân bàn mai" }).click()
+  await selectTomorrow(page)
+  await page.getByRole("cell").filter({ hasText: "Khách phân bàn mai" }).click()
   detail = page.getByRole("dialog").filter({ hasText: "Khách phân bàn mai" })
   await detail.getByText("A0", { exact: true }).waitFor()
 
@@ -650,8 +731,8 @@ await flow("reservation assignment: date-aware availability in both directions (
   // Verify reassignment in details
   await page.getByRole("link", { name: "Đặt bàn" }).click()
   await page.waitForURL("**/reservations")
-  await page.getByRole("button", { name: "Ngày sau" }).click()
-  await page.getByRole("cell", { name: "Khách phân bàn mai" }).click()
+  await selectTomorrow(page)
+  await page.getByRole("cell").filter({ hasText: "Khách phân bàn mai" }).click()
   detail = page.getByRole("dialog").filter({ hasText: "Khách phân bàn mai" })
   await detail.getByText("A0 + A2", { exact: true }).waitFor()
   await page.keyboard.press("Escape")
@@ -687,7 +768,9 @@ await flow(
     await sheet.getByText("Đặt bàn mới", { exact: true }).waitFor()
     // Step 0: click Tiếp
     await sheet.getByRole("button", { name: "Ngày mai" }).click()
-    await sheet.getByRole("radio", { name: /^19:00/ }).click()
+    await sheet.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).click()
+    await sheet.locator('[data-wheel="Giờ"] [data-value="19"]').click()
+    await sheet.locator('[data-wheel="Phút"] [data-value="00"]').click()
     await sheet.getByRole("button", { name: "Tiếp" }).click()
     // Step 1: select first suggested table
     const firstSuggestion = sheet.locator("section").filter({ hasText: "Gợi ý" }).getByRole("button").first()
@@ -710,7 +793,7 @@ await flow(
   },
 )
 
-await flow("booking pickers: keyboard navigation across expired selected slot (MD-04)", 3, async (page) => {
+await flow("booking pickers: keyboard navigation across expired selected time (MD-04)", 3, async (page) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(base + "/reservations", { waitUntil: "networkidle" })
   await page.evaluate(async () => {
@@ -736,39 +819,36 @@ await flow("booking pickers: keyboard navigation across expired selected slot (M
     clock.advance(180) // advance 3 hours
   })
 
-  // Verify roving tab stop: exactly one enabled slot has tabIndex=0
-  const enabledWithTabstop = await editDialog
-    .getByRole("radio")
-    .evaluateAll((nodes) =>
-      nodes.filter((n) => !n.disabled && n.getAttribute("tabindex") === "0").map((n) => n.textContent?.trim()),
-    )
-  if (enabledWithTabstop.length !== 1) {
-    throw new Error(`Expected exactly 1 enabled radio with tabIndex=0, found ${enabledWithTabstop.length}`)
+  // The wheel is reachable by keyboard, skips expired values and keeps the selection in step.
+  const wheelButton = editDialog.getByRole("button", { name: /Chọn giờ bằng con lăn/ })
+  await wheelButton.click()
+  const hours = editDialog.getByRole("spinbutton", { name: "Giờ", exact: true })
+  const tabstops = await editDialog.getByRole("spinbutton").evaluateAll(nodes =>
+    nodes.filter(node => node.tabIndex === 0).length)
+  if (tabstops !== 2 || await editDialog.locator('[data-wheel] [data-value]').evaluateAll(nodes => nodes.some(node => node.tabIndex !== -1))) {
+    throw new Error("Only the two wheel columns may enter the tab order")
   }
-
-  // Keyboard navigation: focus stepper and press Tab into the time picker
-  await editDialog.getByRole("button", { name: "Tăng số khách" }).focus()
+  await wheelButton.focus()
   await page.keyboard.press("Tab")
-
-  const focusedRole = await page.evaluate(() => document.activeElement?.getAttribute("role"))
-  if (focusedRole !== "radio") {
-    throw new Error(`Tab from stepper did not land on time radio (focused ${focusedRole})`)
+  if ((await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))) !== "Giờ") {
+    throw new Error("Tab from the wheel button did not land on the hour wheel")
   }
-
-  // Keyboard ArrowRight / Home / End navigation
-  await page.keyboard.press("ArrowRight")
   await page.keyboard.press("Home")
+  const first = await hours.getAttribute("aria-valuetext")
+  if (await editDialog.locator(`[data-wheel="Giờ"] [data-value="${first}"]`).isDisabled()) {
+    throw new Error("Home selected an expired hour")
+  }
   await page.keyboard.press("End")
-
-  const lastChecked = await editDialog.getByRole("radio", { name: /^01:00/ }).getAttribute("aria-checked")
-  if (lastChecked !== "true") {
-    throw new Error("End key did not select the 01:00 slot")
+  if ((await hours.getAttribute("aria-valuetext")) !== "01") throw new Error("End key did not select hour 01")
+  if (!(await wheelButton.getAttribute("aria-label")).includes("01:00")) {
+    throw new Error("Hour 01 must clamp the minute to 01:00")
   }
 
   await page.keyboard.press("Escape")
 })
 
 console.log(results.join("\n"))
-console.log(failures ? `\n${failures} FAILED` : "\nALL PASSED")
 await browser.close()
-process.exit(failures ? 1 : 0)
+await import("./milestone-a.mjs")
+console.log(failures || process.exitCode ? "\nFAILED" : "\nALL PASSED")
+process.exit(failures ? 1 : (process.exitCode ?? 0))

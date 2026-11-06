@@ -7,10 +7,12 @@ export function useFloorModel(businessDate?: BusinessDate) {
   const catalog = useCatalog()
   const floor = useFloorState(businessDate)
   return useMemo(() => {
+    const snapshot = floor.isPlaceholderData || floor.isError ? undefined : floor.data
     const tables = catalog.data?.tables ?? []
     const byId = new Map<number, TableView>(tables.map((t) => [t.id, t]))
-    const states = new Map<number, FloorTableState>((floor.data?.tables ?? []).map((t) => [t.tableId, t]))
+    const states = new Map<number, FloorTableState>((snapshot?.tables ?? []).map((t) => [t.tableId, t]))
     const counts = {} as Record<TableLiveState, number>
+    // Physical positions: one per table/seat state. Merged-group dedup lives only in StatusLegend.
     for (const s of states.values()) counts[s.state] = (counts[s.state] ?? 0) + 1
     const codes = (ids: number[]) => ids.map((id) => byId.get(id)?.code ?? `#${id}`)
     const label = (id: number) => {
@@ -28,10 +30,10 @@ export function useFloorModel(businessDate?: BusinessDate) {
         .map((t) => t.id),
     )
     return {
-      loading: catalog.isLoading || floor.isLoading,
+      loading: catalog.isLoading || floor.isLoading || floor.isPlaceholderData,
       error: catalog.error || floor.error,
       catalog: catalog.data,
-      floor: floor.data,
+      floor: snapshot,
       tables,
       byId,
       states,
@@ -40,7 +42,7 @@ export function useFloorModel(businessDate?: BusinessDate) {
       label,
       freeIds,
     }
-  }, [catalog.data, floor.data, catalog.isLoading, floor.isLoading, catalog.error, floor.error])
+  }, [catalog.data, floor.data, catalog.isLoading, floor.isLoading, floor.isPlaceholderData, floor.isError, catalog.error, floor.error])
 }
 
 export type FloorModel = ReturnType<typeof useFloorModel>

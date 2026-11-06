@@ -226,7 +226,7 @@ export function formatDailyBookingText(input: DailyBookingTextInput): string {
   } else lines.push("Không có")
   lines.push("", "BÀN HUỶ")
   lines.push(...(cancelled.length ? ordered(cancelled, "").map(bookingLine) : ["Không có"]))
-  if (noShows.length) lines.push("", "KHÔNG ĐẾN", ...ordered(noShows, "").map(bookingLine))
+  if (noShows.length) lines.push("", "KHÔNG TỚI", ...ordered(noShows, "").map(bookingLine))
 
   const arrivals = arrivalCounts(input, active)
   const returning = active.filter((item) => item.metadata.returningCustomer === true).length

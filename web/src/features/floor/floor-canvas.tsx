@@ -1,11 +1,10 @@
 /**
  * FloorCanvas: the 21GAM floorplan rebuilt as SVG from venue-layout.ts.
  * Coordinate space 589 x 754 (the survey image). Pan (drag), zoom (wheel,
- * pinch, buttons), fit-to-screen, zoom-to-zone, keyboard focus per table.
+ * pinch), fit-to-screen, zoom-to-zone, keyboard focus per table.
  */
-import { Maximize, Minus, Plus } from "lucide-react"
+import { List } from "lucide-react"
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
-import { Button } from "@/components/ui/button"
 import type {
   AvailabilityStatus,
   FloorGroup,
@@ -15,19 +14,22 @@ import type {
   TableView,
   ZoneView,
 } from "@/domain/models"
-import { FIXTURES, FLOOR_H, FLOOR_W, ZONES, zoneBounds, type ZoneCode } from "@/domain/venue-layout"
-import { fmtElapsed, fmtTime, MS } from "@/lib/time"
+import { FIXTURES, FLOOR_H, FLOOR_W, ZONES, type ZoneCode } from "@/domain/venue-layout"
+import { fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { STATE_META } from "@/components/status-meta"
+import { useUi } from "@/state/ui"
 import {
   activeGroupForSelection,
+  computeZoneBounds,
   connectorIsSafe,
-  glyphLevel,
-  groupCode,
+  formatGroupCode,
+  formatOccupiedLabel,
+  GUEST_FLAG_META,
+  pickPrimaryGuestFlag,
   supportedFlags,
   tableCanActivate,
-  wholeFloorBounds,
-  type ClaimViewFlags,
+  type GuestFlag,
 } from "./floor-visual-rules"
 
 export type CanvasMode = "live" | "availability"
@@ -53,6 +55,10 @@ interface Props {
   compact?: boolean
   className?: string
   ariaLabel?: string
+
+  // New optional props for P2 contract
+  waitingCount?: number
+  onOpenWaitlist?: () => void
 }
 
 interface View {
@@ -91,12 +97,21 @@ export function FloorCanvas(props: Props) {
     compact,
     className,
     ariaLabel,
+    waitingCount,
+    onOpenWaitlist,
   } = props
+
   const wrapRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const measuredSize = useRef({ w: 0, h: 0 })
   /** A manual view only applies to the zone it was made in; otherwise the view is fitted. */
   const [userView, setUserView] = useState<{ zone: string; view: View } | null>(null)
+  const [isInteracting, setIsInteracting] = useState(false)
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() => {
+    if (typeof window === "undefined") return false
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  })
+
   const pointers = useRef(new Map<number, { x: number; y: number }>())
   const gesture = useRef<{
     startX: number
@@ -107,6 +122,24 @@ export function FloorCanvas(props: Props) {
     pinchMid?: { x: number; y: number }
   } | null>(null)
   const suppressClick = useRef(0)
+
+  // Listen to zoneRefitTick from useUi to support re-clicking active zone tab
+  const zoneRefitTick = useUi((s) => s.zoneRefitTick)
+  const prevZoneRefitTick = useRef(zoneRefitTick)
+
+  useEffect(() => {
+    if (prevZoneRefitTick.current !== zoneRefitTick) {
+      prevZoneRefitTick.current = zoneRefitTick
+      setUserView(null)
+    }
+  }, [zoneRefitTick])
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)")
+    const listener = (e: MediaQueryListEvent) => setPrefersReducedMotion(e.matches)
+    media.addEventListener("change", listener)
+    return () => media.removeEventListener("change", listener)
+  }, [])
 
   useLayoutEffect(() => {
     const el = wrapRef.current
@@ -150,18 +183,74 @@ export function FloorCanvas(props: Props) {
     }
   }, [])
 
+  // Camera fit bounds computed from the REAL tables and bar seats coordinates
   const fitView = useMemo<View>(() => {
     if (!size.w || !size.h) return { k: 1, x: 0, y: 0 }
-    const zb = zoneFocus === "ALL" ? null : zoneBounds(zoneFocus)
-    const b = zb
-      ? { x: zb.x - 16, y: zb.y - 16, w: zb.w + 32, h: zb.h + 32 }
-      : wholeFloorBounds(tables, FLOOR_W, FLOOR_H)
-    const pad = compact ? 6 : size.w < 640 ? 8 : PAD
-    const k = Math.min(Math.max(1, size.w - pad * 2) / b.w, Math.max(1, size.h - pad * 2) / b.h)
-    return { k, x: (size.w - b.w * k) / 2 - b.x * k, y: (size.h - b.h * k) / 2 - b.y * k }
-  }, [size.w, size.h, zoneFocus, compact, tables])
+    const isAll = zoneFocus === "ALL"
+    const b = computeZoneBounds(tables, zoneFocus, isAll ? 0 : compact ? 12 : 24) ?? {
+      x: 20,
+      y: 20,
+      w: FLOOR_W - 40,
+      h: FLOOR_H - 20,
+    }
+
+    const isPhone =
+      !compact &&
+      (size.w <= 480 ||
+        (typeof window !== "undefined" && window.innerWidth < 640 && size.w < 640))
+
+    if (isPhone) {
+      if (isAll) {
+        // Horizontal padding on phones so floor frame lines up with tabs and legend edges (16px at 360/390)
+        // Use largest scale that fits
+        const padH = 16
+        const scaleX = (size.w - padH * 2) / b.w
+        const scaleY = (size.h - 16) / b.h
+        const isWidthLimited = scaleX <= scaleY
+
+        if (isWidthLimited) {
+          const k = scaleX
+          // Aligns the floor to the top of the viewport instead of centering, so slack goes below
+          // Center horizontally with exactly 16px padding on left and right
+          return {
+            k,
+            x: padH - b.x * k,
+            y: -b.y * k,
+          }
+        }
+        const k = Math.min(scaleX, scaleY)
+        return {
+          k,
+          x: (size.w - b.w * k) / 2 - b.x * k,
+          y: (size.h - b.h * k) / 2 - b.y * k,
+        }
+      }
+
+      // Zone zoom on phone
+      const pad = 12
+      const scaleX = (size.w - pad * 2) / b.w
+      const scaleY = (size.h - pad * 2) / b.h
+      const k = Math.min(scaleX, scaleY)
+      const isWidthLimited = scaleX <= scaleY
+      return {
+        k,
+        x: (size.w - b.w * k) / 2 - b.x * k,
+        y: isWidthLimited ? pad - b.y * k : (size.h - b.h * k) / 2 - b.y * k,
+      }
+    }
+
+    // Desktop or compact mode: center
+    const pad = compact ? 6 : PAD
+    const k = Math.min((size.w - pad * 2) / b.w, (size.h - pad * 2) / b.h)
+    return {
+      k,
+      x: (size.w - b.w * k) / 2 - b.x * k,
+      y: (size.h - b.h * k) / 2 - b.y * k,
+    }
+  }, [size.w, size.h, zoneFocus, tables, compact])
 
   const view = userView && userView.zone === zoneFocus ? userView.view : fitView
+
   const setView = useCallback(
     (next: View | ((v: View) => View)) => {
       setUserView((prev) => {
@@ -171,12 +260,8 @@ export function FloorCanvas(props: Props) {
     },
     [zoneFocus, fitView],
   )
-  const fitAll = () => setUserView(null)
 
-  const baseK = useMemo(
-    () => (size.w && size.h ? Math.min((size.w - PAD * 2) / FLOOR_W, (size.h - PAD * 2) / FLOOR_H) : 1),
-    [size],
-  )
+  const baseK = useMemo(() => fitView.k, [fitView.k])
 
   const zoomBy = useCallback(
     (factor: number, cx = size.w / 2, cy = size.h / 2) => {
@@ -189,7 +274,7 @@ export function FloorCanvas(props: Props) {
     [baseK, size.w, size.h, setView],
   )
 
-  // Wheel zoom (non-passive so the page does not scroll).
+  // Wheel zoom (non-passive so the page does not scroll)
   useEffect(() => {
     const el = wrapRef.current
     if (!el || compact) return
@@ -223,6 +308,7 @@ export function FloorCanvas(props: Props) {
         pinchDist: Math.hypot(a.x - b.x, a.y - b.y),
         pinchMid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
       }
+      setIsInteracting(true)
       wrapRef.current?.setPointerCapture(e.pointerId)
     }
   }
@@ -246,6 +332,7 @@ export function FloorCanvas(props: Props) {
     const dy = p.y - g.startY
     if (!g.dragging && Math.hypot(dx, dy) > 6) {
       g.dragging = true
+      setIsInteracting(true)
       wrapRef.current?.setPointerCapture(e.pointerId)
     }
     if (g.dragging) {
@@ -256,8 +343,10 @@ export function FloorCanvas(props: Props) {
   const endPointer = (e: React.PointerEvent) => {
     pointers.current.delete(e.pointerId)
     if (gesture.current?.dragging) markSuppressed(suppressClick)
-    if (pointers.current.size === 0) gesture.current = null
-    else if (pointers.current.size === 1) {
+    if (pointers.current.size === 0) {
+      gesture.current = null
+      setIsInteracting(false)
+    } else if (pointers.current.size === 1) {
       const [p] = [...pointers.current.values()]
       gesture.current = { startX: p.x, startY: p.y, view, dragging: true }
     }
@@ -276,7 +365,6 @@ export function FloorCanvas(props: Props) {
 
   const handleTable = (id: number) => {
     if (isSuppressed(suppressClick)) return
-    // A remotely occupied selection must remain tappable so the operator can deselect it.
     if (!tableCanActivate(id, pickable, selected)) {
       onBlockedTableClick?.(id)
       return
@@ -286,7 +374,54 @@ export function FloorCanvas(props: Props) {
 
   const zoneOf = useMemo(() => new Map(zones.map((z) => [z.code, z])), [zones])
   const focusZone = zoneFocus === "ALL" ? null : zoneFocus
+  const isAllZone = zoneFocus === "ALL"
   const tableById = useMemo(() => new Map(tables.map((t) => [t.id, t])), [tables])
+
+  // Compute waitlist marker position in floor space between Khu A and the bar
+  const waitlistPos = useMemo(() => {
+    const khuATables = tables.filter((t) => t.zoneCode === "A" && t.code !== "A10")
+    const barTables = tables.filter((t) => t.zoneCode === "BAR")
+    const khuBTables = tables.filter((t) => t.zoneCode === "B")
+    const a10 = tables.find((t) => t.code === "A10")
+
+    const maxKhuAX = khuATables.length
+      ? Math.max(...khuATables.map((t) => t.x + (t.w || 46) / 2))
+      : 103
+    const minBarX = barTables.length
+      ? Math.min(...barTables.map((t) => t.x - (t.w || 22) / 2))
+      : 342
+
+    const posX = Math.round((maxKhuAX + minBarX) / 2) // ~222
+
+    const maxKhuBY = khuBTables.length
+      ? Math.max(...khuBTables.map((t) => t.y + (t.h || 30) / 2))
+      : 306
+    const a10TopY = a10 ? a10.y - (a10.h || 38) / 2 : 666
+    const posY = Math.round((maxKhuBY + a10TopY) / 2) // ~486
+
+    return { x: posX, y: posY }
+  }, [tables])
+
+  // Zone tracking chip state (Item 2b)
+  const isZoomed = userView !== null && Math.abs(userView.view.k - baseK) > 0.05
+  const isZoneActive = zoneFocus !== "ALL"
+  const showTrackingChip = isZoneActive || isZoomed
+
+  const zoneLabel =
+    zoneFocus === "A"
+      ? "Khu A"
+      : zoneFocus === "B"
+        ? "Khu B"
+        : zoneFocus === "C"
+          ? "Khu C"
+          : zoneFocus === "BAR"
+            ? "Bar"
+            : "Sơ đồ"
+
+  const handleResetToAll = () => {
+    setUserView(null)
+    useUi.getState().setZone("ALL")
+  }
 
   return (
     <div
@@ -320,7 +455,15 @@ export function FloorCanvas(props: Props) {
             <line x1="0" y1="0" x2="0" y2="7" stroke="var(--floor-grid)" strokeWidth="0.8" />
           </pattern>
         </defs>
-        <g transform={`translate(${view.x} ${view.y}) scale(${view.k})`}>
+        <g
+          transform={`translate(${view.x} ${view.y}) scale(${view.k})`}
+          style={{
+            transition:
+              isInteracting || prefersReducedMotion
+                ? "none"
+                : "transform 320ms cubic-bezier(0.16, 1, 0.3, 1)",
+          }}
+        >
           <rect
             data-bg="1"
             x={20}
@@ -367,6 +510,39 @@ export function FloorCanvas(props: Props) {
           })}
           <Fixtures />
           <GroupThreads groups={activeGroup ? [activeGroup] : []} tableById={tableById} />
+
+          {/* Waitlist marker button anchored to floor space for Zone Tất cả */}
+          {onOpenWaitlist && isAllZone ? (
+            <foreignObject
+              x={waitlistPos.x - 72}
+              y={waitlistPos.y - 20}
+              width={144}
+              height={40}
+              className="overflow-visible"
+              pointerEvents="auto"
+            >
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  // The marker sits mid-floor: a finger landing on it must still pan and pinch.
+                  if (!isSuppressed(suppressClick)) onOpenWaitlist()
+                }}
+                aria-label={
+                  waitingCount !== undefined
+                    ? `Bàn chờ, ${waitingCount} khách đang chờ`
+                    : "Bàn chờ"
+                }
+                className="group flex h-10 w-full items-center justify-center gap-2 rounded-full border border-border/80 bg-background/95 px-3 py-1.5 text-foreground shadow-lg backdrop-blur transition-transform hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-[#1e232d]/95 dark:border-slate-700/80"
+              >
+                <List className="size-4 shrink-0 text-foreground" />
+                <span className="text-xs font-bold whitespace-nowrap">
+                  {waitingCount && waitingCount > 0 ? `Bàn chờ +${waitingCount}` : "Bàn chờ"}
+                </span>
+              </button>
+            </foreignObject>
+          ) : null}
+
           {tables.map((t) => {
             const dim =
               (focusZone && t.zoneCode !== focusZone) || (pickable && !pickable.has(t.id) && !selected.has(t.id))
@@ -388,23 +564,44 @@ export function FloorCanvas(props: Props) {
         </g>
       </svg>
 
-      {mode === "live" ? <FloorLegend /> : null}
+      {/* Zone tracking chip (Item 2b) */}
+      {showTrackingChip && !compact ? (
+        <div className="pointer-events-auto absolute top-2.5 left-2.5 z-10 flex items-center gap-2 rounded-full border border-slate-700/40 bg-[#162238]/90 py-1 pr-1.5 pl-3 text-white shadow-md backdrop-blur dark:bg-[#1a2639]/95 dark:border-slate-600/50">
+          <span className="text-[11px] font-semibold tracking-wide">
+            {zoneLabel} · Đang theo dõi
+          </span>
+          <button
+            type="button"
+            onClick={handleResetToAll}
+            className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-900 shadow-xs hover:bg-slate-100 active:scale-95 transition-transform"
+          >
+            Thu về toàn bộ
+          </button>
+        </div>
+      ) : null}
 
-      {!compact ? (
-        <div
-          className="absolute right-2 bottom-2 flex flex-col overflow-hidden rounded-lg border bg-popover/95 shadow-float backdrop-blur sm:right-3 sm:bottom-3 sm:rounded-xl"
-          role="group"
-          aria-label="Điều khiển thu phóng"
-        >
-          <Button className="size-9" variant="ghost" size="icon" aria-label="Phóng to" onClick={() => zoomBy(1.25)}>
-            <Plus />
-          </Button>
-          <Button className="size-9" variant="ghost" size="icon" aria-label="Thu nhỏ" onClick={() => zoomBy(0.8)}>
-            <Minus />
-          </Button>
-          <Button className="size-9" variant="ghost" size="icon" aria-label="Vừa màn hình" onClick={fitAll}>
-            <Maximize />
-          </Button>
+      {/* Floating HTML overlay waitlist marker for Zone Khu A/B/C/Bar (outside camera transform) */}
+      {onOpenWaitlist && !isAllZone ? (
+        <div className="pointer-events-auto absolute bottom-3 right-3 z-10">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpenWaitlist()
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            aria-label={
+              waitingCount !== undefined
+                ? `Bàn chờ, ${waitingCount} khách đang chờ`
+                : "Bàn chờ"
+            }
+            className="group flex h-10 items-center justify-center gap-2 rounded-full border border-border/80 bg-background/95 px-3 py-1.5 text-foreground shadow-lg backdrop-blur transition-transform hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-[#1e232d]/95 dark:border-slate-700/80"
+          >
+            <List className="size-4 shrink-0 text-foreground" />
+            <span className="text-xs font-bold whitespace-nowrap">
+              {waitingCount && waitingCount > 0 ? `Bàn chờ +${waitingCount}` : "Bàn chờ"}
+            </span>
+          </button>
         </div>
       ) : null}
     </div>
@@ -489,35 +686,8 @@ const Fixtures = memo(function Fixtures() {
               </g>
             )
           case "block":
-            return (
-              <g key={f.id}>
-                <path
-                  d={f.d}
-                  fill="var(--floor-fixture)"
-                  stroke="var(--border-strong)"
-                  strokeWidth={0.8}
-                  strokeDasharray="3 2.5"
-                />
-                <text
-                  x={f.labelAt!.x}
-                  y={f.labelAt!.y - 2}
-                  textAnchor="middle"
-                  fontSize={6.5}
-                  fill="var(--text-subtle)"
-                >
-                  {f.label}
-                </text>
-                <text
-                  x={f.labelAt!.x}
-                  y={f.labelAt!.y + 7}
-                  textAnchor="middle"
-                  fontSize={5.5}
-                  fill="var(--text-subtle)"
-                >
-                  ước lượng
-                </text>
-              </g>
-            )
+            // The two decorative blocks "Chỗ phục vụ sinh uống" are removed (Item 7)
+            return null
           default:
             return null
         }
@@ -539,7 +709,7 @@ function GroupThreads({ groups, tableById }: { groups: FloorGroup[]; tableById: 
           <path
             key={g.id}
             data-group-id={g.id}
-            data-group-code={g.displayCode ?? groupCode(g.symbolNo)}
+            data-group-code={formatGroupCode(g.displayCode ?? g.symbolNo)}
             d={d}
             fill="none"
             stroke="var(--foreground)"
@@ -621,13 +791,14 @@ function GroupBadge({
   y,
   compact = false,
 }: {
-  code: string | null | undefined
+  code: string | number | null | undefined
   x: number
   y: number
   compact?: boolean
 }) {
-  if (!code) return null
-  const width = Math.max(compact ? 17 : 21, code.length * (compact ? 4.8 : 5.5) + 7)
+  const formatted = formatGroupCode(code)
+  if (!formatted) return null
+  const width = Math.max(compact ? 17 : 21, formatted.length * (compact ? 4.8 : 5.5) + 7)
   return (
     <g transform={`translate(${x} ${y})`} aria-hidden pointerEvents="none">
       <rect
@@ -641,7 +812,7 @@ function GroupBadge({
         strokeWidth={0.9}
       />
       <text y={2.5} textAnchor="middle" fontSize={compact ? 6.5 : 7.2} fontWeight={800} fill="var(--foreground)">
-        {code}
+        {formatted}
       </text>
     </g>
   )
@@ -651,40 +822,30 @@ function CustomerBadges({
   flags,
   x,
   y,
-  expanded = false,
 }: {
-  flags: ClaimViewFlags
+  flags: string[]
   x: number
   y: number
-  expanded?: boolean
 }) {
-  const visible = supportedFlags(flags)
-  if (!visible.length) return null
-  const shown = expanded ? visible.slice(0, 2) : visible.slice(0, 1)
+  const primary = pickPrimaryGuestFlag(flags)
+  if (!primary) return null
+  const meta = GUEST_FLAG_META[primary]
   return (
     <g transform={`translate(${x} ${y})`} aria-hidden pointerEvents="none">
-      {shown.map((flag, index) => (
-        <g key={flag} transform={`translate(${index * 12} 0)`}>
-          <circle r={5.7} fill="var(--background)" stroke="var(--border-strong)" strokeWidth={0.8} />
-          <text y={2.8} textAnchor="middle" fontSize={7.2}>
-            {flag === "BIRTHDAY" ? "🎂" : flag === "RETURNING" ? "🔥" : "🆕"}
-          </text>
-        </g>
-      ))}
-      {!expanded && visible.length > 1 ? (
-        <text x={7} y={6} fontSize={5.2} fontWeight={800} fill="var(--foreground)">
-          +{visible.length - 1}
-        </text>
-      ) : null}
+      <circle r={5.7} fill="var(--background)" stroke="var(--border-strong)" strokeWidth={0.8} />
+      <text y={2.8} textAnchor="middle" fontSize={7.2}>
+        {meta.glyph}
+      </text>
     </g>
   )
 }
 
-function liveLabel(state: TableLiveState, fs: FloorTableState | undefined, t: TableView, now: Date): string {
+function liveLabel(state: TableLiveState, fs: FloorTableState | undefined, t: TableView): string {
   const c = fs?.claim
   switch (state) {
     case "seated":
-      return c ? `${c.partySize}·${fmtElapsed(now.getTime() - c.startsAt.getTime())}` : ""
+      // Occupied shows guest count as "{n} khách" and never elapsed time (Item 4)
+      return c ? formatOccupiedLabel(c.partySize) : ""
     case "reserved":
     case "upcoming":
       return c ? fmtTime(c.startsAt) : ""
@@ -693,9 +854,9 @@ function liveLabel(state: TableLiveState, fs: FloorTableState | undefined, t: Ta
     case "noshow":
       return c ? `+${c.minutesLate}'` : ""
     case "hold":
-      return c?.deadlineAt ? `giữ ${Math.max(0, Math.ceil((c.deadlineAt.getTime() - now.getTime()) / MS.MIN))}'` : "giữ"
+      return "giữ"
     case "hold_overdue":
-      return c?.deadlineAt ? `quá ${Math.floor((now.getTime() - c.deadlineAt.getTime()) / MS.MIN)}'` : "quá hạn"
+      return "quá hạn"
     case "spare":
       return "sơ cua"
     case "oos":
@@ -706,14 +867,15 @@ function liveLabel(state: TableLiveState, fs: FloorTableState | undefined, t: Ta
 }
 
 function describe(t: TableView, state: TableLiveState, fs?: FloorTableState) {
-  const base = `${t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`}, ${STATE_META[state].label}`
+  const lateConfirmed = state === "late_confirmed" || !!fs?.claim?.lateConfirmedAt
+  const statusLabel = `${STATE_META[state].label}${lateConfirmed ? " (đã báo tới muộn)" : ""}`
+  const base = `${t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`}, ${statusLabel}`
   const c = fs?.claim
   const spare = t.isSpare ? ", bàn sơ cua" : ""
   if (!c) return `${base}${spare}`
-  const flagLabels = supportedFlags(c.flags ?? []).map((flag) =>
-    flag === "BIRTHDAY" ? "sinh nhật" : flag === "RETURNING" ? "khách quen" : "khách mới",
-  )
-  const code = c.groupDisplayCode ?? groupCode(c.symbolNo)
+  const flags = supportedFlags(c.flags ?? [])
+  const flagLabels = flags.map((flag: GuestFlag) => GUEST_FLAG_META[flag]?.label ?? flag)
+  const code = formatGroupCode(c.groupDisplayCode ?? c.symbolNo)
   return `${base}${spare}, ${c.displayName}, ${c.partySize} khách${flagLabels.length ? `, ${flagLabels.join(", ")}` : ""}${code ? `, nhóm ${code}, ${c.tableIds.length} bàn` : ""}`
 }
 
@@ -727,13 +889,14 @@ const LiveGlyph = memo(function LiveGlyph({
   disabled,
   onActivate,
   state: fs,
-  now,
 }: GlyphBase & { state?: FloorTableState; now: Date }) {
-  const state: TableLiveState = fs?.state ?? "free"
+  const rawState: TableLiveState = fs?.state ?? "free"
+  const state = rawState === "late_confirmed" ? "late" : rawState
   const meta = STATE_META[state]
   const seated = state === "seated"
-  const dashed =
-    state === "late" || state === "late_confirmed" || state === "spare" || state === "hold" || state === "hold_overdue"
+  // Sơ cua uses dashed border (Item 3); late/late_confirmed uses solid border
+  const isSpare = state === "spare" || (t.isSpare && state === "free")
+  const dashed = isSpare
   const stroke = state === "free" ? "var(--table-line)" : meta.color
   const fill = seated
     ? "var(--st-seated-fill)"
@@ -747,9 +910,9 @@ const LiveGlyph = memo(function LiveGlyph({
     : state === "free" || state === "spare" || state === "oos"
       ? "var(--foreground)"
       : meta.ink
-  const label = liveLabel(state, fs, t, now)
+  const label = liveLabel(rawState, fs, t)
   const claim = fs?.claim
-  const code = claim?.groupDisplayCode ?? groupCode(claim?.symbolNo)
+  const code = claim?.groupDisplayCode ?? claim?.symbolNo
   const flags = claim?.flags ?? []
 
   if (t.kind === "BAR_SEAT") {
@@ -758,7 +921,7 @@ const LiveGlyph = memo(function LiveGlyph({
         transform={`translate(${t.x} ${t.y})`}
         role="button"
         tabIndex={dim ? -1 : 0}
-        aria-label={describe(t, state, fs)}
+        aria-label={describe(t, rawState, fs)}
         aria-pressed={selected}
         aria-disabled={disabled}
         data-group-highlighted={groupHighlighted || undefined}
@@ -813,9 +976,8 @@ const LiveGlyph = memo(function LiveGlyph({
         >
           {t.seqNo}
         </text>
-        <CustomerBadges flags={flags} x={-14} y={(t.seqNo ?? 0) % 2 ? -12 : 12} />
-        <GroupBadge code={code} x={14} y={(t.seqNo ?? 0) % 2 ? 12 : -12} compact />
-        {state === "late_confirmed" ? <LateConfirmedMark x={0} y={-13} /> : null}
+        <CustomerBadges flags={flags} x={-11} y={-11} />
+        <GroupBadge code={code} x={11} y={-11} compact />
         {claim?.paid ? <PaidDot x={-9} y={9} /> : null}
         {t.isSpare ? <SpareMark x={0} y={13} /> : null}
       </g>
@@ -829,7 +991,7 @@ const LiveGlyph = memo(function LiveGlyph({
       transform={`translate(${t.x} ${t.y})`}
       role="button"
       tabIndex={dim ? -1 : 0}
-      aria-label={describe(t, state, fs)}
+      aria-label={describe(t, rawState, fs)}
       aria-pressed={selected}
       aria-disabled={disabled}
       data-group-highlighted={groupHighlighted || undefined}
@@ -941,9 +1103,8 @@ const LiveGlyph = memo(function LiveGlyph({
           {label}
         </text>
       ) : null}
-      <CustomerBadges flags={flags} x={-hw} y={-hh} expanded={glyphLevel(t) === "expanded"} />
+      <CustomerBadges flags={flags} x={-hw} y={-hh} />
       <GroupBadge code={code} x={hw} y={-hh} />
-      {state === "late_confirmed" ? <LateConfirmedMark x={0} y={-hh} /> : null}
       {claim?.paid ? <PaidDot x={-hw} y={hh} /> : null}
       {fs?.staleFromPreviousDay ? <StaleMark x={-hw} y={-hh} /> : null}
       {t.isSpare ? <SpareMark x={hw} y={hh} /> : null}
@@ -959,44 +1120,6 @@ function SpareMark({ x, y }: { x: number; y: number }) {
         S
       </text>
     </g>
-  )
-}
-
-function LateConfirmedMark({ x, y }: { x: number; y: number }) {
-  return (
-    <g transform={`translate(${x} ${y})`} aria-hidden pointerEvents="none">
-      <circle r={5.5} fill="var(--background)" stroke="var(--st-late)" strokeWidth={1.1} />
-      <path d="M-2.5 0 L-0.5 2 L3 -2" fill="none" stroke="var(--st-late-ink)" strokeWidth={1.4} strokeLinecap="round" />
-    </g>
-  )
-}
-
-function FloorLegend() {
-  const states: TableLiveState[] = ["free", "reserved", "upcoming", "late", "late_confirmed", "noshow", "seated", "oos"]
-  return (
-    <div
-      className="pointer-events-none absolute bottom-2 left-2 z-[2] max-w-[calc(100%-64px)] rounded-lg border bg-popover/94 p-1.5 shadow-float backdrop-blur"
-      aria-label="Chú giải trạng thái bàn"
-    >
-      <div className="flex flex-wrap gap-x-2 gap-y-1 text-[10px] leading-none sm:text-[11px]">
-        {states.map((state) => (
-          <span key={state} className="inline-flex items-center gap-1 whitespace-nowrap">
-            <span
-              className="size-2 rounded-full border"
-              style={{ background: STATE_META[state].tint, borderColor: STATE_META[state].color }}
-              aria-hidden
-            />
-            {STATE_META[state].short}
-          </span>
-        ))}
-        <span className="inline-flex items-center gap-1 whitespace-nowrap">
-          <span className="font-bold" aria-hidden>
-            S
-          </span>
-          Sơ cua
-        </span>
-      </div>
-    </div>
   )
 }
 
@@ -1076,6 +1199,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
         : AVAIL_LABEL[status]
   const desc = `${t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`}: ${avail?.reason || AVAIL_LABEL[status] || ""}`
   const opacity = dim ? 0.3 : faded ? 0.45 : 1
+
   if (t.kind === "BAR_SEAT") {
     return (
       <g

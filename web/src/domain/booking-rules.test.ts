@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { fromVenueLocal } from "@/lib/time"
+import { businessDateOf, fromVenueLocal } from "@/lib/time"
 import {
   BOOKING_SLOTS,
+  BOOKING_MINUTES,
   GUEST_QUICK,
   bookingCalendarDate,
   bookingInstant,
@@ -11,6 +12,8 @@ import {
   configuredQuickSlots,
   isConfiguredQuickTime,
   isBookingSlot,
+  isBookingTime,
+  usableQuickTimes,
   isWithinBookingReceptionWindow,
   parseOtherGuests,
   slotLabel,
@@ -177,5 +180,31 @@ describe("booking slots", () => {
     const newYork = new Date("2026-10-31T10:15:00-04:00")
     expect(vietnam.getTime()).toBe(newYork.getTime())
     expect(bookingSlots("2026-10-31", vietnam)).toEqual(bookingSlots("2026-10-31", newYork))
+  })
+})
+
+describe("15-minute wheel (R6, NA-13, TU-16)", () => {
+  it("offers only the four quarter-hour minute values", () => {
+    expect(BOOKING_MINUTES).toEqual(["00", "15", "30", "45"])
+    expect(BOOKING_MINUTES).not.toContain("35")
+  })
+  it("accepts 22:30 and quarter-hour stops inside 19:00-01:00", () => {
+    for (const time of ["19:00", "22:30", "23:45", "00:30", "01:00"]) expect(isBookingTime(time)).toBe(true)
+    expect(validateBookingTime(BD, "22:30", NOON)).toBeNull()
+  })
+  it("rejects off-step and out-of-window values", () => {
+    for (const time of ["22:17", "22:35", "18:55", "01:05", "05:00", "", null]) expect(isBookingTime(time)).toBe(false)
+    expect(validateBookingTime(BD, "22:17", NOON)).not.toBeNull()
+    expect(validateBookingTime(BD, "01:05", NOON)).not.toBeNull()
+  })
+  it("keeps quick times from settings, without inventing any", () => {
+    expect(usableQuickTimes(undefined)).toEqual([])
+    expect(usableQuickTimes(["20:10", "18:00", "21:03", "00:30"])).toEqual(["00:30"])
+  })
+  it("maps 23:30 and 00:30 to the same business date", () => {
+    expect(bookingInstant(BD, "23:30").toISOString()).toBe(new Date(`${BD}T23:30:00+07:00`).toISOString())
+    expect(businessDateOf(bookingInstant(BD, "23:30"))).toBe(BD)
+    expect(businessDateOf(bookingInstant(BD, "00:30"))).toBe(BD)
+    expect(bookingCalendarDate(BD, "00:30")).not.toBe(BD)
   })
 })

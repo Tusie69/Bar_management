@@ -78,7 +78,7 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "reservation.create": "Tạo booking",
   "reservation.update": "Sửa booking",
   "reservation.cancel": "Hủy booking",
-  "reservation.mark_no_show": "Xác nhận không đến",
+  "reservation.mark_no_show": "Xác nhận không tới",
   "table.assign": "Phân bàn",
   "table.assign_override": "Phân bàn vượt quy tắc (sơ cua, quá sức chứa)",
   "visit.checkin": "Check-in",

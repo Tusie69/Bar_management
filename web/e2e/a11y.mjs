@@ -95,16 +95,27 @@ const scenarios = [
   ],
   ["reception-mobile-floor", "/floor", idle, 1, { viewport: { width: 390, height: 844 }, hasTouch: true }],
   [
+    "reception-mobile-booking-sheet",
+    "/floor",
+    async (page) => {
+      const deferAlert = page.getByRole("button", { name: "Đã xem, xử lý sau" })
+      if (await deferAlert.isVisible()) await deferAlert.click()
+      await page.locator('[aria-label^="Bàn B5,"]').click()
+      await page.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).click()
+    },
+    1,
+    { viewport: { width: 390, height: 844 }, hasTouch: true },
+  ],
+  [
     "reception-mobile-walkin",
     "/floor",
     async (p) => {
       const deferAlert = p.getByRole("button", { name: "Đã xem, xử lý sau" })
       if (await deferAlert.isVisible()) await deferAlert.click()
       await p.locator('[aria-label^="Ghế Bar 13,"]').first().click()
-      const form = p.getByRole("dialog", { name: "Tạo đơn đặt bàn" })
+      const form = p.getByRole("form", { name: /^(Tạo đặt bàn|Mở bàn Walk-in)/ })
       await form.getByRole("tab", { name: "Walk-in" }).click()
       await form.getByRole("radio", { name: "2 khách" }).click()
-      await form.getByRole("button", { name: "Xem bàn trống lúc này" }).click()
       await p.waitForTimeout(500)
     },
     1,
