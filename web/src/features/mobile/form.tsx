@@ -3,7 +3,6 @@ import { useId, useMemo, useState } from "react"
 import {
   bookingCalendarDate,
   bookingInstant,
-  bookingSlotGroups,
   defaultBookingSlot,
   GUEST_QUICK,
   isAfterMidnight,
@@ -12,6 +11,7 @@ import {
   validateBookingTime,
 } from "@/domain/booking-rules"
 import { SOURCE_LABEL, type BookingClassification, type BookingSourceCode } from "@/domain/enums"
+import { BookingTimePicker } from "@/components/booking-pickers"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useAvailability } from "@/hooks/use-data"
@@ -60,7 +60,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const [dateIdx, setDateIdx] = useState(() =>
     req.date ? Math.max(0, Math.round((Date.parse(`${req.date}T00:00:00Z`) - Date.parse(`${m.today}T00:00:00Z`)) / 86_400_000)) : 0,
   )
-  const [slot, setSlot] = useState<string | null>(() => defaultBookingSlot(m.today, m.now))
+  const [slot, setSlot] = useState<string | null>(() => defaultBookingSlot(req.date ?? m.today, m.now))
   const [checked, setChecked] = useState(preset.length > 0)
   const [choice, setChoice] = useState<Option | null>(
     preset.length ? { key: "preset", ids: preset, label: codesOf(preset, m.model), sub: "" } : null,
@@ -252,8 +252,6 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
     : isBooking
       ? "chưa chọn bàn"
       : "chưa có bàn"
-  const groups = isBooking ? bookingSlotGroups(bd, m.now) : []
-  const past = groups.length ? groups[0].slots.filter((s) => s.disabled) : []
   const dayOffsets = Array.from({ length: 7 }, (_, i) => i)
   if (dateIdx > 6) dayOffsets.push(dateIdx)
   const days = dayOffsets.map((i) => {
@@ -523,59 +521,19 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                     })}
                   </div>
                 </div>
-                <div className="flex flex-col gap-2 border-t border-border pt-3.5">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-[14px] text-tx-2">Giờ đến</span>
-                    <span className="text-xs text-subtle">7:00 PM đến 1:00 AM, mỗi 30 phút</span>
-                  </div>
-                  {groups.map((g) => (
-                    <div key={g.key} role="radiogroup" aria-label={g.title} className="flex flex-col gap-2">
-                      <span className="text-[13px] text-[var(--text-muted)]">{g.title}</span>
-                      <div className="grid grid-cols-4 gap-2">
-                        {g.slots.map((s) => {
-                          const on = !!at && slot === s.time
-                          return (
-                            <button
-                              key={s.time}
-                              type="button"
-                              role="radio"
-                              aria-checked={on}
-                              aria-disabled={s.disabled}
-                              disabled={s.disabled}
-                              aria-label={`${s.label}${s.nextDay ? `, sáng ${fmtDayMonth(s.calendarDate)}` : ""}${s.disabled ? ", đã qua" : ""}`}
-                              onClick={() => {
-                                setSlot(s.time)
-                                reset()
-                                touch()
-                              }}
-                              className={cn(
-                                "h-11 min-w-0 rounded-full px-0.5 text-[13px] whitespace-nowrap tabular-nums",
-                                pickChip(on, s.disabled),
-                              )}
-                            >
-                              {s.label}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                  {past.length ? (
-                    <span className="text-xs text-subtle">
-                      Hôm nay đã qua {past[0].label} đến {past[past.length - 1].label}.
-                    </span>
-                  ) : null}
-                  {nextDay && slot ? (
-                    <span className="text-[13px] text-pretty text-tx-2">
-                      {slotLabel(slot)} là sáng {fmtDayMonth(bookingCalendarDate(bd, slot))}, vẫn thuộc ngày kinh doanh{" "}
-                      {fmtDayMonth(bd)}.
-                    </span>
-                  ) : null}
-                  {errTime ? (
-                    <span role="alert" className="text-[13px] text-st-noshow-ink">
-                      {timeErr}
-                    </span>
-                  ) : null}
+                <div className="border-t border-border pt-3.5">
+                  <BookingTimePicker
+                    date={bd}
+                    value={slot ?? ""}
+                    now={m.now}
+                    error={errTime ? timeErr : null}
+                    quickTimes={m.model.catalog?.venue.settings?.quick_times}
+                    onChange={(time) => {
+                      setSlot(time)
+                      reset()
+                      touch()
+                    }}
+                  />
                 </div>
               </>
             ) : null}

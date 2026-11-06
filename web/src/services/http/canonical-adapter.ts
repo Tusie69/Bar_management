@@ -123,9 +123,9 @@ export function deriveAvailability(
     } else if (live.staleFromPreviousDay) {
       status = "reserved"
       reason = "Bàn chưa nhả từ hôm trước. Cần nhả bàn thủ công."
-    } else if (["reserved", "late", "noshow", "hold", "hold_overdue"].includes(live.state)) {
+    } else if (["reserved", "upcoming", "late", "late_confirmed", "noshow", "hold", "hold_overdue"].includes(live.state)) {
       status = "reserved"
-      reason = "Máy chủ đang giữ bàn."
+      reason = "Bàn đã có khách đặt trong ngày này."
     } else if (table.isSpare || live.state === "spare") {
       status = "spare"
       reason = "Bàn sơ cua."

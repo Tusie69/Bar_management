@@ -137,6 +137,7 @@ export function seedDb(now: Date): MockDb {
     reservationWindowMinutes: null,
     groupSymbolCount: 12,
     changeSeq: 1200,
+    settings: { quick_times: ["21:00", "21:30", "22:00", "22:30"], upcoming_minutes: 10, no_show_minutes: 30 },
     version: 1,
   })
 

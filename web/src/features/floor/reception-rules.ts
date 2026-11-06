@@ -1,4 +1,7 @@
-import type { FloorTableState, ReservationView, TableView, ZoneView } from "@/domain/models"
+import type { FloorTableState, ReservationView, TableView, WaitlistEntryView, ZoneView } from "@/domain/models"
+
+/** Counted on the Bàn chờ marker. An entry holding a real table (HOLD_ACTIVE) no longer waits for one. */
+export const isWaitingForTable = (e: WaitlistEntryView) => ["WAITING", "CONTACTING", "OFFERED"].includes(e.status)
 
 export function isReceptionBookableTable(table: TableView | undefined, zones: ZoneView[]) {
   return (

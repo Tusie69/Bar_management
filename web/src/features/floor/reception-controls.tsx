@@ -31,15 +31,11 @@ export function ReceptionDatePicker({ onDateChange, className }: { onDateChange?
 
 export function ReceptionControls({
   search,
-  waitCount: _waitCount,
-  onWaitlist: _onWaitlist,
   onCount,
   onOpenBooking,
   onDateChange,
 }: {
   search: ReturnType<typeof useReceptionSearch>
-  waitCount?: number
-  onWaitlist?: () => void
   onCount: () => void
   onOpenBooking: (id: number, businessDate: BusinessDate) => void
   onDateChange?: () => void

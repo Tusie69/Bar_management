@@ -3,8 +3,9 @@
  *
  * - Guests: quick-pick 1–10, "Khác" for whole numbers above 10 (no upper limit until one is approved;
  *   note the mock server still caps partySize at 500).
- * - Arrival: 19:00 of the selected business date to 01:00 next morning, every 30 minutes, both ends
- *   included (13 slots). Walk-in arrival is "now" and is NOT limited by these slots.
+ * - Arrival: 19:00 of the selected business date to 01:00 next morning, picked on a wheel in 5-minute
+ *   steps (R6/NA-13). The 30-minute BOOKING_SLOTS only seed the default time.
+ *   Walk-in arrival is "now" and is NOT limited by this window.
  * - The business day itself stays 17:00 → 05:00 (lib/time.ts). 00:00–01:00 slots use the next calendar
  *   date but keep the selected business date; the API derives business_date from expectedAt.
  */
@@ -14,6 +15,11 @@ export const GUEST_QUICK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const
 export const BOOKING_SLOT_STEP_MIN = 30
 export const BOOKING_FIRST_SLOT = "19:00"
 export const BOOKING_LAST_SLOT = "01:00"
+export const BOOKING_MINUTE_STEP = 5
+export const BOOKING_HOURS = ["19", "20", "21", "22", "23", "00", "01"] as const
+export const BOOKING_MINUTES = Array.from({ length: 60 / BOOKING_MINUTE_STEP }, (_, i) =>
+  String(i * BOOKING_MINUTE_STEP).padStart(2, "0"),
+)
 export const PAST_GRACE_MIN = 0
 
 const DAY_START = 17 * 60
@@ -47,6 +53,14 @@ export function isWithinBookingReceptionWindow(hhmm: string): boolean {
   const minutes = toMin(hhmm)
   return minutes >= toMin(BOOKING_FIRST_SLOT) || minutes <= toMin(BOOKING_LAST_SLOT)
 }
+
+/** Any wheel value: inside 19:00–01:00 and on the 5-minute step. */
+export function isBookingTime(hhmm: string | null | undefined): hhmm is string {
+  return !!hhmm && isWithinBookingReceptionWindow(hhmm) && toMin(hhmm) % BOOKING_MINUTE_STEP === 0
+}
+
+/** Venue quick times (TU-16) that the wheel can represent. Never falls back to hardcoded values. */
+export const usableQuickTimes = (times: readonly string[] | undefined): string[] => (times ?? []).filter(isBookingTime)
 
 /** Booking time is always displayed in the venue's 24-hour format. */
 export const slotLabel = (hhmm: string): string => hhmm
@@ -98,7 +112,7 @@ export function validateBookingTime(
   graceMin = PAST_GRACE_MIN,
 ) {
   if (!hhmm) return "Chọn giờ đến."
-  if (!isBookingSlot(hhmm)) return "Giờ đặt bàn chỉ từ 19:00 đến 01:00, theo các mốc 30 phút đang cấu hình."
+  if (!isBookingTime(hhmm)) return "Giờ đặt bàn chỉ từ 19:00 đến 01:00, phút cách nhau 5."
   if (bookingInstant(bd, hhmm).getTime() < now.getTime() - graceMin * MS.MIN)
     return `${slotLabel(hhmm)} đã qua ở ngày này. Chọn lại giờ đến.`
   return null

@@ -33,7 +33,7 @@ import {
   type WaitlistPreferenceMode,
 } from "@/domain/enums"
 import type { ReservationView } from "@/domain/models"
-import { isBookingSlot, validateBookingCheckInDate, validateBookingTime } from "@/domain/booking-rules"
+import { isBookingTime, validateBookingCheckInDate, validateBookingTime } from "@/domain/booking-rules"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAction } from "@/hooks/use-action"
 import { useCatalog, useNow, useOperations, useReservations } from "@/hooks/use-data"
@@ -442,7 +442,7 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
   const invalid = noteHasPhoneNumber(note)
   const originalSchedule = time === fmtTime(r.expectedAt)
   const timeError = originalSchedule ? null : validateBookingTime(r.businessDate, time, now)
-  const legacyTime = originalSchedule && !isBookingSlot(time) ? time : null
+  const legacyTime = originalSchedule && !isBookingTime(time) ? time : null
   return (
     <>
       <DialogHeader className="shrink-0 p-6 pb-2 pr-14 text-left">
@@ -468,6 +468,7 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
             onChange={setTime}
             error={timeError}
             legacyValue={legacyTime}
+            quickTimes={catalog.data?.venue.settings?.quick_times}
           />
           <div className="grid gap-1.5">
             <Label htmlFor="ed-source">Nguồn</Label>

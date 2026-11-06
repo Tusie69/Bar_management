@@ -77,6 +77,8 @@ export function useAvailability(at: Date | null, party: number) {
     queryFn: () => api.getAvailability(at!, party),
     enabled: !!at,
     placeholderData: keepPreviousData,
+    // No push in HTTP mode: a table taken on another device must still reach an open sheet.
+    refetchInterval: 15_000,
   })
 }
 

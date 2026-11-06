@@ -3,7 +3,7 @@ import { useMemo } from "react"
 import type { TableLiveState } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAvailability } from "@/hooks/use-data"
-import { fmtBusinessDate, fmtTime12 } from "@/lib/time"
+import { fmtBusinessDate, fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
@@ -13,9 +13,12 @@ import { StatusLegend } from "../floor/status-legend"
 import { CallCustomerControl } from "../bookings/call-customer"
 import { groupCode } from "../floor/floor-visual-rules"
 import { ReceptionControls } from "../floor/reception-controls"
+import { QuickForm } from "../floor/quick-form"
+import { isWaitingForTable } from "../floor/reception-rules"
+import { useBookingDraft } from "../floor/use-booking-draft"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
-import { codesOf, duration, isOpenEntry, type Tone, toneStyle } from "./model"
+import { codesOf, duration, type Tone, toneStyle } from "./model"
 import { BellButton, PlainHeader } from "./ui"
 
 const ZONE_TABS: [ZoneCode | "ALL", string][] = [
@@ -50,6 +53,9 @@ export function MapScreen({
   const search = useReceptionSearch(m.businessDate, receptionist)
   const zone = useUi((s) => s.zone)
   const setZone = useUi((s) => s.setZone)
+  const d = useBookingDraft(m.model)
+  const draft = d.draft
+  const waitingCount = (m.waitlist ?? []).filter(isWaitingForTable).length
 
   const isAssignPick = !!pick?.targetExpectedAt
   const pickAvail = useAvailability(isAssignPick ? pick.targetExpectedAt! : null, pick?.targetParty ?? 2)
@@ -93,12 +99,10 @@ export function MapScreen({
             <h1 className="m-0 min-w-0 flex-1 truncate text-[22px] font-semibold text-tx-strong">Sơ đồ bàn</h1>
             <BellButton />
           </div>
-          {!pick ? (
+          {!pick && !draft ? (
             <div className="pb-1.5">
               <ReceptionControls
                 search={search}
-                waitCount={(m.waitlist ?? []).filter(isOpenEntry).length}
-                onWaitlist={() => m.go("wait")}
                 onCount={m.openCount}
                 onOpenBooking={m.openDetail}
                 onDateChange={() => onSelect(null)}
@@ -107,14 +111,16 @@ export function MapScreen({
           ) : null}
         </header>
       ) : (
-        <PlainHeader title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"} />
+        <PlainHeader
+          title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"}
+        />
       )}
       {!pick ? (
-        <div className="z-[4] shrink-0 flex flex-col gap-1.5 bg-background px-4 pt-0 pb-1.5">
+        <div className="z-[4] flex shrink-0 flex-col gap-1.5 bg-background px-4 pt-0 pb-1.5">
           <div
             role="tablist"
             aria-label="Lọc khu"
-            className="flex max-w-full w-full gap-0.5 overflow-x-auto rounded-[14px] border border-border bg-surface-1 p-[3px] shadow-[var(--shadow-xs)]"
+            className="flex w-full max-w-full gap-0.5 overflow-x-auto rounded-[14px] border border-border bg-surface-1 p-[3px] shadow-[var(--shadow-xs)]"
           >
             {ZONE_TABS.map(([k, label]) => {
               const on = zone === k
@@ -126,7 +132,7 @@ export function MapScreen({
                   aria-selected={on}
                   onClick={() => setZone(k)}
                   className={cn(
-                    "flex-1 flex h-[38px] min-w-0 shrink-0 items-center justify-center rounded-[11px] px-1 text-[13px] whitespace-nowrap",
+                    "flex h-[38px] min-w-0 flex-1 shrink-0 items-center justify-center rounded-[11px] px-1 text-[13px] whitespace-nowrap",
                     on ? "bg-tx-strong font-semibold text-background" : "font-medium text-tx-2",
                   )}
                 >
@@ -135,80 +141,111 @@ export function MapScreen({
               )
             })}
           </div>
-          <StatusLegend tables={m.model.tables} states={m.model.states} />
+          {draft ? null : <StatusLegend tables={m.model.tables} states={m.model.states} />}
         </div>
       ) : null}
+      {pick ? (
+        <div className="z-[6] mx-3 mt-1 mb-2 flex shrink-0 items-start gap-2 rounded-[14px] border border-primary bg-surface-1 py-2.5 pr-1.5 pl-3.5 shadow-[var(--shadow-soft)]">
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="text-[14px] font-semibold text-tx-strong">{pick.title}</span>
+            <span className="text-[13px] text-pretty text-[var(--text-muted)]">{pick.hint}</span>
+            {pick.targetDate ? (
+              <span className="mt-0.5 text-[12px] font-medium text-primary">
+                Lịch đặt: {pick.targetTime} · {fmtBusinessDate(pick.targetDate, "short")} ({pick.targetParty} khách)
+              </span>
+            ) : null}
+          </span>
+          <button
+            type="button"
+            onClick={onPickCancel}
+            aria-label="Hủy chọn bàn"
+            className="grid size-11 shrink-0 place-items-center rounded-full text-[var(--text-muted)]"
+          >
+            <X className="size-5" />
+          </button>
+        </div>
+      ) : null}
+
       <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
         {m.model.catalog ? (
           <FloorCanvas
             className="absolute inset-0"
             tables={m.model.tables}
             zones={m.model.catalog.zones}
-            mode={isAssignPick ? "availability" : "live"}
+            mode={isAssignPick || d.bookingDraft ? "availability" : "live"}
             states={m.model.states}
-            availability={isAssignPick ? pickAvailMap : undefined}
-            groups={isAssignPick ? [] : m.model.floor?.groups}
-            selectedIds={pick ? pickSel : [...new Set([...(selected ? [selected] : []), ...search.tableIds])]}
-            pickable={pickable}
+            availability={d.bookingDraft ? d.availabilityMap : isAssignPick ? pickAvailMap : undefined}
+            groups={isAssignPick || d.bookingDraft ? [] : m.model.floor?.groups}
+            selectedIds={
+              draft
+                ? draft.tableIds
+                : pick
+                  ? pickSel
+                  : [...new Set([...(selected ? [selected] : []), ...search.tableIds])]
+            }
+            pickable={d.bookingDraft ? d.pickable : draft ? null : pickable}
             zoneFocus={zone}
             now={m.now}
-            waitingCount={(m.waitlist ?? []).filter(isOpenEntry).length}
-            onOpenWaitlist={() => m.go("wait")}
-            onTableClick={(id) => (pick ? onPickToggle(id) : onSelect(id))}
-            onBackgroundClick={() => (pick ? undefined : onSelect(null))}
+            waitingCount={draft || pick ? undefined : waitingCount}
+            onOpenWaitlist={draft || pick ? undefined : () => m.go("wait")}
+            onTableClick={(id) => (draft ? d.onTableClick(id) : pick ? onPickToggle(id) : onSelect(id))}
+            onBlockedTableClick={draft ? d.onTableClick : undefined}
+            onBackgroundClick={() => (pick || draft ? undefined : onSelect(null))}
             ariaLabel={
-              isAssignPick
-                ? `Sơ đồ khả dụng lúc ${pick.targetTime} ngày ${fmtBusinessDate(pick.targetDate!, "short")}`
-                : "Sơ đồ bàn. Kéo để di chuyển, chụm hai ngón để phóng to"
+              d.bookingDraft
+                ? `Sơ đồ khả dụng lúc ${d.bookingDraft.time} để chọn bàn`
+                : isAssignPick
+                  ? `Sơ đồ khả dụng lúc ${pick.targetTime} ngày ${fmtBusinessDate(pick.targetDate!, "short")}`
+                  : "Sơ đồ bàn. Kéo để di chuyển, chụm hai ngón để phóng to"
             }
           />
         ) : null}
-
-        {pick ? (
-          <div className="absolute inset-x-3 top-2.5 z-[6] flex items-start gap-2 rounded-[14px] border border-primary bg-surface-1 py-2.5 pr-1.5 pl-3.5 shadow-[var(--shadow-soft)]">
-            <span className="flex min-w-0 flex-1 flex-col">
-              <span className="text-[14px] font-semibold text-tx-strong">{pick.title}</span>
-              <span className="text-[13px] text-pretty text-[var(--text-muted)]">{pick.hint}</span>
-              {pick.targetDate ? (
-                <span className="mt-0.5 text-[12px] font-medium text-primary">
-                  Lịch đặt: {pick.targetTime} · {fmtBusinessDate(pick.targetDate, "short")} ({pick.targetParty} khách)
-                </span>
-              ) : null}
-            </span>
-            <button
-              type="button"
-              onClick={onPickCancel}
-              aria-label="Hủy chọn bàn"
-              className="grid size-11 shrink-0 place-items-center rounded-full text-[var(--text-muted)]"
-            >
-              <X className="size-5" />
-            </button>
-          </div>
-        ) : null}
-
-        {pick ? (
-          <div className="absolute inset-x-0 bottom-0 z-[12] flex flex-col gap-2.5 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-4 shadow-[var(--shadow-float)]">
-            <span className="text-[13px] text-[var(--text-muted)]">
-              {pickSel.length ? (
-                <>
-                  Đã chọn {codesOf(pickSel, m.model)} ·{" "}
-                  {pickSel.reduce((sum, id) => sum + (m.model.byId.get(id)?.capacity ?? 0), 0)} chỗ
-                </>
-              ) : (
-                "Chưa chọn bàn"
-              )}
-            </span>
-            <button
-              type="button"
-              disabled={!pickSel.length || pickBusy}
-              onClick={onPickConfirm}
-              className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground disabled:opacity-50"
-            >
-              {pickBusy ? "Đang gửi..." : pick.confirmLabel}
-            </button>
-          </div>
-        ) : null}
       </div>
+      {pick ? (
+        <div className="z-[12] flex shrink-0 flex-col gap-2.5 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-4 shadow-[var(--shadow-float)]">
+          {pick.question && pickSel.length ? (
+            <span className="text-[15px] font-medium text-tx-strong">{pick.question(codesOf(pickSel, m.model))}</span>
+          ) : null}
+          <span className="text-[13px] text-[var(--text-muted)]">
+            {pickSel.length ? (
+              <>
+                Đã chọn {codesOf(pickSel, m.model)} ·{" "}
+                {pickSel.reduce((sum, id) => sum + (m.model.byId.get(id)?.capacity ?? 0), 0)} chỗ
+              </>
+            ) : (
+              "Chưa chọn bàn"
+            )}
+          </span>
+          <button
+            type="button"
+            disabled={!pickSel.length || pickBusy}
+            onClick={onPickConfirm}
+            className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground disabled:opacity-50"
+          >
+            {pickBusy ? "Đang gửi..." : pick.confirmLabel}
+          </button>
+        </div>
+      ) : null}
+      {draft ? (
+        <section
+          role="dialog"
+          aria-label="Đặt bàn trên sơ đồ"
+          className="z-[12] flex max-h-[calc(100dvh-210px)] shrink-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)]"
+        >
+          <div className="flex shrink-0 justify-center pt-2" aria-hidden>
+            <span className="h-[5px] w-9 rounded-full bg-strong" />
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <QuickForm
+              compact
+              model={m.model}
+              availability={d.availability.data}
+              availabilityStatus={d.status}
+              onRetryAvailability={() => void d.availability.refetch()}
+            />
+          </div>
+        </section>
+      ) : null}
     </main>
   )
 }
@@ -256,11 +293,14 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
   let actions: Action[] = []
   if (c?.kind === "reservation") {
     who = `${c.displayName}, ${c.partySize} khách`
-    when = `Booking ${fmtTime12(c.startsAt)}${st === "late" || st === "late_confirmed" || st === "noshow" ? `, trễ ${c.minutesLate} phút` : st === "upcoming" ? ", sắp đến" : ", đã đặt"}`
+    when = `Booking ${fmtTime(c.startsAt)}${st === "late" || st === "late_confirmed" || st === "noshow" ? `, trễ ${c.minutesLate} phút` : st === "upcoming" ? ", sắp đến" : ", đã đặt"}`
     actions = r
       ? [
           { label: "Khách đã đến", primary: true, go: () => void a.checkIn(r) },
-          ...(!r.lateConfirmedAt && r.businessDate === m.today && m.now.getTime() >= r.expectedAt.getTime() && r.minutesLate < m.th.noshow
+          ...(!r.lateConfirmedAt &&
+          r.businessDate === m.today &&
+          m.now.getTime() >= r.expectedAt.getTime() &&
+          r.minutesLate < m.th.noshow
             ? [{ label: "Tới muộn", go: () => a.confirmLate(r) }]
             : []),
           { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
@@ -270,7 +310,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
       : []
   } else if (c?.kind === "visit") {
     who = `${c.displayName}, ${c.partySize} khách`
-    when = `Đang ngồi từ ${fmtTime12(c.startsAt)}, ${duration(m.now.getTime() - c.startsAt.getTime())}`
+    when = `Đang ngồi từ ${fmtTime(c.startsAt)}, ${duration(m.now.getTime() - c.startsAt.getTime())}`
     actions = [
       { label: "Đổi bàn", go: () => a.moveVisit(c, id) },
       c.tableIds.length > 1 && c.groupId && api.mode !== "http"
@@ -281,7 +321,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
     ]
   } else if (c?.kind === "waitlist_hold") {
     who = `${c.displayName}, ${c.partySize} khách`
-    when = c.deadlineAt ? `Giữ từ danh sách chờ đến ${fmtTime12(c.deadlineAt)}` : "Đang giữ bàn từ danh sách chờ"
+    when = c.deadlineAt ? `Giữ từ danh sách chờ đến ${fmtTime(c.deadlineAt)}` : "Đang giữ bàn từ danh sách chờ"
     actions = [{ label: "Mở đơn chờ", primary: true, wide: true, go: () => m.go("wait") }]
   } else if (st === "spare") {
     info = m.isOwner

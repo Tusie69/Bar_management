@@ -1,4 +1,4 @@
-import { AlertCircle, Check, Eye, MousePointerClick, Radio, Search, X } from "lucide-react"
+import { AlertCircle, Check, Eye, Radio, Search, X } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { EmptyState, Stepper } from "@/components/common"
@@ -22,12 +22,13 @@ import { FloorCanvas } from "./floor-canvas"
 import { StatusLegend } from "./status-legend"
 import { FloorTimeline } from "./floor-timeline"
 import { FloorToolbar, TimeField } from "./floor-toolbar"
-import { draftPickable, QuickForm } from "./quick-form"
+import { QuickForm } from "./quick-form"
+import { useBookingDraft } from "./use-booking-draft"
 import { ShiftPanel } from "./shift-panel"
 import { TableDetail } from "./table-detail"
 import { useFloorModel } from "./use-floor-model"
 import { ReceptionControls } from "./reception-controls"
-import { canStartTableBooking } from "./reception-rules"
+import { canStartTableBooking, isWaitingForTable } from "./reception-rules"
 
 const ZONE_TABS: { value: ZoneCode | "ALL"; label: string }[] = [
   { value: "ALL", label: "Tất cả" },
@@ -120,15 +121,13 @@ export function FloorPage() {
     () => new Map((availability.data?.tables ?? []).map((t) => [t.tableId, t])),
     [availability.data],
   )
-  const draftAt = useMemo(
-    () => (draft?.kind === "booking" ? atBusinessTime(draft.date, draft.time) : null),
-    [draft?.kind, draft?.date, draft?.time],
-  )
-  const draftAvail = useAvailability(draftAt, draft?.party ?? 2)
-  const draftAvailMap = useMemo(
-    () => new Map((draftAvail.data?.tables ?? []).map((t) => [t.tableId, t])),
-    [draftAvail.data],
-  )
+  const {
+    availability: draftAvail,
+    availabilityMap: draftAvailMap,
+    status: draftAvailStatus,
+    pickable: draftBookingPickable,
+    onTableClick: onDraftTableClick,
+  } = useBookingDraft(model)
 
   const isPickAssign = ui.pick?.intent === "assign" && !!ui.pick.targetExpectedAt
   const pickAvail = useAvailability(isPickAssign ? ui.pick!.targetExpectedAt! : null, ui.pick?.targetParty ?? 2)
@@ -165,31 +164,6 @@ export function FloorPage() {
     return set
   }, [ui.pick, model.freeIds, pickAvail.data])
 
-  const draftBookingPickable = useMemo(() => {
-    const bookingDraft = draft?.kind === "booking" ? draft : null
-    if (!bookingDraft) return null
-    if (bookingDraft.tableIds.length === 0) {
-      const set = new Set<number>()
-      for (const t of model.tables) {
-        if (draftPickable("booking", t.id, model, draftAvail.data)) {
-          set.add(t.id)
-        }
-      }
-      return set
-    }
-    const first = model.byId.get(bookingDraft.tableIds[0])
-    if (!first) return null
-    const set = new Set<number>()
-    for (const t of model.tables) {
-      if (t.zoneId === first.zoneId && t.kind === first.kind) {
-        if (draftPickable("booking", t.id, model, draftAvail.data, bookingDraft.tableIds)) {
-          set.add(t.id)
-        }
-      }
-    }
-    return set
-  }, [draft, model, draftAvail.data])
-
   const selectedIds = draft
     ? draft.tableIds
     : ui.pick
@@ -201,26 +175,7 @@ export function FloorPage() {
           : []
 
   const onTableClick = (id: number) => {
-    if (draft) {
-      if (draft.tableIds.includes(id)) {
-        return ui.toggleDraftTable(id)
-      }
-      if (draft.kind === "booking" && draft.tableIds.length > 0) {
-        const first = model.byId.get(draft.tableIds[0])
-        const target = model.byId.get(id)
-        if (first && target) {
-          if (target.zoneId !== first.zoneId) {
-            return toast.info("Chỉ có thể chọn các bàn trong cùng một khu vực")
-          }
-          if (target.kind !== first.kind) {
-            return toast.info("Không thể ghép bàn thường với ghế Bar")
-          }
-        }
-      }
-      if (draftPickable(draft.kind, id, model, draftAvail.data, draft.tableIds))
-        return ui.toggleDraftTable(id)
-      return toast.info(`${model.label(id)}: không trống · chọn vị trí trống`)
-    }
+    if (draft) return onDraftTableClick(id)
     if (ui.pick) {
       if (pickable && !pickable.has(id) && !ui.pickSelection.includes(id)) {
         return toast.info(`${model.label(id)}: không khả dụng vào giờ đã chọn`)
@@ -246,7 +201,13 @@ export function FloorPage() {
   }
 
   const panel = draft ? (
-    <QuickForm model={model} availability={draftAvail.data} />
+    <QuickForm
+      model={model}
+      availability={draftAvail.data}
+      availabilityStatus={draftAvailStatus}
+      onRetryAvailability={() => void draftAvail.refetch()}
+      compact={!wide}
+    />
   ) : !live ? (
     <AvailabilityPanel
       model={model}
@@ -287,12 +248,6 @@ export function FloorPage() {
         <div className="shrink-0 border-b px-4 py-2">
           <ReceptionControls
             search={search}
-            waitCount={
-              waitlist.isPlaceholderData
-                ? 0
-                : (waitlist.data ?? []).filter((row) => ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"].includes(row.status)).length
-            }
-            onWaitlist={() => setWaitOpen(true)}
             onCount={() => setCountOpen(true)}
             onOpenBooking={ui.openReservation}
             onDateChange={() => ui.selectTable(null)}
@@ -322,8 +277,9 @@ export function FloorPage() {
         </div>
       ) : null}
 
-      <div className="relative flex min-h-0 flex-1">
-        {xl && view !== "list" ? (
+      <div className={cn("relative flex min-h-0 flex-1", !wide && draft && "flex-col")}>
+        {/* NA-11: the receptionist works from the floor alone, without the Cần xử lý / Sắp đến lists. */}
+        {xl && view !== "list" && !receptionist ? (
           <aside className="w-1/4 max-w-[336px] min-w-[288px] shrink-0 border-r" aria-label="Danh sách booking">
             {list}
           </aside>
@@ -354,6 +310,8 @@ export function FloorPage() {
           {view === "map" && !ui.pick && !draft ? (
             <StatusLegend tables={model.tables} states={model.states} />
           ) : null}
+
+          {view === "map" ? <PickBanner model={model} /> : null}
 
           {view === "map" ? (
             <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-border/60">
@@ -395,6 +353,7 @@ export function FloorPage() {
                   zoneFocus={ui.zone}
                   now={now}
                   onTableClick={onTableClick}
+                  onBlockedTableClick={draft ? onDraftTableClick : undefined}
                   onBackgroundClick={() => !ui.pick && !draft && live && ui.selectTable(null)}
                   ariaLabel={
                     bookingDraft
@@ -405,24 +364,10 @@ export function FloorPage() {
                           ? "Sơ đồ bàn, trạng thái hiện tại"
                           : `Sơ đồ khả dụng lúc ${ui.availTime}`
                   }
-                  waitingCount={receptionist ? (waitlist.isPlaceholderData ? 0 : (waitlist.data ?? []).filter((row) => ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"].includes(row.status)).length) : undefined}
-                  onOpenWaitlist={receptionist ? () => setWaitOpen(true) : undefined}
+                  waitingCount={receptionist && !draft ? (waitlist.isPlaceholderData ? 0 : (waitlist.data ?? []).filter(isWaitingForTable).length) : undefined}
+                  onOpenWaitlist={receptionist && !draft ? () => setWaitOpen(true) : undefined}
                 />
               )}
-              <PickBanner model={model} />
-              {draft ? (
-                <div
-                  className="pointer-events-none absolute top-3 left-1/2 z-10 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-2 rounded-sm border border-strong bg-popover/95 px-3 py-2 text-sm shadow-float backdrop-blur"
-                  aria-live="polite"
-                >
-                  <MousePointerClick className="size-4 shrink-0 text-primary-ink" aria-hidden />
-                  <span className="truncate">
-                    {draft.tableIds.length
-                      ? `Đã chọn ${draft.tableIds.map((id) => model.label(id)).join(", ")} · chạm để thêm hoặc bỏ`
-                      : "Chạm vị trí trống để gán bàn cho đơn"}
-                  </span>
-                </div>
-              ) : null}
             </div>
           ) : view === "timeline" ? (
             <FloorTimeline model={model} date={date} now={now} zone={ui.zone} live={live} />
@@ -442,7 +387,10 @@ export function FloorPage() {
 
         {bottomOpen ? (
           <section
-            className="absolute inset-x-0 bottom-0 z-20 flex max-h-[62%] animate-in flex-col overflow-hidden rounded-t-sm border-t border-strong bg-popover shadow-float duration-200 slide-in-from-bottom-6"
+            className={cn(
+              "z-20 flex animate-in flex-col overflow-hidden border-t border-strong bg-popover shadow-float duration-200 slide-in-from-bottom-6",
+              draft ? "relative max-h-[60%] shrink-0 rounded-t-lg" : "absolute inset-x-0 bottom-0 max-h-[62%] rounded-t-sm",
+            )}
             aria-label="Chi tiết"
           >
             <div className="flex justify-center pt-2" aria-hidden>
@@ -459,7 +407,7 @@ export function FloorPage() {
                 <X />
               </Button>
             ) : null}
-            <div className="min-h-0 flex-1">{panel}</div>
+            <div className="flex min-h-0 flex-1 flex-col">{panel}</div>
           </section>
         ) : null}
       </div>
@@ -471,7 +419,9 @@ export function FloorPage() {
             <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-[920px]">
               <SheetTitle className="sr-only">Bàn chờ ảo</SheetTitle>
               <SheetDescription className="sr-only">Ngày kinh doanh {fmtBusinessDate(date)}</SheetDescription>
-              <div className="min-h-0 flex-1 overflow-y-auto"><WaitlistPage businessDate={date} /></div>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <WaitlistPage businessDate={date} onLeaveToFloor={() => setWaitOpen(false)} />
+              </div>
             </SheetContent>
           </Sheet>
         </>
@@ -516,7 +466,7 @@ function PickBanner({ model }: { model: ReturnType<typeof useFloorModel> }) {
   const isAssign = pick.intent === "assign" && !!pick.targetDate
   return (
     <div
-      className="absolute inset-x-3 top-3 z-10 mx-auto max-w-xl rounded-sm border border-strong bg-popover/97 p-3 shadow-float backdrop-blur"
+      className="z-10 w-full shrink-0 rounded-sm border border-strong bg-popover p-3"
       role="dialog"
       aria-label={pick.title}
     >

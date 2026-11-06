@@ -54,6 +54,7 @@ export function venueConfig(db: MockDb): VenueConfig {
     reservationWindowMinutes: v.reservationWindowMinutes,
     groupSymbolCount: v.groupSymbolCount,
     changeSeq: v.changeSeq,
+    settings: v.settings,
   }
 }
 

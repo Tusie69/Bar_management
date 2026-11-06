@@ -3,7 +3,7 @@
  * global dialogs (conflict / override reason), sheets, undo/redo stacks.
  */
 import { create } from "zustand"
-import { defaultBookingSlot, isBookingSlot } from "@/domain/booking-rules"
+import { defaultBookingSlot, isBookingTime } from "@/domain/booking-rules"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { clock } from "@/services"
@@ -47,6 +47,8 @@ export interface BookingPrefill {
   date?: BusinessDate
   time?: string
   party?: number
+  /** Flow B: an advance booking without a table goes straight into Bàn chờ. */
+  toWaitlist?: boolean
 }
 
 /** v2 inline form on Điều phối (right column). Tables are picked on the map. */
@@ -56,6 +58,9 @@ export interface QuickDraft {
   time: string
   party: number
   tableIds: number[]
+  toWaitlist?: boolean
+  /** "Đổi bàn": the next table tapped replaces the selection instead of joining it. */
+  replacing?: boolean
 }
 
 export interface UndoItem {
@@ -209,14 +214,15 @@ export const useUi = create<UiState>((set, get) => ({
       draft: {
         kind: "booking",
         date: bookingPrefill.date ?? businessDateOf(clock.now()),
-        // Booking arrival must be one of the 13 slots (19:00 → 01:00, 30'). Availability mode keeps defaultTime().
-        time: isBookingSlot(bookingPrefill.time)
+        // Booking arrival stays inside 19:00 → 01:00 on the 5-minute wheel. Availability mode keeps defaultTime().
+        time: isBookingTime(bookingPrefill.time)
           ? bookingPrefill.time
           : (defaultBookingSlot(bookingPrefill.date ?? businessDateOf(clock.now()), clock.now()) ?? "19:00"),
         party:
           bookingPrefill.party ??
           (bookingPrefill.tableIds?.length ? Math.min(8, bookingPrefill.tableIds.length * 4) : 4),
         tableIds: bookingPrefill.tableIds ?? [],
+        toWaitlist: bookingPrefill.toWaitlist,
       },
     }),
   closeBooking: () => set({ bookingOpen: false, draft: null }),
@@ -245,9 +251,12 @@ export const useUi = create<UiState>((set, get) => ({
         ? {
             draft: {
               ...s.draft,
-              tableIds: s.draft.tableIds.includes(id)
-                ? s.draft.tableIds.filter((x) => x !== id)
-                : [...s.draft.tableIds, id],
+              replacing: false,
+              tableIds: s.draft.replacing
+                ? [id]
+                : s.draft.tableIds.includes(id)
+                  ? s.draft.tableIds.filter((x) => x !== id)
+                  : [...s.draft.tableIds, id],
             },
           }
         : {},
@@ -263,7 +272,7 @@ export const useUi = create<UiState>((set, get) => ({
               ...s.draft,
               kind,
               ...(kind === "walkin" ? { date: businessDateOf(clock.now()) } : {}),
-              ...(kind === "booking" && !isBookingSlot(s.draft.time)
+              ...(kind === "booking" && !isBookingTime(s.draft.time)
                 ? { time: defaultBookingSlot(s.draft.date, clock.now()) ?? "19:00" }
                 : {}),
             },

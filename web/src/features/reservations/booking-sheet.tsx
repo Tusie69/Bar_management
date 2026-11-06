@@ -305,7 +305,7 @@ function BookingBody() {
                 now={now}
                 onChange={setTime}
                 error={timeError}
-                gridClassName="sm:grid-cols-5"
+                quickTimes={model.catalog?.venue.settings?.quick_times}
               />
             </section>
           </div>
