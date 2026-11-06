@@ -413,3 +413,22 @@ describe("Phase 2A floor adapter", () => {
     expect(floor.tables[1]?.state).toBe("free")
   })
 })
+
+describe("deriveAvailability", () => {
+  // BF-03: every state that keeps a table on the date must block it, not only "reserved".
+  it.each(["reserved", "upcoming", "late", "late_confirmed", "noshow", "hold", "hold_overdue"] as const)(
+    "reports %s as not bookable for that date",
+    (state) => {
+      const catalog = mapCatalog(catalogPayload, sources)
+      const at = new Date("2026-10-30T15:00:00.000Z")
+      const floor = {
+        at,
+        businessDate: "2026-10-30",
+        changeSeq: 1,
+        groups: [],
+        tables: catalog.tables.map((table) => ({ tableId: table.id, state, claim: null })),
+      } as unknown as Parameters<typeof deriveAvailability>[2]
+      expect(deriveAvailability(at, 2, floor, [], catalog).tables[0]?.status).toBe("reserved")
+    },
+  )
+})

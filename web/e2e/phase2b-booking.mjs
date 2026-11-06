@@ -196,20 +196,26 @@ try {
   let form = bookingForm(page)
   await form.waitFor()
   if ((await form.locator('input[type="time"]').count()) !== 0) throw new Error("Native time picker is still present")
-  const timeGroups = form.getByRole("radiogroup").filter({ hasText: /Tối|Sáng hôm sau/ })
-  const timeRadios = timeGroups.getByRole("radio")
-  if ((await timeRadios.count()) !== 13) {
-    throw new Error(`Time picker does not contain all 13 canonical slots (found ${await timeRadios.count()})`)
+  const quick = form.getByRole("group", { name: "Giờ nhanh" }).getByRole("button")
+  if ((await quick.allTextContents()).join() !== "21:00,21:30,22:00,22:30") {
+    throw new Error("Quick times do not come from venue settings defaults")
   }
-  const slotTops = await timeRadios.evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().top)))
-  if (new Set(slotTops).size <= 1) throw new Error("Time slots are not rendered in a multi-row grid")
-  const firstSlot = form.getByRole("radio", { name: /^19:00/ })
-  await firstSlot.focus()
-  await firstSlot.press("ArrowRight")
-  if ((await form.getByRole("radio", { name: /^19:30/ }).getAttribute("aria-checked")) !== "true") {
-    throw new Error("Arrow-key time selection did not update the selected slot")
+  await form.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).click()
+  const minutes = form.getByRole("spinbutton", { name: "Phút", exact: true })
+  const hours = form.getByRole("spinbutton", { name: "Giờ", exact: true })
+  if ((await form.locator('[data-wheel="Phút"] [data-value]').count()) !== 12) {
+    throw new Error("Minute wheel must have 12 five-minute stops")
   }
-  await form.getByRole("radio", { name: /^01:00/ }).click()
+  await hours.focus()
+  await hours.press("Home")
+  if ((await hours.getAttribute("aria-valuetext")) !== "19") throw new Error("Home did not select the first hour")
+  await hours.press("ArrowDown")
+  if ((await hours.getAttribute("aria-valuetext")) !== "20") throw new Error("Arrow key did not change the hour")
+  await hours.press("End")
+  await minutes.waitFor()
+  if (await form.locator('[data-wheel="Phút"] [data-value="05"]').isEnabled()) {
+    throw new Error("Minutes past 01:00 must be disabled")
+  }
   if (await form.evaluate((node) => node.scrollWidth > node.clientWidth + 1)) {
     throw new Error("Time picker caused form overflow")
   }
@@ -358,18 +364,12 @@ try {
   if (await mobileForm.evaluate((node) => node.scrollWidth > node.clientWidth + 1)) {
     throw new Error("Mobile booking form has horizontal overflow")
   }
-  const mobileTimeGroups = mobileForm.getByRole("radiogroup").filter({ hasText: /Tối|Sáng hôm sau/ })
-  const mobileRadios = mobileTimeGroups.getByRole("radio")
-  if ((await mobileRadios.count()) !== 13) {
-    throw new Error(`Mobile form does not contain all 13 slots (found ${await mobileRadios.count()})`)
+  await mobileForm.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).click()
+  await mobileForm.locator('[data-wheel="Giờ"] [data-value="01"]').click()
+  if (!(await mobileForm.getByRole("button", { name: /đang chọn 01:00/ }).isVisible())) {
+    throw new Error("01:00 was not selectable in the mobile sheet")
   }
-  const mobileLastSlot = mobileForm.getByRole("radio", { name: /^01:00/ })
-  await mobileLastSlot.scrollIntoViewIfNeeded()
-  await mobileLastSlot.click()
-  if ((await mobileLastSlot.getAttribute("aria-checked")) !== "true") {
-    throw new Error("Slot 01:00 was not selectable in mobile form")
-  }
-  await mobileForm.getByRole("button", { name: /^(Hủy|Quay lại)$/ }).first().click()
+  await mobileForm.getByRole("button", { name: "Đóng form" }).click()
   const mobileLeave = secondPage.getByRole("alertdialog", { name: /Bỏ đơn đang nhập/ })
   if (await mobileLeave.isVisible().catch(() => false)) await mobileLeave.getByRole("button", { name: "Bỏ đơn" }).click()
   await mobileForm.waitFor({ state: "hidden" })

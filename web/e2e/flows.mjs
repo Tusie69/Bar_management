@@ -150,20 +150,16 @@ await flow(
     const deferAlert = page.getByRole("button", { name: "Đã xem, xử lý sau" })
     if (await deferAlert.isVisible()) await deferAlert.click()
     await barSeat(page, 13).click()
-    const form = page.getByRole("dialog", { name: "Tạo đơn đặt bàn" })
+    const form = page.getByRole("form", { name: /^(Tạo đặt bàn|Mở bàn Walk-in)/ })
     await form.getByRole("tab", { name: "Walk-in" }).click()
     await form.getByRole("radio", { name: "2 khách" }).click()
-    await form.getByRole("button", { name: "Xem bàn trống lúc này" }).click()
-    if (await form.getByRole("radiogroup", { name: "Bàn trống" }).count()) {
-      throw new Error("Walk-in still renders the legacy table-chip list")
+    // One seat is not enough: the sheet says so and hands the map back instead of submitting.
+    await form.getByRole("button", { name: "Thiếu 1 chỗ · Chọn thêm bàn" }).click()
+    await barSeat(page, 15).click()
+    await form.getByText("Bar 13 + Bar 15 đang trống · 2 chỗ, đủ 2 khách").waitFor()
+    if (await form.getByRole("button", { name: "Mở bàn ngay" }).isDisabled()) {
+      throw new Error("Walk-in action stayed disabled after enough Bar seats were selected")
     }
-    const map = form.getByRole("group", { name: "Sơ đồ bàn để chọn trực tiếp cho khách Walk-in" })
-    await map.waitFor()
-    const second = map.locator('[aria-label^="Ghế Bar"][aria-disabled="false"][aria-pressed="false"]').first()
-    await second.click()
-    await form.getByText("Sức chứa: 2/2 chỗ · Đã đủ chỗ", { exact: true }).waitFor()
-    const open = form.getByRole("button", { name: /^Mở bàn Bar/ })
-    if (await open.isDisabled()) throw new Error("Walk-in action stayed disabled after enough Bar seats were selected")
   },
   { viewport: { width: 390, height: 844 }, hasTouch: true },
 )
@@ -199,7 +195,9 @@ await flow("booking flow end-to-end for tomorrow with table", 3, async (page) =>
   await page.goto(base + "/reservations", { waitUntil: "networkidle" })
   await page.getByRole("button", { name: /Đặt bàn mới/ }).click()
   await page.getByRole("button", { name: "Ngày mai" }).click()
-  await page.getByRole("radio", { name: "20:30" }).click()
+  await page.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).click()
+  await page.locator('[data-wheel="Giờ"] [data-value="20"]').click()
+  await page.locator('[data-wheel="Phút"] [data-value="30"]').click()
   await page.getByRole("button", { name: /Tiếp/ }).click()
   await page.getByRole("button", { name: /^A0/ }).first().click()
   await page.getByRole("button", { name: /Tiếp/ }).click()
@@ -619,12 +617,12 @@ await flow("bar seat: multi-seat booking capacity check & group reservation", 1,
 
   // Select adjacent bar seat 7 on the canvas to meet capacity
   await barSeat(page, 7).click()
-  await page.getByText(/Sức chứa 2 chỗ · đủ cho 2 khách/).waitFor()
+  await page.getByText(/2 chỗ, đủ 2 khách/).waitFor()
 
   // Draft inputs
   await page.locator("#qf-name").fill("Khách Bar Ghép")
   await page.locator("#qf-phone").fill("0912345678")
-  await page.getByRole("button", { name: "Lưu đặt bàn" }).click()
+  await page.getByRole("button", { name: /^Đặt bàn Bar 8 \+ Bar 7$/ }).click()
 
   // Both bar seats become reserved and grouped
   await expectLabel(barSeat(page, 8), /Đang đặt/)
@@ -775,7 +773,7 @@ await flow("direct booking: validate same zone and kind in floor quick-form and 
   await page.keyboard.press("Escape")
 })
 
-await flow("booking pickers: keyboard navigation across expired selected slot (MD-04)", 3, async (page) => {
+await flow("booking pickers: keyboard navigation across expired selected time (MD-04)", 3, async (page) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(base + "/reservations", { waitUntil: "networkidle" })
   await page.evaluate(async () => {
@@ -801,31 +799,24 @@ await flow("booking pickers: keyboard navigation across expired selected slot (M
     clock.advance(180) // advance 3 hours
   })
 
-  // Verify roving tab stop: exactly one enabled slot has tabIndex=0
-  const enabledWithTabstop = await editDialog.getByRole("radio").evaluateAll((nodes) =>
-    nodes.filter((n) => !n.disabled && n.getAttribute("tabindex") === "0").map((n) => n.textContent?.trim())
-  )
-  if (enabledWithTabstop.length !== 1) {
-    throw new Error(`Expected exactly 1 enabled radio with tabIndex=0, found ${enabledWithTabstop.length}`)
-  }
-
-  // Keyboard navigation: focus stepper and press Tab into the time picker
-  await editDialog.getByRole("button", { name: "Tăng số khách" }).focus()
+  // The wheel is reachable by keyboard, skips expired values and keeps the selection in step.
+  const wheelButton = editDialog.getByRole("button", { name: /Chọn giờ bằng con lăn/ })
+  await wheelButton.click()
+  const hours = editDialog.getByRole("spinbutton", { name: "Giờ", exact: true })
+  await wheelButton.focus()
   await page.keyboard.press("Tab")
-
-  const focusedRole = await page.evaluate(() => document.activeElement?.getAttribute("role"))
-  if (focusedRole !== "radio") {
-    throw new Error(`Tab from stepper did not land on time radio (focused ${focusedRole})`)
+  if ((await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))) !== "Giờ") {
+    throw new Error("Tab from the wheel button did not land on the hour wheel")
   }
-
-  // Keyboard ArrowRight / Home / End navigation
-  await page.keyboard.press("ArrowRight")
   await page.keyboard.press("Home")
+  const first = await hours.getAttribute("aria-valuetext")
+  if (await editDialog.locator(`[data-wheel="Giờ"] [data-value="${first}"]`).isDisabled()) {
+    throw new Error("Home selected an expired hour")
+  }
   await page.keyboard.press("End")
-
-  const lastChecked = await editDialog.getByRole("radio", { name: /^01:00/ }).getAttribute("aria-checked")
-  if (lastChecked !== "true") {
-    throw new Error("End key did not select the 01:00 slot")
+  if ((await hours.getAttribute("aria-valuetext")) !== "01") throw new Error("End key did not select hour 01")
+  if (!(await wheelButton.getAttribute("aria-label")).includes("01:00")) {
+    throw new Error("Hour 01 must clamp the minute to 01:00")
   }
 
   await page.keyboard.press("Escape")

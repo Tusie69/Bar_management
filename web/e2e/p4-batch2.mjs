@@ -112,7 +112,7 @@ try {
       const waiting = await page.evaluate(async () => {
         const { api, clock } = await import("/src/services/index.ts")
         const { businessDateOf } = await import("/src/lib/time.ts")
-        return (await api.listWaitlist(businessDateOf(clock.now()))).filter(row => ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"].includes(row.status))
+        return (await api.listWaitlist(businessDateOf(clock.now()))).filter(row => ["WAITING", "CONTACTING", "OFFERED"].includes(row.status))
       })
       assert(waiting.length > 0, "nonzero real waiting fixture")
       for (const zone of ["Tất cả", "Khu A", "Khu B", "Khu C", "Bar"]) {

@@ -11,9 +11,9 @@ fs.mkdirSync(output, { recursive: true })
 const browser = await chromium.launch(
   process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {},
 )
-const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"]`).first()
-const freeTables = (form) => form.getByRole("radiogroup", { name: "Bàn trống", exact: true })
-const presetCard = (form) => form.getByRole("status", { name: "Bàn B5 không khả dụng", exact: true })
+const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"]`).first()
+const bookingForm = (page) => page.getByRole("form", { name: /^Tạo đặt bàn/ })
+const blockedReason = (form) => form.getByRole("alert").filter({ hasText: /B5/ })
 
 async function dismiss(page) {
   for (let i = 0; i < 10; i++) {
@@ -55,10 +55,10 @@ async function run(name, width, theme, fn) {
 
 async function openBooking(page) {
   await table(page, "B5").click()
-  const form = page.getByRole("dialog", { name: "Tạo đơn đặt bàn", exact: true })
-  await expect(form).toBeVisible()
+  const form = bookingForm(page)
+  await expect(form).toHaveAccessibleName("Tạo đặt bàn B5")
   await form.getByLabel("Tên khách").fill("Milestone A browser")
-  await expect(freeTables(form).getByRole("radio", { name: /^B5\b/ })).toHaveAttribute("aria-checked", "true")
+  await expect(form.getByRole("button", { name: "Đặt bàn B5", exact: true })).toBeEnabled()
   return form
 }
 
@@ -108,16 +108,13 @@ async function observeCreates(page) {
 }
 
 async function assertBlocked(form, page) {
-  await expect(freeTables(form).getByRole("radio", { name: /^B5\b/ }), "taken preset must leave Bàn trống").toHaveCount(
-    0,
-  )
-  await expect(presetCard(form)).toContainText(/B5.*(?:đã được giữ|đang được giữ|đang có khách|Đã giữ cho booking)/s)
-  await form.getByRole("button", { name: "Đặt bàn", exact: true }).click()
-  await expect(form.getByRole("alert").last()).toContainText(/Vui lòng chọn bàn trống khác hoặc bỏ chọn bàn/)
+  await expect(blockedReason(form)).toContainText(/B5.*(?:đã có khách đặt|đang có khách)/s)
+  await expect(form.getByRole("button", { name: /^Đặt bàn/ }), "a blocked table leaves nothing to submit").toHaveCount(0)
+  await expect(form.getByRole("button", { name: "Chọn bàn khác", exact: true })).toBeEnabled()
   assert.deepEqual(
     await page.evaluate(() => window.bookingCreates),
     [],
-    "blocked submit must not call createReservation",
+    "blocked state must not call createReservation",
   )
   await expect(form).toBeVisible()
 }
@@ -140,9 +137,9 @@ async function assertCreated(page, tableId, expectedDate) {
   return { createCalls: calls.length, reservationId: reservation.id, businessDate: reservation.businessDate }
 }
 
-async function tomorrow(form) {
-  await form.getByRole("button", { name: /05\/11/ }).click()
-  await form.getByRole("button", { name: "Kiểm tra bàn trống", exact: true }).click()
+async function tomorrow(form, page) {
+  await form.getByRole("combobox", { name: "Ngày", exact: true }).click()
+  await page.getByRole("option", { name: /05\/11/ }).click()
 }
 
 async function contrast(locator) {
@@ -185,55 +182,44 @@ try {
         await observeCreates(page)
         await assertBlocked(form, page)
         await page.screenshot({ path: `${output}/race-${width}-${theme}.png`, fullPage: true })
-        const free = freeTables(form).getByRole("radio").first()
-        const code = (await free.innerText()).split("\n")[0]
-        const id = await page.evaluate(async (code) => {
+        await form.getByRole("button", { name: "Chọn bàn khác", exact: true }).click()
+        await table(page, "B7").click()
+        await expect(form.getByLabel("Tên khách"), "form data survives the table change").toHaveValue("Milestone A browser")
+        const id = await page.evaluate(async () => {
           const { api } = await import("/src/services/index.ts")
-          return (await api.getCatalog()).tables.find((item) => item.code === code).id
-        }, code)
-        await free.click()
-        await form.getByRole("button", { name: "Đặt bàn", exact: true }).click()
+          return (await api.getCatalog()).tables.find((item) => item.code === "B7").id
+        })
+        await form.getByRole("button", { name: "Đặt bàn B7", exact: true }).click()
         await expect(form).toBeHidden()
-        return { freeTable: code, ...(await assertCreated(page, id, "2026-11-04")) }
+        return { freeTable: "B7", ...(await assertCreated(page, id, "2026-11-04")) }
       })
       await run(`tomorrow-occupied-today-${width}-${theme}`, width, theme, async (page) => {
         const form = await openBooking(page)
         const id = await remoteClaim(page, 0, true)
-        await expect(presetCard(form)).toContainText("đang có khách")
-        await tomorrow(form)
-        await expect(presetCard(form)).toHaveCount(0)
-        await expect(freeTables(form).getByRole("radio", { name: /^B5\b/ })).toHaveAttribute("aria-checked", "true")
+        await expect(blockedReason(form)).toContainText("đang có khách")
+        await tomorrow(form, page)
+        await expect(blockedReason(form)).toHaveCount(0)
         await observeCreates(page)
-        await form.getByRole("button", { name: "Đặt bàn", exact: true }).click()
+        await form.getByRole("button", { name: "Đặt bàn B5", exact: true }).click()
         await expect(form).toBeHidden()
         return assertCreated(page, id, "2026-11-05")
       })
       await run(`tomorrow-held-${width}-${theme}`, width, theme, async (page) => {
         const form = await openBooking(page)
         await remoteClaim(page, 1)
-        await expect(table(page, "B5")).toHaveAttribute("aria-label", /Chưa đặt/)
-        await tomorrow(form)
+        await tomorrow(form, page)
         await observeCreates(page)
         await assertBlocked(form, page)
       })
       await run(`contrast-${width}-${theme}`, width, theme, async (page) => {
         const form = await openBooking(page)
         await remoteClaim(page)
-        const button = presetCard(form).getByRole("button", { name: "Bỏ chọn bàn này", exact: true })
-        await expect(button).toBeVisible()
-        await button.scrollIntoViewIfNeeded()
+        const reason = blockedReason(form)
+        await expect(reason).toBeVisible()
         await page.evaluate(() => document.fonts.ready)
-        const measurement = await contrast(button)
+        const measurement = await contrast(reason)
         await page.screenshot({ path: `${output}/contrast-${width}-${theme}.png`, fullPage: true })
-        assert(
-          measurement.ratio >= 4.5,
-          `Bỏ chọn bàn này ${width} ${theme}: ${JSON.stringify(measurement)} must be >=4.5`,
-        )
-        await button.click()
-        await observeCreates(page)
-        await form.getByRole("button", { name: "Đặt bàn", exact: true }).click()
-        await expect(form).toBeHidden()
-        assert.deepEqual((await page.evaluate(() => window.bookingCreates))[0].tableIds, [])
+        assert(measurement.ratio >= 4.5, `B5 reason ${width} ${theme}: ${JSON.stringify(measurement)} must be >=4.5`)
         return measurement
       })
       await run(`chips-${width}-${theme}`, width, theme, async (page) => {
@@ -281,6 +267,63 @@ try {
         return { states }
       })
     }
+  await run("business-date-switching", 390, "light", async (page) => {
+    const form = await openBooking(page)
+    const date = form.getByRole("combobox", { name: "Ngày", exact: true })
+    await tomorrow(form, page)
+    await form.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).click()
+    await form.locator('[data-wheel="Giờ"] [data-value="19"]').click()
+    await form.locator('[data-wheel="Phút"] [data-value="05"]').click()
+    await expect(form.getByRole("button", { name: "Đặt bàn B5", exact: true })).toBeEnabled()
+    // Back to today: 19:05 has passed at 21:30. The time is flagged, never silently replaced, and B5 stays.
+    await date.click()
+    await page.getByRole("option", { name: /04\/11/ }).click()
+    await expect(form.getByRole("alert")).toContainText("19:05 đã qua")
+    await expect(form.getByRole("button", { name: "Chọn lại giờ", exact: true })).toBeDisabled()
+    await expect(form).toHaveAccessibleName("Tạo đặt bàn B5")
+    await form.locator('[data-wheel="Giờ"] [data-value="00"]').click()
+    await form.locator('[data-wheel="Phút"] [data-value="30"]').click()
+    await expect(form.getByText("00:30 là sáng 05/11, vẫn thuộc ngày kinh doanh 04/11.")).toBeVisible()
+    await expect(form.getByRole("button", { name: "Đặt bàn B5", exact: true })).toBeEnabled()
+    await expect(form.locator('[data-wheel="Giờ"] [data-value="20"]'), "expired hours are disabled").toBeDisabled()
+    await observeCreates(page)
+    await form.getByRole("button", { name: "Đặt bàn B5", exact: true }).click()
+    await expect(form).toBeHidden()
+    const id = await page.evaluate(async () => {
+      const { api } = await import("/src/services/index.ts")
+      return (await api.getCatalog()).tables.find((item) => item.code === "B5").id
+    })
+    return assertCreated(page, id, "2026-11-04")
+  })
+  await run("pinch-and-tap-with-open-sheet", 390, "light", async (page) => {
+    const camera = () => page.locator('svg[role="group"] > g').first().getAttribute("transform")
+    const cdp = await page.context().newCDPSession(page)
+    const pinch = async () => {
+      const box = await page.locator('svg[role="group"]').boundingBox()
+      const cx = box.x + box.width / 2
+      const cy = box.y + box.height / 2
+      const at = (gap) => [
+        { x: cx - gap, y: cy },
+        { x: cx + gap, y: cy },
+      ]
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: at(30) })
+      for (const gap of [45, 60, 75, 90])
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: at(gap) })
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+    }
+    const fitted = await camera()
+    await pinch()
+    await expect.poll(camera, "two-finger pinch must change the camera").not.toBe(fitted)
+    await page.reload({ waitUntil: "networkidle" })
+    await dismiss(page)
+    const form = await openBooking(page)
+    await form.getByRole("button", { name: "Đổi bàn", exact: true }).click()
+    const beforeSheetPinch = await camera()
+    await pinch()
+    await expect.poll(camera, "pinch still works while the sheet is collapsed").not.toBe(beforeSheetPinch)
+    await expect(page.getByRole("button", { name: /^[+−-]$|phóng to|thu nhỏ/i }), "no zoom rail").toHaveCount(0)
+    await expect(form).toHaveAccessibleName("Tạo đặt bàn B5")
+  })
   await run("export-label", 390, "light", async (page) => {
     await page.evaluate(async () => {
       const { api, clock } = await import("/src/services/index.ts")
