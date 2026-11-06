@@ -1,7 +1,8 @@
 # BA-003 — Canonical Walk-in Consistency
 
-Date: 2026-11-07  
-Branch: `develop`  
+Date: 2026-11-07
+
+Branch: `develop`
 Verdict: **FIXED_AND_VERIFIED**
 
 ## 1. Baseline Git
