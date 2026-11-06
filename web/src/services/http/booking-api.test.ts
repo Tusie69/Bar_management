@@ -62,6 +62,39 @@ describe("HTTP booking endpoints", () => {
     expect(new URL(urls[1]!).searchParams.get("q")).toBe("Khách API")
   })
 
+  it("uses exact last3 reception search and preserves waitlist/table identities", async () => {
+    let requested = ""
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        requested = String(input)
+        return json({
+          businessDate: "2030-10-24",
+          query: { last3: "123" },
+          bookings: [{ id: 7, displayName: "Khách API", phoneLast3: "123", tableIds: [11] }],
+          waitlist: [
+            {
+              id: 9,
+              reservationId: null,
+              displayName: "Khách chờ",
+              phoneLast3: "123",
+              tableIds: [],
+              status: "WAITING",
+            },
+          ],
+          summary: { bookingCount: 1, waitlistCount: 1, totalCount: 2 },
+        })
+      }),
+    )
+    const api = new HttpBookingApi(new HttpClient("http://api.test"))
+    const result = await api.searchReception("2030-10-24", { last3: "123" })
+    const url = new URL(requested)
+    expect(url.searchParams.get("last3")).toBe("123")
+    expect(url.searchParams.has("q")).toBe(false)
+    expect(result.bookings[0]?.tableIds).toEqual([11])
+    expect(result.waitlist[0]?.tableIds).toEqual([])
+  })
+
   it("uses detail, create, atomic direct create, full PUT update and cancel response envelopes", async () => {
     const requests: { url: string; method: string; body: unknown }[] = []
     vi.stubGlobal(

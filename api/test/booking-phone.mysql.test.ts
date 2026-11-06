@@ -8,6 +8,7 @@ import { hashPassword } from '../src/auth/password.js'
 import { env } from '../src/config/env.js'
 import { databasePool } from '../src/database/pool.js'
 import { createBooking, revealBookingPhone, updateBooking } from '../src/modules/bookings/booking.repository.js'
+import { searchReception } from '../src/modules/bookings/reception-search.repository.js'
 
 const integrationEnabled = process.env.RUN_MYSQL_INTEGRATION === '1' && /_test$/.test(process.env.DB_NAME ?? '')
 const mysqlDescribe = integrationEnabled ? describe : describe.skip
@@ -29,6 +30,7 @@ const ownerActor: AuthenticatedActor = { organizationId, venueId, userId: ownerI
 let passwordHash = ''
 interface AuthBody { csrfToken: string }
 interface RevealBody { phoneNumber: string }
+interface ErrorBody { error: { code: string } }
 
 async function clearFixture(): Promise<void> {
   for (const statement of [
@@ -147,6 +149,40 @@ mysqlDescribe('booking phone MySQL integration', () => {
     })
     expect(removed.phoneLast3).toBeNull()
     await expect(revealBookingPhone(ownerActor, created.id)).rejects.toMatchObject({ status: 422 })
+  })
+
+  it('searches exact last3 and unaccented names within venue/date, returns waitlist, and deduplicates linked matches', async () => {
+    const created = await createBooking(receptionistActor, {
+      ...input('0987 654 567'), guestName: 'Đặng Ánh',
+    })
+    await createBooking(receptionistActor, {
+      ...input('0912 000 567'), guestName: 'Ngày khác',
+      expectedAt: '2030-10-25T20:00:00+07:00', businessDate: '2030-10-25',
+    })
+    await databasePool.execute(
+      `INSERT INTO waitlist_entries
+        (organization_id, venue_id, kind, reservation_id, contact_channel, business_date, queued_at, created_by_user_id)
+       VALUES (?, ?, 'ADVANCE_RESERVATION', ?, 'PHONE_CALLBACK', '2030-10-24', UTC_TIMESTAMP(3), ?)`,
+      [organizationId, venueId, created.id, receptionistId],
+    )
+
+    const byPhone = await searchReception(receptionistActor, '2030-10-24', { last3: '567' })
+    expect(byPhone.bookings).toHaveLength(1)
+    expect(byPhone.waitlist).toHaveLength(1)
+    expect(byPhone.summary).toEqual({ bookingCount: 1, waitlistCount: 1, totalCount: 1 })
+    expect(byPhone.bookings[0]).toMatchObject({ id: created.id, displayName: 'Đặng Ánh', phoneLast3: '567' })
+    expect(byPhone.bookings[0]?.tableIds).toEqual([])
+    expect(JSON.stringify(byPhone)).not.toMatch(/cipher|hmac|0987654567/)
+
+    const byName = await searchReception(receptionistActor, '2030-10-24', { name: 'dang anh' })
+    expect(byName.bookings.map((row) => row.id)).toEqual([created.id])
+  })
+
+  it('rejects a non-exact last3 search parameter', async () => {
+    const receptionist = await login('phone_reception')
+    const response = await receptionist.agent.get('/api/v1/bookings/search?date=2030-10-24&last3=67')
+    expect(response.status).toBe(400)
+    expect((response.body as ErrorBody).error.code).toBe('INVALID_PHONE_SUFFIX')
   })
 
   it('enforces session, CSRF, role, venue scope, rate limit, and no-store headers', async () => {

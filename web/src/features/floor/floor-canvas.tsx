@@ -39,6 +39,8 @@ interface Props {
   availability?: Map<number, TableAvailability>
   groups?: FloorGroup[]
   selectedIds: number[]
+  /** Visual-only reception search overlay; never participates in selection or group derivation. */
+  searchHighlightedIds?: number[]
   /** When set, only these tables accept taps (pick mode). */
   pickable?: Set<number> | null
   zoneFocus?: ZoneCode | "ALL"
@@ -78,6 +80,7 @@ export function FloorCanvas(props: Props) {
     availability,
     groups = [],
     selectedIds,
+    searchHighlightedIds = [],
     pickable,
     zoneFocus = "ALL",
     now,
@@ -260,6 +263,7 @@ export function FloorCanvas(props: Props) {
   }
 
   const selected = useMemo(() => new Set(selectedIds), [selectedIds])
+  const searchHighlighted = useMemo(() => new Set(searchHighlightedIds), [searchHighlightedIds])
   const activeGroup = useMemo(
     () => activeGroupForSelection(groups, selectedIds, mode === "live"),
     [groups, mode, selectedIds],
@@ -369,6 +373,7 @@ export function FloorCanvas(props: Props) {
               table: t,
               selected: selected.has(t.id),
               groupHighlighted: highlighted.has(t.id) && !selected.has(t.id),
+              searchHighlighted: searchHighlighted.has(t.id),
               dim: !!dim,
               pickHint: !!pickable && pickable.has(t.id),
               disabled: !!pickable && !pickable.has(t.id) && !selected.has(t.id),
@@ -554,6 +559,7 @@ interface GlyphBase {
   table: TableView
   selected: boolean
   groupHighlighted: boolean
+  searchHighlighted: boolean
   dim: boolean
   pickHint: boolean
   disabled: boolean
@@ -714,6 +720,7 @@ const LiveGlyph = memo(function LiveGlyph({
   table: t,
   selected,
   groupHighlighted,
+  searchHighlighted,
   dim,
   pickHint,
   disabled,
@@ -724,7 +731,8 @@ const LiveGlyph = memo(function LiveGlyph({
   const state: TableLiveState = fs?.state ?? "free"
   const meta = STATE_META[state]
   const seated = state === "seated"
-  const dashed = state === "late" || state === "late_confirmed" || state === "spare" || state === "hold" || state === "hold_overdue"
+  const dashed =
+    state === "late" || state === "late_confirmed" || state === "spare" || state === "hold" || state === "hold_overdue"
   const stroke = state === "free" ? "var(--table-line)" : meta.color
   const fill = seated
     ? "var(--st-seated-fill)"
@@ -753,6 +761,7 @@ const LiveGlyph = memo(function LiveGlyph({
         aria-pressed={selected}
         aria-disabled={disabled}
         data-group-highlighted={groupHighlighted || undefined}
+        data-search-highlighted={searchHighlighted || undefined}
         className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
         opacity={dim ? 0.3 : 1}
         onClick={() => onActivate(t.id)}
@@ -767,6 +776,9 @@ const LiveGlyph = memo(function LiveGlyph({
           strokeWidth={1.5}
           strokeDasharray="2 2"
         />
+        {searchHighlighted ? (
+          <circle className="animate-pulse" r={16} fill="none" stroke="var(--primary)" strokeWidth={3} />
+        ) : null}
         {selected ? (
           <circle r={14.5} fill="none" stroke="var(--ring)" strokeWidth={2.2} />
         ) : groupHighlighted ? (
@@ -820,6 +832,7 @@ const LiveGlyph = memo(function LiveGlyph({
       aria-pressed={selected}
       aria-disabled={disabled}
       data-group-highlighted={groupHighlighted || undefined}
+      data-search-highlighted={searchHighlighted || undefined}
       className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
       opacity={dim ? 0.3 : 1}
       onClick={() => onActivate(t.id)}
@@ -838,6 +851,19 @@ const LiveGlyph = memo(function LiveGlyph({
         strokeWidth={1.5}
         strokeDasharray="3 2"
       />
+      {searchHighlighted ? (
+        <rect
+          className="animate-pulse"
+          x={-hw - 9}
+          y={-hh - 9}
+          width={t.w + 18}
+          height={t.h + 18}
+          rx={9}
+          fill="none"
+          stroke="var(--primary)"
+          strokeWidth={3}
+        />
+      ) : null}
       {selected ? (
         <rect
           x={-hw - 7}

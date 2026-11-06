@@ -17,6 +17,7 @@ export const qk = {
   availability: (at: string, party: number) => ["availability", at, party] as const,
   overview: ["overview"] as const,
   reservations: (bd: string, search: string) => ["reservations", bd, search] as const,
+  receptionSearch: (bd: string, last3: string) => ["reception-search", bd, last3] as const,
   bookingExport: (bd: string) => ["booking-export", bd] as const,
   visits: (bd: string) => ["visits", bd] as const,
   waitlist: (bd: string) => ["waitlist", bd] as const,

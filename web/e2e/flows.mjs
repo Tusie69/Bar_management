@@ -34,7 +34,8 @@ async function flow(name, userId, fn, pageOptions = {}) {
   await page.close()
 }
 const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"]`).first()
-const barSeat = (page, number) => page.locator(`[aria-label^="Ghế Bar ${number},"], [aria-label^="Ghế Bar ${number}:"]`).first()
+const barSeat = (page, number) =>
+  page.locator(`[aria-label^="Ghế Bar ${number},"], [aria-label^="Ghế Bar ${number}:"]`).first()
 const expectLabel = async (loc, re) => {
   for (let i = 0; i < 25; i++) {
     if (re.test(await loc.getAttribute("aria-label"))) return
@@ -196,68 +197,78 @@ await flow("time warp: A5 becomes late after +15', no auto cancel after +60'", 3
   await expectLabel(table(page, "A5"), /Khách không đến/)
 })
 
-await flow("call customer: mobile opens tel flow and keeps a manual outcome action", 3, async (page) => {
-  await page.addInitScript(() => {
-    const click = HTMLAnchorElement.prototype.click
-    HTMLAnchorElement.prototype.click = function () {
-      if (this.href.startsWith("tel:")) {
-        window.__lastTelUri = this.href
-        return
+await flow(
+  "call customer: mobile opens tel flow and keeps a manual outcome action",
+  3,
+  async (page) => {
+    await page.addInitScript(() => {
+      const click = HTMLAnchorElement.prototype.click
+      HTMLAnchorElement.prototype.click = function () {
+        if (this.href.startsWith("tel:")) {
+          window.__lastTelUri = this.href
+          return
+        }
+        return click.call(this)
       }
-      return click.call(this)
+    })
+    await page.goto(base + "/floor", { waitUntil: "networkidle" })
+    await page.evaluate(async () => {
+      const { demo } = await import("/src/services/index.ts")
+      demo?.reset()
+    })
+    await page.reload({ waitUntil: "networkidle" })
+    const blockingAlert = page.getByRole("alertdialog")
+    if (await blockingAlert.count()) {
+      await blockingAlert.getByRole("button", { name: "Đã xem, xử lý sau", exact: true }).click()
     }
-  })
-  await page.goto(base + "/floor", { waitUntil: "networkidle" })
-  await page.evaluate(async () => {
-    const { demo } = await import("/src/services/index.ts")
-    demo?.reset()
-  })
-  await page.reload({ waitUntil: "networkidle" })
-  const blockingAlert = page.getByRole("alertdialog")
-  if (await blockingAlert.count()) {
-    await blockingAlert.getByRole("button", { name: "Đã xem, xử lý sau", exact: true }).click()
-  }
-  await table(page, "A5").click()
-  for (const width of [360, 375, 390]) {
-    await page.setViewportSize({ width, height: width === 390 ? 844 : width === 375 ? 812 : 800 })
-    await page.getByRole("button", { name: "Gọi khách", exact: true }).waitFor()
-  }
-  await page.screenshot({ path: "e2e/.artifacts/call-customer-mobile-390.png" })
-  await page.getByRole("button", { name: "Gọi khách", exact: true }).click()
-  await page.evaluate(async () => {
-    const { clock } = await import("/src/services/index.ts")
-    clock.advance(60)
-  })
-  await page.waitForTimeout(16_000)
-  await page.getByRole("button", { name: "Ghi kết quả cuộc gọi", exact: true }).waitFor()
-  await page.getByRole("button", { name: "Gọi khách", exact: true }).waitFor({ state: "detached" })
-  for (let index = 0; index < 20; index += 1) {
-    const noShowAlert = page.getByRole("alertdialog")
-    if (!(await noShowAlert.isVisible().catch(() => false))) break
-    await noShowAlert.getByRole("button", { name: "Đã xem, xử lý sau", exact: true }).click()
-    await page.waitForTimeout(100)
-  }
-  await page.getByRole("button", { name: "Ghi kết quả cuộc gọi", exact: true }).click()
-  const outcome = page.getByRole("dialog", { name: "Kết quả cuộc gọi" })
-  await outcome.getByRole("button", { name: "Không nghe máy", exact: true }).click()
-  await outcome.waitFor({ state: "hidden" })
-}, {
-  viewport: { width: 390, height: 844 },
-  userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
-})
+    await table(page, "A5").click()
+    for (const width of [360, 375, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : width === 375 ? 812 : 800 })
+      await page.getByRole("button", { name: "Gọi khách", exact: true }).waitFor()
+    }
+    await page.screenshot({ path: "e2e/.artifacts/call-customer-mobile-390.png" })
+    await page.getByRole("button", { name: "Gọi khách", exact: true }).click()
+    await page.evaluate(async () => {
+      const { clock } = await import("/src/services/index.ts")
+      clock.advance(60)
+    })
+    await page.waitForTimeout(16_000)
+    await page.getByRole("button", { name: "Ghi kết quả cuộc gọi", exact: true }).waitFor()
+    await page.getByRole("button", { name: "Gọi khách", exact: true }).waitFor({ state: "detached" })
+    for (let index = 0; index < 20; index += 1) {
+      const noShowAlert = page.getByRole("alertdialog")
+      if (!(await noShowAlert.isVisible().catch(() => false))) break
+      await noShowAlert.getByRole("button", { name: "Đã xem, xử lý sau", exact: true }).click()
+      await page.waitForTimeout(100)
+    }
+    await page.getByRole("button", { name: "Ghi kết quả cuộc gọi", exact: true }).click()
+    const outcome = page.getByRole("dialog", { name: "Kết quả cuộc gọi" })
+    await outcome.getByRole("button", { name: "Không nghe máy", exact: true }).click()
+    await outcome.waitFor({ state: "hidden" })
+  },
+  {
+    viewport: { width: 390, height: 844 },
+    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+  },
+)
 
-await flow("call customer: tablet explains that direct calling is unavailable", 3, async (page) => {
-  await page.goto(base + "/floor", { waitUntil: "networkidle" })
-  await page.evaluate(async () => {
-    const { demo } = await import("/src/services/index.ts")
-    demo?.reset()
-  })
-  await page.reload({ waitUntil: "networkidle" })
-  await table(page, "A5").click()
-  await page.getByRole("button", { name: "Gọi khách", exact: true }).click()
-  await page.getByText("Thiết bị này không hỗ trợ gọi trực tiếp", { exact: true }).waitFor()
-  await page.screenshot({ path: "e2e/.artifacts/call-customer-tablet-768.png" })
-}, { viewport: { width: 768, height: 1024 } })
+await flow(
+  "call customer: tablet explains that direct calling is unavailable",
+  3,
+  async (page) => {
+    await page.goto(base + "/floor", { waitUntil: "networkidle" })
+    await page.evaluate(async () => {
+      const { demo } = await import("/src/services/index.ts")
+      demo?.reset()
+    })
+    await page.reload({ waitUntil: "networkidle" })
+    await table(page, "A5").click()
+    await page.getByRole("button", { name: "Gọi khách", exact: true }).click()
+    await page.getByText("Thiết bị này không hỗ trợ gọi trực tiếp", { exact: true }).waitFor()
+    await page.screenshot({ path: "e2e/.artifacts/call-customer-tablet-768.png" })
+  },
+  { viewport: { width: 768, height: 1024 } },
+)
 
 await flow("waitlist: claim, accept offer -> hold, then seat when guest arrives", 3, async (page) => {
   await page.goto(base + "/waitlist", { waitUntil: "networkidle" })
@@ -288,7 +299,8 @@ await flow("receptionist sees no reveal button and no reports", 1, async (page) 
   if (await page.getByRole("button", { name: "Xem số" }).count()) throw new Error("reveal visible for receptionist")
   await page.goto(base + "/reports", { waitUntil: "networkidle" })
   await page.waitForURL("**/floor")
-  if (await page.getByRole("link", { name: "Báo cáo" }).count()) throw new Error("reports navigation visible for receptionist")
+  if (await page.getByRole("link", { name: "Báo cáo" }).count())
+    throw new Error("reports navigation visible for receptionist")
 })
 
 await flow("availability tomorrow: B3 reserved, A3 free", 1, async (page) => {
@@ -472,11 +484,7 @@ await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (phone
     if (!visit.groupId) {
       throw new Error(`Group should be preserved on visit for ${tc.name}`)
     }
-    if (
-      !visit.tableIds.includes(13) ||
-      !visit.tableIds.includes(10) ||
-      visit.tableIds.length !== 2
-    ) {
+    if (!visit.tableIds.includes(13) || !visit.tableIds.includes(10) || visit.tableIds.length !== 2) {
       throw new Error(`Visit tables [${visit.tableIds}] should preserve both B5 and B7 for ${tc.name}`)
     }
   }
@@ -649,52 +657,58 @@ await flow("reservation assignment: date-aware availability in both directions (
   await page.keyboard.press("Escape")
 })
 
-await flow("direct booking: validate same zone and kind in floor quick-form and booking sheet (MD-05)", 3, async (page) => {
-  // 1. Floor quick-form validation
-  await page.goto(base + "/floor", { waitUntil: "networkidle" })
-  await barSeat(page, 8).click()
-  await page.getByRole("button", { name: "Đặt trước" }).click()
-  // QuickForm is open with Ghế Bar 8 (BAR_SEAT in Zone D)
-  // Attempt to select Bàn B7 (TABLE in Zone B) on canvas: B7 is disabled
-  const b7Floor = table(page, "B7")
-  await b7Floor.waitFor()
-  const b7FloorDisabled = await b7Floor.getAttribute("aria-disabled")
-  if (b7FloorDisabled !== "true") {
-    throw new Error("Table B7 of different kind/zone should be disabled on floor in Bar 8 direct draft")
-  }
-  await b7Floor.click({ force: true })
-  const hasB7 = await page.getByRole("button", { name: /Bàn B7/ }).count()
-  if (hasB7 > 1) {
-    throw new Error("Table B7 of different kind/zone should not be added to Bar 8 direct draft")
-  }
-  await page.keyboard.press("Escape")
+await flow(
+  "direct booking: validate same zone and kind in floor quick-form and booking sheet (MD-05)",
+  3,
+  async (page) => {
+    // 1. Floor quick-form validation
+    await page.goto(base + "/floor", { waitUntil: "networkidle" })
+    await barSeat(page, 8).click()
+    await page.getByRole("button", { name: "Đặt trước" }).click()
+    // QuickForm is open with Ghế Bar 8 (BAR_SEAT in Zone D)
+    // Attempt to select Bàn B7 (TABLE in Zone B) on canvas: B7 is disabled
+    const b7Floor = table(page, "B7")
+    await b7Floor.waitFor()
+    const b7FloorDisabled = await b7Floor.getAttribute("aria-disabled")
+    if (b7FloorDisabled !== "true") {
+      throw new Error("Table B7 of different kind/zone should be disabled on floor in Bar 8 direct draft")
+    }
+    await b7Floor.click({ force: true })
+    const hasB7 = await page.getByRole("button", { name: /Bàn B7/ }).count()
+    if (hasB7 > 1) {
+      throw new Error("Table B7 of different kind/zone should not be added to Bar 8 direct draft")
+    }
+    await page.keyboard.press("Escape")
 
-  // 2. Booking sheet validation
-  await page.goto(base + "/reservations", { waitUntil: "networkidle" })
-  await page.getByRole("button", { name: "Đặt bàn mới" }).click()
-  const sheet = page.getByRole("dialog").last()
-  await sheet.getByText("Đặt bàn mới", { exact: true }).waitFor()
-  // Step 0: click Tiếp
-  await sheet.getByRole("button", { name: "Tiếp" }).click()
-  // Step 1: select first suggested table
-  const firstSuggestion = sheet.locator("section").filter({ hasText: "Gợi ý" }).getByRole("button").first()
-  await firstSuggestion.waitFor()
-  await firstSuggestion.click()
+    // 2. Booking sheet validation
+    await page.goto(base + "/reservations", { waitUntil: "networkidle" })
+    await page.getByRole("button", { name: "Đặt bàn mới" }).click()
+    const sheet = page.getByRole("dialog").last()
+    await sheet.getByText("Đặt bàn mới", { exact: true }).waitFor()
+    // Step 0: click Tiếp
+    await sheet.getByRole("button", { name: "Ngày mai" }).click()
+    await sheet.getByRole("radio", { name: /^19:00/ }).click()
+    await sheet.getByRole("button", { name: "Tiếp" }).click()
+    // Step 1: select first suggested table
+    const firstSuggestion = sheet.locator("section").filter({ hasText: "Gợi ý" }).getByRole("button").first()
+    await firstSuggestion.waitFor()
+    await firstSuggestion.click()
 
-  // Cross-kind/zone seat Ghế Bar 8 (Zone BAR, BAR_SEAT) must be disabled on canvas
-  const cross = sheet.locator('[aria-label^="Ghế Bar 8:"]').first()
-  await cross.waitFor()
-  const crossDisabled = await cross.getAttribute("aria-disabled")
-  if (crossDisabled !== "true") {
-    throw new Error("Cross-kind/zone seat Bar 8 should be disabled in booking sheet")
-  }
-  await cross.click({ force: true })
-  const crossPressed = await cross.getAttribute("aria-pressed")
-  if (crossPressed === "true") {
-    throw new Error("Cross-kind/zone seat Bar 8 should not be selected in booking sheet")
-  }
-  await page.keyboard.press("Escape")
-})
+    // Cross-kind/zone seat Ghế Bar 8 (Zone BAR, BAR_SEAT) must be disabled on canvas
+    const cross = sheet.locator('[aria-label^="Ghế Bar 8:"]').first()
+    await cross.waitFor()
+    const crossDisabled = await cross.getAttribute("aria-disabled")
+    if (crossDisabled !== "true") {
+      throw new Error("Cross-kind/zone seat Bar 8 should be disabled in booking sheet")
+    }
+    await cross.click({ force: true })
+    const crossPressed = await cross.getAttribute("aria-pressed")
+    if (crossPressed === "true") {
+      throw new Error("Cross-kind/zone seat Bar 8 should not be selected in booking sheet")
+    }
+    await page.keyboard.press("Escape")
+  },
+)
 
 await flow("booking pickers: keyboard navigation across expired selected slot (MD-04)", 3, async (page) => {
   await page.setViewportSize({ width: 390, height: 844 })
@@ -723,9 +737,11 @@ await flow("booking pickers: keyboard navigation across expired selected slot (M
   })
 
   // Verify roving tab stop: exactly one enabled slot has tabIndex=0
-  const enabledWithTabstop = await editDialog.getByRole("radio").evaluateAll((nodes) =>
-    nodes.filter((n) => !n.disabled && n.getAttribute("tabindex") === "0").map((n) => n.textContent?.trim())
-  )
+  const enabledWithTabstop = await editDialog
+    .getByRole("radio")
+    .evaluateAll((nodes) =>
+      nodes.filter((n) => !n.disabled && n.getAttribute("tabindex") === "0").map((n) => n.textContent?.trim()),
+    )
   if (enabledWithTabstop.length !== 1) {
     throw new Error(`Expected exactly 1 enabled radio with tabIndex=0, found ${enabledWithTabstop.length}`)
   }

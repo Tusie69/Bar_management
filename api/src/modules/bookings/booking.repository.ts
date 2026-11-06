@@ -6,6 +6,7 @@ import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
 import { assertNoteHasNoPhoneNumber, redactPhoneNumbersInNote } from '../../security/note-privacy.js'
 import { applicationNow } from '../../time/application-clock.js'
+import { normalizeSearchText } from '../../lib/search-text.js'
 import { assertCheckInBusinessDate, currentBusinessDate, validateBookingSchedule } from './business-date.js'
 import { deriveBookingTiming, type BookingDisplayStatus } from './booking-timing.js'
 import { canCallBooking } from './booking-call.js'
@@ -276,12 +277,12 @@ export async function createBooking(
       (organization_id, venue_id, contact_name, contact_name_search, phone_ciphertext, phone_key_id,
        phone_hmac, phone_hmac_key_id, phone_last3, source_id, party_size,
        expected_at, business_date, customer_classification, guest_type, is_birthday, note, created_by_user_id)
-     VALUES (?, ?, ?, LOWER(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       actor.organizationId,
       actor.venueId,
       input.guestName,
-      input.guestName,
+      normalizeSearchText(input.guestName),
       ...protectedPhoneValues(phone),
       source.id,
       input.partySize,
@@ -343,12 +344,12 @@ export async function createAndAssignBooking(
         (organization_id, venue_id, contact_name, contact_name_search, phone_ciphertext, phone_key_id,
          phone_hmac, phone_hmac_key_id, phone_last3, source_id, party_size,
          expected_at, business_date, customer_classification, guest_type, is_birthday, note, created_by_user_id)
-       VALUES (?, ?, ?, LOWER(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         actor.organizationId,
         actor.venueId,
         input.guestName,
-        input.guestName,
+        normalizeSearchText(input.guestName),
         ...protectedPhoneValues(phone),
         source.id,
         input.partySize,
@@ -657,13 +658,13 @@ export async function updateBooking(
     const phoneValues = phoneChanged ? protectedPhoneValues(phone ?? null) : []
     const [updateResult] = await connection.execute<ResultSetHeader>(
       `UPDATE reservations
-       SET contact_name = ?, contact_name_search = LOWER(?), party_size = ?, source_id = ?,
+       SET contact_name = ?, contact_name_search = ?, party_size = ?, source_id = ?,
            expected_at = ?, business_date = ?, customer_classification = ?, guest_type = ?, is_birthday = ?, note = ?, updated_by_user_id = ?,
            updated_at = UTC_TIMESTAMP(3), version = version + 1${phoneSql}
        WHERE organization_id = ? AND venue_id = ? AND id = ? AND status = 'BOOKED' AND version = ?`,
       [
         input.guestName,
-        input.guestName,
+        normalizeSearchText(input.guestName),
         input.partySize,
         source.id,
         schedule.mysqlExpectedAt,

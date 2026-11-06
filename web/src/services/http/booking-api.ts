@@ -1,5 +1,6 @@
 import { ApiError } from "../contracts"
 import type { BusinessDate } from "@/lib/time"
+import type { ReceptionSearchResult } from "@/domain/models"
 import type { HttpClient } from "./http-client"
 import {
   assignmentPayload,
@@ -35,6 +36,20 @@ export class HttpBookingApi {
       throw new ApiError(502, "BUSINESS_DATE_RESPONSE_MISMATCH", "Unexpected business date in bookings response.")
     }
     return response.bookings.map(mapBooking)
+  }
+
+  async searchReception(
+    businessDate: BusinessDate,
+    query: { last3?: string; name?: string },
+  ): Promise<ReceptionSearchResult> {
+    const params = new URLSearchParams({ date: businessDate })
+    if (query.last3) params.set("last3", query.last3)
+    if (query.name) params.set("name", query.name)
+    const response = await this.client.get<ReceptionSearchResult>(`/bookings/search?${params}`)
+    if (response.businessDate !== businessDate) {
+      throw new ApiError(502, "BUSINESS_DATE_RESPONSE_MISMATCH", "Unexpected business date in search response.")
+    }
+    return response
   }
 
   exportDailyText(businessDate: BusinessDate): Promise<string> {
@@ -93,7 +108,10 @@ export class HttpBookingApi {
     return mapBooking(response.booking)
   }
 
-  async confirmLate(id: number, version: number): Promise<{
+  async confirmLate(
+    id: number,
+    version: number,
+  ): Promise<{
     bookingId: number
     lateConfirmed: true
     lateConfirmedAt: Date
@@ -106,11 +124,7 @@ export class HttpBookingApi {
       lateConfirmedAt: Date
       version: number
       changeSeq: string
-    }>(
-      `/bookings/${id}/late-confirm`,
-      { version },
-      { reviver: dateReviver },
-    )
+    }>(`/bookings/${id}/late-confirm`, { version }, { reviver: dateReviver })
   }
 
   async startCall(id: number): Promise<{ callId: number; bookingId: number; initiatedAt: Date; telUri: string }> {
@@ -123,10 +137,14 @@ export class HttpBookingApi {
     outcome: "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED",
     bookingVersion?: number,
   ): Promise<void> {
-    await this.client.post(`/bookings/${bookingId}/calls/${callId}/outcome`, {
-      outcome,
-      ...(bookingVersion === undefined ? {} : { bookingVersion }),
-    }, { reviver: dateReviver })
+    await this.client.post(
+      `/bookings/${bookingId}/calls/${callId}/outcome`,
+      {
+        outcome,
+        ...(bookingVersion === undefined ? {} : { bookingVersion }),
+      },
+      { reviver: dateReviver },
+    )
   }
 
   async assignVersion(id: number, version: number, tableIds: number[]): Promise<HttpBooking> {

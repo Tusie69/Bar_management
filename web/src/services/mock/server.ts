@@ -696,6 +696,59 @@ export class MockGamApi implements GamApi, DemoControls {
       .map((r) => reservationView(this.db, r, this.now))
   }
 
+  async searchReception(businessDate: BusinessDate, query: { last3?: string; name?: string }) {
+    const needle = query.last3 ?? query.name ?? ""
+    const matches = searchMatches(this.db, needle)
+    const bookings = [...this.db.reservations.values()]
+      .filter((row) => row.businessDate === businessDate && matches.reservation(row))
+      .map((row) => {
+        const view = reservationView(this.db, row, this.now)
+        return { id: view.id, displayName: view.displayName, phoneLast3: view.phoneLast3, tableIds: view.tableIds }
+      })
+    const waitlist = [...this.db.waitlist.values()]
+      .filter(
+        (row) =>
+          row.businessDate === businessDate && ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"].includes(row.status),
+      )
+      .filter((row) => {
+        const reservation = row.reservationId ? this.db.reservations.get(row.reservationId) : undefined
+        if (reservation) return matches.reservation(reservation)
+        const customer = row.customerId ? this.db.customers.get(row.customerId) : undefined
+        return query.last3
+          ? customer?.phoneLast3 === query.last3
+          : foldVietnamese(customer?.displayName ?? row.contactName ?? "").includes(foldVietnamese(query.name ?? ""))
+      })
+      .map((row) => {
+        const reservation = row.reservationId ? this.db.reservations.get(row.reservationId) : undefined
+        const customer = row.customerId ? this.db.customers.get(row.customerId) : undefined
+        return {
+          id: row.id,
+          reservationId: row.reservationId,
+          displayName: customer?.displayName ?? reservation?.contactName ?? row.contactName ?? "Khách chờ",
+          phoneLast3:
+            customer?.phoneLast3 ?? (reservation ? reservationView(this.db, reservation, this.now).phoneLast3 : null),
+          tableIds: holdTableIds(
+            this.db,
+            activeHoldForEntry(this.db, row.id)?.id ?? activeReservationHold(this.db, reservation?.id ?? 0)?.id ?? 0,
+          ),
+          status: row.status,
+        }
+      })
+    const ids = new Set(bookings.map((row) => row.id))
+    const linked = waitlist.filter((row) => row.reservationId !== null && ids.has(row.reservationId)).length
+    return {
+      businessDate,
+      query,
+      bookings,
+      waitlist,
+      summary: {
+        bookingCount: bookings.length,
+        waitlistCount: waitlist.length,
+        totalCount: bookings.length + waitlist.length - linked,
+      },
+    }
+  }
+
   async exportDailyBookingText(bd: BusinessDate): Promise<string> {
     this.require("customer.view_masked")
     const reservations = await this.listReservations({ businessDate: bd })

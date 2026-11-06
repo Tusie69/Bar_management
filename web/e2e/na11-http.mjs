@@ -266,7 +266,8 @@ try {
   }
   const creation = page.waitForResponse(
     (response) =>
-      response.request().method() === "POST" && /^\/api\/v1\/bookings(?:\/direct)?$/.test(new URL(response.url()).pathname),
+      response.request().method() === "POST" &&
+      /^\/api\/v1\/bookings(?:\/direct)?$/.test(new URL(response.url()).pathname),
   )
   await form.getByRole("button", { name: /^(Đặt bàn|Xác nhận đặt bàn)$/ }).click()
   const createdResponse = await creation
@@ -292,16 +293,22 @@ try {
   const searches = []
   page.on("request", (request) => {
     if (new URL(request.url()).pathname === "/api/v1/bookings/search")
-      searches.push(new URL(request.url()).searchParams.get("q"))
+      searches.push(new URL(request.url()).searchParams.get("last3"))
   })
   await search.fill("78")
   expect(searches).toEqual([])
   const searchRead = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/bookings/search")
+  const searchStartedAt = Date.now()
   await search.fill("789")
   const searched = await (await searchRead).json()
   expect(searched.bookings).toHaveLength(2)
-  await expect(table(page, "A1")).toHaveAttribute("aria-pressed", "true")
-  await expect(table(page, "A2")).toHaveAttribute("aria-pressed", "true")
+  await expect(table(page, "A1")).toHaveAttribute("data-search-highlighted", "true")
+  await expect(table(page, "A2")).toHaveAttribute("data-search-highlighted", "true")
+  await expect(table(page, "A1")).toHaveAttribute("aria-pressed", "false")
+  await expect(table(page, "A2")).toHaveAttribute("aria-pressed", "false")
+  const searchHighlightMs = Date.now() - searchStartedAt
+  expect(searchHighlightMs).toBeLessThan(1000)
+  console.log(`Reception search API-to-highlight: ${searchHighlightMs}ms`)
   expect(searches.every((q) => /^\d{3}$/.test(q))).toBe(true)
   expect(await page.locator("body").innerText()).not.toContain("0987654789")
   await search.fill("7899")

@@ -84,7 +84,12 @@ export function MapScreen({
       {receptionist ? (
         <header className="z-[5] shrink-0 bg-background px-4 pt-[var(--top-safe)]">
           <div className="flex h-[52px] items-center gap-3">
-            <button type="button" onClick={m.openAccount} aria-label="Tài khoản và giao diện" className="grid size-10 shrink-0 place-items-center rounded-full bg-[var(--glass)] text-[15px] font-semibold text-tx-strong shadow-[var(--shadow-xs)]">
+            <button
+              type="button"
+              onClick={m.openAccount}
+              aria-label="Tài khoản và giao diện"
+              className="grid size-10 shrink-0 place-items-center rounded-full bg-[var(--glass)] text-[15px] font-semibold text-tx-strong shadow-[var(--shadow-xs)]"
+            >
               {initials(user.displayName).slice(0, 1)}
             </button>
             <h1 className="m-0 min-w-0 flex-1 truncate text-[22px] font-semibold text-tx-strong">Sơ đồ bàn</h1>
@@ -98,13 +103,14 @@ export function MapScreen({
                 waitCount={(m.waitlist ?? []).filter(isOpenEntry).length}
                 onWaitlist={() => m.go("wait")}
                 onCount={m.openCount}
-                onOpenBooking={m.openDetail}
               />
             </div>
           ) : null}
         </header>
       ) : (
-        <PlainHeader title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"} />
+        <PlainHeader
+          title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"}
+        />
       )}
       <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
         {m.model.catalog ? (
@@ -116,7 +122,8 @@ export function MapScreen({
             states={m.model.states}
             availability={isAssignPick ? pickAvailMap : undefined}
             groups={isAssignPick ? [] : m.model.floor?.groups}
-            selectedIds={pick ? pickSel : [...new Set([...(selected ? [selected] : []), ...search.tableIds])]}
+            selectedIds={pick ? pickSel : selected ? [selected] : []}
+            searchHighlightedIds={!pick ? search.tableIds : []}
             pickable={pickable}
             zoneFocus={zone}
             now={m.now}
@@ -253,7 +260,10 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
     actions = r
       ? [
           { label: "Khách đã đến", primary: true, go: () => void a.checkIn(r) },
-          ...(!r.lateConfirmedAt && r.businessDate === m.today && m.now.getTime() >= r.expectedAt.getTime() && r.minutesLate < m.th.noshow
+          ...(!r.lateConfirmedAt &&
+          r.businessDate === m.today &&
+          m.now.getTime() >= r.expectedAt.getTime() &&
+          r.minutesLate < m.th.noshow
             ? [{ label: "Tới muộn", go: () => a.confirmLate(r) }]
             : []),
           { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },

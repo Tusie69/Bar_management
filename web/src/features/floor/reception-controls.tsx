@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useBusinessDate } from "@/hooks/use-data"
 import type { useReceptionSearch } from "@/hooks/use-reception-search"
-import { fmtDayMonth, type BusinessDate } from "@/lib/time"
+import { fmtDayMonth } from "@/lib/time"
 import { useUi } from "@/state/ui"
 import { DateField } from "./floor-toolbar"
 
@@ -26,18 +26,28 @@ export function ReceptionDatePicker({ onDateChange }: { onDateChange?: () => voi
   )
 }
 
-export function ReceptionControls({ search, waitCount, onWaitlist, onCount, onOpenBooking }: {
+export function ReceptionControls({
+  search,
+  waitCount,
+  onWaitlist,
+  onCount,
+}: {
   search: ReturnType<typeof useReceptionSearch>
   waitCount: number
   onWaitlist: () => void
   onCount: () => void
-  onOpenBooking: (id: number, businessDate: BusinessDate) => void
 }) {
+  const searching = search.suffix.length === 3 && (search.debounced !== search.suffix || search.query.isFetching)
+  const result = search.debounced === search.suffix ? search.query.data : undefined
+  const matchedWaitlist = result?.summary.waitlistCount ?? 0
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <div className="flex min-w-0 items-center gap-2">
         <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+          <Search
+            className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden
+          />
           <Input
             value={search.suffix}
             inputMode="numeric"
@@ -50,22 +60,48 @@ export function ReceptionControls({ search, waitCount, onWaitlist, onCount, onOp
             onChange={(event) => search.setSuffix(event.target.value.replace(/\D/g, "").slice(0, 3))}
           />
         </div>
-        <Button variant="outline" className="h-11 shrink-0 gap-1.5 bg-surface-1 px-2.5" onClick={onWaitlist} aria-label={`Bàn chờ ảo, ${waitCount} đang chờ`}>
-          <ListOrdered className="size-4" /><span className="text-xs sm:text-sm">Bàn chờ</span><span className="tnum text-xs">+{waitCount}</span>
+        <Button
+          variant="outline"
+          className="h-11 shrink-0 gap-1.5 bg-surface-1 px-2.5"
+          onClick={onWaitlist}
+          aria-label={`Bàn chờ ảo, ${waitCount} đang chờ${matchedWaitlist ? `, ${matchedWaitlist} khớp tìm kiếm` : ""}`}
+        >
+          <ListOrdered className="size-4" />
+          <span className="text-xs sm:text-sm">Bàn chờ</span>
+          <span className="tnum text-xs">+{waitCount}</span>
+          {matchedWaitlist ? (
+            <span
+              className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground"
+              data-testid="waitlist-search-badge"
+            >
+              {matchedWaitlist} khớp
+            </span>
+          ) : null}
         </Button>
-        <Button variant="outline" className="h-11 shrink-0 gap-1.5 bg-surface-1 px-2.5" onClick={onCount} aria-label="Đếm khách" title="Đếm khách và xem báo cáo hiện có">
-          <Users className="size-4" /><span className="hidden text-sm sm:inline">Đếm khách</span>
+        <Button
+          variant="outline"
+          className="h-11 shrink-0 gap-1.5 bg-surface-1 px-2.5"
+          onClick={onCount}
+          aria-label="Đếm khách"
+          title="Đếm khách và xem báo cáo hiện có"
+        >
+          <Users className="size-4" />
+          <span className="hidden text-sm sm:inline">Đếm khách</span>
         </Button>
       </div>
       {search.suffix.length === 3 ? (
         <div className="flex flex-wrap gap-1.5 text-xs" aria-live="polite">
-          {search.query.isFetching ? <span>Đang tìm…</span> : search.query.error ? <span role="alert">Không tải được kết quả. Thử lại sau.</span> : search.matches.length ? (
-            search.matches.map((row) => (
-              <button key={row.id} type="button" className="min-h-11 rounded-sm border bg-surface-1 px-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={() => onOpenBooking(row.id, row.businessDate)}>
-                {row.displayName} · ***{row.phoneLast3} · {row.tableIds.length ? `${row.tableIds.length} bàn` : "Chưa có bàn"}
-              </button>
-            ))
-          ) : <span>Không có khách khớp 3 số cuối trong ngày đã chọn.</span>}
+          {searching ? (
+            <span>Đang tìm…</span>
+          ) : search.query.error ? (
+            <span role="alert">Không tải được kết quả. Thử lại sau.</span>
+          ) : result?.summary.totalCount ? (
+            <span data-testid="reception-search-summary">
+              {result.summary.totalCount} khách khớp · {search.tableIds.length} bàn được đánh dấu
+            </span>
+          ) : (
+            <span>Không có khách khớp 3 số cuối trong ngày đã chọn.</span>
+          )}
         </div>
       ) : null}
     </div>

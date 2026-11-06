@@ -141,7 +141,7 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     const [beforeRows] = await databasePool.execute<(RowDataPacket & { count: number })[]>(
       `SELECT COUNT(*) AS count FROM auth_sessions AS s
        JOIN users AS u ON u.id = s.user_id WHERE u.username = ?`,
-      ['portal_receptionist'],
+      [testUsername('portal_receptionist')],
     )
     const invalidPortal = await request(app).post('/api/v1/auth/login').set('Origin', origin).send({
       username: testUsername('portal_receptionist'), password: 'Correct horse battery staple', portal: 'unknown',
@@ -155,7 +155,7 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     const [afterRows] = await databasePool.execute<(RowDataPacket & { count: number })[]>(
       `SELECT COUNT(*) AS count FROM auth_sessions AS s
        JOIN users AS u ON u.id = s.user_id WHERE u.username = ?`,
-      ['portal_receptionist'],
+      [testUsername('portal_receptionist')],
     )
     expect(Number(afterRows[0]?.count)).toBe(Number(beforeRows[0]?.count))
   })

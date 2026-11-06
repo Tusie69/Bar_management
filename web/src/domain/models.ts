@@ -264,6 +264,21 @@ export interface ReservationView {
   canCall?: boolean
 }
 
+export interface ReceptionSearchResult {
+  businessDate: BusinessDate
+  query: { last3?: string; name?: string }
+  bookings: Array<{ id: number; displayName: string; phoneLast3: string | null; tableIds: number[] }>
+  waitlist: Array<{
+    id: number
+    reservationId: number | null
+    displayName: string
+    phoneLast3: string | null
+    tableIds: number[]
+    status: WaitlistStatus
+  }>
+  summary: { bookingCount: number; waitlistCount: number; totalCount: number }
+}
+
 export interface VisitView {
   id: number
   version: number

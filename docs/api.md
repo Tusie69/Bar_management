@@ -80,7 +80,9 @@ Spare configuration is persistent rather than per-day. `reason` is required, at 
 | --- | --- | --- | --- |
 | GET | `/bookings?date=YYYY-MM-DD` | `customer.view_masked` | `{businessDate,bookings:BookingView[]}` |
 | GET | `/bookings/sources` | `customer.view_masked` | `{sources:[{code,name}]}`; active organization sources |
-| GET | `/bookings/search?date=YYYY-MM-DD&q=...` | `customer.view_masked` | `{businessDate,query,bookings}`; up to 100 results |
+| GET | `/bookings/search?date=YYYY-MM-DD&last3=123` | `customer.view_masked` | Fast reception search: exact last 3 digits, scoped to session venue/date; returns masked booking/waitlist matches, real assigned `tableIds`, and a deduplicated summary |
+| GET | `/bookings/search?date=YYYY-MM-DD&name=...` | `customer.view_masked` | Optional accent-insensitive reception name search; same masked response |
+| GET | `/bookings/search?date=YYYY-MM-DD&q=...` | `customer.view_masked` | Backward-compatible booking search response `{businessDate,query,bookings}`; up to 100 results |
 | GET | `/bookings/export?date=YYYY-MM-DD` | `customer.view_masked` | UTF-8 `text/plain` Zalo summary and booking statistics, no phone fields |
 | GET | `/bookings/:id` | `customer.view_masked` | `{booking:BookingView}` |
 | POST | `/bookings` | `reservation.create` | Body `BookingInput`; 201 `{booking}` |

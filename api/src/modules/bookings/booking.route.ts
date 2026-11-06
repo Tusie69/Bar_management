@@ -30,6 +30,7 @@ import { formatDailyBookingText, getDailyBookingTextInput } from './booking-expo
 import { assertCurrentBusinessDate, validateCalendarDate } from './business-date.js'
 import { assertPhoneDisclosureAllowed, PhoneRevealRateLimiter } from './phone-rate-limit.js'
 import { resolveBookingMetadata, type GuestType } from './booking-metadata.js'
+import { searchReception } from './reception-search.repository.js'
 
 export const bookingRouter: Router = Router()
 const phoneRevealLimiter = env.phone.revealRateLimitMax && env.phone.revealRateLimitWindowMs
@@ -130,14 +131,37 @@ bookingRouter.get('/sources', requireAuthentication, requirePermission('customer
 
 bookingRouter.get('/search', requireAuthentication, requirePermission('customer.view_masked'), async (request, response) => {
   const date = businessDate(request.query.date)
-  if (typeof request.query.q !== 'string' || !request.query.q.trim() || request.query.q.trim().length > 120) {
+  const explicitLast3 = typeof request.query.last3 === 'string' ? request.query.last3.trim() : undefined
+  if (explicitLast3 !== undefined && !/^\d{3}$/.test(explicitLast3)) {
+    throw new AppError(400, 'INVALID_PHONE_SUFFIX', 'Ba số cuối điện thoại phải gồm đúng 3 chữ số.')
+  }
+  const explicitName = typeof request.query.name === 'string' ? request.query.name.trim() : undefined
+  if (explicitName !== undefined && (!explicitName || explicitName.length > 120)) {
     throw new AppError(400, 'INVALID_SEARCH_QUERY', 'Từ khóa tìm kiếm phải dài từ 1 đến 120 ký tự.')
   }
-  const query = request.query.q.trim()
+  const legacy = typeof request.query.q === 'string' ? request.query.q.trim() : undefined
+  if (legacy !== undefined && (!legacy || legacy.length > 120)) {
+    throw new AppError(400, 'INVALID_SEARCH_QUERY', 'Từ khóa tìm kiếm phải dài từ 1 đến 120 ký tự.')
+  }
+  if (legacy && explicitLast3 === undefined && explicitName === undefined) {
+    response.json({
+      businessDate: date,
+      query: legacy,
+      bookings: await searchBookings(requireAuthenticatedActor(request), date, legacy),
+    })
+    return
+  }
+  const last3 = explicitLast3 ?? (legacy && /^\d{3}$/.test(legacy) ? legacy : undefined)
+  const name = explicitName ?? (legacy && !/^\d{3}$/.test(legacy) ? legacy : undefined)
+  if (!last3 && !name) throw new AppError(400, 'INVALID_SEARCH_QUERY', 'Cần nhập 3 số cuối hoặc tên khách.')
+  const result = await searchReception(requireAuthenticatedActor(request), date, {
+    ...(last3 ? { last3 } : {}),
+    ...(name ? { name } : {}),
+  })
   response.json({
     businessDate: date,
-    query,
-    bookings: await searchBookings(requireAuthenticatedActor(request), date, query),
+    query: { ...(last3 ? { last3 } : {}), ...(name ? { name } : {}) },
+    ...result,
   })
 })
 

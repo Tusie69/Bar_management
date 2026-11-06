@@ -5,6 +5,7 @@ import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
 import { assertNoteHasNoPhoneNumber, redactPhoneNumbersInNote } from '../../security/note-privacy.js'
+import { normalizeSearchText } from '../../lib/search-text.js'
 import { assertBusinessDateNotPast } from '../bookings/business-date.js'
 import { protectPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from '../bookings/phone-security.js'
 import { createTableGroup, dissolveUnusedGroups, lockAndValidateAssignableTables } from '../tables/table-group.repository.js'
@@ -204,8 +205,8 @@ export async function createWaitlistEntry(
           `INSERT INTO customers
             (organization_id, display_name, name_search, phone_ciphertext, phone_key_id,
              phone_hmac, phone_hmac_key_id, phone_last3, created_by_user_id)
-           VALUES (?, ?, LOWER(?), ?, ?, ?, ?, ?, ?)`,
-          [actor.organizationId, input.guestName, input.guestName, ...protectedPhoneValues(phone), actor.userId],
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [actor.organizationId, input.guestName, normalizeSearchText(input.guestName), ...protectedPhoneValues(phone), actor.userId],
         )
         customerId = customer.insertId
       }
@@ -512,10 +513,10 @@ export async function seatWaitlistEntry(
         `INSERT INTO reservations
           (organization_id, venue_id, customer_id, contact_name, contact_name_search, source_id,
            party_size, expected_at, business_date, customer_classification, status, note, created_by_user_id)
-         VALUES (?, ?, ?, ?, LOWER(?), ?, ?, UTC_TIMESTAMP(3), ?, 'UNCLASSIFIED', 'BOOKED', ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(3), ?, 'UNCLASSIFIED', 'BOOKED', ?, ?)`,
         [actor.organizationId, actor.venueId, entry.customer_id,
           entry.customer_id === null ? entry.contact_name : null,
-          entry.customer_id === null ? entry.contact_name : null,
+          entry.customer_id === null && entry.contact_name ? normalizeSearchText(entry.contact_name) : null,
           source.id, entry.party_size, businessDate, entry.note, actor.userId],
       )
       reservationId = createdReservation.insertId

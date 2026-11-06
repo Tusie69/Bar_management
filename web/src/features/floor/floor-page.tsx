@@ -216,8 +216,7 @@ export function FloorPage() {
           }
         }
       }
-      if (draftPickable(draft.kind, id, model, draftAvail.data, draft.tableIds))
-        return ui.toggleDraftTable(id)
+      if (draftPickable(draft.kind, id, model, draftAvail.data, draft.tableIds)) return ui.toggleDraftTable(id)
       return toast.info(`${model.label(id)}: không trống · chọn vị trí trống`)
     }
     if (ui.pick) {
@@ -289,11 +288,12 @@ export function FloorPage() {
             waitCount={
               waitlist.isPlaceholderData
                 ? 0
-                : (waitlist.data ?? []).filter((row) => ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"].includes(row.status)).length
+                : (waitlist.data ?? []).filter((row) =>
+                    ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"].includes(row.status),
+                  ).length
             }
             onWaitlist={() => setWaitOpen(true)}
             onCount={() => setCountOpen(true)}
-            onOpenBooking={ui.openReservation}
           />
         </div>
       ) : null}
@@ -382,7 +382,8 @@ export function FloorPage() {
                   states={model.states}
                   availability={bookingDraft ? draftAvailMap : isPickAssign ? pickAvailMap : availMap}
                   groups={live && !bookingDraft && !isPickAssign ? model.floor?.groups : []}
-                  selectedIds={ui.pick || draft ? selectedIds : [...new Set([...selectedIds, ...search.tableIds])]}
+                  selectedIds={selectedIds}
+                  searchHighlightedIds={!ui.pick && !draft ? search.tableIds : []}
                   pickable={bookingDraft ? draftBookingPickable : draft ? null : pickable}
                   zoneFocus={ui.zone}
                   now={now}
@@ -461,7 +462,9 @@ export function FloorPage() {
             <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-[920px]">
               <SheetTitle className="sr-only">Bàn chờ ảo</SheetTitle>
               <SheetDescription className="sr-only">Ngày kinh doanh {fmtBusinessDate(date)}</SheetDescription>
-              <div className="min-h-0 flex-1 overflow-y-auto"><WaitlistPage businessDate={date} /></div>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <WaitlistPage businessDate={date} />
+              </div>
             </SheetContent>
           </Sheet>
         </>
@@ -523,7 +526,7 @@ function PickBanner({ model }: { model: ReturnType<typeof useFloorModel> }) {
             {selection.length ? (
               <>
                 <span className="font-medium">{selection.map((id) => model.label(id)).join(" + ")}</span>
-                <span className="text-muted-foreground font-normal"> · tổng sức chứa {totalCapacity} chỗ</span>
+                <span className="font-normal text-muted-foreground"> · tổng sức chứa {totalCapacity} chỗ</span>
               </>
             ) : (
               <span className="text-subtle">Chưa chọn bàn</span>

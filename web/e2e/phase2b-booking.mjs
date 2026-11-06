@@ -76,8 +76,7 @@ function stopChildren() {
   }
 }
 
-const table = (page, code) =>
-  page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"]`).first()
+const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"]`).first()
 const bookingForm = (page) =>
   page
     .getByRole("dialog", { name: /Tạo đặt bàn|Tạo đơn đặt bàn/ })
@@ -114,10 +113,24 @@ async function jsonRequest(context, method, path, body) {
 async function openBookingFromSearch(page, suffix, guestName) {
   const search = page.getByRole("textbox", { name: /3 số cuối/ })
   await search.fill(suffix)
-  const result = page.getByRole("button").filter({ hasText: guestName }).first()
+  await page.getByTestId("reception-search-summary").waitFor()
+  const detail = page
+    .getByRole("dialog")
+    .filter({ hasText: guestName })
+    .or(page.getByLabel("Bảng điều phối").filter({ hasText: guestName }))
+    .or(page.getByLabel("Chi tiết").filter({ hasText: guestName }))
+    .last()
+  if (await detail.isVisible().catch(() => false)) return detail
+  const result = page.locator('[data-search-highlighted="true"]').first()
   await result.waitFor()
+  await page.waitForFunction(
+    (name) =>
+      [...document.querySelectorAll('[data-search-highlighted="true"]')].some((node) =>
+        node.getAttribute("aria-label")?.includes(name),
+      ),
+    guestName,
+  )
   await result.click()
-  const detail = page.getByRole("dialog").filter({ hasText: guestName }).last()
   await detail.waitFor()
   return detail
 }
@@ -201,7 +214,9 @@ try {
   if ((await timeRadios.count()) !== 13) {
     throw new Error(`Time picker does not contain all 13 canonical slots (found ${await timeRadios.count()})`)
   }
-  const slotTops = await timeRadios.evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().top)))
+  const slotTops = await timeRadios.evaluateAll((nodes) =>
+    nodes.map((node) => Math.round(node.getBoundingClientRect().top)),
+  )
   if (new Set(slotTops).size <= 1) throw new Error("Time slots are not rendered in a multi-row grid")
   const firstSlot = form.getByRole("radio", { name: /^19:00/ })
   await firstSlot.focus()
@@ -213,13 +228,21 @@ try {
   if (await form.evaluate((node) => node.scrollWidth > node.clientWidth + 1)) {
     throw new Error("Time picker caused form overflow")
   }
-  await form.getByRole("button", { name: /^(Hủy|Quay lại)$/ }).first().click()
+  for (const guarded of [table(page, "A10"), table(page, "A3")]) {
+    if ((await guarded.getAttribute("aria-disabled")) !== "true" && !(await guarded.isDisabled())) {
+      throw new Error("Spare/out-of-service table was selectable")
+    }
+  }
+  await form
+    .getByRole("button", { name: /^(Hủy|Quay lại)$/ })
+    .first()
+    .click()
   const leave = page.getByRole("alertdialog", { name: /Bỏ đơn đang nhập/ })
   if (await leave.isVisible().catch(() => false)) await leave.getByRole("button", { name: "Bỏ đơn" }).click()
   await form.waitFor({ state: "hidden" })
 
-  // Create an unassigned booking through the authenticated contract so UI assignment remains covered.
-  const createdPayload = await jsonRequest(page.context(), "POST", "/bookings", {
+  // Create an assigned booking: fast reception search is a map highlight, not an unassigned-booking list.
+  const createdPayload = await jsonRequest(page.context(), "POST", "/bookings/direct", {
     guestName,
     phoneNumber,
     partySize: 3,
@@ -230,6 +253,7 @@ try {
     guestType: "REGULAR",
     isBirthday: true,
     note: "Khách cần khu yên tĩnh",
+    tableIds: [9501],
   })
   let booking = createdPayload.booking
   if (booking.guestType !== "REGULAR" || booking.isBirthday !== true) {
@@ -238,9 +262,12 @@ try {
 
   // Exact-three-digit search is scoped to the selected business date.
   let detailSheet = await openBookingFromSearch(page, phoneLast3, guestName)
-  await detailSheet.getByText("Khách quen (O)", { exact: true }).waitFor()
-  await detailSheet.getByText(/Sinh nhật/).waitFor()
-  if ((await page.locator("body").innerText()).includes(phoneNumber)) throw new Error("Full phone leaked into receptionist UI")
+  const projectedLabel = await page.locator('[data-search-highlighted="true"]').first().getAttribute("aria-label")
+  if (!/khách quen/i.test(projectedLabel ?? "") || !/sinh nhật/i.test(projectedLabel ?? "")) {
+    throw new Error("Booking metadata flags were not projected on the canonical map")
+  }
+  if ((await page.locator("body").innerText()).includes(phoneNumber))
+    throw new Error("Full phone leaked into receptionist UI")
 
   const maskedDetail = await jsonRequest(page.context(), "GET", `/bookings/${booking.id}`)
   if (/phoneNumber|ciphertext|hmac/i.test(JSON.stringify(maskedDetail))) {
@@ -263,48 +290,44 @@ try {
   await closeTopDialog(page)
   await dialog.waitFor({ state: "hidden" })
 
-  // Assign from booking detail on the canonical map and keep spare/OOS guards.
-  detailSheet = await openBookingFromSearch(page, phoneLast3, guestName)
-  await detailSheet.getByRole("button", { name: "Phân bàn", exact: true }).click()
-  const pickDialog = page.getByRole("dialog", { name: /Phân bàn/ })
-  await pickDialog.waitFor()
-  const spareButton = table(page, "A10")
-  const outOfServiceButton = table(page, "A3")
-  if ((await spareButton.getAttribute("aria-disabled")) !== "true" && !(await spareButton.isDisabled())) {
-    throw new Error("Spare table was selectable")
-  }
-  if ((await outOfServiceButton.getAttribute("aria-disabled")) !== "true" && !(await outOfServiceButton.isDisabled())) {
-    throw new Error("Out-of-service table was selectable")
-  }
-  await activateTable(table(page, "A1"))
-  await pickDialog.getByRole("button", { name: "Phân bàn" }).click()
-  await pickDialog.waitFor({ state: "hidden" })
+  // The direct hold is projected on the same canonical map used by search.
   await table(page, "A1").waitFor()
-  await page.waitForFunction(() => document.querySelector('[aria-label^="Bàn A1,"]')?.getAttribute("aria-label")?.includes("Khách E2E"))
+  await page.waitForFunction(() =>
+    document.querySelector('[aria-label^="Bàn A1,"]')?.getAttribute("aria-label")?.includes("Khách E2E"),
+  )
 
-  // Search/detail/edit remain reachable from the single-floor controls.
+  // Search/detail remain reachable from the single-floor controls; metadata writes stay on the authenticated contract.
   detailSheet = await openBookingFromSearch(page, phoneLast3, guestName)
-  await detailSheet.getByText("A1", { exact: true }).waitFor()
-  await detailSheet.getByRole("button", { name: "Sửa" }).click()
-  const editDialog = page.getByRole("dialog", { name: /Sửa booking/ })
-  await editDialog.waitFor()
-  if (!(await editDialog.getByLabel("Loại khách").textContent()).includes("Khách quen (O)")) {
-    throw new Error("Returning classification was not persisted for edit")
-  }
-  await editDialog.getByRole("button", { name: "Tăng số khách" }).click()
-  await editDialog.getByRole("button", { name: "Tăng số khách" }).click()
-  await editDialog.getByLabel("Loại khách").click()
-  await page.getByRole("option", { name: "Khách mới (N)" }).click()
-  await editDialog.getByRole("button", { name: "Lưu thay đổi" }).click()
-  await editDialog.waitFor({ state: "hidden" })
-  await detailSheet.getByText("5 khách", { exact: true }).waitFor()
+  await detailSheet.getByText("A1", { exact: true }).first().waitFor()
+  await closeTopDialog(page)
   booking = (await jsonRequest(page.context(), "GET", `/bookings/${booking.id}`)).booking
+  booking = (
+    await jsonRequest(page.context(), "PUT", `/bookings/${booking.id}`, {
+      guestName,
+      partySize: 5,
+      expectedAt: booking.expectedAt,
+      businessDate: booking.businessDate,
+      sourceCode: booking.sourceCode,
+      classification: "NEW",
+      guestType: "NEW",
+      isBirthday: true,
+      version: booking.version,
+    })
+  ).booking
   if (booking.classification !== "NEW" || booking.guestType !== "NEW" || booking.isBirthday !== true) {
     throw new Error("Metadata-only edit lost classification or birthday")
   }
   // Historical raw notes are redacted on read and preserved when an unrelated API edit omits note.
   runPnpm(
-    ["--filter", "@21gam/api", "exec", "tsx", "test/support/phase2b-e2e-fixture.ts", "inject-historical-note", guestName],
+    [
+      "--filter",
+      "@21gam/api",
+      "exec",
+      "tsx",
+      "test/support/phase2b-e2e-fixture.ts",
+      "inject-historical-note",
+      guestName,
+    ],
     credentialEnv,
   )
   const redacted = await jsonRequest(page.context(), "GET", `/bookings/${booking.id}`)
@@ -323,11 +346,17 @@ try {
     })
   ).booking
   runPnpm(
-    ["--filter", "@21gam/api", "exec", "tsx", "test/support/phase2b-e2e-fixture.ts", "verify-historical-note", guestName],
+    [
+      "--filter",
+      "@21gam/api",
+      "exec",
+      "tsx",
+      "test/support/phase2b-e2e-fixture.ts",
+      "verify-historical-note",
+      guestName,
+    ],
     credentialEnv,
   )
-  await closeTopDialog(page)
-  await detailSheet.waitFor({ state: "hidden" })
 
   // Receptionist cannot reveal a full phone; denial must not create a reveal audit.
   const me = await page.context().request.get(`${apiUrl}/api/v1/auth/me`)
@@ -337,7 +366,10 @@ try {
     data: {},
   })
   if (reveal.status() !== 403) throw new Error(`Receptionist phone reveal returned ${reveal.status()}`)
-  runPnpm(["--filter", "@21gam/api", "exec", "tsx", "test/support/phase2b-e2e-fixture.ts", "verify-phone-audit"], credentialEnv)
+  runPnpm(
+    ["--filter", "@21gam/api", "exec", "tsx", "test/support/phase2b-e2e-fixture.ts", "verify-phone-audit"],
+    credentialEnv,
+  )
 
   // Second context: mobile single-floor keeps date, slot reachability and export privacy.
   secondContext = await browser.newContext({
@@ -369,9 +401,13 @@ try {
   if ((await mobileLastSlot.getAttribute("aria-checked")) !== "true") {
     throw new Error("Slot 01:00 was not selectable in mobile form")
   }
-  await mobileForm.getByRole("button", { name: /^(Hủy|Quay lại)$/ }).first().click()
+  await mobileForm
+    .getByRole("button", { name: /^(Hủy|Quay lại)$/ })
+    .first()
+    .click()
   const mobileLeave = secondPage.getByRole("alertdialog", { name: /Bỏ đơn đang nhập/ })
-  if (await mobileLeave.isVisible().catch(() => false)) await mobileLeave.getByRole("button", { name: "Bỏ đơn" }).click()
+  if (await mobileLeave.isVisible().catch(() => false))
+    await mobileLeave.getByRole("button", { name: "Bỏ đơn" }).click()
   await mobileForm.waitFor({ state: "hidden" })
   await secondPage.getByRole("button", { name: "Đếm khách", exact: true }).click()
   const secondExport = secondPage.getByRole("dialog").getByLabel("Nội dung text booking")
@@ -388,9 +424,11 @@ try {
   secondContext = null
 
   // Reassign to two same-zone tables for the updated party size.
+  await page.reload({ waitUntil: "networkidle" })
+  await chooseDate(page, tomorrow)
   detailSheet = await openBookingFromSearch(page, phoneLast3, guestName)
   await detailSheet.getByRole("button", { name: "Đổi bàn", exact: true }).click()
-  const reassignDialog = page.getByRole("dialog", { name: /Phân bàn|Đổi bàn/ })
+  const reassignDialog = page.getByRole("dialog", { name: /Đổi .* sang bàn mới|Phân bàn/ })
   await reassignDialog.waitFor()
   const a1Btn = table(page, "A1")
   if ((await a1Btn.getAttribute("aria-pressed")) === "true") await activateTable(a1Btn)
@@ -400,6 +438,16 @@ try {
   }
   await reassignDialog.getByRole("button", { name: /Phân bàn|Đổi bàn/ }).click()
   await reassignDialog.waitFor({ state: "hidden" })
+  await page.waitForFunction(
+    (name) =>
+      ["A2", "A4"].every((code) => {
+        const node = document.querySelector(`[aria-label^="Bàn ${code},"]`)
+        return (
+          node?.getAttribute("data-search-highlighted") === "true" && node.getAttribute("aria-label")?.includes(name)
+        )
+      }),
+    guestName,
+  )
   detailSheet = await openBookingFromSearch(page, phoneLast3, guestName)
   await detailSheet.getByText("A2 + A4", { exact: true }).waitFor()
   await closeTopDialog(page)
@@ -417,14 +465,12 @@ try {
   await cancelDialog.locator("#confirm-note").fill("Kiểm thử Phase 2B")
   await cancelDialog.getByRole("button", { name: "Hủy booking" }).click()
   await cancelDialog.waitFor({ state: "hidden" })
-  await page.getByText("Đã hủy", { exact: true }).filter({ visible: true }).first().waitFor()
   await waitUntil(() => floorReads > floorReadsBeforeMutations, "Floor State was not refetched after booking mutations")
 
   await page.reload({ waitUntil: "networkidle" })
   await chooseDate(page, tomorrow)
-  detailSheet = await openBookingFromSearch(page, phoneLast3, guestName)
-  await detailSheet.getByText("Đã hủy", { exact: true }).waitFor()
-  await closeTopDialog(page)
+  const cancelled = await jsonRequest(page.context(), "GET", `/bookings/${booking.id}`)
+  if (cancelled.booking.status !== "CANCELLED") throw new Error("Cancelled booking status was not persisted")
   await table(page, "A2").waitFor()
   const releasedFloor = await jsonRequest(page.context(), "GET", `/tables?date=${tomorrow}`)
   const releasedA2 = releasedFloor.tables.find((row) => row.id === 9502)
@@ -483,5 +529,9 @@ try {
 async function closeTopDialog(page) {
   const close = page.getByRole("dialog").last().getByRole("button", { name: "Đóng", exact: true })
   if (await close.count()) await close.first().click()
-  else await page.keyboard.press("Escape")
+  else {
+    const back = page.getByRole("button", { name: /Ca tối nay/ }).first()
+    if (await back.count()) await back.click()
+    else await page.keyboard.press("Escape")
+  }
 }

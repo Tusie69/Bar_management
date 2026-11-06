@@ -37,6 +37,7 @@ import type {
   PhoneReveal,
   ReportQuery,
   ReportResult,
+  ReceptionSearchResult,
   ReservationView,
   SessionUser,
   ShiftOverview,
@@ -225,6 +226,7 @@ export interface GamApi {
   getAvailability(at: Date, partySize: number): Promise<AvailabilityResult>
   getShiftOverview(): Promise<ShiftOverview>
   listReservations(q: ReservationQuery): Promise<ReservationView[]>
+  searchReception(businessDate: BusinessDate, query: { last3?: string; name?: string }): Promise<ReceptionSearchResult>
   exportDailyBookingText(businessDate: BusinessDate): Promise<string>
   listVisits(businessDate: BusinessDate): Promise<VisitView[]>
   listWaitlist(businessDate: BusinessDate): Promise<WaitlistEntryView[]>
@@ -308,6 +310,7 @@ export const REST_ENDPOINTS = {
   sources: "GET /bookings/sources",
   floorState: "GET /tables?date=YYYY-MM-DD",
   reservations: "GET /bookings?date=YYYY-MM-DD",
+  receptionSearch: "GET /bookings/search?date=YYYY-MM-DD&last3=123",
   exportDailyBookingText: "GET /bookings/export?date=YYYY-MM-DD",
   createReservation: "POST /bookings",
   createDirectReservation: "POST /bookings/direct",

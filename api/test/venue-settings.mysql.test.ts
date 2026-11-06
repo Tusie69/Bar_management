@@ -31,6 +31,11 @@ mysqlDescribe('venue settings API and dynamic configuration', () => {
   afterAll(async () => {
     await clearFixture()
     await databasePool.execute(
+      `DELETE rp FROM role_permissions rp
+       JOIN roles r ON r.id = rp.role_id JOIN permissions p ON p.id = rp.permission_id
+       WHERE r.code = 'CUSTOMER_CARE' AND p.code = 'venue.configure'`,
+    )
+    await databasePool.execute(
       `DELETE rp FROM role_permissions rp JOIN roles r ON r.id = rp.role_id
        WHERE r.code IN ('TEST_SUPER_ADMIN', 'TEST_READ_ONLY_ADMIN')`,
     )
@@ -75,6 +80,13 @@ mysqlDescribe('venue settings API and dynamic configuration', () => {
          WHERE r.code = ?`,
         [roleCode],
       )
+    } else {
+      await databasePool.execute(
+        `DELETE rp FROM role_permissions rp
+         JOIN roles r ON r.id = rp.role_id JOIN permissions p ON p.id = rp.permission_id
+         WHERE r.code = ? AND p.code = 'venue.configure'`,
+        [roleCode],
+      )
     }
   }
 
@@ -116,7 +128,7 @@ mysqlDescribe('venue settings API and dynamic configuration', () => {
       quickTimes: ['20:45', '22:15', '00:30'], upcomingMinutes: 15, noShowMinutes: 45,
     })).status).toBe(200)
 
-    await setRole('integration_care', 'TEST_SUPER_ADMIN', true)
+    await setRole('integration_care', 'CUSTOMER_CARE', true)
     const superAdmin = await putSettings('integration_care', {
       quickTimes: ['19:00', '23:45', '01:00'], upcomingMinutes: 20, noShowMinutes: 50,
     })
@@ -126,7 +138,7 @@ mysqlDescribe('venue settings API and dynamic configuration', () => {
     })
 
     await resetFixture()
-    await setRole('integration_care', 'TEST_READ_ONLY_ADMIN', false)
+    await setRole('integration_care', 'CUSTOMER_CARE', false)
     expect((await putSettings('integration_care')).status).toBe(403)
   })
 

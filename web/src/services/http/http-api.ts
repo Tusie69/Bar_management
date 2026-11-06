@@ -154,6 +154,7 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
       const [rows, catalog] = await Promise.all([bookings.list(query.businessDate, query.search), loadCatalog()])
       return rows.map((booking) => mapReservation(booking, catalog))
     },
+    searchReception: (businessDate, query) => bookings.searchReception(businessDate, query),
     listWaitlist,
     exportDailyBookingText: (date) => bookings.exportDailyText(date),
     createReservation: async (input) => {

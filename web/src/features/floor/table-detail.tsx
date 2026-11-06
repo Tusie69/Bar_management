@@ -69,7 +69,7 @@ import {
 import type { ClaimView, WaitlistEntryView } from "@/domain/models"
 import { symbolByNo } from "@/domain/symbols"
 import { useAction } from "@/hooks/use-action"
-import { useNow, useTableHistory, useWaitlist } from "@/hooks/use-data"
+import { useNow, useTableHistory, useVenueSettings, useWaitlist } from "@/hooks/use-data"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { businessDateOf, fmtCountdown, fmtElapsed, fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -574,11 +574,14 @@ function ReservationSection({
   const [noShowOpen, setNoShowOpen] = useState(false)
   const ui = useUi()
   const venue = model.catalog?.venue
-  const canNoShow = claim.minutesLate >= (venue?.noShowWarningMinutes ?? 30)
-  const canConfirmLate = model.floor?.businessDate === businessDateOf(now)
-    && now.getTime() >= claim.startsAt.getTime()
-    && !canNoShow
-    && !claim.lateConfirmedAt
+  const settings = useVenueSettings()
+  const noShowMinutes = settings.data?.noShowMinutes ?? venue?.noShowWarningMinutes ?? 30
+  const canNoShow = claim.minutesLate >= noShowMinutes
+  const canConfirmLate =
+    model.floor?.businessDate === businessDateOf(now) &&
+    now.getTime() >= claim.startsAt.getTime() &&
+    !canNoShow &&
+    !claim.lateConfirmedAt
   const today = claim.startsAt.getTime() - now.getTime() < 12 * 3600_000
   return (
     <>
@@ -607,7 +610,9 @@ function ReservationSection({
       ) : null}
       {claim.lateConfirmedAt ? (
         <Note icon={BadgeCheck} tone="late">
-          <span className="font-semibold" style={{ color: STATE_META.late_confirmed.ink }}>Khách đã báo sẽ tới muộn</span>
+          <span className="font-semibold" style={{ color: STATE_META.late_confirmed.ink }}>
+            Khách đã báo sẽ tới muộn
+          </span>
           <span className="block text-muted-foreground">Bàn vẫn được giữ; có thể check-in khi khách đến.</span>
         </Note>
       ) : null}
@@ -634,7 +639,15 @@ function ReservationSection({
         <GuardedButton
           permission="reservation.update"
           variant="outline"
-          disabledReason={pending ? "Đang ghi nhận..." : canConfirmLate ? null : claim.lateConfirmedAt ? "Đã ghi nhận khách tới muộn" : "Chỉ bật sau giờ hẹn và trước ngưỡng Không đến"}
+          disabledReason={
+            pending
+              ? "Đang ghi nhận..."
+              : canConfirmLate
+                ? null
+                : claim.lateConfirmedAt
+                  ? "Đã ghi nhận khách tới muộn"
+                  : "Chỉ bật sau giờ hẹn và trước ngưỡng Không đến"
+          }
           onClick={() => run(() => api.confirmLate(claim.reservationId!, claim.version))}
         >
           <BadgeCheck /> Tới muộn
@@ -648,9 +661,7 @@ function ReservationSection({
         <GuardedButton
           permission="reservation.mark_no_show"
           variant="outline"
-          disabledReason={
-            canNoShow ? null : `Chỉ bật sau ${venue?.noShowWarningMinutes ?? 30} phút trễ (chờ PO duyệt DR-05)`
-          }
+          disabledReason={canNoShow ? null : `Chỉ bật sau ${noShowMinutes} phút trễ (chờ PO duyệt DR-05)`}
           onClick={() => setNoShowOpen(true)}
         >
           <TimerReset /> Không đến
