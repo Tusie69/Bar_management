@@ -1,0 +1,38 @@
+[
+  {
+    "name": "AT1 AT4 AT6 AT7: tap A1 opens its sheet, 22:30 in 3 taps, venue quick times, saved on A1",
+    "result": "PASS",
+    "taps": 3,
+    "tableCodes": [
+      "A1"
+    ]
+  },
+  {
+    "name": "AT2: changing the date re-checks the table for that date",
+    "result": "PASS"
+  },
+  {
+    "name": "AT3 AT5 AT13: other device takes A2 mid-entry, backend refuses, data stays, another table saves",
+    "result": "PASS"
+  },
+  {
+    "name": "AT12: 00:30 stays on business date 03/11, 23:30 on 04/11",
+    "result": "PASS",
+    "early": "2026-11-03",
+    "late": "2026-11-04"
+  },
+  {
+    "name": "AT8 AT9: booking without table enters Bàn chờ as ADVANCE_RESERVATION, moves to A2 in 4 taps, no Visit",
+    "result": "PASS",
+    "taps": 4
+  },
+  {
+    "name": "AT10: Walk-in on a free table creates Visit and allocation",
+    "result": "PASS",
+    "state": "IN_USE"
+  },
+  {
+    "name": "AT11: Walk-in without a table enters Bàn chờ as WALK_IN",
+    "result": "PASS"
+  }
+]

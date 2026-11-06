@@ -4,9 +4,10 @@ import { randomBytes } from "node:crypto"
 import { spawn, spawnSync } from "node:child_process"
 import assert from "node:assert/strict"
 import fs from "node:fs"
+import { fileURLToPath } from "node:url"
 import { chromium, expect } from "@playwright/test"
 
-const root = new URL("../../", import.meta.url).pathname.replace(/^\/(\w:)/, "$1")
+const root = fileURLToPath(new URL("../../", import.meta.url))
 const apiUrl = process.env.API_BASE_URL ?? "http://127.0.0.1:3101"
 const webUrl = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5174"
 const databaseName = process.env.DB_NAME ?? "gam21_platform_test"
