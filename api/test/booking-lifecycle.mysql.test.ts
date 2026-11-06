@@ -348,6 +348,20 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     expect(Number(stored.version)).toBe(retained.version)
   })
 
+  it('preserves an existing off-grid arrival when editing booking details', async () => {
+    const created = await createBooking(actor, bookingInput())
+    await databasePool.execute(
+      'UPDATE reservations SET expected_at = ? WHERE id = ?', ['2030-10-24 14:17:00.000', created.id],
+    )
+    const updated = await updateBooking(actor, created.id, {
+      ...bookingInput('2030-10-24', '21:17', 'Legacy arrival'), expectedVersion: created.version,
+    })
+    expect(updated.expectedAt).toBe('2030-10-24T14:17:00.000Z')
+    await expect(updateBooking(actor, updated.id, {
+      ...bookingInput('2030-10-24', '21:18', 'Invalid reschedule'), expectedVersion: updated.version,
+    })).rejects.toMatchObject({ code: 'EXPECTED_AT_OFF_SLOT' })
+  })
+
   it('persists manual O/N classification, supports edits, and keeps legacy NULL rows unclassified', async () => {
     const created = await createBooking(actor, bookingInput('2030-10-24', '20:00', 'Returning guest', 'RETURNING'))
     expect(created.classification).toBe('RETURNING')

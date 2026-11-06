@@ -19,7 +19,10 @@ const advanceBody = (reservationId: number) => ({ kind: 'ADVANCE_RESERVATION', r
 mysqlDescribe('Wave 2 owner-approved integration', () => {
   beforeAll(initializeFixture)
   beforeEach(resetFixture)
-  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
   afterAll(clearFixture)
 
   it('revokes receptionist phone reveal and keeps venue configuration owner-only', async () => {
@@ -186,8 +189,9 @@ mysqlDescribe('Wave 2 owner-approved integration', () => {
     )
     expect(audit).toHaveLength(1)
     const floor = await session.agent.get(`/api/v1/tables?date=${businessDate}`)
-    expect(floor.body).toMatchObject({ changeSeq: String(audit[0]?.change_seq),
-      tables: expect.arrayContaining([expect.objectContaining({ id: tableId, state: 'IN_USE' })]) })
+    const projection = floor.body as { changeSeq: string; tables: { id: number; state: string }[] }
+    expect(projection.changeSeq).toBe(String(audit[0]?.change_seq))
+    expect(projection.tables.find(table => table.id === tableId)?.state).toBe('IN_USE')
   })
 
   async function bookingWithLinkedEntries(status: 'CONTACTING' | 'HOLD_ACTIVE') {
