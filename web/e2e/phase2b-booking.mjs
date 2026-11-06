@@ -222,7 +222,7 @@ try {
   const firstSlot = form.getByRole("radio", { name: /^19:00/ })
   await firstSlot.focus()
   await firstSlot.press("ArrowRight")
-  if ((await form.getByRole("radio", { name: /^19:30/ }).getAttribute("aria-checked")) !== "true") {
+  if ((await form.getByRole("radio", { name: /^19:15/ }).getAttribute("aria-checked")) !== "true") {
     throw new Error("Arrow-key time selection did not update the selected slot")
   }
   await form.getByRole("radio", { name: /^01:00/ }).click()
