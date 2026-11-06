@@ -285,11 +285,18 @@ bookingRouter.post(
 bookingRouter.post('/walk-ins', requireAuthentication, requireCsrfProtection, requirePermission('visit.walkin'), idempotent('booking.walk_in'), async (request, response) => {
   const body = objectBody(request.body)
   if (!Array.isArray(body.tableIds)) throw new AppError(400, 'TABLES_REQUIRED', 'Danh sách bàn không hợp lệ.')
+  if (body.phoneNumber !== undefined
+    && (typeof body.phoneNumber !== 'string' || body.phoneNumber.length > 20)) {
+    throw new AppError(422, 'INVALID_PHONE_NUMBER', 'Số điện thoại không hợp lệ.')
+  }
+  const guestName = optionalText(body.guestName, 120, 'INVALID_GUEST_NAME', 'Tên khách không được vượt quá 120 ký tự.')
   const result = await createWalkIn(requireAuthenticatedActor(request), {
     partySize: positiveInteger(body.partySize, 'INVALID_PARTY_SIZE', 'Số khách không hợp lệ.'),
     businessDate: assertCurrentBusinessDate(body.businessDate, applicationNow()),
     tableIds: body.tableIds.map((id) => positiveInteger(id, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.')),
-    ...(typeof body.guestName === 'string' && body.guestName.trim() ? { guestName: body.guestName.trim() } : {}),
+    ...(guestName ? { guestName } : {}),
+    ...(typeof body.phoneNumber === 'string' && body.phoneNumber.trim()
+      ? { phoneNumber: body.phoneNumber.trim() } : {}),
   }, idempotencyTransaction(response))
   response.status(201).json(result)
 })

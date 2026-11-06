@@ -11,7 +11,7 @@ Base URL: `http://localhost:3000/api/v1`. This document describes the implemente
 - Actors, organization and venue are determined by the authenticated session. Request bodies cannot choose another organization, venue or user. Booking sources belong to the organization; bookings, tables, visits and waitlist belong to the active venue.
 - All business routes require authentication and their listed permissions. Permissions are checked on every request, including after role revocation.
 - Existing-entity writes require the current positive integer `version`. The status compatibility route uses optional `expectedVersion`. Stale versions return 409. Do not automatically retry mutations.
-- `Idempotency-Key` is not enforced. Disable duplicate submission in clients.
+- `Idempotency-Key` is optional on protected create endpoints. When supplied, it is bound to the authenticated organization, endpoint and request fingerprint; concurrent/retried requests replay one committed response and share the domain transaction. Clients should still disable duplicate submission for user feedback.
 - `businessDate` is a valid `YYYY-MM-DD`; response instants are ISO-8601 UTC strings. Booking `expectedAt` must include an offset and represent local time in `Asia/Ho_Chi_Minh` (normally `+07:00`). Business hours are 17:00 through before 05:00 the next morning; after midnight belongs to the previous business date. New or changed booking times must be within 19:00-01:00 inclusive. Updating other fields on a historical booking may retain its existing out-of-window timestamp. Walk-ins keep the operating-hours rule.
 - There is no subscription/change-feed endpoint. Clients may poll and refetch after successful mutations.
 
@@ -97,7 +97,7 @@ Spare configuration is persistent rather than per-day. `reason` is required, at 
 | POST | `/bookings/:id/calls/:callId/outcome` | `booking.phone.reveal` | Body `{outcome,bookingVersion?}`; records one result for the call |
 | POST | `/bookings/:id/check-in` | `visit.checkin` | Body `{version}`; `{booking}` |
 | POST | `/bookings/:id/phone:reveal` | Both `booking.phone.reveal` and `customer.phone.reveal` | `{phoneNumber}`; owner-only under seeded roles |
-| POST | `/bookings/walk-ins` | `visit.walkin` | Body `{partySize,businessDate,tableIds,guestName?}`; 201 `{visitId}` |
+| POST | `/bookings/walk-ins` | `visit.walkin` | Body `{partySize,businessDate,tableIds,guestName?,phoneNumber?}`; 201 `{visitId}` |
 
 `BookingInput`:
 
@@ -124,7 +124,7 @@ Direct creation atomically creates the reservation, its hold, allocations and (f
 
 Merges preserve existing tables, add at least one table, require compatible kinds in one zone and sufficient combined capacity, and create/reuse an active group symbol. Reassignment may select multiple same-kind tables across bookable zones without adjacency configuration; multiple targets receive a shared group. Assignments reject spare/inactive tables and occupied allocations. The backend locks table rows and revalidates concurrent requests; a lost race returns 409 rather than double seating. No fixed seating duration is assumed.
 
-Walk-ins require the current business date during operating hours; errors are `WALK_IN_OUTSIDE_BUSINESS_HOURS` or `BUSINESS_DATE_NOT_CURRENT`. A reservation for another date does not authorize a walk-in for that date.
+Walk-ins require the current business date during operating hours; errors are `WALK_IN_OUTSIDE_BUSINESS_HOURS` or `BUSINESS_DATE_NOT_CURRENT`. A reservation for another date does not authorize a walk-in for that date. Name and phone are optional; an omitted name is stored/displayed as `Khách Walk-in`. An optional phone is protected through the existing encrypted customer identity and is never returned by this endpoint. The mutation locks and validates ACTIVE/non-spare tables in one bookable zone with compatible kinds and sufficient total capacity, rejects any unreleased allocation (including confirmed booking holds), creates a canonical group for multiple tables without an adjacency requirement, then writes the Visit, USAGE allocations, `WALK_IN_CREATED` audit and one venue `change_seq` increment atomically. An `Idempotency-Key` replay shares the same transaction and produces one domain effect.
 
 ### Late confirmation (TU-12)
 

@@ -1630,6 +1630,7 @@ export async function confirmBookingLate(
 
 export interface CreateWalkInInput {
   guestName?: string
+  phoneNumber?: string
   partySize: number
   businessDate: string
   tableIds: number[]
@@ -1646,42 +1647,81 @@ export async function createWalkIn(
     if (ownsTransaction) await connection.beginTransaction()
     const uniqueTableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
     if (!uniqueTableIds.length) throw new AppError(400, 'TABLE_REQUIRED', 'Cần chọn ít nhất một bàn cho khách walk-in.')
-    const placeholders = uniqueTableIds.map(() => '?').join(',')
-    const [tableRows] = await connection.execute<(RowDataPacket & { id: number; code: string; is_spare: number })[]>(
-      `SELECT id, code, is_spare FROM dining_tables WHERE venue_id = ? AND status = 'ACTIVE' AND id IN (${placeholders}) FOR UPDATE`,
-      [actor.venueId, ...uniqueTableIds],
-    )
-    if (tableRows.length !== uniqueTableIds.length)
-      throw new AppError(400, 'TABLE_NOT_FOUND', 'Có bàn không tồn tại hoặc ngừng hoạt động.')
-    const spareTable = tableRows.find((table) => Boolean(table.is_spare))
-    if (spareTable)
+    const guestName = input.guestName?.trim() || 'Khách Walk-in'
+    const tables = await lockAndValidateAssignableTables(connection, actor, uniqueTableIds)
+    const totalCapacity = tables.reduce((total, table) => total + Number(table.capacity), 0)
+    if (totalCapacity < input.partySize) {
       throw new AppError(
         409,
-        'SPARE_TABLE_NOT_BOOKABLE',
-        `Bàn ${spareTable.code} là bàn sơ cua và chưa được cấu hình để nhận khách.`,
+        'INSUFFICIENT_TABLE_CAPACITY',
+        `Các bàn đã chọn chỉ có ${totalCapacity} chỗ cho ${input.partySize} khách.`,
       )
+    }
+    const placeholders = uniqueTableIds.map(() => '?').join(',')
     const [conflicts] = await connection.execute<RowDataPacket[]>(
       `SELECT table_id FROM table_allocations
-       WHERE venue_id = ? AND released_at IS NULL AND table_id IN (${placeholders})
+       WHERE organization_id = ? AND venue_id = ? AND released_at IS NULL AND table_id IN (${placeholders})
+       ORDER BY table_id, id
        FOR UPDATE`,
-      [actor.venueId, ...uniqueTableIds],
+      [actor.organizationId, actor.venueId, ...uniqueTableIds],
     )
     if (conflicts.length)
       throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
+
+    let customerId: number | null = null
+    if (input.phoneNumber) {
+      const phone = protectPhoneNumber(input.phoneNumber, phoneKeyRing())
+      const [customers] = await connection.execute<(RowDataPacket & { id: number })[]>(
+        `SELECT id FROM customers
+         WHERE organization_id = ? AND phone_hmac = ? AND status = 'ACTIVE' FOR UPDATE`,
+        [actor.organizationId, phone.hmac],
+      )
+      customerId = customers[0] ? Number(customers[0].id) : null
+      if (customerId === null) {
+        const [customer] = await connection.execute<ResultSetHeader>(
+          `INSERT INTO customers
+            (organization_id, display_name, name_search, phone_ciphertext, phone_key_id,
+             phone_hmac, phone_hmac_key_id, phone_last3, created_by_user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [actor.organizationId, guestName, normalizeSearchText(guestName), ...protectedPhoneValues(phone), actor.userId],
+        )
+        customerId = customer.insertId
+      }
+    }
+
+    const group = uniqueTableIds.length > 1
+      ? await createTableGroup(connection, actor, input.businessDate)
+      : null
     const [visitResult] = await connection.execute<ResultSetHeader>(
       `INSERT INTO visits
-        (organization_id, venue_id, origin, contact_name, guest_count, started_at, business_date, created_by_user_id)
-       VALUES (?, ?, 'WALK_IN', ?, ?, UTC_TIMESTAMP(3), ?, ?)`,
-      [actor.organizationId, actor.venueId, input.guestName ?? null, input.partySize, input.businessDate, actor.userId],
+        (organization_id, venue_id, origin, customer_id, contact_name, guest_count,
+         started_at, business_date, created_by_user_id)
+       VALUES (?, ?, 'WALK_IN', ?, ?, ?, UTC_TIMESTAMP(3), ?, ?)`,
+      [actor.organizationId, actor.venueId, customerId, customerId === null ? guestName : null,
+        input.partySize, input.businessDate, actor.userId],
     )
+    const allocationIds: number[] = []
     for (const tableId of uniqueTableIds) {
-      await connection.execute(
+      const [allocation] = await connection.execute<ResultSetHeader>(
         `INSERT INTO table_allocations
-          (organization_id, venue_id, table_id, kind, visit_id, starts_at, business_date, created_by_user_id)
-         VALUES (?, ?, ?, 'USAGE', ?, UTC_TIMESTAMP(3), ?, ?)`,
-        [actor.organizationId, actor.venueId, tableId, visitResult.insertId, input.businessDate, actor.userId],
+          (organization_id, venue_id, table_id, kind, visit_id, group_id, starts_at, business_date, created_by_user_id)
+         VALUES (?, ?, ?, 'USAGE', ?, ?, UTC_TIMESTAMP(3), ?, ?)`,
+        [actor.organizationId, actor.venueId, tableId, visitResult.insertId, group?.id ?? null,
+          input.businessDate, actor.userId],
       )
+      allocationIds.push(allocation.insertId)
     }
+    const changeSequence = await nextVenueChangeSequence(connection, actor)
+    await connection.execute(
+      `INSERT INTO operation_log
+        (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
+         auth_session_id, action, entity_type, entity_id, entity_version_after, changes, reason_code, is_undoable)
+       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'WALK_IN_CREATED', 'visit', ?, 1, ?, 'DIRECT_WALK_IN', 0)`,
+      [actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
+        actor.authSessionId ?? null, visitResult.insertId,
+        JSON.stringify([{ type: 'walk_in_created', groupId: group?.id ?? null, allocationIds,
+          tableIds: uniqueTableIds, partySize: input.partySize }])],
+    )
     if (ownsTransaction) await connection.commit()
     return { visitId: visitResult.insertId }
   } catch (error) {

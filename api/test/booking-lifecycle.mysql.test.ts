@@ -458,6 +458,36 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     expect(allocation.released_at).not.toBeNull()
   })
 
+  it('accepts anonymous and optional-phone Walk-ins through HTTP without exposing plaintext phone', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2030-10-24T12:00:00.000Z'))
+    try {
+      const agent = request.agent(app)
+      const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin)
+        .send({ username: 'booking_reception', password, portal: 'receptionist' })
+      const auth = JSON.parse(login.text) as AuthResponse
+      const anonymous = await agent.post('/api/v1/bookings/walk-ins').set('Origin', env.webOrigin)
+        .set('X-CSRF-Token', auth.csrfToken)
+        .send({ partySize: 2, businessDate: '2030-10-24', tableIds: [tableOneId] })
+      expect(anonymous.status).toBe(201)
+      const withPhone = await agent.post('/api/v1/bookings/walk-ins').set('Origin', env.webOrigin)
+        .set('X-CSRF-Token', auth.csrfToken)
+        .send({ guestName: 'HTTP phone Walk-in', phoneNumber: '0901 234 567', partySize: 2,
+          businessDate: '2030-10-24', tableIds: [tableTwoId] })
+      expect(withPhone.status).toBe(201)
+      expect(withPhone.text).not.toContain('0901')
+      const [visits] = await databasePool.execute<RowDataPacket[]>(
+        `SELECT v.contact_name, c.phone_last3, c.phone_ciphertext
+         FROM visits v LEFT JOIN customers c ON c.id = v.customer_id ORDER BY v.id`,
+      )
+      expect(visits[0]).toMatchObject({ contact_name: 'Khách Walk-in', phone_last3: null, phone_ciphertext: null })
+      expect(visits[1]).toMatchObject({ contact_name: null, phone_last3: '567' })
+      expect(JSON.stringify(visits[1])).not.toContain('0901234567')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('stores 00:30 on the next calendar day under the previous business date', async () => {
     const created = await createBooking(actor, bookingInput('2030-10-24', '00:30'))
     expect(created.businessDate).toBe('2030-10-24')
@@ -1018,8 +1048,8 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         'SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log) AS audits',
         [],
       )
-      expect([Number(effects.holds), Number(effects.allocations), Number(effects.audits)]).toEqual([1, 2, 2])
-      expect(Number((await row('SELECT change_seq FROM venues WHERE id = ?', [venueId])).change_seq)).toBe(2)
+      expect([Number(effects.holds), Number(effects.allocations), Number(effects.audits)]).toEqual([1, 2, 3])
+      expect(Number((await row('SELECT change_seq FROM venues WHERE id = ?', [venueId])).change_seq)).toBe(3)
     })
 
     it('rolls back the direct booking when MySQL rejects the idempotency response update', async () => {
