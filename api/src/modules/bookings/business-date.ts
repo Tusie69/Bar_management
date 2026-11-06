@@ -176,6 +176,9 @@ export function validateBookingSchedule(
       'Giờ nhận booking chỉ từ 19:00 đến 01:00 sáng hôm sau.',
     )
   }
+  if (local.minute % 15 !== 0 || local.second !== 0 || expectedAtUtc.getUTCMilliseconds() !== 0) {
+    throw new AppError(400, 'EXPECTED_AT_OFF_SLOT', 'Giờ đặt bàn phải theo mốc 15 phút.')
+  }
   const derivedBusinessDate = local.hour < bookingDayCutoffHour
     ? previousCalendarDate(local.year, local.month, local.day)
     : formatCalendarDate(local.year, local.month, local.day)

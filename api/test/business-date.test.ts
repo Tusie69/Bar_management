@@ -37,12 +37,19 @@ describe('booking business date validation', () => {
   it.each([
     ['19:00', '2026-10-24'],
     ['21:00', '2026-10-24'],
+    ['21:15', '2026-10-24'],
+    ['00:45', '2026-10-25'],
     ['23:30', '2026-10-24'],
     ['00:30', '2026-10-25'],
     ['01:00', '2026-10-25'],
   ])('accepts booking boundary %s', (time, calendarDate) => {
     expect(validateBookingSchedule(`${calendarDate}T${time}:00+07:00`, '2026-10-24', beforeBooking).businessDate)
       .toBe('2026-10-24')
+  })
+
+  it.each(['20:17:00', '20:15:01', '20:15:00.001'])('rejects off-grid time %s', (time) => {
+    expect(() => validateBookingSchedule(`2026-10-24T${time}+07:00`, '2026-10-24', beforeBooking))
+      .toThrowError(expect.objectContaining({ code: 'EXPECTED_AT_OFF_SLOT' }))
   })
 
   it('rejects a business date that disagrees with an after-midnight arrival', () => {
