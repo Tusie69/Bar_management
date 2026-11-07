@@ -312,6 +312,120 @@ try {
     return { phoneLast3: booking.phoneLast3, hasGuestName: booking.hasGuestName }
   })
 
+  for (const width of [1280, 390]) {
+    await step(`WF-01 ${width}: editing only the note preserves a phone-only booking`, async () => {
+      const phoneNumber = width === 1280 ? "0909999909" : "0909999908"
+      const created = await api(context, "POST", width === 1280 ? "/bookings" : "/bookings/direct", {
+        phoneNumber,
+        partySize: 2,
+        expectedAt: `${today}T21:30:00+07:00`,
+        businessDate: today,
+        sourceCode: "HOTLINE",
+        ...(width === 390 ? { tableIds: [await tableIdOf(context, "B4")] } : {}),
+      })
+      assert.equal(created.status, 201)
+      let booking = created.body.booking
+      assert.equal(booking.hasGuestName, false)
+      await page.setViewportSize({ width, height: width === 1280 ? 800 : 844 })
+      await page.goto(`${webUrl}/floor`, { waitUntil: "networkidle" })
+      if (width === 1280) {
+        await page.getByRole("textbox", { name: "Tìm 3 số cuối SĐT", exact: true }).fill(phoneNumber.slice(-3))
+        await page.getByRole("button", { name: /Khách · \*\*\*909/ }).click()
+        await page.getByRole("button", { name: "Sửa", exact: true }).click()
+      } else {
+        await table(page, "B4").click()
+        await page.getByRole("button", { name: "Xem booking", exact: true }).click()
+        await page.getByRole("button", { name: "Sửa booking", exact: true }).click()
+      }
+      const editor = page.getByRole("dialog", { name: "Sửa booking", exact: true })
+      await expect(editor.getByLabel("Tên khách", { exact: true })).toHaveValue("")
+      const note = `Ghi chú WF-01 ${width}`
+      await editor.getByLabel("Ghi chú", { exact: true }).fill(note)
+      await page.screenshot({ path: `${output}/wf-01-editor-${width}.png` })
+      const updated = page.waitForResponse((response) =>
+        response.request().method() === "PUT" &&
+        new URL(response.url()).pathname === `/api/v1/bookings/${booking.id}`,
+      )
+      await editor.getByRole("button", { name: "Lưu thay đổi", exact: true }).click()
+      const response = await updated
+      assert.equal(response.status(), 200)
+      assert(!Object.hasOwn(response.request().postDataJSON(), "guestName"), "unchanged fallback must be omitted")
+      booking = (await response.json()).booking
+      assert.equal(booking.hasGuestName, false)
+      assert.equal(booking.guestName, "Khách")
+      assert.equal(booking.note, note)
+      const fresh = await api(context, "GET", `/bookings/${booking.id}`)
+      assert.equal(fresh.status, 200)
+      assert.equal(fresh.body.booking.hasGuestName, false)
+      assert.equal(fresh.body.booking.guestName, "Khách")
+      assert.equal(fresh.body.booking.note, note)
+      await expect(editor).toBeHidden()
+      assert(!(await page.locator("body").innerText()).includes(phoneNumber), "editor leaked the full phone")
+
+      if (width === 390) {
+        await step("WF-01: an intentional name edit is sent in the PUT payload", async () => {
+          await page.getByRole("button", { name: "Sửa booking", exact: true }).click()
+          await expect(editor.getByLabel("Tên khách", { exact: true })).toHaveValue("")
+          await editor.getByLabel("Tên khách", { exact: true }).fill("Tên khách mới")
+          const renamed = page.waitForResponse((res) =>
+            res.request().method() === "PUT" && new URL(res.url()).pathname === `/api/v1/bookings/${booking.id}`,
+          )
+          await editor.getByRole("button", { name: "Lưu thay đổi", exact: true }).click()
+          const renamedResponse = await renamed
+          assert.equal(renamedResponse.status(), 200)
+          assert.equal(renamedResponse.request().postDataJSON().guestName, "Tên khách mới")
+          booking = (await renamedResponse.json()).booking
+          await expect(editor).toBeHidden()
+        })
+      }
+      const cancelled = await api(context, "POST", `/bookings/${booking.id}/cancel`, { version: booking.version })
+      assert.equal(cancelled.status, 200)
+      return { viewportWidth: width, hasGuestName: fresh.body.booking.hasGuestName }
+    })
+  }
+
+  await step("WF-01: editing only the note preserves the real name Khách", async () => {
+    const created = await api(context, "POST", "/bookings", {
+      guestName: "Khách",
+      phoneNumber: "0909999907",
+      partySize: 2,
+      expectedAt: `${today}T21:30:00+07:00`,
+      businessDate: today,
+      sourceCode: "HOTLINE",
+    })
+    assert.equal(created.status, 201)
+    const booking = created.body.booking
+    assert.equal(booking.hasGuestName, true)
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await page.goto(`${webUrl}/floor`, { waitUntil: "networkidle" })
+    await page.getByRole("textbox", { name: "Tìm 3 số cuối SĐT", exact: true }).fill("907")
+    await page.getByRole("button", { name: /Khách · \*\*\*907/ }).click()
+    await page.getByRole("button", { name: "Sửa", exact: true }).click()
+    const editor = page.getByRole("dialog", { name: "Sửa booking", exact: true })
+    await expect(editor.getByLabel("Tên khách", { exact: true })).toHaveValue("Khách")
+    await editor.getByLabel("Ghi chú", { exact: true }).fill("Giữ tên thật")
+    const updated = page.waitForResponse((response) =>
+      response.request().method() === "PUT" && new URL(response.url()).pathname === `/api/v1/bookings/${booking.id}`,
+    )
+    await editor.getByRole("button", { name: "Lưu thay đổi", exact: true }).click()
+    const response = await updated
+    assert.equal(response.status(), 200)
+    assert.equal(response.request().postDataJSON().guestName, "Khách")
+    const saved = (await response.json()).booking
+    assert.equal(saved.hasGuestName, true)
+    assert.equal(saved.guestName, "Khách")
+    const fresh = await api(context, "GET", `/bookings/${booking.id}`)
+    assert.equal(fresh.status, 200)
+    assert.equal(fresh.body.booking.hasGuestName, true)
+    assert.equal(fresh.body.booking.guestName, "Khách")
+    assert.equal(fresh.body.booking.note, "Giữ tên thật")
+    await expect(editor).toBeHidden()
+    assert.equal((await api(context, "POST", `/bookings/${booking.id}/cancel`, { version: saved.version })).status, 200)
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(`${webUrl}/floor`, { waitUntil: "networkidle" })
+    await table(page, "A1").waitFor()
+  })
+
   await step("AT1 AT4 AT6 AT7: tap A1 opens its sheet, 22:30 in 3 taps, venue quick times, saved on A1", async () => {
     await table(page, "A1").click()
     const form = sheet(page)

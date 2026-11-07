@@ -254,6 +254,16 @@ describe("canonical contract reads", () => {
   it("exposes classification on canonical reservations", async () => {
     expect((await api.listReservations({ businessDate: date }))[0].classification).toBe("UNCLASSIFIED")
   })
+  it.each([false, true, undefined])("preserves hasGuestName=%s on canonical reservations", async (hasGuestName) => {
+    const original = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (new URL(String(input)).pathname === "/api/v1/bookings")
+        return json({ businessDate: date, bookings: [{ ...booking, guestName: "Khách", hasGuestName }] })
+      return original(input, init)
+    })
+    const [row] = await api.listReservations({ businessDate: date })
+    expect(row).toMatchObject({ displayName: "Khách", hasGuestName: hasGuestName ?? true })
+  })
   it("exports backend text verbatim through GamApi without a JSON wrapper", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       new Response("THỐNG KÊ\nBàn khách quen O: 2\n", {
