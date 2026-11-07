@@ -5,6 +5,7 @@ import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { AppError } from '../../errors/app-error.js'
 import { getFloorProjection } from './floor-projection.repository.js'
 import { configureTable, getTableCatalog, updateTableState } from './table.repository.js'
+import { splitTableGroup } from './table-split.repository.js'
 import { isTableState } from './table-state.js'
 
 export const tableRouter: Router = Router()
@@ -117,5 +118,27 @@ tableRouter.patch(
         reason: body.reason.trim(),
       }),
     })
+  },
+)
+
+/* BA-021 Split: identified by the merge group, keeping the chosen tables. */
+tableRouter.post(
+  '/groups/:id/split',
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission('visit.split'),
+  async (request, response) => {
+    const body = parseBody(request.body)
+    const groupId = Number(request.params.id)
+    if (!Number.isSafeInteger(groupId) || groupId <= 0) {
+      throw new AppError(400, 'INVALID_GROUP_ID', 'Mã nhóm ghép không hợp lệ.')
+    }
+    if (!Array.isArray(body.keepTableIds)) {
+      throw new AppError(400, 'TABLES_REQUIRED', 'Danh sách bàn giữ lại không hợp lệ.')
+    }
+    response.json(await splitTableGroup(requireAuthenticatedActor(request), {
+      groupId,
+      keepTableIds: body.keepTableIds.map(Number),
+    }))
   },
 )

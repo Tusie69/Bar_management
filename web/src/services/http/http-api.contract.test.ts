@@ -198,6 +198,9 @@ beforeEach(() => {
         return json({ entry: { ...entry, status: "SEATED", visitId: 31 }, reservationId: null, groupId: null })
       }
       if (path === "/waitlist" || path.startsWith("/waitlist/")) return json({ entry, reservationId: 11, groupId: 1 })
+      if (/^\/tables\/groups\/\d+\/split$/.test(path))
+        return json({ operationId: 91, changeSeq: 12, summary: "Đã tách nhóm bàn.", undoable: false,
+          splitGroupId: 1, group: null, keptTableIds: [1], releasedTableIds: [2] })
       if (path === "/operations/undo-state")
         return json({ undo: { operationId: 81, action: "VISIT_TABLES_MOVED", summary: "đổi bàn lượt khách" }, redo: null })
       if (path === "/operations/undo" || path === "/operations/redo")
@@ -716,7 +719,6 @@ describe("unsupported and transport failures", () => {
     { name: "setZoneFlags", run: (api) => api.setZoneFlags(1, 1, { isBookable: true, isWaitingArea: false }) },
     { name: "setHoldDeadline", run: (api) => api.setHoldDeadline(1, 1, at, "x") },
     { name: "releaseHold", run: (api) => api.releaseHold(1, 1, "OTHER") },
-    { name: "splitGroup", run: (api) => api.splitGroup({ groupId: 1, keepTableIds: [1] }) },
     { name: "claimWaitlist", run: (api) => api.claimWaitlist(21, 2) },
     { name: "releaseClaim", run: (api) => api.releaseClaim(21, 2) },
     { name: "markPaid", run: (api) => api.markPaid(31, 5) },
@@ -781,6 +783,19 @@ describe("BA-020 Undo/Redo HTTP contract", () => {
       { method: "GET", path: "/operations/undo-state", body: undefined },
       { method: "POST", path: "/operations/undo", body: { operationId: 81 } },
       { method: "POST", path: "/operations/redo", body: { operationId: 82 } },
+    ])
+  })
+})
+
+describe("BA-021 Split HTTP contract", () => {
+  it("posts the kept tables to the group split endpoint", async () => {
+    expect(await api.splitGroup({ groupId: 7, keepTableIds: [1] })).toMatchObject({
+      operationId: 91,
+      changeSeq: 12,
+      undoable: false,
+    })
+    expect(calls).toEqual([
+      { method: "POST", path: "/tables/groups/7/split", body: { keepTableIds: [1] } },
     ])
   })
 })
