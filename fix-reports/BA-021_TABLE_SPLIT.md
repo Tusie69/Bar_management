@@ -6,6 +6,12 @@ Repository: `Tusie69/Bar_management`
 
 Branch: `develop` (local)
 
+> **Superseded in part.** The PO answered on 07/11/2026. Sections 2 (NEED_PO)
+> and 9 (remaining risks) are superseded by
+> [BA-021_SPLIT_PO_DECISIONS.md](BA-021_SPLIT_PO_DECISIONS.md), which records
+> SPL-01 to SPL-05, the GWT acceptance criteria and the final verdict. The
+> design, lock order and audit below still apply.
+
 ## 1. Environment
 
 | Item | Value |
