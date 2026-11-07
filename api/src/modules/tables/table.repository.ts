@@ -358,7 +358,7 @@ export async function listTables(actor: AuthenticatedActor, businessDate: string
        END AS state,
        dt.is_spare, dt.version, a.stale_from_previous_day, a.allocation_business_date,
        a.active_visit_id, v.version AS active_visit_version,
-       COALESCE(c.display_name, v.contact_name, 'Khách') AS active_visit_display_name,
+       COALESCE(v.contact_name, c.display_name, 'Khách') AS active_visit_display_name,
        c.phone_last3 AS active_visit_phone_last3,
        v.guest_count AS active_visit_guest_count,
        v.started_at AS active_visit_started_at,

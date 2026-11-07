@@ -251,7 +251,7 @@ export function formatDailyBookingText(input: DailyBookingTextInput): string {
 
 async function loadBookingRows(connection: PoolConnection, actor: AuthenticatedActor, businessDate: string) {
   const [rows] = await connection.execute<ExportRow[]>(
-    `SELECT r.id, COALESCE(c.display_name, r.contact_name, 'Khách') AS guest_name,
+    `SELECT r.id, COALESCE(r.contact_name, c.display_name, 'Khách') AS guest_name,
        r.party_size, r.expected_at, r.checked_in_at, r.status, r.customer_classification,
        a.id AS allocation_id, dt.code AS table_code, z.code AS zone_code, z.name AS zone_name
      FROM reservations AS r

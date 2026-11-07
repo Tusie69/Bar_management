@@ -167,6 +167,12 @@ interface ProjectionRow extends RowDataPacket {
   visit_business_date: Date | string | null
   visit_origin: 'RESERVATION' | 'WALK_IN' | 'WAITLIST' | null
   visit_paid: number | null
+  // B02: the booking this visit was checked in from, via reservations.visit_id.
+  visit_reservation_id: number | null
+  visit_reservation_classification: 'NEW' | 'RETURNING' | 'UNCLASSIFIED' | null
+  visit_reservation_is_birthday: number | null
+  visit_reservation_source_code: string | null
+  visit_reservation_phone_last3: string | null
 }
 
 function dateOnly(value: Date | string | null): string | null {
@@ -229,17 +235,20 @@ function buildClaim(
   const groupId = row.group_id === null ? null : Number(row.group_id)
   const displayCode = row.group_symbol_no === null ? null : groupDisplayCode(Number(row.group_symbol_no))
   if (kind === 'VISIT') {
+    // B02: a visit checked in from a booking keeps that booking's identity, so
+    // the floor does not lose it the moment the guest sits down. A Walk-in or
+    // Waitlist visit has no reservation and falls back to its own data.
     return {
       kind,
-      reservationId: null,
+      reservationId: row.visit_reservation_id === null ? null : Number(row.visit_reservation_id),
       visitId: Number(row.active_visit_id),
       waitlistEntryId: null,
       holdId: null,
-      guestName: row.visit_customer_name ?? row.visit_contact_name ?? 'Khách',
-      phoneLast3: row.visit_phone_last3,
+      guestName: row.visit_contact_name ?? row.visit_customer_name ?? 'Khách',
+      phoneLast3: row.visit_phone_last3 ?? row.visit_reservation_phone_last3,
       partySize: Number(row.visit_guest_count),
       turnNo: null,
-      flags: [],
+      flags: customerFlags(row.visit_reservation_classification, row.visit_reservation_is_birthday),
       groupId,
       groupDisplayCode: displayCode,
       groupMemberTableIds: memberIds,
@@ -248,9 +257,10 @@ function buildClaim(
       holdOverdue: false,
       paid: Boolean(row.visit_paid),
       origin: row.visit_origin,
-      sourceCode: null,
+      sourceCode: row.visit_reservation_source_code,
       version: Number(row.visit_version),
       lateConfirmedAt: null,
+      // Calling stays off after check-in; the guest is already here.
       canCall: false,
     }
   }
@@ -350,16 +360,16 @@ async function readProjection(
        h.reservation_id AS hold_reservation_id, h.waitlist_entry_id AS hold_waitlist_entry_id,
        r.status AS reservation_status, r.version AS reservation_version,
        r.expected_at AS reservation_expected_at, r.business_date AS reservation_business_date,
-       COALESCE(rc.display_name, r.contact_name) AS reservation_contact_name,
+       COALESCE(r.contact_name, rc.display_name) AS reservation_contact_name,
        r.party_size AS reservation_party_size, COALESCE(r.phone_last3, rc.phone_last3) AS reservation_phone_last3,
        r.customer_classification AS reservation_classification, r.is_birthday AS reservation_is_birthday,
        bs.code AS reservation_source_code,
        r.late_confirmed_at AS reservation_late_confirmed_at,
        lw.id AS linked_waitlist_entry_id, lw.status AS linked_waitlist_status, lw.version AS linked_waitlist_version,
        ow.id AS offer_waitlist_entry_id, ow.status AS offer_waitlist_status, ow.version AS offer_waitlist_version,
-       COALESCE(owc.display_name, ow.contact_name) AS offer_contact_name, ow.party_size AS offer_party_size,
+       COALESCE(ow.contact_name, owc.display_name) AS offer_contact_name, ow.party_size AS offer_party_size,
        owc.phone_last3 AS offer_phone_last3, ow.reservation_id AS offer_reservation_id,
-       COALESCE(orc.display_name, orr.contact_name) AS offer_reservation_contact_name,
+       COALESCE(orr.contact_name, orc.display_name) AS offer_reservation_contact_name,
        orr.party_size AS offer_reservation_party_size,
        COALESCE(orr.phone_last3, orc.phone_last3) AS offer_reservation_phone_last3,
        orr.customer_classification AS offer_reservation_classification,
@@ -368,7 +378,12 @@ async function readProjection(
        vc.display_name AS visit_customer_name, vc.phone_last3 AS visit_phone_last3,
        v.guest_count AS visit_guest_count, v.started_at AS visit_started_at,
        v.business_date AS visit_business_date, v.origin AS visit_origin,
-       (v.paid_marked_at IS NOT NULL) AS visit_paid
+       (v.paid_marked_at IS NOT NULL) AS visit_paid,
+       vr.id AS visit_reservation_id,
+       vr.customer_classification AS visit_reservation_classification,
+       vr.is_birthday AS visit_reservation_is_birthday,
+       vbs.code AS visit_reservation_source_code,
+       COALESCE(vr.phone_last3, vrc.phone_last3) AS visit_reservation_phone_last3
      FROM dining_tables AS dt
      JOIN zones AS z ON z.organization_id = dt.organization_id AND z.venue_id = dt.venue_id AND z.id = dt.zone_id
      LEFT JOIN table_allocations AS a ON a.organization_id = dt.organization_id AND a.venue_id = dt.venue_id
@@ -381,6 +396,10 @@ async function readProjection(
      LEFT JOIN visits AS v ON a.kind = 'USAGE' AND v.organization_id = a.organization_id
        AND v.venue_id = a.venue_id AND v.id = a.visit_id AND v.ended_at IS NULL
      LEFT JOIN customers AS vc ON vc.organization_id = v.organization_id AND vc.id = v.customer_id
+     LEFT JOIN reservations AS vr ON vr.organization_id = v.organization_id AND vr.venue_id = v.venue_id
+       AND vr.visit_id = v.id
+     LEFT JOIN customers AS vrc ON vrc.organization_id = vr.organization_id AND vrc.id = vr.customer_id
+     LEFT JOIN booking_sources AS vbs ON vbs.organization_id = vr.organization_id AND vbs.id = vr.source_id
      LEFT JOIN table_holds AS h ON a.kind = 'HOLD' AND h.organization_id = a.organization_id
        AND h.venue_id = a.venue_id AND h.id = a.hold_id
      LEFT JOIN reservations AS r ON r.organization_id = h.organization_id AND r.venue_id = h.venue_id

@@ -111,7 +111,7 @@ function toView(row: WaitlistRow): WaitlistEntryView {
 }
 
 const waitlistSelect = `SELECT w.id, w.kind,
-  COALESCE(c.display_name, r.contact_name, w.contact_name, 'Khách chờ') AS guest_name,
+  COALESCE(r.contact_name, w.contact_name, c.display_name, 'Khách chờ') AS guest_name,
   COALESCE(c.phone_last3, r.phone_last3) AS phone_last3,
   COALESCE(r.party_size, w.party_size) AS resolved_party_size,
   w.business_date, w.queued_at, w.status, w.contact_channel,

@@ -154,7 +154,7 @@ function toBooking(row: BookingRow, now = applicationNow()): BookingView {
 }
 
 const bookingSelect = `SELECT
-  r.id, COALESCE(c.display_name, r.contact_name, 'Khách') AS guest_name,
+  r.id, COALESCE(r.contact_name, c.display_name, 'Khách') AS guest_name,
   (c.display_name IS NOT NULL OR r.contact_name IS NOT NULL) AS has_guest_name,
   COALESCE(r.phone_last3, c.phone_last3) AS phone_last3, r.party_size, r.expected_at, r.business_date,
   r.customer_classification, r.guest_type, r.is_birthday, r.status,
@@ -194,7 +194,7 @@ export async function searchBookings(
     `${bookingSelect}
      WHERE r.organization_id = ? AND r.venue_id = ? AND r.business_date = ?
        AND (
-         LOCATE(?, LOWER(COALESCE(c.display_name, r.contact_name, ''))) > 0
+         LOCATE(?, LOWER(COALESCE(r.contact_name, c.display_name, ''))) > 0
          OR (? IS NOT NULL AND COALESCE(r.phone_last3, c.phone_last3) = ?)
        )
      GROUP BY r.id, c.display_name, r.contact_name, r.phone_last3, c.phone_last3, r.party_size, r.expected_at,
