@@ -1,7 +1,9 @@
 # BA-020 — Undo/Redo recovery and verification
 
-Date: 2026-11-07  
-Repository: `Tusie69/Bar_management`  
+Date: 2026-11-07
+
+Repository: `Tusie69/Bar_management`
+
 Target baseline: `origin/develop` at `30fb2cb81b7a58d1f62f3e0c74c96ce018a82ed9`
 
 ## Recovery evidence
