@@ -267,6 +267,43 @@ interface CustomerIdentityRow extends RowDataPacket {
   status: 'ACTIVE' | 'MERGED' | 'ANONYMIZED'
 }
 
+/**
+ * BF-01: rebuilds the protected phone already stored on a reservation so the
+ * Customer identity behind it can be resolved. The ciphertext is passed through
+ * untouched; nothing is decrypted and nothing is logged, and the client is never
+ * asked to resend the full number.
+ */
+async function storedReservationPhone(
+  connection: PoolConnection,
+  actor: AuthenticatedActor,
+  reservationId: number,
+): Promise<ProtectedPhone | null> {
+  const [rows] = await connection.execute<(RowDataPacket & {
+    phone_ciphertext: Buffer | null
+    phone_key_id: number | null
+    phone_hmac: Buffer | null
+    phone_hmac_key_id: number | null
+    phone_last3: string | null
+  })[]>(
+    `SELECT phone_ciphertext, phone_key_id, phone_hmac, phone_hmac_key_id, phone_last3
+     FROM reservations
+     WHERE organization_id = ? AND venue_id = ? AND id = ?`,
+    [actor.organizationId, actor.venueId, reservationId],
+  )
+  const row = rows[0]
+  if (!row || !row.phone_ciphertext || row.phone_key_id === null
+    || !row.phone_hmac || row.phone_hmac_key_id === null || !row.phone_last3) {
+    return null
+  }
+  return {
+    ciphertext: row.phone_ciphertext,
+    encryptionKeyId: Number(row.phone_key_id),
+    hmac: row.phone_hmac,
+    hmacKeyId: Number(row.phone_hmac_key_id),
+    last3: row.phone_last3,
+  }
+}
+
 async function resolveBookingCustomer(
   connection: PoolConnection,
   actor: AuthenticatedActor,
@@ -718,11 +755,26 @@ export async function updateBooking(
       ? ', phone_ciphertext = ?, phone_key_id = ?, phone_hmac = ?, phone_hmac_key_id = ?, phone_last3 = ?'
       : ''
     const phoneValues = phoneChanged ? protectedPhoneValues(phone ?? null) : []
-    const customerId = phone === undefined
-      ? reservation.customer_id
-      : phone === null || guestName
+    // BF-01: clearing the name on a booking that keeps its phone turns it into a
+    // phone-only booking, so the contact has to become the Customer identity for
+    // the phone already stored. A named booking with a phone holds
+    // customer_id = NULL, so without this the row would have neither a contact
+    // name nor a customer and would violate ck_reservations_contact.
+    let customerId: number | null
+    if (phone === undefined) {
+      customerId = reservation.customer_id
+      if (!guestName && customerId === null) {
+        const stored = await storedReservationPhone(connection, actor, id)
+        if (!stored) {
+          throw new AppError(400, 'BOOKING_CONTACT_REQUIRED', 'Cần ít nhất tên khách hoặc số điện thoại.')
+        }
+        customerId = await resolveBookingCustomer(connection, actor, stored)
+      }
+    } else {
+      customerId = phone === null || guestName
         ? null
         : await resolveBookingCustomer(connection, actor, phone)
+    }
     const [updateResult] = await connection.execute<ResultSetHeader>(
       `UPDATE reservations
        SET customer_id = ?, contact_name = ?, contact_name_search = ?, party_size = ?, source_id = ?,
