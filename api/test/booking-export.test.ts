@@ -40,7 +40,7 @@ function input(bookings: DailyBookingTextItem[], options: Partial<DailyBookingTe
     bookings,
     waitlistCount: 0,
     outTables: [],
-    arrivalCutoff: { hour: 21, minute: 30, basis: 'EXPECTED_AT', atCutoff: 'AFTER' },
+    arrivalCutoff: { hour: 21, minute: 30, basis: 'EXPECTED_AT', atCutoff: 'BEFORE' },
     ...options,
   }
 }
@@ -122,7 +122,7 @@ describe('daily Zalo booking text formatter', () => {
 
   it('reports verified zero values and keeps unclassified bookings out of O/N', () => {
     const text = formatDailyBookingText(input([booking(1, ['A1'])]))
-    expect(text).toContain('Khách vào trước 21:30: 2')
+    expect(text).toContain('Khách vào trước/bằng 21:30: 2')
     expect(text).toContain('Khách vào sau 21:30: 0')
     expect(text).toContain('Bàn khách quen O: 0')
     expect(text).toContain('Bàn khách mới N: 0')
@@ -138,8 +138,9 @@ describe('daily Zalo booking text formatter', () => {
       booking(5, ['A5'], { partySize: 5, expectedAt: new Date('2026-10-31T16:59:00.000Z') }),
       booking(6, ['A6'], { partySize: 6, expectedAt: new Date('2026-10-31T17:30:00.000Z') }),
     ]))
-    expect(text).toContain('Khách vào trước 21:30: 3')
-    expect(text).toContain('Khách vào sau 21:30: 18')
+    // BE-04: the 21:30 booking of 3 now counts before the cutoff, not after.
+    expect(text).toContain('Khách vào trước/bằng 21:30: 6')
+    expect(text).toContain('Khách vào sau 21:30: 15')
   })
 
   it('uses expected_at even when check-in happens on the other side of the cutoff', () => {
@@ -155,7 +156,7 @@ describe('daily Zalo booking text formatter', () => {
         checkedInAt: new Date('2026-10-31T14:00:00.000Z'),
       }),
     ]))
-    expect(text).toContain('Khách vào trước 21:30: 2')
+    expect(text).toContain('Khách vào trước/bằng 21:30: 2')
     expect(text).toContain('Khách vào sau 21:30: 7')
   })
 

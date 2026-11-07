@@ -817,7 +817,7 @@ export class MockGamApi implements GamApi, DemoControls {
         (entry) => entry.businessDate === bd && ["WAITING", "CONTACTING", "OFFERED"].includes(entry.status),
       ).length,
       outTables: cat.tables.filter((table) => table.status === "OUT_OF_SERVICE").map(tableInfo),
-      arrivalCutoff: { hour: 21, minute: 30, basis: "EXPECTED_AT", atCutoff: "AFTER" },
+      arrivalCutoff: { hour: 21, minute: 30, basis: "EXPECTED_AT", atCutoff: "BEFORE" },
     })
   }
 
@@ -2263,7 +2263,7 @@ export class MockGamApi implements GamApi, DemoControls {
     )
       this.fail("Cần 1–24 giờ nhanh HH:mm không trùng trong cửa sổ 19:00–01:00.")
     if (input.upcomingMinutes < 1 || input.upcomingMinutes > 240) this.fail("Mốc sắp đến phải từ 1 đến 240 phút.")
-    if (input.noShowMinutes <= this.venue.lateWarningMinutes) this.fail("Mốc không đến phải lớn hơn mốc đến muộn.")
+    if (input.noShowMinutes <= this.venue.lateWarningMinutes) this.fail("Mốc không tới phải lớn hơn mốc đến muộn.")
     this.quickTimes = [...input.quickTimes]
     this.commit({ action: "VENUE_SETTINGS_UPDATED", entityType: "venue", undoable: false }, (tx) => {
       const row = tx.edit("venue", this.venue.id)

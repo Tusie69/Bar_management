@@ -140,10 +140,10 @@ function DynamicVenueSettingsForm({
           max={240}
         />
       </Row>
-      <Row label="Cảnh báo không đến" hint="Chỉ đổi cảnh báo. Không tự hủy booking hoặc nhả bàn.">
+      <Row label="Cảnh báo không tới" hint="Chỉ đổi cảnh báo. Không tự hủy booking hoặc nhả bàn.">
         <NumberField
           id="dynamic-noshow"
-          label="Cảnh báo không đến"
+          label="Cảnh báo không tới"
           value={noShowMinutes}
           onChange={setNoShowMinutes}
           unit="phút"

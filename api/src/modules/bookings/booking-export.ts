@@ -56,7 +56,7 @@ export interface DailyBookingTextInput {
     hour: 21
     minute: 30
     basis: 'EXPECTED_AT'
-    atCutoff: 'AFTER'
+    atCutoff: 'BEFORE'
   }
 }
 
@@ -181,7 +181,8 @@ function arrivalCounts(input: DailyBookingTextInput, active: DailyBookingTextIte
   let before = 0
   let after = 0
   for (const item of active) {
-    if (item.expectedAt.getTime() < cutoff) before += item.partySize
+    // S2 #3: exactly 21:30 belongs with before, so the bound is inclusive.
+    if (item.expectedAt.getTime() <= cutoff) before += item.partySize
     else after += item.partySize
   }
   return { before: String(before), after: String(after) }
@@ -228,7 +229,7 @@ export function formatDailyBookingText(input: DailyBookingTextInput): string {
   } else lines.push('Không có')
   lines.push('', 'BÀN HUỶ')
   lines.push(...(cancelled.length ? ordered(cancelled, '').map(bookingLine) : ['Không có']))
-  if (noShows.length) lines.push('', 'KHÔNG ĐẾN', ...ordered(noShows, '').map(bookingLine))
+  if (noShows.length) lines.push('', 'KHÔNG TỚI', ...ordered(noShows, '').map(bookingLine))
 
   const arrivals = arrivalCounts(input, active)
   const returning = active.filter((item) => item.metadata.returningCustomer === true).length
@@ -237,7 +238,7 @@ export function formatDailyBookingText(input: DailyBookingTextInput): string {
   lines.push(
     '',
     'THỐNG KÊ',
-    `Khách vào trước 21:30: ${arrivals.before}`,
+    `Khách vào trước/bằng 21:30: ${arrivals.before}`,
     `Khách vào sau 21:30: ${arrivals.after}`,
     `Tổng bàn đặt: ${active.length}`,
     `Tổng khách đặt: ${active.reduce((total, item) => total + item.partySize, 0)}`,
@@ -330,7 +331,7 @@ export async function getDailyBookingTextInput(
       bookings: normalizeBookings(rows),
       waitlistCount: Number(waitlistRows[0]?.waiting_count ?? 0),
       outTables: outRows.map((row) => ({ code: row.code, zoneCode: row.zone_code, zoneName: row.zone_name })),
-      arrivalCutoff: { hour: 21, minute: 30, basis: 'EXPECTED_AT', atCutoff: 'AFTER' },
+      arrivalCutoff: { hour: 21, minute: 30, basis: 'EXPECTED_AT', atCutoff: 'BEFORE' },
     }
   } catch (error) {
     await connection.rollback()

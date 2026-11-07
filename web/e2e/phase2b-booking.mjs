@@ -412,7 +412,7 @@ try {
   if (!secondText.includes("Bàn khách quen O: 0") || !secondText.includes("Bàn khách mới N: 1")) {
     throw new Error("Second browser did not observe updated O/N statistics")
   }
-  if (!secondText.includes("Khách vào trước 21:30: 5")) {
+  if (!secondText.includes("Khách vào trước/bằng 21:30: 5")) {
     throw new Error("Second browser did not observe expected_at statistics")
   }
   if (/0987|phone|ciphertext|hmac/i.test(secondText)) throw new Error("Sensitive phone data leaked in export")

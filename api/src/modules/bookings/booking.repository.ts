@@ -1676,7 +1676,7 @@ async function confirmBookingLateInTransaction(
     throw new AppError(
       409,
       'LATE_CONFIRM_NO_SHOW_THRESHOLD_REACHED',
-      'Không thể xác nhận tới muộn khi booking đã đạt ngưỡng Không đến.',
+      'Không thể xác nhận tới muộn khi booking đã đạt ngưỡng Không tới.',
     )
   }
 
