@@ -18,10 +18,10 @@ import {
   Zap,
 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router"
 import { toast } from "sonner"
 import { Kbd } from "@/components/common"
+import { useUndoRedo, useUndoRedoShortcuts } from "@/features/operations/use-undo-redo"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -356,49 +356,11 @@ function UndoRedo() {
 }
 
 function HttpUndoRedo() {
-  const queryClient = useQueryClient()
-  const canUndo = useSession((state) => state.permissions.includes("operation.undo"))
-  const state = useQuery({
-    queryKey: ["undo-state"],
-    queryFn: () => api.getUndoState(),
-    enabled: canUndo,
-    refetchInterval: 5_000,
-    retry: false,
-  })
-  const [pending, setPending] = useState(false)
-  const undo = state.data?.undo ?? null
-  const redo = state.data?.redo ?? null
+  const controller = useUndoRedo()
+  const { undo, redo, pending, apply } = controller
+  useUndoRedoShortcuts(controller)
 
-  const apply = async (mode: "undo" | "redo") => {
-    const item = mode === "undo" ? undo : redo
-    if (!item || pending) return
-    setPending(true)
-    try {
-      const response = mode === "undo" ? await api.undo(item.operationId) : await api.redo(item.operationId)
-      toast.success(response.summary)
-      await queryClient.invalidateQueries()
-    } catch (error) {
-      reportError(error)
-      await state.refetch()
-    } finally {
-      setPending(false)
-    }
-  }
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement
-      if (target.closest("input, textarea, [contenteditable=true]")) return
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
-        event.preventDefault()
-        void apply(event.shiftKey ? "redo" : "undo")
-      }
-    }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  })
-
-  if (!canUndo) return null
+  if (!controller.enabled) return null
   return (
     <div className="flex items-center">
       <Tooltip>
@@ -411,7 +373,7 @@ function HttpUndoRedo() {
       </Tooltip>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label="Làm lại" disabled={!redo || pending} onClick={() => void apply("redo")} className="hidden sm:inline-flex">
+          <Button variant="ghost" size="icon" aria-label="Làm lại" disabled={!redo || pending} onClick={() => void apply("redo")}>
             <Redo2 />
           </Button>
         </TooltipTrigger>

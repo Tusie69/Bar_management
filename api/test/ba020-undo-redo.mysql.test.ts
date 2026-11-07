@@ -9,6 +9,7 @@ import { app } from '../src/app.js'
 import {
   assignBookingTables,
   createBooking,
+  closeBooking,
   createWalkIn,
   getBookingById,
   mergeBookingTables,
@@ -21,6 +22,8 @@ import {
   clearFixture,
   initializeFixture,
   login,
+  otherOrganizationId,
+  otherVenueId,
   resetFixture,
   tableId,
 } from './support/integration-fixture.js'
@@ -181,6 +184,95 @@ mysqlDescribe('BA-020 server-authoritative Undo/Redo', () => {
     const afterNewOperation = await getUndoState(deviceActor)
     expect(afterNewOperation.redo).toBeNull()
     expect(afterNewOperation.undo?.action).toBe('RESERVATION_TABLES_MERGED')
+  })
+
+  // UNDO-03: an untouched session has nothing to compensate and must not guess one.
+  it('reports no undo candidate and refuses compensation without a prior operation', async () => {
+    const fresh: AuthenticatedActor = { ...actor, authSessionId: 20_010 }
+    expect(await getUndoState(fresh)).toEqual({ undo: null, redo: null })
+    await expect(compensateOperation(fresh, 1, 'undo'))
+      .rejects.toMatchObject({ code: 'NOT_LATEST_DEVICE_OPERATION' })
+  })
+
+  // UNDO-05/17: an operation is owned by one session inside one organization and venue.
+  it('isolates undo state across sessions, venues and organizations', async () => {
+    const created = await createBooking(actor, bookingInput('BA020 isolation'))
+    const assigned = await assignBookingTables(actor, created.id, created.version, [tableId])
+    await assignBookingTables(deviceActor, assigned.id, assigned.version, [tableTwoId])
+    const operationId = (await getUndoState(deviceActor)).undo!.operationId
+
+    // Same session id, different venue and different organization: not visible, not compensable.
+    for (const stranger of [
+      { ...deviceActor, venueId: otherVenueId },
+      { ...deviceActor, organizationId: otherOrganizationId },
+    ] as AuthenticatedActor[]) {
+      expect(await getUndoState(stranger)).toEqual({ undo: null, redo: null })
+      await expect(compensateOperation(stranger, operationId, 'undo'))
+        .rejects.toMatchObject({ code: 'NOT_LATEST_DEVICE_OPERATION' })
+    }
+    // A request with no resolvable device session is refused rather than defaulted.
+    const sessionless: AuthenticatedActor = { ...deviceActor }
+    delete (sessionless as { authSessionId?: number }).authSessionId
+    await expect(compensateOperation(sessionless, operationId, 'undo'))
+      .rejects.toMatchObject({ code: 'UNDO_SESSION_REQUIRED' })
+    expect(await activeReservationTables(created.id)).toEqual([tableTwoId])
+  })
+
+  // UNDO-07/08: concurrent compensation of one operation commits exactly once.
+  it('lets only one of two concurrent undos win and compensates once', async () => {
+    const created = await createBooking(actor, bookingInput('BA020 concurrent undo'))
+    const assigned = await assignBookingTables(actor, created.id, created.version, [tableId])
+    await assignBookingTables(deviceActor, assigned.id, assigned.version, [tableTwoId])
+    const operationId = (await getUndoState(deviceActor)).undo!.operationId
+
+    const results = await Promise.allSettled([
+      compensateOperation(deviceActor, operationId, 'undo'),
+      compensateOperation(deviceActor, operationId, 'undo'),
+    ])
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(await activeReservationTables(created.id)).toEqual([tableId])
+    const [compensations] = await databasePool.execute<(RowDataPacket & { total: number })[]>(
+      'SELECT COUNT(*) AS total FROM operation_log WHERE compensates_operation_id = ?',
+      [operationId],
+    )
+    expect(Number(compensations[0]?.total)).toBe(1)
+  })
+
+  // UNDO-15: a booking cancelled after the operation must not be silently resurrected.
+  it('refuses to undo a table move once the booking has been cancelled', async () => {
+    const created = await createBooking(actor, bookingInput('BA020 cancelled booking'))
+    const assigned = await assignBookingTables(actor, created.id, created.version, [tableId])
+    const moved = await assignBookingTables(deviceActor, assigned.id, assigned.version, [tableTwoId])
+    const operationId = (await getUndoState(deviceActor)).undo!.operationId
+    await closeBooking(actor, created.id, moved.version, 'CANCELLED', 'BA020 test cancel')
+
+    await expect(compensateOperation(deviceActor, operationId, 'undo'))
+      .rejects.toMatchObject({ code: 'UNDO_CONFLICT_MODIFIED' })
+    expect(await activeReservationTables(created.id)).toEqual([])
+  })
+
+  // UNDO-24: compensation restores allocations on the operation's own business date.
+  it('keeps compensation on the original business date across midnight', async () => {
+    const lateInput = {
+      ...bookingInput('BA020 cross midnight'),
+      expectedAt: `${businessDate}T23:45:00+07:00`,
+    }
+    const created = await createBooking(actor, lateInput)
+    const assigned = await assignBookingTables(actor, created.id, created.version, [tableId])
+    await assignBookingTables(deviceActor, assigned.id, assigned.version, [tableTwoId])
+    await compensateOperation(deviceActor, (await getUndoState(deviceActor)).undo!.operationId, 'undo')
+
+    const [rows] = await databasePool.execute<(RowDataPacket & { business_date: Date | string; table_id: number })[]>(
+      `SELECT a.business_date, a.table_id FROM table_allocations AS a
+       JOIN table_holds AS h ON h.venue_id = a.venue_id AND h.id = a.hold_id
+       WHERE h.reservation_id = ? AND a.released_at IS NULL`,
+      [created.id],
+    )
+    expect(rows).toHaveLength(1)
+    expect(Number(rows[0]?.table_id)).toBe(tableId)
+    const restored = rows[0]!.business_date
+    const asText = restored instanceof Date ? restored.toISOString().slice(0, 10) : String(restored).slice(0, 10)
+    expect(asText).toBe(businessDate)
   })
 
   it('enforces auth, CSRF, RBAC and idempotently replays one committed HTTP undo', async () => {

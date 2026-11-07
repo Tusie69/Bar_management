@@ -12,6 +12,7 @@ import { useM } from "./context"
 import { isOpenEntry, splitShift, tableText } from "./model"
 import {
   BellButton,
+  UndoRedoButtons,
   BookingCard,
   card,
   CardSkeleton,
@@ -73,6 +74,7 @@ function Hero({ title }: { title: string }) {
             {ROLE_LABEL[user.role]}
           </span>
         </div>
+        <UndoRedoButtons glass />
         <BellButton glass />
       </div>
       <div className="relative flex items-baseline justify-between gap-3 px-0.5 pt-4">

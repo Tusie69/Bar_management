@@ -1,9 +1,10 @@
-import { Bell, ChevronDown, Ellipsis, StickyNote, Users } from "lucide-react"
+import { Bell, ChevronDown, Ellipsis, Redo2, StickyNote, Undo2, Users } from "lucide-react"
 import { useEffect, useRef, type ReactNode } from "react"
 import { SOURCE_LABEL } from "@/domain/enums"
 import type { ReservationView } from "@/domain/models"
 import { fmtTime12 } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { useUndoRedo, useUndoRedoShortcuts } from "@/features/operations/use-undo-redo"
 import { useMobileActions } from "./actions"
 import { useM, type Tab } from "./context"
 import { chipOf, fmtShort, subOf, tableText, toneOf, toneStyle } from "./model"
@@ -22,6 +23,44 @@ export function useKeepScroll(key: Tab | string) {
     }
   }, [key])
   return ref
+}
+
+/**
+ * BA-020 / US-10 on Mobile V1. Same hook, same endpoints and same server-owned
+ * eligibility as the Desktop top bar; a button only enables when the server
+ * reports a compensable operation for this device session.
+ */
+export function UndoRedoButtons({ glass }: { glass?: boolean }) {
+  const controller = useUndoRedo()
+  const { undo, redo, pending, apply } = controller
+  useUndoRedoShortcuts(controller)
+  if (!controller.enabled) return null
+  const base = cn(
+    "grid size-11 shrink-0 place-items-center rounded-full text-tx-1 disabled:text-[var(--text-muted)] disabled:active:bg-transparent",
+    glass ? "bg-[var(--glass)] shadow-[var(--shadow-xs)]" : "active:bg-surface-2",
+  )
+  return (
+    <>
+      <button
+        type="button"
+        aria-label="Hoàn tác"
+        disabled={!undo || pending}
+        onClick={() => void apply("undo")}
+        className={base}
+      >
+        <Undo2 className="size-[21px]" strokeWidth={1.8} />
+      </button>
+      <button
+        type="button"
+        aria-label="Làm lại"
+        disabled={!redo || pending}
+        onClick={() => void apply("redo")}
+        className={base}
+      >
+        <Redo2 className="size-[21px]" strokeWidth={1.8} />
+      </button>
+    </>
+  )
 }
 
 export function BellButton({ glass }: { glass?: boolean }) {
@@ -53,6 +92,7 @@ export function PlainHeader({ title, children }: { title: string; children?: Rea
       <div className="flex h-[52px] items-center gap-3">
         <h1 className="m-0 flex-1 truncate text-[22px] font-semibold tracking-[-0.01em] text-tx-strong">{title}</h1>
         <span className="shrink-0 text-[13px] text-[var(--text-muted)]">{fmtShort(m.today)}</span>
+        <UndoRedoButtons />
         <BellButton />
       </div>
       {children}
