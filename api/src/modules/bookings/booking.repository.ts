@@ -30,6 +30,7 @@ export type { BookingClassification } from './booking-metadata.js'
 export interface BookingView {
   id: number
   guestName: string
+  hasGuestName: boolean
   phoneLast3: string | null
   partySize: number
   expectedAt: string
@@ -73,6 +74,7 @@ export async function listBookingSources(actor: AuthenticatedActor): Promise<Boo
 interface BookingRow extends RowDataPacket {
   id: number
   guest_name: string
+  has_guest_name: number
   phone_last3: string | null
   party_size: number
   expected_at: Date | string
@@ -117,6 +119,7 @@ function toBooking(row: BookingRow, now = applicationNow()): BookingView {
   return {
     id: Number(row.id),
     guestName: row.guest_name,
+    hasGuestName: Number(row.has_guest_name) !== 0,
     phoneLast3: row.phone_last3,
     partySize: row.party_size,
     expectedAt: isoDateTime(row.expected_at),
@@ -151,6 +154,7 @@ function toBooking(row: BookingRow, now = applicationNow()): BookingView {
 
 const bookingSelect = `SELECT
   r.id, COALESCE(c.display_name, r.contact_name, 'Khách') AS guest_name,
+  (c.display_name IS NOT NULL OR r.contact_name IS NOT NULL) AS has_guest_name,
   COALESCE(r.phone_last3, c.phone_last3) AS phone_last3, r.party_size, r.expected_at, r.business_date,
   r.customer_classification, r.guest_type, r.is_birthday, r.status,
   bs.name AS source_name, bs.code AS source_code, r.note, r.version, r.late_confirmed_at,
@@ -221,7 +225,7 @@ export async function getBookingById(
 }
 
 export interface CreateBookingInput {
-  guestName: string
+  guestName?: string
   partySize: number
   expectedAt: string
   businessDate: string
@@ -257,6 +261,44 @@ function protectedPhoneValues(phone: ProtectedPhone | null): [Buffer | null, num
     : [null, null, null, null, null]
 }
 
+interface CustomerIdentityRow extends RowDataPacket {
+  id: number
+  status: 'ACTIVE' | 'MERGED' | 'ANONYMIZED'
+}
+
+async function resolveBookingCustomer(
+  connection: PoolConnection,
+  actor: AuthenticatedActor,
+  phone: ProtectedPhone | null,
+): Promise<number | null> {
+  if (!phone) return null
+  const [upsert] = await connection.execute<ResultSetHeader>(
+    `INSERT INTO customers
+      (organization_id, display_name, name_search, phone_ciphertext, phone_key_id,
+       phone_hmac, phone_hmac_key_id, phone_last3, created_by_user_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+    [
+      actor.organizationId,
+      null,
+      null,
+      ...protectedPhoneValues(phone),
+      actor.userId,
+    ],
+  )
+  const customerId = Number(upsert.insertId)
+  const [rows] = await connection.execute<CustomerIdentityRow[]>(
+    `SELECT id, status FROM customers
+     WHERE organization_id = ? AND id = ? FOR UPDATE`,
+    [actor.organizationId, customerId],
+  )
+  const customer = rows[0]
+  if (!customer || customer.status !== 'ACTIVE') {
+    throw new AppError(409, 'CUSTOMER_IDENTITY_UNAVAILABLE', 'Danh tính khách theo số điện thoại không còn hoạt động.')
+  }
+  return customerId
+}
+
 export async function createBooking(
   actor: AuthenticatedActor,
   input: CreateBookingInput,
@@ -267,37 +309,53 @@ export async function createBooking(
   const metadata = resolveBookingMetadata(input)
   const schedule = validateBookingSchedule(input.expectedAt, input.businessDate, now)
   const phone = typeof input.phoneNumber === 'string' ? protectPhoneNumber(input.phoneNumber, phoneKeyRing()) : null
-  const executor = transaction ?? databasePool
-  const [sourceRows] = await executor.execute<(RowDataPacket & { id: number })[]>(
-    'SELECT id FROM booking_sources WHERE organization_id = ? AND code = ? AND is_active = 1',
-    [actor.organizationId, input.sourceCode],
-  )
-  const source = sourceRows[0]
-  if (!source) throw new AppError(400, 'BOOKING_SOURCE_NOT_FOUND', 'Nguồn đặt bàn không hợp lệ.')
-  const [result] = await executor.execute<ResultSetHeader>(
-    `INSERT INTO reservations
-      (organization_id, venue_id, contact_name, contact_name_search, phone_ciphertext, phone_key_id,
-       phone_hmac, phone_hmac_key_id, phone_last3, source_id, party_size,
-       expected_at, business_date, customer_classification, guest_type, is_birthday, note, created_by_user_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      actor.organizationId,
-      actor.venueId,
-      input.guestName,
-      normalizeSearchText(input.guestName),
-      ...protectedPhoneValues(phone),
-      source.id,
-      input.partySize,
-      schedule.mysqlExpectedAt,
-      schedule.businessDate,
-      metadata.classification,
-      metadata.guestType,
-      input.isBirthday ?? false,
-      input.note ?? null,
-      actor.userId,
-    ],
-  )
-  return getBookingById(actor, result.insertId, executor)
+  const connection = transaction ?? await databasePool.getConnection()
+  const ownsTransaction = transaction === undefined
+  try {
+    if (ownsTransaction) await connection.beginTransaction()
+    const [sourceRows] = await connection.execute<(RowDataPacket & { id: number })[]>(
+      'SELECT id FROM booking_sources WHERE organization_id = ? AND code = ? AND is_active = 1',
+      [actor.organizationId, input.sourceCode],
+    )
+    const source = sourceRows[0]
+    if (!source) throw new AppError(400, 'BOOKING_SOURCE_NOT_FOUND', 'Nguồn đặt bàn không hợp lệ.')
+    const customerId = input.guestName
+      ? null
+      : await resolveBookingCustomer(connection, actor, phone)
+    const [result] = await connection.execute<ResultSetHeader>(
+      `INSERT INTO reservations
+        (organization_id, venue_id, customer_id, contact_name, contact_name_search,
+         phone_ciphertext, phone_key_id, phone_hmac, phone_hmac_key_id, phone_last3,
+         source_id, party_size, expected_at, business_date, customer_classification,
+         guest_type, is_birthday, note, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        actor.organizationId,
+        actor.venueId,
+        customerId,
+        customerId === null ? input.guestName ?? null : null,
+        customerId === null && input.guestName ? normalizeSearchText(input.guestName) : null,
+        ...protectedPhoneValues(phone),
+        source.id,
+        input.partySize,
+        schedule.mysqlExpectedAt,
+        schedule.businessDate,
+        metadata.classification,
+        metadata.guestType,
+        input.isBirthday ?? false,
+        input.note ?? null,
+        actor.userId,
+      ],
+    )
+    const booking = await getBookingById(actor, result.insertId, connection)
+    if (ownsTransaction) await connection.commit()
+    return booking
+  } catch (error) {
+    if (ownsTransaction) await connection.rollback()
+    throw error
+  } finally {
+    if (ownsTransaction) connection.release()
+  }
 }
 
 export async function createAndAssignBooking(
@@ -343,17 +401,22 @@ export async function createAndAssignBooking(
       throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
     }
 
+    const customerId = input.guestName
+      ? null
+      : await resolveBookingCustomer(connection, actor, phone)
     const [reservation] = await connection.execute<ResultSetHeader>(
       `INSERT INTO reservations
-        (organization_id, venue_id, contact_name, contact_name_search, phone_ciphertext, phone_key_id,
-         phone_hmac, phone_hmac_key_id, phone_last3, source_id, party_size,
-         expected_at, business_date, customer_classification, guest_type, is_birthday, note, created_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (organization_id, venue_id, customer_id, contact_name, contact_name_search,
+         phone_ciphertext, phone_key_id, phone_hmac, phone_hmac_key_id, phone_last3,
+         source_id, party_size, expected_at, business_date, customer_classification,
+         guest_type, is_birthday, note, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         actor.organizationId,
         actor.venueId,
-        input.guestName,
-        normalizeSearchText(input.guestName),
+        customerId,
+        customerId === null ? input.guestName ?? null : null,
+        customerId === null && input.guestName ? normalizeSearchText(input.guestName) : null,
         ...protectedPhoneValues(phone),
         source.id,
         input.partySize,
@@ -514,6 +577,11 @@ export async function updateBooking(
     if (reservation.status !== 'BOOKED') {
       throw new AppError(409, 'BOOKING_NOT_EDITABLE', 'Chỉ booking đang ở trạng thái BOOKED mới được chỉnh sửa.')
     }
+    const guestName = input.guestName?.trim() || undefined
+    const retainsPhone = input.phoneNumber === undefined && reservation.phone_hmac !== null
+    if (!guestName && !retainsPhone && !input.phoneNumber) {
+      throw new AppError(400, 'BOOKING_CONTACT_REQUIRED', 'Cần ít nhất tên khách hoặc số điện thoại.')
+    }
 
     const currentExpectedAt = reservation.expected_at
     const currentBusinessDate = dateOnly(reservation.business_date)
@@ -587,7 +655,7 @@ export async function updateBooking(
     }
 
     const changedFields: string[] = []
-    if (reservation.contact_name !== input.guestName) changedFields.push('guestName')
+    if (reservation.contact_name !== (guestName ?? null)) changedFields.push('guestName')
     if (Number(reservation.party_size) !== input.partySize) changedFields.push('partySize')
     if (Number(reservation.source_id) !== Number(source.id)) changedFields.push('sourceCode')
     if ((reservation.note ?? '') !== (resolvedNote ?? '')) changedFields.push('note')
@@ -660,15 +728,21 @@ export async function updateBooking(
       ? ', phone_ciphertext = ?, phone_key_id = ?, phone_hmac = ?, phone_hmac_key_id = ?, phone_last3 = ?'
       : ''
     const phoneValues = phoneChanged ? protectedPhoneValues(phone ?? null) : []
+    const customerId = phone === undefined
+      ? reservation.customer_id
+      : phone === null || guestName
+        ? null
+        : await resolveBookingCustomer(connection, actor, phone)
     const [updateResult] = await connection.execute<ResultSetHeader>(
       `UPDATE reservations
-       SET contact_name = ?, contact_name_search = ?, party_size = ?, source_id = ?,
+       SET customer_id = ?, contact_name = ?, contact_name_search = ?, party_size = ?, source_id = ?,
            expected_at = ?, business_date = ?, customer_classification = ?, guest_type = ?, is_birthday = ?, note = ?, updated_by_user_id = ?,
            updated_at = UTC_TIMESTAMP(3), version = version + 1${phoneSql}
        WHERE organization_id = ? AND venue_id = ? AND id = ? AND status = 'BOOKED' AND version = ?`,
       [
-        input.guestName,
-        normalizeSearchText(input.guestName),
+        customerId,
+        guestName ?? null,
+        guestName ? normalizeSearchText(guestName) : null,
         input.partySize,
         source.id,
         schedule.mysqlExpectedAt,

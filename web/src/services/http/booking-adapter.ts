@@ -15,6 +15,7 @@ export type BookingClassification = (typeof classifications)[number]
 export interface BackendBookingPayload {
   id: number
   guestName: string
+  hasGuestName?: boolean
   phoneLast3: string | null
   partySize: number
   expectedAt: Date
@@ -38,6 +39,7 @@ export interface BackendBookingPayload {
 export interface HttpBooking {
   id: number
   guestName: string
+  hasGuestName?: boolean
   phoneLast3: string | null
   partySize: number
   expectedAt: Date
@@ -59,7 +61,7 @@ export interface HttpBooking {
 }
 
 export interface BookingWriteFields {
-  guestName: string
+  guestName?: string
   partySize: number
   expectedAt: Date
   businessDate: BusinessDate
@@ -72,7 +74,7 @@ export interface BookingWriteFields {
 }
 
 export interface BookingCreatePayload {
-  guestName: string
+  guestName?: string
   partySize: number
   expectedAt: string
   businessDate: BusinessDate
@@ -129,6 +131,7 @@ export function mapBooking(payload: BackendBookingPayload): HttpBooking {
   return {
     ...payload,
     id: Number(payload.id),
+    hasGuestName: payload.hasGuestName ?? true,
     version: Number(payload.version),
     partySize: Number(payload.partySize),
     minutesLate: Number(payload.minutesLate),
@@ -145,11 +148,8 @@ export function mapBooking(payload: BackendBookingPayload): HttpBooking {
   }
 }
 
-function commonPayload(fields: BookingWriteFields): BookingCreatePayload {
-  const guestName = fields.guestName.trim()
-  if (!guestName || guestName.length > 120) {
-    throw new ApiError(400, "INVALID_GUEST_NAME", "Tên khách phải dài từ 1 đến 120 ký tự.")
-  }
+function commonPayload(fields: BookingWriteFields, hasRetainedPhone = false): BookingCreatePayload {
+  const guestName = fields.guestName?.trim()
   if (!Number.isSafeInteger(fields.partySize) || fields.partySize <= 0) {
     throw new ApiError(400, "INVALID_PARTY_SIZE", "Số khách không hợp lệ.")
   }
@@ -158,12 +158,18 @@ function commonPayload(fields: BookingWriteFields): BookingCreatePayload {
   }
   const note = fields.note?.trim()
   const phoneNumber = typeof fields.phoneNumber === "string" ? fields.phoneNumber.trim() : fields.phoneNumber
+  if (guestName && guestName.length > 120) {
+    throw new ApiError(400, "INVALID_GUEST_NAME", "Tên khách không được vượt quá 120 ký tự.")
+  }
   if (typeof phoneNumber === "string" && !isPlausibleVnPhone(phoneNumber)) {
     throw new ApiError(422, "INVALID_PHONE_NUMBER", "Số điện thoại không hợp lệ.")
   }
+  if (!guestName && !phoneNumber && !hasRetainedPhone) {
+    throw new ApiError(400, "BOOKING_CONTACT_REQUIRED", "Cần ít nhất tên khách hoặc số điện thoại.")
+  }
   if (note && note.length > 500) throw new ApiError(400, "INVALID_NOTE", "Ghi chú không được vượt quá 500 ký tự.")
   return {
-    guestName,
+    ...(guestName ? { guestName } : {}),
     partySize: fields.partySize,
     expectedAt: venueRfc3339(fields.expectedAt),
     businessDate: fields.businessDate,
@@ -201,7 +207,9 @@ export function fullUpdateBookingPayload(
   // Canonical callers use null for "unchanged". A string (including "") is an intentional edit.
   const editedNote = typeof fields.note === "string" ? fields.note.trim() : undefined
   const merged: BookingWriteFields = {
-    guestName: fields.guestName ?? current.guestName,
+    ...(fields.guestName === undefined
+      ? current.hasGuestName !== false ? { guestName: current.guestName } : {}
+      : { guestName: fields.guestName }),
     partySize: fields.partySize ?? current.partySize,
     expectedAt: fields.expectedAt ?? current.expectedAt,
     businessDate: fields.businessDate ?? current.businessDate,
@@ -212,7 +220,7 @@ export function fullUpdateBookingPayload(
     ...(Object.prototype.hasOwnProperty.call(fields, "phoneNumber") ? { phoneNumber: fields.phoneNumber } : {}),
   }
   return {
-    ...commonPayload(merged),
+    ...commonPayload(merged, current.phoneLast3 !== null),
     ...(editedNote === undefined ? {} : { note: editedNote }),
     version: current.version,
   }

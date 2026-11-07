@@ -142,6 +142,30 @@ describe("HTTP booking endpoints", () => {
     expect(requests[4]?.body).toEqual({ version: 1, reasonNote: "Khách gọi hủy" })
   })
 
+  it("creates phone-only bookings without inventing a guest name", async () => {
+    const bodies: Record<string, unknown>[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        return json({ booking: { ...booking, guestName: "Khách", hasGuestName: false, phoneLast3: "567" } }, 201)
+      }),
+    )
+    const api = new HttpBookingApi(new HttpClient("http://api.test"))
+    const created = await api.create({
+      phoneNumber: "0901234567",
+      partySize: 2,
+      expectedAt: new Date(booking.expectedAt),
+      businessDate: "2030-10-24",
+      sourceCode: "HOTLINE",
+    })
+    await api.update(created, { partySize: 3 })
+    expect(bodies[0]).toMatchObject({ phoneNumber: "0901234567", partySize: 2, sourceCode: "HOTLINE" })
+    expect(bodies[0]).not.toHaveProperty("guestName")
+    expect(bodies[1]).toMatchObject({ partySize: 3, version: 1 })
+    expect(bodies[1]).not.toHaveProperty("guestName")
+  })
+
   it("assigns through the backend transaction with the supplied booking version", async () => {
     const requests: { url: string; method: string; body: unknown }[] = []
     vi.stubGlobal(

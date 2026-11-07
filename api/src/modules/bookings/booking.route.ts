@@ -103,8 +103,17 @@ function bookingBody(value: unknown, mode: 'create' | 'update') {
     phoneNumber = body.phoneNumber === null ? null : body.phoneNumber.trim()
     if (phoneNumber === '') phoneNumber = null
   }
+  const guestName = optionalText(
+    body.guestName,
+    120,
+    'INVALID_GUEST_NAME',
+    'Tên khách không được vượt quá 120 ký tự.',
+  )
+  if (mode === 'create' && !guestName && !phoneNumber) {
+    throw new AppError(400, 'BOOKING_CONTACT_REQUIRED', 'Cần ít nhất tên khách hoặc số điện thoại.')
+  }
   return {
-    guestName: requiredText(body.guestName, 120, 'INVALID_GUEST_NAME', 'Tên khách phải dài từ 1 đến 120 ký tự.'),
+    ...(guestName ? { guestName } : {}),
     partySize: positiveInteger(body.partySize, 'INVALID_PARTY_SIZE', 'Số khách không hợp lệ.'),
     expectedAt: requiredText(body.expectedAt, 40, 'INVALID_EXPECTED_AT', 'Giờ khách đến không hợp lệ.'),
     businessDate: businessDate(body.businessDate),

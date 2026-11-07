@@ -12,6 +12,7 @@ import {
   assignBookingTables,
   checkInBooking,
   closeBooking,
+  createAndAssignBooking,
   createBooking,
   createWalkIn,
   getBookingById,
@@ -213,6 +214,156 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
 
   afterAll(async () => {
     await clearOperationalData()
+  })
+
+  describe('BA-004 phone-only booking identity', () => {
+    async function bookingAgent() {
+      const agent = request.agent(app)
+      const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
+        username: 'booking_reception', password, portal: 'receptionist',
+      })
+      expect(login.status).toBe(200)
+      const auth = JSON.parse(login.text) as AuthResponse
+      return (path: string, body: object, key?: string) => {
+        const call = agent.post(path).set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken)
+        return (key ? call.set('Idempotency-Key', key) : call).send(body)
+      }
+    }
+
+    it('accepts omitted, null, empty and whitespace names when a valid phone is present', async () => {
+      const send = await bookingAgent()
+      const base = bookingInput()
+      const variants = [
+        { ...base, guestName: undefined },
+        { ...base, guestName: null },
+        { ...base, guestName: '' },
+        { ...base, guestName: '   ' },
+      ]
+      for (const [index, body] of variants.entries()) {
+        const response = await send('/api/v1/bookings', {
+          ...body,
+          phoneNumber: `09012345${String(60 + index)}`,
+        }, `ba004-name-shape-${index}`)
+        expect(response.status).toBe(201)
+        const view = (JSON.parse(response.text) as { booking: BookingView }).booking
+        expect(view).toMatchObject({ guestName: 'Khách', phoneLast3: String(560 + index) })
+        expect(JSON.stringify(view)).not.toContain('09012345')
+      }
+      expect(Number((await row('SELECT COUNT(*) AS total FROM customers', [])).total)).toBe(4)
+      expect(Number((await row('SELECT COUNT(*) AS total FROM reservations', [])).total)).toBe(4)
+    })
+
+    it('rejects a missing identity and an invalid phone-only identity', async () => {
+      const send = await bookingAgent()
+      const { guestName: _guestName, ...base } = bookingInput()
+      void _guestName
+      const missing = await send('/api/v1/bookings', base)
+      expect(missing.status).toBe(400)
+      expect(JSON.parse(missing.text)).toMatchObject({ error: { code: 'BOOKING_CONTACT_REQUIRED' } })
+      const invalid = await send('/api/v1/bookings', { ...base, phoneNumber: '123' })
+      expect(invalid.status).toBe(422)
+      expect(JSON.parse(invalid.text)).toMatchObject({ error: { code: 'INVALID_PHONE_NUMBER' } })
+      expect(Number((await row('SELECT COUNT(*) AS total FROM reservations', [])).total)).toBe(0)
+    })
+
+    it('deduplicates the protected customer identity and never erases its existing name', async () => {
+      await createWalkIn(actor, {
+        guestName: 'Tên đã lưu', phoneNumber: '090 123 4567', partySize: 2,
+        businessDate: '2030-10-24', tableIds: [tableTwoId],
+      })
+      const { guestName: _phoneOnlyName, ...phoneOnlyInput } = bookingInput()
+      void _phoneOnlyName
+      const phoneOnly = await createBooking(actor, {
+        ...phoneOnlyInput, phoneNumber: '090-123-4567',
+      })
+      expect(phoneOnly).toMatchObject({ guestName: 'Tên đã lưu', phoneLast3: '567' })
+      const identity = await row(
+        `SELECT COUNT(*) AS total, MAX(display_name) AS display_name,
+           SUM(phone_ciphertext IS NOT NULL AND phone_hmac IS NOT NULL) AS protected
+         FROM customers WHERE organization_id = ?`,
+        [organizationId],
+      )
+      expect(Number(identity.total)).toBe(1)
+      expect(identity.display_name).toBe('Tên đã lưu')
+      expect(Number(identity.protected)).toBe(1)
+      const reservation = await row(
+        'SELECT customer_id, contact_name, phone_ciphertext, phone_hmac, phone_last3 FROM reservations WHERE id = ?',
+        [phoneOnly.id],
+      )
+      expect(reservation.customer_id).not.toBeNull()
+      expect(reservation.contact_name).toBeNull()
+      expect(reservation.phone_ciphertext).toBeInstanceOf(Buffer)
+      expect(reservation.phone_hmac).toBeInstanceOf(Buffer)
+      expect(reservation.phone_last3).toBe('567')
+    })
+
+    it('supports phone-only direct booking and concurrent canonical identity resolution', async () => {
+      const { guestName: _phoneOnlyName, ...phoneOnlyInput } = bookingInput()
+      void _phoneOnlyName
+      const direct = await createAndAssignBooking(actor, {
+        ...phoneOnlyInput, phoneNumber: '0907654321', tableIds: [tableOneId],
+      })
+      expect(direct).toMatchObject({ guestName: 'Khách', phoneLast3: '321', tableCodes: ['T1'] })
+      const projection = await getFloorProjection(actor, '2030-10-24')
+      expect(projection.tables.find((table) => table.tableId === tableOneId)?.claim)
+        .toMatchObject({ reservationId: direct.id, guestName: 'Khách đặt', phoneLast3: '321' })
+      const concurrentPhone = '0912345999'
+      const created = await Promise.all(Array.from({ length: 6 }, (_, index) => createBooking(actor, {
+        ...phoneOnlyInput, phoneNumber: concurrentPhone,
+        note: `Concurrent phone-only ${index}`,
+      })))
+      expect(new Set(created.map((booking) => booking.id)).size).toBe(6)
+      const identity = await row(
+        'SELECT COUNT(*) AS total FROM customers WHERE organization_id = ? AND phone_last3 = ?',
+        [organizationId, '999'],
+      )
+      expect(Number(identity.total)).toBe(1)
+    })
+
+    it('lets a phone-only advance booking enter the waitlist without changing WALK_IN rules', async () => {
+      const { guestName: _phoneOnlyName, ...phoneOnlyInput } = bookingInput()
+      void _phoneOnlyName
+      const booking = await createBooking(actor, { ...phoneOnlyInput, phoneNumber: '0904444555' })
+      const entry = await createWaitlistEntry(actor, {
+        kind: 'ADVANCE_RESERVATION', reservationId: booking.id, businessDate: '2030-10-24',
+        contactChannel: 'PHONE_CALLBACK',
+      })
+      expect(entry).toMatchObject({
+        kind: 'ADVANCE_RESERVATION', reservationId: booking.id, guestName: 'Khách chờ', phoneLast3: '555',
+      })
+      const anonymous = await createWalkIn(actor, {
+        partySize: 2, businessDate: '2030-10-24', tableIds: [tableThreeId],
+      })
+      expect(anonymous.visitId).toBeGreaterThan(0)
+    })
+
+    it('does not persist the display fallback while editing a phone-only booking', async () => {
+      const { guestName: _phoneOnlyName, ...phoneOnlyInput } = bookingInput()
+      void _phoneOnlyName
+      const created = await createBooking(actor, { ...phoneOnlyInput, phoneNumber: '0902222333' })
+      expect(created).toMatchObject({ guestName: 'Khách', hasGuestName: false, phoneLast3: '333' })
+      const edited = await updateBooking(actor, created.id, {
+        ...phoneOnlyInput,
+        partySize: 3,
+        expectedVersion: created.version,
+      })
+      expect(edited).toMatchObject({ guestName: 'Khách', hasGuestName: false, phoneLast3: '333', partySize: 3 })
+      const stored = await row('SELECT customer_id, contact_name FROM reservations WHERE id = ?', [created.id])
+      expect(stored.customer_id).not.toBeNull()
+      expect(stored.contact_name).toBeNull()
+
+      await expect(updateBooking(actor, created.id, {
+        ...phoneOnlyInput, phoneNumber: null, expectedVersion: edited.version,
+      })).rejects.toMatchObject({ code: 'BOOKING_CONTACT_REQUIRED' })
+      const named = await updateBooking(actor, created.id, {
+        ...phoneOnlyInput, guestName: 'Tên bổ sung', phoneNumber: null, expectedVersion: edited.version,
+      })
+      expect(named).toMatchObject({ guestName: 'Tên bổ sung', hasGuestName: true, phoneLast3: null })
+      const unlinked = await row('SELECT customer_id, contact_name, phone_hmac FROM reservations WHERE id = ?', [created.id])
+      expect(unlinked.customer_id).toBeNull()
+      expect(unlinked.contact_name).toBe('Tên bổ sung')
+      expect(unlinked.phone_hmac).toBeNull()
+    })
   })
 
   it('runs Create → Assign → Edit → Check-in → Close while preserving allocation history', async () => {
@@ -994,6 +1145,28 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       expect(other.status).toBe(201)
       expect(bookingId(other)).not.toBe(bookingId(responses[0]!))
       expect(await countRows('reservations')).toBe(2)
+    })
+
+    it('keeps phone-only customer resolution atomic with idempotency completion', async () => {
+      const send = await loginAs('booking_reception')
+      const { guestName: _guestName, ...base } = bookingInput()
+      void _guestName
+      const payload = { ...base, phoneNumber: '0909988776' }
+      const key = 'ba004-phone-only-atomic'
+      injectIdempotencyFaultForTest(key, 'FAIL_COMPLETION')
+      const failed = await send('/api/v1/bookings', payload, key)
+      expect(failed.status).toBe(500)
+      expect(Number((await row('SELECT COUNT(*) AS total FROM customers', [])).total)).toBe(0)
+      expect(await countRows('reservations')).toBe(0)
+      expect(await countRows('idempotency_keys')).toBe(0)
+
+      const created = await send('/api/v1/bookings', payload, key)
+      const replay = await send('/api/v1/bookings', payload, key)
+      expect([created.status, replay.status]).toEqual([201, 201])
+      expect(bookingId(replay)).toBe(bookingId(created))
+      expect(replay.headers['idempotent-replayed']).toBe('true')
+      expect(Number((await row('SELECT COUNT(*) AS total FROM customers', [])).total)).toBe(1)
+      expect(await countRows('reservations')).toBe(1)
     })
 
     it('makes concurrent direct bookings, walk-ins and waitlist entries with the same key succeed once and replay', async () => {

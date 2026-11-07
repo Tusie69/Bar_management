@@ -221,6 +221,30 @@ try {
       tableIds: [await tableIdOf(otherDevice, code)],
     })
 
+  await step("BA-004 desktop: phone-only booking submits through real HTTP without persisting a fake name", async () => {
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await page.goto(`${webUrl}/floor`, { waitUntil: "networkidle" })
+    await table(page, "B6").click()
+    const bookingForm = sheet(page)
+    await bookingForm.getByLabel("Số điện thoại").fill("0901111222")
+    await bookingForm.getByRole("group", { name: "Giờ nhanh" }).getByRole("button", { name: "21:30" }).click()
+    const created = createdBy(page, "/bookings/direct")
+    await bookingForm.getByRole("button", { name: "Đặt bàn B6", exact: true }).click()
+    const response = await created
+    assert.equal(response.status(), 201)
+    assert.equal(response.request().postDataJSON().guestName, undefined)
+    const { booking } = await response.json()
+    assert.equal(booking.hasGuestName, false)
+    assert.equal(booking.phoneLast3, "222")
+    assert.equal(booking.guestName, "Khách")
+    await expect(bookingForm).toBeHidden()
+    assert(!(await page.locator("body").innerText()).includes("0901111222"), "desktop UI leaked the full phone")
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto(`${webUrl}/floor`, { waitUntil: "networkidle" })
+    await table(page, "A1").waitFor()
+    return { phoneLast3: booking.phoneLast3, hasGuestName: booking.hasGuestName }
+  })
+
   await step("AT1 AT4 AT6 AT7: tap A1 opens its sheet, 22:30 in 3 taps, venue quick times, saved on A1", async () => {
     await table(page, "A1").click()
     const form = sheet(page)
@@ -247,6 +271,27 @@ try {
     await expect(form).toBeHidden()
     await expect.poll(async () => (await floorRow(context, today, "A1")).state).not.toBe("AVAILABLE")
     return { taps: taps.n, tableCodes: booking.tableCodes }
+  })
+
+  await step("BA-004 mobile: phone-only table-first booking renders masked on the floor", async () => {
+    await table(page, "B5").click()
+    const form = sheet(page)
+    await form.getByLabel("Số điện thoại").fill("0903333444")
+    await form.getByRole("group", { name: "Giờ nhanh" }).getByRole("button", { name: "21:30" }).click()
+    const created = createdBy(page, "/bookings/direct")
+    await form.getByRole("button", { name: "Đặt bàn B5", exact: true }).click()
+    const response = await created
+    assert.equal(response.status(), 201)
+    assert.equal(response.request().postDataJSON().guestName, undefined)
+    const { booking } = await response.json()
+    assert.equal(booking.hasGuestName, false)
+    assert.equal(booking.phoneLast3, "444")
+    await expect(form).toBeHidden()
+    const floor = await floorRow(context, today, "B5")
+    assert.equal(floor.claim.guestName, "Khách đặt")
+    assert.equal(floor.claim.phoneLast3, "444")
+    assert(!(await page.locator("body").innerText()).includes("0903333444"), "mobile UI leaked the full phone")
+    return { displayName: floor.claim.guestName, phoneLast3: floor.claim.phoneLast3 }
   })
 
   await step("AT2: changing the date re-checks the table for that date", async () => {

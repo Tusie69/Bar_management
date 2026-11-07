@@ -11,7 +11,7 @@ const fields: BookingWriteFields = {
 }
 const created: HttpBooking = {
   id: 71,
-  guestName: fields.guestName,
+  guestName: "Khách layout",
   phoneLast3: null,
   partySize: fields.partySize,
   expectedAt: fields.expectedAt,
