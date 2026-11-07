@@ -198,6 +198,10 @@ beforeEach(() => {
         return json({ entry: { ...entry, status: "SEATED", visitId: 31 }, reservationId: null, groupId: null })
       }
       if (path === "/waitlist" || path.startsWith("/waitlist/")) return json({ entry, reservationId: 11, groupId: 1 })
+      if (path === "/operations/undo-state")
+        return json({ undo: { operationId: 81, action: "VISIT_TABLES_MOVED", summary: "đổi bàn lượt khách" }, redo: null })
+      if (path === "/operations/undo" || path === "/operations/redo")
+        return json({ operationId: 82, changeSeq: 9, summary: "Đã áp dụng.", undoable: true })
       if (path.startsWith("/visits/"))
         return json({ visit: { id: 31, version: 6 }, group: { id: 1, symbolNo: 1, tableIds: [1, 2] } })
       if (path.startsWith("/tables/")) return json({ table: { id: 1, version: 5 } })
@@ -708,8 +712,6 @@ describe("unsupported and transport failures", () => {
     { name: "listOperations", run: (api) => api.listOperations(10) },
     { name: "listAllocations", run: (api) => api.listAllocations(date) },
     { name: "getReport", run: (api) => api.getReport({ from: date, to: date, zone: "ALL" }) },
-    { name: "undo", run: (api) => api.undo(1) },
-    { name: "redo", run: (api) => api.redo(1) },
     { name: "updateVenueConfig", run: (api) => api.updateVenueConfig({ version: 1 }) },
     { name: "setZoneFlags", run: (api) => api.setZoneFlags(1, 1, { isBookable: true, isWaitingArea: false }) },
     { name: "setHoldDeadline", run: (api) => api.setHoldDeadline(1, 1, at, "x") },
@@ -764,5 +766,21 @@ describe("unsupported and transport failures", () => {
       code: "REASON_REQUIRED",
     })
     expect(calls).toEqual([])
+  })
+})
+
+describe("BA-020 Undo/Redo HTTP contract", () => {
+  it("reads server state and sends operation ids to the canonical endpoints", async () => {
+    expect(await api.getUndoState()).toEqual({
+      undo: { operationId: 81, action: "VISIT_TABLES_MOVED", summary: "đổi bàn lượt khách" },
+      redo: null,
+    })
+    expect(await api.undo(81)).toMatchObject({ operationId: 82, changeSeq: 9, undoable: true })
+    expect(await api.redo(82)).toMatchObject({ operationId: 82, changeSeq: 9, undoable: true })
+    expect(calls).toEqual([
+      { method: "GET", path: "/operations/undo-state", body: undefined },
+      { method: "POST", path: "/operations/undo", body: { operationId: 81 } },
+      { method: "POST", path: "/operations/redo", body: { operationId: 82 } },
+    ])
   })
 })

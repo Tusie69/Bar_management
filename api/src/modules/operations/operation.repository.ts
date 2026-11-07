@@ -97,7 +97,8 @@ function actionSummary(action: string): string {
 function parseChange(value: unknown): TableChange {
   let decoded = value
   if (typeof decoded === 'string') decoded = JSON.parse(decoded) as unknown
-  const first = Array.isArray(decoded) ? decoded[0] : null
+  const values = Array.isArray(decoded) ? decoded as unknown[] : []
+  const first: unknown = values[0] ?? null
   if (!first || typeof first !== 'object') throw new AppError(409, 'NOT_UNDOABLE', 'Nhật ký thao tác không đủ dữ liệu để hoàn tác.')
   const record = first as Record<string, unknown>
   const previousTableIds = Array.isArray(record.previousTableIds) ? record.previousTableIds.map(Number) : []
@@ -342,7 +343,7 @@ export async function compensateOperation(
       ? await compensateReservation(connection, actor, latest, change.newTableIds, change.previousTableIds)
       : await compensateVisit(connection, actor, latest, change.newTableIds, change.previousTableIds)
     const changeSeq = await nextVenueChangeSequence(connection, actor)
-    const action = `${mode === 'undo' ? 'UNDO' : 'REDO'}_${latest.action}`
+    const action = `${mode === 'undo' ? 'UNDO' : 'REDO'}_${baseAction(latest.action)}`
     const [insert] = await connection.execute<ResultSetHeader>(
       `INSERT INTO operation_log
         (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id, auth_session_id,
