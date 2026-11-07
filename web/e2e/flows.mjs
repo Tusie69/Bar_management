@@ -332,10 +332,26 @@ await flow(
   },
 )
 
+// BA-023 removed the user-agent gate: the client no longer refuses a desktop or
+// tablet browser and lets the OS decide whether a dialer can handle tel:. This
+// flow guards that decision, so the old "unsupported device" notice cannot come
+// back. Sprint 2 HTTP E2E covers the same capability against the real backend.
 await flow(
-  "call customer: tablet explains that direct calling is unavailable",
+  "call customer: tablet starts the call instead of refusing the device",
   3,
   async (page) => {
+    // Observe the synthetic tel: anchor click without letting it navigate.
+    await page.addInitScript(() => {
+      window.__telClicks = []
+      const originalClick = HTMLAnchorElement.prototype.click
+      HTMLAnchorElement.prototype.click = function click() {
+        if (this.href.startsWith("tel:")) {
+          window.__telClicks.push(this.href)
+          return
+        }
+        return originalClick.call(this)
+      }
+    })
     await page.goto(base + "/floor", { waitUntil: "networkidle" })
     await page.evaluate(async () => {
       const { demo } = await import("/src/services/index.ts")
@@ -344,7 +360,18 @@ await flow(
     await page.reload({ waitUntil: "networkidle" })
     await table(page, "A5").click()
     await page.getByRole("button", { name: "Gọi khách", exact: true }).click()
-    await page.getByText("Thiết bị này không hỗ trợ gọi trực tiếp", { exact: true }).waitFor()
+
+    // The call starts: the outcome action replaces the call button.
+    await page.getByRole("button", { name: "Ghi kết quả cuộc gọi", exact: true }).waitFor()
+    await page.getByRole("button", { name: "Gọi khách", exact: true }).waitFor({ state: "detached" })
+    const telClicks = await page.evaluate(() => window.__telClicks)
+    assert.equal(telClicks.length, 1, "tablet did not open a tel: URI")
+    assert.match(telClicks[0], /^tel:\+?\d+$/)
+
+    // The device-gating notice must not reappear, and the full number stays off screen.
+    const body = await page.locator("body").innerText()
+    assert(!body.includes("không hỗ trợ gọi trực tiếp"), "device gating notice came back")
+    assert(!body.includes(telClicks[0].replace("tel:", "")), "tablet UI leaked the full phone")
     await page.screenshot({ path: "e2e/.artifacts/call-customer-tablet-768.png" })
   },
   { viewport: { width: 768, height: 1024 } },
