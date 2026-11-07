@@ -148,6 +148,31 @@ export interface CombineInput {
   overrideReason?: string
 }
 
+/** BA-022: an account as the admin account screen shows it. Never any credential. */
+export interface AccountSummary {
+  id: number
+  username: string
+  displayName: string
+  status: "ACTIVE" | "DISABLED"
+  membershipStatus: string
+  roles: string[]
+  lastLoginAt: string | null
+  version: number
+}
+
+export interface AccountsView {
+  accounts: AccountSummary[]
+  /** Role codes an account may be created with: only those the backend seeds. */
+  roles: { code: string; name: string }[]
+}
+
+export interface CreateAccountInput {
+  username: string
+  displayName: string
+  password: string
+  roleCode: string
+}
+
 export interface SplitInput {
   groupId: number
   /** Tables that stay with the party. Others are released (SPLIT). */
@@ -247,6 +272,9 @@ export interface GamApi {
   searchCustomers(query: string): Promise<CustomerSummary[]>
   getCustomer(id: number): Promise<CustomerProfile>
   listOperations(limit: number): Promise<OperationView[]>
+  listAccounts(): Promise<AccountsView>
+  createAccount(input: CreateAccountInput): Promise<AccountSummary>
+  setAccountStatus(userId: number, version: number, status: "ACTIVE" | "DISABLED"): Promise<AccountSummary>
   getUndoState(): Promise<UndoState>
   /** table_allocations of a business date, optionally for one table (history + timeline). */
   listAllocations(businessDate: BusinessDate, tableId?: number): Promise<AllocationView[]>
@@ -321,6 +349,9 @@ export interface GamApi {
 /** Implemented backend paths, relative to /api/v1. */
 export const REST_ENDPOINTS = {
   settings: "GET, PUT /settings",
+  accounts: "GET /accounts",
+  createAccount: "POST /accounts",
+  setAccountStatus: "POST /accounts/:id/status",
   catalog: "GET /tables/catalog",
   sources: "GET /bookings/sources",
   floorState: "GET /tables?date=YYYY-MM-DD",

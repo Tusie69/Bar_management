@@ -201,6 +201,19 @@ beforeEach(() => {
       if (/^\/tables\/groups\/\d+\/split$/.test(path))
         return json({ operationId: 91, changeSeq: 12, summary: "Đã tách nhóm bàn.", undoable: false,
           splitGroupId: 1, group: null, keptTableIds: [1], releasedTableIds: [2] })
+      if (path === "/accounts" && init.method === "POST")
+        return json({ account: { id: 5, username: "le_tan", displayName: "Lễ tân", status: "ACTIVE",
+          membershipStatus: "ACTIVE", roles: ["RECEPTIONIST"], lastLoginAt: null, version: 1 } })
+      if (path === "/accounts")
+        return json({
+          accounts: [{ id: 5, username: "le_tan", displayName: "Lễ tân", status: "ACTIVE",
+            membershipStatus: "ACTIVE", roles: ["RECEPTIONIST"], lastLoginAt: null, version: 3 }],
+          roles: [{ code: "RECEPTIONIST", name: "Lễ tân" }],
+        })
+      if (/^\/accounts\/\d+\/status$/.test(path))
+        return json({ account: { id: 5, username: "le_tan", displayName: "Lễ tân", status: "DISABLED",
+          membershipStatus: "ACTIVE", roles: ["RECEPTIONIST"], lastLoginAt: null, version: 4 },
+          revokedSessions: 2 })
       if (path === "/operations/undo-state")
         return json({ undo: { operationId: 81, action: "VISIT_TABLES_MOVED", summary: "đổi bàn lượt khách" }, redo: null })
       if (path === "/operations/undo" || path === "/operations/redo")
@@ -796,6 +809,37 @@ describe("BA-021 Split HTTP contract", () => {
     })
     expect(calls).toEqual([
       { method: "POST", path: "/tables/groups/7/split", body: { keepTableIds: [1] } },
+    ])
+  })
+})
+
+describe("BA-022 account management HTTP contract", () => {
+  it("reads accounts and posts create and status changes to the account routes", async () => {
+    const view = await api.listAccounts()
+    expect(view.accounts[0]).toMatchObject({ id: 5, username: "le_tan", status: "ACTIVE", version: 3 })
+    expect(view.roles).toEqual([{ code: "RECEPTIONIST", name: "Lễ tân" }])
+
+    const created = await api.createAccount({
+      username: "le_tan", displayName: "Lễ tân", password: "a-very-long-password", roleCode: "RECEPTIONIST",
+    })
+    expect(created.id).toBe(5)
+
+    const locked = await api.setAccountStatus(5, 3, "DISABLED")
+    expect(locked.status).toBe("DISABLED")
+
+    expect(calls).toEqual([
+      { method: "GET", path: "/accounts", body: undefined },
+      {
+        method: "POST",
+        path: "/accounts",
+        body: {
+          username: "le_tan",
+          displayName: "Lễ tân",
+          password: "a-very-long-password",
+          roleCode: "RECEPTIONIST",
+        },
+      },
+      { method: "POST", path: "/accounts/5/status", body: { version: 3, status: "DISABLED" } },
     ])
   })
 })

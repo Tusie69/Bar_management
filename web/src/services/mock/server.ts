@@ -13,6 +13,7 @@ import { roleCan, PERMISSION_LABEL, type Permission } from "@/domain/access"
 import { isWithinBookingReceptionWindow } from "@/domain/booking-rules"
 import {
   ROLE_LABEL,
+  type RoleCode,
   type AllocationReleaseReason,
   type HoldReleaseReason,
   type ReservationCloseReason,
@@ -637,6 +638,41 @@ export class MockGamApi implements GamApi, DemoControls {
 
   setSession(user: SessionUser) {
     this.session = { ...user }
+  }
+
+  /**
+   * BA-022: the demo server has no account store. It lists its demo users so the
+   * admin account screen renders, and refuses the mutations, which only the real
+   * backend performs.
+   */
+  async listAccounts() {
+    await this.latency("q")
+    this.require("user.manage")
+    return {
+      accounts: DEMO_USERS.filter((u) => u.id !== REMOTE_USER_ID).map((u) => ({
+        id: u.id,
+        username: u.displayName.toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+        displayName: u.displayName,
+        status: "ACTIVE" as const,
+        membershipStatus: "ACTIVE",
+        roles: [u.role],
+        lastLoginAt: null,
+        version: 1,
+      })),
+      roles: (Object.keys(ROLE_LABEL) as RoleCode[]).map((code) => ({ code, name: ROLE_LABEL[code] })),
+    }
+  }
+
+  async createAccount(): Promise<never> {
+    await this.latency("q")
+    this.require("user.manage")
+    return this.fail("Chế độ demo không tạo được tài khoản. Dùng máy chủ thật để quản lý tài khoản.")
+  }
+
+  async setAccountStatus(): Promise<never> {
+    await this.latency("q")
+    this.require("user.manage")
+    return this.fail("Chế độ demo không khóa/mở được tài khoản. Dùng máy chủ thật để quản lý tài khoản.")
   }
 
   listDemoUsers(): SessionUser[] {

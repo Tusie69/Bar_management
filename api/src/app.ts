@@ -7,6 +7,7 @@ import { env } from './config/env.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { notFoundHandler } from './middleware/not-found.js'
 import { bookingRouter } from './modules/bookings/booking.route.js'
+import { accountRouter } from './modules/accounts/account.route.js'
 import { operationRouter } from './modules/operations/operation.route.js'
 import { tableRouter } from './modules/tables/table.route.js'
 import { visitRouter } from './modules/visits/visit.route.js'
@@ -25,6 +26,7 @@ app.use('/api/v1/health', healthRouter)
 app.use('/api/v1/auth', authRouter)
 app.use('/api/v1/tables', tableRouter)
 app.use('/api/v1/bookings', bookingRouter)
+app.use('/api/v1/accounts', accountRouter)
 app.use('/api/v1/operations', operationRouter)
 app.use('/api/v1/visits', visitRouter)
 app.use('/api/v1/waitlist', waitlistRouter)

@@ -2,7 +2,7 @@
 import type { Catalog, ClaimView, FloorState, MutationResult, SessionUser, VenueSettingsView } from "@/domain/models"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { clock } from "../clock"
-import { ApiError, type GamApi, type UndoState } from "../contracts"
+import { ApiError, type AccountsView, type AccountSummary, type GamApi, type UndoState } from "../contracts"
 import { HttpBookingApi } from "./booking-api"
 import { createAndAssignDirectBooking } from "./direct-booking"
 import {
@@ -397,6 +397,11 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     setHoldDeadline: rejectUnsupported("gia hạn giữ bàn"),
     releaseHold: rejectUnsupported("nhả giữ bàn"),
     updateCustomerNotes: rejectUnsupported("ghi chú hồ sơ khách"),
+    listAccounts: () => get<AccountsView>("/accounts"),
+    createAccount: async (input) =>
+      (await post<{ account: AccountSummary }>("/accounts", input)).account,
+    setAccountStatus: async (userId, version, status) =>
+      (await post<{ account: AccountSummary }>(`/accounts/${userId}/status`, { version, status })).account,
     getUndoState: () => get<UndoState>("/operations/undo-state"),
     undo: (operationId) => post<MutationResult>("/operations/undo", { operationId }, crypto.randomUUID()),
     redo: (operationId) => post<MutationResult>("/operations/redo", { operationId }, crypto.randomUUID()),
