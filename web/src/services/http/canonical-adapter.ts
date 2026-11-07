@@ -18,6 +18,7 @@ export function mapReservation(booking: HttpBooking, catalog: Catalog): Reservat
     version: booking.version,
     customerId: null,
     displayName: booking.guestName,
+    hasGuestName: booking.hasGuestName,
     phoneLast3: booking.phoneLast3,
     partySize: booking.partySize,
     expectedAt: booking.expectedAt,
