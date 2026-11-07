@@ -435,7 +435,8 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
     return `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`
   })
   const [party, setParty] = useState(r.partySize)
-  const [name, setName] = useState(r.displayName)
+  const initialName = r.hasGuestName === false ? "" : r.displayName
+  const [name, setName] = useState(initialName)
   const [note, setNote] = useState(r.note ?? "")
   const [source, setSource] = useState<BookingSourceCode>(r.sourceCode)
   const [classification, setClassification] = useState<BookingClassification>(r.classification)
@@ -527,7 +528,7 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
               api.updateReservation({
                 id: r.id,
                 version: r.version,
-                contactName: name,
+                ...(name.trim() !== initialName ? { contactName: name } : {}),
                 partySize: party,
                 expectedAt: atBusinessTime(r.businessDate, time),
                 sourceCode: source,
