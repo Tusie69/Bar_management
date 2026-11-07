@@ -547,9 +547,12 @@ export function reservationView(db: MockDb, r: ReservationRow, now: Date): Reser
   if (r.status === "BOOKED") subState = effectiveHold ? "DANG_GIU_BAN" : entry ? "CHO_BAN" : "CHO_PHAN_BAN"
   const w = reservationWarning(venue, r, now)
   const creator = db.users.get(r.createdByUserId)
+  // WF-01: a name exists only if the booking or its customer actually has one.
+  const storedName = r.contactName ?? customerOf(db, r.customerId)?.displayName ?? null
   return {
     id: r.id,
     version: r.version,
+    hasGuestName: storedName !== null,
     customerId: r.customerId,
     displayName: personName(db, r.contactName, r.customerId, "Khách đặt"),
     phoneLast3: customerOf(db, r.customerId)?.phoneLast3 ?? null,
