@@ -18,6 +18,7 @@ import {
   Zap,
 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router"
 import { toast } from "sonner"
 import { Kbd } from "@/components/common"
@@ -192,7 +193,7 @@ function TopBar() {
       <div className="flex items-center gap-1 md:gap-2">
         {!receptionist ? <SyncPill /> : null}
         <ClockMenu />
-        {api.mode === "mock" ? <UndoRedo /> : null}
+        <UndoRedo />
         <ThemeToggle />
         <AlertsBell />
         {!receptionist ? <Identity /> : null}
@@ -351,8 +352,73 @@ function DemoTools({
 }
 
 function UndoRedo() {
-  if (api.mode === "http") return null
-  return <UndoRedoContent />
+  return api.mode === "http" ? <HttpUndoRedo /> : <UndoRedoContent />
+}
+
+function HttpUndoRedo() {
+  const queryClient = useQueryClient()
+  const canUndo = useSession((state) => state.permissions.includes("operation.undo"))
+  const state = useQuery({
+    queryKey: ["undo-state"],
+    queryFn: () => api.getUndoState(),
+    enabled: canUndo,
+    refetchInterval: 5_000,
+    retry: false,
+  })
+  const [pending, setPending] = useState(false)
+  const undo = state.data?.undo ?? null
+  const redo = state.data?.redo ?? null
+
+  const apply = async (mode: "undo" | "redo") => {
+    const item = mode === "undo" ? undo : redo
+    if (!item || pending) return
+    setPending(true)
+    try {
+      const response = mode === "undo" ? await api.undo(item.operationId) : await api.redo(item.operationId)
+      toast.success(response.summary)
+      await queryClient.invalidateQueries()
+    } catch (error) {
+      reportError(error)
+      await state.refetch()
+    } finally {
+      setPending(false)
+    }
+  }
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement
+      if (target.closest("input, textarea, [contenteditable=true]")) return
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault()
+        void apply(event.shiftKey ? "redo" : "undo")
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  })
+
+  if (!canUndo) return null
+  return (
+    <div className="flex items-center">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label="Hoàn tác" disabled={!undo || pending} onClick={() => void apply("undo")}>
+            <Undo2 />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{undo ? <>Hoàn tác: {undo.summary} <Kbd>Ctrl Z</Kbd></> : "Chưa có thao tác để hoàn tác"}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label="Làm lại" disabled={!redo || pending} onClick={() => void apply("redo")} className="hidden sm:inline-flex">
+            <Redo2 />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{redo ? <>Làm lại: {redo.summary}</> : "Chưa có thao tác để làm lại"}</TooltipContent>
+      </Tooltip>
+    </div>
+  )
 }
 
 function UndoRedoContent() {

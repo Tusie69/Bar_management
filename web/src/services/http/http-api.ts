@@ -2,7 +2,7 @@
 import type { Catalog, ClaimView, FloorState, MutationResult, SessionUser, VenueSettingsView } from "@/domain/models"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { clock } from "../clock"
-import { ApiError, type GamApi } from "../contracts"
+import { ApiError, type GamApi, type UndoState } from "../contracts"
 import { HttpBookingApi } from "./booking-api"
 import { createAndAssignDirectBooking } from "./direct-booking"
 import {
@@ -392,8 +392,9 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     setHoldDeadline: rejectUnsupported("gia hạn giữ bàn"),
     releaseHold: rejectUnsupported("nhả giữ bàn"),
     updateCustomerNotes: rejectUnsupported("ghi chú hồ sơ khách"),
-    undo: rejectUnsupported("hoàn tác"),
-    redo: rejectUnsupported("làm lại"),
+    getUndoState: () => get<UndoState>("/operations/undo-state"),
+    undo: (operationId) => post<MutationResult>("/operations/undo", { operationId }, crypto.randomUUID()),
+    redo: (operationId) => post<MutationResult>("/operations/redo", { operationId }, crypto.randomUUID()),
     updateVenueConfig: rejectUnsupported("cấu hình quán mở rộng"),
     updateVenueSettings: async (input) => {
       const settings = await put<VenueSettingsView>("/settings", input)

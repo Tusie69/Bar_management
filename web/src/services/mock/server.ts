@@ -832,6 +832,10 @@ export class MockGamApi implements GamApi, DemoControls {
       .map((op) => operationView(this.db, op, this.session.id))
   }
 
+  async getUndoState() {
+    return { undo: null, redo: null }
+  }
+
   async listAllocations(bd: BusinessDate, tableId?: number) {
     await this.latency("q")
     return allocationViews(this.db, bd, this.now, tableId)

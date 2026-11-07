@@ -211,6 +211,17 @@ export interface ReservationQuery {
   search?: string
 }
 
+export interface UndoStateItem {
+  operationId: number
+  action: string
+  summary: string
+}
+
+export interface UndoState {
+  undo: UndoStateItem | null
+  redo: UndoStateItem | null
+}
+
 /* ---------------- Interface ---------------- */
 
 export interface GamApi {
@@ -234,6 +245,7 @@ export interface GamApi {
   searchCustomers(query: string): Promise<CustomerSummary[]>
   getCustomer(id: number): Promise<CustomerProfile>
   listOperations(limit: number): Promise<OperationView[]>
+  getUndoState(): Promise<UndoState>
   /** table_allocations of a business date, optionally for one table (history + timeline). */
   listAllocations(businessDate: BusinessDate, tableId?: number): Promise<AllocationView[]>
   getReport(q: ReportQuery): Promise<ReportResult>
@@ -332,6 +344,9 @@ export const REST_ENDPOINTS = {
   seatWaitlist: "POST /waitlist/:id/seat",
   cancelWaitlist: "POST /waitlist/:id/cancel",
   revealPhone: "POST /bookings/:id/phone:reveal",
+  undoState: "GET /operations/undo-state",
+  undo: "POST /operations/undo",
+  redo: "POST /operations/redo",
 } as const
 
 export const DEMO_ROLE_ORDER: RoleCode[] = ["RECEPTIONIST", "OWNER_ADMIN", "CUSTOMER_CARE", "CASHIER"]

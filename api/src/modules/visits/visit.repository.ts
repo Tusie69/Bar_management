@@ -371,7 +371,7 @@ export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput
         (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
          auth_session_id, action, entity_type, entity_id, entity_version_before,
          entity_version_after, changes, reason_code, reason_note, is_undoable)
-       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'VISIT_TABLES_MOVED', 'visit', ?, ?, ?, ?, 'MANUAL', ?, 0)`,
+       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'VISIT_TABLES_MOVED', 'visit', ?, ?, ?, ?, 'MANUAL', ?, ?)`,
       [
         actor.organizationId,
         actor.venueId,
@@ -390,6 +390,7 @@ export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput
           newTableIds: targetTableIds,
         }]),
         input.note ?? null,
+        actor.authSessionId ? 1 : 0,
       ],
     )
     await connection.commit()
@@ -487,10 +488,11 @@ export async function mergeVisitTables(
       `INSERT INTO operation_log
         (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id, auth_session_id,
          action, entity_type, entity_id, entity_version_before, entity_version_after, changes, reason_code, is_undoable)
-       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'VISIT_TABLES_MERGED', 'visit', ?, ?, ?, ?, 'MANUAL', 0)`,
+       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'VISIT_TABLES_MERGED', 'visit', ?, ?, ?, ?, 'MANUAL', ?)`,
       [actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
         actor.authSessionId ?? null, input.visitId, input.expectedVersion, input.expectedVersion + 1,
-        JSON.stringify([{ type: 'table_group', groupId: group.id, previousTableIds: currentIds, tableIds: requested }])],
+        JSON.stringify([{ type: 'table_group', groupId: group.id, previousTableIds: currentIds, tableIds: requested }]),
+        actor.authSessionId ? 1 : 0],
     )
     await connection.commit()
     return {

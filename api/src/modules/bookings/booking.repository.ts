@@ -1170,7 +1170,7 @@ export async function assignBookingTables(
         (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
          auth_session_id, action, entity_type, entity_id, entity_version_before,
          entity_version_after, changes, reason_code, is_undoable)
-       VALUES (?, ?, ?, 'USER', ?, ?, ?, ?, 'reservation', ?, ?, ?, ?, ?, 0)`,
+        VALUES (?, ?, ?, 'USER', ?, ?, ?, ?, 'reservation', ?, ?, ?, ?, ?, ?)`,
       [
         actor.organizationId,
         actor.venueId,
@@ -1194,6 +1194,7 @@ export async function assignBookingTables(
           },
         ]),
         previousAllocations.length ? 'STAFF_REASSIGNED' : 'INITIAL_ASSIGNMENT',
+        previousAllocations.length > 0 && actor.authSessionId ? 1 : 0,
       ],
     )
     await connection.commit()
@@ -1279,10 +1280,11 @@ export async function mergeBookingTables(
       `INSERT INTO operation_log
         (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id, auth_session_id,
          action, entity_type, entity_id, entity_version_before, entity_version_after, changes, reason_code, is_undoable)
-       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'RESERVATION_TABLES_MERGED', 'reservation', ?, ?, ?, ?, 'MANUAL', 0)`,
+        VALUES (?, ?, ?, 'USER', ?, ?, ?, 'RESERVATION_TABLES_MERGED', 'reservation', ?, ?, ?, ?, 'MANUAL', ?)`,
       [actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
         actor.authSessionId ?? null, id, expectedVersion, expectedVersion + 1,
-        JSON.stringify([{ type: 'table_group', groupId: group.id, previousTableIds: currentIds, tableIds: requested }])],
+        JSON.stringify([{ type: 'table_group', groupId: group.id, previousTableIds: currentIds, tableIds: requested }]),
+        actor.authSessionId ? 1 : 0],
     )
     const booking = await getBookingById(actor, id, connection)
     await connection.commit()
