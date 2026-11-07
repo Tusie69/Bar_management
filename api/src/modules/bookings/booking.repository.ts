@@ -16,6 +16,7 @@ import {
   type GuestType,
 } from './booking-metadata.js'
 import { protectPhoneNumber, revealPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from './phone-security.js'
+import { lockOccupancyConflicts } from '../tables/table-occupancy.js'
 import {
   createTableGroup,
   dissolveUnusedGroups,
@@ -389,13 +390,8 @@ export async function createAndAssignBooking(
         `Các bàn đã chọn chỉ có ${totalCapacity} chỗ cho ${input.partySize} khách.`,
       )
     }
-    const placeholders = tableIds.map(() => '?').join(',')
-    const [conflicts] = await connection.execute<RowDataPacket[]>(
-      `SELECT id FROM table_allocations
-       WHERE organization_id = ? AND venue_id = ? AND business_date = ?
-         AND released_at IS NULL AND table_id IN (${placeholders})
-       ORDER BY table_id, id FOR UPDATE`,
-      [actor.organizationId, actor.venueId, schedule.businessDate, ...tableIds],
+    const conflicts = await lockOccupancyConflicts(
+      connection, actor, 'HOLD', tableIds, schedule.businessDate, [], now,
     )
     if (conflicts.length) {
       throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
@@ -681,15 +677,9 @@ export async function updateBooking(
     const allocationIds = holdRows.map((row) => Number(row.allocation_id))
     const tableIds = holdRows.map((row) => Number(row.table_id))
     if (scheduleChanged && allocationIds.length) {
-      const tablePlaceholders = tableIds.map(() => '?').join(',')
       const allocationPlaceholders = allocationIds.map(() => '?').join(',')
-      const [conflicts] = await connection.execute<RowDataPacket[]>(
-        `SELECT id FROM table_allocations
-         WHERE organization_id = ? AND venue_id = ? AND business_date = ?
-           AND released_at IS NULL AND table_id IN (${tablePlaceholders})
-           AND id NOT IN (${allocationPlaceholders})
-         ORDER BY table_id, id FOR UPDATE`,
-        [actor.organizationId, actor.venueId, schedule.businessDate, ...tableIds, ...allocationIds],
+      const conflicts = await lockOccupancyConflicts(
+        connection, actor, 'HOLD', tableIds, schedule.businessDate, allocationIds, now,
       )
       if (conflicts.length) {
         throw new AppError(
@@ -1094,7 +1084,6 @@ export async function assignBookingTables(
     const tableRows = uniqueTableIds.length > 1
       ? await lockAndValidateSameKindTables(connection, actor, uniqueTableIds)
       : await lockAndValidateAssignableTables(connection, actor, uniqueTableIds)
-    const placeholders = uniqueTableIds.map(() => '?').join(',')
     const totalCapacity = tableRows.reduce((total, table) => total + Number(table.capacity), 0)
     if (totalCapacity < Number(reservation.party_size)) {
       throw new AppError(
@@ -1121,11 +1110,8 @@ export async function assignBookingTables(
     }
     await releaseActiveHold(connection, actor, id, previousAllocations.length ? 'MOVED' : 'HOLD_RELEASED')
     await dissolveUnusedGroups(connection, actor, previousAllocations.map((allocation) => allocation.group_id))
-    const [conflicts] = await connection.execute<RowDataPacket[]>(
-      `SELECT table_id FROM table_allocations
-       WHERE venue_id = ? AND business_date = ? AND released_at IS NULL AND table_id IN (${placeholders})
-       FOR UPDATE`,
-      [actor.venueId, dateOnly(reservation.business_date), ...uniqueTableIds],
+    const conflicts = await lockOccupancyConflicts(
+      connection, actor, 'HOLD', uniqueTableIds, dateOnly(reservation.business_date),
     )
     if (conflicts.length)
       throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
@@ -1238,11 +1224,8 @@ export async function mergeBookingTables(
     if (!additions.length) throw new AppError(409, 'TABLE_ASSIGNMENT_UNCHANGED', 'Nhóm bàn không thay đổi.')
     const totalCapacity = tables.reduce((total, table) => total + Number(table.capacity), 0)
     if (totalCapacity < Number(reservation.party_size)) throw new AppError(409, 'INSUFFICIENT_TABLE_CAPACITY', 'Nhóm bàn không đủ sức chứa.')
-    const placeholders = additions.map(() => '?').join(',')
-    const [conflicts] = await connection.execute<RowDataPacket[]>(
-      `SELECT id FROM table_allocations WHERE organization_id = ? AND venue_id = ?
-       AND business_date = ? AND released_at IS NULL AND table_id IN (${placeholders}) FOR UPDATE`,
-      [actor.organizationId, actor.venueId, dateOnly(reservation.business_date), ...additions],
+    const conflicts = await lockOccupancyConflicts(
+      connection, actor, 'HOLD', additions, dateOnly(reservation.business_date),
     )
     if (conflicts.length) throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một bàn được chọn đang thuộc nhóm khách khác.')
     const groupIds = [...new Set(allocations.map((row) => row.group_id).filter((value): value is number => value !== null))]
@@ -1733,14 +1716,7 @@ export async function createWalkIn(
         `Các bàn đã chọn chỉ có ${totalCapacity} chỗ cho ${input.partySize} khách.`,
       )
     }
-    const placeholders = uniqueTableIds.map(() => '?').join(',')
-    const [conflicts] = await connection.execute<RowDataPacket[]>(
-      `SELECT table_id FROM table_allocations
-       WHERE organization_id = ? AND venue_id = ? AND released_at IS NULL AND table_id IN (${placeholders})
-       ORDER BY table_id, id
-       FOR UPDATE`,
-      [actor.organizationId, actor.venueId, ...uniqueTableIds],
-    )
+    const conflicts = await lockOccupancyConflicts(connection, actor, 'USAGE', uniqueTableIds, input.businessDate)
     if (conflicts.length)
       throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
 

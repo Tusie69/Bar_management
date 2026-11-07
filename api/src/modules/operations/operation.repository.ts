@@ -9,6 +9,7 @@ import {
   lockAndValidateAssignableTables,
   lockAndValidateSameKindTables,
 } from '../tables/table-group.repository.js'
+import { lockOccupancyConflicts, type OccupancyIntent } from '../tables/table-occupancy.js'
 
 const supportedActions = new Set([
   'RESERVATION_TABLES_REASSIGNED',
@@ -177,18 +178,15 @@ async function validateTables(
 async function assertNoConflicts(
   connection: PoolConnection,
   actor: AuthenticatedActor,
+  intent: OccupancyIntent,
   businessDate: string,
   desiredTableIds: number[],
   currentAllocationIds: number[],
 ): Promise<void> {
-  const tableSlots = desiredTableIds.map(() => '?').join(',')
-  const allocationFilter = currentAllocationIds.length ? `AND id NOT IN (${currentAllocationIds.map(() => '?').join(',')})` : ''
-  const [rows] = await connection.execute<RowDataPacket[]>(
-    `SELECT id FROM table_allocations
-     WHERE organization_id = ? AND venue_id = ? AND business_date = ? AND released_at IS NULL
-       AND table_id IN (${tableSlots}) ${allocationFilter}
-     ORDER BY table_id, id FOR UPDATE`,
-    [actor.organizationId, actor.venueId, businessDate, ...desiredTableIds, ...currentAllocationIds],
+  // Same occupancy policy as every other allocation command, so a compensation
+  // cannot restore a table an unreleased carry-over USAGE still holds.
+  const rows = await lockOccupancyConflicts(
+    connection, actor, intent, desiredTableIds, businessDate, currentAllocationIds,
   )
   if (rows.length) throw new AppError(409, 'UNDO_CONFLICT_MODIFIED', 'Không thể hoàn tác vì bàn cũ đã được sử dụng bởi thao tác khác.')
 }
@@ -227,7 +225,7 @@ async function compensateReservation(
   }
   const businessDate = dateOnly(entity.business_date)
   await validateTables(connection, actor, desiredTableIds, Number(entity.party_size))
-  await assertNoConflicts(connection, actor, businessDate, desiredTableIds, allocations.map((row) => Number(row.id)))
+  await assertNoConflicts(connection, actor, 'HOLD', businessDate, desiredTableIds, allocations.map((row) => Number(row.id)))
   await connection.execute(
     `UPDATE table_allocations SET released_at = UTC_TIMESTAMP(3), released_by_user_id = ?, release_reason = 'UNDO'
      WHERE organization_id = ? AND venue_id = ? AND kind = 'HOLD' AND released_at IS NULL
@@ -291,7 +289,7 @@ async function compensateVisit(
   }
   const businessDate = dateOnly(entity.business_date)
   await validateTables(connection, actor, desiredTableIds, Number(entity.guest_count))
-  await assertNoConflicts(connection, actor, businessDate, desiredTableIds, allocations.map((row) => Number(row.id)))
+  await assertNoConflicts(connection, actor, 'USAGE', businessDate, desiredTableIds, allocations.map((row) => Number(row.id)))
   await connection.execute(
     `UPDATE table_allocations SET released_at = UTC_TIMESTAMP(3), released_by_user_id = ?, release_reason = 'UNDO'
      WHERE organization_id = ? AND venue_id = ? AND visit_id = ? AND kind = 'USAGE' AND released_at IS NULL`,

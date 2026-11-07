@@ -4,6 +4,7 @@ import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
+import { lockOccupancyConflicts } from '../tables/table-occupancy.js'
 import { assertNoteHasNoPhoneNumber, redactPhoneNumbersInNote } from '../../security/note-privacy.js'
 import { normalizeSearchText } from '../../lib/search-text.js'
 import { assertBusinessDateNotPast, assertCheckInBusinessDate } from '../bookings/business-date.js'
@@ -504,20 +505,13 @@ export async function seatWaitlistEntry(
 
     const tableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
     if (!tableIds.length) throw new AppError(400, 'TABLE_REQUIRED', 'Cần chọn ít nhất một bàn.')
-    const placeholders = tableIds.map(() => '?').join(',')
     const tables = await lockAndValidateAssignableTables(connection, actor, tableIds)
     const capacity = tables.reduce((total, table) => total + Number(table.capacity), 0)
     if (capacity < Number(entry.party_size)) {
       throw new AppError(409, 'INSUFFICIENT_TABLE_CAPACITY', `Bàn đã chọn chỉ có ${capacity} chỗ cho ${entry.party_size} khách.`)
     }
     const businessDate = dateOnly(entry.business_date)
-    const [conflicts] = await connection.execute<RowDataPacket[]>(
-      `SELECT id FROM table_allocations
-       WHERE organization_id = ? AND venue_id = ? AND business_date = ?
-         AND released_at IS NULL AND table_id IN (${placeholders})
-       ORDER BY table_id, id FOR UPDATE`,
-      [actor.organizationId, actor.venueId, businessDate, ...tableIds],
-    )
+    const conflicts = await lockOccupancyConflicts(connection, actor, 'USAGE', tableIds, businessDate)
     if (conflicts.length) throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc sử dụng.')
 
     if (input.arrived) {
