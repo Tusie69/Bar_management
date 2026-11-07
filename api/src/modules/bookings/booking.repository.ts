@@ -897,6 +897,9 @@ export async function initiateBookingCall(
     if (dateOnly(booking.business_date) !== currentBusinessDate(now)) {
       throw new AppError(409, 'BOOKING_BUSINESS_DATE_NOT_CURRENT', 'Chỉ gọi booking thuộc ngày nghiệp vụ hiện tại.')
     }
+    if (!booking.phone_ciphertext || booking.phone_key_id === null) {
+      throw new AppError(422, 'BOOKING_PHONE_UNAVAILABLE', 'Booking không có số điện thoại hợp lệ.')
+    }
     const eligible = canCallBooking({
       status: booking.status,
       expectedAt: isoDateTime(booking.expected_at),
@@ -912,9 +915,6 @@ export async function initiateBookingCall(
       },
     })
     if (!eligible) throw new AppError(409, 'BOOKING_CALL_NOT_ALLOWED', 'Booking chưa đủ điều kiện gọi khách.')
-    if (!booking.phone_ciphertext || booking.phone_key_id === null) {
-      throw new AppError(422, 'BOOKING_PHONE_UNAVAILABLE', 'Booking không có số điện thoại hợp lệ.')
-    }
     const phone = revealPhoneNumber(booking.phone_ciphertext, Number(booking.phone_key_id), phoneKeyRing())
     const initiatedAt = now.toISOString()
     const mysqlNow = initiatedAt.slice(0, 23).replace('T', ' ')

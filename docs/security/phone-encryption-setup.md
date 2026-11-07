@@ -85,7 +85,7 @@ $env:RUN_MYSQL_INTEGRATION = '1'
 pnpm exec vitest run test/booking-phone.mysql.test.ts
 ```
 
-The setup file rejects any other integration database and replaces phone keys with test-only random keys. It does not validate deployment ciphertext decryptability. A restored production-key check must run privately under an operator, emit only success/failure and counts, and discard decrypted data from memory. Never log reveal response bodies or enter real phones in screenshots or test fixtures. The endpoint requires both `booking.phone.reveal` and `customer.phone.reveal`; current effective authorization is owner-only even before the pending dev grant cleanup. It commits the audit record before returning a phone and sends `Cache-Control: no-store, private, max-age=0` and `Pragma: no-cache`.
+The setup file rejects any other integration database and replaces phone keys with test-only random keys. It does not validate deployment ciphertext decryptability. A restored production-key check must run privately under an operator, emit only success/failure and counts, and discard decrypted data from memory. Never log reveal response bodies or enter real phones in screenshots or test fixtures. The general reveal endpoint still requires both `booking.phone.reveal` and `customer.phone.reveal` and remains owner-only. BA-023's separate call endpoint requires `booking.phone.call`, granted to OWNER_ADMIN and RECEPTIONIST, commits a non-PII initiation audit before returning a transient `tel:` URI, and sends `Cache-Control: no-store, private, max-age=0` plus `Pragma: no-cache`. The URI necessarily exposes the full number to the receiving browser and OS/dialer; it is not hidden-number telephony.
 
 ## Rotation and restore
 

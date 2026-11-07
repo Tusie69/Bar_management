@@ -50,8 +50,8 @@ All rows below are venue/tenant scoped from the authenticated actor. All mutatio
 | POST | `/waitlist/:id/seat` | Yes | Yes | `waitlist.accept_offer` + `reservation.create` + `table.assign` | OWNER_ADMIN, RECEPTIONIST |
 | POST | `/waitlist/:id/cancel` | Yes | Yes | `waitlist.cancel` | OWNER_ADMIN, RECEPTIONIST, CUSTOMER_CARE |
 | POST | `/waitlist/:id/contact-attempts` | Yes | Yes | `waitlist.record_contact` | OWNER_ADMIN, RECEPTIONIST, CUSTOMER_CARE |
-| POST | `/bookings/:id/call` | Yes | Yes | `booking.phone.reveal` + `customer.phone.reveal` | OWNER_ADMIN only |
-| POST | `/bookings/:id/calls/:callId/outcome` | Yes | Yes | `booking.phone.reveal` | OWNER_ADMIN only after migration 0005 |
+| POST | `/bookings/:id/call` | Yes | Yes | `booking.phone.call` | OWNER_ADMIN, RECEPTIONIST |
+| POST | `/bookings/:id/calls/:callId/outcome` | Yes | Yes | `booking.phone.call` | OWNER_ADMIN, RECEPTIONIST |
 | POST | `/bookings/:id/phone:reveal` | Yes | Yes | `booking.phone.reveal` + `customer.phone.reveal` | OWNER_ADMIN only |
 
 Repository queries include organization and venue predicates; cross-scope entities resolve as not found or are rejected. No checked mutation relies only on frontend visibility.

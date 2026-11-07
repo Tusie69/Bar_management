@@ -994,45 +994,81 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         .toBe('LATE_CONFIRMED')
     })
 
-    it('does not expose the call route without authentication or the existing sensitive permission', async () => {
-      expect((await request(app).post('/api/v1/bookings/1/call').set('Origin', env.webOrigin).send({})).status).toBe(401)
+    it('requires a session, CSRF and the dedicated call permission', async () => {
+      const created = await createBooking(actor, {
+        ...bookingInput('2030-10-24', '19:15', 'Call authorization guest'), phoneNumber: '0901234567',
+      })
+      await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      expect((await request(app).post(`/api/v1/bookings/${created.id}/call`).set('Origin', env.webOrigin).send({})).status).toBe(401)
       const receptionist = request.agent(app)
       const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
         username: 'booking_reception', password, portal: 'receptionist',
       })
       const auth = JSON.parse(login.text) as AuthResponse
-      const response = await receptionist.post('/api/v1/bookings/1/call')
-        .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken).send({})
-      expect(response.status).toBe(403)
-      expect(response.text).not.toContain('tel:')
+      expect(auth.permissions).toContain('booking.phone.call')
+      expect(auth.permissions).not.toContain('booking.phone.reveal')
+      expect(auth.permissions).not.toContain('customer.phone.reveal')
+      const noCsrf = await receptionist.post(`/api/v1/bookings/${created.id}/call`)
+        .set('Origin', env.webOrigin).send({})
+      expect(noCsrf.status).toBe(403)
+      expect(noCsrf.text).not.toContain('tel:')
+      const cashier = await createHttpUserWithRole('booking_call_cashier', 'CASHIER')
+      const denied = await cashier.agent.post(`/api/v1/bookings/${created.id}/call`)
+        .set('Origin', env.webOrigin).set('X-CSRF-Token', cashier.auth.csrfToken).send({})
+      expect(denied.status).toBe(403)
+      expect(denied.text).not.toContain('tel:')
     })
 
-    it('requires both phone permissions before the call route can disclose a tel URI', async () => {
-      const created = await createBooking(actor, { ...bookingInput(), phoneNumber: '0901234567' })
+    it('lets a receptionist call named and phone-only bookings without granting reveal access', async () => {
+      const created = await createBooking(actor, {
+        ...bookingInput('2030-10-24', '19:15', 'Reception call guest'), phoneNumber: '0901234567',
+      })
       await assignBookingTables(actor, created.id, created.version, [tableOneId])
-      await databasePool.execute(
-        `INSERT IGNORE INTO role_permissions (role_id, permission_id)
-         SELECT r.id, p.id FROM roles r JOIN permissions p ON p.code = 'booking.phone.reveal'
-         WHERE r.code = 'RECEPTIONIST'`,
-      )
-      try {
-        const limited = await createHttpUserWithRole('booking_phone_only', 'RECEPTIONIST')
-        const response = await limited.agent.post(`/api/v1/bookings/${created.id}/call`)
-          .set('Origin', env.webOrigin).set('X-CSRF-Token', limited.auth.csrfToken).send({})
-        expect(response.status).toBe(403)
-        expect(response.text).not.toContain('tel:')
-        expect(Number((await row(
-          'SELECT COUNT(*) AS total FROM booking_call_logs WHERE reservation_id = ?',
-          [created.id],
-        )).total)).toBe(0)
-      } finally {
-        await databasePool.execute(
-          `DELETE rp FROM role_permissions rp
-           JOIN roles r ON r.id = rp.role_id
-           JOIN permissions p ON p.id = rp.permission_id
-           WHERE r.code = 'RECEPTIONIST' AND p.code = 'booking.phone.reveal'`,
-        )
+      const { guestName: _guestName, ...phoneOnlyInput } = bookingInput('2030-10-24', '19:15')
+      void _guestName
+      const phoneOnly = await createBooking(actor, { ...phoneOnlyInput, phoneNumber: '0907654321' })
+      await assignBookingTables(actor, phoneOnly.id, phoneOnly.version, [tableTwoId])
+      const receptionist = await createHttpUserWithRole('booking_phone_call', 'RECEPTIONIST')
+      expect(receptionist.auth.permissions).toContain('booking.phone.call')
+      expect(receptionist.auth.permissions).not.toContain('booking.phone.reveal')
+      expect(receptionist.auth.permissions).not.toContain('customer.phone.reveal')
+
+      for (const [bookingId, telUri] of [[created.id, 'tel:+84901234567'], [phoneOnly.id, 'tel:+84907654321']] as const) {
+        const response = await receptionist.agent.post(`/api/v1/bookings/${bookingId}/call`)
+          .set('Origin', env.webOrigin).set('X-CSRF-Token', receptionist.auth.csrfToken).send({})
+        expect(response.status).toBe(201)
+        expect(response.headers['cache-control']).toContain('no-store')
+        expect(response.headers.pragma).toBe('no-cache')
+        const call = JSON.parse(response.text) as { callId: number; bookingId: number; telUri: string }
+        expect(call).toMatchObject({ bookingId, telUri })
+        const outcome = await receptionist.agent.post(`/api/v1/bookings/${bookingId}/calls/${call.callId}/outcome`)
+          .set('Origin', env.webOrigin).set('X-CSRF-Token', receptionist.auth.csrfToken)
+          .send({ outcome: 'NO_ANSWER' })
+        expect(outcome.status).toBe(200)
+        const reveal = await receptionist.agent.post(`/api/v1/bookings/${bookingId}/phone:reveal`)
+          .set('Origin', env.webOrigin).set('X-CSRF-Token', receptionist.auth.csrfToken).send({})
+        expect(reveal.status).toBe(403)
+        expect(reveal.text).not.toContain('8490')
       }
+      const audit = await row(
+        `SELECT COUNT(*) AS total,
+           SUM(CAST(changes AS CHAR) LIKE '%84901234567%' OR CAST(changes AS CHAR) LIKE '%84907654321%') AS leaked
+         FROM operation_log WHERE action = 'BOOKING_CALL_INITIATED'`,
+        [],
+      )
+      expect(Number(audit.total)).toBe(2)
+      expect(Number(audit.leaked)).toBe(0)
+    })
+
+    it('returns a specific error for a booking without a phone', async () => {
+      const created = await createBooking(actor, bookingInput('2030-10-24', '19:15', 'No phone guest'))
+      await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const receptionist = await createHttpUserWithRole('booking_no_phone_call', 'RECEPTIONIST')
+      const response = await receptionist.agent.post(`/api/v1/bookings/${created.id}/call`)
+        .set('Origin', env.webOrigin).set('X-CSRF-Token', receptionist.auth.csrfToken).send({})
+      expect(response.status).toBe(422)
+      expect(JSON.parse(response.text)).toMatchObject({ error: { code: 'BOOKING_PHONE_UNAVAILABLE' } })
+      expect(response.text).not.toMatch(/090|tel:/)
     })
 
     it('applies the existing phone disclosure rate limit and venue scope to starting calls', async () => {
@@ -1056,6 +1092,11 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       )).total)).toBe(3)
       await expect(initiateBookingCall(
         { ...actor, venueId: venueId + 999 },
+        created.id,
+        new Date('2030-10-24T21:16:00+07:00'),
+      )).rejects.toMatchObject({ code: 'BOOKING_NOT_FOUND' })
+      await expect(initiateBookingCall(
+        { ...actor, organizationId: organizationId + 999 },
         created.id,
         new Date('2030-10-24T21:16:00+07:00'),
       )).rejects.toMatchObject({ code: 'BOOKING_NOT_FOUND' })

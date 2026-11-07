@@ -28,17 +28,24 @@ mysqlDescribe('Wave 2 owner-approved integration', () => {
   })
   afterAll(clearFixture)
 
-  it('revokes receptionist phone reveal and keeps venue configuration owner-only', async () => {
+  it('separates receptionist calling from phone reveal and keeps venue configuration owner-only', async () => {
     const [grants] = await databasePool.execute<RowDataPacket[]>(
       `SELECT r.code AS role, p.code AS permission FROM role_permissions rp
        JOIN roles r ON r.id = rp.role_id JOIN permissions p ON p.id = rp.permission_id
-       WHERE p.code IN ('booking.phone.reveal', 'venue.configure') ORDER BY p.code, r.code`,
+       WHERE p.code IN ('booking.phone.call', 'booking.phone.reveal', 'customer.phone.reveal', 'venue.configure')
+       ORDER BY p.code, r.code`,
     )
-    expect(grants).toEqual([{ role: 'OWNER_ADMIN', permission: 'booking.phone.reveal' },
+    expect(grants).toEqual([
+      { role: 'OWNER_ADMIN', permission: 'booking.phone.call' },
+      { role: 'RECEPTIONIST', permission: 'booking.phone.call' },
+      { role: 'OWNER_ADMIN', permission: 'booking.phone.reveal' },
+      { role: 'OWNER_ADMIN', permission: 'customer.phone.reveal' },
       { role: 'OWNER_ADMIN', permission: 'venue.configure' }])
     const receptionist = await login()
     const me = await receptionist.agent.get('/api/v1/auth/me')
+    expect((me.body as { permissions: string[] }).permissions).toContain('booking.phone.call')
     expect((me.body as { permissions: string[] }).permissions).not.toContain('booking.phone.reveal')
+    expect((me.body as { permissions: string[] }).permissions).not.toContain('customer.phone.reveal')
   })
 
   it('creates advance entries from reservations, prioritizes them over older walk-ins and rejects duplicates', async () => {

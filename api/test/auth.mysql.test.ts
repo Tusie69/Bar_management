@@ -171,6 +171,7 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     expect(reception.portal).toBe('receptionist')
     expect(reception.user.roles).toEqual(['RECEPTIONIST'])
     expect(reception.permissions).not.toContain('venue.configure')
+    expect(reception.permissions).toContain('booking.phone.call')
     expect(reception.permissions).not.toContain('customer.phone.reveal')
     const deniedAdminWrite = await receptionAgent.patch('/api/v1/tables/1/configuration')
       .set('Origin', origin).set('X-CSRF-Token', reception.csrfToken).send({})
@@ -181,6 +182,7 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     expect(admin.portal).toBe('admin')
     expect(admin.user.roles).toEqual(['OWNER_ADMIN'])
     expect(admin.permissions).toContain('venue.configure')
+    expect(admin.permissions).toContain('booking.phone.call')
     expect(admin.permissions).toContain('customer.phone.reveal')
   })
 

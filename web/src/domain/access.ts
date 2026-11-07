@@ -29,6 +29,7 @@ export type Permission =
   | "hold.release"
   | "customer.view_masked"
   | "customer.phone.reveal"
+  | "booking.phone.call"
   | "booking.phone.reveal"
   | "customer.anonymize"
   | "audit.read"
@@ -65,6 +66,7 @@ export const PERMISSION_MATRIX: Record<Permission, RoleCode[]> = {
   "hold.release": [OA, R],
   "customer.view_masked": [OA, R, CC, C],
   "customer.phone.reveal": [OA],
+  "booking.phone.call": [OA, R],
   "booking.phone.reveal": [OA],
   "customer.anonymize": [OA],
   "audit.read": [OA],
@@ -97,7 +99,8 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "hold.release": "Nhả giữ bàn",
   "customer.view_masked": "Xem khách (SĐT che)",
   "customer.phone.reveal": "Xem SĐT đầy đủ",
-  "booking.phone.reveal": "Mở SĐT của booking để gọi khách",
+  "booking.phone.call": "Gọi khách qua trình gọi điện",
+  "booking.phone.reveal": "Xem SĐT đầy đủ của booking",
   "customer.anonymize": "Ẩn danh khách",
   "audit.read": "Xem nhật ký",
   "report.read": "Xem báo cáo",
@@ -151,6 +154,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
     items: [
       "customer.view_masked",
       "customer.phone.reveal",
+      "booking.phone.call",
       "booking.phone.reveal",
       "customer.anonymize",
       "audit.read",

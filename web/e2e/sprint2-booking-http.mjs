@@ -17,8 +17,8 @@ if (!pnpmCli) throw new Error("pnpm CLI path is unavailable")
 const output = process.env.SPRINT2_OUTPUT ?? "e2e/.artifacts/sprint2-booking"
 fs.mkdirSync(output, { recursive: true })
 
-// 19:00 in Hanoi on 03/11. Today's 22:30 is still ahead; tomorrow is 04/11.
-const fixedNow = "2026-11-03T12:00:00.000Z"
+// 18:55 in Hanoi on 03/11. A 19:00 booking is inside the call window without being in the past.
+const fixedNow = "2026-11-03T11:55:00.000Z"
 const today = "2026-11-03"
 const tomorrow = "2026-11-04"
 const quickTimes = ["20:10", "21:30", "22:00", "23:45"]
@@ -195,6 +195,17 @@ try {
     reducedMotion: "reduce",
   })
   const page = await context.newPage()
+  await page.addInitScript(() => {
+    window.__ba023TelClicks = []
+    const originalClick = HTMLAnchorElement.prototype.click
+    HTMLAnchorElement.prototype.click = function click() {
+      if (this.href.startsWith("tel:")) {
+        window.__ba023TelClicks.push(this.href)
+        return
+      }
+      return originalClick.call(this)
+    }
+  })
   const pageErrors = []
   page.on("pageerror", (error) => pageErrors.push(error.message))
   await page.goto(webUrl, { waitUntil: "networkidle" })
@@ -220,6 +231,62 @@ try {
       classification: "UNCLASSIFIED",
       tableIds: [await tableIdOf(otherDevice, code)],
     })
+
+  const callableBooking = async (code, phoneNumber, guestName) =>
+    api(otherDevice, "POST", "/bookings/direct", {
+      guestName,
+      phoneNumber,
+      partySize: 2,
+      expectedAt: `${today}T19:00:00+07:00`,
+      businessDate: today,
+      sourceCode: "HOTLINE",
+      classification: "UNCLASSIFIED",
+      tableIds: [await tableIdOf(otherDevice, code)],
+    })
+
+  const exerciseCallControl = async (code, phoneNumber, width) => {
+    const created = await callableBooking(code, phoneNumber, `Khách gọi ${code}`)
+    assert.equal(created.status, 201, `callable booking rejected: ${JSON.stringify(created.body)}`)
+    await page.setViewportSize({ width, height: width >= 900 ? 800 : 844 })
+    await page.goto(`${webUrl}/floor`, { waitUntil: "networkidle" })
+    await table(page, code).click()
+    const callResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === `/api/v1/bookings/${created.body.booking.id}/call`,
+    )
+    await page.getByRole("button", { name: "Gọi khách", exact: true }).click()
+    assert.equal((await callResponse).status(), 201)
+    await expect(page.getByRole("button", { name: "Ghi kết quả cuộc gọi", exact: true })).toBeVisible()
+    const telClicks = await page.evaluate(() => window.__ba023TelClicks)
+    assert.equal(telClicks.at(-1), `tel:+84${phoneNumber.slice(1)}`)
+    const body = await page.locator("body").innerText()
+    assert(!body.includes(phoneNumber), `${width >= 900 ? "desktop" : "mobile"} UI leaked the full phone`)
+    assert(!JSON.stringify(await page.evaluate(() => ({ ...localStorage }))).includes(phoneNumber))
+    assert(!JSON.stringify(await page.evaluate(() => ({ ...sessionStorage }))).includes(phoneNumber))
+    await page.getByRole("button", { name: "Ghi kết quả cuộc gọi", exact: true }).click()
+    const outcomeResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname.endsWith("/outcome"),
+    )
+    await page.getByRole("button", { name: "Không nghe máy", exact: true }).click()
+    assert.equal((await outcomeResponse).status(), 200)
+    const cancelled = await api(otherDevice, "POST", `/bookings/${created.body.booking.id}/cancel`, {
+      version: created.body.booking.version,
+      reasonNote: "Dọn fixture BA-023",
+    })
+    assert.equal(cancelled.status, 200)
+    return { bookingId: created.body.booking.id, viewportWidth: width, phoneLast3: phoneNumber.slice(-3) }
+  }
+
+  await step("BA-023 desktop: receptionist call opens the controlled tel URI and records an outcome", async () =>
+    exerciseCallControl("B6", "0905555666", 1280),
+  )
+
+  await step("BA-023 mobile: receptionist call opens the controlled tel URI without persisting the phone", async () =>
+    exerciseCallControl("B5", "0907777888", 390),
+  )
 
   await step("BA-004 desktop: phone-only booking submits through real HTTP without persisting a fake name", async () => {
     await page.setViewportSize({ width: 1280, height: 800 })

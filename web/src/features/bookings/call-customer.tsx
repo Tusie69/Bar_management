@@ -18,10 +18,6 @@ import { useCan } from "@/state/session"
 
 type Outcome = "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED"
 
-function supportsDirectPhoneCall(): boolean {
-  return /iPhone|iPod|Android.*Mobile/i.test(navigator.userAgent)
-}
-
 export function CallCustomerControl({
   bookingId,
   bookingVersion,
@@ -33,8 +29,7 @@ export function CallCustomerControl({
   canCall: boolean
   className?: string
 }) {
-  const allowedToRecord = useCan("booking.phone.reveal")
-  const allowedToReveal = useCan("customer.phone.reveal")
+  const allowedToCall = useCan("booking.phone.call")
   const queryClient = useQueryClient()
   const [pending, setPending] = useState(false)
   const [outcomeOpen, setOutcomeOpen] = useState(false)
@@ -51,17 +46,11 @@ export function CallCustomerControl({
     return () => document.removeEventListener("visibilitychange", onVisibility)
   }, [callId])
 
-  const canStartCall = canCall && allowedToRecord && allowedToReveal
-  const hasPendingOutcome = callId !== null && allowedToRecord
+  const canStartCall = canCall && allowedToCall
+  const hasPendingOutcome = callId !== null && allowedToCall
   if (!canStartCall && !hasPendingOutcome) return null
 
   const start = async () => {
-    if (!supportsDirectPhoneCall()) {
-      toast.info("Thiết bị này không hỗ trợ gọi trực tiếp", {
-        description: "Hãy mở chức năng này trên điện thoại có ứng dụng gọi.",
-      })
-      return
-    }
     setPending(true)
     try {
       const call = await api.startBookingCall(bookingId)
@@ -105,7 +94,7 @@ export function CallCustomerControl({
     <>
       {callId === null ? (
         <GuardedButton
-          permission="customer.phone.reveal"
+          permission="booking.phone.call"
           type="button"
           variant="outline"
           className={className}

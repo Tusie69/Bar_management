@@ -222,8 +222,7 @@ bookingRouter.post(
   '/:id/call',
   requireAuthentication,
   requireCsrfProtection,
-  requirePermission('booking.phone.reveal'),
-  requirePermission('customer.phone.reveal'),
+  requirePermission('booking.phone.call'),
   async (request, response) => {
   objectBody(request.body)
   const id = positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.')
@@ -242,7 +241,7 @@ bookingRouter.post(
   },
 )
 
-bookingRouter.post('/:id/calls/:callId/outcome', requireAuthentication, requireCsrfProtection, requirePermission('booking.phone.reveal'), async (request, response) => {
+bookingRouter.post('/:id/calls/:callId/outcome', requireAuthentication, requireCsrfProtection, requirePermission('booking.phone.call'), async (request, response) => {
   const body = objectBody(request.body)
   const outcome = body.outcome
   if (outcome !== 'CONTACTED' && outcome !== 'NO_ANSWER' && outcome !== 'LATE_CONFIRMED') {

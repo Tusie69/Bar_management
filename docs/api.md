@@ -93,8 +93,8 @@ Spare configuration is persistent rather than per-day. `reason` is required, at 
 | POST | `/bookings/:id/cancel` | `reservation.cancel` | Body `{version,reasonNote?}`; `{booking}` |
 | POST | `/bookings/:id/no-show` | `reservation.mark_no_show` | Body `{version}`; `{booking}` |
 | POST | `/bookings/:id/late-confirm` | `reservation.update` | Body `{version}`; returns `{bookingId,lateConfirmed,lateConfirmedAt,version,changeSeq}` only |
-| POST | `/bookings/:id/call` | Both `booking.phone.reveal` and `customer.phone.reveal` | Empty object; 201 `{callId,bookingId,initiatedAt,telUri}` with `Cache-Control: no-store` |
-| POST | `/bookings/:id/calls/:callId/outcome` | `booking.phone.reveal` | Body `{outcome,bookingVersion?}`; records one result for the call |
+| POST | `/bookings/:id/call` | `booking.phone.call` | Empty object; 201 `{callId,bookingId,initiatedAt,telUri}` with `Cache-Control: no-store` |
+| POST | `/bookings/:id/calls/:callId/outcome` | `booking.phone.call` | Body `{outcome,bookingVersion?}`; records one result for the call |
 | POST | `/bookings/:id/check-in` | `visit.checkin` | Body `{version}`; `{booking}` |
 | POST | `/bookings/:id/phone:reveal` | Both `booking.phone.reveal` and `customer.phone.reveal` | `{phoneNumber}`; owner-only under seeded roles |
 | POST | `/bookings/walk-ins` | `visit.walkin` | Body `{partySize,businessDate,tableIds,guestName?,phoneNumber?}`; 201 `{visitId}` |
@@ -136,7 +136,7 @@ Walk-ins require the current business date during operating hours; errors are `W
 
 The atomic Floor Projection and `BookingView` expose only `canCall` plus the existing `phoneLast3`. The server computes `canCall`; clients must not infer it from their device clock. It is true only for a current-business-date `BOOKED` reservation with a valid encrypted phone, an active table claim, and a server-derived state of `UPCOMING`, `LATE` or `LATE_CONFIRMED`. The pre-arrival boundary uses the venue `upcoming_warning_minutes` setting (default 10 minutes and dynamically updateable through `/settings`). `NO_SHOW`, checked-in, closed, unassigned and phone-less bookings are not callable.
 
-`POST /bookings/:id/call` accepts no phone number. Because its RFC 3966 `tel:` response contains the full number, it uses the same fail-closed disclosure policy, per-user/booking rate limiter, dual `booking.phone.reveal` + `customer.phone.reveal` permissions and actor venue scope as `phone:reveal`. The server then rechecks all call eligibility conditions using `applicationNow()`, decrypts the phone only after acceptance, creates one `booking_call_logs` row, and returns the private/no-store response. Neither the URI nor the full number is written to `operation_log`, the floor projection, normal application logs or browser storage. A `tel:` URI necessarily exposes the number to the receiving browser/phone application and may be visible in browser developer tools. FX-20 LAN calling is not implemented.
+`POST /bookings/:id/call` accepts no phone number. BA-023 gives OWNER_ADMIN and RECEPTIONIST the dedicated sensitive permission `booking.phone.call`; it does not grant either reveal permission. The endpoint retains the fail-closed per-user/booking rate limiter and actor organization/venue scope, rechecks call eligibility using `applicationNow()`, decrypts only after authorization, creates one `booking_call_logs` row, and returns a private/no-store RFC 3966 `tel:` response. Neither the URI nor the full number is written to `operation_log`, the floor projection, normal application logs or browser storage. The user must directly press the call action; the client creates a transient `tel:` link and does not retain it in application state or web storage. A `tel:` URI necessarily sends the full number to the browser and OS/dialer, may be visible in developer tools, and does not prove that a call connected. The outcome dialog therefore requires a human result. Backend-controlled telephony/hidden-number calling is not implemented.
 
 Recording an outcome is independent from starting another call: an existing `callId` can still receive `CONTACTED`, `NO_ANSWER` or `LATE_CONFIRMED` after time-based call eligibility expires. `LATE_CONFIRMED` runs inside the same database transaction as the call outcome. If the booking is already late-confirmed, the endpoint validates the current booking version and records the new call result without repeating the TU-12 transition.
 
@@ -164,9 +164,9 @@ riêng số `UNCLASSIFIED`. Endpoint chỉ trả text; không gửi sang Zalo.
 
 Receptionists never receive a full stored phone, including from `phone:reveal`. That route requires both permissions above; an owner can explicitly reveal a number. It applies per-user/booking rate limits, writes a redacted audit record before returning a number, and sets `Cache-Control: no-store, private, max-age=0` plus `Pragma: no-cache`. Audit failure prevents disclosure. Missing encryption/HMAC keys or rate-limit policy fail closed with 503.
 
-Migration 0005 (`0005_revoke_receptionist_phone_reveal.sql`) revokes the historical `booking.phone.reveal` grant from RECEPTIONIST. Both `booking.phone.reveal` and `customer.phone.reveal` remain required in code; only OWNER_ADMIN has the reveal grant in the current roles.
+Migration 0005 (`0005_revoke_receptionist_phone_reveal.sql`) revokes the historical `booking.phone.reveal` grant from RECEPTIONIST. Migration 0014 adds `booking.phone.call` to OWNER_ADMIN and RECEPTIONIST. Both `booking.phone.reveal` and `customer.phone.reveal` remain owner-only and are still required by the separate `phone:reveal` endpoint.
 
-`[?]` Receptionist calling remains a PO/BA decision. Do not broaden either reveal permission implicitly. If operational staff must call without receiving general-purpose phone-reveal access, introduce a dedicated sensitive permission (for example `booking.call.initiate`) whose route still enforces the fail-closed disclosure policy, rate limit, tenant/venue scope and audit requirements.
+BA-023 records the approved PO decision: Receptionist calling uses the dedicated sensitive `booking.phone.call` permission and the controlled `tel:` response described above. This is an explicit exception for transferring the number to the browser/OS dialer; it does not broaden either general-purpose reveal permission.
 
 ## Visits
 
