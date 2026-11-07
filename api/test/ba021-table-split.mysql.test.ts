@@ -97,6 +97,16 @@ async function mergedVisit(tables: number[]): Promise<{ visitId: number; groupId
   return { visitId: walkIn.visitId, groupId: merged.group.id }
 }
 
+/** The active group behind a visit's USAGE allocations. */
+async function visitGroupId(visitId: number): Promise<number> {
+  const [rows] = await databasePool.execute<(RowDataPacket & { group_id: number })[]>(
+    `SELECT group_id FROM table_allocations
+     WHERE visit_id = ? AND kind = 'USAGE' AND released_at IS NULL AND group_id IS NOT NULL LIMIT 1`,
+    [visitId],
+  )
+  return Number(rows[0]!.group_id)
+}
+
 mysqlDescribe('BA-021 table group Split', () => {
   beforeAll(initializeFixture)
   beforeEach(async () => {
@@ -263,6 +273,93 @@ mysqlDescribe('BA-021 table group Split', () => {
     await splitTableGroup(deviceActor, { groupId, keepTableIds: [tableId] })
 
     expect(await getUndoState(deviceActor)).toEqual({ undo: null, redo: null })
+  })
+
+  // SPL-01 (PO 07/11/2026): kept tables must still seat the party.
+  it('refuses a split whose kept tables cannot seat the party', async () => {
+    const walkIn = await createWalkIn(actor, {
+      guestName: 'BA021 capacity', partySize: 8, businessDate, tableIds: [tableId, tableTwoId],
+    })
+    const groupId = await visitGroupId(walkIn.visitId)
+
+    // 8 guests on two tables of 4; keeping one table leaves 4 seats.
+    await expect(splitTableGroup(deviceActor, { groupId, keepTableIds: [tableId] }))
+      .rejects.toMatchObject({ code: 'INSUFFICIENT_TABLE_CAPACITY' })
+    expect(await activeVisitTables(walkIn.visitId)).toEqual([tableId, tableTwoId])
+    expect((await groupRow(groupId))?.dissolved).toBe(false)
+  })
+
+  // SPL-01 for a booking hold: party_size behind the hold is the limit.
+  it('applies the capacity rule to a booking hold group', async () => {
+    const created = await createBooking(actor, {
+      guestName: 'BA021 hold capacity',
+      partySize: 8,
+      expectedAt: `${businessDate}T20:00:00+07:00`,
+      businessDate,
+      sourceCode: 'HOTLINE',
+    })
+    const assigned = await assignBookingTables(actor, created.id, created.version, [tableId, tableTwoId])
+    const merged = await mergeBookingTables(
+      deviceActor, assigned.id, assigned.version, [tableId, tableTwoId, tableThreeId],
+    )
+
+    await expect(splitTableGroup(deviceActor, { groupId: merged.group.id, keepTableIds: [tableId] }))
+      .rejects.toMatchObject({ code: 'INSUFFICIENT_TABLE_CAPACITY' })
+    // Keeping two of the three tables seats the eight guests, so it is allowed.
+    const outcome = await splitTableGroup(deviceActor, {
+      groupId: merged.group.id, keepTableIds: [tableId, tableTwoId],
+    })
+    expect(outcome.releasedTableIds).toEqual([tableThreeId])
+    expect(await activeReservationTables(created.id)).toEqual([tableId, tableTwoId])
+  })
+
+  // SPL-02 (PO 07/11/2026): keeping the whole group is not a Split.
+  it('refuses a split that releases no table', async () => {
+    const { visitId, groupId } = await mergedVisit([tableId, tableTwoId])
+
+    await expect(splitTableGroup(deviceActor, { groupId, keepTableIds: [tableId, tableTwoId] }))
+      .rejects.toMatchObject({ code: 'SPLIT_RELEASES_NO_TABLE' })
+    expect(await activeVisitTables(visitId)).toEqual([tableId, tableTwoId])
+    expect((await groupRow(groupId))?.dissolved).toBe(false)
+    const [audit] = await databasePool.execute<(RowDataPacket & { total: number })[]>(
+      "SELECT COUNT(*) AS total FROM operation_log WHERE action = 'TABLES_SPLIT'",
+    )
+    expect(Number(audit[0]?.total)).toBe(0)
+  })
+
+  // SPL-03 (PO 07/11/2026): BA-002 replay, and a reused key with another payload.
+  it('replays one committed split for the same key and rejects a changed payload', async () => {
+    const { visitId, groupId } = await mergedVisit([tableId, tableTwoId, tableThreeId])
+    const receptionist = await login()
+    const path = `/api/v1/tables/groups/${groupId}/split`
+    const key = 'ba021_split_replay_0001'
+
+    const first = await receptionist.agent.post(path).set('Origin', env.webOrigin)
+      .set('X-CSRF-Token', receptionist.csrfToken).set('Idempotency-Key', key)
+      .send({ keepTableIds: [tableId] })
+    expect(first.status).toBe(200)
+
+    const replay = await receptionist.agent.post(path).set('Origin', env.webOrigin)
+      .set('X-CSRF-Token', receptionist.csrfToken).set('Idempotency-Key', key)
+      .send({ keepTableIds: [tableId] })
+    expect(replay.status).toBe(200)
+    expect(replay.headers['idempotent-replayed']).toBe('true')
+    expect(replay.body).toEqual(first.body)
+
+    // One mutation and one audit row only.
+    expect(await activeVisitTables(visitId)).toEqual([tableId])
+    const [audit] = await databasePool.execute<(RowDataPacket & { total: number })[]>(
+      "SELECT COUNT(*) AS total FROM operation_log WHERE action = 'TABLES_SPLIT' AND entity_id = ?",
+      [groupId],
+    )
+    expect(Number(audit[0]?.total)).toBe(1)
+
+    // Same key, different payload: refused as a reused key.
+    const mismatch = await receptionist.agent.post(path).set('Origin', env.webOrigin)
+      .set('X-CSRF-Token', receptionist.csrfToken).set('Idempotency-Key', key)
+      .send({ keepTableIds: [tableTwoId] })
+    expect(mismatch.status).toBe(422)
+    expect((mismatch.body as { error: { code: string } }).error.code).toBe('IDEMPOTENCY_KEY_REUSED')
   })
 
   // SPLIT-09: transport security on the HTTP route.

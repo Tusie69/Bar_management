@@ -3,6 +3,7 @@ import { Router } from 'express'
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { AppError } from '../../errors/app-error.js'
+import { idempotent, idempotencyTransaction } from '../../middleware/idempotency.js'
 import { getFloorProjection } from './floor-projection.repository.js'
 import { configureTable, getTableCatalog, updateTableState } from './table.repository.js'
 import { splitTableGroup } from './table-split.repository.js'
@@ -127,6 +128,7 @@ tableRouter.post(
   requireAuthentication,
   requireCsrfProtection,
   requirePermission('visit.split'),
+  idempotent('table.group.split'),
   async (request, response) => {
     const body = parseBody(request.body)
     const groupId = Number(request.params.id)
@@ -136,9 +138,10 @@ tableRouter.post(
     if (!Array.isArray(body.keepTableIds)) {
       throw new AppError(400, 'TABLES_REQUIRED', 'Danh sách bàn giữ lại không hợp lệ.')
     }
-    response.json(await splitTableGroup(requireAuthenticatedActor(request), {
-      groupId,
-      keepTableIds: body.keepTableIds.map(Number),
-    }))
+    response.json(await splitTableGroup(
+      requireAuthenticatedActor(request),
+      { groupId, keepTableIds: body.keepTableIds.map(Number) },
+      idempotencyTransaction(response),
+    ))
   },
 )

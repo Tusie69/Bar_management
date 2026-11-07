@@ -152,6 +152,8 @@ export interface SplitInput {
   groupId: number
   /** Tables that stay with the party. Others are released (SPLIT). */
   keepTableIds: number[]
+  /** SPL-03: same key + same payload on a retry replays the committed split. */
+  idempotencyKey?: string
 }
 
 export interface AddWaitlistInput {

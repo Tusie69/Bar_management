@@ -465,6 +465,7 @@ function SeatedSection({
   const { run } = useAction()
   const pick = usePickActions(tableId, claim, model)
   const [splitOpen, setSplitOpen] = useState(false)
+  const [splitKey, renewSplitKey] = useIdempotencyKey()
   const [endOpen, setEndOpen] = useState(false)
   const ui = useUi()
   const stale = model.states.get(tableId)?.staleFromPreviousDay
@@ -532,8 +533,14 @@ function SeatedSection({
         onOpenChange={setSplitOpen}
         tables={claim.tableIds.map((id) => ({ id, label: model.label(id) }))}
         onConfirm={async (keep) => {
-          const r = await run(() => api.splitGroup({ groupId: claim.groupId!, keepTableIds: keep }))
-          if (r) setSplitOpen(false)
+          // SPL-03: reuse the key while retrying, renew only after it commits.
+          const r = await run(() =>
+            api.splitGroup({ groupId: claim.groupId!, keepTableIds: keep, idempotencyKey: splitKey }),
+          )
+          if (r) {
+            renewSplitKey()
+            setSplitOpen(false)
+          }
         }}
       />
       <ConfirmAction

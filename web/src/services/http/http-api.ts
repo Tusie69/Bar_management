@@ -386,7 +386,11 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     listAllocations: rejectUnsupported("lịch sử sử dụng bàn"),
     getReport: rejectUnsupported("báo cáo"),
     splitGroup: (input) =>
-      post<MutationResult>(`/tables/groups/${input.groupId}/split`, { keepTableIds: input.keepTableIds }),
+      post<MutationResult>(
+        `/tables/groups/${input.groupId}/split`,
+        { keepTableIds: input.keepTableIds },
+        input.idempotencyKey,
+      ),
     markPaid: rejectUnsupported("xác minh thanh toán"),
     claimWaitlist: rejectUnsupported("nhận quyền liên hệ"),
     releaseClaim: rejectUnsupported("nhả quyền liên hệ"),

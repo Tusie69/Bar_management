@@ -132,8 +132,8 @@ function SplitBody({ tables, onConfirm, onCancel }: SplitProps & { onCancel: () 
       <DialogHeader>
         <DialogTitle>Tách bàn</DialogTitle>
         <DialogDescription>
-          Ký hiệu ghép sẽ biến mất. Chọn bàn giữ lại cho đoàn khách; bàn bỏ chọn sẽ được nhả. Lịch sử sử dụng vẫn được
-          giữ.
+          Ký hiệu ghép sẽ biến mất. Chọn bàn giữ lại cho đoàn khách; bàn bỏ chọn sẽ được nhả. Phải nhả ít nhất một
+          bàn, và các bàn giữ lại phải đủ sức chứa cho số khách. Lịch sử sử dụng vẫn được giữ.
         </DialogDescription>
       </DialogHeader>
       <div className="grid gap-2">
@@ -158,12 +158,18 @@ function SplitBody({ tables, onConfirm, onCancel }: SplitProps & { onCancel: () 
       {keep.length === 0 ? (
         <p className="text-sm text-destructive">Giữ ít nhất một bàn. Muốn trả hết bàn hãy dùng Nhả bàn.</p>
       ) : null}
+      {released.length === 0 ? (
+        <p className="text-sm text-destructive">Bỏ chọn ít nhất một bàn để nhả, nếu không thì không có gì để tách.</p>
+      ) : null}
       <DialogFooter>
         <Button variant="ghost" onClick={onCancel}>
           Quay lại
         </Button>
-        <Button disabled={busy || keep.length === 0} onClick={() => run(() => onConfirm(keep))}>
-          {released.length ? `Tách và nhả ${released.map((t) => t.label).join(", ")}` : "Bỏ ký hiệu ghép"}
+        <Button
+          disabled={busy || keep.length === 0 || released.length === 0}
+          onClick={() => run(() => onConfirm(keep))}
+        >
+          {released.length ? `Tách và nhả ${released.map((t) => t.label).join(", ")}` : "Chọn bàn để nhả"}
         </Button>
       </DialogFooter>
     </>

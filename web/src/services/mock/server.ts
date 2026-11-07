@@ -1520,6 +1520,19 @@ export class MockGamApi implements GamApi, DemoControls {
     if (!input.keepTableIds.length)
       this.fail("Giữ lại ít nhất một bàn cho đoàn khách. Muốn trả hết bàn hãy dùng Nhả bàn.")
     if (input.keepTableIds.some((t) => !tables.includes(t))) this.fail("Bàn giữ lại không thuộc nhóm.")
+    // SPL-02 (PO 07/11/2026): a Split must release at least one table.
+    if (input.keepTableIds.length === tables.length)
+      this.fail("Tách bàn phải nhả ít nhất một bàn. Nhóm ghép giữ nguyên.")
+    // SPL-01 (PO 07/11/2026): the kept tables must still seat the party.
+    const owning = allocs[0]
+    const seats = owning.visitId
+      ? this.db.visits.get(owning.visitId)?.guestCount
+      : this.db.holds.get(owning.holdId!)?.reservationId
+        ? this.db.reservations.get(this.db.holds.get(owning.holdId!)!.reservationId!)?.partySize
+        : 0
+    const keptSeats = input.keepTableIds.reduce((sum, t) => sum + (this.db.tables.get(t)?.capacity ?? 0), 0)
+    if (keptSeats < (seats ?? 0))
+      this.fail("Các bàn giữ lại không đủ sức chứa cho số khách hiện tại.")
     return this.commit({ action: "TABLES_SPLIT", entityType: "table_group", undoable: true }, (tx) => {
       allocs.forEach((a) => this.release(tx, a, "SPLIT"))
       const gr = tx.edit("groups", g.id)

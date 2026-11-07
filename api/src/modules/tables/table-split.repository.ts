@@ -49,6 +49,7 @@ interface GroupAllocationRow extends RowDataPacket {
   id: number
   table_id: number
   table_code: string
+  table_capacity: number
   kind: 'HOLD' | 'USAGE'
   hold_id: number | null
   visit_id: number | null
@@ -82,7 +83,8 @@ async function groupAllocations(
   lock: boolean,
 ): Promise<GroupAllocationRow[]> {
   const [rows] = await connection.execute<GroupAllocationRow[]>(
-    `SELECT a.id, a.table_id, dt.code AS table_code, a.kind, a.hold_id, a.visit_id, a.business_date
+    `SELECT a.id, a.table_id, dt.code AS table_code, dt.capacity AS table_capacity,
+            a.kind, a.hold_id, a.visit_id, a.business_date
      FROM table_allocations AS a
      JOIN dining_tables AS dt ON dt.venue_id = a.venue_id AND dt.id = a.table_id
      WHERE a.organization_id = ? AND a.venue_id = ? AND a.group_id = ? AND a.released_at IS NULL
@@ -92,38 +94,53 @@ async function groupAllocations(
   return rows
 }
 
+interface SplitOwner {
+  kind: 'VISIT' | 'HOLD'
+  id: number
+  version: number
+  /** visits.guest_count, or the reservation party_size behind a hold. */
+  guestCount: number
+}
+
 async function lockOwner(
   connection: PoolConnection,
   actor: AuthenticatedActor,
   allocation: GroupAllocationRow,
-): Promise<{ kind: 'VISIT' | 'HOLD'; id: number; version: number }> {
+): Promise<SplitOwner> {
   if (allocation.kind === 'USAGE') {
     const visitId = Number(allocation.visit_id)
-    const [visits] = await connection.execute<(RowDataPacket & { version: number; ended_at: Date | null })[]>(
-      `SELECT version, ended_at FROM visits
+    const [visits] = await connection.execute<(RowDataPacket & {
+      version: number; ended_at: Date | null; guest_count: number
+    })[]>(
+      `SELECT version, ended_at, guest_count FROM visits
        WHERE organization_id = ? AND venue_id = ? AND id = ? FOR UPDATE`,
       [actor.organizationId, actor.venueId, visitId],
     )
     const visit = visits[0]
     if (!visit) throw new AppError(404, 'VISIT_NOT_FOUND', 'Không tìm thấy lượt khách.')
     if (visit.ended_at) throw new AppError(409, 'VISIT_ALREADY_CLOSED', 'Lượt khách đã kết thúc.')
-    return { kind: 'VISIT', id: visitId, version: Number(visit.version) }
+    return { kind: 'VISIT', id: visitId, version: Number(visit.version), guestCount: Number(visit.guest_count) }
   }
   const holdId = Number(allocation.hold_id)
-  const [holds] = await connection.execute<(RowDataPacket & { version: number; status: string })[]>(
-    `SELECT version, status FROM table_holds
-     WHERE organization_id = ? AND venue_id = ? AND id = ? FOR UPDATE`,
+  const [holds] = await connection.execute<(RowDataPacket & {
+    version: number; status: string; party_size: number | null
+  })[]>(
+    `SELECT h.version, h.status, r.party_size FROM table_holds AS h
+     LEFT JOIN reservations AS r ON r.organization_id = h.organization_id
+       AND r.venue_id = h.venue_id AND r.id = h.reservation_id
+     WHERE h.organization_id = ? AND h.venue_id = ? AND h.id = ? FOR UPDATE`,
     [actor.organizationId, actor.venueId, holdId],
   )
   const hold = holds[0]
   if (!hold) throw new AppError(404, 'HOLD_NOT_FOUND', 'Không tìm thấy lượt giữ bàn.')
   if (hold.status !== 'ACTIVE') throw new AppError(409, 'HOLD_NOT_ACTIVE', 'Lượt giữ bàn không còn hiệu lực.')
-  return { kind: 'HOLD', id: holdId, version: Number(hold.version) }
+  return { kind: 'HOLD', id: holdId, version: Number(hold.version), guestCount: Number(hold.party_size ?? 0) }
 }
 
 export async function splitTableGroup(
   actor: AuthenticatedActor,
   input: SplitTableGroupInput,
+  transaction?: PoolConnection,
 ): Promise<SplitTableGroupResult> {
   const keep = [...new Set(input.keepTableIds)].sort((a, b) => a - b)
   if (!keep.length) {
@@ -134,9 +151,12 @@ export async function splitTableGroup(
     throw new AppError(400, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.')
   }
 
-  const connection = await databasePool.getConnection()
+  // SPL-03: when BA-002 supplies the idempotency transaction, the compensation
+  // shares it so the committed response and this mutation land together.
+  const connection = transaction ?? await databasePool.getConnection()
+  const ownsTransaction = transaction === undefined
   try {
-    await connection.beginTransaction()
+    if (ownsTransaction) await connection.beginTransaction()
 
     // Discovery only: find the owning entity so the locks below are taken in the
     // same order the merge path uses. Everything is re-validated after locking.
@@ -172,6 +192,21 @@ export async function splitTableGroup(
 
     const businessDate = dateOnly(group.business_date)
     const released = groupTableIds.filter((id) => !keep.includes(id))
+
+    // SPL-02 (PO 07/11/2026): a Split must actually release a table. Keeping the
+    // whole group is not a Split; it would only churn the group symbol.
+    if (!released.length) {
+      throw new AppError(409, 'SPLIT_RELEASES_NO_TABLE',
+        'Tách bàn phải nhả ít nhất một bàn. Nhóm ghép giữ nguyên.')
+    }
+    // SPL-01 (PO 07/11/2026): the kept tables must still seat the party. Same
+    // capacity rule as merge and assignment: sum of capacities vs guest count.
+    const keptCapacity = keep.reduce((sum, id) => sum
+      + Number(allocations.find((row) => Number(row.table_id) === id)?.table_capacity ?? 0), 0)
+    if (keptCapacity < owner.guestCount) {
+      throw new AppError(409, 'INSUFFICIENT_TABLE_CAPACITY',
+        'Các bàn giữ lại không đủ sức chứa cho số khách hiện tại.')
+    }
 
     // Release every allocation of the group, then re-allocate the kept tables.
     // Released rows are kept, so usage history survives the split.
@@ -247,7 +282,7 @@ export async function splitTableGroup(
       ? `Đã tách nhóm bàn, giữ ${codes(keep)} và nhả ${codes(released)}.`
       : `Đã bỏ ký hiệu ghép, giữ ${codes(keep)}.`
 
-    await connection.commit()
+    if (ownsTransaction) await connection.commit()
     return {
       operationId: logged.insertId,
       changeSeq: Number(changeSeq),
@@ -260,9 +295,9 @@ export async function splitTableGroup(
       owner: { ...owner, version: nextVersion },
     }
   } catch (error) {
-    await connection.rollback()
+    if (ownsTransaction) await connection.rollback()
     throw error
   } finally {
-    connection.release()
+    if (ownsTransaction) connection.release()
   }
 }
