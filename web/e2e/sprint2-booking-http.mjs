@@ -687,12 +687,16 @@ try {
   const closeDetail = (p) => p.locator('button[aria-label="Quay lại"]').first().click()
   const labels = ["Quản lý đơn", "Xem booking", "Xem đơn chờ", "Đổi / Ghép bàn", "Đổi trạng thái", "Khách đã đến"]
 
-  await step("F11: Fixture target allowlist rejects before connecting", async () => {
-    for (const name of ["gam21_platform_it_test", "gam21_platform_e2e_test"])
+  // The guard admits any `_test` database on 127.0.0.1, which is the suffix the
+  // whole repo uses for throwaway databases, and refuses everything else before
+  // it opens a connection. A fixed port is not part of it: 33306 rejected the
+  // targets this suite passes in on its default 3306, this case included.
+  await step("F11: Fixture target guard rejects non-test databases and remote hosts before connecting", async () => {
+    for (const name of ["gam21_platform_it_test", "gam21_platform_e2e_test", "gam21_platform_test"])
       assert.match(runPnpm(["--filter", "@21gam/api", "exec", "tsx", "test/support/phase2b-e2e-fixture.ts", "verify-target"], { ...credentialEnv, DB_NAME: name }), /fixture-target-approved=1/)
     for (const target of [
-      { DB_NAME: "gam21_platform_dev" }, { DB_NAME: "gam21_platform_test" }, { DB_NAME: "arbitrary_test" }, { DB_NAME: "" },
-      { DB_HOST: "localhost" }, { DB_HOST: "192.0.2.1" }, { DB_PORT: "1" },
+      { DB_NAME: "gam21_platform_dev" }, { DB_NAME: "gam21_platform" }, { DB_NAME: "gam21_dev" }, { DB_NAME: "" },
+      { DB_HOST: "localhost" }, { DB_HOST: "192.0.2.1" },
     ]) {
       const result = spawnSync(process.execPath, [pnpmCli, "--filter", "@21gam/api", "exec", "tsx", "test/support/phase2b-e2e-fixture.ts", "verify-target"], { cwd: root, env: { ...credentialEnv, ...target }, encoding: "utf8", windowsHide: true })
       assert.notEqual(result.status, 0)

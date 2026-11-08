@@ -3,10 +3,20 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { hashPassword } from "../../src/auth/password.js";
 import "dotenv/config";
 
+// This fixture truncates and deletes rows, so it must never touch a database
+// that is not disposable: the name must carry the `_test` suffix the whole repo
+// uses for throwaway databases, and the server must be this machine.
+//
+// The port is deliberately not checked. It says nothing about whether a
+// database is disposable, and pinning one (33306) made the guard reject the
+// very targets this suite and its own F11 case pass in on the default port
+// (3306), so no run could get past the fixture. Read from `process.env` rather
+// than the env config so this guard throws before config validation does.
+const databaseName = process.env.DB_NAME ?? "";
+const databaseHost = process.env.DB_HOST ?? "";
 const mode = process.argv[2];
-if (!["gam21_platform_it_test", "gam21_platform_e2e_test"].includes(process.env.DB_NAME ?? "") ||
-    process.env.DB_HOST !== "127.0.0.1" || process.env.DB_PORT !== "33306")
-  throw new Error("Refusing E2E fixture: unapproved database, host or port");
+if (!/_test$/.test(databaseName) || databaseHost !== "127.0.0.1")
+  throw new Error(`Refusing E2E fixture: "${databaseName}" on "${databaseHost}" is not a disposable local test database`);
 if (!["setup", "cleanup", "verify-clean", "verify-phone-audit", "inject-historical-note", "verify-historical-note", "set-quick-times", "revoke-permissions", "restore-permissions", "setup-case2-pure-hold", "cleanup-case2-pure-hold", "cleanup-today-arrival", "snapshot-entities", "cleanup-entities", "verify-target", "set-booking-time"].includes(mode ?? ""))
   throw new Error("Unsupported E2E fixture command");
 
@@ -19,12 +29,24 @@ const membershipId = 9501;
 const historicalNote = "Khách dặn gọi 0987 654 321 khi tới";
 
 type EntityIds = { bookingIds?: number[]; entryIds?: number[]; holdIds?: number[]; visitIds?: number[] };
+const entityIdKeys = ["bookingIds", "entryIds", "holdIds", "visitIds"] as const;
 function entityIds(raw: string | undefined): EntityIds {
-  const ids = JSON.parse(raw ?? "{}");
-  if (!ids || Array.isArray(ids) || Object.keys(ids).some((key) => !["bookingIds", "entryIds", "holdIds", "visitIds"].includes(key)) ||
-      !Object.values(ids).some((value) => Array.isArray(value) && value.length) ||
-      Object.values(ids).some((value) => !Array.isArray(value) || value.some((id) => !Number.isSafeInteger(id) || id <= 0)))
+  const parsed: unknown = JSON.parse(raw ?? "{}");
+  const reject = () => {
     throw new Error("Explicit case entity IDs are required");
+  };
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) reject();
+  const source = parsed as Record<string, unknown>;
+  const ids: EntityIds = {};
+  for (const key of Object.keys(source)) {
+    const known = entityIdKeys.find((candidate) => candidate === key);
+    const value = source[key];
+    if (!known || !Array.isArray(value) ||
+        (value as unknown[]).some((id) => typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0))
+      reject();
+    ids[known as (typeof entityIdKeys)[number]] = value as number[];
+  }
+  if (!entityIdKeys.some((key) => ids[key]?.length)) reject();
   return ids;
 }
 const inIds = (ids: number[] = []) => (ids.length ? ids : [0]).map(() => "?").join(",");
@@ -42,13 +64,13 @@ async function snapshotEntities(ids: EntityIds) {
     `SELECT id, hold_kind, status, version, reservation_id, waitlist_entry_id, converted_visit_id FROM table_holds WHERE organization_id=? AND venue_id=? AND (id IN (${inIds(ids.holdIds)}) OR reservation_id IN (${inIds(ids.bookingIds)}) OR waitlist_entry_id IN (${inIds(entryIds)}))`,
     [...scope, ...values(ids.holdIds), ...values(ids.bookingIds), ...values(entryIds)]);
   const holdIds = holds.map((row) => Number(row.id));
-  const visitIds = [...new Set([...(ids.visitIds ?? []), ...bookings.map((r) => r.visit_id), ...entries.map((r) => r.visit_id), ...holds.map((r) => r.converted_visit_id)].filter(Boolean).map(Number))];
+  const visitIds = [...new Set([...(ids.visitIds ?? []), ...bookings.map((r) => Number(r.visit_id)), ...entries.map((r) => Number(r.visit_id)), ...holds.map((r) => Number(r.converted_visit_id))].filter(Boolean))];
   const [visits] = await databasePool.execute<RowDataPacket[]>(
     `SELECT id, version, ended_at FROM visits WHERE organization_id=? AND venue_id=? AND id IN (${inIds(visitIds)})`, [...scope, ...values(visitIds)]);
   const [allocations] = await databasePool.execute<RowDataPacket[]>(
     `SELECT id, table_id, kind, hold_id, visit_id, group_id, released_at FROM table_allocations WHERE organization_id=? AND venue_id=? AND (hold_id IN (${inIds(holdIds)}) OR visit_id IN (${inIds(visitIds)})) ORDER BY id`,
     [...scope, ...values(holdIds), ...values(visitIds)]);
-  const groupIds = [...new Set(allocations.map((r) => r.group_id).filter(Boolean).map(Number))];
+  const groupIds = [...new Set(allocations.map((r) => Number(r.group_id)).filter(Boolean))];
   const [groups] = await databasePool.execute<RowDataPacket[]>(
     `SELECT id, symbol_no, dissolved_at FROM table_groups WHERE organization_id=? AND venue_id=? AND id IN (${inIds(groupIds)})`, [...scope, ...values(groupIds)]);
   const snapshot = { bookings, entries, holds, visits, allocations, groups };
