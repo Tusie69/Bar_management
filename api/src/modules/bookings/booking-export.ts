@@ -12,6 +12,7 @@ interface ExportRow extends RowDataPacket {
   checked_in_at: Date | null
   status: BookingStatus
   customer_classification: BookingClassification | null
+  is_birthday: number
   allocation_id: number | null
   table_code: string | null
   zone_code: string | null
@@ -253,7 +254,7 @@ export function formatDailyBookingText(input: DailyBookingTextInput): string {
 async function loadBookingRows(connection: PoolConnection, actor: AuthenticatedActor, businessDate: string) {
   const [rows] = await connection.execute<ExportRow[]>(
     `SELECT r.id, COALESCE(r.contact_name, c.display_name, 'Khách') AS guest_name,
-       r.party_size, r.expected_at, r.checked_in_at, r.status, r.customer_classification,
+       r.party_size, r.expected_at, r.checked_in_at, r.status, r.customer_classification, r.is_birthday,
        a.id AS allocation_id, dt.code AS table_code, z.code AS zone_code, z.name AS zone_name
      FROM reservations AS r
      LEFT JOIN customers AS c ON c.organization_id = r.organization_id AND c.id = r.customer_id
@@ -289,7 +290,7 @@ function normalizeBookings(rows: ExportRow[]): DailyBookingTextItem[] {
             ? true
             : row.customer_classification === 'NEW' ? false : null,
           designated: false,
-          birthday: false,
+          birthday: Number(row.is_birthday) !== 0,
           round: null,
         },
       }

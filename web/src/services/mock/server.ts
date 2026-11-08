@@ -804,11 +804,12 @@ export class MockGamApi implements GamApi, DemoControls {
         checkedInAt: row.checkedInAt,
         status: row.status,
         tables: cat.tables.filter((table) => row.tableIds.includes(table.id)).map(tableInfo),
-        // shortcut: mock seed has no export metadata flags; extend its schema when those controls are added.
+        // bossTable, designated and round have no field yet (B01, awaiting the PO);
+        // birthday is real data, so it comes from the reservation.
         metadata: {
           bossTable: false,
           designated: false,
-          birthday: false,
+          birthday: row.isBirthday,
           round: null,
           returningCustomer: row.classification === "RETURNING" ? true : row.classification === "NEW" ? false : null,
         },
