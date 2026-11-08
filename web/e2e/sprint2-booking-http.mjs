@@ -52,6 +52,17 @@ function run(command, args, env = common) {
 const runPnpm = (args, env = common) => run(process.execPath, [pnpmCli, ...args], env)
 const fixture = (...args) =>
   runPnpm(["--filter", "@21gam/api", "exec", "tsx", "test/support/phase2b-e2e-fixture.ts", ...args], credentialEnv)
+const snapshot = (ids) => JSON.parse(fixture("snapshot-entities", JSON.stringify(ids)).split("entity-snapshot=")[1]);
+const cleanupCase = (ids) => fixture("cleanup-entities", JSON.stringify(ids));
+const watchWrites = (page) => {
+  const requests = []
+  const listen = (request) => {
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method()) && request.url().includes("/api/v1/"))
+      requests.push({ path: new URL(request.url()).pathname, body: request.postDataJSON() })
+  }
+  page.on("request", listen)
+  return { requests, stop: () => page.off("request", listen) }
+}
 function startPnpm(args, env) {
   const child = spawn(process.execPath, [pnpmCli, ...args], {
     cwd: root,
@@ -126,10 +137,22 @@ const counter = () => {
 
 async function chooseDate(page, date) {
   const [year, month, day] = date.split("-").map(Number)
+  const targetText = `${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}`
   const calendar = page.getByRole("button", { name: /Chọn ngày/ }).first()
+  const currentText = await calendar.innerText()
+  if (currentText.includes(targetText)) {
+    return
+  }
   await calendar.click()
-  await page.locator(`[data-day="${month}/${day}/${year}"]`).click()
-  await expect(calendar).toContainText(`${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}`)
+  const target = page.locator(`[data-day="${month}/${day}/${year}"]`)
+  for (let n = 0; n < 15 && !await target.count(); n++) {
+    const shown = await page.locator("[data-day]").first().getAttribute("data-day")
+    const shownDate = new Date(shown)
+    await page.locator(new Date(year, month - 1, day) > shownDate ? ".rdp-button_next" : ".rdp-button_previous").click()
+  }
+  await target.click()
+  await expect(calendar).toContainText(targetText)
+  await expect(page.locator("[data-radix-popper-content-wrapper]")).toBeHidden()
 }
 
 async function pickTime(form, hour, minute, tap = (locator) => locator.click()) {
@@ -616,6 +639,526 @@ try {
       return { taps: taps.n }
     },
   )
+
+  // Every hold case owns its IDs and its page. Failed assertions still release only that case.
+  const holdCase = async (fn, { date = today, time = "22:00", name = "Khách Hôm Nay", offer = false, pure = false, linked = true } = {}) => {
+    const ids = { bookingIds: [], entryIds: [] }
+    let p
+    try {
+      let booking, entry
+      if (!pure) {
+        const created = await api(otherDevice, "POST", "/bookings", { guestName: name, partySize: 2,
+          expectedAt: `${date}T${time}:00+07:00`, businessDate: date, sourceCode: "HOTLINE", classification: "UNCLASSIFIED" })
+        assert.equal(created.status, 201, JSON.stringify(created))
+        booking = created.body.booking
+        ids.bookingIds.push(booking.id)
+      }
+      if (offer || pure) {
+        ids.entryIds.push(9988)
+        fixture("setup-case2-pure-hold", "A5", date, String(booking?.id ?? 0))
+      } else if (linked) {
+        const added = await api(otherDevice, "POST", "/waitlist", { kind: "ADVANCE_RESERVATION", reservationId: booking.id, businessDate: date, contactChannel: "IN_PERSON" })
+        assert.equal(added.status, 201, JSON.stringify(added))
+        entry = added.body.entry
+        ids.entryIds.push(entry.id)
+        const seated = await api(otherDevice, "POST", `/waitlist/${entry.id}/seat`, { version: entry.version, tableIds: [await tableIdOf(otherDevice, "A5")], arrived: false })
+        assert.equal(seated.status, 200, JSON.stringify(seated))
+      } else {
+        assert.equal((await api(otherDevice, "POST", `/bookings/${booking.id}/assign`, { version: booking.version, tableIds: [await tableIdOf(otherDevice, "A5")] })).status, 200)
+      }
+      booking = booking && (await bookingsOf(otherDevice, date)).find((r) => r.id === booking.id)
+      entry = (await waitlistOf(otherDevice, date)).find((e) => ids.entryIds.includes(e.id))
+      p = await context.newPage()
+      p.on("pageerror", (error) => pageErrors.push(error.message))
+      await p.goto(`${webUrl}/floor`, { waitUntil: "networkidle" })
+      await chooseDate(p, date)
+      await expect(table(p, "A5")).toHaveAttribute("aria-label", /giữ|đặt|hạn/i)
+      await fn({ p, ids, booking, entry, date })
+    } finally {
+      if (p) await p.close()
+      if (ids.bookingIds.length || ids.entryIds.length) cleanupCase(ids)
+    }
+  }
+  const openHeld = async (p, code = "A5", width = 390) => {
+    await table(p, code).click()
+    const detail = width < 768 ? p.getByRole("dialog", { name: `Chi tiết ${code}` }) : p.locator("aside").last()
+    return width < 768 ? detail : p
+  }
+  const closeDetail = (p) => p.locator('button[aria-label="Quay lại"]').first().click()
+  const labels = ["Quản lý đơn", "Xem booking", "Xem đơn chờ", "Đổi / Ghép bàn", "Đổi trạng thái", "Khách đã đến"]
+
+  await step("F11: Fixture target allowlist rejects before connecting", async () => {
+    for (const name of ["gam21_platform_it_test", "gam21_platform_e2e_test"])
+      assert.match(runPnpm(["--filter", "@21gam/api", "exec", "tsx", "test/support/phase2b-e2e-fixture.ts", "verify-target"], { ...credentialEnv, DB_NAME: name }), /fixture-target-approved=1/)
+    for (const target of [
+      { DB_NAME: "gam21_platform_dev" }, { DB_NAME: "gam21_platform_test" }, { DB_NAME: "arbitrary_test" }, { DB_NAME: "" },
+      { DB_HOST: "localhost" }, { DB_HOST: "192.0.2.1" }, { DB_PORT: "1" },
+    ]) {
+      const result = spawnSync(process.execPath, [pnpmCli, "--filter", "@21gam/api", "exec", "tsx", "test/support/phase2b-e2e-fixture.ts", "verify-target"], { cwd: root, env: { ...credentialEnv, ...target }, encoding: "utf8", windowsHide: true })
+      assert.notEqual(result.status, 0)
+      assert.match(result.stderr + result.stdout, /Refusing E2E fixture/)
+      assert.doesNotMatch(result.stderr + result.stdout, /ECONNREFUSED|ETIMEDOUT/)
+    }
+  })
+
+  await step("AT9b: Duplicate names resolve booking and entry IDs; view/cancel preserve held entities", () => holdCase(async ({ p, ids, booking, entry }) => {
+    const twin = await api(otherDevice, "POST", "/bookings", { guestName: booking.guestName, partySize: 2, expectedAt: `${today}T19:00:00+07:00`, businessDate: today, sourceCode: "HOTLINE", classification: "UNCLASSIFIED" })
+    assert.equal(twin.status, 201)
+    ids.bookingIds.push(twin.body.booking.id)
+    const before = snapshot(ids)
+    assert.equal(before.entries[0].status, "HOLD_ACTIVE")
+    assert.equal(before.bookings.find((r) => r.id === booking.id).status, "BOOKED")
+    assert.equal(before.visits.length, 0)
+    assert.equal(before.allocations.filter((r) => r.kind === "HOLD" && !r.released_at).length, 1)
+    const writes = watchWrites(p)
+    try {
+      let detail = await openHeld(p)
+      for (const label of labels) await expect(detail.getByRole("button", { name: label, exact: true })).toBeVisible()
+      await detail.getByRole("button", { name: "Xem booking", exact: true }).click()
+      // The detail's linked entry is an ID assertion even when two guest names are identical.
+      await expect(p.getByRole("dialog", { name: "Chi tiết booking" }).getByText(`#${entry.id} (Đặt trước)`, { exact: true })).toBeVisible()
+      await closeDetail(p)
+      detail = await openHeld(p)
+      await detail.getByRole("button", { name: "Xem đơn chờ", exact: true }).click()
+      await expect(p.getByRole("dialog", { name: "Chi tiết mục chờ" }).getByText(`#${booking.id}`, { exact: true })).toBeVisible()
+      await closeDetail(p)
+      detail = await openHeld(p)
+      await detail.getByRole("button", { name: "Đổi / Ghép bàn", exact: true }).click()
+      await expect(table(p, "A5")).toHaveAttribute("aria-pressed", "true")
+      assert.equal(writes.requests.length, 0)
+      await p.getByRole("button", { name: "Hủy chọn bàn" }).click()
+      detail = await openHeld(p)
+      await detail.getByRole("button", { name: "Đổi trạng thái", exact: true }).click()
+      await p.getByRole("dialog", { name: "Đổi trạng thái booking" }).getByRole("button", { name: "Đóng", exact: true }).click()
+      detail = await openHeld(p)
+      await detail.getByRole("button", { name: "Khách đã đến", exact: true }).click()
+      const confirm = p.getByRole("alertdialog", { name: "Xác nhận khách đã đến" })
+      await expect(confirm).toContainText(booking.guestName)
+      await expect(confirm).toContainText("A5")
+      await expect(confirm).toContainText("2 khách")
+      await confirm.getByRole("button", { name: "Quay lại", exact: true }).click()
+      await p.getByRole("dialog", { name: "Chi tiết A5" }).getByRole("button", { name: "Đóng", exact: true }).click()
+      assert.deepEqual(writes.requests, [])
+      assert.deepEqual(snapshot(ids), before)
+      detail = await openHeld(p)
+      await detail.getByRole("button", { name: "Đổi trạng thái", exact: true }).click()
+      await p.getByRole("dialog", { name: "Đổi trạng thái booking" }).getByRole("button", { name: "Hủy booking", exact: true }).click()
+      const cancelled = createdBy(p, `/bookings/${booking.id}/cancel`)
+      await p.getByRole("alertdialog").getByRole("button", { name: "Hủy booking", exact: true }).click()
+      const response = await cancelled
+      assert.equal(response.status(), 200)
+      assert.equal(response.request().postDataJSON().version, booking.version)
+      assert.equal(writes.requests.length, 1)
+      const after = snapshot(ids)
+      assert.equal(after.bookings.find((r) => r.id === booking.id).status, "CANCELLED")
+      assert.deepEqual(after.bookings.find((r) => r.id === twin.body.booking.id), before.bookings.find((r) => r.id === twin.body.booking.id))
+      assert.equal(after.entries[0].status, "CANCELLED")
+      assert.equal(after.visits.length, 0)
+    } finally { writes.stop() }
+  }))
+
+  await step("AT9c: Merge full own target set retains HOLD and group; stale assign is exact 409", () => holdCase(async ({ p, ids, booking, entry }) => {
+    const before = snapshot(ids)
+    const detail = await openHeld(p)
+    const writes = watchWrites(p)
+    try {
+      await detail.getByRole("button", { name: "Đổi / Ghép bàn", exact: true }).click()
+      await expect(table(p, "A5")).toHaveAttribute("aria-pressed", "true")
+      assert.notEqual(await table(p, "A5").getAttribute("aria-disabled"), "true")
+      await table(p, "A6").click()
+      const moved = createdBy(p, `/bookings/${booking.id}/assign`)
+      await p.getByRole("button", { name: "Đổi bàn", exact: true }).click()
+      const response = await moved
+      assert.equal(response.status(), 200)
+      assert.equal(response.request().postDataJSON().version, booking.version)
+      const after = snapshot(ids)
+      assert.equal(after.visits.length, before.visits.length)
+      assert.equal(after.entries.find((r) => r.id === entry.id).status, "HOLD_ACTIVE")
+      assert.equal(after.bookings[0].status, "BOOKED")
+      const active = after.allocations.filter((r) => r.kind === "HOLD" && !r.released_at)
+      assert.deepEqual(active.map((r) => r.table_id).sort(), [await tableIdOf(context, "A5"), await tableIdOf(context, "A6")].sort())
+      assert(active.every((r) => r.group_id && r.group_id === active[0].group_id))
+      assert.equal(after.groups.filter((g) => g.id === active[0].group_id && !g.dissolved_at).length, 1)
+      assert.equal(writes.requests.length, 1)
+      const stale = await api(otherDevice, "POST", `/bookings/${booking.id}/assign`, { tableIds: [await tableIdOf(context, "A5")], version: booking.version })
+      assert.equal(stale.status, 409)
+      assert.equal(JSON.parse(stale.body).error.code, "VERSION_CONFLICT")
+      fs.writeFileSync(`${output}/hold-merge-entities.json`, JSON.stringify({ before, after }, null, 2))
+    } finally { writes.stop() }
+  }))
+
+  await step("AT9d: HTTP linked/pure matrix blocks unsupported floor, card and booking-detail actions", async () => {
+    fs.mkdirSync("e2e/.artifacts/waitlist-hold/after", { recursive: true })
+    for (const pure of [true, false]) await holdCase(async ({ p, ids, booking, entry }) => {
+      const before = snapshot(ids)
+      for (const width of [360, 390, 768]) for (const theme of ["light", "dark"]) {
+        await p.setViewportSize({ width, height: width === 768 ? 1024 : 844 })
+        await p.evaluate(async (theme) => (await import("/src/state/session.ts")).useSession.getState().setTheme(theme), theme)
+        const writes = watchWrites(p)
+        try {
+          const detail = await openHeld(p, "A5", width)
+          for (const label of ["Đổi / Ghép bàn", "Khách đã đến", ...(!pure ? ["Đổi trạng thái"] : [])]) await expect(detail.getByRole("button", { name: label, exact: true })).toBeDisabled()
+          if (pure) await expect(detail.getByRole("button", { name: "Xem booking", exact: true })).toBeHidden()
+          await p.screenshot({ path: `e2e/.artifacts/waitlist-hold/after/http-${pure ? "pure" : "offer"}-floor-${width}-${theme}.png` })
+          await detail.getByRole("button", { name: "Quản lý đơn", exact: true }).click()
+          if (width < 768) {
+            const d = p.getByRole("dialog", { name: pure ? "Chi tiết mục chờ" : "Chi tiết booking" })
+            await expect(d).toBeVisible()
+            await expect(d.getByRole("button", { name: pure ? "Khách đã đến" : "Xếp bàn", exact: true })).toBeDisabled()
+            if (pure) await expect(d.getByRole("button", { name: "Đổi / Ghép bàn", exact: true })).toBeDisabled()
+            else await expect(d.getByRole("button", { name: "Đổi trạng thái", exact: true })).toBeDisabled()
+
+            await closeDetail(p)
+            const sheetClose = p.getByRole("dialog", { name: "Chi tiết A5" }).getByRole("button", { name: "Đóng", exact: true })
+            if (await sheetClose.isVisible()) await sheetClose.click()
+          } else {
+            const d = p.getByRole("dialog").last()
+            await expect(d).toContainText(pure ? `#${entry.id}` : `#${booking.id}`)
+            if (!pure) {
+              await expect(d.getByRole("button", { name: "Phân bàn", exact: true })).toBeDisabled()
+              await expect(d.getByRole("button", { name: "Đưa vào danh sách chờ (đặt trước)", exact: true })).toBeHidden()
+              await expect(d.getByRole("button", { name: "Hủy booking", exact: true })).toBeDisabled()
+              await expect(d.getByRole("button", { name: /Khách đã tới: chọn bàn và check-in/ })).toBeDisabled()
+            }
+            await d.getByRole("button", { name: "Đóng", exact: true }).click()
+            await expect(d).toBeHidden()
+            const back = p.getByRole("button", { name: "Ca tối nay", exact: true })
+            if (await back.isVisible()) await back.click()
+          }
+          await p.getByRole("button", { name: /^Bàn chờ/ }).first().click()
+          if (width < 768) await expect(p.getByRole("button", { name: "Khách đã đến", exact: true }).first()).toBeDisabled()
+          else {
+            const card = p.locator(`#entry-${entry.id}`)
+            await expect(card.getByRole("button", { name: "Khách đã đến", exact: true })).toBeDisabled()
+            await expect(card.getByRole("button", { name: "Đổi / Ghép bàn", exact: true })).toBeDisabled()
+          }
+          assert.deepEqual(writes.requests, [])
+          await p.keyboard.press("Escape")
+          await p.reload({ waitUntil: "networkidle" })
+        } finally { writes.stop() }
+      }
+      assert.deepEqual(snapshot(ids), before)
+    }, { offer: !pure, pure })
+  })
+
+  await step("F13 AT5 AT6 AT7 AT9: pending/503 waitlist cannot mutate a linked HTTP offer", async () => {
+    for (const width of [390, 768]) await holdCase(async ({ p, ids, booking }) => {
+      await p.setViewportSize({ width, height: width === 768 ? 1024 : 844 })
+      const before = snapshot(ids)
+      assert.equal(before.holds.filter((h) => h.status === "ACTIVE").length, 1)
+      let release
+      const gate = new Promise((resolve) => { release = resolve })
+      const route = async (route) => {
+        await gate
+        await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "TEST_WAITLIST_UNAVAILABLE", message: "waitlist unavailable" } }) })
+      }
+      await p.route("**/api/v1/waitlist?**", route)
+      const writes = watchWrites(p)
+      try {
+        await p.reload({ waitUntil: "domcontentloaded" })
+        const floor = await openHeld(p, "A5", width)
+        await expect(floor.getByRole("button", { name: "Khách đã đến", exact: true })).toBeDisabled()
+        await floor.getByRole("button", { name: "Quản lý đơn", exact: true }).click()
+        const d = p.getByRole("dialog", { name: width < 768 ? "Chi tiết booking" : undefined }).last()
+        const blocked = width < 768 ? ["Xếp bàn", "Đổi trạng thái", "Sửa booking"] : ["Phân bàn", "Hủy booking", "Không tới", "Khách đã tới: chọn bàn và check-in", "Sửa"]
+        for (const label of blocked) await expect(d.getByRole("button", { name: label, exact: true })).toBeDisabled()
+        await expect(d.getByRole("alert")).toHaveText("Đang tải đơn chờ")
+        const failed = p.waitForResponse((r) => r.url().includes("/api/v1/waitlist?") && r.status() === 503)
+        release()
+        await failed
+        await expect(d.getByRole("alert")).toHaveText("Không tải được đơn chờ")
+        for (const label of blocked) await expect(d.getByRole("button", { name: label, exact: true })).toBeDisabled()
+        await p.screenshot({ path: `${output}/f13-error-detail-${width}.png` })
+        assert.deepEqual(writes.requests, [])
+        assert.deepEqual(snapshot(ids), before)
+        await p.unroute("**/api/v1/waitlist?**", route)
+        await p.reload({ waitUntil: "networkidle" })
+        const recovered = await openHeld(p, "A5", width)
+        await recovered.getByRole("button", { name: "Xem booking", exact: true }).click()
+        const detail = p.getByRole("dialog", { name: width < 768 ? "Chi tiết booking" : undefined }).last()
+        await expect(detail).toContainText(width < 768 ? "Chưa có bàn" : `#${booking.id}`)
+        await expect(detail.getByRole("button", { name: blocked[0], exact: true })).toBeDisabled()
+        assert.deepEqual(writes.requests, [])
+        const after = snapshot(ids)
+        assert.deepEqual(after, before)
+        assert.equal(after.holds.filter((h) => h.status === "ACTIVE").length, 1)
+        assert.equal(after.allocations.filter((a) => a.kind === "HOLD" && !a.released_at).length, 1)
+        assert.equal(after.visits.length, 0)
+      } finally { release(); writes.stop() }
+    }, { offer: true })
+  })
+
+  await step("F13 submit: a direct picker opened before a waitlist 503 sends zero writes", async () => {
+    for (const width of [390, 768]) await holdCase(async ({ p, ids, booking }) => {
+      await p.setViewportSize({ width, height: width === 768 ? 1024 : 844 })
+      await p.reload({ waitUntil: "networkidle" })
+      const before = snapshot(ids)
+      await table(p, "A5").click()
+      if (width < 768) await p.getByRole("button", { name: "Xem booking", exact: true }).click()
+      else await p.evaluate(async (r) => (await import("/src/state/ui.ts")).useUi.getState().openReservation(r.id, r.businessDate), booking)
+      const d = p.getByRole("dialog", { name: width < 768 ? "Chi tiết booking" : undefined }).last()
+      await d.getByRole("button", { name: width < 768 ? "Đổi / Ghép bàn" : "Đổi bàn", exact: true }).click()
+      const route = (route) => route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "TEST_WAITLIST_UNAVAILABLE", message: "waitlist unavailable" } }) })
+      await p.route("**/api/v1/waitlist?**", route)
+      const failed = p.waitForResponse((r) => r.url().includes("/api/v1/waitlist?") && r.status() === 503, { timeout: 25_000 })
+      await failed
+      const writes = watchWrites(p)
+      try {
+        await table(p, "A5").click()
+        await table(p, "A6").click()
+        await p.getByRole("button", { name: "Đổi bàn", exact: true }).click()
+        await expect(p.getByText(/Đơn chờ đã thay đổi|Không tải được đơn chờ/).first()).toBeVisible()
+        assert.deepEqual(writes.requests, [])
+        assert.deepEqual(snapshot(ids), before)
+        assert.deepEqual(snapshot(ids), before)
+        assert.equal(before.holds.filter((h) => h.status === "ACTIVE").length, 1)
+      } finally { writes.stop(); await p.unroute("**/api/v1/waitlist?**", route) }
+    }, { linked: false })
+  })
+
+  await step("AT9e: Same-frame double confirm counts exactly one request and entity/group Visit", () => holdCase(async ({ p, ids, booking, entry }) => {
+    const assigned = await api(otherDevice, "POST", `/bookings/${booking.id}/assign`, { version: booking.version, tableIds: [await tableIdOf(context, "A5"), await tableIdOf(context, "A6")] })
+    assert.equal(assigned.status, 200)
+    booking = assigned.body.booking
+    await p.reload({ waitUntil: "networkidle" })
+    const before = snapshot(ids)
+    const detail = await openHeld(p)
+    const writes = watchWrites(p)
+    try {
+      await detail.getByRole("button", { name: "Khách đã đến", exact: true }).click()
+      const confirm = p.getByRole("alertdialog", { name: "Xác nhận khách đã đến" })
+      assert.equal(writes.requests.length, 0)
+      const checked = createdBy(p, `/bookings/${booking.id}/check-in`)
+      await confirm.getByRole("button", { name: "Khách đã đến", exact: true }).evaluate((el) => { el.click(); el.click() })
+      assert.equal((await checked).status(), 200)
+      await expect(table(p, "A5")).toHaveAttribute("aria-label", /Có khách/)
+      assert.equal(writes.requests.length, 1)
+      assert.deepEqual(writes.requests[0], { path: `/api/v1/bookings/${booking.id}/check-in`, body: { version: booking.version } })
+      const after = snapshot(ids)
+      assert.equal(after.visits.length - before.visits.length, 1)
+      assert.equal(after.bookings[0].status, "CHECKED_IN")
+      assert.equal(after.entries.find((r) => r.id === entry.id).status, "SEATED")
+      assert.equal(after.holds.filter((h) => h.status === "ACTIVE").length, 0)
+      assert.equal(after.allocations.filter((a) => a.kind === "HOLD" && !a.released_at).length, 0)
+      const usage = after.allocations.filter((a) => a.kind === "USAGE" && !a.released_at)
+      assert.equal(usage.length, 2)
+      assert(usage.every((a) => a.visit_id === after.visits[0].id && a.group_id && a.group_id === usage[0].group_id))
+      assert.deepEqual(usage.map((a) => a.table_id).sort(), before.allocations.filter((a) => !a.released_at).map((a) => a.table_id).sort())
+      const replay = await api(otherDevice, "POST", `/bookings/${booking.id}/check-in`, { version: booking.version })
+      assert.equal(replay.status, 409)
+      assert.equal(JSON.parse(replay.body).error.code, "VERSION_CONFLICT")
+      const visit = await openHeld(p)
+      await expect(visit.getByRole("button", { name: "Khách đã đến", exact: true })).toBeHidden()
+      assert.deepEqual(snapshot(ids), after)
+      fs.writeFileSync(`${output}/arrival-entities.json`, JSON.stringify({ before, after }, null, 2))
+    } finally { writes.stop() }
+  }))
+
+  await step("AT13: Two authenticated sessions race the same held booking; one 200 and one 409", () => holdCase(async ({ ids, booking }) => {
+    let requests = 0
+    const checkin = (session) => { requests++; return api(session, "POST", `/bookings/${booking.id}/check-in`, { version: booking.version }) }
+    const responses = await Promise.all([checkin(context), checkin(otherDevice)])
+    assert.equal(requests, 2)
+    assert.deepEqual(responses.map((r) => r.status).sort(), [200, 409])
+    assert.equal(JSON.parse(responses.find((r) => r.status === 409).body).error.code, "VERSION_CONFLICT")
+    const after = snapshot(ids)
+    assert.equal(after.visits.length, 1)
+    assert.equal(after.entries[0].status, "SEATED")
+    assert.equal(after.bookings[0].status, "CHECKED_IN")
+  }))
+
+  await step("AT13b: Desktop arrival keeps the confirmed version when another session changes the hold", () => holdCase(async ({ p, ids, booking }) => {
+    await p.setViewportSize({ width: 768, height: 1024 })
+    await p.reload({ waitUntil: "networkidle" })
+    const detail = await openHeld(p, "A5", 768)
+    await detail.getByRole("button", { name: "Khách đã đến", exact: true }).click()
+    const confirm = p.getByRole("dialog", { name: /Xác nhận khách đã đến/ })
+    const updated = await api(otherDevice, "POST", `/bookings/${booking.id}/assign`, { version: booking.version,
+      tableIds: [await tableIdOf(context, "A5"), await tableIdOf(context, "A6")] })
+    assert.equal(updated.status, 200, JSON.stringify(updated))
+    const refreshed = p.waitForResponse(async (response) => {
+      if (response.request().method() !== "GET" || !response.url().includes(`/bookings?date=${today}`)) return false
+      const body = await response.json()
+      return body.bookings?.some((r) => r.id === booking.id && r.version > booking.version)
+    }, { timeout: 22_000 })
+    await refreshed
+    await expect(confirm).toContainText("A6", { timeout: 20_000 })
+    const writes = watchWrites(p)
+    try {
+      const failed = createdBy(p, `/bookings/${booking.id}/check-in`)
+      await confirm.getByRole("button", { name: "Khách đã đến", exact: true }).click()
+      const response = await failed
+      assert.equal(response.status(), 409)
+      assert.equal((await response.json()).error.code, "VERSION_CONFLICT")
+      assert.equal(response.request().postDataJSON().version, booking.version)
+      await expect(p.getByRole("dialog", { name: /Dữ liệu vừa thay đổi/ }).or(p.getByRole("alertdialog", { name: /Dữ liệu vừa thay đổi/ }))).toBeVisible()
+      assert.equal(writes.requests.length, 1)
+      assert.equal(snapshot(ids).visits.length, 0)
+    } finally { writes.stop() }
+  }))
+
+  await step("AT9f: Missing permission disables UI, sends zero writes and direct calls are exact 403", () => holdCase(async ({ p, ids, booking }) => {
+    const before = snapshot(ids)
+    try {
+      fixture("revoke-permissions")
+      await p.reload({ waitUntil: "networkidle" })
+      const writes = watchWrites(p)
+      try {
+        const detail = await openHeld(p)
+        for (const label of ["Khách đã đến", "Đổi / Ghép bàn"]) {
+          const button = detail.getByRole("button", { name: label, exact: true })
+          await expect(button).toBeDisabled()
+          await button.evaluate((el) => el.click())
+        }
+        assert.deepEqual(writes.requests, [])
+        for (const action of ["assign", "check-in"]) {
+          const denied = await api(context, "POST", `/bookings/${booking.id}/${action}`, { version: booking.version, ...(action === "assign" ? { tableIds: [await tableIdOf(context, "A6")] } : {}) })
+          assert.equal(denied.status, 403)
+          assert.equal(JSON.parse(denied.body).error.code, "PERMISSION_DENIED")
+        }
+        assert.deepEqual(snapshot(ids), before)
+      } finally { writes.stop() }
+    } finally { fixture("restore-permissions") }
+  }))
+
+  await step("AT9g: External held assignment polls version and full target set before reload", () => holdCase(async ({ p, ids, booking }) => {
+    const before = snapshot(ids)
+    const detail = await openHeld(p)
+    const writes = watchWrites(p)
+    try {
+      await detail.getByRole("button", { name: "Quản lý đơn", exact: true }).click()
+      const poll = p.waitForResponse((r) => r.request().method() === "GET" && r.url().includes(`/bookings?date=${today}`), { timeout: 22_000 })
+      const moved = await api(otherDevice, "POST", `/bookings/${booking.id}/assign`, { version: booking.version, tableIds: [await tableIdOf(context, "A6")] })
+      assert.equal(moved.status, 200)
+      await poll
+      await expect(p.getByRole("dialog", { name: "Chi tiết booking" }).getByText("A6", { exact: true })).toBeVisible({ timeout: 20_000 })
+      assert.deepEqual(writes.requests, [])
+      await p.reload({ waitUntil: "networkidle" })
+      const refreshed = await openHeld(p, "A6")
+      for (const label of labels) await expect(refreshed.getByRole("button", { name: label, exact: true })).toBeVisible()
+      await refreshed.getByRole("button", { name: "Đổi / Ghép bàn", exact: true }).click()
+      await expect(table(p, "A6")).toHaveAttribute("aria-pressed", "true")
+      const after = snapshot(ids)
+      assert(after.bookings[0].version > before.bookings[0].version)
+      assert.equal(after.entries[0].status, "HOLD_ACTIVE")
+      assert.equal(after.visits.length, 0)
+    } finally { writes.stop() }
+  }))
+
+  await step("AT9h: Direct reservation actions and desktop detail picker stay unchanged", () => holdCase(async ({ p, booking }) => {
+    let detail = await openHeld(p)
+    for (const label of ["Khách đã đến", "Xem booking", "Đổi bàn", "Đổi trạng thái"]) await expect(detail.getByRole("button", { name: label, exact: true })).toBeVisible()
+    await expect(detail.getByRole("button", { name: "Xem đơn chờ", exact: true })).toBeHidden()
+    await p.setViewportSize({ width: 768, height: 1024 })
+    await p.evaluate(async (id) => (await import("/src/state/ui.ts")).useUi.getState().openReservation(id, "2026-11-03"), booking.id)
+    detail = p.getByRole("dialog").last()
+    for (const label of ["Đổi bàn", "Sửa", "Hủy booking", "Không tới", "Check-in A5"]) await expect(detail.getByRole("button", { name: label, exact: true })).toBeVisible()
+    await detail.getByRole("button", { name: "Đổi bàn", exact: true }).click()
+    assert.deepEqual(await p.evaluate(async () => { const s = (await import("/src/state/ui.ts")).useUi.getState(); return { intent: s.pick.intent, preselected: s.pick.preselected, date: s.pick.targetDate } }), { intent: "assign", preselected: [await tableIdOf(context, "A5")], date: today })
+  }, { linked: false }))
+
+  await step("AT9i: Canonical HTTP 360/390/768 light/dark management and arrival screenshots", () => holdCase(async ({ p, ids, entry, date }) => {
+    const before = snapshot(ids)
+    for (const width of [360, 390, 768]) for (const theme of ["light", "dark"]) {
+      await p.setViewportSize({ width, height: width === 768 ? 1024 : 844 })
+      await p.evaluate(async (theme) => (await import("/src/state/session.ts")).useSession.getState().setTheme(theme), theme)
+      const writes = watchWrites(p)
+      try {
+        const detail = await openHeld(p, "A5", width)
+        for (const label of labels) await expect(detail.getByRole("button", { name: label, exact: true })).toBeVisible()
+        await p.screenshot({ path: `e2e/.artifacts/waitlist-hold/after/http-linked-floor-${width}-${theme}.png` })
+        await detail.getByRole("button", { name: "Khách đã đến", exact: true }).click()
+        const confirm = p.getByRole(width < 768 ? "alertdialog" : "dialog", { name: /Xác nhận khách đã đến/ })
+        await expect(confirm).toContainText("A5")
+        await expect(confirm).toContainText("2 khách")
+        await p.screenshot({ path: `e2e/.artifacts/waitlist-hold/after/http-linked-confirm-${width}-${theme}.png` })
+        await confirm.getByRole("button", { name: "Quay lại", exact: true }).click()
+        if (width < 768) await detail.getByRole("button", { name: "Đóng", exact: true }).click()
+        else await p.getByRole("button", { name: "Ca tối nay", exact: true }).click()
+        await p.getByRole("button", { name: /^Bàn chờ/ }).first().click()
+        const card = width < 768 ? p.locator("div.rounded-\\[18px\\]").filter({ hasText: "Khách Hôm Nay" }) : p.locator(`#entry-${entry.id}`)
+        await card.scrollIntoViewIfNeeded()
+        await expect(card.getByRole("button", { name: "Quản lý đơn", exact: true })).toBeVisible()
+        await p.screenshot({ path: `e2e/.artifacts/waitlist-hold/after/http-linked-card-${width}-${theme}.png` })
+        const currentUrl = p.url()
+        await card.getByRole("button", { name: "Xem đơn chờ", exact: true }).click()
+        const entryDetail = p.getByRole("dialog", { name: /Chi tiết mục chờ/ })
+        await expect(entryDetail).toBeVisible()
+        assert.equal(p.url(), currentUrl)
+        if (width < 768) await closeDetail(p)
+        else {
+          await entryDetail.getByRole("button", { name: "Đóng", exact: true }).click()
+          await expect(entryDetail).toBeHidden()
+        }
+        await p.keyboard.press("Escape")
+        assert.deepEqual(writes.requests, [])
+        await p.reload({ waitUntil: "networkidle" })
+        await chooseDate(p, date)
+      } finally { writes.stop() }
+    }
+    assert.deepEqual(snapshot(ids), before)
+  }, { date: tomorrow }))
+
+  await step("AT7: Desktop status submits cancel, late-confirm and no-show with exact IDs/version", async () => {
+    for (const action of ["cancel", "late-confirm", "no-show"]) await holdCase(async ({ p, ids, booking }) => {
+      if (action !== "cancel") fixture("set-booking-time", String(booking.id), `${today}T${action === "late-confirm" ? "11:50" : "11:00"}:00.000Z`)
+      await p.setViewportSize({ width: 768, height: 1024 })
+      await p.reload({ waitUntil: "networkidle" })
+      const detail = await openHeld(p, "A5", 768)
+      const writes = watchWrites(p)
+      try {
+        await detail.getByRole("button", { name: "Đổi trạng thái", exact: true }).click()
+        const status = p.getByRole("dialog", { name: "Đổi trạng thái booking" })
+        if (action === "cancel") {
+          await expect(status.getByRole("button", { name: "Tới muộn", exact: true })).toBeDisabled()
+          await expect(status.getByRole("button", { name: "Không tới", exact: true })).toBeDisabled()
+        }
+        assert.equal(writes.requests.length, 0)
+        const sent = createdBy(p, `/bookings/${booking.id}/${action}`)
+        await status.getByRole("button", { name: action === "cancel" ? "Hủy booking" : action === "no-show" ? "Không tới" : "Tới muộn", exact: true }).click()
+        if (action !== "late-confirm") await p.getByRole("alertdialog").getByRole("button", { name: action === "cancel" ? "Hủy booking" : "Xác nhận không tới", exact: true }).click()
+        const response = await sent
+        assert.equal(response.status(), 200)
+        assert.equal(response.request().postDataJSON().version, booking.version)
+        assert.equal(writes.requests.length, 1)
+        const after = snapshot(ids)
+        assert.equal(after.visits.length, 0)
+        assert.equal(after.bookings[0].status, action === "cancel" ? "CANCELLED" : action === "no-show" ? "NO_SHOW" : "BOOKED")
+        assert.equal(after.entries[0].status, action === "late-confirm" ? "HOLD_ACTIVE" : "CANCELLED")
+        assert.equal(after.allocations.filter((a) => a.kind === "HOLD" && !a.released_at).length, action === "late-confirm" ? 1 : 0)
+      } finally { writes.stop() }
+    })
+  })
+
+  await step("F12: Scoped case cleanup preserves a same-name different-day sentinel", () => holdCase(async ({ ids }) => {
+    const sentinelBefore = snapshot(ids)
+    await holdCase(async ({ ids: otherIds }) => {
+      cleanupCase(otherIds)
+      const empty = snapshot(otherIds)
+      for (const rows of Object.values(empty)) assert.equal(rows.length, 0)
+      assert.deepEqual(snapshot(ids), sentinelBefore)
+    }, { date: tomorrow })
+    assert.deepEqual(snapshot(ids), sentinelBefore)
+  }))
+
+  await step("F10: Selected-day calendar bug recorded separately; other day and year boundary close", async () => {
+    const p = await context.newPage()
+    try {
+      await p.goto(`${webUrl}/floor`, { waitUntil: "networkidle" })
+      const button = p.getByRole("button", { name: "Chọn ngày kinh doanh" }).first()
+      await button.click()
+      await p.locator('[data-selected="true"][data-day]').click()
+      await expect(p.locator('[data-slot="popover-content"]')).toBeVisible()
+      console.log("OPEN CALENDAR-SELECTED-DAY: selecting the current day keeps the popup open; separate task, unchanged")
+      await p.locator('[data-day="11/4/2026"]').click()
+      await expect(p.locator('[data-slot="popover-content"]')).toBeHidden()
+      await chooseDate(p, "2026-12-31")
+      await expect(button).toContainText("31/12")
+      await chooseDate(p, "2027-01-01")
+      await expect(button).toContainText("01/01")
+      await expect(p.locator('[data-slot="popover-content"]')).toBeHidden()
+    } finally { await p.close() }
+  })
 
   await step("AT10: Walk-in on a free table creates Visit and allocation", async () => {
     await chooseDate(page, today)

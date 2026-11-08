@@ -1,5 +1,5 @@
 import { CalendarPlus, Clock, ListPlus, TriangleAlert, UserPlus, X, type LucideIcon } from "lucide-react"
-import type { ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 import { useNavigate } from "react-router"
 import { roleCan, type Permission } from "@/domain/access"
 import { ROLE_LABEL } from "@/domain/enums"
@@ -203,22 +203,42 @@ export function StatusDialog({ r, onClose }: { r: ReservationView; onClose: () =
     onClose()
     void fn()
   }
+  const hold = a.bookingPolicy(r)
+  const canLate =
+    hold.canLate &&
+    !r.lateConfirmedAt &&
+    r.businessDate === m.today &&
+    m.now.getTime() >= r.expectedAt.getTime() &&
+    r.minutesLate < m.th.noshow &&
+    m.can("reservation.update")
+  const canNoShow = m.can("reservation.mark_no_show") && hold.canBookingStatus
+  const canCancel = m.can("reservation.cancel") && hold.canBookingStatus
+
   const opts: { label: string; dot: string; sub?: string; disabled?: boolean; go: () => void }[] =
     r.status === "BOOKED"
       ? [
-          { label: "Khách đã đến (check-in)", dot: "var(--st-seated-fill)", go: close(() => a.checkIn(r)) },
-          { label: "Đổi bàn", dot: "var(--st-reserved)", go: close(() => a.move(r)) },
+          ...(canLate ? [{ label: "Tới muộn", dot: "var(--st-late)", go: close(() => a.confirmLate(r)) }] : []),
           {
             label: "Khách không tới",
             dot: "var(--st-noshow)",
-            disabled: r.warning !== "noshow",
+            disabled: !canNoShow || r.warning !== "noshow",
             sub:
-              r.warning === "noshow"
-                ? ""
-                : `Chỉ dùng sau mốc ${m.th.noshow} phút${late ? `, hiện trễ ${late} phút` : ""}`,
+              !hold.canBookingStatus
+                ? "Chưa hỗ trợ"
+                : !canNoShow
+                ? "Thiếu quyền"
+                : r.warning === "noshow"
+                  ? ""
+                  : `Chỉ dùng sau mốc ${m.th.noshow} phút${late ? `, hiện trễ ${late} phút` : ""}`,
             go: close(() => a.noShow(r)),
           },
-          { label: "Hủy booking", dot: "var(--st-oos)", go: close(() => a.cancel(r)) },
+          {
+            label: "Hủy booking",
+            dot: "var(--st-oos)",
+            disabled: !canCancel,
+            sub: !hold.canBookingStatus ? "Chưa hỗ trợ" : !canCancel ? "Thiếu quyền" : undefined,
+            go: close(() => a.cancel(r)),
+          },
         ]
       : r.status === "CHECKED_IN"
         ? [
@@ -271,6 +291,7 @@ export function StatusDialog({ r, onClose }: { r: ReservationView; onClose: () =
 }
 
 export function ConfirmDialog({ c, onClose }: { c: Confirm; onClose: () => void }) {
+  const [inProgress, setInProgress] = useState(false)
   return (
     <div
       role="alertdialog"
@@ -282,18 +303,22 @@ export function ConfirmDialog({ c, onClose }: { c: Confirm; onClose: () => void 
       <div className="mt-1 flex gap-2">
         <button
           type="button"
+          disabled={inProgress}
           onClick={onClose}
-          className="h-12 flex-1 rounded-xl border border-strong text-[15px] text-tx-1"
+          className="h-12 flex-1 rounded-xl border border-strong text-[15px] text-tx-1 disabled:opacity-50"
         >
           Quay lại
         </button>
         <button
           type="button"
+          disabled={inProgress}
           onClick={() => {
+            if (inProgress) return
+            setInProgress(true)
             onClose()
             void c.run()
           }}
-          className="h-12 flex-1 rounded-xl bg-st-noshow text-[15px] font-medium text-white"
+          className="h-12 flex-1 rounded-xl bg-st-noshow text-[15px] font-medium text-white disabled:opacity-50"
         >
           {c.label}
         </button>

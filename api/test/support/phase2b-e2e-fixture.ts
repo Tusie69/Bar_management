@@ -1,20 +1,77 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 
 import { hashPassword } from "../../src/auth/password.js";
-import { env } from "../../src/config/env.js";
-import { databasePool } from "../../src/database/pool.js";
+import "dotenv/config";
 
 const mode = process.argv[2];
-if (!/_test$/.test(env.database.name))
-  throw new Error("Refusing E2E fixture: DB_NAME must end in _test");
-if (!["setup", "cleanup", "verify-clean", "verify-phone-audit", "inject-historical-note", "verify-historical-note", "set-quick-times"].includes(mode ?? ""))
+if (!["gam21_platform_it_test", "gam21_platform_e2e_test"].includes(process.env.DB_NAME ?? "") ||
+    process.env.DB_HOST !== "127.0.0.1" || process.env.DB_PORT !== "33306")
+  throw new Error("Refusing E2E fixture: unapproved database, host or port");
+if (!["setup", "cleanup", "verify-clean", "verify-phone-audit", "inject-historical-note", "verify-historical-note", "set-quick-times", "revoke-permissions", "restore-permissions", "setup-case2-pure-hold", "cleanup-case2-pure-hold", "cleanup-today-arrival", "snapshot-entities", "cleanup-entities", "verify-target", "set-booking-time"].includes(mode ?? ""))
   throw new Error("Unsupported E2E fixture command");
+
+const { databasePool } = await import("../../src/database/pool.js");
 
 const organizationId = 1;
 const venueId = 1;
 const userId = 9501;
 const membershipId = 9501;
 const historicalNote = "Khách dặn gọi 0987 654 321 khi tới";
+
+type EntityIds = { bookingIds?: number[]; entryIds?: number[]; holdIds?: number[]; visitIds?: number[] };
+function entityIds(raw: string | undefined): EntityIds {
+  const ids = JSON.parse(raw ?? "{}");
+  if (!ids || Array.isArray(ids) || Object.keys(ids).some((key) => !["bookingIds", "entryIds", "holdIds", "visitIds"].includes(key)) ||
+      !Object.values(ids).some((value) => Array.isArray(value) && value.length) ||
+      Object.values(ids).some((value) => !Array.isArray(value) || value.some((id) => !Number.isSafeInteger(id) || id <= 0)))
+    throw new Error("Explicit case entity IDs are required");
+  return ids;
+}
+const inIds = (ids: number[] = []) => (ids.length ? ids : [0]).map(() => "?").join(",");
+const values = (ids: number[] = []) => ids.length ? ids : [0];
+async function snapshotEntities(ids: EntityIds) {
+  const scope = [organizationId, venueId];
+  const [bookings] = await databasePool.execute<RowDataPacket[]>(
+    `SELECT id, status, version, visit_id, business_date FROM reservations WHERE organization_id=? AND venue_id=? AND id IN (${inIds(ids.bookingIds)})`,
+    [...scope, ...values(ids.bookingIds)]);
+  const [entries] = await databasePool.execute<RowDataPacket[]>(
+    `SELECT id, status, version, reservation_id, visit_id, business_date FROM waitlist_entries WHERE organization_id=? AND venue_id=? AND (id IN (${inIds(ids.entryIds)}) OR reservation_id IN (${inIds(ids.bookingIds)}))`,
+    [...scope, ...values(ids.entryIds), ...values(ids.bookingIds)]);
+  const entryIds = entries.map((row) => Number(row.id));
+  const [holds] = await databasePool.execute<RowDataPacket[]>(
+    `SELECT id, hold_kind, status, version, reservation_id, waitlist_entry_id, converted_visit_id FROM table_holds WHERE organization_id=? AND venue_id=? AND (id IN (${inIds(ids.holdIds)}) OR reservation_id IN (${inIds(ids.bookingIds)}) OR waitlist_entry_id IN (${inIds(entryIds)}))`,
+    [...scope, ...values(ids.holdIds), ...values(ids.bookingIds), ...values(entryIds)]);
+  const holdIds = holds.map((row) => Number(row.id));
+  const visitIds = [...new Set([...(ids.visitIds ?? []), ...bookings.map((r) => r.visit_id), ...entries.map((r) => r.visit_id), ...holds.map((r) => r.converted_visit_id)].filter(Boolean).map(Number))];
+  const [visits] = await databasePool.execute<RowDataPacket[]>(
+    `SELECT id, version, ended_at FROM visits WHERE organization_id=? AND venue_id=? AND id IN (${inIds(visitIds)})`, [...scope, ...values(visitIds)]);
+  const [allocations] = await databasePool.execute<RowDataPacket[]>(
+    `SELECT id, table_id, kind, hold_id, visit_id, group_id, released_at FROM table_allocations WHERE organization_id=? AND venue_id=? AND (hold_id IN (${inIds(holdIds)}) OR visit_id IN (${inIds(visitIds)})) ORDER BY id`,
+    [...scope, ...values(holdIds), ...values(visitIds)]);
+  const groupIds = [...new Set(allocations.map((r) => r.group_id).filter(Boolean).map(Number))];
+  const [groups] = await databasePool.execute<RowDataPacket[]>(
+    `SELECT id, symbol_no, dissolved_at FROM table_groups WHERE organization_id=? AND venue_id=? AND id IN (${inIds(groupIds)})`, [...scope, ...values(groupIds)]);
+  const snapshot = { bookings, entries, holds, visits, allocations, groups };
+  for (const rows of Object.values(snapshot)) for (const row of rows) for (const key of Object.keys(row))
+    if ((key === "id" || key.endsWith("_id") || key === "version" || key === "symbol_no") && row[key] !== null) row[key] = Number(row[key]);
+  return snapshot;
+}
+async function cleanupEntities(ids: EntityIds) {
+  const snapshot = await snapshotEntities(ids);
+  const scopedDelete = async (table: string, key: string, owned: number[]) => {
+    if (owned.length) await databasePool.execute(`DELETE FROM ${table} WHERE organization_id=? AND venue_id=? AND ${key} IN (${inIds(owned)})`, [organizationId, venueId, ...owned]);
+  };
+  await scopedDelete("table_allocations", "id", snapshot.allocations.map((r) => Number(r.id)));
+  await scopedDelete("table_groups", "id", snapshot.groups.map((r) => Number(r.id)));
+  await scopedDelete("table_holds", "id", snapshot.holds.map((r) => Number(r.id)));
+  const entryIds = snapshot.entries.map((r) => Number(r.id));
+  await scopedDelete("waitlist_table_preferences", "entry_id", entryIds);
+  await scopedDelete("waitlist_contact_attempts", "entry_id", entryIds);
+  await scopedDelete("waitlist_entries", "id", entryIds);
+  await scopedDelete("booking_call_logs", "reservation_id", snapshot.bookings.map((r) => Number(r.id)));
+  await scopedDelete("reservations", "id", snapshot.bookings.map((r) => Number(r.id)));
+  await scopedDelete("visits", "id", snapshot.visits.map((r) => Number(r.id)));
+}
 
 async function injectHistoricalNote(guestName: string | undefined) {
   if (!guestName) throw new Error("Historical-note guest name is required");
@@ -156,6 +213,8 @@ async function setup() {
        (9503, ?, ?, 9501, 'A10', 'Bàn A10', 'TABLE', 4, NULL, 300, 100, 60, 40),
        (9504, ?, ?, 9501, 'A3', 'Bàn A3', 'TABLE', 4, NULL, 400, 100, 60, 40),
        (9505, ?, ?, 9501, 'A4', 'Bàn A4', 'TABLE', 4, NULL, 250, 180, 60, 40),
+       (9513, ?, ?, 9501, 'A5', 'Bàn A5', 'TABLE', 4, NULL, 100, 180, 60, 40),
+       (9514, ?, ?, 9501, 'A6', 'Bàn A6', 'TABLE', 4, NULL, 500, 100, 60, 40),
        (9506, ?, ?, 9502, 'B3', 'Bàn B3', 'TABLE', 4, NULL, 500, 200, 60, 40),
        (9507, ?, ?, 9502, 'B4', 'Bàn B4', 'TABLE', 4, NULL, 580, 200, 60, 40),
        (9511, ?, ?, 9502, 'B5', 'Bàn B5', 'TABLE', 4, NULL, 500, 280, 60, 40),
@@ -164,6 +223,10 @@ async function setup() {
        (9509, ?, ?, 9501, 'BAR12', 'Ghế Bar 12', 'BAR_SEAT', 1, 12, 150, 260, 32, 32),
        (9510, ?, ?, 9501, 'BAR13', 'Ghế Bar 13', 'BAR_SEAT', 1, 13, 200, 260, 32, 32)`,
     [
+      organizationId,
+      venueId,
+      organizationId,
+      venueId,
       organizationId,
       venueId,
       organizationId,
@@ -205,7 +268,20 @@ async function setup() {
 }
 
 try {
-  if (mode === "setup") await setup();
+  if (mode === "verify-target") console.log("fixture-target-approved=1");
+  else if (mode === "snapshot-entities") console.log("entity-snapshot=" + JSON.stringify(await snapshotEntities(entityIds(process.argv[3]))));
+  else if (mode === "cleanup-entities" || mode === "cleanup-today-arrival") {
+    await cleanupEntities(entityIds(process.argv[3]));
+    console.log("entities-cleaned=1");
+  }
+  else if (mode === "set-booking-time") {
+    const id = Number(process.argv[3]);
+    const expectedAt = new Date(process.argv[4] ?? "");
+    if (!Number.isSafeInteger(id) || id <= 0 || !Number.isFinite(expectedAt.getTime())) throw new Error("Invalid booking time fixture");
+    const [updated] = await databasePool.execute<ResultSetHeader>("UPDATE reservations SET expected_at=? WHERE organization_id=? AND venue_id=? AND id=? AND status='BOOKED'", [expectedAt, organizationId, venueId, id]);
+    if (updated.affectedRows !== 1) throw new Error("Booking time fixture must match one owned booking");
+  }
+  else if (mode === "setup") await setup();
   else if (mode === "cleanup") await cleanup();
   else if (mode === "verify-clean") await verifyClean();
   else if (mode === "verify-phone-audit") await verifyPhoneAudit();
@@ -216,6 +292,67 @@ try {
       "INSERT INTO venue_settings (organization_id, venue_id, `key`, value) VALUES (?, ?, 'quick_times', ?) ON DUPLICATE KEY UPDATE value = ?",
       [organizationId, venueId, quickTimes, quickTimes],
     );
+  }
+  else if (mode === "revoke-permissions") {
+    await databasePool.execute(
+      `DELETE rp FROM role_permissions AS rp
+       JOIN roles AS r ON r.id = rp.role_id
+       JOIN permissions AS p ON p.id = rp.permission_id
+       WHERE r.code = 'RECEPTIONIST' AND p.code IN ('table.assign', 'visit.checkin')`,
+    );
+    console.log("permissions-revoked=1");
+  } else if (mode === "restore-permissions") {
+    await databasePool.execute(
+      `INSERT IGNORE INTO role_permissions (role_id, permission_id)
+       SELECT r.id, p.id FROM roles AS r JOIN permissions AS p
+       WHERE r.code = 'RECEPTIONIST' AND p.code IN ('table.assign', 'visit.checkin')`,
+    );
+    console.log("permissions-restored=1");
+  } else if (mode === "setup-case2-pure-hold") {
+    const tableCode = process.argv[3] ?? "B3";
+    const date = process.argv[4] ?? "2026-11-04";
+    const [tRows] = await databasePool.execute<(RowDataPacket & { id: number })[]>(
+      "SELECT id FROM dining_tables WHERE organization_id = ? AND venue_id = ? AND code = ?",
+      [organizationId, venueId, tableCode],
+    );
+    const tableId = tRows[0]?.id;
+    if (!tableId) throw new Error(`Table ${tableCode} not found`);
+
+
+    await databasePool.execute(
+      `INSERT INTO waitlist_entries
+        (id, organization_id, venue_id, kind, contact_name, party_size, contact_channel, business_date, queued_at, status, created_by_user_id)
+       VALUES
+        (9988, ?, ?, 'WALK_IN', 'Khách Vãng Lai Case 2', 2, 'IN_PERSON', ?, UTC_TIMESTAMP(3), 'HOLD_ACTIVE', ?)`,
+      [organizationId, venueId, date, userId],
+    );
+    await databasePool.execute(
+      `INSERT INTO table_holds
+        (id, organization_id, venue_id, hold_kind, waitlist_entry_id, status, starts_at, customer_confirmed_at, deadline_at, deadline_basis, default_minutes_snapshot, created_by_user_id)
+       VALUES
+        (9988, ?, ?, 'WAITLIST_OFFER', 9988, 'ACTIVE', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3), UTC_TIMESTAMP(3) + INTERVAL 15 MINUTE, 'DEFAULT', 15, ?)`,
+      [organizationId, venueId, userId],
+    );
+    await databasePool.execute(
+      `INSERT INTO table_allocations
+        (organization_id, venue_id, table_id, kind, hold_id, business_date, starts_at, created_by_user_id)
+       VALUES
+        (?, ?, ?, 'HOLD', 9988, ?, UTC_TIMESTAMP(3), ?)`,
+      [organizationId, venueId, tableId, date, userId],
+    );
+    const linkedBookingId = Number(process.argv[5] ?? 0);
+    if (linkedBookingId) {
+      const [linked] = await databasePool.execute<RowDataPacket[]>("SELECT id FROM reservations WHERE organization_id=? AND venue_id=? AND id=?", [organizationId, venueId, linkedBookingId]);
+      if (linked.length !== 1) throw new Error("Linked booking not found in fixture scope");
+      await databasePool.execute("UPDATE waitlist_entries SET kind='ADVANCE_RESERVATION', reservation_id=?, contact_name=NULL, party_size=NULL WHERE organization_id=? AND venue_id=? AND id=9988", [linkedBookingId, organizationId, venueId]);
+    }
+    console.log(`case2-hold-ready=${tableCode}`);
+  } else if (mode === "cleanup-case2-pure-hold") {
+    await databasePool.execute("DELETE FROM table_allocations WHERE organization_id = ? AND venue_id = ? AND hold_id = 9988", [organizationId, venueId]);
+    await databasePool.execute("DELETE FROM table_holds WHERE organization_id = ? AND venue_id = ? AND id = 9988", [organizationId, venueId]);
+    await databasePool.execute("DELETE FROM waitlist_entries WHERE organization_id = ? AND venue_id = ? AND id = 9988", [organizationId, venueId]);
+    console.log("case2-hold-cleaned=1");
+
   }
   else if (mode === "inject-historical-note") await injectHistoricalNote(process.argv[3]);
   else await verifyHistoricalNote(process.argv[3]);
