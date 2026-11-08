@@ -750,6 +750,33 @@ describe("MockGamApi", () => {
     expect(floor.tables.find((t) => t.tableId === id("B5"))!.state).toBe("seated")
   })
 
+  // SPL-01 / SPL-02 (PO 07/11/2026). Desktop and Mobile V1 share this path, so
+  // the client rejects the same cases the server does.
+  it("split requires a released table and enough capacity for the party", async () => {
+    const cat = await api.getCatalog()
+    const id = (code: string) => cat.tables.find((t) => t.code === code)!.id
+    const seats = (code: string) => cat.tables.find((t) => t.code === code)!.capacity
+    const party = seats("B5") + seats("B7")
+    // Seat the full party across both tables, so the group already fits exactly.
+    await api.seatWalkIn({ tableIds: [id("B5"), id("B7")], guestCount: party })
+    const floor = await api.getFloorState(clock.now())
+    const group = floor.groups.find((g) => g.tableIds.includes(id("B5")))!
+
+    // SPL-02: keeping every table releases nothing.
+    await expectApiError(
+      api.splitGroup({ groupId: group.id, keepTableIds: [id("B5"), id("B7")] }),
+      "VALIDATION_FAILED",
+    )
+    // SPL-01: one table cannot seat the whole party.
+    await expectApiError(api.splitGroup({ groupId: group.id, keepTableIds: [id("B5")] }), "VALIDATION_FAILED")
+
+    // The group is untouched by either refusal.
+    const after = await api.getFloorState(clock.now())
+    expect(after.groups.find((g) => g.id === group.id)?.tableIds.sort()).toEqual(
+      [id("B5"), id("B7")].sort(),
+    )
+  })
+
   it("undo is blocked when another device changed the data", async () => {
     const cat = await api.getCatalog()
     const b5 = cat.tables.find((t) => t.code === "B5")!.id

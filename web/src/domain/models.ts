@@ -236,8 +236,8 @@ export interface ReservationView {
   version: number
   customerId: number | null
   displayName: string
-  /** False means displayName is only the server fallback. */
-  hasGuestName?: boolean
+  /** WF-01: false when displayName is only a fallback and no name is stored. */
+  hasGuestName: boolean
   phoneLast3: string | null
   partySize: number
   expectedAt: Date

@@ -2,7 +2,7 @@
 import type { Catalog, ClaimView, FloorState, MutationResult, SessionUser, VenueSettingsView } from "@/domain/models"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { clock } from "../clock"
-import { ApiError, type GamApi } from "../contracts"
+import { ApiError, type AccountsView, type AccountSummary, type GamApi, type UndoState } from "../contracts"
 import { HttpBookingApi } from "./booking-api"
 import { createAndAssignDirectBooking } from "./direct-booking"
 import {
@@ -385,15 +385,26 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     listOperations: rejectUnsupported("nhật ký thao tác"),
     listAllocations: rejectUnsupported("lịch sử sử dụng bàn"),
     getReport: rejectUnsupported("báo cáo"),
-    splitGroup: rejectUnsupported("tách nhóm bàn"),
+    splitGroup: (input) =>
+      post<MutationResult>(
+        `/tables/groups/${input.groupId}/split`,
+        { keepTableIds: input.keepTableIds },
+        input.idempotencyKey,
+      ),
     markPaid: rejectUnsupported("xác minh thanh toán"),
     claimWaitlist: rejectUnsupported("nhận quyền liên hệ"),
     releaseClaim: rejectUnsupported("nhả quyền liên hệ"),
     setHoldDeadline: rejectUnsupported("gia hạn giữ bàn"),
     releaseHold: rejectUnsupported("nhả giữ bàn"),
     updateCustomerNotes: rejectUnsupported("ghi chú hồ sơ khách"),
-    undo: rejectUnsupported("hoàn tác"),
-    redo: rejectUnsupported("làm lại"),
+    listAccounts: () => get<AccountsView>("/accounts"),
+    createAccount: async (input) =>
+      (await post<{ account: AccountSummary }>("/accounts", input)).account,
+    setAccountStatus: async (userId, version, status) =>
+      (await post<{ account: AccountSummary }>(`/accounts/${userId}/status`, { version, status })).account,
+    getUndoState: () => get<UndoState>("/operations/undo-state"),
+    undo: (operationId) => post<MutationResult>("/operations/undo", { operationId }, crypto.randomUUID()),
+    redo: (operationId) => post<MutationResult>("/operations/redo", { operationId }, crypto.randomUUID()),
     updateVenueConfig: rejectUnsupported("cấu hình quán mở rộng"),
     updateVenueSettings: async (input) => {
       const settings = await put<VenueSettingsView>("/settings", input)

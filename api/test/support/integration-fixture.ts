@@ -20,17 +20,39 @@ export async function initializeFixture(): Promise<void> {
   passwordHash = await hashPassword(password)
 }
 
-export async function clearFixture(): Promise<void> {
+/**
+ * T-01: when vitest gives up on a hook that exceeded its timeout it stops
+ * awaiting it, but the hook's promise keeps running. The next test's setup then
+ * interleaves with the abandoned one and its INSERT hits `organizations.PRIMARY`,
+ * which is how one slow fixture turned into a cascade of unrelated failures.
+ *
+ * Every fixture mutation queues behind the previous one, so an abandoned run
+ * finishes before the next begins instead of racing it. A rejection is absorbed
+ * into the queue so one failure cannot poison the rest of the run.
+ */
+let fixtureQueue: Promise<unknown> = Promise.resolve()
+
+function serializeFixture<T>(operation: () => Promise<T>): Promise<T> {
+  const result = fixtureQueue.then(operation, operation)
+  fixtureQueue = result.catch(() => undefined)
+  return result
+}
+
+/** The destructive body, already inside the fixture queue when it runs. */
+async function truncateFixtureTables(): Promise<void> {
   if (env.database.name !== 'gam21_platform_it_test') throw new Error('Refusing destructive fixture outside integration database')
-  await measureFixture('clearFixture', async () => {
-    for (const table of ['booking_call_logs', 'operation_log', 'table_allocations', 'table_groups', 'table_holds',
-      'waitlist_table_preferences', 'waitlist_contact_attempts', 'waitlist_entries', 'reservations', 'visits',
-      'customers', 'table_combination_members', 'table_combinations', 'table_adjacencies', 'dining_tables',
-      'zones', 'floors', 'auth_sessions', 'membership_roles', 'memberships', 'idempotency_keys', 'users',
-      'booking_sources', 'venues', 'organizations']) {
-      await databasePool.execute(`DELETE FROM ${table}`)
-    }
-  })
+  await databasePool.execute('UPDATE operation_log SET compensates_operation_id = NULL WHERE compensates_operation_id IS NOT NULL')
+  for (const table of ['booking_call_logs', 'operation_log', 'table_allocations', 'table_groups', 'table_holds',
+    'waitlist_table_preferences', 'waitlist_contact_attempts', 'waitlist_entries', 'reservations', 'visits',
+    'customers', 'table_combination_members', 'table_combinations', 'table_adjacencies', 'dining_tables',
+    'zones', 'floors', 'auth_sessions', 'membership_roles', 'memberships', 'idempotency_keys', 'users',
+    'booking_sources', 'venues', 'organizations']) {
+    await databasePool.execute(`DELETE FROM ${table}`)
+  }
+}
+
+export async function clearFixture(): Promise<void> {
+  await serializeFixture(() => measureFixture('clearFixture', truncateFixtureTables))
 }
 
 async function measureFixture(name: string, operation: () => Promise<void>): Promise<void> {
@@ -51,11 +73,12 @@ async function measureFixture(name: string, operation: () => Promise<void>): Pro
 }
 
 export async function resetFixture(): Promise<void> {
-  await measureFixture('resetFixture', populateFixture)
+  await serializeFixture(() => measureFixture('resetFixture', populateFixture))
 }
 
 async function populateFixture(): Promise<void> {
-  await clearFixture()
+  // The inner body: this already runs inside the queue via resetFixture.
+  await truncateFixtureTables()
   await databasePool.execute("INSERT INTO organizations (id, code, name) VALUES (?, 'INTEGRATION', 'Integration'), (?, 'FOREIGN', 'Foreign')",
     [actor.organizationId, otherOrganizationId])
   await databasePool.execute(

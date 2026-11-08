@@ -1554,8 +1554,9 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     expect(exported.text).toMatch(/BÀN HUỶ\nChưa gán: 22:00 · Export cancelled/)
     expect(exported.text).toContain('Tổng bàn đặt: 3')
     expect(exported.text).toContain('Tổng khách đặt: 10')
-    expect(exported.text).toContain('Khách vào trước 21:30: 4')
-    expect(exported.text).toContain('Khách vào sau 21:30: 6')
+    // BE-04: 'New at cutoff' at exactly 21:30 now counts before the cutoff.
+    expect(exported.text).toContain('Khách vào trước/bằng 21:30: 8')
+    expect(exported.text).toContain('Khách vào sau 21:30: 2')
     expect(exported.text).toContain('Bàn khách quen O: 1')
     expect(exported.text).toContain('Bàn khách mới N: 1')
     expect(exported.text).toContain('Bàn chưa phân loại: 1')

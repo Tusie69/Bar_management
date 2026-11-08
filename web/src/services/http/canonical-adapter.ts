@@ -18,7 +18,8 @@ export function mapReservation(booking: HttpBooking, catalog: Catalog): Reservat
     version: booking.version,
     customerId: null,
     displayName: booking.guestName,
-    hasGuestName: booking.hasGuestName,
+    // WF-01: an older backend omits the flag; assume a real name only then.
+    hasGuestName: booking.hasGuestName ?? true,
     phoneLast3: booking.phoneLast3,
     partySize: booking.partySize,
     expectedAt: booking.expectedAt,

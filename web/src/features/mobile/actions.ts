@@ -1,6 +1,7 @@
 import type { ClaimView, ReservationView, WaitlistEntryView } from "@/domain/models"
 import { validateBookingCheckInDate } from "@/domain/booking-rules"
 import { useAction } from "@/hooks/use-action"
+import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { fmtTime } from "@/lib/time"
 import { api, clock } from "@/services"
 import { toast } from "sonner"
@@ -137,6 +138,8 @@ export function useMobileActions() {
   const m = useM()
   const { run, pending } = useAction()
   const held = useHeldOrderActions(m.model)
+  // SPL-03: one key per Split attempt, renewed only once it commits.
+  const [splitKey, renewSplitKey] = useIdempotencyKey()
 
   const visitClaim = (r: ReservationView): ClaimView | null => {
     for (const id of r.tableIds) {
@@ -239,7 +242,13 @@ export function useMobileActions() {
       only: claim.tableIds,
       preselected: [keep],
       confirmLabel: "Tách bàn",
-      onConfirm: async (ids) => !!(await run(() => api.splitGroup({ groupId: claim.groupId!, keepTableIds: ids }))),
+      onConfirm: async (ids) => {
+        const done = !!(await run(() =>
+          api.splitGroup({ groupId: claim.groupId!, keepTableIds: ids, idempotencyKey: splitKey }),
+        ))
+        if (done) renewSplitKey()
+        return done
+      },
     })
 
   const endVisit = (claim: ClaimView) =>

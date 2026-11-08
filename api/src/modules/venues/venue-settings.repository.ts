@@ -86,7 +86,7 @@ export async function updateVenueSettings(
       throw new AppError(
         400,
         'INVALID_NO_SHOW_MINUTES',
-        `Mốc không đến phải lớn hơn mốc đến muộn hiện tại (${venue.late_warning_minutes} phút).`,
+        `Mốc không tới phải lớn hơn mốc đến muộn hiện tại (${venue.late_warning_minutes} phút).`,
       )
     }
 

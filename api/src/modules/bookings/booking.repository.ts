@@ -16,6 +16,7 @@ import {
   type GuestType,
 } from './booking-metadata.js'
 import { protectPhoneNumber, revealPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from './phone-security.js'
+import { lockOccupancyConflicts } from '../tables/table-occupancy.js'
 import {
   createTableGroup,
   dissolveUnusedGroups,
@@ -153,7 +154,7 @@ function toBooking(row: BookingRow, now = applicationNow()): BookingView {
 }
 
 const bookingSelect = `SELECT
-  r.id, COALESCE(c.display_name, r.contact_name, 'Khách') AS guest_name,
+  r.id, COALESCE(r.contact_name, c.display_name, 'Khách') AS guest_name,
   (c.display_name IS NOT NULL OR r.contact_name IS NOT NULL) AS has_guest_name,
   COALESCE(r.phone_last3, c.phone_last3) AS phone_last3, r.party_size, r.expected_at, r.business_date,
   r.customer_classification, r.guest_type, r.is_birthday, r.status,
@@ -193,7 +194,7 @@ export async function searchBookings(
     `${bookingSelect}
      WHERE r.organization_id = ? AND r.venue_id = ? AND r.business_date = ?
        AND (
-         LOCATE(?, LOWER(COALESCE(c.display_name, r.contact_name, ''))) > 0
+         LOCATE(?, LOWER(COALESCE(r.contact_name, c.display_name, ''))) > 0
          OR (? IS NOT NULL AND COALESCE(r.phone_last3, c.phone_last3) = ?)
        )
      GROUP BY r.id, c.display_name, r.contact_name, r.phone_last3, c.phone_last3, r.party_size, r.expected_at,
@@ -264,6 +265,43 @@ function protectedPhoneValues(phone: ProtectedPhone | null): [Buffer | null, num
 interface CustomerIdentityRow extends RowDataPacket {
   id: number
   status: 'ACTIVE' | 'MERGED' | 'ANONYMIZED'
+}
+
+/**
+ * BF-01: rebuilds the protected phone already stored on a reservation so the
+ * Customer identity behind it can be resolved. The ciphertext is passed through
+ * untouched; nothing is decrypted and nothing is logged, and the client is never
+ * asked to resend the full number.
+ */
+async function storedReservationPhone(
+  connection: PoolConnection,
+  actor: AuthenticatedActor,
+  reservationId: number,
+): Promise<ProtectedPhone | null> {
+  const [rows] = await connection.execute<(RowDataPacket & {
+    phone_ciphertext: Buffer | null
+    phone_key_id: number | null
+    phone_hmac: Buffer | null
+    phone_hmac_key_id: number | null
+    phone_last3: string | null
+  })[]>(
+    `SELECT phone_ciphertext, phone_key_id, phone_hmac, phone_hmac_key_id, phone_last3
+     FROM reservations
+     WHERE organization_id = ? AND venue_id = ? AND id = ?`,
+    [actor.organizationId, actor.venueId, reservationId],
+  )
+  const row = rows[0]
+  if (!row || !row.phone_ciphertext || row.phone_key_id === null
+    || !row.phone_hmac || row.phone_hmac_key_id === null || !row.phone_last3) {
+    return null
+  }
+  return {
+    ciphertext: row.phone_ciphertext,
+    encryptionKeyId: Number(row.phone_key_id),
+    hmac: row.phone_hmac,
+    hmacKeyId: Number(row.phone_hmac_key_id),
+    last3: row.phone_last3,
+  }
 }
 
 async function resolveBookingCustomer(
@@ -389,13 +427,8 @@ export async function createAndAssignBooking(
         `Các bàn đã chọn chỉ có ${totalCapacity} chỗ cho ${input.partySize} khách.`,
       )
     }
-    const placeholders = tableIds.map(() => '?').join(',')
-    const [conflicts] = await connection.execute<RowDataPacket[]>(
-      `SELECT id FROM table_allocations
-       WHERE organization_id = ? AND venue_id = ? AND business_date = ?
-         AND released_at IS NULL AND table_id IN (${placeholders})
-       ORDER BY table_id, id FOR UPDATE`,
-      [actor.organizationId, actor.venueId, schedule.businessDate, ...tableIds],
+    const conflicts = await lockOccupancyConflicts(
+      connection, actor, 'HOLD', tableIds, schedule.businessDate, [], now,
     )
     if (conflicts.length) {
       throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
@@ -681,15 +714,9 @@ export async function updateBooking(
     const allocationIds = holdRows.map((row) => Number(row.allocation_id))
     const tableIds = holdRows.map((row) => Number(row.table_id))
     if (scheduleChanged && allocationIds.length) {
-      const tablePlaceholders = tableIds.map(() => '?').join(',')
       const allocationPlaceholders = allocationIds.map(() => '?').join(',')
-      const [conflicts] = await connection.execute<RowDataPacket[]>(
-        `SELECT id FROM table_allocations
-         WHERE organization_id = ? AND venue_id = ? AND business_date = ?
-           AND released_at IS NULL AND table_id IN (${tablePlaceholders})
-           AND id NOT IN (${allocationPlaceholders})
-         ORDER BY table_id, id FOR UPDATE`,
-        [actor.organizationId, actor.venueId, schedule.businessDate, ...tableIds, ...allocationIds],
+      const conflicts = await lockOccupancyConflicts(
+        connection, actor, 'HOLD', tableIds, schedule.businessDate, allocationIds, now,
       )
       if (conflicts.length) {
         throw new AppError(
@@ -728,11 +755,26 @@ export async function updateBooking(
       ? ', phone_ciphertext = ?, phone_key_id = ?, phone_hmac = ?, phone_hmac_key_id = ?, phone_last3 = ?'
       : ''
     const phoneValues = phoneChanged ? protectedPhoneValues(phone ?? null) : []
-    const customerId = phone === undefined
-      ? reservation.customer_id
-      : phone === null || guestName
+    // BF-01: clearing the name on a booking that keeps its phone turns it into a
+    // phone-only booking, so the contact has to become the Customer identity for
+    // the phone already stored. A named booking with a phone holds
+    // customer_id = NULL, so without this the row would have neither a contact
+    // name nor a customer and would violate ck_reservations_contact.
+    let customerId: number | null
+    if (phone === undefined) {
+      customerId = reservation.customer_id
+      if (!guestName && customerId === null) {
+        const stored = await storedReservationPhone(connection, actor, id)
+        if (!stored) {
+          throw new AppError(400, 'BOOKING_CONTACT_REQUIRED', 'Cần ít nhất tên khách hoặc số điện thoại.')
+        }
+        customerId = await resolveBookingCustomer(connection, actor, stored)
+      }
+    } else {
+      customerId = phone === null || guestName
         ? null
         : await resolveBookingCustomer(connection, actor, phone)
+    }
     const [updateResult] = await connection.execute<ResultSetHeader>(
       `UPDATE reservations
        SET customer_id = ?, contact_name = ?, contact_name_search = ?, party_size = ?, source_id = ?,
@@ -1094,7 +1136,6 @@ export async function assignBookingTables(
     const tableRows = uniqueTableIds.length > 1
       ? await lockAndValidateSameKindTables(connection, actor, uniqueTableIds)
       : await lockAndValidateAssignableTables(connection, actor, uniqueTableIds)
-    const placeholders = uniqueTableIds.map(() => '?').join(',')
     const totalCapacity = tableRows.reduce((total, table) => total + Number(table.capacity), 0)
     if (totalCapacity < Number(reservation.party_size)) {
       throw new AppError(
@@ -1121,11 +1162,8 @@ export async function assignBookingTables(
     }
     await releaseActiveHold(connection, actor, id, previousAllocations.length ? 'MOVED' : 'HOLD_RELEASED')
     await dissolveUnusedGroups(connection, actor, previousAllocations.map((allocation) => allocation.group_id))
-    const [conflicts] = await connection.execute<RowDataPacket[]>(
-      `SELECT table_id FROM table_allocations
-       WHERE venue_id = ? AND business_date = ? AND released_at IS NULL AND table_id IN (${placeholders})
-       FOR UPDATE`,
-      [actor.venueId, dateOnly(reservation.business_date), ...uniqueTableIds],
+    const conflicts = await lockOccupancyConflicts(
+      connection, actor, 'HOLD', uniqueTableIds, dateOnly(reservation.business_date),
     )
     if (conflicts.length)
       throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
@@ -1170,7 +1208,7 @@ export async function assignBookingTables(
         (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
          auth_session_id, action, entity_type, entity_id, entity_version_before,
          entity_version_after, changes, reason_code, is_undoable)
-       VALUES (?, ?, ?, 'USER', ?, ?, ?, ?, 'reservation', ?, ?, ?, ?, ?, 0)`,
+        VALUES (?, ?, ?, 'USER', ?, ?, ?, ?, 'reservation', ?, ?, ?, ?, ?, ?)`,
       [
         actor.organizationId,
         actor.venueId,
@@ -1194,6 +1232,7 @@ export async function assignBookingTables(
           },
         ]),
         previousAllocations.length ? 'STAFF_REASSIGNED' : 'INITIAL_ASSIGNMENT',
+        previousAllocations.length > 0 && actor.authSessionId ? 1 : 0,
       ],
     )
     await connection.commit()
@@ -1237,11 +1276,8 @@ export async function mergeBookingTables(
     if (!additions.length) throw new AppError(409, 'TABLE_ASSIGNMENT_UNCHANGED', 'Nhóm bàn không thay đổi.')
     const totalCapacity = tables.reduce((total, table) => total + Number(table.capacity), 0)
     if (totalCapacity < Number(reservation.party_size)) throw new AppError(409, 'INSUFFICIENT_TABLE_CAPACITY', 'Nhóm bàn không đủ sức chứa.')
-    const placeholders = additions.map(() => '?').join(',')
-    const [conflicts] = await connection.execute<RowDataPacket[]>(
-      `SELECT id FROM table_allocations WHERE organization_id = ? AND venue_id = ?
-       AND business_date = ? AND released_at IS NULL AND table_id IN (${placeholders}) FOR UPDATE`,
-      [actor.organizationId, actor.venueId, dateOnly(reservation.business_date), ...additions],
+    const conflicts = await lockOccupancyConflicts(
+      connection, actor, 'HOLD', additions, dateOnly(reservation.business_date),
     )
     if (conflicts.length) throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một bàn được chọn đang thuộc nhóm khách khác.')
     const groupIds = [...new Set(allocations.map((row) => row.group_id).filter((value): value is number => value !== null))]
@@ -1279,10 +1315,11 @@ export async function mergeBookingTables(
       `INSERT INTO operation_log
         (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id, auth_session_id,
          action, entity_type, entity_id, entity_version_before, entity_version_after, changes, reason_code, is_undoable)
-       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'RESERVATION_TABLES_MERGED', 'reservation', ?, ?, ?, ?, 'MANUAL', 0)`,
+        VALUES (?, ?, ?, 'USER', ?, ?, ?, 'RESERVATION_TABLES_MERGED', 'reservation', ?, ?, ?, ?, 'MANUAL', ?)`,
       [actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
         actor.authSessionId ?? null, id, expectedVersion, expectedVersion + 1,
-        JSON.stringify([{ type: 'table_group', groupId: group.id, previousTableIds: currentIds, tableIds: requested }])],
+        JSON.stringify([{ type: 'table_group', groupId: group.id, previousTableIds: currentIds, tableIds: requested }]),
+        actor.authSessionId ? 1 : 0],
     )
     const booking = await getBookingById(actor, id, connection)
     await connection.commit()
@@ -1639,7 +1676,7 @@ async function confirmBookingLateInTransaction(
     throw new AppError(
       409,
       'LATE_CONFIRM_NO_SHOW_THRESHOLD_REACHED',
-      'Không thể xác nhận tới muộn khi booking đã đạt ngưỡng Không đến.',
+      'Không thể xác nhận tới muộn khi booking đã đạt ngưỡng Không tới.',
     )
   }
 
@@ -1731,14 +1768,7 @@ export async function createWalkIn(
         `Các bàn đã chọn chỉ có ${totalCapacity} chỗ cho ${input.partySize} khách.`,
       )
     }
-    const placeholders = uniqueTableIds.map(() => '?').join(',')
-    const [conflicts] = await connection.execute<RowDataPacket[]>(
-      `SELECT table_id FROM table_allocations
-       WHERE organization_id = ? AND venue_id = ? AND released_at IS NULL AND table_id IN (${placeholders})
-       ORDER BY table_id, id
-       FOR UPDATE`,
-      [actor.organizationId, actor.venueId, ...uniqueTableIds],
-    )
+    const conflicts = await lockOccupancyConflicts(connection, actor, 'USAGE', uniqueTableIds, input.businessDate)
     if (conflicts.length)
       throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
 

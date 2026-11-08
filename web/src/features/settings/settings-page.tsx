@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { PERMISSION_GROUPS, PERMISSION_LABEL, PERMISSION_MATRIX } from "@/domain/access"
+import { AccountsSection } from "./accounts-section"
 import { ROLE_LABEL, type RoleCode } from "@/domain/enums"
 import type { VenueConfig } from "@/domain/models"
 import { DDL_TABLES } from "@/domain/schema"
@@ -139,10 +140,10 @@ function DynamicVenueSettingsForm({
           max={240}
         />
       </Row>
-      <Row label="Cảnh báo không đến" hint="Chỉ đổi cảnh báo. Không tự hủy booking hoặc nhả bàn.">
+      <Row label="Cảnh báo không tới" hint="Chỉ đổi cảnh báo. Không tự hủy booking hoặc nhả bàn.">
         <NumberField
           id="dynamic-noshow"
-          label="Cảnh báo không đến"
+          label="Cảnh báo không tới"
           value={noShowMinutes}
           onChange={setNoShowMinutes}
           unit="phút"
@@ -563,6 +564,7 @@ function AccessSettings() {
   const { user, users, setUser } = useSession()
   return (
     <div className="grid gap-6">
+      <AccountsSection />
       <section className="grid gap-2">
         <SectionTitle>Vai trò đang dùng (demo)</SectionTitle>
         <div className="flex flex-wrap gap-2">

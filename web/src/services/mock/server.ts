@@ -13,6 +13,7 @@ import { roleCan, PERMISSION_LABEL, type Permission } from "@/domain/access"
 import { isWithinBookingReceptionWindow } from "@/domain/booking-rules"
 import {
   ROLE_LABEL,
+  type RoleCode,
   type AllocationReleaseReason,
   type HoldReleaseReason,
   type ReservationCloseReason,
@@ -639,6 +640,41 @@ export class MockGamApi implements GamApi, DemoControls {
     this.session = { ...user }
   }
 
+  /**
+   * BA-022: the demo server has no account store. It lists its demo users so the
+   * admin account screen renders, and refuses the mutations, which only the real
+   * backend performs.
+   */
+  async listAccounts() {
+    await this.latency("q")
+    this.require("user.manage")
+    return {
+      accounts: DEMO_USERS.filter((u) => u.id !== REMOTE_USER_ID).map((u) => ({
+        id: u.id,
+        username: u.displayName.toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+        displayName: u.displayName,
+        status: "ACTIVE" as const,
+        membershipStatus: "ACTIVE",
+        roles: [u.role],
+        lastLoginAt: null,
+        version: 1,
+      })),
+      roles: (Object.keys(ROLE_LABEL) as RoleCode[]).map((code) => ({ code, name: ROLE_LABEL[code] })),
+    }
+  }
+
+  async createAccount(): Promise<never> {
+    await this.latency("q")
+    this.require("user.manage")
+    return this.fail("Chế độ demo không tạo được tài khoản. Dùng máy chủ thật để quản lý tài khoản.")
+  }
+
+  async setAccountStatus(): Promise<never> {
+    await this.latency("q")
+    this.require("user.manage")
+    return this.fail("Chế độ demo không khóa/mở được tài khoản. Dùng máy chủ thật để quản lý tài khoản.")
+  }
+
   listDemoUsers(): SessionUser[] {
     return DEMO_USERS.filter((u) => u.id !== REMOTE_USER_ID).map((u) => ({ ...u }))
   }
@@ -781,7 +817,7 @@ export class MockGamApi implements GamApi, DemoControls {
         (entry) => entry.businessDate === bd && ["WAITING", "CONTACTING", "OFFERED"].includes(entry.status),
       ).length,
       outTables: cat.tables.filter((table) => table.status === "OUT_OF_SERVICE").map(tableInfo),
-      arrivalCutoff: { hour: 21, minute: 30, basis: "EXPECTED_AT", atCutoff: "AFTER" },
+      arrivalCutoff: { hour: 21, minute: 30, basis: "EXPECTED_AT", atCutoff: "BEFORE" },
     })
   }
 
@@ -830,6 +866,10 @@ export class MockGamApi implements GamApi, DemoControls {
       .slice(-limit)
       .reverse()
       .map((op) => operationView(this.db, op, this.session.id))
+  }
+
+  async getUndoState() {
+    return { undo: null, redo: null }
   }
 
   async listAllocations(bd: BusinessDate, tableId?: number) {
@@ -1516,6 +1556,19 @@ export class MockGamApi implements GamApi, DemoControls {
     if (!input.keepTableIds.length)
       this.fail("Giữ lại ít nhất một bàn cho đoàn khách. Muốn trả hết bàn hãy dùng Nhả bàn.")
     if (input.keepTableIds.some((t) => !tables.includes(t))) this.fail("Bàn giữ lại không thuộc nhóm.")
+    // SPL-02 (PO 07/11/2026): a Split must release at least one table.
+    if (input.keepTableIds.length === tables.length)
+      this.fail("Tách bàn phải nhả ít nhất một bàn. Nhóm ghép giữ nguyên.")
+    // SPL-01 (PO 07/11/2026): the kept tables must still seat the party.
+    const owning = allocs[0]
+    const seats = owning.visitId
+      ? this.db.visits.get(owning.visitId)?.guestCount
+      : this.db.holds.get(owning.holdId!)?.reservationId
+        ? this.db.reservations.get(this.db.holds.get(owning.holdId!)!.reservationId!)?.partySize
+        : 0
+    const keptSeats = input.keepTableIds.reduce((sum, t) => sum + (this.db.tables.get(t)?.capacity ?? 0), 0)
+    if (keptSeats < (seats ?? 0))
+      this.fail("Các bàn giữ lại không đủ sức chứa cho số khách hiện tại.")
     return this.commit({ action: "TABLES_SPLIT", entityType: "table_group", undoable: true }, (tx) => {
       allocs.forEach((a) => this.release(tx, a, "SPLIT"))
       const gr = tx.edit("groups", g.id)
@@ -2210,7 +2263,7 @@ export class MockGamApi implements GamApi, DemoControls {
     )
       this.fail("Cần 1–24 giờ nhanh HH:mm không trùng trong cửa sổ 19:00–01:00.")
     if (input.upcomingMinutes < 1 || input.upcomingMinutes > 240) this.fail("Mốc sắp đến phải từ 1 đến 240 phút.")
-    if (input.noShowMinutes <= this.venue.lateWarningMinutes) this.fail("Mốc không đến phải lớn hơn mốc đến muộn.")
+    if (input.noShowMinutes <= this.venue.lateWarningMinutes) this.fail("Mốc không tới phải lớn hơn mốc đến muộn.")
     this.quickTimes = [...input.quickTimes]
     this.commit({ action: "VENUE_SETTINGS_UPDATED", entityType: "venue", undoable: false }, (tx) => {
       const row = tx.edit("venue", this.venue.id)

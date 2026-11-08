@@ -51,7 +51,7 @@ export async function searchReception(
   const name = criteria.name ? `%${normalizeSearchText(criteria.name)}%` : null
   const params = [actor.organizationId, actor.venueId, businessDate, last3, last3, name, name]
   const [bookingRows] = await databasePool.execute<MatchRow[]>(
-    `SELECT r.id, COALESCE(c.display_name, r.contact_name, 'Khách') AS display_name,
+    `SELECT r.id, COALESCE(r.contact_name, c.display_name, 'Khách') AS display_name,
        COALESCE(r.phone_last3, c.phone_last3) AS phone_last3,
        GROUP_CONCAT(DISTINCT a.table_id ORDER BY a.table_id SEPARATOR ',') AS table_ids
      FROM reservations AS r
@@ -69,7 +69,7 @@ export async function searchReception(
 
   const [waitlistRows] = await databasePool.execute<MatchRow[]>(
     `SELECT w.id, w.reservation_id,
-       COALESCE(c.display_name, r.contact_name, w.contact_name, 'Khách chờ') AS display_name,
+       COALESCE(r.contact_name, w.contact_name, c.display_name, 'Khách chờ') AS display_name,
        COALESCE(c.phone_last3, r.phone_last3) AS phone_last3,
        GROUP_CONCAT(DISTINCT a.table_id ORDER BY a.table_id SEPARATOR ',') AS table_ids,
        w.status

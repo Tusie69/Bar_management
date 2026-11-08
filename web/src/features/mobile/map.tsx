@@ -19,7 +19,7 @@ import { useBookingDraft } from "../floor/use-booking-draft"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
 import { codesOf, duration, type Tone, toneStyle } from "./model"
-import { BellButton, PlainHeader } from "./ui"
+import { BellButton, PlainHeader, UndoRedoButtons } from "./ui"
 
 const ZONE_TABS: [ZoneCode | "ALL", string][] = [
   ["ALL", "Tất cả"],
@@ -98,6 +98,7 @@ export function MapScreen({
               <Menu className="size-5" />
             </button>
             <h1 className="m-0 min-w-0 flex-1 truncate text-[22px] font-semibold text-tx-strong">Sơ đồ bàn</h1>
+            <UndoRedoButtons />
             <BellButton />
           </div>
           {!pick && !draft ? (

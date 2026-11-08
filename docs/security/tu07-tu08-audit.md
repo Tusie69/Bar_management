@@ -47,9 +47,16 @@ All rows below are venue/tenant scoped from the authenticated actor. All mutatio
 | POST | `/visits/:id/close` | Yes | Yes | `visit.end` | OWNER_ADMIN, RECEPTIONIST, CASHIER |
 | GET | `/waitlist` | Yes | — | `customer.view_masked` | OWNER_ADMIN, RECEPTIONIST, CUSTOMER_CARE, CASHIER |
 | POST | `/waitlist` | Yes | Yes | `waitlist.create` | OWNER_ADMIN, RECEPTIONIST, CUSTOMER_CARE |
-| POST | `/waitlist/:id/seat` | Yes | Yes | `waitlist.accept_offer` + `reservation.create` + `table.assign` | OWNER_ADMIN, RECEPTIONIST |
+| POST | `/waitlist/:id/seat` | Yes | Yes | `waitlist.accept_offer` + `reservation.create` + `table.assign`, plus `visit.walkin` when `arrived` is true | OWNER_ADMIN, RECEPTIONIST |
 | POST | `/waitlist/:id/cancel` | Yes | Yes | `waitlist.cancel` | OWNER_ADMIN, RECEPTIONIST, CUSTOMER_CARE |
 | POST | `/waitlist/:id/contact-attempts` | Yes | Yes | `waitlist.record_contact` | OWNER_ADMIN, RECEPTIONIST, CUSTOMER_CARE |
+| POST | `/tables/groups/:id/split` | Yes | Yes | `visit.split` | OWNER_ADMIN, RECEPTIONIST |
+| GET | `/operations/undo-state` | Yes | — | `operation.undo` | OWNER_ADMIN, RECEPTIONIST |
+| POST | `/operations/undo` | Yes | Yes | `operation.undo` | OWNER_ADMIN, RECEPTIONIST |
+| POST | `/operations/redo` | Yes | Yes | `operation.undo` | OWNER_ADMIN, RECEPTIONIST |
+| GET | `/accounts` | Yes | — | `user.manage` (sensitive) | OWNER_ADMIN |
+| POST | `/accounts` | Yes | Yes | `user.manage` (sensitive) | OWNER_ADMIN |
+| POST | `/accounts/:id/status` | Yes | Yes | `user.manage` (sensitive) | OWNER_ADMIN |
 | POST | `/bookings/:id/call` | Yes | Yes | `booking.phone.call` | OWNER_ADMIN, RECEPTIONIST |
 | POST | `/bookings/:id/calls/:callId/outcome` | Yes | Yes | `booking.phone.call` | OWNER_ADMIN, RECEPTIONIST |
 | POST | `/bookings/:id/phone:reveal` | Yes | Yes | `booking.phone.reveal` + `customer.phone.reveal` | OWNER_ADMIN only |

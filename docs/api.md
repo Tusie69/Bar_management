@@ -12,7 +12,7 @@ Base URL: `http://localhost:3000/api/v1`. This document describes the implemente
 - All business routes require authentication and their listed permissions. Permissions are checked on every request, including after role revocation.
 - Existing-entity writes require the current positive integer `version`. The status compatibility route uses optional `expectedVersion`. Stale versions return 409. Do not automatically retry mutations.
 - `Idempotency-Key` is optional on protected create endpoints. When supplied, it is bound to the authenticated organization, endpoint and request fingerprint; concurrent/retried requests replay one committed response and share the domain transaction. Clients should still disable duplicate submission for user feedback.
-- `businessDate` is a valid `YYYY-MM-DD`; response instants are ISO-8601 UTC strings. Booking `expectedAt` must include an offset and represent local time in `Asia/Ho_Chi_Minh` (normally `+07:00`). Business hours are 17:00 through before 05:00 the next morning; after midnight belongs to the previous business date. New or changed booking times must be within 19:00-01:00 inclusive. Updating other fields on a historical booking may retain its existing out-of-window timestamp. Walk-ins keep the operating-hours rule.
+- `businessDate` is a valid `YYYY-MM-DD`; response instants are ISO-8601 UTC strings. Booking `expectedAt` must include an offset and represent local time in `Asia/Ho_Chi_Minh` (normally `+07:00`). Business hours are 17:00 through before 05:00 the next morning; after midnight belongs to the previous business date. New or changed booking times must be within 19:00-01:00 inclusive and must fall on a 15-minute slot with zero seconds; anything else is rejected as `EXPECTED_AT_OFF_SLOT` (for example 22:35). This records the interval the API enforces today and is not an approval of it: Q03 is still open with the PO, and the written sources S2/S3/S4 specify a 5-minute step, so the acceptance criteria, pickers and this paragraph change together once Q03 is decided. Updating other fields on a historical booking may retain its existing out-of-window timestamp. Walk-ins keep the operating-hours rule.
 - There is no subscription/change-feed endpoint. Clients may poll and refetch after successful mutations.
 
 Errors use:
@@ -49,7 +49,7 @@ Both endpoints derive organization and venue exclusively from the authenticated 
 
 `PUT` requires exactly `quickTimes`, `upcomingMinutes` and `noShowMinutes`; unknown or missing fields return 400. `quickTimes` contains 1–24 unique `HH:mm` values inside 19:00–01:00 inclusive. `upcomingMinutes` is an integer from 1 through 240. `noShowMinutes` is an unsigned-smallint value and must also remain greater than the venue's unchanged `late_warning_minutes`. Invalid settings use `INVALID_SETTINGS_PAYLOAD`, `INVALID_QUICK_TIMES`, `INVALID_UPCOMING_MINUTES` or `INVALID_NO_SHOW_MINUTES`. Seeded roles grant `venue.configure` only to `OWNER_ADMIN`; the backend checks the permission itself, so a read-only admin or staff role receives 403 while any separately provisioned super-admin role must explicitly have the same permission.
 
-The update locks the venue and writes `venue_settings.quick_times`, `venues.upcoming_warning_minutes`, `venues.no_show_warning_minutes`, the venue version/change sequence and a redacted `VENUE_SETTINGS_UPDATED` audit in one transaction. `late_warning_minutes` is not modified. Failure of any write rolls everything back. Other venues are unaffected. Each committed update bumps `change_seq`; current floor polling and the settings query's 15-second polling refetch server-derived state without introducing another realtime channel. The booking forms show the database quick times as shortcuts while retaining all existing 30-minute choices and never replace the time already entered by the user.
+The update locks the venue and writes `venue_settings.quick_times`, `venues.upcoming_warning_minutes`, `venues.no_show_warning_minutes`, the venue version/change sequence and a redacted `VENUE_SETTINGS_UPDATED` audit in one transaction. `late_warning_minutes` is not modified. Failure of any write rolls everything back. Other venues are unaffected. Each committed update bumps `change_seq`; current floor polling and the settings query's 15-second polling refetch server-derived state without introducing another realtime channel. The booking forms show the database quick times as shortcuts and never replace the time already entered by the user. The pickers offer the slots the API accepts, which is the 15-minute step described under Transport while Q03 is open; they do not offer a 30-minute-only list.
 
 Floor Projection, booking views and TU-Call continue to read thresholds directly from `venues`. Changing `upcomingMinutes` therefore changes the server-side `UPCOMING` and `canCall` boundary. Changing `noShowMinutes` changes the visual no-show warning and the TU-12 cutoff. It never automatically changes the persisted booking to `NO_SHOW`, cancels a hold or releases a table; manual no-show behavior remains authoritative.
 
@@ -61,10 +61,27 @@ Floor Projection, booking views and TU-Call continue to read thresholds directly
 | GET | `/tables?date=YYYY-MM-DD` | `customer.view_masked` | Atomic `{businessDate,serverNow,changeSeq,tables:FloorTableProjection[],groups:FloorGroupProjection[]}` |
 | PATCH | `/tables/:id/status` | `table.assign` | Body `{businessDate,state,expectedVersion?,reason?}`; see limitation below |
 | PATCH | `/tables/:id/configuration` | `venue.configure` | Body `{isSpare?:boolean,status?:"ACTIVE"|"OUT_OF_SERVICE",version,reason}`; returns `{table:{id,code,isBackup,status,version}}` |
+| POST | `/tables/groups/:id/split` | `visit.split` | Body `{keepTableIds}`; `{operationId,changeSeq,summary,undoable:false,splitGroupId,group,keptTableIds,releasedTableIds,owner}` |
 
 `FloorTableProjection` retains the legacy table fields additively and exposes `{tableId,tableCode,catalogStatus,isSpare,displayState,arrivalPhase,arrivalTime,minutesLate,claim,groupId,groupDisplayCode,groupMemberTableIds}`. `displayState` is `EMPTY`, `BOOKED`, `UPCOMING`, `LATE`, `NO_SHOW`, `IN_USE` or `OUT_OF_SERVICE`; it is computed with the venue thresholds and server clock. `NO_SHOW` is visual while the reservation may remain `BOOKED` with an active allocation. Active visits have precedence over holds. Reservation and waitlist holds for another business date are excluded; an unreleased visit from an earlier date remains visible and is marked stale.
 
-`claim` is null or a whitelisted `{kind,reservationId,visitId,waitlistEntryId,holdId,guestName,phoneLast3,partySize,turnNo,flags,groupId,groupDisplayCode,groupMemberTableIds,startsAt,deadlineAt,holdOverdue,paid,origin,sourceCode,version}`. `kind` is `RESERVATION`, `VISIT` or `WAITLIST_HOLD`. `turnNo` is currently null. `flags` only contains structured `NEW` or `RETURNING`; notes are never parsed. The response never includes raw notes, full phone numbers, ciphertext or HMAC fields.
+Every command that allocates a table applies one occupancy policy, the same one this projection reads: an unreleased
+`HOLD` blocks only the business date being allocated, so each operating day is planned independently; a command that
+seats a party now blocks on any unreleased `USAGE` whatever date it carries; and a command that only plans a day blocks
+on a `USAGE` that date would really carry, so planning a later day beside a table still in use today stays allowed. No
+release time is inferred. This covers walk-in, create-and-assign, assign, booking and visit merge, visit move, waitlist
+seating and undo compensation, which all answer with `TABLE_ALREADY_OCCUPIED`.
+
+Split takes the merge group, not a table. `keepTableIds` are the tables that stay with the party and must all belong to
+the group; every other table of the group is released with reason `SPLIT`. It must release at least one table
+(`SPLIT_RELEASES_NO_TABLE`) and the kept tables must still seat the party (`INSUFFICIENT_TABLE_CAPACITY`), using the
+same capacity rule as merge and assignment. The group is dissolved and the kept tables are re-allocated, forming a new
+group with a fresh symbol when two or more stay. Allocation history is append-only: released rows are kept. The route
+accepts `Idempotency-Key`, so a retry with the same key and payload replays the committed split, while the same key
+with a different payload is refused `IDEMPOTENCY_KEY_REUSED`. A split is not undoable, so its audit row carries
+`is_undoable = 0` and undo stays closed with `NOT_UNDOABLE`.
+
+`claim` is null or a whitelisted `{kind,reservationId,visitId,waitlistEntryId,holdId,guestName,phoneLast3,partySize,turnNo,flags,groupId,groupDisplayCode,groupMemberTableIds,startsAt,deadlineAt,holdOverdue,paid,origin,sourceCode,version}`. `kind` is `RESERVATION`, `VISIT` or `WAITLIST_HOLD`. `turnNo` is currently null. `flags` only contains the structured values `BIRTHDAY`, `NEW` or `RETURNING`; notes are never parsed. A `VISIT` claim that was checked in from a booking keeps that booking's `reservationId`, `flags`, `sourceCode` and masked `phoneLast3`, resolved through `reservations.visit_id`; an independent Walk-in or Waitlist visit reports `reservationId` null, no flags and no source. `canCall` is always false for a `VISIT`. The response never includes raw notes, full phone numbers, ciphertext or HMAC fields.
 
 The endpoint performs two fixed-count reads inside one read-only `REPEATABLE READ` transaction. `serverNow` is the application clock instant used for every derived state and `changeSeq` is returned as a decimal string. Groups use persisted IDs and symbol numbers; display codes use Excel-style letters (`1 => ◆A`, `26 => ◆Z`, `27 => ◆AA`). The legacy `state` and `activeVisit` fields remain during rollout, but `activeVisit.note` is always null. GET has no lifecycle write side effects.
 
@@ -155,7 +172,7 @@ giá trị hiện tại. Response list/detail luôn trả một trong ba giá tr
 Yêu cầu session hợp lệ và quyền `customer.view_masked`. Response là `text/plain; charset=utf-8`, lấy booking,
 allocation, bàn `OUT_OF_SERVICE` và bộ đếm waitlist trong cùng một MySQL transaction read snapshot. Query và formatter
 không đọc/xuất số điện thoại, `phoneLast3`, ciphertext, HMAC hay customer ID. Thống kê trước/sau cộng `party_size`
-theo `expected_at` với cutoff 21:30 giờ Việt Nam (`>=` thuộc nhóm sau); O/N đếm booking theo classification và báo
+theo `expected_at` với cutoff 21:30 giờ Việt Nam; đúng 21:30 thuộc nhóm trước (`<=` thuộc nhóm trước, chỉ `>` mới thuộc nhóm sau) và dòng text là `Khách vào trước/bằng 21:30`; O/N đếm booking theo classification và báo
 riêng số `UNCLASSIFIED`. Endpoint chỉ trả text; không gửi sang Zalo.
 
 
@@ -190,7 +207,7 @@ Carry-over occupancy remains visible and `staleFromPreviousDay` remains true on 
 | --- | --- | --- | --- |
 | GET | `/waitlist?date=YYYY-MM-DD` | `customer.view_masked` | `{businessDate,entries:WaitlistEntryView[]}` |
 | POST | `/waitlist` | `waitlist.create` | Body WALK_IN `{kind?:"WALK_IN",guestName,partySize,businessDate,contactChannel,phoneNumber?,note?}` or ADVANCE `{kind:"ADVANCE_RESERVATION",reservationId,businessDate,contactChannel,note?}`; 201 `{entry}` |
-| POST | `/waitlist/:id/seat` | `waitlist.accept_offer` + `reservation.create` + `table.assign` | Body `{version,tableIds,arrived?}`; `{entry,reservationId,groupId}` |
+| POST | `/waitlist/:id/seat` | `waitlist.accept_offer` + `reservation.create` + `table.assign`, plus `visit.walkin` when `arrived` is true | Body `{version,tableIds,arrived?}`; `{entry,reservationId,groupId}` where `reservationId` is null for an arrived Walk-in that creates a Visit without a reservation |
 | POST | `/waitlist/:id/cancel` | `waitlist.cancel` | Body `{version,reasonCode,note?}`; `{entry}` |
 | POST | `/waitlist/:id/contact-attempts` | `waitlist.record_contact` | Body `{version,channel,outcome,note?}`; `{entry}` |
 
@@ -204,9 +221,49 @@ Cancel supports all non-terminal statuses (`WAITING`, `CONTACTING`, `OFFERED`, `
 
 Contact recording uses the existing `waitlist_contact_attempts` table. Its channel values differ from creation: `IN_PERSON`, `PHONE_BY_AUTHORIZED`, `ZALO_THREAD`, `FANPAGE_THREAD`, `OTHER`. Outcomes are `NO_ANSWER`, `CALLBACK_REQUESTED`, `OFFER_PENDING`, `ACCEPTED`, `DECLINED_OFFER`, `KEEP_WAITING`, `WITHDREW`, `WRONG_CONTACT`. Note is optional, at most 300 characters. The entry lock serializes attempt numbering; each completed attempt records the authenticated user, server timestamps, channel/outcome/note, bumps entry version and writes `WAITLIST_CONTACT_RECORDED` atomically. Recording an outcome does not change entry status or create an offer, hold or visit. Terminal entries reject both mutations with 409 `WAITLIST_TERMINAL`; stale versions return 409 `VERSION_CONFLICT` first. Unknown/out-of-scope entries return 404 `WAITLIST_NOT_FOUND`.
 
+## Operations (undo/redo)
+
+| Method | Path | Permission | Request / response |
+| --- | --- | --- | --- |
+| GET | `/operations/undo-state` | `operation.undo` | `{undo,redo}`, each null or `{operationId,action,summary}` |
+| POST | `/operations/undo` | `operation.undo` | Body `{operationId}`; `{operationId,changeSeq,summary,undoable}` |
+| POST | `/operations/redo` | `operation.undo` | Body `{operationId}`; same shape |
+
+Undo is a compensating mutation with its own audit row; nothing is deleted and no past audit row is rewritten. Only the
+single latest `operation_log` row of the caller's organization, venue and server-side `auth_session_id` is eligible, so
+a device undoes only its own last step and never another device's. The device is resolved from the authenticated
+session, never from the body or client storage. Only table reassignment and merge for a booking or a visit are
+undoable; everything else answers `NOT_UNDOABLE`. The entity version and its complete active table set must still match
+the recorded operation, and the restored tables are re-validated under lock, otherwise `UNDO_CONFLICT_MODIFIED`. Other
+errors are `NOT_LATEST_DEVICE_OPERATION`, `UNDO_SESSION_REQUIRED`, `REDO_REQUIRED`, `UNDO_REQUIRED` and
+`INSUFFICIENT_TABLE_CAPACITY`. Both mutations accept `Idempotency-Key` and advance the venue `change_seq`. How many
+steps may be undone and any time window remain open with the PO; the API exposes only the session's current step.
+
+## Accounts
+
+| Method | Path | Permission | Request / response |
+| --- | --- | --- | --- |
+| GET | `/accounts` | `user.manage` | `{accounts:AccountSummary[],roles:[{code,name}]}` |
+| POST | `/accounts` | `user.manage` | Body `{username,displayName,password,roleCode}`; 201 `{account}` |
+| POST | `/accounts/:id/status` | `user.manage` | Body `{version,status:"ACTIVE"\|"DISABLED"}`; `{account,revokedSessions}` |
+
+`user.manage` is sensitive and granted to `OWNER_ADMIN` only. `AccountSummary` is
+`{id,username,displayName,status,membershipStatus,roles,lastLoginAt,version}`; no password, hash or customer data is
+ever returned. Listing is scoped to the caller's organization and reports the roles effective at its venue, and
+`roles` offers only the four roles the baseline seeds, so an unseeded code is rejected `ROLE_NOT_FOUND`. Creating an
+account inserts the user, its membership and one role grant in one transaction, hashing the password with the existing
+scrypt helper; the limits are username 80, display name 120 and password at least 12 characters (`WEAK_PASSWORD`,
+`USERNAME_TAKEN`). Locking requires the current version and revokes every live session of that account with reason
+`ACCOUNT_LOCKED`; `authenticateSession` re-checks user and membership status on every request, so a lock also takes
+effect immediately on its own. An admin cannot lock itself (`CANNOT_LOCK_SELF`) and the last active admin is protected
+(`LAST_ADMIN_PROTECTED`). Account changes audit on `entity_type = 'user'` with `is_undoable = 0` and deliberately do
+not advance `change_seq`, because they are not floor state. Changing an existing account's role, resetting a password,
+viewing another account's screen, and the SuperAdmin / view-only Admin levels are not implemented: the owner deferred
+the admin RBAC model, so no role is created here.
+
 ## Unavailable capabilities
 
-There are no implemented endpoints for customer search/profile/notes, operation-log listing, undo/redo, reports, venue configuration, zone flags, hold deadlines/releases, group split, waitlist claim/release-claim, or standalone visits/allocations lists. A catalog exposing lease/hold configuration does not imply that those write APIs exist. Unknown routes return 404; HTTP adapters may expose these unavailable methods as explicit 501 `NOT_SUPPORTED_BY_BACKEND` errors. Direct table-state writes and payment-verified closing have the restrictions described above.
+There are no implemented endpoints for customer search/profile/notes, operation-log listing, reports, zone flags, hold deadlines/releases, booking statistics as JSON, waitlist claim/release-claim, or standalone visits/allocations lists. Undo/redo, table group split, venue configuration and account management do exist and are documented above. A catalog exposing lease/hold configuration does not imply that those write APIs exist. Unknown routes return 404; HTTP adapters may expose these unavailable methods as explicit 501 `NOT_SUPPORTED_BY_BACKEND` errors. Direct table-state writes and payment-verified closing have the restrictions described above.
 
 ## Verification
 

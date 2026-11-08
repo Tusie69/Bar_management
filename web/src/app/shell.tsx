@@ -21,6 +21,7 @@ import { useEffect, useMemo, useState } from "react"
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router"
 import { toast } from "sonner"
 import { Kbd } from "@/components/common"
+import { useUndoRedo, useUndoRedoShortcuts } from "@/features/operations/use-undo-redo"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -192,7 +193,7 @@ function TopBar() {
       <div className="flex items-center gap-1 md:gap-2">
         {!receptionist ? <SyncPill /> : null}
         <ClockMenu />
-        {api.mode === "mock" ? <UndoRedo /> : null}
+        <UndoRedo />
         <ThemeToggle />
         <AlertsBell />
         {!receptionist ? <Identity /> : null}
@@ -351,8 +352,35 @@ function DemoTools({
 }
 
 function UndoRedo() {
-  if (api.mode === "http") return null
-  return <UndoRedoContent />
+  return api.mode === "http" ? <HttpUndoRedo /> : <UndoRedoContent />
+}
+
+function HttpUndoRedo() {
+  const controller = useUndoRedo()
+  const { undo, redo, pending, apply } = controller
+  useUndoRedoShortcuts(controller)
+
+  if (!controller.enabled) return null
+  return (
+    <div className="flex items-center">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label="Hoàn tác" disabled={!undo || pending} onClick={() => void apply("undo")}>
+            <Undo2 />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{undo ? <>Hoàn tác: {undo.summary} <Kbd>Ctrl Z</Kbd></> : "Chưa có thao tác để hoàn tác"}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label="Làm lại" disabled={!redo || pending} onClick={() => void apply("redo")}>
+            <Redo2 />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{redo ? <>Làm lại: {redo.summary}</> : "Chưa có thao tác để làm lại"}</TooltipContent>
+      </Tooltip>
+    </div>
+  )
 }
 
 function UndoRedoContent() {

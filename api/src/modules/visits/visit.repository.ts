@@ -10,6 +10,7 @@ import {
   lockAndValidateSameKindTables,
   lockAndValidateSameZoneTables,
 } from '../tables/table-group.repository.js'
+import { lockOccupancyConflicts } from '../tables/table-occupancy.js'
 
 export type CloseVisitMode = 'MANUAL' | 'AFTER_PAYMENT'
 export type ManualCloseReason = 'GUEST_LEFT' | 'ENTRY_ERROR'
@@ -317,16 +318,9 @@ export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput
       )
     }
     const allocationIds = currentAllocations.map((allocation) => Number(allocation.id))
-    const allocationPlaceholders = allocationIds.map(() => '?').join(',')
     const visitBusinessDate = dateOnly(visit.business_date)
-    const [conflicts] = await connection.execute<RowDataPacket[]>(
-      `SELECT id FROM table_allocations
-       WHERE organization_id = ? AND venue_id = ? AND released_at IS NULL
-         AND table_id IN (${targetPlaceholders})
-         AND (kind = 'USAGE' OR business_date = ?)
-         AND id NOT IN (${allocationPlaceholders})
-       ORDER BY table_id, id FOR UPDATE`,
-      [actor.organizationId, actor.venueId, ...targetTableIds, visitBusinessDate, ...allocationIds],
+    const conflicts = await lockOccupancyConflicts(
+      connection, actor, 'USAGE', targetTableIds, visitBusinessDate, allocationIds,
     )
     if (conflicts.length) throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn mới đang được giữ hoặc sử dụng.')
 
@@ -371,7 +365,7 @@ export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput
         (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
          auth_session_id, action, entity_type, entity_id, entity_version_before,
          entity_version_after, changes, reason_code, reason_note, is_undoable)
-       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'VISIT_TABLES_MOVED', 'visit', ?, ?, ?, ?, 'MANUAL', ?, 0)`,
+       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'VISIT_TABLES_MOVED', 'visit', ?, ?, ?, ?, 'MANUAL', ?, ?)`,
       [
         actor.organizationId,
         actor.venueId,
@@ -390,6 +384,7 @@ export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput
           newTableIds: targetTableIds,
         }]),
         input.note ?? null,
+        actor.authSessionId ? 1 : 0,
       ],
     )
     await connection.commit()
@@ -445,11 +440,8 @@ export async function mergeVisitTables(
     if (tables.reduce((sum, table) => sum + Number(table.capacity), 0) < Number(visit.guest_count)) {
       throw new AppError(409, 'INSUFFICIENT_TABLE_CAPACITY', 'Nhóm bàn không đủ sức chứa.')
     }
-    const placeholders = additions.map(() => '?').join(',')
-    const [conflicts] = await connection.execute<RowDataPacket[]>(
-      `SELECT id FROM table_allocations WHERE organization_id = ? AND venue_id = ? AND business_date = ?
-       AND released_at IS NULL AND table_id IN (${placeholders}) FOR UPDATE`,
-      [actor.organizationId, actor.venueId, dateOnly(visit.business_date), ...additions],
+    const conflicts = await lockOccupancyConflicts(
+      connection, actor, 'USAGE', additions, dateOnly(visit.business_date),
     )
     if (conflicts.length) throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một bàn được chọn đang thuộc nhóm khách khác.')
     const groupIds = [...new Set(allocations.map((row) => row.group_id).filter((id): id is number => id !== null))]
@@ -487,10 +479,11 @@ export async function mergeVisitTables(
       `INSERT INTO operation_log
         (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id, auth_session_id,
          action, entity_type, entity_id, entity_version_before, entity_version_after, changes, reason_code, is_undoable)
-       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'VISIT_TABLES_MERGED', 'visit', ?, ?, ?, ?, 'MANUAL', 0)`,
+       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'VISIT_TABLES_MERGED', 'visit', ?, ?, ?, ?, 'MANUAL', ?)`,
       [actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
         actor.authSessionId ?? null, input.visitId, input.expectedVersion, input.expectedVersion + 1,
-        JSON.stringify([{ type: 'table_group', groupId: group.id, previousTableIds: currentIds, tableIds: requested }])],
+        JSON.stringify([{ type: 'table_group', groupId: group.id, previousTableIds: currentIds, tableIds: requested }]),
+        actor.authSessionId ? 1 : 0],
     )
     await connection.commit()
     return {

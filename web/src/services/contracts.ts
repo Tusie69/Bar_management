@@ -148,10 +148,37 @@ export interface CombineInput {
   overrideReason?: string
 }
 
+/** BA-022: an account as the admin account screen shows it. Never any credential. */
+export interface AccountSummary {
+  id: number
+  username: string
+  displayName: string
+  status: "ACTIVE" | "DISABLED"
+  membershipStatus: string
+  roles: string[]
+  lastLoginAt: string | null
+  version: number
+}
+
+export interface AccountsView {
+  accounts: AccountSummary[]
+  /** Role codes an account may be created with: only those the backend seeds. */
+  roles: { code: string; name: string }[]
+}
+
+export interface CreateAccountInput {
+  username: string
+  displayName: string
+  password: string
+  roleCode: string
+}
+
 export interface SplitInput {
   groupId: number
   /** Tables that stay with the party. Others are released (SPLIT). */
   keepTableIds: number[]
+  /** SPL-03: same key + same payload on a retry replays the committed split. */
+  idempotencyKey?: string
 }
 
 export interface AddWaitlistInput {
@@ -211,6 +238,17 @@ export interface ReservationQuery {
   search?: string
 }
 
+export interface UndoStateItem {
+  operationId: number
+  action: string
+  summary: string
+}
+
+export interface UndoState {
+  undo: UndoStateItem | null
+  redo: UndoStateItem | null
+}
+
 /* ---------------- Interface ---------------- */
 
 export interface GamApi {
@@ -234,6 +272,10 @@ export interface GamApi {
   searchCustomers(query: string): Promise<CustomerSummary[]>
   getCustomer(id: number): Promise<CustomerProfile>
   listOperations(limit: number): Promise<OperationView[]>
+  listAccounts(): Promise<AccountsView>
+  createAccount(input: CreateAccountInput): Promise<AccountSummary>
+  setAccountStatus(userId: number, version: number, status: "ACTIVE" | "DISABLED"): Promise<AccountSummary>
+  getUndoState(): Promise<UndoState>
   /** table_allocations of a business date, optionally for one table (history + timeline). */
   listAllocations(businessDate: BusinessDate, tableId?: number): Promise<AllocationView[]>
   getReport(q: ReportQuery): Promise<ReportResult>
@@ -307,6 +349,9 @@ export interface GamApi {
 /** Implemented backend paths, relative to /api/v1. */
 export const REST_ENDPOINTS = {
   settings: "GET, PUT /settings",
+  accounts: "GET /accounts",
+  createAccount: "POST /accounts",
+  setAccountStatus: "POST /accounts/:id/status",
   catalog: "GET /tables/catalog",
   sources: "GET /bookings/sources",
   floorState: "GET /tables?date=YYYY-MM-DD",
@@ -332,6 +377,9 @@ export const REST_ENDPOINTS = {
   seatWaitlist: "POST /waitlist/:id/seat",
   cancelWaitlist: "POST /waitlist/:id/cancel",
   revealPhone: "POST /bookings/:id/phone:reveal",
+  undoState: "GET /operations/undo-state",
+  undo: "POST /operations/undo",
+  redo: "POST /operations/redo",
 } as const
 
 export const DEMO_ROLE_ORDER: RoleCode[] = ["RECEPTIONIST", "OWNER_ADMIN", "CUSTOMER_CARE", "CASHIER"]

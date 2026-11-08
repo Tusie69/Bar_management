@@ -34,6 +34,7 @@ import {
 } from "@/domain/enums"
 import type { ReservationView } from "@/domain/models"
 import { isBookingSlot, validateBookingCheckInDate, validateBookingTime } from "@/domain/booking-rules"
+import { contactNameUpdate, initialContactName } from "@/domain/booking-identity"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAction } from "@/hooks/use-action"
 import { useCatalog, useNow, useOperations, useReservations, useVenueSettings, useWaitlist } from "@/hooks/use-data"
@@ -497,8 +498,7 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
     return `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`
   })
   const [party, setParty] = useState(r.partySize)
-  const initialName = r.hasGuestName === false ? "" : r.displayName
-  const [name, setName] = useState(initialName)
+  const [name, setName] = useState(() => initialContactName(r.hasGuestName, r.displayName))
   const [note, setNote] = useState(r.note ?? "")
   const [source, setSource] = useState<BookingSourceCode>(r.sourceCode)
   const [classification, setClassification] = useState<BookingClassification>(r.classification)
@@ -517,7 +517,13 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
         <div className="grid gap-4">
           <div className="grid gap-1.5">
             <Label htmlFor="ed-name">Tên khách</Label>
-            <Input id="ed-name" className="h-11" value={name} onChange={(e) => setName(e.target.value)} />
+            <Input
+              id="ed-name"
+              className="h-11"
+              value={name}
+              placeholder={r.hasGuestName ? undefined : "Khách chưa cho tên"}
+              onChange={(e) => setName(e.target.value)}
+            />
           </div>
           <div className="flex flex-wrap items-end gap-4">
             <div className="grid gap-1.5">
@@ -590,7 +596,8 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
               api.updateReservation({
                 id: r.id,
                 version: r.version,
-                ...(name.trim() !== initialName ? { contactName: name } : {}),
+                // WF-01: omit the name unless it is really the guest's.
+                ...contactNameUpdate(r.hasGuestName, name),
                 partySize: party,
                 expectedAt: atBusinessTime(r.businessDate, time),
                 sourceCode: source,

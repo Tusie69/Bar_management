@@ -13,6 +13,7 @@ import { useSession } from "@/state/session"
 export const qk = {
   catalog: ["catalog"] as const,
   settings: ["settings"] as const,
+  accounts: ["accounts"] as const,
   floor: (at: string) => ["floor", at] as const,
   availability: (at: string, party: number) => ["availability", at, party] as const,
   overview: ["overview"] as const,
