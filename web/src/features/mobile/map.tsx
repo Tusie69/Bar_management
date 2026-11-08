@@ -273,16 +273,19 @@ const STATE_TEXT = (st: TableLiveState, late: number, noshow: number): [string, 
 
 interface Action {
   label: string
-  go: () => void
+  go?: () => void
   primary?: boolean
   danger?: boolean
   wide?: boolean
+  disabled?: boolean
+  title?: string
 }
 
 /** Bottom sheet over the lower half; the map stays visible and other tables stay tappable. */
 export function TableSheet({ id, onClose }: { id: number; onClose: () => void }) {
   const m = useM()
   const a = useMobileActions()
+  const pending = a.pending
   const t = m.model.byId.get(id)
   if (!t) return null
   const fs = m.model.states.get(id)
@@ -292,12 +295,47 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
   const isBar = t.kind === "BAR_SEAT"
   const [chip, tone] = STATE_TEXT(st, m.th.late, m.th.noshow)
   const r = c?.reservationId ? m.reservations?.find((x) => x.id === c.reservationId) : undefined
+  const linkedEntry = c?.waitlistEntryId
+    ? m.waitlist?.find((x) => x.id === c.waitlistEntryId)
+    : r
+      ? m.waitlist?.find((x) => x.reservationId === r.id && x.status === "HOLD_ACTIVE")
+      : undefined
 
   let who = ""
   let when = ""
   let info = ""
   let actions: Action[] = []
-  if (c?.kind === "reservation") {
+  if (c?.kind === "visit") {
+    who = `${c.displayName}, ${c.partySize} khách`
+    when = `Đang ngồi từ ${fmtTime(c.startsAt)}, ${duration(m.now.getTime() - c.startsAt.getTime())}`
+    actions = [
+      { label: "Đổi bàn", go: () => a.moveVisit(c, id) },
+      c.tableIds.length > 1 && c.groupId && api.mode !== "http"
+        ? { label: "Tách bàn", go: () => a.split(c, id) }
+        : { label: "Ghép bàn", go: () => a.combine(c) },
+      ...(c.reservationId ? [{ label: "Xem booking", go: () => m.openDetail(c.reservationId!, m.today) }] : []),
+      { label: "Nhả bàn", danger: true, wide: !c.reservationId, go: () => a.endVisit(c) },
+    ]
+  } else if (c?.kind === "waitlist_hold" || (c?.kind === "reservation" && linkedEntry)) {
+    const entry = linkedEntry ?? (c?.waitlistEntryId ? m.waitlist?.find((x) => x.id === c.waitlistEntryId) : undefined)
+    who = `${c.displayName}, ${c.partySize} khách`
+    when = c.deadlineAt ? `Giữ từ danh sách chờ đến ${fmtTime(c.deadlineAt)}` : "Đang giữ bàn từ danh sách chờ"
+
+    const hold = a.heldPolicy(entry, r)
+    actions = [
+      { label: "Khách đã đến", primary: true, wide: true, disabled: !hold.canArrival,
+        title: !hold.supported ? "Chưa hỗ trợ" : undefined,
+        go: () => a.arrival({ entry, reservation: r, partySize: c.partySize, tableCodes: codesOf(c.tableIds, m.model) }) },
+      { label: "Quản lý đơn", go: () => r ? m.openDetail(r.id, r.businessDate) : m.openEntryDetail(entry?.id ?? c.waitlistEntryId!, m.businessDate) },
+      { label: "Đổi / Ghép bàn", disabled: !hold.canReassign, title: !hold.supported ? "Chưa hỗ trợ" : undefined,
+        go: () => a.reassignHold(entry, r) },
+      { label: "Đổi trạng thái",
+        disabled: r ? !hold.canBookingStatus || (!m.can("reservation.cancel") && !m.can("reservation.mark_no_show") && !m.can("reservation.update")) : !m.can("waitlist.cancel"),
+        go: () => r ? m.openStatus(r) : entry && a.cancelEntry(entry) },
+      ...(r ? [{ label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) }] : []),
+      { label: "Xem đơn chờ", wide: true, disabled: !entry, go: () => entry && m.openEntryDetail(entry.id, entry.businessDate) },
+    ]
+  } else if (c?.kind === "reservation") {
     who = `${c.displayName}, ${c.partySize} khách`
     when = `Booking ${fmtTime(c.startsAt)}${st === "late" || st === "late_confirmed" || st === "noshow" ? `, trễ ${c.minutesLate} phút` : st === "upcoming" ? ", sắp đến" : ", đã đặt"}`
     actions = r
@@ -314,21 +352,6 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
           { label: "Đổi trạng thái", go: () => m.openStatus(r) },
         ]
       : []
-  } else if (c?.kind === "visit") {
-    who = `${c.displayName}, ${c.partySize} khách`
-    when = `Đang ngồi từ ${fmtTime(c.startsAt)}, ${duration(m.now.getTime() - c.startsAt.getTime())}`
-    actions = [
-      { label: "Đổi bàn", go: () => a.moveVisit(c, id) },
-      c.tableIds.length > 1 && c.groupId && api.mode !== "http"
-        ? { label: "Tách bàn", go: () => a.split(c, id) }
-        : { label: "Ghép bàn", go: () => a.combine(c) },
-      ...(c.reservationId ? [{ label: "Xem booking", go: () => m.openDetail(c.reservationId!, m.today) }] : []),
-      { label: "Nhả bàn", danger: true, wide: !c.reservationId, go: () => a.endVisit(c) },
-    ]
-  } else if (c?.kind === "waitlist_hold") {
-    who = `${c.displayName}, ${c.partySize} khách`
-    when = c.deadlineAt ? `Giữ từ danh sách chờ đến ${fmtTime(c.deadlineAt)}` : "Đang giữ bàn từ danh sách chờ"
-    actions = [{ label: "Mở đơn chờ", primary: true, wide: true, go: () => m.go("wait") }]
   } else if (st === "spare") {
     info = m.isOwner
       ? "Bàn sơ cua chỉ mở khi quản lý chấp nhận vượt quy tắc."
@@ -415,9 +438,10 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
               key={x.label}
               type="button"
               onClick={x.go}
-              disabled={a.pending}
+              disabled={x.disabled || a.pending || pending}
+              title={x.title}
               className={cn(
-                "h-12 rounded-xl border text-[15px] font-medium",
+                "h-12 rounded-xl border text-[15px] font-medium disabled:opacity-45",
                 x.wide && "col-span-2",
                 x.primary
                   ? "border-primary bg-primary text-primary-foreground"

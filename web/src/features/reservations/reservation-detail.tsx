@@ -37,7 +37,7 @@ import { isBookingSlot, validateBookingCheckInDate, validateBookingTime } from "
 import { contactNameUpdate, initialContactName } from "@/domain/booking-identity"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAction } from "@/hooks/use-action"
-import { useCatalog, useNow, useOperations, useReservations, useVenueSettings } from "@/hooks/use-data"
+import { useCatalog, useNow, useOperations, useReservations, useVenueSettings, useWaitlist } from "@/hooks/use-data"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { toast } from "sonner"
 import { NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
@@ -47,6 +47,8 @@ import { useUi } from "@/state/ui"
 import { GuestCountDialog } from "../floor/floor-dialogs"
 import { CallCustomerControl } from "../bookings/call-customer"
 import { ReservationStatusChip } from "./reservation-status"
+import { useFloorModel } from "../floor/use-floor-model"
+import { bookingOrderPolicy, useHeldOrderActions } from "../mobile/actions"
 
 const CANCEL_REASONS = (Object.keys(CLOSE_REASON_LABEL) as ReservationCloseReason[])
   .filter((r) => r !== "NO_SHOW_CONFIRMED")
@@ -80,7 +82,12 @@ function Detail({ r }: { r: ReservationView }) {
   const now = useNow(15_000)
   const { run, pending } = useAction()
   const ops = useOperations(300)
+  const waitlist = useWaitlist(r.businessDate)
+  const held = useHeldOrderActions(useFloorModel(r.businessDate))
+  const holdPolicy = bookingOrderPolicy(r, waitlist.isPlaceholderData ? undefined : waitlist)
+  const heldEntry = holdPolicy.entry
   const [checkInOpen, setCheckInOpen] = useState(false)
+  const [heldArrival, setHeldArrival] = useState<(() => Promise<unknown>) | null>(null)
   const [cancelOpen, setCancelOpen] = useState(false)
   const [noShowOpen, setNoShowOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
@@ -96,6 +103,17 @@ function Detail({ r }: { r: ReservationView }) {
   const history = (ops.data ?? []).filter((o) => o.entityType === "reservation" && o.entityId === r.id)
 
   const pickOnFloor = (intent: "assign" | "checkin", count?: number) => {
+    if (!(intent === "assign" ? held.bookingPolicy(r).canReassign : held.bookingPolicy(r).canArrival)) return
+    if (heldEntry) {
+      if (intent !== "assign") return
+      const pick = held.picker(heldEntry, r)
+      if (pick) {
+        ui.openReservation(null)
+        navigate("/floor")
+        ui.startPick({ ...pick, intent: "assign" })
+      }
+      return
+    }
     ui.openReservation(null)
     navigate("/floor")
     if (intent === "assign") {
@@ -126,6 +144,11 @@ function Detail({ r }: { r: ReservationView }) {
       multi: true,
       confirmLabel: intent === "assign" ? (r.tableIds.length ? "Đổi bàn" : "Phân bàn") : "Check-in",
       onConfirm: async (ids) => {
+        const current = held.bookingPolicy(r)
+        if (current.kind !== "direct" || !(intent === "assign" ? current.canReassign : current.canArrival)) {
+          toast.error("Đơn chờ đã thay đổi. Vui lòng mở lại.")
+          return false
+        }
         if (intent === "assign") {
           const kinds = new Set(ids.map((id) => catalog.data?.tables.find((t) => t.id === id)?.kind).filter(Boolean))
           if (kinds.size > 1) {
@@ -142,17 +165,23 @@ function Detail({ r }: { r: ReservationView }) {
             )
             return false
           }
-          return !!(await run((o) => api.assignTables(r.id, r.version, ids, o)))
+          return !!(await run(async (o) => {
+            const current = await held.verifyBooking(r)
+            if (!current.canReassign || current.kind !== "direct") throw new Error("Đơn chờ đã thay đổi. Vui lòng mở lại.")
+            return api.assignTables(r.id, r.version, ids, o)
+          }))
         }
-        return !!(await run((o) =>
-          api.checkIn({
+        return !!(await run(async (o) => {
+          const current = await held.verifyBooking(r)
+          if (!current.canArrival || current.kind !== "direct") throw new Error("Đơn chờ đã thay đổi. Vui lòng mở lại.")
+          return api.checkIn({
             reservationId: r.id,
             version: r.version,
             guestCount: count ?? r.partySize,
             tableIds: ids,
             overrideReason: o,
-          }),
-        ))
+          })
+        }))
       },
     })
   }
@@ -179,6 +208,7 @@ function Detail({ r }: { r: ReservationView }) {
         </SheetDescription>
       </SheetHeader>
       <div className="min-h-0 flex-1 scrollbar-thin overflow-y-auto px-5 py-5">
+        {holdPolicy.reason ? <p role="alert" className="mb-3 text-sm text-destructive">{holdPolicy.reason}</p> : null}
         <dl className="grid grid-cols-2 gap-4 text-sm">
           <Item k="Giờ đến" v={<span className="text-base font-semibold">{fmtTime(r.expectedAt)}</span>} />
           <Item k="Ngày kinh doanh" v={fmtBusinessDate(r.businessDate)} />
@@ -251,9 +281,12 @@ function Detail({ r }: { r: ReservationView }) {
                 permission="visit.checkin"
                 size="lg"
                 className="col-span-2"
-                disabled={Boolean(checkInError) || pending}
-                disabledReason={checkInError}
-                onClick={() => setCheckInOpen(true)}
+                disabled={Boolean(checkInError) || pending || !holdPolicy.canArrival}
+                disabledReason={holdPolicy.reason ?? (heldEntry && !holdPolicy.supported ? "Chưa hỗ trợ" : checkInError)}
+                onClick={() => {
+                  setHeldArrival(heldEntry ? () => () => held.arrive(heldEntry, r, r.partySize) : null)
+                  setCheckInOpen(true)
+                }}
               >
                 <LogIn /> Check-in {codes(r.tableIds).join(" + ")}
               </GuardedButton>
@@ -262,9 +295,12 @@ function Detail({ r }: { r: ReservationView }) {
                 permission="visit.checkin"
                 size="lg"
                 className="col-span-2"
-                disabled={Boolean(checkInError) || pending}
-                disabledReason={checkInError}
-                onClick={() => setCheckInOpen(true)}
+                disabled={Boolean(checkInError) || pending || !holdPolicy.canArrival}
+                disabledReason={holdPolicy.reason ?? (heldEntry && !holdPolicy.supported ? "Chưa hỗ trợ" : checkInError)}
+                onClick={() => {
+                  setHeldArrival(heldEntry ? () => () => held.arrive(heldEntry, r, r.partySize) : null)
+                  setCheckInOpen(true)
+                }}
               >
                 <LogIn /> Khách đã tới: chọn bàn và check-in
               </GuardedButton>
@@ -272,7 +308,8 @@ function Detail({ r }: { r: ReservationView }) {
             <GuardedButton
               permission="table.assign"
               variant="outline"
-              disabled={pending}
+              disabled={pending || !holdPolicy.canReassign}
+              disabledReason={holdPolicy.reason ?? (heldEntry && !holdPolicy.supported ? "Chưa hỗ trợ" : undefined)}
               onClick={() => pickOnFloor("assign")}
             >
               {r.tableIds.length ? <ArrowRightLeft /> : <MapPinned />} {r.tableIds.length ? "Đổi bàn" : "Phân bàn"}
@@ -280,17 +317,19 @@ function Detail({ r }: { r: ReservationView }) {
             <GuardedButton
               permission="reservation.update"
               variant="outline"
-              disabled={pending}
+              disabled={pending || !!holdPolicy.reason}
+              disabledReason={holdPolicy.reason}
               onClick={() => setEditOpen(true)}
             >
               <Pencil /> Sửa
             </GuardedButton>
-            {!r.tableIds.length && !r.waitlistEntryId ? (
+            {!r.tableIds.length && !r.waitlistEntryId && !heldEntry ? (
               <GuardedButton
                 permission="waitlist.create"
                 variant="outline"
                 className="col-span-2"
-                disabled={pending}
+                disabled={pending || !!holdPolicy.reason}
+                disabledReason={holdPolicy.reason}
                 onClick={() => setWaitOpen(true)}
               >
                 <ListPlus /> Đưa vào danh sách chờ (đặt trước)
@@ -299,7 +338,8 @@ function Detail({ r }: { r: ReservationView }) {
             <GuardedButton
               permission="reservation.cancel"
               variant="outline"
-              disabled={pending}
+              disabled={pending || !holdPolicy.canBookingStatus}
+              disabledReason={holdPolicy.reason ?? (!holdPolicy.canBookingStatus ? "Chưa hỗ trợ" : undefined)}
               onClick={() => setCancelOpen(true)}
             >
               <XCircle /> Hủy booking
@@ -307,8 +347,8 @@ function Detail({ r }: { r: ReservationView }) {
             <GuardedButton
               permission="reservation.mark_no_show"
               variant="outline"
-              disabled={pending}
-              disabledReason={r.minutesLate >= noShowAfter ? null : `Chỉ bật sau ${noShowAfter} phút trễ`}
+              disabled={pending || !holdPolicy.canBookingStatus}
+              disabledReason={holdPolicy.reason ?? (!holdPolicy.canBookingStatus ? "Chưa hỗ trợ" : r.minutesLate >= noShowAfter ? null : `Chỉ bật sau ${noShowAfter} phút trễ`)}
               onClick={() => setNoShowOpen(true)}
             >
               <TimerReset /> Không tới
@@ -353,12 +393,26 @@ function Detail({ r }: { r: ReservationView }) {
         readOnly
         confirmLabel={r.tableIds.length ? "Check-in" : "Chọn bàn"}
         onConfirm={async () => {
+          if (!held.bookingPolicy(r).canArrival) {
+            toast.error("Đơn chờ đã thay đổi. Vui lòng mở lại.")
+            return
+          }
+          if (heldArrival) {
+            const result = await heldArrival()
+            if (result) setCheckInOpen(false)
+            return
+          }
+          if (held.bookingPolicy(r).kind !== "direct") return
           if (!r.tableIds.length) {
             setCheckInOpen(false)
             pickOnFloor("checkin", r.partySize)
             return
           }
-          const res = await run(() => api.checkIn({ reservationId: r.id, version: r.version, guestCount: r.partySize }))
+          const res = await run(async () => {
+            const current = await held.verifyBooking(r)
+            if (!current.canArrival || current.kind !== "direct") throw new Error("Đơn chờ đã thay đổi. Vui lòng mở lại.")
+            return api.checkIn({ reservationId: r.id, version: r.version, guestCount: r.partySize })
+          })
           if (res) setCheckInOpen(false)
         }}
       />
@@ -376,7 +430,11 @@ function Detail({ r }: { r: ReservationView }) {
         reasons={CANCEL_REASONS}
         requireNoteFor="OTHER"
         onConfirm={async (reason, note) => {
-          await run(() => api.cancelReservation(r.id, r.version, reason as ReservationCloseReason, note))
+          if (!held.bookingPolicy(r).canBookingStatus || !held.can("reservation.cancel")) return
+          await run(async () => {
+            if (!(await held.verifyBooking(r)).canBookingStatus) throw new Error("Đơn chờ đã thay đổi. Vui lòng mở lại.")
+            return api.cancelReservation(r.id, r.version, reason as ReservationCloseReason, note)
+          })
         }}
       />
       <ConfirmAction
@@ -390,7 +448,11 @@ function Detail({ r }: { r: ReservationView }) {
         }
         confirmLabel="Xác nhận không tới"
         onConfirm={async () => {
-          await run(() => api.markNoShow(r.id, r.version))
+          if (!held.bookingPolicy(r).canBookingStatus || !held.can("reservation.mark_no_show") || r.status !== "BOOKED" || r.minutesLate < noShowAfter) return
+          await run(async () => {
+            if (!(await held.verifyBooking(r)).canBookingStatus) throw new Error("Đơn chờ đã thay đổi. Vui lòng mở lại.")
+            return api.markNoShow(r.id, r.version)
+          })
         }}
       />
       <EditReservationDialog open={editOpen} onOpenChange={setEditOpen} r={r} />

@@ -59,6 +59,7 @@ export interface MobileCtx {
   openAccount: () => void
   openCount: () => void
   openDetail: (id: number, bd: BusinessDate) => void
+  openEntryDetail: (id: number, bd: BusinessDate) => void
   openStatus: (r: ReservationView) => void
   openForm: (f: FormRequest) => void
   openTable: (id: number) => void

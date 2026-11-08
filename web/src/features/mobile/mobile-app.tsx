@@ -40,7 +40,7 @@ import {
   Toast15,
 } from "./overlays"
 import { PlainHeader } from "./ui"
-import { WaitScreen } from "./wait"
+import { EntryDetailScreen, WaitScreen } from "./wait"
 import "./mobile.css"
 
 const PATH: Record<Tab, string> = { home: "/home", list: "/reservations", map: "/floor", wait: "/waitlist" }
@@ -69,6 +69,7 @@ export default function MobileApp() {
   const [statusFor, setStatusFor] = useState<ReservationView | null>(null)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [detail, setDetail] = useState<{ id: number; bd: BusinessDate } | null>(null)
+  const [entryDetail, setEntryDetail] = useState<{ id: number; bd: BusinessDate } | null>(null)
   const [form, setForm] = useState<FormRequest | null>(null)
   const [tableSel, setTableSel] = useState<number | null>(null)
   const [pick, setPick] = useState<TablePick | null>(null)
@@ -83,13 +84,14 @@ export default function MobileApp() {
   const handle = (key: string) => setHandled((s) => new Set(s).add(key))
   const alert30 = booked.find((r) => r.warning === "noshow" && !handled.has(`n${r.id}`)) ?? null
   const toast15 = booked.find((r) => r.warning === "late" && !handled.has(`l${r.id}`)) ?? null
-  const busy = !!(overlay || statusFor || confirm || detail || form || pick || ui.draft)
+  const busy = !!(overlay || statusFor || confirm || detail || entryDetail || form || pick || ui.draft)
   const keyboardSafeHeight = useKeyboardSafeHeight()
 
   // Role switch resets to the role's home, like a fresh login.
   useEffect(() => {
     setOverlay(null)
     setDetail(null)
+    setEntryDetail(null)
     setForm(null)
     setPick(null)
     setTableSel(null)
@@ -103,11 +105,12 @@ export default function MobileApp() {
       if (e.key !== "Escape") return
       if (statusFor) setStatusFor(null)
       else if (overlay) setOverlay(null)
+      else if (entryDetail) setEntryDetail(null)
       else if (tableSel) setTableSel(null)
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [statusFor, overlay, tableSel])
+  }, [statusFor, overlay, entryDetail, tableSel])
 
   const go = (t: Tab) => {
     if (isReceptionist && t === "wait") {
@@ -141,7 +144,15 @@ export default function MobileApp() {
     openCount: () => setOverlay("count"),
     openDetail: (id, bd) => {
       setOverlay(null)
+      setTableSel(null)
+      setEntryDetail(null)
       setDetail({ id, bd })
+    },
+    openEntryDetail: (id, bd) => {
+      setOverlay(null)
+      setTableSel(null)
+      setDetail(null)
+      setEntryDetail({ id, bd })
     },
     openStatus: (r) => setStatusFor(reservations?.find((x) => x.id === r.id) ?? r),
     openForm: (f) => {
@@ -160,6 +171,7 @@ export default function MobileApp() {
     },
     openTable: (id) => {
       setDetail(null)
+      setEntryDetail(null)
       setTableSel(id)
       go("map")
     },
@@ -169,6 +181,7 @@ export default function MobileApp() {
     },
     startPick: (p) => {
       setDetail(null)
+      setEntryDetail(null)
       setStatusFor(null)
       setTableSel(null)
       setPickSel(p.preselected ?? [])
@@ -252,7 +265,7 @@ export default function MobileApp() {
           go={go}
         /> : null}
 
-        {tab === "map" && tableSel && !pick && !detail && !form && !ui.draft ? (
+        {tab === "map" && tableSel && !pick && !detail && !entryDetail && !form && !ui.draft ? (
           <TableSheet id={tableSel} onClose={() => setTableSel(null)} />
         ) : null}
         {detail ? (
@@ -261,6 +274,14 @@ export default function MobileApp() {
             bd={detail.bd}
             backLabel={titleOf || "Quay lại"}
             onClose={() => setDetail(null)}
+          />
+        ) : null}
+        {entryDetail ? (
+          <EntryDetailScreen
+            id={entryDetail.id}
+            bd={entryDetail.bd}
+            backLabel={titleOf || "Quay lại"}
+            onClose={() => setEntryDetail(null)}
           />
         ) : null}
         {form ? <FormScreen req={form} onClose={() => setForm(null)} /> : null}

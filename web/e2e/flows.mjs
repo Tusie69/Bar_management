@@ -1,7 +1,7 @@
 // End-to-end flows as a receptionist / owner would run them on a tablet (1280x800).
 // Run against a dev server:  npm run dev  ->  npm run e2e
 // Env: E2E_BASE_URL (default http://127.0.0.1:5173), PW_CHROMIUM_PATH (optional custom Chromium binary).
-import { chromium } from "@playwright/test"
+import { chromium, expect } from "@playwright/test"
 import assert from "node:assert/strict"
 const base = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5173"
 const browser = await chromium.launch(
@@ -385,8 +385,29 @@ await flow("waitlist: claim, accept offer -> hold, then seat when guest arrives"
   await dlg.getByRole("button", { name: /^B5/ }).click()
   await dlg.getByRole("button", { name: "Ghi kết quả" }).click()
   await card.getByText("Đang giữ bàn").waitFor()
-  await card.getByRole("button", { name: "Khách đã tới, xếp chỗ" }).click()
-  await page.getByRole("dialog").getByRole("button", { name: "Xếp chỗ" }).click()
+
+  // Acceptance 4: pure waitlist entry without reservation hides "Xem booking" and opens entry detail
+  const xemBookingBtn = card.getByRole("button", { name: "Xem booking" })
+  assert.equal(await xemBookingBtn.count(), 0, "Pure waitlist hold must hide 'Xem booking'")
+  await card.getByRole("button", { name: "Xem đơn chờ" }).click()
+  const entryDlg = page.getByRole("dialog").filter({ hasText: "Chi tiết mục chờ" })
+  await entryDlg.waitFor()
+  await page.keyboard.press("Escape")
+  await entryDlg.waitFor({ state: "hidden" })
+
+  // Acceptance 10 & 11: arrival shows confirm, cancelling leaves everything held
+  await card.getByRole("button", { name: "Khách đã đến" }).click()
+  const confirmDlg = page.getByRole("dialog").filter({ hasText: "Xác nhận khách đã đến" }).last()
+  await confirmDlg.waitFor()
+  assert(await confirmDlg.getByText("Chị mặc váy đỏ").first().isVisible(), "Confirm dialog shows guest name")
+  await confirmDlg.getByRole("button", { name: "Quay lại" }).click()
+  await confirmDlg.waitFor({ state: "hidden" })
+  await card.getByText("Đang giữ bàn").waitFor()
+
+  // Acceptance 12: confirm arrival seats entry
+  await card.getByRole("button", { name: "Khách đã đến" }).click()
+  await confirmDlg.waitFor()
+  await confirmDlg.getByRole("button", { name: "Khách đã đến", exact: true }).click()
   await page.getByText("Đã đóng trong ca").waitFor()
 })
 
@@ -467,10 +488,10 @@ await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (deskt
   await card.getByText("Đang giữ bàn", { exact: true }).waitFor()
   await card.getByText("B7").first().waitFor()
 
-  await card.getByRole("button", { name: "Khách đã tới, xếp chỗ" }).click()
-  const checkInDialog = page.getByRole("dialog").filter({ hasText: "Xếp chỗ cho" }).last()
+  await card.getByRole("button", { name: "Khách đã đến" }).click()
+  const checkInDialog = page.getByRole("dialog").filter({ hasText: "Xác nhận khách đã đến" }).last()
   await checkInDialog.waitFor()
-  await checkInDialog.getByRole("button", { name: "Xếp chỗ", exact: true }).click()
+  await checkInDialog.getByRole("button", { name: "Khách đã đến", exact: true }).click()
   await checkInDialog.waitFor({ state: "hidden" })
   await page.getByText("Đã đóng trong ca").waitFor()
 })
@@ -553,8 +574,44 @@ await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (phone
     await card.getByText("Đang giữ bàn").waitFor()
     await card.getByText("Đang giữ B5 + B7").waitFor()
 
-    // 3. Trigger arrival check-in on target card only
-    await card.getByRole("button", { name: "Khách nhận bàn (check-in)" }).click()
+    // Acceptance 3: "Xem booking" opens linked reservation detail, showing guest name
+    await card.getByRole("button", { name: "Xem booking" }).click()
+    const backBtn = page.locator('button[aria-label="Quay lại"]').first()
+    await backBtn.waitFor()
+    assert(await page.getByText(tc.name).first().isVisible(), `Detail must show booking for ${tc.name}`)
+    await backBtn.click()
+    await card.getByText("Đang giữ bàn").waitFor()
+
+    // Acceptance 5: "Đổi / Ghép bàn" opens table picker, cancel returns without mutating
+    await card.getByRole("button", { name: "Đổi / Ghép bàn" }).click()
+    const cancelPick = page.getByRole("button", { name: "Hủy chọn bàn" })
+    await cancelPick.waitFor()
+    await cancelPick.click()
+    await page.locator('nav[aria-label="Điều hướng chính"]').getByRole("button", { name: /Đơn chờ/ }).click()
+    await card.getByText("Đang giữ bàn").waitFor()
+
+    // Acceptance 7: "Đổi trạng thái" opens StatusDialog, close returns without mutating
+    await card.getByRole("button", { name: "Đổi trạng thái" }).click()
+    const statusDlg = page.getByRole("dialog", { name: "Đổi trạng thái booking" })
+    await statusDlg.waitFor()
+    await statusDlg.getByRole("button", { name: "Đóng", exact: true }).click()
+    await statusDlg.waitFor({ state: "hidden" })
+    await card.getByText("Đang giữ bàn").waitFor()
+
+    // Acceptance 10 & 11: "Khách đã đến" opens ConfirmDialog, cancel leaves card held
+    await card.getByRole("button", { name: "Khách đã đến" }).click()
+    const confirmDlg = page.locator('[role="dialog"], [role="alertdialog"]').filter({ hasText: "Xác nhận khách đã đến" }).last()
+    await confirmDlg.waitFor()
+    assert(await confirmDlg.getByText(tc.name).first().isVisible(), "ConfirmDialog shows guest name")
+    assert(await confirmDlg.getByText("B5 + B7").first().isVisible(), "ConfirmDialog shows table codes")
+    await confirmDlg.getByRole("button", { name: "Quay lại", exact: true }).click()
+    await confirmDlg.waitFor({ state: "hidden" })
+    await card.getByText("Đang giữ bàn").waitFor()
+
+    // Acceptance 12 & 13: Confirm check-in transitions to SEATED, double tap adds no second visit
+    await card.getByRole("button", { name: "Khách đã đến" }).click()
+    await confirmDlg.waitFor()
+    await confirmDlg.getByRole("button", { name: "Khách đã đến", exact: true }).click()
     await card.getByText("Đã nhận bàn").first().waitFor()
 
     // 4. Assert arrival check-in lifecycle and group preservation
@@ -873,6 +930,257 @@ await flow("booking pickers: keyboard navigation across expired selected time (M
 
   await page.keyboard.press("Escape")
 })
+
+async function dismissHoldAlerts(page) {
+  for (let i = 0; i < 12; i++) {
+    const dismiss = page.getByRole("button", { name: /Đã xem.*xử lý sau|Đã xem, nhắc sau|Để sau|Đóng thông báo/ }).first()
+    if (!await dismiss.isVisible()) break
+    await dismiss.click()
+  }
+}
+async function mockHeldFixture(page, kind) {
+  return page.evaluate(async (kind) => {
+    const { api, clock } = await import("/src/services/index.ts")
+    const { businessDateOf } = await import("/src/lib/time.ts")
+    const bd = businessDateOf(clock.now())
+    let e = (await api.listWaitlist(bd)).find((e) => kind === "pure" ? e.id === 4 : e.kind === "ADVANCE_RESERVATION" && e.status === "WAITING")
+    if (kind === "reservation") await api.seatWaitlist({ entryId: e.id, version: e.version, guestCount: e.partySize, tableIds: [13] })
+    if (kind === "offer") {
+      await api.claimWaitlist(e.id, e.version)
+      e = (await api.listWaitlist(bd)).find((x) => x.id === e.id)
+      await api.recordContact({ entryId: e.id, version: e.version, channel: "ZALO_MANUAL", outcome: "ACCEPTED", offeredTableIds: [13] })
+    }
+    e = (await api.listWaitlist(bd)).find((x) => x.id === e.id)
+    const r = (await api.listReservations({ businessDate: bd })).find((r) => r.id === e.reservationId)
+    window.holdWrites = []
+    for (const key of ["seatWaitlist", "checkIn", "moveClaim", "assignTables", "cancelWaitlist", "cancelReservation", "markNoShow", "confirmLate"]) {
+      const original = api[key].bind(api)
+      api[key] = (...args) => { window.holdWrites.push({ key, args }); return original(...args) }
+    }
+    clock.advance(0)
+    return { e, r, bd, code: kind === "pure" ? "A4" : "B5" }
+  }, kind)
+}
+
+await flow("R4 F01 F06: desktop linked reservation resolves management and full booking picker", 3, async (page) => {
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await dismissHoldAlerts(page)
+  const { e, r } = await mockHeldFixture(page, "reservation")
+  await table(page, "B5").click()
+  for (const label of ["Quản lý đơn", "Xem booking", "Xem đơn chờ", "Đổi / Ghép bàn", "Đổi trạng thái", "Khách đã đến"])
+    await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Xem đơn chờ", exact: true }).click()
+  await expect(page.getByRole("dialog")).toContainText(`#${e.id}`)
+  await page.keyboard.press("Escape")
+  await page.getByRole("button", { name: "Đổi / Ghép bàn", exact: true }).click()
+  assert.deepEqual(await page.evaluate(async () => { const p = (await import("/src/state/ui.ts")).useUi.getState().pick; return { intent: p.intent, own: p.preselected, date: p.targetDate, expected: p.targetExpectedAt, exclude: p.excludeIds ?? [] } }),
+    { intent: "assign", own: r.tableIds, date: r.businessDate, expected: r.expectedAt, exclude: [] })
+  assert.notEqual(await table(page, "B5").getAttribute("aria-disabled"), "true")
+  await page.getByRole("button", { name: "Hủy chọn bàn" }).click()
+  assert.deepEqual(await page.evaluate(() => window.holdWrites), [])
+}, { viewport: { width: 768, height: 1024 } })
+
+for (const width of [390, 768]) await flow(`R4 F07: linked offer booking detail moves one offer at ${width}`, 3, async (page) => {
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await dismissHoldAlerts(page)
+  const { e, r } = await mockHeldFixture(page, "offer")
+  await dismissHoldAlerts(page)
+  await table(page, "B5").click()
+  await page.getByRole("button", { name: "Quản lý đơn", exact: true }).click()
+  const detail = page.getByRole("dialog", { name: width < 768 ? "Chi tiết booking" : undefined }).last()
+  await expect(detail).toBeVisible()
+  await detail.getByRole("button", { name: width < 768 ? "Đổi / Ghép bàn" : "Đổi bàn", exact: true }).click()
+  await table(page, "B5").click()
+  await table(page, "B7").click()
+  await page.getByRole("button", { name: "Đổi bàn", exact: true }).click()
+  await expect.poll(() => page.evaluate(() => window.holdWrites.length)).toBe(1)
+  await expect(page.getByRole("button", { name: "Hủy chọn bàn" })).toBeHidden()
+  const result = await page.evaluate(async ({ e, r }) => {
+    const { api } = await import("/src/services/index.ts")
+    return { calls: window.holdWrites, holds: [...api.db.holds.values()].filter((h) => h.status === "ACTIVE" && (h.waitlistEntryId === e.id || h.reservationId === r.id)),
+      allocations: [...api.db.allocations.values()].filter((a) => a.holdId === e.hold.id && !a.releasedAt).map((a) => a.tableId) }
+  }, { e, r })
+  assert.equal(result.calls[0].key, "moveClaim")
+  assert.deepEqual(result.calls[0].args[0].claim, { waitlistEntryId: e.id, version: e.hold.version })
+  assert.equal(result.holds.length, 1)
+  assert.equal(result.holds[0].holdKind, "WAITLIST_OFFER")
+  assert.deepEqual(result.allocations, [10])
+}, { viewport: { width, height: width === 768 ? 1024 : 844 } })
+
+for (const width of [390, 768]) for (const surface of ["floor", "card", "detail"]) await flow(`F14 AT7 AT9: offer no-show threshold ${surface} ${width}`, 3, async (page) => {
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await dismissHoldAlerts(page)
+  const { e, r } = await mockHeldFixture(page, "offer")
+  await page.evaluate(async (r) => {
+    const { clock } = await import("/src/services/index.ts")
+    clock.advance((new Date(r.expectedAt).getTime() - clock.now().getTime()) / 60000 + 29)
+  }, r)
+  await page.waitForTimeout(500)
+  await dismissHoldAlerts(page)
+  let openStatus
+  if (surface === "card") {
+    await page.getByRole("button", { name: /^Bàn chờ/ }).first().click()
+    const card = width < 768 ? page.locator("div.rounded-\\[18px\\]").filter({ hasText: e.displayName }) : page.locator(`#entry-${e.id}`)
+    openStatus = () => card.getByRole("button", { name: "Đổi trạng thái", exact: true }).click()
+    await openStatus()
+  } else {
+    await table(page, "B5").click()
+    if (surface === "detail") {
+      await page.getByRole("button", { name: "Quản lý đơn", exact: true }).click()
+      if (width < 768) openStatus = () => page.getByRole("button", { name: "Đổi trạng thái", exact: true }).click()
+    } else openStatus = () => page.getByRole("button", { name: "Đổi trạng thái", exact: true }).click()
+    if (openStatus) await openStatus()
+  }
+  const noShow = page.getByRole("button", { name: width < 768 ? /^Khách không tới/ : "Không tới", exact: width >= 768 })
+  await expect(noShow).toBeDisabled()
+  const late = page.getByRole("button", { name: "Tới muộn", exact: true })
+  if (await late.count()) await expect(late).toBeDisabled()
+  if (openStatus) await page.getByRole("dialog", { name: "Đổi trạng thái booking" }).getByRole("button", { name: "Đóng", exact: true }).click()
+  await page.evaluate(async () => (await import("/src/services/index.ts")).clock.advance(2))
+  await page.waitForTimeout(500)
+  await dismissHoldAlerts(page)
+  if (openStatus) await openStatus()
+  await expect(noShow).toBeEnabled()
+  await page.evaluate(async () => {
+    const { PERMISSION_MATRIX } = await import("/src/domain/access.ts")
+    window.savedNoShowPermission = [...PERMISSION_MATRIX["reservation.mark_no_show"]]
+    PERMISSION_MATRIX["reservation.mark_no_show"] = []
+    ;(await import("/src/state/session.ts")).useSession.setState((s) => ({ permissions: [...s.permissions] }))
+    ;(await import("/src/services/index.ts")).clock.advance(0)
+  })
+  await expect(noShow).toBeDisabled()
+  await page.evaluate(async () => {
+    ;(await import("/src/domain/access.ts")).PERMISSION_MATRIX["reservation.mark_no_show"] = window.savedNoShowPermission
+    ;(await import("/src/state/session.ts")).useSession.setState((s) => ({ permissions: [...s.permissions] }))
+    ;(await import("/src/services/index.ts")).clock.advance(0)
+  })
+  await expect(noShow).toBeEnabled()
+  await noShow.click()
+  const confirm = page.getByRole("alertdialog")
+  await confirm.getByRole("button", { name: width < 768 ? "Không tới" : "Xác nhận không tới", exact: true }).click()
+  await expect.poll(() => page.evaluate(() => window.holdWrites.length)).toBe(1)
+  await expect.poll(() => page.evaluate(async (id) => (await import("/src/services/index.ts")).api.db.reservations.get(id).status, r.id)).toBe("NO_SHOW")
+  const result = await page.evaluate(async ({ e, r }) => {
+    const { api } = await import("/src/services/index.ts")
+    return { calls: window.holdWrites, status: api.db.reservations.get(r.id).status,
+      active: [...api.db.holds.values()].filter((h) => h.id === e.hold.id && h.status === "ACTIVE").length,
+      visits: [...api.db.visits.values()].filter((v) => v.reservationId === r.id).length }
+  }, { e, r })
+  assert.deepEqual(result.calls, [{ key: "markNoShow", args: [r.id, r.version] }])
+  assert.equal(result.status, "NO_SHOW")
+  assert.equal(result.active, 0)
+  assert.equal(result.visits, 0)
+}, { viewport: { width, height: width === 768 ? 1024 : 844 } })
+
+for (const width of [390, 768]) await flow(`R4 F04: pure arrival checks each permission before open and at submit ${width}`, 3, async (page) => {
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await dismissHoldAlerts(page)
+  await mockHeldFixture(page, "pure")
+  await table(page, "A4").click()
+  for (const permission of ["visit.checkin", "waitlist.accept_offer", "reservation.create", "table.assign"]) {
+    await page.evaluate(async (permission) => {
+      const { PERMISSION_MATRIX } = await import("/src/domain/access.ts")
+      window.savedPermission = [...PERMISSION_MATRIX[permission]]
+      PERMISSION_MATRIX[permission] = PERMISSION_MATRIX[permission].filter((r) => r !== "OWNER_ADMIN")
+      ;(await import("/src/services/index.ts")).clock.advance(0)
+    }, permission)
+    const arrival = page.getByRole("button", { name: "Khách đã đến", exact: true })
+    await expect(arrival).toBeDisabled()
+    await arrival.evaluate((el) => el.click())
+    assert.deepEqual(await page.evaluate(() => window.holdWrites), [])
+    await page.evaluate(async (permission) => {
+      ;(await import("/src/domain/access.ts")).PERMISSION_MATRIX[permission] = window.savedPermission
+      ;(await import("/src/services/index.ts")).clock.advance(0)
+    }, permission)
+    await expect(arrival).toBeEnabled()
+    await arrival.click()
+    const confirm = page.getByRole(width < 768 ? "alertdialog" : "dialog", { name: /Xác nhận khách đã đến/ })
+    await page.evaluate(async (permission) => {
+      const { PERMISSION_MATRIX } = await import("/src/domain/access.ts")
+      PERMISSION_MATRIX[permission] = PERMISSION_MATRIX[permission].filter((r) => r !== "OWNER_ADMIN")
+    }, permission)
+    await confirm.getByRole("button", { name: "Khách đã đến", exact: true }).click()
+    await expect(page.locator("[data-sonner-toast]").filter({ hasText: /thiếu quyền nhận khách/ }).first()).toBeVisible()
+    assert.deepEqual(await page.evaluate(() => window.holdWrites), [])
+    if (width === 768) await confirm.getByRole("button", { name: "Quay lại", exact: true }).click()
+    await page.evaluate(async (permission) => {
+      ;(await import("/src/domain/access.ts")).PERMISSION_MATRIX[permission] = window.savedPermission
+      ;(await import("/src/services/index.ts")).clock.advance(0)
+    }, permission)
+  }
+  if (width === 768) {
+    await page.getByRole("button", { name: "Ca tối nay", exact: true }).click()
+    await page.getByRole("button", { name: /^Bàn chờ/ }).first().click()
+    await page.evaluate(async () => {
+      const { PERMISSION_MATRIX } = await import("/src/domain/access.ts")
+      PERMISSION_MATRIX["reservation.create"] = PERMISSION_MATRIX["reservation.create"].filter((r) => r !== "OWNER_ADMIN")
+      ;(await import("/src/services/index.ts")).clock.advance(0)
+    })
+    await expect(page.locator("#entry-4").getByRole("button", { name: "Khách đã đến", exact: true })).toBeDisabled()
+  }
+}, { viewport: { width, height: width === 768 ? 1024 : 844 } })
+
+await flow("R4 AT16: B11 direct detail retains buttons picker and check-in without seat", 3, async (page) => {
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await dismissHoldAlerts(page)
+  const data = await page.evaluate(async () => {
+    const { api, clock } = await import("/src/services/index.ts")
+    const { businessDateOf } = await import("/src/lib/time.ts")
+    const { useUi } = await import("/src/state/ui.ts")
+    const r = (await api.listReservations({ businessDate: businessDateOf(clock.now()) })).find((r) => r.status === "BOOKED" && r.tableIds.includes(15))
+    window.holdWrites = []
+    for (const key of ["seatWaitlist", "checkIn", "assignTables"]) { const f = api[key].bind(api); api[key] = (...args) => { window.holdWrites.push({ key, args }); return f(...args) } }
+    useUi.getState().openReservation(r.id, r.businessDate)
+    return r
+  })
+  let detail = page.getByRole("dialog").last()
+  for (const label of ["Đổi bàn", "Sửa", "Hủy booking", "Không tới", "Check-in B4"]) await expect(detail.getByRole("button", { name: label, exact: true })).toBeVisible()
+  await detail.getByRole("button", { name: "Đổi bàn", exact: true }).click()
+  assert.deepEqual(await page.evaluate(async () => { const p = (await import("/src/state/ui.ts")).useUi.getState().pick; return { intent: p.intent, own: p.preselected, date: p.targetDate, expected: p.targetExpectedAt } }), { intent: "assign", own: data.tableIds, date: data.businessDate, expected: data.expectedAt })
+  await page.getByRole("button", { name: "Hủy chọn bàn" }).click()
+  await page.evaluate(async (r) => (await import("/src/state/ui.ts")).useUi.getState().openReservation(r.id, r.businessDate), data)
+  detail = page.getByRole("dialog").last()
+  await detail.getByRole("button", { name: "Check-in B4", exact: true }).click()
+  const confirm = page.getByRole("dialog", { name: /Check-in/ }).last()
+  await confirm.getByRole("button", { name: "Check-in", exact: true }).click()
+  await expect.poll(() => page.evaluate(() => window.holdWrites.length)).toBe(1)
+  const calls = await page.evaluate(() => window.holdWrites)
+  assert.equal(calls[0].key, "checkIn")
+  assert.equal(calls[0].args[0].reservationId, data.id)
+}, { viewport: { width: 768, height: 1024 } })
+
+for (const width of [360, 390, 768]) for (const theme of ["light", "dark"]) for (const kind of ["pure", "reservation"]) {
+  await flow(`R4 AT17: ${kind} screenshots ${width} ${theme}`, 3, async (page) => {
+    fs.mkdirSync("e2e/.artifacts/waitlist-hold/after", { recursive: true })
+    await page.goto(base + "/floor", { waitUntil: "networkidle" })
+    await page.evaluate(async (theme) => (await import("/src/state/session.ts")).useSession.getState().setTheme(theme), theme)
+    await dismissHoldAlerts(page)
+    const { e, code } = await mockHeldFixture(page, kind)
+    await table(page, code).click()
+    await expect(page.getByRole("button", { name: "Quản lý đơn", exact: true })).toBeVisible()
+    const prefix = kind === "pure" ? "" : "linked-"
+    await page.screenshot({ path: `e2e/.artifacts/waitlist-hold/after/${prefix}table-sheet-${width}-${theme}.png` })
+    await page.getByRole("button", { name: "Khách đã đến", exact: true }).click()
+    const confirm = page.getByRole(width < 768 ? "alertdialog" : "dialog", { name: /Xác nhận khách đã đến/ })
+    await expect(confirm).toContainText(code)
+    await page.screenshot({ path: `e2e/.artifacts/waitlist-hold/after/${prefix}arrival-confirm-${width}-${theme}.png` })
+    await confirm.getByRole("button", { name: "Quay lại", exact: true }).click()
+    if (width < 768) {
+      await page.getByRole("dialog", { name: `Chi tiết ${code}` }).getByRole("button", { name: "Đóng", exact: true }).click()
+      await page.locator('nav[aria-label="Điều hướng chính"]').getByRole("button", { name: /Đơn chờ/ }).click()
+    } else {
+      await page.getByRole("button", { name: "Ca tối nay", exact: true }).click()
+      await page.getByRole("button", { name: /^Bàn chờ/ }).first().click()
+    }
+    await dismissHoldAlerts(page)
+    const card = width < 768 ? page.locator("div.rounded-\\[18px\\]").filter({ hasText: e.displayName }) : page.locator(`#entry-${e.id}`)
+    await card.scrollIntoViewIfNeeded()
+    await expect(card.getByRole("button", { name: "Quản lý đơn", exact: true })).toBeInViewport()
+    assert.equal(await page.getByRole("dialog", { name: /Cảnh báo/ }).count(), 0)
+    await page.screenshot({ path: `e2e/.artifacts/waitlist-hold/after/${prefix}wait-card-${width}-${theme}.png` })
+    assert.deepEqual(await page.evaluate(() => window.holdWrites), [])
+  }, { viewport: { width, height: width === 768 ? 1024 : 844 } })
+}
 
 console.log(results.join("\n"))
 await browser.close()

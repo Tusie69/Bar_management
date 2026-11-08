@@ -51,6 +51,7 @@ import { StateChip } from "@/components/status"
 import { STATE_META } from "@/components/status-meta"
 import { groupCode } from "./floor-visual-rules"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -69,7 +70,7 @@ import {
 import type { ClaimView, WaitlistEntryView } from "@/domain/models"
 import { symbolByNo } from "@/domain/symbols"
 import { useAction } from "@/hooks/use-action"
-import { useNow, useTableHistory, useVenueSettings, useWaitlist } from "@/hooks/use-data"
+import { useNow, useReservations, useTableHistory, useVenueSettings, useWaitlist } from "@/hooks/use-data"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { businessDateOf, fmtCountdown, fmtElapsed, fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -77,9 +78,10 @@ import { api } from "@/services"
 import { useCan } from "@/state/session"
 import { useUi } from "@/state/ui"
 import { toast } from "sonner"
-import { ExtendHoldDialog, GuestCountDialog, SplitDialog } from "./floor-dialogs"
+import { GuestCountDialog, SplitDialog } from "./floor-dialogs"
 import { CallCustomerControl } from "../bookings/call-customer"
 import type { FloorModel } from "./use-floor-model"
+import { useHeldOrderActions } from "../mobile/actions"
 
 const CANCEL_REASONS = (Object.keys(CLOSE_REASON_LABEL) as ReservationCloseReason[])
   .filter((r) => r !== "NO_SHOW_CONFIRMED")
@@ -110,6 +112,7 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
   const now = useNow(1000)
   const bd = model.floor?.businessDate ?? ""
   const history = useTableHistory(tableId, bd)
+  const waitlist = useWaitlist(bd)
   const isOwner = useCan("venue.configure")
   const { run } = useAction()
   const [oosOpen, setOosOpen] = useState(false)
@@ -118,6 +121,8 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
   if (!t) return null
   const state = fs?.state ?? "free"
   const claim = fs?.claim ?? null
+  const linkedEntry = waitlist.data?.find((e) => e.status === "HOLD_ACTIVE" &&
+    (e.id === claim?.waitlistEntryId || (!!claim?.reservationId && e.reservationId === claim.reservationId)))
   const zone = model.catalog?.zones.find((z) => z.id === t.zoneId)
   const title = t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`
 
@@ -186,10 +191,10 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
 
         <div className="grid gap-5 px-4 pb-6">
           {claim?.kind === "visit" ? <SeatedSection tableId={tableId} claim={claim} model={model} now={now} /> : null}
-          {claim?.kind === "reservation" ? (
+          {claim?.kind === "reservation" && !linkedEntry ? (
             <ReservationSection tableId={tableId} claim={claim} model={model} now={now} />
           ) : null}
-          {claim?.kind === "waitlist_hold" ? (
+          {claim?.kind === "waitlist_hold" || (claim?.kind === "reservation" && linkedEntry) ? (
             <HoldSection tableId={tableId} claim={claim} model={model} now={now} />
           ) : null}
           {!claim && (state === "free" || state === "spare") ? (
@@ -403,9 +408,7 @@ function usePickActions(_tableId: number, claim: ClaimView, model: FloorModel) {
   const { run } = useAction()
   const claimRef = claim.visitId
     ? { visitId: claim.visitId, version: claim.version }
-    : claim.reservationId && claim.kind === "reservation"
-      ? { reservationId: claim.reservationId, version: claim.version }
-      : { waitlistEntryId: claim.waitlistEntryId ?? undefined, version: claim.version }
+    : { reservationId: claim.reservationId!, version: claim.version }
   const codes = claim.tableIds.map((id) => model.label(id)).join(" + ")
   return {
     move: () =>
@@ -727,7 +730,7 @@ function ReservationSection({
 }
 
 function HoldSection({
-  tableId,
+  tableId: _tableId,
   claim,
   model,
   now,
@@ -737,15 +740,41 @@ function HoldSection({
   model: FloorModel
   now: Date
 }) {
-  const { run } = useAction()
-  const pick = usePickActions(tableId, claim, model)
+  const { run, pending } = useAction()
+  const held = useHeldOrderActions(model)
   const [seatOpen, setSeatOpen] = useState(false)
-  const [extendOpen, setExtendOpen] = useState(false)
+  const [arrival, setArrival] = useState<(() => Promise<unknown>) | null>(null)
+  const [statusOpen, setStatusOpen] = useState(false)
+  const [cancelOpen, setCancelOpen] = useState(false)
+  const [noShowOpen, setNoShowOpen] = useState(false)
   const [releaseOpen, setReleaseOpen] = useState(false)
+  const [entryOpen, setEntryOpen] = useState(false)
   const waitlist = useWaitlist(model.floor?.businessDate ?? "")
-  const entry = waitlist.data?.find((e) => e.id === claim.waitlistEntryId)
+  const entry = waitlist.data?.find((e) => e.status === "HOLD_ACTIVE" && (e.id === claim.waitlistEntryId || (!!claim.reservationId && e.reservationId === claim.reservationId)))
+  const reservations = useReservations(model.floor?.businessDate ?? "")
+  const linkedRes = reservations.data?.find(
+    (r) => r.id === claim.reservationId || (entry?.reservationId && r.id === entry.reservationId),
+  )
+  const policy = held.policy(entry, linkedRes)
   const ui = useUi()
   const overdue = !!claim.deadlineAt && now > claim.deadlineAt
+  const today = model.floor?.businessDate === businessDateOf(now)
+  const venue = useVenueSettings().data
+  const noShowMinutes = venue?.noShowMinutes ?? 30
+  const canConfirmLate =
+    today &&
+    linkedRes &&
+    policy.canLate &&
+    !linkedRes.lateConfirmedAt &&
+    now.getTime() >= linkedRes.expectedAt.getTime() &&
+    linkedRes.minutesLate < noShowMinutes
+  const canNoShow = linkedRes ? (policy.canBookingStatus && linkedRes.status === "BOOKED" && linkedRes.minutesLate >= noShowMinutes) : overdue
+
+  const onReassign = () => {
+    const pick = held.picker(entry, linkedRes)
+    if (pick) ui.startPick({ ...pick, intent: "assign" })
+  }
+
   return (
     <>
       <ClaimCard claim={claim} model={model}>
@@ -754,10 +783,12 @@ function HoldSection({
         </Fact>
         <Fact icon={Hourglass} label={overdue ? "Quá hạn giữ" : "Giữ đến"}>
           <span className={cn("tnum", overdue ? "text-st-late-ink" : "text-st-reserved-ink")}>
-            {fmtTime(claim.deadlineAt)} ·{" "}
-            {overdue
-              ? `+${fmtElapsed(now.getTime() - claim.deadlineAt!.getTime())}`
-              : fmtCountdown(claim.deadlineAt!.getTime() - now.getTime())}
+            {claim.deadlineAt ? fmtTime(claim.deadlineAt) : "Đang giữ bàn"} ·{" "}
+            {claim.deadlineAt
+              ? overdue
+                ? `+${fmtElapsed(now.getTime() - claim.deadlineAt.getTime())}`
+                : fmtCountdown(claim.deadlineAt.getTime() - now.getTime())
+              : "Từ Bàn chờ"}
           </span>
         </Fact>
       </ClaimCard>
@@ -768,75 +799,246 @@ function HoldSection({
       ) : null}
       <div className="grid grid-cols-2 gap-2">
         <GuardedButton
-          permission={entry?.kind === "ADVANCE_RESERVATION" ? "visit.checkin" : "visit.walkin"}
+          permission="visit.checkin"
           size="lg"
           className="col-span-2"
-          disabled={!entry}
-          onClick={() => setSeatOpen(true)}
+          disabled={!policy.canArrival || held.pending}
+          disabledReason={!policy.supported ? "Chưa hỗ trợ" : undefined}
+          onClick={() => {
+            if (held.policy(entry, linkedRes).canArrival) {
+              setArrival(() => () => held.arrive(entry, linkedRes, linkedRes?.partySize ?? claim.partySize))
+              setSeatOpen(true)
+            }
+          }}
         >
-          <Check /> Khách đã tới, xếp chỗ
+          <Check /> Khách đã đến
         </GuardedButton>
-        <GuardedButton
-          permission="hold.set_deadline"
+        <Button
           variant="outline"
-          disabledReason={api.mode === "http" ? "Backend v1 chưa hỗ trợ gia hạn giữ bàn." : undefined}
-          onClick={() => setExtendOpen(true)}
+          onClick={() => {
+            if (linkedRes) ui.openReservation(linkedRes.id, model.floor?.businessDate)
+            else setEntryOpen(true)
+          }}
         >
-          <TimerReset /> Gia hạn
-        </GuardedButton>
-        <GuardedButton permission="table.assign" variant="outline" onClick={pick.move}>
-          <ArrowRightLeft /> Đổi bàn
-        </GuardedButton>
+          Quản lý đơn
+        </Button>
         <GuardedButton
-          permission="hold.release"
+          permission="table.assign"
           variant="outline"
-          className="col-span-2"
-          disabledReason={api.mode === "http" ? "Backend v1 chưa hỗ trợ nhả giữ bàn." : undefined}
-          onClick={() => setReleaseOpen(true)}
+          disabled={!policy.canReassign || held.pending}
+          disabledReason={!policy.supported ? "Chưa hỗ trợ" : undefined}
+          onClick={onReassign}
         >
-          <XCircle /> Nhả giữ bàn
+          <ArrowRightLeft /> Đổi / Ghép bàn
         </GuardedButton>
+        {linkedRes ? (
+          <Button
+            variant="outline"
+            onClick={() => ui.openReservation(linkedRes.id, model.floor?.businessDate)}
+          >
+            Xem booking
+          </Button>
+        ) : null}
+        <Button
+          variant="outline"
+          className={linkedRes ? undefined : "col-span-2"}
+          onClick={() => setEntryOpen(true)}
+        >
+          Xem đơn chờ
+        </Button>
+        {linkedRes ? (
+          <GuardedButton
+            permission={held.can("reservation.cancel") ? "reservation.cancel" : held.can("reservation.mark_no_show") ? "reservation.mark_no_show" : "reservation.update"}
+            disabled={!policy.canBookingStatus}
+            disabledReason={!policy.canBookingStatus ? "Chưa hỗ trợ" : undefined}
+            variant="outline"
+            className="col-span-2"
+            onClick={() => setStatusOpen(true)}
+          >
+            Đổi trạng thái
+          </GuardedButton>
+        ) : (
+          <GuardedButton
+            permission="waitlist.cancel"
+            variant="outline"
+            className="col-span-2"
+            onClick={() => setReleaseOpen(true)}
+          >
+            Đổi trạng thái
+          </GuardedButton>
+        )}
       </div>
+
       <GuestCountDialog
         open={seatOpen}
         onOpenChange={setSeatOpen}
-        title={`Xếp chỗ cho ${claim.displayName}`}
-        description="Xác nhận khách đã có mặt và nhận bàn. Mục chờ sẽ đóng (Đã nhận bàn)."
-        initial={claim.partySize || 1}
-        confirmLabel="Xếp chỗ"
-        onConfirm={async (count) => {
-          if (!entry) return
-          const r = await run(() => api.seatWaitlist({ entryId: entry.id, version: entry.version, guestCount: count }))
-          if (r) setSeatOpen(false)
+        title={`Xác nhận khách đã đến: ${claim.displayName}`}
+        description={`Khách: ${claim.displayName} · Bàn: ${claim.tableIds.map((id) => model.label(id)).join(" + ")} · Số khách: ${claim.partySize || linkedRes?.partySize || 1} khách. Xác nhận khách nhận bàn và hoàn tất mục chờ.`}
+        initial={claim.partySize || linkedRes?.partySize || 1}
+        readOnly
+        confirmLabel="Khách đã đến"
+        onConfirm={async () => {
+          const result = await arrival?.()
+          if (result) setSeatOpen(false)
         }}
       />
-      <ExtendHoldDialog
-        open={extendOpen}
-        onOpenChange={setExtendOpen}
-        deadline={claim.deadlineAt ?? claim.startsAt}
-        onConfirm={async (deadline, reason) => {
-          const r = await run(() => api.setHoldDeadline(claim.holdId!, claim.version, deadline, reason))
-          if (r) setExtendOpen(false)
-        }}
-      />
-      <ConfirmAction
-        open={releaseOpen}
-        onOpenChange={setReleaseOpen}
-        title="Nhả giữ bàn?"
-        description={
-          <>
-            Bàn {claim.tableIds.map((id) => model.label(id)).join(" + ")} trở về trống. Khách quay lại danh sách chờ,
-            trừ khi chọn lý do “Khách không tới”.
-          </>
-        }
-        confirmLabel="Nhả giữ bàn"
-        reasons={HOLD_REASONS}
-        requireNoteFor="OTHER"
-        onConfirm={async (reason, note) => {
-          const r = await run(() => api.releaseHold(claim.holdId!, claim.version, reason as HoldReleaseReason, note))
-          if (r) ui.selectTable(null)
-        }}
-      />
+
+      <Dialog open={entryOpen} onOpenChange={setEntryOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Chi tiết mục chờ #{entry?.id ?? claim.waitlistEntryId}</DialogTitle>
+            <DialogDescription>{claim.displayName}</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2 pt-2 text-sm">
+            <div className="flex justify-between border-b pb-1">
+              <span className="text-muted-foreground">Khách hàng:</span>
+              <span className="font-medium">{claim.displayName}</span>
+            </div>
+            <div className="flex justify-between border-b pb-1">
+              <span className="text-muted-foreground">Số khách:</span>
+              <span className="font-medium">{claim.partySize} khách</span>
+            </div>
+            <div className="flex justify-between border-b pb-1">
+              <span className="text-muted-foreground">Bàn đang giữ:</span>
+              <span className="font-medium">{claim.tableIds.map((id) => model.label(id)).join(" + ")}</span>
+            </div>
+            {claim.startsAt ? (
+              <div className="flex justify-between border-b pb-1">
+                <span className="text-muted-foreground">Thời gian:</span>
+                <span className="font-medium">{fmtTime(claim.startsAt)}</span>
+              </div>
+            ) : null}
+            {claim.deadlineAt ? (
+              <div className="flex justify-between border-b pb-1">
+                <span className="text-muted-foreground">Hạn giữ:</span>
+                <span className="font-medium">{fmtTime(claim.deadlineAt)}</span>
+              </div>
+            ) : null}
+            {entry?.note ? (
+              <div className="flex flex-col gap-1 pt-1">
+                <span className="text-muted-foreground">Ghi chú:</span>
+                <p className="text-tx-1">{entry.note}</p>
+              </div>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {linkedRes ? (
+        <>
+          <Dialog open={statusOpen} onOpenChange={setStatusOpen}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Đổi trạng thái booking</DialogTitle>
+                <DialogDescription>
+                  {linkedRes.displayName} · {claim.tableIds.map((id) => model.label(id)).join(" + ")}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col gap-2 pt-2">
+                <GuardedButton
+                  permission="reservation.update"
+                  variant="outline"
+                  disabledReason={
+                    pending
+                      ? "Đang ghi nhận..."
+                      : canConfirmLate
+                        ? null
+                        : linkedRes.lateConfirmedAt
+                          ? "Đã ghi nhận khách tới muộn"
+                          : "Chỉ bật sau giờ hẹn và trước ngưỡng Không tới"
+                  }
+                  onClick={async () => {
+                    if (!held.can("reservation.update") || !held.policy(entry, linkedRes).canLate || !canConfirmLate) return
+                    const r = await run(() => api.confirmLate(linkedRes.id, linkedRes.version))
+                    if (r) setStatusOpen(false)
+                  }}
+                >
+                  <BadgeCheck /> Tới muộn
+                </GuardedButton>
+                <GuardedButton
+                  permission="reservation.mark_no_show"
+                  variant="outline"
+                  disabledReason={canNoShow ? null : `Chỉ bật sau ${noShowMinutes} phút trễ`}
+                  onClick={() => {
+                    setStatusOpen(false)
+                    setNoShowOpen(true)
+                  }}
+                >
+                  <TimerReset /> Không tới
+                </GuardedButton>
+                <GuardedButton
+                  permission="reservation.cancel"
+                  variant="outline"
+                  onClick={() => {
+                    setStatusOpen(false)
+                    setCancelOpen(true)
+                  }}
+                >
+                  <XCircle /> Hủy booking
+                </GuardedButton>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <ConfirmAction
+            open={cancelOpen}
+            onOpenChange={setCancelOpen}
+            title="Hủy booking?"
+            description={
+              <>
+                Booking của <b className="text-foreground">{linkedRes.displayName}</b>. Bàn đang giữ sẽ được nhả.
+              </>
+            }
+            confirmLabel="Hủy booking"
+            reasons={CANCEL_REASONS}
+            requireNoteFor="OTHER"
+            onConfirm={async (reason, note) => {
+              if (!held.can("reservation.cancel") || !held.policy(entry, linkedRes).canBookingStatus) return
+              const r = await run(() =>
+                api.cancelReservation(linkedRes.id, linkedRes.version, reason as ReservationCloseReason, note),
+              )
+              if (r) ui.selectTable(null)
+            }}
+          />
+
+          <ConfirmAction
+            open={noShowOpen}
+            onOpenChange={setNoShowOpen}
+            title="Xác nhận khách không tới?"
+            description={
+              <>
+                Booking của <b className="text-foreground">{linkedRes.displayName}</b> chuyển sang Không tới và bàn được nhả.
+              </>
+            }
+            confirmLabel="Xác nhận không tới"
+            onConfirm={async () => {
+              if (!held.can("reservation.mark_no_show") || !held.policy(entry, linkedRes).canBookingStatus || !canNoShow) return
+              const r = await run(() => api.markNoShow(linkedRes.id, linkedRes.version))
+              if (r) ui.selectTable(null)
+            }}
+          />
+        </>
+      ) : (
+        <ConfirmAction
+          open={releaseOpen}
+          onOpenChange={setReleaseOpen}
+          title="Hủy mục chờ?"
+          description={
+            <>
+              Bàn {claim.tableIds.map((id) => model.label(id)).join(" + ")} trở về trống. Khách rời khỏi danh sách chờ.
+            </>
+          }
+          confirmLabel="Hủy mục chờ"
+          reasons={HOLD_REASONS}
+          requireNoteFor="OTHER"
+          onConfirm={async () => {
+            if (entry && held.can("waitlist.cancel")) {
+              const r = await run(() => api.cancelWaitlist(entry.id, entry.version, "CUSTOMER_WITHDREW"))
+              if (r) ui.selectTable(null)
+            }
+          }}
+        />
+      )}
     </>
   )
 }
