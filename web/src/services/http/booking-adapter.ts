@@ -171,7 +171,13 @@ export function mapBooking(payload: BackendBookingPayload): HttpBooking {
   }
 }
 
-function commonPayload(fields: BookingWriteFields, hasRetainedPhone = false): BookingCreatePayload {
+export interface BookingWriteOptions {
+  iconKeysSupported?: boolean
+  honorificSupported?: boolean
+  socialPlatformSupported?: boolean
+}
+
+function commonPayload(fields: BookingWriteFields, options: BookingWriteOptions, hasRetainedPhone = false): BookingCreatePayload {
   const guestName = fields.guestName?.trim()
   if (!Number.isSafeInteger(fields.partySize) || fields.partySize <= 0) {
     throw new ApiError(400, "INVALID_PARTY_SIZE", "Số khách không hợp lệ.")
@@ -197,12 +203,13 @@ function commonPayload(fields: BookingWriteFields, hasRetainedPhone = false): Bo
     expectedAt: venueRfc3339(fields.expectedAt),
     businessDate: fields.businessDate,
     sourceCode: fields.sourceCode,
-    ...(fields.sourceCode === "SOCIAL" && fields.socialPlatform ? { socialPlatform: fields.socialPlatform } : {}),
+    ...(options.socialPlatformSupported !== false && fields.sourceCode === "SOCIAL" && fields.socialPlatform
+      ? { socialPlatform: fields.socialPlatform } : {}),
     ...(fields.classification === undefined ? {} : { classification: fields.classification }),
     ...(fields.guestType === undefined ? {} : { guestType: fields.guestType }),
     ...(fields.isBirthday === undefined ? {} : { isBirthday: fields.isBirthday }),
-    ...(fields.iconKeys?.length ? { iconKeys: fields.iconKeys } : {}),
-    ...(fields.honorific ? { honorific: fields.honorific } : {}),
+    ...(options.iconKeysSupported !== false && fields.iconKeys?.length ? { iconKeys: fields.iconKeys } : {}),
+    ...(options.honorificSupported !== false && fields.honorific ? { honorific: fields.honorific } : {}),
     ...(note ? { note } : {}),
     ...(phoneNumber === undefined ? {} : { phoneNumber }),
   }
@@ -214,28 +221,23 @@ function venueRfc3339(value: Date): string {
   return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}:00+07:00`
 }
 
-export function createBookingPayload(fields: BookingWriteFields): BookingCreatePayload {
-  return commonPayload(fields)
+export function createBookingPayload(fields: BookingWriteFields, options: BookingWriteOptions = {}): BookingCreatePayload {
+  return commonPayload(fields, options)
 }
 
-export function directBookingCreatePayload(fields: BookingWriteFields, tableIds: number[]): DirectBookingCreatePayload {
+export function directBookingCreatePayload(fields: BookingWriteFields, tableIds: number[], options: BookingWriteOptions = {}): DirectBookingCreatePayload {
   const uniqueTableIds = [...new Set(tableIds)]
   if (!uniqueTableIds.length || uniqueTableIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
     throw new ApiError(400, "TABLE_REQUIRED", "Cần chọn ít nhất một bàn hợp lệ.")
   }
-  return { ...commonPayload(fields), tableIds: uniqueTableIds }
-}
-
-export interface UpdateBookingOptions {
-  iconKeysSupported?: boolean
+  return { ...commonPayload(fields, options), tableIds: uniqueTableIds }
 }
 
 export function fullUpdateBookingPayload(
   current: HttpBooking,
   fields: Partial<BookingWriteFields>,
-  options?: UpdateBookingOptions | boolean,
+  options: BookingWriteOptions = {},
 ): BookingUpdatePayload {
-  const isIconKeysSupported = typeof options === "boolean" ? options : (options?.iconKeysSupported ?? true)
   // Canonical callers use null for "unchanged". A string (including "") is an intentional edit.
   const editedNote = typeof fields.note === "string" ? fields.note.trim() : undefined
   const targetSource = fields.sourceCode ?? current.sourceCode
@@ -260,9 +262,10 @@ export function fullUpdateBookingPayload(
     ...(Object.prototype.hasOwnProperty.call(fields, "phoneNumber") ? { phoneNumber: fields.phoneNumber } : {}),
   }
   return {
-    ...commonPayload(merged, current.phoneLast3 !== null),
-    ...(isIconKeysSupported ? { iconKeys: targetIconKeys } : {}),
-    honorific: targetHonorific,
+    ...commonPayload(merged, options, current.phoneLast3 !== null),
+    ...(options.socialPlatformSupported !== false ? { socialPlatform: targetPlatform ?? null } : {}),
+    ...(options.iconKeysSupported !== false ? { iconKeys: targetIconKeys } : {}),
+    ...(options.honorificSupported !== false ? { honorific: targetHonorific } : {}),
     ...(editedNote === undefined ? {} : { note: editedNote }),
     version: current.version,
   }

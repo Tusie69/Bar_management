@@ -1,3 +1,5 @@
+import { formatBookingSource } from "@/domain/enums"
+import { formatHonorificName } from "@/domain/booking-identity"
 import { ArrowRightLeft, ListPlus, LogIn, MapPinned, Pencil, XCircle } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router"
@@ -7,8 +9,6 @@ import {
   IconPicker,
   SourcePicker,
   formatBookingIcons,
-  formatBookingSource,
-  formatHonorificName,
   honorificSupported,
   iconKeysSupported,
   socialPlatformSupported,

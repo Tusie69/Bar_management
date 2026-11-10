@@ -227,7 +227,24 @@ erDiagram
     VISITS ||--o{ TABLE_ALLOCATIONS : USAGE_owner
     DINING_TABLES ||--o{ TABLE_ALLOCATIONS : assigned
     TABLE_GROUPS ||--o{ TABLE_ALLOCATIONS : groups
+    TABLE_GROUPS ||--o{ TABLE_GROUP_MEMBERS : has_member
+    DINING_TABLES ||--o{ TABLE_GROUP_MEMBERS : belongs_to
+    VISITS ||--o| TABLE_TURNS : completes
+    DINING_TABLES ||--o{ TABLE_TURNS : served_at
+    TABLE_GROUPS ||--o{ TABLE_TURNS : served_as
+    RESERVATIONS ||--o{ TABLE_TURNS : traced_from
 ```
+
+`TABLE_GROUP_MEMBERS` (C1, migration 0017) là thứ cho phép một cụm bàn tồn tại khi chưa có khách:
+membership không còn nằm ở `table_allocations.group_id`, vốn bị `ck_alloc_owner` buộc phải có `hold_id`
+hoặc `visit_id`. `uq_group_member_active (venue_id, active_table_key)` đảm bảo một bàn chỉ thuộc một cụm
+đang hoạt động, ở mức DB. `table_groups.origin` phân biệt `LAYOUT` (cụm mặt bằng, sống tới khi lễ tân bấm
+Tách) với `CLAIM` (cụm sinh ngầm theo một booking/visit, vòng đời cũ không đổi).
+
+`TABLE_TURNS` (C2, migration 0018) là sổ lượt khách: mỗi visit hoàn tất Trả bàn ghi đúng một hàng
+(`uq_turn_visit`), snapshot mã bàn/cụm, giờ vào/ra, số khách, tên khách, nguồn đặt và số thứ tự lượt
+trong ngày vận hành, nên sửa booking hay tách cụm về sau không làm thay đổi lịch sử. Một cụm `LAYOUT`
+tính một lượt cho cả cụm; `completed_at` là cờ quyết định lượt có được đếm hay không.
 
 ### 5.4 Business date
 
@@ -238,6 +255,7 @@ erDiagram
 - `waitlist_entries`
 - `table_groups`
 - `table_allocations`
+- `table_turns` (C2: ngày vận hành của lượt khách, lấy từ visit)
 
 Schema không tự tính business date bằng trigger. API nhận date từ client và lưu trực tiếp. Seed dùng quy tắc tương đương cutoff 05:00 và có self-check, nhưng frontend `todayInVietnam()` chỉ trả ngày lịch Việt Nam; từ 00:00 đến trước 05:00 nó không tự chọn business date hôm trước.
 

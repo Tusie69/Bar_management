@@ -18,6 +18,7 @@ export type Permission =
   | "visit.move"
   | "visit.combine"
   | "visit.split"
+  | "table.group.manage"
   | "visit.end"
   | "visit.mark_paid"
   | "waitlist.create"
@@ -55,6 +56,9 @@ export const PERMISSION_MATRIX: Record<Permission, RoleCode[]> = {
   "visit.move": [OA, R],
   "visit.combine": [OA, R],
   "visit.split": [OA, R],
+  // C1: a layout cluster is managed without touching a guest, so it has its own
+  // permission; the server grants it to Lễ tân and the management roles.
+  "table.group.manage": [OA, R],
   "visit.end": [OA, R, C],
   "visit.mark_paid": [OA, C],
   "waitlist.create": [OA, R, CC],
@@ -88,6 +92,7 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "visit.move": "Đổi bàn",
   "visit.combine": "Ghép bàn",
   "visit.split": "Tách bàn",
+  "table.group.manage": "Ghép / tách cụm bàn",
   "visit.end": "Nhả bàn khi khách rời",
   "visit.mark_paid": "Đánh dấu đã thanh toán",
   "waitlist.create": "Thêm vào danh sách chờ",
@@ -133,6 +138,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
       "visit.move",
       "visit.combine",
       "visit.split",
+      "table.group.manage",
       "visit.end",
       "visit.mark_paid",
     ],

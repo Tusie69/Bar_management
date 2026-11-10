@@ -177,3 +177,24 @@ export function parseOtherGuests(text: string): GuestParse {
   if (v <= 6) return { ok: false, value: v, error: `${v} khách: chạm nút ${v} ở trên.` }
   return { ok: true, value: v, error: null }
 }
+
+export interface GuestValue {
+  mode: "quick" | "other"
+  /** Last valid count (quick pick or a valid "số khác..."). */
+  party: number
+  /** Raw other text, kept when switching back to 1–6. */
+  otherText: string
+}
+
+export const guestValueFrom = (party: number): GuestValue =>
+  party > 6 ? { mode: "other", party, otherText: String(party) } : { mode: "quick", party, otherText: "" }
+
+/** Effective guest count, or null while "số khác..." is invalid. */
+export function guestCount(v: GuestValue): number | null {
+  if (v.mode === "quick") return v.party
+  const p = parseOtherGuests(v.otherText)
+  return p.ok ? p.value : null
+}
+
+export const guestError = (v: GuestValue): string | null =>
+  v.mode === "other" ? parseOtherGuests(v.otherText).error : null

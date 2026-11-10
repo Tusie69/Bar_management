@@ -37,7 +37,9 @@ describe("direct layout booking flow", () => {
     }
     const result = await createAndAssignDirectBooking(api, fields, [7, 8], "form-key-0001")
     expect(api.createAndAssign).toHaveBeenCalledOnce()
-    expect(api.createAndAssign).toHaveBeenCalledWith(fields, [7, 8], "form-key-0001")
+    // §3.1: the capacity confirmation rides on the same atomic request; nobody
+    // confirmed here, so it is sent empty and the server still refuses an overflow.
+    expect(api.createAndAssign).toHaveBeenCalledWith(fields, [7, 8], "form-key-0001", {})
     expect(result.tableCodes).toEqual(["A7", "A8"])
   })
 

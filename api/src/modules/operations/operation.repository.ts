@@ -243,7 +243,7 @@ async function compensateReservation(
      VALUES (?, ?, 'RESERVATION', ?, ?, ?)`,
     [actor.organizationId, actor.venueId, operation.entity_id, startsAt, actor.userId],
   )
-  const group = desiredTableIds.length > 1 ? await createTableGroup(connection, actor, businessDate) : null
+  const group = desiredTableIds.length > 1 ? await createTableGroup(connection, actor, { businessDate }) : null
   for (const tableId of desiredTableIds) {
     await connection.execute(
       `INSERT INTO table_allocations
@@ -296,7 +296,7 @@ async function compensateVisit(
     [actor.userId, actor.organizationId, actor.venueId, operation.entity_id],
   )
   await dissolveUnusedGroups(connection, actor, allocations.map((row) => row.group_id))
-  const group = desiredTableIds.length > 1 ? await createTableGroup(connection, actor, businessDate) : null
+  const group = desiredTableIds.length > 1 ? await createTableGroup(connection, actor, { businessDate }) : null
   for (const tableId of desiredTableIds) {
     await connection.execute(
       `INSERT INTO table_allocations

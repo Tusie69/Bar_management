@@ -164,9 +164,19 @@ describe("Tu contract mock preview", () => {
   )
   it.each([
     { codes: ["C1"], code: "MERGE_REQUIRES_MULTIPLE_TABLES" },
-    { codes: ["A0", "A2"], code: "SPARE_TABLE_NOT_BOOKABLE" },
+    // A spare table may join a cluster (anh Luân, 10/11/2026), but only after the
+    // operator confirms the warning, so an unconfirmed request is still refused.
+    { codes: ["A0", "A2"], code: "SPARE_TABLE_OVERRIDE_REQUIRED" },
   ])("rejects group $codes with $code", async ({ codes, code }) => {
     await expect(api.createTableGroup({ tableIds: ids(codes) })).rejects.toMatchObject({ code })
+  })
+  it("stops refusing a spare table once the warning is confirmed", async () => {
+    // The seeded A0/A2 carry two different claims, so this still fails - but on the
+    // claim rule, not the spare rule. That is the point: confirming clears exactly
+    // one gate and leaves every other merge rule in place.
+    await expect(
+      api.createTableGroup({ tableIds: ids(["A0", "A2"]), spareOverrideConfirmed: true }),
+    ).rejects.toMatchObject({ code: "TABLE_GROUP_MULTIPLE_CLAIMS" })
   })
   // K1 Section 5: In mock mode pending Tu, cross-kind and cross-zone groups are permitted for UI review.
   it.each([{ codes: ["C1", "BAR18"] }, { codes: ["C1", "B5"] }])(

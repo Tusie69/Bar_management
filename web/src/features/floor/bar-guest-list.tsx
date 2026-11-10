@@ -42,6 +42,8 @@ export interface BarGuestListProps {
   emptyState?: "title-only" | "hidden"
   /** Title text (defaults to "Khách quầy bar") */
   title?: string
+  /** Contextual accessible name when multiple floor maps are exposed. */
+  ariaLabel?: string
   /** Click handler for selecting a row */
   onRowClick?: (row: BarGuestRow) => void
   /** Additional CSS class names */
@@ -63,6 +65,7 @@ export function BarGuestList({
   as = "svg",
   emptyState = "title-only",
   title = "Khách quầy bar",
+  ariaLabel = title,
   onRowClick,
   className,
   "data-testid": testId = "bar-guest-list",
@@ -153,7 +156,7 @@ export function BarGuestList({
       <div
         role="region"
         tabIndex={0}
-        aria-label={title}
+        aria-label={ariaLabel}
         className="flex-1 overflow-y-auto overflow-x-hidden p-1 space-y-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-border-strong [&::-webkit-scrollbar-thumb]:rounded touch-pan-y overscroll-contain"
       >
         {rows.length === 0 ? (

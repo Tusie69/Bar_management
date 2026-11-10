@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 import { calculateStatusCounts, type LegendStatusKey } from "./floor-visual-rules"
 
 export interface StatusLegendProps {
-  tables: (TableView & { state?: TableLiveState; liveState?: TableLiveState; claim?: unknown })[]
+  tables: (TableView & { state?: TableLiveState; liveState?: TableLiveState; claim?: FloorTableState["claim"] })[]
   states?: Map<number, FloorTableState>
   className?: string
 }

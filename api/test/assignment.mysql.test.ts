@@ -54,7 +54,9 @@ async function clearFixture(): Promise<void> {
   const statements = [
     'DELETE FROM booking_call_logs',
     'DELETE FROM operation_log',
+    'DELETE FROM table_turns',
     'DELETE FROM table_allocations',
+    'DELETE FROM table_group_members',
     'DELETE FROM table_groups',
     'DELETE FROM table_holds',
     'DELETE FROM waitlist_table_preferences',
@@ -233,12 +235,12 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     expect(stored[0]?.phone_ciphertext.toString('utf8')).not.toContain('987654321')
   })
 
-  it('rejects two guests on one Bar seat without creating an orphan booking', async () => {
+  it('asks for confirmation before two guests on one Bar seat, without creating an orphan booking', async () => {
     await expect(createAndAssignBooking(actor, {
       ...bookingInput('Direct Bar too large'),
       partySize: 2,
       tableIds: [barSeatTwoId],
-    })).rejects.toMatchObject({ code: 'INSUFFICIENT_TABLE_CAPACITY' })
+    })).rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
     const [rows] = await databasePool.execute<RowDataPacket[]>(
       'SELECT id FROM reservations WHERE contact_name = ?', ['Direct Bar too large'],
     )
@@ -351,7 +353,7 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
   it('WALK-07 rejects capacity, cross-zone and mixed-kind selections without partial data or orphan groups', async () => {
     await expect(createWalkIn(actor, {
       partySize: 3, businessDate: '2030-10-24', tableIds: [lowCapacityTableId],
-    })).rejects.toMatchObject({ code: 'INSUFFICIENT_TABLE_CAPACITY' })
+    })).rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
     await expect(createWalkIn(actor, {
       partySize: 2, businessDate: '2030-10-24', tableIds: [tableOneId, tableB3Id],
     })).rejects.toMatchObject({ code: 'TABLE_ZONE_MISMATCH' })
@@ -480,7 +482,7 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     await expect(assignBookingTables(actor, created.id, created.version, [spareTableId]))
       .rejects.toMatchObject({ code: 'SPARE_TABLE_NOT_BOOKABLE' })
     await expect(assignBookingTables(actor, created.id, created.version, [lowCapacityTableId]))
-      .rejects.toMatchObject({ code: 'INSUFFICIENT_TABLE_CAPACITY' })
+      .rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
     const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
     await expect(assignBookingTables(actor, assigned.id, assigned.version, [tableOneId]))
       .rejects.toMatchObject({ code: 'TABLE_ASSIGNMENT_UNCHANGED' })
@@ -726,7 +728,7 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
       visitId: walkIn.visitId,
       expectedVersion: 1,
       tableIds: [tableOneId, tableA7Id],
-    })).rejects.toMatchObject({ code: 'INSUFFICIENT_TABLE_CAPACITY' })
+    })).rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
     await expect(mergeVisitTables(actor, {
       visitId: walkIn.visitId,
       expectedVersion: 2,

@@ -17,7 +17,7 @@ const databaseHost = process.env.DB_HOST ?? "";
 const mode = process.argv[2];
 if (!/_test$/.test(databaseName) || databaseHost !== "127.0.0.1")
   throw new Error(`Refusing E2E fixture: "${databaseName}" on "${databaseHost}" is not a disposable local test database`);
-if (!["setup", "cleanup", "verify-clean", "verify-phone-audit", "inject-historical-note", "verify-historical-note", "set-quick-times", "revoke-permissions", "restore-permissions", "setup-case2-pure-hold", "cleanup-case2-pure-hold", "cleanup-today-arrival", "snapshot-entities", "cleanup-entities", "verify-target", "set-booking-time"].includes(mode ?? ""))
+if (!["setup", "cleanup", "verify-clean", "verify-phone-audit", "inject-historical-note", "verify-historical-note", "set-quick-times", "revoke-permissions", "restore-permissions", "setup-case2-pure-hold", "cleanup-case2-pure-hold", "cleanup-today-arrival", "snapshot-entities", "cleanup-entities", "verify-target", "set-booking-time", "set-spare", "set-group-permission"].includes(mode ?? ""))
   throw new Error("Unsupported E2E fixture command");
 
 const { databasePool } = await import("../../src/database/pool.js");
@@ -83,7 +83,11 @@ async function cleanupEntities(ids: EntityIds) {
   const scopedDelete = async (table: string, key: string, owned: number[]) => {
     if (owned.length) await databasePool.execute(`DELETE FROM ${table} WHERE organization_id=? AND venue_id=? AND ${key} IN (${inIds(owned)})`, [organizationId, venueId, ...owned]);
   };
+  // C2: turn rows reference the visit, the table and the group, so they go first.
+  await scopedDelete("table_turns", "visit_id", snapshot.visits.map((r) => Number(r.id)));
   await scopedDelete("table_allocations", "id", snapshot.allocations.map((r) => Number(r.id)));
+  // C1: membership rows reference the group, so they go before it.
+  await scopedDelete("table_group_members", "group_id", snapshot.groups.map((r) => Number(r.id)));
   await scopedDelete("table_groups", "id", snapshot.groups.map((r) => Number(r.id)));
   await scopedDelete("table_holds", "id", snapshot.holds.map((r) => Number(r.id)));
   const entryIds = snapshot.entries.map((r) => Number(r.id));
@@ -122,7 +126,9 @@ async function verifyHistoricalNote(guestName: string | undefined) {
 async function cleanup() {
   const statements = [
     "DELETE FROM operation_log WHERE organization_id = ?",
+    "DELETE FROM table_turns WHERE organization_id = ?",
     "DELETE FROM table_allocations WHERE organization_id = ?",
+    "DELETE FROM table_group_members WHERE organization_id = ?",
     "DELETE FROM table_groups WHERE organization_id = ?",
     "DELETE FROM table_holds WHERE organization_id = ?",
     "DELETE FROM waitlist_table_preferences WHERE organization_id = ?",
@@ -314,6 +320,38 @@ try {
       "INSERT INTO venue_settings (organization_id, venue_id, `key`, value) VALUES (?, ?, 'quick_times', ?) ON DUPLICATE KEY UPDATE value = ?",
       [organizationId, venueId, quickTimes, quickTimes],
     );
+  }
+  // C1: the spare-table confirmation and the table.group.manage check both need
+  // the fixture to change one flag, so the browser test can exercise the refusal
+  // and the confirmation without seeding a second venue.
+  else if (mode === "set-spare") {
+    const code = process.argv[3];
+    const spare = process.argv[4] === "1";
+    if (!code) throw new Error("set-spare requires a table code");
+    const [result] = await databasePool.execute<ResultSetHeader>(
+      "UPDATE dining_tables SET is_spare = ?, version = version + 1 WHERE organization_id = ? AND venue_id = ? AND code = ?",
+      [spare ? 1 : 0, organizationId, venueId, code],
+    );
+    if (result.affectedRows !== 1) throw new Error(`set-spare did not match table ${code}`);
+    console.log(`spare-set=${code}:${spare ? 1 : 0}`);
+  }
+  else if (mode === "set-group-permission") {
+    const grant = process.argv[3] !== "revoke";
+    if (grant) {
+      await databasePool.execute(
+        `INSERT IGNORE INTO role_permissions (role_id, permission_id)
+         SELECT r.id, p.id FROM roles AS r JOIN permissions AS p
+         WHERE r.code = 'RECEPTIONIST' AND p.code = 'table.group.manage'`,
+      );
+    } else {
+      await databasePool.execute(
+        `DELETE rp FROM role_permissions AS rp
+         JOIN roles AS r ON r.id = rp.role_id
+         JOIN permissions AS p ON p.id = rp.permission_id
+         WHERE r.code = 'RECEPTIONIST' AND p.code = 'table.group.manage'`,
+      );
+    }
+    console.log(`group-permission=${grant ? "granted" : "revoked"}`);
   }
   else if (mode === "revoke-permissions") {
     await databasePool.execute(

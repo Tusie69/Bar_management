@@ -1,12 +1,12 @@
 import type { ClaimView } from "@/domain/models"
-import { api } from "@/services"
 import { useUi } from "@/state/ui"
 import type { FloorModel } from "./use-floor-model"
 
-// Enable HTTP here with `true` after Tu ships C1; this is the only capability switch.
-export const independentLayoutEnabled = api.mode === "mock"
-export const IDLE_MERGE_BLOCKED =
-  "Chưa thể ghép bàn trống: máy chủ chỉ hỗ trợ ghép cho booking hoặc khách đang ngồi. Đang chờ API nhóm mặt bằng (C1)."
+/**
+ * C1 shipped: POST /tables/groups, /members and /dissolve exist on the server, so
+ * an empty cluster is a real layout entity on HTTP as well as in the mock.
+ */
+export const independentLayoutEnabled = true
 
 export function layoutMembers(model: FloorModel, id: number) {
   return model.floor?.groups.find((g) => g.tableIds.includes(id))?.tableIds ?? [id]
@@ -58,7 +58,6 @@ export function layoutSelection(model: FloorModel, ids: number[]) {
     reason = "Chỉ ghép thêm bàn trống cho một booking hoặc một đoàn khách."
   else if (owner?.kind === "waitlist_hold")
     reason = "Lượt giữ từ Bàn chờ chưa hỗ trợ ghép ở đây. Mở Quản lý đơn để xử lý."
-  else if (!owner && !independentLayoutEnabled && ids.length >= 2) reason = IDLE_MERGE_BLOCKED
   else if (owner && ids.every((id) => owner.tableIds.includes(id)))
     reason = "Chọn thêm ít nhất một bàn trống ngoài nhóm hiện tại."
   return { reason, owner }

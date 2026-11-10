@@ -520,7 +520,7 @@ export async function seatWaitlistEntry(
       }
       assertCheckInBusinessDate(businessDate, now)
       const startedAt = now.toISOString().slice(0, 23).replace('T', ' ')
-      const group = tableIds.length > 1 ? await createTableGroup(connection, actor, businessDate) : null
+      const group = tableIds.length > 1 ? await createTableGroup(connection, actor, { businessDate }) : null
       const [visit] = await connection.execute<ResultSetHeader>(
         `INSERT INTO visits
           (organization_id, venue_id, origin, customer_id, contact_name, guest_count,
@@ -597,7 +597,7 @@ export async function seatWaitlistEntry(
       [actor.organizationId, actor.venueId, reservationId, actor.userId],
     )
     const group = tableIds.length > 1
-      ? await createTableGroup(connection, actor, businessDate)
+      ? await createTableGroup(connection, actor, { businessDate })
       : null
     const allocationIds: number[] = []
     for (const tableId of tableIds) {
