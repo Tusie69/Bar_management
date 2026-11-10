@@ -1,5 +1,14 @@
 import type { HttpClient } from "./http-client"
 
+/**
+ * §3.1: the server refuses a write that exceeds the tables''' capacity until the
+ * request says an operator confirmed it. Sent as-is so the server, not the
+ * browser, decides whether the confirmation is present.
+ */
+export interface CapacityConfirmation {
+  capacityOverrideConfirmed?: boolean
+}
+
 export interface MovedVisit {
   id: number
   businessDate: string
@@ -24,12 +33,26 @@ export class HttpVisitApi {
     await this.client.post(`/visits/${id}/close`, { version, mode: "MANUAL", reason: "GUEST_LEFT" })
   }
 
-  async move(id: number, version: number, tableIds: number[]): Promise<MovedVisit> {
-    const response = await this.client.post<{ visit: MovedVisit }>(`/visits/${id}/move`, { version, tableIds })
+  async move(
+    id: number,
+    version: number,
+    tableIds: number[],
+    confirmations: CapacityConfirmation = {},
+  ): Promise<MovedVisit> {
+    const response = await this.client.post<{ visit: MovedVisit }>(`/visits/${id}/move`, {
+      version,
+      tableIds,
+      ...confirmations,
+    })
     return response.visit
   }
 
-  async merge(id: number, version: number, tableIds: number[]): Promise<MergedVisit> {
-    return this.client.post<MergedVisit>(`/visits/${id}/merge`, { version, tableIds })
+  async merge(
+    id: number,
+    version: number,
+    tableIds: number[],
+    confirmations: CapacityConfirmation = {},
+  ): Promise<MergedVisit> {
+    return this.client.post<MergedVisit>(`/visits/${id}/merge`, { version, tableIds, ...confirmations })
   }
 }

@@ -1671,7 +1671,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     const visitId = Number(reservation.visit_id)
     await databasePool.execute('UPDATE dining_tables SET capacity = 2 WHERE id = ?', [tableTwoId])
     await expect(moveVisit(actor, { visitId, expectedVersion: 1, tableIds: [tableTwoId] }))
-      .rejects.toMatchObject({ code: 'INSUFFICIENT_TABLE_CAPACITY' })
+      .rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
     const active = await row(
       `SELECT table_id FROM table_allocations
        WHERE visit_id = ? AND kind = 'USAGE' AND released_at IS NULL`,

@@ -11,6 +11,7 @@ import {
   lockAndValidateSameZoneTables,
 } from '../tables/table-group.repository.js'
 import { lockOccupancyConflicts } from '../tables/table-occupancy.js'
+import { acknowledgeCapacity } from '../tables/table-capacity.js'
 
 export type CloseVisitMode = 'MANUAL' | 'AFTER_PAYMENT'
 export type ManualCloseReason = 'GUEST_LEFT' | 'ENTRY_ERROR'
@@ -246,6 +247,8 @@ export interface MoveVisitInput {
   expectedVersion: number
   tableIds: number[]
   note?: string
+  /** §3.1: the receptionist's explicit go-ahead to seat more guests than capacity. */
+  capacityOverrideConfirmed?: boolean
 }
 
 export interface MovedVisitView {
@@ -309,14 +312,11 @@ export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput
     if (targetTableIds.length > 1) await lockAndValidateSameKindTables(connection, actor, targetTableIds)
     const spareTable = targetTables.find((table) => Boolean(table.is_spare))
     if (spareTable) throw new AppError(409, 'SPARE_TABLE_NOT_BOOKABLE', `Bàn ${spareTable.code} là bàn sơ cua và chưa được cấu hình để nhận khách.`)
-    const totalCapacity = targetTables.reduce((total, table) => total + Number(table.capacity), 0)
-    if (totalCapacity < Number(visit.guest_count)) {
-      throw new AppError(
-        409,
-        'INSUFFICIENT_TABLE_CAPACITY',
-        `Các bàn đã chọn chỉ có ${totalCapacity} chỗ cho ${visit.guest_count} khách.`,
-      )
-    }
+    const capacityOverride = acknowledgeCapacity({
+      partySize: Number(visit.guest_count),
+      tables: targetTables.map((table) => ({ code: table.code, capacity: Number(table.capacity) })),
+      confirmed: input.capacityOverrideConfirmed,
+    })
     const allocationIds = currentAllocations.map((allocation) => Number(allocation.id))
     const visitBusinessDate = dateOnly(visit.business_date)
     const conflicts = await lockOccupancyConflicts(
@@ -339,7 +339,7 @@ export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput
       throw new AppError(409, 'GROUP_STATE_INCONSISTENT', 'Visit đang có nhiều group identity.')
     }
     const targetGroupId = targetTableIds.length > 1
-      ? previousGroupIds[0] ?? (await createTableGroup(connection, actor, visitBusinessDate)).id
+      ? previousGroupIds[0] ?? (await createTableGroup(connection, actor, { businessDate: visitBusinessDate })).id
       : null
     const newAllocationIds: number[] = []
     for (const tableId of targetTableIds) {
@@ -378,6 +378,7 @@ export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput
         input.expectedVersion + 1,
         JSON.stringify([{
           type: 'visit_table_move',
+          ...(capacityOverride ? { capacityOverride } : {}),
           previousAllocationIds: allocationIds,
           previousTableIds: currentTableIds,
           newAllocationIds,
@@ -437,9 +438,11 @@ export async function mergeVisitTables(
     if (currentIds.some((id) => !requested.includes(id))) throw new AppError(409, 'MERGE_CANNOT_REMOVE_TABLES', 'Ghép bàn không được loại bỏ bàn đang dùng.')
     const additions = requested.filter((id) => !currentIds.includes(id))
     if (!additions.length) throw new AppError(409, 'TABLE_ASSIGNMENT_UNCHANGED', 'Nhóm bàn không thay đổi.')
-    if (tables.reduce((sum, table) => sum + Number(table.capacity), 0) < Number(visit.guest_count)) {
-      throw new AppError(409, 'INSUFFICIENT_TABLE_CAPACITY', 'Nhóm bàn không đủ sức chứa.')
-    }
+    const capacityOverride = acknowledgeCapacity({
+      partySize: Number(visit.guest_count),
+      tables: tables.map((table) => ({ code: table.code, capacity: Number(table.capacity) })),
+      confirmed: input.capacityOverrideConfirmed,
+    })
     const conflicts = await lockOccupancyConflicts(
       connection, actor, 'USAGE', additions, dateOnly(visit.business_date),
     )
@@ -455,7 +458,7 @@ export async function mergeVisitTables(
       if (!rows[0]) throw new AppError(409, 'GROUP_STATE_INCONSISTENT', 'Group của visit không còn hoạt động.')
       group = { id: groupIds[0], symbolNo: Number(rows[0].symbol_no) }
     } else {
-      group = await createTableGroup(connection, actor, dateOnly(visit.business_date))
+      group = await createTableGroup(connection, actor, { businessDate: dateOnly(visit.business_date) })
       await connection.execute(
         `UPDATE table_allocations SET group_id = ? WHERE venue_id = ? AND id IN (${allocations.map(() => '?').join(',')})`,
         [group.id, actor.venueId, ...allocations.map((row) => Number(row.id))],
@@ -482,7 +485,8 @@ export async function mergeVisitTables(
        VALUES (?, ?, ?, 'USER', ?, ?, ?, 'VISIT_TABLES_MERGED', 'visit', ?, ?, ?, ?, 'MANUAL', ?)`,
       [actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
         actor.authSessionId ?? null, input.visitId, input.expectedVersion, input.expectedVersion + 1,
-        JSON.stringify([{ type: 'table_group', groupId: group.id, previousTableIds: currentIds, tableIds: requested }]),
+        JSON.stringify([{ type: 'table_group', groupId: group.id, previousTableIds: currentIds, tableIds: requested,
+          ...(capacityOverride ? { capacityOverride } : {}) }]),
         actor.authSessionId ? 1 : 0],
     )
     await connection.commit()

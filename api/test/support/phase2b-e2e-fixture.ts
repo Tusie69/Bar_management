@@ -84,6 +84,8 @@ async function cleanupEntities(ids: EntityIds) {
     if (owned.length) await databasePool.execute(`DELETE FROM ${table} WHERE organization_id=? AND venue_id=? AND ${key} IN (${inIds(owned)})`, [organizationId, venueId, ...owned]);
   };
   await scopedDelete("table_allocations", "id", snapshot.allocations.map((r) => Number(r.id)));
+  // C1: membership rows reference the group, so they go before it.
+  await scopedDelete("table_group_members", "group_id", snapshot.groups.map((r) => Number(r.id)));
   await scopedDelete("table_groups", "id", snapshot.groups.map((r) => Number(r.id)));
   await scopedDelete("table_holds", "id", snapshot.holds.map((r) => Number(r.id)));
   const entryIds = snapshot.entries.map((r) => Number(r.id));
@@ -123,6 +125,7 @@ async function cleanup() {
   const statements = [
     "DELETE FROM operation_log WHERE organization_id = ?",
     "DELETE FROM table_allocations WHERE organization_id = ?",
+    "DELETE FROM table_group_members WHERE organization_id = ?",
     "DELETE FROM table_groups WHERE organization_id = ?",
     "DELETE FROM table_holds WHERE organization_id = ?",
     "DELETE FROM waitlist_table_preferences WHERE organization_id = ?",

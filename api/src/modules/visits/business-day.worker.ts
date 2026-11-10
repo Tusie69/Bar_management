@@ -169,8 +169,11 @@ export async function processBusinessDayEndCandidate(
       .filter((id): id is number => id !== null))].sort((left, right) => left - right)
     for (const groupId of groupIds) {
       await connection.execute(
+        // origin = 'CLAIM' only: C1 (anh Luân, 08/11/2026) requires a LAYOUT cluster
+        // to survive the business-day rollover, so the worker never touches one.
         `UPDATE table_groups AS g SET dissolved_at = ?, dissolved_by_user_id = NULL, dissolve_reason = 'BUSINESS_DAY_END'
          WHERE g.organization_id = ? AND g.venue_id = ? AND g.id = ? AND g.dissolved_at IS NULL
+           AND g.origin = 'CLAIM'
            AND NOT EXISTS (
              SELECT 1 FROM table_allocations AS a
              WHERE a.organization_id = g.organization_id AND a.venue_id = g.venue_id

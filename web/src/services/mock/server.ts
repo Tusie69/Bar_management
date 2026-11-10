@@ -37,6 +37,7 @@ import {
   type CheckInInput,
   type CombineInput,
   type CreateTableGroupInput,
+  type DissolveTableGroupInput,
   type AddTableGroupMembersInput,
   type CreateReservationInput,
   type GamApi,
@@ -1578,7 +1579,7 @@ export class MockGamApi implements GamApi, DemoControls {
     return group
   }
 
-  private assertGroupTables(ids: number[], ownGroupId?: number) {
+  private assertGroupTables(ids: number[], ownGroupId?: number, spareOverrideConfirmed?: boolean) {
     const reject = (code: string, conflictingTableIds?: number[]): never => {
       const details = conflictingTableIds ? { conflictingTableIds } : {}
       throw new ApiError(
@@ -1592,7 +1593,21 @@ export class MockGamApi implements GamApi, DemoControls {
     if (new Set(ids).size !== ids.length) this.fail("Danh sách bàn bị trùng.")
     const tables = ids.map((id) => this.db.tables.get(id))
     if (tables.some((t) => !t || t.status !== "ACTIVE")) reject("TABLE_NOT_FOUND")
-    if (tables.some((t) => t!.isSpare)) reject("SPARE_TABLE_NOT_BOOKABLE")
+    // A spare table may join a cluster, but only once someone confirms the warning.
+    const spare = tables.filter((t) => t!.isSpare)
+    if (spare.length && !spareOverrideConfirmed) {
+      const details = { spareTableIds: spare.map((t) => t!.id), spareTableCodes: spare.map((t) => t!.code) }
+      throw new ApiError(
+        409,
+        "SPARE_TABLE_OVERRIDE_REQUIRED",
+        apiErrorMessage(
+          "SPARE_TABLE_OVERRIDE_REQUIRED",
+          `Bàn ${spare.map((t) => t!.code).join(", ")} là bàn sơ cua.`,
+          details,
+        ),
+        details,
+      )
+    }
     // Mock-only pending Tu (K1 Section 5): allow cross-zone and table+bar combinations in table groups
     // if (new Set(tables.map((t) => t!.kind)).size > 1) reject("TABLE_KIND_MISMATCH")
     // if (new Set(tables.map((t) => t!.zoneId)).size > 1) reject("TABLE_ZONE_MISMATCH")
@@ -1616,7 +1631,7 @@ export class MockGamApi implements GamApi, DemoControls {
   async createTableGroup(input: CreateTableGroupInput) {
     await this.latency("m")
     this.requireGroupManage()
-    const claims = this.assertGroupTables(input.tableIds)
+    const claims = this.assertGroupTables(input.tableIds, undefined, input.spareOverrideConfirmed)
     return this.commit({ action: "TABLES_COMBINED", entityType: "table_group", undoable: true }, (tx) => {
       const gid = this.newGroup(tx, businessDateOf(this.now))
       const row = tx.edit("groups", gid)
@@ -1640,7 +1655,7 @@ export class MockGamApi implements GamApi, DemoControls {
         .filter((a) => a.groupId === group.id)
         .map((a) => a.tableId)
     const ids = [...members, ...input.tableIds]
-    const claims = this.assertGroupTables(ids, group.id)
+    const claims = this.assertGroupTables(ids, group.id, input.spareOverrideConfirmed)
     return this.commit({ action: "TABLES_COMBINED", entityType: "table_group", undoable: true }, (tx) => {
       tx.edit("groups", group.id).layoutTableIds = ids
       claims.forEach((a) => {
@@ -1716,6 +1731,11 @@ export class MockGamApi implements GamApi, DemoControls {
         return { entityId: entity.id, summary: `Ghép ${this.codes(all)} · ký hiệu ${sym?.name ?? "?"}` }
       },
     )
+  }
+
+  /** Tách bàn: the same operation as splitGroup with mode ALL_TO_SINGLE. */
+  async dissolveTableGroup(input: DissolveTableGroupInput) {
+    return this.splitGroup({ groupId: input.groupId, version: input.version, mode: "ALL_TO_SINGLE" })
   }
 
   async splitGroup(input: SplitInput) {

@@ -78,6 +78,12 @@ export interface FloorTableProjection {
   groupId: number | null
   groupDisplayCode: string | null
   groupMemberTableIds: number[]
+  /**
+   * Where the claim is drawn. 'GROUP' means this table is a cluster member and the
+   * cluster tile owns the display; the table's own `claim` stays populated so
+   * older clients keep working.
+   */
+  claimOwner: 'GROUP' | 'TABLE' | null
 }
 
 export interface FloorGroupProjection {
@@ -85,6 +91,21 @@ export interface FloorGroupProjection {
   symbolNo: number
   displayCode: string
   tableIds: number[]
+  /**
+   * C1 fields. A LAYOUT cluster exists with no guest, so these describe the
+   * cluster itself; `claim` is the one booking or visit using it, if any.
+   * `version` is the cluster's layout version, never a guest's version: merge and
+   * split commands carry this one, commands on a guest carry claim.version.
+   */
+  origin?: 'CLAIM' | 'LAYOUT'
+  version?: number
+  name?: string
+  zoneId?: number
+  totalSeats?: number
+  isOutOfService?: boolean
+  displayState?: TableDisplayState
+  claim?: FloorClaimProjection | null
+  businessDate?: string
 }
 
 export interface FloorProjection {
@@ -102,6 +123,15 @@ interface VenueProjectionRow extends RowDataPacket {
   no_show_warning_minutes: number
 }
 
+interface LayoutMemberRow extends RowDataPacket {
+  group_id: number
+  table_id: number
+  symbol_no: number
+  name: string | null
+  version: number
+  business_date: Date | string
+}
+
 interface ProjectionRow extends RowDataPacket {
   table_id: number
   table_code: string
@@ -113,6 +143,7 @@ interface ProjectionRow extends RowDataPacket {
   table_version: number
   pos_x: string | number | null
   pos_y: string | number | null
+  zone_id: number
   zone_code: string
   zone_name: string
   allocation_id: number | null
@@ -351,7 +382,7 @@ async function readProjection(
        dt.id AS table_id, dt.code AS table_code, dt.display_name AS table_display_name,
        dt.kind AS table_kind, dt.capacity AS table_capacity, dt.status AS table_status,
        dt.is_spare, dt.version AS table_version, dt.pos_x, dt.pos_y,
-       z.code AS zone_code, z.name AS zone_name,
+       dt.zone_id, z.code AS zone_code, z.name AS zone_name,
        a.id AS allocation_id, a.kind AS allocation_kind, a.business_date AS allocation_business_date,
        a.hold_id, a.visit_id, a.group_id,
        g.symbol_no AS group_symbol_no, g.dissolved_at AS group_dissolved_at,
@@ -441,6 +472,44 @@ async function readProjection(
   const selectedByTable = new Map<number, ProjectionRow | null>()
   for (const [tableId, tableRows] of rowsByTable) selectedByTable.set(tableId, selectClaimRow(tableRows))
 
+  // C1: a LAYOUT cluster's membership is its own table, so a cluster with no
+  // booking and nobody sitting at it still appears on the floor. Read separately
+  // from the allocation-derived CLAIM grouping, which is left as it was.
+  const [layoutRows] = await connection.execute<LayoutMemberRow[]>(
+    `SELECT m.group_id, m.table_id, g.symbol_no, g.name, g.version, g.business_date
+     FROM table_group_members AS m
+     JOIN table_groups AS g ON g.organization_id = m.organization_id
+       AND g.venue_id = m.venue_id AND g.id = m.group_id
+     WHERE m.organization_id = ? AND m.venue_id = ? AND m.left_at IS NULL
+       AND g.origin = 'LAYOUT' AND g.dissolved_at IS NULL
+     ORDER BY m.group_id, m.table_id`,
+    [actor.organizationId, actor.venueId],
+  )
+  const layoutGroups = new Map<number, {
+    symbolNo: number
+    name: string | null
+    version: number
+    businessDate: string
+    tableIds: number[]
+  }>()
+  const layoutGroupByTable = new Map<number, number>()
+  for (const row of layoutRows) {
+    const groupId = Number(row.group_id)
+    const tableId = Number(row.table_id)
+    const existing = layoutGroups.get(groupId)
+    if (existing) existing.tableIds.push(tableId)
+    else {
+      layoutGroups.set(groupId, {
+        symbolNo: Number(row.symbol_no),
+        name: row.name,
+        version: Number(row.version),
+        businessDate: dateOnly(row.business_date)!,
+        tableIds: [tableId],
+      })
+    }
+    layoutGroupByTable.set(tableId, groupId)
+  }
+
   const groupMembers = new Map<number, number[]>()
   for (const [tableId, row] of selectedByTable) {
     if (!row || row.group_id === null || row.group_symbol_no === null || row.group_dissolved_at !== null) continue
@@ -495,8 +564,24 @@ async function readProjection(
           || derived.displayState === 'LATE_CONFIRMED')
     }
     const allocationDate = dateOnly(selected?.allocation_business_date ?? null)
-    const groupId = claim?.groupId ?? null
-    const groupCode = claim?.groupDisplayCode ?? null
+    // A LAYOUT cluster is the table's layout identity whether or not a guest is
+    // involved, so it wins over the allocation-derived CLAIM grouping. The two
+    // agree whenever a booking was placed on the cluster, because the allocation
+    // then carries the cluster's own id.
+    const layoutGroupId = layoutGroupByTable.get(tableId) ?? null
+    const layoutGroup = layoutGroupId === null ? undefined : layoutGroups.get(layoutGroupId)
+    const groupId = layoutGroupId ?? claim?.groupId ?? null
+    const groupCode = layoutGroup
+      ? groupDisplayCode(layoutGroup.symbolNo)
+      : claim?.groupDisplayCode ?? null
+    const groupMemberTableIds = layoutGroup
+      ? [...layoutGroup.tableIds]
+      : claim?.groupMemberTableIds ?? []
+    if (claim) {
+      claim.groupId = groupId
+      claim.groupDisplayCode = groupCode
+      claim.groupMemberTableIds = groupMemberTableIds
+    }
     const visitTableIds = selected?.active_visit_id === null
       ? []
       : visitMembers.get(Number(selected?.active_visit_id)) ?? []
@@ -546,16 +631,45 @@ async function readProjection(
       claim,
       groupId,
       groupDisplayCode: groupCode,
-      groupMemberTableIds: claim?.groupMemberTableIds ?? [],
+      groupMemberTableIds,
+      claimOwner: claim === null ? null : groupId === null ? 'TABLE' : 'GROUP',
     } satisfies FloorTableProjection
   })
 
   const groups: FloorGroupProjection[] = []
+  const tableById = new Map(tables.map((table) => [table.tableId, table]))
+
+  // LAYOUT clusters first, and unconditionally: an empty cluster is exactly the
+  // thing the floor could not show before. Its displayState comes from the one
+  // claim using it, so the cluster tile and its member tables can never disagree.
+  for (const [groupId, layout] of layoutGroups) {
+    const memberTables = layout.tableIds
+      .map((tableId) => tableById.get(tableId))
+      .filter((table): table is FloorTableProjection => table !== undefined)
+    const owner = memberTables.find((table) => table.claim !== null)
+    groups.push({
+      id: groupId,
+      symbolNo: layout.symbolNo,
+      displayCode: groupDisplayCode(layout.symbolNo),
+      tableIds: [...layout.tableIds],
+      origin: 'LAYOUT',
+      version: layout.version,
+      name: layout.name ?? groupDisplayCode(layout.symbolNo),
+      zoneId: Number(rowsByTable.get(layout.tableIds[0]!)?.[0]?.zone_id ?? 0),
+      // Real seats, summed from the member tables' own capacity.
+      totalSeats: memberTables.reduce((total, table) => total + table.capacity, 0),
+      isOutOfService: memberTables.some((table) => table.catalogStatus === 'OUT_OF_SERVICE'),
+      displayState: owner?.displayState ?? 'EMPTY',
+      claim: owner?.claim ?? null,
+      businessDate: layout.businessDate,
+    })
+  }
+
   for (const [groupId, tableIds] of groupMembers) {
-    if (tableIds.length < 2) continue
+    if (tableIds.length < 2 || layoutGroups.has(groupId)) continue
     const row = selectedByTable.get(tableIds[0]!)!
     const symbolNo = Number(row?.group_symbol_no)
-    groups.push({ id: groupId, symbolNo, displayCode: groupDisplayCode(symbolNo), tableIds })
+    groups.push({ id: groupId, symbolNo, displayCode: groupDisplayCode(symbolNo), tableIds, origin: 'CLAIM' })
   }
   groups.sort((left, right) => left.id - right.id)
 

@@ -17,6 +17,8 @@ import {
 } from './booking-metadata.js'
 import { protectPhoneNumber, revealPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from './phone-security.js'
 import { lockOccupancyConflicts } from '../tables/table-occupancy.js'
+import { acknowledgeCapacity } from '../tables/table-capacity.js'
+import { resolveLayoutExpansion } from '../tables/table-layout-group.repository.js'
 import {
   createTableGroup,
   dissolveUnusedGroups,
@@ -240,6 +242,8 @@ export interface CreateBookingInput {
 
 export interface CreateAndAssignBookingInput extends CreateBookingInput {
   tableIds: number[]
+  /** §3.1: the receptionist's explicit go-ahead to seat more guests than capacity. */
+  capacityOverrideConfirmed?: boolean
 }
 
 function phoneKeyRing(): PhoneKeyRing {
@@ -406,11 +410,15 @@ export async function createAndAssignBooking(
   const metadata = resolveBookingMetadata(input)
   const schedule = validateBookingSchedule(input.expectedAt, input.businessDate, now)
   const phone = typeof input.phoneNumber === 'string' ? protectPhoneNumber(input.phoneNumber, phoneKeyRing()) : null
-  const tableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
+  const requestedTableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
   const connection = transaction ?? await databasePool.getConnection()
   const ownsTransaction = transaction === undefined
   try {
     if (ownsTransaction) await connection.beginTransaction()
+    // C1: booking one table of an active layout cluster books the whole cluster,
+    // so the cluster is never half-booked and the client never has to know its
+    // membership. The cluster also supplies the group identity for these rows.
+    const { tableIds, layoutGroupId } = await resolveLayoutExpansion(connection, actor, requestedTableIds)
     const [sourceRows] = await connection.execute<(RowDataPacket & { id: number })[]>(
       'SELECT id FROM booking_sources WHERE organization_id = ? AND code = ? AND is_active = 1',
       [actor.organizationId, input.sourceCode],
@@ -419,14 +427,11 @@ export async function createAndAssignBooking(
     if (!source) throw new AppError(400, 'BOOKING_SOURCE_NOT_FOUND', 'Nguồn đặt bàn không hợp lệ.')
 
     const tables = await lockAndValidateAssignableTables(connection, actor, tableIds)
-    const totalCapacity = tables.reduce((total, table) => total + Number(table.capacity), 0)
-    if (totalCapacity < input.partySize) {
-      throw new AppError(
-        409,
-        'INSUFFICIENT_TABLE_CAPACITY',
-        `Các bàn đã chọn chỉ có ${totalCapacity} chỗ cho ${input.partySize} khách.`,
-      )
-    }
+    const capacityOverride = acknowledgeCapacity({
+      partySize: input.partySize,
+      tables: tables.map((table) => ({ code: table.code, capacity: Number(table.capacity) })),
+      confirmed: input.capacityOverrideConfirmed,
+    })
     const conflicts = await lockOccupancyConflicts(
       connection, actor, 'HOLD', tableIds, schedule.businessDate, [], now,
     )
@@ -468,9 +473,11 @@ export async function createAndAssignBooking(
        VALUES (?, ?, 'RESERVATION', ?, ?, ?)`,
       [actor.organizationId, actor.venueId, reservation.insertId, schedule.mysqlExpectedAt, actor.userId],
     )
-    const group = tableIds.length > 1
-      ? await createTableGroup(connection, actor, schedule.businessDate)
-      : null
+    const group = layoutGroupId !== null
+      ? { id: layoutGroupId }
+      : tableIds.length > 1
+        ? await createTableGroup(connection, actor, { businessDate: schedule.businessDate })
+        : null
     const allocationIds: number[] = []
     for (const tableId of tableIds) {
       const [allocation] = await connection.execute<ResultSetHeader>(
@@ -506,6 +513,7 @@ export async function createAndAssignBooking(
         actor.authSessionId ?? null,
         reservation.insertId,
         JSON.stringify([{ type: 'reservation_created_and_assigned', holdId: hold.insertId,
+          ...(capacityOverride ? { capacityOverride } : {}),
           groupId: group?.id ?? null, allocationIds, tableIds }]),
       ],
     )
@@ -1125,6 +1133,7 @@ export async function assignBookingTables(
   id: number,
   expectedVersion: number,
   tableIds: number[],
+  capacityOverrideConfirmed?: boolean,
 ): Promise<BookingView> {
   const connection = await databasePool.getConnection()
   try {
@@ -1132,18 +1141,17 @@ export async function assignBookingTables(
     const reservation = await lockReservation(connection, actor, id, expectedVersion)
     if (reservation.status !== 'BOOKED')
       throw new AppError(409, 'BOOKING_NOT_ASSIGNABLE', 'Chỉ đặt bàn đang chờ mới được gán bàn.')
-    const uniqueTableIds = [...new Set(tableIds)].sort((left, right) => left - right)
+    const { tableIds: uniqueTableIds, layoutGroupId } = await resolveLayoutExpansion(
+      connection, actor, tableIds,
+    )
     const tableRows = uniqueTableIds.length > 1
       ? await lockAndValidateSameKindTables(connection, actor, uniqueTableIds)
       : await lockAndValidateAssignableTables(connection, actor, uniqueTableIds)
-    const totalCapacity = tableRows.reduce((total, table) => total + Number(table.capacity), 0)
-    if (totalCapacity < Number(reservation.party_size)) {
-      throw new AppError(
-        409,
-        'INSUFFICIENT_TABLE_CAPACITY',
-        `Các bàn đã chọn chỉ có ${totalCapacity} chỗ cho ${reservation.party_size} khách.`,
-      )
-    }
+    const capacityOverride = acknowledgeCapacity({
+      partySize: Number(reservation.party_size),
+      tables: tableRows.map((table) => ({ code: table.code, capacity: Number(table.capacity) })),
+      confirmed: capacityOverrideConfirmed,
+    })
     const [previousAllocations] = await connection.execute<(RowDataPacket & { id: number; table_id: number; group_id: number | null })[]>(
       `SELECT a.id, a.table_id, a.group_id FROM table_allocations AS a
        JOIN table_holds AS h ON h.venue_id = a.venue_id AND h.id = a.hold_id
@@ -1174,7 +1182,9 @@ export async function assignBookingTables(
       [actor.organizationId, actor.venueId, id, reservation.expected_at, actor.userId],
     )
     const group = requestedTableIds.length > 1
-      ? await createTableGroup(connection, actor, dateOnly(reservation.business_date))
+      ? layoutGroupId !== null
+        ? { id: layoutGroupId, symbolNo: 0 }
+        : await createTableGroup(connection, actor, { businessDate: dateOnly(reservation.business_date) })
       : null
     const newAllocationIds: number[] = []
     for (const tableId of requestedTableIds) {
@@ -1223,6 +1233,7 @@ export async function assignBookingTables(
         JSON.stringify([
           {
             type: 'reservation_table_assignment',
+            ...(capacityOverride ? { capacityOverride } : {}),
             previousAllocationIds: previousAllocations.map((allocation) => Number(allocation.id)),
             previousTableIds,
             holdId: holdResult.insertId,
@@ -1250,6 +1261,7 @@ export async function mergeBookingTables(
   id: number,
   expectedVersion: number,
   tableIds: number[],
+  capacityOverrideConfirmed?: boolean,
 ): Promise<{ booking: BookingView; group: { id: number; symbolNo: number; tableIds: number[] } }> {
   const connection = await databasePool.getConnection()
   let group!: { id: number; symbolNo: number }
@@ -1274,8 +1286,11 @@ export async function mergeBookingTables(
     }
     const additions = requested.filter((tableId) => !currentIds.includes(tableId))
     if (!additions.length) throw new AppError(409, 'TABLE_ASSIGNMENT_UNCHANGED', 'Nhóm bàn không thay đổi.')
-    const totalCapacity = tables.reduce((total, table) => total + Number(table.capacity), 0)
-    if (totalCapacity < Number(reservation.party_size)) throw new AppError(409, 'INSUFFICIENT_TABLE_CAPACITY', 'Nhóm bàn không đủ sức chứa.')
+    const capacityOverride = acknowledgeCapacity({
+      partySize: Number(reservation.party_size),
+      tables: tables.map((table) => ({ code: table.code, capacity: Number(table.capacity) })),
+      confirmed: capacityOverrideConfirmed,
+    })
     const conflicts = await lockOccupancyConflicts(
       connection, actor, 'HOLD', additions, dateOnly(reservation.business_date),
     )
@@ -1290,7 +1305,7 @@ export async function mergeBookingTables(
       if (!rows[0]) throw new AppError(409, 'GROUP_STATE_INCONSISTENT', 'Group của booking không còn hoạt động.')
       group = { id: groupIds[0], symbolNo: Number(rows[0].symbol_no) }
     } else {
-      group = await createTableGroup(connection, actor, dateOnly(reservation.business_date))
+      group = await createTableGroup(connection, actor, { businessDate: dateOnly(reservation.business_date) })
       await connection.execute(
         `UPDATE table_allocations SET group_id = ? WHERE venue_id = ? AND id IN (${allocations.map(() => '?').join(',')})`,
         [group.id, actor.venueId, ...allocations.map((row) => Number(row.id))],
@@ -1318,7 +1333,8 @@ export async function mergeBookingTables(
         VALUES (?, ?, ?, 'USER', ?, ?, ?, 'RESERVATION_TABLES_MERGED', 'reservation', ?, ?, ?, ?, 'MANUAL', ?)`,
       [actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
         actor.authSessionId ?? null, id, expectedVersion, expectedVersion + 1,
-        JSON.stringify([{ type: 'table_group', groupId: group.id, previousTableIds: currentIds, tableIds: requested }]),
+        JSON.stringify([{ type: 'table_group', groupId: group.id, previousTableIds: currentIds, tableIds: requested,
+          ...(capacityOverride ? { capacityOverride } : {}) }]),
         actor.authSessionId ? 1 : 0],
     )
     const booking = await getBookingById(actor, id, connection)
@@ -1745,6 +1761,8 @@ export interface CreateWalkInInput {
   partySize: number
   businessDate: string
   tableIds: number[]
+  /** §3.1: the receptionist's explicit go-ahead to seat more guests than capacity. */
+  capacityOverrideConfirmed?: boolean
 }
 
 export async function createWalkIn(
@@ -1756,18 +1774,17 @@ export async function createWalkIn(
   const ownsTransaction = transaction === undefined
   try {
     if (ownsTransaction) await connection.beginTransaction()
-    const uniqueTableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
+    const { tableIds: uniqueTableIds, layoutGroupId } = await resolveLayoutExpansion(
+      connection, actor, input.tableIds,
+    )
     if (!uniqueTableIds.length) throw new AppError(400, 'TABLE_REQUIRED', 'Cần chọn ít nhất một bàn cho khách walk-in.')
     const guestName = input.guestName?.trim() || 'Khách Walk-in'
     const tables = await lockAndValidateAssignableTables(connection, actor, uniqueTableIds)
-    const totalCapacity = tables.reduce((total, table) => total + Number(table.capacity), 0)
-    if (totalCapacity < input.partySize) {
-      throw new AppError(
-        409,
-        'INSUFFICIENT_TABLE_CAPACITY',
-        `Các bàn đã chọn chỉ có ${totalCapacity} chỗ cho ${input.partySize} khách.`,
-      )
-    }
+    const capacityOverride = acknowledgeCapacity({
+      partySize: input.partySize,
+      tables: tables.map((table) => ({ code: table.code, capacity: Number(table.capacity) })),
+      confirmed: input.capacityOverrideConfirmed,
+    })
     const conflicts = await lockOccupancyConflicts(connection, actor, 'USAGE', uniqueTableIds, input.businessDate)
     if (conflicts.length)
       throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc đang sử dụng.')
@@ -1793,9 +1810,11 @@ export async function createWalkIn(
       }
     }
 
-    const group = uniqueTableIds.length > 1
-      ? await createTableGroup(connection, actor, input.businessDate)
-      : null
+    const group = layoutGroupId !== null
+      ? { id: layoutGroupId }
+      : uniqueTableIds.length > 1
+        ? await createTableGroup(connection, actor, { businessDate: input.businessDate })
+        : null
     const [visitResult] = await connection.execute<ResultSetHeader>(
       `INSERT INTO visits
         (organization_id, venue_id, origin, customer_id, contact_name, guest_count,
@@ -1824,6 +1843,7 @@ export async function createWalkIn(
       [actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
         actor.authSessionId ?? null, visitResult.insertId,
         JSON.stringify([{ type: 'walk_in_created', groupId: group?.id ?? null, allocationIds,
+          ...(capacityOverride ? { capacityOverride } : {}),
           tableIds: uniqueTableIds, partySize: input.partySize }])],
     )
     if (ownsTransaction) await connection.commit()

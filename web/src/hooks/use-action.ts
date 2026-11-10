@@ -13,6 +13,29 @@ import type { MutationResult } from "@/domain/models"
 import { api, isApiError } from "@/services"
 import { useUi } from "@/state/ui"
 
+/**
+ * Codes where the server refused the write until an operator takes
+ * responsibility. Each maps to the confirmation flag the retry carries, so the
+ * decision is recorded on the server and audited there, not assumed in the browser.
+ */
+const CONFIRM_REQUIRED: Record<string, { key: keyof ActionConfirmations; title: string; confirmLabel: string }> = {
+  CAPACITY_OVERRIDE_REQUIRED: {
+    key: "capacityOverrideConfirmed",
+    title: "Vượt sức chứa đề xuất",
+    confirmLabel: "Vẫn đặt số khách này",
+  },
+  SPARE_TABLE_OVERRIDE_REQUIRED: {
+    key: "spareOverrideConfirmed",
+    title: "Có bàn sơ cua trong cụm",
+    confirmLabel: "Vẫn ghép bàn sơ cua",
+  },
+}
+
+export interface ActionConfirmations {
+  capacityOverrideConfirmed?: boolean
+  spareOverrideConfirmed?: boolean
+}
+
 const CONFLICT_TITLE: Record<string, string> = {
   TABLE_CONFLICT: "Bàn không còn trống",
   VERSION_CONFLICT: "Dữ liệu vừa thay đổi",
@@ -68,7 +91,7 @@ export function useAction() {
 
   const run = useCallback(
     async <T extends MutationResult>(
-      fn: (overrideReason?: string) => Promise<T>,
+      fn: (overrideReason?: string, confirmations?: ActionConfirmations) => Promise<T>,
       opts: { silent?: boolean } = {},
     ): Promise<T | null> => {
       if (inFlight.current) return null
@@ -76,14 +99,33 @@ export function useAction() {
       setPending(true)
       try {
         let result: T
-        try {
-          result = await fn()
-        } catch (e) {
-          if (api.mode === "mock" && isApiError(e) && e.code === "OVERRIDE_REQUIRED") {
-            const reason = await useUi.getState().askOverride(e.message)
-            if (!reason) return null
-            result = await fn(reason)
-          } else {
+        // One pass per distinct confirmation the server can ask for, so a request
+        // needing both capacity and spare confirmation still resolves, and a server
+        // that keeps asking cannot loop.
+        const confirmations: ActionConfirmations = {}
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            result = await fn(undefined, confirmations)
+            break
+          } catch (e) {
+            const needed = isApiError(e) ? CONFIRM_REQUIRED[e.code] : undefined
+            if (needed && !confirmations[needed.key] && attempt <= Object.keys(CONFIRM_REQUIRED).length) {
+              const accepted = await useUi.getState().askConfirm({
+                title: needed.title,
+                message: (e as { message: string }).message,
+                confirmLabel: needed.confirmLabel,
+              })
+              // Declining saves nothing: the server already refused the write.
+              if (!accepted) return null
+              confirmations[needed.key] = true
+              continue
+            }
+            if (api.mode === "mock" && isApiError(e) && e.code === "OVERRIDE_REQUIRED") {
+              const reason = await useUi.getState().askOverride(e.message)
+              if (!reason) return null
+              result = await fn(reason, confirmations)
+              break
+            }
             throw e
           }
         }

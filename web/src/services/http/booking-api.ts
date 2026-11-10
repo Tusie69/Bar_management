@@ -2,6 +2,7 @@ import { ApiError } from "../contracts"
 import type { BusinessDate } from "@/lib/time"
 import type { ReceptionSearchResult } from "@/domain/models"
 import type { HttpClient } from "./http-client"
+import type { CapacityConfirmation } from "./visit-api"
 import {
   assignmentPayload,
   cancelBookingPayload,
@@ -72,10 +73,15 @@ export class HttpBookingApi {
     return mapBooking(response.booking)
   }
 
-  async createAndAssign(fields: BookingWriteFields, tableIds: number[], idempotencyKey?: string): Promise<HttpBooking> {
+  async createAndAssign(
+    fields: BookingWriteFields,
+    tableIds: number[],
+    idempotencyKey?: string,
+    confirmations: CapacityConfirmation = {},
+  ): Promise<HttpBooking> {
     const response = await this.client.post<{ booking: BackendBookingPayload }>(
       "/bookings/direct",
-      directBookingCreatePayload(fields, tableIds),
+      { ...directBookingCreatePayload(fields, tableIds), ...confirmations },
       { reviver: dateReviver, idempotencyKey },
     )
     return mapBooking(response.booking)
@@ -147,20 +153,30 @@ export class HttpBookingApi {
     )
   }
 
-  async assignVersion(id: number, version: number, tableIds: number[]): Promise<HttpBooking> {
+  async assignVersion(
+    id: number,
+    version: number,
+    tableIds: number[],
+    confirmations: CapacityConfirmation = {},
+  ): Promise<HttpBooking> {
     const response = await this.client.post<{ booking: BackendBookingPayload }>(
       `/bookings/${id}/assign`,
-      assignmentPayload(version, tableIds),
+      { ...assignmentPayload(version, tableIds), ...confirmations },
       { reviver: dateReviver },
     )
     return mapBooking(response.booking)
   }
 
-  async merge(id: number, version: number, tableIds: number[]): Promise<{ booking: HttpBooking; groupId: number }> {
+  async merge(
+    id: number,
+    version: number,
+    tableIds: number[],
+    confirmations: CapacityConfirmation = {},
+  ): Promise<{ booking: HttpBooking; groupId: number }> {
     const response = await this.client.post<{
       booking: BackendBookingPayload
       group: { id: number; symbolNo: number; tableIds: number[] }
-    }>(`/bookings/${id}/merge`, { version, tableIds }, { reviver: dateReviver })
+    }>(`/bookings/${id}/merge`, { version, tableIds, ...confirmations }, { reviver: dateReviver })
     return { booking: mapBooking(response.booking), groupId: response.group.id }
   }
 

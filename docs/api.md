@@ -61,7 +61,7 @@ Floor Projection, booking views and TU-Call continue to read thresholds directly
 | GET | `/tables?date=YYYY-MM-DD` | `customer.view_masked` | Atomic `{businessDate,serverNow,changeSeq,tables:FloorTableProjection[],groups:FloorGroupProjection[]}` |
 | PATCH | `/tables/:id/status` | `table.assign` | Body `{businessDate,state,expectedVersion?,reason?}`; see limitation below |
 | PATCH | `/tables/:id/configuration` | `venue.configure` | Body `{isSpare?:boolean,status?:"ACTIVE"|"OUT_OF_SERVICE",version,reason}`; returns `{table:{id,code,isBackup,status,version}}` |
-| POST | `/tables/groups/:id/split` | `visit.split` | Body `{keepTableIds}`; `{operationId,changeSeq,summary,undoable:false,splitGroupId,group,keptTableIds,releasedTableIds,owner}` |
+| POST | `/tables/groups/:id/split` | `table.group.manage` or `visit.split` | Body `{keepTableIds}`, or `{version,mode:"ALL_TO_SINGLE"}` to dissolve a cluster; `{operationId,changeSeq,summary,undoable:false,splitGroupId,group,keptTableIds,releasedTableIds,owner}`. See **Table groups** below for the cluster endpoints. |
 
 `FloorTableProjection` retains the legacy table fields additively and exposes `{tableId,tableCode,catalogStatus,isSpare,displayState,arrivalPhase,arrivalTime,minutesLate,claim,groupId,groupDisplayCode,groupMemberTableIds}`. `displayState` is `EMPTY`, `BOOKED`, `UPCOMING`, `LATE`, `NO_SHOW`, `IN_USE` or `OUT_OF_SERVICE`; it is computed with the venue thresholds and server clock. `NO_SHOW` is visual while the reservation may remain `BOOKED` with an active allocation. Active visits have precedence over holds. Reservation and waitlist holds for another business date are excluded; an unreleased visit from an earlier date remains visible and is marked stale.
 
@@ -90,6 +90,231 @@ Catalog venue fields include `id,version,name,timezone,businessDayStartLocal,bus
 **Direct status changes are unsupported in v1.** The status route accepts `AVAILABLE`, `RESERVED` or `IN_USE`, verifies table organization/venue (404 outside scope), checks `expectedVersion` if present (409 `VERSION_CONFLICT`), then returns 409 `TABLE_STATE_DERIVED`. It never creates an allocation, modifies the table or writes a mutation audit event. Use assign, check-in, move and close instead. Use the owner-only configuration route for manual `OUT_OF_SERVICE` / `ACTIVE` changes.
 
 Spare configuration is persistent rather than per-day. `reason` is required, at most 500 characters. Provide at least one of `isSpare` or `status`; status supports `ACTIVE` and `OUT_OF_SERVICE`. The table must have no unreleased allocations (holds or visits, on any date), and at least one supplied value must change. `venue.configure` is granted only to OWNER_ADMIN. Successful configuration changes audit the actor and bump the table version. Sending `isBackup` to the status route returns 400 `FIXED_SPARE_TABLE`.
+
+## Table groups — cụm bàn (C1)
+
+A cluster of merged tables is part of the **floor layout**, not part of a booking. A receptionist merges two or more
+tables before anyone has booked or arrived, and the cluster lives until a receptionist splits it. Three states stay
+separate and nothing here conflates them: **layout** (single table, or member of a cluster — this section),
+**operation** (empty / booked / in use — `table_allocations`, unchanged) and **history** (the bookings and visits that
+happened — append-only, never rewritten by a layout change).
+
+| Method | Path | Permission | Request | Response | Error codes |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/tables/groups?includeDissolved=true` | `customer.view_masked` | — | `{groups:LayoutGroupView[]}` | — |
+| GET | `/tables/groups/:id` | `customer.view_masked` | — | `{group:LayoutGroupView}` | `INVALID_GROUP_ID`, `TABLE_GROUP_NOT_FOUND` |
+| POST | `/tables/groups` | `table.group.manage` | `{tableCodes:["B3","B4","B5"]}` or `{tableIds:[101,102,103]}`, optional `name`, `spareOverrideConfirmed` | 201 `{operationId,changeSeq,summary,undoable:false,group:LayoutGroupView}` | `INVALID_TABLE_CODES`, `DUPLICATE_TABLE_CODE`, `MERGE_REQUIRES_MULTIPLE_TABLES`, `TABLE_NOT_FOUND`, `TABLE_ALREADY_GROUPED`, `SPARE_TABLE_OVERRIDE_REQUIRED`, `INVALID_SPARE_OVERRIDE`, `ZONE_NOT_BOOKABLE`, `TABLE_KIND_MISMATCH`, `CROSS_ZONE_MERGE_DISABLED`, `TABLE_NOT_ADJACENT`, `TABLE_GROUP_MIXED_STATE`, `TABLE_GROUP_MULTIPLE_CLAIMS`, `TABLE_GROUP_CONFLICT`, `GROUP_SYMBOL_UNAVAILABLE`, `FORBIDDEN` |
+| POST | `/tables/groups/:id/members` | `table.group.manage` | `{version, tableCodes|tableIds}`, optional `spareOverrideConfirmed` | `{operationId,changeSeq,summary,undoable:false,group:LayoutGroupView}` | as POST `/tables/groups`, plus `INVALID_VERSION`, `TABLE_GROUP_VERSION_CONFLICT`, `TABLE_GROUP_ALREADY_DISSOLVED`, `TABLE_ASSIGNMENT_UNCHANGED` |
+| POST | `/tables/groups/:id/dissolve` | `table.group.manage` | `{}` or `{version}` | `{operationId,changeSeq,summary,undoable:false,groupId,groupCode,status:"DISSOLVED",releasedTableIds,releasedTables}` | `INVALID_GROUP_ID`, `TABLE_GROUP_NOT_FOUND`, `TABLE_GROUP_ALREADY_DISSOLVED`, `TABLE_GROUP_IN_USE`, `TABLE_GROUP_VERSION_CONFLICT`, `TABLE_GROUP_CONFLICT`, `FORBIDDEN` |
+| POST | `/tables/groups/:id/split` | `table.group.manage` or `visit.split` | `{keepTableIds}` **or** `{version, mode:"ALL_TO_SINGLE"}` | the BA-021 split result, or the dissolve result for `ALL_TO_SINGLE` | BA-021 codes below, plus `INVALID_SPLIT_MODE` and the dissolve codes |
+| GET | `/tables/stream` | `customer.view_masked` | — | `text/event-stream` | — |
+
+`mode:"ALL_TO_SINGLE"` is the shipped client's spelling of Tách bàn on a cluster and delegates to the same dissolve
+implementation, so the two paths cannot drift apart. A body with neither `mode` nor `keepTableIds` still answers
+`TABLES_REQUIRED`.
+
+`LayoutGroupView` is `{groupId,groupCode,symbolNo,displayCode,name,status,version,zoneId,tableIds,tableCodes,
+tables:[{id,code,capacity}],totalCapacity,formedAt,dissolvedAt,inUseBy}`. `groupCode` is `TG-<groupId>`; `displayCode`
+is the Excel-style floor mark (`1 => ◆A`). `status` is `ACTIVE` or `DISSOLVED`. `totalCapacity` is summed from the
+member tables' own `dining_tables.capacity` — never a constant and never a configured default. `inUseBy` is null, or
+`{kind:"HOLD"|"USAGE",holdId,visitId}` for the one booking or visit currently using the cluster. `version` is the
+**cluster's layout version**, not a guest's: merge and split commands carry this one, commands on a guest carry
+`claim.version`.
+
+### Request and response example
+
+```http
+POST /api/v1/tables/groups
+Content-Type: application/json
+Origin: https://app.example.com
+X-CSRF-Token: <memory-only token>
+Idempotency-Key: 8e0f1b2c-3d4e-5f60-7182-93a4b5c6d7e8
+
+{"tableCodes":["B3","B4","B5"]}
+```
+
+```json
+{
+  "operationId": 412,
+  "changeSeq": 1884,
+  "summary": "Đã ghép B3 + B4 + B5 thành cụm ◆A (12 chỗ).",
+  "undoable": false,
+  "group": {
+    "groupId": 101, "groupCode": "TG-101", "symbolNo": 1, "displayCode": "◆A", "name": "◆A",
+    "status": "ACTIVE", "version": 1, "zoneId": 2,
+    "tableIds": [101, 102, 103], "tableCodes": ["B3", "B4", "B5"],
+    "tables": [{"id":101,"code":"B3","capacity":4},{"id":102,"code":"B4","capacity":4},{"id":103,"code":"B5","capacity":4}],
+    "totalCapacity": 12, "formedAt": "2026-11-10T13:02:11.421Z", "dissolvedAt": null, "inUseBy": null
+  }
+}
+```
+
+```http
+POST /api/v1/tables/groups/101/dissolve
+{"version":1}
+```
+
+```json
+{
+  "operationId": 418, "changeSeq": 1891, "undoable": false,
+  "summary": "Đã tách cụm ◆A, trả lại B3, B4, B5.",
+  "groupId": 101, "groupCode": "TG-101", "status": "DISSOLVED",
+  "releasedTableIds": [101, 102, 103], "releasedTables": ["B3", "B4", "B5"]
+}
+```
+
+### Validation rules
+
+Merging takes a list of tables and nothing else: **no guest name, phone, party size or arrival time is required or
+accepted**. The list must name at least two distinct tables that exist and are `ACTIVE`; a repeated code or id answers
+`DUPLICATE_TABLE_CODE`. Codes are resolved against `dining_tables` — nothing is inferred from the shape of a code.
+
+- **One cluster per table.** A table already in an active cluster answers `TABLE_ALREADY_GROUPED` with
+  `details.conflictingTableIds`. This is enforced by `uq_group_member_active (venue_id, active_table_key)` in the
+  database, not in application code, so two devices merging the same table concurrently cannot both win.
+- **At least two physical tables.** One table is not a cluster (`MERGE_REQUIRES_MULTIPLE_TABLES`).
+- **One claim, or none.** Every member must share one booking or visit, or all be empty. Mixing an empty table with an
+  occupied one answers `TABLE_GROUP_MIXED_STATE`; two different bookings answer `TABLE_GROUP_MULTIPLE_CLAIMS`. Both
+  carry `details.conflictingTableIds`.
+- **Spare tables need a confirmation.** A spare table may join a cluster, but only with
+  `spareOverrideConfirmed: true`; without it the server answers `409 SPARE_TABLE_OVERRIDE_REQUIRED` and writes nothing.
+  The confirmation and the spare codes are recorded in the audit row. A spare table remains unbookable **directly**:
+  assign and walk-in still answer `SPARE_TABLE_NOT_BOOKABLE`.
+- **Adjacency comes from data.** Members must form one connected group over the venue's configured
+  `table_adjacencies` edges (`TABLE_NOT_ADJACENT`). Migration `0003` ships that table empty on purpose, so a venue with
+  no configured edges has nothing to check against and the rule is skipped rather than silently blocking every merge.
+- **Zones.** Mixing `TABLE` with `BAR_SEAT` answers `TABLE_KIND_MISMATCH`; a zone that does not take guests answers
+  `ZONE_NOT_BOOKABLE`. Cross-zone merging is gated by the feature flag below.
+
+### Lifecycle
+
+A cluster exists until someone with the permission calls dissolve. It is **never** dissolved automatically by paying,
+Close Visit, a cancelled booking, a No-show, the end of a shift, the business-day rollover or a server restart — it is a
+row, not memory. One cluster therefore serves several parties one after another.
+
+Dissolve requires the cluster to be `ACTIVE`, runs in one transaction, and refuses `409 TABLE_GROUP_IN_USE` (with
+`details.holdId` / `details.visitId`) while a party is seated on it or a booking is holding it: splitting then would
+break that claim apart. The receptionist closes or moves the party first; dissolve never closes a visit on its own.
+
+Nothing in a layout change touches history. `table_group_members` is append-only — leaving sets `left_at`, it never
+deletes — and dissolve writes **no** `table_allocations` row at all. Past bookings keep pointing at the tables they
+actually used; no old booking is rewritten to look like a single-table booking. The audit row
+(`TABLE_GROUP_FORMED` / `TABLE_GROUP_MEMBERS_ADDED` / `TABLE_GROUP_DISSOLVED`, `entity_type = table_group`) snapshots
+the membership at that moment, which is how a past party is traced back to the cluster it sat on after the cluster is
+gone.
+
+### Booking and visit integration
+
+Booking, walk-in, assign and move **expand a requested table to every member of the active cluster it touches**, in the
+same transaction, so a cluster is never half-booked and the client never has to know its membership — there is no window
+between reading membership and acting on it. When the expanded set is exactly one cluster, the allocations record that
+cluster's id, so the floor shows one identity rather than a second implicit group over the same tables. Check-in
+inherits the hold's group, so it needs no expansion.
+
+`table_groups` carries `origin`. `LAYOUT` is the cluster described here. `CLAIM` is the pre-existing implicit cluster of
+one booking or visit: it is scoped to one business date and still auto-dissolves once nothing uses it, including at the
+business-day cutoff. A `LAYOUT` symbol is reserved venue-wide for as long as it is active, so a cluster that outlives its
+business date can never share a floor mark with a later `CLAIM` group.
+
+### Floor projection
+
+`GET /tables?date=` now returns a cluster with **no guest** in `groups[]`, which is what was impossible before.
+`FloorGroupProjection` gains `{origin,version,name,zoneId,totalSeats,isOutOfService,displayState,claim,businessDate}`.
+`displayState` is derived with the same `deriveTableDisplayState` as a table, from the cluster's single claim, so the
+cluster tile and its member tables can never disagree; with no claim it is `EMPTY`. `isOutOfService` is true when any
+member is out of service. Each member table reports `groupId`, `groupDisplayCode` and the full
+`groupMemberTableIds`, so touching one table identifies the whole cluster, and gains
+`claimOwner: "GROUP" | "TABLE" | null` saying where the claim is drawn. A member table's own `claim` and `displayState`
+are unchanged, so the cluster marking never replaces a table's operational state.
+
+### Feature flag: cross-zone merging
+
+`ALLOW_CROSS_ZONE_TABLE_MERGE` defaults to **`false`**, and the cross-zone rule is read from it rather than hardcoded in
+business logic. While false, members in two different zones answer `409 CROSS_ZONE_MERGE_DISABLED`. Setting it to `true`
+only skips that one check: every other rule — two tables minimum, one cluster per table, one claim or none, kind, zone
+bookability, adjacency, spare confirmation — still applies, so turning it on is not a blanket permission for any
+combination of tables. The flag is read at startup and accepts only `true` or `false`.
+
+### Realtime (SSE)
+
+`GET /tables/stream` is a `text/event-stream` on the same cookie session, trusted-origin and permission checks as the
+rest of `/api/v1`; no token is ever placed in the URL. Frames are `hello` on connect and `floor-changed` thereafter,
+each `{"venueId":1,"changeSeq":"1884"}`.
+
+The cursor is `venues.change_seq`, which every mutation already bumps **inside its transaction**, so a rolled-back
+transaction can never produce an event: the number it would have published was never committed. A frame says "your
+snapshot is stale", never what changed, so no customer data travels on the stream and an out-of-order or replayed frame
+cannot overwrite newer state — the client refetches the authoritative projection, and a frame older than one already
+seen is dropped by the monotonic cursor. On reconnect the client refetches before it trusts anything. `retry: 2000`
+and a comment heartbeat every `REALTIME_HEARTBEAT_MS` keep proxies from closing an idle stream; `X-Accel-Buffering: no`
+stops a buffering reverse proxy from spending the latency budget. Tuning: `REALTIME_POLL_INTERVAL_MS` (default 500) and
+`REALTIME_HEARTBEAT_MS` (default 20000). The clients keep their 15-second poll as the fallback for a blocked stream.
+
+### Capacity is guidance, not a limit
+
+A table's capacity no longer blocks a booking. What replaced the old hard `409 INSUFFICIENT_TABLE_CAPACITY` is **not**
+"no check": the server still computes the real capacity from the member tables' own data, still refuses the write when
+nobody took responsibility, and proceeds only when the request carries `capacityOverrideConfirmed: true`. The
+confirmation is therefore verified on the server — a dialog in the browser is not evidence on its own — and is written
+to the audit row as `changes[0].capacityOverride`.
+
+Without the flag the server answers `409 CAPACITY_OVERRIDE_REQUIRED` and writes nothing:
+
+```json
+{"error":{"code":"CAPACITY_OVERRIDE_REQUIRED",
+  "message":"Bàn B3 có sức chứa đề xuất 4 người. Bạn đang đặt 6 khách. Xác nhận để tiếp tục.",
+  "details":{"requestedGuests":6,"totalCapacity":4,"tableCodes":["B3"]}}}
+```
+
+It applies to `POST /bookings/direct`, `POST /bookings/walk-ins`, `POST /bookings/:id/assign`,
+`POST /bookings/:id/merge`, `POST /visits/:id/move` and `POST /visits/:id/merge`. A non-boolean value answers
+`400 INVALID_CAPACITY_OVERRIDE`.
+
+Every other rule is untouched. Party size must still be a positive whole number; a table still cannot be double-booked
+(`TABLE_ALREADY_OCCUPIED`), confirmation or no confirmation; a spare table is still not bookable directly; and the
+BA-021 split still requires the kept tables to seat the party (`INSUFFICIENT_TABLE_CAPACITY`), which is a different rule
+about shrinking under a seated party and is deliberately left as a hard block. Waitlist seating and undo compensation
+keep their own capacity checks for the same reason.
+
+### Compatibility with the previous API
+
+All of this is additive. `POST /tables/groups/:id/split` with `{keepTableIds}` behaves exactly as before. `groups[]` and
+`FloorTableProjection` only gain optional fields, and clients that ignore them keep working. `table_allocations.group_id`
+keeps its meaning. `AppError` responses may now carry `error.details`; a client that reads only `code` and `message` is
+unaffected. The one intentional behaviour change is the capacity codes above: a client that hard-coded
+`INSUFFICIENT_TABLE_CAPACITY` for booking, walk-in, assign, merge or move must also handle
+`CAPACITY_OVERRIDE_REQUIRED`.
+
+### Migration
+
+`0017_independent_table_group_layout.sql` is additive and loses no data:
+
+- `table_groups` gains `origin` (`DEFAULT 'CLAIM'`, so every existing row keeps its existing meaning), `name`,
+  `version`, a stored `active_layout_symbol` and `uq_table_groups_active_layout_symbol`.
+- `table_group_members` is created with `uq_group_member_active (venue_id, active_table_key)`, foreign keys to venue,
+  group and table, and an append-only `left_at` / `left_by_user_id` / `left_reason`.
+- Permission `table.group.manage` is inserted and granted to `OWNER_ADMIN` and `RECEPTIONIST`.
+
+No row is updated or deleted. Migrations are forward-only (doc 10 §2); there is no down step. Apply with
+`npm run db:migrate` from `Bar_management/api`, with `DB_NAME` pointing at the target database. Test databases that
+hold layout clusters must delete `table_group_members` before `table_groups`; the integration and E2E fixtures already
+do.
+
+### Testing
+
+```powershell
+cd Bar_management/api
+$env:RUN_MYSQL_INTEGRATION='1'
+$env:DB_NAME='gam21_platform_it_test'
+$env:NODE_ENV='test'
+npx vitest run test/table-layout-group.mysql.test.ts
+```
+
+`test/table-layout-group.mysql.test.ts` covers merge, split, lifecycle across Close Visit / Cancel / No-show / the
+business-day sweep, capacity confirmation, permission and spare tables, the cross-zone flag, concurrency (two devices on
+one table, two devices splitting one cluster, a double-clicked request, a rolled-back merge) and the older `CLAIM`
+grouping. On the web side, `src/services/http/floor-stream.test.ts` covers the SSE cursor and
+`src/features/floor/layout-cluster.test.ts` the cluster selection and confirmation dialogs.
 
 ## Bookings
 
@@ -263,7 +488,7 @@ the admin RBAC model, so no role is created here.
 
 ## Unavailable capabilities
 
-There are no implemented endpoints for customer search/profile/notes, operation-log listing, reports, zone flags, hold deadlines/releases, booking statistics as JSON, waitlist claim/release-claim, or standalone visits/allocations lists. Undo/redo, table group split, venue configuration and account management do exist and are documented above. A catalog exposing lease/hold configuration does not imply that those write APIs exist. Unknown routes return 404; HTTP adapters may expose these unavailable methods as explicit 501 `NOT_SUPPORTED_BY_BACKEND` errors. Direct table-state writes and payment-verified closing have the restrictions described above.
+There are no implemented endpoints for customer search/profile/notes, operation-log listing, reports, zone flags, hold deadlines/releases, booking statistics as JSON, waitlist claim/release-claim, or standalone visits/allocations lists. Undo/redo, the table-group endpoints (merge, add members, dissolve, split), the floor SSE stream, venue configuration and account management do exist and are documented above. A catalog exposing lease/hold configuration does not imply that those write APIs exist. Unknown routes return 404; HTTP adapters may expose these unavailable methods as explicit 501 `NOT_SUPPORTED_BY_BACKEND` errors. Direct table-state writes and payment-verified closing have the restrictions described above.
 
 ## Verification
 

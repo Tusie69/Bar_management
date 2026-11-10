@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { lazy, Suspense } from "react"
 import { createBrowserRouter, Navigate, RouterProvider, useLocation } from "react-router"
-import { ConflictDialog, OverrideDialog } from "@/components/dialogs"
+import { ConfirmDialog, ConflictDialog, OverrideDialog } from "@/components/dialogs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -80,6 +80,7 @@ function GlobalLayer() {
     <>
       <ConflictDialog />
       <OverrideDialog />
+      <ConfirmDialog />
     </>
   )
 }
