@@ -1,3 +1,6 @@
+import { formatBookingSource } from "@/domain/enums"
+import { formatHonorificName } from "@/domain/booking-identity"
+import { guestCount, guestValueFrom, type GuestValue } from "@/domain/booking-rules"
 /**
  * Booking flow (OpenTable/Eat App pattern, adapted):
  * 1 Ngày giờ + số khách -> 2 Khả dụng + vị trí -> 3 Thông tin khách -> 4 Xác nhận.
@@ -17,15 +20,10 @@ import {
   IconPicker,
   SourcePicker,
   HonorificPicker,
-  formatBookingSource,
-  formatHonorificName,
   honorificSupported,
   iconKeysSupported,
   socialPlatformSupported,
   type SocialPlatform,
-  guestCount,
-  guestValueFrom,
-  type GuestValue,
 } from "@/components/booking-pickers"
 import { MaskedPhone, PendingTag, SectionTitle } from "@/components/common"
 import { Button } from "@/components/ui/button"

@@ -1,3 +1,4 @@
+import { guestCount, guestError, guestValueFrom, type GuestValue } from "@/domain/booking-rules"
 /**
  * The one booking sheet of the floor: "Đặt bàn" / "Walk-in" as a right column on Điều phối and as a
  * bottom sheet (`compact`) under the map on phones and portrait tablets. Date/time/party/tables live in
@@ -19,10 +20,6 @@ import {
   socialPlatformSupported,
   type Honorific,
   type SocialPlatform,
-  guestCount,
-  guestError,
-  guestValueFrom,
-  type GuestValue,
 } from "@/components/booking-pickers"
 import { GuardedButton } from "@/components/common"
 import { Button } from "@/components/ui/button"

@@ -1,6 +1,7 @@
+import { guestCount, guestError, guestValueFrom, type GuestValue } from "@/domain/booking-rules"
 import { describe, expect, it } from "vitest"
 import { businessDateOf, fromVenueLocal } from "@/lib/time"
-import { guestCount, guestError, guestValueFrom, type GuestValue } from "@/components/booking-pickers"
+
 import {
   BOOKING_SLOTS,
   BOOKING_MINUTES,

@@ -29,6 +29,57 @@ const json = (value: unknown, status = 200) =>
 afterEach(() => vi.unstubAllGlobals())
 
 describe("HTTP booking endpoints", () => {
+  it.each([
+    ["iconKeysSupported", "iconKeys", []],
+    ["honorificSupported", "honorific", null],
+    ["socialPlatformSupported", "socialPlatform", null],
+  ] as const)("gates %s independently of the other optional fields", async (flag, field, value) => {
+    let body: unknown
+    vi.stubGlobal("fetch", vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.body) body = JSON.parse(String(init.body))
+      return json({ booking })
+    }))
+    const api = new HttpBookingApi(new HttpClient("http://api.test"), { [flag]: true })
+    await api.update(await api.detail(7), { iconKeys: [], honorific: null, socialPlatform: null })
+    expect(body).toHaveProperty(field, value)
+    for (const other of ["iconKeys", "honorific", "socialPlatform"]) {
+      if (other !== field) expect(body).not.toHaveProperty(other)
+    }
+  })
+
+  it.each([false, true])("enforces optional write capabilities (%s) on create, direct create and full update", async (supported) => {
+    const bodies: Record<string, unknown>[] = []
+    vi.stubGlobal("fetch", vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      if (init?.body) bodies.push(JSON.parse(String(init.body)))
+      return json({ booking: { ...booking, sourceCode: "SOCIAL", socialPlatform: "FB", iconKeys: ["star"], honorific: "MR" } })
+    }))
+    const api = new HttpBookingApi(new HttpClient("http://api.test"), {
+      iconKeysSupported: supported, honorificSupported: supported, socialPlatformSupported: supported,
+    })
+    const current = await api.detail(7)
+    const fields = { guestName: "Khách API", partySize: 2, expectedAt: current.expectedAt,
+      businessDate: current.businessDate, sourceCode: "SOCIAL" as const,
+      socialPlatform: "IG", iconKeys: ["pin"], honorific: "MS" as const }
+    await api.create(fields)
+    await api.createAndAssign(fields, [11])
+    await api.update(current, { partySize: 3 })
+    await api.update(current, { socialPlatform: "IG", iconKeys: ["pin"], honorific: "MS" })
+    await api.update(current, { socialPlatform: null, iconKeys: [], honorific: null })
+    await api.update(current, { sourceCode: "HOTLINE" })
+    if (supported) {
+      for (const body of [bodies[0], bodies[1], bodies[3]]) {
+        expect(body).toMatchObject({ socialPlatform: "IG", iconKeys: ["pin"], honorific: "MS" })
+      }
+      expect(bodies[2]).toMatchObject({ socialPlatform: "FB", iconKeys: ["star"], honorific: "MR", version: 1 })
+      expect(bodies[4]).toMatchObject({ socialPlatform: null, iconKeys: [], honorific: null, version: 1 })
+      expect(bodies[5]).toMatchObject({ sourceCode: "HOTLINE", socialPlatform: null })
+    } else {
+      for (const body of bodies) for (const field of ["socialPlatform", "iconKeys", "honorific"]) {
+        expect(body).not.toHaveProperty(field)
+      }
+    }
+  })
+
   it("loads the plain-text daily export from the real backend endpoint", async () => {
     const requests: string[] = []
     vi.stubGlobal(
@@ -246,7 +297,7 @@ describe("HTTP booking endpoints", () => {
     expect(new URL(requests[0]!.url).pathname).toBe("/api/v1/bookings/7/phone:reveal")
   })
 
-  it("sends socialPlatform in create and update only when source is SOCIAL", async () => {
+  it("sends socialPlatform when enabled and clears it when switching away from SOCIAL", async () => {
     const requests: { url: string; method: string; body: unknown }[] = []
     vi.stubGlobal(
       "fetch",
@@ -259,7 +310,7 @@ describe("HTTP booking endpoints", () => {
         return json({ booking: { ...booking, sourceCode: "SOCIAL", socialPlatform: "FB" } })
       }),
     )
-    const api = new HttpBookingApi(new HttpClient("http://api.test"))
+    const api = new HttpBookingApi(new HttpClient("http://api.test"), { socialPlatformSupported: true })
     const current = await api.detail(7)
 
     await api.create({
@@ -303,6 +354,6 @@ describe("HTTP booking endpoints", () => {
     expect(requests.at(-1)?.body).toMatchObject({
       sourceCode: "HOTLINE",
     })
-    expect(requests.at(-1)?.body).not.toHaveProperty("socialPlatform")
+    expect(requests.at(-1)?.body).toHaveProperty("socialPlatform", null)
   })
 })

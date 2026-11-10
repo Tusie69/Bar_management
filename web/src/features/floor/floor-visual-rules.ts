@@ -1,8 +1,6 @@
 import type { FloorGroup, FloorTableState, TableLiveState, TableView } from "@/domain/models"
 import { FIXTURES, FLOOR_H, FLOOR_W, type ZoneCode } from "@/domain/venue-layout"
 
-export type ClaimViewFlags = Array<"BIRTHDAY" | "NEW" | "RETURNING" | "VIP" | "DESIGNATED">
-
 /**
  * Approved icon priority (Nam 2026-11-04):
  * ⭐ VIP > 📌 Chỉ định > 🎂 Sinh nhật > 🔥 Khách quen > 🆕 Khách mới
@@ -17,14 +15,6 @@ export const GUEST_FLAG_META: Record<GuestFlag, { glyph: string; label: string }
   RETURNING: { glyph: "🔥", label: "Khách quen" },
   NEW: { glyph: "🆕", label: "Khách mới" },
 }
-
-export function pickPrimaryGuestFlag(flags: string[]): GuestFlag | null {
-  for (const priority of GUEST_ICON_PRIORITY) {
-    if (flags.includes(priority)) return priority
-  }
-  return null
-}
-
 
 /**
  * Formats the guest name shown inside a checked-in table or Bar seat cell (J1 Section 2 & 5).
@@ -115,7 +105,7 @@ export function resolveCellCornerIcons(
 export type LegendStatusKey = "free" | "reserved" | "upcoming" | "noshow" | "seated" | "spare"
 
 export function calculateStatusCounts(
-  tables: (TableView & { state?: TableLiveState; liveState?: TableLiveState; claim?: any })[],
+  tables: (TableView & { state?: TableLiveState; liveState?: TableLiveState; claim?: FloorTableState["claim"] })[],
   states?: Map<number, FloorTableState>,
 ): Record<LegendStatusKey, number> {
   const counts: Record<LegendStatusKey, number> = {
@@ -390,45 +380,4 @@ export function computeZoneBounds(tables: TableView[], zone: ZoneCode | "ALL", p
     w: maxX - minX + pad * 2,
     h: maxY - minY + pad * 2,
   }
-}
-
-/** Fit the visible frame and any catalogue tables extending beyond it. */
-export function wholeFloorBounds(tables: readonly TableView[], floorWidth: number, floorHeight: number) {
-  let left = 20
-  let top = 20
-  let right = floorWidth - 20
-  let bottom = floorHeight
-  for (const table of tables) {
-    left = Math.min(left, table.x - table.w / 2)
-    right = Math.max(right, table.x + table.w / 2)
-    top = Math.min(top, table.y - table.h / 2)
-    bottom = Math.max(bottom, table.y + table.h / 2)
-  }
-  return { x: left, y: top, w: right - left, h: bottom - top }
-}
-
-export function countFloorStates(tables: readonly TableView[], states: ReadonlyMap<number, FloorTableState>) {
-  const counts = new Map<TableLiveState, number>()
-  for (const table of tables) {
-    const state = states.get(table.id)?.state ?? (table.isSpare ? "spare" : "free")
-    counts.set(state, (counts.get(state) ?? 0) + 1)
-  }
-  return counts
-}
-
-/**
- * Formats seat range for Bar seats in group bookings (e.g. `Bar11-12`, `Bar1-3`).
- */
-export function formatBarSeatRange(barSeats: TableView[]): string {
-  const numbers = barSeats
-    .map((s) => s.seqNo ?? parseInt(s.code.replace(/\D/g, ""), 10))
-    .filter((n) => !Number.isNaN(n))
-    .sort((a, b) => a - b)
-  if (!numbers.length) return ""
-  if (numbers.length === 1) return `Bar${numbers[0]}`
-  const isConsecutive = numbers.every((n, i) => n === numbers[0] + i)
-  if (isConsecutive) {
-    return `Bar${numbers[0]}-${numbers[numbers.length - 1]}`
-  }
-  return `Bar${numbers.join("-")}`
 }

@@ -20,6 +20,14 @@ function makeSampleRow(overrides: Partial<BarGuestRow> = {}): BarGuestRow {
 }
 
 describe("BarGuestList presentational component", () => {
+  it("keeps the scroll region keyboard accessible with a contextual name", () => {
+    const html = renderToString(createElement(BarGuestList, {
+      rows: [], as: "html", ariaLabel: "Khách quầy bar - Sơ đồ chọn bàn đặt trước",
+    }))
+    expect(html).toContain('role="region" tabindex="0" aria-label="Khách quầy bar - Sơ đồ chọn bàn đặt trước"')
+    expect(html).toContain("Khách quầy bar</div>")
+  })
+
   it("renders in SVG mode inside a foreignObject with default bounds", () => {
     const rows = [makeSampleRow()]
     const html = renderToString(

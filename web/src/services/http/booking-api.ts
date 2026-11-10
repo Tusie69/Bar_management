@@ -11,6 +11,7 @@ import {
   mapBooking,
   type BackendBookingPayload,
   type BookingWriteFields,
+  type BookingWriteOptions,
   type HttpBooking,
 } from "./booking-adapter"
 
@@ -19,9 +20,15 @@ const dateReviver = (key: string, value: unknown) =>
 
 export class HttpBookingApi {
   private readonly client: HttpClient
+  private readonly capabilities: BookingWriteOptions
 
-  constructor(client: HttpClient) {
+  constructor(client: HttpClient, capabilities: BookingWriteOptions = {}) {
     this.client = client
+    this.capabilities = {
+      iconKeysSupported: capabilities.iconKeysSupported ?? false,
+      honorificSupported: capabilities.honorificSupported ?? false,
+      socialPlatformSupported: capabilities.socialPlatformSupported ?? false,
+    }
   }
 
   async list(businessDate: BusinessDate, search = ""): Promise<HttpBooking[]> {
@@ -66,7 +73,7 @@ export class HttpBookingApi {
   async create(fields: BookingWriteFields, idempotencyKey?: string): Promise<HttpBooking> {
     const response = await this.client.post<{ booking: BackendBookingPayload }>(
       "/bookings",
-      createBookingPayload(fields),
+      createBookingPayload(fields, this.capabilities),
       { reviver: dateReviver, idempotencyKey },
     )
     return mapBooking(response.booking)
@@ -75,7 +82,7 @@ export class HttpBookingApi {
   async createAndAssign(fields: BookingWriteFields, tableIds: number[], idempotencyKey?: string): Promise<HttpBooking> {
     const response = await this.client.post<{ booking: BackendBookingPayload }>(
       "/bookings/direct",
-      directBookingCreatePayload(fields, tableIds),
+      directBookingCreatePayload(fields, tableIds, this.capabilities),
       { reviver: dateReviver, idempotencyKey },
     )
     return mapBooking(response.booking)
@@ -84,7 +91,7 @@ export class HttpBookingApi {
   async update(current: HttpBooking, fields: Partial<BookingWriteFields>): Promise<HttpBooking> {
     const response = await this.client.put<{ booking: BackendBookingPayload }>(
       `/bookings/${current.id}`,
-      fullUpdateBookingPayload(current, fields),
+      fullUpdateBookingPayload(current, fields, this.capabilities),
       { reviver: dateReviver },
     )
     return mapBooking(response.booking)

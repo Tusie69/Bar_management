@@ -1,7 +1,8 @@
+import { formatHonorificName } from "@/domain/booking-identity"
+import { formatBookingSource } from "@/domain/enums"
 import { ChevronLeft } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { RevealPhone } from "@/components/reveal-phone"
-import { formatBookingSource } from "@/components/booking-pickers"
 import { useReservations, useWaitlist } from "@/hooks/use-data"
 import { fmtBusinessDate, fmtDayMonth, fmtTime12, MS, venueDateString, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -106,7 +107,7 @@ export function DetailScreen({
     {
       title: "Khách",
       rows: [
-        { k: "Tên", v: r.displayName },
+        { k: "Tên", v: formatHonorificName(r.displayName, r.honorific) },
         {
           k: "Số điện thoại",
           v: (
@@ -206,7 +207,7 @@ export function DetailScreen({
         >
           <div className="flex items-start gap-2.5">
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="text-[22px] font-semibold tracking-[-0.01em] text-tx-strong">{r.displayName}</span>
+              <span className="text-[22px] font-semibold tracking-[-0.01em] text-tx-strong">{formatHonorificName(r.displayName, r.honorific)}</span>
               <span className="text-[14px] text-tx-2">
                 {fmtTime12(r.expectedAt)}, {r.partySize} khách,{" "}
                 {r.tableIds.length ? `Bàn ${codesOf(r.tableIds, m.model)}` : "Chưa có bàn"}
