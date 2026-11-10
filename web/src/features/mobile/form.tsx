@@ -1,3 +1,4 @@
+import { guestCount, guestValueFrom, type GuestValue } from "@/domain/booking-rules"
 import { ChevronLeft } from "lucide-react"
 import { useMemo, useState } from "react"
 import {
@@ -20,9 +21,6 @@ import {
   socialPlatformSupported,
   type Honorific,
   type SocialPlatform,
-  guestCount,
-  guestValueFrom,
-  type GuestValue,
 } from "@/components/booking-pickers"
 import { useAvailability, useVenueSettings } from "@/hooks/use-data"
 import { useAction } from "@/hooks/use-action"

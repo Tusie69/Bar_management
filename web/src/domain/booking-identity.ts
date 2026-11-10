@@ -34,3 +34,9 @@ export function contactNameUpdate(
   if (input.trim()) return { contactName: input }
   return hasGuestName ? { contactName: "" } : {}
 }
+
+export function formatHonorificName(name: string, honorific?: "MR" | "MS" | null): string {
+  if (honorific === "MR") return `Mr ${name}`
+  if (honorific === "MS") return `Ms ${name}`
+  return name
+}

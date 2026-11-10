@@ -483,6 +483,20 @@ describe("canonical contract writes", () => {
     await api.createReservation({ contactName: "An", partySize: 4, expectedAt: at, sourceCode: "HOTLINE" })
     expect(writes()).toEqual([expect.objectContaining({ path: "/bookings" })])
   })
+  it("omits unsupported optional fields at the real HTTP boundary for create, direct create and update", async () => {
+    const metadata = { iconKeys: ["star"], honorific: "MR" as const, socialPlatform: "FB" }
+    const fields = { contactName: "An", partySize: 4, expectedAt: at, sourceCode: "SOCIAL" as const, ...metadata }
+    await api.createReservation(fields)
+    await api.createReservation({ ...fields, tableIds: [1] })
+    await api.updateReservation({ id: 11, version: 1, partySize: 5, ...metadata })
+    await api.updateReservation({ id: 11, version: 1, iconKeys: [], honorific: null, socialPlatform: null })
+    expect(writes().map(({ method, path }) => [method, path])).toEqual([
+      ["POST", "/bookings"], ["POST", "/bookings/direct"], ["PUT", "/bookings/11"], ["PUT", "/bookings/11"],
+    ])
+    for (const { body } of writes()) for (const field of ["iconKeys", "honorific", "socialPlatform"]) {
+      expect(body).not.toHaveProperty(field)
+    }
+  })
   it("propagates atomic assignment failure without a fallback create or retry", async () => {
     failure = { path: "/bookings/direct", status: 409, code: "RESOURCE_CONFLICT" }
     await expect(
@@ -506,8 +520,6 @@ describe("canonical contract writes", () => {
           classification: "UNCLASSIFIED",
           guestType: null,
           isBirthday: false,
-          iconKeys: [],
-          honorific: null,
         },
       },
     ])

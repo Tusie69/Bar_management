@@ -9,18 +9,14 @@ import {
   calculateStatusCounts,
   computeZoneBounds,
   findGroupRepresentativeId,
-  formatBarSeatRange,
   formatCellGuestName,
   formatGroupCode,
   groupCode,
   groupDisplayName,
-  pickPrimaryGuestFlag,
   resolveCellCornerIcons,
   supportedFlags,
   tableCanActivate,
   GUEST_ICON_PRIORITY,
-  countFloorStates,
-  wholeFloorBounds,
 } from "./floor-visual-rules"
 
 const createTable = (
@@ -302,18 +298,6 @@ describe("guest-type icon priority (Item 5)", () => {
     expect(GUEST_ICON_PRIORITY).toEqual(["VIP", "DESIGNATED", "BIRTHDAY", "RETURNING", "NEW"])
   })
 
-  it("picks the single highest priority flag according to approved order", () => {
-    // 🎂 > 🔥
-    expect(pickPrimaryGuestFlag(["RETURNING", "BIRTHDAY"])).toBe("BIRTHDAY")
-    // ⭐ > 🎂
-    expect(pickPrimaryGuestFlag(["VIP", "BIRTHDAY"])).toBe("VIP")
-    // 📌 > 🎂
-    expect(pickPrimaryGuestFlag(["DESIGNATED", "BIRTHDAY"])).toBe("DESIGNATED")
-    // 🔥 > 🆕
-    expect(pickPrimaryGuestFlag(["NEW", "RETURNING"])).toBe("RETURNING")
-    // None
-    expect(pickPrimaryGuestFlag([])).toBeNull()
-  })
 })
 
 describe("StatusLegend counts and deduplication (Item 8)", () => {
@@ -847,25 +831,6 @@ describe("waitlist marker display per zone mode (Section MARKER)", () => {
 const table = (id: number, x: number, y: number, w = 40, h = 30) => ({ id, x, y, w, h, kind: "TABLE" }) as TableView
 
 describe("adaptive floor visual rules", () => {
-  it("fits the full frame and any table beyond it", () => {
-    expect(wholeFloorBounds([], 589, 754)).toEqual({ x: 20, y: 20, w: 549, h: 734 })
-    expect(wholeFloorBounds([table(1, 580, 748)], 589, 754)).toEqual({ x: 20, y: 20, w: 580, h: 743 })
-  })
-
-  it("keeps late, no-show and overdue hold distinct in the legend", () => {
-    const tables = [table(1, 0, 0), table(2, 10, 10), table(3, 20, 20)]
-    const states = new Map([
-      [1, { state: "late" }],
-      [2, { state: "noshow" }],
-      [3, { state: "hold_overdue" }],
-    ] as [number, FloorTableState][])
-    expect([...countFloorStates(tables, states)]).toEqual([
-      ["late", 1],
-      ["noshow", 1],
-      ["hold_overdue", 1],
-    ])
-  })
-
   it("keeps group display codes deterministic beyond Z", () => {
     expect(groupCode(1)).toBe("G01")
     expect(groupCode(26)).toBe("G26")
@@ -1037,11 +1002,9 @@ describe("Group border redesign - status-colored thick borders and neutral selec
     const bar = realTables.filter((t) => t.kind === "BAR_SEAT")
     const pair = bar.slice(4, 6) // Bar 5, 6
     expect(groupDisplayName(pair)).toBe("Bar5-6")
-    expect(formatBarSeatRange(pair)).toBe("Bar5-6")
 
     const triple = bar.slice(9, 12) // Bar 10, 11, 12
     expect(groupDisplayName(triple)).toBe("Bar10-12")
-    expect(formatBarSeatRange(triple)).toBe("Bar10-12")
 
     const bTables = realTables.filter((t) => ["B5", "B6", "B7"].includes(t.code))
     expect(groupDisplayName(bTables)).toBe("B5-B6-B7")

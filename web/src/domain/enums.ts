@@ -187,3 +187,10 @@ export const RELEASE_REASON_LABEL: Record<AllocationReleaseReason, string> = {
   ENTRY_ERROR: "Nhập sai",
   UNDO: "Hoàn tác",
 }
+
+export function formatBookingSource(sourceCode: BookingSourceCode, socialPlatform?: string | null): string {
+  if (sourceCode === "SOCIAL" && socialPlatform) {
+    return `Social - ${socialPlatform}`
+  }
+  return SOURCE_LABEL[sourceCode] ?? sourceCode
+}

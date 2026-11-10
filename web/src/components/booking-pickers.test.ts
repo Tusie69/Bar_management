@@ -1,3 +1,6 @@
+import { formatBookingSource } from "@/domain/enums"
+import { formatHonorificName } from "@/domain/booking-identity"
+import { guestCount, guestError, guestValueFrom } from "@/domain/booking-rules"
 import React from "react"
 import { describe, expect, it, vi } from "vitest"
 import { renderToString } from "react-dom/server"
@@ -8,11 +11,6 @@ import {
   SOCIAL_PLATFORMS,
   SourcePicker,
   formatBookingIcons,
-  formatBookingSource,
-  formatHonorificName,
-  guestCount,
-  guestError,
-  guestValueFrom,
   handleSourceChange,
   validateSocialPlatform,
 } from "./booking-pickers"

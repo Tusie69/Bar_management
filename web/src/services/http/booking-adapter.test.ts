@@ -76,7 +76,7 @@ describe("booking contract adapter", () => {
 
     const switchedToHotline = fullUpdateBookingPayload(current, { sourceCode: "HOTLINE", socialPlatform: "FB" })
     expect(switchedToHotline).toMatchObject({ sourceCode: "HOTLINE" })
-    expect(switchedToHotline).not.toHaveProperty("socialPlatform")
+    expect(switchedToHotline).toHaveProperty("socialPlatform", null)
   })
 
   it("handles iconKeys in create, update, and mapBooking", () => {
@@ -195,6 +195,7 @@ describe("booking contract adapter", () => {
       classification: "UNCLASSIFIED",
       guestType: null,
       isBirthday: false,
+      socialPlatform: null,
       iconKeys: [],
       honorific: null,
       version: 3,
