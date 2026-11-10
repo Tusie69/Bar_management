@@ -313,8 +313,30 @@ npx vitest run test/table-layout-group.mysql.test.ts
 `test/table-layout-group.mysql.test.ts` covers merge, split, lifecycle across Close Visit / Cancel / No-show / the
 business-day sweep, capacity confirmation, permission and spare tables, the cross-zone flag, concurrency (two devices on
 one table, two devices splitting one cluster, a double-clicked request, a rolled-back merge) and the older `CLAIM`
-grouping. On the web side, `src/services/http/floor-stream.test.ts` covers the SSE cursor and
+grouping. `test/floor-change-stream.test.ts` covers the stream's cursor rules. On the web side,
+`src/services/http/floor-stream.test.ts` covers the SSE client and
 `src/features/floor/layout-cluster.test.ts` the cluster selection and confirmation dialogs.
+
+A browser run on real phone and tablet viewports, against this API and a disposable MySQL test database:
+
+```powershell
+$env:DB_NAME='gam21_platform_test'
+$env:DB_PORT='3306'
+pnpm -C web e2e:c1
+```
+
+`web/e2e/c1-table-group-mobile.mjs` drives 360, 390, 430, 768 and 1024px with touch emulation. At every width it checks
+that merge and split are reachable, that each control measures at least 44px on its short side (measured from the
+rendered box, not from class names) and that the page does not scroll sideways. At 390 and 768 it runs the whole flow:
+merge B3+B4+B5 with no guest details, one tap on a member identifying the cluster, a second browser context seeing the
+split in under two seconds without a reload, re-merging the released tables, the capacity refusal and its confirmation,
+and that a cluster serving a party is offered the BA-021 keep-tables split rather than a dissolve. It then revokes
+`table.group.manage` to check the control is disabled and the server still answers 403, and marks a table spare to check
+the confirmation gate. It reseeds the fixture before each viewport, so no result depends on the order they ran in.
+
+The run needs `pnpm` (it drives the workspace filters), a Chromium that Playwright can launch, and `DB_NAME` ending in
+`_test`; it refuses any database outside the approved disposable list. Set `PW_CHROMIUM_PATH` to use an installed
+Chrome.
 
 ## Bookings
 
