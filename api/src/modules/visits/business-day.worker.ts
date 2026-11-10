@@ -2,6 +2,7 @@ import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/prom
 
 import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
+import { recordTableTurn } from './table-turn.repository.js'
 
 const supportedTimeZone = 'Asia/Ho_Chi_Minh'
 const calendarDatePattern = /^(\d{4})-(\d{2})-(\d{2})$/
@@ -138,13 +139,29 @@ export async function processBusinessDayEndCandidate(
       return 'SKIPPED'
     }
 
-    const [allocationRows] = await connection.execute<(RowDataPacket & { id: number; table_id: number; group_id: number | null })[]>(
-      `SELECT id, table_id, group_id FROM table_allocations
-       WHERE organization_id = ? AND venue_id = ? AND visit_id = ?
-         AND kind = 'USAGE' AND released_at IS NULL
-       ORDER BY id FOR UPDATE`,
+    const [allocationRows] = await connection.execute<(RowDataPacket & {
+      id: number; table_id: number; table_code: string; group_id: number | null
+    })[]>(
+      `SELECT a.id, a.table_id, dt.code AS table_code, a.group_id FROM table_allocations AS a
+       JOIN dining_tables AS dt ON dt.venue_id = a.venue_id AND dt.id = a.table_id
+       WHERE a.organization_id = ? AND a.venue_id = ? AND a.visit_id = ?
+         AND a.kind = 'USAGE' AND a.released_at IS NULL
+       ORDER BY a.id FOR UPDATE`,
       [organizationId, venueId, candidate.id],
     )
+    // C2: the end-of-shift close is recorded in the ledger so a forgotten visit is
+    // not lost to statistics, but it is not a receptionist's Trả bàn, so
+    // recordTableTurn leaves completed_at null and the badge does not count it.
+    const [seatedRows] = await connection.execute<(RowDataPacket & {
+      started_at: Date | string; guest_count: number; contact_name: string | null; customer_name: string | null
+    })[]>(
+      `SELECT v.started_at, v.guest_count, v.contact_name, c.display_name AS customer_name
+       FROM visits AS v
+       LEFT JOIN customers AS c ON c.organization_id = v.organization_id AND c.id = v.customer_id
+       WHERE v.organization_id = ? AND v.venue_id = ? AND v.id = ?`,
+      [organizationId, venueId, candidate.id],
+    )
+    const seated = seatedRows[0]
     const timestamp = mysqlDateTime(now)
     await connection.execute(
       `UPDATE table_allocations
@@ -162,6 +179,24 @@ export async function processBusinessDayEndCandidate(
     if (updated.affectedRows !== 1) {
       await connection.rollback()
       return 'SKIPPED'
+    }
+
+    if (seated && allocationRows.length) {
+      await recordTableTurn(connection, { organizationId, venueId }, {
+        visitId: candidate.id,
+        businessDate,
+        allocations: allocationRows.map((row) => ({
+          tableId: Number(row.table_id),
+          tableCode: row.table_code,
+          groupId: row.group_id ?? null,
+        })),
+        seatedAt: seated.started_at,
+        releasedAt: now,
+        guestCount: Number(seated.guest_count),
+        guestName: seated.contact_name ?? seated.customer_name ?? 'Khách',
+        endReason: 'BUSINESS_DAY_END',
+        closedByUserId: null,
+      })
     }
 
     const groupIds = [...new Set(allocationRows

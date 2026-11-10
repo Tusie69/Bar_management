@@ -4,6 +4,7 @@ import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
 import { businessDateAt } from '../bookings/business-date.js'
+import { completedTurnCounts } from '../visits/table-turn.repository.js'
 import { applicationNow } from '../../time/application-clock.js'
 import {
   deriveTableDisplayState,
@@ -84,6 +85,12 @@ export interface FloorTableProjection {
    * older clients keep working.
    */
   claimOwner: 'GROUP' | 'TABLE' | null
+  /**
+   * C2: turns completed on this table or its cluster during the operating day
+   * being viewed. The badge shows it from 1 and resets with the operating day,
+   * because the count is scoped to that date and never to live state.
+   */
+  seatedTurnCount: number
 }
 
 export interface FloorGroupProjection {
@@ -106,6 +113,8 @@ export interface FloorGroupProjection {
   displayState?: TableDisplayState
   claim?: FloorClaimProjection | null
   businessDate?: string
+  /** One badge for the whole cluster, never one per member table. */
+  seatedTurnCount?: number
 }
 
 export interface FloorProjection {
@@ -510,6 +519,8 @@ async function readProjection(
     layoutGroupByTable.set(tableId, groupId)
   }
 
+  const turnCounts = await completedTurnCounts(connection, actor, businessDate)
+
   const groupMembers = new Map<number, number[]>()
   for (const [tableId, row] of selectedByTable) {
     if (!row || row.group_id === null || row.group_symbol_no === null || row.group_dissolved_at !== null) continue
@@ -633,6 +644,12 @@ async function readProjection(
       groupDisplayCode: groupCode,
       groupMemberTableIds,
       claimOwner: claim === null ? null : groupId === null ? 'TABLE' : 'GROUP',
+      // A member of a LAYOUT cluster shows the cluster's count; the client draws it
+      // once, on the cluster's anchor cell, so the number is never multiplied.
+      seatedTurnCount:
+        (layoutGroupId === null ? undefined : turnCounts.byGroup.get(layoutGroupId))
+        ?? turnCounts.byTable.get(tableId)
+        ?? 0,
     } satisfies FloorTableProjection
   })
 
@@ -662,6 +679,7 @@ async function readProjection(
       displayState: owner?.displayState ?? 'EMPTY',
       claim: owner?.claim ?? null,
       businessDate: layout.businessDate,
+      seatedTurnCount: turnCounts.byGroup.get(groupId) ?? 0,
     })
   }
 
@@ -669,7 +687,14 @@ async function readProjection(
     if (tableIds.length < 2 || layoutGroups.has(groupId)) continue
     const row = selectedByTable.get(tableIds[0]!)!
     const symbolNo = Number(row?.group_symbol_no)
-    groups.push({ id: groupId, symbolNo, displayCode: groupDisplayCode(symbolNo), tableIds, origin: 'CLAIM' })
+    groups.push({
+      id: groupId,
+      symbolNo,
+      displayCode: groupDisplayCode(symbolNo),
+      tableIds,
+      origin: 'CLAIM',
+      seatedTurnCount: turnCounts.byTable.get(tableIds[0]!) ?? 0,
+    })
   }
   groups.sort((left, right) => left.id - right.id)
 

@@ -182,6 +182,8 @@ mysqlDescribe('future floor projection MySQL integration', () => {
       // C1: the projection now says which lifecycle a cluster has. This one is
       // the implicit cluster of a visit, not an independent layout cluster.
       origin: 'CLAIM',
+      // C2: no turn has completed on these tables today, so the badge is absent.
+      seatedTurnCount: 0,
     }])
     expect(current.tables.map((table) => table.groupMemberTableIds)).toEqual([
       [tableId, secondTableId],

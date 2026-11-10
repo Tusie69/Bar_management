@@ -36,7 +36,9 @@ async function clearFixture(): Promise<void> {
   for (const statement of [
     'DELETE FROM booking_call_logs',
     'DELETE FROM operation_log',
+    'DELETE FROM table_turns',
     'DELETE FROM table_allocations',
+    'DELETE FROM table_group_members',
     'DELETE FROM table_groups',
     'DELETE FROM table_holds',
     'DELETE FROM waitlist_table_preferences',

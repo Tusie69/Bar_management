@@ -439,14 +439,193 @@ BA-023 records the approved PO decision: Receptionist calling uses the dedicated
 | POST | `/visits/:id/close` | `visit.end` | Body `{version,mode:"MANUAL",reason,note?}`; `{visit:ClosedVisitView}` |
 | POST | `/visits/:id/move` | `visit.move` | Body `{version,tableIds,note?}`; `{visit:MovedVisitView}` |
 | POST | `/visits/:id/merge` | `visit.combine` | Body `{version,tableIds}`; `{visit:MovedVisitView,group:{id,symbolNo,tableIds}}` |
+| GET | `/visits/turns?from=&to=` | `report.read` | Table-turn ledger over a range of operating days; see **Table turns** below |
 
-Manual close reasons are `GUEST_LEFT` or `ENTRY_ERROR`; note is optional, at most 500 characters. Closing releases the visit allocations and dissolves unused groups. `ClosedVisitView` is `{id,businessDate,status:"CLOSED",endedAt,endReason,version,releasedTables:[{id,code}]}`. `MovedVisitView` is `{id,businessDate,version,previousTables:[{id,code}],tables:[{id,code}]}`. Move validates capacity and same-kind targets, allows multiple tables across bookable zones without adjacency configuration, and creates or retains their shared group. It rejects every unreleased USAGE allocation on target tables regardless of business date, plus holds on the visit's business date. Merge follows the group rules above.
+Manual close reasons are `GUEST_LEFT` or `ENTRY_ERROR`; note is optional, at most 500 characters. Closing releases the visit allocations and dissolves unused groups. `ClosedVisitView` is `{id,businessDate,status:"CLOSED",endedAt,endReason,version,releasedTables:[{id,code}],turn}`, where `turn` is the table turn this close recorded (see **Table turns** below) or null when the visit already had one. Closing releases the operational state only: it never dissolves a LAYOUT cluster. `MovedVisitView` is `{id,businessDate,version,previousTables:[{id,code}],tables:[{id,code}]}`. Move validates capacity and same-kind targets, allows multiple tables across bookable zones without adjacency configuration, and creates or retains their shared group. It rejects every unreleased USAGE allocation on target tables regardless of business date, plus holds on the visit's business date. Merge follows the group rules above.
 
 `BUSINESS_DAY_WORKER_ENABLED` defaults to `true`; `BUSINESS_DAY_WORKER_INTERVAL_MS` defaults to `30000`. The worker sweeps on startup and then at that interval. Each open visit becomes eligible at the venue's next-day business cutoff (05:00 in `Asia/Ho_Chi_Minh` with the default venue configuration). At or after the cutoff, one transaction ends the visit, releases all its active USAGE allocations, dissolves groups with no remaining allocations, increments the visit version/change sequence and audits `VISIT_AUTO_CLOSED_BUSINESS_DAY` as SYSTEM. Visit/allocation reasons are `BUSINESS_DAY_END`, with null staff actor IDs. Migration 0006 enables these reasons; migration 0007 permits system group dissolution only with `dissolve_reason = 'BUSINESS_DAY_END'` while preserving staff attribution on manual dissolution. The worker revalidates each scanned candidate under a lock and skips stale versions; a later sweep rescans them. Audit failure rolls the transaction back.
 
 Carry-over occupancy remains visible and `staleFromPreviousDay` remains true on the current business-date projection until allocations are actually released. Past-date behavior is unchanged. A future business-date projection excludes earlier `USAGE` allocations and includes only exact-date `USAGE`, while reservation and waitlist holds remain scoped to the selected date. This projection filter never releases or rewrites allocations. It covers the interval before the worker runs and operation with the worker disabled; GET never performs a release. Auto-close takes precedence once its transaction commits, so subsequent current-date floor reads show the tables free and remove empty groups. It closes visits only: unreleased reservation/waitlist holds remain reserved on their own business date, CHECKED_IN reservations retain their status, and linked waitlist entries already closed as SEATED retain their closure metadata, version and WAITLIST_SEATED audit. There is no second waitlist cancellation or seating event at business-day end.
 
 `AFTER_PAYMENT` is recognized but rejected because a trusted payment verifier is unavailable (`PAYMENT_VERIFICATION_UNAVAILABLE`). The API does not provide a payment-confirmation endpoint.
+
+## Table turns — lượt khách (C2)
+
+A table or a cluster earns **+1 turn** when both are true: it was `IN_USE`, and the receptionist completed Trả bàn.
+Check-in records when the party sat down (`visits.started_at`); closing the visit is what closes the turn. Each turn is
+its own row, so later statistics read history instead of recomputing it from live state.
+
+The operating day is the venue's own, which turns over at the 05:00 cutoff: 00:30 on 12/11 belongs to the operating day
+of **11/11**, and the badge resets when that day rolls over without deleting anything.
+
+### Why a new table rather than `visits`
+
+`visits` has the guest and the times, but no ordinal, no booking source, and no record of **which** tables or cluster
+the party sat on — that lives in `table_allocations`, which is released on close and changes when a cluster is split.
+Everything a turn needs is therefore snapshotted into `table_turns` at close time, so editing the booking or splitting
+the cluster afterwards cannot rewrite what happened.
+
+### ERD
+
+```
+venues ──1:N──> table_turns <──N:1── visits            (uq_turn_visit: one visit is one turn)
+                     │ ▲
+    dining_tables ───┘ └─── table_groups               (exactly one of table_id / group_id)
+                     │
+               reservations                            (nullable: a pure walk-in has none)
+
+table_turns
+  id                    PK
+  organization_id, venue_id      FK venues (organization_id, id)
+  business_date         DATE            operating day, 05:00 → 05:00
+  scope                 'TABLE'|'GROUP'
+  table_id              FK dining_tables (venue_id, id)   -- set when scope = TABLE
+  group_id              FK table_groups  (venue_id, id)   -- set when scope = GROUP
+  scope_key             GENERATED STORED = IF(scope='GROUP', group_id, table_id)
+  turn_no               SMALLINT         ordinal within (venue, business_date, scope, scope_key)
+  visit_id              FK visits (venue_id, id)
+  reservation_id        FK reservations (venue_id, id), NULL for a walk-in
+  table_codes_snapshot  JSON    ["B3","B4","B5"]
+  member_table_ids      JSON    [101,102,103]
+  group_code_snapshot   VARCHAR(24)  the cluster's mark at the time, NULL for a single table
+  guest_name            VARCHAR(120)
+  guest_count           SMALLINT
+  source_code           VARCHAR(20)  booking source, NULL for a walk-in
+  origin                'RESERVATION'|'WALK_IN'|'WAITLIST'
+  seated_at             DATETIME(3)  giờ vào, from the visit
+  released_at           DATETIME(3)  giờ ra, the instant the allocations carry
+  end_reason            VARCHAR(20)
+  completed_at          DATETIME(3)  NULL = recorded but not a served turn
+  closed_by_user_id     FK users, NULL only for the business-day close
+  created_at            DATETIME(3)
+
+  UNIQUE uq_turn_visit    (venue_id, visit_id)
+  UNIQUE uq_turn_ordinal  (venue_id, business_date, scope, scope_key, turn_no)
+  KEY    ix_turn_badge    (venue_id, business_date, scope, scope_key, completed_at)
+  KEY    ix_turn_range    (venue_id, business_date, id)
+```
+
+### Scope: one turn for a cluster, never one per table
+
+A `LAYOUT` cluster has a lasting identity, so B3+B4+B5 earns **one** turn against the cluster. Anything else is counted
+against a table: its own table when the party sat alone, or the **lowest member id** when the party sat on an ad-hoc
+`CLAIM` grouping, whose id is discarded on close and so cannot carry an ordinal from one party to the next. That anchor
+is the same cell the client already draws a cluster's badge on, so the number appears once either way.
+
+### What counts
+
+`completed_at` is the gate, not the row's existence:
+
+| Close | Row written | Counted |
+| --- | --- | --- |
+| `GUEST_LEFT` (Trả bàn) | yes | **yes** |
+| `ENTRY_ERROR` (sửa nhập sai) | yes | no |
+| `BUSINESS_DAY_END` (worker cuối ca) | yes | no — see `[?]` below |
+| A booking cancelled or marked No-show before check-in | no row at all | no |
+
+A booking that never reached `IN_USE` writes nothing: the turn is written by the close path, which only runs on a visit.
+
+### Idempotency and concurrency
+
+`uq_turn_visit` makes one visit one turn, in the database rather than in a check this code performed first. A repeated
+Close Visit is already refused by the visit's own state (`VISIT_ALREADY_CLOSED`); two devices closing the same visit at
+once leave exactly one turn, because the loser's insert is refused by that key.
+
+The ordinal is read **without** `FOR UPDATE` and the insert retries on a `uq_turn_ordinal` collision, up to six times.
+A locking read took a gap lock on `table_turns` before the close path locks the venue row for `change_seq`, which let
+two devices closing two unrelated visits deadlock; the retry keeps the guarantee without the lock. For the same reason
+the turn is written **after** `nextVenueChangeSequence`, so concurrent closes serialise on the venue row first. It is
+still the same transaction, so a rolled-back close leaves no turn.
+
+### Badge on the floor
+
+`GET /tables?date=` now returns `seatedTurnCount` on every table and on every group: completed turns for that operating
+day. The client shows it from 1 and draws it once per cluster, on the cluster's anchor cell, so the number is never
+multiplied by the member count. A member of a `LAYOUT` cluster reports the cluster's count, so the cell and the cluster
+tile cannot disagree. Close Visit bumps `venues.change_seq`, which the SSE stream publishes, so every open device
+refetches and the badge moves in well under two seconds — the count travels in the projection, never in the event.
+
+A cluster that is split keeps its history: the old turns still name the original `group_id` and `group_code_snapshot`,
+and they deliberately do **not** migrate to the now-single tables, whose badge is therefore 0.
+
+### `GET /api/v1/visits/turns`
+
+| Method | Path | Permission | Request | Response | Error codes |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/visits/turns?from=&to=&page=&pageSize=&includeUncounted=` | `report.read` | query only | `{from,to,page,pageSize,total,completedTotal,guestTotal,turns:TurnView[]}` | `INVALID_BUSINESS_DATE`, `INVALID_DATE_RANGE`, `DATE_RANGE_TOO_WIDE`, `INVALID_PAGE`, `INVALID_PAGE_SIZE`, `INVALID_INCLUDE_UNCOUNTED`, `PERMISSION_DENIED` |
+
+`from` and `to` are operating days, `YYYY-MM-DD`, inclusive, at most 366 days apart. `page` starts at 1, `pageSize` is
+1–200 and defaults to 50. `includeUncounted=true` also returns the rows that do not count; the default returns only
+served turns. `completedTotal` and `guestTotal` are totals for the whole range, not for the page.
+
+It is gated on `report.read`, which **RECEPTIONIST does not hold**: a receptionist reads the badge from the floor
+projection, not the statistics ledger. This endpoint exists for the statistics screen of a later sprint; no report
+screen is built here.
+
+```http
+GET /api/v1/visits/turns?from=2026-11-11&to=2026-11-11
+```
+
+```json
+{
+  "from": "2026-11-11", "to": "2026-11-11", "page": 1, "pageSize": 50,
+  "total": 1, "completedTotal": 1, "guestTotal": 12,
+  "turns": [{
+    "turnId": 31, "turnNo": 1, "businessDate": "2026-11-11",
+    "scope": "GROUP", "groupCode": "◆A", "groupId": 101, "tableId": null,
+    "tableCodes": ["B3", "B4", "B5"], "memberTableIds": [101, 102, 103],
+    "guestName": "Đoàn 12 khách", "guestCount": 12,
+    "sourceCode": "HOTLINE", "origin": "RESERVATION",
+    "seatedAt": "2026-11-11T14:31:02.117Z", "releasedAt": "2026-11-11T16:04:55.903Z",
+    "endReason": "GUEST_LEFT", "counted": true,
+    "visitId": 77, "reservationId": 54
+  }]
+}
+```
+
+`POST /visits/:id/close` additionally answers `turn`, which is the turn the close recorded, or `null` when the visit
+already had one:
+
+```json
+{"visit": {"id": 77, "status": "CLOSED", "releasedTables": [{"id":101,"code":"B3"}],
+  "turn": {"turnId": 31, "scope": "GROUP", "turnNo": 1, "counted": true}}}
+```
+
+### Migration
+
+`0018_table_turn_ledger.sql` creates `table_turns` and nothing else: no column is dropped, no row is updated or
+deleted, and no existing behaviour changes shape. Migrations are forward-only (doc 10 §2). Apply with
+`npm run db:migrate` from `Bar_management/api` with `DB_NAME` on the target database. Turns are not backfilled, because
+a past visit's cluster membership and booking source can no longer be reconstructed truthfully — the ledger starts from
+the first close after the migration, and that is deliberate rather than an omission.
+
+Test and E2E databases must delete `table_turns` before `visits`, `reservations`, `dining_tables` and `table_groups`;
+the shared fixtures and the per-file cleanups already do.
+
+### Unconfirmed decisions
+
+- `[?]` Whether Trả bàn counts as payment completed in the MVP. Applied as C7 of 01/11 describes, so a `GUEST_LEFT`
+  close counts the turn; there is no payment verification behind it.
+- `[?]` Whether the badge should reset at 17:00 rather than on the operating day. It currently follows the operating
+  day, which turns over at the 05:00 cutoff that the rest of the system already uses.
+- `[?]` Whether the end-of-shift auto-close should count as a served turn. It is recorded with `completed_at` null, so
+  it is in the ledger but not in the badge; turning it on is a one-line change and needs no backfill.
+
+### Testing
+
+```powershell
+cd Bar_management/api
+$env:RUN_MYSQL_INTEGRATION='1'
+$env:DB_NAME='gam21_platform_it_test'
+$env:NODE_ENV='test'
+npx vitest run test/table-turn.mysql.test.ts
+```
+
+`test/table-turn.mysql.test.ts` covers the eight recorded fields, a booking cancelled before check-in, the badge rising
+per turn and resetting with the operating day, the 00:30 boundary, the date-range query with pagination and permission,
+one turn for a cluster, a repeated and a concurrent close, distinct ordinals across two devices, history surviving a
+split, Close Visit leaving a cluster standing, an entry correction and the end-of-shift close staying uncounted, and a
+rolled-back close leaving nothing behind.
 
 ## Waitlist
 
@@ -510,7 +689,7 @@ the admin RBAC model, so no role is created here.
 
 ## Unavailable capabilities
 
-There are no implemented endpoints for customer search/profile/notes, operation-log listing, reports, zone flags, hold deadlines/releases, booking statistics as JSON, waitlist claim/release-claim, or standalone visits/allocations lists. Undo/redo, the table-group endpoints (merge, add members, dissolve, split), the floor SSE stream, venue configuration and account management do exist and are documented above. A catalog exposing lease/hold configuration does not imply that those write APIs exist. Unknown routes return 404; HTTP adapters may expose these unavailable methods as explicit 501 `NOT_SUPPORTED_BY_BACKEND` errors. Direct table-state writes and payment-verified closing have the restrictions described above.
+There are no implemented endpoints for customer search/profile/notes, operation-log listing, reports, zone flags, hold deadlines/releases, booking statistics as JSON, waitlist claim/release-claim, or standalone visits/allocations lists. Undo/redo, the table-group endpoints (merge, add members, dissolve, split), the floor SSE stream, the table-turn ledger read, venue configuration and account management do exist and are documented above. The turn ledger is a read for a later statistics screen; no report screen exists. A catalog exposing lease/hold configuration does not imply that those write APIs exist. Unknown routes return 404; HTTP adapters may expose these unavailable methods as explicit 501 `NOT_SUPPORTED_BY_BACKEND` errors. Direct table-state writes and payment-verified closing have the restrictions described above.
 
 ## Verification
 

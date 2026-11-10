@@ -83,6 +83,8 @@ async function cleanupEntities(ids: EntityIds) {
   const scopedDelete = async (table: string, key: string, owned: number[]) => {
     if (owned.length) await databasePool.execute(`DELETE FROM ${table} WHERE organization_id=? AND venue_id=? AND ${key} IN (${inIds(owned)})`, [organizationId, venueId, ...owned]);
   };
+  // C2: turn rows reference the visit, the table and the group, so they go first.
+  await scopedDelete("table_turns", "visit_id", snapshot.visits.map((r) => Number(r.id)));
   await scopedDelete("table_allocations", "id", snapshot.allocations.map((r) => Number(r.id)));
   // C1: membership rows reference the group, so they go before it.
   await scopedDelete("table_group_members", "group_id", snapshot.groups.map((r) => Number(r.id)));
@@ -124,6 +126,7 @@ async function verifyHistoricalNote(guestName: string | undefined) {
 async function cleanup() {
   const statements = [
     "DELETE FROM operation_log WHERE organization_id = ?",
+    "DELETE FROM table_turns WHERE organization_id = ?",
     "DELETE FROM table_allocations WHERE organization_id = ?",
     "DELETE FROM table_group_members WHERE organization_id = ?",
     "DELETE FROM table_groups WHERE organization_id = ?",
