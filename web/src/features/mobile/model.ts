@@ -36,9 +36,9 @@ export function chipOf(r: ReservationView, now: Date): string {
   const late = lateOf(r, now)
   if (r.warning === "late" || r.warning === "noshow") {
     if (r.lateConfirmedAt) {
-      return `Không tới · đã báo muộn · ${late} phút`
+      return `Tới muộn · đã báo muộn · ${late} phút`
     }
-    return `Không tới · ${late} phút`
+    return `Tới muộn · ${late} phút`
   }
   if (late) {
     return `Trễ ${late} phút`

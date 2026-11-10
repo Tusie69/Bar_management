@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { businessDateOf, fromVenueLocal } from "@/lib/time"
+import { guestCount, guestError, guestValueFrom, type GuestValue } from "@/components/booking-pickers"
 import {
   BOOKING_SLOTS,
   BOOKING_MINUTES,
@@ -17,6 +18,8 @@ import {
   isWithinBookingReceptionWindow,
   parseOtherGuests,
   slotLabel,
+  toggleClassification,
+  type BookingClassification,
   validateBookingCheckInDate,
   validateBookingTime,
 } from "./booking-rules"
@@ -25,14 +28,35 @@ const BD = "2026-10-27"
 const NOON = fromVenueLocal(BD, "12:00")
 
 describe("guest count", () => {
-  it("TC-01 quick picks are exactly 1..10", () => expect([...GUEST_QUICK]).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))
-  it("TC-02/03 Khác accepts 11 and 20", () => {
+  it("TC-01 quick picks are exactly 1..6", () => expect([...GUEST_QUICK]).toEqual([1, 2, 3, 4, 5, 6]))
+  it("TC-02/03 Số khác accepts 7, 11, 12 and 20", () => {
+    expect(parseOtherGuests("7")).toMatchObject({ ok: true, value: 7 })
     expect(parseOtherGuests("11")).toMatchObject({ ok: true, value: 11 })
+    expect(parseOtherGuests("12")).toMatchObject({ ok: true, value: 12 })
     expect(parseOtherGuests(" 20 ")).toMatchObject({ ok: true, value: 20 })
   })
-  it("TC-04 Khác rejects 10", () => expect(parseOtherGuests("10").ok).toBe(false))
-  it("TC-05 Khác rejects 0, negatives, decimals, letters, empty", () => {
+  it("TC-04 Số khác rejects 6", () => expect(parseOtherGuests("6").ok).toBe(false))
+  it("TC-05 Số khác rejects 0, negatives, decimals, letters, empty", () => {
     for (const v of ["0", "-3", "12.5", "12,5", "abc", "1e2", ""]) expect(parseOtherGuests(v).ok).toBe(false)
+  })
+  it("guestValueFrom and guestCount handle 1..6 and 12", () => {
+    const q = guestValueFrom(2)
+    expect(q).toEqual({ mode: "quick", party: 2, otherText: "" })
+    expect(guestCount(q)).toBe(2)
+    expect(guestError(q)).toBeNull()
+
+    const o12 = guestValueFrom(12)
+    expect(o12).toEqual({ mode: "other", party: 12, otherText: "12" })
+    expect(guestCount(o12)).toBe(12)
+    expect(guestError(o12)).toBeNull()
+
+    // Typing 12 into other mode
+    const typed12: GuestValue = { mode: "other", party: 12, otherText: "12" }
+    expect(guestCount(typed12)).toBe(12)
+
+    // Tapping 4 clears other text
+    const tapped4: GuestValue = { mode: "quick", party: 4, otherText: "" }
+    expect(guestCount(tapped4)).toBe(4)
   })
 })
 
@@ -65,42 +89,27 @@ describe("booking check-in business date", () => {
 })
 
 describe("booking slots", () => {
-  it("has exactly 25 slots, 19:00 → 01:00, every 15 minutes, in business order", () => {
-    expect(BOOKING_SLOTS).toEqual([
-      "19:00",
-      "19:15",
-      "19:30",
-      "19:45",
-      "20:00",
-      "20:15",
-      "20:30",
-      "20:45",
-      "21:00",
-      "21:15",
-      "21:30",
-      "21:45",
-      "22:00",
-      "22:15",
-      "22:30",
-      "22:45",
-      "23:00",
-      "23:15",
-      "23:30",
-      "23:45",
-      "00:00",
-      "00:15",
-      "00:30",
-      "00:45",
-      "01:00",
-    ])
+  it("has exactly 73 slots, 19:00 → 01:00, every 5 minutes, in business order", () => {
+    expect(BOOKING_SLOTS).toHaveLength(73)
+    expect(BOOKING_SLOTS[0]).toBe("19:00")
+    expect(BOOKING_SLOTS[1]).toBe("19:05")
+    expect(BOOKING_SLOTS[2]).toBe("19:10")
+    expect(BOOKING_SLOTS[BOOKING_SLOTS.length - 1]).toBe("01:00")
+    expect(BOOKING_SLOTS).toContain("20:05")
+    expect(BOOKING_SLOTS).toContain("22:35")
+    expect(BOOKING_SLOTS).not.toContain("20:03")
     const mins = BOOKING_SLOTS.map(businessMinute)
-    mins.slice(1).forEach((m, i) => expect(m - mins[i]).toBe(15))
+    mins.slice(1).forEach((m, i) => expect(m - mins[i]).toBe(5))
   })
   it("TC-07/08/12 valid; TC-09/13/14 invalid", () => {
     expect(validateBookingTime(BD, "19:00", NOON)).toBeNull()
+    expect(validateBookingTime(BD, "19:05", NOON)).toBeNull()
     expect(validateBookingTime(BD, "19:30", NOON)).toBeNull()
     expect(validateBookingTime(BD, "01:00", NOON)).toBeNull()
+    expect(isBookingSlot("19:05")).toBe(true)
     expect(isBookingSlot("19:15")).toBe(true)
+    expect(isBookingSlot("20:03")).toBe(false)
+    expect(validateBookingTime(BD, "20:03", NOON)).not.toBeNull()
     expect(validateBookingTime(BD, "01:30", NOON)).not.toBeNull()
     expect(validateBookingTime(BD, "18:30", NOON)).not.toBeNull()
   })
@@ -148,11 +157,11 @@ describe("booking slots", () => {
   })
   it.each([
     ["2026-10-31T05:00:00.000Z", 0],
-    ["2026-10-31T12:15:00.000Z", 1],
-    ["2026-10-31T14:15:00.000Z", 9],
-    ["2026-10-31T16:45:00.000Z", 19],
-    ["2026-10-31T17:30:00.000Z", 22],
-  ])("disables exactly the quarter-hour slots before %s", (instant, disabled) => {
+    ["2026-10-31T12:15:00.000Z", 3],
+    ["2026-10-31T14:15:00.000Z", 27],
+    ["2026-10-31T16:45:00.000Z", 57],
+    ["2026-10-31T17:30:00.000Z", 66],
+  ])("disables exactly the 5-minute slots before %s", (instant, disabled) => {
     const now = new Date(instant)
     expect(bookingSlots("2026-10-31", now).filter((slot) => slot.disabled).map((slot) => slot.time))
       .toEqual(BOOKING_SLOTS.slice(0, disabled))
@@ -171,8 +180,22 @@ describe("booking slots", () => {
     expect(bookingSlots(BD, now).find((slot) => slot.time === "21:30")?.disabled).toBe(true)
     expect(validateBookingTime(BD, "21:30", now)).not.toBeNull()
     const groups = bookingSlotGroups(BD, now)
-    expect(groups[0].slots).toHaveLength(20)
-    expect(groups[1].slots.map((slot) => slot.time)).toEqual(["00:00", "00:15", "00:30", "00:45", "01:00"])
+    expect(groups[0].slots).toHaveLength(60)
+    expect(groups[1].slots.map((slot) => slot.time)).toEqual([
+      "00:00",
+      "00:05",
+      "00:10",
+      "00:15",
+      "00:20",
+      "00:25",
+      "00:30",
+      "00:35",
+      "00:40",
+      "00:45",
+      "00:50",
+      "00:55",
+      "01:00",
+    ])
     expect(groups[1].slots.every((slot) => slot.calendarDate === "2026-10-28" && !slot.disabled)).toBe(true)
   })
   it("returns identical availability for equivalent instants written with different timezone offsets", () => {
@@ -183,28 +206,59 @@ describe("booking slots", () => {
   })
 })
 
-describe("15-minute wheel (R6, NA-13, TU-16)", () => {
-  it("offers only the four quarter-hour minute values", () => {
-    expect(BOOKING_MINUTES).toEqual(["00", "15", "30", "45"])
-    expect(BOOKING_MINUTES).not.toContain("35")
+describe("5-minute wheel (Nam decision)", () => {
+  it("offers 12 five-minute values", () => {
+    expect(BOOKING_MINUTES).toEqual(["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"])
+    expect(BOOKING_MINUTES).toContain("35")
+    expect(BOOKING_MINUTES).toContain("05")
+    expect(BOOKING_MINUTES).not.toContain("03")
   })
-  it("accepts 22:30 and quarter-hour stops inside 19:00-01:00", () => {
-    for (const time of ["19:00", "22:30", "23:45", "00:30", "01:00"]) expect(isBookingTime(time)).toBe(true)
-    expect(validateBookingTime(BD, "22:30", NOON)).toBeNull()
+  it("accepts 20:05, 22:30, 22:35 and 5-minute stops inside 19:00-01:00", () => {
+    for (const time of ["19:00", "20:05", "22:30", "22:35", "23:45", "00:30", "00:55", "01:00"])
+      expect(isBookingTime(time)).toBe(true)
+    expect(validateBookingTime(BD, "22:35", NOON)).toBeNull()
+    expect(validateBookingTime(BD, "20:05", NOON)).toBeNull()
   })
   it("rejects off-step and out-of-window values", () => {
-    for (const time of ["22:17", "22:35", "18:55", "01:05", "05:00", "", null]) expect(isBookingTime(time)).toBe(false)
+    for (const time of ["20:03", "22:17", "18:55", "01:05", "05:00", "", null])
+      expect(isBookingTime(time)).toBe(false)
+    expect(validateBookingTime(BD, "20:03", NOON)).not.toBeNull()
     expect(validateBookingTime(BD, "22:17", NOON)).not.toBeNull()
     expect(validateBookingTime(BD, "01:05", NOON)).not.toBeNull()
   })
   it("keeps quick times from settings, without inventing any", () => {
     expect(usableQuickTimes(undefined)).toEqual([])
-    expect(usableQuickTimes(["20:10", "18:00", "21:03", "00:30"])).toEqual(["00:30"])
+    expect(usableQuickTimes(["20:10", "18:00", "21:03", "00:30"])).toEqual(["20:10", "00:30"])
   })
   it("maps 23:30 and 00:30 to the same business date", () => {
     expect(bookingInstant(BD, "23:30").toISOString()).toBe(new Date(`${BD}T23:30:00+07:00`).toISOString())
     expect(businessDateOf(bookingInstant(BD, "23:30"))).toBe(BD)
     expect(businessDateOf(bookingInstant(BD, "00:30"))).toBe(BD)
     expect(bookingCalendarDate(BD, "00:30")).not.toBe(BD)
+  })
+})
+
+describe("Khách quen (O) / Khách mới (N) exclusivity (Item 3)", () => {
+  it("starts UNCLASSIFIED when nothing is selected", () => {
+    const initial: BookingClassification = "UNCLASSIFIED"
+    expect(initial).toBe("UNCLASSIFIED")
+  })
+
+  it("selects RETURNING on one tap", () => {
+    expect(toggleClassification("UNCLASSIFIED", "RETURNING")).toBe("RETURNING")
+  })
+
+  it("selects NEW on one tap", () => {
+    expect(toggleClassification("UNCLASSIFIED", "NEW")).toBe("NEW")
+  })
+
+  it("switches mutually exclusively between O and N", () => {
+    expect(toggleClassification("RETURNING", "NEW")).toBe("NEW")
+    expect(toggleClassification("NEW", "RETURNING")).toBe("RETURNING")
+  })
+
+  it("toggles off back to UNCLASSIFIED when clicking active button again", () => {
+    expect(toggleClassification("RETURNING", "RETURNING")).toBe("UNCLASSIFIED")
+    expect(toggleClassification("NEW", "NEW")).toBe("UNCLASSIFIED")
   })
 })

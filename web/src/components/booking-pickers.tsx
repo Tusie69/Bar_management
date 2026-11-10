@@ -1,11 +1,13 @@
 /**
  * Shared booking pickers for every booking form (Điều phối inline form, Đặt bàn sheet, mobile).
  * Rules live in domain/booking-rules.ts:
- * - GuestPicker: 1–10 in one tap, "Khác" for whole numbers above 10. 6 columns.
- * - BookingTimePicker: venue quick times + hour/minute wheels (19:00 → 01:00, 15-minute step). R6, NA-13, TU-16.
+ * - GuestPicker: 1–6 in one tap, "số khác..." input for whole numbers above 6. 6 columns.
+ * - BookingTimePicker: venue quick times + hour/minute wheels (19:00 → 01:00, 5-minute step). R6, NA-13, TU-16.
  */
 import { ChevronDown, Clock } from "lucide-react"
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react"
+import { api } from "@/services"
+import { SOURCE_LABEL, type BookingSourceCode } from "@/domain/enums"
 import {
   BOOKING_HOURS,
   BOOKING_MINUTES,
@@ -31,16 +33,16 @@ const chip = (on: boolean) =>
 
 export interface GuestValue {
   mode: "quick" | "other"
-  /** Last valid count (quick pick or a valid "Khác"). */
+  /** Last valid count (quick pick or a valid "số khác..."). */
   party: number
-  /** Raw "Khác" text, kept when switching back to 1–10. */
+  /** Raw other text, kept when switching back to 1–6. */
   otherText: string
 }
 
 export const guestValueFrom = (party: number): GuestValue =>
-  party > 10 ? { mode: "other", party, otherText: String(party) } : { mode: "quick", party, otherText: "" }
+  party > 6 ? { mode: "other", party, otherText: String(party) } : { mode: "quick", party, otherText: "" }
 
-/** Effective guest count, or null while "Khác" is invalid. */
+/** Effective guest count, or null while "số khác..." is invalid. */
 export function guestCount(v: GuestValue): number | null {
   if (v.mode === "quick") return v.party
   const p = parseOtherGuests(v.otherText)
@@ -57,7 +59,7 @@ export function GuestPicker({
 }: {
   value: GuestValue
   onChange: (v: GuestValue) => void
-  /** Show "Khác" errors even when the field is empty (after a submit attempt). */
+  /** Show "Số khác" errors even when the field is empty (after a submit attempt). */
   showErrors?: boolean
 }) {
   const id = useId()
@@ -69,7 +71,6 @@ export function GuestPicker({
         <span id={`${id}-label`} className="text-xs text-tx-2">
           Số khách
         </span>
-        <span className="text-xs text-tx-3">Trên 10 khách, chọn Khác</span>
       </div>
       <div role="radiogroup" aria-labelledby={`${id}-label`} className="grid grid-cols-6 gap-1.5">
         {GUEST_QUICK.map((n) => {
@@ -82,64 +83,45 @@ export function GuestPicker({
               aria-checked={on}
               aria-label={`${n} khách`}
               className={chip(on)}
-              onClick={() => onChange({ ...value, mode: "quick", party: n })}
+              onClick={() => onChange({ mode: "quick", party: n, otherText: "" })}
             >
               {n}
             </button>
           )
         })}
-        <button
-          type="button"
-          role="radio"
-          aria-checked={value.mode === "other"}
-          aria-label={parsed?.ok ? `Khác, ${parsed.value} khách` : "Khác, trên 10 khách"}
-          className={cn(chip(value.mode === "other"), "col-span-2")}
-          onClick={() => onChange({ ...value, mode: "other" })}
-        >
-          {parsed?.ok ? `Khác: ${parsed.value}` : "Khác"}
-        </button>
       </div>
-      {value.mode === "other" ? (
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor={`${id}-other`} className="text-xs text-tx-2">
-            Số khách, từ 11 trở lên
-          </label>
-          <div className="relative">
-            {/* text + inputMode: iOS number pad without type=number quirks. 16px stops iOS focus zoom. */}
-            <input
-              id={`${id}-other`}
-              autoFocus
-              className="tnum h-11 w-full rounded-sm border border-strong bg-background pr-16 pl-3 text-base outline-none placeholder:text-tx-3 focus:border-foreground aria-[invalid=true]:border-st-noshow"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              enterKeyHint="done"
-              autoComplete="off"
-              placeholder="Ví dụ: 12"
-              value={value.otherText}
-              aria-invalid={!!error}
-              aria-describedby={error ? `${id}-err` : undefined}
-              onChange={(e) => {
-                const p = parseOtherGuests(e.target.value)
-                onChange({ mode: "other", otherText: e.target.value, party: p.ok ? p.value : value.party })
-              }}
-            />
-            <span
-              aria-hidden
-              className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-tx-2"
-            >
-              khách
-            </span>
-          </div>
-          {error ? (
-            <span id={`${id}-err`} role="alert" className="text-xs text-st-noshow-ink">
-              {error}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
+      <div className="flex flex-col gap-1.5">
+        <input
+          id={`${id}-other`}
+          className="tnum h-11 w-full rounded-sm border border-strong bg-background px-3 text-base outline-none placeholder:text-tx-3 focus:border-foreground aria-[invalid=true]:border-st-noshow"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          enterKeyHint="done"
+          autoComplete="off"
+          placeholder="số khác..."
+          value={value.mode === "other" ? value.otherText : ""}
+          aria-invalid={!!error}
+          aria-describedby={error ? `${id}-err` : undefined}
+          onChange={(e) => {
+            const text = e.target.value
+            const p = parseOtherGuests(text)
+            onChange({
+              mode: "other",
+              otherText: text,
+              party: p.ok ? p.value : value.party,
+            })
+          }}
+        />
+        {error ? (
+          <span id={`${id}-err`} role="alert" className="text-xs text-st-noshow-ink">
+            {error}
+          </span>
+        ) : null}
+      </div>
     </div>
   )
 }
+
 
 const WHEEL_ITEM = 44
 
@@ -287,7 +269,7 @@ export function BookingTimePicker({
         <span id={`${id}-label`} className="text-xs text-tx-2">
           Giờ khách dự kiến đến
         </span>
-        <span className="tnum text-xs text-tx-2">19:00 đến 01:00 · phút cách 15</span>
+        <span className="tnum text-xs text-tx-2">19:00 đến 01:00 · phút cách 5</span>
       </div>
       {legacyValue ? (
         <p className="rounded-sm border border-st-late/40 bg-st-late-tint px-3 py-2 text-xs text-st-late-ink">
@@ -316,11 +298,13 @@ export function BookingTimePicker({
         aria-expanded={open}
         aria-label={`Chọn giờ bằng con lăn, đang chọn ${value || "chưa có"}`}
         onClick={() => setOpen((v) => !v)}
-        className="flex h-11 items-center justify-center gap-2 rounded-sm border border-strong bg-background text-sm font-medium"
+        className="flex h-11 items-center justify-between px-3 rounded-sm border border-strong bg-background text-sm font-medium"
       >
-        <Clock className="size-4 text-tx-2" aria-hidden />
-        <span className="tnum text-base font-semibold">{value || "--:--"}</span>
-        <span className="text-tx-2">Chọn bằng con lăn</span>
+        <div className="flex items-center gap-2">
+          <Clock className="size-4 text-tx-2" aria-hidden />
+          <span className="tnum text-base font-semibold">{value || "--:--"}</span>
+          <span className="text-tx-2">Chọn bằng con lăn</span>
+        </div>
         <ChevronDown className={cn("size-4 text-tx-2 transition-transform", open && "rotate-180")} aria-hidden />
       </button>
       {open ? (
@@ -353,6 +337,365 @@ export function BookingTimePicker({
           {error}
         </span>
       ) : null}
+    </div>
+  )
+}
+
+/**
+ * Tu's backend field will enable socialPlatform for HTTP mode in the future.
+ * On HTTP today, the select is hidden, required validation is skipped, and
+ * SOCIAL is saved alone so staff are not asked for data that would be thrown away.
+ */
+export const socialPlatformSupported = api.mode === "mock"
+
+export type SocialPlatform = "FB" | "IG" | "TIKTOK" | "THREADS" | "GG_REVIEW"
+
+export const SOCIAL_PLATFORMS: ReadonlyArray<{ value: SocialPlatform; label: string }> = [
+  { value: "FB", label: "FB" },
+  { value: "IG", label: "IG" },
+  { value: "TIKTOK", label: "TikTok" },
+  { value: "THREADS", label: "Threads" },
+  { value: "GG_REVIEW", label: "GG review" },
+]
+
+export const MAIN_SOURCE_BUTTONS: ReadonlyArray<{
+  code: BookingSourceCode | null
+  label: string
+  disabled?: boolean
+  disabledReason?: string
+}> = [
+  { code: null, label: "WK", disabled: true, disabledReason: "Chưa có mã nguồn WK từ API" },
+  { code: "HOTLINE", label: "Hotline" },
+  { code: "SOCIAL", label: "Social" },
+  { code: "SHAREHOLDER", label: "Cổ đông" },
+  { code: "STAFF", label: "Nhân sự" },
+]
+
+export function formatBookingSource(sourceCode: BookingSourceCode, socialPlatform?: string | null): string {
+  if (sourceCode === "SOCIAL" && socialPlatform) {
+    return `Social - ${socialPlatform}`
+  }
+  return SOURCE_LABEL[sourceCode] ?? sourceCode
+}
+
+export function handleSourceChange(
+  newSource: BookingSourceCode,
+  currentSource: BookingSourceCode,
+  onSourceChange: (s: BookingSourceCode) => void,
+  onPlatformChange: (p: SocialPlatform | "") => void,
+) {
+  if (newSource === currentSource) return
+  onSourceChange(newSource)
+  onPlatformChange("")
+}
+
+export function validateSocialPlatform(
+  source: BookingSourceCode,
+  platform?: string | null,
+  supported = socialPlatformSupported,
+): string | null {
+  if (supported && source === "SOCIAL" && !platform) {
+    return "Vui lòng chọn nền tảng mạng xã hội."
+  }
+  return null
+}
+
+export interface SourcePickerProps {
+  source: BookingSourceCode
+  onSourceChange: (source: BookingSourceCode) => void
+  platform?: SocialPlatform | string | null
+  onPlatformChange: (platform: SocialPlatform | "") => void
+  error?: string | null
+  supported?: boolean
+  id?: string
+  className?: string
+}
+
+export function SourcePicker({
+  source,
+  onSourceChange,
+  platform,
+  onPlatformChange,
+  error,
+  supported = socialPlatformSupported,
+  id: explicitId,
+  className,
+}: SourcePickerProps) {
+  const generatedId = useId()
+  const id = explicitId ?? generatedId
+
+  const isMainSource = MAIN_SOURCE_BUTTONS.some((b) => b.code === source)
+  const showSelect = supported && source === "SOCIAL"
+
+  const handleSourceClick = (code: BookingSourceCode) => {
+    handleSourceChange(code, source, onSourceChange, onPlatformChange)
+  }
+
+  return (
+    <div className={cn("flex flex-col gap-2", className)}>
+      <div role="radiogroup" aria-label="Nguồn" className="flex flex-wrap gap-1.5">
+        {MAIN_SOURCE_BUTTONS.map((btn) => {
+          if (!btn.code) {
+            return (
+              <button
+                key="WK"
+                type="button"
+                disabled
+                title={btn.disabledReason}
+                className={cn(chip(false), "cursor-not-allowed border-dashed opacity-60")}
+                aria-label="WK (chưa hỗ trợ)"
+              >
+                {btn.label}
+              </button>
+            )
+          }
+          const on = source === btn.code
+          return (
+            <button
+              key={btn.code}
+              type="button"
+              role="radio"
+              aria-checked={on}
+              className={chip(on)}
+              onClick={() => handleSourceClick(btn.code!)}
+            >
+              {btn.label}
+            </button>
+          )
+        })}
+
+        {/* Old bookings with FANPAGE, ZALO or OTHER keep their value: show as an extra selected chip */}
+        {!isMainSource && source ? (
+          <button
+            key={source}
+            type="button"
+            role="radio"
+            aria-checked={true}
+            className={chip(true)}
+            onClick={() => {}}
+          >
+            {SOURCE_LABEL[source] ?? source}
+          </button>
+        ) : null}
+      </div>
+
+      {showSelect ? (
+        <div className="flex flex-col gap-1.5 pt-0.5">
+          <select
+            id={`${id}-platform`}
+            aria-label="Chọn nền tảng"
+            aria-invalid={!!error}
+            aria-describedby={error ? `${id}-platform-error` : undefined}
+            value={platform || ""}
+            onChange={(e) => onPlatformChange((e.target.value || "") as SocialPlatform | "")}
+            className={cn(
+              "h-10 w-full rounded-sm border border-strong bg-background px-3 text-sm font-medium outline-none",
+              "focus:border-foreground aria-[invalid=true]:border-st-noshow",
+              !platform && "text-tx-3",
+            )}
+          >
+            <option value="" disabled>
+              Chọn nền tảng
+            </option>
+            {SOCIAL_PLATFORMS.map((p) => (
+              <option key={p.value} value={p.value} className="text-foreground">
+                {p.label}
+              </option>
+            ))}
+          </select>
+          {error ? (
+            <span id={`${id}-platform-error`} role="alert" className="text-xs text-st-noshow-ink">
+              {error}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * Tu's backend field will enable iconKeys (star, pin) for HTTP mode in the future.
+ * On HTTP today, star and pin are disabled with a short title reason, and
+ * Sinh nhật saves through the existing isBirthday field.
+ */
+export const iconKeysSupported = api.mode === "mock"
+
+/**
+ * Tu's backend migration 0016 adds honorific to reservations; Tu will wire the HTTP API later.
+ * On HTTP today, honorific buttons are disabled with a short reason in the title and send nothing.
+ */
+export const honorificSupported = api.mode === "mock"
+
+export type Honorific = "MR" | "MS"
+
+export function formatHonorificName(name: string, honorific?: "MR" | "MS" | null): string {
+  if (honorific === "MR") return `Mr ${name}`
+  if (honorific === "MS") return `Ms ${name}`
+  return name
+}
+
+export interface HonorificPickerProps {
+  value: Honorific | null | undefined
+  onChange: (value: Honorific | null) => void
+  disabled?: boolean
+  supported?: boolean
+  className?: string
+  size?: "default" | "lg"
+}
+
+export function HonorificPicker({
+  value,
+  onChange,
+  disabled = false,
+  supported = honorificSupported,
+  className,
+  size = "default",
+}: HonorificPickerProps) {
+  const isMr = value === "MR"
+  const isMs = value === "MS"
+  const isDisabled = disabled || !supported
+
+  const handleSelect = (choice: Honorific) => {
+    if (isDisabled) return
+    onChange(value === choice ? null : choice)
+  }
+
+  const disabledTitle = !supported ? "Chưa hỗ trợ danh xưng trên HTTP" : undefined
+
+  const btnCls = (on: boolean) =>
+    cn(
+      "tnum inline-flex shrink-0 items-center justify-center font-medium transition-colors select-none",
+      size === "lg"
+        ? "h-12 min-w-[44px] px-3 rounded-xl border text-base"
+        : "h-11 min-w-[42px] px-2.5 rounded-sm border text-sm",
+      on
+        ? "border-foreground bg-foreground text-background font-semibold"
+        : "border-strong bg-background text-tx-1 hover:border-foreground",
+      isDisabled && "cursor-not-allowed opacity-50 border-dashed bg-transparent text-tx-3",
+    )
+
+  return (
+    <div className={cn("flex shrink-0 items-center gap-1.5", className)} role="group" aria-label="Danh xưng">
+      <button
+        type="button"
+        role="radio"
+        aria-checked={isMr}
+        disabled={isDisabled}
+        title={disabledTitle ?? (isMr ? "Bỏ chọn Mr" : "Chọn Mr")}
+        onClick={() => handleSelect("MR")}
+        className={btnCls(isMr)}
+      >
+        Mr
+      </button>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={isMs}
+        disabled={isDisabled}
+        title={disabledTitle ?? (isMs ? "Bỏ chọn Ms" : "Chọn Ms")}
+        onClick={() => handleSelect("MS")}
+        className={btnCls(isMs)}
+      >
+        Ms
+      </button>
+    </div>
+  )
+}
+
+export type BookingIconKey = "star" | "pin"
+
+export interface IconPickerProps {
+  isBirthday: boolean
+  onBirthdayChange: (birthday: boolean) => void
+  iconKeys: string[]
+  onIconKeysChange: (keys: string[]) => void
+  supported?: boolean
+  className?: string
+}
+
+export function formatBookingIcons(isBirthday?: boolean, iconKeys?: string[]): string {
+  const parts: string[] = []
+  if (iconKeys?.includes("star")) parts.push("⭐ Bàn sếp")
+  if (iconKeys?.includes("pin")) parts.push("📌 Chỉ định")
+  if (isBirthday) parts.push("🎂 Sinh nhật")
+  return parts.length ? parts.join(" · ") : "Không có"
+}
+
+export function IconPicker({
+  isBirthday,
+  onBirthdayChange,
+  iconKeys,
+  onIconKeysChange,
+  supported = iconKeysSupported,
+  className,
+}: IconPickerProps) {
+  const hasStar = iconKeys.includes("star")
+  const hasPin = iconKeys.includes("pin")
+
+  const toggleStar = () => {
+    if (!supported) return
+    onIconKeysChange(hasStar ? iconKeys.filter((k) => k !== "star") : [...iconKeys, "star"])
+  }
+
+  const togglePin = () => {
+    if (!supported) return
+    onIconKeysChange(hasPin ? iconKeys.filter((k) => k !== "pin") : [...iconKeys, "pin"])
+  }
+
+  return (
+    <div className={cn("grid grid-cols-3 gap-1.5", className)} role="group" aria-label="Icon">
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={hasStar}
+        disabled={!supported}
+        title={!supported ? "Chưa hỗ trợ Bàn sếp trên HTTP" : "Bàn sếp"}
+        className={cn(
+          chip(hasStar),
+          "flex h-11 items-center justify-center gap-1.5 px-2 text-sm font-medium",
+          hasStar && "border-amber-500 bg-amber-500/15 text-amber-900 dark:text-amber-200 font-semibold",
+          !supported && "cursor-not-allowed opacity-50 border-dashed",
+        )}
+        onClick={toggleStar}
+      >
+        <span aria-hidden>⭐</span>
+        <span className="truncate">Bàn sếp</span>
+      </button>
+
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={hasPin}
+        disabled={!supported}
+        title={!supported ? "Chưa hỗ trợ Chỉ định trên HTTP" : "Chỉ định"}
+        className={cn(
+          chip(hasPin),
+          "flex h-11 items-center justify-center gap-1.5 px-2 text-sm font-medium",
+          hasPin && "border-blue-500 bg-blue-500/15 text-blue-900 dark:text-blue-200 font-semibold",
+          !supported && "cursor-not-allowed opacity-50 border-dashed",
+        )}
+        onClick={togglePin}
+      >
+        <span aria-hidden>📌</span>
+        <span className="truncate">Chỉ định</span>
+      </button>
+
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={isBirthday}
+        aria-label="Sinh nhật"
+        className={cn(
+          chip(isBirthday),
+          "flex h-11 items-center justify-center gap-1.5 px-2 text-sm font-medium",
+          isBirthday && "border-amber-500 bg-amber-500/15 text-amber-900 dark:text-amber-200 font-semibold",
+        )}
+        onClick={() => onBirthdayChange(!isBirthday)}
+      >
+        <span aria-hidden>🎂</span>
+        <span className="truncate">Sinh nhật</span>
+      </button>
     </div>
   )
 }

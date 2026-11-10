@@ -4,10 +4,15 @@
 import { chromium, expect } from "@playwright/test"
 import assert from "node:assert/strict"
 const base = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5173"
-const browser = await chromium.launch(
-  process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {},
-)
 import fs from "node:fs"
+const defaultChrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+const browser = await chromium.launch(
+  process.env.PW_CHROMIUM_PATH
+    ? { executablePath: process.env.PW_CHROMIUM_PATH }
+    : fs.existsSync(defaultChrome)
+      ? { executablePath: defaultChrome }
+      : {},
+)
 fs.mkdirSync("e2e/.artifacts", { recursive: true })
 let failures = 0
 const results = []
@@ -34,9 +39,9 @@ async function flow(name, userId, fn, pageOptions = {}) {
   }
   await page.close()
 }
-const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"]`).first()
+const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"], [data-combined-codes~="${code}"]`).first()
 const barSeat = (page, number) =>
-  page.locator(`[aria-label^="Ghế Bar ${number},"], [aria-label^="Ghế Bar ${number}:"]`).first()
+  page.locator(`[aria-label^="Ghế Bar ${number},"], [aria-label^="Ghế Bar ${number}:"], [data-combined-codes~="BAR${String(number).padStart(2, "0")}"]`).first()
 const expectLabel = async (loc, re) => {
   for (let i = 0; i < 25; i++) {
     if (re.test(await loc.getAttribute("aria-label"))) return
@@ -55,10 +60,10 @@ const selectTomorrow = async (page) => {
   await page.locator(`[data-day="${month}/${day}/${year}"]`).click()
 }
 const expectOccupied = async (loc, guests) => {
-  await expectLabel(loc, new RegExp(`Có khách,.*\\b${guests} khách(?:,|$)`))
+  await expectLabel(loc, new RegExp(`(?:Đã tới|Có khách),.*\\b${guests} khách(?:,|$)`))
   if (/\d+\s*(?:phút|giờ|['’′])/.test(await loc.textContent())) throw new Error("Occupied glyph still shows elapsed time")
-  if ((await loc.getAttribute("aria-label")).startsWith("Bàn ") && !(await loc.locator("text").allTextContents()).includes(`${guests} khách`)) {
-    throw new Error(`Occupied table must display ${guests} khách`)
+  if ((await loc.locator("text").allTextContents()).some((t) => /\b\d+\s*khách\b/i.test(t))) {
+    throw new Error("Occupied table must not display 'N khách' text inside the cell")
   }
 }
 
@@ -128,18 +133,20 @@ for (const theme of ["dark", "light"]) {
 await flow("walk-in from table panel, then undo", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await table(page, "B5").click()
-  await page.getByRole("tab", { name: "Walk-in" }).click()
+  await page.getByRole("button", { name: "Mở bàn Walk-in", exact: true }).click()
+  await page.getByRole("radio", { name: "4 khách" }).click()
   await page.getByRole("button", { name: "Mở bàn ngay" }).click()
   await expectOccupied(table(page, "B5"), 4)
   await page.getByText("Bản mô phỏng").first().waitFor()
   await page.getByRole("button", { name: "Hoàn tác", exact: true }).first().click()
-  await expectLabel(table(page, "B5"), /Chưa đặt/)
+  await expectLabel(table(page, "B5"), /Trống|Chưa đặt/)
 })
 
 await flow("inline walk-in suggests a table (3 taps)", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await table(page, "B5").click()
-  await page.getByRole("tab", { name: "Walk-in" }).click()
+  await page.getByRole("button", { name: "Mở bàn Walk-in", exact: true }).click()
+  await page.getByRole("radio", { name: "4 khách" }).click()
   await page.getByRole("button", { name: "Mở bàn ngay" }).click()
   await expectOccupied(table(page, "B5"), 4)
 })
@@ -152,14 +159,14 @@ await flow(
     const deferAlert = page.getByRole("button", { name: "Đã xem, xử lý sau" })
     if (await deferAlert.isVisible()) await deferAlert.click()
     await barSeat(page, 13).click()
+    await page.getByRole("button", { name: "Mở bàn Walk-in", exact: true }).click()
     const form = page.getByRole("form", { name: /^(Tạo đặt bàn|Mở bàn Walk-in)/ })
-    await form.getByRole("tab", { name: "Walk-in" }).click()
     await form.getByRole("radio", { name: "2 khách" }).click()
     if (await form.getByRole("radiogroup", { name: "Bàn trống" }).count()) {
       throw new Error("Walk-in still renders the legacy table-chip list")
     }
-    // One seat is not enough: the sheet says so and hands the map back instead of submitting.
-    await form.getByRole("button", { name: "Thiếu 1 chỗ · Chọn thêm bàn" }).click()
+    // P1 leaves capacity to staff; the map accepts another seat without a client-side shortage gate.
+    await expect(form.getByRole("button", { name: "Mở bàn ngay" })).toBeEnabled()
     await barSeat(page, 15).click()
     await form.getByText("Bar 13 + Bar 15 đang trống · 2 chỗ, đủ 2 khách").waitFor()
     if (await form.getByRole("button", { name: "Mở bàn ngay" }).isDisabled()) {
@@ -182,17 +189,15 @@ await flow("move seated party B7? -> combine B5 + B7 then split", 3, async (page
   await table(page, "B5").click()
   await page.getByRole("button", { name: /Mở Bàn B5/ }).click()
   await expectOccupied(table(page, "B5"), 2)
-  await page.getByRole("button", { name: "Ghép bàn" }).click()
+  await page.locator('[aria-label="Thao tác mặt bằng"]').getByRole("button", { name: "Ghép bàn", exact: true }).click()
   await table(page, "B7").click()
-  await page
-    .getByRole("dialog", { name: /Ghép thêm/ })
-    .getByRole("button", { name: "Ghép bàn" })
-    .click()
+  await page.getByRole("button", { name: /Ghép \d+ bàn|Xác nhận ghép/ }).click()
+  await expect(page.locator('[data-combined-codes="B5 B7"]')).toHaveCount(2)
   await expectOccupied(table(page, "B7"), 2)
   await page.getByRole("button", { name: "Tách bàn" }).click()
   await page.getByRole("dialog").getByRole("checkbox").nth(1).click()
   await page.getByRole("button", { name: /Tách và nhả B7/ }).click()
-  await expectLabel(table(page, "B7"), /Chưa đặt/)
+  await expectLabel(table(page, "B7"), /Trống|Chưa đặt/)
   await expectOccupied(table(page, "B5"), 2)
 })
 
@@ -204,14 +209,14 @@ await flow("booking flow end-to-end for tomorrow with table", 3, async (page) =>
   await page.locator('[data-wheel="Giờ"] [data-value="20"]').click()
   await page.locator('[data-wheel="Phút"] [data-value="30"]').click()
   await page.getByRole("button", { name: /Tiếp/ }).click()
-  await page.getByRole("button", { name: /^A0/ }).first().click()
+  await page.getByRole("button", { name: /^Bàn C4[, :]/ }).first().click()
   await page.getByRole("button", { name: /Tiếp/ }).click()
   await page.getByLabel("Tên khách").fill("Khách E2E")
   await page.getByLabel("Số điện thoại").fill("0912345678")
   await page.getByRole("button", { name: /Tiếp/ }).click()
   await page.getByRole("button", { name: /Xác nhận đặt bàn/ }).click()
   await page
-    .getByText(/Booking 20:30 · 2 khách · giữ A0/)
+    .getByText(/Booking 20:30 · 2 khách · giữ C4/)
     .first()
     .waitFor()
   await page.getByRole("button", { name: "Ngày sau" }).click()
@@ -219,6 +224,52 @@ await flow("booking flow end-to-end for tomorrow with table", 3, async (page) =>
   const html = await page.content()
   if (html.includes("0912345678") || html.includes("912345678")) throw new Error("full phone leaked to DOM")
 })
+
+await flow("BR-01 BR-02: book a mixed layout group and project its birthday before and after check-in", 1, async (page) => {
+  await page.goto(base + "/floor", { waitUntil: "networkidle" })
+  await page.getByRole("button", { name: "Ghép bàn", exact: true }).click()
+  await table(page, "B5").click()
+  await barSeat(page, 15).click()
+  await page.getByRole("button", { name: "Ghép 2 bàn", exact: true }).click()
+  await expect(table(page, "B5")).toHaveAttribute("data-is-group", "true")
+  await table(page, "B5").click()
+  await page.getByRole("button", { name: "Tạo đặt trước", exact: true }).click()
+  const form = page.getByRole("form")
+  await form.getByLabel("Tên khách", { exact: true }).fill("Mixed birthday group")
+  await form.getByRole("checkbox", { name: "Sinh nhật", exact: true }).click()
+  await form.getByRole("button", { name: "Đặt bàn B5 + Bar 15", exact: true }).click()
+  await expect(form).toBeHidden()
+  const booking = await page.evaluate(async () => {
+    const { api, clock } = await import("/src/services/index.ts")
+    const { businessDateOf } = await import("/src/lib/time.ts")
+    return (await api.listReservations({ businessDate: businessDateOf(clock.now()) })).find((r) => r.displayName === "Mixed birthday group")
+  })
+  assert(booking)
+  assert.deepEqual(booking.tableIds, [13, 115])
+  assert.equal(booking.isBirthday, true)
+  await expect(table(page, "B5").locator('[data-icon="cake"]')).toBeVisible()
+  await page.screenshot({ path: "e2e/.artifacts/codex-fix/mixed-group-birthday-booked-390.png" })
+  const readClaims = () => page.evaluate(async () => {
+    const { api, clock } = await import("/src/services/index.ts")
+    return (await api.getFloorState(clock.now())).tables.filter((t) => [13, 115].includes(t.tableId)).map((t) => t.claim)
+  })
+  for (const claim of await readClaims()) {
+    assert.equal(claim.reservationId, booking.id)
+    assert(claim.flags.includes("BIRTHDAY"))
+  }
+  await page.evaluate(async (r) => {
+    const { api, clock } = await import("/src/services/index.ts")
+    await api.checkIn({ reservationId: r.id, version: r.version, guestCount: r.partySize })
+    clock.advance(0)
+  }, booking)
+  for (const claim of await readClaims()) {
+    assert.equal(claim.reservationId, booking.id)
+    assert(claim.visitId)
+    assert(claim.flags.includes("BIRTHDAY"))
+  }
+  await expect(table(page, "B5").locator('[data-icon="cake"]')).toBeVisible()
+  await page.screenshot({ path: "e2e/.artifacts/codex-fix/mixed-group-birthday-seated-390.png" })
+}, { viewport: { width: 390, height: 844 }, hasTouch: true })
 
 await flow("validation: booking needs name or phone, note without phone", 3, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
@@ -267,13 +318,13 @@ await flow("time warp: A5 becomes late after +15', no auto cancel after +60'", 3
   await page.getByRole("button", { name: /Giờ mô phỏng/ }).click()
   await page.getByRole("button", { name: "15'" }).click()
   await page.keyboard.press("Escape")
-  await expectLabel(table(page, "A5"), /Không tới/)
+  await expectLabel(table(page, "A5"), /Tới muộn/)
   assert.equal(await state(), "late")
   await page.getByRole("button", { name: /Giờ mô phỏng/ }).click()
   await page.getByRole("button", { name: "30'" }).click()
   await page.getByRole("button", { name: "30'" }).click()
   await page.keyboard.press("Escape")
-  await expectLabel(table(page, "A5"), /Không tới/)
+  await expectLabel(table(page, "A5"), /Tới muộn/)
   assert.equal(await state(), "noshow", "warning must keep the booking and table held")
 })
 
@@ -437,14 +488,15 @@ await flow("availability tomorrow: B3 reserved, A3 free", 1, async (page) => {
   await page.waitForTimeout(600)
   const b3 = await table(page, "B3").getAttribute("aria-label")
   const a3 = await table(page, "A3").getAttribute("aria-label")
-  if (!/Đang đặt/.test(b3)) throw new Error("B3 should be reserved tomorrow: " + b3)
-  if (!/Chưa đặt/.test(a3)) throw new Error("A3 should be free tomorrow: " + a3)
+  if (!/Đã đặt|Đang đặt/.test(b3)) throw new Error("B3 should be reserved tomorrow: " + b3)
+  if (!/Trống|Chưa đặt/.test(a3)) throw new Error("A3 should be free tomorrow: " + a3)
 })
 
 await flow("inline form: occupied table is refused, free table is picked on the map", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await table(page, "B5").click()
-  await page.getByRole("tab", { name: "Walk-in" }).click()
+  await page.getByRole("button", { name: "Mở bàn Walk-in", exact: true }).click()
+  await page.getByRole("radio", { name: "4 khách" }).click()
   await table(page, "A3").click()
   await page
     .getByText(/A3: không trống/)
@@ -460,7 +512,7 @@ await flow("cancel booking requires confirmation with reason", 1, async (page) =
   await table(page, "B4").click()
   await page.getByRole("button", { name: "Hủy booking" }).click()
   await page.getByRole("alertdialog").getByRole("button", { name: "Hủy booking" }).click()
-  await expectLabel(table(page, "B4"), /Chưa đặt/)
+  await expectLabel(table(page, "B4"), /Trống|Chưa đặt/)
 })
 
 await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (desktop)", 3, async (page) => {
@@ -673,8 +725,13 @@ await flow("mobile booking creation with classification and Zalo export (phone 3
 
   await page.getByPlaceholder("Ví dụ: Chị Lan").fill("Khách Mobile E2E")
   await page.getByPlaceholder("09xx xxx xxx").fill("0988776655")
-  await page.locator("#bk-classification").click()
-  await page.getByRole("option", { name: "Khách quen (O)" }).click()
+  const classTrigger = page.locator("#bk-classification")
+  if (await classTrigger.isVisible()) {
+    await classTrigger.click()
+    await page.getByRole("option", { name: "Khách quen (O)" }).click()
+  } else {
+    await page.getByRole("radio", { name: "Khách quen (O)" }).or(page.getByRole("button", { name: "Khách quen (O)" })).click()
+  }
   await page.getByRole("button", { name: "Đặt bàn" }).click()
 
   await page.getByText("Khách Mobile E2E").first().waitFor()
@@ -698,20 +755,21 @@ await flow("mobile booking creation with classification and Zalo export (phone 3
 await flow("bar seat: single walk-in from table detail", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await barSeat(page, 13).click()
-  await page.getByRole("tab", { name: "Walk-in" }).click()
+  await page.getByRole("button", { name: "Mở bàn Walk-in", exact: true }).click()
   await page.getByRole("radio", { name: "1 khách" }).click()
   await page.getByRole("button", { name: "Mở bàn ngay" }).click()
   await expectOccupied(barSeat(page, 13), 1)
 })
 
-await flow("bar seat: multi-seat booking capacity check & group reservation", 1, async (page) => {
+await flow("bar seat: multi-seat booking without capacity warning & group reservation", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await barSeat(page, 8).click()
-  // QuickForm opens with Bar 8 selected (capacity 1). Pick 2 guests to trigger capacity shortage.
+  await page.getByRole("button", { name: "Đặt bàn", exact: true }).click()
+  // Capacity is left to staff, including a two-guest booking on one Bar seat.
   await page.getByRole("radio", { name: "2 khách" }).click()
-  await page.getByText(/thiếu 1 chỗ cho 2 khách/).waitFor()
+  await page.getByText(/Bar 8 còn trống.*1 chỗ/).waitFor()
 
-  // Select adjacent bar seat 7 on the canvas to meet capacity
+  // Select adjacent Bar 7 to exercise the multi-table reservation path.
   await barSeat(page, 7).click()
   await page.getByText(/2 chỗ, đủ 2 khách/).waitFor()
 
@@ -720,22 +778,19 @@ await flow("bar seat: multi-seat booking capacity check & group reservation", 1,
   await page.locator("#qf-phone").fill("0912345678")
   await page.getByRole("button", { name: /^Đặt bàn Bar 8 \+ Bar 7$/ }).click()
 
-  // Both bar seats become reserved and grouped
-  await expectLabel(barSeat(page, 8), /Đang đặt/)
-  await expectLabel(barSeat(page, 7), /Đang đặt/)
-  await expectLabel(barSeat(page, 8), /nhóm G\d{2,}, 2 bàn/)
-  const groupCode = (await barSeat(page, 8).getAttribute("aria-label")).match(/nhóm (G\d{2,})/)[1]
-  await expectLabel(barSeat(page, 7), new RegExp(`nhóm ${groupCode}, 2 bàn`))
-  if (await page.locator("path[data-group-id]").count()) throw new Error("Group connector must be hidden by default")
-  await barSeat(page, 8).click()
-  if ((await barSeat(page, 7).getAttribute("data-group-highlighted")) !== "true") {
-    throw new Error("Selecting one group member must highlight the other member")
-  }
-  if ((await page.locator("path[data-group-id]").count()) !== 1) {
-    throw new Error("Only the selected group connector should be visible")
-  }
-  await barSeat(page, 8).click()
-  if (await page.locator("path[data-group-id]").count()) throw new Error("Deselecting must hide the group connector")
+  // K1: Bar seats stay separate circle glyphs with 3px border, dashed selection ring, and no arc connector.
+  const cell = page.locator('[data-combined-codes~="BAR07"][data-combined-codes~="BAR08"]')
+  await expect(cell).toHaveCount(2)
+  await expectLabel(cell.first(), /Đã đặt|Đang đặt|Sắp tới/)
+  await expect(page.locator("[data-group-arc]")).toHaveCount(0)
+  await expect(cell.first().locator('circle[stroke-width="3"]')).toHaveCount(1)
+  await cell.first().click()
+  await expect(cell.first()).toHaveAttribute("aria-pressed", "true")
+  await expect(page.locator('[data-combined-codes~="BAR07"][data-combined-codes~="BAR08"] circle[data-selection-ring="1"]')).toHaveCount(2)
+  await cell.first().click()
+  await expect(cell.first()).toHaveAttribute("aria-pressed", "false")
+  await expect(page.locator('[data-combined-codes~="BAR07"][data-combined-codes~="BAR08"] circle[data-selection-ring="1"]')).toHaveCount(0)
+
 })
 
 await flow("reservation assignment: date-aware availability in both directions (MD-01)", 3, async (page) => {
@@ -776,9 +831,9 @@ await flow("reservation assignment: date-aware availability in both directions (
   await detail.waitFor()
   await detail.getByRole("button", { name: "Phân bàn", exact: true }).click()
 
-  // On floor picker: wait for availability query to settle: table A0 becomes available
-  const a0 = page.locator('[aria-label^="Bàn A0:"][aria-disabled="false"]').first()
-  await a0.waitFor()
+  // On floor picker: wait for availability query to settle: table C4 becomes available
+  const c4 = page.locator('[aria-label^="Bàn C4:"][aria-disabled="false"]').first()
+  await c4.waitFor()
 
   // Direction 1: Table B7 held tomorrow must be disabled/unavailable
   const b7 = page.locator('[aria-label^="Bàn B7:"]').first()
@@ -786,14 +841,14 @@ await flow("reservation assignment: date-aware availability in both directions (
   const b7Disabled = await b7.getAttribute("aria-disabled")
   if (b7Disabled !== "true") throw new Error("Table B7 held tomorrow should be disabled during tomorrow assignment")
 
-  // Direction 2: Table A0 free tomorrow must be available
-  const a0Disabled = await a0.getAttribute("aria-disabled")
-  if (a0Disabled === "true") throw new Error("Table A0 free tomorrow should be available during tomorrow assignment")
+  // Direction 2: Table C4 free tomorrow must be available
+  const c4Disabled = await c4.getAttribute("aria-disabled")
+  if (c4Disabled === "true") throw new Error("Table C4 free tomorrow should be available during tomorrow assignment")
 
-  // Select A0 and confirm initial assignment
-  await a0.click()
-  if ((await a0.getAttribute("aria-pressed")) !== "true") {
-    throw new Error("Table A0 was not selected after click")
+  // Select C4 and confirm initial assignment
+  await c4.click()
+  if ((await c4.getAttribute("aria-pressed")) !== "true") {
+    throw new Error("Table C4 was not selected after click")
   }
   await page.getByRole("button", { name: "Phân bàn" }).click()
 
@@ -803,9 +858,9 @@ await flow("reservation assignment: date-aware availability in both directions (
   await selectTomorrow(page)
   await page.getByRole("cell").filter({ hasText: "Khách phân bàn mai" }).click()
   detail = page.getByRole("dialog").filter({ hasText: "Khách phân bàn mai" })
-  await detail.getByText("A0", { exact: true }).waitFor()
+  await detail.getByText("C4", { exact: true }).waitFor()
 
-  // Reassignment retaining source table A0 and adding A2
+  // Reassignment retaining source table C4 and adding A2
   await detail.getByRole("button", { name: "Đổi bàn", exact: true }).click()
   const a2 = page.locator('[aria-label^="Bàn A2:"][aria-disabled="false"]').first()
   await a2.waitFor()
@@ -818,7 +873,7 @@ await flow("reservation assignment: date-aware availability in both directions (
   await selectTomorrow(page)
   await page.getByRole("cell").filter({ hasText: "Khách phân bàn mai" }).click()
   detail = page.getByRole("dialog").filter({ hasText: "Khách phân bàn mai" })
-  await detail.getByText("A0 + A2", { exact: true }).waitFor()
+  await detail.getByText("C4 + A2", { exact: true }).waitFor()
   await page.keyboard.press("Escape")
 })
 
@@ -935,7 +990,7 @@ async function dismissHoldAlerts(page) {
   for (let i = 0; i < 12; i++) {
     const dismiss = page.getByRole("button", { name: /Đã xem.*xử lý sau|Đã xem, nhắc sau|Để sau|Đóng thông báo/ }).first()
     if (!await dismiss.isVisible()) break
-    await dismiss.click()
+    await dismiss.click({ force: true })
   }
 }
 async function mockHeldFixture(page, kind) {
@@ -1032,43 +1087,49 @@ for (const width of [390, 768]) for (const surface of ["floor", "card", "detail"
     if (openStatus) await openStatus()
   }
   const noShow = page.getByRole("button", { name: width < 768 ? /^Khách không tới/ : "Không tới", exact: width >= 768 })
-  await expect(noShow).toBeDisabled()
-  const late = page.getByRole("button", { name: "Tới muộn", exact: true })
-  if (await late.count()) await expect(late).toBeDisabled()
+  await expect(noShow).toHaveCount(0)
   if (openStatus) await page.getByRole("dialog", { name: "Đổi trạng thái booking" }).getByRole("button", { name: "Đóng", exact: true }).click()
-  await page.evaluate(async () => (await import("/src/services/index.ts")).clock.advance(2))
-  await page.waitForTimeout(500)
-  await dismissHoldAlerts(page)
-  if (openStatus) await openStatus()
-  await expect(noShow).toBeEnabled()
+  let cancelBtn
+  if (surface === "card") {
+    const card = width < 768 ? page.locator("div.rounded-\\[18px\\]").filter({ hasText: e.displayName }) : page.locator(`#entry-${e.id}`)
+    await card.getByRole("button", { name: "Quản lý đơn", exact: true }).click()
+    cancelBtn = page.getByRole("dialog").last().getByRole("button", { name: "Hủy booking", exact: true })
+  } else if (surface === "detail" && width < 768) {
+    cancelBtn = page.getByRole("dialog").last().getByRole("button", { name: "Hủy booking", exact: true })
+  } else {
+    cancelBtn = page.getByRole("button", { name: "Hủy booking", exact: true })
+  }
+  await expect(cancelBtn).toBeVisible()
   await page.evaluate(async () => {
     const { PERMISSION_MATRIX } = await import("/src/domain/access.ts")
-    window.savedNoShowPermission = [...PERMISSION_MATRIX["reservation.mark_no_show"]]
-    PERMISSION_MATRIX["reservation.mark_no_show"] = []
+    window.savedCancelPermission = [...PERMISSION_MATRIX["reservation.cancel"]]
+    PERMISSION_MATRIX["reservation.cancel"] = []
     ;(await import("/src/state/session.ts")).useSession.setState((s) => ({ permissions: [...s.permissions] }))
     ;(await import("/src/services/index.ts")).clock.advance(0)
   })
-  await expect(noShow).toBeDisabled()
+  await expect(cancelBtn).toBeDisabled()
   await page.evaluate(async () => {
-    ;(await import("/src/domain/access.ts")).PERMISSION_MATRIX["reservation.mark_no_show"] = window.savedNoShowPermission
+    ;(await import("/src/domain/access.ts")).PERMISSION_MATRIX["reservation.cancel"] = window.savedCancelPermission
     ;(await import("/src/state/session.ts")).useSession.setState((s) => ({ permissions: [...s.permissions] }))
     ;(await import("/src/services/index.ts")).clock.advance(0)
   })
-  await expect(noShow).toBeEnabled()
-  await noShow.click()
+  await expect(cancelBtn).toBeEnabled()
+  await cancelBtn.click()
   const confirm = page.getByRole("alertdialog")
-  await confirm.getByRole("button", { name: width < 768 ? "Không tới" : "Xác nhận không tới", exact: true }).click()
+  await confirm.getByRole("button", { name: "Hủy booking", exact: true }).click()
   await expect.poll(() => page.evaluate(() => window.holdWrites.length)).toBe(1)
-  await expect.poll(() => page.evaluate(async (id) => (await import("/src/services/index.ts")).api.db.reservations.get(id).status, r.id)).toBe("NO_SHOW")
+  await expect.poll(() => page.evaluate(async (id) => (await import("/src/services/index.ts")).api.db.reservations.get(id).status, r.id)).toBe("CANCELLED")
   const result = await page.evaluate(async ({ e, r }) => {
     const { api } = await import("/src/services/index.ts")
     return { calls: window.holdWrites, status: api.db.reservations.get(r.id).status,
       active: [...api.db.holds.values()].filter((h) => h.id === e.hold.id && h.status === "ACTIVE").length,
+      allocations: [...api.db.allocations.values()].filter((a) => a.holdId === e.hold.id && !a.releasedAt).length,
       visits: [...api.db.visits.values()].filter((v) => v.reservationId === r.id).length }
   }, { e, r })
-  assert.deepEqual(result.calls, [{ key: "markNoShow", args: [r.id, r.version] }])
-  assert.equal(result.status, "NO_SHOW")
+  assert.deepEqual(result.calls, [{ key: "cancelReservation", args: width < 768 ? [r.id, r.version, "CUSTOMER_REQUEST"] : [r.id, r.version, "CUSTOMER_REQUEST", ""] }])
+  assert.equal(result.status, "CANCELLED")
   assert.equal(result.active, 0)
+  assert.equal(result.allocations, 0)
   assert.equal(result.visits, 0)
 }, { viewport: { width, height: width === 768 ? 1024 : 844 } })
 
@@ -1134,7 +1195,8 @@ await flow("R4 AT16: B11 direct detail retains buttons picker and check-in witho
     return r
   })
   let detail = page.getByRole("dialog").last()
-  for (const label of ["Đổi bàn", "Sửa", "Hủy booking", "Không tới", "Check-in B4"]) await expect(detail.getByRole("button", { name: label, exact: true })).toBeVisible()
+  for (const label of ["Đổi bàn", "Sửa", "Hủy booking", "Check-in B4"]) await expect(detail.getByRole("button", { name: label, exact: true })).toBeVisible()
+  await expect(detail.getByRole("button", { name: "Không tới", exact: true })).toHaveCount(0)
   await detail.getByRole("button", { name: "Đổi bàn", exact: true }).click()
   assert.deepEqual(await page.evaluate(async () => { const p = (await import("/src/state/ui.ts")).useUi.getState().pick; return { intent: p.intent, own: p.preselected, date: p.targetDate, expected: p.targetExpectedAt } }), { intent: "assign", own: data.tableIds, date: data.businessDate, expected: data.expectedAt })
   await page.getByRole("button", { name: "Hủy chọn bàn" }).click()
@@ -1185,5 +1247,6 @@ for (const width of [360, 390, 768]) for (const theme of ["light", "dark"]) for 
 console.log(results.join("\n"))
 await browser.close()
 await import("./milestone-a.mjs")
+await import("./p1-merge.mjs")
 console.log(failures || process.exitCode ? "\nFAILED" : "\nALL PASSED")
 process.exit(failures ? 1 : (process.exitCode ?? 0))

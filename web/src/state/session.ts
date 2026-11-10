@@ -45,7 +45,7 @@ function applyTheme(theme: Theme) {
 const users = api.listDemoUsers()
 const stored = load()
 const initialUser = users.find((user) => user.id === stored.userId) ?? users[0]
-const initialTheme: Theme = stored.theme ?? "dark"
+const initialTheme: Theme = stored.theme ?? "light"
 if (api.mode === "mock" && initialUser) api.setSession(initialUser)
 applyTheme(initialTheme)
 

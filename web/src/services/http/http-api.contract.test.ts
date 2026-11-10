@@ -506,6 +506,8 @@ describe("canonical contract writes", () => {
           classification: "UNCLASSIFIED",
           guestType: null,
           isBirthday: false,
+          iconKeys: [],
+          honorific: null,
         },
       },
     ])

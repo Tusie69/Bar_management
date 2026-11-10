@@ -6,11 +6,19 @@
  * waitlist entry; walk-in with tables -> seatWalkIn; walk-in without tables -> WALK_IN waitlist.
  * The backend stays the final check against double booking (one active allocation per table per business date).
  */
-import { AlertCircle, Check, ChevronDown, LoaderCircle, MousePointerClick, X } from "lucide-react"
+import { AlertCircle, Check, LoaderCircle, MousePointerClick, X } from "lucide-react"
 import { useState, type KeyboardEvent } from "react"
 import {
   BookingTimePicker,
   GuestPicker,
+  IconPicker,
+  SourcePicker,
+  HonorificPicker,
+  honorificSupported,
+  iconKeysSupported,
+  socialPlatformSupported,
+  type Honorific,
+  type SocialPlatform,
   guestCount,
   guestError,
   guestValueFrom,
@@ -18,12 +26,10 @@ import {
 } from "@/components/booking-pickers"
 import { GuardedButton } from "@/components/common"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { Permission } from "@/domain/access"
 import { bookingInstant, validateBookingTime } from "@/domain/booking-rules"
-import { SOURCE_LABEL, type BookingClassification, type BookingSourceCode, type WaitlistChannel } from "@/domain/enums"
-import type { AvailabilityResult } from "@/domain/models"
+import { type BookingClassification, type BookingSourceCode, type WaitlistChannel } from "@/domain/enums"
+import type { AvailabilityResult, FloorGroup } from "@/domain/models"
 import { useAction } from "@/hooks/use-action"
 import { useNow, useVenueSettings } from "@/hooks/use-data"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
@@ -33,7 +39,6 @@ import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
-import { toast } from "sonner"
 import type { TableView } from "@/domain/models"
 import type { FloorModel } from "./use-floor-model"
 
@@ -41,12 +46,17 @@ const PICKABLE = new Set(["available", "too_small"])
 
 export type AvailabilityStatus = "checking" | "ready" | "error"
 
-export function checkDirectTableCompatibility(tableIds: number[], byId: Map<number, TableView>): string | null {
+export function checkDirectTableCompatibility(
+  tableIds: number[],
+  byId: Map<number, TableView>,
+  groups: Pick<FloorGroup, "tableIds">[] = [],
+): string | null {
   if (tableIds.length <= 1) return null
-  const first = byId.get(tableIds[0])
+  const representatives = tableIds.map((id) => groups.find((g) => g.tableIds.includes(id))?.tableIds[0] ?? id)
+  const first = byId.get(representatives[0])
   if (!first) return null
-  for (let i = 1; i < tableIds.length; i++) {
-    const t = byId.get(tableIds[i])
+  for (let i = 1; i < representatives.length; i++) {
+    const t = byId.get(representatives[i])
     if (!t) continue
     if (t.zoneId !== first.zoneId) {
       return "Chỉ có thể chọn các bàn trong cùng một khu vực."
@@ -74,12 +84,7 @@ export function draftPickable(
     if (!row || !PICKABLE.has(row.status) || row.bookingConflicts?.length) return false
   }
   if (currentTableIds && currentTableIds.length > 0 && !currentTableIds.includes(id)) {
-    const first = model.byId.get(currentTableIds[0])
-    const candidate = model.byId.get(id)
-    if (first && candidate) {
-      if (candidate.zoneId !== first.zoneId) return false
-      if (candidate.kind !== first.kind) return false
-    }
+    if (checkDirectTableCompatibility([...currentTableIds, id], model.byId, model.floor?.groups)) return false
   }
   return true
 }
@@ -122,6 +127,14 @@ const CHANNEL_OF_SOURCE: Partial<Record<BookingSourceCode, WaitlistChannel>> = {
 }
 
 const label12 = "text-xs text-tx-2"
+const chip = (on: boolean) =>
+  cn(
+    "tnum h-11 min-w-0 rounded-sm border px-2.5 text-sm font-medium whitespace-nowrap transition-colors",
+    on
+      ? "border-primary bg-primary-tint font-semibold text-primary-ink"
+      : "border-strong bg-background text-tx-1 hover:border-foreground",
+    "disabled:cursor-not-allowed disabled:border-dashed disabled:border-border disabled:bg-transparent disabled:font-normal disabled:text-tx-3",
+  )
 // 16px on phones stops iOS focus zoom.
 const inputCls =
   "h-11 w-full rounded-sm border border-strong bg-background px-3 text-base sm:text-sm outline-none placeholder:text-tx-3 focus:border-foreground aria-[invalid=true]:border-st-noshow"
@@ -159,8 +172,11 @@ export function QuickForm({
   const [name, setName] = useState("")
   const [note, setNote] = useState("")
   const [source, setSource] = useState<BookingSourceCode>("HOTLINE")
+  const [platform, setPlatform] = useState<SocialPlatform | "">("")
   const [classification, setClassification] = useState<BookingClassification>("UNCLASSIFIED")
   const [isBirthday, setIsBirthday] = useState(false)
+  const [iconKeys, setIconKeys] = useState<string[]>([])
+  const [honorific, setHonorific] = useState<Honorific | null>(null)
   const [tried, setTried] = useState(false)
   const [guest, setGuest] = useState<GuestValue>(() => guestValueFrom(draft.party))
   // Selection when "Chọn thêm bàn" was pressed; any change to it reopens the form.
@@ -170,7 +186,7 @@ export function QuickForm({
   const isB = draft.kind === "booking"
   const toWaitlist = isB && !!draft.toWaitlist
   const close = isB ? ui.closeBooking : ui.closeWalkIn
-  const dirty = !!(name.trim() || phone.trim() || note.trim())
+  const dirty = !!(name.trim() || phone.trim() || note.trim() || honorific)
   const requestClose = () => (dirty ? setConfirmLeave(true) : close())
   // Re-derived every render: changing the date re-checks the time without silently replacing it.
   const timeError = isB ? validateBookingTime(draft.date, draft.time, now) : null
@@ -178,13 +194,16 @@ export function QuickForm({
   const party = guestCount(guest)
   const venue = model.catalog?.venue
 
-  const errors: { name?: string; phone?: string; note?: string; time?: string; party?: string } = {}
+  const errors: { name?: string; phone?: string; note?: string; time?: string; party?: string; platform?: string } = {}
   if (isB && !name.trim() && !phone.trim()) errors.name = "Cần ít nhất tên hoặc số điện thoại"
   if (isB && phone.trim() && !isPlausibleVnPhone(phone)) errors.phone = "Số điện thoại 10 số, bắt đầu bằng 0"
   if (isB && noteHasPhoneNumber(note)) errors.note = NOTE_PHONE_ERROR
   if (timeError) errors.time = timeError
   const pErr = guestError(guest)
   if (pErr) errors.party = pErr
+  if (isB && socialPlatformSupported && source === "SOCIAL" && !platform) {
+    errors.platform = "Vui lòng chọn nền tảng mạng xã hội."
+  }
   const shown = tried ? errors : {}
 
   const onGuest = (v: GuestValue) => {
@@ -205,12 +224,11 @@ export function QuickForm({
   const tables = toWaitlist ? [] : draft.tableIds
   const codes = tables.map((id) => model.label(id)).join(" + ")
   const checking = isB && tables.length > 0 && availabilityStatus !== "ready"
-  const compatError = isB ? checkDirectTableCompatibility(tables, model.byId) : null
+  const compatError = isB ? checkDirectTableCompatibility(tables, model.byId, model.floor?.groups) : null
   // A passed time is the time's problem, not the table's: fix the time first.
   const blocked =
     checking || timeError ? [] : tables.filter((id) => !draftPickable(draft.kind, id, model, availability, tables))
   const cap = tables.reduce((s, id) => s + (model.byId.get(id)?.capacity ?? 0), 0)
-  const short = party === null ? 0 : party - cap
   // Receptionist flow A is table-first: no table never silently becomes an unassigned booking.
   const needsTable = receptionist && isB && !toWaitlist && tables.length === 0
   const choosing = !!draft.replacing || addingFrom === draft.tableIds.join()
@@ -225,7 +243,7 @@ export function QuickForm({
   const zoneOk = new Set(model.catalog?.zones.filter((z) => z.isBookable).map((z) => z.id))
   const selectedFirstTable = tables.length > 0 ? model.byId.get(tables[0]) : null
   const suggestions = model.tables
-    .filter((t) => t.kind === "TABLE" && zoneOk.has(t.zoneId) && t.capacity >= draft.party && !tables.includes(t.id))
+    .filter((t) => t.kind === "TABLE" && zoneOk.has(t.zoneId) && !tables.includes(t.id))
     .filter((t) => {
       if (selectedFirstTable && (t.zoneId !== selectedFirstTable.zoneId || t.kind !== selectedFirstTable.kind)) {
         return false
@@ -250,12 +268,6 @@ export function QuickForm({
       return
     }
     if (isB) {
-      if (tables.length > 0 && short > 0) {
-        toast.error(
-          `Các bàn đã chọn chỉ có ${cap} chỗ cho ${party} khách. Chọn thêm bàn phù hợp hoặc bỏ chọn bàn để xếp sau.`,
-        )
-        return
-      }
       if (!at) return
       const r = await run(async (o) => {
         const created = await api.createReservation({
@@ -264,9 +276,12 @@ export function QuickForm({
           partySize: party,
           expectedAt: at,
           sourceCode: source,
+          socialPlatform: socialPlatformSupported && source === "SOCIAL" && platform ? platform : undefined,
           classification,
           guestType: classification === "RETURNING" ? "REGULAR" : classification === "NEW" ? "NEW" : null,
           isBirthday,
+          iconKeys: iconKeysSupported && iconKeys.length ? iconKeys : undefined,
+          honorific: honorificSupported && honorific ? honorific : undefined,
           note: note.trim() || undefined,
           tableIds: tables,
           overrideReason: o,
@@ -325,7 +340,6 @@ export function QuickForm({
   }
 
   // The one main action. It follows the checks instead of warning next to a button that still submits.
-  const lacksSeats = receptionist && tables.length > 0 && short > 0 && !compatError
   const cta: { label: string; disabled?: boolean; go: () => void } = pending
     ? { label: "Đang lưu…", disabled: true, go: submit }
     : blocked.length
@@ -340,15 +354,13 @@ export function QuickForm({
             }
           : needsTable
             ? { label: "Chạm bàn trên sơ đồ", disabled: true, go: submit }
-            : lacksSeats
-              ? { label: `Thiếu ${short} chỗ · Chọn thêm bàn`, go: chooseOther }
-              : toWaitlist
-                ? { label: "Lưu vào Bàn chờ", go: submit }
-                : isB
-                  ? { label: receptionist && codes ? `Đặt bàn ${codes}` : "Lưu đặt bàn", go: submit }
-                  : tables.length
-                    ? { label: "Mở bàn ngay", go: submit }
-                    : { label: receptionist ? "Thêm vào Bàn chờ" : "Thêm vào danh sách chờ", go: submit }
+            : toWaitlist
+              ? { label: "Lưu vào Bàn chờ", go: submit }
+              : isB
+                ? { label: receptionist && codes ? `Đặt bàn ${codes}` : "Lưu đặt bàn", go: submit }
+                : tables.length
+                  ? { label: "Mở bàn ngay", go: submit }
+                  : { label: receptionist ? "Thêm vào Bàn chờ" : "Thêm vào danh sách chờ", go: submit }
 
   const title = toWaitlist
     ? "Nhận booking vào Bàn chờ"
@@ -359,9 +371,6 @@ export function QuickForm({
       : codes
         ? `Walk-in ${codes}`
         : "Walk-in vào Bàn chờ"
-
-  const tab = (on: boolean) =>
-    cn("h-[38px] rounded-sm text-sm", on ? "bg-primary-tint font-medium text-primary-ink" : "text-tx-2 hover:text-tx-1")
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape" && !event.defaultPrevented) requestClose()
@@ -418,94 +427,105 @@ export function QuickForm({
           collapsed && "hidden",
         )}
       >
-        {toWaitlist ? null : (
-          <div
-            role="tablist"
-            aria-label="Loại đơn"
-            className="grid shrink-0 grid-cols-2 gap-0.5 rounded-sm border bg-surface-1 p-[3px]"
-          >
-            <button
-              type="button"
-              role="tab"
-              aria-selected={isB}
-              className={tab(isB)}
-              onClick={() => ui.switchDraft("booking")}
-            >
-              Đặt bàn
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={!isB}
-              className={tab(!isB)}
-              onClick={() => {
-                if (model.floor && model.floor.businessDate !== today)
-                  return void toast.info("Walk-in chỉ áp dụng cho ngày kinh doanh hiện tại.")
-                ui.switchDraft("walkin")
-              }}
-            >
-              Walk-in
-            </button>
-          </div>
-        )}
+        <section className="flex shrink-0 flex-col gap-3" aria-label="Số khách">
+          <GuestPicker value={guest} onChange={onGuest} showErrors={tried} />
+        </section>
 
-        <section className="flex shrink-0 flex-col gap-2" aria-label="Khách">
-          <div className={cn("grid gap-3", isB && "grid-cols-2")}>
-            <div className="flex min-w-0 flex-col gap-1.5">
-              <label htmlFor="qf-name" className={label12}>
-                {isB ? "Tên khách" : "Tên hoặc đặc điểm (tùy chọn)"}
-              </label>
+        <section className="flex shrink-0 flex-col gap-3" aria-label="Khách">
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <label htmlFor="qf-name" className={label12}>
+              {isB ? "Tên khách" : "Tên hoặc đặc điểm (tùy chọn)"}
+            </label>
+            <div className="flex items-center gap-1.5">
               <input
                 id="qf-name"
-                className={inputCls}
+                className={cn(inputCls, "min-w-0 flex-1")}
                 autoComplete="off"
                 placeholder={isB ? "Tên người đặt" : "Khách Walk-in"}
                 value={name}
                 aria-invalid={!!shown.name}
                 onChange={(e) => setName(e.target.value)}
               />
-            </div>
-            {isB ? (
-              <div className="flex min-w-0 flex-col gap-1.5">
-                <label htmlFor="qf-phone" className={label12}>
-                  Số điện thoại
-                </label>
-                <input
-                  id="qf-phone"
-                  className={cn(inputCls, "tnum")}
-                  inputMode="tel"
-                  autoComplete="off"
-                  maxLength={20}
-                  placeholder="0xxx xxx xxx"
-                  value={phone}
-                  aria-invalid={!!shown.phone}
-                  onChange={(e) => setPhone(e.target.value)}
+              {isB ? (
+                <HonorificPicker
+                  value={honorific}
+                  onChange={setHonorific}
+                  disabled={pending}
                 />
-              </div>
-            ) : null}
+              ) : null}
+            </div>
+            <FieldError>{shown.name}</FieldError>
           </div>
-          <FieldError>{shown.name}</FieldError>
-          <FieldError>{shown.phone}</FieldError>
+          {isB ? (
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <label htmlFor="qf-phone" className={label12}>
+                Số điện thoại
+              </label>
+              <input
+                id="qf-phone"
+                className={cn(inputCls, "tnum")}
+                inputMode="tel"
+                autoComplete="off"
+                maxLength={20}
+                placeholder="0xxx xxx xxx"
+                value={phone}
+                aria-invalid={!!shown.phone}
+                onChange={(e) => setPhone(e.target.value)}
+              />
+              <FieldError>{shown.phone}</FieldError>
+            </div>
+          ) : null}
         </section>
 
-        <section className="flex shrink-0 flex-col gap-3" aria-label="Số khách và thời gian">
-          <GuestPicker value={guest} onChange={onGuest} showErrors={tried} />
+        {isB ? (
+          <section className="flex shrink-0 flex-col gap-1.5" aria-label="Khách quen / mới">
+            <span className={label12}>Khách quen / mới</span>
+            <div role="radiogroup" aria-label="Khách quen / mới" className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={classification === "RETURNING"}
+                className={chip(classification === "RETURNING")}
+                onClick={() => setClassification((c) => (c === "RETURNING" ? "UNCLASSIFIED" : "RETURNING"))}
+              >
+                Khách quen (O)
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={classification === "NEW"}
+                className={chip(classification === "NEW")}
+                onClick={() => setClassification((c) => (c === "NEW" ? "UNCLASSIFIED" : "NEW"))}
+              >
+                Khách mới (N)
+              </button>
+            </div>
+          </section>
+        ) : null}
+
+        <section className="flex shrink-0 flex-col gap-3" aria-label="Thời gian">
           {isB ? (
             <>
               <div className="flex flex-col gap-1.5">
                 <span className={label12}>Ngày</span>
-                <Select value={draft.date} onValueChange={(date) => ui.setDraft({ date })}>
-                  <SelectTrigger className="h-11 w-full border-strong" aria-label="Ngày">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {dates.map((bd, i) => (
-                      <SelectItem key={bd} value={bd} className="tnum">
+                <div role="radiogroup" aria-label="Ngày" className="flex flex-wrap gap-1.5">
+                  {dates.map((bd, i) => {
+                    const on = draft.date === bd
+                    return (
+                      <button
+                        key={bd}
+                        type="button"
+                        role="radio"
+                        aria-checked={on}
+                        aria-label={dateLabel(bd, i)}
+                        className={chip(on)}
+                        onClick={() => ui.setDraft({ date: bd })}
+                      >
                         {dateLabel(bd, i)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
               <BookingTimePicker
                 date={draft.date}
@@ -523,29 +543,7 @@ export function QuickForm({
           )}
         </section>
 
-        {isB ? (
-          <section className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
-            <div className="flex min-w-0 flex-col gap-1.5">
-              <span className={label12}>Loại khách</span>
-              <Select value={classification} onValueChange={(v) => setClassification(v as BookingClassification)}>
-                <SelectTrigger className="h-11 w-full border-strong" aria-label="Loại khách">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="UNCLASSIFIED">Chưa phân loại</SelectItem>
-                  <SelectItem value="NEW">Khách mới (N)</SelectItem>
-                  <SelectItem value="RETURNING">Khách quen (O)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <label className="flex h-11 items-center gap-2.5 text-sm">
-              <Checkbox checked={isBirthday} onCheckedChange={(checked) => setIsBirthday(checked === true)} />
-              Sinh nhật
-            </label>
-          </section>
-        ) : null}
-
-        {toWaitlist || (compact && tables.length === 1 && short <= 0) ? null : (
+        {toWaitlist || (compact && tables.length === 1) ? null : (
           <section className="flex shrink-0 flex-col gap-2" aria-label="Bàn">
             <div className="flex items-baseline justify-between gap-2">
               <span className={label12}>Bàn</span>
@@ -602,55 +600,51 @@ export function QuickForm({
           </section>
         )}
 
-        {/* shortcut: WalkInInput has no note/phone yet, so those fields are booking-only. */}
         {isB ? (
-          <details className="group shrink-0" open={!compact || !!shown.note}>
-            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 text-sm font-medium text-tx-1 [&::-webkit-details-marker]:hidden">
-              Thêm thông tin
-              <span className="flex items-center gap-1 text-xs font-normal text-tx-2">
-                {SOURCE_LABEL[source]}
-                {note.trim() ? " · có ghi chú" : ""}
-                <ChevronDown className="size-4 transition-transform group-open:rotate-180" aria-hidden />
-              </span>
-            </summary>
-            <div className="flex flex-col gap-3 pt-1">
-              <div className="flex flex-col gap-1.5">
-                <span className={label12}>Nguồn đặt</span>
-                <Select value={source} onValueChange={(v) => setSource(v as BookingSourceCode)}>
-                  <SelectTrigger className="h-11 w-full border-strong" aria-label="Nguồn đặt">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(model.catalog?.sources ?? []).map((s) => (
-                      <SelectItem key={s.code} value={s.code}>
-                        {SOURCE_LABEL[s.code]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="qf-note" className={label12}>
-                  Ghi chú
-                </label>
-                <textarea
-                  id="qf-note"
-                  rows={2}
-                  className={cn(inputCls, "h-auto resize-none py-2.5")}
-                  placeholder="Sinh nhật, cần ghế trẻ em…"
-                  value={note}
-                  aria-invalid={!!shown.note}
-                  onChange={(e) => setNote(e.target.value)}
-                />
-                <FieldError>{shown.note}</FieldError>
-              </div>
+          <>
+            <section className="flex shrink-0 flex-col gap-1.5" aria-label="Yêu cầu">
+              <label htmlFor="qf-note" className={label12}>
+                Yêu cầu của khách
+              </label>
+              <textarea
+                id="qf-note"
+                aria-label="Ghi chú"
+                rows={2}
+                className={cn(inputCls, "h-auto resize-none py-2.5")}
+                placeholder="Yêu cầu của khách (ghi chú)..."
+                value={note}
+                aria-invalid={!!shown.note}
+                onChange={(e) => setNote(e.target.value)}
+              />
+              <FieldError>{shown.note}</FieldError>
               {at && venue ? (
                 <span className="tnum text-xs text-pretty text-tx-2">
-                  {`Cảnh báo đến muộn lúc ${fmtTime(new Date(at.getTime() + venue.lateWarningMinutes * MS.MIN))} · không tới lúc ${fmtTime(new Date(at.getTime() + venue.noShowWarningMinutes * MS.MIN))}`}
+                  {`Cảnh báo đến muộn lúc ${fmtTime(new Date(at.getTime() + venue.lateWarningMinutes * MS.MIN))} · tới muộn lúc ${fmtTime(new Date(at.getTime() + venue.noShowWarningMinutes * MS.MIN))}`}
                 </span>
               ) : null}
-            </div>
-          </details>
+            </section>
+
+            <section className="flex shrink-0 flex-col gap-1.5" aria-label="Nguồn">
+              <span className={label12}>Nguồn</span>
+              <SourcePicker
+                source={source}
+                onSourceChange={setSource}
+                platform={platform}
+                onPlatformChange={setPlatform}
+                error={shown.platform}
+              />
+            </section>
+
+            <section className="flex shrink-0 flex-col gap-1.5" aria-label="Icon">
+              <span className={label12}>Icon</span>
+              <IconPicker
+                isBirthday={isBirthday}
+                onBirthdayChange={setIsBirthday}
+                iconKeys={iconKeys}
+                onIconKeysChange={setIconKeys}
+              />
+            </section>
+          </>
         ) : null}
       </div>
 
@@ -686,25 +680,17 @@ export function QuickForm({
             Đang kiểm tra {codes} ngày {fmtDayMonth(draft.date)}…
           </p>
         ) : tables.length ? (
-          <p
-            role="status"
-            className={cn(
-              "tnum m-0 flex items-start gap-2 text-sm",
-              short > 0 ? "text-st-late-ink" : "text-st-seated-ink",
-            )}
-          >
-            {short > 0 ? (
-              <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
-            ) : (
-              <Check className="mt-0.5 size-4 shrink-0" aria-hidden />
-            )}
+          <p role="status" className="tnum m-0 flex items-start gap-2 text-sm text-st-seated-ink">
+            <Check className="mt-0.5 size-4 shrink-0" aria-hidden />
             {party === null
               ? `${codes} còn trống · ${cap} chỗ`
-              : short > 0
-                ? `${codes} có ${cap} chỗ · thiếu ${short} chỗ cho ${party} khách`
-                : isB
+              : cap >= party
+                ? isB
                   ? `${codes} còn trống ngày ${fmtDayMonth(draft.date)} · ${cap} chỗ, đủ ${party} khách`
-                  : `${codes} đang trống · ${cap} chỗ, đủ ${party} khách`}
+                  : `${codes} đang trống · ${cap} chỗ, đủ ${party} khách`
+                : isB
+                  ? `${codes} còn trống ngày ${fmtDayMonth(draft.date)} · ${cap} chỗ`
+                  : `${codes} đang trống · ${cap} chỗ`}
           </p>
         ) : toWaitlist ? (
           <p role="status" className="m-0 text-sm text-tx-2">

@@ -26,6 +26,9 @@ export interface BackendBookingPayload {
   status: string
   source: string
   sourceCode: string
+  socialPlatform?: string | null
+  iconKeys?: string[]
+  honorific?: "MR" | "MS" | null
   tableCodes: string[]
   note: string | null
   version: number
@@ -50,6 +53,9 @@ export interface HttpBooking {
   status: BookingStatus
   source: string
   sourceCode: BookingSourceCode
+  socialPlatform?: string | null
+  iconKeys?: string[]
+  honorific?: "MR" | "MS" | null
   tableCodes: string[]
   note: string | null
   version: number
@@ -66,11 +72,14 @@ export interface BookingWriteFields {
   expectedAt: Date
   businessDate: BusinessDate
   sourceCode: BookingSourceCode
+  socialPlatform?: string | null
   note?: string | null
   phoneNumber?: string | null
   classification?: BookingClassification
   guestType?: "REGULAR" | "NEW" | null
   isBirthday?: boolean
+  iconKeys?: string[]
+  honorific?: "MR" | "MS" | null
 }
 
 export interface BookingCreatePayload {
@@ -79,11 +88,14 @@ export interface BookingCreatePayload {
   expectedAt: string
   businessDate: BusinessDate
   sourceCode: BookingSourceCode
+  socialPlatform?: string | null
   note?: string
   phoneNumber?: string | null
   classification?: BookingClassification
   guestType?: "REGULAR" | "NEW" | null
   isBirthday?: boolean
+  iconKeys?: string[]
+  honorific?: "MR" | "MS" | null
 }
 
 export interface DirectBookingCreatePayload extends BookingCreatePayload {
@@ -113,6 +125,14 @@ export function mapBooking(payload: BackendBookingPayload): HttpBooking {
   if (guestType !== expectedGuestType || (payload.isBirthday !== undefined && typeof payload.isBirthday !== "boolean")) {
     contractError("INVALID_BOOKING_METADATA", `Booking #${payload.id} có metadata không hợp lệ.`)
   }
+  if (
+    payload.honorific !== undefined &&
+    payload.honorific !== null &&
+    payload.honorific !== "MR" &&
+    payload.honorific !== "MS"
+  ) {
+    contractError("INVALID_BOOKING_METADATA", `Booking #${payload.id} có danh xưng không hợp lệ.`)
+  }
   if (!includes(statuses, payload.status)) {
     contractError("UNSUPPORTED_BOOKING_STATUS", `Booking #${payload.id} có trạng thái không được hỗ trợ.`)
   }
@@ -140,6 +160,9 @@ export function mapBooking(payload: BackendBookingPayload): HttpBooking {
     status: payload.status,
     displayStatus: payload.displayStatus,
     sourceCode: payload.sourceCode,
+    socialPlatform: payload.socialPlatform ?? null,
+    iconKeys: payload.iconKeys ? [...payload.iconKeys] : [],
+    honorific: payload.honorific ?? null,
     classification: payload.classification,
     guestType,
     isBirthday: payload.isBirthday ?? false,
@@ -174,9 +197,12 @@ function commonPayload(fields: BookingWriteFields, hasRetainedPhone = false): Bo
     expectedAt: venueRfc3339(fields.expectedAt),
     businessDate: fields.businessDate,
     sourceCode: fields.sourceCode,
+    ...(fields.sourceCode === "SOCIAL" && fields.socialPlatform ? { socialPlatform: fields.socialPlatform } : {}),
     ...(fields.classification === undefined ? {} : { classification: fields.classification }),
     ...(fields.guestType === undefined ? {} : { guestType: fields.guestType }),
     ...(fields.isBirthday === undefined ? {} : { isBirthday: fields.isBirthday }),
+    ...(fields.iconKeys?.length ? { iconKeys: fields.iconKeys } : {}),
+    ...(fields.honorific ? { honorific: fields.honorific } : {}),
     ...(note ? { note } : {}),
     ...(phoneNumber === undefined ? {} : { phoneNumber }),
   }
@@ -200,12 +226,25 @@ export function directBookingCreatePayload(fields: BookingWriteFields, tableIds:
   return { ...commonPayload(fields), tableIds: uniqueTableIds }
 }
 
+export interface UpdateBookingOptions {
+  iconKeysSupported?: boolean
+}
+
 export function fullUpdateBookingPayload(
   current: HttpBooking,
   fields: Partial<BookingWriteFields>,
+  options?: UpdateBookingOptions | boolean,
 ): BookingUpdatePayload {
+  const isIconKeysSupported = typeof options === "boolean" ? options : (options?.iconKeysSupported ?? true)
   // Canonical callers use null for "unchanged". A string (including "") is an intentional edit.
   const editedNote = typeof fields.note === "string" ? fields.note.trim() : undefined
+  const targetSource = fields.sourceCode ?? current.sourceCode
+  const targetPlatform =
+    targetSource === "SOCIAL"
+      ? (fields.socialPlatform !== undefined ? fields.socialPlatform : current.socialPlatform)
+      : null
+  const targetIconKeys = fields.iconKeys !== undefined ? fields.iconKeys : (current.iconKeys ?? [])
+  const targetHonorific = fields.honorific !== undefined ? fields.honorific : (current.honorific ?? null)
   const merged: BookingWriteFields = {
     ...(fields.guestName === undefined
       ? current.hasGuestName !== false ? { guestName: current.guestName } : {}
@@ -213,7 +252,8 @@ export function fullUpdateBookingPayload(
     partySize: fields.partySize ?? current.partySize,
     expectedAt: fields.expectedAt ?? current.expectedAt,
     businessDate: fields.businessDate ?? current.businessDate,
-    sourceCode: fields.sourceCode ?? current.sourceCode,
+    sourceCode: targetSource,
+    socialPlatform: targetPlatform,
     classification: fields.classification ?? current.classification,
     guestType: fields.guestType === undefined ? current.guestType : fields.guestType,
     isBirthday: fields.isBirthday ?? current.isBirthday,
@@ -221,6 +261,8 @@ export function fullUpdateBookingPayload(
   }
   return {
     ...commonPayload(merged, current.phoneLast3 !== null),
+    ...(isIconKeysSupported ? { iconKeys: targetIconKeys } : {}),
+    honorific: targetHonorific,
     ...(editedNote === undefined ? {} : { note: editedNote }),
     version: current.version,
   }

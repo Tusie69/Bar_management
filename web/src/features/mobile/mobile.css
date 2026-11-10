@@ -29,19 +29,7 @@
   --primary-foreground: oklch(0.99 0 0);
   --primary-ink: oklch(0.48 0.15 255);
   --primary-tint: oklch(0.52 0.15 255 / 0.09);
-  --st-reserved: oklch(0.55 0.13 250);
-  --st-upcoming: oklch(0.68 0.14 85);
-  --st-late: oklch(0.57 0.19 28);
-  --st-noshow: oklch(0.43 0.16 25);
-  --st-seated: oklch(0.55 0.11 160);
-  --st-oos: oklch(0.62 0.005 80);
-  --st-reserved-tint: oklch(0.55 0.13 250 / 0.1);
-  --st-upcoming-tint: oklch(0.72 0.14 85 / 0.2);
-  --st-late-tint: oklch(0.57 0.19 28 / 0.13);
-  --st-noshow-tint: oklch(0.43 0.16 25 / 0.16);
-  --st-seated-tint: oklch(0.55 0.11 160 / 0.13);
-  --st-seated-fill: oklch(0.50 0.12 160);
-  --on-seated: oklch(0.99 0 0);
+  /* Status tokens inherit from index.css for parity with desktop. */
   --floor: oklch(0.97 0.006 95);
   --floor-zone: oklch(0.94 0.008 95);
   --floor-wall: oklch(0.45 0.01 80);
@@ -113,11 +101,6 @@
 }
 
 [data-gm] {
-  --st-reserved-ink: color-mix(in oklab, var(--st-reserved) 60%, var(--tx-1));
-  --st-upcoming-ink: color-mix(in oklab, var(--st-upcoming) 35%, var(--tx-1));
-  --st-late-ink: color-mix(in oklab, var(--st-late) 55%, var(--tx-1));
-  --st-noshow-ink: color-mix(in oklab, var(--st-noshow) 75%, var(--tx-1));
-  --st-seated-ink: color-mix(in oklab, var(--st-seated) 72%, var(--tx-1));
   --card: var(--surface-1);
   --card-foreground: var(--foreground);
   --popover: var(--surface-1);
@@ -129,9 +112,8 @@
   --input: var(--border-strong);
   --ring: var(--primary);
   --destructive: var(--st-noshow);
-  --st-free: var(--table-line);
   --font-ui: var(--font-sans);
-  --top-safe: max(12px, env(safe-area-inset-top));
+  --top-safe: max(6px, env(safe-area-inset-top));
   --nav-h: calc(56px + env(safe-area-inset-bottom));
 
   background: var(--background);
@@ -185,4 +167,60 @@
 /* StatusLegend responsive fit at 360px */
 [data-gm] [role="region"][aria-label="Chú giải trạng thái bàn"] {
   max-width: 100%;
+}
+
+/* G4: Map shell padding reduction - reclaim vertical & horizontal space for the canvas */
+[data-gm] header {
+  padding-left: 10px;
+  padding-right: 10px;
+  padding-bottom: 2px;
+}
+
+[data-gm] header > div.flex {
+  gap: 8px;
+}
+
+/* Reclaim space from intermediate controls above the map */
+[data-gm] .z-\[4\].flex.shrink-0 {
+  padding-left: 10px;
+  padding-right: 10px;
+  padding-top: 0;
+  padding-bottom: 2px;
+  gap: 4px;
+}
+
+[data-gm] .shrink-0.px-3.pb-1 {
+  padding-left: 10px;
+  padding-right: 10px;
+  padding-bottom: 2px;
+}
+
+/* G4: Touch targets on controls are at least 44px on mobile */
+[data-gm] header button,
+[data-gm] header [role="button"],
+[data-gm] [role="tablist"] button,
+[data-gm] [role="tablist"] [role="tab"],
+[data-gm] [role="region"] button,
+[data-gm] .reception-control-btn,
+[data-gm] input:not([type="checkbox"]):not([type="radio"]),
+[data-gm] select {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Ensure Bàn chờ marker has at least 44px touch target and remains visible on floor */
+foreignObject {
+  overflow: visible !important;
+}
+
+[data-gm] foreignObject button,
+foreignObject button,
+[data-gm] button[aria-label*="Bàn chờ"],
+button[aria-label*="Bàn chờ"],
+.pointer-events-auto.absolute.bottom-3.right-3 button {
+  min-height: 44px !important;
+  min-width: 44px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
 }

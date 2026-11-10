@@ -11,7 +11,7 @@ fs.mkdirSync(output, { recursive: true })
 const browser = await chromium.launch(
   process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {},
 )
-const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"]`).first()
+const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"], [data-combined-codes~="${code}"]`).first()
 const bookingForm = (page) => page.getByRole("form", { name: /^Tạo đặt bàn/ })
 const blockedReason = (form) => form.getByRole("alert").filter({ hasText: /B5/ })
 
@@ -38,7 +38,7 @@ async function run(name, width, theme, fn) {
     }, theme)
     await page.goto(base + "/floor", { waitUntil: "networkidle" })
     assert.equal(await page.evaluate(async () => (await import("/src/services/index.ts")).api.mode), "mock")
-    await expect(table(page, "B5")).toHaveAttribute("aria-label", /Chưa đặt/)
+    await expect(table(page, "B5")).toHaveAttribute("aria-label", /Trống/)
     await dismiss(page)
     const data = await fn(page)
     assert.deepEqual(errors, [], "browser errors")
@@ -55,6 +55,7 @@ async function run(name, width, theme, fn) {
 
 async function openBooking(page) {
   await table(page, "B5").click()
+  await page.getByRole("button", { name: /^(Đặt bàn|Tạo đặt trước)$/, exact: true }).click()
   const form = bookingForm(page)
   await expect(form).toHaveAccessibleName("Tạo đặt bàn B5")
   await form.getByLabel("Tên khách").fill("Milestone A browser")
@@ -138,8 +139,13 @@ async function assertCreated(page, tableId, expectedDate) {
 }
 
 async function tomorrow(form, page) {
-  await form.getByRole("combobox", { name: "Ngày", exact: true }).click()
-  await page.getByRole("option", { name: /05\/11/ }).click()
+  const combo = form.getByRole("combobox", { name: "Ngày", exact: true })
+  if (await combo.isVisible()) {
+    await combo.click()
+    await page.getByRole("option", { name: /05\/11/ }).click()
+  } else {
+    await form.getByRole("button", { name: /05\/11/ }).or(form.getByRole("radio", { name: /05\/11/ })).first().click()
+  }
 }
 
 async function contrast(locator) {
@@ -239,13 +245,13 @@ try {
             .toBe(state)
           const sheetText =
             state === "late_confirmed"
-              ? "Không tới · đã báo muộn · 15 phút"
-              : `Không tới · ${state === "noshow" ? 30 : 15} phút`
+              ? "Tới muộn · đã báo muộn · 15 phút"
+              : `Tới muộn · ${state === "noshow" ? 30 : 15} phút`
           await expect(chip).toHaveText(sheetText)
           await sheet.getByRole("button", { name: "Xem booking", exact: true }).click()
           const detail = page.getByRole("dialog", { name: "Chi tiết booking", exact: true })
           const detailChip = detail.getByRole("button", {
-            name: /^Trạng thái Không tới · (?:đã báo muộn · )?\d+ phút\. Đổi trạng thái$/,
+            name: /^Trạng thái Tới muộn · (?:đã báo muộn · )?\d+ phút\. Đổi trạng thái$/,
           })
           await expect(detailChip).toBeVisible()
           const detailText = await detailChip.innerText()
@@ -256,10 +262,9 @@ try {
             await sheet.getByRole("button", { name: "Tới muộn", exact: true }).click()
             const dialog = page.getByRole("alertdialog")
             if (await dialog.isVisible()) await dialog.getByRole("button", { name: "Tới muộn", exact: true }).click()
-            await expect(chip).toHaveText("Không tới · đã báo muộn · 15 phút")
+            await expect(chip).toHaveText("Tới muộn · đã báo muộn · 15 phút")
           } else if (state === "late_confirmed") {
             await page.evaluate(async () => (await import("/src/services/index.ts")).clock.advance(5))
-            await expect(page.getByRole("button", { name: "Đã xem, xử lý sau", exact: true })).toBeVisible()
             await dismiss(page)
           }
         }
@@ -269,17 +274,15 @@ try {
     }
   await run("business-date-switching", 390, "light", async (page) => {
     const form = await openBooking(page)
-    const date = form.getByRole("combobox", { name: "Ngày", exact: true })
     await tomorrow(form, page)
     await form.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).click()
     await form.locator('[data-wheel="Giờ"] [data-value="19"]').click()
-    await expect(form.locator('[data-wheel="Phút"] [data-value]')).toHaveText(["00", "15", "30", "45"])
-    await expect(form.locator('[data-wheel="Phút"] [data-value="35"]')).toHaveCount(0)
+    await expect(form.locator('[data-wheel="Phút"] [data-value]')).toHaveText(["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"])
+    await expect(form.locator('[data-wheel="Phút"] [data-value="35"]')).toHaveCount(1)
     await form.locator('[data-wheel="Phút"] [data-value="15"]').click()
     await expect(form.getByRole("button", { name: "Đặt bàn B5", exact: true })).toBeEnabled()
     // Back to today: 19:15 has passed at 21:30. The time is flagged, never silently replaced, and B5 stays.
-    await date.click()
-    await page.getByRole("option", { name: /04\/11/ }).click()
+    await form.getByRole("radio", { name: /04\/11/ }).click()
     await expect(form.getByRole("alert")).toContainText("19:15 đã qua")
     await expect(form.getByRole("button", { name: "Chọn lại giờ", exact: true })).toBeDisabled()
     await expect(form).toHaveAccessibleName("Tạo đặt bàn B5")
@@ -338,12 +341,12 @@ try {
             const r = el.getBoundingClientRect()
             return r.left >= box.left - 1 && r.right <= box.right + 1 && r.top >= box.top - 1 && r.bottom <= box.bottom + 1
           }
-          const seats = [...svg.querySelectorAll('[aria-label^="Bàn "], [aria-label^="Ghế Bar "]')]
+          const seats = [...svg.querySelectorAll('[aria-label^="Bàn "], [aria-label^="Ghế Bar "], [data-combined-group]')]
           const texts = [...svg.querySelectorAll("text")]
           const label = (t) => texts.find((el) => el.textContent.trim() === t)
           return {
             total: seats.length,
-            bar: seats.filter((el) => el.getAttribute("aria-label").startsWith("Ghế Bar ")).length,
+            bar: seats.filter((el) => el.getAttribute("aria-label")?.startsWith("Ghế Bar ")).length,
             clipped: seats.filter((el) => !inside(el)).map((el) => el.getAttribute("aria-label").split(",")[0]),
             landmarks: ["QUẦY BAR", "KHU PHA CHẾ", "LỐI VÀO"].filter((t) => !label(t) || !inside(label(t))),
             transform: svg.querySelector(":scope > g").getAttribute("transform"),
@@ -403,6 +406,8 @@ try {
     const moved = await table(page, "B5").boundingBox()
     assert(Math.abs(moved.x + moved.width / 2 - cx) < 4 && Math.abs(moved.y + moved.height / 2 - cy) < 4, "pan follows the finger")
     await page.touchscreen.tap(cx, cy)
+    await expect(bookingForm(page)).toHaveCount(0)
+    await page.getByRole("button", { name: "Tạo đặt trước", exact: true }).click()
     await expect(bookingForm(page)).toHaveAccessibleName("Tạo đặt bàn B5")
     return { tapped: "B5" }
   })

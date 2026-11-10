@@ -1,13 +1,26 @@
-import { ArrowRightLeft, ListPlus, LogIn, MapPinned, Pencil, TimerReset, XCircle } from "lucide-react"
+import { ArrowRightLeft, ListPlus, LogIn, MapPinned, Pencil, XCircle } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router"
-import { BookingTimePicker } from "@/components/booking-pickers"
+import {
+  BookingTimePicker,
+  HonorificPicker,
+  IconPicker,
+  SourcePicker,
+  formatBookingIcons,
+  formatBookingSource,
+  formatHonorificName,
+  honorificSupported,
+  iconKeysSupported,
+  socialPlatformSupported,
+  validateSocialPlatform,
+  type Honorific,
+  type SocialPlatform,
+} from "@/components/booking-pickers"
 import { GuardedButton, SectionTitle, Stepper, TableCodes } from "@/components/common"
 import { ConfirmAction } from "@/components/dialogs"
 import { RevealPhone } from "@/components/reveal-phone"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -26,7 +39,6 @@ import {
   CLOSE_REASON_LABEL,
   PREFERENCE_MODE_LABEL,
   RESERVATION_STATUS_LABEL,
-  SOURCE_LABEL,
   type BookingClassification,
   type BookingSourceCode,
   type ReservationCloseReason,
@@ -89,7 +101,6 @@ function Detail({ r }: { r: ReservationView }) {
   const [checkInOpen, setCheckInOpen] = useState(false)
   const [heldArrival, setHeldArrival] = useState<(() => Promise<unknown>) | null>(null)
   const [cancelOpen, setCancelOpen] = useState(false)
-  const [noShowOpen, setNoShowOpen] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [waitOpen, setWaitOpen] = useState(false)
   const codes = (ids: number[]) =>
@@ -99,7 +110,6 @@ function Detail({ r }: { r: ReservationView }) {
     })
   const checkInError = validateBookingCheckInDate(r.businessDate, now)
   const booked = r.status === "BOOKED"
-  const noShowAfter = catalog.data?.venue.noShowWarningMinutes ?? 30
   const history = (ops.data ?? []).filter((o) => o.entityType === "reservation" && o.entityId === r.id)
 
   const pickOnFloor = (intent: "assign" | "checkin", count?: number) => {
@@ -135,8 +145,8 @@ function Detail({ r }: { r: ReservationView }) {
       preselected: r.tableIds,
       title:
         intent === "assign"
-          ? `${r.tableIds.length ? "Đổi bàn" : "Phân bàn"} cho ${r.displayName} · ${r.partySize} khách`
-          : `Check-in ${r.displayName} vào bàn`,
+          ? `${r.tableIds.length ? "Đổi bàn" : "Phân bàn"} cho ${formatHonorificName(r.displayName, r.honorific)} · ${r.partySize} khách`
+          : `Check-in ${formatHonorificName(r.displayName, r.honorific)} vào bàn`,
       hint:
         intent === "assign"
           ? `Booking ${fmtTime(r.expectedAt)}${r.businessDate !== businessDateOf(now) ? ` ngày ${fmtBusinessDate(r.businessDate, "short")}` : ""}. Chạm bàn khả dụng.`
@@ -155,19 +165,10 @@ function Detail({ r }: { r: ReservationView }) {
             toast.error("Không thể ghép bàn thường với ghế Bar.")
             return false
           }
-          const totalCapacity = ids.reduce(
-            (sum, id) => sum + (catalog.data?.tables.find((t) => t.id === id)?.capacity ?? 0),
-            0,
-          )
-          if (totalCapacity < r.partySize) {
-            toast.error(
-              `Tổng sức chứa (${totalCapacity}) thấp hơn số khách (${r.partySize}). Chọn thêm bàn cùng khu, cùng loại trước khi xác nhận.`,
-            )
-            return false
-          }
           return !!(await run(async (o) => {
             const current = await held.verifyBooking(r)
-            if (!current.canReassign || current.kind !== "direct") throw new Error("Đơn chờ đã thay đổi. Vui lòng mở lại.")
+            if (!current.canReassign || current.kind !== "direct")
+              throw new Error("Đơn chờ đã thay đổi. Vui lòng mở lại.")
             return api.assignTables(r.id, r.version, ids, o)
           }))
         }
@@ -195,7 +196,7 @@ function Detail({ r }: { r: ReservationView }) {
             #{r.id}
           </Badge>
         </div>
-        <SheetTitle className="text-xl">{r.displayName}</SheetTitle>
+        <SheetTitle className="text-xl">{formatHonorificName(r.displayName, r.honorific)}</SheetTitle>
         <SheetDescription asChild>
           <div>
             <RevealPhone
@@ -208,12 +209,16 @@ function Detail({ r }: { r: ReservationView }) {
         </SheetDescription>
       </SheetHeader>
       <div className="min-h-0 flex-1 scrollbar-thin overflow-y-auto px-5 py-5">
-        {holdPolicy.reason ? <p role="alert" className="mb-3 text-sm text-destructive">{holdPolicy.reason}</p> : null}
+        {holdPolicy.reason ? (
+          <p role="alert" className="mb-3 text-sm text-destructive">
+            {holdPolicy.reason}
+          </p>
+        ) : null}
         <dl className="grid grid-cols-2 gap-4 text-sm">
           <Item k="Giờ đến" v={<span className="text-base font-semibold">{fmtTime(r.expectedAt)}</span>} />
           <Item k="Ngày kinh doanh" v={fmtBusinessDate(r.businessDate)} />
           <Item k="Số khách" v={`${r.partySize} khách`} />
-          <Item k="Nguồn" v={SOURCE_LABEL[r.sourceCode]} />
+          <Item k="Nguồn" v={formatBookingSource(r.sourceCode, r.socialPlatform)} />
           <Item
             k="Loại khách"
             v={
@@ -224,7 +229,7 @@ function Detail({ r }: { r: ReservationView }) {
                   : "Chưa phân loại"
             }
           />
-          <Item k="Đặc điểm" v={r.isBirthday ? "🎂 Sinh nhật" : "Không có"} />
+          <Item k="Đặc điểm" v={formatBookingIcons(r.isBirthday, r.iconKeys)} />
           <Item
             k="Bàn"
             v={
@@ -282,7 +287,9 @@ function Detail({ r }: { r: ReservationView }) {
                 size="lg"
                 className="col-span-2"
                 disabled={Boolean(checkInError) || pending || !holdPolicy.canArrival}
-                disabledReason={holdPolicy.reason ?? (heldEntry && !holdPolicy.supported ? "Chưa hỗ trợ" : checkInError)}
+                disabledReason={
+                  holdPolicy.reason ?? (heldEntry && !holdPolicy.supported ? "Chưa hỗ trợ" : checkInError)
+                }
                 onClick={() => {
                   setHeldArrival(heldEntry ? () => () => held.arrive(heldEntry, r, r.partySize) : null)
                   setCheckInOpen(true)
@@ -296,7 +303,9 @@ function Detail({ r }: { r: ReservationView }) {
                 size="lg"
                 className="col-span-2"
                 disabled={Boolean(checkInError) || pending || !holdPolicy.canArrival}
-                disabledReason={holdPolicy.reason ?? (heldEntry && !holdPolicy.supported ? "Chưa hỗ trợ" : checkInError)}
+                disabledReason={
+                  holdPolicy.reason ?? (heldEntry && !holdPolicy.supported ? "Chưa hỗ trợ" : checkInError)
+                }
                 onClick={() => {
                   setHeldArrival(heldEntry ? () => () => held.arrive(heldEntry, r, r.partySize) : null)
                   setCheckInOpen(true)
@@ -338,20 +347,12 @@ function Detail({ r }: { r: ReservationView }) {
             <GuardedButton
               permission="reservation.cancel"
               variant="outline"
+              className="col-span-2 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
               disabled={pending || !holdPolicy.canBookingStatus}
               disabledReason={holdPolicy.reason ?? (!holdPolicy.canBookingStatus ? "Chưa hỗ trợ" : undefined)}
               onClick={() => setCancelOpen(true)}
             >
               <XCircle /> Hủy booking
-            </GuardedButton>
-            <GuardedButton
-              permission="reservation.mark_no_show"
-              variant="outline"
-              disabled={pending || !holdPolicy.canBookingStatus}
-              disabledReason={holdPolicy.reason ?? (!holdPolicy.canBookingStatus ? "Chưa hỗ trợ" : r.minutesLate >= noShowAfter ? null : `Chỉ bật sau ${noShowAfter} phút trễ`)}
-              onClick={() => setNoShowOpen(true)}
-            >
-              <TimerReset /> Không tới
             </GuardedButton>
           </div>
         ) : null}
@@ -385,7 +386,7 @@ function Detail({ r }: { r: ReservationView }) {
       <GuestCountDialog
         open={checkInOpen}
         onOpenChange={setCheckInOpen}
-        title={`Check-in ${r.displayName}`}
+        title={`Check-in ${formatHonorificName(r.displayName, r.honorific)}`}
         description={
           r.tableIds.length ? <>Bàn {codes(r.tableIds).join(" + ")}</> : "Bước tiếp theo: chọn bàn trống trên sơ đồ."
         }
@@ -410,7 +411,8 @@ function Detail({ r }: { r: ReservationView }) {
           }
           const res = await run(async () => {
             const current = await held.verifyBooking(r)
-            if (!current.canArrival || current.kind !== "direct") throw new Error("Đơn chờ đã thay đổi. Vui lòng mở lại.")
+            if (!current.canArrival || current.kind !== "direct")
+              throw new Error("Đơn chờ đã thay đổi. Vui lòng mở lại.")
             return api.checkIn({ reservationId: r.id, version: r.version, guestCount: r.partySize })
           })
           if (res) setCheckInOpen(false)
@@ -422,7 +424,7 @@ function Detail({ r }: { r: ReservationView }) {
         title="Hủy booking?"
         description={
           <>
-            Booking {fmtTime(r.expectedAt)} của <b className="text-foreground">{r.displayName}</b>. Bàn đang giữ (nếu
+            Booking {fmtTime(r.expectedAt)} của <b className="text-foreground">{formatHonorificName(r.displayName, r.honorific)}</b>. Bàn đang giữ (nếu
             có) sẽ được nhả.
           </>
         }
@@ -432,26 +434,9 @@ function Detail({ r }: { r: ReservationView }) {
         onConfirm={async (reason, note) => {
           if (!held.bookingPolicy(r).canBookingStatus || !held.can("reservation.cancel")) return
           await run(async () => {
-            if (!(await held.verifyBooking(r)).canBookingStatus) throw new Error("Đơn chờ đã thay đổi. Vui lòng mở lại.")
+            if (!(await held.verifyBooking(r)).canBookingStatus)
+              throw new Error("Đơn chờ đã thay đổi. Vui lòng mở lại.")
             return api.cancelReservation(r.id, r.version, reason as ReservationCloseReason, note)
-          })
-        }}
-      />
-      <ConfirmAction
-        open={noShowOpen}
-        onOpenChange={setNoShowOpen}
-        title="Xác nhận khách không tới?"
-        description={
-          <>
-            Đã trễ {r.minutesLate} phút. Booking chuyển sang Không tới{r.tableIds.length ? " và bàn được nhả" : ""}.
-          </>
-        }
-        confirmLabel="Xác nhận không tới"
-        onConfirm={async () => {
-          if (!held.bookingPolicy(r).canBookingStatus || !held.can("reservation.mark_no_show") || r.status !== "BOOKED" || r.minutesLate < noShowAfter) return
-          await run(async () => {
-            if (!(await held.verifyBooking(r)).canBookingStatus) throw new Error("Đơn chờ đã thay đổi. Vui lòng mở lại.")
-            return api.markNoShow(r.id, r.version)
           })
         }}
       />
@@ -489,7 +474,6 @@ export function EditReservationDialog({
 }
 
 function EditReservationBody({ r, close }: { r: ReservationView; close: () => void }) {
-  const catalog = useCatalog()
   const now = useNow(30_000)
   const quickTimes = useVenueSettings().data?.quickTimes ?? []
   const { run, pending } = useAction()
@@ -501,8 +485,12 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
   const [name, setName] = useState(() => initialContactName(r.hasGuestName, r.displayName))
   const [note, setNote] = useState(r.note ?? "")
   const [source, setSource] = useState<BookingSourceCode>(r.sourceCode)
+  const [platform, setPlatform] = useState<SocialPlatform | "">(() => (r.socialPlatform as SocialPlatform) ?? "")
+  const [platformError, setPlatformError] = useState<string | null>(null)
   const [classification, setClassification] = useState<BookingClassification>(r.classification)
   const [isBirthday, setIsBirthday] = useState(r.isBirthday)
+  const [iconKeys, setIconKeys] = useState<string[]>(() => (r.iconKeys ? [...r.iconKeys] : []))
+  const [honorific, setHonorific] = useState<Honorific | null>(() => r.honorific ?? null)
   const invalid = noteHasPhoneNumber(note)
   const originalSchedule = time === fmtTime(r.expectedAt)
   const timeError = originalSchedule ? null : validateBookingTime(r.businessDate, time, now, undefined, quickTimes)
@@ -517,13 +505,20 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
         <div className="grid gap-4">
           <div className="grid gap-1.5">
             <Label htmlFor="ed-name">Tên khách</Label>
-            <Input
-              id="ed-name"
-              className="h-11"
-              value={name}
-              placeholder={r.hasGuestName ? undefined : "Khách chưa cho tên"}
-              onChange={(e) => setName(e.target.value)}
-            />
+            <div className="flex items-center gap-1.5">
+              <Input
+                id="ed-name"
+                className="h-11 min-w-0 flex-1"
+                value={name}
+                placeholder={r.hasGuestName ? undefined : "Khách chưa cho tên"}
+                onChange={(e) => setName(e.target.value)}
+              />
+              <HonorificPicker
+                value={honorific}
+                onChange={setHonorific}
+                disabled={pending}
+              />
+            </div>
           </div>
           <div className="flex flex-wrap items-end gap-4">
             <div className="grid gap-1.5">
@@ -542,23 +537,31 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
           />
           <div className="grid gap-1.5">
             <Label htmlFor="ed-source">Nguồn</Label>
-            <Select value={source} onValueChange={(v) => setSource(v as BookingSourceCode)}>
-              <SelectTrigger id="ed-source" className="h-11 w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(catalog.data?.sources ?? []).map((s) => (
-                  <SelectItem key={s.code} value={s.code}>
-                    {SOURCE_LABEL[s.code]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SourcePicker
+              id="ed-source"
+              source={source}
+              onSourceChange={(s) => {
+                setSource(s)
+                setPlatform("")
+                setPlatformError(null)
+              }}
+              platform={platform}
+              onPlatformChange={(p) => {
+                setPlatform(p)
+                setPlatformError(null)
+              }}
+              error={platformError}
+            />
           </div>
-          <label className="flex min-h-11 items-center gap-3 text-sm">
-            <Checkbox checked={isBirthday} onCheckedChange={(checked) => setIsBirthday(checked === true)} />
-            Sinh nhật
-          </label>
+          <div className="grid gap-1.5">
+            <Label>Icon</Label>
+            <IconPicker
+              isBirthday={isBirthday}
+              onBirthdayChange={setIsBirthday}
+              iconKeys={iconKeys}
+              onIconKeysChange={setIconKeys}
+            />
+          </div>
           <div className="grid gap-1.5">
             <Label htmlFor="ed-classification">Loại khách</Label>
             <Select value={classification} onValueChange={(v) => setClassification(v as BookingClassification)}>
@@ -592,6 +595,11 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
         <Button
           disabled={pending || invalid || !!timeError || (!name.trim() && !r.phoneLast3)}
           onClick={async () => {
+            const pErr = validateSocialPlatform(source, platform, socialPlatformSupported)
+            if (pErr) {
+              setPlatformError(pErr)
+              return
+            }
             const res = await run(() =>
               api.updateReservation({
                 id: r.id,
@@ -601,10 +609,13 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
                 partySize: party,
                 expectedAt: atBusinessTime(r.businessDate, time),
                 sourceCode: source,
+                socialPlatform: socialPlatformSupported && source === "SOCIAL" ? (platform || null) : null,
                 note,
                 classification,
                 guestType: classification === "RETURNING" ? "REGULAR" : classification === "NEW" ? "NEW" : null,
                 isBirthday,
+                iconKeys: iconKeysSupported ? iconKeys : undefined,
+                honorific: honorificSupported ? (honorific || null) : undefined,
               }),
             )
             if (res) close()

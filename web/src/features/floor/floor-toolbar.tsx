@@ -44,7 +44,7 @@ export function DateField({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" className="justify-start gap-2 font-normal" aria-label="Chọn ngày kinh doanh">
+        <Button variant="outline" className="h-11 min-h-[44px] justify-start gap-2 font-normal" aria-label="Chọn ngày kinh doanh">
           <CalendarDays className="text-muted-foreground" />
           {label ?? fmtBusinessDate(value, "short")}
         </Button>
@@ -78,7 +78,7 @@ export function TimeField({
 }) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className={className ?? "h-11 w-[104px]"} aria-label="Giờ khách muốn đến">
+      <SelectTrigger className={cn("h-11 min-h-[44px] w-[104px]", className)} aria-label="Giờ khách muốn đến">
         <SelectValue />
       </SelectTrigger>
       <SelectContent className="max-h-80">
@@ -116,7 +116,7 @@ function DayNav({ today }: { today: BusinessDate }) {
       <Button
         variant="outline"
         size="icon"
-        className="bg-surface-1"
+        className="h-11 w-11 min-h-[44px] min-w-[44px] bg-surface-1"
         disabled={date <= today}
         onClick={() => go(addDays(date, -1))}
         aria-label="Ngày trước"
@@ -127,7 +127,7 @@ function DayNav({ today }: { today: BusinessDate }) {
         <PopoverTrigger asChild>
           <button
             type="button"
-            className="flex h-11 min-w-[200px] items-center gap-2.5 rounded-sm border border-strong bg-surface-1 px-3.5 text-sm hover:bg-surface-2"
+            className="flex h-11 min-h-[44px] min-w-[200px] items-center gap-2.5 rounded-sm border border-strong bg-surface-1 px-3.5 text-sm hover:bg-surface-2"
             aria-label="Chọn ngày trên lịch"
           >
             <CalendarDays className="size-4 text-muted-foreground" />
@@ -155,14 +155,14 @@ function DayNav({ today }: { today: BusinessDate }) {
       <Button
         variant="outline"
         size="icon"
-        className="bg-surface-1"
+        className="h-11 w-11 min-h-[44px] min-w-[44px] bg-surface-1"
         onClick={() => go(addDays(date, 1))}
         aria-label="Ngày sau"
       >
         <ChevronRight />
       </Button>
       {date !== today ? (
-        <Button variant="outline" className="h-11 bg-transparent" onClick={() => go(today)}>
+        <Button variant="outline" className="h-11 min-h-[44px] min-w-[44px] bg-transparent" onClick={() => go(today)}>
           Hôm nay
         </Button>
       ) : null}
@@ -175,8 +175,8 @@ export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
   const now = useNow(15_000)
   const today = businessDateOf(now)
   return (
-    <div className="flex h-16 shrink-0 items-center gap-4 overflow-x-auto border-b pr-4 pl-5">
-      <div role="tablist" aria-label="Chế độ xem" className="flex shrink-0 items-center gap-3">
+    <div className="flex h-14 shrink-0 items-center gap-2.5 overflow-x-auto border-b px-3 sm:px-4">
+      <div role="tablist" aria-label="Chế độ xem" className="flex shrink-0 items-center gap-2 sm:gap-3">
         {VIEWS.map((v, i) => {
           const on = ui.view === v.id
           return (
@@ -189,7 +189,7 @@ export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
                 aria-label={v.label}
                 onClick={() => ui.setView(v.id)}
                 className={cn(
-                  "flex h-10 items-center gap-2 rounded-sm border px-4 text-sm whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                  "flex h-11 min-h-[44px] items-center gap-2 rounded-sm border px-3 sm:px-4 text-sm whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                   on
                     ? "border-primary bg-primary font-medium text-primary-foreground"
                     : "border-transparent text-tx-1 hover:text-primary-ink",
@@ -207,7 +207,7 @@ export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
       <Sep />
       <div role="group" aria-label="Tạo mới" className="flex shrink-0 items-center gap-2">
         {onOpenList ? (
-          <Button variant="outline" onClick={onOpenList} aria-label="Danh sách booking" className="bg-transparent">
+          <Button variant="outline" size="icon" onClick={onOpenList} aria-label="Danh sách booking" className="h-11 w-11 min-h-[44px] min-w-[44px] bg-transparent">
             <ListTodo />
           </Button>
         ) : null}
@@ -215,7 +215,7 @@ export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
           <GuardedButton
             permission="visit.walkin"
             variant="outline"
-            className="h-11 border-strong bg-transparent px-4"
+            className="h-11 min-h-[44px] border-strong bg-transparent px-4"
             onClick={() => ui.openWalkIn()}
           >
             Walk-in
@@ -223,7 +223,7 @@ export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
         ) : null}
         <GuardedButton
           permission="reservation.create"
-          className="h-11 px-4"
+          className="h-11 min-h-[44px] px-4"
           onClick={() =>
             ui.openBooking(
               ui.floorMode === "availability" ? { date: ui.availDate, time: ui.availTime, party: ui.availParty } : {},

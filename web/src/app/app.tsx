@@ -92,7 +92,7 @@ export function App() {
           <GlobalLayer />
           <RouterProvider router={router} />
         </AuthBoundary>
-        <Toaster position="top-center" richColors={false} closeButton visibleToasts={3} />
+        <Toaster position="top-center" richColors={false} closeButton visibleToasts={3} duration={3000} />
       </TooltipProvider>
     </QueryClientProvider>
   )

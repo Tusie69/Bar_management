@@ -31,8 +31,16 @@ async function audit(page, label) {
   for (const v of res) console.log("  ", v.impact, v.id, v.n, JSON.stringify(v.sample).slice(0, 600))
 }
 const idle = async () => {}
+const mergeSelection = async (p) => {
+  await p.getByRole("button", { name: "Ghép bàn", exact: true }).click()
+  await p.locator('[aria-label^="Bàn B5,"]').first().click()
+  await p.locator('[aria-label^="Bàn B7,"]').first().click()
+}
+
 const scenarios = [
   ["floor", "/floor", idle],
+  ["reception-merge-mode", "/floor", mergeSelection, 1],
+  ["reception-combined-cell", "/floor", async (p) => { await mergeSelection(p); await p.getByRole("button", { name: /Ghép \d+ bàn|Xác nhận ghép/ }).click(); await p.locator('[data-combined-codes="B5 B7"]').first().waitFor() }, 1],
   ["overview", "/overview", idle],
   ["reservations", "/reservations", idle],
   ["waitlist", "/waitlist", idle],
@@ -88,7 +96,7 @@ const scenarios = [
     "/floor",
     async (p) => {
       await p.locator('[aria-label^="Bàn B5,"]').first().click()
-      await p.getByRole("tab", { name: "Walk-in" }).click()
+      await p.getByRole("button", { name: "Mở bàn Walk-in", exact: true }).click()
       await p.waitForTimeout(500)
     },
     1,
@@ -101,6 +109,7 @@ const scenarios = [
       const deferAlert = page.getByRole("button", { name: "Đã xem, xử lý sau" })
       if (await deferAlert.isVisible()) await deferAlert.click()
       await page.locator('[aria-label^="Bàn B5,"]').click()
+      await page.getByRole("button", { name: "Tạo đặt trước", exact: true }).click()
       await page.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).click()
     },
     1,
@@ -113,8 +122,8 @@ const scenarios = [
       const deferAlert = p.getByRole("button", { name: "Đã xem, xử lý sau" })
       if (await deferAlert.isVisible()) await deferAlert.click()
       await p.locator('[aria-label^="Ghế Bar 13,"]').first().click()
+      await p.getByRole("button", { name: "Mở bàn Walk-in", exact: true }).click()
       const form = p.getByRole("form", { name: /^(Tạo đặt bàn|Mở bàn Walk-in)/ })
-      await form.getByRole("tab", { name: "Walk-in" }).click()
       await form.getByRole("radio", { name: "2 khách" }).click()
       await p.waitForTimeout(500)
     },

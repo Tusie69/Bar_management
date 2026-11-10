@@ -31,11 +31,129 @@ const backendBooking = (patch: Partial<BackendBookingPayload> = {}): BackendBook
 
 describe("booking contract adapter", () => {
   it("maps only fields present in the backend booking view", () => {
-    const result = mapBooking(backendBooking())
-    expect(result).toMatchObject({ id: 42, guestName: "Khách backend", tableCodes: ["A1"], version: 3 })
+    const result = mapBooking(backendBooking({ socialPlatform: "FB" }))
+    expect(result).toMatchObject({ id: 42, guestName: "Khách backend", tableCodes: ["A1"], version: 3, socialPlatform: "FB" })
     expect(result.expectedAt).toBeInstanceOf(Date)
     expect(result).not.toHaveProperty("customerId")
     expect(result).not.toHaveProperty("holdId")
+  })
+
+  it("includes socialPlatform only when sourceCode is SOCIAL", () => {
+    const socialPayload = createBookingPayload({
+      guestName: "Khách Social",
+      partySize: 2,
+      expectedAt: new Date("2030-10-24T14:30:00.000Z"),
+      businessDate: "2030-10-24",
+      sourceCode: "SOCIAL",
+      socialPlatform: "IG",
+    })
+    expect(socialPayload).toMatchObject({ sourceCode: "SOCIAL", socialPlatform: "IG" })
+
+    const hotlinePayload = createBookingPayload({
+      guestName: "Khách Hotline",
+      partySize: 2,
+      expectedAt: new Date("2030-10-24T14:30:00.000Z"),
+      businessDate: "2030-10-24",
+      sourceCode: "HOTLINE",
+      socialPlatform: "FB",
+    })
+    expect(hotlinePayload).not.toHaveProperty("socialPlatform")
+
+    const noPlatformSocial = createBookingPayload({
+      guestName: "Khách Social",
+      partySize: 2,
+      expectedAt: new Date("2030-10-24T14:30:00.000Z"),
+      businessDate: "2030-10-24",
+      sourceCode: "SOCIAL",
+    })
+    expect(noPlatformSocial).not.toHaveProperty("socialPlatform")
+  })
+
+  it("updates socialPlatform in fullUpdateBookingPayload only when source is SOCIAL", () => {
+    const current = mapBooking(backendBooking({ sourceCode: "SOCIAL", socialPlatform: "FB" }))
+    const updated = fullUpdateBookingPayload(current, { socialPlatform: "TIKTOK" })
+    expect(updated).toMatchObject({ sourceCode: "SOCIAL", socialPlatform: "TIKTOK" })
+
+    const switchedToHotline = fullUpdateBookingPayload(current, { sourceCode: "HOTLINE", socialPlatform: "FB" })
+    expect(switchedToHotline).toMatchObject({ sourceCode: "HOTLINE" })
+    expect(switchedToHotline).not.toHaveProperty("socialPlatform")
+  })
+
+  it("handles iconKeys in create, update, and mapBooking", () => {
+    const created = createBookingPayload({
+      guestName: "Khách VIP",
+      partySize: 4,
+      expectedAt: new Date("2030-10-24T14:30:00.000Z"),
+      businessDate: "2030-10-24",
+      sourceCode: "HOTLINE",
+      iconKeys: ["star", "pin"],
+    })
+    expect(created).toMatchObject({ iconKeys: ["star", "pin"] })
+
+    const createdEmpty = createBookingPayload({
+      guestName: "Khách thường",
+      partySize: 4,
+      expectedAt: new Date("2030-10-24T14:30:00.000Z"),
+      businessDate: "2030-10-24",
+      sourceCode: "HOTLINE",
+      iconKeys: [],
+    })
+    expect(createdEmpty).not.toHaveProperty("iconKeys")
+
+    const current = mapBooking(backendBooking({ iconKeys: ["star"] }))
+    expect(current.iconKeys).toEqual(["star"])
+
+    const updated = fullUpdateBookingPayload(current, { iconKeys: ["pin"] })
+    expect(updated).toMatchObject({ iconKeys: ["pin"] })
+
+    // Clearing all icons on update must send iconKeys: [] when capability is on
+    const cleared = fullUpdateBookingPayload(current, { iconKeys: [] })
+    expect(cleared.iconKeys).toEqual([])
+
+    // When capability is off, iconKeys is omitted
+    const unsupported = fullUpdateBookingPayload(current, { iconKeys: [] }, { iconKeysSupported: false })
+    expect(unsupported).not.toHaveProperty("iconKeys")
+  })
+
+  it("handles honorific in create, update, and mapBooking", () => {
+    const createdWithMr = createBookingPayload({
+      guestName: "Nam",
+      partySize: 2,
+      expectedAt: new Date("2030-10-24T14:30:00.000Z"),
+      businessDate: "2030-10-24",
+      sourceCode: "HOTLINE",
+      honorific: "MR",
+    })
+    expect(createdWithMr).toMatchObject({ honorific: "MR" })
+
+    const createdWithoutHonorific = createBookingPayload({
+      guestName: "Nam",
+      partySize: 2,
+      expectedAt: new Date("2030-10-24T14:30:00.000Z"),
+      businessDate: "2030-10-24",
+      sourceCode: "HOTLINE",
+    })
+    expect(createdWithoutHonorific).not.toHaveProperty("honorific")
+
+    const mapped = mapBooking(backendBooking({ honorific: "MS" }))
+    expect(mapped.honorific).toBe("MS")
+
+    const mappedNull = mapBooking(backendBooking({ honorific: null }))
+    expect(mappedNull.honorific).toBeNull()
+
+    expect(() => mapBooking(backendBooking({ honorific: "INVALID" as unknown as "MR" }))).toThrowError(ApiError)
+
+    const current = mapBooking(backendBooking({ honorific: "MR" }))
+    const updatedToMs = fullUpdateBookingPayload(current, { honorific: "MS" })
+    expect(updatedToMs.honorific).toBe("MS")
+
+    // On update, send null when cleared
+    const clearedHonorific = fullUpdateBookingPayload(current, { honorific: null })
+    expect(clearedHonorific.honorific).toBeNull()
+
+    // When not edited, preserve existing honorific
+    const preserved = fullUpdateBookingPayload(current, { partySize: 3 })
+    expect(preserved.honorific).toBe("MR")
   })
 
   it("rejects unknown backend status instead of inventing a mapping", () => {
@@ -77,6 +195,8 @@ describe("booking contract adapter", () => {
       classification: "UNCLASSIFIED",
       guestType: null,
       isBirthday: false,
+      iconKeys: [],
+      honorific: null,
       version: 3,
     })
   })

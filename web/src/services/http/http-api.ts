@@ -110,6 +110,10 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
       floor: floorState,
     }
   }
+  client.setGroupConflictHandler(async () => {
+    const dates = latestFloorByDate.size ? [...latestFloorByDate.keys()] : [businessDateOf(clock.now())]
+    await Promise.allSettled(dates.map(floor))
+  })
   const listWaitlist = async (date: BusinessDate) => {
     const response = await get<{ businessDate: string; entries: BackendWaitlistEntry[] }>(`/waitlist?date=${date}`)
     if (response.businessDate !== date || response.entries.some((entry) => entry.businessDate !== date)) {
@@ -165,9 +169,12 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
         expectedAt: input.expectedAt,
         businessDate: businessDateOf(input.expectedAt),
         sourceCode: input.sourceCode,
+        ...(input.sourceCode === "SOCIAL" && input.socialPlatform ? { socialPlatform: input.socialPlatform } : {}),
         classification: input.classification,
         guestType: input.guestType,
         isBirthday: input.isBirthday,
+        ...(input.iconKeys?.length ? { iconKeys: input.iconKeys } : {}),
+        ...(input.honorific ? { honorific: input.honorific } : {}),
         note: input.note,
         ...(input.phone === undefined ? {} : { phoneNumber: input.phone }),
       }
@@ -187,9 +194,18 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
             ? {}
             : { expectedAt: input.expectedAt, businessDate: businessDateOf(input.expectedAt) }),
           ...(input.sourceCode === undefined ? {} : { sourceCode: input.sourceCode }),
+          ...(input.sourceCode === "SOCIAL"
+            ? { socialPlatform: input.socialPlatform ?? null }
+            : input.sourceCode !== undefined
+              ? { socialPlatform: null }
+              : input.socialPlatform !== undefined
+                ? { socialPlatform: input.socialPlatform }
+                : {}),
           ...(input.classification === undefined ? {} : { classification: input.classification }),
           ...(input.guestType === undefined ? {} : { guestType: input.guestType }),
           ...(input.isBirthday === undefined ? {} : { isBirthday: input.isBirthday }),
+          ...(input.iconKeys !== undefined ? { iconKeys: input.iconKeys } : {}),
+          ...(input.honorific !== undefined ? { honorific: input.honorific } : {}),
           ...(input.note === undefined ? {} : { note: input.note }),
         },
       )
@@ -283,8 +299,34 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
         await bookings.merge(booking.id, input.claim.version ?? booking.version, [
           ...new Set([...ids, ...input.addTableIds]),
         ])
-      } else unsupported("ghép bàn không có lượt khách hoặc booking")
+      } else {
+        const current = await floor(businessDateOf(clock.now()))
+        const group = current.groups.find((g) => g.tableIds.some((id) => input.addTableIds.includes(id)))
+        if (group) {
+          if (group.version === undefined) unsupported("phiên bản nhóm mặt bằng")
+          await post(`/tables/groups/${group.id}/members`, {
+            version: group.version,
+            tableIds: input.addTableIds.filter((id) => !group.tableIds.includes(id)),
+          })
+        } else await post("/tables/groups", { tableIds: input.addTableIds })
+      }
       return result("Đã ghép bàn.")
+    },
+    createTableGroup: async (input) => {
+      await post(
+        "/tables/groups",
+        { tableIds: input.tableIds, ...(input.name === undefined ? {} : { name: input.name }) },
+        input.idempotencyKey,
+      )
+      return result("Đã ghép nhóm bàn.")
+    },
+    addTableGroupMembers: async (input) => {
+      await post(
+        `/tables/groups/${input.groupId}/members`,
+        { version: input.version, tableIds: input.tableIds },
+        input.idempotencyKey,
+      )
+      return result("Đã thêm bàn vào nhóm.")
     },
     endVisit: async (id, version) => {
       await visits.close(id, version)
@@ -388,7 +430,9 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     splitGroup: (input) =>
       post<MutationResult>(
         `/tables/groups/${input.groupId}/split`,
-        { keepTableIds: input.keepTableIds },
+        input.mode === "ALL_TO_SINGLE"
+          ? { version: input.version, mode: input.mode }
+          : { keepTableIds: input.keepTableIds },
         input.idempotencyKey,
       ),
     markPaid: rejectUnsupported("xác minh thanh toán"),
@@ -398,8 +442,7 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     releaseHold: rejectUnsupported("nhả giữ bàn"),
     updateCustomerNotes: rejectUnsupported("ghi chú hồ sơ khách"),
     listAccounts: () => get<AccountsView>("/accounts"),
-    createAccount: async (input) =>
-      (await post<{ account: AccountSummary }>("/accounts", input)).account,
+    createAccount: async (input) => (await post<{ account: AccountSummary }>("/accounts", input)).account,
     setAccountStatus: async (userId, version, status) =>
       (await post<{ account: AccountSummary }>(`/accounts/${userId}/status`, { version, status })).account,
     getUndoState: () => get<UndoState>("/operations/undo-state"),

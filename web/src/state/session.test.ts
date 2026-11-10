@@ -61,3 +61,34 @@ describe("HTTP portal-bound session role selection", () => {
     expect(useSession.getState().principal).toBeNull()
   })
 })
+
+describe("theme default and persistence (Item 1)", () => {
+  it("defaults to light theme when localStorage is empty", () => {
+    expect(useSession.getState().theme).toBe("light")
+  })
+
+  it("preserves saved theme when set", () => {
+    useSession.getState().setTheme("dark")
+    expect(useSession.getState().theme).toBe("dark")
+    useSession.getState().setTheme("light")
+    expect(useSession.getState().theme).toBe("light")
+  })
+
+  it("persists theme change to localStorage and updates document element", () => {
+    useSession.getState().setTheme("dark")
+    expect(useSession.getState().theme).toBe("dark")
+    expect(localStorage.setItem).toHaveBeenCalledWith(
+      "21gam.session.v1",
+      expect.stringContaining('"theme":"dark"'),
+    )
+    expect(document.documentElement.classList.toggle).toHaveBeenCalledWith("dark", true)
+
+    useSession.getState().setTheme("light")
+    expect(useSession.getState().theme).toBe("light")
+    expect(localStorage.setItem).toHaveBeenCalledWith(
+      "21gam.session.v1",
+      expect.stringContaining('"theme":"light"'),
+    )
+    expect(document.documentElement.classList.toggle).toHaveBeenCalledWith("dark", false)
+  })
+})

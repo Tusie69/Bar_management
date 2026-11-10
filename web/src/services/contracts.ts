@@ -91,6 +91,7 @@ export interface CreateReservationInput {
   partySize: number
   expectedAt: Date
   sourceCode: BookingSourceCode
+  socialPlatform?: string | null
   note?: string
   /** Selected tables are created with the booking atomically. Empty/omitted creates an unassigned booking. */
   tableIds?: number[]
@@ -98,6 +99,8 @@ export interface CreateReservationInput {
   classification?: BookingClassification
   guestType?: "REGULAR" | "NEW" | null
   isBirthday?: boolean
+  iconKeys?: string[]
+  honorific?: "MR" | "MS" | null
   /** FX-04: mã chống trùng của lần mở form; gửi lại cùng mã thì máy chủ trả lại kết quả cũ. */
   idempotencyKey?: string
 }
@@ -109,10 +112,13 @@ export interface UpdateReservationInput {
   partySize?: number
   expectedAt?: Date
   sourceCode?: BookingSourceCode
+  socialPlatform?: string | null
   note?: string | null
   classification?: BookingClassification
   guestType?: "REGULAR" | "NEW" | null
   isBirthday?: boolean
+  iconKeys?: string[]
+  honorific?: "MR" | "MS" | null
 }
 
 export interface WalkInInput {
@@ -173,11 +179,25 @@ export interface CreateAccountInput {
   roleCode: string
 }
 
-export interface SplitInput {
+export type SplitInput = {
   groupId: number
-  /** Tables that stay with the party. Others are released (SPLIT). */
-  keepTableIds: number[]
   /** SPL-03: same key + same payload on a retry replays the committed split. */
+  idempotencyKey?: string
+} & (
+  | { keepTableIds: number[]; mode?: never; version?: never }
+  | { version: number; mode: "ALL_TO_SINGLE"; keepTableIds?: never }
+)
+
+export interface CreateTableGroupInput {
+  tableIds: number[]
+  name?: string
+  idempotencyKey?: string
+}
+
+export interface AddTableGroupMembersInput {
+  groupId: number
+  version: number
+  tableIds: number[]
   idempotencyKey?: string
 }
 
@@ -305,6 +325,8 @@ export interface GamApi {
   seatWalkIn(input: WalkInInput): Promise<MutationResult & { visitId: number }>
   moveClaim(input: MoveInput): Promise<MutationResult>
   combineTables(input: CombineInput): Promise<MutationResult>
+  createTableGroup(input: CreateTableGroupInput): Promise<MutationResult>
+  addTableGroupMembers(input: AddTableGroupMembersInput): Promise<MutationResult>
   splitGroup(input: SplitInput): Promise<MutationResult>
   endVisit(visitId: number, version: number): Promise<MutationResult>
   markPaid(visitId: number, version: number): Promise<MutationResult>
@@ -320,7 +342,9 @@ export interface GamApi {
   releaseClaim(entryId: number, version: number): Promise<MutationResult>
   recordContact(input: RecordContactInput): Promise<MutationResult>
   /** Target backend assigns a reservation hold, with a group for multiple tables. */
-  seatWaitlist(input: SeatWaitlistInput): Promise<MutationResult & { reservationId: number | null; groupId: number | null }>
+  seatWaitlist(
+    input: SeatWaitlistInput,
+  ): Promise<MutationResult & { reservationId: number | null; groupId: number | null }>
   cancelWaitlist(entryId: number, version: number, reason: WaitlistCloseReason, note?: string): Promise<MutationResult>
   setHoldDeadline(holdId: number, version: number, deadlineAt: Date, reason: string): Promise<MutationResult>
   releaseHold(holdId: number, version: number, reason: HoldReleaseReason, note?: string): Promise<MutationResult>

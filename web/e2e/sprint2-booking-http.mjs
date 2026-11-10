@@ -10,8 +10,9 @@ import { chromium, expect } from "@playwright/test"
 const root = fileURLToPath(new URL("../../", import.meta.url))
 const apiUrl = process.env.API_BASE_URL ?? "http://127.0.0.1:3101"
 const webUrl = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5174"
-const databaseName = process.env.DB_NAME ?? "gam21_platform_test"
+const databaseName = process.env.DB_NAME ?? "gam21_platform_e2e_test"
 if (!/_test$/.test(databaseName)) throw new Error("Refusing browser E2E: DB_NAME must end in _test")
+if (!["gam21_platform_e2e_test", "gam21_platform_it_test"].includes(databaseName) || (process.env.DB_PORT ?? "33306") !== "33306") throw new Error("HTTP E2E requires the approved test databases on port 33306")
 const pnpmCli = process.env.npm_execpath
 if (!pnpmCli) throw new Error("pnpm CLI path is unavailable")
 const output = process.env.SPRINT2_OUTPUT ?? "e2e/.artifacts/sprint2-booking"
@@ -29,7 +30,7 @@ const common = {
   ...process.env,
   NODE_ENV: "test",
   DB_HOST: "127.0.0.1",
-  DB_PORT: process.env.DB_PORT ?? "3306",
+  DB_PORT: process.env.DB_PORT ?? "33306",
   DB_NAME: databaseName,
   DB_USER: process.env.DB_USER ?? "gam21",
   DB_PASSWORD: process.env.DB_PASSWORD ?? "gam21_dev",
@@ -88,7 +89,7 @@ async function waitFor(url, timeoutMs = 40_000) {
   throw new Error(`Timed out waiting for ${url}`)
 }
 
-const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"]`).first()
+const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"], [data-combined-codes~="${code}"]`).first()
 const sheet = (page) => page.getByRole("form", { name: /^(Tạo đặt bàn|Mở bàn Walk-in)/ })
 const instant = (iso) => new Date(iso).toISOString()
 
@@ -315,6 +316,7 @@ try {
     await page.setViewportSize({ width: 1280, height: 800 })
     await page.goto(`${webUrl}/floor`, { waitUntil: "networkidle" })
     await table(page, "B6").click()
+    await page.getByRole("button", { name: /^(Đặt bàn|Tạo đặt trước)$/, exact: true }).click()
     const bookingForm = sheet(page)
     await bookingForm.getByLabel("Số điện thoại").fill("0901111222")
     await bookingForm.getByRole("group", { name: "Giờ nhanh" }).getByRole("button", { name: "21:30" }).click()
@@ -449,19 +451,20 @@ try {
     await table(page, "A1").waitFor()
   })
 
-  await step("AT1 AT4 AT6 AT7: tap A1 opens its sheet, 22:30 in 3 taps, venue quick times, saved on A1", async () => {
+  await step("AT1 AT4 AT6 AT7: choose booking on A1 opens its sheet, 22:30 in 3 taps, venue quick times, saved on A1", async () => {
     await table(page, "A1").click()
+    await page.getByRole("button", { name: /^(Đặt bàn|Tạo đặt trước)$/, exact: true }).click()
     const form = sheet(page)
     await expect(form).toHaveAccessibleName("Tạo đặt bàn A1")
     assert.deepEqual(
       await form.getByRole("group", { name: "Giờ nhanh" }).getByRole("button").allTextContents(),
-      ["21:30", "22:00", "23:45"],
+      quickTimes,
     )
     const taps = counter()
     await pickTime(form, "22", "30", taps.click)
-    await expect(form.locator('[data-wheel="Phút"] [data-value]')).toHaveText(["00", "15", "30", "45"])
-    await expect(form.locator('[data-wheel="Phút"] [data-value="35"]')).toHaveCount(0)
-    await expect(form.getByRole("group", { name: "Giờ nhanh" }).getByRole("button", { name: "20:10" })).toHaveCount(0)
+    await expect(form.locator('[data-wheel="Phút"] [data-value]')).toHaveText(["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"])
+    await expect(form.locator('[data-wheel="Phút"] [data-value="35"]')).toHaveCount(1)
+    await expect(form.getByRole("group", { name: "Giờ nhanh" }).getByRole("button", { name: "20:10" })).toHaveCount(1)
     assert(taps.n <= 3, `22:30 took ${taps.n} taps`)
     await form.getByLabel("Tên khách").fill("Khách 2230")
     const created = createdBy(page, "/bookings/direct")
@@ -479,6 +482,7 @@ try {
 
   await step("BA-004 mobile: phone-only table-first booking renders masked on the floor", async () => {
     await table(page, "B5").click()
+    await page.getByRole("button", { name: /^(Đặt bàn|Tạo đặt trước)$/, exact: true }).click()
     const form = sheet(page)
     await form.getByLabel("Số điện thoại").fill("0903333444")
     await form.getByRole("group", { name: "Giờ nhanh" }).getByRole("button", { name: "21:30" }).click()
@@ -502,15 +506,14 @@ try {
     const taken = await directBooking("B3", tomorrow, "21:00", "Giữ B3 ngày mai")
     assert.equal(taken.status, 201)
     await table(page, "B3").click()
+    await page.getByRole("button", { name: /^(Đặt bàn|Tạo đặt trước)$/, exact: true }).click()
     const form = sheet(page)
     await expect(form.getByRole("button", { name: "Đặt bàn B3", exact: true })).toBeEnabled()
-    await form.getByRole("combobox", { name: "Ngày", exact: true }).click()
-    await page.getByRole("option", { name: /04\/11/ }).click()
+    await form.getByRole("radio", { name: /04\/11/ }).click()
     await expect(form.getByRole("alert")).toContainText("B3 đã có khách đặt trong ngày 04/11")
     await expect(form.getByRole("button", { name: /^Đặt bàn/ })).toHaveCount(0)
     await page.screenshot({ path: `${output}/b3-unavailable-http.png` })
-    await form.getByRole("combobox", { name: "Ngày", exact: true }).click()
-    await page.getByRole("option", { name: /03\/11/ }).click()
+    await form.getByRole("radio", { name: /03\/11/ }).click()
     await expect(form.getByRole("button", { name: "Đặt bàn B3", exact: true })).toBeEnabled()
     await form.getByRole("button", { name: "Đóng form" }).click()
     await expect(form).toBeHidden()
@@ -520,6 +523,7 @@ try {
     "AT3 AT5 AT13: other device takes A2 mid-entry, backend refuses, data stays, another table saves",
     async () => {
       await table(page, "A2").click()
+      await page.getByRole("button", { name: /^(Đặt bàn|Tạo đặt trước)$/, exact: true }).click()
       const form = sheet(page)
       await form.getByLabel("Tên khách").fill("Khách tranh bàn")
       await form.getByLabel("Số điện thoại").fill("0987654111")
@@ -557,6 +561,7 @@ try {
 
   await step("AT12: 00:30 stays on business date 03/11, 23:30 on 04/11", async () => {
     await table(page, "B3").click()
+    await page.getByRole("button", { name: /^(Đặt bàn|Tạo đặt trước)$/, exact: true }).click()
     let form = sheet(page)
     await form.getByLabel("Tên khách").fill("Khách 0030")
     await pickTime(form, "00", "30")
@@ -570,6 +575,7 @@ try {
 
     await chooseDate(page, tomorrow)
     await table(page, "A4").click()
+    await page.getByRole("button", { name: /^(Đặt bàn|Tạo đặt trước)$/, exact: true }).click()
     form = sheet(page)
     await form.getByLabel("Tên khách").fill("Khách 2330")
     await pickTime(form, "23", "30")
@@ -680,8 +686,9 @@ try {
     }
   }
   const openHeld = async (p, code = "A5", width = 390) => {
-    await table(p, code).click()
-    const detail = width < 768 ? p.getByRole("dialog", { name: `Chi tiết ${code}` }) : p.locator("aside").last()
+    const detail = p.getByRole("dialog", { name: /^Chi tiết/ }).filter({ has: p.getByRole("button", { name: "Đóng", exact: true }) })
+    if (width >= 768 || !(await detail.isVisible())) await table(p, code).click()
+    if (width < 768) await expect(detail).toBeVisible()
     return width < 768 ? detail : p
   }
   const closeDetail = (p) => p.locator('button[aria-label="Quay lại"]').first().click()
@@ -745,8 +752,7 @@ try {
       assert.deepEqual(writes.requests, [])
       assert.deepEqual(snapshot(ids), before)
       detail = await openHeld(p)
-      await detail.getByRole("button", { name: "Đổi trạng thái", exact: true }).click()
-      await p.getByRole("dialog", { name: "Đổi trạng thái booking" }).getByRole("button", { name: "Hủy booking", exact: true }).click()
+      await detail.getByRole("button", { name: "Hủy booking", exact: true }).click()
       const cancelled = createdBy(p, `/bookings/${booking.id}/cancel`)
       await p.getByRole("alertdialog").getByRole("button", { name: "Hủy booking", exact: true }).click()
       const response = await cancelled
@@ -864,7 +870,7 @@ try {
         await expect(floor.getByRole("button", { name: "Khách đã đến", exact: true })).toBeDisabled()
         await floor.getByRole("button", { name: "Quản lý đơn", exact: true }).click()
         const d = p.getByRole("dialog", { name: width < 768 ? "Chi tiết booking" : undefined }).last()
-        const blocked = width < 768 ? ["Xếp bàn", "Đổi trạng thái", "Sửa booking"] : ["Phân bàn", "Hủy booking", "Không tới", "Khách đã tới: chọn bàn và check-in", "Sửa"]
+        const blocked = width < 768 ? ["Xếp bàn", "Đổi trạng thái", "Sửa booking"] : ["Phân bàn", "Hủy booking", "Khách đã tới: chọn bàn và check-in", "Sửa"]
         for (const label of blocked) await expect(d.getByRole("button", { name: label, exact: true })).toBeDisabled()
         await expect(d.getByRole("alert")).toHaveText("Đang tải đơn chờ")
         const failed = p.waitForResponse((r) => r.url().includes("/api/v1/waitlist?") && r.status() === 503)
@@ -935,7 +941,7 @@ try {
       const checked = createdBy(p, `/bookings/${booking.id}/check-in`)
       await confirm.getByRole("button", { name: "Khách đã đến", exact: true }).evaluate((el) => { el.click(); el.click() })
       assert.equal((await checked).status(), 200)
-      await expect(table(p, "A5")).toHaveAttribute("aria-label", /Có khách/)
+      await expect(table(p, "A5")).toHaveAttribute("aria-label", /Đã tới/)
       assert.equal(writes.requests.length, 1)
       assert.deepEqual(writes.requests[0], { path: `/api/v1/bookings/${booking.id}/check-in`, body: { version: booking.version } })
       const after = snapshot(ids)
@@ -1056,7 +1062,8 @@ try {
     await p.setViewportSize({ width: 768, height: 1024 })
     await p.evaluate(async (id) => (await import("/src/state/ui.ts")).useUi.getState().openReservation(id, "2026-11-03"), booking.id)
     detail = p.getByRole("dialog").last()
-    for (const label of ["Đổi bàn", "Sửa", "Hủy booking", "Không tới", "Check-in A5"]) await expect(detail.getByRole("button", { name: label, exact: true })).toBeVisible()
+    for (const label of ["Đổi bàn", "Sửa", "Hủy booking", "Check-in A5"]) await expect(detail.getByRole("button", { name: label, exact: true })).toBeVisible()
+    await expect(detail.getByRole("button", { name: "Không tới", exact: true })).toHaveCount(0)
     await detail.getByRole("button", { name: "Đổi bàn", exact: true }).click()
     assert.deepEqual(await p.evaluate(async () => { const s = (await import("/src/state/ui.ts")).useUi.getState(); return { intent: s.pick.intent, preselected: s.pick.preselected, date: s.pick.targetDate } }), { intent: "assign", preselected: [await tableIdOf(context, "A5")], date: today })
   }, { linked: false }))
@@ -1103,33 +1110,46 @@ try {
     assert.deepEqual(snapshot(ids), before)
   }, { date: tomorrow }))
 
-  await step("AT7: Desktop status submits cancel, late-confirm and no-show with exact IDs/version", async () => {
-    for (const action of ["cancel", "late-confirm", "no-show"]) await holdCase(async ({ p, ids, booking }) => {
+  await step("AT7: Desktop status submits cancel and late-confirm; no-show action is removed", async () => {
+    for (const action of ["cancel", "late-confirm"]) await holdCase(async ({ p, ids, booking }) => {
       if (action !== "cancel") fixture("set-booking-time", String(booking.id), `${today}T${action === "late-confirm" ? "11:50" : "11:00"}:00.000Z`)
       await p.setViewportSize({ width: 768, height: 1024 })
       await p.reload({ waitUntil: "networkidle" })
       const detail = await openHeld(p, "A5", 768)
       const writes = watchWrites(p)
       try {
-        await detail.getByRole("button", { name: "Đổi trạng thái", exact: true }).click()
-        const status = p.getByRole("dialog", { name: "Đổi trạng thái booking" })
         if (action === "cancel") {
-          await expect(status.getByRole("button", { name: "Tới muộn", exact: true })).toBeDisabled()
-          await expect(status.getByRole("button", { name: "Không tới", exact: true })).toBeDisabled()
+          // P2 Item 9: "Hủy booking" is a direct button on table action list, not inside status menu
+          await expect(detail.getByRole("button", { name: "Không tới", exact: true })).toHaveCount(0)
+          const sent = createdBy(p, `/bookings/${booking.id}/cancel`)
+          await detail.getByRole("button", { name: "Hủy booking", exact: true }).click()
+          await p.getByRole("alertdialog").getByRole("button", { name: "Hủy booking", exact: true }).click()
+          const response = await sent
+          assert.equal(response.status(), 200)
+          assert.equal(response.request().postDataJSON().version, booking.version)
+          assert.equal(writes.requests.length, 1)
+          const after = snapshot(ids)
+          assert.equal(after.visits.length, 0)
+          assert.equal(after.bookings[0].status, "CANCELLED")
+          assert.equal(after.entries[0].status, "CANCELLED")
+          assert.equal(after.allocations.filter((a) => a.kind === "HOLD" && !a.released_at).length, 0)
+        } else {
+          await detail.getByRole("button", { name: "Đổi trạng thái", exact: true }).click()
+          const status = p.getByRole("dialog", { name: "Đổi trạng thái booking" })
+          await expect(status.getByRole("button", { name: "Không tới", exact: true })).toHaveCount(0)
+          assert.equal(writes.requests.length, 0)
+          const sent = createdBy(p, `/bookings/${booking.id}/${action}`)
+          await status.getByRole("button", { name: "Tới muộn", exact: true }).click()
+          const response = await sent
+          assert.equal(response.status(), 200)
+          assert.equal(response.request().postDataJSON().version, booking.version)
+          assert.equal(writes.requests.length, 1)
+          const after = snapshot(ids)
+          assert.equal(after.visits.length, 0)
+          assert.equal(after.bookings[0].status, "BOOKED")
+          assert.equal(after.entries[0].status, "HOLD_ACTIVE")
+          assert.equal(after.allocations.filter((a) => a.kind === "HOLD" && !a.released_at).length, 1)
         }
-        assert.equal(writes.requests.length, 0)
-        const sent = createdBy(p, `/bookings/${booking.id}/${action}`)
-        await status.getByRole("button", { name: action === "cancel" ? "Hủy booking" : action === "no-show" ? "Không tới" : "Tới muộn", exact: true }).click()
-        if (action !== "late-confirm") await p.getByRole("alertdialog").getByRole("button", { name: action === "cancel" ? "Hủy booking" : "Xác nhận không tới", exact: true }).click()
-        const response = await sent
-        assert.equal(response.status(), 200)
-        assert.equal(response.request().postDataJSON().version, booking.version)
-        assert.equal(writes.requests.length, 1)
-        const after = snapshot(ids)
-        assert.equal(after.visits.length, 0)
-        assert.equal(after.bookings[0].status, action === "cancel" ? "CANCELLED" : action === "no-show" ? "NO_SHOW" : "BOOKED")
-        assert.equal(after.entries[0].status, action === "late-confirm" ? "HOLD_ACTIVE" : "CANCELLED")
-        assert.equal(after.allocations.filter((a) => a.kind === "HOLD" && !a.released_at).length, action === "late-confirm" ? 1 : 0)
       } finally { writes.stop() }
     })
   })
@@ -1167,8 +1187,8 @@ try {
   await step("AT10: Walk-in on a free table creates Visit and allocation", async () => {
     await chooseDate(page, today)
     await table(page, "B4").click()
+    await page.getByRole("button", { name: "Mở bàn Walk-in", exact: true }).click()
     const form = sheet(page)
-    await form.getByRole("tab", { name: "Walk-in", exact: true }).click()
     await form.getByLabel(/Tên hoặc đặc điểm/).fill("Khách vãng lai")
     await page.screenshot({ path: `${output}/walkin-http.png` })
     const opened = page.waitForResponse(

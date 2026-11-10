@@ -6,15 +6,16 @@ import { BAR_SEATS, FIXTURES, FLOOR_H, FLOOR_W, TABLES, ZONES } from "@/domain/v
 import { STATE_META } from "@/components/status-meta"
 import { FloorCanvas } from "./floor-canvas"
 import {
-  activeGroupForSelection,
   calculateStatusCounts,
   computeZoneBounds,
-  connectorIsSafe,
+  findGroupRepresentativeId,
+  formatBarSeatRange,
+  formatCellGuestName,
   formatGroupCode,
-  formatOccupiedLabel,
-  glyphLevel,
   groupCode,
+  groupDisplayName,
   pickPrimaryGuestFlag,
+  resolveCellCornerIcons,
   supportedFlags,
   tableCanActivate,
   GUEST_ICON_PRIORITY,
@@ -50,57 +51,84 @@ const createTable = (
     seating: "pairs-tb",
   }) as TableView
 
+const realTables: TableView[] = [
+  ...TABLES.map(
+    (t, i) =>
+      ({
+        id: i + 1,
+        version: 1,
+        code: t.code,
+        displayName: `Bàn ${t.code}`,
+        zoneId: 1,
+        zoneCode: t.zone,
+        kind: "TABLE",
+        capacity: t.capacity,
+        seqNo: null,
+        isSpare: t.isSpare,
+        status: "ACTIVE",
+        x: t.x,
+        y: t.y,
+        w: t.w,
+        h: t.h,
+        seating: t.seating,
+      }) as TableView,
+  ),
+  ...BAR_SEATS.map(
+    (s, i) =>
+      ({
+        id: TABLES.length + i + 1,
+        version: 1,
+        code: `BAR${String(s.no).padStart(2, "0")}`,
+        displayName: `Ghế ${s.no}`,
+        zoneId: 2,
+        zoneCode: "BAR",
+        kind: "BAR_SEAT",
+        capacity: 1,
+        seqNo: s.no,
+        isSpare: false,
+        status: "ACTIVE",
+        x: s.x,
+        y: s.y,
+        w: 21,
+        h: 21,
+        seating: "pairs-tb",
+      }) as TableView,
+  ),
+]
+
+const dummyZones: ZoneView[] = ZONES.map((z, i) => ({
+  id: i + 1,
+  version: 1,
+  code: z.code,
+  name: z.name,
+  isBookable: true,
+  isWaitingArea: false,
+  displayOrder: i + 1,
+}))
+
+function renderCanvas(props: {
+  tables: TableView[]
+  mode: "live" | "availability"
+  groups?: any[]
+  selectedIds: number[]
+  states?: Map<number, FloorTableState>
+}) {
+  return renderToString(
+    createElement(FloorCanvas, {
+      zones: dummyZones,
+      now: new Date("2026-11-09T19:30:00Z"),
+      onTableClick: () => {},
+      ...props,
+    }),
+  )
+}
+
 describe("floor camera fit bounds (Item 2 & 8)", () => {
   const sampleTables: TableView[] = [
     createTable(1, 100, 200, 40, 30, "A"),
     createTable(2, 120, 260, 40, 30, "A"),
     createTable(3, 300, 400, 50, 40, "B"),
     createTable(4, 320, 450, 50, 40, "B"),
-  ]
-
-  const realTables: TableView[] = [
-    ...TABLES.map(
-      (t, i) =>
-        ({
-          id: i + 1,
-          version: 1,
-          code: t.code,
-          displayName: `Bàn ${t.code}`,
-          zoneId: 1,
-          zoneCode: t.zone,
-          kind: "TABLE",
-          capacity: t.capacity,
-          seqNo: null,
-          isSpare: t.isSpare,
-          status: "ACTIVE",
-          x: t.x,
-          y: t.y,
-          w: t.w,
-          h: t.h,
-          seating: t.seating,
-        }) as TableView,
-    ),
-    ...BAR_SEATS.map(
-      (s, i) =>
-        ({
-          id: TABLES.length + i + 1,
-          version: 1,
-          code: `BAR${String(s.no).padStart(2, "0")}`,
-          displayName: `Ghế ${s.no}`,
-          zoneId: 2,
-          zoneCode: "BAR",
-          kind: "BAR_SEAT",
-          capacity: 1,
-          seqNo: s.no,
-          isSpare: false,
-          status: "ACTIVE",
-          x: s.x,
-          y: s.y,
-          w: 21,
-          h: 21,
-          seating: "pairs-tb",
-        }) as TableView,
-    ),
   ]
 
   it("calculates ALL bounds containing the floor frame, every fixture and the doors", () => {
@@ -188,7 +216,7 @@ describe("floor camera fit bounds (Item 2 & 8)", () => {
       let y: number
 
       if (vp.isPhone) {
-        const padH = 16
+        const padH = 8
         const scaleX = (vp.w - padH * 2) / allBounds.w
         const scaleY = (vp.h - 16) / allBounds.h
         const isWidthLimited = scaleX <= scaleY
@@ -216,10 +244,10 @@ describe("floor camera fit bounds (Item 2 & 8)", () => {
       expect(frameTop).toBeGreaterThanOrEqual(0)
       expect(frameBottom).toBeLessThanOrEqual(vp.h)
 
-      // On phones, horizontal padding is exactly 16px
+      // On phones, horizontal padding is exactly 8px (P4: map enlarged)
       if (vp.isPhone) {
-        expect(Math.round(frameLeft)).toBe(16)
-        expect(Math.round(vp.w - frameRight)).toBe(16)
+        expect(Math.round(frameLeft)).toBe(8)
+        expect(Math.round(vp.w - frameRight)).toBe(8)
         // Top alignment on phones: frameTop is exactly 0
         expect(Math.round(frameTop)).toBe(0)
       }
@@ -266,15 +294,6 @@ describe("merge-group G-code numbering (Item 6 & 8)", () => {
     expect(formatGroupCode("G01")).toBe("G01")
     expect(formatGroupCode(1)).toBe("G01")
     expect(formatGroupCode(null)).toBeNull()
-  })
-})
-
-describe("occupied table label format (Item 4 & 8)", () => {
-  it("formats occupied guest count as '{n} khách' and never elapsed time", () => {
-    expect(formatOccupiedLabel(7)).toBe("7 khách")
-    expect(formatOccupiedLabel(2)).toBe("2 khách")
-    expect(formatOccupiedLabel(10)).toBe("10 khách")
-    expect(formatOccupiedLabel(7)).not.toMatch(/:|'/)
   })
 })
 
@@ -387,13 +406,13 @@ describe("StatusLegend counts and deduplication (Item 8)", () => {
 
   it("the three states (late, late_confirmed, noshow) give the same label and color", () => {
     // Label, short label, and color tokens must be identical
-    expect(STATE_META.late.label).toBe("Không tới")
-    expect(STATE_META.late_confirmed.label).toBe("Không tới")
-    expect(STATE_META.noshow.label).toBe("Không tới")
+    expect(STATE_META.late.label).toBe("Tới muộn")
+    expect(STATE_META.late_confirmed.label).toBe("Tới muộn")
+    expect(STATE_META.noshow.label).toBe("Tới muộn")
 
-    expect(STATE_META.late.short).toBe("Không tới")
-    expect(STATE_META.late_confirmed.short).toBe("Không tới")
-    expect(STATE_META.noshow.short).toBe("Không tới")
+    expect(STATE_META.late.short).toBe("Tới muộn")
+    expect(STATE_META.late_confirmed.short).toBe("Tới muộn")
+    expect(STATE_META.noshow.short).toBe("Tới muộn")
 
     expect(STATE_META.late.color).toBe("var(--st-noshow)")
     expect(STATE_META.late_confirmed.color).toBe("var(--st-noshow)")
@@ -412,7 +431,7 @@ describe("StatusLegend counts and deduplication (Item 8)", () => {
     expect(STATE_META.hold_overdue.short).toBe("Quá hạn")
   })
 
-  it("maps late, late_confirmed, and noshow into the combined Không tới (noshow) chip", () => {
+  it("maps late, late_confirmed, and noshow into the combined Tới muộn (noshow) chip", () => {
     const tables: TableView[] = [
       createTable(1, 100, 100, 40, 30, "A"),
       createTable(2, 100, 150, 40, 30, "A"),
@@ -667,7 +686,7 @@ describe("StatusLegend counts and deduplication (Item 8)", () => {
   it("counts spare tables as Sơ cua", () => {
     const tables: TableView[] = [
       createTable(10, 231, 685, 38, 38, "A", true), // A10 spare
-      createTable(11, 284, 80, 34, 34, "C", true),  // C4 spare
+      createTable(11, 284, 80, 34, 34, "C", true), // C4 spare
     ]
 
     const states = new Map<number, FloorTableState>([
@@ -681,38 +700,14 @@ describe("StatusLegend counts and deduplication (Item 8)", () => {
 })
 
 describe("adaptive floor visual rules legacy compatibility", () => {
-  it("selects a glyph level from geometry without changing geometry", () => {
-    expect(glyphLevel({ kind: "BAR_SEAT", w: 21, h: 21 })).toBe("compact")
-    expect(glyphLevel({ kind: "TABLE", w: 48, h: 30 })).toBe("standard")
-    expect(glyphLevel({ kind: "TABLE", w: 80, h: 42 })).toBe("expanded")
-  })
-
   it("renders only verified, supported customer flags", () => {
     expect(supportedFlags(["RETURNING", "NEW", "RETURNING"])).toEqual(["RETURNING", "NEW"])
   })
 
-  it("suppresses a connector that crosses an unrelated table", () => {
+  it("resolves representative anchor table for mixed and Bar groups (K1 Section 7)", () => {
     const a = createTable(1, 0, 0)
     const b = createTable(2, 100, 0)
-    expect(connectorIsSafe([a, b], [a, b])).toBe(true)
-    expect(connectorIsSafe([a, b], [a, b, createTable(3, 50, 2)])).toBe(false)
-  })
-
-  it("suppresses overly long connectors and leaves halo highlighting as fallback", () => {
-    const a = createTable(1, 0, 0)
-    const b = createTable(2, 200, 0)
-    expect(connectorIsSafe([a, b], [a, b])).toBe(false)
-  })
-
-  it("shows group visuals only for the one selected live group and clears them on deselect", () => {
-    const groups = [
-      { id: 1, symbolNo: 1, displayCode: "G01", tableIds: [7, 8] },
-      { id: 2, symbolNo: 2, displayCode: "G02", tableIds: [10, 11] },
-    ]
-    expect(activeGroupForSelection(groups, [7], true)?.displayCode).toBe("G01")
-    expect(activeGroupForSelection(groups, [10], true)?.displayCode).toBe("G02")
-    expect(activeGroupForSelection(groups, [], true)).toBeNull()
-    expect(activeGroupForSelection(groups, [7], false)).toBeNull()
+    expect(findGroupRepresentativeId([a, b])).toBe(1)
   })
 
   it("allows a remotely unavailable selected table to be activated for deselection", () => {
@@ -723,16 +718,6 @@ describe("adaptive floor visual rules legacy compatibility", () => {
 })
 
 describe("waitlist marker display per zone mode (Section MARKER)", () => {
-  const dummyZones: ZoneView[] = ZONES.map((z, i) => ({
-    id: i + 1,
-    version: 1,
-    code: z.code,
-    name: z.name,
-    isBookable: true,
-    isWaitingArea: false,
-    displayOrder: i + 1,
-  }))
-
   const sampleTables: TableView[] = [
     createTable(1, 100, 200, 40, 30, "A"),
     createTable(2, 120, 260, 40, 30, "A"),
@@ -790,8 +775,8 @@ describe("waitlist marker display per zone mode (Section MARKER)", () => {
       expect(html).toContain("pointer-events-auto absolute bottom-3 right-3 z-10")
       expect(html).toContain("Bàn chờ +3")
       expect(html).toContain('aria-label="Bàn chờ, 3 khách đang chờ"')
-      // No SVG foreignObject marker
-      expect(html).not.toContain("<foreignObject")
+      // No SVG foreignObject waitlist marker
+      expect(html).not.toMatch(/<foreignObject[^>]*>\s*<button[^>]*aria-label="Bàn chờ/)
     }
   })
 
@@ -870,9 +855,15 @@ describe("adaptive floor visual rules", () => {
   it("keeps late, no-show and overdue hold distinct in the legend", () => {
     const tables = [table(1, 0, 0), table(2, 10, 10), table(3, 20, 20)]
     const states = new Map([
-      [1, { state: "late" }], [2, { state: "noshow" }], [3, { state: "hold_overdue" }],
+      [1, { state: "late" }],
+      [2, { state: "noshow" }],
+      [3, { state: "hold_overdue" }],
     ] as [number, FloorTableState][])
-    expect([...countFloorStates(tables, states)]).toEqual([["late", 1], ["noshow", 1], ["hold_overdue", 1]])
+    expect([...countFloorStates(tables, states)]).toEqual([
+      ["late", 1],
+      ["noshow", 1],
+      ["hold_overdue", 1],
+    ])
   })
 
   it("keeps group display codes deterministic beyond Z", () => {
@@ -882,43 +873,473 @@ describe("adaptive floor visual rules", () => {
     expect(groupCode(null)).toBeNull()
   })
 
-  it("selects a glyph level from geometry without changing geometry", () => {
-    expect(glyphLevel({ kind: "BAR_SEAT", w: 21, h: 21 })).toBe("compact")
-    expect(glyphLevel({ kind: "TABLE", w: 48, h: 30 })).toBe("standard")
-    expect(glyphLevel({ kind: "TABLE", w: 80, h: 42 })).toBe("expanded")
-  })
-
   it("renders only verified, supported customer flags", () => {
     expect(supportedFlags(["RETURNING", "NEW", "RETURNING"])).toEqual(["RETURNING", "NEW"])
   })
 
-  it("suppresses a connector that crosses an unrelated table", () => {
+  it("resolves representative anchor table for mixed and Bar groups (K1 Section 7)", () => {
     const a = table(1, 0, 0)
     const b = table(2, 100, 0)
-    expect(connectorIsSafe([a, b], [a, b])).toBe(true)
-    expect(connectorIsSafe([a, b], [a, b, table(3, 50, 2)])).toBe(false)
-  })
-
-  it("suppresses overly long connectors and leaves halo highlighting as fallback", () => {
-    const a = table(1, 0, 0)
-    const b = table(2, 200, 0)
-    expect(connectorIsSafe([a, b], [a, b])).toBe(false)
-  })
-
-  it("shows group visuals only for the one selected live group and clears them on deselect", () => {
-    const groups = [
-      { id: 1, symbolNo: 1, displayCode: "◆A", tableIds: [7, 8] },
-      { id: 2, symbolNo: 2, displayCode: "◆B", tableIds: [10, 11] },
-    ]
-    expect(activeGroupForSelection(groups, [7], true)?.displayCode).toBe("◆A")
-    expect(activeGroupForSelection(groups, [10], true)?.displayCode).toBe("◆B")
-    expect(activeGroupForSelection(groups, [], true)).toBeNull()
-    expect(activeGroupForSelection(groups, [7], false)).toBeNull()
+    expect(findGroupRepresentativeId([a, b])).toBe(1)
   })
 
   it("allows a remotely unavailable selected table to be activated for deselection", () => {
     const pickable = new Set([8])
     expect(tableCanActivate(7, pickable, new Set([7]))).toBe(true)
     expect(tableCanActivate(9, pickable, new Set([7]))).toBe(false)
+  })
+})
+describe("Group border redesign - status-colored thick borders and neutral selection ring", () => {
+  it("keeps adjacent tables in one booking as separate cells with 3px status border and no data-group-color", () => {
+    const tB5 = realTables.find((t) => t.code === "B5")!
+    const tB6 = realTables.find((t) => t.code === "B6")!
+    const group = { id: 101, symbolNo: 1, tableIds: [tB5.id, tB6.id] }
+
+    const states = new Map<number, FloorTableState>([
+      [tB5.id, { state: "reserved", tableId: tB5.id, claim: { reservationId: 1, tableIds: [tB5.id, tB6.id], displayName: "Nam", partySize: 4, startsAt: new Date() } } as any],
+      [tB6.id, { state: "reserved", tableId: tB6.id, claim: { reservationId: 1, tableIds: [tB5.id, tB6.id], displayName: "Nam", partySize: 4, startsAt: new Date() } } as any],
+    ])
+
+    const html = renderCanvas({
+      tables: realTables,
+      mode: "live",
+      groups: [group],
+      states,
+      selectedIds: [],
+    })
+
+    // Both tables render their own individual cells
+    expect(html).toContain(">B5<")
+    expect(html).toContain(">B6<")
+    // Border uses business status color, not group palette
+    expect(html).not.toContain("data-group-color")
+    expect(html).toContain(`stroke="${STATE_META.reserved.color}"`)
+    // Group members have thick 3px border
+    expect(html).toContain('stroke-width="3"')
+  })
+
+  it("keeps tables far apart in one booking with 3px status border and no connector", () => {
+    const tA0 = realTables.find((t) => t.code === "A0")!
+    const tC1 = realTables.find((t) => t.code === "C1")!
+    const group = { id: 102, symbolNo: 1, tableIds: [tA0.id, tC1.id] }
+
+    const states = new Map<number, FloorTableState>([
+      [tA0.id, { state: "seated", tableId: tA0.id, claim: { visitId: 10, tableIds: [tA0.id, tC1.id], displayName: "Party", partySize: 6, startsAt: new Date() } } as any],
+      [tC1.id, { state: "seated", tableId: tC1.id, claim: { visitId: 10, tableIds: [tA0.id, tC1.id], displayName: "Party", partySize: 6, startsAt: new Date() } } as any],
+    ])
+
+    const html = renderCanvas({
+      tables: realTables,
+      mode: "live",
+      groups: [group],
+      states,
+      selectedIds: [],
+    })
+
+    expect(html).toContain(">A0<")
+    expect(html).toContain(">C1<")
+    expect(html).not.toContain("data-group-color")
+    expect(html).toContain(`stroke="${STATE_META.seated.color}"`)
+    expect(html).toContain('stroke-width="3"')
+  })
+
+  it("keeps Bar seats in one booking as separate circles with 3px status border", () => {
+    const bar = realTables.filter((t) => t.kind === "BAR_SEAT")
+    const pair = bar.slice(0, 2) // Bar 1, Bar 2
+    const group = { id: 103, symbolNo: 1, tableIds: pair.map((t) => t.id) }
+
+    const html = renderCanvas({
+      tables: realTables,
+      mode: "live",
+      groups: [group],
+      selectedIds: [],
+    })
+
+    expect(html).toContain(">1<")
+    expect(html).toContain(">2<")
+    expect(html).not.toContain("data-group-color")
+    expect(html).toContain('stroke-width="3"')
+  })
+
+  it("renders normal 2px border for single tables versus 3px for grouped tables", () => {
+    const single = realTables.find((t) => t.code === "C4")!
+    const pair = [realTables.find((t) => t.code === "B3")!, realTables.find((t) => t.code === "B4")!]
+    const group = { id: 104, symbolNo: 1, tableIds: pair.map((t) => t.id) }
+
+    const html = renderCanvas({
+      tables: [single, ...pair],
+      mode: "live",
+      groups: [group],
+      selectedIds: [],
+    })
+
+    expect(html).toContain('stroke-width="2"')
+    expect(html).toContain('stroke-width="3"')
+  })
+
+  it("shows neutral #64748B selection ring on all members when selected, and removes it on deselect", () => {
+    const bar = realTables.filter((t) => t.kind === "BAR_SEAT")
+    const pair = bar.slice(0, 2) // Bar 1, Bar 2
+    const group = { id: 105, symbolNo: 1, tableIds: pair.map((t) => t.id) }
+
+    // When selecting Bar 1:
+    const htmlSelected = renderCanvas({
+      tables: realTables,
+      mode: "live",
+      groups: [group],
+      selectedIds: [pair[0].id],
+    })
+
+    // Both seats get the dashed ring in neutral #64748B
+    const ringMatches = (htmlSelected.match(/data-selection-ring="1"/g) || []).length
+    expect(ringMatches).toBeGreaterThanOrEqual(2)
+    expect(htmlSelected).toContain('stroke="#64748B"')
+    expect(htmlSelected).toContain('stroke-dasharray="5 3"')
+
+    // When deselected:
+    const htmlDeselected = renderCanvas({
+      tables: realTables,
+      mode: "live",
+      groups: [group],
+      selectedIds: [],
+    })
+
+    expect(htmlDeselected).not.toContain('data-selection-ring="1"')
+    expect(htmlDeselected).not.toContain('stroke="#64748B"')
+  })
+
+  it("does not duplicate guest count badge across tables in a multi-table booking", () => {
+    const tB5 = realTables.find((t) => t.code === "B5")!
+    const tB6 = realTables.find((t) => t.code === "B6")!
+    const group = { id: 106, symbolNo: 1, tableIds: [tB5.id, tB6.id] }
+
+    const states = new Map<number, FloorTableState>([
+      [tB5.id, { state: "seated", tableId: tB5.id, claim: { visitId: 11, tableIds: [tB5.id, tB6.id], displayName: "Anh Nam", partySize: 5, startsAt: new Date() } } as any],
+      [tB6.id, { state: "seated", tableId: tB6.id, claim: { visitId: 11, tableIds: [tB5.id, tB6.id], displayName: "Anh Nam", partySize: 5, startsAt: new Date() } } as any],
+    ])
+
+    const html = renderCanvas({
+      tables: [tB5, tB6],
+      mode: "live",
+      groups: [group],
+      states,
+      selectedIds: [],
+    })
+
+    // Guest count badge is shown only once on the first member, never repeated on each table, and never as "5 khách" cell text
+    const badgeMatches = (html.match(/data-testid="guest-count-badge"/g) || []).length
+    expect(badgeMatches).toBe(1)
+    expect(html).toContain(">5<")
+    expect(html).not.toContain(">5 khách<")
+  })
+
+  it("formats Bar seat groups and table groups correctly", () => {
+    const bar = realTables.filter((t) => t.kind === "BAR_SEAT")
+    const pair = bar.slice(4, 6) // Bar 5, 6
+    expect(groupDisplayName(pair)).toBe("Bar5-6")
+    expect(formatBarSeatRange(pair)).toBe("Bar5-6")
+
+    const triple = bar.slice(9, 12) // Bar 10, 11, 12
+    expect(groupDisplayName(triple)).toBe("Bar10-12")
+    expect(formatBarSeatRange(triple)).toBe("Bar10-12")
+
+    const bTables = realTables.filter((t) => ["B5", "B6", "B7"].includes(t.code))
+    expect(groupDisplayName(bTables)).toBe("B5-B6-B7")
+  })
+
+  describe("J1 - Redesigned table cells, corner badges, TurnBadge on right edge, and group brackets/arcs", () => {
+    it("removes outside TableInfoCard and Khách quầy bar block completely", () => {
+      const tA2 = realTables.find((t) => t.code === "A2")!
+      const barSeat = realTables.find((t) => t.kind === "BAR_SEAT")!
+      const states = new Map<number, FloorTableState>([
+        [
+          tA2.id,
+          {
+            tableId: tA2.id,
+            state: "reserved",
+            claim: {
+              reservationId: 101,
+              displayName: "Anh Hưng",
+              partySize: 4,
+              startsAt: new Date("2026-11-09T15:30:00Z"),
+              tableIds: [tA2.id],
+            },
+          } as any,
+        ],
+        [
+          barSeat.id,
+          {
+            tableId: barSeat.id,
+            state: "seated",
+            claim: {
+              visitId: 103,
+              displayName: "Khách Bar",
+              partySize: 1,
+              startsAt: new Date("2026-11-09T14:00:00Z"),
+              tableIds: [barSeat.id],
+            },
+          } as any,
+        ],
+      ])
+
+      const html = renderCanvas({
+        tables: [tA2, barSeat],
+        mode: "live",
+        states,
+        selectedIds: [],
+      })
+
+      expect(html).not.toContain('data-testid="table-info-card"')
+      expect(html).not.toContain('data-testid="bar-khu-c-block"')
+      expect(html).not.toContain("Khách quầy bar:")
+    })
+
+    it("shows code + booked time for booked tables and code + truncated guest name for checked-in tables", () => {
+      const tB21 = realTables.find((t) => t.code === "B21")!
+      const tB3 = realTables.find((t) => t.code === "B3")!
+      const tA3 = realTables.find((t) => t.code === "A3")!
+      const states = new Map<number, FloorTableState>([
+        [
+          tB21.id,
+          {
+            tableId: tB21.id,
+            state: "reserved",
+            claim: {
+              reservationId: 201,
+              displayName: "Chị Lan",
+              partySize: 4,
+              startsAt: new Date("2026-11-09T15:30:00Z"), // 22:30 ICT
+              tableIds: [tB21.id],
+            },
+          } as any,
+        ],
+        [
+          tB3.id,
+          {
+            tableId: tB3.id,
+            state: "seated",
+            claim: {
+              visitId: 202,
+              displayName: "Anh Nam",
+              partySize: 4,
+              startsAt: new Date("2026-11-09T13:30:00Z"),
+              tableIds: [tB3.id],
+            },
+          } as any,
+        ],
+        [
+          tA3.id,
+          {
+            tableId: tA3.id,
+            state: "seated",
+            claim: {
+              visitId: 203,
+              displayName: "Khách Walk-in",
+              partySize: 2,
+              startsAt: new Date("2026-11-09T13:45:00Z"),
+              tableIds: [tA3.id],
+            },
+          } as any,
+        ],
+      ])
+
+      const html = renderCanvas({
+        tables: [tB21, tB3, tA3],
+        mode: "live",
+        states,
+        selectedIds: [],
+      })
+
+      expect(html).toContain(">B21<")
+      expect(html).toContain(">22:30<")
+      expect(html).toContain(">B3<")
+      expect(html).toContain(">Anh Nam<")
+      // Walk-in without a real name shows "Khách lẻ", never fake name or "N khách"
+      expect(html).toContain(">Khách lẻ<")
+      expect(html).not.toContain("4 khách<")
+      expect(html).not.toContain("2 khách<")
+
+      // Long name truncation helper check
+      expect(formatCellGuestName("Nguyễn Hoàng Bảo Trâm", 10)).toBe("Nguyễn Ho…")
+    })
+
+    it("BR-03: shows seat number plus booked time in cell for booked Bar seat (e.g. Bar16 at 22:15)", () => {
+      const bar16 = realTables.find((t) => t.kind === "BAR_SEAT" && t.seqNo === 16)!
+      const states = new Map<number, FloorTableState>([
+        [
+          bar16.id,
+          {
+            tableId: bar16.id,
+            state: "reserved",
+            claim: {
+              reservationId: 401,
+              displayName: "Anh Tuấn",
+              partySize: 2,
+              startsAt: new Date("2026-11-09T15:15:00Z"), // 22:15 ICT
+              tableIds: [bar16.id],
+            },
+          } as any,
+        ],
+      ])
+
+      const html = renderCanvas({
+        tables: [bar16],
+        mode: "live",
+        states,
+        selectedIds: [],
+      })
+
+      expect(html).toContain(">16<")
+      expect(html).toContain(">22:15<")
+    })
+
+    it("BR-04: empty table (e.g. B5, C1) shows its code only and no capacity text in cell", () => {
+      const tB5 = realTables.find((t) => t.code === "B5")!
+      const tC1 = realTables.find((t) => t.code === "C1")!
+      const states = new Map<number, FloorTableState>([
+        [tB5.id, { tableId: tB5.id, state: "free", claim: null } as any],
+        [tC1.id, { tableId: tC1.id, state: "free", claim: null } as any],
+      ])
+
+      const html = renderCanvas({
+        tables: [tB5, tC1],
+        mode: "live",
+        states,
+        selectedIds: [],
+      })
+
+      expect(html).toContain(">B5<")
+      expect(html).toContain(">C1<")
+      expect(html).not.toContain("4 chỗ")
+      expect(html).not.toContain("chỗ")
+    })
+
+    it("places cake at top-right, regular/new at bottom-left (never both), VIP/pin at bottom-right, and TurnBadge at middle of right edge", () => {
+      const tA3 = realTables.find((t) => t.code === "A3")!
+      const hw = tA3.w / 2
+      const hh = tA3.h / 2
+      const states = new Map<number, FloorTableState>([
+        [
+          tA3.id,
+          {
+            tableId: tA3.id,
+            state: "seated",
+            seatedTurnCount: 2,
+            claim: {
+              visitId: 105,
+              displayName: "Sếp Tuấn",
+              partySize: 4,
+              flags: ["BIRTHDAY", "RETURNING", "NEW"],
+              iconKeys: ["star", "pin"],
+              tableIds: [tA3.id],
+            },
+          } as any,
+        ],
+      ])
+
+      const resolved = resolveCellCornerIcons(states.get(tA3.id)!.claim)
+      expect(resolved.topRight).toEqual(["cake"])
+      expect(resolved.bottomLeft).toEqual(["fire"]) // RETURNING wins over NEW, never both
+      expect(resolved.bottomRight).toEqual(["star", "pin"])
+
+      const html = renderCanvas({
+        tables: [tA3],
+        mode: "live",
+        states,
+        selectedIds: [],
+      })
+
+      // Top-left count badge: number only (4)
+      expect(html).toContain('data-testid="guest-count-badge"')
+      expect(html).toContain(">4<")
+
+      // Top-right cake icon
+      expect(html).toContain("🎂")
+      // Bottom-left fire icon (and not 🆕)
+      expect(html).toContain("🔥")
+      expect(html).not.toContain("🆕")
+      // Bottom-right star and pin icons
+      expect(html).toContain("⭐")
+      expect(html).toContain("📌")
+
+      // TurnBadge at middle of right edge (x = hw, y = 0)
+      expect(html).toContain('data-testid="turn-badge"')
+      expect(html).toContain(`transform="translate(${hw} 0)"`)
+      expect(html).not.toContain(`transform="translate(${-hw} ${hh})"`)
+      expect(html).toContain(">2<")
+    })
+
+    it("removes all connectors, brackets, arcs, and link icons (K1 Section 2), showing relation via 3px border, single guest count badge and dashed rings", () => {
+      const tB21 = realTables.find((t) => t.code === "B21")!
+      const tB22 = realTables.find((t) => t.code === "B22")!
+      const bar7 = realTables.find((t) => t.code === "BAR07")!
+      const bar8 = realTables.find((t) => t.code === "BAR08")!
+      const tA0 = realTables.find((t) => t.code === "A0")!
+      const tC1 = realTables.find((t) => t.code === "C1")!
+
+      expect(findGroupRepresentativeId([tB21, tB22])).toBe(tB21.id)
+      expect(findGroupRepresentativeId([bar7, bar8])).toBe(bar7.id)
+      expect(findGroupRepresentativeId([tA0, tC1])).toBe(tA0.id)
+
+      const states = new Map<number, FloorTableState>([
+        [
+          tA0.id,
+          {
+            tableId: tA0.id,
+            state: "seated",
+            claim: {
+              visitId: 301,
+              displayName: "Anh Khoa",
+              partySize: 6,
+              flags: ["NEW"],
+              tableIds: [tA0.id, tC1.id],
+              groupId: 3,
+            },
+          } as any,
+        ],
+        [
+          tC1.id,
+          {
+            tableId: tC1.id,
+            state: "seated",
+            claim: {
+              visitId: 301,
+              displayName: "Anh Khoa",
+              partySize: 6,
+              flags: ["NEW"],
+              tableIds: [tA0.id, tC1.id],
+              groupId: 3,
+            },
+          } as any,
+        ],
+      ])
+
+      const htmlFar = renderCanvas({
+        tables: [tA0, tC1],
+        mode: "live",
+        groups: [{ id: 3, symbolNo: 1, tableIds: [tA0.id, tC1.id] }],
+        states,
+        selectedIds: [tA0.id],
+      })
+
+      // K1 Section 2: No connector, curve, SVG path, long bracket or standalone link icon
+      expect(htmlFar).not.toContain("data-group-bracket")
+      expect(htmlFar).not.toContain("data-group-arc")
+      expect(htmlFar).not.toContain("data-testid=\"group-link-icon\"")
+      expect(htmlFar).not.toContain("data-link-placement")
+
+      // K1 Section 7: One guest count badge on the representative table, number only
+      const badges = (htmlFar.match(/data-testid="guest-count-badge"/g) || []).length
+      expect(badges).toBe(1)
+      expect(htmlFar).toContain(">6<")
+
+      // Both members get dashed selection ring when group member is tapped (K1 Section 4)
+      const rings = (htmlFar.match(/data-selection-ring="1"/g) || []).length
+      expect(rings).toBe(2)
+      expect(htmlFar).toContain('stroke="#64748B"')
+
+      // Corner flags still present
+      expect(htmlFar).toContain("🆕")
+    })
   })
 })

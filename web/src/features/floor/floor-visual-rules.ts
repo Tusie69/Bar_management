@@ -1,7 +1,6 @@
 import type { FloorGroup, FloorTableState, TableLiveState, TableView } from "@/domain/models"
 import { FIXTURES, FLOOR_H, FLOOR_W, type ZoneCode } from "@/domain/venue-layout"
 
-export type GlyphLevel = "compact" | "standard" | "expanded"
 export type ClaimViewFlags = Array<"BIRTHDAY" | "NEW" | "RETURNING" | "VIP" | "DESIGNATED">
 
 /**
@@ -26,8 +25,91 @@ export function pickPrimaryGuestFlag(flags: string[]): GuestFlag | null {
   return null
 }
 
-export function formatOccupiedLabel(partySize: number): string {
-  return `${partySize} khách`
+
+/**
+ * Formats the guest name shown inside a checked-in table or Bar seat cell (J1 Section 2 & 5).
+ * - Walk-ins without a real customer name show a short suitable label ("Khách lẻ" / "Lẻ"), never a fake name.
+ * - Long names are truncated with an ellipsis so they never overflow the cell.
+ */
+export function formatCellGuestName(
+  displayName?: string | null,
+  maxChars = 9,
+  isBarSeat = false,
+): string {
+  const raw = (displayName ?? "").trim()
+  if (!raw || /^(khách walk-in|walk-in|khách vãng lai|khách lẻ|khách)$/i.test(raw)) {
+    return isBarSeat ? "Lẻ" : "Khách lẻ"
+  }
+  if (isBarSeat) {
+    const parts = raw.split(/\s+/).filter(Boolean)
+    const shortWord = parts[parts.length - 1] ?? raw
+    if (shortWord.length > maxChars) {
+      return `${shortWord.slice(0, Math.max(2, maxChars - 1))}…`
+    }
+    return shortWord
+  }
+  if (raw.length > maxChars) {
+    return `${raw.slice(0, Math.max(3, maxChars - 1)).trimEnd()}…`
+  }
+  return raw
+}
+
+export interface CellCornerIcons {
+  topRight: Array<"cake">
+  bottomLeft: Array<"fire" | "new">
+  bottomRight: Array<"star" | "pin">
+}
+
+/**
+ * Resolves the corner icons for a table cell per J1 Section 3:
+ * - Top right: cake if birthday.
+ * - Bottom left: new or regular guest icon. Never both (RETURNING > NEW). UNCLASSIFIED shows none.
+ * - Bottom right: Bàn sếp (star) or Chỉ định (pin) when data exists. Hidden when absent.
+ */
+export function resolveCellCornerIcons(
+  claim?: { flags?: string[] | null; iconKeys?: string[] | null } | null,
+): CellCornerIcons {
+  const result: CellCornerIcons = {
+    topRight: [],
+    bottomLeft: [],
+    bottomRight: [],
+  }
+  if (!claim) return result
+
+  const tokens = [
+    ...(Array.isArray(claim.flags) ? claim.flags : []),
+    ...(Array.isArray(claim.iconKeys) ? claim.iconKeys : []),
+  ]
+    .filter(Boolean)
+    .map((t) => String(t).trim().toLowerCase())
+
+  const hasBirthday = tokens.some(
+    (k) => k === "birthday" || k === "cake" || k === "is_birthday" || k === "sinh nhật" || k === "sinh nhat",
+  )
+  if (hasBirthday) {
+    result.topRight.push("cake")
+  }
+
+  const hasReturning = tokens.some(
+    (k) => k === "returning" || k === "fire" || k === "regular" || k === "khách quen" || k === "khach quen",
+  )
+  const hasNew = tokens.some((k) => k === "new" || k === "khách mới" || k === "khach moi")
+  if (hasReturning) {
+    result.bottomLeft.push("fire")
+  } else if (hasNew) {
+    result.bottomLeft.push("new")
+  }
+
+  const hasStar = tokens.some(
+    (k) => k === "star" || k === "vip" || k === "boss" || k === "bàn sếp" || k === "ban sep",
+  )
+  const hasPin = tokens.some(
+    (k) => k === "pin" || k === "designated" || k === "chỉ định" || k === "chi dinh",
+  )
+  if (hasStar) result.bottomRight.push("star")
+  if (hasPin) result.bottomRight.push("pin")
+
+  return result
 }
 
 export type LegendStatusKey = "free" | "reserved" | "upcoming" | "noshow" | "seated" | "spare"
@@ -53,12 +135,7 @@ export function calculateStatusCounts(
     const claim = fs?.claim ?? t.claim
 
     let key: LegendStatusKey
-    if (
-      rawState === "late" ||
-      rawState === "late_confirmed" ||
-      rawState === "noshow" ||
-      rawState === "hold_overdue"
-    ) {
+    if (rawState === "late" || rawState === "late_confirmed" || rawState === "noshow" || rawState === "hold_overdue") {
       key = "noshow"
     } else if (rawState === "reserved" || rawState === "hold") {
       key = "reserved"
@@ -74,9 +151,7 @@ export function calculateStatusCounts(
 
     const groupId =
       claim?.groupId ??
-      (claim?.groupDisplayCode || claim?.symbolNo
-        ? claim.groupDisplayCode ?? String(claim.symbolNo)
-        : null)
+      (claim?.groupDisplayCode || claim?.symbolNo ? (claim.groupDisplayCode ?? String(claim.symbolNo)) : null)
 
     if (groupId) {
       const groupKey = `${key}:${groupId}`
@@ -90,11 +165,6 @@ export function calculateStatusCounts(
   }
 
   return counts
-}
-
-export function glyphLevel(table: Pick<TableView, "kind" | "w" | "h">): GlyphLevel {
-  if (table.kind === "BAR_SEAT" || Math.min(table.w, table.h) < 25) return "compact"
-  return table.w >= 62 && table.h >= 34 ? "expanded" : "standard"
 }
 
 export function groupCode(symbolNo: number | null | undefined): string | null {
@@ -138,35 +208,8 @@ export function supportedFlags(flags: string[]): GuestFlag[] {
   )
 }
 
-export function activeGroupForSelection(groups: FloorGroup[], selectedIds: number[], live: boolean) {
-  if (!live || selectedIds.length !== 1) return null
-  return groups.find((group) => group.tableIds.includes(selectedIds[0])) ?? null
-}
-
 export function tableCanActivate(tableId: number, pickable: Set<number> | null | undefined, selected: Set<number>) {
   return !pickable || pickable.has(tableId) || selected.has(tableId)
-}
-
-export function connectorIsSafe(group: TableView[], all: TableView[]) {
-  if (group.length < 2) return false
-  const memberIds = new Set(group.map((table) => table.id))
-  for (let index = 1; index < group.length; index += 1) {
-    const a = group[index - 1]
-    const b = group[index]
-    if (Math.hypot(a.x - b.x, a.y - b.y) > 145) return false
-    for (const other of all) {
-      if (memberIds.has(other.id)) continue
-      const dx = b.x - a.x
-      const dy = b.y - a.y
-      const lengthSquared = dx * dx + dy * dy
-      const along = lengthSquared
-        ? Math.max(0, Math.min(1, ((other.x - a.x) * dx + (other.y - a.y) * dy) / lengthSquared))
-        : 0
-      const distance = Math.hypot(other.x - (a.x + along * dx), other.y - (a.y + along * dy))
-      if (distance < Math.max(12, Math.min(other.w, other.h) / 2 + 4)) return false
-    }
-  }
-  return true
 }
 
 export interface Bounds {
@@ -176,11 +219,52 @@ export interface Bounds {
   h: number
 }
 
-export function computeZoneBounds(
-  tables: TableView[],
-  zone: ZoneCode | "ALL",
-  padding?: number,
-): Bounds | null {
+export function normalizeIconKey(raw: string): "star" | "fire" | "pin" | "cake" | "new" | null {
+  const k = raw.trim().toLowerCase()
+  if (k === "star" || k === "vip" || k === "boss" || k === "bàn sếp" || k === "ban sep") return "star"
+  if (k === "fire" || k === "returning" || k === "regular" || k === "khách quen" || k === "khach quen") return "fire"
+  if (k === "pin" || k === "designated" || k === "chỉ định" || k === "chi dinh") return "pin"
+  if (k === "cake" || k === "birthday" || k === "is_birthday" || k === "sinh nhật" || k === "sinh nhat") return "cake"
+  if (k === "new" || k === "khách mới" || k === "khach moi") return "new"
+  return null
+}
+
+/**
+ * Resolves the representative member of a group or multi-table booking (K1 Section 7):
+ * - One total guest badge on one representative member with enough room.
+ * - Prefers regular tables over Bar seats (more room for badges).
+ * - Sorts by code / seqNo so anchor is deterministic.
+ */
+export function findGroupRepresentativeId(members: TableView[]): number {
+  if (members.length === 0) return 0
+  if (members.length === 1) return members[0].id
+  const regular = members.filter((m) => m.kind !== "BAR_SEAT")
+  const pool = regular.length > 0 ? regular : members
+  const sorted = [...pool].sort((a, b) => {
+    if (a.kind === "BAR_SEAT" && b.kind === "BAR_SEAT") {
+      return (a.seqNo ?? a.id) - (b.seqNo ?? b.id)
+    }
+    const codeA = a.code ?? String(a.id)
+    const codeB = b.code ?? String(b.id)
+    return codeA.localeCompare(codeB, undefined, { numeric: true })
+  })
+  return sorted[0].id
+}
+
+export function groupDisplayName(members: TableView[], group?: FloorGroup | null): string {
+  if (group?.displayCode) return group.displayCode
+  const sorted = [...members].sort((a, b) =>
+    a.kind === "BAR_SEAT" ? (a.seqNo ?? 0) - (b.seqNo ?? 0) : a.code.localeCompare(b.code, undefined, { numeric: true }),
+  )
+  if (sorted[0]?.kind === "BAR_SEAT") {
+    const numbers = sorted.map((t) => t.seqNo ?? 0)
+    const consecutive = numbers.every((n, i) => n === numbers[0] + i)
+    return `Bar${consecutive ? `${numbers[0]}-${numbers.at(-1)}` : numbers.join("-")}`
+  }
+  return sorted.map((t) => t.code).join("-")
+}
+
+export function computeZoneBounds(tables: TableView[], zone: ZoneCode | "ALL", padding?: number): Bounds | null {
   if (zone === "ALL") {
     const pad = padding !== undefined ? padding : 0
 
@@ -234,8 +318,8 @@ export function computeZoneBounds(
 
     // Union with all tables and seats
     for (const t of tables) {
-      const hw = (t.w || 22) / 2
-      const hh = (t.h || 22) / 2
+      const hw = (t.w || 24) / 2
+      const hh = (t.h || 24) / 2
       minX = Math.min(minX, t.x - hw)
       maxX = Math.max(maxX, t.x + hw)
       minY = Math.min(minY, t.y - hh)
@@ -261,8 +345,8 @@ export function computeZoneBounds(
   let maxX = -Infinity
   let maxY = -Infinity
   for (const t of inZone) {
-    const hw = (t.w || 22) / 2
-    const hh = (t.h || 22) / 2
+    const hw = (t.w || 24) / 2
+    const hh = (t.h || 24) / 2
     minX = Math.min(minX, t.x - hw)
     maxX = Math.max(maxX, t.x + hw)
     minY = Math.min(minY, t.y - hh)
@@ -271,35 +355,29 @@ export function computeZoneBounds(
 
   // Include zone fixtures and labels
   if (zone === "BAR") {
-    // Bar counter: QUẦY BAR
     minX = Math.min(minX, 396 - 0.6)
     maxX = Math.max(maxX, 552 + 0.6)
     minY = Math.min(minY, 404 - 0.6)
     maxY = Math.max(maxY, 722 + 0.6)
-    // Back bar: KHU PHA CHẾ
     minX = Math.min(minX, 453)
     maxX = Math.max(maxX, 552.4)
     minY = Math.min(minY, 443.6)
     maxY = Math.max(maxY, 716.4)
   } else if (zone === "A") {
-    // Khu A label
     minX = Math.min(minX, 62)
     maxX = Math.max(maxX, 62 + 35)
     minY = Math.min(minY, 726 - 8)
     maxY = Math.max(maxY, 726 + 2)
-    // Sofa along Khu A
     minX = Math.min(minX, 44)
     maxX = Math.max(maxX, 54)
     minY = Math.min(minY, 362)
     maxY = Math.max(maxY, 716)
   } else if (zone === "B") {
-    // Khu B label
     minX = Math.min(minX, 62)
     maxX = Math.max(maxX, 62 + 35)
     minY = Math.min(minY, 194 - 8)
     maxY = Math.max(maxY, 194 + 2)
   } else if (zone === "C") {
-    // Khu C label
     minX = Math.min(minX, 442 - 40)
     maxX = Math.max(maxX, 442)
     minY = Math.min(minY, 84 - 8)
@@ -336,4 +414,21 @@ export function countFloorStates(tables: readonly TableView[], states: ReadonlyM
     counts.set(state, (counts.get(state) ?? 0) + 1)
   }
   return counts
+}
+
+/**
+ * Formats seat range for Bar seats in group bookings (e.g. `Bar11-12`, `Bar1-3`).
+ */
+export function formatBarSeatRange(barSeats: TableView[]): string {
+  const numbers = barSeats
+    .map((s) => s.seqNo ?? parseInt(s.code.replace(/\D/g, ""), 10))
+    .filter((n) => !Number.isNaN(n))
+    .sort((a, b) => a - b)
+  if (!numbers.length) return ""
+  if (numbers.length === 1) return `Bar${numbers[0]}`
+  const isConsecutive = numbers.every((n, i) => n === numbers[0] + i)
+  if (isConsecutive) {
+    return `Bar${numbers[0]}-${numbers[numbers.length - 1]}`
+  }
+  return `Bar${numbers.join("-")}`
 }

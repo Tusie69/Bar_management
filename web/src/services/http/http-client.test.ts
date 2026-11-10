@@ -15,6 +15,50 @@ afterEach(() => {
 })
 
 describe("HttpClient", () => {
+  it.each([
+    ["MERGE_REQUIRES_MULTIPLE_TABLES", "ít nhất hai bàn"],
+    ["TABLE_NOT_FOUND", "không tồn tại"],
+    ["TABLE_ALREADY_GROUPED", "nhóm khác"],
+    ["SPARE_TABLE_NOT_BOOKABLE", "bàn sơ cua"],
+    ["TABLE_KIND_MISMATCH", "ghế Bar"],
+    ["TABLE_ZONE_MISMATCH", "cùng một khu vực"],
+    ["TABLE_GROUP_MIXED_STATE", "bàn trống"],
+    ["TABLE_GROUP_MULTIPLE_CLAIMS", "khác nhau"],
+    ["INVALID_GROUP_ID", "Mã nhóm"],
+    ["TABLES_REQUIRED", "bàn giữ lại"],
+    ["INVALID_SPLIT_MODE", "Cách tách nhóm"],
+    ["TABLE_GROUP_VERSION_CONFLICT", "tải lại sơ đồ"],
+    ["PAYMENT_SOURCE_INVALID", "iPOS"],
+    ["PAYMENT_ALREADY_CONFIRMED", "đã được xác nhận"],
+    ["VISIT_NOT_OPEN", "đã kết thúc"],
+    ["PAYMENT_VERIFICATION_UNAVAILABLE", "Chưa có xác nhận"],
+    ["EXPECTED_AT_OFF_SLOT", "bước 5 phút"],
+    ["INVALID_PHONE_NUMBER", "độ dài"],
+    ["PHONE_NOT_DIALABLE", "không thể dùng để gọi"],
+  ])("maps section D code %s to Vietnamese and retains its details", async (code, text) => {
+    const details = { conflictingTableIds: [101, 102], currentVersion: 7, changeSeq: "42" }
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(json({ error: { code, message: "backend English", details } }, 409)),
+    )
+    await expect(new HttpClient("https://api.test").get("/tables")).rejects.toMatchObject({
+      code,
+      message: expect.stringContaining(text),
+      details,
+    })
+  })
+  it.each(["TABLE_GROUP_MIXED_STATE", "TABLE_GROUP_MULTIPLE_CLAIMS"])(
+    "names the conflicting tables for %s",
+    async (code) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(json({ error: { code, details: { conflictingTableIds: [101, 102] } } }, 409)),
+      )
+      await expect(new HttpClient("https://api.test").get("/tables")).rejects.toMatchObject({
+        message: expect.stringContaining("Bàn: #101, #102"),
+      })
+    },
+  )
   it("uses /api/v1, includes cookies and parses JSON", async () => {
     const fetchMock = vi.fn().mockResolvedValue(json({ ok: true }))
     vi.stubGlobal("fetch", fetchMock)

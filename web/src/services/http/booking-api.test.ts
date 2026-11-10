@@ -245,4 +245,64 @@ describe("HTTP booking endpoints", () => {
     expect(requests[0]).toMatchObject({ method: "POST", body: {} })
     expect(new URL(requests[0]!.url).pathname).toBe("/api/v1/bookings/7/phone:reveal")
   })
+
+  it("sends socialPlatform in create and update only when source is SOCIAL", async () => {
+    const requests: { url: string; method: string; body: unknown }[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        requests.push({
+          url: String(input),
+          method: init?.method ?? "GET",
+          body: init?.body ? JSON.parse(String(init.body)) : null,
+        })
+        return json({ booking: { ...booking, sourceCode: "SOCIAL", socialPlatform: "FB" } })
+      }),
+    )
+    const api = new HttpBookingApi(new HttpClient("http://api.test"))
+    const current = await api.detail(7)
+
+    await api.create({
+      guestName: "Khách Social",
+      partySize: 2,
+      expectedAt: current.expectedAt,
+      businessDate: current.businessDate,
+      sourceCode: "SOCIAL",
+      socialPlatform: "FB",
+    })
+    expect(requests.at(-1)?.body).toMatchObject({
+      sourceCode: "SOCIAL",
+      socialPlatform: "FB",
+    })
+
+    await api.update(
+      {
+        ...current,
+        sourceCode: "SOCIAL",
+        socialPlatform: "FB",
+      },
+      {
+        socialPlatform: "TIKTOK",
+      },
+    )
+    expect(requests.at(-1)?.body).toMatchObject({
+      sourceCode: "SOCIAL",
+      socialPlatform: "TIKTOK",
+    })
+
+    await api.update(
+      {
+        ...current,
+        sourceCode: "SOCIAL",
+        socialPlatform: "FB",
+      },
+      {
+        sourceCode: "HOTLINE",
+      },
+    )
+    expect(requests.at(-1)?.body).toMatchObject({
+      sourceCode: "HOTLINE",
+    })
+    expect(requests.at(-1)?.body).not.toHaveProperty("socialPlatform")
+  })
 })

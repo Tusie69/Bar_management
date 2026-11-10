@@ -99,9 +99,8 @@ export function AvailabilityPanel({
               ) : (
                 <div className="grid gap-3 rounded-xl border bg-surface-1 p-3">
                   <p className="text-base font-semibold">{selection.map((id) => model.label(id)).join(" + ")}</p>
-                  <p className={cn("text-sm", selCapacity < ui.availParty ? "text-st-late" : "text-muted-foreground")}>
+                  <p className="text-sm text-muted-foreground">
                     {selCapacity} chỗ cho {ui.availParty} khách
-                    {selCapacity < ui.availParty ? ": chưa đủ, chọn thêm bàn" : ""}
                   </p>
                   <div className="flex gap-2">
                     <GuardedButton

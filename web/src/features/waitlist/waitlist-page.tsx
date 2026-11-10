@@ -73,7 +73,7 @@ import {
 import type { WaitlistEntryView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAction } from "@/hooks/use-action"
-import { useBusinessDate, useNow, useReservations, useVenueSettings, useWaitlist } from "@/hooks/use-data"
+import { useBusinessDate, useNow, useReservations, useWaitlist } from "@/hooks/use-data"
 import { useDragScroll } from "@/hooks/use-drag-scroll"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
@@ -365,7 +365,6 @@ function EntryCard({
   const [releaseOpen, setReleaseOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
   const [statusOpen, setStatusOpen] = useState(false)
-  const [noShowOpen, setNoShowOpen] = useState(false)
   const [cancelResOpen, setCancelResOpen] = useState(false)
   const [entryDetailOpen, setEntryDetailOpen] = useState(false)
   const mine = e.claimedBy?.userId === me
@@ -377,17 +376,13 @@ function EntryCard({
   const held = useHeldOrderActions(model)
   const policy = held.policy(e, linkedRes)
   const today = e.businessDate === businessDateOf(now)
-  const venue = useVenueSettings().data
-  const noShowMinutes = venue?.noShowMinutes ?? 30
   const canConfirmLate =
     today &&
     linkedRes &&
     policy.canLate &&
     linkedRes.status === "BOOKED" &&
     !linkedRes.lateConfirmedAt &&
-    now.getTime() >= linkedRes.expectedAt.getTime() &&
-    linkedRes.minutesLate < noShowMinutes
-  const canNoShow = linkedRes ? (policy.canBookingStatus && linkedRes.status === "BOOKED" && linkedRes.minutesLate >= noShowMinutes) : overdue
+    now.getTime() >= linkedRes.expectedAt.getTime()
 
   return (
     <li
@@ -609,7 +604,7 @@ function EntryCard({
             </Button>
             {linkedRes ? (
               <GuardedButton
-                permission={held.can("reservation.cancel") ? "reservation.cancel" : held.can("reservation.mark_no_show") ? "reservation.mark_no_show" : "reservation.update"}
+                permission={held.can("reservation.cancel") ? "reservation.cancel" : "reservation.update"}
                 disabled={!policy.canBookingStatus}
                 disabledReason={!policy.canBookingStatus ? "Chưa hỗ trợ" : undefined}
                 variant="outline"
@@ -741,10 +736,10 @@ function EntryCard({
             open={releaseOpen}
             onOpenChange={setReleaseOpen}
             title="Nhả giữ bàn?"
-            description="Bàn trở về trống. Khách quay lại danh sách chờ, trừ khi chọn “Khách không tới”."
+            description="Bàn trở về trống. Khách quay lại danh sách chờ."
             confirmLabel="Nhả giữ"
             reasons={(
-              ["CUSTOMER_NO_SHOW", "CUSTOMER_CANCELLED", "STAFF_REASSIGNED", "OTHER"] as HoldReleaseReason[]
+              ["CUSTOMER_CANCELLED", "STAFF_REASSIGNED", "OTHER"] as HoldReleaseReason[]
             ).map((v) => ({ value: v, label: HOLD_RELEASE_LABEL[v] }))}
             requireNoteFor="OTHER"
             onConfirm={async (reason, note) => {
@@ -800,7 +795,7 @@ function EntryCard({
                         ? null
                         : linkedRes.lateConfirmedAt
                           ? "Đã ghi nhận khách tới muộn"
-                          : "Chỉ bật sau giờ hẹn và trước ngưỡng Không tới"
+                          : "Chỉ bật sau giờ hẹn"
                   }
                   onClick={async () => {
                     if (!held.can("reservation.update") || !held.policy(e, linkedRes).canLate || !canConfirmLate) return
@@ -809,17 +804,6 @@ function EntryCard({
                   }}
                 >
                   <TimerReset /> Tới muộn
-                </GuardedButton>
-                <GuardedButton
-                  permission="reservation.mark_no_show"
-                  variant="outline"
-                  disabledReason={canNoShow ? null : `Chỉ bật sau ${noShowMinutes} phút trễ`}
-                  onClick={() => {
-                    setStatusOpen(false)
-                    setNoShowOpen(true)
-                  }}
-                >
-                  <TimerReset /> Không tới
                 </GuardedButton>
                 <GuardedButton
                   permission="reservation.cancel"
@@ -850,17 +834,6 @@ function EntryCard({
               await run(() =>
                 held.can("reservation.cancel") && held.policy(e, linkedRes).canBookingStatus ? api.cancelReservation(linkedRes.id, linkedRes.version, reason as ReservationCloseReason, note) : Promise.reject(new Error("Chưa hỗ trợ hoặc thiếu quyền hủy booking")),
               )
-            }}
-          />
-          <ConfirmAction
-            open={noShowOpen}
-            onOpenChange={setNoShowOpen}
-            title="Xác nhận khách không tới?"
-            description={`Booking của ${linkedRes.displayName} chuyển sang Không tới và bàn được nhả.`}
-            confirmLabel="Xác nhận không tới"
-            onConfirm={async () => {
-              if (!held.can("reservation.mark_no_show") || !held.policy(e, linkedRes).canBookingStatus || !canNoShow) return
-              await run(() => api.markNoShow(linkedRes.id, linkedRes.version))
             }}
           />
         </>

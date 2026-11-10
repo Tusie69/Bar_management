@@ -63,7 +63,7 @@ describe("Mobile model pure helpers (A-F01 fix)", () => {
     expect(toneOf(r)).toBe("reserved")
   })
 
-  it("returns 'Không tới · 15 phút' for 15-minute late booking with noshow tone", () => {
+  it("returns 'Tới muộn · 15 phút' for 15-minute late booking with noshow tone", () => {
     const now = new Date("2026-11-04T20:15:00Z")
     const r = createReservation({
       status: "BOOKED",
@@ -71,11 +71,11 @@ describe("Mobile model pure helpers (A-F01 fix)", () => {
       warning: "late",
       minutesLate: 15,
     })
-    expect(chipOf(r, now)).toBe("Không tới · 15 phút")
+    expect(chipOf(r, now)).toBe("Tới muộn · 15 phút")
     expect(toneOf(r)).toBe("noshow")
   })
 
-  it("returns 'Không tới · đã báo muộn · 15 phút' when late confirmed", () => {
+  it("returns 'Tới muộn · đã báo muộn · 15 phút' when late confirmed", () => {
     const now = new Date("2026-11-04T20:15:00Z")
     const r = createReservation({
       status: "BOOKED",
@@ -84,11 +84,11 @@ describe("Mobile model pure helpers (A-F01 fix)", () => {
       minutesLate: 15,
       lateConfirmedAt: new Date("2026-11-04T20:05:00Z"),
     })
-    expect(chipOf(r, now)).toBe("Không tới · đã báo muộn · 15 phút")
+    expect(chipOf(r, now)).toBe("Tới muộn · đã báo muộn · 15 phút")
     expect(toneOf(r)).toBe("noshow")
   })
 
-  it("returns 'Không tới · 30 phút' for 30-minute late booking with noshow tone", () => {
+  it("returns 'Tới muộn · 30 phút' for 30-minute late booking with noshow tone", () => {
     const now = new Date("2026-11-04T20:30:00Z")
     const r = createReservation({
       status: "BOOKED",
@@ -96,11 +96,11 @@ describe("Mobile model pure helpers (A-F01 fix)", () => {
       warning: "noshow",
       minutesLate: 30,
     })
-    expect(chipOf(r, now)).toBe("Không tới · 30 phút")
+    expect(chipOf(r, now)).toBe("Tới muộn · 30 phút")
     expect(toneOf(r)).toBe("noshow")
   })
 
-  it("regression: BOOKED past time below threshold (warning=null) is not 'Không tới', restores 'Trễ N phút' with reserved tone", () => {
+  it("regression: BOOKED past time below threshold (warning=null) is not 'Tới muộn', restores 'Trễ N phút' with reserved tone", () => {
     const now = new Date("2026-11-04T20:10:00Z")
     const r = createReservation({
       status: "BOOKED",
@@ -109,11 +109,11 @@ describe("Mobile model pure helpers (A-F01 fix)", () => {
       minutesLate: 10,
     })
     expect(chipOf(r, now)).toBe("Trễ 10 phút")
-    expect(chipOf(r, now)).not.toContain("Không tới")
+    expect(chipOf(r, now)).not.toContain("Tới muộn")
     expect(toneOf(r)).toBe("reserved")
   })
 
-  it("regression: warning late and noshow are 'Không tới', while lateConfirmedAt shows note", () => {
+  it("regression: warning late and noshow are 'Tới muộn', while lateConfirmedAt shows note", () => {
     const now15 = new Date("2026-11-04T20:15:00Z")
     const now30 = new Date("2026-11-04T20:30:00Z")
 
@@ -125,8 +125,8 @@ describe("Mobile model pure helpers (A-F01 fix)", () => {
       minutesLate: 15,
       lateConfirmedAt: null,
     })
-    expect(chipOf(rLate, now15)).toBe("Không tới · 15 phút")
-    expect(chipOf(rLate, now15)).toContain("Không tới")
+    expect(chipOf(rLate, now15)).toBe("Tới muộn · 15 phút")
+    expect(chipOf(rLate, now15)).toContain("Tới muộn")
     expect(toneOf(rLate)).toBe("noshow")
 
     // Warning late with confirmation note
@@ -137,8 +137,8 @@ describe("Mobile model pure helpers (A-F01 fix)", () => {
       minutesLate: 15,
       lateConfirmedAt: new Date("2026-11-04T20:05:00Z"),
     })
-    expect(chipOf(rLateConf, now15)).toBe("Không tới · đã báo muộn · 15 phút")
-    expect(chipOf(rLateConf, now15)).toContain("Không tới · đã báo muộn")
+    expect(chipOf(rLateConf, now15)).toBe("Tới muộn · đã báo muộn · 15 phút")
+    expect(chipOf(rLateConf, now15)).toContain("Tới muộn · đã báo muộn")
     expect(toneOf(rLateConf)).toBe("noshow")
 
     // Warning noshow without confirmation
@@ -149,8 +149,8 @@ describe("Mobile model pure helpers (A-F01 fix)", () => {
       minutesLate: 30,
       lateConfirmedAt: null,
     })
-    expect(chipOf(rNoshow, now30)).toBe("Không tới · 30 phút")
-    expect(chipOf(rNoshow, now30)).toContain("Không tới")
+    expect(chipOf(rNoshow, now30)).toBe("Tới muộn · 30 phút")
+    expect(chipOf(rNoshow, now30)).toContain("Tới muộn")
     expect(toneOf(rNoshow)).toBe("noshow")
 
     // Warning noshow with confirmation note
@@ -161,8 +161,8 @@ describe("Mobile model pure helpers (A-F01 fix)", () => {
       minutesLate: 30,
       lateConfirmedAt: new Date("2026-11-04T20:05:00Z"),
     })
-    expect(chipOf(rNoshowConf, now30)).toBe("Không tới · đã báo muộn · 30 phút")
-    expect(chipOf(rNoshowConf, now30)).toContain("Không tới · đã báo muộn")
+    expect(chipOf(rNoshowConf, now30)).toBe("Tới muộn · đã báo muộn · 30 phút")
+    expect(chipOf(rNoshowConf, now30)).toContain("Tới muộn · đã báo muộn")
     expect(toneOf(rNoshowConf)).toBe("noshow")
   })
 })

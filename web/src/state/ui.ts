@@ -13,7 +13,7 @@ export type FloorMode = "live" | "availability"
 export type FloorView = "list" | "timeline" | "map"
 
 export interface PickRequest {
-  intent: "walkin" | "assign" | "move" | "combine" | "checkin" | "offer" | "seat-waitlist" | "booking"
+  intent: "walkin" | "assign" | "move" | "combine" | "checkin" | "offer" | "seat-waitlist" | "booking" | "layout"
   title: string
   hint: string
   multi: boolean

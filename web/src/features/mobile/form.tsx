@@ -1,19 +1,29 @@
 import { ChevronLeft } from "lucide-react"
-import { useId, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import {
   bookingCalendarDate,
   bookingInstant,
   defaultBookingSlot,
-  GUEST_QUICK,
   isAfterMidnight,
-  parseOtherGuests,
   slotLabel,
   validateBookingTime,
 } from "@/domain/booking-rules"
-import { SOURCE_LABEL, type BookingClassification, type BookingSourceCode } from "@/domain/enums"
-import { BookingTimePicker } from "@/components/booking-pickers"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Checkbox } from "@/components/ui/checkbox"
+import { type BookingClassification, type BookingSourceCode } from "@/domain/enums"
+import {
+  BookingTimePicker,
+  GuestPicker,
+  IconPicker,
+  SourcePicker,
+  HonorificPicker,
+  honorificSupported,
+  iconKeysSupported,
+  socialPlatformSupported,
+  type Honorific,
+  type SocialPlatform,
+  guestCount,
+  guestValueFrom,
+  type GuestValue,
+} from "@/components/booking-pickers"
 import { useAvailability, useVenueSettings } from "@/hooks/use-data"
 import { useAction } from "@/hooks/use-action"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
@@ -24,19 +34,10 @@ import { api } from "@/services"
 import { bookingTableCanSelect } from "./booking-table-selection"
 import { FloorCanvas } from "../floor/floor-canvas"
 import { useM, type FormRequest } from "./context"
+import { useKeyboardSafeHeight } from "./mobile-app"
 import { codesOf } from "./model"
-import { Seg } from "./ui"
-import {
-  selectedCapacity,
-  walkInBlockReason,
-  walkInPickableIds,
-  walkInSelectionIssues,
-} from "./walk-in-selection"
-import {
-  bookingSelectionIssues,
-  bookingTableBadge,
-  isTableAvailableForBooking,
-} from "./booking-table-selection"
+import { selectedCapacity, walkInBlockReason, walkInPickableIds, walkInSelectionIssues } from "./walk-in-selection"
+import { bookingSelectionIssues, bookingTableBadge, isTableAvailableForBooking } from "./booking-table-selection"
 
 interface Option {
   key: string
@@ -51,14 +52,13 @@ const field =
 /** Full-screen "Tạo đơn đặt bàn": Đặt trước / Walk-in. Rules come from domain/booking-rules.ts (same as Desktop). */
 export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => void }) {
   const m = useM()
-  const uid = useId()
   const { run, pending } = useAction()
   const quickTimes = useVenueSettings().data?.quickTimes ?? []
   const preset = useMemo(() => req.tableIds ?? [], [req.tableIds])
-  const [mode, setMode] = useState(req.mode)
-  const [party, setParty] = useState(preset.length ? Math.min(8, preset.length * 4) : 4)
-  const [isOther, setIsOther] = useState(false)
-  const [otherText, setOtherText] = useState("")
+  const mode = req.mode
+  const [guest, setGuest] = useState<GuestValue>(() =>
+    guestValueFrom(preset.length ? Math.min(8, preset.length * 4) : 4),
+  )
   const [dateIdx, setDateIdx] = useState(() =>
     req.date
       ? Math.max(0, Math.round((Date.parse(`${req.date}T00:00:00Z`) - Date.parse(`${m.today}T00:00:00Z`)) / 86_400_000))
@@ -72,8 +72,11 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const [phone, setPhone] = useState("")
   const [name, setName] = useState("")
   const [source, setSource] = useState<BookingSourceCode>("HOTLINE")
+  const [platform, setPlatform] = useState<SocialPlatform | "">("")
   const [classification, setClassification] = useState<BookingClassification>("UNCLASSIFIED")
   const [isBirthday, setIsBirthday] = useState(false)
+  const [iconKeys, setIconKeys] = useState<string[]>([])
+  const [honorific, setHonorific] = useState<Honorific | null>(null)
   const [note, setNote] = useState("")
   const [tried, setTried] = useState(false)
   const [dirty, setDirty] = useState(false)
@@ -82,8 +85,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
 
   const isBooking = mode === "booking"
   const bd = addDays(m.today, dateIdx)
-  const other = isOther ? parseOtherGuests(otherText) : null
-  const guests = isOther ? (other?.ok ? other.value : null) : party
+  const guests = guestCount(guest)
   const timeErr = isBooking ? validateBookingTime(bd, slot, m.now, undefined, quickTimes) : null
   const at = isBooking && slot && !timeErr ? bookingInstant(bd, slot) : null
   const nextDay = !!at && !!slot && isAfterMidnight(slot)
@@ -92,13 +94,11 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const phoneOk = !phone.trim() || isPlausibleVnPhone(phone)
   const guestMissing = isBooking && !phone.trim() && !name.trim()
   const noteBad = noteHasPhoneNumber(note)
-  const errOther = !!other && !other.ok && (tried || !!otherText.trim())
+  const platformErr = isBooking && socialPlatformSupported && source === "SOCIAL" && !platform ? "Vui lòng chọn nền tảng mạng xã hội." : null
   const errTime = isBooking && !!timeErr && (tried || !!slot)
   const errGuest = tried && (guestMissing || !phoneOk)
 
-  const isSameBusinessDate = m.model.floor?.businessDate
-    ? bd === m.model.floor.businessDate
-    : bd === m.today
+  const isSameBusinessDate = m.model.floor?.businessDate ? bd === m.model.floor.businessDate : bd === m.today
   const bookableZoneIds = useMemo(
     () => new Set(m.model.catalog?.zones.filter((zone) => zone.isBookable).map((zone) => zone.id) ?? []),
     [m.model.catalog],
@@ -106,23 +106,21 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
 
   const availability = useAvailability(isBooking && checked && guests ? at : null, guests ?? 1)
   const avail = availability.isPlaceholderData || availability.isError ? undefined : availability.data
-  const availMap = useMemo(
-    () => new Map((avail?.tables ?? []).map((t) => [t.tableId, t])),
-    [avail?.tables],
-  )
+  const availMap = useMemo(() => new Map((avail?.tables ?? []).map((t) => [t.tableId, t])), [avail?.tables])
 
-  const bookingIds = isBooking ? choice?.ids ?? [] : []
+  const bookingIds = isBooking ? (choice?.ids ?? []) : []
   const bookingAnchor = m.model.byId.get(bookingIds[0])
-  const bookingPickable = new Set(m.model.tables.filter((table) =>
-    bookingTableCanSelect(table, availMap.get(table.id), bookingAnchor),
-  ).map((table) => table.id))
-  const bookingCapacity = selectedCapacity(bookingIds, m.model.byId)
-  const bookingSelectionError = !bookingIds.length ? null : !avail
-    ? "Chưa xác minh được bàn cho giờ và ngày đã chọn."
-    : bookingIds.some((id) => !bookingPickable.has(id))
-      ? "Bàn đã chọn không còn khả dụng. Chọn lại trên sơ đồ."
-      : guests && bookingCapacity < guests
-        ? `Mới chọn ${bookingCapacity}/${guests} chỗ. Chạm thêm bàn phù hợp trên sơ đồ.`
+  const bookingPickable = new Set(
+    m.model.tables
+      .filter((table) => bookingTableCanSelect(table, availMap.get(table.id), bookingAnchor))
+      .map((table) => table.id),
+  )
+  const bookingSelectionError = !bookingIds.length
+    ? null
+    : !avail
+      ? "Chưa xác minh được bàn cho giờ và ngày đã chọn."
+      : bookingIds.some((id) => !bookingPickable.has(id))
+        ? "Bàn đã chọn không còn khả dụng. Chọn lại trên sơ đồ."
         : null
 
   const presetIssues = useMemo(() => {
@@ -136,27 +134,13 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
       isSameBusinessDate,
       guests,
     )
-  }, [
-    isBooking,
-    preset,
-    guests,
-    m.model.byId,
-    m.model.states,
-    availMap,
-    bookableZoneIds,
-    isSameBusinessDate,
-  ])
+  }, [isBooking, preset, guests, m.model.byId, m.model.states, availMap, bookableZoneIds, isSameBusinessDate])
 
   const presetBadge = useMemo(() => {
     if (!preset.length) return null
     const firstTable = m.model.byId.get(preset[0])
     if (!firstTable) return "Không khả dụng"
-    return bookingTableBadge(
-      firstTable,
-      m.model.states.get(preset[0]),
-      availMap.get(preset[0]),
-      isSameBusinessDate,
-    )
+    return bookingTableBadge(firstTable, m.model.states.get(preset[0]), availMap.get(preset[0]), isSameBusinessDate)
   }, [preset, m.model.byId, m.model.states, availMap, isSameBusinessDate])
 
   const choiceIssues = useMemo(() => {
@@ -170,21 +154,12 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
       isSameBusinessDate,
       guests,
     )
-  }, [
-    isBooking,
-    choice,
-    guests,
-    m.model.byId,
-    m.model.states,
-    availMap,
-    bookableZoneIds,
-    isSameBusinessDate,
-  ])
+  }, [isBooking, choice, guests, m.model.byId, m.model.states, availMap, bookableZoneIds, isSameBusinessDate])
 
   const options = useMemo<Option[]>(() => {
     if (!checked || !guests || !isBooking) return []
     const fits = m.model.tables
-      .filter((t) => t.kind === "TABLE" && t.capacity >= guests && bookableZoneIds.has(t.zoneId))
+      .filter((t) => t.kind === "TABLE" && bookableZoneIds.has(t.zoneId))
       .filter((t) =>
         isTableAvailableForBooking(
           t,
@@ -204,7 +179,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
         sub: `${t.capacity} chỗ`,
       }))
     const combos = (avail?.combinations ?? [])
-      .filter((c) => c.available && c.capacity >= guests)
+      .filter((c) => c.available)
       .slice(0, 2)
       .flatMap((c) => {
         const v = m.model.catalog?.combinations.find((x) => x.id === c.combinationId)
@@ -251,7 +226,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   )
   const walkInCapacity = selectedCapacity(selectedWalkInIds, m.model.byId)
   const walkInIssues = walkInSelectionIssues(selectedWalkInIds, m.model.byId, m.model.states, bookableZoneIds)
-  const walkInReady = !!guests && selectedWalkInIds.length > 0 && walkInCapacity >= guests && walkInIssues.length === 0
+  const walkInReady = !!guests && selectedWalkInIds.length > 0 && walkInIssues.length === 0
 
   const reset = () => {
     // Revalidate the existing map selection when date/time/party changes.
@@ -311,7 +286,11 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   // FX-04: 1 mã chống trùng cho lần mở form; đổi mã sau mỗi lần tạo thành công.
   const [idempotencyKey, renewIdempotencyKey] = useIdempotencyKey()
   const submit = async () => {
-    if (guests === null || (isBooking ? guestMissing || !phoneOk || !at || !!bookingSelectionError : false) || noteBad) {
+    if (
+      guests === null ||
+      (isBooking ? guestMissing || !phoneOk || !at || !!bookingSelectionError || !!platformErr : false) ||
+      noteBad
+    ) {
       setTried(true)
       return
     }
@@ -319,17 +298,13 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
     if (isBooking && ids.length) {
       if (choiceIssues.length) {
         setTried(true)
-        setSelectionMessage(
-          `${choiceIssues[0]} Vui lòng chọn bàn trống khác hoặc bỏ chọn bàn để lưu chưa xếp bàn.`,
-        )
+        setSelectionMessage(`${choiceIssues[0]} Vui lòng chọn bàn trống khác hoặc bỏ chọn bàn để lưu chưa xếp bàn.`)
         return
       }
     }
     if (!isBooking && ids.length && !walkInReady) {
       setTried(true)
-      setSelectionMessage(
-        walkInIssues[0] ?? `Mới chọn ${walkInCapacity}/${guests} chỗ. Chạm thêm bàn hoặc ghế phù hợp trên sơ đồ.`,
-      )
+      setSelectionMessage(walkInIssues[0] ?? null)
       return
     }
     const ok = isBooking
@@ -340,9 +315,12 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             partySize: guests,
             expectedAt: at!,
             sourceCode: source,
+            socialPlatform: socialPlatformSupported && source === "SOCIAL" && platform ? platform : undefined,
             classification,
             guestType: classification === "RETURNING" ? "REGULAR" : classification === "NEW" ? "NEW" : null,
             isBirthday,
+            iconKeys: iconKeysSupported && iconKeys.length ? iconKeys : undefined,
+            honorific: honorificSupported && honorific ? honorific : undefined,
             note: note.trim() || undefined,
             tableIds: ids,
             overrideReason: o,
@@ -377,20 +355,13 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
     }
   }
 
-  const pickChip = (on: boolean, off = false) =>
-    cn(
-      "border",
-      on
-        ? "border-primary bg-primary-tint font-semibold text-primary-ink"
-        : off
-          ? "cursor-not-allowed border-dashed border-border bg-background font-medium text-subtle"
-          : "border-strong bg-background font-medium text-tx-1",
-    )
+  const keyboardSafeHeight = useKeyboardSafeHeight()
 
   return (
     <div
       role="dialog"
       aria-label="Tạo đơn đặt bàn"
+      style={{ height: keyboardSafeHeight ? `${keyboardSafeHeight}px` : "100dvh" }}
       className="fixed inset-0 z-[40] flex flex-col overflow-hidden bg-background"
     >
       <div className="shrink-0 border-b border-border bg-background px-4 pt-[var(--top-safe)] pb-3">
@@ -403,172 +374,192 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
           >
             <ChevronLeft className="size-[22px]" />
           </button>
-          <h1 className="m-0 text-xl font-semibold tracking-[-0.01em] text-tx-strong">Tạo đơn đặt bàn</h1>
-        </div>
-        <div className="mt-2">
-          <Seg
-            label="Loại đơn"
-            value={mode}
-            onChange={(k) => {
-              setMode(k)
-              setTried(false)
-              if (!preset.length) reset()
-            }}
-            opts={[
-              ["booking", "Đặt trước"],
-              ["walkin", "Walk-in"],
-            ]}
-          />
+          <h1 className="m-0 text-xl font-semibold tracking-[-0.01em] text-tx-strong">
+            {isBooking ? "Tạo đơn đặt bàn" : "Mở bàn Walk-in"}
+          </h1>
         </div>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pt-4 pb-6">
         <section className="flex flex-col gap-3">
           <h2 className="m-0 text-base font-semibold text-tx-strong">
-            {isBooking ? "Số khách và thời gian" : "Khách vừa đến"}
+            {isBooking ? "Số khách" : "Khách vừa đến"}
           </h2>
           <div className="flex flex-col gap-3.5 rounded-2xl border border-border bg-surface-1 p-4">
-            <div className="flex flex-col gap-2">
-              <div className="flex items-baseline justify-between gap-2">
-                <span id={`${uid}-party`} className="text-[14px] text-tx-2">
-                  Số khách
-                </span>
-                <span className="text-xs text-subtle">Trên 10 khách, chọn Khác</span>
+            <GuestPicker
+              value={guest}
+              onChange={(g) => {
+                setGuest(g)
+                reset()
+                touch()
+              }}
+              showErrors={tried}
+            />
+          </div>
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <div className="flex items-baseline justify-between">
+            <h2 className="m-0 text-base font-semibold text-tx-strong">Thông tin khách</h2>
+            <span className="text-[13px] text-[var(--text-muted)]">
+              {isBooking ? "Cần tên hoặc SĐT" : "Không bắt buộc"}
+            </span>
+          </div>
+          <div
+            className={cn(
+              "flex flex-col gap-3 rounded-2xl border bg-surface-1 p-4",
+              errGuest ? "border-st-noshow" : "border-border",
+            )}
+          >
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[13px] font-medium text-tx-2">Tên khách</span>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  autoComplete="name"
+                  value={name}
+                  onChange={(e) => {
+                    setName(e.target.value)
+                    touch()
+                  }}
+                  placeholder={isBooking ? "Ví dụ: Chị Lan" : "Tên hoặc đặc điểm khách"}
+                  className={cn(field, "min-w-0 flex-1")}
+                />
+                {isBooking ? (
+                  <HonorificPicker
+                    value={honorific}
+                    onChange={(val) => {
+                      setHonorific(val)
+                      touch()
+                    }}
+                    size="lg"
+                  />
+                ) : null}
               </div>
-              <div role="radiogroup" aria-labelledby={`${uid}-party`} className="grid grid-cols-4 gap-2">
-                {GUEST_QUICK.map((n) => {
-                  const on = !isOther && party === n
-                  return (
-                    <button
-                      key={n}
-                      type="button"
-                      role="radio"
-                      aria-checked={on}
-                      aria-label={`${n} khách`}
-                      onClick={() => {
-                        setIsOther(false)
-                        setParty(n)
-                        reset()
-                        touch()
-                      }}
-                      className={cn("h-12 min-w-0 rounded-xl px-1 text-base tabular-nums", pickChip(on))}
-                    >
-                      {n}
-                    </button>
-                  )
-                })}
-                <button
-                  type="button"
-                  role="radio"
-                  aria-checked={isOther}
-                  aria-label={other?.ok ? `Khác, ${other.value} khách` : "Khác, trên 10 khách"}
-                  onClick={() => {
-                    setIsOther(true)
+            </div>
+            {isBooking ? (
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[13px] font-medium text-tx-2">Số điện thoại</span>
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  value={phone}
+                  onChange={(e) => {
+                    setPhone(e.target.value)
+                    touch()
+                  }}
+                  placeholder="09xx xxx xxx"
+                  className={field}
+                />
+              </label>
+            ) : null}
+            {errGuest ? (
+              <span role="alert" className="text-[13px] text-st-noshow-ink">
+                {!phoneOk ? "SĐT chưa đúng định dạng (10 số, bắt đầu bằng 0)." : "Nhập ít nhất tên hoặc số điện thoại."}
+              </span>
+            ) : null}
+            {isBooking ? (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[13px] font-medium text-tx-2">Khách quen / mới</span>
+                <div role="radiogroup" aria-label="Khách quen / mới" className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={classification === "RETURNING"}
+                    className={cn(
+                      "h-12 rounded-xl border text-[14px] font-medium transition-colors",
+                      classification === "RETURNING"
+                        ? "border-primary bg-primary-tint font-semibold text-primary-ink"
+                        : "border-strong bg-background text-tx-1",
+                    )}
+                    onClick={() => {
+                      setClassification((c) => (c === "RETURNING" ? "UNCLASSIFIED" : "RETURNING"))
+                      touch()
+                    }}
+                  >
+                    Khách quen (O)
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={classification === "NEW"}
+                    className={cn(
+                      "h-12 rounded-xl border text-[14px] font-medium transition-colors",
+                      classification === "NEW"
+                        ? "border-primary bg-primary-tint font-semibold text-primary-ink"
+                        : "border-strong bg-background text-tx-1",
+                    )}
+                    onClick={() => {
+                      setClassification((c) => (c === "NEW" ? "UNCLASSIFIED" : "NEW"))
+                      touch()
+                    }}
+                  >
+                    Khách mới (N)
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </section>
+
+        {isBooking ? (
+          <section className="flex flex-col gap-3">
+            <h2 className="m-0 text-base font-semibold text-tx-strong">Thời gian</h2>
+            <div className="flex flex-col gap-3.5 rounded-2xl border border-border bg-surface-1 p-4">
+              <div className="flex flex-col gap-2">
+                <span className="text-[14px] text-tx-2">Ngày</span>
+                <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-0.5">
+                  {days.map((d) => {
+                    const on = dateIdx === d.offset
+                    return (
+                      <button
+                        key={d.offset}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => {
+                          setDateIdx(d.offset)
+                          reset()
+                          touch()
+                        }}
+                        className={cn(
+                          "flex h-14 min-w-16 shrink-0 flex-col items-center justify-center gap-px rounded-[14px] border px-2.5",
+                          on
+                            ? "border-tx-strong bg-tx-strong text-background"
+                            : "border-border bg-background text-tx-1",
+                        )}
+                      >
+                        <span className="text-xs">{d.top}</span>
+                        <span className="text-[15px] font-semibold">{d.day}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+              <div className="border-t border-border pt-3.5">
+                <BookingTimePicker
+                  date={bd}
+                  value={slot ?? ""}
+                  now={m.now}
+                  error={errTime ? timeErr : null}
+                  quickTimes={quickTimes}
+                  onChange={(time) => {
+                    setSlot(time)
                     reset()
                     touch()
                   }}
-                  className={cn(
-                    "col-span-2 h-12 min-w-0 rounded-xl px-1 text-base whitespace-nowrap",
-                    pickChip(isOther),
-                  )}
-                >
-                  {other?.ok ? `Khác: ${other.value}` : "Khác"}
-                </button>
+                />
               </div>
-              {isOther ? (
-                <label className="mt-1 flex flex-col gap-1.5">
-                  <span className="text-[13px] font-medium text-tx-2">Số khách, từ 11 trở lên</span>
-                  <span className="relative block">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      enterKeyHint="done"
-                      autoComplete="off"
-                      autoFocus
-                      value={otherText}
-                      onChange={(e) => {
-                        setOtherText(e.target.value)
-                        reset()
-                        touch()
-                      }}
-                      placeholder="Ví dụ: 12"
-                      aria-invalid={errOther}
-                      className={cn(field, "scroll-mb-36 pr-[72px] tabular-nums", errOther && "border-st-noshow")}
-                    />
-                    <span
-                      aria-hidden
-                      className="pointer-events-none absolute top-0 right-3.5 flex h-12 items-center text-[15px] text-tx-2"
-                    >
-                      khách
-                    </span>
-                  </span>
-                  {errOther ? (
-                    <span role="alert" className="text-[13px] text-st-noshow-ink">
-                      {other?.error}
-                    </span>
-                  ) : null}
-                </label>
-              ) : null}
+              <button
+                type="button"
+                onClick={() => (guests === null || timeErr ? setTried(true) : setChecked(true))}
+                className="h-12 rounded-xl border border-primary bg-primary-tint text-[15px] font-medium text-primary-ink active:brightness-95"
+              >
+                Kiểm tra bàn trống
+              </button>
             </div>
-
-            {isBooking ? (
-              <>
-                <div className="flex flex-col gap-2 border-t border-border pt-3.5">
-                  <span className="text-[14px] text-tx-2">Ngày</span>
-                  <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-0.5">
-                    {days.map((d) => {
-                      const on = dateIdx === d.offset
-                      return (
-                        <button
-                          key={d.offset}
-                          type="button"
-                          aria-pressed={on}
-                          onClick={() => {
-                            setDateIdx(d.offset)
-                            reset()
-                            touch()
-                          }}
-                          className={cn(
-                            "flex h-14 min-w-16 shrink-0 flex-col items-center justify-center gap-px rounded-[14px] border px-2.5",
-                            on
-                              ? "border-tx-strong bg-tx-strong text-background"
-                              : "border-border bg-background text-tx-1",
-                          )}
-                        >
-                          <span className="text-xs">{d.top}</span>
-                          <span className="text-[15px] font-semibold">{d.day}</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-                <div className="border-t border-border pt-3.5">
-                  <BookingTimePicker
-                    date={bd}
-                    value={slot ?? ""}
-                    now={m.now}
-                    error={errTime ? timeErr : null}
-                    quickTimes={quickTimes}
-                    onChange={(time) => {
-                      setSlot(time)
-                      reset()
-                      touch()
-                    }}
-                  />
-                </div>
-              </>
-            ) : null}
-
-            <button
-              type="button"
-              onClick={() => (guests === null || (isBooking && timeErr) ? setTried(true) : setChecked(true))}
-              className="h-12 rounded-xl border border-primary bg-primary-tint text-[15px] font-medium text-primary-ink active:brightness-95"
-            >
-              {isBooking ? "Kiểm tra bàn trống" : "Xem bàn trống lúc này"}
-            </button>
-          </div>
-        </section>
+          </section>
+        ) : null}
 
         {checked ? (
           <section className="flex flex-col gap-3">
@@ -591,17 +582,23 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                     pickable={bookingPickable}
                     now={m.now}
                     onTableClick={toggleBookingTable}
-                    onBlockedTableClick={(id) => setSelectionMessage(
-                      availMap.get(id)?.reason ?? "Bàn này chưa khả dụng cho lịch đã chọn.",
-                    )}
+                    onBlockedTableClick={(id) =>
+                      setSelectionMessage(availMap.get(id)?.reason ?? "Bàn này chưa khả dụng cho lịch đã chọn.")
+                    }
                     ariaLabel="Sơ đồ chọn bàn đặt trước"
                   />
                 </div>
                 {bookingSelectionError || selectionMessage ? (
-                  <p role="status" className="m-0 text-sm text-st-late-ink">{bookingSelectionError ?? selectionMessage}</p>
+                  <p role="status" className="m-0 text-sm text-st-late-ink">
+                    {bookingSelectionError ?? selectionMessage}
+                  </p>
                 ) : null}
                 {availability.isError ? (
-                  <button type="button" className="min-h-11 rounded-xl border" onClick={() => void availability.refetch()}>
+                  <button
+                    type="button"
+                    className="min-h-11 rounded-xl border"
+                    onClick={() => void availability.refetch()}
+                  >
                     Tải lại bàn khả dụng
                   </button>
                 ) : null}
@@ -616,9 +613,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                     className="flex flex-col gap-1.5 rounded-[14px] border border-st-reserved/30 bg-st-reserved-tint px-4 py-3 text-tx-1"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-[15px] font-semibold text-tx-strong">
-                        Bàn {codesOf(preset, m.model)}
-                      </span>
+                      <span className="text-[15px] font-semibold text-tx-strong">Bàn {codesOf(preset, m.model)}</span>
                       <span className="rounded-md bg-st-reserved/20 px-2 py-0.5 text-xs font-medium text-st-reserved-ink">
                         {presetBadge}
                       </span>
@@ -645,7 +640,8 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                 {options.length ? (
                   <div role="radiogroup" aria-label="Bàn trống" className="flex flex-wrap gap-2">
                     {options.map((o) => {
-                      const on = choice?.key === o.key || (choice?.key === "preset" && o.ids.join() === choice.ids.join())
+                      const on =
+                        choice?.key === o.key || (choice?.key === "preset" && o.ids.join() === choice.ids.join())
                       return (
                         <button
                           key={o.key}
@@ -662,9 +658,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                             on ? "border-primary bg-primary-tint" : "border-border bg-surface-1",
                           )}
                         >
-                          <span
-                            className={cn("text-[15px] font-semibold", on ? "text-primary-ink" : "text-tx-strong")}
-                          >
+                          <span className={cn("text-[15px] font-semibold", on ? "text-primary-ink" : "text-tx-strong")}>
                             {o.label}
                           </span>
                           {o.sub ? <span className="text-xs text-[var(--text-muted)]">{o.sub}</span> : null}
@@ -681,8 +675,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             ) : (
               <div className="flex flex-col gap-3">
                 <p className="m-0 text-[13px] text-pretty text-tx-2">
-                  Chạm trực tiếp lên bàn hoặc ghế trống. Nếu chưa đủ chỗ, tiếp tục chọn thêm trong cùng khu và cùng
-                  loại.
+                  Chạm trực tiếp lên bàn hoặc ghế trống. Có thể chọn thêm trong cùng khu và cùng loại.
                 </p>
                 <div className="relative h-[min(58dvh,500px)] min-h-[360px] overflow-hidden rounded-2xl border border-border bg-floor">
                   {m.model.catalog ? (
@@ -719,12 +712,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                     {selectedWalkInIds.length ? `Đã chọn: ${codesOf(selectedWalkInIds, m.model)}` : "Chưa chọn bàn"}
                   </span>
                   <span className={cn("text-[13px]", walkInReady ? "text-primary-ink" : "text-tx-2")}>
-                    Sức chứa: {walkInCapacity}/{guests ?? "?"} chỗ
-                    {walkInReady
-                      ? " · Đã đủ chỗ"
-                      : selectedWalkInIds.length
-                        ? ` · Cần thêm ${Math.max(0, (guests ?? 0) - walkInCapacity)} chỗ`
-                        : ""}
+                    Sức chứa: {walkInCapacity} chỗ cho {guests ?? "?"} khách
                   </span>
                   {walkInIssues[0] || selectionMessage ? (
                     <span className="text-[13px] text-st-noshow-ink" role="alert">
@@ -746,124 +734,12 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
           </section>
         ) : null}
 
-        <section className="flex flex-col gap-3">
-          <div className="flex items-baseline justify-between">
-            <h2 className="m-0 text-base font-semibold text-tx-strong">Thông tin khách</h2>
-            <span className="text-[13px] text-[var(--text-muted)]">
-              {isBooking ? "Cần tên hoặc SĐT" : "Không bắt buộc"}
-            </span>
-          </div>
-          <div
-            className={cn(
-              "flex flex-col gap-3 rounded-2xl border bg-surface-1 p-4",
-              errGuest ? "border-st-noshow" : "border-border",
-            )}
-          >
-            {isBooking ? (
+        {isBooking ? (
+          <section className="flex flex-col gap-3">
+            <h2 className="m-0 text-base font-semibold text-tx-strong">Yêu cầu & Nguồn đặt</h2>
+            <div className="flex flex-col gap-3.5 rounded-2xl border border-border bg-surface-1 p-4">
               <label className="flex flex-col gap-1.5">
-                <span className="text-[13px] font-medium text-tx-2">Số điện thoại</span>
-                <input
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  value={phone}
-                  onChange={(e) => {
-                    setPhone(e.target.value)
-                    touch()
-                  }}
-                  placeholder="09xx xxx xxx"
-                  className={field}
-                />
-              </label>
-            ) : null}
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[13px] font-medium text-tx-2">Tên khách</span>
-              <input
-                type="text"
-                autoComplete="name"
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value)
-                  touch()
-                }}
-                placeholder="Ví dụ: Chị Lan"
-                className={field}
-              />
-            </label>
-            {errGuest ? (
-              <span role="alert" className="text-[13px] text-st-noshow-ink">
-                {!phoneOk ? "SĐT chưa đúng định dạng (10 số, bắt đầu bằng 0)." : "Nhập ít nhất tên hoặc số điện thoại."}
-              </span>
-            ) : null}
-            {isBooking ? (
-              <div className="flex flex-col gap-2">
-                <span className="text-[13px] font-medium text-tx-2">Nguồn đặt</span>
-                <div className="flex flex-wrap gap-2">
-                  {(Object.entries(SOURCE_LABEL) as [BookingSourceCode, string][]).map(([code, label]) => {
-                    const on = source === code
-                    return (
-                      <button
-                        key={code}
-                        type="button"
-                        aria-pressed={on}
-                        onClick={() => {
-                          setSource(code)
-                          touch()
-                        }}
-                        className={cn(
-                          "h-9 rounded-full border px-3.5 text-[13px] font-medium",
-                          on
-                            ? "border-tx-strong bg-tx-strong text-background"
-                            : "border-strong bg-transparent text-tx-1",
-                        )}
-                      >
-                        {label}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            ) : null}
-            {isBooking ? (
-              <div className="flex flex-col gap-1.5">
-                <label htmlFor="bk-classification" className="text-[13px] font-medium text-tx-2">
-                  Loại khách
-                </label>
-                <Select
-                  value={classification}
-                  onValueChange={(val) => {
-                    setClassification(val as BookingClassification)
-                    touch()
-                  }}
-                >
-                  <SelectTrigger
-                    id="bk-classification"
-                    aria-label="Loại khách"
-                    className="h-12 w-full rounded-xl bg-surface-1 text-tx-1"
-                  >
-                    <SelectValue placeholder="Chưa phân loại" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="UNCLASSIFIED">Chưa phân loại</SelectItem>
-                    <SelectItem value="NEW">Khách mới (N)</SelectItem>
-                    <SelectItem value="RETURNING">Khách quen (O)</SelectItem>
-                  </SelectContent>
-                </Select>
-                <label className="flex min-h-12 items-center gap-3 text-sm">
-                  <Checkbox
-                    checked={isBirthday}
-                    onCheckedChange={(checked) => {
-                      setIsBirthday(checked === true)
-                      touch()
-                    }}
-                  />
-                  Sinh nhật
-                </label>
-              </div>
-            ) : null}
-            {isBooking || !choice ? (
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[13px] font-medium text-tx-2">Ghi chú</span>
+                <span className="text-[13px] font-medium text-tx-2">Yêu cầu của khách (Ghi chú)</span>
                 <textarea
                   rows={3}
                   value={note}
@@ -877,9 +753,63 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                 />
                 {noteBad ? <span className="text-[13px] text-st-noshow-ink">{NOTE_PHONE_ERROR}</span> : null}
               </label>
-            ) : null}
-          </div>
-        </section>
+
+              <div className="flex flex-col gap-2">
+                <span className="text-[13px] font-medium text-tx-2">Nguồn</span>
+                <SourcePicker
+                  source={source}
+                  onSourceChange={(s) => {
+                    setSource(s)
+                    touch()
+                  }}
+                  platform={platform}
+                  onPlatformChange={(p) => {
+                    setPlatform(p)
+                    touch()
+                  }}
+                  error={tried ? platformErr : null}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[13px] font-medium text-tx-2">Icon</span>
+                <IconPicker
+                  isBirthday={isBirthday}
+                  onBirthdayChange={(b) => {
+                    setIsBirthday(b)
+                    touch()
+                  }}
+                  iconKeys={iconKeys}
+                  onIconKeysChange={(keys) => {
+                    setIconKeys(keys)
+                    touch()
+                  }}
+                />
+              </div>
+            </div>
+          </section>
+        ) : !choice ? (
+          <section className="flex flex-col gap-3">
+            <h2 className="m-0 text-base font-semibold text-tx-strong">Ghi chú</h2>
+            <div className="flex flex-col gap-3 rounded-2xl border border-border bg-surface-1 p-4">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-[13px] font-medium text-tx-2">Ghi chú</span>
+                <textarea
+                  rows={3}
+                  value={note}
+                  onChange={(e) => {
+                    setNote(e.target.value)
+                    touch()
+                  }}
+                  aria-invalid={noteBad}
+                  placeholder="Ghi chú thêm..."
+                  className={cn(field, "h-auto resize-none py-3 leading-[1.45]", noteBad && "border-st-noshow")}
+                />
+                {noteBad ? <span className="text-[13px] text-st-noshow-ink">{NOTE_PHONE_ERROR}</span> : null}
+              </label>
+            </div>
+          </section>
+        ) : null}
       </div>
 
       <footer className="flex shrink-0 flex-col gap-2 border-t border-border bg-surface-1 px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
@@ -905,9 +835,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             : isBooking
               ? "Đặt bàn"
               : choice
-                ? walkInReady
-                  ? `Mở bàn ${choice.label}`
-                  : `Chọn thêm bàn · ${walkInCapacity}/${guests ?? "?"} chỗ`
+                ? `Mở bàn ${choice.label}`
                 : "Thêm vào danh sách chờ"}
         </button>
       </footer>

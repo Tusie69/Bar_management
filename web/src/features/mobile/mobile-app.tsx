@@ -20,7 +20,7 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/
 import { NAV } from "@/app/nav"
 import { useShiftAlerts } from "../floor/alerts"
 import { useFloorModel } from "../floor/use-floor-model"
-import { canStartTableBooking, isWaitingForTable } from "../floor/reception-rules"
+import { isWaitingForTable } from "../floor/reception-rules"
 import { ZaloBookingExport } from "../reservations/zalo-booking-export"
 import { MobileContext, type Confirm, type FormRequest, type MobileCtx, type TablePick, type Tab } from "./context"
 import { DetailScreen } from "./detail"
@@ -31,7 +31,6 @@ import { MapScreen, TableSheet } from "./map"
 import { isOpenEntry } from "./model"
 import {
   AccountSheet,
-  Alert30,
   AlertsSheet,
   ConfirmDialog,
   CreateSheet,
@@ -82,7 +81,6 @@ export default function MobileApp() {
   const alerts = useShiftAlerts(model, booked, now)
   const unread = alerts.filter((a) => !seen.has(a.key)).length
   const handle = (key: string) => setHandled((s) => new Set(s).add(key))
-  const alert30 = booked.find((r) => r.warning === "noshow" && !handled.has(`n${r.id}`)) ?? null
   const toast15 = booked.find((r) => r.warning === "late" && !handled.has(`l${r.id}`)) ?? null
   const busy = !!(overlay || statusFor || confirm || detail || entryDetail || form || pick || ui.draft)
   const keyboardSafeHeight = useKeyboardSafeHeight()
@@ -216,14 +214,6 @@ export default function MobileApp() {
             <MapScreen
               selected={tableSel}
               onSelect={(id) => {
-                if (id && isReceptionist) {
-                  const state = model.states.get(id)
-                  if (!state) return void toast.info("Chưa tải được trạng thái bàn. Vui lòng thử lại.")
-                  if (ctx.can("reservation.create") && canStartTableBooking(model.byId.get(id), state, model.catalog?.zones ?? [])) {
-                    ctx.openForm({ mode: "booking", tableIds: [id], date: selectedDate })
-                    return
-                  }
-                }
                 setTableSel(id)
               }}
               pick={pick}
@@ -257,15 +247,24 @@ export default function MobileApp() {
           )}
         </div>
 
-        {!isReceptionist ? <BottomNav
-          tab={tab}
-          isOwner={isOwner}
-          waitBadge={(waitlist ?? []).filter(isOpenEntry).length}
-          onCreate={() => setOverlay("create")}
-          go={go}
-        /> : null}
+        {!isReceptionist ? (
+          <BottomNav
+            tab={tab}
+            isOwner={isOwner}
+            waitBadge={(waitlist ?? []).filter(isOpenEntry).length}
+            onCreate={() => setOverlay("create")}
+            go={go}
+          />
+        ) : null}
 
-        {tab === "map" && tableSel && !pick && !detail && !entryDetail && !form && !ui.draft ? (
+        {tab === "map" &&
+        tableSel &&
+        !pick &&
+        !detail &&
+        !entryDetail &&
+        !form &&
+        !ui.draft &&
+        ui.pick?.intent !== "layout" ? (
           <TableSheet id={tableSel} onClose={() => setTableSel(null)} />
         ) : null}
         {detail ? (
@@ -286,7 +285,7 @@ export default function MobileApp() {
         ) : null}
         {form ? <FormScreen req={form} onClose={() => setForm(null)} /> : null}
 
-        {toast15 && !alert30 && !busy ? (
+        {toast15 && !busy ? (
           <Toast15
             r={toast15}
             onView={() => {
@@ -297,10 +296,10 @@ export default function MobileApp() {
           />
         ) : null}
 
-        {(overlay && overlay !== "wait" && overlay !== "count") || statusFor || confirm || (alert30 && !busy) ? (
+        {(overlay && overlay !== "wait" && overlay !== "count") || statusFor || confirm ? (
           <Scrim
             onClick={() => {
-              if (confirm || (alert30 && !overlay && !statusFor)) return
+              if (confirm) return
               setStatusFor(null)
               setOverlay(null)
             }}
@@ -308,7 +307,11 @@ export default function MobileApp() {
         ) : null}
         {overlay === "create" ? <CreateSheet onClose={() => setOverlay(null)} /> : null}
         {overlay === "account" ? <AccountSheet onClose={() => setOverlay(null)} /> : null}
-        <ZaloBookingExport businessDate={selectedDate} open={overlay === "count"} onOpenChange={(open) => !open && setOverlay(null)} />
+        <ZaloBookingExport
+          businessDate={selectedDate}
+          open={overlay === "count"}
+          onOpenChange={(open) => !open && setOverlay(null)}
+        />
         <Sheet open={overlay === "wait"} onOpenChange={(open) => !open && setOverlay(null)}>
           <SheetContent data-gm side="bottom" className="h-[85dvh] gap-0 overflow-hidden p-0">
             <SheetTitle className="px-4 pt-5 text-lg">
@@ -331,27 +334,19 @@ export default function MobileApp() {
         ) : null}
         {statusFor ? <StatusDialog r={statusFor} onClose={() => setStatusFor(null)} /> : null}
         {confirm ? <ConfirmDialog c={confirm} onClose={() => setConfirm(null)} /> : null}
-        {alert30 && !busy ? (
-          <Alert30
-            r={alert30}
-            onAck={() => {
-              handle(`n${alert30.id}`)
-              handle(`l${alert30.id}`)
-            }}
-          />
-        ) : null}
       </div>
     </MobileContext.Provider>
   )
 }
 
 /** iOS keeps the layout viewport under the keyboard; Android follows interactive-widget in index.html. */
-function useKeyboardSafeHeight() {
+export function useKeyboardSafeHeight() {
   const [height, setHeight] = useState<number | null>(null)
   useEffect(() => {
     const viewport = window.visualViewport
     if (!viewport) return
-    const update = () => setHeight(viewport.scale === 1 && viewport.height < window.innerHeight - 1 ? viewport.height : null)
+    const update = () =>
+      setHeight(viewport.scale === 1 && viewport.height < window.innerHeight - 1 ? viewport.height : null)
     viewport.addEventListener("resize", update)
     return () => viewport.removeEventListener("resize", update)
   }, [])

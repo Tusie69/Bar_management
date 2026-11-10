@@ -40,9 +40,7 @@ function WalkInBody() {
     const zoneOk = new Set(model.catalog?.zones.filter((z) => z.isBookable).map((z) => z.id))
     return model.tables
       .filter((t) => model.states.get(t.id)?.state === "free" && zoneOk.has(t.zoneId))
-      .filter((t) => (party <= 2 ? true : t.kind === "TABLE"))
       .map((t) => ({ t, fit: t.capacity - party }))
-      .filter((x) => x.t.kind === "BAR_SEAT" || x.fit >= 0)
       .sort((a, b) =>
         a.t.kind === b.t.kind ? a.fit - b.fit || a.t.code.localeCompare(b.t.code) : a.t.kind === "TABLE" ? -1 : 1,
       )
@@ -59,7 +57,13 @@ function WalkInBody() {
   const [idempotencyKey, renewIdempotencyKey] = useIdempotencyKey()
   const seat = async () => {
     const r = await run((o) =>
-      api.seatWalkIn({ tableIds: chosen, guestCount: party, contactName: name || undefined, overrideReason: o, idempotencyKey }),
+      api.seatWalkIn({
+        tableIds: chosen,
+        guestCount: party,
+        contactName: name || undefined,
+        overrideReason: o,
+        idempotencyKey,
+      }),
     )
     if (r) {
       renewIdempotencyKey()
@@ -79,7 +83,13 @@ function WalkInBody() {
       confirmLabel: "Mở bàn",
       onConfirm: async (ids) =>
         !!(await run((o) =>
-          api.seatWalkIn({ tableIds: ids, guestCount: party, contactName: name || undefined, overrideReason: o, idempotencyKey }),
+          api.seatWalkIn({
+            tableIds: ids,
+            guestCount: party,
+            contactName: name || undefined,
+            overrideReason: o,
+            idempotencyKey,
+          }),
         )),
     })
   }
@@ -166,9 +176,8 @@ function WalkInBody() {
       </div>
       <SheetFooter className="grid gap-2 border-t px-5 py-4">
         {chosen.length ? (
-          <p className={cn("text-sm", capacity < party ? "text-st-late" : "text-muted-foreground")}>
+          <p className="text-sm text-muted-foreground">
             {chosen.map((id) => model.label(id)).join(" + ")} · {capacity} chỗ
-            {capacity < party ? " (thiếu chỗ, cần Chủ quán duyệt)" : ""}
           </p>
         ) : null}
         <GuardedButton permission="visit.walkin" size="lg" disabled={!chosen.length || pending} onClick={seat}>

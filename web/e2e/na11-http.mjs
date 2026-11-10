@@ -1,4 +1,5 @@
 import { chromium, expect } from "@playwright/test"
+import assert from "node:assert/strict"
 import { randomBytes } from "node:crypto"
 import { spawn, spawnSync } from "node:child_process"
 import { mkdir, writeFile } from "node:fs/promises"
@@ -7,8 +8,13 @@ import { fileURLToPath } from "node:url"
 const root = fileURLToPath(new URL("../../", import.meta.url))
 const apiUrl = process.env.API_BASE_URL ?? "http://127.0.0.1:3117"
 const webUrl = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5192"
-const database = process.env.DB_NAME ?? "gam21_platform_test"
+const database = process.env.DB_NAME ?? "gam21_platform_e2e_test"
 if (!/_test$/.test(database)) throw new Error("NA-11 HTTP E2E requires an isolated *_test database")
+if (
+  !["gam21_platform_e2e_test", "gam21_platform_it_test"].includes(database) ||
+  (process.env.DB_PORT ?? "33306") !== "33306"
+)
+  throw new Error("HTTP E2E requires the approved test databases on port 33306")
 const pnpm = process.env.npm_execpath
 if (!pnpm) throw new Error("Run through pnpm exec node")
 const fixedNow = "2026-11-03T12:00:00.000Z"
@@ -20,7 +26,7 @@ const common = {
   ...process.env,
   NODE_ENV: "test",
   DB_HOST: "127.0.0.1",
-  DB_PORT: process.env.DB_PORT ?? "33317",
+  DB_PORT: process.env.DB_PORT ?? "33306",
   DB_NAME: database,
   DB_USER: process.env.DB_USER ?? "gam21",
   DB_PASSWORD: process.env.DB_PASSWORD ?? "gam21_test",
@@ -75,7 +81,7 @@ async function ready(url) {
   }
   throw new Error(`Server not ready: ${url}`)
 }
-const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"]`).first()
+const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"], [data-combined-codes~="${code}"]`).first()
 const bookingForm = (page) =>
   page
     .getByRole("dialog", { name: /Tạo đặt bàn|Tạo đơn đặt bàn/ })
@@ -171,17 +177,36 @@ try {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, locale: "en-US" })
   const page = await context.newPage()
   activePage = page
-  page.on("request", request => {
+  page.on("request", (request ) => {
     if (new URL(request.url()).pathname.endsWith("/check-in"))
       checkInNetwork.push({ event: "request", method: request.method(), at: Date.now() })
   })
-  page.on("response", response => {
+  page.on("response", (response ) => {
     if (new URL(response.url()).pathname.endsWith("/check-in"))
       checkInNetwork.push({ event: "response", status: response.status(), at: Date.now() })
   })
   const errors = []
   page.on("pageerror", (error) => errors.push(error.message))
   await login(page)
+  for (const width of [390, 1366]) {
+    await page.setViewportSize({ width, height: 1000 })
+    await page.getByRole("button", { name: "Ghép bàn", exact: true }).click()
+    const writes = []
+    const observe = (req) => {
+      if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method())) writes.push(req.url())
+    }
+    page.on("request", observe)
+    await table(page, "A1").click()
+    await table(page, "A2").click()
+    await expect(page.getByRole("form")).toHaveCount(0)
+    await expect(page.getByRole("button", { name: "Ghép 2 bàn", exact: true })).toBeDisabled()
+    await expect(page.getByRole("region", { name: "Chế độ ghép bàn" })).toContainText("Chưa thể ghép bàn trống")
+    await expect(page.locator("[data-combined-group]")).toHaveCount(0)
+    assert.deepEqual(writes, [])
+    page.off("request", observe)
+    await page.getByRole("region", { name: "Chế độ ghép bàn" }).getByRole("button", { name: "Hủy", exact: true }).click()
+    results.push({ check: `P1 HTTP idle merge disabled without writes ${width}`, result: "PASS" })
+  }
   await jsonRequest(context, "POST", "/waitlist", {
     kind: "WALK_IN",
     guestName: "NA11 waiting guest",
@@ -229,7 +254,8 @@ try {
     await expect(page.getByRole("group", { name: "Điều khiển thu phóng" })).toHaveCount(0)
     await expect(page.getByRole("button", { name: /Phóng to|Thu nhỏ/ })).toHaveCount(0)
     await expect(page.getByRole("region", { name: "Chú giải trạng thái bàn", exact: true })).toHaveCount(1)
-    await expect(calendar(page).locator("../..").getByRole("button", { name: /Bàn chờ/ })).toHaveCount(0)
+    await expect(calendar(page).locator("../..").getByRole("button", { name: /Bàn chờ/ }),
+    ).toHaveCount(0)
     if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1))
       throw new Error(`Overflow at ${width}`)
     await expect(page.getByRole("button", { name: /Bàn chờ/ })).toHaveCount(1)
@@ -240,6 +266,7 @@ try {
     await expect(page.getByLabel("Nội dung text booking")).toHaveValue(/THỐNG KÊ/)
     await closeDialog(page)
     await table(page, "A1").tap()
+    await page.getByRole("button", { name: /^(Đặt bàn|Tạo đặt trước)$/, exact: true }).click()
     const form = bookingForm(page)
     await expect(form).toContainText("A1")
     await expect(form.getByText(/Đặt trước|Đặt bàn/).first()).toBeVisible()
@@ -272,19 +299,25 @@ try {
   await chooseDate(page, tomorrow)
   await dateRead
   await table(page, "A1").tap()
+  await page.getByRole("button", { name: /^(Đặt bàn|Tạo đặt trước)$/, exact: true }).click()
   const form = bookingForm(page)
   const name = "NA11 Nguyễn Văn An"
   await form.getByLabel("Tên khách", { exact: true }).fill(name)
   await form.getByLabel("Số điện thoại", { exact: true }).fill("0987654789")
   await form.getByRole("group", { name: "Giờ nhanh" }).getByRole("button", { name: "21:00" }).click()
-  const birthday = form.getByRole("checkbox", { name: "Sinh nhật", exact: true })
+  const birthday = form.getByRole("checkbox", { name: "Sinh nhật", exact: true }).or(form.getByRole("button", { name: "Sinh nhật", exact: true }))
   const metadataEnabled = (await birthday.count()) > 0
   if (process.env.NA11_REQUIRE_NA14 === "1" && !metadataEnabled)
     throw new Error("NA-14 metadata controls missing in combined build")
   if (metadataEnabled) {
-    await birthday.check()
-    await form.getByLabel("Loại khách").click()
-    await page.getByRole("option", { name: "Khách quen (O)" }).click()
+    await birthday.first().click()
+    const regBtn = page.getByRole("button", { name: "Khách quen (O)" }).or(page.getByRole("radio", { name: "Khách quen (O)" }))
+    if (await regBtn.isVisible()) {
+      await regBtn.click()
+    } else {
+      await form.getByLabel("Loại khách").click()
+      await page.getByRole("option", { name: "Khách quen (O)" }).click()
+    }
   }
   const creation = page.waitForResponse(
     (response) =>
@@ -397,6 +430,7 @@ try {
     await expect(calendar(page)).toContainText("15/11")
     // Existing API intentionally keeps unreleased earlier holds occupied; use a never-allocated table.
     await table(page, "A4").tap()
+    await page.getByRole("button", { name: /^(Đặt bàn|Tạo đặt trước)$/, exact: true }).click()
     const futureForm = bookingForm(page)
     await expect(futureForm).toContainText("15/11")
     if (await futureForm.evaluate((node) => node.scrollWidth > node.clientWidth + 1))
@@ -415,6 +449,7 @@ try {
   await page.setViewportSize({ width: 1280, height: 800 })
   await table(page, "B3").focus()
   await table(page, "B3").press("Enter")
+  await page.getByRole("button", { name: "Đặt bàn", exact: true }).click()
   const desktopDraft = bookingForm(page)
   await desktopDraft.getByLabel("Tên khách", { exact: true }).fill("NA11 preserved draft")
   await expect(table(page, "B4")).toHaveAttribute("aria-disabled", "false")
@@ -426,6 +461,10 @@ try {
   await expect(desktopDraft).toBeVisible()
   await expect(desktopDraft.getByLabel("Tên khách", { exact: true })).toHaveValue("NA11 preserved draft")
   await desktopDraft.getByRole("button", { name: "Hủy", exact: true }).click()
+  const discard = page.getByRole("alertdialog", { name: "Bỏ đơn đang nhập" })
+  await expect(discard).toBeVisible()
+  await discard.getByRole("button", { name: "Bỏ đơn", exact: true }).click()
+  await expect(desktopDraft).toBeHidden()
   results.push({
     check: "desktop map multi-selection and Escape retain draft fields until explicit cancel",
     result: "PASS",
@@ -444,26 +483,28 @@ try {
   await expect(table(page, "A4")).toHaveAttribute("aria-label", /Đã đặt|Đang đặt/, { timeout: 20_000 })
   await table(page, "A4").tap()
   const checkInStarted = Date.now()
-  const checkInResponse = page.waitForResponse(response =>
+  const checkInResponse = page.waitForResponse((response ) =>
     response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/check-in"),
   )
   await page.getByRole("button", { name: "Khách đã đến", exact: true }).click()
   const checkedIn = await checkInResponse
   expect(checkedIn.status()).toBe(200)
   expect((await checkedIn.json()).booking.status).toBe("CHECKED_IN")
-  await expect(table(page, "A4")).toHaveAttribute("aria-label", /Có khách,.*\b2 khách(?:,|$)/)
-  await expect(table(page, "A4").locator("text")).toContainText([/^A4$/, /^2 khách$/])
+  await expect(table(page, "A4")).toHaveAttribute("aria-label", /(?:Đã tới|Có khách),.*\b2 khách(?:,|$)/)
+  await expect(table(page, "A4").locator("text")).toContainText([/^A4$/, /^NA11 arrival$/])
+  await expect(table(page, "A4").locator('[data-testid="guest-count-badge"]')).toHaveText("2")
   await expect(table(page, "A4")).not.toContainText(/\d+\s*(?:phút|giờ|['’′])/)
   checkInNetwork.push({ event: "A4 visible seated", elapsedMs: Date.now() - checkInStarted })
   await page.keyboard.press("Escape")
   await table(page, "B3").tap()
-  const walkForm = bookingForm(page)
-  await walkForm.getByRole("tab", { name: "Walk-in", exact: true }).click()
+  await page.getByRole("button", { name: "Mở bàn Walk-in", exact: true }).click()
   const walkInSheet = page.getByRole("form", { name: "Mở bàn Walk-in B3", exact: true })
   await walkInSheet.getByLabel(/Tên hoặc đặc điểm/).fill("NA11 walk-in")
+  await walkInSheet.getByRole("radio", { name: "4 khách", exact: true }).click()
   await walkInSheet.getByRole("button", { name: "Mở bàn ngay", exact: true }).click()
-  await expect(table(page, "B3")).toHaveAttribute("aria-label", /Có khách,.*\b4 khách(?:,|$)/)
-  await expect(table(page, "B3").locator("text")).toContainText([/^B3$/, /^4 khách$/])
+  await expect(table(page, "B3")).toHaveAttribute("aria-label", /(?:Đã tới|Có khách),.*\b4 khách(?:,|$)/)
+  await expect(table(page, "B3").locator("text")).toContainText([/^B3$/, /^NA11 walk-in$/])
+  await expect(table(page, "B3").locator('[data-testid="guest-count-badge"]')).toHaveText("4")
   await expect(table(page, "B3")).not.toContainText(/\d+\s*(?:phút|giờ|['’′])/)
   await table(page, "B3").tap()
   await page.getByRole("button", { name: "Đổi bàn", exact: true }).click()
@@ -473,12 +514,23 @@ try {
   await expect(table(page, "B4")).toHaveAttribute("aria-label", /NA11 walk-in/)
   await table(page, "B4").focus()
   await table(page, "B4").press("Enter")
-  await page.getByRole("button", { name: "Ghép bàn", exact: true }).click()
+  await page.locator('[aria-label="Thao tác mặt bằng"]').getByRole("button", { name: "Ghép bàn", exact: true }).click()
   await table(page, "B3").tap()
-  await page.getByRole("button", { name: "Ghép bàn", exact: true }).click()
-  await expect(table(page, "B3")).toHaveAttribute("aria-label", /nhóm G\d{2,}, 2 bàn/)
-  const groupCode = (await table(page, "B3").getAttribute("aria-label")).match(/nhóm (G\d{2,})/)[1]
-  await expect(table(page, "B4")).toHaveAttribute("aria-label", new RegExp(`nhóm ${groupCode}, 2 bàn`))
+  await page.getByRole("button", { name: "Ghép 2 bàn", exact: true }).click()
+  const combined = page.locator('[data-combined-codes="B3 B4"]')
+  await expect(combined).toHaveCount(2)
+  await expect(combined.first()).toHaveAttribute("aria-label", /Đã tới|Có khách/)
+  await page.getByRole("dialog", { name: /^Chi tiết/ }).getByRole("button", { name: "Đóng", exact: true }).click()
+  await combined.first().click()
+  await page.getByRole("button", { name: "Tách bàn", exact: true }).click()
+  const split = page.getByRole("dialog", { name: "Tách bàn", exact: true })
+  await split.getByLabel("B3", { exact: false }).click()
+  await split.getByRole("button", { name: /Tách và nhả B3/ }).click()
+  await expect(combined).toHaveCount(0)
+  await expect(table(page, "B3")).toHaveAttribute("aria-label", /Trống|Chưa đặt/)
+
+  await expect(table(page, "B4")).toHaveAttribute("aria-label", /Đã tới|Có khách/)
+  results.push({ check: "P1 HTTP BA-021 split from one combined cell", result: "PASS" })
   await page.keyboard.press("Escape")
   await page.getByRole("button", { name: "Đếm khách", exact: true }).click()
   const guestCountText = page.getByLabel("Nội dung text booking")

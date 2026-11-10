@@ -6,8 +6,9 @@ import { chromium } from "@playwright/test"
 const root = fileURLToPath(new URL("../../", import.meta.url))
 const apiUrl = process.env.API_BASE_URL ?? "http://127.0.0.1:3101"
 const webUrl = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5174"
-const databaseName = process.env.DB_NAME ?? "gam21_platform_test"
+const databaseName = process.env.DB_NAME ?? "gam21_platform_e2e_test"
 if (!/_test$/.test(databaseName)) throw new Error("Refusing browser E2E: DB_NAME must end in _test")
+if (!["gam21_platform_e2e_test", "gam21_platform_it_test"].includes(databaseName) || (process.env.DB_PORT ?? "33306") !== "33306") throw new Error("HTTP E2E requires the approved test databases on port 33306")
 const pnpmCli = process.env.npm_execpath
 if (!pnpmCli) throw new Error("pnpm CLI path is unavailable")
 const fixedNow = "2026-11-03T12:00:00.000Z"
@@ -19,7 +20,7 @@ const common = {
   ...process.env,
   NODE_ENV: "test",
   DB_HOST: "127.0.0.1",
-  DB_PORT: process.env.DB_PORT ?? "3306",
+  DB_PORT: process.env.DB_PORT ?? "33306",
   DB_NAME: databaseName,
   DB_USER: process.env.DB_USER ?? "gam21",
   DB_PASSWORD: process.env.DB_PASSWORD ?? "gam21_dev",
@@ -77,7 +78,7 @@ function stopChildren() {
   }
 }
 
-const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"]`).first()
+const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"], [data-combined-codes~="${code}"]`).first()
 const bookingForm = (page) =>
   page
     .getByRole("dialog", { name: /Tạo đặt bàn|Tạo đơn đặt bàn/ })
@@ -157,7 +158,7 @@ try {
     PHONE_REVEAL_RATE_LIMIT_MAX: "3",
     PHONE_REVEAL_RATE_LIMIT_WINDOW_MS: "60000",
   })
-  startPnpm(["--filter", "@21gam/web", "exec", "vite", "--mode", "test", "--host", "127.0.0.1", "--port", "5174"], {
+  startPnpm(["--filter", "@21gam/web", "exec", "vite", "--mode", "test", "--host", "127.0.0.1", "--port", new URL(webUrl).port, "--strictPort"], {
     ...process.env,
     VITE_API_MODE: "http",
     VITE_API_BASE_URL: apiUrl,
@@ -205,8 +206,9 @@ try {
   const phoneNumber = "0987654789"
   const phoneLast3 = "789"
 
-  // The wheel keeps all 25 canonical choices, keyboard access and overflow guards.
+  // The wheel keeps all 73 five-minute choices, keyboard access and overflow guards.
   await table(page, "A1").click()
+  await page.getByRole("button", { name: "Đặt bàn", exact: true }).click()
   let form = bookingForm(page)
   await form.waitFor()
   if ((await form.locator('input[type="time"]').count()) !== 0) throw new Error("Native time picker is still present")
@@ -214,17 +216,17 @@ try {
   const hourWheel = form.getByRole("spinbutton", { name: "Giờ", exact: true })
   const minuteWheel = form.getByRole("spinbutton", { name: "Phút", exact: true })
   if ((await hourWheel.locator('[data-value]').count()) !== 7) throw new Error("Missing canonical hours")
-  if (JSON.stringify(await minuteWheel.locator('[data-value]').allTextContents()) !== JSON.stringify(["00", "15", "30", "45"]))
-    throw new Error("Minutes must offer exactly the four quarter-hour values")
-  if (await minuteWheel.locator('[data-value="35"]').count()) throw new Error("Off-slot minute is selectable")
+  if (JSON.stringify(await minuteWheel.locator('[data-value]').allTextContents()) !== JSON.stringify(["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"]))
+    throw new Error("Minutes must offer exactly the twelve five-minute values")
+  if ((await minuteWheel.locator('[data-value="35"]').count()) !== 1) throw new Error("Five-minute slot is missing")
   await hourWheel.press("Home")
   await minuteWheel.press("Home")
   await minuteWheel.press("ArrowDown")
-  if ((await minuteWheel.getAttribute("aria-valuetext")) !== "15") throw new Error("Arrow-key selection did not advance 15 minutes")
+  if ((await minuteWheel.getAttribute("aria-valuetext")) !== "05") throw new Error("Arrow-key selection did not advance 5 minutes")
   await hourWheel.press("End")
   if ((await minuteWheel.locator('[data-value]:not(:disabled)').count()) !== 1 ||
       !(await form.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).getAttribute("aria-label")).includes("01:00"))
-    throw new Error("01:00 boundary must leave exactly 25 canonical combinations")
+    throw new Error("01:00 boundary must leave exactly one valid minute at the final hour")
   if (await form.evaluate((node) => node.scrollWidth > node.clientWidth + 1)) {
     throw new Error("Time picker caused form overflow")
   }
@@ -385,6 +387,7 @@ try {
   await table(secondPage, "A1").waitFor()
   await chooseDate(secondPage, tomorrow)
   await table(secondPage, "A2").tap()
+  await secondPage.getByRole("button", { name: "Tạo đặt trước", exact: true }).click()
   const mobileForm = bookingForm(secondPage)
   await mobileForm.waitFor()
   if (await mobileForm.evaluate((node) => node.scrollWidth > node.clientWidth + 1)) {
@@ -392,8 +395,8 @@ try {
   }
   await mobileForm.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).click()
   if ((await mobileForm.locator('[data-wheel="Giờ"] [data-value]').count()) !== 7 ||
-      JSON.stringify(await mobileForm.locator('[data-wheel="Phút"] [data-value]').allTextContents()) !== JSON.stringify(["00", "15", "30", "45"]))
-    throw new Error("Mobile wheel is missing canonical quarter-hour choices")
+      JSON.stringify(await mobileForm.locator('[data-wheel="Phút"] [data-value]').allTextContents()) !== JSON.stringify(["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"]))
+    throw new Error("Mobile wheel is missing canonical five-minute choices")
   await mobileForm.locator('[data-wheel="Giờ"] [data-value="01"]').click()
   if (!(await mobileForm.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).getAttribute("aria-label")).includes("01:00"))
     throw new Error("01:00 is not selectable on mobile")
@@ -437,7 +440,7 @@ try {
   await page.waitForFunction(
     (name) =>
       ["A2", "A4"].every((code) => {
-        const node = document.querySelector(`[aria-label^="Bàn ${code},"]`)
+        const node = document.querySelector(`[aria-label^="Bàn ${code},"], [data-combined-codes~="${code}"]`)
         return (
           node?.getAttribute("data-search-highlighted") === "true" && node.getAttribute("aria-label")?.includes(name)
         )

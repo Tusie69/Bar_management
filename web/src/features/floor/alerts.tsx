@@ -26,7 +26,7 @@ export function useShiftAlerts(model: FloorModel, booked: ReservationView[], now
           severity: r.warning === "noshow" ? 3 : 2,
           icon: <AlarmClock className="size-4" />,
           title: `${r.tableIds.length ? model.codes(r.tableIds).join(" + ") : "Chưa có bàn"} · ${r.displayName}`,
-          detail: `Không tới +${r.minutesLate}' · hẹn ${fmtTime(r.expectedAt)} · ${r.partySize} khách`,
+          detail: `Tới muộn +${r.minutesLate}' · hẹn ${fmtTime(r.expectedAt)} · ${r.partySize} khách`,
           tableId: r.tableIds[0] ?? null,
           reservationId: r.id,
           tone: "noshow",

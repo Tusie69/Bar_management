@@ -39,36 +39,37 @@ export function StatusLegend({ tables = [], states, className }: StatusLegendPro
     label: string
     count: number
     colorVar: string
+    tintVar?: string
     isDashed?: boolean
   }> = [
-    { key: "free", label: "Trống", count: counts.free, colorVar: "var(--table-line)" },
+    { key: "free", label: "Trống", count: counts.free, colorVar: "var(--st-free)", tintVar: "var(--st-free-tint)" },
     { key: "reserved", label: "Đã đặt", count: counts.reserved, colorVar: "var(--st-reserved)" },
     { key: "upcoming", label: "Sắp tới", count: counts.upcoming, colorVar: "var(--st-upcoming)" },
-    { key: "noshow", label: "Không tới", count: counts.noshow, colorVar: "var(--st-noshow)" },
-    { key: "seated", label: "Có khách", count: counts.seated, colorVar: "var(--st-seated)" },
-    { key: "spare", label: "Sơ cua", count: counts.spare, colorVar: "var(--table-line)", isDashed: true },
+    { key: "noshow", label: "Tới muộn", count: counts.noshow, colorVar: "var(--st-noshow)" },
+    { key: "seated", label: "Đã tới", count: counts.seated, colorVar: "var(--st-seated)" },
+    { key: "spare", label: "Sơ cua", count: counts.spare, colorVar: "var(--table-line)", tintVar: "var(--st-free-tint)", isDashed: true },
   ]
 
   return (
     <Popover open={popoverOpen} onOpenChange={onOpenChange}>
       <div
         className={cn(
-          "relative rounded-xl border border-border/70 bg-card/95 p-1.5 shadow-2xs backdrop-blur select-none sm:p-2",
+          "relative rounded-xl border border-border/80 bg-card/95 p-2 shadow-2xs backdrop-blur select-none sm:p-2.5",
           className,
         )}
         role="region"
         aria-label="Chú giải trạng thái bàn"
       >
         {/* Title & Popover Button */}
-        <div className="mb-1 flex items-center justify-between gap-2 px-0.5">
-          <span className="text-[10px] font-bold tracking-wider text-muted-foreground uppercase sm:text-[11px]">
+        <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5 sm:mb-2">
+          <span className="text-[11px] font-bold tracking-wider text-muted-foreground uppercase sm:text-xs">
             Trạng thái · Số bàn / ghế
           </span>
           <PopoverTrigger asChild>
             <button
               ref={triggerRef}
               type="button"
-              className="inline-flex min-h-[44px] items-center gap-1 rounded -my-2.5 px-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="inline-flex min-h-[44px] items-center gap-1 -my-2.5 rounded-md px-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               aria-label="Ký hiệu: mở bảng chú giải ký hiệu khách và nhóm bàn"
             >
               <Info className="size-3.5 shrink-0" />
@@ -78,33 +79,34 @@ export function StatusLegend({ tables = [], states, className }: StatusLegendPro
         </div>
 
         {/* Chips: 3-column grid on mobile (exact 2 rows of 3), 1 compact row on desktop if it fits */}
-        <div className="grid grid-cols-3 gap-0.5 sm:flex sm:flex-wrap sm:items-center sm:gap-0.5 lg:gap-1">
+        <div className="grid grid-cols-3 gap-1.5 sm:flex sm:flex-wrap sm:items-center sm:gap-2">
           {CHIPS.map((chip) => (
             <div
               key={chip.key}
-              className="flex min-w-0 items-center gap-0.5 rounded-md border border-border/60 bg-background/80 px-1 py-0.5 text-[10px] leading-none text-foreground shadow-2xs sm:text-[10px] md:text-[10.5px]"
+              className="flex h-[26px] min-w-0 items-center justify-between gap-1 rounded-md border border-border/70 bg-background/80 px-1.5 text-[11px] font-medium text-foreground shadow-2xs sm:inline-flex sm:h-[26px] sm:w-auto sm:justify-start sm:gap-1.5 sm:px-2 sm:text-xs"
             >
-              {chip.isDashed ? (
-                <span
-                  className="size-2 shrink-0 rounded-xs border border-dashed sm:size-2.5"
-                  style={{ borderColor: chip.colorVar }}
-                  aria-hidden
-                />
-              ) : chip.key === "free" ? (
-                <span
-                  className="size-2 shrink-0 rounded-xs border sm:size-2.5"
-                  style={{ borderColor: chip.colorVar, background: "transparent" }}
-                  aria-hidden
-                />
-              ) : (
-                <span
-                  className="size-2 shrink-0 rounded-xs sm:size-2.5"
-                  style={{ background: chip.colorVar }}
-                  aria-hidden
-                />
-              )}
-              <span className="whitespace-nowrap text-muted-foreground">{chip.label}</span>
-              <span className="ml-auto font-bold">{chip.count}</span>
+              <div className="flex min-w-0 items-center gap-1 sm:gap-1.5">
+                {chip.isDashed ? (
+                  <span
+                    className="size-2.5 shrink-0 rounded-[2px] border border-dashed"
+                    style={{ borderColor: chip.colorVar, background: chip.tintVar ?? "transparent" }}
+                    aria-hidden
+                  />
+                ) : chip.key === "free" ? (
+                  <span
+                    className="size-2.5 shrink-0 rounded-[2px] border border-[var(--st-free)] bg-[var(--st-free-tint)]"
+                    aria-hidden
+                  />
+                ) : (
+                  <span
+                    className="size-2.5 shrink-0 rounded-[2px]"
+                    style={{ background: chip.colorVar }}
+                    aria-hidden
+                  />
+                )}
+                <span className="truncate text-muted-foreground">{chip.label}</span>
+              </div>
+              <span className="shrink-0 font-bold tabular-nums text-foreground">{chip.count}</span>
             </div>
           ))}
         </div>
@@ -176,7 +178,7 @@ export function StatusLegend({ tables = [], states, className }: StatusLegendPro
             </div>
 
             <p className="text-[11px] leading-relaxed text-muted-foreground">
-              Không tới và Tới muộn dùng chung màu. Tới muộn là hành động/metadata, không phải màu trạng thái thứ hai. Mặc định ẩn chú giải icon dưới nút ⓘ để không che bàn; chú giải màu bàn vẫn luôn hiển thị.
+              Bàn tới muộn chuyển sang màu đỏ khi quá giờ hẹn. Mặc định ẩn chú giải icon dưới nút ⓘ để không che bàn; chú giải màu bàn vẫn luôn hiển thị.
             </p>
 
             <button

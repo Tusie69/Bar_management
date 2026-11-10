@@ -1,4 +1,5 @@
 import { ApiError, type ApiErrorCode } from "../contracts"
+import { apiErrorMessage } from "../error-messages"
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 
@@ -54,6 +55,7 @@ export class HttpClient {
   private sessionRevisionValue = 0
   private unauthorizedHandler: SecurityHandler | null = null
   private csrfFailureHandler: SecurityHandler | null = null
+  private groupConflictHandler: (() => Promise<void>) | null = null
 
   constructor(baseUrl: string, defaultTimeoutMs = 15_000) {
     this.root = apiRoot(baseUrl)
@@ -77,6 +79,10 @@ export class HttpClient {
     this.csrfFailureHandler = handler
   }
 
+  setGroupConflictHandler(handler: () => Promise<void>): void {
+    this.groupConflictHandler = handler
+  }
+
   async request<T>(method: HttpMethod, path: string, body?: unknown, options: RequestOptions = {}): Promise<T> {
     const controller = new AbortController()
     const timeout = globalThis.setTimeout(() => controller.abort(), options.timeoutMs ?? this.defaultTimeoutMs)
@@ -98,10 +104,16 @@ export class HttpClient {
         const normalized = errorPayload(data)
         if (response.status === 401) this.unauthorizedHandler?.()
         if (response.status === 403 && normalized.code === "CSRF_TOKEN_INVALID") this.csrfFailureHandler?.()
+        if (normalized.code === "TABLE_GROUP_VERSION_CONFLICT")
+          await this.groupConflictHandler?.().catch(() => undefined)
         throw new ApiError(
           response.status,
           normalized.code,
-          normalized.message ?? `Yêu cầu thất bại (${response.status}).`,
+          apiErrorMessage(
+            normalized.code,
+            normalized.message ?? `Yêu cầu thất bại (${response.status}).`,
+            normalized.details,
+          ),
           normalized.details,
         )
       }

@@ -56,7 +56,7 @@ export function WarningChip({ warning, minutes }: { warning: "late" | "noshow" |
   if (!warning) return null
   return (
     <StateChip state={warning === "late" ? "late" : "noshow"}>
-      Không tới +{minutes}'
+      Tới muộn +{minutes}'
     </StateChip>
   )
 }

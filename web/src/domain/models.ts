@@ -141,10 +141,10 @@ export interface ClaimView {
   origin: VisitOrigin | null
   tableIds: number[]
   groupId: number | null
-  symbolNo: number | null
+  symbolNo?: number | null
   groupDisplayCode?: string | null
   turnNo?: number | null
-  flags?: Array<"BIRTHDAY" | "NEW" | "RETURNING">
+  flags?: Array<"BIRTHDAY" | "NEW" | "RETURNING" | "VIP">
   warning: BookingWarning
   minutesLate: number
   sourceCode: BookingSourceCode | null
@@ -152,10 +152,17 @@ export interface ClaimView {
   version: number
   lateConfirmedAt?: Date | null
   canCall?: boolean
+  reservedExpectedAt?: Date | null
+  iconKeys?: string[]
+  contactedAt?: Date | null
+  contactStatus?: "CONTACTED" | "NO_ANSWER" | null
+  honorific?: "MR" | "MS" | null
 }
 
 export interface FloorTableState {
   tableId: number
+  seatedTurnCount?: number
+  claimOwner?: "GROUP" | "TABLE" | null
   state: TableLiveState
   claim: ClaimView | null
   /** Seated but the business day already rolled over: "bàn chưa nhả từ hôm trước". */
@@ -185,6 +192,18 @@ export interface AllocationView {
 
 export interface FloorGroup {
   id: number
+  /** Layout version; guest commands use claim.version instead. */
+  version?: number
+  name?: string
+  zoneId?: number
+  totalSeats?: number
+  state?: TableLiveState
+  isOutOfService?: boolean
+  claim?: ClaimView | null
+  seatedTurnCount?: number
+  completedTurnCount?: number
+  currentTurnNo?: number | null
+  businessDate?: BusinessDate
   symbolNo: number
   /** Authoritative, stable label supplied by the floor projection (for example ◆A). */
   displayCode?: string
@@ -247,6 +266,9 @@ export interface ReservationView {
   isBirthday: boolean
   status: ReservationStatus
   sourceCode: BookingSourceCode
+  socialPlatform?: string | null
+  iconKeys?: string[]
+  honorific?: "MR" | "MS" | null
   note: string | null
   tableIds: number[]
   holdId: number | null

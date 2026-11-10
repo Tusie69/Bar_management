@@ -71,7 +71,10 @@ export function WaitScreen({ embedded = false }: { embedded?: boolean }) {
         ) : shown.length ? (
           shown.map((e) => <WaitCard key={e.id} e={e} />)
         ) : (
-          <EmptyBox title="Không có khách đang chờ" body="Booking chưa xếp bàn và khách Walk-in chưa có bàn sẽ hiện ở đây." />
+          <EmptyBox
+            title="Không có khách đang chờ"
+            body="Booking chưa xếp bàn và khách Walk-in chưa có bàn sẽ hiện ở đây."
+          />
         )}
       </div>
       {embedded ? (
@@ -138,7 +141,9 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
       ? PREFERENCE_MODE_LABEL[e.preferenceMode]
       : null
 
-  const linkedRes = m.reservations?.find((r) => (e.reservationId ? r.id === e.reservationId : r.waitlistEntryId === e.id))
+  const linkedRes = m.reservations?.find((r) =>
+    e.reservationId ? r.id === e.reservationId : r.waitlistEntryId === e.id,
+  )
   const tableCodes = e.hold?.tableIds
     ? codesOf(e.hold.tableIds, m.model)
     : linkedRes?.tableIds.length
@@ -184,16 +189,12 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
           }
         : {}),
       confirmLabel: arrived ? "Xác nhận mở bàn" : "Xác nhận chuyển bàn",
-      question: (codes) => arrived ? `Mở bàn ${codes} cho ${e.displayName}?` : `Chuyển ${e.displayName} vào ${codes}?`,
+      question: (codes) =>
+        arrived ? `Mở bàn ${codes} cho ${e.displayName}?` : `Chuyển ${e.displayName} vào ${codes}?`,
       onConfirm: async (ids) => {
         const kinds = new Set(ids.map((id) => m.model.byId.get(id)?.kind).filter(Boolean))
         if (kinds.size > 1) {
           toast.error("Không thể ghép bàn thường với ghế Bar.")
-          return false
-        }
-        const capacity = ids.reduce((sum, id) => sum + (m.model.byId.get(id)?.capacity ?? 0), 0)
-        if (capacity < party) {
-          toast.error(`Các bàn đã chọn chỉ có ${capacity} chỗ cho ${party} khách. Chọn thêm bàn trước khi xác nhận.`)
           return false
         }
         return !!(await run((o) => assignWaitlistTables(e, ids, o)))
@@ -207,7 +208,8 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
   const canArrival = hold.canArrival
   const canReassign = hold.canReassign
   const canChangeStatus = linkedRes
-    ? hold.canBookingStatus && (m.can("reservation.cancel") || m.can("reservation.mark_no_show") || m.can("reservation.update"))
+    ? hold.canBookingStatus &&
+      (m.can("reservation.cancel") || m.can("reservation.update"))
     : canCancel
   const arrival = () => a.arrival({ entry: e, reservation: linkedRes, partySize: party, tableCodes })
   const reassign = () => a.reassignHold(e, linkedRes)
@@ -270,9 +272,11 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              onClick={() => (linkedRes ? m.openDetail(linkedRes.id, e.businessDate) : m.openEntryDetail(e.id, e.businessDate))}
+              onClick={() =>
+                linkedRes ? m.openDetail(linkedRes.id, e.businessDate) : m.openEntryDetail(e.id, e.businessDate)
+              }
               disabled={pending}
-              className="h-10 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1"
+              className="h-11 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1"
             >
               Quản lý đơn
             </button>
@@ -281,7 +285,7 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
               onClick={reassign}
               disabled={pending || !canReassign}
               title={!canReassign && !hold.supported ? "Chưa hỗ trợ" : undefined}
-              className="h-10 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1 disabled:opacity-45"
+              className="h-11 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1 disabled:opacity-45"
             >
               Đổi / Ghép bàn
             </button>
@@ -289,7 +293,7 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
               type="button"
               onClick={changeStatus}
               disabled={pending || !canChangeStatus}
-              className="h-10 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1 disabled:opacity-45"
+              className="h-11 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1 disabled:opacity-45"
             >
               Đổi trạng thái
             </button>
@@ -298,7 +302,7 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
                 type="button"
                 onClick={() => m.openDetail(linkedRes.id, e.businessDate)}
                 disabled={pending}
-                className="h-10 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1"
+                className="h-11 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1"
               >
                 Xem booking
               </button>
@@ -307,7 +311,7 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
                 type="button"
                 onClick={() => m.openEntryDetail(e.id, e.businessDate)}
                 disabled={pending}
-                className="h-10 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1"
+                className="h-11 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1"
               >
                 Xem đơn chờ
               </button>
@@ -317,7 +321,7 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
                 type="button"
                 onClick={() => m.openEntryDetail(e.id, e.businessDate)}
                 disabled={pending}
-                className="col-span-2 h-10 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1"
+                className="col-span-2 h-11 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1"
               >
                 Xem đơn chờ
               </button>
@@ -370,7 +374,9 @@ export function EntryDetailScreen({
   const pending = a.pending
   const waitlist = useWaitlist(bd).data
   const e = waitlist?.find((x) => x.id === id)
-  const linkedRes = m.reservations?.find((r) => (e?.reservationId ? r.id === e.reservationId : r.waitlistEntryId === e?.id))
+  const linkedRes = m.reservations?.find((r) =>
+    e?.reservationId ? r.id === e.reservationId : r.waitlistEntryId === e?.id,
+  )
   const tableCodes = e?.hold?.tableIds
     ? codesOf(e.hold.tableIds, m.model)
     : linkedRes?.tableIds.length
@@ -409,7 +415,8 @@ export function EntryDetailScreen({
   const canArrival = hold.canArrival
   const canReassign = hold.canReassign
   const canChangeStatus = linkedRes
-    ? hold.canBookingStatus && (m.can("reservation.cancel") || m.can("reservation.mark_no_show") || m.can("reservation.update"))
+    ? hold.canBookingStatus &&
+      (m.can("reservation.cancel") || m.can("reservation.update"))
     : canCancel
   const arrival = () => a.arrival({ entry: e, reservation: linkedRes, partySize: party, tableCodes })
   const reassign = () => a.reassignHold(e, linkedRes)
@@ -441,7 +448,10 @@ export function EntryDetailScreen({
                 {tableCodes ? `, Đang giữ ${tableCodes}` : ""}
               </span>
             </div>
-            <span className="shrink-0 rounded-full px-2.5 text-xs leading-6 font-medium" style={toneStyle(TONE[e.status] ?? null)}>
+            <span
+              className="shrink-0 rounded-full px-2.5 text-xs leading-6 font-medium"
+              style={toneStyle(TONE[e.status] ?? null)}
+            >
               {WAITLIST_STATUS_LABEL[e.status]}
             </span>
           </div>
@@ -452,7 +462,9 @@ export function EntryDetailScreen({
           <div className={cn(card, "flex flex-col overflow-hidden")}>
             <div className="flex min-h-12 items-center gap-3 px-4 py-2">
               <span className="w-[118px] shrink-0 text-[13px] text-[var(--text-muted)]">Hình thức</span>
-              <span className="min-w-0 flex-1 text-[14px] text-tx-1">{e.kind === "WALK_IN" ? "Walk-in" : "Đặt trước"}</span>
+              <span className="min-w-0 flex-1 text-[14px] text-tx-1">
+                {e.kind === "WALK_IN" ? "Walk-in" : "Đặt trước"}
+              </span>
             </div>
             <div className="flex min-h-12 items-center gap-3 border-t border-border px-4 py-2">
               <span className="w-[118px] shrink-0 text-[13px] text-[var(--text-muted)]">Số khách</span>

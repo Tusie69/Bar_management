@@ -1,7 +1,7 @@
 import { ChevronLeft } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { RevealPhone } from "@/components/reveal-phone"
-import { SOURCE_LABEL } from "@/domain/enums"
+import { formatBookingSource } from "@/components/booking-pickers"
 import { useReservations, useWaitlist } from "@/hooks/use-data"
 import { fmtBusinessDate, fmtDayMonth, fmtTime12, MS, venueDateString, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -118,7 +118,7 @@ export function DetailScreen({
             />
           ),
         },
-        { k: "Nguồn đặt", v: SOURCE_LABEL[r.sourceCode] },
+        { k: "Nguồn đặt", v: formatBookingSource(r.sourceCode, r.socialPlatform) },
         {
           k: "Loại khách",
           v:
@@ -240,7 +240,7 @@ export function DetailScreen({
                   key={`${row.k}${i}`}
                   className={cn("flex min-h-12 items-center gap-3 px-4 py-2", i && "border-t border-border")}
                 >
-                  <span className="w-[118px] shrink-0 text-[13px] text-[var(--text-muted)]">{row.k}</span>
+                  <span className="w-[110px] shrink-0 text-[13px] text-[var(--text-muted)]">{row.k}</span>
                   <span className="min-w-0 flex-1 text-[14px] text-pretty text-tx-1">{row.v}</span>
                   {row.btn ? (
                     <button
@@ -261,36 +261,67 @@ export function DetailScreen({
       </div>
       {hold.reason ? <p role="alert" className="px-4 py-2 text-sm text-destructive">{hold.reason}</p> : null}
       {primary ? (
-        <footer className="flex shrink-0 gap-2 border-t border-border bg-surface-1 px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
+        <footer className="flex shrink-0 flex-col gap-2 border-t border-border bg-surface-1 px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
           <button
             type="button"
             onClick={primary.go}
             title={hold.reason ?? (heldEntry && !hold.supported ? "Chưa hỗ trợ" : undefined)}
             disabled={primary.disabled ?? a.pending}
-            className="h-[52px] flex-1 rounded-[14px] bg-primary text-base font-semibold text-primary-foreground disabled:opacity-50"
+            className="h-[48px] w-full rounded-[14px] bg-primary text-base font-semibold text-primary-foreground active:brightness-90 disabled:opacity-50"
           >
             {primary.label}
           </button>
-          {r.status === "BOOKED" && r.tableIds.length ? (
+          {r.status === "BOOKED" ? (
+            <div className={cn("grid gap-2", r.tableIds.length ? "grid-cols-3" : "grid-cols-2")}>
+              {r.tableIds.length ? (
+                <button
+                  type="button"
+                  onClick={() => (heldEntry ? a.reassignHold(heldEntry, r) : a.assign(r))}
+                  title={hold.reason ?? (heldEntry && !hold.supported ? "Chưa hỗ trợ" : undefined)}
+                  disabled={a.pending || !hold.canReassign}
+                  className="h-11 rounded-[12px] border border-strong px-2 text-center text-[13px] font-medium text-tx-1 active:bg-surface-2 disabled:opacity-50"
+                >
+                  Đổi / Ghép bàn
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => a.cancel(r)}
+                title={hold.reason ?? (heldEntry && !hold.canBookingStatus ? "Chưa hỗ trợ" : undefined)}
+                disabled={a.pending || !hold.canBookingStatus || !m.can("reservation.cancel")}
+                className="h-11 rounded-[12px] border border-destructive/50 px-2 text-center text-[13px] font-medium text-destructive active:bg-destructive/10 disabled:opacity-50"
+              >
+                Hủy booking
+              </button>
+              <button
+                type="button"
+                onClick={() => m.openStatus(r)}
+                title={hold.reason ?? (heldEntry && !hold.canBookingStatus ? "Chưa hỗ trợ" : undefined)}
+                disabled={
+                  a.pending ||
+                  !hold.canBookingStatus ||
+                  (!m.can("reservation.cancel") && !m.can("reservation.update"))
+                }
+                className="h-11 rounded-[12px] border border-strong px-2 text-center text-[13px] font-medium text-tx-1 active:bg-surface-2 disabled:opacity-50"
+              >
+                Đổi trạng thái
+              </button>
+            </div>
+          ) : (
             <button
               type="button"
-              onClick={() => heldEntry ? a.reassignHold(heldEntry, r) : a.assign(r)}
-              title={hold.reason ?? (heldEntry && !hold.supported ? "Chưa hỗ trợ" : undefined)}
-              disabled={a.pending || !hold.canReassign}
-              className="h-[52px] shrink-0 rounded-[14px] border border-strong px-3 text-[15px] font-medium text-tx-1 disabled:opacity-50"
+              onClick={() => m.openStatus(r)}
+              title={hold.reason ?? (heldEntry && !hold.canBookingStatus ? "Chưa hỗ trợ" : undefined)}
+              disabled={
+                a.pending ||
+                !hold.canBookingStatus ||
+                (!m.can("reservation.cancel") && !m.can("reservation.update"))
+              }
+              className="h-11 w-full rounded-[12px] border border-strong px-3 text-center text-[13px] font-medium text-tx-1 active:bg-surface-2 disabled:opacity-50"
             >
-              Đổi / Ghép bàn
+              Đổi trạng thái
             </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => m.openStatus(r)}
-            title={hold.reason ?? (heldEntry && !hold.canBookingStatus ? "Chưa hỗ trợ" : undefined)}
-            disabled={a.pending || !hold.canBookingStatus || (!m.can("reservation.cancel") && !m.can("reservation.mark_no_show") && !m.can("reservation.update"))}
-            className="h-[52px] shrink-0 rounded-[14px] border border-strong px-[18px] text-[15px] text-tx-1 disabled:opacity-50"
-          >
-            Đổi trạng thái
-          </button>
+          )}
         </footer>
       ) : null}
       {r ? <EditReservationDialog open={editOpen} onOpenChange={setEditOpen} r={r} /> : null}

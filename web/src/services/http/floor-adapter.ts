@@ -32,12 +32,24 @@ export interface BackendCatalog {
 
 export interface BackendFloorGroup {
   id: number
+  version?: number
+  name?: string
+  zoneId?: number
+  totalSeats?: number
+  displayState?: BackendDisplayState
+  isOutOfService?: boolean
+  claim?: BackendFloorClaimProjection | null
+  seatedTurnCount?: number
+  completedTurnCount?: number
+  currentTurnNo?: number | null
+  businessDate?: BusinessDate
   symbolNo: number
   displayCode?: string
   tableIds: number[]
 }
 
-export type BackendDisplayState = "EMPTY" | "BOOKED" | "UPCOMING" | "LATE" | "LATE_CONFIRMED" | "NO_SHOW" | "IN_USE" | "OUT_OF_SERVICE"
+export type BackendDisplayState =
+  "EMPTY" | "BOOKED" | "UPCOMING" | "CONTACTED" | "LATE" | "LATE_CONFIRMED" | "NO_SHOW" | "IN_USE" | "OUT_OF_SERVICE"
 
 export interface BackendFloorClaimProjection {
   kind: "RESERVATION" | "VISIT" | "WAITLIST_HOLD"
@@ -62,10 +74,18 @@ export interface BackendFloorClaimProjection {
   version: number
   lateConfirmedAt?: Date | null
   canCall?: boolean
+  reservedExpectedAt?: Date | null
+  contactedAt?: Date | null
+  contactStatus?: ClaimView["contactStatus"]
+  iconKeys?: string[]
+  honorific?: ClaimView["honorific"]
 }
 
 export interface BackendFloorTableProjection {
   tableId: number
+  seatedTurnCount?: number
+  claimOwner?: "GROUP" | "TABLE" | null
+  isOutOfService?: boolean
   tableCode: string
   catalogStatus: "ACTIVE" | "OUT_OF_SERVICE"
   isSpare: boolean
@@ -312,24 +332,30 @@ export function mapFloorState(
     at,
     businessDate,
     tables: states,
-    groups,
+    groups: groups.map(({ id, symbolNo, displayCode, tableIds }) => ({ id, symbolNo, displayCode, tableIds })),
     changeSeq: catalog.venue.changeSeq,
   }
 }
 
-export function projectionState(table: BackendFloorTableProjection): TableLiveState {
-  if (table.displayState === "OUT_OF_SERVICE") return "oos"
+export function projectionState(
+  table: Pick<BackendFloorTableProjection, "displayState" | "isOutOfService" | "claim" | "isSpare">,
+): TableLiveState {
+  if (table.isOutOfService || table.displayState === "OUT_OF_SERVICE") return "oos"
   if (table.displayState === "IN_USE") return "seated"
   if (table.claim?.kind === "WAITLIST_HOLD") return table.claim.holdOverdue ? "hold_overdue" : "hold"
   if (table.displayState === "LATE") return "late"
   if (table.displayState === "LATE_CONFIRMED") return "late_confirmed"
   if (table.displayState === "NO_SHOW") return "noshow"
   if (table.displayState === "UPCOMING") return "upcoming"
+  if (table.displayState === "CONTACTED") return "upcoming"
   if (table.displayState === "BOOKED") return "reserved"
   return table.isSpare ? "spare" : "free"
 }
 
-function projectionClaim(table: BackendFloorTableProjection, group?: BackendFloorGroup): ClaimView | null {
+function projectionClaim(
+  table: Pick<BackendFloorTableProjection, "tableId" | "tableCode" | "displayState" | "claim" | "minutesLate">,
+  group?: BackendFloorGroup,
+): ClaimView | null {
   const claim = table.claim
   if (!claim) return null
   if (claim.origin !== null && !includes(visitOrigins, claim.origin)) {
@@ -366,6 +392,20 @@ function projectionClaim(table: BackendFloorTableProjection, group?: BackendFloo
     version: claim.version,
     lateConfirmedAt: claim.lateConfirmedAt ?? null,
     canCall: claim.canCall ?? false,
+    ...(claim.reservedExpectedAt === undefined
+      ? {}
+      : {
+          reservedExpectedAt:
+            claim.reservedExpectedAt === null ? null : validDate(claim.reservedExpectedAt, "reservedExpectedAt"),
+        }),
+    ...(claim.contactedAt === undefined
+      ? {}
+      : {
+          contactedAt: claim.contactedAt === null ? null : validDate(claim.contactedAt, "contactedAt"),
+        }),
+    ...(claim.contactStatus === undefined ? {} : { contactStatus: claim.contactStatus }),
+    ...(claim.iconKeys === undefined ? {} : { iconKeys: [...claim.iconKeys] }),
+    ...(claim.honorific === undefined ? {} : { honorific: claim.honorific }),
   }
 }
 
@@ -401,6 +441,8 @@ export function mapFloorProjection(payload: BackendFloorProjection, catalog: Cat
     return {
       tableId: table.tableId,
       state: projectionState(table),
+      ...(table.seatedTurnCount === undefined ? {} : { seatedTurnCount: table.seatedTurnCount }),
+      ...(table.claimOwner === undefined ? {} : { claimOwner: table.claimOwner }),
       claim: projectionClaim(table, group),
       staleFromPreviousDay: Boolean(table.staleFromPreviousDay),
     }
@@ -409,12 +451,50 @@ export function mapFloorProjection(payload: BackendFloorProjection, catalog: Cat
     at: serverNow,
     businessDate: payload.businessDate as BusinessDate,
     tables,
-    groups: payload.groups.map((group) => ({
-      id: group.id,
-      symbolNo: group.symbolNo,
-      displayCode: group.displayCode,
-      tableIds: [...group.tableIds],
-    })),
+    groups: payload.groups.map((group) => {
+      const { claim, displayState } = group
+      return {
+        id: group.id,
+        symbolNo: group.symbolNo,
+        displayCode: group.displayCode,
+        ...(group.version === undefined ? {} : { version: group.version }),
+        ...(group.name === undefined ? {} : { name: group.name }),
+        ...(group.zoneId === undefined ? {} : { zoneId: group.zoneId }),
+        ...(group.totalSeats === undefined ? {} : { totalSeats: group.totalSeats }),
+        ...(group.isOutOfService === undefined ? {} : { isOutOfService: group.isOutOfService }),
+        ...(group.seatedTurnCount === undefined ? {} : { seatedTurnCount: group.seatedTurnCount }),
+        ...(group.completedTurnCount === undefined ? {} : { completedTurnCount: group.completedTurnCount }),
+        ...(group.currentTurnNo === undefined ? {} : { currentTurnNo: group.currentTurnNo }),
+        ...(group.businessDate === undefined ? {} : { businessDate: group.businessDate }),
+        tableIds: [...group.tableIds],
+        ...(group.displayState === undefined
+          ? {}
+          : {
+              state: projectionState({
+                displayState: group.displayState,
+                isOutOfService: group.isOutOfService,
+                claim: claim ?? null,
+                isSpare: false,
+              }),
+            }),
+        ...(claim === undefined
+          ? {}
+          : {
+              claim: projectionClaim(
+                {
+                  tableId: group.tableIds[0],
+                  tableCode: group.displayCode ?? String(group.id),
+                  claim,
+                  displayState: displayState ?? "EMPTY",
+                  minutesLate: group.claim?.reservedExpectedAt
+                    ? Math.max(0, Math.floor((serverNow.getTime() - group.claim.reservedExpectedAt.getTime()) / 60_000))
+                    : 0,
+                },
+                group,
+              ),
+            }),
+      }
+    }),
     changeSeq: safeChangeSequence(payload.changeSeq),
   }
 }

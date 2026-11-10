@@ -1,17 +1,19 @@
 import { Menu, X } from "lucide-react"
 import { useMemo } from "react"
-import type { TableLiveState } from "@/domain/models"
+import type { TableLiveState, TableView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAvailability } from "@/hooks/use-data"
 import { fmtBusinessDate, fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { api } from "@/services"
 import { useUi } from "@/state/ui"
 import { useReceptionSearch } from "@/hooks/use-reception-search"
 import { FloorCanvas } from "../floor/floor-canvas"
+import { SpareButton } from "../floor/spare-button"
+import { LayoutActions, LayoutMergeControls } from "../floor/layout-merge-controls"
+import { independentLayoutEnabled, layoutMembers, toggleLayoutTable } from "../floor/layout-merge"
 import { StatusLegend } from "../floor/status-legend"
 import { CallCustomerControl } from "../bookings/call-customer"
-import { groupCode } from "../floor/floor-visual-rules"
+import { groupCode, groupDisplayName } from "../floor/floor-visual-rules"
 import { ReceptionControls } from "../floor/reception-controls"
 import { QuickForm } from "../floor/quick-form"
 import { isWaitingForTable } from "../floor/reception-rules"
@@ -51,19 +53,18 @@ export function MapScreen({
   const m = useM()
   const receptionist = m.role === "RECEPTIONIST"
   const search = useReceptionSearch(m.businessDate, receptionist)
-  const zone = useUi((s) => receptionist ? "ALL" : s.zone)
+  const zone = useUi((s) => (receptionist ? "ALL" : s.zone))
   const setZone = useUi((s) => s.setZone)
   const d = useBookingDraft(m.model)
   const draft = d.draft
+  const layoutPick = useUi((s) => s.pick?.intent === "layout")
+  const layoutIds = useUi((s) => s.pickSelection)
   const waitingCount = (m.waitlist ?? []).filter(isWaitingForTable).length
 
   const isAssignPick = !!pick?.targetExpectedAt
   const pickAvail = useAvailability(isAssignPick ? pick.targetExpectedAt! : null, pick?.targetParty ?? 2)
   const pickSnapshot = pickAvail.isPlaceholderData || pickAvail.isError ? undefined : pickAvail.data
-  const pickAvailMap = useMemo(
-    () => new Map((pickSnapshot?.tables ?? []).map((t) => [t.tableId, t])),
-    [pickSnapshot],
-  )
+  const pickAvailMap = useMemo(() => new Map((pickSnapshot?.tables ?? []).map((t) => [t.tableId, t])), [pickSnapshot])
 
   const pickable = useMemo(() => {
     if (!pick) return null
@@ -149,6 +150,11 @@ export function MapScreen({
           {draft ? null : <StatusLegend tables={m.model.tables} states={m.model.states} />}
         </div>
       ) : null}
+      {!pick ? (
+        <div className="shrink-0 px-3 pb-1">
+          <LayoutMergeControls model={m.model} />
+        </div>
+      ) : null}
       {pick ? (
         <div className="z-[6] mx-3 mt-1 mb-2 flex shrink-0 items-start gap-2 rounded-[14px] border border-primary bg-surface-1 py-2.5 pr-1.5 pl-3.5 shadow-[var(--shadow-soft)]">
           <span className="flex min-w-0 flex-1 flex-col">
@@ -180,23 +186,25 @@ export function MapScreen({
             mode={isAssignPick || d.bookingDraft ? "availability" : "live"}
             states={m.model.states}
             availability={d.bookingDraft ? d.availabilityMap : isAssignPick ? pickAvailMap : undefined}
-            groups={isAssignPick || d.bookingDraft ? [] : m.model.floor?.groups}
-            selectedIds={
-              draft
-                ? draft.tableIds
-                : pick
-                  ? pickSel
-                  : selected ? [selected] : []
-            }
+            groups={independentLayoutEnabled || (!isAssignPick && !d.bookingDraft) ? m.model.floor?.groups : []}
+            selectedIds={draft ? draft.tableIds : layoutPick ? layoutIds : pick ? pickSel : selected ? [selected] : []}
             searchHighlightedIds={!pick && !draft ? search.tableIds : []}
-            pickable={d.bookingDraft ? d.pickable : draft ? null : pickable}
+            pickable={layoutPick ? null : d.bookingDraft ? d.pickable : draft ? null : pickable}
             zoneFocus={receptionist ? "ALL" : zone}
             now={m.now}
             waitingCount={draft || pick ? undefined : waitingCount}
             onOpenWaitlist={draft || pick ? undefined : () => m.go("wait")}
-            onTableClick={(id) => (draft ? d.onTableClick(id) : pick ? onPickToggle(id) : onSelect(id))}
+            onTableClick={(id) =>
+              layoutPick
+                ? toggleLayoutTable(m.model, id)
+                : draft
+                  ? d.onTableClick(id)
+                  : pick
+                    ? onPickToggle(id)
+                    : onSelect(id)
+            }
             onBlockedTableClick={draft ? d.onTableClick : undefined}
-            onBackgroundClick={() => (pick || draft ? undefined : onSelect(null))}
+            onBackgroundClick={() => (pick || draft || layoutPick ? undefined : onSelect(null))}
             ariaLabel={
               d.bookingDraft
                 ? `Sơ đồ khả dụng lúc ${d.bookingDraft.time} để chọn bàn`
@@ -260,11 +268,11 @@ const STATE_TEXT = (st: TableLiveState, late: number, noshow: number): [string, 
   ({
     free: ["Trống", null],
     reserved: ["Đã đặt", "reserved"],
-    upcoming: ["Sắp đến", "reserved"],
-    late: [`Không tới · ${late} phút`, "noshow"],
-    late_confirmed: [`Không tới · đã báo muộn · ${late} phút`, "noshow"],
-    noshow: [`Không tới · ${noshow} phút`, "noshow"],
-    seated: ["Có khách", "seated"],
+    upcoming: ["Sắp tới", "upcoming"],
+    late: [`Tới muộn · ${late} phút`, "noshow"],
+    late_confirmed: [`Tới muộn · đã báo muộn · ${late} phút`, "noshow"],
+    noshow: [`Tới muộn · ${noshow} phút`, "noshow"],
+    seated: ["Đã tới", "seated"],
     hold: ["Đang giữ", "reserved"],
     hold_overdue: ["Quá hạn giữ", "late"],
     oos: ["Ngưng phục vụ", null],
@@ -291,8 +299,15 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
   const fs = m.model.states.get(id)
   const st = fs?.state ?? "free"
   const c = fs?.claim ?? null
-  const zone = m.model.catalog?.zones.find((z) => z.id === t.zoneId)
+  const members = layoutMembers(m.model, id)
+  const isGroup = members.length > 1
+  const memberTables = members.map((mid) => m.model.byId.get(mid)).filter((x): x is TableView => !!x)
+  const group = m.model.floor?.groups.find((g) => g.tableIds.includes(id))
+  const groupName = isGroup ? groupDisplayName(memberTables, group) : ""
   const isBar = t.kind === "BAR_SEAT"
+  const groupTitle = isGroup ? `Bàn ${groupName}` : isBar ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`
+  const totalCapacity = memberTables.reduce((sum, x) => sum + x.capacity, 0)
+  const zone = m.model.catalog?.zones.find((z) => z.id === t.zoneId)
   const [chip, tone] = STATE_TEXT(st, m.th.late, m.th.noshow)
   const r = c?.reservationId ? m.reservations?.find((x) => x.id === c.reservationId) : undefined
   const linkedEntry = c?.waitlistEntryId
@@ -310,9 +325,6 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
     when = `Đang ngồi từ ${fmtTime(c.startsAt)}, ${duration(m.now.getTime() - c.startsAt.getTime())}`
     actions = [
       { label: "Đổi bàn", go: () => a.moveVisit(c, id) },
-      c.tableIds.length > 1 && c.groupId && api.mode !== "http"
-        ? { label: "Tách bàn", go: () => a.split(c, id) }
-        : { label: "Ghép bàn", go: () => a.combine(c) },
       ...(c.reservationId ? [{ label: "Xem booking", go: () => m.openDetail(c.reservationId!, m.today) }] : []),
       { label: "Nhả bàn", danger: true, wide: !c.reservationId, go: () => a.endVisit(c) },
     ]
@@ -323,17 +335,51 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
 
     const hold = a.heldPolicy(entry, r)
     actions = [
-      { label: "Khách đã đến", primary: true, wide: true, disabled: !hold.canArrival,
+      {
+        label: "Khách đã đến",
+        primary: true,
+        wide: true,
+        disabled: !hold.canArrival,
         title: !hold.supported ? "Chưa hỗ trợ" : undefined,
-        go: () => a.arrival({ entry, reservation: r, partySize: c.partySize, tableCodes: codesOf(c.tableIds, m.model) }) },
-      { label: "Quản lý đơn", go: () => r ? m.openDetail(r.id, r.businessDate) : m.openEntryDetail(entry?.id ?? c.waitlistEntryId!, m.businessDate) },
-      { label: "Đổi / Ghép bàn", disabled: !hold.canReassign, title: !hold.supported ? "Chưa hỗ trợ" : undefined,
-        go: () => a.reassignHold(entry, r) },
-      { label: "Đổi trạng thái",
-        disabled: r ? !hold.canBookingStatus || (!m.can("reservation.cancel") && !m.can("reservation.mark_no_show") && !m.can("reservation.update")) : !m.can("waitlist.cancel"),
-        go: () => r ? m.openStatus(r) : entry && a.cancelEntry(entry) },
-      ...(r ? [{ label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) }] : []),
-      { label: "Xem đơn chờ", wide: true, disabled: !entry, go: () => entry && m.openEntryDetail(entry.id, entry.businessDate) },
+        go: () =>
+          a.arrival({ entry, reservation: r, partySize: c.partySize, tableCodes: codesOf(c.tableIds, m.model) }),
+      },
+      {
+        label: "Quản lý đơn",
+        go: () =>
+          r ? m.openDetail(r.id, r.businessDate) : m.openEntryDetail(entry?.id ?? c.waitlistEntryId!, m.businessDate),
+      },
+      {
+        label: "Đổi / Ghép bàn",
+        disabled: !hold.canReassign,
+        title: !hold.supported ? "Chưa hỗ trợ" : undefined,
+        go: () => a.reassignHold(entry, r),
+      },
+      {
+        label: "Đổi trạng thái",
+        disabled: r
+          ? !hold.canBookingStatus ||
+            (!m.can("reservation.cancel") && !m.can("reservation.mark_no_show") && !m.can("reservation.update"))
+          : !m.can("waitlist.cancel"),
+        go: () => (r ? m.openStatus(r) : entry && a.cancelEntry(entry)),
+      },
+      ...(r
+        ? [
+            {
+              label: "Hủy booking",
+              danger: true,
+              disabled: !m.can("reservation.cancel") || !hold.canBookingStatus,
+              go: () => a.cancel(r),
+            },
+            { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
+          ]
+        : []),
+      {
+        label: "Xem đơn chờ",
+        wide: true,
+        disabled: !entry,
+        go: () => entry && m.openEntryDetail(entry.id, entry.businessDate),
+      },
     ]
   } else if (c?.kind === "reservation") {
     who = `${c.displayName}, ${c.partySize} khách`
@@ -349,6 +395,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
             : []),
           { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
           { label: "Đổi bàn", go: () => a.assign(r) },
+          { label: "Hủy booking", danger: true, disabled: !m.can("reservation.cancel"), go: () => a.cancel(r) },
           { label: "Đổi trạng thái", go: () => m.openStatus(r) },
         ]
       : []
@@ -357,17 +404,17 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
       ? "Bàn sơ cua chỉ mở khi quản lý chấp nhận vượt quy tắc."
       : "Bàn sơ cua. Cần Chủ quán/Admin mở vượt quy tắc."
     actions = m.isOwner
-      ? [{ label: "Mở bàn vượt quy tắc", wide: true, go: () => m.openForm({ mode: "walkin", tableIds: [id] }) }]
+      ? [{ label: "Mở bàn vượt quy tắc", wide: true, go: () => m.openForm({ mode: "walkin", tableIds: members }) }]
       : []
   } else if (st === "oos") {
     info = "Bàn đang ngưng phục vụ."
   } else {
     info = zone?.isWaitingArea ? `${zone.name} là khu chờ, không nhận đặt trước.` : "Bàn đang trống lúc này."
     actions = [
-      { label: "Mở bàn Walk-in", primary: true, go: () => m.openForm({ mode: "walkin", tableIds: [id] }) },
+      { label: "Mở bàn Walk-in", primary: true, go: () => m.openForm({ mode: "walkin", tableIds: members }) },
       {
         label: "Tạo đặt trước",
-        go: () => m.openForm({ mode: "booking", tableIds: zone?.isBookable ? [id] : [] }),
+        go: () => m.openForm({ mode: "booking", tableIds: zone?.isBookable ? members : [] }),
       },
     ]
   }
@@ -375,16 +422,16 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
   return (
     <div
       role="dialog"
-      aria-label={`Chi tiết ${t.code}`}
+      aria-label={`Chi tiết ${isGroup ? groupTitle : t.code}`}
       className="absolute inset-x-0 bottom-[var(--nav-h)] z-[12] flex flex-col gap-3 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-2 pb-4 shadow-[var(--shadow-float)]"
     >
       <div className="mx-auto mb-0.5 h-[5px] w-9 rounded-[3px] bg-strong" />
       <div className="flex items-center gap-2.5">
         <span className="text-2xl font-semibold tracking-[-0.01em] text-tx-strong">
-          {isBar ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`}
+          {groupTitle}
         </span>
         <span className="rounded-full px-2.5 text-xs leading-6 font-medium" style={toneStyle(tone)}>
-          {chip}
+          {isGroup ? `${chip} - ghép ${members.length} bàn` : chip}
         </span>
         <span className="flex-1" />
         <button
@@ -396,8 +443,13 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
           <X className="size-5" />
         </button>
       </div>
+      {isGroup ? (
+        <span className="-mt-1 text-[13px] text-[var(--text-muted)]">
+          Trạng thái: <strong className="font-semibold text-tx-strong">{chip}</strong> · ghép {members.length} bàn
+        </span>
+      ) : null}
       <span className="-mt-2 text-[13px] text-[var(--text-muted)]">
-        {zone?.name}, {isBar ? "1 ghế" : `${t.capacity} chỗ`}
+        {zone?.name}, {isBar && !isGroup ? "1 ghế" : `${totalCapacity} chỗ`}
         {t.isSpare ? ", bàn sơ cua" : ""}
       </span>
       {who ? (
@@ -423,6 +475,15 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
         </div>
       ) : null}
       {info ? <span className="text-[13px] text-pretty text-[var(--text-muted)]">{info}</span> : null}
+      <LayoutActions model={m.model} tableId={id} />
+      {t ? (
+        <SpareButton
+          table={t}
+          state={st}
+          hasClaim={Boolean(c)}
+          inGroup={isGroup}
+        />
+      ) : null}
       {actions.length ? (
         <div className="grid grid-cols-2 gap-2">
           {c?.kind === "reservation" && c.reservationId ? (

@@ -12,7 +12,6 @@ import {
   ChevronRight,
   CircleDollarSign,
   Clock3,
-  Combine,
   Crown,
   DoorOpen,
   Footprints,
@@ -25,10 +24,8 @@ import {
   MessageCircle,
   MoreHorizontal,
   Phone,
-  Split,
   StickyNote,
   Tag,
-  TimerReset,
   TriangleAlert,
   UserPlus,
   Users,
@@ -49,7 +46,7 @@ import {
 import { ConfirmAction } from "@/components/dialogs"
 import { StateChip } from "@/components/status"
 import { STATE_META } from "@/components/status-meta"
-import { groupCode } from "./floor-visual-rules"
+import { groupCode, groupDisplayName } from "./floor-visual-rules"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -67,7 +64,7 @@ import {
   type VisitOrigin,
   type ReservationCloseReason,
 } from "@/domain/enums"
-import type { ClaimView, WaitlistEntryView } from "@/domain/models"
+import type { ClaimView, TableView, WaitlistEntryView } from "@/domain/models"
 import { symbolByNo } from "@/domain/symbols"
 import { useAction } from "@/hooks/use-action"
 import { useNow, useReservations, useTableHistory, useVenueSettings, useWaitlist } from "@/hooks/use-data"
@@ -75,10 +72,12 @@ import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { businessDateOf, fmtCountdown, fmtElapsed, fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
-import { useCan } from "@/state/session"
+import { useCan, useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
-import { toast } from "sonner"
-import { GuestCountDialog, SplitDialog } from "./floor-dialogs"
+import { LayoutActions } from "./layout-merge-controls"
+import { layoutMembers } from "./layout-merge"
+import { SpareButton } from "./spare-button"
+import { GuestCountDialog } from "./floor-dialogs"
 import { CallCustomerControl } from "../bookings/call-customer"
 import type { FloorModel } from "./use-floor-model"
 import { useHeldOrderActions } from "../mobile/actions"
@@ -114,6 +113,7 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
   const history = useTableHistory(tableId, bd)
   const waitlist = useWaitlist(bd)
   const isOwner = useCan("venue.configure")
+  const receptionist = useSession((s) => s.user.role === "RECEPTIONIST")
   const { run } = useAction()
   const [oosOpen, setOosOpen] = useState(false)
   const [activeOpen, setActiveOpen] = useState(false)
@@ -121,10 +121,19 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
   if (!t) return null
   const state = fs?.state ?? "free"
   const claim = fs?.claim ?? null
-  const linkedEntry = waitlist.data?.find((e) => e.status === "HOLD_ACTIVE" &&
-    (e.id === claim?.waitlistEntryId || (!!claim?.reservationId && e.reservationId === claim.reservationId)))
+  const linkedEntry = waitlist.data?.find(
+    (e) =>
+      e.status === "HOLD_ACTIVE" &&
+      (e.id === claim?.waitlistEntryId || (!!claim?.reservationId && e.reservationId === claim.reservationId)),
+  )
   const zone = model.catalog?.zones.find((z) => z.id === t.zoneId)
-  const title = t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`
+  const memberIds = layoutMembers(model, tableId)
+  const isGroup = memberIds.length > 1
+  const memberTables = memberIds.map((id) => model.byId.get(id)).filter((x): x is TableView => !!x)
+  const group = model.floor?.groups.find((g) => g.tableIds.includes(tableId))
+  const groupName = isGroup ? groupDisplayName(memberTables, group) : ""
+  const title = isGroup ? `Bàn ${groupName}` : t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`
+  const totalCapacity = memberTables.reduce((sum, m) => sum + m.capacity, 0)
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -153,13 +162,6 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
                   <Check /> Mở lại phục vụ
                 </DropdownMenuItem>
               )}
-              {t.kind === "TABLE" ? (
-                <DropdownMenuItem
-                  onSelect={() => run(() => api.setTableStatus(t.id, t.version, { isSpare: !t.isSpare }))}
-                >
-                  {t.isSpare ? "Bỏ đánh dấu sơ cua" : "Đánh dấu bàn sơ cua"}
-                </DropdownMenuItem>
-              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
@@ -169,8 +171,13 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
         <header className="flex items-start justify-between gap-3 px-4 pt-4 pb-4">
           <div className="min-w-0">
             <h2 className="text-[28px] leading-none font-extrabold tracking-tight">
-              {t.kind === "BAR_SEAT" ? `Bar ${t.seqNo}` : t.code}
+              {isGroup ? `Bàn ${groupName}` : t.kind === "BAR_SEAT" ? `Bar ${t.seqNo}` : t.code}
             </h2>
+            {isGroup ? (
+              <p className="mt-1 text-sm text-muted-foreground">
+                Trạng thái: <strong className="font-semibold text-foreground">{STATE_META[state].label}</strong> · ghép {memberIds.length} bàn
+              </p>
+            ) : null}
             <p className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
               <span className="inline-flex items-center gap-1.5">
                 <MapPin className="size-3.5 text-subtle" aria-hidden />
@@ -178,7 +185,7 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Users className="size-3.5 text-subtle" aria-hidden />
-                {t.capacity} chỗ
+                {totalCapacity} chỗ
               </span>
               {t.isSpare ? <span className="rounded-md border border-dashed px-1.5 text-xs">sơ cua</span> : null}
               {zone?.isWaitingArea ? (
@@ -186,10 +193,21 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
               ) : null}
             </p>
           </div>
-          <StateChip state={state} />
+          <StateChip state={state}>
+            {isGroup ? `${STATE_META[state].label} - ghép ${memberIds.length} bàn` : undefined}
+          </StateChip>
         </header>
 
         <div className="grid gap-5 px-4 pb-6">
+          <LayoutActions model={model} tableId={tableId} />
+          {t ? (
+            <SpareButton
+              table={t}
+              state={state}
+              hasClaim={Boolean(claim)}
+              inGroup={isGroup}
+            />
+          ) : null}
           {claim?.kind === "visit" ? <SeatedSection tableId={tableId} claim={claim} model={model} now={now} /> : null}
           {claim?.kind === "reservation" && !linkedEntry ? (
             <ReservationSection tableId={tableId} claim={claim} model={model} now={now} />
@@ -197,7 +215,30 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
           {claim?.kind === "waitlist_hold" || (claim?.kind === "reservation" && linkedEntry) ? (
             <HoldSection tableId={tableId} claim={claim} model={model} now={now} />
           ) : null}
-          {!claim && (state === "free" || state === "spare") ? (
+          {!claim && (state === "free" || state === "spare") && receptionist ? (
+            <div className="grid gap-2">
+              <GuardedButton
+                permission="reservation.create"
+                disabledReason={!zone?.isBookable || t.isSpare ? "Bàn không nhận đặt trước." : undefined}
+                onClick={() =>
+                  useUi.getState().openBooking({
+                    tableIds: layoutMembers(model, tableId),
+                    date: model.floor?.businessDate,
+                    party: layoutMembers(model, tableId).reduce((n, id) => n + (model.byId.get(id)?.capacity ?? 0), 0),
+                  })
+                }
+              >
+                <CalendarPlus /> Đặt bàn
+              </GuardedButton>
+              <GuardedButton
+                permission="visit.walkin"
+                variant="outline"
+                onClick={() => useUi.getState().openWalkIn(layoutMembers(model, tableId))}
+              >
+                <UserPlus /> Mở bàn Walk-in
+              </GuardedButton>
+            </div>
+          ) : !claim && (state === "free" || state === "spare") ? (
             <FreeSection
               tableId={tableId}
               model={model}
@@ -420,36 +461,10 @@ function usePickActions(_tableId: number, claim: ClaimView, model: FloorModel) {
         excludeIds: claim.tableIds,
         confirmLabel: "Đổi bàn",
         onConfirm: async (toIds) => {
-          const targetCapacity = toIds.reduce((sum, id) => sum + (model.byId.get(id)?.capacity ?? 0), 0)
-          if (targetCapacity < claim.partySize) {
-            toast.error(
-              `Các bàn đã chọn chỉ có ${targetCapacity} chỗ cho đoàn ${claim.partySize} khách. Chọn thêm bàn trước khi xác nhận.`,
-            )
-            return false
-          }
           const r = await run((o) => api.moveClaim({ claim: claimRef, tableIds: toIds, overrideReason: o }))
           if (r && toIds.length) ui.selectTable(toIds[0])
           return !!r
         },
-      }),
-    combine: () =>
-      ui.startPick({
-        intent: "combine",
-        title: `Ghép thêm bàn cho ${codes}`,
-        hint: "Chạm các bàn trống liền kề. Cả nhóm sẽ dùng chung một ký hiệu.",
-        multi: true,
-        excludeIds: claim.tableIds,
-        confirmLabel: "Ghép bàn",
-        onConfirm: async (ids) =>
-          !!(await run((o) =>
-            api.combineTables({
-              claim: claim.visitId
-                ? { visitId: claim.visitId, version: claim.version }
-                : { reservationId: claim.reservationId!, version: claim.version },
-              addTableIds: ids,
-              overrideReason: o,
-            }),
-          )),
       }),
   }
 }
@@ -467,8 +482,6 @@ function SeatedSection({
 }) {
   const { run } = useAction()
   const pick = usePickActions(tableId, claim, model)
-  const [splitOpen, setSplitOpen] = useState(false)
-  const [splitKey, renewSplitKey] = useIdempotencyKey()
   const [endOpen, setEndOpen] = useState(false)
   const ui = useUi()
   const stale = model.states.get(tableId)?.staleFromPreviousDay
@@ -499,19 +512,7 @@ function SeatedSection({
         <GuardedButton permission="visit.move" variant="outline" onClick={pick.move}>
           <ArrowRightLeft /> Đổi bàn
         </GuardedButton>
-        <GuardedButton permission="visit.combine" variant="outline" onClick={pick.combine}>
-          <Combine /> Ghép bàn
-        </GuardedButton>
-        {claim.groupId ? (
-          <GuardedButton
-            permission="visit.split"
-            variant="outline"
-            disabledReason={api.mode === "http" ? "Backend v1 chưa hỗ trợ tách nhóm bàn." : undefined}
-            onClick={() => setSplitOpen(true)}
-          >
-            <Split /> Tách bàn
-          </GuardedButton>
-        ) : null}
+
         {!claim.paid ? (
           <GuardedButton
             permission="visit.mark_paid"
@@ -531,21 +532,6 @@ function SeatedSection({
           <DoorOpen /> Nhả bàn (khách rời)
         </GuardedButton>
       </div>
-      <SplitDialog
-        open={splitOpen}
-        onOpenChange={setSplitOpen}
-        tables={claim.tableIds.map((id) => ({ id, label: model.label(id) }))}
-        onConfirm={async (keep) => {
-          // SPL-03: reuse the key while retrying, renew only after it commits.
-          const r = await run(() =>
-            api.splitGroup({ groupId: claim.groupId!, keepTableIds: keep, idempotencyKey: splitKey }),
-          )
-          if (r) {
-            renewSplitKey()
-            setSplitOpen(false)
-          }
-        }}
-      />
       <ConfirmAction
         open={endOpen}
         onOpenChange={setEndOpen}
@@ -581,16 +567,14 @@ function ReservationSection({
   const pick = usePickActions(tableId, claim, model)
   const [checkInOpen, setCheckInOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
-  const [noShowOpen, setNoShowOpen] = useState(false)
   const ui = useUi()
   const venue = model.catalog?.venue
   const settings = useVenueSettings()
   const noShowMinutes = settings.data?.noShowMinutes ?? venue?.noShowWarningMinutes ?? 30
-  const canNoShow = claim.minutesLate >= noShowMinutes
   const canConfirmLate =
     model.floor?.businessDate === businessDateOf(now) &&
     now.getTime() >= claim.startsAt.getTime() &&
-    !canNoShow &&
+    claim.minutesLate < noShowMinutes &&
     !claim.lateConfirmedAt
   const today = claim.startsAt.getTime() - now.getTime() < 12 * 3600_000
   return (
@@ -608,11 +592,8 @@ function ReservationSection({
       {claim.warning ? (
         <div role="status">
           <Note icon={AlarmClock} tone="noshow">
-            <span
-              className="font-semibold"
-              style={{ color: STATE_META.noshow.ink }}
-            >
-              Không tới · trễ {claim.minutesLate}'
+            <span className="font-semibold" style={{ color: STATE_META.noshow.ink }}>
+              Tới muộn · trễ {claim.minutesLate}'
             </span>
             <span className="block text-muted-foreground">Chỉ cảnh báo, bàn vẫn giữ.</span>
           </Note>
@@ -649,24 +630,21 @@ function ReservationSection({
         <GuardedButton
           permission="reservation.update"
           variant="outline"
-          disabledReason={pending ? "Đang ghi nhận..." : canConfirmLate ? null : claim.lateConfirmedAt ? "Đã ghi nhận khách tới muộn" : "Chỉ bật sau giờ hẹn và trước ngưỡng Không tới"}
+          disabledReason={
+            pending
+              ? "Đang ghi nhận..."
+              : canConfirmLate
+                ? null
+                : claim.lateConfirmedAt
+                  ? "Đã ghi nhận khách tới muộn"
+                  : "Chỉ bật sau giờ hẹn và trước ngưỡng trễ 30 phút"
+          }
           onClick={() => run(() => api.confirmLate(claim.reservationId!, claim.version))}
         >
           <BadgeCheck /> Tới muộn
         </GuardedButton>
-        <GuardedButton permission="visit.combine" variant="outline" onClick={pick.combine}>
-          <Combine /> Ghép bàn
-        </GuardedButton>
         <GuardedButton permission="reservation.cancel" variant="outline" onClick={() => setCancelOpen(true)}>
           <XCircle /> Hủy booking
-        </GuardedButton>
-        <GuardedButton
-          permission="reservation.mark_no_show"
-          variant="outline"
-          disabledReason={canNoShow ? null : `Chỉ bật sau ${noShowMinutes} phút trễ (chờ PO duyệt DR-05)`}
-          onClick={() => setNoShowOpen(true)}
-        >
-          <TimerReset /> Không tới
         </GuardedButton>
       </div>
       <GuestCountDialog
@@ -709,22 +687,6 @@ function ReservationSection({
           if (r) ui.selectTable(null)
         }}
       />
-      <ConfirmAction
-        open={noShowOpen}
-        onOpenChange={setNoShowOpen}
-        title="Xác nhận khách không tới?"
-        description={
-          <>
-            Đây là thao tác xử lý thủ công. Booking chuyển sang Không tới và bàn được nhả; hệ thống không tự nhả bàn chỉ
-            vì đã quá ngưỡng cảnh báo. Có thể hoàn tác nếu chưa ai dùng bàn.
-          </>
-        }
-        confirmLabel="Xác nhận không tới"
-        onConfirm={async () => {
-          const r = await run(() => api.markNoShow(claim.reservationId!, claim.version))
-          if (r) ui.selectTable(null)
-        }}
-      />
     </>
   )
 }
@@ -746,21 +708,24 @@ function HoldSection({
   const [arrival, setArrival] = useState<(() => Promise<unknown>) | null>(null)
   const [statusOpen, setStatusOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
-  const [noShowOpen, setNoShowOpen] = useState(false)
   const [releaseOpen, setReleaseOpen] = useState(false)
   const [entryOpen, setEntryOpen] = useState(false)
   const waitlist = useWaitlist(model.floor?.businessDate ?? "")
-  const entry = waitlist.data?.find((e) => e.status === "HOLD_ACTIVE" && (e.id === claim.waitlistEntryId || (!!claim.reservationId && e.reservationId === claim.reservationId)))
+  const entry = waitlist.data?.find(
+    (e) =>
+      e.status === "HOLD_ACTIVE" &&
+      (e.id === claim.waitlistEntryId || (!!claim.reservationId && e.reservationId === claim.reservationId)),
+  )
   const reservations = useReservations(model.floor?.businessDate ?? "")
   const linkedRes = reservations.data?.find(
     (r) => r.id === claim.reservationId || (entry?.reservationId && r.id === entry.reservationId),
   )
   const policy = held.policy(entry, linkedRes)
   const ui = useUi()
-  const overdue = !!claim.deadlineAt && now > claim.deadlineAt
   const today = model.floor?.businessDate === businessDateOf(now)
   const venue = useVenueSettings().data
   const noShowMinutes = venue?.noShowMinutes ?? 30
+  const overdue = !!claim.deadlineAt && now > claim.deadlineAt
   const canConfirmLate =
     today &&
     linkedRes &&
@@ -768,7 +733,6 @@ function HoldSection({
     !linkedRes.lateConfirmedAt &&
     now.getTime() >= linkedRes.expectedAt.getTime() &&
     linkedRes.minutesLate < noShowMinutes
-  const canNoShow = linkedRes ? (policy.canBookingStatus && linkedRes.status === "BOOKED" && linkedRes.minutesLate >= noShowMinutes) : overdue
 
   const onReassign = () => {
     const pick = held.picker(entry, linkedRes)
@@ -832,31 +796,34 @@ function HoldSection({
           <ArrowRightLeft /> Đổi / Ghép bàn
         </GuardedButton>
         {linkedRes ? (
-          <Button
-            variant="outline"
-            onClick={() => ui.openReservation(linkedRes.id, model.floor?.businessDate)}
-          >
+          <Button variant="outline" onClick={() => ui.openReservation(linkedRes.id, model.floor?.businessDate)}>
             Xem booking
           </Button>
         ) : null}
-        <Button
-          variant="outline"
-          className={linkedRes ? undefined : "col-span-2"}
-          onClick={() => setEntryOpen(true)}
-        >
+        <Button variant="outline" className={linkedRes ? undefined : "col-span-2"} onClick={() => setEntryOpen(true)}>
           Xem đơn chờ
         </Button>
         {linkedRes ? (
-          <GuardedButton
-            permission={held.can("reservation.cancel") ? "reservation.cancel" : held.can("reservation.mark_no_show") ? "reservation.mark_no_show" : "reservation.update"}
-            disabled={!policy.canBookingStatus}
-            disabledReason={!policy.canBookingStatus ? "Chưa hỗ trợ" : undefined}
-            variant="outline"
-            className="col-span-2"
-            onClick={() => setStatusOpen(true)}
-          >
-            Đổi trạng thái
-          </GuardedButton>
+          <>
+            <GuardedButton
+              permission="reservation.cancel"
+              disabled={!policy.canBookingStatus}
+              disabledReason={!policy.canBookingStatus ? "Chưa hỗ trợ" : undefined}
+              variant="outline"
+              onClick={() => setCancelOpen(true)}
+            >
+              <XCircle /> Hủy booking
+            </GuardedButton>
+            <GuardedButton
+              permission="reservation.update"
+              disabled={!policy.canBookingStatus}
+              disabledReason={!policy.canBookingStatus ? "Chưa hỗ trợ" : undefined}
+              variant="outline"
+              onClick={() => setStatusOpen(true)}
+            >
+              Đổi trạng thái
+            </GuardedButton>
+          </>
         ) : (
           <GuardedButton
             permission="waitlist.cancel"
@@ -945,36 +912,16 @@ function HoldSection({
                         ? null
                         : linkedRes.lateConfirmedAt
                           ? "Đã ghi nhận khách tới muộn"
-                          : "Chỉ bật sau giờ hẹn và trước ngưỡng Không tới"
+                          : "Chỉ bật sau giờ hẹn và trước ngưỡng trễ 30 phút"
                   }
                   onClick={async () => {
-                    if (!held.can("reservation.update") || !held.policy(entry, linkedRes).canLate || !canConfirmLate) return
+                    if (!held.can("reservation.update") || !held.policy(entry, linkedRes).canLate || !canConfirmLate)
+                      return
                     const r = await run(() => api.confirmLate(linkedRes.id, linkedRes.version))
                     if (r) setStatusOpen(false)
                   }}
                 >
                   <BadgeCheck /> Tới muộn
-                </GuardedButton>
-                <GuardedButton
-                  permission="reservation.mark_no_show"
-                  variant="outline"
-                  disabledReason={canNoShow ? null : `Chỉ bật sau ${noShowMinutes} phút trễ`}
-                  onClick={() => {
-                    setStatusOpen(false)
-                    setNoShowOpen(true)
-                  }}
-                >
-                  <TimerReset /> Không tới
-                </GuardedButton>
-                <GuardedButton
-                  permission="reservation.cancel"
-                  variant="outline"
-                  onClick={() => {
-                    setStatusOpen(false)
-                    setCancelOpen(true)
-                  }}
-                >
-                  <XCircle /> Hủy booking
                 </GuardedButton>
               </div>
             </DialogContent>
@@ -997,23 +944,6 @@ function HoldSection({
               const r = await run(() =>
                 api.cancelReservation(linkedRes.id, linkedRes.version, reason as ReservationCloseReason, note),
               )
-              if (r) ui.selectTable(null)
-            }}
-          />
-
-          <ConfirmAction
-            open={noShowOpen}
-            onOpenChange={setNoShowOpen}
-            title="Xác nhận khách không tới?"
-            description={
-              <>
-                Booking của <b className="text-foreground">{linkedRes.displayName}</b> chuyển sang Không tới và bàn được nhả.
-              </>
-            }
-            confirmLabel="Xác nhận không tới"
-            onConfirm={async () => {
-              if (!held.can("reservation.mark_no_show") || !held.policy(entry, linkedRes).canBookingStatus || !canNoShow) return
-              const r = await run(() => api.markNoShow(linkedRes.id, linkedRes.version))
               if (r) ui.selectTable(null)
             }}
           />
@@ -1150,7 +1080,7 @@ function FreeSection({
           </p>
         ) : (
           <ul className="grid gap-2">
-            {suggestions.map(({ entry, fits }) => {
+            {suggestions.map(({ entry }) => {
               const KindIcon = entry.kind === "ADVANCE_RESERVATION" ? CalendarClock : Footprints
               return (
                 <li key={entry.id} className="flex items-center gap-3 rounded-xl border px-3 py-2.5">
@@ -1178,7 +1108,6 @@ function FreeSection({
                           hẹn {fmtTime(entry.reservationExpectedAt)}
                         </span>
                       ) : null}
-                      {!fits ? <span className="text-st-late-ink">thiếu chỗ</span> : null}
                     </p>
                   </div>
                   {entry.channel === "IN_PERSON" && entry.status !== "HOLD_ACTIVE" ? (

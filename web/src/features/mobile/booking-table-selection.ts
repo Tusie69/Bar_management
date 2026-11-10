@@ -80,7 +80,7 @@ export function bookingTableBlockReason(
   availTable: TableAvailability | undefined,
   bookableZoneIds: ReadonlySet<number>,
   isSameBusinessDate: boolean,
-  guests?: number,
+  _guests?: number,
 ): string | null {
   const label = table.kind === "BAR_SEAT" ? `Ghế Bar ${table.seqNo}` : `Bàn ${table.code}`
 
@@ -109,11 +109,7 @@ export function bookingTableBlockReason(
     if (liveState.state !== "free") {
       const min = liveState.claim?.minutesLate
       const minSuffix = min && min > 0 ? ` · ${min} phút` : ""
-      if (
-        liveState.state === "late" ||
-        liveState.state === "late_confirmed" ||
-        liveState.state === "noshow"
-      ) {
+      if (liveState.state === "late" || liveState.state === "late_confirmed" || liveState.state === "noshow") {
         const base = occupiedLiveReason[liveState.state]
         return `${label} ${base}${minSuffix}.`
       }
@@ -142,9 +138,6 @@ export function bookingTableBlockReason(
     if (availTable.status === "occupied_unknown_end") {
       return availTable.reason || `${label} đang có khách.`
     }
-    if (availTable.status === "too_small" && guests !== undefined) {
-      return `${label} chỉ có ${table.capacity} chỗ, không đủ cho ${guests ?? "?"} khách.`
-    }
     if (availTable.status !== "available" && availTable.status !== "too_small") {
       return availTable.reason || `${label} không còn khả dụng.`
     }
@@ -154,11 +147,6 @@ export function bookingTableBlockReason(
   }
 
   if (!availTable) return `${label} chưa được xác minh khả dụng.`
-
-  // 4. Capacity check
-  if (guests !== undefined && table.capacity < guests) {
-    return `${label} chỉ có ${table.capacity} chỗ, không đủ cho ${guests} khách.`
-  }
 
   return null
 }
@@ -171,22 +159,10 @@ export function isTableAvailableForBooking(
   isSameBusinessDate: boolean,
   guests?: number,
 ): boolean {
-  return (
-    bookingTableBlockReason(
-      table,
-      liveState,
-      availTable,
-      bookableZoneIds,
-      isSameBusinessDate,
-      guests,
-    ) === null
-  )
+  return bookingTableBlockReason(table, liveState, availTable, bookableZoneIds, isSameBusinessDate, guests) === null
 }
 
-export function checkBookingCompatibility(
-  tableIds: number[],
-  byId: ReadonlyMap<number, TableView>,
-): string | null {
+export function checkBookingCompatibility(tableIds: number[], byId: ReadonlyMap<number, TableView>): string | null {
   if (tableIds.length <= 1) return null
   const first = byId.get(tableIds[0])
   if (!first) return null
@@ -217,11 +193,6 @@ export function bookingSelectionIssues(
   const compat = checkBookingCompatibility(selectedIds, byId)
   if (compat) return [compat]
 
-  const totalCap = selectedIds.reduce((sum, id) => sum + (byId.get(id)?.capacity ?? 0), 0)
-  if (guests !== undefined && totalCap < guests) {
-    return [`Các bàn đã chọn chỉ có ${totalCap} chỗ cho ${guests} khách.`]
-  }
-
   const issues: string[] = []
   for (const id of selectedIds) {
     const table = byId.get(id)
@@ -235,7 +206,7 @@ export function bookingSelectionIssues(
       availMap.get(id),
       bookableZoneIds,
       isSameBusinessDate,
-      // For multi-table combos, individual table capacity check is handled by totalCap above
+      // Capacity is informational; HTTP validation remains authoritative pending C1.
       selectedIds.length > 1 ? undefined : guests,
     )
     if (reason) {
@@ -246,9 +217,11 @@ export function bookingSelectionIssues(
   return issues
 }
 
-
 export function bookingTableCanSelect(table: TableView, availability?: TableAvailability, anchor?: TableView) {
-  return table.status === "ACTIVE" && !table.isSpare
-    && (availability?.status === "available" || availability?.status === "too_small")
-    && (!anchor || (table.zoneId === anchor.zoneId && table.kind === anchor.kind))
+  return (
+    table.status === "ACTIVE" &&
+    !table.isSpare &&
+    (availability?.status === "available" || availability?.status === "too_small") &&
+    (!anchor || (table.zoneId === anchor.zoneId && table.kind === anchor.kind))
+  )
 }

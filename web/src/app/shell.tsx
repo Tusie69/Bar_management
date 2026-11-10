@@ -179,7 +179,7 @@ function TopBar() {
     NAV.find((n) => location.pathname.startsWith(n.to))?.label ??
     (location.pathname === "/overview" ? "Tổng quan" : "21GAM")
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background px-3 md:px-4">
+    <header className="flex h-14 shrink-0 items-center gap-2 sm:gap-3 border-b bg-background px-2.5 sm:px-3 md:px-4">
       <h1 className="sr-only">{pageTitle}</h1>
       <Button variant="ghost" size="icon" className="md:hidden" aria-label="Mở menu" onClick={toggleSidebar}>
         <Menu />
@@ -239,7 +239,7 @@ function ClockMenu() {
       <PopoverTrigger asChild>
         <Button
           variant="ghost"
-          className="tnum gap-2 px-2 text-sm font-medium"
+          className="tnum h-11 min-h-[44px] gap-2 px-2 text-sm font-medium"
           aria-label={`Giờ ${clock.isSimulated ? "mô phỏng" : "thực"} ${fmtTime(now)}. Mở điều khiển thời gian`}
         >
           <Clock4 className="text-muted-foreground" />
@@ -469,7 +469,7 @@ function ThemeToggle() {
           size="icon"
           aria-label="Đổi giao diện sáng / tối"
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          className="hidden size-10 bg-transparent sm:inline-flex"
+          className="hidden size-11 min-h-[44px] min-w-[44px] bg-transparent sm:inline-flex"
         >
           {theme === "dark" ? <Moon /> : <Sun />}
         </Button>
@@ -498,7 +498,7 @@ export function AlertsBell({ className }: { className?: string }) {
         <Button
           variant="outline"
           size="icon"
-          className={cn("relative size-10 bg-transparent", className)}
+          className={cn("relative size-11 min-h-[44px] min-w-[44px] bg-transparent", className)}
           aria-label={`${receptionist ? "Thông báo" : "Cần xử lý"}: ${alerts.length}`}
         >
           <Bell />
@@ -587,7 +587,7 @@ function AccountMenu() {
       <DropdownMenuTrigger asChild>
         <Button
           variant="outline"
-          className="h-9 max-w-[220px] gap-2 bg-surface-1 pr-2 pl-2.5 text-sm font-medium"
+          className="h-11 min-h-[44px] max-w-[220px] gap-2 bg-surface-1 pr-2 pl-2.5 text-sm font-medium"
           aria-label={`Tài khoản: ${displayName}`}
         >
           <UserRound className="text-muted-foreground" />

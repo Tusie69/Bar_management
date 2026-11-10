@@ -108,6 +108,7 @@ function GuestCountBody({
 
 interface SplitProps {
   tables: { id: number; label: string }[]
+  idle?: boolean
   onConfirm: (keepIds: number[]) => Promise<unknown>
 }
 
@@ -123,7 +124,7 @@ export function SplitDialog({
   )
 }
 
-function SplitBody({ tables, onConfirm, onCancel }: SplitProps & { onCancel: () => void }) {
+function SplitBody({ tables, idle, onConfirm, onCancel }: SplitProps & { onCancel: () => void }) {
   const [keep, setKeep] = useState<number[]>(() => tables.map((t) => t.id))
   const [busy, run] = useBusy()
   const released = tables.filter((t) => !keep.includes(t.id))
@@ -132,33 +133,36 @@ function SplitBody({ tables, onConfirm, onCancel }: SplitProps & { onCancel: () 
       <DialogHeader>
         <DialogTitle>Tách bàn</DialogTitle>
         <DialogDescription>
-          Ký hiệu ghép sẽ biến mất. Chọn bàn giữ lại cho đoàn khách; bàn bỏ chọn sẽ được nhả. Phải nhả ít nhất một
-          bàn, và các bàn giữ lại phải đủ sức chứa cho số khách. Lịch sử sử dụng vẫn được giữ.
+          {idle
+            ? "Tách nhóm mặt bằng trống thành các bàn đơn. Bản mô phỏng, đang chờ API C1."
+            : "Ký hiệu ghép sẽ biến mất. Chọn bàn giữ lại cho đoàn khách; bàn bỏ chọn sẽ được nhả. Phải nhả ít nhất một bàn. Lịch sử sử dụng vẫn được giữ."}
         </DialogDescription>
       </DialogHeader>
-      <div className="grid gap-2">
-        {tables.map((t) => (
-          <Label
-            key={t.id}
-            htmlFor={`keep-${t.id}`}
-            className="flex h-12 cursor-pointer items-center gap-3 rounded-lg border px-3 font-normal has-[[data-state=checked]]:bg-surface-2"
-          >
-            <Checkbox
-              id={`keep-${t.id}`}
-              checked={keep.includes(t.id)}
-              onCheckedChange={(v) => setKeep((k) => (v ? [...k, t.id] : k.filter((x) => x !== t.id)))}
-            />
-            <span className="font-semibold">{t.label}</span>
-            <span className="ml-auto text-sm text-muted-foreground">
-              {keep.includes(t.id) ? "Giữ cho đoàn" : "Nhả bàn"}
-            </span>
-          </Label>
-        ))}
-      </div>
-      {keep.length === 0 ? (
+      {!idle ? (
+        <div className="grid gap-2">
+          {tables.map((t) => (
+            <Label
+              key={t.id}
+              htmlFor={`keep-${t.id}`}
+              className="flex h-12 cursor-pointer items-center gap-3 rounded-lg border px-3 font-normal has-[[data-state=checked]]:bg-surface-2"
+            >
+              <Checkbox
+                id={`keep-${t.id}`}
+                checked={keep.includes(t.id)}
+                onCheckedChange={(v) => setKeep((k) => (v ? [...k, t.id] : k.filter((x) => x !== t.id)))}
+              />
+              <span className="font-semibold">{t.label}</span>
+              <span className="ml-auto text-sm text-muted-foreground">
+                {keep.includes(t.id) ? "Giữ cho đoàn" : "Nhả bàn"}
+              </span>
+            </Label>
+          ))}
+        </div>
+      ) : null}
+      {!idle && keep.length === 0 ? (
         <p className="text-sm text-destructive">Giữ ít nhất một bàn. Muốn trả hết bàn hãy dùng Nhả bàn.</p>
       ) : null}
-      {released.length === 0 ? (
+      {!idle && released.length === 0 ? (
         <p className="text-sm text-destructive">Bỏ chọn ít nhất một bàn để nhả, nếu không thì không có gì để tách.</p>
       ) : null}
       <DialogFooter>
@@ -166,10 +170,14 @@ function SplitBody({ tables, onConfirm, onCancel }: SplitProps & { onCancel: () 
           Quay lại
         </Button>
         <Button
-          disabled={busy || keep.length === 0 || released.length === 0}
-          onClick={() => run(() => onConfirm(keep))}
+          disabled={busy || (!idle && (keep.length === 0 || released.length === 0))}
+          onClick={() => run(() => onConfirm(idle ? [] : keep))}
         >
-          {released.length ? `Tách và nhả ${released.map((t) => t.label).join(", ")}` : "Chọn bàn để nhả"}
+          {idle
+            ? "Tách thành bàn đơn"
+            : released.length
+              ? `Tách và nhả ${released.map((t) => t.label).join(", ")}`
+              : "Chọn bàn để nhả"}
         </Button>
       </DialogFooter>
     </>

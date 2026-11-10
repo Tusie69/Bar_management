@@ -7,8 +7,10 @@ import { toast } from "sonner"
 import { useAvailability } from "@/hooks/use-data"
 import { atBusinessTime } from "@/lib/time"
 import { useUi } from "@/state/ui"
-import { draftPickable, type AvailabilityStatus } from "./quick-form"
+import { checkDirectTableCompatibility, draftPickable, type AvailabilityStatus } from "./quick-form"
 import type { FloorModel } from "./use-floor-model"
+
+import { layoutMembers } from "./layout-merge"
 
 export function useBookingDraft(model: FloorModel) {
   const draft = useUi((s) => s.draft)
@@ -19,10 +21,7 @@ export function useBookingDraft(model: FloorModel) {
   const at = useMemo(() => (date && time ? atBusinessTime(date, time) : null), [date, time])
   const availability = useAvailability(at, draft?.party ?? 2)
   const snapshot = availability.isPlaceholderData || availability.isError ? undefined : availability.data
-  const availabilityMap = useMemo(
-    () => new Map((snapshot?.tables ?? []).map((t) => [t.tableId, t])),
-    [snapshot],
-  )
+  const availabilityMap = useMemo(() => new Map((snapshot?.tables ?? []).map((t) => [t.tableId, t])), [snapshot])
   // keepPreviousData would otherwise show the old date's answer as if it were this one.
   const status: AvailabilityStatus = !bookingDraft
     ? "ready"
@@ -39,8 +38,9 @@ export function useBookingDraft(model: FloorModel) {
     if (selected.length && !first) return null
     const set = new Set<number>()
     for (const t of model.tables) {
-      if (first && (t.zoneId !== first.zoneId || t.kind !== first.kind)) continue
-      if (draftPickable("booking", t.id, model, snapshot, selected)) set.add(t.id)
+      const members = layoutMembers(model, t.id)
+      if (checkDirectTableCompatibility([...selected, ...members], model.byId, model.floor?.groups)) continue
+      if (members.every((id) => draftPickable("booking", id, model, snapshot, selected))) set.add(t.id)
     }
     return set
   }, [bookingDraft, model, snapshot])
@@ -48,17 +48,16 @@ export function useBookingDraft(model: FloorModel) {
   const onTableClick = (id: number) => {
     if (!draft) return
     const selected = draft.replacing ? [] : draft.tableIds
-    if (selected.includes(id)) return toggleDraftTable(id)
-    if (draft.kind === "booking" && selected.length > 0) {
-      const first = model.byId.get(selected[0])
-      const target = model.byId.get(id)
-      if (first && target) {
-        if (target.zoneId !== first.zoneId) return toast.info("Chỉ có thể chọn các bàn trong cùng một khu vực")
-        if (target.kind !== first.kind) return toast.info("Không thể ghép bàn thường với ghế Bar")
-      }
+    const members = layoutMembers(model, id)
+    if (members.every((i) => selected.includes(i))) {
+      return useUi.getState().setDraft({ tableIds: selected.filter((i) => !members.includes(i)), replacing: false })
     }
-    if (draftPickable(draft.kind, id, model, snapshot, selected))
-      return toggleDraftTable(id)
+    const compatibility = checkDirectTableCompatibility([...selected, ...members], model.byId, model.floor?.groups)
+    if (draft.kind === "booking" && compatibility) return toast.info(compatibility)
+    if (members.every((i) => draftPickable(draft.kind, i, model, snapshot, selected))) {
+      if (members.length === 1) return toggleDraftTable(id)
+      return useUi.getState().setDraft({ tableIds: [...new Set([...selected, ...members])], replacing: false })
+    }
     return toast.info(`${model.label(id)}: không trống · chọn vị trí trống`)
   }
 
