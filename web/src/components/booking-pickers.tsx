@@ -6,7 +6,6 @@
  */
 import { ChevronDown, Clock } from "lucide-react"
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react"
-import { api } from "@/services"
 import { SOURCE_LABEL, type BookingSourceCode } from "@/domain/enums"
 import {
   BOOKING_HOURS,
@@ -342,11 +341,11 @@ export function BookingTimePicker({
 }
 
 /**
- * Tu's backend field will enable socialPlatform for HTTP mode in the future.
- * On HTTP today, the select is hidden, required validation is skipped, and
- * SOCIAL is saved alone so staff are not asked for data that would be thrown away.
+ * The HTTP backend now stores reservations.social_platform (migration 0016) and
+ * returns it in the booking payload, so the select is shown and required in both
+ * modes. The server clears the platform whenever the source is not SOCIAL.
  */
-export const socialPlatformSupported = api.mode === "mock"
+export const socialPlatformSupported = true
 
 export type SocialPlatform = "FB" | "IG" | "TIKTOK" | "THREADS" | "GG_REVIEW"
 
@@ -515,17 +514,17 @@ export function SourcePicker({
 }
 
 /**
- * Tu's backend field will enable iconKeys (star, pin) for HTTP mode in the future.
- * On HTTP today, star and pin are disabled with a short title reason, and
- * Sinh nhật saves through the existing isBirthday field.
+ * The HTTP backend now stores star as reservations.is_boss_table and pin as
+ * reservations.is_designated (migration 0016), and returns both as iconKeys, so
+ * the chips are live in both modes. Sinh nhật still saves through isBirthday.
  */
-export const iconKeysSupported = api.mode === "mock"
+export const iconKeysSupported = true
 
 /**
- * Tu's backend migration 0016 adds honorific to reservations; Tu will wire the HTTP API later.
- * On HTTP today, honorific buttons are disabled with a short reason in the title and send nothing.
+ * The HTTP backend now stores reservations.honorific (migration 0016) and returns
+ * it in the booking payload and in the floor claim, so Mr/Ms is live in both modes.
  */
-export const honorificSupported = api.mode === "mock"
+export const honorificSupported = true
 
 export type Honorific = "MR" | "MS"
 

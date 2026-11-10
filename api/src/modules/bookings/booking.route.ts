@@ -30,6 +30,7 @@ import { formatDailyBookingText, getDailyBookingTextInput } from './booking-expo
 import { assertCurrentBusinessDate, validateCalendarDate } from './business-date.js'
 import { assertPhoneDisclosureAllowed, PhoneRevealRateLimiter } from './phone-rate-limit.js'
 import { resolveBookingMetadata, type GuestType } from './booking-metadata.js'
+import { parseHonorific, parseIconKeys, parseSocialPlatform } from './booking-flags.js'
 import { searchReception } from './reception-search.repository.js'
 
 export const bookingRouter: Router = Router()
@@ -109,6 +110,11 @@ function bookingBody(value: unknown, mode: 'create' | 'update') {
     'INVALID_GUEST_NAME',
     'Tên khách không được vượt quá 120 ký tự.',
   )
+  // 0016's columns: icons map onto is_boss_table/is_designated, and the
+  // platform is only kept while the source is SOCIAL (resolved in the repository).
+  const iconFlags = parseIconKeys(body.iconKeys)
+  const honorific = parseHonorific(body.honorific)
+  const socialPlatform = parseSocialPlatform(body.socialPlatform)
   if (mode === 'create' && !guestName && !phoneNumber) {
     throw new AppError(400, 'BOOKING_CONTACT_REQUIRED', 'Cần ít nhất tên khách hoặc số điện thoại.')
   }
@@ -125,6 +131,9 @@ function bookingBody(value: unknown, mode: 'create' | 'update') {
       ? noteProvided ? { note: note ?? null } : {}
       : note === undefined ? {} : { note }),
     ...(phoneNumber === undefined ? {} : { phoneNumber }),
+    ...(iconFlags === undefined ? {} : { iconFlags }),
+    ...(honorific === undefined ? {} : { honorific }),
+    ...(socialPlatform === undefined ? {} : { socialPlatform }),
     body,
   }
 }

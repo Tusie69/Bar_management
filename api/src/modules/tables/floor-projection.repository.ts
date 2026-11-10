@@ -4,6 +4,12 @@ import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
 import { businessDateAt } from '../bookings/business-date.js'
+import {
+  honorificFrom,
+  iconKeysFrom,
+  type BookingIconKey,
+  type Honorific,
+} from '../bookings/booking-flags.js'
 import { applicationNow } from '../../time/application-clock.js'
 import {
   deriveTableDisplayState,
@@ -25,6 +31,10 @@ export interface FloorClaimProjection {
   partySize: number
   turnNo: null
   flags: FloorCustomerFlag[]
+  /** 0016's honorific, so the floor can show "Mr Nam" instead of a bare name. */
+  honorific: Honorific | null
+  /** 0016's is_boss_table/is_designated, as icon keys. */
+  iconKeys: BookingIconKey[]
   groupId: number | null
   groupDisplayCode: string | null
   groupMemberTableIds: number[]
@@ -140,6 +150,9 @@ interface ProjectionRow extends RowDataPacket {
   reservation_phone_last3: string | null
   reservation_classification: 'NEW' | 'RETURNING' | 'UNCLASSIFIED' | null
   reservation_is_birthday: number | null
+  reservation_honorific: string | null
+  reservation_is_boss_table: number | null
+  reservation_is_designated: number | null
   reservation_source_code: string | null
   reservation_late_confirmed_at: Date | string | null
   linked_waitlist_entry_id: number | null
@@ -157,6 +170,9 @@ interface ProjectionRow extends RowDataPacket {
   offer_reservation_phone_last3: string | null
   offer_reservation_classification: 'NEW' | 'RETURNING' | 'UNCLASSIFIED' | null
   offer_reservation_is_birthday: number | null
+  offer_reservation_honorific: string | null
+  offer_reservation_is_boss_table: number | null
+  offer_reservation_is_designated: number | null
   active_visit_id: number | null
   visit_version: number | null
   visit_contact_name: string | null
@@ -171,6 +187,9 @@ interface ProjectionRow extends RowDataPacket {
   visit_reservation_id: number | null
   visit_reservation_classification: 'NEW' | 'RETURNING' | 'UNCLASSIFIED' | null
   visit_reservation_is_birthday: number | null
+  visit_reservation_honorific: string | null
+  visit_reservation_is_boss_table: number | null
+  visit_reservation_is_designated: number | null
   visit_reservation_source_code: string | null
   visit_reservation_phone_last3: string | null
 }
@@ -249,6 +268,8 @@ function buildClaim(
       partySize: Number(row.visit_guest_count),
       turnNo: null,
       flags: customerFlags(row.visit_reservation_classification, row.visit_reservation_is_birthday),
+      honorific: honorificFrom(row.visit_reservation_honorific),
+      iconKeys: iconKeysFrom(row.visit_reservation_is_boss_table, row.visit_reservation_is_designated),
       groupId,
       groupDisplayCode: displayCode,
       groupMemberTableIds: memberIds,
@@ -289,6 +310,12 @@ function buildClaim(
         directOffer ? row.offer_reservation_classification : row.reservation_classification,
         directOffer ? row.offer_reservation_is_birthday : row.reservation_is_birthday,
       ),
+      honorific: honorificFrom(
+        directOffer ? row.offer_reservation_honorific : row.reservation_honorific,
+      ),
+      iconKeys: directOffer
+        ? iconKeysFrom(row.offer_reservation_is_boss_table, row.offer_reservation_is_designated)
+        : iconKeysFrom(row.reservation_is_boss_table, row.reservation_is_designated),
       groupId,
       groupDisplayCode: displayCode,
       groupMemberTableIds: memberIds,
@@ -315,6 +342,8 @@ function buildClaim(
     partySize: Number(row.reservation_party_size),
     turnNo: null,
     flags: customerFlags(row.reservation_classification, row.reservation_is_birthday),
+    honorific: honorificFrom(row.reservation_honorific),
+    iconKeys: iconKeysFrom(row.reservation_is_boss_table, row.reservation_is_designated),
     groupId,
     groupDisplayCode: displayCode,
     groupMemberTableIds: memberIds,
@@ -363,6 +392,8 @@ async function readProjection(
        COALESCE(r.contact_name, rc.display_name) AS reservation_contact_name,
        r.party_size AS reservation_party_size, COALESCE(r.phone_last3, rc.phone_last3) AS reservation_phone_last3,
        r.customer_classification AS reservation_classification, r.is_birthday AS reservation_is_birthday,
+       r.honorific AS reservation_honorific,
+       r.is_boss_table AS reservation_is_boss_table, r.is_designated AS reservation_is_designated,
        bs.code AS reservation_source_code,
        r.late_confirmed_at AS reservation_late_confirmed_at,
        lw.id AS linked_waitlist_entry_id, lw.status AS linked_waitlist_status, lw.version AS linked_waitlist_version,
@@ -374,6 +405,9 @@ async function readProjection(
        COALESCE(orr.phone_last3, orc.phone_last3) AS offer_reservation_phone_last3,
        orr.customer_classification AS offer_reservation_classification,
        orr.is_birthday AS offer_reservation_is_birthday,
+       orr.honorific AS offer_reservation_honorific,
+       orr.is_boss_table AS offer_reservation_is_boss_table,
+       orr.is_designated AS offer_reservation_is_designated,
        v.id AS active_visit_id, v.version AS visit_version, v.contact_name AS visit_contact_name,
        vc.display_name AS visit_customer_name, vc.phone_last3 AS visit_phone_last3,
        v.guest_count AS visit_guest_count, v.started_at AS visit_started_at,
@@ -382,6 +416,9 @@ async function readProjection(
        vr.id AS visit_reservation_id,
        vr.customer_classification AS visit_reservation_classification,
        vr.is_birthday AS visit_reservation_is_birthday,
+       vr.honorific AS visit_reservation_honorific,
+       vr.is_boss_table AS visit_reservation_is_boss_table,
+       vr.is_designated AS visit_reservation_is_designated,
        vbs.code AS visit_reservation_source_code,
        COALESCE(vr.phone_last3, vrc.phone_last3) AS visit_reservation_phone_last3
      FROM dining_tables AS dt

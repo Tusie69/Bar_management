@@ -127,13 +127,17 @@ Spare configuration is persistent rather than per-day. `reason` is required, at 
   "sourceCode":"HOTLINE",
   "note":"Ghi chú tùy chọn",
   "phoneNumber":"0987654321",
-  "classification":"NEW"
+  "classification":"NEW",
+  "isBirthday":false,
+  "iconKeys":["star","pin"],
+  "honorific":"MR",
+  "socialPlatform":"IG"
 }
 ```
 
 At least one of `guestName` or `phoneNumber` is required. A supplied name is trimmed and limited to 120 characters; whitespace-only names are absent. A supplied phone is normalized and validated by the existing Vietnamese-phone policy. Phone-only creation resolves one organization-scoped Customer by deterministic phone HMAC, never invents a name, and preserves an existing Customer name. `partySize` is 1-500, `sourceCode` must exist and be active, and `note` is at most 500 characters. On update, omitted `phoneNumber` retains the existing phone, while null or blank removes it; removing the last contact identity is rejected. Update sends the complete non-sensitive booking fields, not a partial patch. Cancel `reasonNote` is at most 300 characters.
 
-`BookingView` is `{id,guestName,hasGuestName,phoneLast3,partySize,expectedAt,businessDate,classification,status,source,sourceCode,tableCodes,note,version,displayStatus,minutesLate,autoNoShowDue,canCall}`. `guestName` uses the existing display fallback `Khách`; `hasGuestName=false` distinguishes that label from stored identity so later edits do not persist the fallback as a customer name. `status` is `BOOKED`, `CHECKED_IN`, `CANCELLED` or `NO_SHOW`. For an active `BOOKED` reservation, display timing uses the current venue thresholds: `upcoming_warning_minutes` controls the pre-arrival window, `late_warning_minutes` controls the late boundary and `no_show_warning_minutes` controls the visual no-show boundary. Their seeded defaults are 10/15/30 minutes. Display `NO_SHOW` is non-terminal: `status` stays `BOOKED`, allocations and holds remain active, and `autoNoShowDue` stays false until an authorized user performs the manual no-show action. Search matches guest names or exactly three trailing phone digits. List, detail, search and mutation responses never contain a full stored phone or cryptographic fields. Export contains no phone fields, including suffixes.
+`BookingView` is `{id,guestName,hasGuestName,phoneLast3,partySize,expectedAt,businessDate,classification,guestType,isBirthday,iconKeys,honorific,socialPlatform,status,source,sourceCode,tableCodes,note,version,displayStatus,minutesLate,autoNoShowDue,canCall}`. `guestName` uses the existing display fallback `Khách`; `hasGuestName=false` distinguishes that label from stored identity so later edits do not persist the fallback as a customer name. `status` is `BOOKED`, `CHECKED_IN`, `CANCELLED` or `NO_SHOW`. For an active `BOOKED` reservation, display timing uses the current venue thresholds: `upcoming_warning_minutes` controls the pre-arrival window, `late_warning_minutes` controls the late boundary and `no_show_warning_minutes` controls the visual no-show boundary. Their seeded defaults are 10/15/30 minutes. Display `NO_SHOW` is non-terminal: `status` stays `BOOKED`, allocations and holds remain active, and `autoNoShowDue` stays false until an authorized user performs the manual no-show action. Search matches guest names or exactly three trailing phone digits. List, detail, search and mutation responses never contain a full stored phone or cryptographic fields. Export contains no phone fields, including suffixes.
 
 Booking creation does not allocate tables or create a visit. Assign creates/replaces a hold; check-in requires an assigned booking and converts the hold to a visit/usage allocation. Cancel/no-show are explicit staff actions for `BOOKED` reservations and release their holds. Warnings after 15 and 30 minutes do not cancel or release anything. `NO_SHOW_WORKER_ENABLED` remains false.
 
@@ -142,6 +146,53 @@ Direct creation atomically creates the reservation, its hold, allocations and (f
 Merges preserve existing tables, add at least one table, require compatible kinds in one zone and sufficient combined capacity, and create/reuse an active group symbol. Reassignment may select multiple same-kind tables across bookable zones without adjacency configuration; multiple targets receive a shared group. Assignments reject spare/inactive tables and occupied allocations. The backend locks table rows and revalidates concurrent requests; a lost race returns 409 rather than double seating. No fixed seating duration is assumed.
 
 Walk-ins require the current business date during operating hours; errors are `WALK_IN_OUTSIDE_BUSINESS_HOURS` or `BUSINESS_DATE_NOT_CURRENT`. A reservation for another date does not authorize a walk-in for that date. Name and phone are optional; an omitted name is stored/displayed as `Khách Walk-in`. An optional phone is protected through the existing encrypted customer identity and is never returned by this endpoint. The mutation locks and validates ACTIVE/non-spare tables in one bookable zone with compatible kinds and sufficient total capacity, rejects any unreleased allocation (including confirmed booking holds), creates a canonical group for multiple tables without an adjacency requirement, then writes the Visit, USAGE allocations, `WALK_IN_CREATED` audit and one venue `change_seq` increment atomically. An `Idempotency-Key` replay shares the same transaction and produces one domain effect.
+
+### Booking icons, honorific and Social platform (migration 0016)
+
+Migration `0016_add_booking_icons_social_honorific.sql` added `is_boss_table`,
+`is_designated`, `social_platform` and `honorific` to `reservations`. No new
+migration is needed to use them: `iconKeys` is the wire form of the two boolean
+columns, so a venue already on 0016 needs no schema change.
+
+`POST /bookings`, `POST /bookings/direct` and `PUT /bookings/:id` accept:
+
+| Field | Values | Stored as |
+| --- | --- | --- |
+| `iconKeys` | array of `star` (⭐ Bàn sếp) and `pin` (📌 Chỉ định); `[]` or `null` clears both | `is_boss_table`, `is_designated` |
+| `honorific` | `MR`, `MS`; `null` or `""` clears it | `honorific` |
+| `socialPlatform` | `FB`, `IG`, `TIKTOK`, `THREADS`, `GG_REVIEW`; `null` or `""` clears it | `social_platform` |
+
+`BookingView` returns `iconKeys` (always an array, `[]` when nothing is set),
+`honorific` and `socialPlatform` (both nullable). A booking written before 0016
+has all four columns at their defaults and reads back as `{"iconKeys":[],"honorific":null,"socialPlatform":null}`.
+
+Rules:
+
+* `🎂 Sinh nhật` is **not** an icon key — it stays the existing `isBirthday` boolean.
+  🔥 Khách quen and 🆕 Khách mới are derived from `classification` and are not sent either.
+  Any other key is refused rather than dropped in silence.
+* `socialPlatform` is only stored while `sourceCode` is `SOCIAL`. For every other
+  source the server writes `NULL`, whether the client sent a platform or not, and
+  an update that moves a booking off `SOCIAL` clears the stored platform. A CHECK
+  constraint cannot read the source code through the `booking_sources` foreign key,
+  so this is enforced by the API.
+* An omitted field keeps the stored value on update; an explicit `null` (or `[]`
+  for `iconKeys`) clears it. A change to any of the three alone counts as a change,
+  so such an edit is not rejected with `BOOKING_NOT_CHANGED`.
+* The atomic Floor Projection claim also carries `honorific` and `iconKeys`, for a
+  `RESERVATION`, a `WAITLIST_HOLD` and the `VISIT` a booking was checked in to, so
+  the floor can render `Mr Nam` and the ⭐/📌 markers without a second request.
+
+Errors, all 400:
+
+| Code | Cause |
+| --- | --- |
+| `INVALID_ICON_KEYS` | not an array, more entries than there are icon keys, or a key outside `star`/`pin` |
+| `INVALID_HONORIFIC` | a value outside `MR`/`MS` (case-sensitive) |
+| `INVALID_SOCIAL_PLATFORM` | a value outside `FB`/`IG`/`TIKTOK`/`THREADS`/`GG_REVIEW` |
+
+`POST /bookings/walk-ins` does not accept these three fields; a walk-in carries no
+icons, honorific or platform.
 
 ### Late confirmation (TU-12)
 

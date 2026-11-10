@@ -14,6 +14,9 @@ import {
   guestError,
   guestValueFrom,
   handleSourceChange,
+  honorificSupported,
+  iconKeysSupported,
+  socialPlatformSupported,
   validateSocialPlatform,
 } from "./booking-pickers"
 
@@ -370,6 +373,20 @@ describe("HonorificPicker and honorific rules", () => {
     )
     expect(html).toContain("disabled")
     expect(html).toContain('title="Chưa hỗ trợ danh xưng trên HTTP"')
+  })
+
+  /**
+   * Migration 0016's columns are now read and written by the HTTP API, so these
+   * three are no longer mock-only. A regression to `api.mode === "mock"` would
+   * silently throw the receptionist's input away again.
+   */
+  it("keeps the three 0016 fields enabled in both API modes", () => {
+    expect(iconKeysSupported).toBe(true)
+    expect(honorificSupported).toBe(true)
+    expect(socialPlatformSupported).toBe(true)
+    expect(validateSocialPlatform("SOCIAL", null)).toBe("Vui lòng chọn nền tảng mạng xã hội.")
+    expect(validateSocialPlatform("SOCIAL", "IG")).toBeNull()
+    expect(validateSocialPlatform("HOTLINE", null)).toBeNull()
   })
 
   it("formats guest display name with honorific only when set", () => {

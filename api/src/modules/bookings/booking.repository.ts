@@ -15,6 +15,16 @@ import {
   type BookingClassification,
   type GuestType,
 } from './booking-metadata.js'
+import {
+  honorificFrom,
+  iconKeysFrom,
+  resolveSocialPlatform,
+  socialPlatformFrom,
+  type BookingIconFlags,
+  type BookingIconKey,
+  type Honorific,
+  type SocialPlatform,
+} from './booking-flags.js'
 import { protectPhoneNumber, revealPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from './phone-security.js'
 import { lockOccupancyConflicts } from '../tables/table-occupancy.js'
 import {
@@ -39,6 +49,11 @@ export interface BookingView {
   classification: BookingClassification
   guestType: GuestType | null
   isBirthday: boolean
+  /** 0016's is_boss_table/is_designated, as the icon keys the clients speak. */
+  iconKeys: BookingIconKey[]
+  honorific: Honorific | null
+  /** Always null unless the source is SOCIAL. */
+  socialPlatform: SocialPlatform | null
   status: BookingStatus
   source: string
   sourceCode: string
@@ -83,6 +98,10 @@ interface BookingRow extends RowDataPacket {
   customer_classification: BookingClassification | null
   guest_type: GuestType | null
   is_birthday: number
+  is_boss_table: number
+  is_designated: number
+  social_platform: string | null
+  honorific: string | null
   status: BookingStatus
   source_name: string
   source_code: string
@@ -128,6 +147,9 @@ function toBooking(row: BookingRow, now = applicationNow()): BookingView {
     classification: row.customer_classification ?? 'UNCLASSIFIED',
     guestType: row.guest_type,
     isBirthday: Boolean(row.is_birthday),
+    iconKeys: iconKeysFrom(row.is_boss_table, row.is_designated),
+    honorific: honorificFrom(row.honorific),
+    socialPlatform: socialPlatformFrom(row.social_platform),
     status: row.status,
     source: row.source_name,
     sourceCode: row.source_code,
@@ -158,6 +180,7 @@ const bookingSelect = `SELECT
   (c.display_name IS NOT NULL OR r.contact_name IS NOT NULL) AS has_guest_name,
   COALESCE(r.phone_last3, c.phone_last3) AS phone_last3, r.party_size, r.expected_at, r.business_date,
   r.customer_classification, r.guest_type, r.is_birthday, r.status,
+  r.is_boss_table, r.is_designated, r.social_platform, r.honorific,
   bs.name AS source_name, bs.code AS source_code, r.note, r.version, r.late_confirmed_at,
   v.upcoming_warning_minutes, v.late_warning_minutes, v.no_show_warning_minutes,
   GROUP_CONCAT(DISTINCT dt.code ORDER BY dt.id SEPARATOR ',') AS table_codes
@@ -175,7 +198,8 @@ export async function listBookings(actor: AuthenticatedActor, businessDate: stri
     `${bookingSelect}
      WHERE r.organization_id = ? AND r.venue_id = ? AND r.business_date = ?
      GROUP BY r.id, c.display_name, r.contact_name, r.phone_last3, c.phone_last3, r.party_size, r.expected_at,
-       r.business_date, r.customer_classification, r.guest_type, r.is_birthday, r.status, bs.name, bs.code, r.note, r.version,
+       r.business_date, r.customer_classification, r.guest_type, r.is_birthday,
+       r.is_boss_table, r.is_designated, r.social_platform, r.honorific, r.status, bs.name, bs.code, r.note, r.version,
        v.upcoming_warning_minutes, v.late_warning_minutes, v.no_show_warning_minutes
      ORDER BY r.expected_at, r.id`,
     [actor.organizationId, actor.venueId, businessDate],
@@ -198,7 +222,8 @@ export async function searchBookings(
          OR (? IS NOT NULL AND COALESCE(r.phone_last3, c.phone_last3) = ?)
        )
      GROUP BY r.id, c.display_name, r.contact_name, r.phone_last3, c.phone_last3, r.party_size, r.expected_at,
-       r.business_date, r.customer_classification, r.guest_type, r.is_birthday, r.status, bs.name, bs.code, r.note, r.version,
+       r.business_date, r.customer_classification, r.guest_type, r.is_birthday,
+       r.is_boss_table, r.is_designated, r.social_platform, r.honorific, r.status, bs.name, bs.code, r.note, r.version,
        v.upcoming_warning_minutes, v.late_warning_minutes, v.no_show_warning_minutes
      ORDER BY r.expected_at, r.id
      LIMIT 100`,
@@ -216,7 +241,8 @@ export async function getBookingById(
     `${bookingSelect}
      WHERE r.organization_id = ? AND r.venue_id = ? AND r.id = ?
      GROUP BY r.id, c.display_name, r.contact_name, r.phone_last3, c.phone_last3, r.party_size, r.expected_at,
-       r.business_date, r.customer_classification, r.guest_type, r.is_birthday, r.status, bs.name, bs.code, r.note, r.version,
+       r.business_date, r.customer_classification, r.guest_type, r.is_birthday,
+       r.is_boss_table, r.is_designated, r.social_platform, r.honorific, r.status, bs.name, bs.code, r.note, r.version,
        v.upcoming_warning_minutes, v.late_warning_minutes, v.no_show_warning_minutes`,
     [actor.organizationId, actor.venueId, id],
   )
@@ -236,6 +262,11 @@ export interface CreateBookingInput {
   classification?: BookingClassification
   guestType?: GuestType | null
   isBirthday?: boolean
+  /** Absent means "no icon"; the icon keys arrive parsed into their columns. */
+  iconFlags?: BookingIconFlags
+  honorific?: Honorific | null
+  /** Ignored unless sourceCode is SOCIAL. */
+  socialPlatform?: SocialPlatform | null
 }
 
 export interface CreateAndAssignBookingInput extends CreateBookingInput {
@@ -365,8 +396,9 @@ export async function createBooking(
         (organization_id, venue_id, customer_id, contact_name, contact_name_search,
          phone_ciphertext, phone_key_id, phone_hmac, phone_hmac_key_id, phone_last3,
          source_id, party_size, expected_at, business_date, customer_classification,
-         guest_type, is_birthday, note, created_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         guest_type, is_birthday, is_boss_table, is_designated, social_platform, honorific,
+         note, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         actor.organizationId,
         actor.venueId,
@@ -381,6 +413,10 @@ export async function createBooking(
         metadata.classification,
         metadata.guestType,
         input.isBirthday ?? false,
+        input.iconFlags?.isBossTable ?? false,
+        input.iconFlags?.isDesignated ?? false,
+        resolveSocialPlatform(input.sourceCode, input.socialPlatform),
+        input.honorific ?? null,
         input.note ?? null,
         actor.userId,
       ],
@@ -442,8 +478,9 @@ export async function createAndAssignBooking(
         (organization_id, venue_id, customer_id, contact_name, contact_name_search,
          phone_ciphertext, phone_key_id, phone_hmac, phone_hmac_key_id, phone_last3,
          source_id, party_size, expected_at, business_date, customer_classification,
-         guest_type, is_birthday, note, created_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         guest_type, is_birthday, is_boss_table, is_designated, social_platform, honorific,
+         note, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         actor.organizationId,
         actor.venueId,
@@ -458,6 +495,10 @@ export async function createAndAssignBooking(
         metadata.classification,
         metadata.guestType,
         input.isBirthday ?? false,
+        input.iconFlags?.isBossTable ?? false,
+        input.iconFlags?.isDesignated ?? false,
+        resolveSocialPlatform(input.sourceCode, input.socialPlatform),
+        input.honorific ?? null,
         input.note ?? null,
         actor.userId,
       ],
@@ -531,6 +572,10 @@ interface LockedReservation extends RowDataPacket {
   customer_classification: BookingClassification | null
   guest_type: GuestType | null
   is_birthday: number
+  is_boss_table: number
+  is_designated: number
+  social_platform: string | null
+  honorific: string | null
   customer_id: number | null
   contact_name: string | null
   party_size: number
@@ -547,7 +592,8 @@ async function lockReservation(
 ): Promise<LockedReservation> {
   const [rows] = await connection.execute<LockedReservation[]>(
     `SELECT id, organization_id, venue_id, status, version, expected_at, business_date,
-       customer_classification, guest_type, is_birthday, customer_id, contact_name, party_size, source_id, note, phone_hmac
+       customer_classification, guest_type, is_birthday, is_boss_table, is_designated,
+       social_platform, honorific, customer_id, contact_name, party_size, source_id, note, phone_hmac
      FROM reservations
      WHERE organization_id = ? AND venue_id = ? AND id = ? FOR UPDATE`,
     [actor.organizationId, actor.venueId, id],
@@ -696,6 +742,22 @@ export async function updateBooking(
     if ((reservation.customer_classification ?? 'UNCLASSIFIED') !== metadata.classification) changedFields.push('classification')
     const isBirthday = input.isBirthday ?? Boolean(reservation.is_birthday)
     if (isBirthday !== Boolean(reservation.is_birthday)) changedFields.push('isBirthday')
+    // Icons, honorific and the Social platform (0016). An absent field keeps
+    // what is stored; the platform is re-resolved against the target source, so
+    // moving a booking off SOCIAL clears it even when the client sent nothing.
+    const iconFlags = input.iconFlags ?? {
+      isBossTable: Boolean(reservation.is_boss_table),
+      isDesignated: Boolean(reservation.is_designated),
+    }
+    if (iconFlags.isBossTable !== Boolean(reservation.is_boss_table)
+      || iconFlags.isDesignated !== Boolean(reservation.is_designated)) changedFields.push('iconKeys')
+    const honorific = input.honorific === undefined ? honorificFrom(reservation.honorific) : input.honorific
+    if (honorific !== honorificFrom(reservation.honorific)) changedFields.push('honorific')
+    const socialPlatform = resolveSocialPlatform(
+      input.sourceCode,
+      input.socialPlatform === undefined ? socialPlatformFrom(reservation.social_platform) : input.socialPlatform,
+    )
+    if (socialPlatform !== socialPlatformFrom(reservation.social_platform)) changedFields.push('socialPlatform')
     const phone = input.phoneNumber === undefined
       ? undefined
       : typeof input.phoneNumber === 'string'
@@ -778,7 +840,8 @@ export async function updateBooking(
     const [updateResult] = await connection.execute<ResultSetHeader>(
       `UPDATE reservations
        SET customer_id = ?, contact_name = ?, contact_name_search = ?, party_size = ?, source_id = ?,
-           expected_at = ?, business_date = ?, customer_classification = ?, guest_type = ?, is_birthday = ?, note = ?, updated_by_user_id = ?,
+           expected_at = ?, business_date = ?, customer_classification = ?, guest_type = ?, is_birthday = ?,
+           is_boss_table = ?, is_designated = ?, social_platform = ?, honorific = ?, note = ?, updated_by_user_id = ?,
            updated_at = UTC_TIMESTAMP(3), version = version + 1${phoneSql}
        WHERE organization_id = ? AND venue_id = ? AND id = ? AND status = 'BOOKED' AND version = ?`,
       [
@@ -792,6 +855,10 @@ export async function updateBooking(
         metadata.classification,
         metadata.guestType,
         isBirthday,
+        iconFlags.isBossTable,
+        iconFlags.isDesignated,
+        socialPlatform,
+        honorific,
         resolvedNote ?? null,
         actor.userId,
         ...phoneValues,
