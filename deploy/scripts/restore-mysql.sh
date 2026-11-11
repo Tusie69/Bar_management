@@ -43,7 +43,7 @@ fi
 # sao lưu hoá ra không phải bản mình tưởng.
 mkdir -p "$DESTINATION"
 safety="$DESTINATION/${DATABASE}-pre-restore-$(date +%Y%m%d-%H%M%S).sql.gz"
-mysqldump --defaults-file="$HOME/.my.cnf" --single-transaction --quick \
+mysqldump --defaults-file="$HOME/.my.cnf" --single-transaction --quick --no-tablespaces \
   --routines --events --triggers --default-character-set=utf8mb4 \
   "$DATABASE" | gzip -9 > "$safety"
 chmod 600 "$safety"

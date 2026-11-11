@@ -24,6 +24,9 @@ target="$DESTINATION/${DATABASE}-${stamp}.sql.gz"
 # --single-transaction: ảnh chụp nhất quán trên InnoDB mà không khóa bàn ghi,
 #   nên sao lưu giữa giờ mở cửa không chặn lễ tân.
 # --routines --events --triggers: giữ đủ schema, không chỉ dữ liệu.
+# --no-tablespaces: user sao lưu chỉ có quyền trên một database, không có
+#   PROCESS toàn cục. Thiếu cờ này mysqldump in "Access denied ... PROCESS"
+#   ra stderr mỗi lần chạy, và cấp PROCESS chỉ để im lỗi đó là nới quyền thừa.
 # Ghi ra file tạm rồi mới đổi tên: một lần chạy hỏng không để lại bản .sql.gz
 #   cụt mà sau này tưởng là bản tốt.
 temporary="${target}.partial"
@@ -31,6 +34,7 @@ mysqldump \
   --defaults-file="$HOME/.my.cnf" \
   --single-transaction \
   --quick \
+  --no-tablespaces \
   --routines --events --triggers \
   --default-character-set=utf8mb4 \
   "$DATABASE" | gzip -9 > "$temporary"
