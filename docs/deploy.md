@@ -330,7 +330,78 @@ sudo systemctl start 21gam-api
 Script tự chụp một bản an toàn của trạng thái hiện tại trước khi ghi đè, từ
 chối chạy khi API còn sống, và bắt gõ đúng tên database để xác nhận.
 
-## 9. Cập nhật phiên bản mới
+## 9. Tự động triển khai từ `develop`
+
+VPS tự kéo, không phải GitHub đẩy xuống. Nghĩa là không khóa riêng nào rời
+khỏi máy chủ, không cần secret trên GitHub, và không phải mở thêm cổng nào.
+
+```bash
+sudo chmod +x /srv/21gam/deploy/scripts/*.sh
+sudo cp /srv/21gam/deploy/systemd/21gam-deploy.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now 21gam-deploy.timer
+```
+
+Cổng kiểm thử chạy test tích hợp MySQL nên cần một database test riêng, tạo
+một lần:
+
+```bash
+sudo mysql -e "CREATE DATABASE IF NOT EXISTS gam21_platform_it_test
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+sudo mysql -e "GRANT ALL PRIVILEGES ON gam21_platform_it_test.* TO 'gam21'@'127.0.0.1';"
+cd /srv/21gam/api && sudo -u gam21 env HOME=/home/gam21   DB_NAME=gam21_platform_it_test NODE_ENV=test pnpm db:migrate
+```
+
+### Nó làm gì
+
+Mỗi 2 phút: `git fetch`, nếu `develop` không đổi thì thoát ngay (khoảng 1 giây).
+Khi có bản mới:
+
+1. **Cửa sổ giờ.** Từ 17:00 đến 05:00 là giờ mở cửa, script ghi log "đang hoãn"
+   rồi thoát. Sáng hôm sau mới đẩy. Đổi bằng `DEPLOY_QUIET_FROM` /
+   `DEPLOY_QUIET_UNTIL`, bỏ qua một lần bằng `DEPLOY_FORCE=1`.
+2. **Cổng kiểm thử trước khi đụng database**: `typecheck`, `lint`, `build` và
+   `test` cho cả api lẫn web. Hỏng ở bước nào thì lùi code về commit cũ,
+   build lại, và database chưa hề bị đụng tới.
+3. **Sao lưu**, rồi mới `db:migrate`.
+4. Khởi động lại API, **health check** trong 30 giây.
+5. Health check hỏng thì **chỉ lùi code**, không đụng database.
+
+### Vì sao sắp xếp như vậy
+
+Migration của dự án này chỉ thêm bảng và cột, **không có `DOWN`**. Nên cách
+hoàn tác duy nhất ở tầng dữ liệu là phục hồi bản sao lưu — mà làm vậy sẽ xoá
+mất những booking lễ tân vừa ghi trong mấy phút đó. Vì thế:
+
+* Test chạy **trước** migration, để phần lớn lỗi bị chặn khi database còn
+  nguyên vẹn và hoàn tác chỉ là đổi lại commit.
+* Sao lưu chụp **ngay trước** migration chứ không phải đầu quy trình, nên nếu
+  migration hỏng giữa chừng thì bản sao lưu chỉ cách đó vài giây.
+* Health check hỏng sau migration thì chỉ lùi code: schema mới vẫn tương thích
+  ngược với code cũ vì nó chỉ thêm chứ không bỏ.
+
+Nếu migration hỏng, script **dừng hẳn** và không tự phục hồi database — đó là
+quyết định của con người, không phải của script. Bản sao lưu vừa chụp nằm
+trong `/srv/21gam/backups`, phục hồi theo mục 8.
+
+### Theo dõi
+
+```bash
+journalctl -u 21gam-deploy -n 50
+```
+
+```bash
+sudo systemctl start 21gam-deploy.service
+```
+
+```bash
+sudo DEPLOY_FORCE=1 /srv/21gam/deploy/scripts/auto-deploy.sh
+```
+
+`flock` chặn hai lần chạy chồng nhau, nên gọi tay trong lúc timer đang chạy là
+vô hại.
+
+## 10. Cập nhật tay
 
 ```bash
 cd /srv/21gam
@@ -345,7 +416,7 @@ sudo systemctl restart 21gam-api
 Web là file tĩnh nên không cần restart nginx. Trình duyệt đang mở sẽ lấy bundle
 mới ở lần tải lại sau, vì `index.html` được gửi kèm `Cache-Control: no-cache`.
 
-## 10. Nghiệm thu sau khi triển khai
+## 11. Nghiệm thu sau khi triển khai
 
 | Mã | Kiểm tra | Cách làm |
 | --- | --- | --- |
@@ -359,7 +430,7 @@ mới ở lần tải lại sau, vì `index.html` được gửi kèm `Cache-Con
 | AC08 | Mobile/tablet | Mở trên điện thoại và máy tính bảng thật |
 | AC10 | Chất lượng | `pnpm -r typecheck && pnpm -r lint && pnpm -r build` |
 
-## 11. Khi có sự cố
+## 12. Khi có sự cố
 
 | Triệu chứng | Nơi nhìn trước |
 | --- | --- |
