@@ -13,3 +13,7 @@ Thumbs.db
 .tools/
 .backups/
 
+
+# Ban sao luu database tren VPS nam o /srv/21gam/backups, tuc la ben trong cay
+# repo. Dump chua du lieu khach that nen tuyet doi khong duoc commit.
+backups/
