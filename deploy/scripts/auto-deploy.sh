@@ -91,10 +91,17 @@ for part in api web; do
   done
 done
 # Chạy cả test tích hợp MySQL, trên database test riêng. dotenv không ghi đè
-# biến môi trường đã có, nên ba biến truyền ở đây thắng api/.env. Fixture còn
+# biến môi trường đã có, nên các biến truyền ở đây thắng api/.env. Fixture còn
 # tự từ chối chạy nếu DB_NAME khác gam21_platform_it_test, nên database thật
 # không thể bị truncate kể cả khi script này sai.
-if ! (cd "$REPO/api" && as_app env RUN_MYSQL_INTEGRATION=1 NODE_ENV=test       DB_NAME=gam21_platform_it_test pnpm test >/tmp/21gam-deploy-test.log 2>&1); then
+#
+# Hai biến cuối bắt buộc phải ghi đè, nếu không 110 test rớt với lỗi 401:
+#   SESSION_COOKIE_SECURE=true khiến cookie phiên chỉ đi qua HTTPS, mà
+#   supertest gọi app qua HTTP thường nên cookie không bao giờ quay lại và mọi
+#   request sau đăng nhập đều 401.
+#   WEB_ORIGIN của production là https://<tên miền>, trong khi fixture gửi
+#   Origin của môi trường dev; middleware so sánh hai giá trị này.
+if ! (cd "$REPO/api" && as_app env RUN_MYSQL_INTEGRATION=1 NODE_ENV=test       DB_NAME=gam21_platform_it_test SESSION_COOKIE_SECURE=false       WEB_ORIGIN=http://localhost:5173 pnpm test >/tmp/21gam-deploy-test.log 2>&1); then
   log "api test hỏng:"; tail -20 /tmp/21gam-deploy-test.log | sed 's/^/    /'
   rollback; die "test chặn bản này"
 fi
