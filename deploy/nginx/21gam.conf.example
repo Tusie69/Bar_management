@@ -26,9 +26,10 @@ server {
 }
 
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+    # Tham so http2 cua listen chay tu nginx 1.9.5 den nay. Ubuntu 24.04 giao
+    # nginx 1.24, chua co directive "http2 on" cua 1.25+, nen dung dang nay.
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name APP_DOMAIN;
 
     # Certbot quản lý các đường dẫn chứng chỉ bên dưới.

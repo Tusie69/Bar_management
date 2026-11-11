@@ -39,18 +39,21 @@ sudo apt update && sudo apt upgrade -y
 sudo apt install -y nginx mysql-server git curl ufw
 ```
 
-Node 22 (khớp `.nvmrc`) và pnpm:
+Node 24 (`.nvmrc` ghi `24`, và `package.json` yêu cầu `>=24 <25`) cùng pnpm
+đúng phiên bản trong `packageManager`:
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt install -y nodejs
-sudo corepack enable && sudo corepack prepare pnpm@latest --activate
+sudo corepack enable && sudo corepack prepare pnpm@11.25.0 --activate
 ```
 
-User riêng cho ứng dụng, không đăng nhập được:
+User riêng cho ứng dụng. Home tách khỏi thư mục mã nguồn, vì `/srv/21gam` là
+gốc repo và dotfiles của user không nên nằm lẫn trong cây git:
 
 ```bash
-sudo useradd --system --create-home --home-dir /srv/21gam --shell /usr/sbin/nologin gam21
+sudo useradd --system --create-home --home-dir /home/gam21 --shell /bin/bash gam21
+sudo mkdir -p /srv/21gam && sudo chown gam21:gam21 /srv/21gam
 ```
 
 ## 2. Tường lửa
@@ -120,11 +123,13 @@ mất dữ liệu**. Không chạy MySQL trong container không có volume.
 ## 4. Mã nguồn và build
 
 ```bash
-sudo mkdir -p /srv/21gam && sudo chown gam21:gam21 /srv/21gam
-sudo -u gam21 git clone https://github.com/Tusie69/Bar_management.git /srv/21gam
-cd /srv/21gam && sudo -u gam21 git checkout develop
-sudo -u gam21 pnpm install --frozen-lockfile
+sudo -u gam21 git clone --branch develop https://github.com/Tusie69/Bar_management.git /srv/21gam
+cd /srv/21gam && sudo -u gam21 pnpm install --frozen-lockfile
 ```
+
+`/srv/21gam` phải **rỗng** khi clone. Mọi lệnh `sudo -u gam21` chạy Node hay
+pnpm đều cần `env HOME=/home/gam21` nếu shell gọi từ root, nếu không corepack
+ghi cache vào `/root`.
 
 ### API
 
@@ -157,13 +162,50 @@ cd /srv/21gam/api && sudo -u gam21 pnpm db:migrate
 Migration trong dự án này chỉ thêm bảng và cột, không có `DOWN`. Phương án
 rollback là phục hồi bản sao lưu vừa chụp (mục 8), nên đừng bỏ bước backup.
 
-Tạo tài khoản quản trị đầu tiên:
+### Dữ liệu nền
+
+Migration chỉ tạo schema và 4 role. Ứng dụng còn cần organization, venue,
+cấu hình venue và danh sách nguồn đặt bàn. **Không dùng `pnpm db:seed`**:
+`database/seeds/demo.sql` trộn lẫn dữ liệu nền với khách, booking, visit và
+waitlist giả — chạy nó là đưa dữ liệu demo lên production.
 
 ```bash
-cd /srv/21gam/api && sudo -u gam21 pnpm auth:bootstrap
+sudo -u gam21 mysql --defaults-file=/home/gam21/.my.cnf --default-character-set=utf8mb4 gam21_platform <<'SQL'
+INSERT INTO organizations (id, code, name) VALUES (1, "GAM21", "21GAM")
+  ON DUPLICATE KEY UPDATE name = VALUES(name);
+INSERT INTO venues (id, organization_id, code, name) VALUES (1, 1, "21GAM", "21GAM")
+  ON DUPLICATE KEY UPDATE name = VALUES(name);
+INSERT INTO venue_settings (organization_id, venue_id, `key`, `value`) VALUES
+  (1, 1, "quick_times", JSON_ARRAY("21:00","21:30","22:00","22:30"))
+  ON DUPLICATE KEY UPDATE `value` = VALUES(`value`);
+INSERT INTO booking_sources (id,organization_id,code,name,sort_order) VALUES
+  (1,1,"HOTLINE","Hotline",0), (2,1,"FANPAGE","Fanpage",1), (3,1,"ZALO","Zalo",2),
+  (4,1,"SHAREHOLDER","Cổ đông",3), (5,1,"STAFF","Nhân viên",4), (6,1,"SOCIAL","Social",5),
+  (7,1,"OTHER","Khác",6)
+  ON DUPLICATE KEY UPDATE name = VALUES(name), sort_order = VALUES(sort_order);
+SQL
 ```
 
-> **Không chạy `pnpm db:seed` trên production.** Seed là dữ liệu demo.
+Bảy mã nguồn trên là tập cố định mà frontend (`web/src/domain/enums.ts`) biết;
+thêm mã lạ thì giao diện không hiển thị được.
+
+Còn lại là **sơ đồ sàn thật của quán**: `zones` và `dining_tables` (mã bàn, sức
+chứa, toạ độ `pos_x`/`pos_y`). Đây là dữ liệu riêng của từng quán, không có giá
+trị mặc định đúng. `demo.sql` có sẵn một bộ zone (A, B, C, Quầy Bar) và danh
+sách bàn kèm toạ độ — nếu đó đúng là sơ đồ quán bạn thì trích riêng hai lệnh
+`INSERT INTO zones` và `INSERT INTO dining_tables` của `organization_id = 1`,
+bỏ mọi lệnh khác trong file.
+
+### Tài khoản quản trị đầu tiên
+
+```bash
+cd /srv/21gam/api && sudo -u gam21 env HOME=/home/gam21 pnpm auth:bootstrap   --username <ten-dang-nhap> --display-name "<Ten hien thi>"   --organization-id 1 --venue-id 1 --role OWNER_ADMIN
+```
+
+Lệnh này **bắt buộc chạy trong terminal tương tác**: nó hỏi một chuỗi xác nhận
+rồi yêu cầu nhập mật khẩu hai lần, ẩn trên màn hình. Thiết kế như vậy để mật
+khẩu không bao giờ nằm trong `argv`, trong lịch sử shell hay trong log. Nghĩa
+là không chạy được qua script hay qua SSH không tương tác.
 
 ### Web
 
@@ -198,13 +240,37 @@ sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-File cấu hình tham chiếu đường dẫn chứng chỉ chưa tồn tại, nên lần đầu hãy để
-certbot tự tạo rồi mới bật block 443 — cách gọn nhất là chạy certbot ngay:
+Cấu hình trên tham chiếu đường dẫn chứng chỉ **chưa tồn tại**, nên nạp thẳng
+nó lúc này thì `nginx -t` hỏng. Trình tự đúng là dựng một vhost HTTP tạm chỉ để
+ACME xác thực, lấy chứng chỉ, rồi mới nạp cấu hình thật:
 
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d ten-mien-that --agree-tos -m email@cua-ban --redirect
+
+# vhost tam, chi phuc vu /.well-known
+sudo tee /etc/nginx/sites-available/21gam.conf >/dev/null <<'CONF'
+server {
+    listen 80;
+    server_name ten-mien-that;
+    root /var/www/html;
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 404; }
+}
+CONF
+sudo ln -sf /etc/nginx/sites-available/21gam.conf /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+
+sudo certbot certonly --webroot -w /var/www/html -d ten-mien-that   --agree-tos --register-unsafely-without-email --non-interactive
+
+# gio moi nap cau hinh that
+sudo sed 's/APP_DOMAIN/ten-mien-that/g' /srv/21gam/deploy/nginx/21gam.conf.example   | sudo tee /etc/nginx/sites-available/21gam.conf >/dev/null
+sudo nginx -t && sudo systemctl reload nginx
 ```
+
+`--register-unsafely-without-email` tránh gửi địa chỉ email sang Let's Encrypt
+khi chưa cần. Đánh đổi là không nhận được cảnh báo sắp hết hạn; thêm sau bằng
+`sudo certbot update_account --email dia-chi@cua-ban`.
 
 Certbot cài sẵn timer tự gia hạn. Kiểm tra:
 
