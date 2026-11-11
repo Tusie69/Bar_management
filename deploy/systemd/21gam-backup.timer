@@ -1,0 +1,14 @@
+# Sao lưu lúc 06:00 giờ Việt Nam, tức là sau khi business day worker đã đóng
+# các lượt khách lúc 05:00, nên bản sao lưu luôn chụp một ngày đã khép lại.
+
+[Unit]
+Description=Sao lưu MySQL 21GAM hằng ngày
+
+[Timer]
+OnCalendar=*-*-* 06:00:00
+# Chạy bù nếu VPS tắt vào đúng giờ đó.
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

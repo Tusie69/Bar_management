@@ -18,6 +18,10 @@ import { healthRouter } from './routes/health.route.js'
 export const app: Express = express()
 
 app.disable('x-powered-by')
+// Sau nginx, req.ip phải là IP của điện thoại chứ không phải 127.0.0.1. Chỉ tin
+// đúng số hop đã khai báo: tin tất cả thì bất kỳ ai cũng tự đặt được
+// X-Forwarded-For, còn mặc định 0 giữ nguyên hành vi cũ cho dev và test.
+if (env.trustProxyHops > 0) app.set('trust proxy', env.trustProxyHops)
 app.use(cors({ origin: env.webOrigin, credentials: true }))
 app.use(express.json({ limit: '1mb' }))
 app.use('/api/v1', requireTrustedOrigin)

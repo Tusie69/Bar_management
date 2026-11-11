@@ -26,6 +26,14 @@ function readBoolean(name: string, fallback: boolean): boolean {
   throw new Error(`${name} phải là true hoặc false`)
 }
 
+function readNonNegativeInteger(name: string, fallback: number): number {
+  const rawValue = process.env[name]
+  if (rawValue === undefined || rawValue === '') return fallback
+  const value = Number(rawValue)
+  if (!Number.isInteger(value) || value < 0) throw new Error(`${name} phải là số nguyên không âm`)
+  return value
+}
+
 function readOptionalNumber(name: string): number | undefined {
   const rawValue = process.env[name]
   if (rawValue === undefined || rawValue === '') return undefined
@@ -133,6 +141,9 @@ if (noShowWorkerEnabled && !noShowAutomationCutoff) {
 export const env = {
   nodeEnv,
   port: readNumber('PORT', 3000),
+  // Số reverse proxy đứng trước API. 0 nghĩa là không tin header chuyển tiếp
+  // nào, nên req.ip không thể bị giả mạo khi API nhận request trực tiếp.
+  trustProxyHops: readNonNegativeInteger('TRUST_PROXY_HOPS', 0),
   webOrigin,
   organizationId: readNumber('ORGANIZATION_ID', 1),
   venueId: readNumber('VENUE_ID', 1),
