@@ -49,3 +49,23 @@ export function requirePermission(permissionCode: string): RequestHandler {
     next()
   }
 }
+
+/**
+ * Passes when the account holds any one of these permissions.
+ *
+ * Used where a capability gained its own permission code but clients already
+ * shipped against an older one: the new code is the one to grant, and the older
+ * ones keep working instead of locking a device out mid-shift.
+ */
+export function requireAnyPermission(...permissionCodes: string[]): RequestHandler {
+  return async (request, _response, next) => {
+    const actor = requireAuthenticatedActor(request)
+    for (const code of permissionCodes) {
+      if (await hasPermission(actor, code)) {
+        next()
+        return
+      }
+    }
+    throw new AppError(403, 'FORBIDDEN', 'Tài khoản không có quyền thực hiện thao tác này.')
+  }
+}

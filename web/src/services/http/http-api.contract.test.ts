@@ -483,6 +483,32 @@ describe("canonical contract writes", () => {
     await api.createReservation({ contactName: "An", partySize: 4, expectedAt: at, sourceCode: "HOTLINE" })
     expect(writes()).toEqual([expect.objectContaining({ path: "/bookings" })])
   })
+  /**
+   * The backend stores and returns the three 0016 fields now, so the HTTP writer
+   * sends them instead of dropping what the receptionist typed. The platform is
+   * the one exception: it only travels while the target source is SOCIAL, which
+   * matches the server clearing `social_platform` for every other source.
+   */
+  it("sends the 0016 fields at the real HTTP boundary for create, direct create and update", async () => {
+    const metadata = { iconKeys: ["star"], honorific: "MR" as const, socialPlatform: "FB" }
+    const fields = { contactName: "An", partySize: 4, expectedAt: at, sourceCode: "SOCIAL" as const, ...metadata }
+    await api.createReservation(fields)
+    await api.createReservation({ ...fields, tableIds: [1] })
+    await api.updateReservation({ id: 11, version: 1, sourceCode: "SOCIAL", partySize: 5, ...metadata })
+    await api.updateReservation({ id: 11, version: 1, partySize: 5, ...metadata })
+    await api.updateReservation({ id: 11, version: 1, iconKeys: [], honorific: null, socialPlatform: null })
+    expect(writes().map(({ method, path }) => [method, path])).toEqual([
+      ["POST", "/bookings"], ["POST", "/bookings/direct"], ["PUT", "/bookings/11"],
+      ["PUT", "/bookings/11"], ["PUT", "/bookings/11"],
+    ])
+    const [create, direct, socialUpdate, hotlineUpdate, cleared] = writes()
+    for (const write of [create, direct, socialUpdate]) {
+      expect(write!.body).toMatchObject({ iconKeys: ["star"], honorific: "MR", socialPlatform: "FB" })
+    }
+    // Booking 11 is stored as HOTLINE, so the platform is cleared rather than sent.
+    expect(hotlineUpdate!.body).toMatchObject({ iconKeys: ["star"], honorific: "MR", socialPlatform: null })
+    expect(cleared!.body).toMatchObject({ iconKeys: [], honorific: null, socialPlatform: null })
+  })
   it("propagates atomic assignment failure without a fallback create or retry", async () => {
     failure = { path: "/bookings/direct", status: 409, code: "RESOURCE_CONFLICT" }
     await expect(
@@ -508,6 +534,7 @@ describe("canonical contract writes", () => {
           isBirthday: false,
           iconKeys: [],
           honorific: null,
+          socialPlatform: null,
         },
       },
     ])

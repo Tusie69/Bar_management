@@ -42,6 +42,18 @@ interface OverrideRequest {
   resolve: (reason: string | null) => void
 }
 
+/**
+ * A yes/no the server asked for: it refused the write until someone takes
+ * responsibility, so the answer travels back as a confirmation flag on the retry.
+ * Unlike an override it needs no reason text, and the server still re-checks it.
+ */
+export interface ConfirmRequest {
+  title: string
+  message: string
+  confirmLabel: string
+  resolve: (confirmed: boolean) => void
+}
+
 export interface BookingPrefill {
   tableIds?: number[]
   date?: BusinessDate
@@ -96,6 +108,7 @@ interface UiState {
 
   conflict: ConflictInfo | null
   override: OverrideRequest | null
+  confirmRequest: ConfirmRequest | null
 
   bookingOpen: boolean
   bookingPrefill: BookingPrefill
@@ -121,6 +134,8 @@ interface UiState {
   closeConflict: () => void
   askOverride: (needs: string) => Promise<string | null>
   resolveOverride: (reason: string | null) => void
+  askConfirm: (request: { title: string; message: string; confirmLabel?: string }) => Promise<boolean>
+  resolveConfirm: (confirmed: boolean) => void
 
   openBooking: (prefill?: BookingPrefill) => void
   closeBooking: () => void
@@ -151,6 +166,7 @@ export const useUi = create<UiState>((set, get) => ({
   pickSelection: [],
   conflict: null,
   override: null,
+  confirmRequest: null,
   bookingOpen: false,
   bookingPrefill: {},
   walkInOpen: false,
@@ -201,6 +217,12 @@ export const useUi = create<UiState>((set, get) => ({
   resolveOverride: (reason) => {
     get().override?.resolve(reason)
     set({ override: null })
+  },
+  askConfirm: ({ title, message, confirmLabel = "Xác nhận và tiếp tục" }) =>
+    new Promise((resolve) => set({ confirmRequest: { title, message, confirmLabel, resolve } })),
+  resolveConfirm: (confirmed) => {
+    get().confirmRequest?.resolve(confirmed)
+    set({ confirmRequest: null })
   },
 
   openBooking: (bookingPrefill = {}) =>

@@ -61,6 +61,9 @@ export type KnownApiErrorCode =
   | "IDEMPOTENCY_KEY_REUSED"
   | "INVALID_STATE"
   | "OVERRIDE_REQUIRED"
+  | "CAPACITY_OVERRIDE_REQUIRED"
+  | "SPARE_TABLE_OVERRIDE_REQUIRED"
+  | "TABLE_GROUP_IN_USE"
   | "NOT_SUPPORTED_BY_BACKEND"
 
 export type ApiErrorCode = KnownApiErrorCode | (string & {})
@@ -96,6 +99,8 @@ export interface CreateReservationInput {
   /** Selected tables are created with the booking atomically. Empty/omitted creates an unassigned booking. */
   tableIds?: number[]
   overrideReason?: string
+  /** §3.1: explicit go-ahead to seat more guests than the tables''' capacity. */
+  capacityOverrideConfirmed?: boolean
   classification?: BookingClassification
   guestType?: "REGULAR" | "NEW" | null
   isBirthday?: boolean
@@ -126,6 +131,7 @@ export interface WalkInInput {
   guestCount: number
   contactName?: string
   overrideReason?: string
+  capacityOverrideConfirmed?: boolean
   /** FX-04: mã chống trùng của lần mở form; gửi lại cùng mã thì máy chủ trả lại kết quả cũ. */
   idempotencyKey?: string
 }
@@ -136,12 +142,14 @@ export interface CheckInInput {
   guestCount: number
   tableIds?: number[]
   overrideReason?: string
+  capacityOverrideConfirmed?: boolean
 }
 
 export type MoveInput = {
   /** Visit or reservation whose claim moves. */
   claim: { visitId?: number; reservationId?: number; waitlistEntryId?: number; version?: number }
   overrideReason?: string
+  capacityOverrideConfirmed?: boolean
 } & (
   | { fromTableId: number; toTableId: number; tableIds?: never }
   /** Replace the complete destination set, including single-table to grouped moves. */
@@ -152,6 +160,9 @@ export interface CombineInput {
   claim: { visitId?: number; reservationId?: number; version?: number }
   addTableIds: number[]
   overrideReason?: string
+  capacityOverrideConfirmed?: boolean
+  /** Explicit go-ahead to pull a spare table into the cluster. */
+  spareOverrideConfirmed?: boolean
 }
 
 /** BA-022: an account as the admin account screen shows it. Never any credential. */
@@ -179,6 +190,12 @@ export interface CreateAccountInput {
   roleCode: string
 }
 
+export interface DissolveTableGroupInput {
+  groupId: number
+  version: number
+  idempotencyKey?: string
+}
+
 export type SplitInput = {
   groupId: number
   /** SPL-03: same key + same payload on a retry replays the committed split. */
@@ -191,6 +208,8 @@ export type SplitInput = {
 export interface CreateTableGroupInput {
   tableIds: number[]
   name?: string
+  /** Explicit go-ahead to pull a spare table into the cluster. */
+  spareOverrideConfirmed?: boolean
   idempotencyKey?: string
 }
 
@@ -198,6 +217,7 @@ export interface AddTableGroupMembersInput {
   groupId: number
   version: number
   tableIds: number[]
+  spareOverrideConfirmed?: boolean
   idempotencyKey?: string
 }
 
@@ -328,6 +348,8 @@ export interface GamApi {
   createTableGroup(input: CreateTableGroupInput): Promise<MutationResult>
   addTableGroupMembers(input: AddTableGroupMembersInput): Promise<MutationResult>
   splitGroup(input: SplitInput): Promise<MutationResult>
+  /** Tách bàn: ends a layout cluster and returns every member to a single table. */
+  dissolveTableGroup(input: DissolveTableGroupInput): Promise<MutationResult>
   endVisit(visitId: number, version: number): Promise<MutationResult>
   markPaid(visitId: number, version: number): Promise<MutationResult>
   setTableStatus(
@@ -394,6 +416,12 @@ export const REST_ENDPOINTS = {
   walkIn: "POST /bookings/walk-ins",
   move: "POST /visits/:id/move",
   combine: "POST /visits/:id/merge",
+  tableGroups: "GET, POST /tables/groups",
+  tableGroup: "GET /tables/groups/:id",
+  tableGroupMembers: "POST /tables/groups/:id/members",
+  tableGroupDissolve: "POST /tables/groups/:id/dissolve",
+  tableGroupSplit: "POST /tables/groups/:id/split",
+  floorStream: "GET /tables/stream (SSE)",
   endVisit: "POST /visits/:id/close",
   waitlist: "GET /waitlist?date=YYYY-MM-DD",
   addWaitlist: "POST /waitlist",

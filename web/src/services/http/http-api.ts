@@ -5,6 +5,7 @@ import { clock } from "../clock"
 import { ApiError, type AccountsView, type AccountSummary, type GamApi, type UndoState } from "../contracts"
 import { HttpBookingApi } from "./booking-api"
 import { createAndAssignDirectBooking } from "./direct-booking"
+import { openFloorStream } from "./floor-stream"
 import {
   deriveAvailability,
   deriveOverview,
@@ -28,6 +29,19 @@ const result = (summary: string): MutationResult => ({ operationId: null, change
 const unsupported = (capability: string): never => {
   throw new ApiError(501, "NOT_SUPPORTED_BY_BACKEND", `Máy chủ chưa hỗ trợ ${capability}.`)
 }
+
+/**
+ * §3.1: only forward the confirmation when it is actually set, so a request that
+ * nobody confirmed stays a request the server refuses.
+ */
+function capacityConfirmation(input: { capacityOverrideConfirmed?: boolean }): { capacityOverrideConfirmed?: boolean } {
+  return input.capacityOverrideConfirmed ? { capacityOverrideConfirmed: true } : {}
+}
+
+/** Explicit go-ahead to pull a spare table into a cluster. */
+function spareConfirmation(input: { spareOverrideConfirmed?: boolean }): { spareOverrideConfirmed?: boolean } {
+  return input.spareOverrideConfirmed ? { spareOverrideConfirmed: true } : {}
+}
 const rejectUnsupported = (capability: string) => async () => unsupported(capability)
 const catalogMaxAgeMs = 60_000
 
@@ -35,7 +49,14 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
   // Venue is scoped by the server session; never sent as a client-selected actor scope.
   void _venueId
   let session: SessionUser | null = null
-  const bookings = new HttpBookingApi(client)
+  // The backend stores and returns all three 0016 fields now (icons as
+  // is_boss_table/is_designated, honorific, social_platform), so the HTTP writer
+  // is told to send them instead of dropping what the receptionist typed.
+  const bookings = new HttpBookingApi(client, {
+    iconKeysSupported: true,
+    honorificSupported: true,
+    socialPlatformSupported: true,
+  })
   const visits = new HttpVisitApi(client)
   const get = <T>(path: string) => client.get<T>(path, { reviver: revive })
   const post = <T>(path: string, body: unknown, idempotencyKey?: string) =>
@@ -141,7 +162,12 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
       session = user
     },
     listDemoUsers: () => (session ? [session] : []),
-    subscribe: () => () => undefined,
+    // §10: one SSE stream per device. The listener only learns that the floor
+    // moved, then useRealtimeSync refetches, so the server stays authoritative.
+    subscribe: (listener) => {
+      const stream = openFloorStream(client.root, listener)
+      return () => stream.close()
+    },
     getCatalog: loadCatalog,
     getVenueSettings: () => get<VenueSettingsView>("/settings"),
     getFloorState: async (at, date = businessDateOf(at)) => floor(date),
@@ -178,8 +204,9 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
         note: input.note,
         ...(input.phone === undefined ? {} : { phoneNumber: input.phone }),
       }
+      const capacity = capacityConfirmation(input)
       const created = input.tableIds?.length
-        ? await createAndAssignDirectBooking(bookings, fields, input.tableIds, input.idempotencyKey)
+        ? await createAndAssignDirectBooking(bookings, fields, input.tableIds, input.idempotencyKey, capacity)
         : await bookings.create(fields, input.idempotencyKey)
       return { ...result("Đã tạo booking."), reservationId: created.id }
     },
@@ -246,7 +273,7 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
           currentIds.length !== new Set(input.tableIds).size ||
           input.tableIds.some((id) => !currentIds.includes(id))
         ) {
-          current = await bookings.assignVersion(current.id, input.version, input.tableIds)
+          current = await bookings.assignVersion(current.id, input.version, input.tableIds, capacityConfirmation(input))
         }
       }
       await bookings.checkIn(current)
@@ -261,6 +288,7 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
           businessDate: businessDateOf(clock.now()),
           tableIds: input.tableIds,
           ...(input.contactName ? { guestName: input.contactName } : {}),
+          ...capacityConfirmation(input),
         },
         input.idempotencyKey,
       )
@@ -272,17 +300,23 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
         const claim = await visitClaim(input.claim.visitId)
         if (!input.tableIds && !claim.tableIds.includes(input.fromTableId))
           throw new ApiError(409, "TABLE_CONFLICT", "Lượt khách đã đổi bàn. Hãy tải lại sơ đồ.")
-        await visits.move(input.claim.visitId, input.claim.version ?? claim.version, [
-          ...new Set(input.tableIds ?? claim.tableIds.map((id) => (id === input.fromTableId ? input.toTableId : id))),
-        ])
+        await visits.move(
+          input.claim.visitId,
+          input.claim.version ?? claim.version,
+          [...new Set(input.tableIds ?? claim.tableIds.map((id) => (id === input.fromTableId ? input.toTableId : id)))],
+          capacityConfirmation(input),
+        )
       } else if (input.claim.reservationId) {
         const booking = await bookings.detail(input.claim.reservationId)
         const ids = await idsForCodes(booking.tableCodes)
         if (!input.tableIds && !ids.includes(input.fromTableId))
           throw new ApiError(409, "TABLE_CONFLICT", "Booking đã đổi bàn. Hãy tải lại sơ đồ.")
-        await bookings.assignVersion(booking.id, input.claim.version ?? booking.version, [
-          ...new Set(input.tableIds ?? ids.map((id) => (id === input.fromTableId ? input.toTableId : id))),
-        ])
+        await bookings.assignVersion(
+          booking.id,
+          input.claim.version ?? booking.version,
+          [...new Set(input.tableIds ?? ids.map((id) => (id === input.fromTableId ? input.toTableId : id)))],
+          capacityConfirmation(input),
+        )
       } else unsupported("đổi bàn đang giữ từ danh sách chờ")
       return result("Đã đổi bàn.")
     },
@@ -290,15 +324,21 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
       if (input.overrideReason) unsupported("ghép bàn vượt quy tắc")
       if (input.claim.visitId) {
         const claim = await visitClaim(input.claim.visitId)
-        await visits.merge(input.claim.visitId, input.claim.version ?? claim.version, [
-          ...new Set([...claim.tableIds, ...input.addTableIds]),
-        ])
+        await visits.merge(
+          input.claim.visitId,
+          input.claim.version ?? claim.version,
+          [...new Set([...claim.tableIds, ...input.addTableIds])],
+          capacityConfirmation(input),
+        )
       } else if (input.claim.reservationId) {
         const booking = await bookings.detail(input.claim.reservationId)
         const ids = await idsForCodes(booking.tableCodes)
-        await bookings.merge(booking.id, input.claim.version ?? booking.version, [
-          ...new Set([...ids, ...input.addTableIds]),
-        ])
+        await bookings.merge(
+          booking.id,
+          input.claim.version ?? booking.version,
+          [...new Set([...ids, ...input.addTableIds])],
+          capacityConfirmation(input),
+        )
       } else {
         const current = await floor(businessDateOf(clock.now()))
         const group = current.groups.find((g) => g.tableIds.some((id) => input.addTableIds.includes(id)))
@@ -307,15 +347,20 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
           await post(`/tables/groups/${group.id}/members`, {
             version: group.version,
             tableIds: input.addTableIds.filter((id) => !group.tableIds.includes(id)),
+            ...spareConfirmation(input),
           })
-        } else await post("/tables/groups", { tableIds: input.addTableIds })
+        } else await post("/tables/groups", { tableIds: input.addTableIds, ...spareConfirmation(input) })
       }
       return result("Đã ghép bàn.")
     },
     createTableGroup: async (input) => {
       await post(
         "/tables/groups",
-        { tableIds: input.tableIds, ...(input.name === undefined ? {} : { name: input.name }) },
+        {
+          tableIds: input.tableIds,
+          ...(input.name === undefined ? {} : { name: input.name }),
+          ...spareConfirmation(input),
+        },
         input.idempotencyKey,
       )
       return result("Đã ghép nhóm bàn.")
@@ -323,11 +368,18 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     addTableGroupMembers: async (input) => {
       await post(
         `/tables/groups/${input.groupId}/members`,
-        { version: input.version, tableIds: input.tableIds },
+        { version: input.version, tableIds: input.tableIds, ...spareConfirmation(input) },
         input.idempotencyKey,
       )
       return result("Đã thêm bàn vào nhóm.")
     },
+    // Tách bàn: the only thing that ends a layout cluster.
+    dissolveTableGroup: (input) =>
+      post<MutationResult>(
+        `/tables/groups/${input.groupId}/dissolve`,
+        { version: input.version },
+        input.idempotencyKey,
+      ),
     endVisit: async (id, version) => {
       await visits.close(id, version)
       return result("Đã nhả bàn.")

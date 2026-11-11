@@ -40,6 +40,7 @@ export interface SplitTableGroupResult {
 
 interface GroupRow extends RowDataPacket {
   id: number
+  origin: 'CLAIM' | 'LAYOUT'
   business_date: Date | string
   symbol_no: number
   dissolved_at: Date | null
@@ -170,7 +171,7 @@ export async function splitTableGroup(
     const owner = await lockOwner(connection, actor, probe[0]!)
     const allocations = await groupAllocations(connection, actor, input.groupId, true)
     const [groups] = await connection.execute<GroupRow[]>(
-      `SELECT id, business_date, symbol_no, dissolved_at FROM table_groups
+      `SELECT id, origin, business_date, symbol_no, dissolved_at FROM table_groups
        WHERE organization_id = ? AND venue_id = ? AND id = ? FOR UPDATE`,
       [actor.organizationId, actor.venueId, input.groupId],
     )
@@ -218,12 +219,37 @@ export async function splitTableGroup(
       [actor.userId, actor.organizationId, actor.venueId, ...allocations.map((row) => Number(row.id))],
     )
     await connection.execute(
-      `UPDATE table_groups SET dissolved_at = UTC_TIMESTAMP(3), dissolved_by_user_id = ?
+      `UPDATE table_groups SET dissolved_at = UTC_TIMESTAMP(3), dissolved_by_user_id = ?,
+         version = version + 1
        WHERE organization_id = ? AND venue_id = ? AND id = ? AND dissolved_at IS NULL`,
       [actor.userId, actor.organizationId, actor.venueId, input.groupId],
     )
+    // C1: releasing tables out of a LAYOUT cluster reshapes the floor, so the
+    // cluster's membership ends with it. The kept tables, if still two or more,
+    // form a new LAYOUT cluster, which keeps "a cluster is always used whole".
+    const isLayout = group.origin === 'LAYOUT'
+    if (isLayout) {
+      await connection.execute(
+        `UPDATE table_group_members
+         SET left_at = UTC_TIMESTAMP(3), left_by_user_id = ?, left_reason = 'SPLIT'
+         WHERE organization_id = ? AND venue_id = ? AND group_id = ? AND left_at IS NULL`,
+        [actor.userId, actor.organizationId, actor.venueId, input.groupId],
+      )
+    }
 
-    const newGroup = keep.length > 1 ? await createTableGroup(connection, actor, businessDate) : null
+    const newGroup = keep.length > 1
+      ? await createTableGroup(connection, actor, isLayout ? { origin: 'LAYOUT' } : { businessDate })
+      : null
+    if (newGroup && isLayout) {
+      for (const tableId of keep) {
+        await connection.execute(
+          `INSERT INTO table_group_members
+            (organization_id, venue_id, group_id, table_id, joined_at, joined_by_user_id)
+           VALUES (?, ?, ?, ?, UTC_TIMESTAMP(3), ?)`,
+          [actor.organizationId, actor.venueId, newGroup.id, tableId, actor.userId],
+        )
+      }
+    }
     for (const tableId of keep) {
       const source = allocations.find((row) => Number(row.table_id) === tableId)!
       await connection.execute(

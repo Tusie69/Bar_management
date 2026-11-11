@@ -16,6 +16,8 @@
     "e2e:auth": "node e2e/auth.mjs",
     "e2e:phase2b": "node e2e/phase2b-booking.mjs",
     "e2e:sprint2": "node e2e/sprint2-booking-http.mjs",
+    "e2e:c1": "node e2e/c1-table-group-mobile.mjs",
+    "e2e:c2": "node e2e/c2-table-turn-mobile.mjs",
     "a11y": "node e2e/a11y.mjs",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
   },

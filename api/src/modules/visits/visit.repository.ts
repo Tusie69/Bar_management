@@ -11,6 +11,8 @@ import {
   lockAndValidateSameZoneTables,
 } from '../tables/table-group.repository.js'
 import { lockOccupancyConflicts } from '../tables/table-occupancy.js'
+import { acknowledgeCapacity } from '../tables/table-capacity.js'
+import { recordTableTurn } from './table-turn.repository.js'
 
 export type CloseVisitMode = 'MANUAL' | 'AFTER_PAYMENT'
 export type ManualCloseReason = 'GUEST_LEFT' | 'ENTRY_ERROR'
@@ -31,6 +33,8 @@ export interface ClosedVisitView {
   endReason: ManualCloseReason
   version: number
   releasedTables: Array<{ id: number; code: string }>
+  /** C2: the turn this close recorded, or null when the visit already had one. */
+  turn: { turnId: number; scope: 'TABLE' | 'GROUP'; turnNo: number; counted: boolean } | null
 }
 
 interface LockedVisitRow extends RowDataPacket {
@@ -40,6 +44,10 @@ interface LockedVisitRow extends RowDataPacket {
   version: number
   paid_marked_at: Date | string | null
   guest_count: number
+  /** C2: the turn snapshot's giờ vào and tên khách, read under the same lock. */
+  started_at?: Date | string
+  contact_name?: string | null
+  customer_name?: string | null
 }
 
 interface AllocationRow extends RowDataPacket {
@@ -134,9 +142,11 @@ export async function closeVisit(
     }
 
     const [visitRows] = await connection.execute<LockedVisitRow[]>(
-      `SELECT id, business_date, ended_at, version, paid_marked_at, guest_count
-       FROM visits
-       WHERE organization_id = ? AND venue_id = ? AND id = ?
+      `SELECT v.id, v.business_date, v.ended_at, v.version, v.paid_marked_at, v.guest_count,
+         v.started_at, v.contact_name, c.display_name AS customer_name
+       FROM visits AS v
+       LEFT JOIN customers AS c ON c.organization_id = v.organization_id AND c.id = v.customer_id
+       WHERE v.organization_id = ? AND v.venue_id = ? AND v.id = ?
        FOR UPDATE`,
       [actor.organizationId, actor.venueId, input.visitId],
     )
@@ -186,12 +196,47 @@ export async function closeVisit(
        WHERE venue_id = ? AND id IN (${placeholders}) AND released_at IS NULL`,
       [actor.userId, input.reason, actor.venueId, ...allocationIds],
     )
+    // Read back the instant the rows actually carry, so giờ ra on the turn is the
+    // same timestamp the allocation and the visit were closed with.
+    const [releasedRows] = await connection.execute<(RowDataPacket & { released_at: Date | string })[]>(
+      `SELECT released_at FROM table_allocations WHERE venue_id = ? AND id = ?`,
+      [actor.venueId, allocationIds[0]!],
+    )
+    const closedAt = releasedRows[0]?.released_at ?? new Date()
     if (allocationUpdate.affectedRows !== allocationIds.length) {
       throw new AppError(409, 'ALLOCATION_RELEASE_CONFLICT', 'Danh sách bàn vừa được thay đổi. Vui lòng tải lại.')
     }
+    // Captured before dissolveUnusedGroups, which may retire an ad-hoc CLAIM
+    // grouping and so change what the turn would have been scoped to.
+    const closingAllocations = allocations.map((allocation) => ({
+      tableId: Number(allocation.table_id),
+      tableCode: allocation.table_code,
+      groupId: allocation.group_id ?? null,
+    }))
+
+    // C1 stays true here: Close Visit frees the operational state and never
+    // dissolves a LAYOUT cluster. dissolveUnusedGroups only retires CLAIM groups.
     await dissolveUnusedGroups(connection, actor, allocations.map((allocation) => allocation.group_id ?? null))
 
     const changeSequence = await nextVenueChangeSequence(connection, actor)
+
+    // C2: the turn is written AFTER the venue row is locked for change_seq, on
+    // purpose. Writing it earlier put an insert-intention lock on table_turns
+    // before that row lock, so two devices closing two unrelated visits could
+    // deadlock; taking the venue row first makes them serialise instead.
+    // A rolled-back close still leaves no turn: this is the same transaction.
+    const turn = await recordTableTurn(connection, actor, {
+      visitId: input.visitId,
+      businessDate: visitBusinessDate,
+      allocations: closingAllocations,
+      seatedAt: visit.started_at ?? new Date(),
+      releasedAt: closedAt,
+      guestCount: Number(visit.guest_count),
+      guestName: visit.contact_name ?? visit.customer_name ?? 'Khách',
+      endReason: input.reason,
+      closedByUserId: actor.userId,
+    })
+
     await connection.execute(
       `INSERT INTO operation_log
         (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
@@ -211,6 +256,7 @@ export async function closeVisit(
         JSON.stringify([
           { type: 'visit', id: input.visitId, versionBefore: input.expectedVersion, versionAfter: input.expectedVersion + 1 },
           { type: 'table_allocation', ids: allocationIds },
+          ...(turn ? [{ type: 'table_turn', id: turn.turnId, scope: turn.scope, turnNo: turn.turnNo, counted: turn.counted }] : []),
         ]),
         input.note ?? null,
       ],
@@ -232,6 +278,9 @@ export async function closeVisit(
       endReason: input.reason,
       version: closed.version,
       releasedTables: allocations.map((allocation) => ({ id: Number(allocation.table_id), code: allocation.table_code })),
+      turn: turn
+        ? { turnId: turn.turnId, scope: turn.scope, turnNo: turn.turnNo, counted: turn.counted }
+        : null,
     }
   } catch (error) {
     await connection.rollback()
@@ -246,6 +295,8 @@ export interface MoveVisitInput {
   expectedVersion: number
   tableIds: number[]
   note?: string
+  /** §3.1: the receptionist's explicit go-ahead to seat more guests than capacity. */
+  capacityOverrideConfirmed?: boolean
 }
 
 export interface MovedVisitView {
@@ -309,14 +360,11 @@ export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput
     if (targetTableIds.length > 1) await lockAndValidateSameKindTables(connection, actor, targetTableIds)
     const spareTable = targetTables.find((table) => Boolean(table.is_spare))
     if (spareTable) throw new AppError(409, 'SPARE_TABLE_NOT_BOOKABLE', `Bàn ${spareTable.code} là bàn sơ cua và chưa được cấu hình để nhận khách.`)
-    const totalCapacity = targetTables.reduce((total, table) => total + Number(table.capacity), 0)
-    if (totalCapacity < Number(visit.guest_count)) {
-      throw new AppError(
-        409,
-        'INSUFFICIENT_TABLE_CAPACITY',
-        `Các bàn đã chọn chỉ có ${totalCapacity} chỗ cho ${visit.guest_count} khách.`,
-      )
-    }
+    const capacityOverride = acknowledgeCapacity({
+      partySize: Number(visit.guest_count),
+      tables: targetTables.map((table) => ({ code: table.code, capacity: Number(table.capacity) })),
+      confirmed: input.capacityOverrideConfirmed,
+    })
     const allocationIds = currentAllocations.map((allocation) => Number(allocation.id))
     const visitBusinessDate = dateOnly(visit.business_date)
     const conflicts = await lockOccupancyConflicts(
@@ -339,7 +387,7 @@ export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput
       throw new AppError(409, 'GROUP_STATE_INCONSISTENT', 'Visit đang có nhiều group identity.')
     }
     const targetGroupId = targetTableIds.length > 1
-      ? previousGroupIds[0] ?? (await createTableGroup(connection, actor, visitBusinessDate)).id
+      ? previousGroupIds[0] ?? (await createTableGroup(connection, actor, { businessDate: visitBusinessDate })).id
       : null
     const newAllocationIds: number[] = []
     for (const tableId of targetTableIds) {
@@ -378,6 +426,7 @@ export async function moveVisit(actor: AuthenticatedActor, input: MoveVisitInput
         input.expectedVersion + 1,
         JSON.stringify([{
           type: 'visit_table_move',
+          ...(capacityOverride ? { capacityOverride } : {}),
           previousAllocationIds: allocationIds,
           previousTableIds: currentTableIds,
           newAllocationIds,
@@ -437,9 +486,11 @@ export async function mergeVisitTables(
     if (currentIds.some((id) => !requested.includes(id))) throw new AppError(409, 'MERGE_CANNOT_REMOVE_TABLES', 'Ghép bàn không được loại bỏ bàn đang dùng.')
     const additions = requested.filter((id) => !currentIds.includes(id))
     if (!additions.length) throw new AppError(409, 'TABLE_ASSIGNMENT_UNCHANGED', 'Nhóm bàn không thay đổi.')
-    if (tables.reduce((sum, table) => sum + Number(table.capacity), 0) < Number(visit.guest_count)) {
-      throw new AppError(409, 'INSUFFICIENT_TABLE_CAPACITY', 'Nhóm bàn không đủ sức chứa.')
-    }
+    const capacityOverride = acknowledgeCapacity({
+      partySize: Number(visit.guest_count),
+      tables: tables.map((table) => ({ code: table.code, capacity: Number(table.capacity) })),
+      confirmed: input.capacityOverrideConfirmed,
+    })
     const conflicts = await lockOccupancyConflicts(
       connection, actor, 'USAGE', additions, dateOnly(visit.business_date),
     )
@@ -455,7 +506,7 @@ export async function mergeVisitTables(
       if (!rows[0]) throw new AppError(409, 'GROUP_STATE_INCONSISTENT', 'Group của visit không còn hoạt động.')
       group = { id: groupIds[0], symbolNo: Number(rows[0].symbol_no) }
     } else {
-      group = await createTableGroup(connection, actor, dateOnly(visit.business_date))
+      group = await createTableGroup(connection, actor, { businessDate: dateOnly(visit.business_date) })
       await connection.execute(
         `UPDATE table_allocations SET group_id = ? WHERE venue_id = ? AND id IN (${allocations.map(() => '?').join(',')})`,
         [group.id, actor.venueId, ...allocations.map((row) => Number(row.id))],
@@ -482,7 +533,8 @@ export async function mergeVisitTables(
        VALUES (?, ?, ?, 'USER', ?, ?, ?, 'VISIT_TABLES_MERGED', 'visit', ?, ?, ?, ?, 'MANUAL', ?)`,
       [actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
         actor.authSessionId ?? null, input.visitId, input.expectedVersion, input.expectedVersion + 1,
-        JSON.stringify([{ type: 'table_group', groupId: group.id, previousTableIds: currentIds, tableIds: requested }]),
+        JSON.stringify([{ type: 'table_group', groupId: group.id, previousTableIds: currentIds, tableIds: requested,
+          ...(capacityOverride ? { capacityOverride } : {}) }]),
         actor.authSessionId ? 1 : 0],
     )
     await connection.commit()

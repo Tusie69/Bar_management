@@ -5,6 +5,7 @@ import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { env } from '../../config/env.js'
 import { AppError } from '../../errors/app-error.js'
 import { idempotent, idempotencyTransaction } from '../../middleware/idempotency.js'
+import { parseCapacityOverride } from '../tables/table-capacity.js'
 import { assertNoteHasNoPhoneNumber } from '../../security/note-privacy.js'
 import { applicationNow } from '../../time/application-clock.js'
 import {
@@ -220,9 +221,11 @@ bookingRouter.post(
     const { body, ...input } = bookingBody(request.body, 'create')
     if (!Array.isArray(body.tableIds)) throw new AppError(400, 'TABLES_REQUIRED', 'Danh sách bàn không hợp lệ.')
     const tableIds = body.tableIds.map((id) => positiveInteger(id, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.'))
+    const capacityOverrideConfirmed = parseCapacityOverride(body.capacityOverrideConfirmed)
     response.status(201).json({ booking: await createAndAssignBooking(requireAuthenticatedActor(request), {
       ...input,
       tableIds,
+      ...(capacityOverrideConfirmed === undefined ? {} : { capacityOverrideConfirmed }),
     }, applicationNow(), idempotencyTransaction(response)) })
   },
 )
@@ -307,6 +310,7 @@ bookingRouter.post('/walk-ins', requireAuthentication, requireCsrfProtection, re
     throw new AppError(422, 'INVALID_PHONE_NUMBER', 'Số điện thoại không hợp lệ.')
   }
   const guestName = optionalText(body.guestName, 120, 'INVALID_GUEST_NAME', 'Tên khách không được vượt quá 120 ký tự.')
+  const walkInOverride = parseCapacityOverride(body.capacityOverrideConfirmed)
   const result = await createWalkIn(requireAuthenticatedActor(request), {
     partySize: positiveInteger(body.partySize, 'INVALID_PARTY_SIZE', 'Số khách không hợp lệ.'),
     businessDate: assertCurrentBusinessDate(body.businessDate, applicationNow()),
@@ -314,6 +318,7 @@ bookingRouter.post('/walk-ins', requireAuthentication, requireCsrfProtection, re
     ...(guestName ? { guestName } : {}),
     ...(typeof body.phoneNumber === 'string' && body.phoneNumber.trim()
       ? { phoneNumber: body.phoneNumber.trim() } : {}),
+    ...(walkInOverride === undefined ? {} : { capacityOverrideConfirmed: walkInOverride }),
   }, idempotencyTransaction(response))
   response.status(201).json(result)
 })
@@ -327,6 +332,7 @@ bookingRouter.post('/:id/assign', requireAuthentication, requireCsrfProtection, 
     positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.'),
     positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản booking không hợp lệ.'),
     tableIds,
+    parseCapacityOverride(body.capacityOverrideConfirmed),
   ) })
 })
 
@@ -338,6 +344,7 @@ bookingRouter.post('/:id/merge', requireAuthentication, requireCsrfProtection, r
     positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.'),
     positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản booking không hợp lệ.'),
     body.tableIds.map((id) => positiveInteger(id, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.')),
+    parseCapacityOverride(body.capacityOverrideConfirmed),
   ))
 })
 

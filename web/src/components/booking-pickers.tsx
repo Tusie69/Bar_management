@@ -16,6 +16,7 @@ import {
   isAfterMidnight,
   isBookingTime,
   parseOtherGuests,
+  type GuestValue,
   usableQuickTimes,
 } from "@/domain/booking-rules"
 import { fmtDayMonth, type BusinessDate } from "@/lib/time"
@@ -29,27 +30,6 @@ const chip = (on: boolean) =>
       : "border-strong bg-background font-medium hover:border-foreground",
     "disabled:cursor-not-allowed disabled:border-dashed disabled:border-border disabled:bg-transparent disabled:font-normal disabled:text-tx-3",
   )
-
-export interface GuestValue {
-  mode: "quick" | "other"
-  /** Last valid count (quick pick or a valid "số khác..."). */
-  party: number
-  /** Raw other text, kept when switching back to 1–6. */
-  otherText: string
-}
-
-export const guestValueFrom = (party: number): GuestValue =>
-  party > 6 ? { mode: "other", party, otherText: String(party) } : { mode: "quick", party, otherText: "" }
-
-/** Effective guest count, or null while "số khác..." is invalid. */
-export function guestCount(v: GuestValue): number | null {
-  if (v.mode === "quick") return v.party
-  const p = parseOtherGuests(v.otherText)
-  return p.ok ? p.value : null
-}
-
-export const guestError = (v: GuestValue): string | null =>
-  v.mode === "other" ? parseOtherGuests(v.otherText).error : null
 
 export function GuestPicker({
   value,
@@ -370,13 +350,6 @@ export const MAIN_SOURCE_BUTTONS: ReadonlyArray<{
   { code: "STAFF", label: "Nhân sự" },
 ]
 
-export function formatBookingSource(sourceCode: BookingSourceCode, socialPlatform?: string | null): string {
-  if (sourceCode === "SOCIAL" && socialPlatform) {
-    return `Social - ${socialPlatform}`
-  }
-  return SOURCE_LABEL[sourceCode] ?? sourceCode
-}
-
 export function handleSourceChange(
   newSource: BookingSourceCode,
   currentSource: BookingSourceCode,
@@ -528,12 +501,6 @@ export const honorificSupported = true
 
 export type Honorific = "MR" | "MS"
 
-export function formatHonorificName(name: string, honorific?: "MR" | "MS" | null): string {
-  if (honorific === "MR") return `Mr ${name}`
-  if (honorific === "MS") return `Ms ${name}`
-  return name
-}
-
 export interface HonorificPickerProps {
   value: Honorific | null | undefined
   onChange: (value: Honorific | null) => void
@@ -601,8 +568,6 @@ export function HonorificPicker({
     </div>
   )
 }
-
-export type BookingIconKey = "star" | "pin"
 
 export interface IconPickerProps {
   isBirthday: boolean

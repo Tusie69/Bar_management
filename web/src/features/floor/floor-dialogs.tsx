@@ -134,7 +134,7 @@ function SplitBody({ tables, idle, onConfirm, onCancel }: SplitProps & { onCance
         <DialogTitle>Tách bàn</DialogTitle>
         <DialogDescription>
           {idle
-            ? "Tách nhóm mặt bằng trống thành các bàn đơn. Bản mô phỏng, đang chờ API C1."
+            ? "Tách cụm bàn trống thành các bàn đơn. Lịch sử booking và lượt khách cũ vẫn được giữ."
             : "Ký hiệu ghép sẽ biến mất. Chọn bàn giữ lại cho đoàn khách; bàn bỏ chọn sẽ được nhả. Phải nhả ít nhất một bàn. Lịch sử sử dụng vẫn được giữ."}
         </DialogDescription>
       </DialogHeader>

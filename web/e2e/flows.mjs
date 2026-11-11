@@ -1244,6 +1244,38 @@ for (const width of [360, 390, 768]) for (const theme of ["light", "dark"]) for 
   }, { viewport: { width, height: width === 768 ? 1024 : 844 } })
 }
 
+for (const width of [360, 390, 430]) {
+  await flow(`RR04 mobile honorific detail ${width}`, 3, async (page) => {
+    fs.mkdirSync("e2e/.artifacts/rereview4-fixes", { recursive: true })
+    await page.goto(`${base}/reservations`, { waitUntil: "networkidle" })
+    for (const honorific of ["MR", "MS", null]) {
+      const name = `RR04 ${honorific ?? "unset"}`
+      await page.evaluate(async ({ name, honorific }) => {
+        const { api, clock } = await import("/src/services/index.ts")
+        const { businessDateOf, atBusinessTime } = await import("/src/lib/time.ts")
+        await api.createReservation({ contactName: name, partySize: 4,
+          expectedAt: atBusinessTime(businessDateOf(clock.now()), "22:00"),
+          sourceCode: "HOTLINE", honorific, note: "Ghi chú nguyên bản" })
+      }, { name, honorific })
+      await page.getByText(name, { exact: true }).last().click()
+      const detail = page.getByRole("dialog", { name: "Chi tiết booking", exact: true })
+      const display = honorific ? `${honorific === "MR" ? "Mr" : "Ms"} ${name}` : name
+      await expect(detail.getByText(display, { exact: true })).toHaveCount(2)
+      await expect(detail.getByText("Ghi chú nguyên bản", { exact: true })).toBeVisible()
+      if (honorific === "MR") await page.screenshot({ path: `e2e/.artifacts/rereview4-fixes/detail-${width}.png` })
+      const stored = await page.evaluate(async (name) => {
+        const { api, clock } = await import("/src/services/index.ts")
+        const { businessDateOf } = await import("/src/lib/time.ts")
+        return (await api.listReservations({ businessDate: businessDateOf(clock.now()) })).find((r) => r.displayName === name)
+      }, name)
+      assert.equal(stored.displayName, name)
+      assert.equal(stored.honorific, honorific)
+      assert.equal(stored.note, "Ghi chú nguyên bản")
+      await detail.getByRole("button", { name: "Quay lại", exact: true }).click()
+    }
+  }, { viewport: { width, height: 844 } })
+}
+
 console.log(results.join("\n"))
 await browser.close()
 await import("./milestone-a.mjs")

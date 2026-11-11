@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 vi.mock("@/services", () => ({ api: { mode: "http" }, clock: { now: () => new Date("2026-11-09T12:00:00Z") } }))
-import { IDLE_MERGE_BLOCKED, layoutSelection } from "./layout-merge"
+import { layoutSelection } from "./layout-merge"
 import type { FloorModel } from "./use-floor-model"
 
 const model = {
@@ -11,8 +11,12 @@ const model = {
 } as unknown as FloorModel
 
 describe("P1 merge eligibility on HTTP", () => {
-  it("disables an idle triple with the C1 reason instead of creating a local group", () => {
-    expect(layoutSelection(model, [1, 2, 3]).reason).toBe(IDLE_MERGE_BLOCKED)
+  // C1 shipped: an idle triple is exactly what POST /tables/groups is for, so the
+  // client no longer blocks it and no longer invents a local group either.
+  it("allows an idle triple now that the layout-cluster endpoints exist", () => {
+    const selection = layoutSelection(model, [1, 2, 3])
+    expect(selection.reason).toBe("")
+    expect(selection.owner).toBeUndefined()
   })
   it("allows a triple for one existing owner even above the catalog capacity and cross-zone", () => {
     const m = { ...model, states: new Map(model.states) }

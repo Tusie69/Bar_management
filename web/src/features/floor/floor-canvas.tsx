@@ -581,6 +581,7 @@ export function FloorCanvas(props: Props) {
 
           {/* Bar guest list inside floor SVG */}
           <BarGuestList
+            ariaLabel={ariaLabel ? `Khách quầy bar - ${ariaLabel}` : undefined}
             tables={tables}
             states={states}
             groups={groups}

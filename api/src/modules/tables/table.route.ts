@@ -1,10 +1,23 @@
 import { Router } from 'express'
 
-import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
+import {
+  requireAnyPermission,
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission,
+} from '../../auth/auth.middleware.js'
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { AppError } from '../../errors/app-error.js'
 import { idempotent, idempotencyTransaction } from '../../middleware/idempotency.js'
 import { getFloorProjection } from './floor-projection.repository.js'
+import { publishFloorChange, subscribeToFloorChanges } from './floor-change-stream.js'
+import {
+  addLayoutGroupMembers,
+  createLayoutGroup,
+  dissolveLayoutGroup,
+  getLayoutGroup,
+  listLayoutGroups,
+} from './table-layout-group.repository.js'
 import { configureTable, getTableCatalog, updateTableState } from './table.repository.js'
 import { splitTableGroup } from './table-split.repository.js'
 import { isTableState } from './table-state.js'
@@ -122,26 +135,220 @@ tableRouter.patch(
   },
 )
 
-/* BA-021 Split: identified by the merge group, keeping the chosen tables. */
+/* ------------------------------------------------------------------ *
+ * C1 — layout clusters (cụm bàn), independent of booking and visit.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Managing a cluster is a layout action, not an action on a guest, so it has its
+ * own permission (anh Luân, 10/11/2026): table.group.manage, granted to Lễ tân and
+ * to the management roles. The BA-021 split-with-keepTableIds branch still serves
+ * a seated party, so that route also accepts the older visit.split.
+ */
+const requireGroupManage = requirePermission('table.group.manage')
+const requireGroupSplit = requireAnyPermission('table.group.manage', 'visit.split')
+
+function parseGroupId(value: unknown): number {
+  const groupId = Number(value)
+  if (!Number.isSafeInteger(groupId) || groupId <= 0) {
+    throw new AppError(400, 'INVALID_GROUP_ID', 'Mã cụm bàn không hợp lệ.')
+  }
+  return groupId
+}
+
+/**
+ * Both spellings are accepted: tableIds is what the shipped client sends,
+ * tableCodes is what a receptionist reads off the floor.
+ */
+function parseTableSelection(body: Record<string, unknown>): { tableIds?: number[]; tableCodes?: string[] } {
+  if (Array.isArray(body.tableIds)) return { tableIds: body.tableIds.map(Number) }
+  if (Array.isArray(body.tableCodes)) return { tableCodes: body.tableCodes.map(String) }
+  throw new AppError(400, 'INVALID_TABLE_CODES', 'Cần gửi tableIds hoặc tableCodes dạng mảng.')
+}
+
+/** Reads the spare-table confirmation, rejecting any value that is not a boolean. */
+function parseSpareOverride(body: Record<string, unknown>): { spareOverrideConfirmed?: boolean } {
+  const value = body.spareOverrideConfirmed
+  if (value === undefined || value === null) return {}
+  if (typeof value !== 'boolean') {
+    throw new AppError(400, 'INVALID_SPARE_OVERRIDE', 'spareOverrideConfirmed phải là true hoặc false.')
+  }
+  return { spareOverrideConfirmed: value }
+}
+
+function parseGroupVersion(value: unknown): number {
+  const version = Number(value)
+  if (!Number.isSafeInteger(version) || version < 1) {
+    throw new AppError(400, 'INVALID_VERSION', 'Phiên bản cụm bàn không hợp lệ.')
+  }
+  return version
+}
+
+/** Pushes the committed change so other devices see it well inside two seconds. */
+function announce(actor: { organizationId: number; venueId: number }, changeSeq: number): void {
+  publishFloorChange({
+    organizationId: actor.organizationId,
+    venueId: actor.venueId,
+    changeSeq: String(changeSeq),
+  })
+}
+
+tableRouter.get(
+  '/groups',
+  requireAuthentication,
+  requirePermission('customer.view_masked'),
+  async (request, response) => {
+    response.json(await listLayoutGroups(requireAuthenticatedActor(request), {
+      includeDissolved: request.query.includeDissolved === 'true',
+    }))
+  },
+)
+
+/**
+ * §10 — push channel for the floor. The client refetches the projection when a
+ * frame arrives, so a frame is a staleness signal, never data; an old frame can
+ * therefore not overwrite newer state.
+ *
+ * Declared before '/groups/:id' so 'stream' is never read as a group id.
+ */
+tableRouter.get(
+  '/stream',
+  requireAuthentication,
+  requirePermission('customer.view_masked'),
+  (request, response) => {
+    const actor = requireAuthenticatedActor(request)
+    subscribeToFloorChanges({ organizationId: actor.organizationId, venueId: actor.venueId, response })
+  },
+)
+
+tableRouter.get(
+  '/groups/:id',
+  requireAuthentication,
+  requirePermission('customer.view_masked'),
+  async (request, response) => {
+    response.json(await getLayoutGroup(requireAuthenticatedActor(request), parseGroupId(request.params.id)))
+  },
+)
+
+/** Ghép bàn. No guest name, phone, party size or arrival time is required. */
+tableRouter.post(
+  '/groups',
+  requireAuthentication,
+  requireCsrfProtection,
+  requireGroupManage,
+  idempotent('table.group.create'),
+  async (request, response) => {
+    const body = parseBody(request.body)
+    const actor = requireAuthenticatedActor(request)
+    const result = await createLayoutGroup(
+      actor,
+      {
+        ...parseTableSelection(body),
+        ...(typeof body.name === 'string' ? { name: body.name } : {}),
+        ...parseSpareOverride(body),
+      },
+      idempotencyTransaction(response),
+    )
+    response.status(201).json(result)
+    announce(actor, result.changeSeq)
+  },
+)
+
+/** Adds tables to an existing cluster instead of forcing a split and re-merge. */
+tableRouter.post(
+  '/groups/:id/members',
+  requireAuthentication,
+  requireCsrfProtection,
+  requireGroupManage,
+  idempotent('table.group.add_members'),
+  async (request, response) => {
+    const body = parseBody(request.body)
+    const actor = requireAuthenticatedActor(request)
+    const result = await addLayoutGroupMembers(
+      actor,
+      {
+        groupId: parseGroupId(request.params.id),
+        version: parseGroupVersion(body.version),
+        ...parseTableSelection(body),
+        ...parseSpareOverride(body),
+      },
+      idempotencyTransaction(response),
+    )
+    response.json(result)
+    announce(actor, result.changeSeq)
+  },
+)
+
+/**
+ * Tách bàn. The only thing that ever ends a layout cluster: paying, Close Visit,
+ * a cancelled booking, a No-show, the end of a shift, the business-day rollover
+ * and a server restart all leave the cluster standing.
+ */
+tableRouter.post(
+  '/groups/:id/dissolve',
+  requireAuthentication,
+  requireCsrfProtection,
+  requireGroupManage,
+  idempotent('table.group.dissolve'),
+  async (request, response) => {
+    const body = parseBody(request.body)
+    const actor = requireAuthenticatedActor(request)
+    const result = await dissolveLayoutGroup(
+      actor,
+      {
+        groupId: parseGroupId(request.params.id),
+        ...(body.version === undefined ? {} : { version: parseGroupVersion(body.version) }),
+      },
+      idempotencyTransaction(response),
+    )
+    response.json(result)
+    announce(actor, result.changeSeq)
+  },
+)
+
+/*
+ * BA-021 Split: identified by the merge group, keeping the chosen tables.
+ * mode ALL_TO_SINGLE is the shipped client's spelling of Tách bàn on an empty
+ * cluster and delegates to the same dissolve path — one implementation, two
+ * spellings, so the two can never drift apart.
+ */
 tableRouter.post(
   '/groups/:id/split',
   requireAuthentication,
   requireCsrfProtection,
-  requirePermission('visit.split'),
+  requireGroupSplit,
   idempotent('table.group.split'),
   async (request, response) => {
     const body = parseBody(request.body)
-    const groupId = Number(request.params.id)
-    if (!Number.isSafeInteger(groupId) || groupId <= 0) {
-      throw new AppError(400, 'INVALID_GROUP_ID', 'Mã nhóm ghép không hợp lệ.')
+    const actor = requireAuthenticatedActor(request)
+    const groupId = parseGroupId(request.params.id)
+
+    // Only an explicit mode selects the dissolve branch, so a body with neither
+    // mode nor keepTableIds still reports the missing table list it is missing.
+    if (body.mode !== undefined) {
+      if (body.mode !== 'ALL_TO_SINGLE') {
+        throw new AppError(400, 'INVALID_SPLIT_MODE', 'Cách tách cụm bàn không hợp lệ.')
+      }
+      const dissolved = await dissolveLayoutGroup(
+        actor,
+        { groupId, version: parseGroupVersion(body.version) },
+        idempotencyTransaction(response),
+      )
+      response.json(dissolved)
+      announce(actor, dissolved.changeSeq)
+      return
     }
+
     if (!Array.isArray(body.keepTableIds)) {
       throw new AppError(400, 'TABLES_REQUIRED', 'Danh sách bàn giữ lại không hợp lệ.')
     }
-    response.json(await splitTableGroup(
-      requireAuthenticatedActor(request),
+    const result = await splitTableGroup(
+      actor,
       { groupId, keepTableIds: body.keepTableIds.map(Number) },
       idempotencyTransaction(response),
-    ))
+    )
+    response.json(result)
+    announce(actor, result.changeSeq)
   },
 )
+
