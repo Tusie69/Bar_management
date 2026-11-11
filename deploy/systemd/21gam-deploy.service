@@ -1,0 +1,20 @@
+# Một lần kiểm tra và triển khai develop. Chạy theo 21gam-deploy.timer.
+#   sudo cp deploy/systemd/21gam-deploy.* /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now 21gam-deploy.timer
+#   sudo systemctl start 21gam-deploy.service   # chạy ngay một lần
+
+[Unit]
+Description=21GAM tự động triển khai develop
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Chạy bằng root vì cần systemctl restart 21gam-api; mọi thao tác git, pnpm và
+# build đều hạ quyền xuống gam21 bên trong script.
+User=root
+ExecStart=/srv/21gam/deploy/scripts/auto-deploy.sh
+# Build và test ăn CPU; nhường chỗ cho API đang phục vụ khách.
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=30min
