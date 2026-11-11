@@ -5,15 +5,10 @@
 # Tự động:    bật 21gam-backup.timer (xem deploy/systemd/)
 #
 # Thông tin đăng nhập đọc từ ~/.my.cnf của user chạy script, KHÔNG truyền
-# mật khẩu trên dòng lệnh vì nó lộ ra trong `ps`. Tạo một lần:
+# mật khẩu trên dòng lệnh vì nó lộ ra trong `ps`.
 #
-#   install -m 600 /dev/null ~/.my.cnf
-#   cat > ~/.my.cnf <<'CNF'
-#   [client]
-#   user=gam21
-#   password=mat-khau-that
-#   host=127.0.0.1
-#   CNF
+# Cách tạo ~/.my.cnf: xem docs/deploy.md mục 7. Tóm tắt: file quyền 600, một
+# mục [client] khai ba khóa user, password và host.
 set -euo pipefail
 
 DATABASE="${DB_NAME:-gam21_platform}"

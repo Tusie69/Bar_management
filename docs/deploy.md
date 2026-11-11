@@ -90,7 +90,8 @@ sudo mysql
 ```sql
 CREATE DATABASE gam21_platform
   CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
-CREATE USER 'gam21'@'127.0.0.1' IDENTIFIED BY 'MAT-KHAU-MANH-TU-SINH';
+-- Tự sinh một chuỗi ngẫu nhiên dài (ví dụ `openssl rand -base64 24`) và điền vào đây.
+CREATE USER 'gam21'@'127.0.0.1' IDENTIFIED BY '...';
 GRANT ALL PRIVILEGES ON gam21_platform.* TO 'gam21'@'127.0.0.1';
 FLUSH PRIVILEGES;
 ```
@@ -223,8 +224,18 @@ Nếu hạ `REALTIME_HEARTBEAT_MS`, giữ nó **nhỏ hơn** `proxy_read_timeout
 
 ## 7. Sao lưu tự động
 
-Tạo `~/.my.cnf` cho user `gam21` (chi tiết trong đầu file `backup-mysql.sh`),
-rồi:
+Script sao lưu đọc thông tin đăng nhập từ `~/.my.cnf` của user `gam21` thay vì
+nhận mật khẩu trên dòng lệnh, vì tham số dòng lệnh hiện ra trong `ps` cho mọi
+user trên máy. Tạo file đó một lần, quyền `600`, nội dung là một mục `[client]`
+khai ba khóa: `user` là `gam21`, `password` là mật khẩu MySQL bạn đặt ở mục 3,
+`host` là `127.0.0.1`.
+
+```bash
+sudo -u gam21 install -m 600 /dev/null /srv/21gam/.my.cnf
+sudo -u gam21 nano /srv/21gam/.my.cnf     # tự gõ, đừng dán từ chỗ khác
+```
+
+Rồi:
 
 ```bash
 sudo chmod +x /srv/21gam/deploy/scripts/*.sh
