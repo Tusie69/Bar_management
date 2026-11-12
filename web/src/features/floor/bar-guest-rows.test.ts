@@ -4,6 +4,7 @@ import {
   buildBarGuestRows,
   extractBarGuestIcons,
   formatBarBookedTime,
+  formatBarSeatedTime,
   formatBarGuestName,
   formatBarSeatLabel,
 } from "./bar-guest-rows"
@@ -133,6 +134,28 @@ describe("bar-guest-rows formatting helpers", () => {
       reservedExpectedAt: null,
     })
     expect(formatBarBookedTime(claimSeatedWalkIn, "seated")).toBeNull()
+  })
+
+  it("gives a walk-in row its entry time, kept apart from the booked time", () => {
+    const walkIn = makeClaim({
+      kind: "visit",
+      startsAt: new Date("2026-11-09T14:45:00.000Z"),
+      reservedExpectedAt: null,
+    })
+    expect(formatBarBookedTime(walkIn, "seated")).toBeNull()
+    expect(formatBarSeatedTime(walkIn, "seated")).not.toBeNull()
+
+    // A booked party keeps its booked time; no entry time is offered beside it.
+    const booked = makeClaim({
+      kind: "visit",
+      startsAt: new Date("2026-11-09T14:45:00.000Z"),
+      reservedExpectedAt: new Date("2026-11-09T14:00:00.000Z"),
+    })
+    expect(formatBarBookedTime(booked, "seated")).not.toBeNull()
+
+    // Not seated yet: there is no entry time at all.
+    expect(formatBarSeatedTime(makeClaim({ kind: "reservation" }), "reserved")).toBeNull()
+    expect(formatBarSeatedTime(null, "seated")).toBeNull()
   })
 
   it("extracts icons only from real metadata", () => {

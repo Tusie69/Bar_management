@@ -1182,9 +1182,9 @@ describe("Group border redesign - status-colored thick borders and neutral selec
       ])
 
       const resolved = resolveCellCornerIcons(states.get(tA3.id)!.claim)
-      expect(resolved.topRight).toEqual(["cake"])
+      expect(resolved.topRight).toEqual([]) // the turn badge owns that corner
       expect(resolved.bottomLeft).toEqual(["fire"]) // RETURNING wins over NEW, never both
-      expect(resolved.bottomRight).toEqual(["star", "pin"])
+      expect(resolved.bottomRight).toEqual(["star", "pin", "cake"])
 
       const html = renderCanvas({
         tables: [tA3],

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { useAction } from "@/hooks/use-action"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { api } from "@/services"
+import { cn } from "@/lib/utils"
 import { useUi } from "@/state/ui"
 import { startLayoutMerge, layoutSelection } from "./layout-merge"
 import { SplitDialog } from "./floor-dialogs"
@@ -64,7 +65,7 @@ export function LayoutActions({ model, tableId }: { model: FloorModel; tableId: 
   )
 }
 
-export function LayoutMergeControls({ model }: { model: FloorModel }) {
+export function LayoutMergeControls({ model, overlay = false }: { model: FloorModel; overlay?: boolean }) {
   const pick = useUi((s) => s.pick)
   const ids = useUi((s) => s.pickSelection)
   const draft = useUi((s) => s.draft)
@@ -94,29 +95,67 @@ export function LayoutMergeControls({ model }: { model: FloorModel }) {
     }) &&
     new Set(ids.map((id) => model.byId.get(id)?.zoneId)).size === 1
   return (
-    <section className="grid gap-2 rounded-lg border bg-surface-1 p-2 text-sm" aria-label="Chế độ ghép bàn">
+    <section
+      className={cn(
+        "grid text-sm",
+        overlay
+          ? // Mockup 03: the panel COVERS the top of the plan instead of pushing
+            // it down. Pushing re-fits the camera, which is what made the plan
+            // jump back to the top twice during one merge.
+            "gap-1.5 rounded-b-[18px] bg-[#1b1a17] px-3 pt-2 pb-2.5 text-white shadow-[var(--shadow-float)]"
+          : "gap-2 rounded-lg border bg-surface-1 p-2",
+      )}
+      aria-label="Chế độ ghép bàn"
+    >
       <div className="flex items-center justify-between gap-2">
         <strong>Đang ghép bàn</strong>
-        <Button variant="ghost" aria-label="Hủy" onClick={useUi.getState().cancelPick}>
+        <Button
+          variant="ghost"
+          aria-label="Hủy"
+          className={overlay ? "h-8 px-2 text-white hover:bg-white/10 hover:text-white" : undefined}
+          onClick={useUi.getState().cancelPick}
+        >
           Hủy
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">Chạm các bàn muốn ghép trên sơ đồ.</p>
-      {ids.length ? (
+      <p className={cn("text-xs", overlay ? "text-white/70" : "text-muted-foreground")}>
+        Chạm {overlay && ids.length ? "tiếp " : ""}các bàn cần ghép trên sơ đồ.
+      </p>
+      {ids.length && overlay ? (
+        // The chips say what is selected at a glance; the old sentence made the
+        // panel taller than the 172px the mockup gives it.
+        <p className="flex flex-wrap items-center gap-1.5" aria-live="polite">
+          <span className="sr-only">Đang chọn {ids.length} vị trí:</span>
+          {ids.map((id) => (
+            <span key={id} className="rounded-md bg-white/15 px-2 py-0.5 text-[13px] font-semibold">
+              {model.label(id)}
+            </span>
+          ))}
+          <span className="rounded-md bg-white px-2 py-0.5 text-[13px] font-bold text-[#1b1a17]">
+            {total}
+            <span className="sr-only"> chỗ</span>
+          </span>
+          {existingGroup ? (
+            <span className="text-[12px] text-white/70">
+              thêm vào cụm {existingGroup.displayCode ?? "#" + existingGroup.id}
+            </span>
+          ) : null}
+        </p>
+      ) : ids.length ? (
         <p aria-live="polite">
           Đang chọn ({ids.length} vị trí): {ids.map((id) => model.label(id)).join(" - ")} · tổng {total} chỗ
           {existingGroup ? ` · thêm vào cụm ${existingGroup.displayCode ?? "#" + existingGroup.id}` : ""}
         </p>
       ) : null}
       {reason ? (
-        <p id="layout-merge-reason" className="text-xs text-muted-foreground">
+        <p id="layout-merge-reason" className={cn("text-xs", overlay ? "text-white/70" : "text-muted-foreground")}>
           {reason}
         </p>
       ) : null}
-      {api.mode === "mock" ? (
+      {api.mode === "mock" && !overlay ? (
         <p className="text-xs text-muted-foreground">Bản mô phỏng: chỉ lưu trên máy này.</p>
       ) : null}
-      <div className="flex flex-wrap gap-2">
+      <div className={cn("flex flex-wrap gap-2", overlay && "mt-0.5 flex-row-reverse")}>
         <GuardedButton
           permission={owner ? "visit.combine" : "table.group.manage"}
           disabled={pending || !!reason}
@@ -153,14 +192,18 @@ export function LayoutMergeControls({ model }: { model: FloorModel }) {
         {canBook ? (
           <GuardedButton
             permission="reservation.create"
-            variant="outline"
+            variant={overlay ? "default" : "outline"}
+            className={overlay ? "flex-1" : undefined}
             onClick={() =>
               useUi
                 .getState()
                 .openBooking({ tableIds: ids, date: model.floor?.businessDate, party: Math.min(total, 6) })
             }
           >
-            Tiếp tục đặt bàn
+            {/* Mockup 03 calls this one button "Xong · Nhập thông tin đặt". The
+                merge-only button stays beside it: a layout cluster with no guest
+                is a real case the mockup does not draw. */}
+            {overlay ? "Xong · Nhập thông tin đặt" : "Tiếp tục đặt bàn"}
           </GuardedButton>
         ) : null}
       </div>

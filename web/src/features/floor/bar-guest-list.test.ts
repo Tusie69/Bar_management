@@ -11,6 +11,7 @@ function makeSampleRow(overrides: Partial<BarGuestRow> = {}): BarGuestRow {
     seatNumbers: [1],
     seatsLabel: "Bar1",
     time: "21:00",
+    seatedTime: null,
     partySize: 2,
     guestName: "Nam",
     state: "seated" as TableLiveState,

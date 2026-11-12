@@ -45,16 +45,22 @@ export function formatCellGuestName(
 }
 
 export interface CellCornerIcons {
-  topRight: Array<"cake">
+  /**
+   * Empty since the approved mockup gave the top right corner to the turn
+   * badge alone. Kept so a caller that still reads it does not crash.
+   */
+  topRight: never[]
   bottomLeft: Array<"fire" | "new">
-  bottomRight: Array<"star" | "pin">
+  bottomRight: Array<"star" | "pin" | "cake">
 }
 
 /**
  * Resolves the corner icons for a table cell per J1 Section 3:
- * - Top right: cake if birthday.
+ * - Top right: nothing. The mockup puts the turn badge there, so an icon in
+ *   that corner would sit on top of it.
  * - Bottom left: new or regular guest icon. Never both (RETURNING > NEW). UNCLASSIFIED shows none.
- * - Bottom right: Bàn sếp (star) or Chỉ định (pin) when data exists. Hidden when absent.
+ * - Bottom right: table flags - Bàn sếp (star), Chỉ định (pin), Sinh nhật
+ *   (cake). The mockup lists all three together in that corner.
  */
 export function resolveCellCornerIcons(
   claim?: { flags?: string[] | null; iconKeys?: string[] | null } | null,
@@ -76,10 +82,6 @@ export function resolveCellCornerIcons(
   const hasBirthday = tokens.some(
     (k) => k === "birthday" || k === "cake" || k === "is_birthday" || k === "sinh nhật" || k === "sinh nhat",
   )
-  if (hasBirthday) {
-    result.topRight.push("cake")
-  }
-
   const hasReturning = tokens.some(
     (k) => k === "returning" || k === "fire" || k === "regular" || k === "khách quen" || k === "khach quen",
   )
@@ -96,8 +98,11 @@ export function resolveCellCornerIcons(
   const hasPin = tokens.some(
     (k) => k === "pin" || k === "designated" || k === "chỉ định" || k === "chi dinh",
   )
+  // Order follows the mockup's own list for this corner: VIP, then Chỉ định,
+  // then Sinh nhật.
   if (hasStar) result.bottomRight.push("star")
   if (hasPin) result.bottomRight.push("pin")
+  if (hasBirthday) result.bottomRight.push("cake")
 
   return result
 }

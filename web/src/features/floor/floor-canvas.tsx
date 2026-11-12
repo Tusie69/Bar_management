@@ -1353,17 +1353,7 @@ const LiveGlyph = memo(function LiveGlyph({
         <GuestCountBadge count={claim?.partySize} x={-hw + 3} y={-hh - 0.5} color={meta.color} />
       ) : null}
 
-      {/* Top-right: birthday cake icon when present */}
-      {hasActiveClaim && isAnchor && cornerIcons.topRight.length > 0 ? (
-        <TableIcons
-          iconKeys={cornerIcons.topRight}
-          x={hw - 1}
-          y={-hh + 0.5}
-          direction="left"
-          radius={5}
-          data-testid="table-icons"
-        />
-      ) : null}
+      {/* Top-right belongs to the turn badge alone, as the mockup draws it. */}
 
       {/* Bottom-left: new/regular guest icon */}
       {hasActiveClaim && isAnchor && cornerIcons.bottomLeft.length > 0 ? (

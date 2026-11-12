@@ -14,6 +14,12 @@ export interface BarGuestRow {
   seatNumbers: number[]
   seatsLabel: string
   time: string | null
+  /**
+   * Time the party sat down, for a row that has no booked time (walk-ins).
+   * The mockup wants a time on every row; this keeps that promise without
+   * passing an entry time off as a booking time, which `time` must never do.
+   */
+  seatedTime: string | null
   partySize: number
   guestName: string
   state: TableLiveState
@@ -154,6 +160,18 @@ export function formatBarBookedTime(
   }
 
   return null
+}
+
+/**
+ * Entry time of a party that is already sitting, used only when there is no
+ * booked time to show. Null while the party has not arrived.
+ */
+export function formatBarSeatedTime(claim: ClaimView | null | undefined, state: TableLiveState): string | null {
+  if (!claim) return null
+  const isCheckedIn = state === "seated" || claim.kind === "visit"
+  if (!isCheckedIn || !claim.startsAt) return null
+  const timeStr = fmtTime(claim.startsAt)
+  return timeStr === "--:--" ? null : timeStr
 }
 
 /**
@@ -326,6 +344,7 @@ export function buildBarGuestRows(
     item.seatNumbers.sort((a, b) => a - b)
     const seatsLabel = formatBarSeatLabel(item.seatNumbers)
     const time = formatBarBookedTime(item.claim, item.state)
+    const seatedTime = time ? null : formatBarSeatedTime(item.claim, item.state)
     const partySize = item.claim.partySize ?? 1
     const guestName = formatBarGuestName(item.claim.displayName)
     const icons = extractBarGuestIcons(item.claim)
@@ -335,6 +354,7 @@ export function buildBarGuestRows(
       seatNumbers: item.seatNumbers,
       seatsLabel,
       time,
+      seatedTime,
       partySize,
       guestName,
       state: item.state,

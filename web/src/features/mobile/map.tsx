@@ -178,7 +178,7 @@ export function MapScreen({
       ) : null}
       {/* Idle "Ghép bàn" button is off the receptionist's screen: merging starts from the
           table sheet. The active merge panel still shows so nobody gets stuck in pick mode. */}
-      {!pick && (!receptionist || layoutPick) ? (
+      {!pick && !layoutPick && !receptionist ? (
         <div className="shrink-0 px-3 pb-1">
           <LayoutMergeControls model={m.model} />
         </div>
@@ -206,6 +206,15 @@ export function MapScreen({
       ) : null}
 
       <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
+        {/* Mockup 03: the merge panel floats OVER the plan. In the document flow
+            it shortened the canvas, the camera re-fitted, and the plan jumped. */}
+        {!pick && layoutPick ? (
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-[11] px-2">
+            <div className="pointer-events-auto">
+              <LayoutMergeControls model={m.model} overlay />
+            </div>
+          </div>
+        ) : null}
         {m.model.catalog ? (
           <FloorCanvas
             className="absolute inset-0"

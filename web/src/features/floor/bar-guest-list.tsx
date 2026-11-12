@@ -196,7 +196,7 @@ export function BarGuestList({
 
               const rowAriaLabel = [
                 row.seatsLabel,
-                row.time ? `lúc ${row.time}` : "",
+                row.time ? `lúc ${row.time}` : row.seatedTime ? `vào lúc ${row.seatedTime}` : "",
                 `${row.partySize} khách`,
                 row.guestName,
                 allIconLabels,
@@ -266,9 +266,13 @@ export function BarGuestList({
 
                     {/* Line 2: time and guest count (count never clipped) */}
                     <div className="flex items-center gap-0.5 text-[10px] text-muted-foreground min-w-0 w-full font-medium tracking-tight">
-                      {row.time ? (
+                      {row.time || row.seatedTime ? (
                         <>
-                          <span className="shrink-0">{row.time}</span>
+                          <span className="shrink-0">
+                            {/* "vào" marks an entry time, so a walk-in row is never
+                                read as if the guest had booked that hour. */}
+                            {row.time ?? `vào ${row.seatedTime}`}
+                          </span>
                           <span className="text-muted-foreground/60 select-none shrink-0 text-[9px]">·</span>
                           <span className="inline-flex items-center gap-0.5 shrink-0">
                             <Users className="size-2 opacity-70 shrink-0" aria-hidden="true" />
