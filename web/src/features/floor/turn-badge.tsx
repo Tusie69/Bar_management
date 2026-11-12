@@ -3,7 +3,8 @@
  * Follows HU-32 H4 with Nam's decisions:
  * - Black circle, white number
  * - Positioned at bottom-left of a cell
- * - Shows from 1, not from 2 (1, 2, 3...)
+ * - Shows from the SECOND turn only (2, 3, ...): the first turn of the day is
+ *   the normal case and needs no badge (chốt với Hưng 12/11/2026)
  * - Absent, null, undefined, 0, or negative renders nothing (returns null)
  * - Readable at the smallest map scale (high-contrast black fill, white text, bold font)
  *
@@ -22,8 +23,8 @@ import { cn } from "@/lib/utils"
 export interface TurnBadgeProps {
   /**
    * Turn number (seatedTurnCount or turn ordinal).
-   * Renders starting from 1 (shows from 1, not from 2).
-   * If null, undefined, 0, negative, or NaN, renders nothing (null).
+   * Renders from 2 upwards. The first turn of the business day carries no badge.
+   * If null, undefined, below 2, or NaN, renders nothing (null).
    */
   count?: number | null
   /** Position coordinates in SVG context. */
@@ -49,7 +50,7 @@ export function TurnBadge({
   "data-testid": testId = "turn-badge",
 }: TurnBadgeProps): ReactNode {
   // Shows from 1, not from 2. Absent or null renders nothing.
-  if (count === null || count === undefined || typeof count !== "number" || Number.isNaN(count) || count < 1) {
+  if (count === null || count === undefined || typeof count !== "number" || Number.isNaN(count) || count < 2) {
     return null
   }
 

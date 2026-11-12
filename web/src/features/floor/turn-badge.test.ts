@@ -17,14 +17,16 @@ describe("TurnBadge", () => {
     expect(renderToString(createElement(TurnBadge, { count: -5 }))).toBe("")
   })
 
-  it("renders starting from 1 (shows from 1, not from 2)", () => {
-    const html1 = renderToString(createElement(TurnBadge, { count: 1 }))
-    expect(html1).toContain("turn-badge")
-    expect(html1).toContain(">1<")
-    expect(html1).toContain('aria-label="Lượt 1"')
+  it("renders nothing for the first turn and shows from the second", () => {
+    expect(renderToString(createElement(TurnBadge, { count: 1 }))).toBe("")
+
+    const html2 = renderToString(createElement(TurnBadge, { count: 2 }))
+    expect(html2).toContain("turn-badge")
+    expect(html2).toContain(">2<")
+    expect(html2).toContain('aria-label="Lượt 2"')
     // Black circle with white text
-    expect(html1).toContain('fill="#000000"')
-    expect(html1).toContain('fill="#ffffff"')
+    expect(html2).toContain('fill="#000000"')
+    expect(html2).toContain('fill="#ffffff"')
   })
 
   it("renders count 2 correctly", () => {
@@ -47,7 +49,7 @@ describe("TurnBadge", () => {
   })
 
   it("is readable at the smallest map scale with bold font and high contrast", () => {
-    const html = renderToString(createElement(TurnBadge, { count: 1 }))
+    const html = renderToString(createElement(TurnBadge, { count: 2 }))
     expect(html).toContain('font-weight="800"')
     expect(html).toContain('fill="#000000"')
     expect(html).toContain('stroke="#ffffff"')

@@ -8,7 +8,7 @@
 import { foldVietnamese } from "@/lib/text"
 import { addDays, atBusinessTime, businessDateOf, MS, type BusinessDate } from "@/lib/time"
 import type { AllocationReleaseReason, BookingSourceCode, VisitOrigin } from "@/domain/enums"
-import { BAR_SEATS, COMBINATIONS, TABLES, ZONES, barSeatCode } from "@/domain/venue-layout"
+import { BAR_SEATS, BAR_SEAT_SIZE, COMBINATIONS, TABLES, ZONES, barSeatCode } from "@/domain/venue-layout"
 import type { ReservationRow, VisitRow, WaitlistEntryRow } from "@/domain/schema"
 import { emptyDb, allocId, ORG_ID, VENUE_ID, type MockDb, type MockUser } from "./db"
 
@@ -205,8 +205,8 @@ export function seedDb(now: Date): MockDb {
       status: s.no === 21 ? "OUT_OF_SERVICE" : "ACTIVE",
       posX: s.x,
       posY: s.y,
-      width: 24,
-      height: 24,
+      width: BAR_SEAT_SIZE,
+      height: BAR_SEAT_SIZE,
       rotationDeg: 0,
       version: 1,
       seating: "bar",
@@ -308,7 +308,17 @@ export function seedDb(now: Date): MockDb {
       partySize: p.party,
       expectedAt,
       businessDate: p.bd,
+      // Demo data only: makes the plan exercise the corner-icon system
+      // (🔥 khách quen, 🆕 khách mới, 🎂 sinh nhật, ⭐ bàn sếp, 📌 chỉ định).
       customerClassification: "UNCLASSIFIED",
+      isBirthday: id % 7 === 0,
+      // Icons only, keyed off the id so every run looks the same. These go through
+      // iconKeys rather than customerClassification on purpose: classification feeds
+      // the Zalo report counts, and demo decoration must not move business numbers.
+      iconKeys: [
+        ...(id % 3 === 0 ? ["RETURNING"] : id % 3 === 1 ? ["NEW"] : []),
+        ...(id % 5 === 0 ? ["VIP"] : id % 5 === 2 ? ["DESIGNATED"] : []),
+      ],
       status: p.status,
       note: p.note ?? null,
       visitId: p.visitId ?? null,
@@ -860,6 +870,34 @@ export function seedDb(now: Date): MockDb {
     status: "CANCELLED",
     closeReason: "CUSTOMER_REQUEST",
   })
+
+  /* ---------- earlier turns tonight ----------
+     A few tables that already served a party and were released, so the floor
+     shows the turn badge, which only appears from the SECOND turn of the day. */
+  const earlierTurn = (code: string, cust: number, guests: number, from: string, to: string) => {
+    const v = addVisit({
+      bd,
+      origin: "WALK_IN",
+      customerId: cust,
+      name: nameOf(cust),
+      guests,
+      startedAt: at(from),
+      endedAt: at(to),
+      paid: true,
+    })
+    addAlloc({
+      tableId: T(code),
+      kind: "USAGE",
+      visitId: v.id,
+      startsAt: at(from),
+      bd,
+      releasedAt: at(to),
+      reason: "GUEST_LEFT",
+    })
+  }
+  earlierTurn("A3", C[2], 3, "17:30", "19:20")
+  earlierTurn("B11", C[4], 4, "17:45", "19:40")
+  earlierTurn("A2", C[6], 2, "18:00", "19:55")
 
   /* ---------- waitlist tonight ---------- */
   const addEntry = (p: Partial<WaitlistEntryRow> & { kind: "ADVANCE_RESERVATION" | "WALK_IN"; queuedAt: Date }) => {

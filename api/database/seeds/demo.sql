@@ -110,27 +110,27 @@ INSERT INTO dining_tables
   (201,2,2,5,'A1','Bàn A1 (giả)','TABLE',4,0,64,615,56,34);
 INSERT INTO dining_tables
   (id,organization_id,venue_id,zone_id,code,display_name,kind,capacity,seq_no,status,pos_x,pos_y,width,height) VALUES
-  (101,1,1,4,'BAR01','Ghế Bar 1','BAR_SEAT',1,1,'ACTIVE',176,682,20,20),
-  (102,1,1,4,'BAR02','Ghế Bar 2','BAR_SEAT',1,2,'ACTIVE',176,658,20,20),
-  (103,1,1,4,'BAR03','Ghế Bar 3','BAR_SEAT',1,3,'ACTIVE',176,634,20,20),
-  (104,1,1,4,'BAR04','Ghế Bar 4','BAR_SEAT',1,4,'ACTIVE',176,610,20,20),
-  (105,1,1,4,'BAR05','Ghế Bar 5','BAR_SEAT',1,5,'ACTIVE',176,586,20,20),
-  (106,1,1,4,'BAR06','Ghế Bar 6','BAR_SEAT',1,6,'ACTIVE',176,562,20,20),
-  (107,1,1,4,'BAR07','Ghế Bar 7','BAR_SEAT',1,7,'ACTIVE',176,538,20,20),
-  (108,1,1,4,'BAR08','Ghế Bar 8','BAR_SEAT',1,8,'ACTIVE',176,514,20,20),
-  (109,1,1,4,'BAR09','Ghế Bar 9','BAR_SEAT',1,9,'ACTIVE',176,490,20,20),
-  (110,1,1,4,'BAR10','Ghế Bar 10','BAR_SEAT',1,10,'ACTIVE',176,466,20,20),
-  (111,1,1,4,'BAR11','Ghế Bar 11','BAR_SEAT',1,11,'ACTIVE',176,442,20,20),
-  (112,1,1,4,'BAR12','Ghế Bar 12','BAR_SEAT',1,12,'ACTIVE',176,418,20,20),
-  (113,1,1,4,'BAR13','Ghế Bar 13','BAR_SEAT',1,13,'ACTIVE',176,394,20,20),
-  (114,1,1,4,'BAR14','Ghế Bar 14','BAR_SEAT',1,14,'ACTIVE',176,370,20,20),
-  (115,1,1,4,'BAR15','Ghế Bar 15','BAR_SEAT',1,15,'ACTIVE',200,346,20,20),
-  (116,1,1,4,'BAR16','Ghế Bar 16','BAR_SEAT',1,16,'ACTIVE',229,346,20,20),
-  (117,1,1,4,'BAR17','Ghế Bar 17','BAR_SEAT',1,17,'ACTIVE',259,346,20,20),
-  (118,1,1,4,'BAR18','Ghế Bar 18','BAR_SEAT',1,18,'ACTIVE',288,346,20,20),
-  (119,1,1,4,'BAR19','Ghế Bar 19','BAR_SEAT',1,19,'ACTIVE',317,346,20,20),
-  (120,1,1,4,'BAR20','Ghế Bar 20','BAR_SEAT',1,20,'ACTIVE',347,346,20,20),
-  (121,1,1,4,'BAR21','Ghế Bar 21','BAR_SEAT',1,21,'OUT_OF_SERVICE',376,346,20,20);
+  (101,1,1,4,'BAR01','Ghế Bar 1','BAR_SEAT',1,1,'ACTIVE',190,682,18,18),
+  (102,1,1,4,'BAR02','Ghế Bar 2','BAR_SEAT',1,2,'ACTIVE',190,658,18,18),
+  (103,1,1,4,'BAR03','Ghế Bar 3','BAR_SEAT',1,3,'ACTIVE',190,634,18,18),
+  (104,1,1,4,'BAR04','Ghế Bar 4','BAR_SEAT',1,4,'ACTIVE',190,610,18,18),
+  (105,1,1,4,'BAR05','Ghế Bar 5','BAR_SEAT',1,5,'ACTIVE',190,586,18,18),
+  (106,1,1,4,'BAR06','Ghế Bar 6','BAR_SEAT',1,6,'ACTIVE',190,562,18,18),
+  (107,1,1,4,'BAR07','Ghế Bar 7','BAR_SEAT',1,7,'ACTIVE',190,538,18,18),
+  (108,1,1,4,'BAR08','Ghế Bar 8','BAR_SEAT',1,8,'ACTIVE',190,514,18,18),
+  (109,1,1,4,'BAR09','Ghế Bar 9','BAR_SEAT',1,9,'ACTIVE',190,490,18,18),
+  (110,1,1,4,'BAR10','Ghế Bar 10','BAR_SEAT',1,10,'ACTIVE',190,466,18,18),
+  (111,1,1,4,'BAR11','Ghế Bar 11','BAR_SEAT',1,11,'ACTIVE',190,442,18,18),
+  (112,1,1,4,'BAR12','Ghế Bar 12','BAR_SEAT',1,12,'ACTIVE',190,418,18,18),
+  (113,1,1,4,'BAR13','Ghế Bar 13','BAR_SEAT',1,13,'ACTIVE',190,394,18,18),
+  (114,1,1,4,'BAR14','Ghế Bar 14','BAR_SEAT',1,14,'ACTIVE',190,370,18,18),
+  (115,1,1,4,'BAR15','Ghế Bar 15','BAR_SEAT',1,15,'ACTIVE',214,346,18,18),
+  (116,1,1,4,'BAR16','Ghế Bar 16','BAR_SEAT',1,16,'ACTIVE',243,346,18,18),
+  (117,1,1,4,'BAR17','Ghế Bar 17','BAR_SEAT',1,17,'ACTIVE',273,346,18,18),
+  (118,1,1,4,'BAR18','Ghế Bar 18','BAR_SEAT',1,18,'ACTIVE',302,346,18,18),
+  (119,1,1,4,'BAR19','Ghế Bar 19','BAR_SEAT',1,19,'ACTIVE',331,346,18,18),
+  (120,1,1,4,'BAR20','Ghế Bar 20','BAR_SEAT',1,20,'ACTIVE',361,346,18,18),
+  (121,1,1,4,'BAR21','Ghế Bar 21','BAR_SEAT',1,21,'OUT_OF_SERVICE',390,346,18,18);
 INSERT INTO table_combinations (id,organization_id,venue_id,code,display_name) VALUES
   (1,1,1,'B1','B1 (B11 + B12)'), (2,1,1,'B2','B2 (B21 + B22)'), (3,1,1,'A6L','A6 dài (A6 + A7)');
 INSERT INTO table_combination_members (venue_id,combination_id,table_id) VALUES
