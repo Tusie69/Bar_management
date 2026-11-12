@@ -9,11 +9,17 @@ export interface StatusLegendProps {
   tables: (TableView & { state?: TableLiveState; liveState?: TableLiveState; claim?: FloorTableState["claim"] })[]
   states?: Map<number, FloorTableState>
   className?: string
+  /**
+   * "card": the full legend card (title + status chips + ⓘ).
+   * "badge": just a round ⓘ button to float over the floor plan; the status
+   * counts move inside its popover so they stop eating screen height.
+   */
+  variant?: "card" | "badge"
 }
 
 export type { LegendStatusKey }
 
-export function StatusLegend({ tables = [], states, className }: StatusLegendProps) {
+export function StatusLegend({ tables = [], states, className, variant = "card" }: StatusLegendProps) {
   const [popoverOpen, setPopoverOpen] = useState(false)
   // The popover renders through the house Popover portal (document.body), so it escapes the
   // legend's stacking context and any clipping ancestor. When the legend lives inside the mobile
@@ -50,36 +56,9 @@ export function StatusLegend({ tables = [], states, className }: StatusLegendPro
     { key: "spare", label: "Sơ cua", count: counts.spare, colorVar: "var(--table-line)", tintVar: "var(--st-free-tint)", isDashed: true },
   ]
 
-  return (
-    <Popover open={popoverOpen} onOpenChange={onOpenChange}>
-      <div
-        className={cn(
-          "relative rounded-xl border border-border/80 bg-card/95 p-2 shadow-2xs backdrop-blur select-none sm:p-2.5",
-          className,
-        )}
-        role="region"
-        aria-label="Chú giải trạng thái bàn"
-      >
-        {/* Title & Popover Button */}
-        <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5 sm:mb-2">
-          <span className="text-[11px] font-bold tracking-wider text-muted-foreground uppercase sm:text-xs">
-            Trạng thái · Số bàn / ghế
-          </span>
-          <PopoverTrigger asChild>
-            <button
-              ref={triggerRef}
-              type="button"
-              className="inline-flex min-h-[44px] items-center gap-1 -my-2.5 rounded-md px-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              aria-label="Ký hiệu: mở bảng chú giải ký hiệu khách và nhóm bàn"
-            >
-              <Info className="size-3.5 shrink-0" />
-              <span>Ký hiệu</span>
-            </button>
-          </PopoverTrigger>
-        </div>
-
-        {/* Chips: 3-column grid on mobile (exact 2 rows of 3), 1 compact row on desktop if it fits */}
-        <div className="grid grid-cols-3 gap-1.5 sm:flex sm:flex-wrap sm:items-center sm:gap-2">
+  /** Chips: 3-column grid on mobile (exact 2 rows of 3), 1 compact row on desktop if it fits */
+  const chipsGrid = (
+    <div className="grid grid-cols-3 gap-1.5 sm:flex sm:flex-wrap sm:items-center sm:gap-2">
           {CHIPS.map((chip) => (
             <div
               key={chip.key}
@@ -109,7 +88,53 @@ export function StatusLegend({ tables = [], states, className }: StatusLegendPro
               <span className="shrink-0 font-bold tabular-nums text-foreground">{chip.count}</span>
             </div>
           ))}
+    </div>
+  )
+
+  return (
+    <Popover open={popoverOpen} onOpenChange={onOpenChange}>
+      {variant === "badge" ? (
+        <PopoverTrigger asChild>
+          <button
+            ref={triggerRef}
+            type="button"
+            aria-label="Ký hiệu: mở bảng chú giải trạng thái, ký hiệu khách và nhóm bàn"
+            className={cn(
+              "grid size-9 place-items-center rounded-full border border-border/80 bg-background/95 text-tx-strong shadow-lg backdrop-blur transition-transform active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-slate-700/80 dark:bg-[#1e232d]/95",
+              className,
+            )}
+          >
+            <Info className="size-5 shrink-0" aria-hidden />
+          </button>
+        </PopoverTrigger>
+      ) : (
+        <div
+          className={cn(
+            "relative rounded-xl border border-border/80 bg-card/95 p-2 shadow-2xs backdrop-blur select-none sm:p-2.5",
+            className,
+          )}
+          role="region"
+          aria-label="Chú giải trạng thái bàn"
+        >
+          <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5 sm:mb-2">
+            <span className="text-[11px] font-bold tracking-wider text-muted-foreground uppercase sm:text-xs">
+              Trạng thái · Số bàn / ghế
+            </span>
+            <PopoverTrigger asChild>
+              <button
+                ref={triggerRef}
+                type="button"
+                className="inline-flex min-h-[44px] items-center gap-1 -my-2.5 rounded-md px-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                aria-label="Ký hiệu: mở bảng chú giải ký hiệu khách và nhóm bàn"
+              >
+                <Info className="size-3.5 shrink-0" />
+                <span>Ký hiệu</span>
+              </button>
+            </PopoverTrigger>
+          </div>
+          {chipsGrid}
         </div>
+      )}
 
       {/* Popover dialog: portalled by the house Popover (Radix) - focus, Esc, outside and placement */}
       <PopoverContent
@@ -138,6 +163,14 @@ export function StatusLegend({ tables = [], states, className }: StatusLegendPro
           </div>
 
           <div className="space-y-3 text-xs">
+            {/* Status counts live here in badge mode: off the plan, inside the ⓘ popup */}
+            {variant === "badge" ? (
+              <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
+                <div className="mb-2 font-semibold text-foreground">Trạng thái · Số bàn / ghế</div>
+                {chipsGrid}
+              </div>
+            ) : null}
+
             {/* Customer flags */}
             <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
               <div className="mb-2 font-semibold text-foreground">
@@ -193,7 +226,6 @@ export function StatusLegend({ tables = [], states, className }: StatusLegendPro
             </button>
           </div>
       </PopoverContent>
-    </div>
     </Popover>
   )
 }
