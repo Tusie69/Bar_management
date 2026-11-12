@@ -1,4 +1,4 @@
-import { Menu, MessageSquareText, Users, X } from "lucide-react"
+import { Menu, MessageSquareText, X } from "lucide-react"
 import { useMemo, useState } from "react"
 import type { TableLiveState, TableView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
@@ -11,6 +11,7 @@ import { FloorCanvas } from "../floor/floor-canvas"
 import { SpareButton } from "../floor/spare-button"
 import { LayoutActions, LayoutMergeControls } from "../floor/layout-merge-controls"
 import { independentLayoutEnabled, layoutMembers, toggleLayoutTable } from "../floor/layout-merge"
+import { GuestCountCard } from "../floor/guest-count-card"
 import { StatusLegend } from "../floor/status-legend"
 import { CallCustomerControl } from "../bookings/call-customer"
 import { groupCode, groupDisplayName } from "../floor/floor-visual-rules"
@@ -226,15 +227,11 @@ export function MapScreen({
                       className="pointer-events-none absolute"
                       style={{ left: r.left, top: r.top, width: r.width, height: r.height }}
                     >
-                      <button
-                        type="button"
-                        onClick={m.openCount}
-                        title="Đếm khách và xem báo cáo hiện có"
-                        className="pointer-events-auto absolute top-2 left-2 inline-flex h-9 items-center gap-1.5 rounded-xl border border-border/80 bg-background/95 px-2.5 text-[13px] font-semibold text-tx-strong shadow-lg backdrop-blur active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
-                      >
-                        <Users className="size-4 shrink-0" aria-hidden />
-                        <span>Đếm khách</span>
-                      </button>
+                      <GuestCountCard
+                        reservations={m.reservations}
+                        onOpen={m.openCount}
+                        className="pointer-events-auto absolute top-2 left-2"
+                      />
                       <div className="pointer-events-auto absolute top-2 right-2 flex flex-col items-end gap-1.5">
                         <StatusLegend variant="badge" tables={m.model.tables} states={m.model.states} />
                         <ReceptionDatePicker
