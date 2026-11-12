@@ -10,7 +10,7 @@
 -- through the backend before enabling login. RBAC comes from the migration.
 -- shortcut: phone fields are NULL because backend encryption keys/helpers do
 -- not exist here yet; add encrypted synthetic phones through that backend.
--- Layout: 23 tables + 21 bar seats, including 3 spare tables, BAR21 unavailable.
+-- Layout: 23 tables + 21 bar seats, including 1 spare table (A10), BAR21 unavailable.
 -- B1/B2/A6L are presets, not physical tables; their catalogue remains provisional.
 
 SET NAMES utf8mb4;
@@ -79,7 +79,9 @@ FROM memberships m JOIN roles r ON r.code = CASE m.user_id
 
 -- Same IDs/order and geometry as src/domain/venue-layout.ts + mock/seed.ts.
 INSERT INTO zones (id, organization_id, venue_id, code, name, is_bookable, is_waiting_area, sort_order) VALUES
-  (1,1,1,'C','Khu C',0,1,0), (2,1,1,'B','Khu B',1,0,1),
+  -- Khu C nhận đặt bàn (migration 0019): is_bookable=1 nên is_waiting_area phải là 0
+  -- theo ck_zones_waiting_not_bookable. Hiện 21GAM không còn khu chờ theo cờ.
+  (1,1,1,'C','Khu C',1,0,0), (2,1,1,'B','Khu B',1,0,1),
   (3,1,1,'A','Khu A',1,0,2), (4,1,1,'BAR','Quầy Bar',1,0,3),
   (5,2,2,'A','Khu A (giả)',1,0,0);
 INSERT INTO dining_tables
@@ -103,8 +105,9 @@ INSERT INTO dining_tables
   (17,1,1,2,'B22','Bàn B22','TABLE',4,0,257,189,46,34),
   (18,1,1,2,'B11','Bàn B11','TABLE',4,0,257,231,46,34),
   (19,1,1,2,'B12','Bàn B12','TABLE',4,0,257,273,46,34),
-  (20,1,1,1,'C4','Bàn C4','TABLE',4,1,176,26,40,32),
-  (21,1,1,1,'C5','Bàn C5','TABLE',4,1,176,64,40,32),
+  -- C4, C5 là bàn thường (mục 3.7 + HU-32), không phải bàn sơ cua.
+  (20,1,1,1,'C4','Bàn C4','TABLE',4,0,176,26,40,32),
+  (21,1,1,1,'C5','Bàn C5','TABLE',4,0,176,64,40,32),
   (22,1,1,1,'C1','Bàn C1','TABLE',4,0,220,26,40,32),
   (23,1,1,1,'C2','Bàn C2','TABLE',4,0,264,26,40,32),
   (201,2,2,5,'A1','Bàn A1 (giả)','TABLE',4,0,64,615,56,34);
@@ -337,7 +340,8 @@ UPDATE venues SET change_seq=8 WHERE id=1;
 INSERT INTO _gam_seed_guard VALUES (IF(
   (SELECT COUNT(*) FROM dining_tables WHERE venue_id=1) = 44
   AND (SELECT COUNT(*) FROM dining_tables WHERE venue_id=1 AND kind='BAR_SEAT') = 21
-  AND (SELECT COUNT(*) FROM dining_tables WHERE venue_id=1 AND is_spare=1) = 3
+  -- Chỉ còn A10 sơ cua: C4, C5 là bàn thường từ migration 0019.
+  AND (SELECT COUNT(*) FROM dining_tables WHERE venue_id=1 AND is_spare=1) = 1
   AND (SELECT COUNT(*) FROM membership_roles) = 6
   AND (SELECT COUNT(DISTINCT status) FROM reservations) = 4
   AND (SELECT COUNT(DISTINCT status) FROM waitlist_entries) = 7

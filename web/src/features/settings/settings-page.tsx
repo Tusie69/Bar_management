@@ -446,7 +446,6 @@ function FloorSettings({ readOnly }: { readOnly: boolean }) {
             <Row
               key={z.id}
               label={z.name}
-              pending={z.code === "C"}
               hint={
                 z.isWaitingArea
                   ? "Khu chờ: không nhận đặt bàn, không mở bàn."
