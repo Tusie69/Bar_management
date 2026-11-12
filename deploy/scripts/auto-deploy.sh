@@ -39,8 +39,17 @@ die() { log "THẤT BẠI: $*"; exit 1; }
 as_app() { sudo -u "$APP_USER" env HOME="$(getent passwd "$APP_USER" | cut -d: -f6)" "$@"; }
 
 # Hai lần chạy chồng nhau sẽ build cùng một cây thư mục và phá nhau.
+#
+# Timer chạy mỗi 2 phút nên nếu bận thì bỏ qua là đúng: lần sau nó gọi lại
+# ngay. Nhưng người gõ lệnh bằng tay thì không có "lần sau", mà lần timer chạy
+# không-làm-gì chỉ giữ lock khoảng một giây — thua cuộc đua đó rồi bị từ chối
+# là vô lý. Nên chạy tay thì đợi, chạy tự động thì bỏ qua.
 exec 9>/var/lock/21gam-deploy.lock
-flock -n 9 || { log "một lần triển khai khác đang chạy, bỏ qua"; exit 0; }
+if [ -n "${DEPLOY_FORCE:-}${DEPLOY_REBUILD:-}" ]; then
+  flock -w 600 9 || { log "chờ 10 phút mà lần triển khai khác vẫn chưa xong, bỏ cuộc"; exit 1; }
+else
+  flock -n 9 || { log "một lần triển khai khác đang chạy, bỏ qua"; exit 0; }
+fi
 
 hour=$(date +%-H)
 in_quiet_window() {
