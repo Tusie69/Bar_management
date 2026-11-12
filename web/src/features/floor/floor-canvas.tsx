@@ -25,6 +25,7 @@ import type {
   ZoneView,
 } from "@/domain/models"
 import {
+  BAR_SEAT_SIZE,
   FIXTURES,
   FLOOR_H,
   FLOOR_W,
@@ -98,11 +99,16 @@ interface View {
 const PAD = 18
 const TABLE_SPEC_BY_CODE = new Map(TABLES.map((s) => [s.code, s]))
 
-/** Ensure tables and Bar seats use the grown J1 dimensions even if HTTP catalog sends older DB widths. */
+/**
+ * Ensure tables and Bar seats use the dimensions the layout declares, even if an
+ * HTTP catalog still sends older DB widths. The seat floor is BAR_SEAT_SIZE, not
+ * a constant: a hardcoded 24 here silently overrode the declared 18 and left the
+ * seats touching, because the seat pitch is 24 as well.
+ */
 function normalizeTableGeometry(t: TableView): TableView {
   if (t.kind === "BAR_SEAT") {
-    if (t.w >= 24 && t.h >= 24) return t
-    return { ...t, w: Math.max(t.w, 24), h: Math.max(t.h, 24) }
+    if (t.w >= BAR_SEAT_SIZE && t.h >= BAR_SEAT_SIZE) return t
+    return { ...t, w: Math.max(t.w, BAR_SEAT_SIZE), h: Math.max(t.h, BAR_SEAT_SIZE) }
   }
   const spec = TABLE_SPEC_BY_CODE.get(t.code)
   if (!spec) return t
@@ -631,9 +637,9 @@ export function FloorCanvas(props: Props) {
           {onOpenWaitlist && isAllZone ? (
             <foreignObject
               x={waitlistPos.x - waitlistPos.width / 2}
-              y={waitlistPos.y - waitlistPos.height / 2}
+              y={waitlistPos.y - waitlistPos.touchHeight / 2}
               width={waitlistPos.width}
-              height={waitlistPos.height}
+              height={waitlistPos.touchHeight}
               className="overflow-visible"
               pointerEvents="auto"
             >
@@ -645,11 +651,17 @@ export function FloorCanvas(props: Props) {
                   if (!isSuppressed(suppressClick)) onOpenWaitlist()
                 }}
                 aria-label={waitingCount !== undefined ? `Bàn chờ, ${waitingCount} khách đang chờ` : "Bàn chờ"}
-                className="group flex h-10 w-full items-center justify-center gap-2 rounded-full border border-border/80 bg-background/95 px-3 py-1.5 text-foreground shadow-lg backdrop-blur transition-transform hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-[#1e232d]/95 dark:border-slate-700/80"
+                style={{ height: waitlistPos.touchHeight, width: waitlistPos.width }}
+                className="group flex items-center justify-center border-0 bg-transparent p-0"
               >
-                <List className="size-4 shrink-0 text-foreground" />
-                <span className="text-xs font-bold whitespace-nowrap">
-                  {waitingCount && waitingCount > 0 ? `Bàn chờ +${waitingCount}` : "Bàn chờ"}
+                <span
+                  style={{ height: waitlistPos.height, width: waitlistPos.width }}
+                  className="pointer-events-none flex items-center justify-center gap-2 rounded-full border border-border/80 bg-background/95 px-3 text-foreground shadow-lg backdrop-blur transition-transform group-active:scale-95 dark:bg-[#1e232d]/95 dark:border-slate-700/80"
+                >
+                  <List className="size-4 shrink-0 text-foreground" />
+                  <span className="text-xs font-bold whitespace-nowrap">
+                    {waitingCount && waitingCount > 0 ? `Bàn chờ +${waitingCount}` : "Bàn chờ"}
+                  </span>
                 </span>
               </button>
             </foreignObject>

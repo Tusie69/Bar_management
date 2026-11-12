@@ -4,7 +4,9 @@
  * Source of truth for positions: the mobile floor-plan mockup approved on
  * 12/11/2026 (frame 374 x 732), mapped into this space with a +20 offset so
  * the venue wall lands on the frame the renderer draws at
- * (x 20, y 20, w FLOOR_W-40, h FLOOR_H-20).
+ * (x 20, y 20, w FLOOR_W-40, h FLOOR_H-20). The room was then widened by 28
+ * units on the right and the bar block moved 14 right, so the plan covers more
+ * of a phone's width and the counter is not pressed against Khu A.
  *
  * CAUTION: these are NOT the surveyed coordinates from the product brief any
  * more. The plan is laid out for a phone screen, so distances on it no longer
@@ -14,17 +16,23 @@
  * Edit this file only: the renderer draws whatever is declared here.
  */
 
-export const FLOOR_W = 414
+export const FLOOR_W = 442
 export const FLOOR_H = 752
 
 /**
  * Inner face of the venue wall. Chrome that must read as being "inside the
  * plan" (Đếm khách, the date button, the legend) is positioned against this.
  */
-export const WALL_BOUNDS = { x: 22, y: 22, w: 370, h: 702 } as const
+export const WALL_BOUNDS = { x: 22, y: 22, w: 398, h: 702 } as const
 
-/** Waitlist marker, placed by hand in the gap between Khu B and Khu A. */
-export const WAITLIST_MARKER = { x: 112, y: 300, width: 112, height: 34 } as const
+/**
+ * Waitlist marker, placed by hand in the gap between Khu B and Khu A.
+ * `height` is the pill people see; `touchHeight` is the invisible area around it
+ * that catches the tap, because mobile.css enforces a 44px minimum on buttons
+ * inside a foreignObject. Keeping them apart lets the pill stay clear of the
+ * tables above and below while the target stays big enough to hit.
+ */
+export const WAITLIST_MARKER = { x: 112, y: 295, width: 112, height: 30, touchHeight: 44 } as const
 
 export type ZoneCode = "A" | "B" | "C" | "BAR"
 
@@ -48,6 +56,9 @@ export interface BarSeatSpec {
   x: number
   y: number
 }
+
+/** Seat diameter. Pitch is 24, so 18 leaves a 6-unit gap between neighbours. */
+export const BAR_SEAT_SIZE = 18
 
 export interface ZoneSpec {
   code: ZoneCode
@@ -154,27 +165,27 @@ export const TABLES: TableSpec[] = [
  * left to right, so together they wrap the counter.
  */
 export const BAR_SEATS: BarSeatSpec[] = [
-  { no: 1, x: 176, y: 682 },
-  { no: 2, x: 176, y: 658 },
-  { no: 3, x: 176, y: 634 },
-  { no: 4, x: 176, y: 610 },
-  { no: 5, x: 176, y: 586 },
-  { no: 6, x: 176, y: 562 },
-  { no: 7, x: 176, y: 538 },
-  { no: 8, x: 176, y: 514 },
-  { no: 9, x: 176, y: 490 },
-  { no: 10, x: 176, y: 466 },
-  { no: 11, x: 176, y: 442 },
-  { no: 12, x: 176, y: 418 },
-  { no: 13, x: 176, y: 394 },
-  { no: 14, x: 176, y: 370 },
-  { no: 15, x: 200, y: 346 },
-  { no: 16, x: 229, y: 346 },
-  { no: 17, x: 259, y: 346 },
-  { no: 18, x: 288, y: 346 },
-  { no: 19, x: 317, y: 346 },
-  { no: 20, x: 347, y: 346 },
-  { no: 21, x: 376, y: 346 },
+  { no: 1, x: 190, y: 682 },
+  { no: 2, x: 190, y: 658 },
+  { no: 3, x: 190, y: 634 },
+  { no: 4, x: 190, y: 610 },
+  { no: 5, x: 190, y: 586 },
+  { no: 6, x: 190, y: 562 },
+  { no: 7, x: 190, y: 538 },
+  { no: 8, x: 190, y: 514 },
+  { no: 9, x: 190, y: 490 },
+  { no: 10, x: 190, y: 466 },
+  { no: 11, x: 190, y: 442 },
+  { no: 12, x: 190, y: 418 },
+  { no: 13, x: 190, y: 394 },
+  { no: 14, x: 190, y: 370 },
+  { no: 15, x: 214, y: 346 },
+  { no: 16, x: 243, y: 346 },
+  { no: 17, x: 273, y: 346 },
+  { no: 18, x: 302, y: 346 },
+  { no: 19, x: 331, y: 346 },
+  { no: 20, x: 361, y: 346 },
+  { no: 21, x: 390, y: 346 },
 ]
 
 export const barSeatCode = (no: number) => `BAR${String(no).padStart(2, "0")}`
@@ -212,7 +223,7 @@ export const ZONES: ZoneSpec[] = [
     isBookable: true,
     isWaitingArea: false,
   },
-  { code: "BAR", name: "Quầy Bar", rects: [[160, 330, 230, 370]], label: null, isBookable: true, isWaitingArea: false },
+  { code: "BAR", name: "Quầy Bar", rects: [[174, 330, 240, 370]], label: null, isBookable: true, isWaitingArea: false },
 ]
 
 /**
@@ -232,7 +243,7 @@ export const FIXTURES: FixtureSpec[] = [
     id: "outer-wall",
     kind: "wall",
     // Building outline with the entrance gap on the bottom wall (x 100..172).
-    d: "M100 724 H22 V22 H392 V724 H172",
+    d: "M100 724 H22 V22 H420 V724 H172",
     estimated: true,
   },
   {
@@ -248,9 +259,9 @@ export const FIXTURES: FixtureSpec[] = [
     id: "bar-counter",
     kind: "bar-counter",
     // Straight counter; seats 1-14 sit to its left and 15-21 above it.
-    d: "M190 360 H216 V694 H190 Z",
+    d: "M204 360 H230 V694 H204 Z",
     label: "Quầy Bar",
-    labelAt: { x: 203, y: 527, rotate: -90 },
+    labelAt: { x: 217, y: 527, rotate: -90 },
     estimated: true,
   },
 ]

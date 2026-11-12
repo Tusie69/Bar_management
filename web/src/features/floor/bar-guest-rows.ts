@@ -34,7 +34,7 @@ export interface BuildBarGuestRowsOptions {
  * x = 426, y = 432, width = 112 (426..538), height = 284 (432..716).
  */
 export const DEFAULT_BAR_GUEST_LIST_BOUNDS = {
-  x: 220,
+  x: 234,
   y: 360,
   width: 166,
   height: 334,

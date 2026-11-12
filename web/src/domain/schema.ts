@@ -226,6 +226,8 @@ export interface ReservationRow extends Versioned {
   customerClassification: BookingClassification
   guestType?: "REGULAR" | "NEW" | null
   isBirthday?: boolean
+  /** Extra cell icons beyond the classification flags, e.g. VIP, DESIGNATED. */
+  iconKeys?: string[]
   status: ReservationStatus
   note: string | null
   visitId: Id | null
