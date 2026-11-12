@@ -333,7 +333,7 @@ export function MapScreen({
         <section
           role="dialog"
           aria-label="Đặt bàn trên sơ đồ"
-          className="z-[12] flex max-h-[52dvh] shrink-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)]"
+          className="z-[12] flex max-h-[62dvh] shrink-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)]"
         >
           <div className="flex shrink-0 justify-center pt-2" aria-hidden>
             <span className="h-[5px] w-9 rounded-full bg-strong" />

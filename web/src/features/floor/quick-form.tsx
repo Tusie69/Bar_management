@@ -7,7 +7,7 @@ import { guestCount, guestError, guestValueFrom, type GuestValue } from "@/domai
  * waitlist entry; walk-in with tables -> seatWalkIn; walk-in without tables -> WALK_IN waitlist.
  * The backend stays the final check against double booking (one active allocation per table per business date).
  */
-import { AlertCircle, Check, LoaderCircle, MousePointerClick, X } from "lucide-react"
+import { AlertCircle, Check, ChevronDown, LoaderCircle, MousePointerClick, X } from "lucide-react"
 import { useState, type KeyboardEvent } from "react"
 import {
   BookingTimePicker,
@@ -173,6 +173,8 @@ export function QuickForm({
   const [classification, setClassification] = useState<BookingClassification>("UNCLASSIFIED")
   const [isBirthday, setIsBirthday] = useState(false)
   const [iconKeys, setIconKeys] = useState<string[]>([])
+  /** Phone only: the seven date chips stay folded until the night changes. */
+  const [dateOpen, setDateOpen] = useState(false)
   const [honorific, setHonorific] = useState<Honorific | null>(null)
   const [tried, setTried] = useState(false)
   const [guest, setGuest] = useState<GuestValue>(() => guestValueFrom(draft.party))
@@ -419,8 +421,11 @@ export function QuickForm({
 
       <div
         className={cn(
-          "flex min-h-0 flex-1 scrollbar-thin flex-col gap-4 overflow-x-hidden overflow-y-auto overscroll-contain pt-3 pb-4",
-          compact ? "px-4" : "px-5",
+          "flex min-h-0 flex-1 scrollbar-thin flex-col overflow-x-hidden overflow-y-auto overscroll-contain pt-3 pb-4",
+          // Eight sections at gap-4 spend 112px on air alone. On the phone the
+          // sheet is only ~440px tall, so that air is a quarter of what the
+          // receptionist can see.
+          compact ? "gap-2.5 px-4" : "gap-4 px-5",
           collapsed && "hidden",
         )}
       >
@@ -504,27 +509,52 @@ export function QuickForm({
           {isB ? (
             <>
               <div className="flex flex-col gap-1.5">
-                <span className={label12}>Ngày</span>
-                <div role="radiogroup" aria-label="Ngày" className="flex flex-wrap gap-1.5">
-                  {dates.map((bd, i) => {
-                    const on = draft.date === bd
-                    return (
-                      <button
-                        key={bd}
-                        type="button"
-                        role="radio"
-                        aria-checked={on}
-                        aria-label={dateLabel(bd, i)}
-                        className={chip(on)}
-                        onClick={() => ui.setDraft({ date: bd })}
-                      >
-                        {dateLabel(bd, i)}
-                      </button>
-                    )
-                  })}
-                </div>
+                {/* Seven date chips wrap to three rows and cost 166px. On the
+                    phone the date is almost always the one already showing on
+                    the plan, so it collapses to a single row that opens the
+                    chips when the booking really is for another night. */}
+                {compact && !dateOpen ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={label12}>Ngày</span>
+                    <button
+                      type="button"
+                      onClick={() => setDateOpen(true)}
+                      aria-expanded={false}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-sm border border-strong bg-background px-3 text-sm font-medium"
+                    >
+                      {dateLabel(draft.date, dates.indexOf(draft.date))}
+                      <ChevronDown className="size-4 text-tx-2" aria-hidden />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <span className={label12}>Ngày</span>
+                    <div role="radiogroup" aria-label="Ngày" className="flex flex-wrap gap-1.5">
+                      {dates.map((bd, i) => {
+                        const on = draft.date === bd
+                        return (
+                          <button
+                            key={bd}
+                            type="button"
+                            role="radio"
+                            aria-checked={on}
+                            aria-label={dateLabel(bd, i)}
+                            className={chip(on)}
+                            onClick={() => {
+                              ui.setDraft({ date: bd })
+                              if (compact) setDateOpen(false)
+                            }}
+                          >
+                            {dateLabel(bd, i)}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
               <BookingTimePicker
+                compact={compact}
                 date={draft.date}
                 value={draft.time}
                 now={now}

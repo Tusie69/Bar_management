@@ -222,6 +222,7 @@ export function BookingTimePicker({
   error,
   legacyValue,
   quickTimes = [],
+  compact = false,
 }: {
   date: BusinessDate
   value: string
@@ -233,6 +234,8 @@ export function BookingTimePicker({
   quickTimes?: readonly string[]
   /** Existing out-of-window value: display it explicitly and preserve it until staff selects a valid time. */
   legacyValue?: string | null
+  /** Phone sheet: put the quick times and the wheel toggle on one row. */
+  compact?: boolean
 }) {
   const id = useId()
   const [open, setOpen] = useState(false)
@@ -243,12 +246,14 @@ export function BookingTimePicker({
   const valid = isBookingTime(value)
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className={cn("flex flex-col", compact ? "gap-1.5" : "gap-2")}>
       <div className="flex items-baseline justify-between gap-2">
         <span id={`${id}-label`} className="text-xs text-tx-2">
           Giờ khách dự kiến đến
         </span>
-        <span className="tnum text-xs text-tx-2">19:00 đến 01:00 · phút cách 5</span>
+        <span className="tnum text-xs text-tx-2">
+          {compact ? "19:00 - 01:00" : "19:00 đến 01:00 · phút cách 5"}
+        </span>
       </div>
       {legacyValue ? (
         <p className="rounded-sm border border-st-late/40 bg-st-late-tint px-3 py-2 text-xs text-st-late-ink">
@@ -257,7 +262,11 @@ export function BookingTimePicker({
         </p>
       ) : null}
       {quick.length ? (
-        <div role="group" aria-label="Giờ nhanh" className="grid grid-cols-4 gap-1.5">
+        <div
+          role="group"
+          aria-label="Giờ nhanh"
+          className={cn("grid gap-1.5", compact && quick.length <= 4 ? "grid-cols-5" : "grid-cols-4")}
+        >
           {quick.map((time) => (
             <button
               key={time}
@@ -270,22 +279,36 @@ export function BookingTimePicker({
               {time}
             </button>
           ))}
+          {compact && quick.length <= 4 ? (
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-label={`Chọn giờ bằng con lăn, đang chọn ${value || "chưa có"}`}
+              onClick={() => setOpen((v) => !v)}
+              className="flex h-11 items-center justify-center gap-1 rounded-sm border border-strong bg-background text-sm font-medium"
+            >
+              <Clock className="size-4 text-tx-2" aria-hidden />
+              <ChevronDown className={cn("size-3.5 text-tx-2 transition-transform", open && "rotate-180")} aria-hidden />
+            </button>
+          ) : null}
         </div>
       ) : null}
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-label={`Chọn giờ bằng con lăn, đang chọn ${value || "chưa có"}`}
-        onClick={() => setOpen((v) => !v)}
-        className="flex h-11 items-center justify-between px-3 rounded-sm border border-strong bg-background text-sm font-medium"
-      >
-        <div className="flex items-center gap-2">
-          <Clock className="size-4 text-tx-2" aria-hidden />
-          <span className="tnum text-base font-semibold">{value || "--:--"}</span>
-          <span className="text-tx-2">Chọn bằng con lăn</span>
-        </div>
-        <ChevronDown className={cn("size-4 text-tx-2 transition-transform", open && "rotate-180")} aria-hidden />
-      </button>
+      {compact && quick.length <= 4 ? null : (
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-label={`Chọn giờ bằng con lăn, đang chọn ${value || "chưa có"}`}
+          onClick={() => setOpen((v) => !v)}
+          className="flex h-11 items-center justify-between px-3 rounded-sm border border-strong bg-background text-sm font-medium"
+        >
+          <div className="flex items-center gap-2">
+            <Clock className="size-4 text-tx-2" aria-hidden />
+            <span className="tnum text-base font-semibold">{value || "--:--"}</span>
+            <span className="text-tx-2">Chọn bằng con lăn</span>
+          </div>
+          <ChevronDown className={cn("size-4 text-tx-2 transition-transform", open && "rotate-180")} aria-hidden />
+        </button>
+      )}
       {open ? (
         <div className="flex gap-2">
           <Wheel
