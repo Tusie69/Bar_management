@@ -1,5 +1,5 @@
-import { Menu, X } from "lucide-react"
-import { useMemo } from "react"
+import { Menu, MessageSquareText, Users, X } from "lucide-react"
+import { useMemo, useState } from "react"
 import type { TableLiveState, TableView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAvailability } from "@/hooks/use-data"
@@ -14,14 +14,15 @@ import { independentLayoutEnabled, layoutMembers, toggleLayoutTable } from "../f
 import { StatusLegend } from "../floor/status-legend"
 import { CallCustomerControl } from "../bookings/call-customer"
 import { groupCode, groupDisplayName } from "../floor/floor-visual-rules"
-import { ReceptionControls } from "../floor/reception-controls"
+import { ReceptionDatePicker, ReceptionSearchField, ReceptionSearchResults } from "../floor/reception-controls"
+import { ZaloBookingExport } from "../reservations/zalo-booking-export"
 import { QuickForm } from "../floor/quick-form"
 import { isWaitingForTable } from "../floor/reception-rules"
 import { useBookingDraft } from "../floor/use-booking-draft"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
 import { codesOf, duration, type Tone, toneStyle } from "./model"
-import { BellButton, PlainHeader, UndoRedoButtons } from "./ui"
+import { PlainHeader, UndoRedoButtons } from "./ui"
 
 const ZONE_TABS: [ZoneCode | "ALL", string][] = [
   ["ALL", "Tất cả"],
@@ -60,6 +61,10 @@ export function MapScreen({
   const layoutPick = useUi((s) => s.pick?.intent === "layout")
   const layoutIds = useUi((s) => s.pickSelection)
   const waitingCount = (m.waitlist ?? []).filter(isWaitingForTable).length
+  const [exportOpen, setExportOpen] = useState(false)
+  const canExport = m.can("customer.view_masked")
+  // The plan owns the screen: its own controls float on it instead of stacking above it.
+  const planChrome = receptionist && !pick && !draft
 
   const isAssignPick = !!pick?.targetExpectedAt
   const pickAvail = useAvailability(isAssignPick ? pick.targetExpectedAt! : null, pick?.targetParty ?? 2)
@@ -88,8 +93,10 @@ export function MapScreen({
   return (
     <main className="contents">
       {receptionist ? (
-        <header className="z-[5] shrink-0 bg-background px-4 pt-[var(--top-safe)]">
-          <div className="flex h-[48px] items-center gap-3">
+        <header className="z-[5] shrink-0 bg-background px-3 pt-[var(--top-safe)]">
+          {/* A single 48px row is the whole fixed chrome: menu, search, export.
+              Undo/redo, date, Đếm khách and ⓘ float on the plan itself. */}
+          <div className="flex h-[48px] items-center gap-2">
             <button
               type="button"
               onClick={m.openAccount}
@@ -98,30 +105,38 @@ export function MapScreen({
             >
               <Menu className="size-5" />
             </button>
-            <h1 className="m-0 min-w-0 flex-1 truncate text-[22px] font-semibold text-tx-strong">Sơ đồ bàn</h1>
-            <UndoRedoButtons />
-            <BellButton />
+            {planChrome ? (
+              <ReceptionSearchField search={search} />
+            ) : (
+              <h1 className="m-0 min-w-0 flex-1 truncate text-[18px] font-semibold text-tx-strong">Sơ đồ bàn</h1>
+            )}
+            <button
+              type="button"
+              disabled={!canExport}
+              onClick={() => setExportOpen(true)}
+              aria-label="Xuất text Zalo"
+              title="Xuất text booking để gửi nhóm Zalo"
+              className={cn(
+                "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-3 text-[14px] font-semibold text-primary-foreground",
+                !canExport && "cursor-not-allowed opacity-50",
+              )}
+            >
+              <MessageSquareText className="size-4 shrink-0" aria-hidden />
+              <span>Xuất Text</span>
+            </button>
           </div>
-          {!pick && !draft ? (
-            <div className="pb-1.5">
-              <ReceptionControls
-                search={search}
-                onCount={m.openCount}
-                onOpenBooking={m.openDetail}
-                onDateChange={() => onSelect(null)}
-              />
-            </div>
-          ) : null}
+          {planChrome ? <ReceptionSearchResults search={search} onOpenBooking={m.openDetail} /> : null}
         </header>
       ) : (
         <PlainHeader
           title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"}
         />
       )}
-      {!pick && !(receptionist && draft) ? (
+      {/* The receptionist works on the whole floor and reads the counts inside the ⓘ popup,
+          so neither the zone tabs nor the legend card take screen height from the plan. */}
+      {!receptionist && !pick ? (
         <div className="z-[4] flex shrink-0 flex-col gap-1.5 bg-background px-4 pt-0 pb-1.5">
-          {/* The receptionist always works on the whole floor; zone tabs stay for other roles. */}
-          {receptionist ? null : (
+          {(
             <div
               role="tablist"
               aria-label="Lọc khu"
@@ -150,7 +165,9 @@ export function MapScreen({
           {draft ? null : <StatusLegend tables={m.model.tables} states={m.model.states} />}
         </div>
       ) : null}
-      {!pick ? (
+      {/* Idle "Ghép bàn" button is off the receptionist's screen: merging starts from the
+          table sheet. The active merge panel still shows so nobody gets stuck in pick mode. */}
+      {!pick && (!receptionist || layoutPick) ? (
         <div className="shrink-0 px-3 pb-1">
           <LayoutMergeControls model={m.model} />
         </div>
@@ -214,6 +231,29 @@ export function MapScreen({
             }
           />
         ) : null}
+        {planChrome ? (
+          <>
+            <button
+              type="button"
+              onClick={m.openCount}
+              title="Đếm khách và xem báo cáo hiện có"
+              className="absolute top-2 left-2 inline-flex h-9 items-center gap-1.5 rounded-xl border border-border/80 bg-background/95 px-2.5 text-[13px] font-semibold text-tx-strong shadow-lg backdrop-blur active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
+            >
+              <Users className="size-4 shrink-0" aria-hidden />
+              <span>Đếm khách</span>
+            </button>
+            <div className="absolute top-2 right-2 flex items-center gap-1.5">
+              <ReceptionDatePicker
+                onDateChange={() => onSelect(null)}
+                className="[&>button]:h-9 [&>button]:min-h-[36px] [&>button]:px-2.5 [&>button]:shadow-lg"
+              />
+              <StatusLegend variant="badge" tables={m.model.tables} states={m.model.states} />
+            </div>
+            <div className="absolute bottom-2 left-2 flex items-center gap-1">
+              <UndoRedoButtons glass />
+            </div>
+          </>
+        ) : null}
       </div>
       {pick ? (
         <div className="z-[12] flex shrink-0 flex-col gap-2.5 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-4 shadow-[var(--shadow-float)]">
@@ -260,6 +300,7 @@ export function MapScreen({
           </div>
         </section>
       ) : null}
+      <ZaloBookingExport businessDate={m.businessDate} open={exportOpen} onOpenChange={setExportOpen} />
     </main>
   )
 }

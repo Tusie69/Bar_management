@@ -200,6 +200,14 @@ export function FloorCanvas(props: Props) {
     }
   }, [])
 
+  // A phone shows the WHOLE floor fitted to the viewport. While that is the
+  // case the camera is locked: no pan, no pinch, no wheel zoom. Lễ tân never
+  // has to drag the map, and the plan never jumps back to the top after an
+  // action. Zone focus still allows the old free camera.
+  const phoneViewport =
+    !compact && (size.w <= 480 || (typeof window !== "undefined" && window.innerWidth < 640 && size.w < 640))
+  const planLocked = phoneViewport && zoneFocus === "ALL"
+
   // Camera fit bounds computed from the REAL tables and bar seats coordinates
   const fitView = useMemo<View>(() => {
     if (!size.w || !size.h) return { k: 1, x: 0, y: 0 }
@@ -211,18 +219,22 @@ export function FloorCanvas(props: Props) {
       h: FLOOR_H - 20,
     }
 
-    const isPhone =
-      !compact && (size.w <= 480 || (typeof window !== "undefined" && window.innerWidth < 640 && size.w < 640))
+    const isPhone = phoneViewport
 
     if (isPhone) {
       if (isAll) {
-        // Fit map cleanly to mobile width (8px horizontal padding)
+        // Fit the floor on BOTH axes, then centre the leftover space.
+        // Fitting width only (the previous behaviour) let the plan run past the
+        // bottom of the screen, which is why the lower tables needed scrolling.
+        // One single k for the whole plan is also what keeps the spacing ratios
+        // between seats, tables and zones identical on every device.
         const padH = 8
-        const k = (size.w - padH * 2) / b.w
+        const padV = 6
+        const k = Math.min((size.w - padH * 2) / b.w, (size.h - padV * 2) / b.h)
         return {
           k,
-          x: padH - b.x * k,
-          y: -b.y * k,
+          x: (size.w - b.w * k) / 2 - b.x * k,
+          y: (size.h - b.h * k) / 2 - b.y * k,
         }
       }
 
@@ -262,9 +274,9 @@ export function FloorCanvas(props: Props) {
       x: (size.w - b.w * k) / 2 - b.x * k,
       y: (size.h - b.h * k) / 2 - b.y * k,
     }
-  }, [size.w, size.h, zoneFocus, tables, compact])
+  }, [size.w, size.h, zoneFocus, tables, compact, phoneViewport])
 
-  const view = userView && userView.zone === zoneFocus ? userView.view : fitView
+  const view = !planLocked && userView && userView.zone === zoneFocus ? userView.view : fitView
 
   const setView = useCallback(
     (next: View | ((v: View) => View)) => {
@@ -292,7 +304,7 @@ export function FloorCanvas(props: Props) {
   // Wheel zoom: Ctrl+wheel / trackpad pinch zooms; regular wheel allows natural vertical scrolling of the map
   useEffect(() => {
     const el = wrapRef.current
-    if (!el || compact) return
+    if (!el || compact || planLocked) return
     const onWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault()
@@ -302,7 +314,7 @@ export function FloorCanvas(props: Props) {
     }
     el.addEventListener("wheel", onWheel, { passive: false })
     return () => el.removeEventListener("wheel", onWheel)
-  }, [zoomBy, compact])
+  }, [zoomBy, compact, planLocked])
 
   const local = (e: React.PointerEvent) => {
     const rect = wrapRef.current!.getBoundingClientRect()
@@ -310,7 +322,7 @@ export function FloorCanvas(props: Props) {
   }
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (compact) return
+    if (compact || planLocked) return
     pointers.current.set(e.pointerId, local(e))
     const pts = [...pointers.current.values()]
     if (pts.length === 1) {
@@ -489,15 +501,20 @@ export function FloorCanvas(props: Props) {
     useUi.getState().setZone("ALL")
   }
 
-  const isPhone =
-    !compact && (size.w <= 480 || (typeof window !== "undefined" && window.innerWidth < 640 && size.w < 640))
+  const isPhone = phoneViewport
+  // When the plan is fitted to the viewport the SVG must not grow past it:
+  // any extra height brings the vertical scrollbar straight back.
   const neededHeight = isAllZone ? Math.ceil((FLOOR_H - 20) * view.k + (isPhone ? 4 : 28)) : size.h
-  const svgHeight = Math.max(size.h, neededHeight)
+  const svgHeight = planLocked ? size.h : Math.max(size.h, neededHeight)
 
   return (
     <div
       ref={wrapRef}
-      className={cn("touch-none-pan relative h-full w-full overflow-y-auto overflow-x-hidden bg-floor select-none", className)}
+      className={cn(
+        "touch-none-pan relative h-full w-full overflow-x-hidden bg-floor select-none",
+        planLocked ? "overflow-y-hidden" : "overflow-y-auto",
+        className,
+      )}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endPointer}
