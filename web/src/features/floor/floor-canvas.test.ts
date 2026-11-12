@@ -2,7 +2,7 @@ import { createElement } from "react"
 import { renderToString } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 import type { FloorTableState, TableView, ZoneView } from "@/domain/models"
-import { BAR_SEATS, FIXTURES, FLOOR_H, FLOOR_W, TABLES, ZONES } from "@/domain/venue-layout"
+import { BAR_SEATS, FIXTURES, FLOOR_H, FLOOR_W, TABLES, WALL_BOUNDS, ZONES } from "@/domain/venue-layout"
 import { STATE_META } from "@/components/status-meta"
 import { FloorCanvas } from "./floor-canvas"
 import {
@@ -132,8 +132,8 @@ describe("floor camera fit bounds (Item 2 & 8)", () => {
     const allBounds = computeZoneBounds(realTables, "ALL", 0)
     expect(allBounds).not.toBeNull()
 
-    // 1. Contains the floor frame rect (x:20, y:20, w:FLOOR_W-40, h:FLOOR_H-20)
-    const frame = { x: 20, y: 20, w: FLOOR_W - 40, h: FLOOR_H - 20 }
+    // 1. Contains the venue wall the canvas draws
+    const frame = { x: WALL_BOUNDS.x, y: WALL_BOUNDS.y, w: WALL_BOUNDS.w, h: WALL_BOUNDS.h }
     expect(allBounds!.x).toBeLessThanOrEqual(frame.x)
     expect(allBounds!.y).toBeLessThanOrEqual(frame.y)
     expect(allBounds!.x + allBounds!.w).toBeGreaterThanOrEqual(frame.x + frame.w)
@@ -177,7 +177,7 @@ describe("floor camera fit bounds (Item 2 & 8)", () => {
 
   it("ensures transformed floor frame stays inside viewports at 360, 390, 768, and 1280 widths", () => {
     const allBounds = computeZoneBounds(realTables, "ALL", 0)!
-    const frame = { x: 20, y: 20, w: FLOOR_W - 40, h: FLOOR_H - 20 }
+    const frame = { x: WALL_BOUNDS.x, y: WALL_BOUNDS.y, w: WALL_BOUNDS.w, h: WALL_BOUNDS.h }
 
     const viewports = [
       { w: 360, h: 800, isPhone: true },
@@ -222,10 +222,11 @@ describe("floor camera fit bounds (Item 2 & 8)", () => {
 
       // On phones, horizontal padding is exactly 8px (P4: map enlarged)
       if (vp.isPhone) {
-        expect(Math.round(frameLeft)).toBe(8)
-        expect(Math.round(vp.w - frameRight)).toBe(8)
-        // Top alignment on phones: frameTop is exactly 0
-        expect(Math.round(frameTop)).toBe(0)
+        // 8px of padding around the 374 x 732 plan container, then the wall
+        // sits WALL_BOUNDS.x further in - the margin the mockup leaves.
+        expect(Math.round(frameLeft)).toBe(Math.round(8 + WALL_BOUNDS.x * k))
+        expect(Math.round(vp.w - frameRight)).toBe(Math.round(8 + (FLOOR_W - WALL_BOUNDS.x - WALL_BOUNDS.w) * k))
+        expect(Math.round(frameTop)).toBe(Math.round(WALL_BOUNDS.y * k))
       }
     }
   })
@@ -238,10 +239,10 @@ describe("floor camera fit bounds (Item 2 & 8)", () => {
   it("returns full default floor bounds for ALL when table list is empty", () => {
     const bounds = computeZoneBounds([], "ALL", 0)
     expect(bounds).toEqual({
-      x: 20,
-      y: 20,
-      w: FLOOR_W - 40,
-      h: FLOOR_H - 20,
+      x: 0,
+      y: 0,
+      w: FLOOR_W,
+      h: FLOOR_H,
     })
   })
 })

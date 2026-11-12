@@ -94,6 +94,13 @@ interface View {
   k: number
   x: number
   y: number
+  /**
+   * The fitted camera already shows the whole plan inside the viewport, so the
+   * SVG must be exactly as tall as the viewport. Without this the slack
+   * svgHeight adds below the plan brings back the scrollbar the fit removed.
+   * Absent on a camera the user panned or zoomed themselves.
+   */
+  contained?: boolean
 }
 
 const PAD = 18
@@ -257,10 +264,10 @@ export function FloorCanvas(props: Props) {
     if (!size.w || !size.h) return { k: 1, x: 0, y: 0 }
     const isAll = zoneFocus === "ALL"
     const b = computeZoneBounds(tables, zoneFocus, isAll ? 0 : compact ? 12 : 24) ?? {
-      x: 20,
-      y: 20,
-      w: FLOOR_W - 40,
-      h: FLOOR_H - 20,
+      x: 0,
+      y: 0,
+      w: FLOOR_W,
+      h: FLOOR_H,
     }
 
     const isPhone = phoneViewport
@@ -279,6 +286,7 @@ export function FloorCanvas(props: Props) {
           k,
           x: (size.w - b.w * k) / 2 - b.x * k,
           y: (size.h - b.h * k) / 2 - b.y * k,
+          contained: true,
         }
       }
 
@@ -317,6 +325,7 @@ export function FloorCanvas(props: Props) {
           k: fittedK,
           x: (size.w - b.w * fittedK) / 2 - b.x * fittedK,
           y: Math.max(padV, (size.h - b.h * fittedK) / 2) - b.y * fittedK,
+          contained: true,
         }
       }
 
@@ -556,8 +565,8 @@ export function FloorCanvas(props: Props) {
   const isPhone = phoneViewport
   // When the plan is fitted to the viewport the SVG must not grow past it:
   // any extra height brings the vertical scrollbar straight back.
-  const neededHeight = isAllZone ? Math.ceil((FLOOR_H - 20) * view.k + (isPhone ? 4 : CANVAS_BOTTOM_GAP)) : size.h
-  const svgHeight = planLocked ? size.h : Math.max(size.h, neededHeight)
+  const neededHeight = isAllZone ? Math.ceil(FLOOR_H * view.k + (isPhone ? 4 : CANVAS_BOTTOM_GAP)) : size.h
+  const svgHeight = planLocked || view.contained ? size.h : Math.max(size.h, neededHeight)
 
   return (
     <div
@@ -604,10 +613,10 @@ export function FloorCanvas(props: Props) {
         >
           <rect
             data-bg="1"
-            x={20}
-            y={20}
-            width={FLOOR_W - 40}
-            height={FLOOR_H - 20}
+            x={WALL_BOUNDS.x}
+            y={WALL_BOUNDS.y}
+            width={WALL_BOUNDS.w}
+            height={WALL_BOUNDS.h}
             fill={mode === "availability" ? "url(#avail-lines)" : "url(#dot-grid)"}
           />
           {ZONES.map((z) => {
@@ -615,9 +624,8 @@ export function FloorCanvas(props: Props) {
             const dim = focusZone && focusZone !== z.code
             return (
               <g key={z.code} opacity={dim ? 0.35 : 1} data-bg="1">
-                {z.rects.map(([x, y, w, h], i) => (
-                  <rect key={i} data-bg="1" x={x} y={y} width={w} height={h} rx={10} fill="var(--floor-zone)" />
-                ))}
+                {/* No tinted zone block: the approved mockup has none. z.rects
+                    is kept as the zone extent for zoom-to-zone and dimming. */}
                 {z.label ? (
                   <text
                     x={z.label.x}

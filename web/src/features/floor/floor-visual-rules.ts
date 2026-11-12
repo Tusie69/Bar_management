@@ -297,11 +297,14 @@ export function computeZoneBounds(tables: TableView[], zone: ZoneCode | "ALL", p
   if (zone === "ALL") {
     const pad = padding !== undefined ? padding : 0
 
-    // Floor frame rect the canvas draws: x=20, y=20, w=FLOOR_W-40, h=FLOOR_H-20
-    let minX = 20
-    let minY = 20
-    let maxX = 20 + FLOOR_W - 40
-    let maxY = 20 + FLOOR_H - 20
+    // The whole plan container, 374 x 732 - the frame plus the small margin
+    // the mockup leaves around it for the entrance label. Fitting against the
+    // container (not the frame) is what makes the camera scale exactly
+    // k = min(W / 374, H / 732), the rule the approved mockup states.
+    let minX: number = 0
+    let minY: number = 0
+    let maxX: number = FLOOR_W
+    let maxY: number = FLOOR_H
 
     // Union with every fixture, read from its own path. These used to be
     // hardcoded numbers per fixture kind, which silently kept the old floor's
