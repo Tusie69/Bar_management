@@ -1,5 +1,5 @@
 import type { FloorGroup, FloorTableState, TableLiveState, TableView } from "@/domain/models"
-import { FIXTURES, FLOOR_H, FLOOR_W, type ZoneCode } from "@/domain/venue-layout"
+import { FIXTURES, FLOOR_H, FLOOR_W, WAITLIST_MARKER, type ZoneCode } from "@/domain/venue-layout"
 
 /**
  * Approved icon priority (Nam 2026-11-04):
@@ -254,57 +254,78 @@ export function groupDisplayName(members: TableView[], group?: FloorGroup | null
   return sorted.map((t) => t.code).join("-")
 }
 
+/**
+ * Every point an absolute SVG path names. Fixture paths use only M, L, H, V, A
+ * and Z with absolute values, and an arc never leaves the box its endpoints
+ * make, so the points alone bound the path.
+ */
+export function fixturePathPoints(d: string): [number, number][] {
+  const out: [number, number][] = []
+  let cur: [number, number] = [0, 0]
+  const re = /([MLHVA])([^MLHVAZ]*)/gi
+  let m: RegExpExecArray | null
+  while ((m = re.exec(d)) !== null) {
+    const cmd = m[1].toUpperCase()
+    const n = (m[2].match(/-?\d*\.?\d+/g) ?? []).map(Number)
+    if (cmd === "M" || cmd === "L") {
+      for (let i = 0; i + 1 < n.length; i += 2) {
+        cur = [n[i], n[i + 1]]
+        out.push(cur)
+      }
+    } else if (cmd === "H") {
+      for (const v of n) {
+        cur = [v, cur[1]]
+        out.push(cur)
+      }
+    } else if (cmd === "V") {
+      for (const v of n) {
+        cur = [cur[0], v]
+        out.push(cur)
+      }
+    } else if (cmd === "A") {
+      // rx ry rotation large-arc sweep x y
+      for (let i = 0; i + 6 < n.length; i += 7) {
+        cur = [n[i + 5], n[i + 6]]
+        out.push(cur)
+      }
+    }
+  }
+  return out
+}
+
 export function computeZoneBounds(tables: TableView[], zone: ZoneCode | "ALL", padding?: number): Bounds | null {
   if (zone === "ALL") {
     const pad = padding !== undefined ? padding : 0
 
-    // Floor frame rect: x=20, y=20, w=FLOOR_W-40 (549), h=FLOOR_H-20 (734)
+    // Floor frame rect the canvas draws: x=20, y=20, w=FLOOR_W-40, h=FLOOR_H-20
     let minX = 20
     let minY = 20
-    let maxX = 20 + FLOOR_W - 40 // 569
-    let maxY = 20 + FLOOR_H - 20 // 754
+    let maxX = 20 + FLOOR_W - 40
+    let maxY = 20 + FLOOR_H - 20
 
-    // Union with outer wall, entrance doors + label, and all fixtures
+    // Union with every fixture, read from its own path. These used to be
+    // hardcoded numbers per fixture kind, which silently kept the old floor's
+    // extents after the layout was redrawn and shrank the whole plan on screen.
     for (const f of FIXTURES) {
-      if (f.kind === "wall") {
-        minX = Math.min(minX, 32 - 1.2)
-        maxX = Math.max(maxX, 560 + 1.2)
-        minY = Math.min(minY, 32 - 1.2)
-        maxY = Math.max(maxY, 738 + 1.2)
-      } else if (f.kind === "entrance") {
-        minX = Math.min(minX, 268 - 0.45)
-        maxX = Math.max(maxX, 328 + 0.45)
-        minY = Math.min(minY, 708 - 0.45)
-        maxY = Math.max(maxY, 738 + 0.45)
-        if (f.labelAt) {
-          minX = Math.min(minX, f.labelAt.x - 20)
-          maxX = Math.max(maxX, f.labelAt.x + 20)
-          minY = Math.min(minY, f.labelAt.y - 8)
-          maxY = Math.max(maxY, f.labelAt.y + 3)
-        }
-      } else if (f.kind === "bar-counter") {
-        minX = Math.min(minX, 396 - 0.6)
-        maxX = Math.max(maxX, 552 + 0.6)
-        minY = Math.min(minY, 404 - 0.6)
-        maxY = Math.max(maxY, 722 + 0.6)
-      } else if (f.kind === "back-bar") {
-        minX = Math.min(minX, 540 - 0.4)
-        maxX = Math.max(maxX, 552 + 0.4)
-        minY = Math.min(minY, 444 - 0.4)
-        maxY = Math.max(maxY, 716 + 0.4)
-        if (f.labelAt) {
-          minX = Math.min(minX, f.labelAt.x - 35)
-          maxX = Math.max(maxX, f.labelAt.x + 35)
-          minY = Math.min(minY, f.labelAt.y - 6)
-          maxY = Math.max(maxY, f.labelAt.y + 6)
-        }
-      } else if (f.kind === "sofa") {
-        minX = Math.min(minX, 44)
-        maxX = Math.max(maxX, 54)
-        minY = Math.min(minY, 362)
-        maxY = Math.max(maxY, 716)
+      for (const [px, py] of fixturePathPoints(f.d)) {
+        minX = Math.min(minX, px)
+        maxX = Math.max(maxX, px)
+        minY = Math.min(minY, py)
+        maxY = Math.max(maxY, py)
+      }
+      if (f.labelAt) {
+        minX = Math.min(minX, f.labelAt.x - 20)
+        maxX = Math.max(maxX, f.labelAt.x + 20)
+        minY = Math.min(minY, f.labelAt.y - 8)
+        maxY = Math.max(maxY, f.labelAt.y + 3)
       }
     }
+
+    // The waitlist marker is drawn in floor space too, so it must stay in view.
+    minX = Math.min(minX, WAITLIST_MARKER.x - WAITLIST_MARKER.width / 2)
+    maxX = Math.max(maxX, WAITLIST_MARKER.x + WAITLIST_MARKER.width / 2)
+    minY = Math.min(minY, WAITLIST_MARKER.y - WAITLIST_MARKER.height / 2)
+    maxY = Math.max(maxY, WAITLIST_MARKER.y + WAITLIST_MARKER.height / 2)
 
     // Union with all tables and seats
     for (const t of tables) {

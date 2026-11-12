@@ -66,6 +66,16 @@ export function MapScreen({
   // The plan owns the screen: its own controls float on it instead of stacking above it.
   const planChrome = receptionist && !pick && !draft
 
+  // While the booking form is open the map only gets the upper half, so fitting
+  // the whole venue into it leaves the tables too small to aim at. Focus the
+  // zone the chosen table sits in instead: that zone fills the strip, and the
+  // canvas dims every other zone, which is what "mờ các khu khác" means.
+  const draftZone = useMemo<ZoneCode | null>(() => {
+    const first = draft?.tableIds?.[0]
+    if (first === undefined) return null
+    return (m.model.byId.get(first)?.zoneCode as ZoneCode | undefined) ?? null
+  }, [draft, m.model])
+
   const isAssignPick = !!pick?.targetExpectedAt
   const pickAvail = useAvailability(isAssignPick ? pick.targetExpectedAt! : null, pick?.targetParty ?? 2)
   const pickSnapshot = pickAvail.isPlaceholderData || pickAvail.isError ? undefined : pickAvail.data
@@ -207,8 +217,35 @@ export function MapScreen({
             selectedIds={draft ? draft.tableIds : layoutPick ? layoutIds : pick ? pickSel : selected ? [selected] : []}
             searchHighlightedIds={!pick && !draft ? search.tableIds : []}
             pickable={layoutPick ? null : d.bookingDraft ? d.pickable : draft ? null : pickable}
-            zoneFocus={receptionist ? "ALL" : zone}
+            zoneFocus={receptionist ? (draftZone ?? "ALL") : zone}
             now={m.now}
+            planOverlay={
+              planChrome
+                ? (r) => (
+                    <div
+                      className="pointer-events-none absolute"
+                      style={{ left: r.left, top: r.top, width: r.width, height: r.height }}
+                    >
+                      <button
+                        type="button"
+                        onClick={m.openCount}
+                        title="Đếm khách và xem báo cáo hiện có"
+                        className="pointer-events-auto absolute top-2 left-2 inline-flex h-9 items-center gap-1.5 rounded-xl border border-border/80 bg-background/95 px-2.5 text-[13px] font-semibold text-tx-strong shadow-lg backdrop-blur active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
+                      >
+                        <Users className="size-4 shrink-0" aria-hidden />
+                        <span>Đếm khách</span>
+                      </button>
+                      <div className="pointer-events-auto absolute top-2 right-2 flex flex-col items-end gap-1.5">
+                        <StatusLegend variant="badge" tables={m.model.tables} states={m.model.states} />
+                        <ReceptionDatePicker
+                          onDateChange={() => onSelect(null)}
+                          className="[&>button]:h-9 [&>button]:min-h-[36px] [&>button]:px-2.5 [&>button]:shadow-lg"
+                        />
+                      </div>
+                    </div>
+                  )
+                : undefined
+            }
             waitingCount={draft || pick ? undefined : waitingCount}
             onOpenWaitlist={draft || pick ? undefined : () => m.go("wait")}
             onTableClick={(id) =>
@@ -233,22 +270,6 @@ export function MapScreen({
         ) : null}
         {planChrome ? (
           <>
-            <button
-              type="button"
-              onClick={m.openCount}
-              title="Đếm khách và xem báo cáo hiện có"
-              className="absolute top-2 left-2 inline-flex h-9 items-center gap-1.5 rounded-xl border border-border/80 bg-background/95 px-2.5 text-[13px] font-semibold text-tx-strong shadow-lg backdrop-blur active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
-            >
-              <Users className="size-4 shrink-0" aria-hidden />
-              <span>Đếm khách</span>
-            </button>
-            <div className="absolute top-2 right-2 flex items-center gap-1.5">
-              <ReceptionDatePicker
-                onDateChange={() => onSelect(null)}
-                className="[&>button]:h-9 [&>button]:min-h-[36px] [&>button]:px-2.5 [&>button]:shadow-lg"
-              />
-              <StatusLegend variant="badge" tables={m.model.tables} states={m.model.states} />
-            </div>
             <div className="absolute bottom-2 left-2 flex items-center gap-1">
               <UndoRedoButtons glass />
             </div>
@@ -284,7 +305,7 @@ export function MapScreen({
         <section
           role="dialog"
           aria-label="Đặt bàn trên sơ đồ"
-          className="z-[12] flex max-h-[calc(100dvh-210px)] shrink-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)]"
+          className="z-[12] flex max-h-[52dvh] shrink-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)]"
         >
           <div className="flex shrink-0 justify-center pt-2" aria-hidden>
             <span className="h-[5px] w-9 rounded-full bg-strong" />

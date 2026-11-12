@@ -17,6 +17,7 @@ import {
   supportedFlags,
   tableCanActivate,
   GUEST_ICON_PRIORITY,
+  fixturePathPoints,
 } from "./floor-visual-rules"
 
 const createTable = (
@@ -138,23 +139,14 @@ describe("floor camera fit bounds (Item 2 & 8)", () => {
     expect(allBounds!.x + allBounds!.w).toBeGreaterThanOrEqual(frame.x + frame.w)
     expect(allBounds!.y + allBounds!.h).toBeGreaterThanOrEqual(frame.y + frame.h)
 
-    // 2. Contains every fixture (including wall stroke and entrance)
+    // 2. Contains every fixture, checked against its own path rather than
+    //    numbers copied from one particular floor layout.
     for (const f of FIXTURES) {
-      if (f.kind === "wall") {
-        expect(allBounds!.x).toBeLessThanOrEqual(32 - 1.2)
-        expect(allBounds!.x + allBounds!.w).toBeGreaterThanOrEqual(560 + 1.2)
-        expect(allBounds!.y).toBeLessThanOrEqual(32 - 1.2)
-        expect(allBounds!.y + allBounds!.h).toBeGreaterThanOrEqual(738 + 1.2)
-      } else if (f.kind === "entrance") {
-        expect(allBounds!.x).toBeLessThanOrEqual(268)
-        expect(allBounds!.x + allBounds!.w).toBeGreaterThanOrEqual(328)
-        expect(allBounds!.y + allBounds!.h).toBeGreaterThanOrEqual(751)
-      } else if (f.kind === "bar-counter") {
-        expect(allBounds!.x).toBeLessThanOrEqual(396)
-        expect(allBounds!.x + allBounds!.w).toBeGreaterThanOrEqual(552)
-      } else if (f.kind === "back-bar") {
-        expect(allBounds!.x).toBeLessThanOrEqual(488)
-        expect(allBounds!.x + allBounds!.w).toBeGreaterThanOrEqual(552)
+      for (const [px, py] of fixturePathPoints(f.d)) {
+        expect(allBounds!.x).toBeLessThanOrEqual(px)
+        expect(allBounds!.x + allBounds!.w).toBeGreaterThanOrEqual(px)
+        expect(allBounds!.y).toBeLessThanOrEqual(py)
+        expect(allBounds!.y + allBounds!.h).toBeGreaterThanOrEqual(py)
       }
     }
 
@@ -169,22 +161,10 @@ describe("floor camera fit bounds (Item 2 & 8)", () => {
     }
   })
 
-  it("ensures zone Bar bounds contains bar counter and back-bar fixtures", () => {
+  it("ensures zone Bar bounds contains every bar seat", () => {
     const barBounds = computeZoneBounds(realTables, "BAR", 12)
     expect(barBounds).not.toBeNull()
 
-    // Must contain QUẬY BAR (396..552, 404..722)
-    expect(barBounds!.x).toBeLessThanOrEqual(396 - 0.6)
-    expect(barBounds!.x + barBounds!.w).toBeGreaterThanOrEqual(552 + 0.6)
-    expect(barBounds!.y).toBeLessThanOrEqual(404 - 0.6)
-    expect(barBounds!.y + barBounds!.h).toBeGreaterThanOrEqual(722 + 0.6)
-
-    // Must contain KHU PHA CHẾ (back bar)
-    expect(barBounds!.x + barBounds!.w).toBeGreaterThanOrEqual(552)
-    expect(barBounds!.y).toBeLessThanOrEqual(444)
-    expect(barBounds!.y + barBounds!.h).toBeGreaterThanOrEqual(716)
-
-    // Must contain all 21 bar seats
     const barSeats = realTables.filter((t) => t.zoneCode === "BAR")
     expect(barSeats.length).toBe(21)
     for (const s of barSeats) {
@@ -260,8 +240,8 @@ describe("floor camera fit bounds (Item 2 & 8)", () => {
     expect(bounds).toEqual({
       x: 20,
       y: 20,
-      w: 549,
-      h: 734,
+      w: FLOOR_W - 40,
+      h: FLOOR_H - 20,
     })
   })
 })

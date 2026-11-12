@@ -1,24 +1,35 @@
 /**
- * 21GAM spatial reference, rebuilt as data (coordinate space 589 x 754).
+ * 21GAM spatial reference, rebuilt as data (coordinate space 414 x 752).
  *
- * Source of truth for positions: the coordinate table in the product brief
- * (table centres + 21 bar seats). The floorplan image itself was not attached
- * (db02 §2 lists it as MISSING_SOURCE), so every fixture flagged
- * `estimated: true` (walls, bar counter outline, the two auxiliary furniture
- * blocks, entrance) must be checked against the real survey image.
+ * Source of truth for positions: the mobile floor-plan mockup approved on
+ * 12/11/2026 (frame 374 x 732), mapped into this space with a +20 offset so
+ * the venue wall lands on the frame the renderer draws at
+ * (x 20, y 20, w FLOOR_W-40, h FLOOR_H-20).
+ *
+ * CAUTION: these are NOT the surveyed coordinates from the product brief any
+ * more. The plan is laid out for a phone screen, so distances on it no longer
+ * match the real room. Changing it back means restoring the brief's table
+ * centres here and in api/database/seeds/demo.sql together.
+ *
  * Edit this file only: the renderer draws whatever is declared here.
  */
 
-export const FLOOR_W = 589
-export const FLOOR_H = 754
+export const FLOOR_W = 414
+export const FLOOR_H = 752
 
-/** UI-only virtual waitlist marker replacing the surveyed auxiliary block. */
-export const WAITLIST_MARKER = { x: 211, y: 441, width: 58, height: 42 } as const
+/**
+ * Inner face of the venue wall. Chrome that must read as being "inside the
+ * plan" (Đếm khách, the date button, the legend) is positioned against this.
+ */
+export const WALL_BOUNDS = { x: 22, y: 22, w: 370, h: 702 } as const
+
+/** Waitlist marker, placed by hand in the gap between Khu B and Khu A. */
+export const WAITLIST_MARKER = { x: 112, y: 300, width: 112, height: 34 } as const
 
 export type ZoneCode = "A" | "B" | "C" | "BAR"
 
-/** How chairs are drawn around a table top. UI-only, not part of the DDL. */
-export type SeatingStyle = "banquette" | "pairs-tb" | "pairs-lr" | "four-sides"
+/** How chairs are drawn around a table top. "none" = no chairs, as the mockup shows. */
+export type SeatingStyle = "none" | "banquette" | "pairs-tb" | "pairs-lr" | "four-sides"
 
 export interface TableSpec {
   code: string
@@ -68,72 +79,102 @@ export interface FixtureSpec {
   estimated: boolean
 }
 
-const A = (code: string, y: number, h = 35): TableSpec => ({
+/** Khu A is one banquette run down the west wall; every table is the same box. */
+const A = (code: string, y: number, isSpare = false): TableSpec => ({
   code,
   zone: "A",
-  x: 80,
+  x: 64,
   y,
-  w: 52,
-  h,
+  w: 56,
+  h: 34,
+  capacity: 4,
+  isSpare,
+  seating: "none",
+})
+
+/** Khu B and Khu C share one box size per zone. */
+const B = (code: string, x: number, y: number, isSpare = false): TableSpec => ({
+  code,
+  zone: "B",
+  x,
+  y,
+  w: 46,
+  h: 34,
+  capacity: 4,
+  isSpare,
+  seating: "none",
+})
+
+const C = (code: string, x: number, y: number): TableSpec => ({
+  code,
+  zone: "C",
+  x,
+  y,
+  w: 40,
+  h: 32,
   capacity: 4,
   isSpare: false,
-  seating: "banquette",
+  seating: "none",
 })
 
 export const TABLES: TableSpec[] = [
-  // Khu A: banquette run along the west wall + A10 (spare)
-  A("A7", 382, 33),
-  A("A6", 419, 33),
-  A("A5", 468, 35),
-  A("A4", 516, 35),
-  A("A3", 562, 35),
-  A("A2", 609, 35),
-  A("A1", 654, 35),
-  { ...A("A0", 696, 35), isSpare: true },
-  { code: "A10", zone: "A", x: 231, y: 685, w: 42, h: 42, capacity: 4, isSpare: true, seating: "four-sides" },
+  // Khu A: banquette run along the west wall, pitch 44, + A10 (spare)
+  A("A7", 339),
+  A("A6", 385),
+  A("A5", 431),
+  A("A4", 477),
+  A("A3", 523),
+  A("A2", 569),
+  A("A1", 615),
+  A("A0", 661, true),
+  { code: "A10", zone: "A", x: 131, y: 661, w: 54, h: 34, capacity: 4, isSpare: true, seating: "none" },
 
-  // Khu B
-  { code: "B7", zone: "B", x: 107, y: 213, w: 36, h: 33, capacity: 4, isSpare: false, seating: "pairs-tb" },
-  { code: "B8", zone: "B", x: 67, y: 259, w: 36, h: 33, capacity: 4, isSpare: true, seating: "pairs-tb" },
-  { code: "B6", zone: "B", x: 107, y: 259, w: 36, h: 33, capacity: 4, isSpare: false, seating: "pairs-tb" },
-  { code: "B5", zone: "B", x: 107, y: 306, w: 36, h: 33, capacity: 4, isSpare: false, seating: "pairs-tb" },
-  { code: "B3", zone: "B", x: 248, y: 223, w: 48, h: 46, capacity: 4, isSpare: false, seating: "four-sides" },
-  { code: "B4", zone: "B", x: 248, y: 285, w: 48, h: 46, capacity: 4, isSpare: false, seating: "four-sides" },
-  { code: "B21", zone: "B", x: 381, y: 205, w: 54, h: 33, capacity: 4, isSpare: false, seating: "pairs-lr" },
-  { code: "B22", zone: "B", x: 381, y: 243, w: 54, h: 33, capacity: 4, isSpare: false, seating: "pairs-lr" },
-  { code: "B11", zone: "B", x: 381, y: 286, w: 54, h: 33, capacity: 4, isSpare: false, seating: "pairs-lr" },
-  { code: "B12", zone: "B", x: 381, y: 325, w: 54, h: 33, capacity: 4, isSpare: false, seating: "pairs-lr" },
+  // Khu B: left cluster (B7, B8, B6, B5) and right cluster (B3, B4, B21, B22, B11, B12)
+  B("B7", 83, 160),
+  B("B8", 59, 206, true),
+  B("B6", 109, 206),
+  B("B5", 83, 252),
+  B("B3", 183, 160),
+  B("B4", 183, 216),
+  B("B21", 277, 160),
+  B("B22", 277, 206),
+  B("B11", 277, 252),
+  B("B12", 277, 298),
 
   // Khu C (C4, C5 normal per HU-32)
-  { code: "C4", zone: "C", x: 284, y: 80, w: 38, h: 38, capacity: 4, isSpare: false, seating: "pairs-lr" },
-  { code: "C5", zone: "C", x: 284, y: 127, w: 38, h: 38, capacity: 4, isSpare: false, seating: "pairs-lr" },
-  { code: "C1", zone: "C", x: 337, y: 75, w: 48, h: 36, capacity: 4, isSpare: false, seating: "pairs-tb" },
-  { code: "C2", zone: "C", x: 391, y: 75, w: 48, h: 36, capacity: 4, isSpare: false, seating: "pairs-tb" },
+  C("C4", 196, 46),
+  C("C5", 196, 90),
+  C("C1", 240, 46),
+  C("C2", 284, 46),
 ]
 
-/** Bar seats in counter order 1..21 (exact centres from the brief). */
+/**
+ * Bar seats 1..21. Seats 1-14 run down the LEFT edge of the bar block
+ * (14 at the top, 1 at the bottom) and 15-21 along its TOP edge,
+ * left to right, so together they wrap the counter.
+ */
 export const BAR_SEATS: BarSeatSpec[] = [
-  { no: 1, x: 353, y: 696 },
-  { no: 2, x: 378, y: 672 },
-  { no: 3, x: 353, y: 648 },
-  { no: 4, x: 378, y: 623 },
-  { no: 5, x: 353, y: 600 },
-  { no: 6, x: 378, y: 575 },
-  { no: 7, x: 353, y: 551 },
-  { no: 8, x: 378, y: 525 },
-  { no: 9, x: 353, y: 502 },
-  { no: 10, x: 378, y: 478 },
-  { no: 11, x: 353, y: 454 },
-  { no: 12, x: 378, y: 428 },
-  { no: 13, x: 353, y: 405 },
-  { no: 14, x: 378, y: 377 },
-  { no: 15, x: 409, y: 358 },
-  { no: 16, x: 428, y: 387 },
-  { no: 17, x: 445, y: 358 },
-  { no: 18, x: 462, y: 387 },
-  { no: 19, x: 481, y: 358 },
-  { no: 20, x: 499, y: 387 },
-  { no: 21, x: 514, y: 358 },
+  { no: 1, x: 176, y: 682 },
+  { no: 2, x: 176, y: 658 },
+  { no: 3, x: 176, y: 634 },
+  { no: 4, x: 176, y: 610 },
+  { no: 5, x: 176, y: 586 },
+  { no: 6, x: 176, y: 562 },
+  { no: 7, x: 176, y: 538 },
+  { no: 8, x: 176, y: 514 },
+  { no: 9, x: 176, y: 490 },
+  { no: 10, x: 176, y: 466 },
+  { no: 11, x: 176, y: 442 },
+  { no: 12, x: 176, y: 418 },
+  { no: 13, x: 176, y: 394 },
+  { no: 14, x: 176, y: 370 },
+  { no: 15, x: 200, y: 346 },
+  { no: 16, x: 229, y: 346 },
+  { no: 17, x: 259, y: 346 },
+  { no: 18, x: 288, y: 346 },
+  { no: 19, x: 317, y: 346 },
+  { no: 20, x: 347, y: 346 },
+  { no: 21, x: 376, y: 346 },
 ]
 
 export const barSeatCode = (no: number) => `BAR${String(no).padStart(2, "0")}`
@@ -142,8 +183,8 @@ export const ZONES: ZoneSpec[] = [
   {
     code: "C",
     name: "Khu C",
-    rects: [[250, 44, 220, 108]],
-    label: { x: 462, y: 60, anchor: "end" },
+    rects: [[170, 24, 142, 98]],
+    label: { x: 220, y: 116 },
     // Mock catalog follows 08/11; HTTP keeps the zone flags supplied by the server.
     isBookable: true,
     isWaitingArea: false,
@@ -151,8 +192,12 @@ export const ZONES: ZoneSpec[] = [
   {
     code: "B",
     name: "Khu B",
-    rects: [[42, 174, 386, 172]],
-    label: { x: 52, y: 187 },
+    // Two clusters, so the gap between them stays untinted for the waitlist marker.
+    rects: [
+      [30, 136, 108, 142],
+      [154, 136, 152, 184],
+    ],
+    label: { x: 216, y: 316 },
     isBookable: true,
     isWaitingArea: false,
   },
@@ -160,14 +205,14 @@ export const ZONES: ZoneSpec[] = [
     code: "A",
     name: "Khu A",
     rects: [
-      [42, 352, 92, 380],
-      [200, 650, 62, 80],
+      [30, 316, 68, 378],
+      [98, 638, 66, 56],
     ],
-    label: { x: 62, y: 726 },
+    label: { x: 36, y: 690 },
     isBookable: true,
     isWaitingArea: false,
   },
-  { code: "BAR", name: "Quầy Bar", rects: [[332, 338, 226, 392]], label: null, isBookable: true, isWaitingArea: false },
+  { code: "BAR", name: "Quầy Bar", rects: [[160, 330, 230, 370]], label: null, isBookable: true, isWaitingArea: false },
 ]
 
 /**
@@ -186,56 +231,26 @@ export const FIXTURES: FixtureSpec[] = [
   {
     id: "outer-wall",
     kind: "wall",
-    // Building outline with the entrance gap on the bottom wall (x 268..328).
-    d: "M268 738 H32 V32 H560 V738 H328",
+    // Building outline with the entrance gap on the bottom wall (x 100..172).
+    d: "M100 724 H22 V22 H392 V724 H172",
     estimated: true,
   },
   {
     id: "entrance",
     kind: "entrance",
-    // Double door swinging into the room.
-    d: "M268 738 V708 A30 30 0 0 1 298 738 M328 738 V708 A30 30 0 0 0 298 738",
+    // Double door swinging into the room, plus the threshold tick.
+    d: "M108 724 V696 A28 28 0 0 1 136 724 M164 724 V696 A28 28 0 0 0 136 724 M136 726 V730",
     label: "Lối vào",
-    labelAt: { x: 298, y: 751 },
-    estimated: true,
-  },
-  {
-    id: "sofa-west",
-    kind: "sofa",
-    d: "M44 362 H54 V716 H44 Z",
+    labelAt: { x: 136, y: 738 },
     estimated: true,
   },
   {
     id: "bar-counter",
     kind: "bar-counter",
-    // L-shaped counter hugging seats 1-14 (vertical run) and 15-21 (top run).
-    d: "M396 722 V404 H552 V430 H424 V722 Z",
+    // Straight counter; seats 1-14 sit to its left and 15-21 above it.
+    d: "M190 360 H216 V694 H190 Z",
     label: "Quầy Bar",
-    labelAt: { x: 410, y: 600, rotate: -90 },
-    estimated: true,
-  },
-  {
-    id: "back-bar",
-    kind: "back-bar",
-    d: "M540 444 H552 V716 H540 Z",
-    label: "Pha chế",
-    labelAt: { x: 488, y: 600 },
-    estimated: true,
-  },
-  {
-    id: "block-1",
-    kind: "block",
-    d: "M182 420 H240 V462 H182 Z",
-    label: "Khối phụ 1",
-    labelAt: { x: 211, y: 444 },
-    estimated: true,
-  },
-  {
-    id: "block-2",
-    kind: "block",
-    d: "M182 548 H240 V590 H182 Z",
-    label: "Khối phụ 2",
-    labelAt: { x: 211, y: 572 },
+    labelAt: { x: 203, y: 527, rotate: -90 },
     estimated: true,
   },
 ]

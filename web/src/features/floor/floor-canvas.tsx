@@ -4,7 +4,17 @@
  * pinch), fit-to-screen, zoom-to-zone, keyboard focus per table.
  */
 import { List } from "lucide-react"
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react"
 import type {
   AvailabilityStatus,
   FloorGroup,
@@ -14,7 +24,16 @@ import type {
   TableView,
   ZoneView,
 } from "@/domain/models"
-import { FIXTURES, FLOOR_H, FLOOR_W, TABLES, ZONES, type ZoneCode } from "@/domain/venue-layout"
+import {
+  FIXTURES,
+  FLOOR_H,
+  FLOOR_W,
+  TABLES,
+  WAITLIST_MARKER,
+  WALL_BOUNDS,
+  ZONES,
+  type ZoneCode,
+} from "@/domain/venue-layout"
 import { fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { STATE_META } from "@/components/status-meta"
@@ -61,6 +80,13 @@ interface Props {
   // New optional props for P2 contract
   waitingCount?: number
   onOpenWaitlist?: () => void
+  /**
+   * Chrome drawn on top of the plan, given the venue wall's rectangle in screen
+   * pixels. Anchoring to the wall (not to the viewport) is what keeps these
+   * controls inside the plan on every screen, while they stay real size so the
+   * touch targets never shrink with the map.
+   */
+  planOverlay?: (rect: { left: number; top: number; width: number; height: number }) => ReactNode
 }
 
 interface View {
@@ -114,6 +140,7 @@ export function FloorCanvas(props: Props) {
     ariaLabel,
     waitingCount,
     onOpenWaitlist,
+    planOverlay,
   } = props
 
   const tables = useMemo(() => rawTables.map(normalizeTableGeometry), [rawTables])
@@ -422,24 +449,11 @@ export function FloorCanvas(props: Props) {
   const focusZone = zoneFocus === "ALL" ? null : zoneFocus
   const isAllZone = zoneFocus === "ALL"
 
-  // Compute waitlist marker position in floor space between Khu A and the bar
-  const waitlistPos = useMemo(() => {
-    const khuATables = tables.filter((t) => t.zoneCode === "A" && t.code !== "A10")
-    const barTables = tables.filter((t) => t.zoneCode === "BAR")
-    const khuBTables = tables.filter((t) => t.zoneCode === "B")
-    const a10 = tables.find((t) => t.code === "A10")
-
-    const maxKhuAX = khuATables.length ? Math.max(...khuATables.map((t) => t.x + (t.w || 52) / 2)) : 106
-    const minBarX = barTables.length ? Math.min(...barTables.map((t) => t.x - (t.w || 24) / 2)) : 341
-
-    const posX = Math.round((maxKhuAX + minBarX) / 2)
-
-    const maxKhuBY = khuBTables.length ? Math.max(...khuBTables.map((t) => t.y + (t.h || 33) / 2)) : 322
-    const a10TopY = a10 ? a10.y - (a10.h || 42) / 2 : 664
-    const posY = Math.round((maxKhuBY + a10TopY) / 2)
-
-    return { x: posX, y: posY }
-  }, [tables])
+  // Waitlist marker: a fixed slot declared with the layout, not derived from the
+  // tables. The plan is packed tightly now, so the only reliable way to keep the
+  // marker off every table (badges and corner icons included) is to place it by
+  // hand in the gap between Khu B and Khu A and check it against the layout test.
+  const waitlistPos = WAITLIST_MARKER
 
   // Single representative member ID per multi-table booking or group (K1 Section 7: one guest badge per group)
   const groupRepresentativeMap = useMemo(() => {
@@ -483,7 +497,9 @@ export function FloorCanvas(props: Props) {
   // Zone tracking chip state (Item 2b)
   const isZoomed = userView !== null && Math.abs(userView.view.k - baseK) > 0.05
   const isZoneActive = zoneFocus !== "ALL"
-  const showTrackingChip = isZoneActive || isZoomed
+  // While picking a table for a booking the zone is focused on purpose, so the
+  // "Đang theo dõi" chip would only cover the tables being aimed at.
+  const showTrackingChip = (isZoneActive || isZoomed) && mode !== "availability"
 
   const zoneLabel =
     zoneFocus === "A"
@@ -614,10 +630,10 @@ export function FloorCanvas(props: Props) {
           {/* Waitlist marker button anchored to floor space for Zone Tất cả */}
           {onOpenWaitlist && isAllZone ? (
             <foreignObject
-              x={waitlistPos.x - 72}
-              y={waitlistPos.y - 20}
-              width={144}
-              height={40}
+              x={waitlistPos.x - waitlistPos.width / 2}
+              y={waitlistPos.y - waitlistPos.height / 2}
+              width={waitlistPos.width}
+              height={waitlistPos.height}
               className="overflow-visible"
               pointerEvents="auto"
             >
@@ -671,6 +687,15 @@ export function FloorCanvas(props: Props) {
           })}
         </g>
       </svg>
+
+      {planOverlay
+        ? planOverlay({
+            left: view.x + WALL_BOUNDS.x * view.k,
+            top: view.y + WALL_BOUNDS.y * view.k,
+            width: WALL_BOUNDS.w * view.k,
+            height: WALL_BOUNDS.h * view.k,
+          })
+        : null}
 
       {/* Zone tracking chip (Item 2b) */}
       {showTrackingChip && !compact ? (
@@ -1041,7 +1066,7 @@ const LiveGlyph = memo(function LiveGlyph({
     : undefined
 
   if (t.kind === "BAR_SEAT") {
-    const r = Math.max(12, (t.w || 24) / 2)
+    const r = Math.max(9, (t.w || 20) / 2)
     const hasRoom = r >= 10
     const barSubText = hasRoom
       ? seated
@@ -1132,40 +1157,10 @@ const LiveGlyph = memo(function LiveGlyph({
             {barSubText}
           </text>
         ) : null}
-        {showCountBadgeOnCell ? (
-          <GuestCountBadge count={claim?.partySize} x={-r + 2} y={-r - 0.5} color={meta.color} />
-        ) : null}
-        {hasActiveClaim && isAnchor && cornerIcons.topRight.length > 0 ? (
-          <TableIcons
-            iconKeys={cornerIcons.topRight}
-            x={r - 1}
-            y={-r + 1}
-            radius={4.5}
-            data-testid="table-icons"
-          />
-        ) : null}
-        {hasActiveClaim && isAnchor && cornerIcons.bottomLeft.length > 0 ? (
-          <TableIcons
-            iconKeys={cornerIcons.bottomLeft}
-            x={-r + 2}
-            y={r - 1}
-            direction="right"
-            radius={4.5}
-            data-testid="table-icons-bottom-left"
-          />
-        ) : null}
-        {hasActiveClaim && isAnchor && cornerIcons.bottomRight.length > 0 ? (
-          <TableIcons
-            iconKeys={cornerIcons.bottomRight}
-            x={r - 1}
-            y={r - 1}
-            direction="left"
-            radius={4.5}
-            data-testid="table-icons-bottom-right"
-          />
-        ) : null}
-        <TurnBadge count={isTurnAnchor ? turnCount : null} x={r + 0.5} y={0} size={4.5} />
-        {claim?.paid ? <PaidDot x={r - 1} y={r - 1} /> : null}
+        {/* No count / turn badge and no corner icons on a bar seat. A seat is a 20-unit
+            circle, so a badge hung on its rim lands on the neighbouring seat; the guest
+            details for the bar live in the "Khách quầy bar" panel beside the counter. */}
+        {claim?.paid ? <PaidDot x={r - 5.4} y={r - 5.4} /> : null}
       </g>
     )
   }
@@ -1444,7 +1439,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
       : undefined
 
   if (t.kind === "BAR_SEAT") {
-    const r = Math.max(12, (t.w || 24) / 2)
+    const r = Math.max(9, (t.w || 20) / 2)
     return (
       <g
         transform={`translate(${t.x} ${t.y})`}

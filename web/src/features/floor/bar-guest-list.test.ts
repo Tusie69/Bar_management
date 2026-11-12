@@ -52,8 +52,8 @@ describe("BarGuestList presentational component", () => {
 
     expect(html).not.toContain("<foreignObject")
     expect(html).toContain('data-testid="bar-guest-list"')
-    expect(html).toContain("width:112px")
-    expect(html).toContain("height:284px")
+    expect(html).toContain(`width:${DEFAULT_BAR_GUEST_LIST_BOUNDS.width}px`)
+    expect(html).toContain(`height:${DEFAULT_BAR_GUEST_LIST_BOUNDS.height}px`)
   })
 
   it("applies counter-scaling transform when mapScale is provided", () => {
@@ -62,11 +62,11 @@ describe("BarGuestList presentational component", () => {
       createElement("svg", null, createElement(BarGuestList, { rows, as: "svg", mapScale: 0.62 })),
     )
 
-    // innerPixelWidth = Math.round(112 * 0.62) = 69px
+    // innerPixelWidth = Math.round(panel width * 0.62)
     // innerPixelHeight = Math.round(284 * 0.62) = 176px
     // transform = scale(1 / 0.62) = scale(1.6129...)
-    expect(html).toContain("width:69px")
-    expect(html).toContain("height:176px")
+    expect(html).toContain(`width:${Math.round(DEFAULT_BAR_GUEST_LIST_BOUNDS.width * 0.62)}px`)
+    expect(html).toContain(`height:${Math.round(DEFAULT_BAR_GUEST_LIST_BOUNDS.height * 0.62)}px`)
     expect(html).toContain("transform:scale(")
     expect(html).toContain("transform-origin:top left")
   })
@@ -250,12 +250,12 @@ describe("BarGuestList presentational component", () => {
   })
 
   it.each([
-    { viewport: 360, scale: 0.584, expectedWidth: 65 },
-    { viewport: 390, scale: 0.635, expectedWidth: 71 },
-    { viewport: 430, scale: 0.703, expectedWidth: 79 },
-    { viewport: 768, scale: 1.28, expectedWidth: 143 },
-    { viewport: 1366, scale: 1.5, expectedWidth: 168 },
-  ])("renders Bar2-4 with 12 guests and 4 icons across viewport $viewport (scale $scale)", ({ scale, expectedWidth }) => {
+    { viewport: 360, scale: 0.584 },
+    { viewport: 390, scale: 0.635 },
+    { viewport: 430, scale: 0.703 },
+    { viewport: 768, scale: 1.28 },
+    { viewport: 1366, scale: 1.5 },
+  ])("renders Bar2-4 with 12 guests and 4 icons across viewport $viewport (scale $scale)", ({ scale }) => {
     const row = makeSampleRow({
       bookingKey: "res:234",
       seatNumbers: [2, 3, 4],
@@ -272,7 +272,7 @@ describe("BarGuestList presentational component", () => {
     )
 
     // Inner pixel width scales to real screen pixels
-    expect(html).toContain(`width:${expectedWidth}px`)
+    expect(html).toContain(`width:${Math.round(DEFAULT_BAR_GUEST_LIST_BOUNDS.width * scale)}px`)
     expect(html).toContain(`transform:scale(${1 / scale})`)
 
     // Bar2-4, 12 guests, 4 icons are properly rendered
