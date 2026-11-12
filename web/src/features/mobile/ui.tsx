@@ -30,14 +30,19 @@ export function useKeepScroll(key: Tab | string) {
  * eligibility as the Desktop top bar; a button only enables when the server
  * reports a compensable operation for this device session.
  */
-export function UndoRedoButtons({ glass }: { glass?: boolean }) {
+export function UndoRedoButtons({ glass, square }: { glass?: boolean; square?: boolean }) {
   const controller = useUndoRedo()
   const { undo, redo, pending, apply } = controller
   useUndoRedoShortcuts(controller)
   if (!controller.enabled) return null
   const base = cn(
-    "grid size-11 shrink-0 place-items-center rounded-full text-tx-1 disabled:text-[var(--text-muted)] disabled:active:bg-transparent",
-    glass ? "bg-[var(--glass)] shadow-[var(--shadow-xs)]" : "active:bg-surface-2",
+    "grid shrink-0 place-items-center text-tx-1 disabled:text-[var(--text-muted)] disabled:active:bg-transparent",
+    // `square` is the mockup's bottom bar: a 36x36 rounded square with a hairline
+    // border. The touch target stays 44 through the row's own padding.
+    square
+      ? "size-9 rounded-[10px] border border-border bg-surface-1 active:bg-surface-2"
+      : "size-11 rounded-full",
+    !square && (glass ? "bg-[var(--glass)] shadow-[var(--shadow-xs)]" : "active:bg-surface-2"),
   )
   return (
     <>

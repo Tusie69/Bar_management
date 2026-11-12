@@ -1,4 +1,4 @@
-import { Menu, MessageSquareText, X } from "lucide-react"
+import { ListOrdered, Menu, MessageSquareText, X } from "lucide-react"
 import { useMemo, useState } from "react"
 import type { TableLiveState, TableView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
@@ -23,6 +23,7 @@ import { useBookingDraft } from "../floor/use-booking-draft"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
 import { codesOf, duration, type Tone, toneStyle } from "./model"
+import { useUndoRedo } from "@/features/operations/use-undo-redo"
 import { PlainHeader, UndoRedoButtons } from "./ui"
 
 const ZONE_TABS: [ZoneCode | "ALL", string][] = [
@@ -62,6 +63,7 @@ export function MapScreen({
   const layoutPick = useUi((s) => s.pick?.intent === "layout")
   const layoutIds = useUi((s) => s.pickSelection)
   const waitingCount = (m.waitlist ?? []).filter(isWaitingForTable).length
+  const undoEnabled = useUndoRedo().enabled
   const [exportOpen, setExportOpen] = useState(false)
   const canExport = m.can("customer.view_masked")
   // The plan owns the screen: its own controls float on it instead of stacking above it.
@@ -247,13 +249,25 @@ export function MapScreen({
                           onDateChange={() => onSelect(null)}
                           className="[&>button]:h-9 [&>button]:min-h-[36px] [&>button]:px-2.5 [&>button]:shadow-lg"
                         />
+                        {/* The mockup puts Bàn chờ here, right under the date. Drawn in
+                            floor space it scaled with the plan while the date chip kept
+                            real pixels, and the two overlapped by 8px on a 375 screen. */}
+                        <button
+                          type="button"
+                          onClick={() => m.go("wait")}
+                          aria-label={`Bàn chờ, ${waitingCount} nhóm đang đợi`}
+                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-border/80 bg-background/95 px-2.5 text-[13px] font-semibold text-tx-strong shadow-lg backdrop-blur active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
+                        >
+                          <ListOrdered className="size-4 shrink-0" aria-hidden />
+                          Bàn chờ {waitingCount > 0 ? `+${waitingCount}` : ""}
+                        </button>
                       </div>
                     </div>
                   )
                 : undefined
             }
-            waitingCount={draft || pick ? undefined : waitingCount}
-            onOpenWaitlist={draft || pick ? undefined : () => m.go("wait")}
+            waitingCount={receptionist || draft || pick ? undefined : waitingCount}
+            onOpenWaitlist={receptionist || draft || pick ? undefined : () => m.go("wait")}
             onTableClick={(id) =>
               layoutPick
                 ? toggleLayoutTable(m.model, id)
@@ -274,14 +288,17 @@ export function MapScreen({
             }
           />
         ) : null}
-        {planChrome ? (
-          <>
-            <div className="absolute bottom-2 left-2 flex items-center gap-1">
-              <UndoRedoButtons glass />
-            </div>
-          </>
-        ) : null}
       </div>
+      {planChrome && undoEnabled ? (
+        // Mockup 01 ends the screen with a 52px row holding just these two.
+        // Floating them over the plan put them on top of Khu A. The row is
+        // dropped entirely where undo is not available (mock build), so there
+        // is no empty strip; api.mode is fixed per build, so the plan height
+        // cannot change under the camera mid-session.
+        <div className="z-[5] flex h-[52px] shrink-0 items-center gap-1 bg-background px-2 pb-[var(--bottom-safe)]">
+          <UndoRedoButtons square />
+        </div>
+      ) : null}
       {pick ? (
         <div className="z-[12] flex shrink-0 flex-col gap-2.5 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-4 shadow-[var(--shadow-float)]">
           {pick.question && pickSel.length ? (
@@ -306,6 +323,11 @@ export function MapScreen({
             {pickBusy ? "Đang gửi..." : pick.confirmLabel}
           </button>
         </div>
+      ) : null}
+      {draft && draftZone ? (
+        <p className="z-[11] shrink-0 bg-background px-4 pb-1 text-center text-[11px] font-medium tracking-wide text-[var(--text-muted)]">
+          KHU {draftZone} · chạm để chọn thêm
+        </p>
       ) : null}
       {draft ? (
         <section
