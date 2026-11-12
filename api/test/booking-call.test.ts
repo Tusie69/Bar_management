@@ -19,9 +19,22 @@ describe('booking call eligibility', () => {
     ['21:20', '2026-11-02T14:20:00.000Z', true],
     ['21:30', '2026-11-02T14:30:00.000Z', true],
     ['late', '2026-11-02T14:46:00.000Z', true],
-    ['no-show threshold', '2026-11-02T15:00:00.000Z', false],
+    // Past the no-show threshold the table is still held and the guest has
+    // still not arrived, which is the moment the receptionist rings them.
+    ['no-show threshold', '2026-11-02T15:00:00.000Z', true],
+    ['long past the threshold', '2026-11-02T16:30:00.000Z', true],
   ])('%s', (_label, now, expected) => {
     expect(canCallBooking({ ...base, now: new Date(now) })).toBe(expected)
+  })
+
+  it('still refuses a reservation that was closed as a no-show', () => {
+    // The display state and the reservation status are different things: the
+    // first says the guest is overdue, the second says the booking is over.
+    expect(canCallBooking({
+      ...base,
+      status: 'NO_SHOW',
+      now: new Date('2026-11-02T15:00:00.000Z'),
+    })).toBe(false)
   })
 
   it('allows an existing late confirmation before the no-show threshold', () => {

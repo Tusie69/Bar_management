@@ -15,6 +15,7 @@ import {
 import { reportError } from "@/hooks/use-action"
 import { api } from "@/services"
 import { useCan } from "@/state/session"
+import { usePendingCall, usePendingCalls } from "./pending-calls"
 
 type Outcome = "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED"
 
@@ -33,7 +34,11 @@ export function CallCustomerControl({
   const queryClient = useQueryClient()
   const [pending, setPending] = useState(false)
   const [outcomeOpen, setOutcomeOpen] = useState(false)
-  const [callId, setCallId] = useState<number | null>(null)
+  // Kept outside the component: this sheet is closed and reopened constantly,
+  // and an unfinished call must survive that, and a reload.
+  const startPendingCall = usePendingCalls((s) => s.start)
+  const clearPendingCall = usePendingCalls((s) => s.clear)
+  const callId = usePendingCall(bookingId)?.callId ?? null
   const leftPage = useRef(false)
 
   useEffect(() => {
@@ -54,7 +59,7 @@ export function CallCustomerControl({
     setPending(true)
     try {
       const call = await api.startBookingCall(bookingId)
-      setCallId(call.callId)
+      startPendingCall(bookingId, call.callId)
       leftPage.current = false
       const link = document.createElement("a")
       link.href = call.telUri
@@ -78,11 +83,18 @@ export function CallCustomerControl({
         outcome === "LATE_CONFIRMED" ? bookingVersion : undefined,
       )
       setOutcomeOpen(false)
-      setCallId(null)
+      clearPendingCall(bookingId)
       leftPage.current = false
       toast.success(outcome === "LATE_CONFIRMED" ? "Đã ghi nhận khách sẽ tới muộn." : "Đã ghi kết quả cuộc gọi.")
       await queryClient.invalidateQueries()
     } catch (error) {
+      const code = (error as { code?: string } | null)?.code
+      if (code === "BOOKING_CALL_NOT_FOUND" || code === "BOOKING_CALL_OUTCOME_CONFLICT") {
+        // The server has closed this call already - from another device, or an
+        // earlier attempt whose reply never arrived. Nothing left to record.
+        clearPendingCall(bookingId)
+        setOutcomeOpen(false)
+      }
       reportError(error)
       await queryClient.invalidateQueries()
     } finally {

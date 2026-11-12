@@ -27,5 +27,12 @@ export function canCallBooking(input: BookingCallEligibility): boolean {
     now: input.now,
     thresholds: input.thresholds,
   }).displayState
-  return state === 'UPCOMING' || state === 'LATE' || state === 'LATE_CONFIRMED'
+  // NO_SHOW is in the list on purpose. It is the display state a booking lands
+  // in once it is past the no-show threshold while the table is still held, and
+  // it is exactly when the receptionist needs to ring the guest to find out
+  // whether they are still coming. Leaving it out took the Gọi khách button
+  // away from the latest - and usually largest - party on the floor.
+  // The reservation status is still BOOKED here; a reservation actually closed
+  // as NO_SHOW fails the status check above and stays uncallable.
+  return state === 'UPCOMING' || state === 'LATE' || state === 'LATE_CONFIRMED' || state === 'NO_SHOW'
 }

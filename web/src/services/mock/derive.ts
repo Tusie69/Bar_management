@@ -341,7 +341,10 @@ export function floorState(
             lateConfirmedAt: r.lateConfirmedAt,
             canCall:
               customerOf(db, r.customerId)?.phoneLast3 != null &&
-              (state === "upcoming" || state === "late" || state === "late_confirmed"),
+              // "noshow" belongs here: the table is still held and the guest is
+              // past the threshold, which is when the receptionist rings them.
+              // Mirrors canCallBooking in api/src/modules/bookings/booking-call.ts.
+              (state === "upcoming" || state === "late" || state === "late_confirmed" || state === "noshow"),
           }
         }
       }
