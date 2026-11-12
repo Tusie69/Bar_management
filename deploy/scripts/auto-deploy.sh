@@ -6,7 +6,13 @@
 #
 #   Chạy tay ngay:        sudo systemctl start 21gam-deploy.service
 #   Bỏ qua cửa sổ giờ:    sudo DEPLOY_FORCE=1 /srv/21gam/deploy/scripts/auto-deploy.sh
+#   Build lại tại chỗ:    sudo DEPLOY_REBUILD=1 DEPLOY_FORCE=1 .../auto-deploy.sh
 #   Xem log:              journalctl -u 21gam-deploy -n 50
+#
+# DEPLOY_REBUILD dùng khi mã nguồn trên máy đã khớp develop nhưng bản build thì
+# chưa — chẳng hạn vừa có ai đó `git pull` bằng tay. Không có nó, script thấy
+# commit trùng nhau rồi thoát, và máy cứ phục vụ bundle cũ trong khi `git log`
+# nói mọi thứ đã mới.
 #
 # Thứ tự các bước được chọn để một lần hỏng không làm sập quán:
 #   1. Cổng kiểm thử (typecheck, lint, build, test) chạy TRƯỚC migration.
@@ -50,7 +56,7 @@ cd "$REPO" || die "không vào được $REPO"
 as_app git fetch -q origin "$BRANCH" || die "git fetch hỏng"
 current=$(as_app git rev-parse HEAD)
 target=$(as_app git rev-parse "origin/$BRANCH")
-[ "$current" = "$target" ] && exit 0
+if [ "$current" = "$target" ] && [ -z "${DEPLOY_REBUILD:-}" ]; then exit 0; fi
 
 # Có thay đổi thật. Giờ mới xét cửa sổ giờ, để log nói rõ là đang hoãn chứ
 # không phải không thấy gì.
@@ -63,8 +69,12 @@ if [ -n "$(as_app git status --porcelain)" ]; then
   die "cây làm việc có thay đổi chưa commit, không tự ghi đè"
 fi
 
-log "triển khai ${current:0:7} -> ${target:0:7}"
-as_app git log --oneline "$current..$target" | sed 's/^/    /'
+if [ "$current" = "$target" ]; then
+  log "build lại tại chỗ ở ${current:0:7} (DEPLOY_REBUILD)"
+else
+  log "triển khai ${current:0:7} -> ${target:0:7}"
+  as_app git log --oneline "$current..$target" | sed 's/^/    /'
+fi
 
 rollback() {
   log "hoàn tác về ${current:0:7}"
