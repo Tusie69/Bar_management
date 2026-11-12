@@ -101,6 +101,16 @@ beforeEach(() => {
       if (failure?.path === path)
         return json({ error: { code: failure.code, message: "Máy chủ từ chối." } }, failure.status)
       if (path === "/tables/catalog") return json(catalog)
+      if (path === "/settings")
+        return json(
+          init.method === "PUT"
+            ? body
+            : {
+                quickTimes: ["21:00", "21:30", "22:00", "22:30"],
+                upcomingMinutes: 10,
+                noShowMinutes: 30,
+              },
+        )
       if (path === "/bookings/sources") return json({ sources: [{ code: "HOTLINE", name: "Hotline" }] })
       if (path.startsWith("/tables?"))
         return json({
@@ -113,27 +123,59 @@ beforeEach(() => {
             tableCode: `A${id}`,
             catalogStatus: "ACTIVE",
             isSpare: false,
-            displayState: id !== 1 || tableState === "AVAILABLE" ? "EMPTY" : tableState === "IN_USE" ? "IN_USE" : "BOOKED",
+            displayState:
+              id !== 1 || tableState === "AVAILABLE" ? "EMPTY" : tableState === "IN_USE" ? "IN_USE" : "BOOKED",
             arrivalPhase: null,
             arrivalTime: id === 1 && tableState === "RESERVED" ? at.toISOString() : null,
             minutesLate: 0,
-            claim: id !== 1 || tableState === "AVAILABLE"
-              ? null
-              : tableState === "IN_USE"
-                ? {
-                    kind: "VISIT", reservationId: null, visitId: 31, waitlistEntryId: null, holdId: null,
-                    guestName: "Visit", phoneLast3: null, partySize: 4, turnNo: null, flags: [],
-                    groupId: null, groupDisplayCode: null, groupMemberTableIds: [],
-                    startsAt: "2026-10-29T13:00:00.000Z", deadlineAt: null, holdOverdue: false,
-                    paid: false, origin: "WALK_IN", sourceCode: null, version: 5,
-                  }
-                : {
-                    kind: "RESERVATION", reservationId: 11, visitId: null, waitlistEntryId: null, holdId: 41,
-                    guestName: "An", phoneLast3: "123", partySize: 4, turnNo: null, flags: [],
-                    groupId: null, groupDisplayCode: null, groupMemberTableIds: [],
-                    startsAt: at.toISOString(), deadlineAt: null, holdOverdue: false,
-                    paid: false, origin: null, sourceCode: "HOTLINE", version: 3,
-                  },
+            claim:
+              id !== 1 || tableState === "AVAILABLE"
+                ? null
+                : tableState === "IN_USE"
+                  ? {
+                      kind: "VISIT",
+                      reservationId: null,
+                      visitId: 31,
+                      waitlistEntryId: null,
+                      holdId: null,
+                      guestName: "Visit",
+                      phoneLast3: null,
+                      partySize: 4,
+                      turnNo: null,
+                      flags: [],
+                      groupId: null,
+                      groupDisplayCode: null,
+                      groupMemberTableIds: [],
+                      startsAt: "2026-10-29T13:00:00.000Z",
+                      deadlineAt: null,
+                      holdOverdue: false,
+                      paid: false,
+                      origin: "WALK_IN",
+                      sourceCode: null,
+                      version: 5,
+                    }
+                  : {
+                      kind: "RESERVATION",
+                      reservationId: 11,
+                      visitId: null,
+                      waitlistEntryId: null,
+                      holdId: 41,
+                      guestName: "An",
+                      phoneLast3: "123",
+                      partySize: 4,
+                      turnNo: null,
+                      flags: [],
+                      groupId: null,
+                      groupDisplayCode: null,
+                      groupMemberTableIds: [],
+                      startsAt: at.toISOString(),
+                      deadlineAt: null,
+                      holdOverdue: false,
+                      paid: false,
+                      origin: null,
+                      sourceCode: "HOTLINE",
+                      version: 3,
+                    },
             groupId: null,
             groupDisplayCode: null,
             groupMemberTableIds: [],
@@ -148,7 +190,34 @@ beforeEach(() => {
       if (path.startsWith("/waitlist?")) return json({ businessDate: date, entries: [entry] })
       if (path === "/bookings/walk-ins") return json({ visitId: 31 })
       if (path.endsWith("phone:reveal")) return json({ phoneNumber: "+84901234123" })
+      if (path === "/bookings/11/call")
+        return json({ callId: 71, bookingId: 11, initiatedAt: at.toISOString(), telUri: "tel:+84901234123" }, 201)
+      if (path === "/bookings/11/calls/71/outcome")
+        return json({ callId: 71, bookingId: 11, outcome: body.outcome, outcomeAt: at.toISOString() })
+      if (path === "/waitlist/21/seat" && (body as { arrived?: boolean })?.arrived) {
+        return json({ entry: { ...entry, status: "SEATED", visitId: 31 }, reservationId: null, groupId: null })
+      }
       if (path === "/waitlist" || path.startsWith("/waitlist/")) return json({ entry, reservationId: 11, groupId: 1 })
+      if (/^\/tables\/groups\/\d+\/split$/.test(path))
+        return json({ operationId: 91, changeSeq: 12, summary: "Đã tách nhóm bàn.", undoable: false,
+          splitGroupId: 1, group: null, keptTableIds: [1], releasedTableIds: [2] })
+      if (path === "/accounts" && init.method === "POST")
+        return json({ account: { id: 5, username: "le_tan", displayName: "Lễ tân", status: "ACTIVE",
+          membershipStatus: "ACTIVE", roles: ["RECEPTIONIST"], lastLoginAt: null, version: 1 } })
+      if (path === "/accounts")
+        return json({
+          accounts: [{ id: 5, username: "le_tan", displayName: "Lễ tân", status: "ACTIVE",
+            membershipStatus: "ACTIVE", roles: ["RECEPTIONIST"], lastLoginAt: null, version: 3 }],
+          roles: [{ code: "RECEPTIONIST", name: "Lễ tân" }],
+        })
+      if (/^\/accounts\/\d+\/status$/.test(path))
+        return json({ account: { id: 5, username: "le_tan", displayName: "Lễ tân", status: "DISABLED",
+          membershipStatus: "ACTIVE", roles: ["RECEPTIONIST"], lastLoginAt: null, version: 4 },
+          revokedSessions: 2 })
+      if (path === "/operations/undo-state")
+        return json({ undo: { operationId: 81, action: "VISIT_TABLES_MOVED", summary: "đổi bàn lượt khách" }, redo: null })
+      if (path === "/operations/undo" || path === "/operations/redo")
+        return json({ operationId: 82, changeSeq: 9, summary: "Đã áp dụng.", undoable: true })
       if (path.startsWith("/visits/"))
         return json({ visit: { id: 31, version: 6 }, group: { id: 1, symbolNo: 1, tableIds: [1, 2] } })
       if (path.startsWith("/tables/")) return json({ table: { id: 1, version: 5 } })
@@ -174,8 +243,26 @@ afterEach(() => {
 const writes = () => calls.filter((call) => call.method !== "GET")
 
 describe("canonical contract reads", () => {
+  it("reads the authenticated venue settings contract", async () => {
+    expect(await api.getVenueSettings()).toEqual({
+      quickTimes: ["21:00", "21:30", "22:00", "22:30"],
+      upcomingMinutes: 10,
+      noShowMinutes: 30,
+    })
+    expect(calls).toEqual([{ method: "GET", path: "/settings", body: undefined }])
+  })
   it("exposes classification on canonical reservations", async () => {
     expect((await api.listReservations({ businessDate: date }))[0].classification).toBe("UNCLASSIFIED")
+  })
+  it.each([false, true, undefined])("preserves hasGuestName=%s on canonical reservations", async (hasGuestName) => {
+    const original = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (new URL(String(input)).pathname === "/api/v1/bookings")
+        return json({ businessDate: date, bookings: [{ ...booking, guestName: "Khách", hasGuestName }] })
+      return original(input, init)
+    })
+    const [row] = await api.listReservations({ businessDate: date })
+    expect(row).toMatchObject({ displayName: "Khách", hasGuestName: hasGuestName ?? true })
   })
   it("exports backend text verbatim through GamApi without a JSON wrapper", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
@@ -196,11 +283,12 @@ describe("canonical contract reads", () => {
         return json({ businessDate: "1999-01-01", bookings: [], tables: [], entries: [] })
       return original(input, init)
     })
-    const request = resource === "waitlist"
-      ? api.listWaitlist(date)
-      : resource === "bookings"
-        ? api.listReservations({ businessDate: date })
-        : api.getFloorState(at, date)
+    const request =
+      resource === "waitlist"
+        ? api.listWaitlist(date)
+        : resource === "bookings"
+          ? api.listReservations({ businessDate: date })
+          : api.getFloorState(at, date)
     await expect(request).rejects.toMatchObject({
       status: 502,
       code: "BUSINESS_DATE_RESPONSE_MISMATCH",
@@ -288,6 +376,26 @@ describe("canonical contract reads", () => {
 })
 
 describe("canonical contract writes", () => {
+  it("updates only the supported venue settings contract", async () => {
+    const input = { quickTimes: ["20:15", "00:15"], upcomingMinutes: 15, noShowMinutes: 45 }
+    expect(await api.updateVenueSettings(input)).toEqual(input)
+    expect(writes()).toEqual([{ method: "PUT", path: "/settings", body: input }])
+  })
+  it("starts a call without sending a phone and records the selected outcome against the same call", async () => {
+    const call = await api.startBookingCall(11)
+    expect(call).toMatchObject({ callId: 71, bookingId: 11, telUri: "tel:+84901234123" })
+    await api.recordBookingCallOutcome(11, 71, "LATE_CONFIRMED", 3)
+    expect(writes()).toEqual([
+      { method: "POST", path: "/bookings/11/call", body: {} },
+      {
+        method: "POST",
+        path: "/bookings/11/calls/71/outcome",
+        body: { outcome: "LATE_CONFIRMED", bookingVersion: 3 },
+      },
+    ])
+    expect(JSON.stringify(writes())).not.toContain("+84901234123")
+  })
+
   it("forwards a full destination set for grouped visit and booking moves", async () => {
     tableState = "IN_USE"
     await api.moveClaim({ claim: { visitId: 31, version: 1 }, tableIds: [1, 2] })
@@ -318,6 +426,13 @@ describe("canonical contract writes", () => {
       undoable: false,
     })
     expect(writes()).toEqual([{ method: "POST", path: "/waitlist/21/seat", body: { version: 2, tableIds: [1, 2] } }])
+  })
+  it("sends explicit arrival for walk-in seating without a reservation", async () => {
+    const result = await api.seatWaitlist({ entryId: 21, version: 2, guestCount: 4, tableIds: [1], arrived: true })
+    expect(result).toMatchObject({ reservationId: null, groupId: null })
+    expect(writes()).toEqual([
+      { method: "POST", path: "/waitlist/21/seat", body: { version: 2, tableIds: [1], arrived: true } },
+    ])
   })
   it("forwards the selected walk-in waitlist date and phone only on create", async () => {
     await api.addWaitlist({
@@ -368,6 +483,32 @@ describe("canonical contract writes", () => {
     await api.createReservation({ contactName: "An", partySize: 4, expectedAt: at, sourceCode: "HOTLINE" })
     expect(writes()).toEqual([expect.objectContaining({ path: "/bookings" })])
   })
+  /**
+   * The backend stores and returns the three 0016 fields now, so the HTTP writer
+   * sends them instead of dropping what the receptionist typed. The platform is
+   * the one exception: it only travels while the target source is SOCIAL, which
+   * matches the server clearing `social_platform` for every other source.
+   */
+  it("sends the 0016 fields at the real HTTP boundary for create, direct create and update", async () => {
+    const metadata = { iconKeys: ["star"], honorific: "MR" as const, socialPlatform: "FB" }
+    const fields = { contactName: "An", partySize: 4, expectedAt: at, sourceCode: "SOCIAL" as const, ...metadata }
+    await api.createReservation(fields)
+    await api.createReservation({ ...fields, tableIds: [1] })
+    await api.updateReservation({ id: 11, version: 1, sourceCode: "SOCIAL", partySize: 5, ...metadata })
+    await api.updateReservation({ id: 11, version: 1, partySize: 5, ...metadata })
+    await api.updateReservation({ id: 11, version: 1, iconKeys: [], honorific: null, socialPlatform: null })
+    expect(writes().map(({ method, path }) => [method, path])).toEqual([
+      ["POST", "/bookings"], ["POST", "/bookings/direct"], ["PUT", "/bookings/11"],
+      ["PUT", "/bookings/11"], ["PUT", "/bookings/11"],
+    ])
+    const [create, direct, socialUpdate, hotlineUpdate, cleared] = writes()
+    for (const write of [create, direct, socialUpdate]) {
+      expect(write!.body).toMatchObject({ iconKeys: ["star"], honorific: "MR", socialPlatform: "FB" })
+    }
+    // Booking 11 is stored as HOTLINE, so the platform is cleared rather than sent.
+    expect(hotlineUpdate!.body).toMatchObject({ iconKeys: ["star"], honorific: "MR", socialPlatform: null })
+    expect(cleared!.body).toMatchObject({ iconKeys: [], honorific: null, socialPlatform: null })
+  })
   it("propagates atomic assignment failure without a fallback create or retry", async () => {
     failure = { path: "/bookings/direct", status: 409, code: "RESOURCE_CONFLICT" }
     await expect(
@@ -389,6 +530,11 @@ describe("canonical contract writes", () => {
           businessDate: date,
           sourceCode: "HOTLINE",
           classification: "UNCLASSIFIED",
+          guestType: null,
+          isBirthday: false,
+          iconKeys: [],
+          honorific: null,
+          socialPlatform: null,
         },
       },
     ])
@@ -413,7 +559,12 @@ describe("canonical contract writes", () => {
       body: { version: 3, reasonNote: "Cancelled" },
     },
     { name: "no-show", run: (api) => api.markNoShow(11, 3), path: "/bookings/11/no-show", body: { version: 3 } },
-    { name: "late confirm", run: (api) => api.confirmLate(11, 3), path: "/bookings/11/late-confirm", body: { version: 3 } },
+    {
+      name: "late confirm",
+      run: (api) => api.confirmLate(11, 3),
+      path: "/bookings/11/late-confirm",
+      body: { version: 3 },
+    },
     {
       name: "walk-in",
       run: (api) => api.seatWalkIn({ tableIds: [2], guestCount: 4, contactName: "An" }),
@@ -616,13 +767,10 @@ describe("unsupported and transport failures", () => {
     { name: "listOperations", run: (api) => api.listOperations(10) },
     { name: "listAllocations", run: (api) => api.listAllocations(date) },
     { name: "getReport", run: (api) => api.getReport({ from: date, to: date, zone: "ALL" }) },
-    { name: "undo", run: (api) => api.undo(1) },
-    { name: "redo", run: (api) => api.redo(1) },
     { name: "updateVenueConfig", run: (api) => api.updateVenueConfig({ version: 1 }) },
     { name: "setZoneFlags", run: (api) => api.setZoneFlags(1, 1, { isBookable: true, isWaitingArea: false }) },
     { name: "setHoldDeadline", run: (api) => api.setHoldDeadline(1, 1, at, "x") },
     { name: "releaseHold", run: (api) => api.releaseHold(1, 1, "OTHER") },
-    { name: "splitGroup", run: (api) => api.splitGroup({ groupId: 1, keepTableIds: [1] }) },
     { name: "claimWaitlist", run: (api) => api.claimWaitlist(21, 2) },
     { name: "releaseClaim", run: (api) => api.releaseClaim(21, 2) },
     { name: "markPaid", run: (api) => api.markPaid(31, 5) },
@@ -672,5 +820,65 @@ describe("unsupported and transport failures", () => {
       code: "REASON_REQUIRED",
     })
     expect(calls).toEqual([])
+  })
+})
+
+describe("BA-020 Undo/Redo HTTP contract", () => {
+  it("reads server state and sends operation ids to the canonical endpoints", async () => {
+    expect(await api.getUndoState()).toEqual({
+      undo: { operationId: 81, action: "VISIT_TABLES_MOVED", summary: "đổi bàn lượt khách" },
+      redo: null,
+    })
+    expect(await api.undo(81)).toMatchObject({ operationId: 82, changeSeq: 9, undoable: true })
+    expect(await api.redo(82)).toMatchObject({ operationId: 82, changeSeq: 9, undoable: true })
+    expect(calls).toEqual([
+      { method: "GET", path: "/operations/undo-state", body: undefined },
+      { method: "POST", path: "/operations/undo", body: { operationId: 81 } },
+      { method: "POST", path: "/operations/redo", body: { operationId: 82 } },
+    ])
+  })
+})
+
+describe("BA-021 Split HTTP contract", () => {
+  it("posts the kept tables to the group split endpoint", async () => {
+    expect(await api.splitGroup({ groupId: 7, keepTableIds: [1] })).toMatchObject({
+      operationId: 91,
+      changeSeq: 12,
+      undoable: false,
+    })
+    expect(calls).toEqual([
+      { method: "POST", path: "/tables/groups/7/split", body: { keepTableIds: [1] } },
+    ])
+  })
+})
+
+describe("BA-022 account management HTTP contract", () => {
+  it("reads accounts and posts create and status changes to the account routes", async () => {
+    const view = await api.listAccounts()
+    expect(view.accounts[0]).toMatchObject({ id: 5, username: "le_tan", status: "ACTIVE", version: 3 })
+    expect(view.roles).toEqual([{ code: "RECEPTIONIST", name: "Lễ tân" }])
+
+    const created = await api.createAccount({
+      username: "le_tan", displayName: "Lễ tân", password: "a-very-long-password", roleCode: "RECEPTIONIST",
+    })
+    expect(created.id).toBe(5)
+
+    const locked = await api.setAccountStatus(5, 3, "DISABLED")
+    expect(locked.status).toBe("DISABLED")
+
+    expect(calls).toEqual([
+      { method: "GET", path: "/accounts", body: undefined },
+      {
+        method: "POST",
+        path: "/accounts",
+        body: {
+          username: "le_tan",
+          displayName: "Lễ tân",
+          password: "a-very-long-password",
+          roleCode: "RECEPTIONIST",
+        },
+      },
+      { method: "POST", path: "/accounts/5/status", body: { version: 3, status: "DISABLED" } },
+    ])
   })
 })

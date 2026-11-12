@@ -3,6 +3,14 @@ import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
+import { businessDateAt } from '../bookings/business-date.js'
+import {
+  honorificFrom,
+  iconKeysFrom,
+  type BookingIconKey,
+  type Honorific,
+} from '../bookings/booking-flags.js'
+import { completedTurnCounts } from '../visits/table-turn.repository.js'
 import { applicationNow } from '../../time/application-clock.js'
 import {
   deriveTableDisplayState,
@@ -11,7 +19,7 @@ import {
 } from './table-display-state.js'
 
 export type FloorClaimKind = 'RESERVATION' | 'VISIT' | 'WAITLIST_HOLD'
-export type FloorCustomerFlag = 'NEW' | 'RETURNING'
+export type FloorCustomerFlag = 'BIRTHDAY' | 'NEW' | 'RETURNING'
 
 export interface FloorClaimProjection {
   kind: FloorClaimKind
@@ -24,6 +32,10 @@ export interface FloorClaimProjection {
   partySize: number
   turnNo: null
   flags: FloorCustomerFlag[]
+  /** 0016's honorific, so the floor can show "Mr Nam" instead of a bare name. */
+  honorific: Honorific | null
+  /** 0016's is_boss_table/is_designated, as icon keys. */
+  iconKeys: BookingIconKey[]
   groupId: number | null
   groupDisplayCode: string | null
   groupMemberTableIds: number[]
@@ -35,6 +47,7 @@ export interface FloorClaimProjection {
   sourceCode: string | null
   version: number
   lateConfirmedAt: string | null
+  canCall: boolean
 }
 
 export interface FloorTableProjection {
@@ -76,6 +89,18 @@ export interface FloorTableProjection {
   groupId: number | null
   groupDisplayCode: string | null
   groupMemberTableIds: number[]
+  /**
+   * Where the claim is drawn. 'GROUP' means this table is a cluster member and the
+   * cluster tile owns the display; the table's own `claim` stays populated so
+   * older clients keep working.
+   */
+  claimOwner: 'GROUP' | 'TABLE' | null
+  /**
+   * C2: turns completed on this table or its cluster during the operating day
+   * being viewed. The badge shows it from 1 and resets with the operating day,
+   * because the count is scoped to that date and never to live state.
+   */
+  seatedTurnCount: number
 }
 
 export interface FloorGroupProjection {
@@ -83,6 +108,23 @@ export interface FloorGroupProjection {
   symbolNo: number
   displayCode: string
   tableIds: number[]
+  /**
+   * C1 fields. A LAYOUT cluster exists with no guest, so these describe the
+   * cluster itself; `claim` is the one booking or visit using it, if any.
+   * `version` is the cluster's layout version, never a guest's version: merge and
+   * split commands carry this one, commands on a guest carry claim.version.
+   */
+  origin?: 'CLAIM' | 'LAYOUT'
+  version?: number
+  name?: string
+  zoneId?: number
+  totalSeats?: number
+  isOutOfService?: boolean
+  displayState?: TableDisplayState
+  claim?: FloorClaimProjection | null
+  businessDate?: string
+  /** One badge for the whole cluster, never one per member table. */
+  seatedTurnCount?: number
 }
 
 export interface FloorProjection {
@@ -100,6 +142,15 @@ interface VenueProjectionRow extends RowDataPacket {
   no_show_warning_minutes: number
 }
 
+interface LayoutMemberRow extends RowDataPacket {
+  group_id: number
+  table_id: number
+  symbol_no: number
+  name: string | null
+  version: number
+  business_date: Date | string
+}
+
 interface ProjectionRow extends RowDataPacket {
   table_id: number
   table_code: string
@@ -111,6 +162,7 @@ interface ProjectionRow extends RowDataPacket {
   table_version: number
   pos_x: string | number | null
   pos_y: string | number | null
+  zone_id: number
   zone_code: string
   zone_name: string
   allocation_id: number | null
@@ -137,6 +189,10 @@ interface ProjectionRow extends RowDataPacket {
   reservation_party_size: number | null
   reservation_phone_last3: string | null
   reservation_classification: 'NEW' | 'RETURNING' | 'UNCLASSIFIED' | null
+  reservation_is_birthday: number | null
+  reservation_honorific: string | null
+  reservation_is_boss_table: number | null
+  reservation_is_designated: number | null
   reservation_source_code: string | null
   reservation_late_confirmed_at: Date | string | null
   linked_waitlist_entry_id: number | null
@@ -153,6 +209,10 @@ interface ProjectionRow extends RowDataPacket {
   offer_reservation_party_size: number | null
   offer_reservation_phone_last3: string | null
   offer_reservation_classification: 'NEW' | 'RETURNING' | 'UNCLASSIFIED' | null
+  offer_reservation_is_birthday: number | null
+  offer_reservation_honorific: string | null
+  offer_reservation_is_boss_table: number | null
+  offer_reservation_is_designated: number | null
   active_visit_id: number | null
   visit_version: number | null
   visit_contact_name: string | null
@@ -163,6 +223,15 @@ interface ProjectionRow extends RowDataPacket {
   visit_business_date: Date | string | null
   visit_origin: 'RESERVATION' | 'WALK_IN' | 'WAITLIST' | null
   visit_paid: number | null
+  // B02: the booking this visit was checked in from, via reservations.visit_id.
+  visit_reservation_id: number | null
+  visit_reservation_classification: 'NEW' | 'RETURNING' | 'UNCLASSIFIED' | null
+  visit_reservation_is_birthday: number | null
+  visit_reservation_honorific: string | null
+  visit_reservation_is_boss_table: number | null
+  visit_reservation_is_designated: number | null
+  visit_reservation_source_code: string | null
+  visit_reservation_phone_last3: string | null
 }
 
 function dateOnly(value: Date | string | null): string | null {
@@ -186,10 +255,14 @@ export function groupDisplayCode(symbolNo: number): string {
   return `◆${letters}`
 }
 
-function classificationFlags(
+function customerFlags(
   classification: 'NEW' | 'RETURNING' | 'UNCLASSIFIED' | null,
+  isBirthday: number | null,
 ): FloorCustomerFlag[] {
-  return classification === 'NEW' || classification === 'RETURNING' ? [classification] : []
+  const flags: FloorCustomerFlag[] = []
+  if (isBirthday) flags.push('BIRTHDAY')
+  if (classification === 'NEW' || classification === 'RETURNING') flags.push(classification)
+  return flags
 }
 
 function isActiveWaitlistStatus(status: string | null): boolean {
@@ -221,17 +294,22 @@ function buildClaim(
   const groupId = row.group_id === null ? null : Number(row.group_id)
   const displayCode = row.group_symbol_no === null ? null : groupDisplayCode(Number(row.group_symbol_no))
   if (kind === 'VISIT') {
+    // B02: a visit checked in from a booking keeps that booking's identity, so
+    // the floor does not lose it the moment the guest sits down. A Walk-in or
+    // Waitlist visit has no reservation and falls back to its own data.
     return {
       kind,
-      reservationId: null,
+      reservationId: row.visit_reservation_id === null ? null : Number(row.visit_reservation_id),
       visitId: Number(row.active_visit_id),
       waitlistEntryId: null,
       holdId: null,
-      guestName: row.visit_customer_name ?? row.visit_contact_name ?? 'Khách',
-      phoneLast3: row.visit_phone_last3,
+      guestName: row.visit_contact_name ?? row.visit_customer_name ?? 'Khách',
+      phoneLast3: row.visit_phone_last3 ?? row.visit_reservation_phone_last3,
       partySize: Number(row.visit_guest_count),
       turnNo: null,
-      flags: [],
+      flags: customerFlags(row.visit_reservation_classification, row.visit_reservation_is_birthday),
+      honorific: honorificFrom(row.visit_reservation_honorific),
+      iconKeys: iconKeysFrom(row.visit_reservation_is_boss_table, row.visit_reservation_is_designated),
       groupId,
       groupDisplayCode: displayCode,
       groupMemberTableIds: memberIds,
@@ -240,9 +318,11 @@ function buildClaim(
       holdOverdue: false,
       paid: Boolean(row.visit_paid),
       origin: row.visit_origin,
-      sourceCode: null,
+      sourceCode: row.visit_reservation_source_code,
       version: Number(row.visit_version),
       lateConfirmedAt: null,
+      // Calling stays off after check-in; the guest is already here.
+      canCall: false,
     }
   }
 
@@ -266,7 +346,16 @@ function buildClaim(
       phoneLast3: directOffer ? row.offer_reservation_phone_last3 ?? row.offer_phone_last3 : row.reservation_phone_last3,
       partySize: Number(directOffer ? row.offer_reservation_party_size ?? row.offer_party_size : row.reservation_party_size),
       turnNo: null,
-      flags: classificationFlags(directOffer ? row.offer_reservation_classification : row.reservation_classification),
+      flags: customerFlags(
+        directOffer ? row.offer_reservation_classification : row.reservation_classification,
+        directOffer ? row.offer_reservation_is_birthday : row.reservation_is_birthday,
+      ),
+      honorific: honorificFrom(
+        directOffer ? row.offer_reservation_honorific : row.reservation_honorific,
+      ),
+      iconKeys: directOffer
+        ? iconKeysFrom(row.offer_reservation_is_boss_table, row.offer_reservation_is_designated)
+        : iconKeysFrom(row.reservation_is_boss_table, row.reservation_is_designated),
       groupId,
       groupDisplayCode: displayCode,
       groupMemberTableIds: memberIds,
@@ -278,6 +367,7 @@ function buildClaim(
       sourceCode: directOffer ? null : row.reservation_source_code,
       version: Number(directOffer ? row.offer_waitlist_version : row.linked_waitlist_version),
       lateConfirmedAt: null,
+      canCall: false,
     }
   }
 
@@ -291,7 +381,9 @@ function buildClaim(
     phoneLast3: row.reservation_phone_last3,
     partySize: Number(row.reservation_party_size),
     turnNo: null,
-    flags: classificationFlags(row.reservation_classification),
+    flags: customerFlags(row.reservation_classification, row.reservation_is_birthday),
+    honorific: honorificFrom(row.reservation_honorific),
+    iconKeys: iconKeysFrom(row.reservation_is_boss_table, row.reservation_is_designated),
     groupId,
     groupDisplayCode: displayCode,
     groupMemberTableIds: memberIds,
@@ -303,6 +395,7 @@ function buildClaim(
     sourceCode: row.reservation_source_code,
     version: Number(row.reservation_version),
     lateConfirmedAt: row.reservation_late_confirmed_at === null ? null : isoDateTime(row.reservation_late_confirmed_at),
+    canCall: false,
   }
 }
 
@@ -312,6 +405,8 @@ async function readProjection(
   businessDate: string,
   now: Date,
 ): Promise<FloorProjection> {
+  // Preserve real carry-over on current/past views; future planning sees only exact-date USAGE.
+  const currentBusinessDate = businessDateAt(now)
   const [venueRows] = await connection.execute<VenueProjectionRow[]>(
     `SELECT change_seq, upcoming_warning_minutes, late_warning_minutes, no_show_warning_minutes
      FROM venues WHERE organization_id = ? AND id = ? AND status = 'ACTIVE'`,
@@ -325,7 +420,7 @@ async function readProjection(
        dt.id AS table_id, dt.code AS table_code, dt.display_name AS table_display_name,
        dt.kind AS table_kind, dt.capacity AS table_capacity, dt.status AS table_status,
        dt.is_spare, dt.version AS table_version, dt.pos_x, dt.pos_y,
-       z.code AS zone_code, z.name AS zone_name,
+       dt.zone_id, z.code AS zone_code, z.name AS zone_name,
        a.id AS allocation_id, a.kind AS allocation_kind, a.business_date AS allocation_business_date,
        a.hold_id, a.visit_id, a.group_id,
        g.symbol_no AS group_symbol_no, g.dissolved_at AS group_dissolved_at,
@@ -334,33 +429,54 @@ async function readProjection(
        h.reservation_id AS hold_reservation_id, h.waitlist_entry_id AS hold_waitlist_entry_id,
        r.status AS reservation_status, r.version AS reservation_version,
        r.expected_at AS reservation_expected_at, r.business_date AS reservation_business_date,
-       COALESCE(rc.display_name, r.contact_name) AS reservation_contact_name,
+       COALESCE(r.contact_name, rc.display_name) AS reservation_contact_name,
        r.party_size AS reservation_party_size, COALESCE(r.phone_last3, rc.phone_last3) AS reservation_phone_last3,
-       r.customer_classification AS reservation_classification, bs.code AS reservation_source_code,
+       r.customer_classification AS reservation_classification, r.is_birthday AS reservation_is_birthday,
+       r.honorific AS reservation_honorific,
+       r.is_boss_table AS reservation_is_boss_table, r.is_designated AS reservation_is_designated,
+       bs.code AS reservation_source_code,
        r.late_confirmed_at AS reservation_late_confirmed_at,
        lw.id AS linked_waitlist_entry_id, lw.status AS linked_waitlist_status, lw.version AS linked_waitlist_version,
        ow.id AS offer_waitlist_entry_id, ow.status AS offer_waitlist_status, ow.version AS offer_waitlist_version,
-       COALESCE(owc.display_name, ow.contact_name) AS offer_contact_name, ow.party_size AS offer_party_size,
+       COALESCE(ow.contact_name, owc.display_name) AS offer_contact_name, ow.party_size AS offer_party_size,
        owc.phone_last3 AS offer_phone_last3, ow.reservation_id AS offer_reservation_id,
-       COALESCE(orc.display_name, orr.contact_name) AS offer_reservation_contact_name,
+       COALESCE(orr.contact_name, orc.display_name) AS offer_reservation_contact_name,
        orr.party_size AS offer_reservation_party_size,
        COALESCE(orr.phone_last3, orc.phone_last3) AS offer_reservation_phone_last3,
        orr.customer_classification AS offer_reservation_classification,
+       orr.is_birthday AS offer_reservation_is_birthday,
+       orr.honorific AS offer_reservation_honorific,
+       orr.is_boss_table AS offer_reservation_is_boss_table,
+       orr.is_designated AS offer_reservation_is_designated,
        v.id AS active_visit_id, v.version AS visit_version, v.contact_name AS visit_contact_name,
        vc.display_name AS visit_customer_name, vc.phone_last3 AS visit_phone_last3,
        v.guest_count AS visit_guest_count, v.started_at AS visit_started_at,
        v.business_date AS visit_business_date, v.origin AS visit_origin,
-       (v.paid_marked_at IS NOT NULL) AS visit_paid
+       (v.paid_marked_at IS NOT NULL) AS visit_paid,
+       vr.id AS visit_reservation_id,
+       vr.customer_classification AS visit_reservation_classification,
+       vr.is_birthday AS visit_reservation_is_birthday,
+       vr.honorific AS visit_reservation_honorific,
+       vr.is_boss_table AS visit_reservation_is_boss_table,
+       vr.is_designated AS visit_reservation_is_designated,
+       vbs.code AS visit_reservation_source_code,
+       COALESCE(vr.phone_last3, vrc.phone_last3) AS visit_reservation_phone_last3
      FROM dining_tables AS dt
      JOIN zones AS z ON z.organization_id = dt.organization_id AND z.venue_id = dt.venue_id AND z.id = dt.zone_id
      LEFT JOIN table_allocations AS a ON a.organization_id = dt.organization_id AND a.venue_id = dt.venue_id
        AND a.table_id = dt.id AND a.released_at IS NULL
-       AND ((a.kind = 'USAGE' AND a.business_date <= ?) OR (a.kind = 'HOLD' AND a.business_date = ?))
+       AND ((a.kind = 'USAGE' AND a.business_date <= ?
+         AND (? <= ? OR a.business_date = ?))
+         OR (a.kind = 'HOLD' AND a.business_date = ?))
      LEFT JOIN table_groups AS g ON g.organization_id = a.organization_id AND g.venue_id = a.venue_id
        AND g.id = a.group_id AND g.dissolved_at IS NULL
      LEFT JOIN visits AS v ON a.kind = 'USAGE' AND v.organization_id = a.organization_id
        AND v.venue_id = a.venue_id AND v.id = a.visit_id AND v.ended_at IS NULL
      LEFT JOIN customers AS vc ON vc.organization_id = v.organization_id AND vc.id = v.customer_id
+     LEFT JOIN reservations AS vr ON vr.organization_id = v.organization_id AND vr.venue_id = v.venue_id
+       AND vr.visit_id = v.id
+     LEFT JOIN customers AS vrc ON vrc.organization_id = vr.organization_id AND vrc.id = vr.customer_id
+     LEFT JOIN booking_sources AS vbs ON vbs.organization_id = vr.organization_id AND vbs.id = vr.source_id
      LEFT JOIN table_holds AS h ON a.kind = 'HOLD' AND h.organization_id = a.organization_id
        AND h.venue_id = a.venue_id AND h.id = a.hold_id
      LEFT JOIN reservations AS r ON r.organization_id = h.organization_id AND r.venue_id = h.venue_id
@@ -378,7 +494,18 @@ async function readProjection(
      WHERE dt.organization_id = ? AND dt.venue_id = ? AND dt.status <> 'RETIRED'
      ORDER BY dt.id, CASE WHEN a.kind = 'USAGE' THEN 0 ELSE 1 END,
        a.business_date DESC, a.id DESC`,
-    [businessDate, businessDate, businessDate, businessDate, businessDate, actor.organizationId, actor.venueId],
+    [
+      businessDate,
+      businessDate,
+      currentBusinessDate,
+      businessDate,
+      businessDate,
+      businessDate,
+      businessDate,
+      businessDate,
+      actor.organizationId,
+      actor.venueId,
+    ],
   )
 
   const rowsByTable = new Map<number, ProjectionRow[]>()
@@ -390,6 +517,46 @@ async function readProjection(
   }
   const selectedByTable = new Map<number, ProjectionRow | null>()
   for (const [tableId, tableRows] of rowsByTable) selectedByTable.set(tableId, selectClaimRow(tableRows))
+
+  // C1: a LAYOUT cluster's membership is its own table, so a cluster with no
+  // booking and nobody sitting at it still appears on the floor. Read separately
+  // from the allocation-derived CLAIM grouping, which is left as it was.
+  const [layoutRows] = await connection.execute<LayoutMemberRow[]>(
+    `SELECT m.group_id, m.table_id, g.symbol_no, g.name, g.version, g.business_date
+     FROM table_group_members AS m
+     JOIN table_groups AS g ON g.organization_id = m.organization_id
+       AND g.venue_id = m.venue_id AND g.id = m.group_id
+     WHERE m.organization_id = ? AND m.venue_id = ? AND m.left_at IS NULL
+       AND g.origin = 'LAYOUT' AND g.dissolved_at IS NULL
+     ORDER BY m.group_id, m.table_id`,
+    [actor.organizationId, actor.venueId],
+  )
+  const layoutGroups = new Map<number, {
+    symbolNo: number
+    name: string | null
+    version: number
+    businessDate: string
+    tableIds: number[]
+  }>()
+  const layoutGroupByTable = new Map<number, number>()
+  for (const row of layoutRows) {
+    const groupId = Number(row.group_id)
+    const tableId = Number(row.table_id)
+    const existing = layoutGroups.get(groupId)
+    if (existing) existing.tableIds.push(tableId)
+    else {
+      layoutGroups.set(groupId, {
+        symbolNo: Number(row.symbol_no),
+        name: row.name,
+        version: Number(row.version),
+        businessDate: dateOnly(row.business_date)!,
+        tableIds: [tableId],
+      })
+    }
+    layoutGroupByTable.set(tableId, groupId)
+  }
+
+  const turnCounts = await completedTurnCounts(connection, actor, businessDate)
 
   const groupMembers = new Map<number, number[]>()
   for (const [tableId, row] of selectedByTable) {
@@ -438,9 +605,31 @@ async function readProjection(
         noShowAfterMinutes: Number(venue.no_show_warning_minutes),
       },
     })
+    if (claim?.kind === 'RESERVATION') {
+      claim.canCall = claim.phoneLast3 !== null
+        && (derived.displayState === 'UPCOMING'
+          || derived.displayState === 'LATE'
+          || derived.displayState === 'LATE_CONFIRMED')
+    }
     const allocationDate = dateOnly(selected?.allocation_business_date ?? null)
-    const groupId = claim?.groupId ?? null
-    const groupCode = claim?.groupDisplayCode ?? null
+    // A LAYOUT cluster is the table's layout identity whether or not a guest is
+    // involved, so it wins over the allocation-derived CLAIM grouping. The two
+    // agree whenever a booking was placed on the cluster, because the allocation
+    // then carries the cluster's own id.
+    const layoutGroupId = layoutGroupByTable.get(tableId) ?? null
+    const layoutGroup = layoutGroupId === null ? undefined : layoutGroups.get(layoutGroupId)
+    const groupId = layoutGroupId ?? claim?.groupId ?? null
+    const groupCode = layoutGroup
+      ? groupDisplayCode(layoutGroup.symbolNo)
+      : claim?.groupDisplayCode ?? null
+    const groupMemberTableIds = layoutGroup
+      ? [...layoutGroup.tableIds]
+      : claim?.groupMemberTableIds ?? []
+    if (claim) {
+      claim.groupId = groupId
+      claim.groupDisplayCode = groupCode
+      claim.groupMemberTableIds = groupMemberTableIds
+    }
     const visitTableIds = selected?.active_visit_id === null
       ? []
       : visitMembers.get(Number(selected?.active_visit_id)) ?? []
@@ -490,16 +679,59 @@ async function readProjection(
       claim,
       groupId,
       groupDisplayCode: groupCode,
-      groupMemberTableIds: claim?.groupMemberTableIds ?? [],
+      groupMemberTableIds,
+      claimOwner: claim === null ? null : groupId === null ? 'TABLE' : 'GROUP',
+      // A member of a LAYOUT cluster shows the cluster's count; the client draws it
+      // once, on the cluster's anchor cell, so the number is never multiplied.
+      seatedTurnCount:
+        (layoutGroupId === null ? undefined : turnCounts.byGroup.get(layoutGroupId))
+        ?? turnCounts.byTable.get(tableId)
+        ?? 0,
     } satisfies FloorTableProjection
   })
 
   const groups: FloorGroupProjection[] = []
+  const tableById = new Map(tables.map((table) => [table.tableId, table]))
+
+  // LAYOUT clusters first, and unconditionally: an empty cluster is exactly the
+  // thing the floor could not show before. Its displayState comes from the one
+  // claim using it, so the cluster tile and its member tables can never disagree.
+  for (const [groupId, layout] of layoutGroups) {
+    const memberTables = layout.tableIds
+      .map((tableId) => tableById.get(tableId))
+      .filter((table): table is FloorTableProjection => table !== undefined)
+    const owner = memberTables.find((table) => table.claim !== null)
+    groups.push({
+      id: groupId,
+      symbolNo: layout.symbolNo,
+      displayCode: groupDisplayCode(layout.symbolNo),
+      tableIds: [...layout.tableIds],
+      origin: 'LAYOUT',
+      version: layout.version,
+      name: layout.name ?? groupDisplayCode(layout.symbolNo),
+      zoneId: Number(rowsByTable.get(layout.tableIds[0]!)?.[0]?.zone_id ?? 0),
+      // Real seats, summed from the member tables' own capacity.
+      totalSeats: memberTables.reduce((total, table) => total + table.capacity, 0),
+      isOutOfService: memberTables.some((table) => table.catalogStatus === 'OUT_OF_SERVICE'),
+      displayState: owner?.displayState ?? 'EMPTY',
+      claim: owner?.claim ?? null,
+      businessDate: layout.businessDate,
+      seatedTurnCount: turnCounts.byGroup.get(groupId) ?? 0,
+    })
+  }
+
   for (const [groupId, tableIds] of groupMembers) {
-    if (tableIds.length < 2) continue
+    if (tableIds.length < 2 || layoutGroups.has(groupId)) continue
     const row = selectedByTable.get(tableIds[0]!)!
     const symbolNo = Number(row?.group_symbol_no)
-    groups.push({ id: groupId, symbolNo, displayCode: groupDisplayCode(symbolNo), tableIds })
+    groups.push({
+      id: groupId,
+      symbolNo,
+      displayCode: groupDisplayCode(symbolNo),
+      tableIds,
+      origin: 'CLAIM',
+      seatedTurnCount: turnCounts.byTable.get(tableIds[0]!) ?? 0,
+    })
   }
   groups.sort((left, right) => left.id - right.id)
 

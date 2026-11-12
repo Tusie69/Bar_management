@@ -55,6 +55,157 @@ describe("MockGamApi", () => {
     bd = businessDateOf(clock.now())
   })
 
+  it("mock-only booking metadata survives create, update, floor claims and source changes", async () => {
+    const tableId = (await api.getCatalog()).tables.find((t) => t.code === "C4")!.id
+    const created = await api.createReservation({
+      contactName: "Social guest",
+      partySize: 2,
+      expectedAt: atBusinessTime(bd, "23:00"),
+      sourceCode: "SOCIAL",
+      socialPlatform: "INSTAGRAM",
+      iconKeys: ["birthday", "vip"],
+      tableIds: [tableId],
+    })
+    const read = async () =>
+      (await api.listReservations({ businessDate: bd })).find((r) => r.id === created.reservationId)!
+    let row = await read()
+    expect(row).toMatchObject({ socialPlatform: "INSTAGRAM", iconKeys: ["birthday", "vip"] })
+    expect((await api.getFloorState(clock.now())).tables.find((t) => t.tableId === tableId)!.claim).toMatchObject({
+      socialPlatform: "INSTAGRAM",
+      iconKeys: ["birthday", "vip"],
+    })
+    await api.updateReservation({ id: row.id, version: row.version, socialPlatform: "FACEBOOK", iconKeys: ["new"] })
+    row = await read()
+    expect(row).toMatchObject({ socialPlatform: "FACEBOOK", iconKeys: ["new"] })
+    await api.updateReservation({
+      id: row.id,
+      version: row.version,
+      sourceCode: "HOTLINE",
+      socialPlatform: "INSTAGRAM",
+    })
+    row = await read()
+    expect(row).toMatchObject({ socialPlatform: null, iconKeys: ["new"] })
+    await api.updateReservation({ id: row.id, version: row.version, sourceCode: "SOCIAL", iconKeys: [] })
+    expect(await read()).toMatchObject({ socialPlatform: null, iconKeys: [] })
+  })
+
+  it("mock stores, updates, and clears honorific (round trip)", async () => {
+    const tableId = (await api.getCatalog()).tables.find((t) => t.code === "C1")!.id
+    const created = await api.createReservation({
+      contactName: "Nam",
+      partySize: 2,
+      expectedAt: atBusinessTime(bd, "23:00"),
+      sourceCode: "HOTLINE",
+      honorific: "MR",
+      tableIds: [tableId],
+    })
+    const read = async () =>
+      (await api.listReservations({ businessDate: bd })).find((r) => r.id === created.reservationId)!
+    let row = await read()
+    expect(row.honorific).toBe("MR")
+    expect((await api.getFloorState(clock.now())).tables.find((t) => t.tableId === tableId)!.claim?.honorific).toBe("MR")
+
+    // Update to MS
+    await api.updateReservation({ id: row.id, version: row.version, honorific: "MS" })
+    row = await read()
+    expect(row.honorific).toBe("MS")
+
+    // Clear honorific (set to null)
+    await api.updateReservation({ id: row.id, version: row.version, honorific: null })
+    row = await read()
+    expect(row.honorific).toBeNull()
+
+    // Create without honorific has no default
+    const unselected = await api.createReservation({
+      contactName: "Lan",
+      partySize: 2,
+      expectedAt: atBusinessTime(bd, "23:30"),
+      sourceCode: "HOTLINE",
+    })
+    const unselectedRow = (await api.listReservations({ businessDate: bd })).find((r) => r.id === unselected.reservationId)!
+    expect(unselectedRow.honorific).toBeNull()
+  })
+
+  it("mock-only ignores social platform for non-social bookings", async () => {
+    const created = await api.createReservation({
+      contactName: "Hotline guest",
+      partySize: 2,
+      expectedAt: atBusinessTime(bd, "23:00"),
+      sourceCode: "HOTLINE",
+      socialPlatform: "INSTAGRAM",
+      iconKeys: [],
+    })
+    expect(
+      (await api.listReservations({ businessDate: bd })).find((r) => r.id === created.reservationId),
+    ).toMatchObject({ socialPlatform: null, iconKeys: [] })
+  })
+
+  it("mock-only C1 merges three idle tables without creating guest allocations", async () => {
+    const catalog = await api.getCatalog()
+    const ids = ["B5", "B6", "B7"].map((code) => catalog.tables.find((t) => t.code === code)!.id)
+    const before = mutationState()
+    const occupied = (await api.getFloorState(clock.now())).tables.find((t) => t.tableId === ids[1])!.claim!
+    await api.endVisit(occupied.visitId!, occupied.version)
+    const empty = mutationState()
+    await api.combineTables({ claim: {}, addTableIds: ids })
+    const group = (await api.getFloorState(clock.now())).groups.find((g) => g.tableIds.includes(ids[0]))!
+    expect(group.tableIds).toEqual(ids)
+    expect(mutationState().allocations).toEqual(empty.allocations)
+    expect(mutationState().reservations).toEqual(before.reservations)
+    expect(mutationState().visits).toEqual(empty.visits)
+    await api.splitGroup({ groupId: group.id, version: group.version!, mode: "ALL_TO_SINGLE" })
+    expect((await api.getFloorState(clock.now())).groups.some((g) => g.id === group.id)).toBe(false)
+  })
+
+  it("uses HU-32 spare tables and accepts bookings on all four Khu C tables", async () => {
+    const catalog = await api.getCatalog()
+    const zone = catalog.zones.find((z) => z.code === "C")!
+    expect(zone).toMatchObject({ isBookable: true, isWaitingArea: false })
+    expect(
+      catalog.tables
+        .filter((t) => t.isSpare)
+        .map((t) => t.code)
+        .sort(),
+    ).toEqual(["A0", "A10", "B8"])
+    for (const code of ["C1", "C2", "C4", "C5"]) {
+      const tableId = catalog.tables.find((t) => t.code === code)!.id
+      const created = await api.createReservation({
+        tableIds: [tableId],
+        contactName: "Khu C P1",
+        partySize: 4,
+        expectedAt: atBusinessTime(bd, "23:00"),
+        sourceCode: "HOTLINE",
+      })
+      expect(
+        (await api.listReservations({ businessDate: bd })).find((r) => r.id === created.reservationId)?.tableIds,
+      ).toEqual([tableId])
+    }
+  })
+
+  it("mock-only C1 keeps a Bar pair after booking, check-in, departure and business day end", async () => {
+    const catalog = await api.getCatalog()
+    const ids = ["BAR02", "BAR03"].map((code) => catalog.tables.find((t) => t.code === code)!.id)
+    await api.combineTables({ claim: {}, addTableIds: ids })
+    const gid = (await api.getFloorState(clock.now())).groups.find((g) => g.tableIds.includes(ids[0]))!.id
+    const created = await api.createReservation({
+      tableIds: ids,
+      contactName: "C1 couple",
+      partySize: 3,
+      expectedAt: atBusinessTime(bd, "23:00"),
+      sourceCode: "HOTLINE",
+    })
+    const reservation = (await api.listReservations({ businessDate: bd })).find((r) => r.id === created.reservationId)!
+    await api.checkIn({ reservationId: reservation.id, version: reservation.version, guestCount: 3 })
+    let claim = (await api.getFloorState(clock.now())).tables.find((t) => t.tableId === ids[0])!.claim!
+    api.setSession(owner)
+    await api.markPaid(claim.visitId!, claim.version)
+    claim = (await api.getFloorState(clock.now())).tables.find((t) => t.tableId === ids[0])!.claim!
+    await api.endVisit(claim.visitId!, claim.version)
+    expect((await api.getFloorState(clock.now())).groups.find((g) => g.id === gid)?.tableIds).toEqual(ids)
+    clock.advance(24 * 60)
+    expect((await api.getFloorState(clock.now())).groups.find((g) => g.id === gid)?.tableIds).toEqual(ids)
+  })
+
   // Include released rows and operation history so a rejected mutation cannot
   // hide an orphan hold/group or a partially released previous assignment.
   function mutationState() {
@@ -72,12 +223,7 @@ describe("MockGamApi", () => {
     })
   }
 
-  it.each([
-    { codes: ["A0", "BAR11"], partySize: 2, code: "TABLE_ZONE_MISMATCH" },
-    { codes: ["A0", "B7"], partySize: 2, code: "TABLE_ZONE_MISMATCH" },
-    { codes: ["BAR11"], partySize: 2, code: "INSUFFICIENT_TABLE_CAPACITY" },
-    { codes: ["A10"], partySize: 2, code: "SPARE_TABLE_NOT_BOOKABLE" },
-  ])(
+  it.each([{ codes: ["A10"], partySize: 2, code: "SPARE_TABLE_NOT_BOOKABLE" }])(
     "atomically rejects direct booking $codes with $code even with owner override",
     async ({ codes, partySize, code }) => {
       api.setSession(owner)
@@ -96,6 +242,28 @@ describe("MockGamApi", () => {
         }),
       ).rejects.toMatchObject({ status: 409, code })
       expect(mutationState()).toEqual(before)
+    },
+  )
+
+  it.each([
+    { codes: ["A2", "BAR11"], partySize: 2 },
+    { codes: ["A2", "B7"], partySize: 2 },
+  ])(
+    "accepts direct booking $codes in mock mode (mock-only pending Tu C1 / cross-zone approval)",
+    async ({ codes, partySize }) => {
+      api.setSession(owner)
+      const catalog = await api.getCatalog()
+      const tableIds = codes.map((code) => catalog.tables.find((table) => table.code === code)!.id)
+      await expect(
+        api.createReservation({
+          contactName: "Cross-zone mock guest",
+          phone: "0901112233",
+          expectedAt: atBusinessTime(addDays(bd, 1), "23:00"),
+          sourceCode: "HOTLINE",
+          partySize,
+          tableIds,
+        }),
+      ).resolves.toMatchObject({ reservationId: expect.any(Number) })
     },
   )
 
@@ -122,11 +290,7 @@ describe("MockGamApi", () => {
       const visit =
         operation === "visit move" ? (await api.listVisits(bd)).find((row) => row.id === current.visitId)! : null
       const before = mutationState()
-      for (const [codes, code] of [
-        [["B5", "BAR18"], "TABLE_KIND_MISMATCH"],
-        [["BAR18"], "INSUFFICIENT_TABLE_CAPACITY"],
-        [["A10"], "SPARE_TABLE_NOT_BOOKABLE"],
-      ] as const) {
+      for (const [codes, code] of [[["A10"], "SPARE_TABLE_NOT_BOOKABLE"]] as const) {
         const tableIds = ids([...codes])
         const request = visit
           ? api.moveClaim({
@@ -144,6 +308,23 @@ describe("MockGamApi", () => {
         await expect(request).rejects.toMatchObject({ status: 409, code })
         expect(mutationState()).toEqual(before)
       }
+
+      // In mock mode (mock-only pending Tu C1), table+bar combination [B5, BAR18] is allowed
+      const mixedIds = ids(["B5", "BAR18"])
+      const mixedRequest = visit
+        ? api.moveClaim({
+            claim: { visitId: visit.id, version: visit.version },
+            tableIds: mixedIds,
+            overrideReason: "Owner approval",
+          })
+        : operation === "reservation move"
+          ? api.moveClaim({
+              claim: { reservationId: reservation.id, version: reservation.version },
+              tableIds: mixedIds,
+              overrideReason: "Owner approval",
+            })
+          : api.assignTables(reservation.id, reservation.version, mixedIds, "Owner approval")
+      await expect(mixedRequest).resolves.toBeDefined()
     },
   )
 
@@ -163,11 +344,11 @@ describe("MockGamApi", () => {
     expect(
       (await api.getFloorState(clock.now(), bd)).groups.find((group) => group.tableIds.includes(pair[0]))?.tableIds,
     ).toEqual(pair)
-    // Free the seeded A0 party through the public API before crossing zones.
-    const initialFloor = await api.getFloorState(clock.now(), bd)
-    const occupied = initialFloor.tables.find((table) => table.tableId === ids(["A0"])[0])!.claim!
+    const crossZone = ids(["A2", "B7"])
+    const occupied = (await api.getFloorState(clock.now(), bd)).tables.find(
+      (table) => table.tableId === ids(["A2"])[0],
+    )!.claim!
     await api.endVisit(occupied.visitId!, occupied.version)
-    const crossZone = ids(["A0", "B7"])
     await api.assignTables(row.id, row.version, crossZone)
     row = (await api.listReservations({ businessDate: bd })).find((item) => item.id === row.id)!
     expect(row.tableIds).toEqual(crossZone)
@@ -177,7 +358,7 @@ describe("MockGamApi", () => {
     const group = (await api.getFloorState(clock.now(), bd)).groups.find((item) =>
       item.tableIds.includes(crossZone[0]),
     )!
-    const destination = ids(["A0", "B5"])
+    const destination = ids(["A2", "B5"])
     await api.moveClaim({ claim: { visitId: visit.id, version: visit.version }, tableIds: destination })
     const floor = await api.getFloorState(clock.now(), bd)
     expect(floor.groups.find((item) => item.id === group.id)?.tableIds).toEqual(destination)
@@ -545,7 +726,14 @@ describe("MockGamApi", () => {
       const floor = await api.getFloorState(clock.now(), nextDate)
       expect(floor.tables.filter((row) => ids.includes(row.tableId))).toEqual(
         expect.arrayContaining(
-          ids.map((tableId) => ({ tableId, state: "free", staleFromPreviousDay: false, claim: null })),
+          ids.map((tableId) => ({
+            tableId,
+            state: "free",
+            staleFromPreviousDay: false,
+            claim: null,
+            claimOwner: null,
+            seatedTurnCount: 0,
+          })),
         ),
       )
       expect(floor.groups.some((row) => row.id === group.id)).toBe(false)
@@ -603,7 +791,7 @@ describe("MockGamApi", () => {
         claim: { visitId: seated.visitId, groupId: group.id, tableIds: ids },
       })
     }
-    expect(floor.groups.find((row) => row.id === group.id)).toEqual(group)
+    expect(floor.groups.find((row) => row.id === group.id)).toEqual({ ...group, seatedTurnCount: 0 })
     expect((await disabled.listVisits(bd)).find((row) => row.id === seated.visitId)?.endedAt).toBeNull()
     const claim = floor.tables.find((row) => row.tableId === ids[0])!.claim!
     await disabled.endVisit(seated.visitId, claim.version!)
@@ -748,6 +936,27 @@ describe("MockGamApi", () => {
     floor = await api.getFloorState(clock.now())
     expect(floor.tables.find((t) => t.tableId === id("B7"))!.state).toBe("free")
     expect(floor.tables.find((t) => t.tableId === id("B5"))!.state).toBe("seated")
+  })
+
+  it("split still requires a released table but leaves capacity to staff", async () => {
+    const cat = await api.getCatalog()
+    const id = (code: string) => cat.tables.find((t) => t.code === code)!.id
+    const seats = (code: string) => cat.tables.find((t) => t.code === code)!.capacity
+    const party = seats("B5") + seats("B7")
+    // Seat the full party across both tables, so the group already fits exactly.
+    await api.seatWalkIn({ tableIds: [id("B5"), id("B7")], guestCount: party })
+    const floor = await api.getFloorState(clock.now())
+    const group = floor.groups.find((g) => g.tableIds.includes(id("B5")))!
+
+    // SPL-02: keeping every table releases nothing.
+    await expectApiError(api.splitGroup({ groupId: group.id, keepTableIds: [id("B5"), id("B7")] }), "VALIDATION_FAILED")
+    expect((await api.getFloorState(clock.now())).groups.find((g) => g.id === group.id)?.tableIds.sort()).toEqual(
+      [id("B5"), id("B7")].sort(),
+    )
+    await api.splitGroup({ groupId: group.id, keepTableIds: [id("B5")] })
+    const after = await api.getFloorState(clock.now())
+    expect(after.tables.find((t) => t.tableId === id("B5"))?.claim?.partySize).toBe(party)
+    expect(after.tables.find((t) => t.tableId === id("B7"))?.claim).toBeNull()
   })
 
   it("undo is blocked when another device changed the data", async () => {

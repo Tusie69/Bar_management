@@ -110,6 +110,7 @@ describe("Phase 2A floor adapter", () => {
     expect(projected("EMPTY", true)).toBe("spare")
     expect(projected("BOOKED", true)).toBe("reserved")
     expect(projected("UPCOMING")).toBe("upcoming")
+    expect(projected("CONTACTED")).toBe("upcoming")
     expect(projected("LATE")).toBe("late")
     expect(projected("LATE_CONFIRMED")).toBe("late_confirmed")
     expect(projected("NO_SHOW")).toBe("noshow")
@@ -141,13 +142,36 @@ describe("Phase 2A floor adapter", () => {
       sourceCode: "HOTLINE",
       version: 3,
       phoneNumber: "+84901234123",
+      reservedExpectedAt: new Date("2026-10-28T12:30:00.000Z"),
+      contactedAt: new Date("2026-10-28T12:40:00.000Z"),
+      contactStatus: "CONTACTED" as const,
+      iconKeys: ["star", "pin"],
+      honorific: "MS" as const,
       note: "must not cross the adapter",
     }
     const projection: BackendFloorProjection = {
       businessDate: "2026-10-28",
       serverNow: "2026-10-28T13:00:00.000Z",
       changeSeq: "12",
-      groups: [{ id: 9, symbolNo: 27, displayCode: "◆AA", tableIds: [1, 2] }],
+      groups: [
+        {
+          id: 9,
+          version: 42,
+          symbolNo: 27,
+          displayCode: "◆AA",
+          name: "Cặp bàn",
+          zoneId: 1,
+          tableIds: [1, 2],
+          totalSeats: 8,
+          displayState: "NO_SHOW",
+          isOutOfService: false,
+          claim,
+          seatedTurnCount: 3,
+          completedTurnCount: 1,
+          currentTurnNo: 3,
+          businessDate: "2026-10-28",
+        },
+      ],
       tables: [1, 2].map((tableId) => ({
         tableId,
         tableCode: tableId === 1 ? "A1" : "A10",
@@ -162,8 +186,11 @@ describe("Phase 2A floor adapter", () => {
         groupDisplayCode: "◆AA",
         groupMemberTableIds: [1, 2],
         staleFromPreviousDay: false,
+        seatedTurnCount: 3,
+        claimOwner: "GROUP",
       })),
     }
+    Object.assign(projection.groups[0]!, { phoneNumber: "+84901234123", note: "private group field" })
     const floor = mapFloorProjection(projection, catalog)
     expect(floor.at).toEqual(new Date(projection.serverNow))
     expect(floor.changeSeq).toBe(12)
@@ -176,7 +203,29 @@ describe("Phase 2A floor adapter", () => {
       groupDisplayCode: "◆AA",
       flags: ["RETURNING"],
       note: null,
+      version: 3,
+      reservedExpectedAt: claim.reservedExpectedAt,
+      contactedAt: claim.contactedAt,
+      contactStatus: "CONTACTED",
+      iconKeys: ["star", "pin"],
+      honorific: "MS",
     })
+    expect(floor.tables[0]).toMatchObject({ seatedTurnCount: 3, claimOwner: "GROUP" })
+    expect(floor.groups[0]).toMatchObject({
+      version: 42,
+      seatedTurnCount: 3,
+      totalSeats: 8,
+      state: "noshow",
+      claim: {
+        version: 3,
+        reservedExpectedAt: claim.reservedExpectedAt,
+        iconKeys: ["star", "pin"],
+        honorific: "MS",
+        note: null,
+      },
+    })
+    expect(JSON.stringify(floor)).not.toContain("+84901234123")
+    expect(floor.groups[0]).not.toHaveProperty("note")
     expect(floor.tables[0]?.claim).not.toHaveProperty("phoneNumber")
   })
 
@@ -230,6 +279,11 @@ describe("Phase 2A floor adapter", () => {
       state: "hold_overdue",
       claim: { kind: "waitlist_hold", waitlistEntryId: 22 },
     })
+    const mapped = mapFloorProjection(projection, catalog)
+    expect(mapped.tables[0]).not.toHaveProperty("seatedTurnCount")
+    expect(mapped.tables[0]).not.toHaveProperty("claimOwner")
+    expect(mapped.tables[0]!.claim).not.toHaveProperty("reservedExpectedAt")
+    expect(mapped.tables[0]!.claim).not.toHaveProperty("iconKeys")
   })
   it("maps persisted catalog geometry, source codes, spare and out-of-service configuration", () => {
     const catalog = mapCatalog(catalogPayload, sources)
@@ -412,4 +466,23 @@ describe("Phase 2A floor adapter", () => {
     expect(floor.tables.map((table) => table.staleFromPreviousDay)).toEqual([false, false])
     expect(floor.tables[1]?.state).toBe("free")
   })
+})
+
+describe("deriveAvailability", () => {
+  // BF-03: every state that keeps a table on the date must block it, not only "reserved".
+  it.each(["reserved", "upcoming", "late", "late_confirmed", "noshow", "hold", "hold_overdue"] as const)(
+    "reports %s as not bookable for that date",
+    (state) => {
+      const catalog = mapCatalog(catalogPayload, sources)
+      const at = new Date("2026-10-30T15:00:00.000Z")
+      const floor = {
+        at,
+        businessDate: "2026-10-30",
+        changeSeq: 1,
+        groups: [],
+        tables: catalog.tables.map((table) => ({ tableId: table.id, state, claim: null })),
+      } as unknown as Parameters<typeof deriveAvailability>[2]
+      expect(deriveAvailability(at, 2, floor, [], catalog).tables[0]?.status).toBe("reserved")
+    },
+  )
 })

@@ -94,12 +94,12 @@ export const RESERVATION_STATUS_LABEL: Record<ReservationStatus, string> = {
   BOOKED: "Đã đặt",
   CHECKED_IN: "Đã check-in",
   CANCELLED: "Đã hủy",
-  NO_SHOW: "Không đến",
+  NO_SHOW: "Không tới",
 }
 
 export const CLOSE_REASON_LABEL: Record<ReservationCloseReason, string> = {
   CUSTOMER_REQUEST: "Khách yêu cầu hủy",
-  NO_SHOW_CONFIRMED: "Xác nhận không đến",
+  NO_SHOW_CONFIRMED: "Xác nhận không tới",
   DUPLICATE: "Trùng booking",
   ENTRY_ERROR: "Nhập sai",
   VENUE_DECISION: "Quán quyết định",
@@ -149,7 +149,7 @@ export const CONTACT_OUTCOME_LABEL: Record<ContactOutcome, string> = {
 export const WAITLIST_CLOSE_LABEL: Record<WaitlistCloseReason, string> = {
   CUSTOMER_DECLINED: "Khách từ chối",
   CUSTOMER_WITHDREW: "Khách rút",
-  NO_SHOW_AFTER_ACCEPT: "Nhận bàn nhưng không đến",
+  NO_SHOW_AFTER_ACCEPT: "Nhận bàn nhưng không tới",
   RESERVATION_CANCELLED: "Booking đã hủy",
   SEATED_OTHERWISE: "Đã có chỗ theo cách khác",
   DUPLICATE: "Trùng",
@@ -158,7 +158,7 @@ export const WAITLIST_CLOSE_LABEL: Record<WaitlistCloseReason, string> = {
 }
 
 export const HOLD_RELEASE_LABEL: Record<HoldReleaseReason, string> = {
-  CUSTOMER_NO_SHOW: "Khách không đến",
+  CUSTOMER_NO_SHOW: "Khách không tới",
   CUSTOMER_CANCELLED: "Khách hủy",
   RESERVATION_CANCELLED: "Booking đã hủy",
   STAFF_REASSIGNED: "Nhân viên xếp lại",
@@ -183,7 +183,14 @@ export const RELEASE_REASON_LABEL: Record<AllocationReleaseReason, string> = {
   BUSINESS_DAY_END: "Tự đóng cuối ngày kinh doanh",
   HOLD_RELEASED: "Nhả giữ bàn",
   RESERVATION_CANCELLED: "Hủy booking",
-  NO_SHOW: "Không đến",
+  NO_SHOW: "Không tới",
   ENTRY_ERROR: "Nhập sai",
   UNDO: "Hoàn tác",
+}
+
+export function formatBookingSource(sourceCode: BookingSourceCode, socialPlatform?: string | null): string {
+  if (sourceCode === "SOCIAL" && socialPlatform) {
+    return `Social - ${socialPlatform}`
+  }
+  return SOURCE_LABEL[sourceCode] ?? sourceCode
 }

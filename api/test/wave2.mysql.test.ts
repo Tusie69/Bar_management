@@ -2,6 +2,7 @@ import type { RowDataPacket } from 'mysql2/promise'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { WaitlistEntryView } from '../src/modules/waitlist/waitlist.repository.js'
+import * as applicationClock from '../src/time/application-clock.js'
 import { env } from '../src/config/env.js'
 import { databasePool } from '../src/database/pool.js'
 import { assignBookingTables, createBooking, createWalkIn } from '../src/modules/bookings/booking.repository.js'
@@ -17,21 +18,34 @@ const advanceBody = (reservationId: number) => ({ kind: 'ADVANCE_RESERVATION', r
 
 mysqlDescribe('Wave 2 owner-approved integration', () => {
   beforeAll(initializeFixture)
-  beforeEach(resetFixture)
-  afterEach(() => vi.useRealTimers())
+  beforeEach(async () => {
+    await resetFixture()
+    vi.spyOn(applicationClock, 'applicationNow').mockReturnValue(new Date('2030-10-24T12:00:00.000Z'))
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
   afterAll(clearFixture)
 
-  it('revokes receptionist phone reveal and keeps venue configuration owner-only', async () => {
+  it('separates receptionist calling from phone reveal and keeps venue configuration owner-only', async () => {
     const [grants] = await databasePool.execute<RowDataPacket[]>(
       `SELECT r.code AS role, p.code AS permission FROM role_permissions rp
        JOIN roles r ON r.id = rp.role_id JOIN permissions p ON p.id = rp.permission_id
-       WHERE p.code IN ('booking.phone.reveal', 'venue.configure') ORDER BY p.code, r.code`,
+       WHERE p.code IN ('booking.phone.call', 'booking.phone.reveal', 'customer.phone.reveal', 'venue.configure')
+       ORDER BY p.code, r.code`,
     )
-    expect(grants).toEqual([{ role: 'OWNER_ADMIN', permission: 'booking.phone.reveal' },
+    expect(grants).toEqual([
+      { role: 'OWNER_ADMIN', permission: 'booking.phone.call' },
+      { role: 'RECEPTIONIST', permission: 'booking.phone.call' },
+      { role: 'OWNER_ADMIN', permission: 'booking.phone.reveal' },
+      { role: 'OWNER_ADMIN', permission: 'customer.phone.reveal' },
       { role: 'OWNER_ADMIN', permission: 'venue.configure' }])
     const receptionist = await login()
     const me = await receptionist.agent.get('/api/v1/auth/me')
+    expect((me.body as { permissions: string[] }).permissions).toContain('booking.phone.call')
     expect((me.body as { permissions: string[] }).permissions).not.toContain('booking.phone.reveal')
+    expect((me.body as { permissions: string[] }).permissions).not.toContain('customer.phone.reveal')
   })
 
   it('creates advance entries from reservations, prioritizes them over older walk-ins and rejects duplicates', async () => {
@@ -152,6 +166,42 @@ mysqlDescribe('Wave 2 owner-approved integration', () => {
     expect(audit).toEqual([{ action: 'WAITLIST_ADDED' }, { action: 'WAITLIST_ASSIGNED_TO_RESERVATION' }, { action: 'WAITLIST_SEATED' }])
     const [usage] = await databasePool.execute<RowDataPacket[]>('SELECT kind, group_id FROM table_allocations WHERE released_at IS NULL')
     expect(usage).toEqual([{ kind: 'USAGE', group_id: String(result.groupId) }, { kind: 'USAGE', group_id: String(result.groupId) }])
+  })
+
+  it('seats a present walk-in atomically and respects an existing booking hold', async () => {
+    vi.spyOn(applicationClock, 'applicationNow').mockReturnValue(new Date('2030-10-24T12:00:00.000Z'))
+    const booking = await createBooking(actor, bookingInput)
+    await assignBookingTables(actor, booking.id, 1, [tableId])
+    const entry = await createWaitlistEntry(actor, {
+      guestName: 'Present guest', partySize: 2, businessDate, contactChannel: 'IN_PERSON',
+    })
+    const session = await login()
+    const seat = () => session.agent.post(`/api/v1/waitlist/${entry.id}/seat`).set('Origin', env.webOrigin)
+      .set('X-CSRF-Token', session.csrfToken).send({ version: 1, tableIds: [tableId], arrived: true })
+    expect((await seat()).status).toBe(409)
+    const [before] = await databasePool.execute<RowDataPacket[]>('SELECT id FROM visits')
+    expect(before).toHaveLength(0)
+    const cancelled = await session.agent.post('/api/v1/bookings/' + booking.id + '/cancel').set('Origin', env.webOrigin)
+      .set('X-CSRF-Token', session.csrfToken).send({ version: 2 })
+    expect(cancelled.status).toBe(200)
+    const attempts = await Promise.all([seat(), seat()])
+    expect(attempts.map(result => result.status).sort()).toEqual([200, 409])
+    const result = attempts.find(attempt => attempt.status === 200)?.body as { entry: WaitlistEntryView; reservationId: null }
+    expect(result.reservationId).toBeNull()
+    expect(result.entry).toMatchObject({ kind: 'WALK_IN', status: 'SEATED', version: 2, reservationId: null })
+    expect(result.entry.visitId).toBeGreaterThan(0)
+    const [usages] = await databasePool.execute<RowDataPacket[]>(
+      "SELECT kind, visit_id FROM table_allocations WHERE released_at IS NULL",
+    )
+    expect(usages).toEqual([{ kind: 'USAGE', visit_id: String(result.entry.visitId) }])
+    const [audit] = await databasePool.execute<RowDataPacket[]>(
+      "SELECT action, change_seq FROM operation_log WHERE action = 'WAITLIST_SEATED' AND entity_id = ?", [entry.id],
+    )
+    expect(audit).toHaveLength(1)
+    const floor = await session.agent.get(`/api/v1/tables?date=${businessDate}`)
+    const projection = floor.body as { changeSeq: string; tables: { id: number; state: string }[] }
+    expect(projection.changeSeq).toBe(String(audit[0]?.change_seq))
+    expect(projection.tables.find(table => table.id === tableId)?.state).toBe('IN_USE')
   })
 
   async function bookingWithLinkedEntries(status: 'CONTACTING' | 'HOLD_ACTIVE') {

@@ -1,20 +1,33 @@
 /**
  * Booking form rules (approved): one source for every booking form variant.
  *
- * - Guests: quick-pick 1–10, "Khác" for whole numbers above 10 (no upper limit until one is approved;
- *   note the mock server still caps partySize at 500).
- * - Arrival: 19:00 of the selected business date to 01:00 next morning, every 30 minutes, both ends
- *   included (13 slots). Walk-in arrival is "now" and is NOT limited by these slots.
+ * - Guests: quick-pick 1-6, with an input for any positive whole number.
+ * - Arrival: 19:00 of the selected business date to 01:00 next morning, every 5 minutes, both ends
+ *   included (73 slots). Walk-in arrival is "now" and is NOT limited by these slots.
  * - The business day itself stays 17:00 → 05:00 (lib/time.ts). 00:00–01:00 slots use the next calendar
  *   date but keep the selected business date; the API derives business_date from expectedAt.
  */
 import { addDays, atBusinessTime, fmtDayMonth, MS, venueDateString, venueParts, type BusinessDate } from "@/lib/time"
 
-export const GUEST_QUICK = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const
-export const BOOKING_SLOT_STEP_MIN = 30
+export const GUEST_QUICK = [1, 2, 3, 4, 5, 6] as const
+export const BOOKING_MINUTE_STEP = 5
+export const BOOKING_SLOT_STEP_MIN = BOOKING_MINUTE_STEP
 export const BOOKING_FIRST_SLOT = "19:00"
 export const BOOKING_LAST_SLOT = "01:00"
+export const BOOKING_HOURS = ["19", "20", "21", "22", "23", "00", "01"] as const
+export const BOOKING_MINUTES = Array.from({ length: 60 / BOOKING_MINUTE_STEP }, (_, i) =>
+  String(i * BOOKING_MINUTE_STEP).padStart(2, "0"),
+)
 export const PAST_GRACE_MIN = 0
+
+export type BookingClassification = "UNCLASSIFIED" | "RETURNING" | "NEW"
+
+export function toggleClassification(
+  current: BookingClassification,
+  selected: "RETURNING" | "NEW",
+): BookingClassification {
+  return current === selected ? "UNCLASSIFIED" : selected
+}
 
 const DAY_START = 17 * 60
 const pad = (n: number) => String(n).padStart(2, "0")
@@ -39,7 +52,10 @@ export const BOOKING_SLOTS: readonly string[] = (() => {
 
 export const isBookingSlot = (hhmm: string | null | undefined): hhmm is string => !!hhmm && BOOKING_SLOTS.includes(hhmm)
 
-/** Backend-style window check: accepts any minute in 19:00–01:00, independent of the configured UI slot step. */
+export const isConfiguredQuickTime = (hhmm: string | null | undefined, quickTimes: readonly string[]): hhmm is string =>
+  !!hhmm && quickTimes.includes(hhmm) && isBookingSlot(hhmm)
+
+/** Backend-style window check: accepts any minute in 19:00–01:00, independent of the booking slot step. */
 export function isWithinBookingReceptionWindow(hhmm: string): boolean {
   if (!/^\d{2}:\d{2}$/.test(hhmm)) return false
   const [hour, minute] = hhmm.split(":").map(Number)
@@ -47,6 +63,14 @@ export function isWithinBookingReceptionWindow(hhmm: string): boolean {
   const minutes = toMin(hhmm)
   return minutes >= toMin(BOOKING_FIRST_SLOT) || minutes <= toMin(BOOKING_LAST_SLOT)
 }
+
+/** Any wheel value: inside 19:00–01:00 and on the 15-minute step. */
+export function isBookingTime(hhmm: string | null | undefined): hhmm is string {
+  return !!hhmm && isWithinBookingReceptionWindow(hhmm) && toMin(hhmm) % BOOKING_MINUTE_STEP === 0
+}
+
+/** Venue quick times (TU-16) that the wheel can represent. Never falls back to hardcoded values. */
+export const usableQuickTimes = (times: readonly string[] | undefined): string[] => (times ?? []).filter(isBookingTime)
 
 /** Booking time is always displayed in the venue's 24-hour format. */
 export const slotLabel = (hhmm: string): string => hhmm
@@ -80,6 +104,25 @@ export function bookingSlots(bd: BusinessDate, now: Date, graceMin = PAST_GRACE_
   })
 }
 
+export function configuredQuickSlots(
+  bd: BusinessDate,
+  now: Date,
+  quickTimes: readonly string[],
+  graceMin = PAST_GRACE_MIN,
+): BookingSlot[] {
+  return quickTimes.filter(isBookingSlot).map((time) => {
+    const past = bookingInstant(bd, time).getTime() < now.getTime() - graceMin * MS.MIN
+    return {
+      time,
+      label: slotLabel(time),
+      nextDay: isAfterMidnight(time),
+      calendarDate: bookingCalendarDate(bd, time),
+      disabled: past,
+      reason: past ? "Đã qua" : null,
+    }
+  })
+}
+
 /** Canonical mobile forms group slots across midnight while preserving venue-time ordering. */
 export function bookingSlotGroups(bd: BusinessDate, now: Date) {
   const all = bookingSlots(bd, now)
@@ -96,9 +139,11 @@ export function validateBookingTime(
   hhmm: string | null | undefined,
   now: Date,
   graceMin = PAST_GRACE_MIN,
+  quickTimes: readonly string[] = [],
 ) {
   if (!hhmm) return "Chọn giờ đến."
-  if (!isBookingSlot(hhmm)) return "Giờ đặt bàn chỉ từ 19:00 đến 01:00, theo các mốc 30 phút đang cấu hình."
+  if (!isBookingSlot(hhmm) && !isConfiguredQuickTime(hhmm, quickTimes))
+    return "Giờ đặt bàn chỉ từ 19:00 đến 01:00, theo mốc 5 phút."
   if (bookingInstant(bd, hhmm).getTime() < now.getTime() - graceMin * MS.MIN)
     return `${slotLabel(hhmm)} đã qua ở ngày này. Chọn lại giờ đến.`
   return null
@@ -120,15 +165,36 @@ export function validateBookingCheckInDate(bd: BusinessDate, now: Date): string 
 
 export type GuestParse = { ok: true; value: number; error: null } | { ok: false; value: number | null; error: string }
 
-/** "Khác": whole numbers above 10 only. */
+/** "Số khác": whole numbers above 6 only (7 and up). */
 export function parseOtherGuests(text: string): GuestParse {
   const t = text.trim()
-  if (!t) return { ok: false, value: null, error: "Nhập số khách, từ 11 trở lên." }
+  if (!t) return { ok: false, value: null, error: "Nhập số khách." }
   if (/^-/.test(t)) return { ok: false, value: null, error: "Số khách phải lớn hơn 0." }
   if (/[.,]/.test(t)) return { ok: false, value: null, error: "Chỉ nhập số nguyên, không có phần lẻ." }
   if (!/^\d+$/.test(t)) return { ok: false, value: null, error: "Chỉ nhập chữ số." }
   const v = Number(t)
   if (v === 0) return { ok: false, value: 0, error: "Số khách phải lớn hơn 0." }
-  if (v <= 10) return { ok: false, value: v, error: `${v} khách: chạm nút ${v} ở trên. Ô Khác dành cho từ 11 khách.` }
+  if (v <= 6) return { ok: false, value: v, error: `${v} khách: chạm nút ${v} ở trên.` }
   return { ok: true, value: v, error: null }
 }
+
+export interface GuestValue {
+  mode: "quick" | "other"
+  /** Last valid count (quick pick or a valid "số khác..."). */
+  party: number
+  /** Raw other text, kept when switching back to 1–6. */
+  otherText: string
+}
+
+export const guestValueFrom = (party: number): GuestValue =>
+  party > 6 ? { mode: "other", party, otherText: String(party) } : { mode: "quick", party, otherText: "" }
+
+/** Effective guest count, or null while "số khác..." is invalid. */
+export function guestCount(v: GuestValue): number | null {
+  if (v.mode === "quick") return v.party
+  const p = parseOtherGuests(v.otherText)
+  return p.ok ? p.value : null
+}
+
+export const guestError = (v: GuestValue): string | null =>
+  v.mode === "other" ? parseOtherGuests(v.otherText).error : null

@@ -48,6 +48,13 @@ export interface VenueConfig {
   reservationWindowMinutes: number | null
   groupSymbolCount: number
   changeSeq: number
+  settings?: { quick_times: string[]; upcoming_minutes: number; no_show_minutes: number }
+}
+
+export interface VenueSettingsView {
+  quickTimes: string[]
+  upcomingMinutes: number
+  noShowMinutes: number
 }
 
 export interface ZoneView {
@@ -104,7 +111,17 @@ export interface Catalog {
 /* ---------------- Floor ---------------- */
 
 export type TableLiveState =
-  "free" | "reserved" | "upcoming" | "late" | "late_confirmed" | "noshow" | "seated" | "hold" | "hold_overdue" | "oos" | "spare"
+  | "free"
+  | "reserved"
+  | "upcoming"
+  | "late"
+  | "late_confirmed"
+  | "noshow"
+  | "seated"
+  | "hold"
+  | "hold_overdue"
+  | "oos"
+  | "spare"
 
 export type BookingWarning = "late" | "noshow" | null
 
@@ -124,20 +141,28 @@ export interface ClaimView {
   origin: VisitOrigin | null
   tableIds: number[]
   groupId: number | null
-  symbolNo: number | null
+  symbolNo?: number | null
   groupDisplayCode?: string | null
   turnNo?: number | null
-  flags?: Array<"NEW" | "RETURNING">
+  flags?: Array<"BIRTHDAY" | "NEW" | "RETURNING" | "VIP">
   warning: BookingWarning
   minutesLate: number
   sourceCode: BookingSourceCode | null
   note: string | null
   version: number
   lateConfirmedAt?: Date | null
+  canCall?: boolean
+  reservedExpectedAt?: Date | null
+  iconKeys?: string[]
+  contactedAt?: Date | null
+  contactStatus?: "CONTACTED" | "NO_ANSWER" | null
+  honorific?: "MR" | "MS" | null
 }
 
 export interface FloorTableState {
   tableId: number
+  seatedTurnCount?: number
+  claimOwner?: "GROUP" | "TABLE" | null
   state: TableLiveState
   claim: ClaimView | null
   /** Seated but the business day already rolled over: "bàn chưa nhả từ hôm trước". */
@@ -167,6 +192,18 @@ export interface AllocationView {
 
 export interface FloorGroup {
   id: number
+  /** Layout version; guest commands use claim.version instead. */
+  version?: number
+  name?: string
+  zoneId?: number
+  totalSeats?: number
+  state?: TableLiveState
+  isOutOfService?: boolean
+  claim?: ClaimView | null
+  seatedTurnCount?: number
+  completedTurnCount?: number
+  currentTurnNo?: number | null
+  businessDate?: BusinessDate
   symbolNo: number
   /** Authoritative, stable label supplied by the floor projection (for example ◆A). */
   displayCode?: string
@@ -218,13 +255,20 @@ export interface ReservationView {
   version: number
   customerId: number | null
   displayName: string
+  /** WF-01: false when displayName is only a fallback and no name is stored. */
+  hasGuestName: boolean
   phoneLast3: string | null
   partySize: number
   expectedAt: Date
   businessDate: BusinessDate
   classification: BookingClassification
+  guestType: "REGULAR" | "NEW" | null
+  isBirthday: boolean
   status: ReservationStatus
   sourceCode: BookingSourceCode
+  socialPlatform?: string | null
+  iconKeys?: string[]
+  honorific?: "MR" | "MS" | null
   note: string | null
   tableIds: number[]
   holdId: number | null
@@ -241,6 +285,22 @@ export interface ReservationView {
   createdAt: Date | null
   createdByName: string
   lateConfirmedAt: Date | null
+  canCall?: boolean
+}
+
+export interface ReceptionSearchResult {
+  businessDate: BusinessDate
+  query: { last3?: string; name?: string }
+  bookings: Array<{ id: number; displayName: string; phoneLast3: string | null; tableIds: number[] }>
+  waitlist: Array<{
+    id: number
+    reservationId: number | null
+    displayName: string
+    phoneLast3: string | null
+    tableIds: number[]
+    status: WaitlistStatus
+  }>
+  summary: { bookingCount: number; waitlistCount: number; totalCount: number }
 }
 
 export interface VisitView {

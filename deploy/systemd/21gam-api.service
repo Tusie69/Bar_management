@@ -1,0 +1,46 @@
+# Unit chạy 21GAM API trên VPS Ubuntu.
+# Cài đặt:
+#   sudo cp deploy/systemd/21gam-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now 21gam-api
+# Sửa WorkingDirectory/EnvironmentFile nếu mã nguồn không nằm ở /srv/21gam.
+
+[Unit]
+Description=21GAM Bar Management API
+Documentation=https://github.com/21gam/bar-management
+After=network-online.target mysql.service
+Wants=network-online.target
+Requires=mysql.service
+
+[Service]
+Type=simple
+User=gam21
+Group=gam21
+WorkingDirectory=/srv/21gam/api
+# Không dùng EnvironmentFile: server tự nạp /srv/21gam/api/.env qua dotenv
+# (đọc theo WorkingDirectory), nên tránh được khác biệt cú pháp khi parse khóa base64.
+ExecStart=/usr/bin/node dist/server.js
+# server.ts dừng worker, đóng HTTP server và pool khi nhận SIGTERM.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=21gam-api
+
+# Siết quyền: API chỉ cần đọc mã nguồn và nói chuyện với MySQL qua loopback.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+
+[Install]
+WantedBy=multi-user.target

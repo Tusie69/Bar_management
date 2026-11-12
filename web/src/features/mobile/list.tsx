@@ -27,7 +27,7 @@ const STATUS_CHIPS: [Status, string][] = [
   ["attention", "Cần xử lý"],
   ["upcoming", "Sắp đến"],
   ["seated", "Đã nhận bàn"],
-  ["closed", "Không đến, hủy"],
+  ["closed", "Không tới, hủy"],
 ]
 
 export function ListScreen() {

@@ -26,10 +26,10 @@ export function useShiftAlerts(model: FloorModel, booked: ReservationView[], now
           severity: r.warning === "noshow" ? 3 : 2,
           icon: <AlarmClock className="size-4" />,
           title: `${r.tableIds.length ? model.codes(r.tableIds).join(" + ") : "Chưa có bàn"} · ${r.displayName}`,
-          detail: `${r.warning === "noshow" ? "Chưa đến" : "Đến muộn"} +${r.minutesLate}' · hẹn ${fmtTime(r.expectedAt)} · ${r.partySize} khách`,
+          detail: `Tới muộn +${r.minutesLate}' · hẹn ${fmtTime(r.expectedAt)} · ${r.partySize} khách`,
           tableId: r.tableIds[0] ?? null,
           reservationId: r.id,
-          tone: r.warning === "noshow" ? "noshow" : "late",
+          tone: "noshow",
         })
       } else if (r.subState !== "DANG_GIU_BAN" && r.expectedAt.getTime() - now.getTime() < 60 * MS.MIN) {
         out.push({

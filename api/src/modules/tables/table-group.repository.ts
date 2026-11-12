@@ -2,6 +2,8 @@ import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/prom
 
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { AppError } from '../../errors/app-error.js'
+import { businessDateAt } from '../bookings/business-date.js'
+import { applicationNow } from '../../time/application-clock.js'
 
 export interface GroupTableRow extends RowDataPacket {
   id: number
@@ -137,19 +139,39 @@ export async function lockAndValidateConnectedTables(
   return tables
 }
 
+export interface CreateTableGroupOptions {
+  /**
+   * CLAIM (the default) is the implicit cluster of one booking or visit: scoped to
+   * one business date and auto-dissolved when nothing uses it any more.
+   * LAYOUT is an independent floor cluster that lives until a receptionist splits
+   * it, so its business_date records only when it was formed.
+   */
+  origin?: 'CLAIM' | 'LAYOUT'
+  /** Required for CLAIM; LAYOUT records the business date it was formed on. */
+  businessDate?: string
+  name?: string
+}
+
 export async function createTableGroup(
   connection: PoolConnection,
   actor: AuthenticatedActor,
-  businessDate: string,
+  options: CreateTableGroupOptions,
 ): Promise<{ id: number; symbolNo: number }> {
+  const origin = options.origin ?? 'CLAIM'
+  const businessDate = options.businessDate ?? businessDateAt(applicationNow())
+  // FOR UPDATE on the venue row serialises symbol allocation for this venue, so
+  // two devices forming a cluster at the same moment queue instead of colliding.
   const [venueRows] = await connection.execute<(RowDataPacket & { group_symbol_count: number })[]>(
     'SELECT group_symbol_count FROM venues WHERE organization_id = ? AND id = ? FOR UPDATE',
     [actor.organizationId, actor.venueId],
   )
   const maximum = Number(venueRows[0]?.group_symbol_count ?? 0)
+  // A LAYOUT cluster outlives its business date, so its symbol is reserved venue
+  // wide; a CLAIM symbol is only reserved within its own business date.
   const [usedRows] = await connection.execute<(RowDataPacket & { symbol_no: number })[]>(
     `SELECT symbol_no FROM table_groups
-     WHERE organization_id = ? AND venue_id = ? AND business_date = ? AND dissolved_at IS NULL FOR UPDATE`,
+     WHERE organization_id = ? AND venue_id = ? AND dissolved_at IS NULL
+       AND (origin = 'LAYOUT' OR business_date = ?) FOR UPDATE`,
     [actor.organizationId, actor.venueId, businessDate],
   )
   const used = new Set(usedRows.map((row) => Number(row.symbol_no)))
@@ -157,13 +179,21 @@ export async function createTableGroup(
   if (!symbolNo) throw new AppError(409, 'GROUP_SYMBOL_UNAVAILABLE', 'Đã dùng hết ký hiệu nhóm trong ngày nghiệp vụ.')
   const [result] = await connection.execute<ResultSetHeader>(
     `INSERT INTO table_groups
-      (organization_id, venue_id, business_date, symbol_no, formed_at, formed_by_user_id)
-     VALUES (?, ?, ?, ?, UTC_TIMESTAMP(3), ?)`,
-    [actor.organizationId, actor.venueId, businessDate, symbolNo, actor.userId],
+      (organization_id, venue_id, origin, business_date, symbol_no, name, formed_at, formed_by_user_id)
+     VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(3), ?)`,
+    [actor.organizationId, actor.venueId, origin, businessDate, symbolNo, options.name ?? null, actor.userId],
   )
   return { id: result.insertId, symbolNo }
 }
 
+/**
+ * Dissolves a CLAIM cluster once nothing uses it any more: it only ever existed to
+ * give one booking or visit a group identity.
+ *
+ * C1 (anh Luân, 08/11/2026): a LAYOUT cluster is explicitly excluded. It is part of
+ * the floor layout, not of a guest, so Close Visit, Cancel, No-show, a reassignment
+ * and an undo must all leave it standing — only Tách bàn ends it.
+ */
 export async function dissolveUnusedGroups(
   connection: PoolConnection,
   actor: AuthenticatedActor,
@@ -177,7 +207,8 @@ export async function dissolveUnusedGroups(
     if (!active.length) {
       await connection.execute(
         `UPDATE table_groups SET dissolved_at = UTC_TIMESTAMP(3), dissolved_by_user_id = ?
-         WHERE organization_id = ? AND venue_id = ? AND id = ? AND dissolved_at IS NULL`,
+         WHERE organization_id = ? AND venue_id = ? AND id = ? AND dissolved_at IS NULL
+           AND origin = 'CLAIM'`,
         [actor.userId, actor.organizationId, actor.venueId, groupId],
       )
     }

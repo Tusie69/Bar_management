@@ -1,3 +1,6 @@
+import { formatBookingSource } from "@/domain/enums"
+import { formatHonorificName } from "@/domain/booking-identity"
+import { guestCount, guestValueFrom, type GuestValue } from "@/domain/booking-rules"
 /**
  * Booking flow (OpenTable/Eat App pattern, adapted):
  * 1 Ngày giờ + số khách -> 2 Khả dụng + vị trí -> 3 Thông tin khách -> 4 Xác nhận.
@@ -14,28 +17,30 @@ import { z } from "zod"
 import {
   BookingTimePicker,
   GuestPicker,
-  guestCount,
-  guestValueFrom,
-  type GuestValue,
+  IconPicker,
+  SourcePicker,
+  HonorificPicker,
+  honorificSupported,
+  iconKeysSupported,
+  socialPlatformSupported,
+  type SocialPlatform,
 } from "@/components/booking-pickers"
 import { MaskedPhone, PendingTag, SectionTitle } from "@/components/common"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 import {
   bookingCalendarDate,
   bookingInstant,
-  defaultBookingSlot,
   isAfterMidnight,
   slotLabel,
   validateBookingTime,
 } from "@/domain/booking-rules"
-import { SOURCE_LABEL, type BookingClassification, type BookingSourceCode } from "@/domain/enums"
+import { type BookingClassification, type BookingSourceCode } from "@/domain/enums"
 import { useAction } from "@/hooks/use-action"
-import { useAvailability, useNow } from "@/hooks/use-data"
+import { useAvailability, useNow, useVenueSettings } from "@/hooks/use-data"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { NOTE_PHONE_ERROR, isPlausibleVnPhone, noteHasPhoneNumber } from "@/lib/text"
 import { addDays, businessDateOf, fmtBusinessDate, fmtDayMonth, type BusinessDate } from "@/lib/time"
@@ -58,7 +63,11 @@ const guestSchema = z
       .trim()
       .refine((v) => v === "" || isPlausibleVnPhone(v), "Số điện thoại 10 số, bắt đầu bằng 0"),
     sourceCode: z.string().min(1, "Chọn nguồn đặt"),
+    socialPlatform: z.string().optional(),
     classification: z.enum(["RETURNING", "NEW", "UNCLASSIFIED"]),
+    isBirthday: z.boolean(),
+    iconKeys: z.array(z.string()).optional(),
+    honorific: z.enum(["MR", "MS"]).nullable().optional(),
     note: z
       .string()
       .max(500, "Tối đa 500 ký tự")
@@ -67,6 +76,10 @@ const guestSchema = z
   .refine((v) => v.contactName !== "" || v.phone !== "", {
     message: "Cần ít nhất tên hoặc số điện thoại",
     path: ["contactName"],
+  })
+  .refine((v) => !socialPlatformSupported || v.sourceCode !== "SOCIAL" || !!v.socialPlatform, {
+    message: "Vui lòng chọn nền tảng mạng xã hội.",
+    path: ["socialPlatform"],
   })
 
 type GuestForm = z.infer<typeof guestSchema>
@@ -85,18 +98,15 @@ function BookingBody() {
   const ui = useUi()
   const model = useFloorModel()
   const now = useNow(30_000)
+  const quickTimes = useVenueSettings().data?.quickTimes ?? []
   const today = businessDateOf(now)
   const { run, pending } = useAction()
 
   const prefill = ui.bookingPrefill
   const [step, setStep] = useState(0)
   const [date, setDate] = useState<BusinessDate>(prefill.date ?? today)
-  const [time, setTime] = useState(() => {
-    const wanted = prefill.time ?? ui.availTime
-    const d = prefill.date ?? today
-    if (!validateBookingTime(d, wanted, now)) return wanted
-    return defaultBookingSlot(d, now) ?? "19:00"
-  })
+  // Preserve the caller's value while venue settings load; validation can update without mutating the draft.
+  const [time, setTime] = useState(() => prefill.time ?? ui.availTime)
   const [guest, setGuest] = useState<GuestValue>(() =>
     guestValueFrom(prefill.party ?? (prefill.tableIds?.length ? Math.min(8, prefill.tableIds.length * 4) : 2)),
   )
@@ -107,12 +117,22 @@ function BookingBody() {
 
   const form = useForm<GuestForm>({
     resolver: zodResolver(guestSchema),
-    defaultValues: { contactName: "", phone: "", sourceCode: "HOTLINE", classification: "UNCLASSIFIED", note: "" },
+    defaultValues: {
+      contactName: "",
+      phone: "",
+      sourceCode: "HOTLINE",
+      socialPlatform: "",
+      classification: "UNCLASSIFIED",
+      isBirthday: false,
+      iconKeys: [],
+      honorific: null,
+      note: "",
+    },
     mode: "onTouched",
   })
 
   // Re-derived every render: changing the date re-checks the slot without silently replacing it.
-  const timeError = validateBookingTime(date, time, now)
+  const timeError = validateBookingTime(date, time, now, undefined, quickTimes)
   const at = useMemo(() => bookingInstant(date, time), [date, time])
   const nextDayNote = isAfterMidnight(time) ? ` (sáng ${fmtDayMonth(bookingCalendarDate(date, time))})` : ""
   const availability = useAvailability(step >= 1 ? at : null, party)
@@ -137,12 +157,11 @@ function BookingBody() {
           (t) =>
             t &&
             t.kind === "TABLE" &&
-            t.capacity >= party &&
             (!selectedFirst || (t.zoneId === selectedFirst.zoneId && t.kind === selectedFirst.kind)),
         )
         .sort((a, b) => a.capacity - b.capacity || a.code.localeCompare(b.code))
         .slice(0, 10),
-    [availability.data, model.byId, party, selectedFirst],
+    [availability.data, model.byId, selectedFirst],
   )
 
   const toggle = (id: number) => {
@@ -193,7 +212,7 @@ function BookingBody() {
 
   const canNext = [
     !timeError && guestCount(guest) !== null,
-    later || (tables.length > 0 && blockedSelected.length === 0 && capacity >= party && !compatError),
+    later || (tables.length > 0 && blockedSelected.length === 0 && !compatError),
     true,
     true,
   ]
@@ -221,7 +240,13 @@ function BookingBody() {
         partySize: party,
         expectedAt: at,
         sourceCode: v.sourceCode as BookingSourceCode,
+        socialPlatform:
+          socialPlatformSupported && v.sourceCode === "SOCIAL" && v.socialPlatform ? v.socialPlatform : undefined,
         classification: v.classification as BookingClassification,
+        guestType: v.classification === "RETURNING" ? "REGULAR" : v.classification === "NEW" ? "NEW" : null,
+        isBirthday: v.isBirthday,
+        iconKeys: iconKeysSupported && v.iconKeys?.length ? v.iconKeys : undefined,
+        honorific: honorificSupported && v.honorific ? v.honorific : undefined,
         note: v.note || undefined,
         tableIds: later ? [] : tables,
         overrideReason: o,
@@ -231,8 +256,7 @@ function BookingBody() {
     if (r) {
       renewIdempotencyKey()
       ui.closeBooking()
-    }
-    else setStep((s) => (s === 3 ? 1 : s))
+    } else setStep((s) => (s === 3 ? 1 : s))
   }
 
   const v = useWatch({ control: form.control }) as GuestForm
@@ -299,9 +323,9 @@ function BookingBody() {
                 date={date}
                 value={time}
                 now={now}
+                quickTimes={quickTimes}
                 onChange={setTime}
                 error={timeError}
-                gridClassName="sm:grid-cols-5"
               />
             </section>
           </div>
@@ -380,12 +404,6 @@ function BookingBody() {
                   <>
                     <span className="font-semibold">{tables.map((id) => model.label(id)).join(" + ")}</span> ·{" "}
                     {capacity} chỗ
-                    {capacity < party ? (
-                      <span className="text-st-late-ink">
-                        {" "}
-                        · thiếu {party - capacity} chỗ cho {party} khách; chọn thêm bàn hoặc nhận trước xếp sau
-                      </span>
-                    ) : null}
                   </>
                 ) : (
                   "Chưa chọn vị trí."
@@ -425,13 +443,19 @@ function BookingBody() {
             }}
           >
             <Field id="bk-name" label="Tên khách" error={form.formState.errors.contactName?.message}>
-              <Input
-                id="bk-name"
-                className="h-11"
-                autoComplete="off"
-                {...form.register("contactName")}
-                placeholder="Ví dụ: Nguyễn Minh Anh"
-              />
+              <div className="flex items-center gap-1.5">
+                <Input
+                  id="bk-name"
+                  className="h-11 min-w-0 flex-1"
+                  autoComplete="off"
+                  {...form.register("contactName")}
+                  placeholder="Ví dụ: Nguyễn Minh Anh"
+                />
+                <HonorificPicker
+                  value={v.honorific}
+                  onChange={(val) => form.setValue("honorific", val, { shouldDirty: true })}
+                />
+              </div>
             </Field>
             <Field
               id="bk-phone"
@@ -449,37 +473,56 @@ function BookingBody() {
                 placeholder="09xx xxx xxx"
               />
             </Field>
-            <Field id="bk-source" label="Nguồn đặt" error={form.formState.errors.sourceCode?.message}>
-              <Select
-                value={v.sourceCode}
-                onValueChange={(val) => form.setValue("sourceCode", val, { shouldValidate: true })}
-              >
-                <SelectTrigger id="bk-source" className="h-11 w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(model.catalog?.sources ?? []).map((s) => (
-                    <SelectItem key={s.code} value={s.code}>
-                      {SOURCE_LABEL[s.code]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <Field id="bk-classification" label="Khách quen / mới">
+              <div role="radiogroup" aria-label="Khách quen / mới" className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant={v.classification === "RETURNING" ? "default" : "outline"}
+                  className="h-11 justify-center text-sm font-medium"
+                  onClick={() =>
+                    form.setValue(
+                      "classification",
+                      v.classification === "RETURNING" ? "UNCLASSIFIED" : "RETURNING",
+                    )
+                  }
+                >
+                  Khách quen (O)
+                </Button>
+                <Button
+                  type="button"
+                  variant={v.classification === "NEW" ? "default" : "outline"}
+                  className="h-11 justify-center text-sm font-medium"
+                  onClick={() =>
+                    form.setValue("classification", v.classification === "NEW" ? "UNCLASSIFIED" : "NEW")
+                  }
+                >
+                  Khách mới (N)
+                </Button>
+              </div>
             </Field>
-            <Field id="bk-classification" label="Loại khách">
-              <Select
-                value={v.classification}
-                onValueChange={(val) => form.setValue("classification", val as BookingClassification)}
-              >
-                <SelectTrigger id="bk-classification" className="h-11 w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="UNCLASSIFIED">Chưa phân loại</SelectItem>
-                  <SelectItem value="NEW">Khách mới (N)</SelectItem>
-                  <SelectItem value="RETURNING">Khách quen (O)</SelectItem>
-                </SelectContent>
-              </Select>
+            <Field
+              id="bk-source"
+              label="Nguồn"
+              error={form.formState.errors.sourceCode?.message || form.formState.errors.socialPlatform?.message}
+            >
+              <SourcePicker
+                source={v.sourceCode as BookingSourceCode}
+                onSourceChange={(s) => {
+                  form.setValue("sourceCode", s, { shouldValidate: true })
+                  form.setValue("socialPlatform", "", { shouldValidate: true })
+                }}
+                platform={(v.socialPlatform as SocialPlatform) || ""}
+                onPlatformChange={(p) => form.setValue("socialPlatform", p, { shouldValidate: true })}
+                error={form.formState.errors.socialPlatform?.message}
+              />
+            </Field>
+            <Field id="bk-icons" label="Icon">
+              <IconPicker
+                isBirthday={v.isBirthday}
+                onBirthdayChange={(b) => form.setValue("isBirthday", b)}
+                iconKeys={v.iconKeys ?? []}
+                onIconKeysChange={(keys) => form.setValue("iconKeys", keys)}
+              />
             </Field>
             <Field
               id="bk-note"
@@ -520,12 +563,12 @@ function BookingBody() {
                   )
                 }
               />
-              <Summary k="Khách" v={v.contactName || "(không tên)"} />
+              <Summary k="Khách" v={formatHonorificName(v.contactName || "(không tên)", v.honorific)} />
               <Summary
                 k="SĐT"
                 v={v.phone ? <MaskedPhone last3={v.phone.replace(/\D/g, "").slice(-3)} /> : "Không có"}
               />
-              <Summary k="Nguồn" v={SOURCE_LABEL[v.sourceCode as BookingSourceCode]} />
+              <Summary k="Nguồn" v={formatBookingSource(v.sourceCode as BookingSourceCode, v.socialPlatform)} />
               <Summary
                 k="Loại khách"
                 v={

@@ -1,5 +1,5 @@
-import { CalendarPlus, Clock, ListPlus, TriangleAlert, UserPlus, X, type LucideIcon } from "lucide-react"
-import type { ReactNode } from "react"
+import { CalendarPlus, Clock, ListPlus, UserPlus, X, type LucideIcon } from "lucide-react"
+import { useState, type ReactNode } from "react"
 import { useNavigate } from "react-router"
 import { roleCan, type Permission } from "@/domain/access"
 import { ROLE_LABEL } from "@/domain/enums"
@@ -11,7 +11,7 @@ import { NAV } from "@/app/nav"
 import type { Alert } from "../floor/alerts"
 import { useMobileActions } from "./actions"
 import { useM, type Confirm } from "./context"
-import { lateOf, tableText } from "./model"
+import { tableText } from "./model"
 import { Seg } from "./ui"
 
 export function Scrim({ onClick }: { onClick?: () => void }) {
@@ -198,27 +198,22 @@ export function AccountSheet({ onClose }: { onClose: () => void }) {
 export function StatusDialog({ r, onClose }: { r: ReservationView; onClose: () => void }) {
   const m = useM()
   const a = useMobileActions()
-  const late = lateOf(r, m.now)
   const close = (fn: () => unknown) => () => {
     onClose()
     void fn()
   }
+  const hold = a.bookingPolicy(r)
+  const canLate =
+    hold.canLate &&
+    !r.lateConfirmedAt &&
+    r.businessDate === m.today &&
+    m.now.getTime() >= r.expectedAt.getTime() &&
+    m.can("reservation.update")
+
   const opts: { label: string; dot: string; sub?: string; disabled?: boolean; go: () => void }[] =
     r.status === "BOOKED"
       ? [
-          { label: "Khách đã đến (check-in)", dot: "var(--st-seated-fill)", go: close(() => a.checkIn(r)) },
-          { label: "Đổi bàn", dot: "var(--st-reserved)", go: close(() => a.move(r)) },
-          {
-            label: "Khách không đến",
-            dot: "var(--st-noshow)",
-            disabled: r.warning !== "noshow",
-            sub:
-              r.warning === "noshow"
-                ? ""
-                : `Chỉ dùng sau mốc ${m.th.noshow} phút${late ? `, hiện trễ ${late} phút` : ""}`,
-            go: close(() => a.noShow(r)),
-          },
-          { label: "Hủy booking", dot: "var(--st-oos)", go: close(() => a.cancel(r)) },
+          ...(canLate ? [{ label: "Tới muộn", dot: "var(--st-late)", go: close(() => a.confirmLate(r)) }] : []),
         ]
       : r.status === "CHECKED_IN"
         ? [
@@ -271,6 +266,7 @@ export function StatusDialog({ r, onClose }: { r: ReservationView; onClose: () =
 }
 
 export function ConfirmDialog({ c, onClose }: { c: Confirm; onClose: () => void }) {
+  const [inProgress, setInProgress] = useState(false)
   return (
     <div
       role="alertdialog"
@@ -282,73 +278,24 @@ export function ConfirmDialog({ c, onClose }: { c: Confirm; onClose: () => void 
       <div className="mt-1 flex gap-2">
         <button
           type="button"
+          disabled={inProgress}
           onClick={onClose}
-          className="h-12 flex-1 rounded-xl border border-strong text-[15px] text-tx-1"
+          className="h-12 flex-1 rounded-xl border border-strong text-[15px] text-tx-1 disabled:opacity-50"
         >
           Quay lại
         </button>
         <button
           type="button"
+          disabled={inProgress}
           onClick={() => {
+            if (inProgress) return
+            setInProgress(true)
             onClose()
             void c.run()
           }}
-          className="h-12 flex-1 rounded-xl bg-st-noshow text-[15px] font-medium text-white"
+          className="h-12 flex-1 rounded-xl bg-st-noshow text-[15px] font-medium text-white disabled:opacity-50"
         >
           {c.label}
-        </button>
-      </div>
-    </div>
-  )
-}
-
-/** 30': stays until the host picks an action. Never auto-cancels, never releases the table. */
-export function Alert30({ r, onAck }: { r: ReservationView; onAck: () => void }) {
-  const m = useM()
-  const a = useMobileActions()
-  return (
-    <div
-      role="alertdialog"
-      aria-labelledby="m-a30"
-      className="fixed inset-x-5 top-1/2 z-[55] flex -translate-y-1/2 flex-col gap-4 rounded-[22px] border-[1.5px] border-st-noshow bg-surface-1 px-[18px] pt-5 pb-4 shadow-[var(--shadow-float)]"
-    >
-      <div className="flex flex-col items-center gap-1.5 text-center">
-        <span className="grid size-12 place-items-center rounded-full bg-st-noshow-tint text-st-noshow-ink">
-          <TriangleAlert className="size-[22px]" />
-        </span>
-        <span id="m-a30" className="text-lg font-semibold text-tx-strong">
-          {r.displayName} đã trễ {m.th.noshow} phút
-        </span>
-        <span className="text-[14px] text-tx-2">
-          {r.partySize} khách, {tableText(r.tableIds, m.model)}, hẹn {fmtTime12(r.expectedAt)}
-        </span>
-        <span className="text-[13px] text-pretty text-[var(--text-muted)]">
-          Booking và bàn vẫn được giữ. Hệ thống không tự hủy, không tự nhả bàn.
-        </span>
-      </div>
-      <div className="flex flex-col gap-2">
-        <button
-          type="button"
-          onClick={() => {
-            onAck()
-            void a.checkIn(r)
-          }}
-          className="h-[50px] rounded-[14px] bg-primary text-[15px] font-semibold text-primary-foreground"
-        >
-          Khách đã đến
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            onAck()
-            a.noShow(r)
-          }}
-          className="h-[50px] rounded-[14px] border border-strong text-[15px] font-medium text-st-noshow-ink"
-        >
-          Xác nhận không đến
-        </button>
-        <button type="button" onClick={onAck} className="h-11 rounded-xl text-[14px] text-tx-2">
-          Đã xem, xử lý sau
         </button>
       </div>
     </div>

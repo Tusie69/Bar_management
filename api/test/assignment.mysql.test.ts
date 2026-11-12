@@ -18,6 +18,7 @@ import {
   mergeBookingTables,
 } from '../src/modules/bookings/booking.repository.js'
 import { listActiveTableGroups, listTables } from '../src/modules/tables/table.repository.js'
+import { getFloorProjection } from '../src/modules/tables/floor-projection.repository.js'
 import { runBusinessDayEndSweep } from '../src/modules/visits/business-day.worker.js'
 import { closeVisit, mergeVisitTables, moveVisit } from '../src/modules/visits/visit.repository.js'
 
@@ -51,8 +52,11 @@ interface AuthResponse {
 
 async function clearFixture(): Promise<void> {
   const statements = [
+    'DELETE FROM booking_call_logs',
     'DELETE FROM operation_log',
+    'DELETE FROM table_turns',
     'DELETE FROM table_allocations',
+    'DELETE FROM table_group_members',
     'DELETE FROM table_groups',
     'DELETE FROM table_holds',
     'DELETE FROM waitlist_table_preferences',
@@ -231,12 +235,12 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     expect(stored[0]?.phone_ciphertext.toString('utf8')).not.toContain('987654321')
   })
 
-  it('rejects two guests on one Bar seat without creating an orphan booking', async () => {
+  it('asks for confirmation before two guests on one Bar seat, without creating an orphan booking', async () => {
     await expect(createAndAssignBooking(actor, {
       ...bookingInput('Direct Bar too large'),
       partySize: 2,
       tableIds: [barSeatTwoId],
-    })).rejects.toMatchObject({ code: 'INSUFFICIENT_TABLE_CAPACITY' })
+    })).rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
     const [rows] = await databasePool.execute<RowDataPacket[]>(
       'SELECT id FROM reservations WHERE contact_name = ?', ['Direct Bar too large'],
     )
@@ -287,6 +291,152 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     expect(await listActiveTableGroups(actor, '2030-10-24')).toHaveLength(1)
   })
 
+  it('WALK-01/03/14 creates a canonical anonymous Walk-in with one audit and one change sequence', async () => {
+    const created = await createWalkIn(actor, {
+      partySize: 2, businessDate: '2030-10-24', tableIds: [tableOneId],
+    })
+    const [visits] = await databasePool.execute<RowDataPacket[]>(
+      'SELECT origin, customer_id, contact_name, guest_count FROM visits WHERE id = ?', [created.visitId],
+    )
+    expect(visits).toEqual([{ origin: 'WALK_IN', customer_id: null, contact_name: 'Khách Walk-in', guest_count: 2 }])
+    const [allocations] = await databasePool.execute<RowDataPacket[]>(
+      'SELECT kind, visit_id, group_id FROM table_allocations WHERE visit_id = ?', [created.visitId],
+    )
+    expect(allocations).toEqual([{ kind: 'USAGE', visit_id: String(created.visitId), group_id: null }])
+    const [audits] = await databasePool.execute<RowDataPacket[]>(
+      "SELECT action, change_seq, changes FROM operation_log WHERE action = 'WALK_IN_CREATED'", [],
+    )
+    expect(audits).toHaveLength(1)
+    expect(audits[0]?.change_seq).toBe('1')
+    expect(JSON.stringify(audits[0])).not.toContain('Khách Walk-in')
+    const [venues] = await databasePool.execute<RowDataPacket[]>('SELECT change_seq FROM venues WHERE id = ?', [venueId])
+    expect(venues[0]?.change_seq).toBe('1')
+  })
+
+  it('WALK-02/19/20 groups distant same-zone tables and projects both as occupied', async () => {
+    const created = await createWalkIn(actor, {
+      guestName: 'Distant Walk-in', partySize: 6, businessDate: '2030-10-24',
+      tableIds: [tableOneId, tableA7Id],
+    })
+    const [allocations] = await databasePool.execute<RowDataPacket[]>(
+      'SELECT table_id, group_id FROM table_allocations WHERE visit_id = ? ORDER BY table_id', [created.visitId],
+    )
+    expect(allocations).toHaveLength(2)
+    expect(Number(allocations[0]?.group_id)).toBeGreaterThan(0)
+    expect(allocations[1]?.group_id).toBe(allocations[0]?.group_id)
+    const projection = await getFloorProjection(actor, '2030-10-24')
+    expect(projection.tables.filter((table) => [tableOneId, tableA7Id].includes(table.id)))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: tableOneId, state: 'IN_USE', displayState: 'IN_USE' }),
+        expect.objectContaining({ id: tableA7Id, state: 'IN_USE', displayState: 'IN_USE' }),
+      ]))
+    expect(projection.groups).toHaveLength(1)
+  })
+
+  it('WALK-04 stores optional phone only through protected customer fields', async () => {
+    const created = await createWalkIn(actor, {
+      guestName: 'Phone Walk-in', phoneNumber: '0987 654 321', partySize: 2,
+      businessDate: '2030-10-24', tableIds: [tableOneId],
+    })
+    const [rows] = await databasePool.execute<(RowDataPacket & { phone_ciphertext: Buffer })[]>(
+      `SELECT v.contact_name, c.display_name, c.phone_ciphertext, c.phone_last3
+       FROM visits v JOIN customers c ON c.id = v.customer_id WHERE v.id = ?`, [created.visitId],
+    )
+    expect(rows[0]).toMatchObject({ contact_name: null, display_name: 'Phone Walk-in', phone_last3: '321' })
+    expect(rows[0]?.phone_ciphertext).toBeInstanceOf(Buffer)
+    expect(rows[0]?.phone_ciphertext.toString('utf8')).not.toContain('987654321')
+    const [audits] = await databasePool.execute<RowDataPacket[]>("SELECT * FROM operation_log WHERE action = 'WALK_IN_CREATED'")
+    expect(JSON.stringify(audits)).not.toContain('0987')
+    expect(JSON.stringify(audits)).not.toContain('Phone Walk-in')
+  })
+
+  it('WALK-07 rejects capacity, cross-zone and mixed-kind selections without partial data or orphan groups', async () => {
+    await expect(createWalkIn(actor, {
+      partySize: 3, businessDate: '2030-10-24', tableIds: [lowCapacityTableId],
+    })).rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
+    await expect(createWalkIn(actor, {
+      partySize: 2, businessDate: '2030-10-24', tableIds: [tableOneId, tableB3Id],
+    })).rejects.toMatchObject({ code: 'TABLE_ZONE_MISMATCH' })
+    await expect(createWalkIn(actor, {
+      partySize: 2, businessDate: '2030-10-24', tableIds: [tableOneId, barSeatOneId],
+    })).rejects.toMatchObject({ code: 'TABLE_ZONE_MISMATCH' })
+    const [counts] = await databasePool.execute<RowDataPacket[]>(
+      'SELECT (SELECT COUNT(*) FROM visits) visits, (SELECT COUNT(*) FROM table_allocations) allocations, (SELECT COUNT(*) FROM table_groups) group_count, (SELECT COUNT(*) FROM operation_log) audits',
+    )
+    expect(Object.values(counts[0] ?? {}).map(Number)).toEqual([0, 0, 0, 0])
+  })
+
+  it('WALK-08 permits only one concurrent Walk-in on the same table', async () => {
+    const outcomes = await Promise.allSettled([
+      createWalkIn(actor, { guestName: 'Race one', partySize: 2, businessDate: '2030-10-24', tableIds: [tableOneId] }),
+      createWalkIn(actor, { guestName: 'Race two', partySize: 2, businessDate: '2030-10-24', tableIds: [tableOneId] }),
+    ])
+    expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1)
+    expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toHaveLength(1)
+    const [counts] = await databasePool.execute<RowDataPacket[]>(
+      "SELECT (SELECT COUNT(*) FROM visits) visits, (SELECT COUNT(*) FROM table_allocations WHERE released_at IS NULL) allocations",
+    )
+    expect([Number(counts[0]?.visits), Number(counts[0]?.allocations)]).toEqual([1, 1])
+  })
+
+  it('WALK-09 permits only one concurrent direct booking or Walk-in on the same table', async () => {
+    const outcomes = await Promise.allSettled([
+      createAndAssignBooking(actor, { ...bookingInput('Direct race'), tableIds: [tableOneId] }),
+      createWalkIn(actor, { guestName: 'Walk-in race', partySize: 2,
+        businessDate: '2030-10-24', tableIds: [tableOneId] }),
+    ])
+    expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1)
+    expect(outcomes.filter((outcome) => outcome.status === 'rejected')).toHaveLength(1)
+    const [counts] = await databasePool.execute<RowDataPacket[]>(
+      `SELECT (SELECT COUNT(*) FROM visits) visits,
+        (SELECT COUNT(*) FROM reservations) reservations,
+        (SELECT COUNT(*) FROM table_allocations WHERE released_at IS NULL) allocations`,
+    )
+    expect(Number(counts[0]?.visits) + Number(counts[0]?.reservations)).toBe(1)
+    expect(Number(counts[0]?.allocations)).toBe(1)
+  })
+
+  it('WALK-15 rolls back Visit, group, allocations and change sequence when audit insertion fails', async () => {
+    await databasePool.query(
+      `ALTER TABLE operation_log ADD CONSTRAINT ck_test_reject_walkin CHECK (action <> 'WALK_IN_CREATED')`,
+    )
+    try {
+      await expect(createWalkIn(actor, {
+        partySize: 6, businessDate: '2030-10-24', tableIds: [tableOneId, tableA7Id],
+      })).rejects.toMatchObject({ code: 'ER_CHECK_CONSTRAINT_VIOLATED' })
+    } finally {
+      await databasePool.query('ALTER TABLE operation_log DROP CHECK ck_test_reject_walkin')
+    }
+    const [counts] = await databasePool.execute<RowDataPacket[]>(
+      'SELECT (SELECT COUNT(*) FROM visits) visits, (SELECT COUNT(*) FROM table_allocations) allocations, (SELECT COUNT(*) FROM table_groups) group_count, (SELECT change_seq FROM venues WHERE id = 1) change_seq',
+    )
+    expect(Object.values(counts[0] ?? {}).map(Number)).toEqual([0, 0, 0, 0])
+  })
+
+  it('WALK-16 rejects a table belonging to another venue', async () => {
+    await databasePool.execute("INSERT INTO venues (id, organization_id, code, name) VALUES (2, ?, 'OTHER_VENUE', 'Other venue')", [organizationId])
+    await databasePool.execute("INSERT INTO zones (id, organization_id, venue_id, code, name) VALUES (9699, ?, 2, 'OTHER', 'Other')", [organizationId])
+    await databasePool.execute(
+      "INSERT INTO dining_tables (id, organization_id, venue_id, zone_id, code, display_name, kind, capacity, pos_x, pos_y) VALUES (9699, ?, 2, 9699, 'X1', 'X1', 'TABLE', 4, 0, 0)",
+      [organizationId],
+    )
+    await expect(createWalkIn(actor, {
+      partySize: 2, businessDate: '2030-10-24', tableIds: [9699],
+    })).rejects.toMatchObject({ code: 'TABLE_NOT_FOUND' })
+    const [visits] = await databasePool.execute<RowDataPacket[]>('SELECT id FROM visits')
+    expect(visits).toHaveLength(0)
+  })
+
+  it('WALK-18 preserves an existing confirmed booking allocation', async () => {
+    const booking = await createAndAssignBooking(actor, { ...bookingInput('Priority booking'), tableIds: [tableOneId] })
+    await expect(createWalkIn(actor, {
+      partySize: 2, businessDate: '2030-10-24', tableIds: [tableOneId],
+    })).rejects.toMatchObject({ code: 'TABLE_ALREADY_OCCUPIED' })
+    expect(await activeTableIds(booking.id)).toEqual([tableOneId])
+    const [visits] = await databasePool.execute<RowDataPacket[]>('SELECT id FROM visits')
+    expect(visits).toHaveLength(0)
+  })
+
   it('allows only one concurrent direct booking for the same table', async () => {
     const outcomes = await Promise.allSettled([
       createAndAssignBooking(actor, { ...bookingInput('Direct race one'), tableIds: [tableOneId] }),
@@ -332,7 +482,7 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     await expect(assignBookingTables(actor, created.id, created.version, [spareTableId]))
       .rejects.toMatchObject({ code: 'SPARE_TABLE_NOT_BOOKABLE' })
     await expect(assignBookingTables(actor, created.id, created.version, [lowCapacityTableId]))
-      .rejects.toMatchObject({ code: 'INSUFFICIENT_TABLE_CAPACITY' })
+      .rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
     const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
     await expect(assignBookingTables(actor, assigned.id, assigned.version, [tableOneId]))
       .rejects.toMatchObject({ code: 'TABLE_ASSIGNMENT_UNCHANGED' })
@@ -537,7 +687,7 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
 
     const [auditRows] = await databasePool.execute<(RowDataPacket & { actor_kind: string; action: string })[]>(
       `SELECT actor_kind, action FROM operation_log
-       WHERE entity_type = 'visit' AND entity_id = ?`,
+       WHERE entity_type = 'visit' AND entity_id = ? AND action = 'VISIT_AUTO_CLOSED_BUSINESS_DAY'`,
       [walkIn.visitId],
     )
     expect(auditRows).toEqual([{
@@ -569,15 +719,16 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
   it('enforces merge capacity and version without changing allocations', async () => {
     const walkIn = await createWalkIn(actor, {
       guestName: 'Capacity merge',
-      partySize: 9,
+      partySize: 4,
       businessDate: '2030-10-24',
       tableIds: [tableOneId],
     })
+    await databasePool.execute('UPDATE visits SET guest_count = 9 WHERE id = ?', [walkIn.visitId])
     await expect(mergeVisitTables(actor, {
       visitId: walkIn.visitId,
       expectedVersion: 1,
       tableIds: [tableOneId, tableA7Id],
-    })).rejects.toMatchObject({ code: 'INSUFFICIENT_TABLE_CAPACITY' })
+    })).rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
     await expect(mergeVisitTables(actor, {
       visitId: walkIn.visitId,
       expectedVersion: 2,
@@ -617,7 +768,7 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
 
     const receptionist = request.agent(app)
     const auth = JSON.parse((await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-      username: 'assignment_reception', password,
+      username: 'assignment_reception', password, portal: 'receptionist',
     })).text) as AuthResponse
     expect(auth.permissions).toContain('table.assign')
     expect((await receptionist.post('/api/v1/bookings/direct')
@@ -646,7 +797,7 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     )
     const care = request.agent(app)
     const careAuth = JSON.parse((await care.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-      username: 'assignment_care', password,
+      username: 'assignment_care', password, portal: 'customer-care',
     })).text) as AuthResponse
     expect(careAuth.permissions).not.toContain('table.assign')
     expect((await care.post(`/api/v1/bookings/${created.id}/assign`)

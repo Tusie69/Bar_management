@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react"
 import type { RoleCode } from "@/domain/enums"
+import type { Permission } from "@/domain/access"
 import type { ReservationView, WaitlistEntryView } from "@/domain/models"
 import type { BusinessDate } from "@/lib/time"
 import type { FloorModel } from "../floor/use-floor-model"
@@ -28,20 +29,26 @@ export interface TablePick {
   targetExpectedAt?: Date
   targetParty?: number
   confirmLabel: string
+  /** R9: asks in words once a table is chosen, e.g. "Chuyển Lan vào A6?". */
+  question?: (codes: string) => string
   onConfirm: (ids: number[]) => Promise<boolean>
 }
 
 export interface FormRequest {
   mode: "booking" | "walkin"
   tableIds?: number[]
+  date?: BusinessDate
+  toWaitlist?: boolean
 }
 
 export interface MobileCtx {
   model: FloorModel
   now: Date
   today: BusinessDate
+  businessDate: BusinessDate
   role: RoleCode
   isOwner: boolean
+  can: (permission: Permission) => boolean
   th: Thresholds
   reservations: ReservationView[] | undefined
   waitlist: WaitlistEntryView[] | undefined
@@ -50,7 +57,9 @@ export interface MobileCtx {
   go: (tab: Tab) => void
   openAlerts: () => void
   openAccount: () => void
+  openCount: () => void
   openDetail: (id: number, bd: BusinessDate) => void
+  openEntryDetail: (id: number, bd: BusinessDate) => void
   openStatus: (r: ReservationView) => void
   openForm: (f: FormRequest) => void
   openTable: (id: number) => void

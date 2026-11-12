@@ -26,6 +26,14 @@ function readBoolean(name: string, fallback: boolean): boolean {
   throw new Error(`${name} phải là true hoặc false`)
 }
 
+function readNonNegativeInteger(name: string, fallback: number): number {
+  const rawValue = process.env[name]
+  if (rawValue === undefined || rawValue === '') return fallback
+  const value = Number(rawValue)
+  if (!Number.isInteger(value) || value < 0) throw new Error(`${name} phải là số nguyên không âm`)
+  return value
+}
+
 function readOptionalNumber(name: string): number | undefined {
   const rawValue = process.env[name]
   if (rawValue === undefined || rawValue === '') return undefined
@@ -101,6 +109,10 @@ if (noShowPolicyMode !== 'MANUAL') {
 const noShowSystemUserId = readOptionalNumber('NO_SHOW_SYSTEM_USER_ID')
 const noShowAutomationCutoff = readOptionalUtcInstant('NO_SHOW_AUTOMATION_CUTOFF')
 const businessDayWorkerEnabled = readBoolean('BUSINESS_DAY_WORKER_ENABLED', true)
+// §6: merging tables across two zones is OFF until anh Luân decides otherwise.
+// Turning it on only skips the cross-zone check; every other merge rule still
+// applies, so it is not a blanket permission for any combination of tables.
+const allowCrossZoneTableMerge = readBoolean('ALLOW_CROSS_ZONE_TABLE_MERGE', false)
 const phoneEncryptionKeys = readKeyRing('PHONE_ENCRYPTION_KEYS')
 const phoneHmacKeys = readKeyRing('PHONE_HMAC_KEYS')
 const phoneActiveEncryptionKeyId = readOptionalNumber('PHONE_ACTIVE_ENCRYPTION_KEY_ID')
@@ -129,6 +141,9 @@ if (noShowWorkerEnabled && !noShowAutomationCutoff) {
 export const env = {
   nodeEnv,
   port: readNumber('PORT', 3000),
+  // Số reverse proxy đứng trước API. 0 nghĩa là không tin header chuyển tiếp
+  // nào, nên req.ip không thể bị giả mạo khi API nhận request trực tiếp.
+  trustProxyHops: readNonNegativeInteger('TRUST_PROXY_HOPS', 0),
   webOrigin,
   organizationId: readNumber('ORGANIZATION_ID', 1),
   venueId: readNumber('VENUE_ID', 1),
@@ -156,6 +171,15 @@ export const env = {
   businessDayWorker: {
     enabled: businessDayWorkerEnabled,
     intervalMs: readNumber('BUSINESS_DAY_WORKER_INTERVAL_MS', 30_000),
+  },
+  tableGroups: {
+    allowCrossZoneMerge: allowCrossZoneTableMerge,
+  },
+  realtime: {
+    /** How often the floor-change broadcaster re-reads venues.change_seq. */
+    pollIntervalMs: readNumber('REALTIME_POLL_INTERVAL_MS', 500),
+    /** Comment frames that keep proxies from closing an idle SSE stream. */
+    heartbeatMs: readNumber('REALTIME_HEARTBEAT_MS', 20_000),
   },
   phone: {
     activeEncryptionKeyId: phoneActiveEncryptionKeyId,

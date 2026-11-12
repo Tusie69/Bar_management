@@ -1,25 +1,30 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise'
 import request from 'supertest'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { app } from '../src/app.js'
 import type { AuthenticatedActor } from '../src/auth/authenticated-actor.js'
 import { hashPassword } from '../src/auth/password.js'
 import { env } from '../src/config/env.js'
 import { databasePool } from '../src/database/pool.js'
+import { injectIdempotencyFaultForTest } from '../src/middleware/idempotency.js'
 import {
   assignBookingTables,
   checkInBooking,
   closeBooking,
+  createAndAssignBooking,
   createBooking,
   createWalkIn,
   getBookingById,
+  initiateBookingCall,
+  recordBookingCallOutcome,
   updateBooking,
   type BookingClassification,
   type BookingView,
 } from '../src/modules/bookings/booking.repository.js'
 import { closeVisit, moveVisit } from '../src/modules/visits/visit.repository.js'
 import { listTables } from '../src/modules/tables/table.repository.js'
+import { getFloorProjection } from '../src/modules/tables/floor-projection.repository.js'
 import {
   listNoShowCandidates,
   processNoShowCandidate,
@@ -56,8 +61,11 @@ interface AuthResponse {
 
 async function clearOperationalData(): Promise<void> {
   const statements = [
+    'DELETE FROM booking_call_logs',
     'DELETE FROM operation_log',
+    'DELETE FROM table_turns',
     'DELETE FROM table_allocations',
+    'DELETE FROM table_group_members',
     'DELETE FROM table_groups',
     'DELETE FROM table_holds',
     'DELETE FROM waitlist_table_preferences',
@@ -169,6 +177,30 @@ async function row(sql: string, values: (string | number)[]): Promise<RowDataPac
   return result
 }
 
+async function createHttpUserWithRole(username: string, roleCode: string) {
+  const [user] = await databasePool.execute<ResultSetHeader>(
+    `INSERT INTO users (username, display_name, password_hash, status)
+     VALUES (?, ?, ?, 'ACTIVE')`,
+    [username, username, passwordHash],
+  )
+  const [membership] = await databasePool.execute<ResultSetHeader>(
+    `INSERT INTO memberships (organization_id, user_id, status) VALUES (?, ?, 'ACTIVE')`,
+    [organizationId, user.insertId],
+  )
+  await databasePool.execute(
+    `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
+     SELECT ?, ?, id, ? FROM roles WHERE code = ?`,
+    [organizationId, membership.insertId, venueId, roleCode],
+  )
+  const agent = request.agent(app)
+  const portal = roleCode === 'OWNER_ADMIN' ? 'admin'
+    : roleCode === 'CUSTOMER_CARE' ? 'customer-care'
+      : roleCode === 'CASHIER' ? 'cashier' : 'receptionist'
+  const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password, portal })
+  expect(login.status).toBe(200)
+  return { agent, auth: JSON.parse(login.text) as AuthResponse }
+}
+
 function databaseDate(value: unknown): string {
   return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10)
 }
@@ -184,6 +216,156 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
 
   afterAll(async () => {
     await clearOperationalData()
+  })
+
+  describe('BA-004 phone-only booking identity', () => {
+    async function bookingAgent() {
+      const agent = request.agent(app)
+      const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
+        username: 'booking_reception', password, portal: 'receptionist',
+      })
+      expect(login.status).toBe(200)
+      const auth = JSON.parse(login.text) as AuthResponse
+      return (path: string, body: object, key?: string) => {
+        const call = agent.post(path).set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken)
+        return (key ? call.set('Idempotency-Key', key) : call).send(body)
+      }
+    }
+
+    it('accepts omitted, null, empty and whitespace names when a valid phone is present', async () => {
+      const send = await bookingAgent()
+      const base = bookingInput()
+      const variants = [
+        { ...base, guestName: undefined },
+        { ...base, guestName: null },
+        { ...base, guestName: '' },
+        { ...base, guestName: '   ' },
+      ]
+      for (const [index, body] of variants.entries()) {
+        const response = await send('/api/v1/bookings', {
+          ...body,
+          phoneNumber: `09012345${String(60 + index)}`,
+        }, `ba004-name-shape-${index}`)
+        expect(response.status).toBe(201)
+        const view = (JSON.parse(response.text) as { booking: BookingView }).booking
+        expect(view).toMatchObject({ guestName: 'Khách', phoneLast3: String(560 + index) })
+        expect(JSON.stringify(view)).not.toContain('09012345')
+      }
+      expect(Number((await row('SELECT COUNT(*) AS total FROM customers', [])).total)).toBe(4)
+      expect(Number((await row('SELECT COUNT(*) AS total FROM reservations', [])).total)).toBe(4)
+    })
+
+    it('rejects a missing identity and an invalid phone-only identity', async () => {
+      const send = await bookingAgent()
+      const { guestName: _guestName, ...base } = bookingInput()
+      void _guestName
+      const missing = await send('/api/v1/bookings', base)
+      expect(missing.status).toBe(400)
+      expect(JSON.parse(missing.text)).toMatchObject({ error: { code: 'BOOKING_CONTACT_REQUIRED' } })
+      const invalid = await send('/api/v1/bookings', { ...base, phoneNumber: '123' })
+      expect(invalid.status).toBe(422)
+      expect(JSON.parse(invalid.text)).toMatchObject({ error: { code: 'INVALID_PHONE_NUMBER' } })
+      expect(Number((await row('SELECT COUNT(*) AS total FROM reservations', [])).total)).toBe(0)
+    })
+
+    it('deduplicates the protected customer identity and never erases its existing name', async () => {
+      await createWalkIn(actor, {
+        guestName: 'Tên đã lưu', phoneNumber: '090 123 4567', partySize: 2,
+        businessDate: '2030-10-24', tableIds: [tableTwoId],
+      })
+      const { guestName: _phoneOnlyName, ...phoneOnlyInput } = bookingInput()
+      void _phoneOnlyName
+      const phoneOnly = await createBooking(actor, {
+        ...phoneOnlyInput, phoneNumber: '090-123-4567',
+      })
+      expect(phoneOnly).toMatchObject({ guestName: 'Tên đã lưu', phoneLast3: '567' })
+      const identity = await row(
+        `SELECT COUNT(*) AS total, MAX(display_name) AS display_name,
+           SUM(phone_ciphertext IS NOT NULL AND phone_hmac IS NOT NULL) AS protected
+         FROM customers WHERE organization_id = ?`,
+        [organizationId],
+      )
+      expect(Number(identity.total)).toBe(1)
+      expect(identity.display_name).toBe('Tên đã lưu')
+      expect(Number(identity.protected)).toBe(1)
+      const reservation = await row(
+        'SELECT customer_id, contact_name, phone_ciphertext, phone_hmac, phone_last3 FROM reservations WHERE id = ?',
+        [phoneOnly.id],
+      )
+      expect(reservation.customer_id).not.toBeNull()
+      expect(reservation.contact_name).toBeNull()
+      expect(reservation.phone_ciphertext).toBeInstanceOf(Buffer)
+      expect(reservation.phone_hmac).toBeInstanceOf(Buffer)
+      expect(reservation.phone_last3).toBe('567')
+    })
+
+    it('supports phone-only direct booking and concurrent canonical identity resolution', async () => {
+      const { guestName: _phoneOnlyName, ...phoneOnlyInput } = bookingInput()
+      void _phoneOnlyName
+      const direct = await createAndAssignBooking(actor, {
+        ...phoneOnlyInput, phoneNumber: '0907654321', tableIds: [tableOneId],
+      })
+      expect(direct).toMatchObject({ guestName: 'Khách', phoneLast3: '321', tableCodes: ['T1'] })
+      const projection = await getFloorProjection(actor, '2030-10-24')
+      expect(projection.tables.find((table) => table.tableId === tableOneId)?.claim)
+        .toMatchObject({ reservationId: direct.id, guestName: 'Khách đặt', phoneLast3: '321' })
+      const concurrentPhone = '0912345999'
+      const created = await Promise.all(Array.from({ length: 6 }, (_, index) => createBooking(actor, {
+        ...phoneOnlyInput, phoneNumber: concurrentPhone,
+        note: `Concurrent phone-only ${index}`,
+      })))
+      expect(new Set(created.map((booking) => booking.id)).size).toBe(6)
+      const identity = await row(
+        'SELECT COUNT(*) AS total FROM customers WHERE organization_id = ? AND phone_last3 = ?',
+        [organizationId, '999'],
+      )
+      expect(Number(identity.total)).toBe(1)
+    })
+
+    it('lets a phone-only advance booking enter the waitlist without changing WALK_IN rules', async () => {
+      const { guestName: _phoneOnlyName, ...phoneOnlyInput } = bookingInput()
+      void _phoneOnlyName
+      const booking = await createBooking(actor, { ...phoneOnlyInput, phoneNumber: '0904444555' })
+      const entry = await createWaitlistEntry(actor, {
+        kind: 'ADVANCE_RESERVATION', reservationId: booking.id, businessDate: '2030-10-24',
+        contactChannel: 'PHONE_CALLBACK',
+      })
+      expect(entry).toMatchObject({
+        kind: 'ADVANCE_RESERVATION', reservationId: booking.id, guestName: 'Khách chờ', phoneLast3: '555',
+      })
+      const anonymous = await createWalkIn(actor, {
+        partySize: 2, businessDate: '2030-10-24', tableIds: [tableThreeId],
+      })
+      expect(anonymous.visitId).toBeGreaterThan(0)
+    })
+
+    it('does not persist the display fallback while editing a phone-only booking', async () => {
+      const { guestName: _phoneOnlyName, ...phoneOnlyInput } = bookingInput()
+      void _phoneOnlyName
+      const created = await createBooking(actor, { ...phoneOnlyInput, phoneNumber: '0902222333' })
+      expect(created).toMatchObject({ guestName: 'Khách', hasGuestName: false, phoneLast3: '333' })
+      const edited = await updateBooking(actor, created.id, {
+        ...phoneOnlyInput,
+        partySize: 3,
+        expectedVersion: created.version,
+      })
+      expect(edited).toMatchObject({ guestName: 'Khách', hasGuestName: false, phoneLast3: '333', partySize: 3 })
+      const stored = await row('SELECT customer_id, contact_name FROM reservations WHERE id = ?', [created.id])
+      expect(stored.customer_id).not.toBeNull()
+      expect(stored.contact_name).toBeNull()
+
+      await expect(updateBooking(actor, created.id, {
+        ...phoneOnlyInput, phoneNumber: null, expectedVersion: edited.version,
+      })).rejects.toMatchObject({ code: 'BOOKING_CONTACT_REQUIRED' })
+      const named = await updateBooking(actor, created.id, {
+        ...phoneOnlyInput, guestName: 'Tên bổ sung', phoneNumber: null, expectedVersion: edited.version,
+      })
+      expect(named).toMatchObject({ guestName: 'Tên bổ sung', hasGuestName: true, phoneLast3: null })
+      const unlinked = await row('SELECT customer_id, contact_name, phone_hmac FROM reservations WHERE id = ?', [created.id])
+      expect(unlinked.customer_id).toBeNull()
+      expect(unlinked.contact_name).toBe('Tên bổ sung')
+      expect(unlinked.phone_hmac).toBeNull()
+    })
   })
 
   it('runs Create → Assign → Edit → Check-in → Close while preserving allocation history', async () => {
@@ -320,6 +502,20 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     expect(Number(stored.version)).toBe(retained.version)
   })
 
+  it('preserves an existing off-grid arrival when editing booking details', async () => {
+    const created = await createBooking(actor, bookingInput())
+    await databasePool.execute(
+      'UPDATE reservations SET expected_at = ? WHERE id = ?', ['2030-10-24 14:17:00.000', created.id],
+    )
+    const updated = await updateBooking(actor, created.id, {
+      ...bookingInput('2030-10-24', '21:17', 'Legacy arrival'), expectedVersion: created.version,
+    })
+    expect(updated.expectedAt).toBe('2030-10-24T14:17:00.000Z')
+    await expect(updateBooking(actor, updated.id, {
+      ...bookingInput('2030-10-24', '21:18', 'Invalid reschedule'), expectedVersion: updated.version,
+    })).rejects.toMatchObject({ code: 'EXPECTED_AT_OFF_SLOT' })
+  })
+
   it('persists manual O/N classification, supports edits, and keeps legacy NULL rows unclassified', async () => {
     const created = await createBooking(actor, bookingInput('2030-10-24', '20:00', 'Returning guest', 'RETURNING'))
     expect(created.classification).toBe('RETURNING')
@@ -413,6 +609,56 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     })
     const allocation = await row('SELECT released_at FROM table_allocations WHERE visit_id = ?', [walkIn.visitId])
     expect(allocation.released_at).not.toBeNull()
+  })
+
+  it('accepts anonymous and optional-phone Walk-ins through HTTP without exposing plaintext phone', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2030-10-24T12:00:00.000Z'))
+    try {
+      const agent = request.agent(app)
+      const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin)
+        .send({ username: 'booking_reception', password, portal: 'receptionist' })
+      const auth = JSON.parse(login.text) as AuthResponse
+      const anonymous = await agent.post('/api/v1/bookings/walk-ins').set('Origin', env.webOrigin)
+        .set('X-CSRF-Token', auth.csrfToken)
+        .send({ partySize: 2, businessDate: '2030-10-24', tableIds: [tableOneId] })
+      expect(anonymous.status).toBe(201)
+      const withPhone = await agent.post('/api/v1/bookings/walk-ins').set('Origin', env.webOrigin)
+        .set('X-CSRF-Token', auth.csrfToken)
+        .send({ guestName: 'HTTP phone Walk-in', phoneNumber: '0901 234 567', partySize: 2,
+          businessDate: '2030-10-24', tableIds: [tableTwoId] })
+      expect(withPhone.status).toBe(201)
+      expect(withPhone.text).not.toContain('0901')
+      const [visits] = await databasePool.execute<RowDataPacket[]>(
+        `SELECT v.contact_name, c.phone_last3, c.phone_ciphertext
+         FROM visits v LEFT JOIN customers c ON c.id = v.customer_id ORDER BY v.id`,
+      )
+      expect(visits[0]).toMatchObject({ contact_name: 'Khách Walk-in', phone_last3: null, phone_ciphertext: null })
+      expect(visits[1]).toMatchObject({ contact_name: null, phone_last3: '567' })
+      expect(JSON.stringify(visits[1])).not.toContain('0901234567')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('WALK-17 keeps a 00:30 Walk-in on the previous business date through HTTP', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2030-10-24T17:30:00.000Z'))
+    try {
+      const agent = request.agent(app)
+      const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin)
+        .send({ username: 'booking_reception', password, portal: 'receptionist' })
+      const auth = JSON.parse(login.text) as AuthResponse
+      const response = await agent.post('/api/v1/bookings/walk-ins').set('Origin', env.webOrigin)
+        .set('X-CSRF-Token', auth.csrfToken)
+        .send({ partySize: 2, businessDate: '2030-10-24', tableIds: [tableOneId] })
+      expect(response.status).toBe(201)
+      const visitId = (JSON.parse(response.text) as { visitId: number }).visitId
+      const visit = await row('SELECT business_date FROM visits WHERE id = ?', [visitId])
+      expect(databaseDate(visit.business_date)).toBe('2030-10-24')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('stores 00:30 on the next calendar day under the previous business date', async () => {
@@ -578,7 +824,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     it('returns 409 BUSINESS_DATE_IN_PAST through POST /waitlist', async () => {
       const receptionist = request.agent(app)
       const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-        username: 'booking_reception', password,
+        username: 'booking_reception', password, portal: 'receptionist',
       })
       const auth = JSON.parse(login.text) as AuthResponse
       const response = await receptionist.post('/api/v1/waitlist')
@@ -588,12 +834,322 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         error: { code: 'BUSINESS_DATE_IN_PAST', message: 'Không thể đặt bàn cho ngày đã qua.' },
       })
     })
+
+    it('returns 409 BUSINESS_DATE_IN_PAST through POST /waitlist/:id/seat without allocating a table', async () => {
+      const entry = await createWaitlistEntry(actor, waitlistInput('2030-10-24', 'Past route seat'))
+      await databasePool.execute('UPDATE waitlist_entries SET business_date = ? WHERE id = ?', [pastDate, entry.id])
+      const receptionist = request.agent(app)
+      const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
+        username: 'booking_reception', password, portal: 'receptionist',
+      })
+      const auth = JSON.parse(login.text) as AuthResponse
+      const response = await receptionist.post(`/api/v1/waitlist/${entry.id}/seat`)
+        .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken)
+        .send({ version: entry.version, tableIds: [tableOneId] })
+      expect(response.status).toBe(409)
+      expect(JSON.parse(response.text)).toEqual({
+        error: { code: 'BUSINESS_DATE_IN_PAST', message: 'Không thể đặt bàn cho ngày đã qua.' },
+      })
+      const allocationCount = await row(
+        'SELECT COUNT(*) AS total FROM table_allocations WHERE organization_id = ?',
+        [organizationId],
+      )
+      expect(Number(allocationCount.total)).toBe(0)
+    })
+  })
+
+  describe('TU call customer workflow', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2030-10-24T12:05:00.000Z'))
+    })
+    afterEach(() => vi.useRealTimers())
+
+    it('projects server-derived canCall without exposing the full phone', async () => {
+      const created = await createBooking(actor, {
+        ...bookingInput('2030-10-24', '19:15', 'Projection call guest'),
+        phoneNumber: '0901234567',
+      })
+      await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const projection = await getFloorProjection(actor, '2030-10-24')
+      const claim = projection.tables.find((table) => table.tableId === tableOneId)?.claim
+      expect(claim).toMatchObject({ reservationId: created.id, phoneLast3: '567', canCall: true })
+      expect(JSON.stringify(projection)).not.toContain('+84901234567')
+      expect(JSON.stringify(projection)).not.toContain('phone_ciphertext')
+      expect(JSON.stringify(projection)).not.toContain('phone_hmac')
+    })
+
+    it('enforces server eligibility, writes one log per accepted call and keeps result retries idempotent', async () => {
+      const created = await createBooking(actor, { ...bookingInput(), phoneNumber: '0901234567' })
+      const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      await expect(initiateBookingCall(actor, created.id, new Date('2030-10-24T20:49:00+07:00')))
+        .rejects.toMatchObject({ code: 'BOOKING_CALL_NOT_ALLOWED' })
+
+      const first = await initiateBookingCall(actor, created.id, new Date('2030-10-24T20:50:00+07:00'))
+      const second = await initiateBookingCall(actor, created.id, new Date('2030-10-24T20:51:00+07:00'))
+      expect(first.telUri).toBe('tel:+84901234567')
+      expect(second.callId).not.toBe(first.callId)
+      const result = await recordBookingCallOutcome(
+        actor, created.id, first.callId, 'CONTACTED', undefined, new Date('2030-10-24T20:52:00+07:00'),
+      )
+      const replay = await recordBookingCallOutcome(
+        actor, created.id, first.callId, 'CONTACTED', undefined, new Date('2030-10-24T20:53:00+07:00'),
+      )
+      expect(replay.outcomeAt).toBe(result.outcomeAt)
+      expect(Number((await row('SELECT COUNT(*) AS total FROM booking_call_logs WHERE reservation_id = ?', [created.id])).total)).toBe(2)
+      expect(assigned.canCall).toBe(false)
+    })
+
+    it('records Tới muộn through TU-12 and rejects a stale state transition', async () => {
+      const created = await createBooking(actor, { ...bookingInput(), phoneNumber: '0901234567' })
+      const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const call = await initiateBookingCall(actor, created.id, new Date('2030-10-24T21:16:00+07:00'))
+      const result = await recordBookingCallOutcome(
+        actor, created.id, call.callId, 'LATE_CONFIRMED', assigned.version, new Date('2030-10-24T21:16:00+07:00'),
+      )
+      expect(result.lateConfirmation).toMatchObject({ bookingId: created.id, lateConfirmed: true })
+      const stored = await row('SELECT outcome FROM booking_call_logs WHERE id = ?', [call.callId])
+      expect(stored.outcome).toBe('LATE_CONFIRMED')
+      const booking = await getBookingById(actor, created.id)
+      expect(booking.lateConfirmedAt).not.toBeNull()
+
+      const checkedIn = await checkInBooking(actor, created.id, booking.version, new Date('2030-10-24T21:17:00+07:00'))
+      expect(checkedIn.status).toBe('CHECKED_IN')
+      await expect(initiateBookingCall(actor, created.id, new Date('2030-10-24T21:18:00+07:00')))
+        .rejects.toMatchObject({ code: 'BOOKING_CALL_NOT_ALLOWED' })
+    })
+
+    it('records a new Tới muộn call outcome for an already confirmed booking using its current version', async () => {
+      const created = await createBooking(actor, { ...bookingInput(), phoneNumber: '0901234567' })
+      const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const firstCall = await initiateBookingCall(actor, created.id, new Date('2030-10-24T21:16:00+07:00'))
+      const first = await recordBookingCallOutcome(
+        actor, created.id, firstCall.callId, 'LATE_CONFIRMED', assigned.version,
+        new Date('2030-10-24T21:16:00+07:00'),
+      )
+      const secondCall = await initiateBookingCall(actor, created.id, new Date('2030-10-24T21:17:00+07:00'))
+      const second = await recordBookingCallOutcome(
+        actor, created.id, secondCall.callId, 'LATE_CONFIRMED', first.lateConfirmation!.version,
+        new Date('2030-10-24T21:17:00+07:00'),
+      )
+
+      expect(second.lateConfirmation).toMatchObject({
+        bookingId: created.id,
+        version: first.lateConfirmation!.version,
+        changeSeq: first.lateConfirmation!.changeSeq,
+      })
+      expect(Number((await row(
+        `SELECT COUNT(*) AS total FROM operation_log
+         WHERE action = 'RESERVATION_LATE_CONFIRMED' AND entity_id = ?`,
+        [created.id],
+      )).total)).toBe(1)
+      expect(Number((await row(
+        `SELECT COUNT(*) AS total FROM booking_call_logs
+         WHERE reservation_id = ? AND outcome = 'LATE_CONFIRMED'`,
+        [created.id],
+      )).total)).toBe(2)
+    })
+
+    it('keeps a late call outcome unrecorded when the current booking version is stale', async () => {
+      const created = await createBooking(actor, { ...bookingInput(), phoneNumber: '0901234567' })
+      const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const firstCall = await initiateBookingCall(actor, created.id, new Date('2030-10-24T21:16:00+07:00'))
+      await recordBookingCallOutcome(
+        actor, created.id, firstCall.callId, 'LATE_CONFIRMED', assigned.version,
+        new Date('2030-10-24T21:16:00+07:00'),
+      )
+      const secondCall = await initiateBookingCall(actor, created.id, new Date('2030-10-24T21:17:00+07:00'))
+
+      await expect(recordBookingCallOutcome(
+        actor, created.id, secondCall.callId, 'LATE_CONFIRMED', assigned.version,
+        new Date('2030-10-24T21:17:00+07:00'),
+      )).rejects.toMatchObject({ code: 'VERSION_CONFLICT' })
+      const stored = await row('SELECT outcome, outcome_at FROM booking_call_logs WHERE id = ?', [secondCall.callId])
+      expect(stored.outcome).toBeNull()
+      expect(stored.outcome_at).toBeNull()
+    })
+
+    it('atomically serializes ten concurrent late outcome retries without exhausting the pool', async () => {
+      const created = await createBooking(actor, { ...bookingInput(), phoneNumber: '0901234567' })
+      const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const call = await initiateBookingCall(actor, created.id, new Date('2030-10-24T21:16:00+07:00'))
+      const concurrent = Promise.all(Array.from({ length: 10 }, () => recordBookingCallOutcome(
+        actor, created.id, call.callId, 'LATE_CONFIRMED', assigned.version,
+        new Date('2030-10-24T21:16:00+07:00'),
+      )))
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Concurrent call outcomes timed out')), 5_000)
+      })
+      const results = await Promise.race([concurrent, timeout]).finally(() => {
+        if (timer) clearTimeout(timer)
+      })
+
+      expect(results).toHaveLength(10)
+      expect(new Set(results.map(result => result.outcomeAt)).size).toBe(1)
+      expect(Number((await row(
+        `SELECT COUNT(*) AS total FROM operation_log
+         WHERE action = 'RESERVATION_LATE_CONFIRMED' AND entity_id = ?`,
+        [created.id],
+      )).total)).toBe(1)
+      expect((await row('SELECT outcome FROM booking_call_logs WHERE id = ?', [call.callId])).outcome)
+        .toBe('LATE_CONFIRMED')
+    })
+
+    it('requires a session, CSRF and the dedicated call permission', async () => {
+      const created = await createBooking(actor, {
+        ...bookingInput('2030-10-24', '19:15', 'Call authorization guest'), phoneNumber: '0901234567',
+      })
+      await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      expect((await request(app).post(`/api/v1/bookings/${created.id}/call`).set('Origin', env.webOrigin).send({})).status).toBe(401)
+      const receptionist = request.agent(app)
+      const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
+        username: 'booking_reception', password, portal: 'receptionist',
+      })
+      const auth = JSON.parse(login.text) as AuthResponse
+      expect(auth.permissions).toContain('booking.phone.call')
+      expect(auth.permissions).not.toContain('booking.phone.reveal')
+      expect(auth.permissions).not.toContain('customer.phone.reveal')
+      const noCsrf = await receptionist.post(`/api/v1/bookings/${created.id}/call`)
+        .set('Origin', env.webOrigin).send({})
+      expect(noCsrf.status).toBe(403)
+      expect(noCsrf.text).not.toContain('tel:')
+      const cashier = await createHttpUserWithRole('booking_call_cashier', 'CASHIER')
+      const denied = await cashier.agent.post(`/api/v1/bookings/${created.id}/call`)
+        .set('Origin', env.webOrigin).set('X-CSRF-Token', cashier.auth.csrfToken).send({})
+      expect(denied.status).toBe(403)
+      expect(denied.text).not.toContain('tel:')
+    })
+
+    it('lets a receptionist call named and phone-only bookings without granting reveal access', async () => {
+      const created = await createBooking(actor, {
+        ...bookingInput('2030-10-24', '19:15', 'Reception call guest'), phoneNumber: '0901234567',
+      })
+      await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const { guestName: _guestName, ...phoneOnlyInput } = bookingInput('2030-10-24', '19:15')
+      void _guestName
+      const phoneOnly = await createBooking(actor, { ...phoneOnlyInput, phoneNumber: '0907654321' })
+      await assignBookingTables(actor, phoneOnly.id, phoneOnly.version, [tableTwoId])
+      const receptionist = await createHttpUserWithRole('booking_phone_call', 'RECEPTIONIST')
+      expect(receptionist.auth.permissions).toContain('booking.phone.call')
+      expect(receptionist.auth.permissions).not.toContain('booking.phone.reveal')
+      expect(receptionist.auth.permissions).not.toContain('customer.phone.reveal')
+
+      for (const [bookingId, telUri] of [[created.id, 'tel:+84901234567'], [phoneOnly.id, 'tel:+84907654321']] as const) {
+        const response = await receptionist.agent.post(`/api/v1/bookings/${bookingId}/call`)
+          .set('Origin', env.webOrigin).set('X-CSRF-Token', receptionist.auth.csrfToken).send({})
+        expect(response.status).toBe(201)
+        expect(response.headers['cache-control']).toContain('no-store')
+        expect(response.headers.pragma).toBe('no-cache')
+        const call = JSON.parse(response.text) as { callId: number; bookingId: number; telUri: string }
+        expect(call).toMatchObject({ bookingId, telUri })
+        const outcome = await receptionist.agent.post(`/api/v1/bookings/${bookingId}/calls/${call.callId}/outcome`)
+          .set('Origin', env.webOrigin).set('X-CSRF-Token', receptionist.auth.csrfToken)
+          .send({ outcome: 'NO_ANSWER' })
+        expect(outcome.status).toBe(200)
+        const reveal = await receptionist.agent.post(`/api/v1/bookings/${bookingId}/phone:reveal`)
+          .set('Origin', env.webOrigin).set('X-CSRF-Token', receptionist.auth.csrfToken).send({})
+        expect(reveal.status).toBe(403)
+        expect(reveal.text).not.toContain('8490')
+      }
+      const audit = await row(
+        `SELECT COUNT(*) AS total,
+           SUM(CAST(changes AS CHAR) LIKE '%84901234567%' OR CAST(changes AS CHAR) LIKE '%84907654321%') AS leaked
+         FROM operation_log WHERE action = 'BOOKING_CALL_INITIATED'`,
+        [],
+      )
+      expect(Number(audit.total)).toBe(2)
+      expect(Number(audit.leaked)).toBe(0)
+    })
+
+    it('returns a specific error for a booking without a phone', async () => {
+      const created = await createBooking(actor, bookingInput('2030-10-24', '19:15', 'No phone guest'))
+      await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const receptionist = await createHttpUserWithRole('booking_no_phone_call', 'RECEPTIONIST')
+      const response = await receptionist.agent.post(`/api/v1/bookings/${created.id}/call`)
+        .set('Origin', env.webOrigin).set('X-CSRF-Token', receptionist.auth.csrfToken).send({})
+      expect(response.status).toBe(422)
+      expect(JSON.parse(response.text)).toMatchObject({ error: { code: 'BOOKING_PHONE_UNAVAILABLE' } })
+      expect(response.text).not.toMatch(/090|tel:/)
+    })
+
+    it('applies the existing phone disclosure rate limit and venue scope to starting calls', async () => {
+      const created = await createBooking(actor, {
+        ...bookingInput('2030-10-24', '19:15', 'Rate-limited call guest'),
+        phoneNumber: '0901234567',
+      })
+      await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const owner = await createHttpUserWithRole('booking_rate_owner', 'OWNER_ADMIN')
+      const statuses: number[] = []
+      for (let count = 0; count < (env.phone.revealRateLimitMax ?? 0) + 1; count += 1) {
+        const response = await owner.agent.post(`/api/v1/bookings/${created.id}/call`)
+          .set('Origin', env.webOrigin).set('X-CSRF-Token', owner.auth.csrfToken).send({})
+        statuses.push(response.status)
+        if (response.status !== 201) expect(response.text).not.toContain('tel:')
+      }
+      expect(statuses).toEqual([201, 201, 201, 429])
+      expect(Number((await row(
+        'SELECT COUNT(*) AS total FROM booking_call_logs WHERE reservation_id = ?',
+        [created.id],
+      )).total)).toBe(3)
+      await expect(initiateBookingCall(
+        { ...actor, venueId: venueId + 999 },
+        created.id,
+        new Date('2030-10-24T21:16:00+07:00'),
+      )).rejects.toMatchObject({ code: 'BOOKING_NOT_FOUND' })
+      await expect(initiateBookingCall(
+        { ...actor, organizationId: organizationId + 999 },
+        created.id,
+        new Date('2030-10-24T21:16:00+07:00'),
+      )).rejects.toMatchObject({ code: 'BOOKING_NOT_FOUND' })
+    })
+
+    it('accepts the controlled HTTP call flow for an authorized owner without a phone in the request', async () => {
+      const created = await createBooking(actor, {
+        ...bookingInput('2030-10-24', '19:15', 'HTTP call guest'),
+        phoneNumber: '0901234567',
+      })
+      await assignBookingTables(actor, created.id, created.version, [tableOneId])
+      const [owner] = await databasePool.execute<ResultSetHeader>(
+        `INSERT INTO users (username, display_name, password_hash, status)
+         VALUES ('booking_owner', 'Booking owner', ?, 'ACTIVE')`,
+        [passwordHash],
+      )
+      const [membership] = await databasePool.execute<ResultSetHeader>(
+        `INSERT INTO memberships (organization_id, user_id, status) VALUES (?, ?, 'ACTIVE')`,
+        [organizationId, owner.insertId],
+      )
+      await databasePool.execute(
+        `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
+         SELECT ?, ?, id, ? FROM roles WHERE code = 'OWNER_ADMIN'`,
+        [organizationId, membership.insertId, venueId],
+      )
+      const ownerAgent = request.agent(app)
+      const login = await ownerAgent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
+        username: 'booking_owner', password, portal: 'admin',
+      })
+      const auth = JSON.parse(login.text) as AuthResponse
+      const call = await ownerAgent.post(`/api/v1/bookings/${created.id}/call`)
+        .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken).send({})
+      const callBody = JSON.parse(call.text) as { callId: number; bookingId: number; telUri: string }
+      expect(call.status).toBe(201)
+      expect(callBody).toMatchObject({ bookingId: created.id, telUri: 'tel:+84901234567' })
+      expect(call.headers['cache-control']).toContain('no-store')
+      const outcome = await ownerAgent.post(`/api/v1/bookings/${created.id}/calls/${callBody.callId}/outcome`)
+        .set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken).send({ outcome: 'CONTACTED' })
+      const outcomeBody = JSON.parse(outcome.text) as { callId: number; outcome: string }
+      expect(outcome.status).toBe(200)
+      expect(outcomeBody).toMatchObject({ callId: callBody.callId, outcome: 'CONTACTED' })
+    })
   })
 
   describe('FX-04 Idempotency-Key prevents duplicate creates', () => {
+    afterEach(() => vi.useRealTimers())
+
     async function loginAs(username: string) {
       const agent = request.agent(app)
-      const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password })
+      const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin)
+        .send({ username, password, portal: 'receptionist' })
       const auth = JSON.parse(login.text) as AuthResponse
       return (path: string, body: object, key?: string) => {
         const call = agent.post(path).set('Origin', env.webOrigin).set('X-CSRF-Token', auth.csrfToken)
@@ -615,7 +1171,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         [organizationId, membership.insertId, venueId],
       )
     }
-    const countRows = async (table: 'reservations' | 'waitlist_entries' | 'idempotency_keys') =>
+    const countRows = async (table: 'reservations' | 'visits' | 'waitlist_entries' | 'idempotency_keys') =>
       Number((await row(`SELECT COUNT(*) AS total FROM ${table} WHERE organization_id = ?`, [organizationId])).total)
     const bookingId = (response: { text: string }) => (JSON.parse(response.text) as { booking: BookingView }).booking.id
 
@@ -634,20 +1190,173 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       expect(await countRows('reservations')).toBe(2)
     })
 
-    it('makes concurrent direct bookings and waitlist entries with the same key succeed once and replay', async () => {
+    it('keeps phone-only customer resolution atomic with idempotency completion', async () => {
+      const send = await loginAs('booking_reception')
+      const { guestName: _guestName, ...base } = bookingInput()
+      void _guestName
+      const payload = { ...base, phoneNumber: '0909988776' }
+      const key = 'ba004-phone-only-atomic'
+      injectIdempotencyFaultForTest(key, 'FAIL_COMPLETION')
+      const failed = await send('/api/v1/bookings', payload, key)
+      expect(failed.status).toBe(500)
+      expect(Number((await row('SELECT COUNT(*) AS total FROM customers', [])).total)).toBe(0)
+      expect(await countRows('reservations')).toBe(0)
+      expect(await countRows('idempotency_keys')).toBe(0)
+
+      const created = await send('/api/v1/bookings', payload, key)
+      const replay = await send('/api/v1/bookings', payload, key)
+      expect([created.status, replay.status]).toEqual([201, 201])
+      expect(bookingId(replay)).toBe(bookingId(created))
+      expect(replay.headers['idempotent-replayed']).toBe('true')
+      expect(Number((await row('SELECT COUNT(*) AS total FROM customers', [])).total)).toBe(1)
+      expect(await countRows('reservations')).toBe(1)
+    })
+
+    it('makes concurrent direct bookings, walk-ins and waitlist entries with the same key succeed once and replay', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2030-10-24T12:00:00.000Z'))
       const send = await loginAs('booking_reception')
       const direct = await Promise.all([1, 2, 3].map(() => send(
         '/api/v1/bookings/direct', { ...bookingInput(), tableIds: [tableOneId] }, 'fx04-direct-key-01',
       )))
       expect(direct.map((response) => response.status)).toEqual([201, 201, 201])
       expect(new Set(direct.map(bookingId)).size).toBe(1)
+      const walkIns = await Promise.all([1, 2, 3].map(() => send('/api/v1/bookings/walk-ins', {
+        guestName: 'Walk-in bấm 3 lần', partySize: 2, businessDate: '2030-10-24', tableIds: [tableTwoId],
+      }, 'fx04-walkin-success-01')))
+      expect(walkIns.map((response) => response.status)).toEqual([201, 201, 201])
+      const visitIds = walkIns.map((response) => (JSON.parse(response.text) as { visitId: number }).visitId)
+      expect(new Set(visitIds).size).toBe(1)
       const waitlist = await Promise.all([1, 2].map(() => send('/api/v1/waitlist', {
         guestName: 'Chờ bấm 2 lần', partySize: 2, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
       }, 'fx04-waitlist-key-1')))
       expect(waitlist.map((response) => response.status)).toEqual([201, 201])
       const entryIds = waitlist.map((response) => (JSON.parse(response.text) as { entry: WaitlistEntryView }).entry.id)
       expect(entryIds[0]).toBe(entryIds[1])
-      expect([await countRows('reservations'), await countRows('waitlist_entries')]).toEqual([1, 1])
+      expect([await countRows('reservations'), await countRows('visits'), await countRows('waitlist_entries')])
+        .toEqual([1, 1, 1])
+    })
+
+    it('atomically rolls back every protected domain mutation when idempotency completion fails', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date('2030-10-24T12:00:00.000Z'))
+      const send = await loginAs('booking_reception')
+      const requests = [
+        ['/api/v1/bookings', { ...bookingInput(), guestName: 'Atomic booking' }, 'ba002-booking-fail'],
+        ['/api/v1/bookings/direct', {
+          ...bookingInput(), guestName: 'Atomic direct', tableIds: [tableOneId],
+        }, 'ba002-direct-fail'],
+        ['/api/v1/bookings/walk-ins', {
+          guestName: 'Atomic walk-in', partySize: 2, businessDate: '2030-10-24', tableIds: [tableTwoId],
+        }, 'ba002-walkin-fail'],
+        ['/api/v1/waitlist', {
+          guestName: 'Atomic waitlist', partySize: 2, businessDate: '2030-10-24', contactChannel: 'IN_PERSON',
+        }, 'ba002-waitlist-fail'],
+      ] as const
+
+      for (const [path, body, key] of requests) {
+        injectIdempotencyFaultForTest(key, 'FAIL_COMPLETION')
+        const failed = await send(path, body, key)
+        expect(failed.status).toBe(500)
+        expect(JSON.parse(failed.text)).toMatchObject({ error: { code: 'IDEMPOTENCY_FINALIZATION_FAILED' } })
+        expect([
+          await countRows('reservations'), await countRows('visits'), await countRows('waitlist_entries'),
+          await countRows('idempotency_keys'),
+        ]).toEqual([0, 0, 0, 0])
+        const rolledBackEffects = await row(
+          'SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log) AS audits',
+          [],
+        )
+        expect([
+          Number(rolledBackEffects.holds), Number(rolledBackEffects.allocations), Number(rolledBackEffects.audits),
+        ]).toEqual([0, 0, 0])
+        expect(Number((await row('SELECT change_seq FROM venues WHERE id = ?', [venueId])).change_seq)).toBe(0)
+      }
+
+      const retried = []
+      for (const [path, body, key] of requests) retried.push(await send(path, body, key))
+      expect(retried.map((response) => response.status)).toEqual([201, 201, 201, 201])
+      expect([
+        await countRows('reservations'), await countRows('visits'), await countRows('waitlist_entries'),
+        await countRows('idempotency_keys'),
+      ]).toEqual([2, 1, 1, 4])
+      const effects = await row(
+        'SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log) AS audits',
+        [],
+      )
+      expect([Number(effects.holds), Number(effects.allocations), Number(effects.audits)]).toEqual([1, 2, 3])
+      expect(Number((await row('SELECT change_seq FROM venues WHERE id = ?', [venueId])).change_seq)).toBe(3)
+    })
+
+    it('rolls back the direct booking when MySQL rejects the idempotency response update', async () => {
+      const send = await loginAs('booking_reception')
+      await databasePool.query(`ALTER TABLE idempotency_keys
+        ADD CONSTRAINT ck_ba002_reject_completed CHECK (response_status IS NULL)`)
+      let failed
+      try {
+        failed = await send('/api/v1/bookings/direct', {
+          ...bookingInput(), guestName: 'Constraint rollback', tableIds: [tableOneId],
+        }, 'ba002-constraint-fail')
+      } finally {
+        await databasePool.query('ALTER TABLE idempotency_keys DROP CHECK ck_ba002_reject_completed')
+      }
+      expect(failed.status).toBe(500)
+      expect([
+        await countRows('reservations'), await countRows('idempotency_keys'),
+        Number((await row('SELECT COUNT(*) AS total FROM table_holds', [])).total),
+        Number((await row('SELECT COUNT(*) AS total FROM table_allocations', [])).total),
+        Number((await row('SELECT COUNT(*) AS total FROM operation_log', [])).total),
+      ]).toEqual([0, 0, 0, 0, 0])
+      expect(Number((await row('SELECT change_seq FROM venues WHERE id = ?', [venueId])).change_seq)).toBe(0)
+
+      const retry = await send('/api/v1/bookings/direct', {
+        ...bookingInput(), guestName: 'Constraint rollback', tableIds: [tableOneId],
+      }, 'ba002-constraint-fail')
+      expect(retry.status).toBe(201)
+      expect([await countRows('reservations'), await countRows('idempotency_keys')]).toEqual([1, 1])
+    })
+
+    it('recovers after the database connection is lost before the shared commit', async () => {
+      const send = await loginAs('booking_reception')
+      const key = 'ba002-connection-fail'
+      injectIdempotencyFaultForTest(key, 'DROP_CONNECTION_BEFORE_COMMIT')
+      const failed = await send('/api/v1/bookings', {
+        ...bookingInput(), guestName: 'Connection retry',
+      }, key)
+      expect(failed.status).toBe(500)
+      expect([await countRows('reservations'), await countRows('idempotency_keys')]).toEqual([0, 0])
+
+      const retry = await send('/api/v1/bookings', {
+        ...bookingInput(), guestName: 'Connection retry',
+      }, key)
+      expect(retry.status).toBe(201)
+      expect([await countRows('reservations'), await countRows('idempotency_keys')]).toEqual([1, 1])
+    })
+
+    it('replays the committed direct booking after the original HTTP response is lost', async () => {
+      const send = await loginAs('booking_reception')
+      const key = 'ba002-lost-response'
+      const payload = { ...bookingInput(), guestName: 'Lost response', tableIds: [tableOneId] }
+      injectIdempotencyFaultForTest(key, 'DROP_RESPONSE_AFTER_COMMIT')
+      let transportFailure: unknown
+      try {
+        await send('/api/v1/bookings/direct', payload, key)
+      } catch (error) {
+        transportFailure = error
+      }
+      expect(transportFailure).toBeDefined()
+      expect([await countRows('reservations'), await countRows('idempotency_keys')]).toEqual([1, 1])
+
+      const replay = await send('/api/v1/bookings/direct', payload, key)
+      expect(replay.status).toBe(201)
+      expect(replay.headers['idempotent-replayed']).toBe('true')
+      expect([await countRows('reservations'), await countRows('idempotency_keys')]).toEqual([1, 1])
+      const effects = await row(
+        'SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log) AS audits',
+        [],
+      )
+      expect([Number(effects.holds), Number(effects.allocations), Number(effects.audits)]).toEqual([1, 1, 1])
+      expect(Number((await row('SELECT change_seq FROM venues WHERE id = ?', [venueId])).change_seq)).toBe(1)
     })
 
     it('rejects reusing a successful key for different content or another endpoint', async () => {
@@ -671,9 +1380,9 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       const failed = await send('/api/v1/bookings', { ...bookingInput(), note: 'gọi 0987654321' }, 'fx04-retry-key-01')
       expect(failed.status).toBe(422)
       const walkIn = await send('/api/v1/bookings/walk-ins', {
-        partySize: 2, businessDate: '2030-10-24', tableIds: [tableTwoId],
+        partySize: 0, businessDate: '2030-10-24', tableIds: [tableTwoId],
       }, 'fx04-walkin-key-01')
-      expect(walkIn.status).toBe(409)
+      expect(walkIn.status).toBe(400)
       expect(await countRows('idempotency_keys')).toBe(0)
       const fixed = await send('/api/v1/bookings', bookingInput(), 'fx04-retry-key-01')
       expect(fixed.status).toBe(201)
@@ -718,7 +1427,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     const created = await createBooking(actor, bookingInput())
     const receptionist = request.agent(app)
     const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-      username: 'booking_reception', password,
+      username: 'booking_reception', password, portal: 'receptionist',
     })
     const auth = JSON.parse(login.text) as AuthResponse
     const sources = await receptionist.get('/api/v1/bookings/sources')
@@ -754,7 +1463,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     )
     const care = request.agent(app)
     const careAuth = JSON.parse((await care.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-      username: 'booking_care', password,
+      username: 'booking_care', password, portal: 'customer-care',
     })).text) as AuthResponse
     expect(careAuth.permissions).not.toContain('reservation.update')
     const waitlistForbidden = await care.post(`/api/v1/waitlist/${waitlistBody.entry.id}/seat`)
@@ -795,7 +1504,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
 
     const receptionist = request.agent(app)
     const login = await receptionist.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({
-      username: 'booking_reception', password,
+      username: 'booking_reception', password, portal: 'receptionist',
     })
     const auth = JSON.parse(login.text) as AuthResponse
     expect(auth.permissions).toContain('customer.view_masked')
@@ -847,8 +1556,9 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     expect(exported.text).toMatch(/BÀN HUỶ\nChưa gán: 22:00 · Export cancelled/)
     expect(exported.text).toContain('Tổng bàn đặt: 3')
     expect(exported.text).toContain('Tổng khách đặt: 10')
-    expect(exported.text).toContain('Khách vào trước 21:30: 4')
-    expect(exported.text).toContain('Khách vào sau 21:30: 6')
+    // BE-04: 'New at cutoff' at exactly 21:30 now counts before the cutoff.
+    expect(exported.text).toContain('Khách vào trước/bằng 21:30: 8')
+    expect(exported.text).toContain('Khách vào sau 21:30: 2')
     expect(exported.text).toContain('Bàn khách quen O: 1')
     expect(exported.text).toContain('Bàn khách mới N: 1')
     expect(exported.text).toContain('Bàn chưa phân loại: 1')
@@ -963,7 +1673,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     const visitId = Number(reservation.visit_id)
     await databasePool.execute('UPDATE dining_tables SET capacity = 2 WHERE id = ?', [tableTwoId])
     await expect(moveVisit(actor, { visitId, expectedVersion: 1, tableIds: [tableTwoId] }))
-      .rejects.toMatchObject({ code: 'INSUFFICIENT_TABLE_CAPACITY' })
+      .rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
     const active = await row(
       `SELECT table_id FROM table_allocations
        WHERE visit_id = ? AND kind = 'USAGE' AND released_at IS NULL`,

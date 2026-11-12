@@ -4,6 +4,7 @@ import { env } from '../config/env.js'
 import { databasePool } from '../database/pool.js'
 import { AppError } from '../errors/app-error.js'
 import type { AuthenticatedActor, AuthenticatedSession } from './authenticated-actor.js'
+import { isAuthPortal, rolesForPortal, type AuthPortal } from './auth-portal.js'
 import { verifyPassword } from './password.js'
 import { createSessionToken, hashSessionToken } from './session-security.js'
 
@@ -24,6 +25,7 @@ interface SessionRow extends RowDataPacket {
   user_id: number
   username: string
   display_name: string
+  portal: string
 }
 
 export interface LoginResult {
@@ -31,7 +33,12 @@ export interface LoginResult {
   expiresAt: string
 }
 
-export async function login(username: string, password: string, deviceLabel?: string): Promise<LoginResult> {
+export async function login(
+  username: string,
+  password: string,
+  portal: AuthPortal,
+  deviceLabel?: string,
+): Promise<LoginResult> {
   const [rows] = await databasePool.execute<LoginRow[]>(
     `SELECT u.id AS user_id, u.username, u.display_name, u.password_hash,
        u.status AS user_status, m.id AS membership_id, m.status AS membership_status
@@ -54,24 +61,30 @@ export async function login(username: string, password: string, deviceLabel?: st
     throw new AppError(401, 'INVALID_CREDENTIALS', 'Tên đăng nhập hoặc mật khẩu không hợp lệ.')
   }
 
+  const portalRoles = rolesForPortal(portal)
+  const rolePlaceholders = portalRoles.map(() => '?').join(', ')
   const [venueRows] = await databasePool.execute<RowDataPacket[]>(
     `SELECT 1 FROM venues AS v
      WHERE v.organization_id = ? AND v.id = ? AND v.status = 'ACTIVE'
        AND EXISTS (
          SELECT 1 FROM membership_roles AS mr
+         JOIN roles AS r ON r.id = mr.role_id
          WHERE mr.organization_id = ? AND mr.membership_id = ?
            AND mr.revoked_at IS NULL AND (mr.venue_id IS NULL OR mr.venue_id = ?)
+           AND r.code IN (${rolePlaceholders})
        )`,
-    [env.organizationId, env.venueId, env.organizationId, user.membership_id, env.venueId],
+    [env.organizationId, env.venueId, env.organizationId, user.membership_id, env.venueId, ...portalRoles],
   )
-  if (!venueRows[0]) throw new AppError(403, 'VENUE_ACCESS_UNAVAILABLE', 'Địa điểm vận hành không khả dụng.')
+  if (!venueRows[0]) {
+    throw new AppError(403, 'PORTAL_ACCESS_DENIED', 'Tài khoản không được phép đăng nhập tại cổng này.')
+  }
 
   const token = createSessionToken()
   const expiresAt = new Date(Date.now() + env.session.ttlHours * 60 * 60 * 1000)
   const [result] = await databasePool.execute<ResultSetHeader>(
     `INSERT INTO auth_sessions
-      (organization_id, membership_id, user_id, token_hash, device_label, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+      (organization_id, membership_id, user_id, token_hash, device_label, expires_at, portal)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [
       env.organizationId,
       user.membership_id,
@@ -79,6 +92,7 @@ export async function login(username: string, password: string, deviceLabel?: st
       hashSessionToken(token),
       deviceLabel?.slice(0, 100) || null,
       expiresAt,
+      portal,
     ],
   )
   return {
@@ -89,10 +103,12 @@ export async function login(username: string, password: string, deviceLabel?: st
         organizationId: env.organizationId,
         venueId: env.venueId,
         authSessionId: result.insertId,
+        portal,
       },
       username: user.username,
       displayName: user.display_name,
       sessionToken: token,
+      portal,
     },
     expiresAt: expiresAt.toISOString(),
   }
@@ -101,7 +117,7 @@ export async function login(username: string, password: string, deviceLabel?: st
 export async function authenticateSession(sessionToken: string): Promise<AuthenticatedSession | null> {
   const [rows] = await databasePool.execute<SessionRow[]>(
     `SELECT s.id AS session_id, s.organization_id, s.membership_id, s.user_id,
-       u.username, u.display_name
+       u.username, u.display_name, s.portal
      FROM auth_sessions AS s
      JOIN memberships AS m
        ON m.organization_id = s.organization_id AND m.id = s.membership_id AND m.user_id = s.user_id
@@ -112,14 +128,21 @@ export async function authenticateSession(sessionToken: string): Promise<Authent
        AND m.status = 'ACTIVE' AND u.status = 'ACTIVE' AND v.status = 'ACTIVE'
        AND EXISTS (
          SELECT 1 FROM membership_roles AS mr
+         JOIN roles AS r ON r.id = mr.role_id
          WHERE mr.organization_id = s.organization_id AND mr.membership_id = s.membership_id
            AND mr.revoked_at IS NULL AND (mr.venue_id IS NULL OR mr.venue_id = ?)
+           AND (
+             (s.portal = 'admin' AND r.code = 'OWNER_ADMIN')
+             OR (s.portal = 'receptionist' AND r.code = 'RECEPTIONIST')
+             OR (s.portal = 'customer-care' AND r.code = 'CUSTOMER_CARE')
+             OR (s.portal = 'cashier' AND r.code = 'CASHIER')
+           )
        )
      LIMIT 1`,
     [env.venueId, env.organizationId, hashSessionToken(sessionToken), env.venueId],
   )
   const row = rows[0]
-  if (!row) return null
+  if (!row || !isAuthPortal(row.portal)) return null
   return {
     actor: {
       userId: Number(row.user_id),
@@ -127,14 +150,19 @@ export async function authenticateSession(sessionToken: string): Promise<Authent
       organizationId: Number(row.organization_id),
       venueId: env.venueId,
       authSessionId: Number(row.session_id),
+      portal: row.portal,
     },
     username: row.username,
     displayName: row.display_name,
     sessionToken,
+    portal: row.portal,
   }
 }
 
 export async function listRoles(actor: AuthenticatedActor): Promise<string[]> {
+  if (!actor.portal) return []
+  const portalRoles = rolesForPortal(actor.portal)
+  const rolePlaceholders = portalRoles.map(() => '?').join(', ')
   const [rows] = await databasePool.execute<(RowDataPacket & { code: string })[]>(
     `SELECT DISTINCT r.code
      FROM memberships AS m
@@ -143,24 +171,30 @@ export async function listRoles(actor: AuthenticatedActor): Promise<string[]> {
      JOIN roles AS r ON r.id = mr.role_id
      WHERE m.organization_id = ? AND m.id = ? AND m.user_id = ? AND m.status = 'ACTIVE'
        AND mr.revoked_at IS NULL AND (mr.venue_id IS NULL OR mr.venue_id = ?)
+       AND r.code IN (${rolePlaceholders})
      ORDER BY r.code`,
-    [actor.organizationId, actor.membershipId, actor.userId, actor.venueId],
+    [actor.organizationId, actor.membershipId, actor.userId, actor.venueId, ...portalRoles],
   )
   return rows.map((row) => row.code)
 }
 
 export async function listPermissions(actor: AuthenticatedActor): Promise<string[]> {
+  if (!actor.portal) return []
+  const portalRoles = rolesForPortal(actor.portal)
+  const rolePlaceholders = portalRoles.map(() => '?').join(', ')
   const [rows] = await databasePool.execute<(RowDataPacket & { code: string })[]>(
     `SELECT DISTINCT p.code
      FROM memberships AS m
      JOIN membership_roles AS mr
        ON mr.organization_id = m.organization_id AND mr.membership_id = m.id
+     JOIN roles AS r ON r.id = mr.role_id
      JOIN role_permissions AS rp ON rp.role_id = mr.role_id
      JOIN permissions AS p ON p.id = rp.permission_id
      WHERE m.organization_id = ? AND m.id = ? AND m.user_id = ? AND m.status = 'ACTIVE'
        AND mr.revoked_at IS NULL AND (mr.venue_id IS NULL OR mr.venue_id = ?)
+       AND r.code IN (${rolePlaceholders})
      ORDER BY p.code`,
-    [actor.organizationId, actor.membershipId, actor.userId, actor.venueId],
+    [actor.organizationId, actor.membershipId, actor.userId, actor.venueId, ...portalRoles],
   )
   return rows.map((row) => row.code)
 }

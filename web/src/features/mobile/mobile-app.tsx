@@ -5,16 +5,23 @@
  * Other routes (Khách, Báo cáo, Cài đặt) render their Desktop page inside this shell.
  */
 import { Clock4, LayoutDashboard, List, ListOrdered, Map as MapIcon, Plus, type LucideIcon } from "lucide-react"
-import { Suspense, useEffect, useMemo, useState } from "react"
+import { Suspense, useEffect, useMemo, useState, type CSSProperties } from "react"
 import { Outlet, useLocation, useNavigate } from "react-router"
 import type { ReservationView } from "@/domain/models"
 import { useNow, useReservations, useWaitlist } from "@/hooks/use-data"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useSession } from "@/state/session"
+import { roleCan } from "@/domain/access"
+import { api } from "@/services"
+import { useUi } from "@/state/ui"
+import { toast } from "sonner"
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { NAV } from "@/app/nav"
 import { useShiftAlerts } from "../floor/alerts"
 import { useFloorModel } from "../floor/use-floor-model"
+import { isWaitingForTable } from "../floor/reception-rules"
+import { ZaloBookingExport } from "../reservations/zalo-booking-export"
 import { MobileContext, type Confirm, type FormRequest, type MobileCtx, type TablePick, type Tab } from "./context"
 import { DetailScreen } from "./detail"
 import { FormScreen } from "./form"
@@ -24,7 +31,6 @@ import { MapScreen, TableSheet } from "./map"
 import { isOpenEntry } from "./model"
 import {
   AccountSheet,
-  Alert30,
   AlertsSheet,
   ConfirmDialog,
   CreateSheet,
@@ -33,7 +39,7 @@ import {
   Toast15,
 } from "./overlays"
 import { PlainHeader } from "./ui"
-import { WaitScreen } from "./wait"
+import { EntryDetailScreen, WaitScreen } from "./wait"
 import "./mobile.css"
 
 const PATH: Record<Tab, string> = { home: "/home", list: "/reservations", map: "/floor", wait: "/waitlist" }
@@ -44,20 +50,25 @@ export default function MobileApp() {
   const navigate = useNavigate()
   const tab: Tab | null = TAB_OF[loc.pathname] ?? null
   const role = useSession((s) => s.user.role)
+  const permissions = useSession((s) => s.permissions)
   const isOwner = role === "OWNER_ADMIN"
-  const model = useFloorModel()
+  const isReceptionist = role === "RECEPTIONIST"
+  const ui = useUi()
   const now = useNow(15_000)
-  const today = model.floor?.businessDate ?? businessDateOf(now)
-  const reservations = useReservations(today).data
-  const waitlistQuery = useWaitlist(today)
-  const waitlist = waitlistQuery.data
+  const today = businessDateOf(now)
+  const selectedDate = isReceptionist && ui.floorMode !== "live" ? ui.availDate : today
+  const model = useFloorModel(selectedDate)
+  const reservations = useReservations(selectedDate).data
+  const waitlistQuery = useWaitlist(selectedDate)
+  const waitlist = waitlistQuery.isPlaceholderData ? undefined : waitlistQuery.data
   const venue = model.catalog?.venue
   const th = { late: venue?.lateWarningMinutes ?? 15, noshow: venue?.noShowWarningMinutes ?? 30 }
 
-  const [overlay, setOverlay] = useState<null | "create" | "alerts" | "account">(null)
+  const [overlay, setOverlay] = useState<null | "create" | "alerts" | "account" | "wait" | "count">(null)
   const [statusFor, setStatusFor] = useState<ReservationView | null>(null)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [detail, setDetail] = useState<{ id: number; bd: BusinessDate } | null>(null)
+  const [entryDetail, setEntryDetail] = useState<{ id: number; bd: BusinessDate } | null>(null)
   const [form, setForm] = useState<FormRequest | null>(null)
   const [tableSel, setTableSel] = useState<number | null>(null)
   const [pick, setPick] = useState<TablePick | null>(null)
@@ -70,17 +81,20 @@ export default function MobileApp() {
   const alerts = useShiftAlerts(model, booked, now)
   const unread = alerts.filter((a) => !seen.has(a.key)).length
   const handle = (key: string) => setHandled((s) => new Set(s).add(key))
-  const alert30 = booked.find((r) => r.warning === "noshow" && !handled.has(`n${r.id}`)) ?? null
   const toast15 = booked.find((r) => r.warning === "late" && !handled.has(`l${r.id}`)) ?? null
-  const busy = !!(overlay || statusFor || confirm || detail || form || pick)
+  const busy = !!(overlay || statusFor || confirm || detail || entryDetail || form || pick || ui.draft)
+  const keyboardSafeHeight = useKeyboardSafeHeight()
 
   // Role switch resets to the role's home, like a fresh login.
   useEffect(() => {
     setOverlay(null)
     setDetail(null)
+    setEntryDetail(null)
     setForm(null)
     setPick(null)
     setTableSel(null)
+    const { draft, closeBooking, closeWalkIn } = useUi.getState()
+    if (draft) (draft.kind === "booking" ? closeBooking : closeWalkIn)()
   }, [role])
 
   // Escape closes the top layer. The 30' alert and confirmations need an explicit choice.
@@ -89,13 +103,18 @@ export default function MobileApp() {
       if (e.key !== "Escape") return
       if (statusFor) setStatusFor(null)
       else if (overlay) setOverlay(null)
+      else if (entryDetail) setEntryDetail(null)
       else if (tableSel) setTableSel(null)
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [statusFor, overlay, tableSel])
+  }, [statusFor, overlay, entryDetail, tableSel])
 
   const go = (t: Tab) => {
+    if (isReceptionist && t === "wait") {
+      setOverlay("wait")
+      return
+    }
     setOverlay(null)
     if (t !== "map") setTableSel(null)
     if (PATH[t] !== loc.pathname) navigate(PATH[t])
@@ -105,8 +124,10 @@ export default function MobileApp() {
     model,
     now,
     today,
+    businessDate: selectedDate,
     role,
     isOwner,
+    can: (permission) => (api.mode === "http" ? permissions.includes(permission) : roleCan(role, permission)),
     th,
     reservations,
     waitlist,
@@ -118,18 +139,37 @@ export default function MobileApp() {
       setOverlay("alerts")
     },
     openAccount: () => setOverlay("account"),
+    openCount: () => setOverlay("count"),
     openDetail: (id, bd) => {
       setOverlay(null)
+      setTableSel(null)
+      setEntryDetail(null)
       setDetail({ id, bd })
+    },
+    openEntryDetail: (id, bd) => {
+      setOverlay(null)
+      setTableSel(null)
+      setDetail(null)
+      setEntryDetail({ id, bd })
     },
     openStatus: (r) => setStatusFor(reservations?.find((x) => x.id === r.id) ?? r),
     openForm: (f) => {
+      if (f.mode === "walkin" && (f.date ?? selectedDate) !== today) {
+        toast.info("Walk-in chỉ áp dụng cho ngày kinh doanh hiện tại.")
+        return
+      }
       setOverlay(null)
       setTableSel(null)
-      setForm(f)
+      if (isReceptionist) {
+        if (f.mode === "walkin") ui.openWalkIn(f.tableIds)
+        else ui.openBooking({ tableIds: f.tableIds, date: f.date ?? selectedDate, toWaitlist: f.toWaitlist })
+        return
+      }
+      setForm({ ...f, date: f.date ?? selectedDate })
     },
     openTable: (id) => {
       setDetail(null)
+      setEntryDetail(null)
       setTableSel(id)
       go("map")
     },
@@ -139,6 +179,7 @@ export default function MobileApp() {
     },
     startPick: (p) => {
       setDetail(null)
+      setEntryDetail(null)
       setStatusFor(null)
       setTableSel(null)
       setPickSel(p.preselected ?? [])
@@ -154,7 +195,16 @@ export default function MobileApp() {
 
   return (
     <MobileContext.Provider value={ctx}>
-      <div data-gm className="fixed inset-0 h-dvh w-full touch-manipulation overflow-hidden">
+      <div
+        data-gm
+        style={
+          {
+            ...(isReceptionist ? { "--nav-h": "0px" } : {}),
+            ...(keyboardSafeHeight ? { height: keyboardSafeHeight } : {}),
+          } as CSSProperties
+        }
+        className="fixed inset-0 h-dvh w-full touch-manipulation overflow-hidden"
+      >
         <div className="absolute inset-x-0 top-0 bottom-[var(--nav-h)] flex flex-col overflow-hidden">
           {tab === "home" ? (
             <HomeScreen />
@@ -163,7 +213,9 @@ export default function MobileApp() {
           ) : tab === "map" ? (
             <MapScreen
               selected={tableSel}
-              onSelect={setTableSel}
+              onSelect={(id) => {
+                setTableSel(id)
+              }}
               pick={pick}
               pickSel={pickSel}
               onPickToggle={(id) =>
@@ -195,15 +247,24 @@ export default function MobileApp() {
           )}
         </div>
 
-        <BottomNav
-          tab={tab}
-          isOwner={isOwner}
-          waitBadge={(waitlist ?? []).filter(isOpenEntry).length}
-          onCreate={() => setOverlay("create")}
-          go={go}
-        />
+        {!isReceptionist ? (
+          <BottomNav
+            tab={tab}
+            isOwner={isOwner}
+            waitBadge={(waitlist ?? []).filter(isOpenEntry).length}
+            onCreate={() => setOverlay("create")}
+            go={go}
+          />
+        ) : null}
 
-        {tab === "map" && tableSel && !pick && !detail && !form ? (
+        {tab === "map" &&
+        tableSel &&
+        !pick &&
+        !detail &&
+        !entryDetail &&
+        !form &&
+        !ui.draft &&
+        ui.pick?.intent !== "layout" ? (
           <TableSheet id={tableSel} onClose={() => setTableSel(null)} />
         ) : null}
         {detail ? (
@@ -214,9 +275,17 @@ export default function MobileApp() {
             onClose={() => setDetail(null)}
           />
         ) : null}
+        {entryDetail ? (
+          <EntryDetailScreen
+            id={entryDetail.id}
+            bd={entryDetail.bd}
+            backLabel={titleOf || "Quay lại"}
+            onClose={() => setEntryDetail(null)}
+          />
+        ) : null}
         {form ? <FormScreen req={form} onClose={() => setForm(null)} /> : null}
 
-        {toast15 && !alert30 && !busy ? (
+        {toast15 && !busy ? (
           <Toast15
             r={toast15}
             onView={() => {
@@ -227,10 +296,10 @@ export default function MobileApp() {
           />
         ) : null}
 
-        {overlay || statusFor || confirm || (alert30 && !busy) ? (
+        {(overlay && overlay !== "wait" && overlay !== "count") || statusFor || confirm ? (
           <Scrim
             onClick={() => {
-              if (confirm || (alert30 && !overlay && !statusFor)) return
+              if (confirm) return
               setStatusFor(null)
               setOverlay(null)
             }}
@@ -238,31 +307,50 @@ export default function MobileApp() {
         ) : null}
         {overlay === "create" ? <CreateSheet onClose={() => setOverlay(null)} /> : null}
         {overlay === "account" ? <AccountSheet onClose={() => setOverlay(null)} /> : null}
+        <ZaloBookingExport
+          businessDate={selectedDate}
+          open={overlay === "count"}
+          onOpenChange={(open) => !open && setOverlay(null)}
+        />
+        <Sheet open={overlay === "wait"} onOpenChange={(open) => !open && setOverlay(null)}>
+          <SheetContent data-gm side="bottom" className="h-[85dvh] gap-0 overflow-hidden p-0">
+            <SheetTitle className="px-4 pt-5 text-lg">
+              Bàn chờ ảo <span aria-hidden>({(waitlist ?? []).filter(isWaitingForTable).length})</span>
+            </SheetTitle>
+            <SheetDescription className="px-4 pb-2 text-xs">Ai đặt trước nằm trên. Chưa giữ bàn thật.</SheetDescription>
+            <WaitScreen embedded />
+          </SheetContent>
+        </Sheet>
         {overlay === "alerts" ? (
           <AlertsSheet
             alerts={alerts}
             onClose={() => setOverlay(null)}
             onOpen={(a) => {
               setOverlay(null)
-              if (a.reservationId) setDetail({ id: a.reservationId, bd: today })
+              if (a.reservationId) setDetail({ id: a.reservationId, bd: selectedDate })
               else if (a.tableId) ctx.openTable(a.tableId)
             }}
           />
         ) : null}
         {statusFor ? <StatusDialog r={statusFor} onClose={() => setStatusFor(null)} /> : null}
         {confirm ? <ConfirmDialog c={confirm} onClose={() => setConfirm(null)} /> : null}
-        {alert30 && !busy ? (
-          <Alert30
-            r={alert30}
-            onAck={() => {
-              handle(`n${alert30.id}`)
-              handle(`l${alert30.id}`)
-            }}
-          />
-        ) : null}
       </div>
     </MobileContext.Provider>
   )
+}
+
+/** iOS keeps the layout viewport under the keyboard; Android follows interactive-widget in index.html. */
+export function useKeyboardSafeHeight() {
+  const [height, setHeight] = useState<number | null>(null)
+  useEffect(() => {
+    const viewport = window.visualViewport
+    if (!viewport) return
+    const update = () =>
+      setHeight(viewport.scale === 1 && viewport.height < window.innerHeight - 1 ? viewport.height : null)
+    viewport.addEventListener("resize", update)
+    return () => viewport.removeEventListener("resize", update)
+  }, [])
+  return height
 }
 
 interface NavItem {

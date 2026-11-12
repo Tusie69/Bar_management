@@ -31,6 +31,7 @@ INSERT INTO _gam_seed_guard VALUES (
     AND (SELECT COUNT(*) FROM permissions) IN (28, 29)
     AND (SELECT COUNT(*) FROM organizations) = 0
     AND (SELECT COUNT(*) FROM venues) = 0
+    AND (SELECT COUNT(*) FROM venue_settings) = 0
     AND (SELECT COUNT(*) FROM users) = 0
     AND (SELECT COUNT(*) FROM memberships) = 0
     AND (SELECT COUNT(*) FROM membership_roles) = 0
@@ -58,6 +59,9 @@ INSERT INTO organizations (id, code, name) VALUES
   (1, 'GAM21', '21GAM (giả)'), (2, 'DEMO2', 'Tổ chức khác (giả)');
 INSERT INTO venues (id, organization_id, code, name) VALUES
   (1, 1, '21GAM', '21GAM (giả)'), (2, 2, 'DEMO2', 'Venue khác (giả)');
+INSERT INTO venue_settings (organization_id, venue_id, `key`, `value`) VALUES
+  (1, 1, 'quick_times', JSON_ARRAY('21:00','21:30','22:00','22:30')),
+  (2, 2, 'quick_times', JSON_ARRAY('21:00','21:30','22:00','22:30'));
 INSERT INTO users (id, username, display_name, password_hash, status) VALUES
   (1, 'demo_reception1', 'Lễ tân 1 (giả)', '!DEMO_NO_LOGIN', 'DISABLED'),
   (2, 'demo_reception2', 'Lễ tân 2 (giả)', '!DEMO_NO_LOGIN', 'DISABLED'),
@@ -226,6 +230,11 @@ INSERT INTO reservations
    status,closed_at,closed_by_user_id,close_reason_code,created_by_user_id) VALUES
   (10,1,1,10,1,4,@day+INTERVAL 1230 MINUTE,@seed_date,'CANCELLED',@day+INTERVAL 1170 MINUTE,1,'CUSTOMER_REQUEST',1),
   (11,1,1,11,2,4,@day+INTERVAL 1170 MINUTE,@seed_date,'NO_SHOW',@day+INTERVAL 1210 MINUTE,1,'NO_SHOW_CONFIRMED',1);
+
+-- NA-14 synthetic metadata. Unclassified rows intentionally stay NULL/false.
+UPDATE reservations
+SET customer_classification='RETURNING', guest_type='REGULAR', is_birthday=1
+WHERE id=5;
 
 INSERT INTO waitlist_entries
   (id,organization_id,venue_id,kind,reservation_id,customer_id,contact_name,party_size,preference_mode,

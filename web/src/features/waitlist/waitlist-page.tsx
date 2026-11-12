@@ -1,6 +1,7 @@
 import {
   AlertCircle,
   Armchair,
+  ArrowRightLeft,
   CalendarClock,
   Check,
   Clock3,
@@ -52,6 +53,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
+  CLOSE_REASON_LABEL,
   CONTACT_OUTCOME_LABEL,
   HOLD_RELEASE_LABEL,
   PREFERENCE_MODE_LABEL,
@@ -62,6 +64,7 @@ import {
   type ContactAttemptChannel,
   type ContactOutcome,
   type HoldReleaseReason,
+  type ReservationCloseReason,
   type WaitlistChannel,
   type WaitlistCloseReason,
   type WaitlistKind,
@@ -74,20 +77,37 @@ import { useBusinessDate, useNow, useReservations, useWaitlist } from "@/hooks/u
 import { useDragScroll } from "@/hooks/use-drag-scroll"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
-import { fmtCountdown, fmtElapsed, fmtTime } from "@/lib/time"
+import { businessDateOf, fmtCountdown, fmtElapsed, fmtTime, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api, isApiError } from "@/services"
 import { useCan, useSession } from "@/state/session"
+import { useUi } from "@/state/ui"
+import { assignWaitlistTables } from "./assign-waitlist"
+import { useHeldOrderActions } from "../mobile/actions"
 import { ExtendHoldDialog, GuestCountDialog } from "../floor/floor-dialogs"
 import { useFloorModel, type FloorModel } from "../floor/use-floor-model"
 import { WaitlistPreferencePicker } from "../reservations/reservation-detail"
 
+const CANCEL_REASONS = (Object.keys(CLOSE_REASON_LABEL) as ReservationCloseReason[]).map((v) => ({
+  value: v,
+  label: CLOSE_REASON_LABEL[v],
+}))
+
 const ACTIVE = ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"]
 
-export default function WaitlistPage() {
-  const bd = useBusinessDate()
+export default function WaitlistPage({
+  businessDate,
+  onLeaveToFloor,
+}: {
+  businessDate?: BusinessDate
+  /** Set on the receptionist's floor sheet: actions continue on the map, so the sheet must close first. */
+  onLeaveToFloor?: () => void
+}) {
+  const openBooking = useUi((s) => s.openBooking)
+  const today = useBusinessDate()
+  const bd = businessDate ?? today
   const waitlist = useWaitlist(bd)
-  const model = useFloorModel()
+  const model = useFloorModel(bd)
   const [params, setParams] = useSearchParams()
   const focusEntry = Number(params.get("entry")) || null
   const focusTable = Number(params.get("table")) || null
@@ -151,7 +171,22 @@ export default function WaitlistPage() {
               n={active.filter((e) => e.status === "HOLD_ACTIVE").length}
               label="đang giữ bàn"
             />
-            <GuardedButton permission="waitlist.create" onClick={() => setAddOpen(true)}>
+            {onLeaveToFloor ? (
+              <GuardedButton
+                permission="reservation.create"
+                onClick={() => {
+                  onLeaveToFloor()
+                  openBooking({ tableIds: [], date: businessDate, toWaitlist: true })
+                }}
+              >
+                <CalendarClock /> Nhận booking
+              </GuardedButton>
+            ) : null}
+            <GuardedButton
+              permission="waitlist.create"
+              variant={onLeaveToFloor ? "outline" : "default"}
+              onClick={() => setAddOpen(true)}
+            >
               <ListPlus /> Thêm khách chờ
             </GuardedButton>
           </div>
@@ -242,6 +277,7 @@ export default function WaitlistPage() {
                   <ol className="grid gap-2">
                     {lane.items.map((e, i) => (
                       <EntryCard
+                        onLeaveToFloor={onLeaveToFloor}
                         key={e.id}
                         entry={e}
                         index={i + 1}
@@ -304,6 +340,7 @@ function EntryCard({
   highlighted,
   dimmed,
   presetTable,
+  onLeaveToFloor,
 }: {
   entry: WaitlistEntryView
   index: number
@@ -311,23 +348,41 @@ function EntryCard({
   highlighted: boolean
   dimmed: boolean
   presetTable: number | null
+  onLeaveToFloor?: () => void
 }) {
+  const startPick = useUi((s) => s.startPick)
+  const openReservation = useUi((s) => s.openReservation)
   const now = useNow(1000)
   const me = useSession((s) => s.user.id)
   const canReveal = useCan("customer.phone.reveal")
+  const canOpenWalkIn = useCan("visit.walkin")
   const { run, pending } = useAction()
   const { data: reservations } = useReservations(e.businessDate)
   const [contactOpen, setContactOpen] = useState(false)
   const [seatOpen, setSeatOpen] = useState(false)
+  const [arrival, setArrival] = useState<(() => Promise<unknown>) | null>(null)
   const [extendOpen, setExtendOpen] = useState(false)
   const [releaseOpen, setReleaseOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
+  const [statusOpen, setStatusOpen] = useState(false)
+  const [cancelResOpen, setCancelResOpen] = useState(false)
+  const [entryDetailOpen, setEntryDetailOpen] = useState(false)
   const mine = e.claimedBy?.userId === me
   const claimLeft = e.claimExpiresAt ? e.claimExpiresAt.getTime() - now.getTime() : 0
   const overdue = !!e.hold && now > e.hold.deadlineAt
   const ChannelIcon = e.channel === "PHONE_CALLBACK" ? Phone : e.channel === "IN_PERSON" ? Hand : MessageCircle
   const linkedRes = reservations?.find((r) => (e.reservationId ? r.id === e.reservationId : r.waitlistEntryId === e.id))
-  const heldCodes = linkedRes?.tableIds?.length ? model.codes(linkedRes.tableIds) : []
+  const heldCodes = linkedRes?.tableIds?.length ? model.codes(linkedRes.tableIds) : (e.hold?.tableIds?.length ? model.codes(e.hold.tableIds) : [])
+  const held = useHeldOrderActions(model)
+  const policy = held.policy(e, linkedRes)
+  const today = e.businessDate === businessDateOf(now)
+  const canConfirmLate =
+    today &&
+    linkedRes &&
+    policy.canLate &&
+    linkedRes.status === "BOOKED" &&
+    !linkedRes.lateConfirmedAt &&
+    now.getTime() >= linkedRes.expectedAt.getTime()
 
   return (
     <li
@@ -496,30 +551,76 @@ function EntryCard({
           <>
             <GuardedButton
               permission="visit.checkin"
-              onClick={() => setSeatOpen(true)}
+              disabled={!policy.canArrival || held.pending}
+              disabledReason={!policy.supported ? "Chưa hỗ trợ" : undefined}
+              onClick={() => {
+                if (held.policy(e, linkedRes).canArrival) {
+                  setArrival(() => () => held.arrive(e, linkedRes, linkedRes?.partySize ?? e.partySize))
+                  setSeatOpen(true)
+                }
+              }}
             >
-              <Check /> Khách đã tới, xếp chỗ
+              <Check /> Khách đã đến
             </GuardedButton>
-            {e.hold ? (
-              <>
-                <GuardedButton
-                  permission="hold.set_deadline"
-                  variant="outline"
-                  disabledReason={api.mode === "http" ? "Backend v1 chưa hỗ trợ gia hạn giữ bàn." : undefined}
-                  onClick={() => setExtendOpen(true)}
-                >
-                  <TimerReset /> Gia hạn
-                </GuardedButton>
-                <GuardedButton
-                  permission="hold.release"
-                  variant="outline"
-                  disabledReason={api.mode === "http" ? "Backend v1 chưa hỗ trợ nhả giữ bàn." : undefined}
-                  onClick={() => setReleaseOpen(true)}
-                >
-                  Nhả giữ
-                </GuardedButton>
-              </>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (linkedRes) openReservation(linkedRes.id, e.businessDate)
+                else setEntryDetailOpen(true)
+              }}
+            >
+              Quản lý đơn
+            </Button>
+            <GuardedButton
+              permission="table.assign"
+              variant="outline"
+              disabled={!policy.canReassign || held.pending}
+              disabledReason={!policy.supported ? "Chưa hỗ trợ" : undefined}
+              onClick={() => {
+                const pick = held.picker(e, linkedRes)
+                if (pick) {
+                  onLeaveToFloor?.()
+                  startPick({ ...pick, intent: "assign" })
+                }
+              }}
+            >
+              <ArrowRightLeft /> Đổi / Ghép bàn
+            </GuardedButton>
+            {linkedRes ? (
+              <Button
+                variant="outline"
+                onClick={() => openReservation(linkedRes.id, e.businessDate)}
+              >
+                Xem booking
+              </Button>
             ) : null}
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEntryDetailOpen(true)
+              }}
+            >
+              Xem đơn chờ
+            </Button>
+            {linkedRes ? (
+              <GuardedButton
+                permission={held.can("reservation.cancel") ? "reservation.cancel" : "reservation.update"}
+                disabled={!policy.canBookingStatus}
+                disabledReason={!policy.canBookingStatus ? "Chưa hỗ trợ" : undefined}
+                variant="outline"
+                onClick={() => setStatusOpen(true)}
+              >
+                Đổi trạng thái
+              </GuardedButton>
+            ) : (
+              <GuardedButton
+                permission="waitlist.cancel"
+                variant="outline"
+                onClick={() => setCancelOpen(true)}
+              >
+                Đổi trạng thái
+              </GuardedButton>
+            )}
           </>
         ) : e.status === "CONTACTING" && mine ? (
           <>
@@ -565,9 +666,37 @@ function EntryCard({
                 <PhoneCall /> {e.status === "CONTACTING" ? "Đang có người liên hệ" : "Nhận liên hệ"}
               </GuardedButton>
             )}
+            {onLeaveToFloor && e.status === "WAITING" ? (
+              <GuardedButton
+                permission={api.mode === "http" ? "table.assign" : "waitlist.claim"}
+                disabled={pending || (api.mode === "http" && e.kind === "WALK_IN" && !canOpenWalkIn)}
+                onClick={() => {
+                  const expected = e.kind === "ADVANCE_RESERVATION" ? e.reservationExpectedAt : null
+                  onLeaveToFloor()
+                  startPick({
+                    intent: expected ? "assign" : "seat-waitlist",
+                    title: `Chuyển ${e.displayName} vào bàn`,
+                    hint: `Chạm bàn trống cho ${e.partySize || 1} khách rồi xác nhận.`,
+                    multi: true,
+                    confirmLabel: e.kind === "WALK_IN" ? "Xác nhận mở bàn" : "Xác nhận chuyển bàn",
+                    ...(expected
+                      ? {
+                          targetDate: e.businessDate,
+                          targetTime: fmtTime(expected),
+                          targetExpectedAt: expected,
+                          targetParty: e.partySize || 1,
+                        }
+                      : {}),
+                    onConfirm: async (ids) => !!(await run((o) => assignWaitlistTables(e, ids, o))),
+                  })
+                }}
+              >
+                <Armchair /> Chuyển bàn
+              </GuardedButton>
+            ) : null}
             <GuardedButton
               permission="table.assign"
-              variant={api.mode === "http" ? "default" : "outline"}
+              variant={api.mode === "http" && !onLeaveToFloor ? "default" : "outline"}
               onClick={() => setSeatOpen(true)}
             >
               <Armchair /> {e.channel === "IN_PERSON" ? "Khách nhận bàn ngay" : "Gán giữ bàn"}
@@ -576,6 +705,13 @@ function EntryCard({
         )}
       </div>
 
+      {api.mode === "mock" && e.hold ? (
+        <div className="flex gap-2">
+          <GuardedButton permission="hold.set_deadline" variant="outline" onClick={() => setExtendOpen(true)}>Gia hạn giữ</GuardedButton>
+          <GuardedButton permission="hold.release" variant="outline" onClick={() => setReleaseOpen(true)}>Nhả giữ</GuardedButton>
+        </div>
+      ) : null}
+
       <ContactDialog
         open={contactOpen}
         onOpenChange={setContactOpen}
@@ -583,7 +719,7 @@ function EntryCard({
         model={model}
         presetTable={presetTable}
       />
-      <SeatDialog open={seatOpen} onOpenChange={setSeatOpen} entry={e} model={model} presetTable={presetTable} />
+      <SeatDialog onArrival={arrival ?? undefined} open={seatOpen} onOpenChange={setSeatOpen} entry={e} model={model} presetTable={presetTable} />
       {e.hold ? (
         <>
           <ExtendHoldDialog
@@ -591,6 +727,7 @@ function EntryCard({
             onOpenChange={setExtendOpen}
             deadline={e.hold.deadlineAt}
             onConfirm={async (deadline, reason) => {
+              if (!held.can("hold.set_deadline")) return
               const r = await run(() => api.setHoldDeadline(e.hold!.id, e.hold!.version, deadline, reason))
               if (r) setExtendOpen(false)
             }}
@@ -599,13 +736,14 @@ function EntryCard({
             open={releaseOpen}
             onOpenChange={setReleaseOpen}
             title="Nhả giữ bàn?"
-            description="Bàn trở về trống. Khách quay lại danh sách chờ, trừ khi chọn “Khách không đến”."
+            description="Bàn trở về trống. Khách quay lại danh sách chờ."
             confirmLabel="Nhả giữ"
             reasons={(
-              ["CUSTOMER_NO_SHOW", "CUSTOMER_CANCELLED", "STAFF_REASSIGNED", "OTHER"] as HoldReleaseReason[]
+              ["CUSTOMER_CANCELLED", "STAFF_REASSIGNED", "OTHER"] as HoldReleaseReason[]
             ).map((v) => ({ value: v, label: HOLD_RELEASE_LABEL[v] }))}
             requireNoteFor="OTHER"
             onConfirm={async (reason, note) => {
+              if (!held.can("hold.release")) return
               await run(() => api.releaseHold(e.hold!.id, e.hold!.version, reason as HoldReleaseReason, note))
             }}
           />
@@ -634,9 +772,115 @@ function EntryCard({
         ).map((v) => ({ value: v, label: WAITLIST_CLOSE_LABEL[v] }))}
         requireNoteFor="OTHER"
         onConfirm={async (reason, note) => {
+          if (!held.can("waitlist.cancel")) return
           await run(() => api.cancelWaitlist(e.id, e.version, reason as WaitlistCloseReason, note))
         }}
       />
+      {linkedRes ? (
+        <>
+          <Dialog open={statusOpen} onOpenChange={setStatusOpen}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Đổi trạng thái booking</DialogTitle>
+                <DialogDescription>{linkedRes.displayName}</DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col gap-2 pt-2">
+                <GuardedButton
+                  permission="reservation.update"
+                  variant="outline"
+                  disabledReason={
+                    pending
+                      ? "Đang ghi nhận..."
+                      : canConfirmLate
+                        ? null
+                        : linkedRes.lateConfirmedAt
+                          ? "Đã ghi nhận khách tới muộn"
+                          : "Chỉ bật sau giờ hẹn"
+                  }
+                  onClick={async () => {
+                    if (!held.can("reservation.update") || !held.policy(e, linkedRes).canLate || !canConfirmLate) return
+                    const r = await run(() => api.confirmLate(linkedRes.id, linkedRes.version))
+                    if (r) setStatusOpen(false)
+                  }}
+                >
+                  <TimerReset /> Tới muộn
+                </GuardedButton>
+                <GuardedButton
+                  permission="reservation.cancel"
+                  variant="outline"
+                  onClick={() => {
+                    setStatusOpen(false)
+                    setCancelResOpen(true)
+                  }}
+                >
+                  <XCircle /> Hủy booking
+                </GuardedButton>
+              </div>
+            </DialogContent>
+          </Dialog>
+          <ConfirmAction
+            open={cancelResOpen}
+            onOpenChange={setCancelResOpen}
+            title="Hủy booking?"
+            description={
+              <>
+                Booking của <b className="text-foreground">{linkedRes.displayName}</b>. Bàn đang giữ sẽ được nhả.
+              </>
+            }
+            confirmLabel="Hủy booking"
+            reasons={CANCEL_REASONS}
+            requireNoteFor="OTHER"
+            onConfirm={async (reason, note) => {
+              await run(() =>
+                held.can("reservation.cancel") && held.policy(e, linkedRes).canBookingStatus ? api.cancelReservation(linkedRes.id, linkedRes.version, reason as ReservationCloseReason, note) : Promise.reject(new Error("Chưa hỗ trợ hoặc thiếu quyền hủy booking")),
+              )
+            }}
+          />
+        </>
+      ) : null}
+
+      <Dialog open={entryDetailOpen} onOpenChange={setEntryDetailOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Chi tiết mục chờ #{e.id}</DialogTitle>
+            <DialogDescription>{e.displayName}</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2 pt-2 text-sm">
+            <div className="flex justify-between border-b pb-1">
+              <span className="text-muted-foreground">Khách hàng:</span>
+              <span className="font-medium">{e.displayName}</span>
+            </div>
+            <div className="flex justify-between border-b pb-1">
+              <span className="text-muted-foreground">Số khách:</span>
+              <span className="font-medium">{e.partySize} khách</span>
+            </div>
+            <div className="flex justify-between border-b pb-1">
+              <span className="text-muted-foreground">Loại mục chờ:</span>
+              <span className="font-medium">{e.kind === "WALK_IN" ? "Walk-in" : "Đặt trước"}</span>
+            </div>
+            <div className="flex justify-between border-b pb-1">
+              <span className="text-muted-foreground">Trạng thái:</span>
+              <span className="font-medium">{WAITLIST_STATUS_LABEL[e.status]}</span>
+            </div>
+            <div className="flex justify-between border-b pb-1">
+              <span className="text-muted-foreground">Thời gian:</span>
+              <span className="font-medium">{fmtTime(e.queuedAt)}</span>
+            </div>
+            {heldCodes.length ? (
+              <div className="flex justify-between border-b pb-1">
+                <span className="text-muted-foreground">Bàn đang giữ:</span>
+                <span className="font-medium">{heldCodes.join(" + ")}</span>
+              </div>
+            ) : null}
+            {e.note ? (
+              <div className="flex flex-col gap-1 pt-1">
+                <span className="text-muted-foreground">Ghi chú:</span>
+                <p className="text-tx-1">{e.note}</p>
+              </div>
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
     </li>
   )
 }
@@ -890,13 +1134,14 @@ function ContactBody({ entry: e, model, presetTable, close }: EntryDialogProps &
 }
 
 function SeatDialog({
+  onArrival,
   open,
   onOpenChange,
   ...props
-}: EntryDialogProps & { open: boolean; onOpenChange: (o: boolean) => void }) {
+}: EntryDialogProps & { open: boolean; onOpenChange: (o: boolean) => void; onArrival?: () => Promise<unknown> }) {
   const { entry: e, model } = props
-  const { run } = useAction()
   const { data: reservations } = useReservations(e.businessDate)
+  const held = useHeldOrderActions(model)
   const isArrival = e.status === "HOLD_ACTIVE" || Boolean(e.hold)
 
   if (isArrival) {
@@ -909,47 +1154,22 @@ function SeatDialog({
       <GuestCountDialog
         open={open}
         onOpenChange={onOpenChange}
-        title={`Xếp chỗ cho ${e.displayName}`}
+        title={`Xác nhận khách đã đến: ${e.displayName}`}
         description={
           tableCodes.length > 0 ? (
             <>
-              Bàn đang giữ: {tableCodes.join(" + ")}. Check-in booking liên kết để mở bàn và hoàn tất mục chờ.
+              Khách: {e.displayName} · Bàn: {tableCodes.join(" + ")} · Số khách: {storedParty} khách. Xác nhận khách nhận bàn và hoàn tất mục chờ.
             </>
           ) : (
-            <>Check-in booking liên kết để mở bàn và hoàn tất mục chờ.</>
+            <>Khách: {e.displayName} · Số khách: {storedParty} khách. Xác nhận khách nhận bàn và hoàn tất mục chờ.</>
           )
         }
         initial={storedParty}
         readOnly
-        confirmLabel="Xếp chỗ"
+        confirmLabel="Khách đã đến"
         onConfirm={async () => {
-          const r = await run(async (o) => {
-            const list = await api.listReservations({ businessDate: e.businessDate })
-            let booking = list.find((b) => (e.reservationId ? b.id === e.reservationId : b.waitlistEntryId === e.id))
-            if (!booking && e.hold && !e.reservationId) {
-              const assigned = await api.seatWaitlist({
-                entryId: e.id,
-                version: e.version,
-                guestCount: storedParty,
-                tableIds: e.hold.tableIds,
-                overrideReason: o,
-              })
-              if (assigned?.reservationId) {
-                const updatedList = await api.listReservations({ businessDate: e.businessDate })
-                booking = updatedList.find((b) => b.id === assigned.reservationId)
-              }
-            }
-            if (!booking) {
-              throw new Error("Không tìm thấy thông tin đặt bàn liên kết.")
-            }
-            return api.checkIn({
-              reservationId: booking.id,
-              version: booking.version,
-              guestCount: storedParty,
-              overrideReason: o,
-            })
-          })
-          if (r) onOpenChange(false)
+          const result = onArrival ? await onArrival() : await held.arrive(e, res, storedParty)
+          if (result) onOpenChange(false)
         }}
       />
     )
@@ -967,11 +1187,13 @@ function SeatBody({ entry: e, model, presetTable, close }: EntryDialogProps & { 
   const { run, pending } = useAction()
   const [tables, setTables] = useState<number[]>(presetTable ? [presetTable] : [])
   const storedParty = e.partySize || 1
+  const canOpenWalkIn = useCan("visit.walkin")
+  const arrived = api.mode === "http" && e.kind === "WALK_IN"
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Gán giữ bàn cho khách · {e.displayName}</DialogTitle>
-        <DialogDescription>Hệ thống sẽ tạo booking và giữ bàn cho khách. Khách sẽ check-in sau từ booking.</DialogDescription>
+        <DialogTitle>{arrived ? "Mở bàn cho khách đã đến" : "Gán giữ bàn cho khách"} · {e.displayName}</DialogTitle>
+        <DialogDescription>{arrived ? "Xác nhận khách đang có mặt để mở bàn ngay." : "Hệ thống sẽ giữ bàn cho khách. Khách sẽ check-in sau từ booking."}</DialogDescription>
       </DialogHeader>
       <div className="grid gap-4">
         <div className="grid gap-1.5 py-1">
@@ -988,7 +1210,7 @@ function SeatBody({ entry: e, model, presetTable, close }: EntryDialogProps & { 
           Quay lại
         </Button>
         <Button
-          disabled={pending || tables.length === 0}
+          disabled={pending || tables.length === 0 || (arrived && !canOpenWalkIn)}
           onClick={async () => {
             const r = await run((o) =>
               api.seatWaitlist({
@@ -996,13 +1218,14 @@ function SeatBody({ entry: e, model, presetTable, close }: EntryDialogProps & { 
                 version: e.version,
                 guestCount: storedParty,
                 tableIds: tables,
+                ...(arrived ? { arrived: true } : {}),
                 overrideReason: o,
               }),
             )
             if (r) close()
           }}
         >
-          Xác nhận giữ bàn
+          {arrived ? "Xác nhận mở bàn" : "Xác nhận giữ bàn"}
         </Button>
       </DialogFooter>
     </>

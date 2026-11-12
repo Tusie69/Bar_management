@@ -20,3 +20,14 @@ export class PhoneRevealRateLimiter {
     current.count += 1
   }
 }
+
+export function assertPhoneDisclosureAllowed(
+  limiter: PhoneRevealRateLimiter | null,
+  userId: number,
+  bookingId: number,
+): void {
+  if (!limiter) {
+    throw new AppError(503, 'PHONE_REVEAL_POLICY_UNAVAILABLE', 'Chức năng gọi khách chưa được cấu hình đầy đủ.')
+  }
+  limiter.assertAllowed(userId, bookingId)
+}

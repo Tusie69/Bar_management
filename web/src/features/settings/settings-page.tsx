@@ -1,5 +1,7 @@
 import { Check, Lock, Minus } from "lucide-react"
 import { useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
+import { toast } from "sonner"
 import { GroupSymbolIcon, GuardedButton, PendingTag, SectionTitle } from "@/components/common"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -9,12 +11,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { PERMISSION_GROUPS, PERMISSION_LABEL, PERMISSION_MATRIX } from "@/domain/access"
+import { AccountsSection } from "./accounts-section"
 import { ROLE_LABEL, type RoleCode } from "@/domain/enums"
 import type { VenueConfig } from "@/domain/models"
 import { DDL_TABLES } from "@/domain/schema"
 import { GROUP_SYMBOLS } from "@/domain/symbols"
-import { useAction } from "@/hooks/use-action"
-import { useCatalog } from "@/hooks/use-data"
+import { reportError, useAction } from "@/hooks/use-action"
+import { qk, useCatalog, useVenueSettings } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
 import { api, REST_ENDPOINTS } from "@/services"
 import { useCan, useSession } from "@/state/session"
@@ -48,7 +51,8 @@ export default function SettingsPage() {
             </TabsTrigger>
           </TabsList>
           <TabsContent value="venue">
-            <VenueSettings readOnly={!canConfigure} />
+            <DynamicVenueSettings readOnly={!canConfigure} />
+            {api.mode === "mock" ? <VenueSettings readOnly={!canConfigure} /> : null}
           </TabsContent>
           <TabsContent value="floor">
             <FloorSettings readOnly={!canConfigure} />
@@ -62,6 +66,102 @@ export default function SettingsPage() {
         </Tabs>
       </div>
     </div>
+  )
+}
+
+function DynamicVenueSettings({ readOnly }: { readOnly: boolean }) {
+  const settings = useVenueSettings()
+  const value = settings.data
+  if (!value) return null
+  return <DynamicVenueSettingsForm key={JSON.stringify(value)} value={value} readOnly={readOnly} />
+}
+
+function DynamicVenueSettingsForm({
+  value,
+  readOnly,
+}: {
+  value: { quickTimes: string[]; upcomingMinutes: number; noShowMinutes: number }
+  readOnly: boolean
+}) {
+  const queryClient = useQueryClient()
+  const [quickTimes, setQuickTimes] = useState(value.quickTimes.join(", "))
+  const [upcomingMinutes, setUpcomingMinutes] = useState(value.upcomingMinutes)
+  const [noShowMinutes, setNoShowMinutes] = useState(value.noShowMinutes)
+  const [pending, setPending] = useState(false)
+  const parsedQuickTimes = quickTimes
+    .split(/[\s,]+/)
+    .map((time) => time.trim())
+    .filter(Boolean)
+  const dirty =
+    quickTimes !== value.quickTimes.join(", ") ||
+    upcomingMinutes !== value.upcomingMinutes ||
+    noShowMinutes !== value.noShowMinutes
+
+  const save = async () => {
+    if (pending) return
+    setPending(true)
+    try {
+      await api.updateVenueSettings({ quickTimes: parsedQuickTimes, upcomingMinutes, noShowMinutes })
+      await queryClient.invalidateQueries({ queryKey: qk.settings })
+      await queryClient.invalidateQueries({ queryKey: qk.catalog })
+      await queryClient.invalidateQueries({ queryKey: ["floor"] })
+      toast.success("Đã cập nhật cấu hình động của quán.")
+    } catch (error) {
+      reportError(error)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <section className="mb-6 rounded-2xl border px-4 md:px-5" aria-label="Cấu hình động theo quán">
+      <Row
+        label="Giờ nhanh đặt bàn"
+        hint="Nhập 1–24 giờ HH:mm, cách nhau bằng dấu phẩy. Biểu mẫu đặt bàn dùng mốc 15 phút. Giờ nhanh lệch mốc được giữ trong cấu hình."
+      >
+        <Input
+          aria-label="Giờ nhanh đặt bàn"
+          value={quickTimes}
+          disabled={readOnly || pending}
+          onChange={(event) => setQuickTimes(event.target.value)}
+          className="h-11 w-full min-w-64 sm:w-96"
+          placeholder="21:00, 21:30, 22:00, 22:30"
+        />
+      </Row>
+      <Row label="Cửa sổ sắp đến" hint="Ảnh hưởng trạng thái UPCOMING và quyền Gọi khách.">
+        <NumberField
+          id="dynamic-upcoming"
+          label="Cửa sổ sắp đến"
+          value={upcomingMinutes}
+          onChange={setUpcomingMinutes}
+          unit="phút"
+          disabled={readOnly || pending}
+          min={1}
+          max={240}
+        />
+      </Row>
+      <Row label="Cảnh báo không tới" hint="Chỉ đổi cảnh báo. Không tự hủy booking hoặc nhả bàn.">
+        <NumberField
+          id="dynamic-noshow"
+          label="Cảnh báo không tới"
+          value={noShowMinutes}
+          onChange={setNoShowMinutes}
+          unit="phút"
+          disabled={readOnly || pending}
+          min={0}
+          max={65535}
+        />
+      </Row>
+      <div className="flex justify-end gap-2 py-4">
+        <GuardedButton
+          permission="venue.configure"
+          disabled={!dirty || pending || parsedQuickTimes.length === 0}
+          onClick={() => void save()}
+        >
+          {pending ? "Đang lưu…" : "Lưu cấu hình"}
+        </GuardedButton>
+      </div>
+    </section>
   )
 }
 
@@ -195,13 +295,13 @@ function VenueForm({ v, readOnly }: { v: VenueConfig; readOnly: boolean }) {
           />
         </Row>
         <Row
-          label="Cảnh báo không đến"
-          hint="Không tự hủy booking, không tự nhả bàn. Nút Xác nhận không đến chỉ bật sau mốc này."
+          label="Cảnh báo không tới"
+          hint="Không tự hủy booking, không tự nhả bàn. Nút Xác nhận không tới chỉ bật sau mốc này."
           pending
         >
           <NumberField
             id="noshow"
-            label="Cảnh báo không đến"
+            label="Cảnh báo không tới"
             value={form.noShow}
             onChange={(x) => set("noShow", x)}
             unit="phút"
@@ -464,6 +564,7 @@ function AccessSettings() {
   const { user, users, setUser } = useSession()
   return (
     <div className="grid gap-6">
+      <AccountsSection />
       <section className="grid gap-2">
         <SectionTitle>Vai trò đang dùng (demo)</SectionTitle>
         <div className="flex flex-wrap gap-2">

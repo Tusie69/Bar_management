@@ -10,9 +10,10 @@
 import { foldVietnamese, NOTE_PHONE_ERROR, noteHasPhoneNumber, normalizePhone } from "@/lib/text"
 import { addDays, businessDateOf, fmtTime, fromVenueLocal, MS, type BusinessDate } from "@/lib/time"
 import { roleCan, PERMISSION_LABEL, type Permission } from "@/domain/access"
-import { isWithinBookingReceptionWindow } from "@/domain/booking-rules"
+import { BOOKING_MINUTE_STEP, isWithinBookingReceptionWindow } from "@/domain/booking-rules"
 import {
   ROLE_LABEL,
+  type RoleCode,
   type AllocationReleaseReason,
   type HoldReleaseReason,
   type ReservationCloseReason,
@@ -35,6 +36,9 @@ import {
   type AddWaitlistInput,
   type CheckInInput,
   type CombineInput,
+  type CreateTableGroupInput,
+  type DissolveTableGroupInput,
+  type AddTableGroupMembersInput,
   type CreateReservationInput,
   type GamApi,
   type MoveInput,
@@ -44,9 +48,18 @@ import {
   type SplitInput,
   type UpdateReservationInput,
   type VenueConfigPatch,
+  type VenueSettingsUpdate,
   type WalkInInput,
 } from "../contracts"
-import { ORG_ID, VENUE_ID, type CollectionName, type MockAllocation, type MockDb, type MockOperation } from "./db"
+import {
+  ORG_ID,
+  VENUE_ID,
+  type CollectionName,
+  type MockAllocation,
+  type MockDb,
+  type MockOperation,
+  type MockReservation,
+} from "./db"
 import {
   activeAllocations,
   activeEntryForReservation,
@@ -77,6 +90,7 @@ import {
 import { DEMO_USERS, REMOTE_USER_ID, seedDb } from "./seed"
 import { Tx } from "./tx"
 import { formatDailyBookingText } from "./booking-export"
+import { apiErrorMessage } from "../error-messages"
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const ACTIVE_ENTRY = ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"] as const
@@ -111,6 +125,7 @@ export class MockGamApi implements GamApi, DemoControls {
   private seq: number
   private listeners = new Set<(event: ChangeEvent) => void>()
   private armed = false
+  private quickTimes = ["21:00", "21:30", "22:00", "22:30"]
   private readonly businessDayWorkerEnabled: boolean
 
   constructor(options: { businessDayWorkerEnabled?: boolean } = {}) {
@@ -282,9 +297,16 @@ export class MockGamApi implements GamApi, DemoControls {
 
   /* ================= claim helpers ================= */
 
+  private assertBookingSlot(at: Date) {
+    const minute = Number(fmtTime(at).slice(3))
+    if (minute % BOOKING_MINUTE_STEP !== 0 || at.getSeconds() !== 0 || at.getMilliseconds() !== 0)
+      throw new ApiError(400, "EXPECTED_AT_OFF_SLOT", `Giờ đến phải theo bước ${BOOKING_MINUTE_STEP} phút.`)
+  }
+
   /** Booking endpoints and visit moves do not accept the demo walk-in overrides. */
-  private assertBookingTables(tableIds: number[], partySize: number, sameZone = false) {
+  private assertBookingTables(tableIds: number[], _partySize: number, _sameZone = false) {
     if (!tableIds.length) throw new ApiError(400, "TABLE_REQUIRED", "Cần chọn ít nhất một bàn.")
+    this.layoutGroupFor(tableIds)
     const tables = tableIds.map((id) => this.db.tables.get(id))
     if (tables.some((table) => !table || table.status !== "ACTIVE")) {
       throw new ApiError(400, "TABLE_NOT_FOUND", "Có bàn không tồn tại hoặc ngừng hoạt động.")
@@ -294,20 +316,8 @@ export class MockGamApi implements GamApi, DemoControls {
     if (nonBookable) throw new ApiError(409, "ZONE_NOT_BOOKABLE", `Khu của bàn ${nonBookable.code} không nhận khách.`)
     const spare = selected.find((table) => table.isSpare)
     if (spare) throw new ApiError(409, "SPARE_TABLE_NOT_BOOKABLE", `Bàn ${spare.code} là bàn sơ cua.`)
-    if (sameZone && new Set(selected.map((table) => table.zoneId)).size > 1) {
-      throw new ApiError(409, "TABLE_ZONE_MISMATCH", "Chỉ có thể gán các bàn trong cùng một khu vực.")
-    }
-    if (new Set(selected.map((table) => table.kind)).size > 1) {
-      throw new ApiError(409, "TABLE_KIND_MISMATCH", "Không thể ghép bàn thường với ghế Bar.")
-    }
-    const capacity = selected.reduce((total, table) => total + table.capacity, 0)
-    if (capacity < partySize) {
-      throw new ApiError(
-        409,
-        "INSUFFICIENT_TABLE_CAPACITY",
-        `Các bàn đã chọn chỉ có ${capacity} chỗ cho ${partySize} khách.`,
-      )
-    }
+    // Mock-only pending Tu (K1 Section 5): allow cross-zone and table+bar combinations so the UI can be reviewed.
+    // The server on HTTP still limits this (returning TABLE_ZONE_MISMATCH / TABLE_KIND_MISMATCH).
   }
 
   private assertClaimable(
@@ -321,9 +331,9 @@ export class MockGamApi implements GamApi, DemoControls {
     },
   ) {
     if (tableIds.length === 0) this.fail("Chọn ít nhất một bàn.")
+    this.layoutGroupFor(tableIds)
     if (new Set(tableIds).size !== tableIds.length) this.fail("Danh sách bàn bị trùng.")
     const spare: string[] = []
-    let capacity = 0
     for (const id of tableIds) {
       const t = this.db.tables.get(id)
       if (!t || t.status === "RETIRED") throw new ApiError(404, "NOT_FOUND", `Không tìm thấy bàn #${id}`)
@@ -347,11 +357,9 @@ export class MockGamApi implements GamApi, DemoControls {
         })
       }
       if (t.isSpare) spare.push(t.code)
-      capacity += t.capacity
     }
     const needs: string[] = []
     if (spare.length) needs.push(`dùng bàn sơ cua ${spare.join(", ")}`)
-    if (o.partySize && capacity < o.partySize) needs.push(`xếp ${o.partySize} khách vào ${capacity} chỗ`)
     if (needs.length) {
       if (!roleCan(this.session.role, "table.assign_override")) {
         throw new ApiError(403, "PERMISSION_DENIED", `Cần Chủ quán duyệt để ${needs.join(" và ")}.`, {
@@ -411,7 +419,9 @@ export class MockGamApi implements GamApi, DemoControls {
 
   private newGroup(tx: Tx, bd: BusinessDate): number {
     const used = new Set(
-      [...this.db.groups.values()].filter((g) => g.businessDate === bd && !g.dissolvedAt).map((g) => g.symbolNo),
+      [...this.db.groups.values()]
+        .filter((g) => (g.businessDate === bd || g.layoutTableIds) && !g.dissolvedAt)
+        .map((g) => g.symbolNo),
     )
     for (let s = 1; s <= this.venue.groupSymbolCount; s++) {
       if (!used.has(s)) {
@@ -439,12 +449,41 @@ export class MockGamApi implements GamApi, DemoControls {
       if (!gid) continue
       const stillUsed = activeAllocations(this.db).some((a) => a.groupId === gid)
       const g = this.db.groups.get(gid)
-      if (!stillUsed && g && !g.dissolvedAt) {
+      if (!stillUsed && g && !g.dissolvedAt && !g.layoutTableIds) {
         const row = tx.edit("groups", gid)
         row.dissolvedAt = this.now
         row.dissolvedByUserId = this.session.id
       }
     }
+  }
+
+  // Mock-only C1: booking targets the whole independent layout; allocation release never destroys it.
+  private expandLayoutTables(tableIds: number[]) {
+    if (new Set(tableIds).size !== tableIds.length) this.fail("Danh sách bàn bị trùng.")
+    return [
+      ...new Set(
+        tableIds.flatMap(
+          (id) =>
+            [...this.db.groups.values()].find((g) => !g.dissolvedAt && g.layoutTableIds?.includes(id))
+              ?.layoutTableIds ?? [id],
+        ),
+      ),
+    ]
+  }
+
+  private layoutGroupFor(tableIds: number[]) {
+    const groups = [...this.db.groups.values()].filter(
+      (g) => !g.dissolvedAt && g.layoutTableIds?.some((id) => tableIds.includes(id)),
+    )
+    if (!groups.length) return null
+    const g = groups[0]
+    if (
+      groups.length > 1 ||
+      g.layoutTableIds!.length !== tableIds.length ||
+      g.layoutTableIds!.some((id) => !tableIds.includes(id))
+    )
+      this.fail("Chọn toàn bộ nhóm mặt bằng, hoặc tách nhóm trước khi đổi thành viên.")
+    return g.id
   }
 
   private createHoldForReservation(
@@ -477,7 +516,10 @@ export class MockGamApi implements GamApi, DemoControls {
       createdByUserId: this.session.id,
       createdAt: this.now,
     })
-    const groupId = tableIds.length > 1 ? (existingGroupId ?? this.newGroup(tx, r.businessDate)) : null
+    const groupId =
+      tableIds.length > 1
+        ? (existingGroupId ?? this.layoutGroupFor(tableIds) ?? this.newGroup(tx, r.businessDate))
+        : null
     tableIds.forEach((tableId) =>
       this.newAllocation(tx, {
         tableId,
@@ -535,7 +577,7 @@ export class MockGamApi implements GamApi, DemoControls {
     }).id
   }
 
-  private res(id: number): ReservationRow {
+  private res(id: number): MockReservation {
     const r = this.db.reservations.get(id)
     if (!r) throw new ApiError(404, "NOT_FOUND", "Không tìm thấy booking.")
     return r
@@ -637,6 +679,41 @@ export class MockGamApi implements GamApi, DemoControls {
     this.session = { ...user }
   }
 
+  /**
+   * BA-022: the demo server has no account store. It lists its demo users so the
+   * admin account screen renders, and refuses the mutations, which only the real
+   * backend performs.
+   */
+  async listAccounts() {
+    await this.latency("q")
+    this.require("user.manage")
+    return {
+      accounts: DEMO_USERS.filter((u) => u.id !== REMOTE_USER_ID).map((u) => ({
+        id: u.id,
+        username: u.displayName.toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+        displayName: u.displayName,
+        status: "ACTIVE" as const,
+        membershipStatus: "ACTIVE",
+        roles: [u.role],
+        lastLoginAt: null,
+        version: 1,
+      })),
+      roles: (Object.keys(ROLE_LABEL) as RoleCode[]).map((code) => ({ code, name: ROLE_LABEL[code] })),
+    }
+  }
+
+  async createAccount(): Promise<never> {
+    await this.latency("q")
+    this.require("user.manage")
+    return this.fail("Chế độ demo không tạo được tài khoản. Dùng máy chủ thật để quản lý tài khoản.")
+  }
+
+  async setAccountStatus(): Promise<never> {
+    await this.latency("q")
+    this.require("user.manage")
+    return this.fail("Chế độ demo không khóa/mở được tài khoản. Dùng máy chủ thật để quản lý tài khoản.")
+  }
+
   listDemoUsers(): SessionUser[] {
     return DEMO_USERS.filter((u) => u.id !== REMOTE_USER_ID).map((u) => ({ ...u }))
   }
@@ -653,6 +730,15 @@ export class MockGamApi implements GamApi, DemoControls {
   async getCatalog() {
     await this.latency("q")
     return catalog(this.db)
+  }
+
+  async getVenueSettings() {
+    await this.latency("q")
+    return {
+      quickTimes: [...this.quickTimes],
+      upcomingMinutes: this.venue.upcomingWarningMinutes,
+      noShowMinutes: this.venue.noShowWarningMinutes,
+    }
   }
 
   async getFloorState(at: Date, businessDate?: BusinessDate) {
@@ -685,6 +771,59 @@ export class MockGamApi implements GamApi, DemoControls {
       .map((r) => reservationView(this.db, r, this.now))
   }
 
+  async searchReception(businessDate: BusinessDate, query: { last3?: string; name?: string }) {
+    const needle = query.last3 ?? query.name ?? ""
+    const matches = searchMatches(this.db, needle)
+    const bookings = [...this.db.reservations.values()]
+      .filter((row) => row.businessDate === businessDate && matches.reservation(row))
+      .map((row) => {
+        const view = reservationView(this.db, row, this.now)
+        return { id: view.id, displayName: view.displayName, phoneLast3: view.phoneLast3, tableIds: view.tableIds }
+      })
+    const waitlist = [...this.db.waitlist.values()]
+      .filter(
+        (row) =>
+          row.businessDate === businessDate && ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"].includes(row.status),
+      )
+      .filter((row) => {
+        const reservation = row.reservationId ? this.db.reservations.get(row.reservationId) : undefined
+        if (reservation) return matches.reservation(reservation)
+        const customer = row.customerId ? this.db.customers.get(row.customerId) : undefined
+        return query.last3
+          ? customer?.phoneLast3 === query.last3
+          : foldVietnamese(customer?.displayName ?? row.contactName ?? "").includes(foldVietnamese(query.name ?? ""))
+      })
+      .map((row) => {
+        const reservation = row.reservationId ? this.db.reservations.get(row.reservationId) : undefined
+        const customer = row.customerId ? this.db.customers.get(row.customerId) : undefined
+        return {
+          id: row.id,
+          reservationId: row.reservationId,
+          displayName: customer?.displayName ?? reservation?.contactName ?? row.contactName ?? "Khách chờ",
+          phoneLast3:
+            customer?.phoneLast3 ?? (reservation ? reservationView(this.db, reservation, this.now).phoneLast3 : null),
+          tableIds: holdTableIds(
+            this.db,
+            activeHoldForEntry(this.db, row.id)?.id ?? activeReservationHold(this.db, reservation?.id ?? 0)?.id ?? 0,
+          ),
+          status: row.status,
+        }
+      })
+    const ids = new Set(bookings.map((row) => row.id))
+    const linked = waitlist.filter((row) => row.reservationId !== null && ids.has(row.reservationId)).length
+    return {
+      businessDate,
+      query,
+      bookings,
+      waitlist,
+      summary: {
+        bookingCount: bookings.length,
+        waitlistCount: waitlist.length,
+        totalCount: bookings.length + waitlist.length - linked,
+      },
+    }
+  }
+
   async exportDailyBookingText(bd: BusinessDate): Promise<string> {
     this.require("customer.view_masked")
     const reservations = await this.listReservations({ businessDate: bd })
@@ -704,11 +843,12 @@ export class MockGamApi implements GamApi, DemoControls {
         checkedInAt: row.checkedInAt,
         status: row.status,
         tables: cat.tables.filter((table) => row.tableIds.includes(table.id)).map(tableInfo),
-        // shortcut: mock seed has no export metadata flags; extend its schema when those controls are added.
+        // bossTable, designated and round have no field yet (B01, awaiting the PO);
+        // birthday is real data, so it comes from the reservation.
         metadata: {
           bossTable: false,
           designated: false,
-          birthday: false,
+          birthday: row.isBirthday,
           round: null,
           returningCustomer: row.classification === "RETURNING" ? true : row.classification === "NEW" ? false : null,
         },
@@ -717,7 +857,7 @@ export class MockGamApi implements GamApi, DemoControls {
         (entry) => entry.businessDate === bd && ["WAITING", "CONTACTING", "OFFERED"].includes(entry.status),
       ).length,
       outTables: cat.tables.filter((table) => table.status === "OUT_OF_SERVICE").map(tableInfo),
-      arrivalCutoff: { hour: 21, minute: 30, basis: "EXPECTED_AT", atCutoff: "AFTER" },
+      arrivalCutoff: { hour: 21, minute: 30, basis: "EXPECTED_AT", atCutoff: "BEFORE" },
     })
   }
 
@@ -768,6 +908,10 @@ export class MockGamApi implements GamApi, DemoControls {
       .map((op) => operationView(this.db, op, this.session.id))
   }
 
+  async getUndoState() {
+    return { undo: null, redo: null }
+  }
+
   async listAllocations(bd: BusinessDate, tableId?: number) {
     await this.latency("q")
     return allocationViews(this.db, bd, this.now, tableId)
@@ -784,6 +928,7 @@ export class MockGamApi implements GamApi, DemoControls {
   async createReservation(input: CreateReservationInput) {
     await this.latency("m")
     this.require("reservation.create")
+    input = { ...input, tableIds: this.expandLayoutTables(input.tableIds ?? []) }
     const name = input.contactName?.trim() || undefined
     const phone = input.phone?.trim() || undefined
     if (!name && !phone) this.fail("Đặt trước cần ít nhất tên hoặc số điện thoại.")
@@ -798,6 +943,7 @@ export class MockGamApi implements GamApi, DemoControls {
         "Giờ nhận booking chỉ từ 19:00 đến 01:00 sáng hôm sau.",
       )
     }
+    this.assertBookingSlot(input.expectedAt)
     const bd = businessDateOf(input.expectedAt)
     const tableIds = input.tableIds ?? []
     if (tableIds.length) this.maybeTriggerConflict(tableIds[0], bd, input.expectedAt)
@@ -815,10 +961,18 @@ export class MockGamApi implements GamApi, DemoControls {
           contactName,
           contactNameSearch: contactName ? foldVietnamese(contactName) : null,
           sourceId: source.id,
+          // Mock-only booking form metadata.
+          socialPlatform: input.sourceCode === "SOCIAL" ? (input.socialPlatform ?? null) : null,
+          iconKeys: [...(input.iconKeys ?? [])],
+          honorific: input.honorific ?? null,
           partySize: input.partySize,
           expectedAt: input.expectedAt,
           businessDate: bd,
           customerClassification: input.classification ?? "UNCLASSIFIED",
+          guestType:
+            input.guestType ??
+            (input.classification === "RETURNING" ? "REGULAR" : input.classification === "NEW" ? "NEW" : null),
+          isBirthday: input.isBirthday ?? false,
           status: "BOOKED",
           note: input.note?.trim() || null,
           visitId: null,
@@ -863,7 +1017,10 @@ export class MockGamApi implements GamApi, DemoControls {
     this.checkVersion("reservations", r, input.version, "Booking")
     if (r.status !== "BOOKED") this.fail("Chỉ sửa được booking đang ở trạng thái Đã đặt.", "INVALID_STATE")
     if (input.note && noteHasPhoneNumber(input.note)) this.fail(NOTE_PHONE_ERROR)
-    if (input.partySize !== undefined && (input.partySize < 1 || input.partySize > 500))
+    if (
+      input.partySize !== undefined &&
+      (!Number.isInteger(input.partySize) || input.partySize < 1 || input.partySize > 500)
+    )
       this.fail("Số khách phải từ 1 đến 500.")
     if (input.contactName !== undefined && !input.contactName.trim() && !r.customerId)
       this.fail("Cần ít nhất tên hoặc số điện thoại.")
@@ -880,9 +1037,19 @@ export class MockGamApi implements GamApi, DemoControls {
       }
       if (input.sourceCode)
         row.sourceId = [...this.db.sources.values()].find((s) => s.code === input.sourceCode)?.id ?? row.sourceId
+      // Mock-only booking form metadata follows the effective source.
+      if (this.db.sources.get(row.sourceId)?.code !== "SOCIAL") row.socialPlatform = null
+      else if (input.socialPlatform !== undefined) row.socialPlatform = input.socialPlatform
+      if (input.iconKeys !== undefined) row.iconKeys = [...input.iconKeys]
+      if (input.honorific !== undefined) row.honorific = input.honorific
       if (input.note !== undefined) row.note = input.note?.trim() || null
       if (input.classification !== undefined) row.customerClassification = input.classification
+      if (input.guestType !== undefined) row.guestType = input.guestType
+      else if (input.classification !== undefined)
+        row.guestType = input.classification === "RETURNING" ? "REGULAR" : input.classification === "NEW" ? "NEW" : null
+      if (input.isBirthday !== undefined) row.isBirthday = input.isBirthday
       if (input.expectedAt && input.expectedAt.getTime() !== row.expectedAt.getTime()) {
+        this.assertBookingSlot(input.expectedAt)
         if (!isWithinBookingReceptionWindow(fmtTime(input.expectedAt))) {
           throw new ApiError(
             400,
@@ -915,6 +1082,7 @@ export class MockGamApi implements GamApi, DemoControls {
   async assignTables(reservationId: number, version: number, tableIds: number[], overrideReason?: string) {
     await this.latency("m")
     this.require("table.assign")
+    tableIds = this.expandLayoutTables(tableIds)
     const r = this.res(reservationId)
     this.checkVersion("reservations", r, version, "Booking")
     if (r.status !== "BOOKED") this.fail("Chỉ phân bàn cho booking Đã đặt.", "INVALID_STATE")
@@ -936,7 +1104,8 @@ export class MockGamApi implements GamApi, DemoControls {
           tx,
           old.map((a) => a.groupId),
         )
-        const groupId = tableIds.length > 1 ? this.newGroup(tx, r.businessDate) : null
+        const groupId =
+          tableIds.length > 1 ? (this.layoutGroupFor(tableIds) ?? this.newGroup(tx, r.businessDate)) : null
         tableIds.forEach((tableId) =>
           this.newAllocation(tx, {
             tableId,
@@ -976,7 +1145,7 @@ export class MockGamApi implements GamApi, DemoControls {
     const r = this.res(id)
     this.checkVersion("reservations", r, version, "Booking")
     if (r.status !== "BOOKED") this.fail("Booking không còn ở trạng thái Đã đặt.", "INVALID_STATE")
-    if (reason === "NO_SHOW_CONFIRMED") this.fail("Dùng thao tác Xác nhận không đến.")
+    if (reason === "NO_SHOW_CONFIRMED") this.fail("Dùng thao tác Xác nhận không tới.")
     if (reason === "OTHER" && !note?.trim()) this.fail("Ghi rõ lý do khác.")
     if (note && noteHasPhoneNumber(note)) this.fail(NOTE_PHONE_ERROR)
     return this.commit(
@@ -1043,7 +1212,7 @@ export class MockGamApi implements GamApi, DemoControls {
     const { minutesLate } = reservationWarning(this.venue, r, this.now)
     if (minutesLate < this.venue.noShowWarningMinutes) {
       this.fail(
-        `Chỉ xác nhận không đến sau ${this.venue.noShowWarningMinutes} phút (hiện trễ ${minutesLate}'). Trước mốc này, nếu khách báo hủy hãy dùng Hủy booking.`,
+        `Chỉ xác nhận không tới sau ${this.venue.noShowWarningMinutes} phút (hiện trễ ${minutesLate}'). Trước mốc này, nếu khách báo hủy hãy dùng Hủy booking.`,
         "INVALID_STATE",
       )
     }
@@ -1058,7 +1227,7 @@ export class MockGamApi implements GamApi, DemoControls {
         row.closeReasonCode = "NO_SHOW_CONFIRMED"
         return {
           entityId: r.id,
-          summary: `Xác nhận không đến · booking ${fmtTime(r.expectedAt)}${tables.length ? ` · nhả ${this.codes(tables)}` : ""}`,
+          summary: `Xác nhận không tới · booking ${fmtTime(r.expectedAt)}${tables.length ? ` · nhả ${this.codes(tables)}` : ""}`,
         }
       },
     )
@@ -1079,9 +1248,14 @@ export class MockGamApi implements GamApi, DemoControls {
     const elapsed = this.now.getTime() - r.expectedAt.getTime()
     if (elapsed < 0) this.fail("Chỉ xác nhận tới muộn sau giờ hẹn.", "INVALID_STATE")
     if (elapsed >= this.venue.noShowWarningMinutes * 60_000)
-      this.fail("Cách xử lý sau ngưỡng không đến đang chờ phê duyệt.", "INVALID_STATE")
+      this.fail("Cách xử lý sau ngưỡng không tới đang chờ phê duyệt.", "INVALID_STATE")
     return this.commit(
-      { action: "RESERVATION_LATE_CONFIRMED", entityType: "reservation", undoable: false, reasonCode: "CUSTOMER_CONFIRMED_LATE" },
+      {
+        action: "RESERVATION_LATE_CONFIRMED",
+        entityType: "reservation",
+        undoable: false,
+        reasonCode: "CUSTOMER_CONFIRMED_LATE",
+      },
       (tx) => {
         const row = tx.edit("reservations", r.id)
         row.lateConfirmedAt = this.now
@@ -1093,20 +1267,53 @@ export class MockGamApi implements GamApi, DemoControls {
     )
   }
 
+  async startBookingCall(id: number) {
+    await this.latency("q")
+    this.require("booking.phone.call")
+    const r = this.res(id)
+    const customer = r.customerId ? this.db.customers.get(r.customerId) : null
+    if (!customer?.phoneE164) this.fail("Booking không có số điện thoại hợp lệ.", "VALIDATION_FAILED")
+    return {
+      callId: Date.now(),
+      bookingId: id,
+      initiatedAt: new Date(this.now),
+      telUri: `tel:${customer.phoneE164}`,
+    }
+  }
+
+  async recordBookingCallOutcome(
+    bookingId: number,
+    _callId: number,
+    outcome: "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED",
+    bookingVersion?: number,
+  ) {
+    if (outcome === "LATE_CONFIRMED") {
+      const reservation = this.res(bookingId)
+      if (reservation.lateConfirmedAt && bookingVersion === reservation.version) {
+        return { operationId: null, changeSeq: null, undoable: false, summary: "Khách đã được ghi nhận tới muộn." }
+      }
+      return this.confirmLate(bookingId, bookingVersion ?? 0)
+    }
+    await this.latency("q")
+    this.require("booking.phone.call")
+    return { operationId: null, changeSeq: null, undoable: false, summary: "Đã ghi kết quả cuộc gọi." }
+  }
+
   async checkIn(input: CheckInInput) {
     await this.latency("m")
     this.require("visit.checkin")
     const r = this.res(input.reservationId)
     this.checkVersion("reservations", r, input.version, "Booking")
     if (r.status !== "BOOKED") this.fail("Booking không còn ở trạng thái Đã đặt.", "INVALID_STATE")
-    if (input.guestCount < 1 || input.guestCount > 500) this.fail("Số khách phải từ 1 đến 500.")
+    if (!Number.isInteger(input.guestCount) || input.guestCount < 1 || input.guestCount > 500)
+      this.fail("Số khách phải từ 1 đến 500.")
     const bd = businessDateOf(this.now)
     if (r.businessDate !== bd)
       this.fail(`Booking thuộc ngày ${r.businessDate}, không phải ca hiện tại.`, "INVALID_STATE")
     const entry = activeEntryForReservation(this.db, r.id)
     const hold = activeReservationHold(this.db, r.id) ?? (entry ? activeHoldForEntry(this.db, entry.id) : null)
     const holdTables = hold ? holdTableIds(this.db, hold.id) : []
-    const target = input.tableIds?.length ? input.tableIds : holdTables
+    const target = this.expandLayoutTables(input.tableIds?.length ? input.tableIds : holdTables)
     if (!target.length) this.fail("Booking chưa có bàn. Chọn bàn để check-in.")
     const sameTables = target.length === holdTables.length && target.every((t) => holdTables.includes(t))
     if (!sameTables)
@@ -1176,7 +1383,7 @@ export class MockGamApi implements GamApi, DemoControls {
       h.convertedAt = this.now
       h.convertedVisitId = visitId
     }
-    if (!groupId && target.length > 1) groupId = this.newGroup(tx, bd)
+    if (!groupId && target.length > 1) groupId = this.layoutGroupFor(target) ?? this.newGroup(tx, bd)
     target.forEach((tableId) =>
       this.newAllocation(tx, { tableId, kind: "USAGE", visitId, groupId, startsAt: this.now, bd }),
     )
@@ -1198,6 +1405,7 @@ export class MockGamApi implements GamApi, DemoControls {
   async seatWalkIn(input: WalkInInput) {
     await this.latency("m")
     this.require("visit.walkin")
+    input = { ...input, tableIds: this.expandLayoutTables(input.tableIds) }
     if (!Number.isInteger(input.guestCount) || input.guestCount < 1 || input.guestCount > 500)
       this.fail("Số khách phải từ 1 đến 500.")
     if (input.contactName && noteHasPhoneNumber(input.contactName)) this.fail("Không nhập số điện thoại vào ô tên.")
@@ -1229,7 +1437,7 @@ export class MockGamApi implements GamApi, DemoControls {
         createdByUserId: this.session.id,
         createdAt: this.now,
       })
-      const groupId = input.tableIds.length > 1 ? this.newGroup(tx, bd) : null
+      const groupId = input.tableIds.length > 1 ? (this.layoutGroupFor(input.tableIds) ?? this.newGroup(tx, bd)) : null
       input.tableIds.forEach((tableId) =>
         this.newAllocation(tx, { tableId, kind: "USAGE", visitId: v.id, groupId, startsAt: this.now, bd }),
       )
@@ -1296,9 +1504,9 @@ export class MockGamApi implements GamApi, DemoControls {
       if (!allocs.some((a) => a.tableId === input.fromTableId)) this.fail("Bàn nguồn không thuộc nhóm khách này.")
       if (allocs.some((a) => a.tableId === input.toTableId)) this.fail("Bàn đích đã thuộc nhóm khách này.")
     }
-    const targetIds = [
+    const targetIds = this.expandLayoutTables([
       ...new Set(input.tableIds ?? allocs.map((a) => (a.tableId === input.fromTableId ? input.toTableId : a.tableId))),
-    ]
+    ])
     const first = allocs[0]
     if (targetIds.length) this.maybeTriggerConflict(targetIds[0], first.businessDate, at)
     return this.commit(
@@ -1316,11 +1524,15 @@ export class MockGamApi implements GamApi, DemoControls {
           ignore: (allocation) => allocs.some((a) => a.id === allocation.id),
           overrideReason: input.overrideReason,
         })
-        if (new Set(targetIds.map((id) => this.db.tables.get(id)!.kind)).size > 1)
-          throw new ApiError(409, "TABLE_KIND_MISMATCH", "Không thể ghép bàn thường với ghế Bar.")
+        // Mock-only pending Tu (K1 Section 5): allow table+bar combinations in moveClaim
+        // if (new Set(targetIds.map((id) => this.db.tables.get(id)!.kind)).size > 1)
+        //   throw new ApiError(409, "TABLE_KIND_MISMATCH", "Không thể ghép bàn thường với ghế Bar.")
+        const previousGroup = this.db.groups.get(allocs.find((a) => a.groupId)?.groupId ?? 0)
         const groupId =
           targetIds.length > 1
-            ? (allocs.find((a) => a.groupId)?.groupId ?? this.newGroup(tx, first.businessDate))
+            ? (this.layoutGroupFor(targetIds) ??
+              (previousGroup?.layoutTableIds ? null : previousGroup?.id) ??
+              this.newGroup(tx, first.businessDate))
             : null
         allocs.forEach((allocation) => this.release(tx, allocation, "MOVED"))
         for (const tableId of targetIds) {
@@ -1348,13 +1560,135 @@ export class MockGamApi implements GamApi, DemoControls {
     )
   }
 
+  private requireGroupManage() {
+    if (this.session.role !== "OWNER_ADMIN" && this.session.role !== "RECEPTIONIST")
+      throw new ApiError(403, "PERMISSION_DENIED", "Bạn không có quyền quản lý nhóm bàn.", {
+        permission: "table.group.manage",
+      })
+  }
+
+  private groupVersion(groupId: number, version: number) {
+    const group = this.db.groups.get(groupId)
+    if (!group || group.dissolvedAt)
+      throw new ApiError(400, "INVALID_GROUP_ID", apiErrorMessage("INVALID_GROUP_ID", ""))
+    if (group.version !== version)
+      throw new ApiError(409, "TABLE_GROUP_VERSION_CONFLICT", apiErrorMessage("TABLE_GROUP_VERSION_CONFLICT", ""), {
+        currentVersion: group.version,
+        changeSeq: String(this.seq),
+      })
+    return group
+  }
+
+  private assertGroupTables(ids: number[], ownGroupId?: number, spareOverrideConfirmed?: boolean) {
+    const reject = (code: string, conflictingTableIds?: number[]): never => {
+      const details = conflictingTableIds ? { conflictingTableIds } : {}
+      throw new ApiError(
+        code === "MERGE_REQUIRES_MULTIPLE_TABLES" || code === "TABLE_NOT_FOUND" ? 400 : 409,
+        code,
+        apiErrorMessage(code, "Không thể ghép bàn.", details),
+        details,
+      )
+    }
+    if (ids.length < 2) reject("MERGE_REQUIRES_MULTIPLE_TABLES")
+    if (new Set(ids).size !== ids.length) this.fail("Danh sách bàn bị trùng.")
+    const tables = ids.map((id) => this.db.tables.get(id))
+    if (tables.some((t) => !t || t.status !== "ACTIVE")) reject("TABLE_NOT_FOUND")
+    // A spare table may join a cluster, but only once someone confirms the warning.
+    const spare = tables.filter((t) => t!.isSpare)
+    if (spare.length && !spareOverrideConfirmed) {
+      const details = { spareTableIds: spare.map((t) => t!.id), spareTableCodes: spare.map((t) => t!.code) }
+      throw new ApiError(
+        409,
+        "SPARE_TABLE_OVERRIDE_REQUIRED",
+        apiErrorMessage(
+          "SPARE_TABLE_OVERRIDE_REQUIRED",
+          `Bàn ${spare.map((t) => t!.code).join(", ")} là bàn sơ cua.`,
+          details,
+        ),
+        details,
+      )
+    }
+    // Mock-only pending Tu (K1 Section 5): allow cross-zone and table+bar combinations in table groups
+    // if (new Set(tables.map((t) => t!.kind)).size > 1) reject("TABLE_KIND_MISMATCH")
+    // if (new Set(tables.map((t) => t!.zoneId)).size > 1) reject("TABLE_ZONE_MISMATCH")
+    const live = activeAllocations(this.db)
+    const grouped = [...this.db.groups.values()].some(
+      (g) =>
+        !g.dissolvedAt &&
+        g.id !== ownGroupId &&
+        (g.layoutTableIds ?? live.filter((a) => a.groupId === g.id).map((a) => a.tableId)).some((id) =>
+          ids.includes(id),
+        ),
+    )
+    if (grouped) reject("TABLE_ALREADY_GROUPED")
+    const claims = live.filter((a) => ids.includes(a.tableId))
+    if (new Set(claims.map((a) => (a.visitId ? `v${a.visitId}` : `h${a.holdId}`))).size > 1)
+      reject("TABLE_GROUP_MULTIPLE_CLAIMS", [...new Set(claims.map((a) => a.tableId))])
+    if (claims.length && ids.some((id) => !claims.some((a) => a.tableId === id))) reject("TABLE_GROUP_MIXED_STATE", ids)
+    return claims
+  }
+
+  async createTableGroup(input: CreateTableGroupInput) {
+    await this.latency("m")
+    this.requireGroupManage()
+    const claims = this.assertGroupTables(input.tableIds, undefined, input.spareOverrideConfirmed)
+    return this.commit({ action: "TABLES_COMBINED", entityType: "table_group", undoable: true }, (tx) => {
+      const gid = this.newGroup(tx, businessDateOf(this.now))
+      const row = tx.edit("groups", gid)
+      row.layoutTableIds = [...input.tableIds]
+      row.name = input.name?.trim() || undefined
+      claims.forEach((a) => {
+        tx.edit("allocations", a.id).groupId = gid
+      })
+      return { entityId: gid, summary: `Ghép mặt bằng ${this.codes(input.tableIds)} (mô phỏng C1)` }
+    })
+  }
+
+  async addTableGroupMembers(input: AddTableGroupMembersInput) {
+    await this.latency("m")
+    this.requireGroupManage()
+    const group = this.groupVersion(input.groupId, input.version)
+    if (!input.tableIds.length) this.fail("Chọn bàn cần thêm vào nhóm.")
+    const members =
+      group.layoutTableIds ??
+      activeAllocations(this.db)
+        .filter((a) => a.groupId === group.id)
+        .map((a) => a.tableId)
+    const ids = [...members, ...input.tableIds]
+    const claims = this.assertGroupTables(ids, group.id, input.spareOverrideConfirmed)
+    return this.commit({ action: "TABLES_COMBINED", entityType: "table_group", undoable: true }, (tx) => {
+      tx.edit("groups", group.id).layoutTableIds = ids
+      claims.forEach((a) => {
+        if (a.groupId !== group.id) tx.edit("allocations", a.id).groupId = group.id
+      })
+      return { entityId: group.id, summary: `Thêm ${this.codes(input.tableIds)} vào nhóm bàn` }
+    })
+  }
+
   async combineTables(input: CombineInput) {
+    if (!input.claim.visitId && !input.claim.reservationId) {
+      const group = [...this.db.groups.values()].find(
+        (g) => !g.dissolvedAt && g.layoutTableIds?.some((id) => input.addTableIds.includes(id)),
+      )
+      return group
+        ? this.addTableGroupMembers({
+            groupId: group.id,
+            version: group.version,
+            tableIds: input.addTableIds.filter((id) => !group.layoutTableIds!.includes(id)),
+          })
+        : this.createTableGroup({ tableIds: input.addTableIds })
+    }
     await this.latency("m")
     this.require("visit.combine")
     const { allocs, entity, at } = this.claimAllocations(input.claim)
+    if (input.claim.version !== undefined) {
+      const current = (this.db[entity.col] as Map<number, { id: number; version: number }>).get(entity.id)!
+      this.checkVersion(entity.col, current, input.claim.version, "Bàn")
+    }
     if (!allocs.length) this.fail("Không có bàn để ghép.")
     if (!input.addTableIds.length) this.fail("Chọn bàn cần ghép thêm.")
     const bd = allocs[0].businessDate
+    this.assertBookingTables([...allocs.map((a) => a.tableId), ...input.addTableIds], 1, true)
     this.maybeTriggerConflict(input.addTableIds[0], bd, at)
     return this.commit(
       { action: "TABLES_COMBINED", entityType: entity.col === "visits" ? "visit" : "reservation", undoable: true },
@@ -1389,6 +1723,8 @@ export class MockGamApi implements GamApi, DemoControls {
             holdStart: at,
           }),
         )
+        if (this.db.groups.get(groupId)?.layoutTableIds)
+          tx.edit("groups", groupId).layoutTableIds = [...allocs.map((a) => a.tableId), ...input.addTableIds]
         tx.edit(entity.col, entity.id)
         const sym = symbolByNo(this.db.groups.get(groupId)?.symbolNo)
         const all = [...allocs.map((a) => a.tableId), ...input.addTableIds]
@@ -1397,16 +1733,40 @@ export class MockGamApi implements GamApi, DemoControls {
     )
   }
 
+  /** Tách bàn: the same operation as splitGroup with mode ALL_TO_SINGLE. */
+  async dissolveTableGroup(input: DissolveTableGroupInput) {
+    return this.splitGroup({ groupId: input.groupId, version: input.version, mode: "ALL_TO_SINGLE" })
+  }
+
   async splitGroup(input: SplitInput) {
     await this.latency("m")
+    if (input.mode === "ALL_TO_SINGLE") {
+      this.requireGroupManage()
+      const group = this.groupVersion(input.groupId, input.version)
+      const claims = activeAllocations(this.db).filter((a) => a.groupId === group.id)
+      if (claims.length)
+        throw new ApiError(409, "TABLE_GROUP_MIXED_STATE", "Nhóm đang có khách. Dùng Tách bàn và chọn bàn giữ lại.", {
+          conflictingTableIds: claims.map((a) => a.tableId),
+        })
+      return this.commit({ action: "TABLES_SPLIT", entityType: "table_group", undoable: true }, (tx) => {
+        const row = tx.edit("groups", group.id)
+        row.dissolvedAt = this.now
+        row.dissolvedByUserId = this.session.id
+        return { entityId: group.id, summary: "Đã tách nhóm trống thành bàn đơn (mô phỏng C1)" }
+      })
+    }
     this.require("visit.split")
+    if (!Array.isArray(input.keepTableIds))
+      throw new ApiError(400, "INVALID_SPLIT_MODE", apiErrorMessage("INVALID_SPLIT_MODE", ""))
     const g = this.db.groups.get(input.groupId)
     if (!g || g.dissolvedAt) throw new ApiError(404, "NOT_FOUND", "Nhóm ghép không còn tồn tại.")
     const allocs = activeAllocations(this.db).filter((a) => a.groupId === g.id)
     const tables = allocs.map((a) => a.tableId)
-    if (!input.keepTableIds.length)
-      this.fail("Giữ lại ít nhất một bàn cho đoàn khách. Muốn trả hết bàn hãy dùng Nhả bàn.")
+    if (!input.keepTableIds.length) throw new ApiError(400, "TABLES_REQUIRED", apiErrorMessage("TABLES_REQUIRED", ""))
     if (input.keepTableIds.some((t) => !tables.includes(t))) this.fail("Bàn giữ lại không thuộc nhóm.")
+    // SPL-02 (PO 07/11/2026): a Split must release at least one table.
+    if (input.keepTableIds.length === tables.length)
+      this.fail("Tách bàn phải nhả ít nhất một bàn. Nhóm ghép giữ nguyên.")
     return this.commit({ action: "TABLES_SPLIT", entityType: "table_group", undoable: true }, (tx) => {
       allocs.forEach((a) => this.release(tx, a, "SPLIT"))
       const gr = tx.edit("groups", g.id)
@@ -1414,6 +1774,7 @@ export class MockGamApi implements GamApi, DemoControls {
       gr.dissolvedByUserId = this.session.id
       const keep = allocs.filter((a) => input.keepTableIds.includes(a.tableId))
       const newGroupId = keep.length > 1 ? this.newGroup(tx, g.businessDate) : null
+      if (newGroupId && g.layoutTableIds) tx.edit("groups", newGroupId).layoutTableIds = [...input.keepTableIds]
       keep.forEach((a) =>
         this.newAllocation(tx, {
           tableId: a.tableId,
@@ -2058,7 +2419,7 @@ export class MockGamApi implements GamApi, DemoControls {
     if (next.upcomingWarningMinutes < 1 || next.upcomingWarningMinutes > 240)
       this.fail("Mốc sắp đến phải từ 1 đến 240 phút.")
     if (next.lateWarningMinutes < 1) this.fail("Mốc đến muộn phải từ 1 phút.")
-    if (next.noShowWarningMinutes <= next.lateWarningMinutes) this.fail("Mốc không đến phải lớn hơn mốc đến muộn.")
+    if (next.noShowWarningMinutes <= next.lateWarningMinutes) this.fail("Mốc không tới phải lớn hơn mốc đến muộn.")
     if (next.waitlistHoldDefaultMinutes < 1 || next.waitlistHoldDefaultMinutes > 240)
       this.fail("Thời gian giữ bàn từ 1 đến 240 phút.")
     if (next.waitlistClaimLeaseSeconds < 30 || next.waitlistClaimLeaseSeconds > 3600)
@@ -2086,6 +2447,30 @@ export class MockGamApi implements GamApi, DemoControls {
       return { entityId: v.id, summary: "Cập nhật cấu hình quán" }
     })
     return { ...result, venue: venueConfig(this.db) }
+  }
+
+  async updateVenueSettings(input: VenueSettingsUpdate) {
+    await this.latency("m")
+    this.require("venue.configure")
+    if (
+      input.quickTimes.length < 1 ||
+      input.quickTimes.length > 24 ||
+      new Set(input.quickTimes).size !== input.quickTimes.length ||
+      input.quickTimes.some(
+        (time) => !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time) || !isWithinBookingReceptionWindow(time),
+      )
+    )
+      this.fail("Cần 1–24 giờ nhanh HH:mm không trùng trong cửa sổ 19:00–01:00.")
+    if (input.upcomingMinutes < 1 || input.upcomingMinutes > 240) this.fail("Mốc sắp đến phải từ 1 đến 240 phút.")
+    if (input.noShowMinutes <= this.venue.lateWarningMinutes) this.fail("Mốc không tới phải lớn hơn mốc đến muộn.")
+    this.quickTimes = [...input.quickTimes]
+    this.commit({ action: "VENUE_SETTINGS_UPDATED", entityType: "venue", undoable: false }, (tx) => {
+      const row = tx.edit("venue", this.venue.id)
+      row.upcomingWarningMinutes = input.upcomingMinutes
+      row.noShowWarningMinutes = input.noShowMinutes
+      return { entityId: row.id, summary: "Cập nhật cấu hình quán" }
+    })
+    return this.getVenueSettings()
   }
 
   async setZoneFlags(zoneId: number, version: number, flags: { isBookable: boolean; isWaitingArea: boolean }) {
@@ -2135,7 +2520,7 @@ export class MockGamApi implements GamApi, DemoControls {
           for (const groupId of new Set(allocations.map((a) => a.groupId))) {
             if (!groupId || activeAllocations(this.db).some((a) => a.groupId === groupId)) continue
             const group = this.db.groups.get(groupId)
-            if (group && !group.dissolvedAt) {
+            if (group && !group.dissolvedAt && !group.layoutTableIds) {
               const row = tx.edit("groups", groupId)
               row.dissolvedAt = now
               row.dissolvedByUserId = null
@@ -2214,6 +2599,7 @@ export class MockGamApi implements GamApi, DemoControls {
 
   reset() {
     this.db = seedDb(clock.now())
+    this.quickTimes = ["21:00", "21:30", "22:00", "22:30"]
     this.seq = venueOf(this.db).changeSeq
     this.emit({
       latestSeq: this.seq,

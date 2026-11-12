@@ -1,8 +1,9 @@
+import { formatHonorificName } from "@/domain/booking-identity"
+import { formatBookingSource } from "@/domain/enums"
 import { ChevronLeft } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { RevealPhone } from "@/components/reveal-phone"
-import { SOURCE_LABEL } from "@/domain/enums"
-import { useReservations } from "@/hooks/use-data"
+import { useReservations, useWaitlist } from "@/hooks/use-data"
 import { fmtBusinessDate, fmtDayMonth, fmtTime12, MS, venueDateString, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useCan } from "@/state/session"
@@ -36,6 +37,8 @@ export function DetailScreen({
   const canUpdate = useCan("reservation.update")
   const res = useReservations(bd).data
   const r = res?.find((x) => x.id === id)
+  const waitlist = useWaitlist(bd)
+  const linkedEntry = waitlist.data?.find((x) => x.reservationId === r?.id || r?.waitlistEntryId === x.id)
 
   const header = (
     <header className="shrink-0 bg-background px-4 pt-[var(--top-safe)] pb-2">
@@ -54,7 +57,8 @@ export function DetailScreen({
             type="button"
             onClick={() => setEditOpen(true)}
             aria-label="Sửa booking"
-            className="ml-auto rounded-xl border border-strong px-3 py-1.5 text-xs font-medium text-tx-1 active:bg-surface-2"
+            disabled={waitlist.isPending || waitlist.isError || waitlist.isFetching || waitlist.isPlaceholderData}
+            className="ml-auto rounded-xl border border-strong px-3 py-1.5 text-xs font-medium text-tx-1 active:bg-surface-2 disabled:opacity-50"
           >
             Sửa
           </button>
@@ -72,6 +76,8 @@ export function DetailScreen({
     )
   }
 
+  const hold = a.bookingPolicy(r)
+  const heldEntry = hold.entry
   const late = lateOf(r, m.now)
   const sub = subOf(r, m.now, m.th)
   const zone = r.tableIds.length
@@ -101,7 +107,7 @@ export function DetailScreen({
     {
       title: "Khách",
       rows: [
-        { k: "Tên", v: r.displayName },
+        { k: "Tên", v: formatHonorificName(r.displayName, r.honorific) },
         {
           k: "Số điện thoại",
           v: (
@@ -113,7 +119,7 @@ export function DetailScreen({
             />
           ),
         },
-        { k: "Nguồn đặt", v: SOURCE_LABEL[r.sourceCode] },
+        { k: "Nguồn đặt", v: formatBookingSource(r.sourceCode, r.socialPlatform) },
         {
           k: "Loại khách",
           v:
@@ -139,6 +145,26 @@ export function DetailScreen({
       ],
     },
     ...(r.note ? [{ title: "Ghi chú", rows: [{ k: "Ghi chú khách", v: r.note }] }] : []),
+    ...(linkedEntry
+      ? [
+          {
+            title: "Mục chờ",
+            rows: [
+              {
+                k: "Đơn chờ",
+                v: `#${linkedEntry.id} (${linkedEntry.kind === "WALK_IN" ? "Walk-in" : "Đặt trước"})`,
+                btn: {
+                  label: "Xem đơn chờ",
+                  go: () => {
+                    onClose()
+                    m.openEntryDetail(linkedEntry.id, bd)
+                  },
+                },
+              },
+            ],
+          },
+        ]
+      : []),
     {
       title: "Lịch sử",
       rows: [
@@ -152,11 +178,21 @@ export function DetailScreen({
 
   const primary =
     r.status === "CHECKED_IN"
-      ? { label: "Xem trên sơ đồ", go: showMap }
+      ? { label: "Xem trên sơ đồ", go: showMap, disabled: a.pending }
       : r.status === "BOOKED"
         ? r.tableIds.length
-          ? { label: "Khách đã đến", go: () => void a.checkIn(r) }
-          : { label: "Xếp bàn", go: () => a.assign(r) }
+          ? {
+              label: "Khách đã đến",
+              disabled: a.pending || !hold.canArrival,
+              go: () =>
+                a.arrival({
+                  entry: heldEntry,
+                  reservation: r,
+                  partySize: r.partySize,
+                  tableCodes: codesOf(r.tableIds, m.model),
+                }),
+            }
+          : { label: "Xếp bàn", go: () => heldEntry ? a.reassignHold(heldEntry, r) : a.assign(r), disabled: a.pending || !hold.canReassign }
         : null
 
   return (
@@ -171,7 +207,7 @@ export function DetailScreen({
         >
           <div className="flex items-start gap-2.5">
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="text-[22px] font-semibold tracking-[-0.01em] text-tx-strong">{r.displayName}</span>
+              <span className="text-[22px] font-semibold tracking-[-0.01em] text-tx-strong">{formatHonorificName(r.displayName, r.honorific)}</span>
               <span className="text-[14px] text-tx-2">
                 {fmtTime12(r.expectedAt)}, {r.partySize} khách,{" "}
                 {r.tableIds.length ? `Bàn ${codesOf(r.tableIds, m.model)}` : "Chưa có bàn"}
@@ -205,12 +241,14 @@ export function DetailScreen({
                   key={`${row.k}${i}`}
                   className={cn("flex min-h-12 items-center gap-3 px-4 py-2", i && "border-t border-border")}
                 >
-                  <span className="w-[118px] shrink-0 text-[13px] text-[var(--text-muted)]">{row.k}</span>
+                  <span className="w-[110px] shrink-0 text-[13px] text-[var(--text-muted)]">{row.k}</span>
                   <span className="min-w-0 flex-1 text-[14px] text-pretty text-tx-1">{row.v}</span>
                   {row.btn ? (
                     <button
                       type="button"
                       onClick={row.btn.go}
+                      disabled={row.btn.label === "Sửa" && !!hold.reason}
+                      title={row.btn.label === "Sửa" ? hold.reason : undefined}
                       className="h-9 shrink-0 rounded-[10px] border border-strong px-3 text-[13px] font-medium text-primary-ink"
                     >
                       {row.btn.label}
@@ -222,23 +260,69 @@ export function DetailScreen({
           </section>
         ))}
       </div>
+      {hold.reason ? <p role="alert" className="px-4 py-2 text-sm text-destructive">{hold.reason}</p> : null}
       {primary ? (
-        <footer className="flex shrink-0 gap-2 border-t border-border bg-surface-1 px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
+        <footer className="flex shrink-0 flex-col gap-2 border-t border-border bg-surface-1 px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
           <button
             type="button"
             onClick={primary.go}
-            disabled={a.pending}
-            className="h-[52px] flex-1 rounded-[14px] bg-primary text-base font-semibold text-primary-foreground"
+            title={hold.reason ?? (heldEntry && !hold.supported ? "Chưa hỗ trợ" : undefined)}
+            disabled={primary.disabled ?? a.pending}
+            className="h-[48px] w-full rounded-[14px] bg-primary text-base font-semibold text-primary-foreground active:brightness-90 disabled:opacity-50"
           >
             {primary.label}
           </button>
-          <button
-            type="button"
-            onClick={() => m.openStatus(r)}
-            className="h-[52px] shrink-0 rounded-[14px] border border-strong px-[18px] text-[15px] text-tx-1"
-          >
-            Đổi trạng thái
-          </button>
+          {r.status === "BOOKED" ? (
+            <div className={cn("grid gap-2", r.tableIds.length ? "grid-cols-3" : "grid-cols-2")}>
+              {r.tableIds.length ? (
+                <button
+                  type="button"
+                  onClick={() => (heldEntry ? a.reassignHold(heldEntry, r) : a.assign(r))}
+                  title={hold.reason ?? (heldEntry && !hold.supported ? "Chưa hỗ trợ" : undefined)}
+                  disabled={a.pending || !hold.canReassign}
+                  className="h-11 rounded-[12px] border border-strong px-2 text-center text-[13px] font-medium text-tx-1 active:bg-surface-2 disabled:opacity-50"
+                >
+                  Đổi / Ghép bàn
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => a.cancel(r)}
+                title={hold.reason ?? (heldEntry && !hold.canBookingStatus ? "Chưa hỗ trợ" : undefined)}
+                disabled={a.pending || !hold.canBookingStatus || !m.can("reservation.cancel")}
+                className="h-11 rounded-[12px] border border-destructive/50 px-2 text-center text-[13px] font-medium text-destructive active:bg-destructive/10 disabled:opacity-50"
+              >
+                Hủy booking
+              </button>
+              <button
+                type="button"
+                onClick={() => m.openStatus(r)}
+                title={hold.reason ?? (heldEntry && !hold.canBookingStatus ? "Chưa hỗ trợ" : undefined)}
+                disabled={
+                  a.pending ||
+                  !hold.canBookingStatus ||
+                  (!m.can("reservation.cancel") && !m.can("reservation.update"))
+                }
+                className="h-11 rounded-[12px] border border-strong px-2 text-center text-[13px] font-medium text-tx-1 active:bg-surface-2 disabled:opacity-50"
+              >
+                Đổi trạng thái
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => m.openStatus(r)}
+              title={hold.reason ?? (heldEntry && !hold.canBookingStatus ? "Chưa hỗ trợ" : undefined)}
+              disabled={
+                a.pending ||
+                !hold.canBookingStatus ||
+                (!m.can("reservation.cancel") && !m.can("reservation.update"))
+              }
+              className="h-11 w-full rounded-[12px] border border-strong px-3 text-center text-[13px] font-medium text-tx-1 active:bg-surface-2 disabled:opacity-50"
+            >
+              Đổi trạng thái
+            </button>
+          )}
         </footer>
       ) : null}
       {r ? <EditReservationDialog open={editOpen} onOpenChange={setEditOpen} r={r} /> : null}

@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { env } from '../src/config/env.js'
 import { databasePool } from '../src/database/pool.js'
-import { createBooking } from '../src/modules/bookings/booking.repository.js'
+import { checkInBooking, createBooking } from '../src/modules/bookings/booking.repository.js'
 import { runBusinessDayEndSweep } from '../src/modules/visits/business-day.worker.js'
 import { actor, businessDate, clearFixture, initializeFixture, login, resetFixture, tableId } from './support/integration-fixture.js'
 
@@ -34,24 +34,28 @@ mysqlDescribe('business-day auto-close reconciles canonical floor and waitlist H
       .set('X-CSRF-Token', session.csrfToken).send({ version: 1, tableIds: [tableId, tableId + 2] })
     expect(seat.status).toBe(200)
     const groupId = (seat.body as { groupId: number }).groupId
-    const checkIn = await session.agent.post(`/api/v1/bookings/${booking.id}/check-in`).set('Origin', env.webOrigin)
-      .set('X-CSRF-Token', session.csrfToken).send({ version: 2 })
-    expect(checkIn.status).toBe(200)
+    await checkInBooking(actor, booking.id, 2, new Date('2030-10-24T19:00:00+07:00'))
     return { session, entryId, groupId }
   }
 
-  it('shows carry-over until the sweep, then frees grouped tables without rewriting seated waitlist history', async () => {
+  it('keeps current-date occupancy, hides it from future planning, then releases it at the cutoff', async () => {
     const { session, entryId, groupId } = await checkedInAdvanceEntry()
     const [entryBefore] = await databasePool.execute<RowDataPacket[]>('SELECT * FROM waitlist_entries WHERE id = ?', [entryId])
     expect(entryBefore[0]).toMatchObject({ status: 'SEATED', close_reason_code: 'SEATED_OTHERWISE' })
     expect(await runBusinessDayEndSweep({ organizationId: actor.organizationId, venueId: actor.venueId,
       now: new Date(cutoff.getTime() - 1) })).toEqual({ closed: 0, skipped: 0 })
-    const before = await session.agent.get(`/api/v1/tables?date=${nextDate}`)
-    expect(before.status).toBe(200)
-    expect(before.body).toMatchObject({ tables: [
-      { state: 'IN_USE', staleFromPreviousDay: true, allocationBusinessDate: businessDate, activeVisit: { guestCount: 6 } },
-      { state: 'IN_USE', staleFromPreviousDay: true, allocationBusinessDate: businessDate, activeVisit: { guestCount: 6 } },
+    const current = await session.agent.get(`/api/v1/tables?date=${businessDate}`)
+    expect(current.status).toBe(200)
+    expect(current.body).toMatchObject({ tables: [
+      { state: 'IN_USE', staleFromPreviousDay: false, allocationBusinessDate: businessDate, activeVisit: { guestCount: 6 } },
+      { state: 'IN_USE', staleFromPreviousDay: false, allocationBusinessDate: businessDate, activeVisit: { guestCount: 6 } },
     ], groups: [{ id: groupId }] })
+    const futureBeforeSweep = await session.agent.get(`/api/v1/tables?date=${nextDate}`)
+    expect(futureBeforeSweep.status).toBe(200)
+    expect(futureBeforeSweep.body).toMatchObject({ tables: [
+      { state: 'AVAILABLE', staleFromPreviousDay: false, allocationBusinessDate: null, activeVisit: null, claim: null },
+      { state: 'AVAILABLE', staleFromPreviousDay: false, allocationBusinessDate: null, activeVisit: null, claim: null },
+    ], groups: [] })
 
     expect(await runBusinessDayEndSweep({ organizationId: actor.organizationId, venueId: actor.venueId, now: cutoff }))
       .toEqual({ closed: 1, skipped: 0 })

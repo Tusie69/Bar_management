@@ -1,0 +1,14 @@
+# Hai phút một lần. Script tự thoát ngay nếu develop không đổi, nên gọi dày
+# như vậy là vô hại. Cửa sổ giờ nằm trong script chứ không nằm ở timer, để log
+# nói rõ "có bản mới nhưng đang hoãn" thay vì im lặng.
+
+[Unit]
+Description=Kiểm tra develop mỗi 2 phút để tự triển khai
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

@@ -27,26 +27,28 @@ mysqlDescribe('E2E carry-over allocation projections', () => {
     return response.body as { tables: TableView[]; groups: FloorGroupView[] }
   }
 
-  it('keeps earlier unreleased holds reserved with their original date without mutating anything', async () => {
+  it('keeps holds scoped to their selected business date without mutating anything', async () => {
     await heldBooking()
     // An expired planning window still requires manual release.
     await databasePool.execute('UPDATE table_allocations SET planned_until = starts_at + INTERVAL 1 HOUR')
     const [before] = await databasePool.execute<RowDataPacket[]>('SELECT * FROM table_allocations')
     expect((await floor(nextDate)).tables).toEqual([expect.objectContaining({ id: tableId,
-      state: 'RESERVED', staleFromPreviousDay: true, allocationBusinessDate: businessDate, activeVisit: null })])
+      state: 'AVAILABLE', staleFromPreviousDay: false, allocationBusinessDate: null, activeVisit: null })])
     const [after] = await databasePool.execute<RowDataPacket[]>('SELECT * FROM table_allocations')
     expect(after).toEqual(before)
   })
 
-  it('keeps earlier visits occupied with their identity even when started_at has a different date', async () => {
+  it('keeps a visit on its own date and excludes it from a later future projection', async () => {
     const booking = await heldBooking()
-    await checkInBooking(actor, booking.id, booking.version)
+    await checkInBooking(actor, booking.id, booking.version, new Date('2030-10-24T19:00:00+07:00'))
     await databasePool.execute('UPDATE visits SET started_at = ?', [`${nextDate} 13:00:00`])
-    expect((await floor(nextDate)).tables[0]).toMatchObject({ state: 'IN_USE', staleFromPreviousDay: true,
+    expect((await floor(businessDate)).tables[0]).toMatchObject({ state: 'IN_USE', staleFromPreviousDay: false,
       allocationBusinessDate: businessDate, activeVisit: { displayName: 'Carry-over guest', tableCodes: ['A1'] } })
+    expect((await floor(nextDate)).tables[0]).toMatchObject({ state: 'AVAILABLE', staleFromPreviousDay: false,
+      allocationBusinessDate: null, activeVisit: null, claim: null })
   })
 
-  it('includes earlier active group membership and excludes groups before their business date', async () => {
+  it('keeps active group membership on its date and excludes connectors from other dates', async () => {
     await databasePool.execute(
       `INSERT INTO dining_tables (id, organization_id, venue_id, zone_id, code, display_name, kind, capacity)
        VALUES (?, ?, ?, ?, 'A2', 'A2', 'TABLE', 4)`,
@@ -54,8 +56,9 @@ mysqlDescribe('E2E carry-over allocation projections', () => {
     )
     const booking = await heldBooking()
     await mergeBookingTables(actor, booking.id, booking.version, [tableId, tableId + 2])
-    const groups = (await floor(nextDate)).groups
+    const groups = (await floor(businessDate)).groups
     expect(groups).toEqual([expect.objectContaining({ tableIds: [tableId, tableId + 2] })])
+    expect((await floor(nextDate)).groups).toEqual([])
     expect((await floor('2030-10-23')).groups).toEqual([])
   })
 

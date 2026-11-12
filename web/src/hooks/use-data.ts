@@ -12,10 +12,13 @@ import { useSession } from "@/state/session"
 
 export const qk = {
   catalog: ["catalog"] as const,
+  settings: ["settings"] as const,
+  accounts: ["accounts"] as const,
   floor: (at: string) => ["floor", at] as const,
   availability: (at: string, party: number) => ["availability", at, party] as const,
   overview: ["overview"] as const,
   reservations: (bd: string, search: string) => ["reservations", bd, search] as const,
+  receptionSearch: (bd: string, last3: string) => ["reception-search", bd, last3] as const,
   bookingExport: (bd: string) => ["booking-export", bd] as const,
   visits: (bd: string) => ["visits", bd] as const,
   waitlist: (bd: string) => ["waitlist", bd] as const,
@@ -58,6 +61,16 @@ export function useCatalog() {
   })
 }
 
+export function useVenueSettings() {
+  return useQuery({
+    queryKey: qk.settings,
+    retry: api.mode === "mock" ? 1 : false,
+    queryFn: () => api.getVenueSettings(),
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: true,
+  })
+}
+
 export function useFloorState(businessDate?: BusinessDate) {
   const today = useBusinessDate()
   const selectedDate = businessDate ?? today
@@ -77,6 +90,8 @@ export function useAvailability(at: Date | null, party: number) {
     queryFn: () => api.getAvailability(at!, party),
     enabled: !!at,
     placeholderData: keepPreviousData,
+    // No push in HTTP mode: a table taken on another device must still reach an open sheet.
+    refetchInterval: 15_000,
   })
 }
 

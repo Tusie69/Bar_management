@@ -41,10 +41,13 @@ const actor: AuthenticatedActor = {
 
 async function cleanup(): Promise<void> {
   await databasePool.execute('DELETE FROM operation_log WHERE organization_id = ?', [organizationId])
+  await databasePool.execute('DELETE FROM table_turns WHERE organization_id = ?', [organizationId])
   await databasePool.execute('DELETE FROM table_allocations WHERE organization_id = ?', [organizationId])
+  await databasePool.execute('DELETE FROM table_group_members WHERE organization_id = ?', [organizationId])
   await databasePool.execute('DELETE FROM table_groups WHERE organization_id = ?', [organizationId])
   await databasePool.execute('DELETE FROM table_holds WHERE organization_id = ?', [organizationId])
   await databasePool.execute('DELETE FROM waitlist_entries WHERE organization_id = ?', [organizationId])
+  await databasePool.execute('DELETE FROM booking_call_logs WHERE organization_id = ?', [organizationId])
   await databasePool.execute('DELETE FROM reservations WHERE organization_id = ?', [organizationId])
   await databasePool.execute('DELETE FROM visits WHERE organization_id = ?', [organizationId])
   await databasePool.execute('DELETE FROM customers WHERE organization_id = ?', [organizationId])

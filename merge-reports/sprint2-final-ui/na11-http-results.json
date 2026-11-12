@@ -1,0 +1,51 @@
+[
+  {
+    "check": "responsive single floor / overlays / valid table binding / spare-oos guards",
+    "viewport": "360x800",
+    "result": "PASS"
+  },
+  {
+    "check": "responsive single floor / overlays / valid table binding / spare-oos guards",
+    "viewport": "375x812",
+    "result": "PASS"
+  },
+  {
+    "check": "responsive single floor / overlays / valid table binding / spare-oos guards",
+    "viewport": "390x844",
+    "result": "PASS"
+  },
+  {
+    "check": "responsive single floor / overlays / valid table binding / spare-oos guards",
+    "viewport": "768x1024",
+    "result": "PASS"
+  },
+  {
+    "check": "responsive single floor / overlays / valid table binding / spare-oos guards",
+    "viewport": "1280x800",
+    "result": "PASS"
+  },
+  {
+    "check": "future business date, direct booking, real duplicate last3 search, no cross-day waitlist placeholder",
+    "result": "PASS"
+  },
+  {
+    "check": "two browser polling / cache invalidation / masked phone contract",
+    "result": "PASS"
+  },
+  {
+    "check": "calendar date more than seven days ahead survives mobile/tablet form and overlay close",
+    "result": "PASS"
+  },
+  {
+    "check": "desktop map multi-selection and Escape retain draft fields until explicit cancel",
+    "result": "PASS"
+  },
+  {
+    "check": "real receptionist check-in / walk-in / move / merge through existing map actions",
+    "result": "PASS"
+  },
+  {
+    "check": "concurrent allocation protection / capacity / forbidden phone reveal / receptionist legacy route redirects",
+    "result": "PASS"
+  }
+]

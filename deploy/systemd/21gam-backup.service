@@ -1,0 +1,22 @@
+# Một lần sao lưu MySQL. Chạy theo 21gam-backup.timer, không enable trực tiếp.
+#   sudo cp deploy/systemd/21gam-backup.* /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now 21gam-backup.timer
+
+[Unit]
+Description=21GAM MySQL backup
+After=mysql.service
+Requires=mysql.service
+
+[Service]
+Type=oneshot
+User=gam21
+Group=gam21
+ExecStart=/srv/21gam/deploy/scripts/backup-mysql.sh
+Nice=10
+IOSchedulingClass=idle
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/srv/21gam/backups

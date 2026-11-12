@@ -32,7 +32,15 @@ import type {
 } from "@/domain/models"
 import type { ReservationRow, TableHoldRow, VenueRow, VisitRow, WaitlistEntryRow } from "@/domain/schema"
 import type { ZoneCode } from "@/domain/venue-layout"
-import { VENUE_ID, type MockAllocation, type MockCustomer, type MockDb, type MockOperation, type MockTable } from "./db"
+import {
+  VENUE_ID,
+  type MockAllocation,
+  type MockCustomer,
+  type MockDb,
+  type MockOperation,
+  type MockReservation,
+  type MockTable,
+} from "./db"
 
 export const venueOf = (db: MockDb): VenueRow => db.venue.get(VENUE_ID)!
 
@@ -54,6 +62,7 @@ export function venueConfig(db: MockDb): VenueConfig {
     reservationWindowMinutes: v.reservationWindowMinutes,
     groupSymbolCount: v.groupSymbolCount,
     changeSeq: v.changeSeq,
+    settings: v.settings,
   }
 }
 
@@ -301,11 +310,11 @@ export function floorState(
               ? "noshow"
               : r.lateConfirmedAt && now.getTime() >= r.expectedAt.getTime()
                 ? "late_confirmed"
-              : w.warning === "late"
-                ? "late"
-                : minutesUntil <= venue.upcomingWarningMinutes && w.minutesLate <= venue.lateWarningMinutes
-                  ? "upcoming"
-                  : "reserved"
+                : w.warning === "late"
+                  ? "late"
+                  : minutesUntil <= venue.upcomingWarningMinutes && w.minutesLate <= venue.lateWarningMinutes
+                    ? "upcoming"
+                    : "reserved"
           claim = {
             kind: "reservation",
             visitId: null,
@@ -330,12 +339,42 @@ export function floorState(
             note: r.note,
             version: r.version,
             lateConfirmedAt: r.lateConfirmedAt,
+            canCall:
+              customerOf(db, r.customerId)?.phoneLast3 != null &&
+              (state === "upcoming" || state === "late" || state === "late_confirmed"),
           }
         }
       }
     }
     if (t.status === "OUT_OF_SERVICE") state = "oos"
-    tables.push({ tableId: t.id, state, claim, staleFromPreviousDay: stale })
+    if (claim) {
+      const reservation = claim.reservationId ? db.reservations.get(claim.reservationId) : undefined
+      claim.reservedExpectedAt = reservation?.expectedAt ?? null
+      // Mock-only booking form metadata also follows checked-in reservations.
+      Object.assign(claim, {
+        iconKeys: [...(reservation?.iconKeys ?? [])],
+        socialPlatform: reservation?.socialPlatform ?? null,
+        honorific: reservation?.honorific ?? null,
+      })
+      if (!claim.flags) {
+        claim.flags = reservation ? classificationFlags(reservation.customerClassification) : []
+      }
+      if (reservation?.isBirthday) claim.flags.push("BIRTHDAY")
+    }
+    // shortcut: mock-only counts use allocation history, replace with Tu's turn ledger when shipped.
+    const seatedTurnCount = new Set(
+      [...db.allocations.values()]
+        .filter((a) => a.tableId === t.id && a.kind === "USAGE" && a.businessDate === bd)
+        .map((a) => a.visitId),
+    ).size
+    tables.push({
+      tableId: t.id,
+      state,
+      claim,
+      staleFromPreviousDay: stale,
+      seatedTurnCount,
+      claimOwner: claim ? (claim.groupId ? "GROUP" : "TABLE") : null,
+    })
   }
   const live = activeAllocations(db).filter(
     (a) => a.businessDate === bd || (includeStale && a.kind === "USAGE" && a.businessDate < bd),
@@ -344,11 +383,30 @@ export function floorState(
     .filter((g) => !g.dissolvedAt)
     .map((g) => ({
       id: g.id,
+      version: g.version,
+      name: g.name ?? groupDisplayCode(db, g.id)!,
       symbolNo: g.symbolNo,
       displayCode: groupDisplayCode(db, g.id)!,
-      tableIds: live.filter((a) => a.groupId === g.id).map((a) => a.tableId),
+      tableIds: g.layoutTableIds ?? live.filter((a) => a.groupId === g.id).map((a) => a.tableId),
+      businessDate: g.businessDate,
+      seatedTurnCount: new Set(
+        [...db.allocations.values()]
+          .filter((a) => a.groupId === g.id && a.kind === "USAGE" && a.businessDate === bd)
+          .map((a) => a.visitId),
+      ).size,
     }))
     .filter((g) => g.tableIds.length > 1)
+    .map((g) => {
+      const members = tables.filter((t) => g.tableIds.includes(t.tableId))
+      return {
+        ...g,
+        zoneId: db.tables.get(g.tableIds[0])!.zoneId,
+        totalSeats: g.tableIds.reduce((sum, id) => sum + db.tables.get(id)!.capacity, 0),
+        state: members[0]?.state ?? "free",
+        isOutOfService: members.some((t) => t.state === "oos"),
+        claim: members.find((t) => t.claim)?.claim ?? null,
+      }
+    })
   return { at: now, businessDate: bd, tables, groups, changeSeq: venueOf(db).changeSeq }
 }
 
@@ -422,9 +480,6 @@ export function availability(db: MockDb, now: Date, at: Date, partySize: number)
     } else if (t.isSpare) {
       status = "spare"
       reason = "Bàn sơ cua, cần Chủ quán duyệt"
-    } else if (t.capacity < partySize) {
-      status = "too_small"
-      reason = `Sức chứa ${t.capacity} < ${partySize} khách`
     }
     statusOf.set(t.id, { status, reason, claimStartsAt })
   }
@@ -435,16 +490,12 @@ export function availability(db: MockDb, now: Date, at: Date, partySize: number)
       const blocked = c.members
         .map((id) => statusOf.get(id))
         .find((s) => s && s.status !== "available" && s.status !== "too_small")
-      const available = !blocked && capacity >= partySize
+      const available = !blocked
       return {
         combinationId: c.id,
         capacity,
         available,
-        reason: blocked
-          ? blocked.reason
-          : capacity < partySize
-            ? `Sức chứa ${capacity} < ${partySize}`
-            : `Đủ ${capacity} chỗ`,
+        reason: blocked ? blocked.reason : `${capacity} chỗ`,
       }
     })
   return {
@@ -527,7 +578,7 @@ export function allocationViews(db: MockDb, bd: BusinessDate, now: Date, tableId
 
 /* ---------------- views ---------------- */
 
-export function reservationView(db: MockDb, r: ReservationRow, now: Date): ReservationView {
+export function reservationView(db: MockDb, r: MockReservation, now: Date): ReservationView {
   const venue = venueOf(db)
   const hold = activeReservationHold(db, r.id)
   const entry = activeEntryForReservation(db, r.id)
@@ -543,9 +594,12 @@ export function reservationView(db: MockDb, r: ReservationRow, now: Date): Reser
   if (r.status === "BOOKED") subState = effectiveHold ? "DANG_GIU_BAN" : entry ? "CHO_BAN" : "CHO_PHAN_BAN"
   const w = reservationWarning(venue, r, now)
   const creator = db.users.get(r.createdByUserId)
+  // WF-01: a name exists only if the booking or its customer actually has one.
+  const storedName = r.contactName ?? customerOf(db, r.customerId)?.displayName ?? null
   return {
     id: r.id,
     version: r.version,
+    hasGuestName: storedName !== null,
     customerId: r.customerId,
     displayName: personName(db, r.contactName, r.customerId, "Khách đặt"),
     phoneLast3: customerOf(db, r.customerId)?.phoneLast3 ?? null,
@@ -553,8 +607,15 @@ export function reservationView(db: MockDb, r: ReservationRow, now: Date): Reser
     expectedAt: r.expectedAt,
     businessDate: r.businessDate,
     classification: r.customerClassification,
+    guestType:
+      r.guestType ??
+      (r.customerClassification === "RETURNING" ? "REGULAR" : r.customerClassification === "NEW" ? "NEW" : null),
+    isBirthday: r.isBirthday ?? false,
     status: r.status,
     sourceCode: sourceCode(db, r.sourceId),
+    socialPlatform: r.socialPlatform ?? null,
+    iconKeys: [...(r.iconKeys ?? [])],
+    honorific: r.honorific ?? null,
     note: r.note,
     tableIds,
     holdId: effectiveHold?.id ?? null,
@@ -742,9 +803,9 @@ const ACTION_LABEL: Record<string, string> = {
   RESERVATION_UPDATED: "Sửa booking",
   TABLE_ASSIGNED: "Phân bàn",
   RESERVATION_CANCELLED: "Hủy booking",
-  RESERVATION_NO_SHOW: "Xác nhận không đến",
+  RESERVATION_NO_SHOW: "Xác nhận không tới",
   RESERVATION_LATE_WARNING: "Cảnh báo đến muộn",
-  RESERVATION_NO_SHOW_WARNING: "Cảnh báo không đến",
+  RESERVATION_NO_SHOW_WARNING: "Cảnh báo không tới",
   WAITLIST_ADDED: "Thêm danh sách chờ",
   WAITLIST_CLAIMED: "Nhận liên hệ",
   WAITLIST_CLAIM_RELEASED: "Thả liên hệ",

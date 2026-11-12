@@ -15,6 +15,11 @@ const organizationId = env.organizationId
 const venueId = env.venueId
 const otherVenueId = venueId + 1
 let validPasswordHash = ''
+const usernameSuffix = `${process.pid}_${Date.now().toString(36)}`
+
+function testUsername(base: string): string {
+  return `${base}_${usernameSuffix}`
+}
 
 interface ErrorResponse {
   error: { code: string; message: string }
@@ -24,6 +29,7 @@ interface AuthResponse {
   user: { username: string; roles: string[] }
   permissions: string[]
   csrfToken: string
+  portal: string
 }
 
 function responseBody<T>(response: { text: string }): T {
@@ -40,10 +46,11 @@ async function createUser(
     roleVenueId?: number | null
   } = {},
 ): Promise<{ userId: number; membershipId: number }> {
+  const actualUsername = testUsername(username)
   const [userResult] = await databasePool.execute<ResultSetHeader>(
     `INSERT INTO users (username, display_name, password_hash, status)
      VALUES (?, ?, ?, ?)`,
-    [username, username, options.passwordHash ?? validPasswordHash, options.userStatus ?? 'ACTIVE'],
+    [actualUsername, actualUsername, options.passwordHash ?? validPasswordHash, options.userStatus ?? 'ACTIVE'],
   )
   const membershipStatus = options.membershipStatus ?? 'ACTIVE'
   const [membershipResult] = await databasePool.execute<ResultSetHeader>(
@@ -61,8 +68,15 @@ async function createUser(
   return { userId: userResult.insertId, membershipId: membershipResult.insertId }
 }
 
-async function login(agent: ReturnType<typeof request.agent>, username: string, password = 'Correct horse battery staple') {
-  return agent.post('/api/v1/auth/login').set('Origin', origin).send({ username, password })
+async function login(
+  agent: ReturnType<typeof request.agent>,
+  username: string,
+  password = 'Correct horse battery staple',
+  portal = 'receptionist',
+) {
+  return agent.post('/api/v1/auth/login').set('Origin', origin).send({
+    username: testUsername(username), password, portal,
+  })
 }
 
 async function grantRole(membershipId: number, roleCode: string, scopedVenueId = venueId): Promise<void> {
@@ -93,6 +107,7 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     const response = await request(app).post('/api/v1/auth/login').set('Origin', 'https://evil.example').send({
       username: 'nobody',
       password: 'irrelevant',
+      portal: 'receptionist',
     })
     expect(response.status).toBe(403)
     expect(responseBody<ErrorResponse>(response).error.code).toBe('ORIGIN_NOT_ALLOWED')
@@ -110,8 +125,73 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
   it('rejects disabled users and inactive memberships during login', async () => {
     await createUser('disabled_user', { userStatus: 'DISABLED', roleCode: 'RECEPTIONIST' })
     await createUser('suspended_member', { membershipStatus: 'SUSPENDED', roleCode: 'RECEPTIONIST' })
+    const revoked = await createUser('revoked_role_user', { roleCode: 'RECEPTIONIST' })
+    await databasePool.execute(
+      `UPDATE membership_roles SET revoked_at = UTC_TIMESTAMP(3), revoked_by_user_id = ?
+       WHERE membership_id = ? AND revoked_at IS NULL`,
+      [revoked.userId, revoked.membershipId],
+    )
     expect((await login(request.agent(app), 'disabled_user')).status).toBe(401)
     expect((await login(request.agent(app), 'suspended_member')).status).toBe(401)
+    expect((await login(request.agent(app), 'revoked_role_user')).status).toBe(403)
+  })
+
+  it('validates portal and never creates a session for invalid credentials or a denied portal', async () => {
+    await createUser('portal_receptionist', { roleCode: 'RECEPTIONIST' })
+    const [beforeRows] = await databasePool.execute<(RowDataPacket & { count: number })[]>(
+      `SELECT COUNT(*) AS count FROM auth_sessions AS s
+       JOIN users AS u ON u.id = s.user_id WHERE u.username = ?`,
+      [testUsername('portal_receptionist')],
+    )
+    const invalidPortal = await request(app).post('/api/v1/auth/login').set('Origin', origin).send({
+      username: testUsername('portal_receptionist'), password: 'Correct horse battery staple', portal: 'unknown',
+    })
+    expect(invalidPortal.status).toBe(400)
+    expect(responseBody<ErrorResponse>(invalidPortal).error.code).toBe('INVALID_PORTAL')
+    expect((await login(request.agent(app), 'portal_receptionist', 'wrong')).status).toBe(401)
+    const wrongPortal = await login(request.agent(app), 'portal_receptionist', undefined, 'admin')
+    expect(wrongPortal.status).toBe(403)
+    expect(responseBody<ErrorResponse>(wrongPortal).error.code).toBe('PORTAL_ACCESS_DENIED')
+    const [afterRows] = await databasePool.execute<(RowDataPacket & { count: number })[]>(
+      `SELECT COUNT(*) AS count FROM auth_sessions AS s
+       JOIN users AS u ON u.id = s.user_id WHERE u.username = ?`,
+      [testUsername('portal_receptionist')],
+    )
+    expect(Number(afterRows[0]?.count)).toBe(Number(beforeRows[0]?.count))
+  })
+
+  it('binds multi-role sessions to one portal without unioning permissions', async () => {
+    const fixture = await createUser('multi_portal_user', { roleCode: 'RECEPTIONIST' })
+    await grantRole(fixture.membershipId, 'OWNER_ADMIN')
+
+    const receptionAgent = request.agent(app)
+    const reception = responseBody<AuthResponse>(
+      await login(receptionAgent, 'multi_portal_user', undefined, 'receptionist'),
+    )
+    expect(reception.portal).toBe('receptionist')
+    expect(reception.user.roles).toEqual(['RECEPTIONIST'])
+    expect(reception.permissions).not.toContain('venue.configure')
+    expect(reception.permissions).toContain('booking.phone.call')
+    expect(reception.permissions).not.toContain('customer.phone.reveal')
+    const deniedAdminWrite = await receptionAgent.patch('/api/v1/tables/1/configuration')
+      .set('Origin', origin).set('X-CSRF-Token', reception.csrfToken).send({})
+    expect(deniedAdminWrite.status).toBe(403)
+    expect(responseBody<ErrorResponse>(deniedAdminWrite).error.code).toBe('PERMISSION_DENIED')
+
+    const admin = responseBody<AuthResponse>(await login(request.agent(app), 'multi_portal_user', undefined, 'admin'))
+    expect(admin.portal).toBe('admin')
+    expect(admin.user.roles).toEqual(['OWNER_ADMIN'])
+    expect(admin.permissions).toContain('venue.configure')
+    expect(admin.permissions).toContain('booking.phone.call')
+    expect(admin.permissions).toContain('customer.phone.reveal')
+  })
+
+  it('allows an owner only through the admin portal', async () => {
+    await createUser('portal_owner', { roleCode: 'OWNER_ADMIN' })
+    expect((await login(request.agent(app), 'portal_owner', undefined, 'receptionist')).status).toBe(403)
+    const accepted = await login(request.agent(app), 'portal_owner', undefined, 'admin')
+    expect(accepted.status).toBe(200)
+    expect(responseBody<AuthResponse>(accepted).portal).toBe('admin')
   })
 
   it('creates an HttpOnly session cookie, returns a session-bound CSRF token and never exposes the raw token', async () => {
@@ -121,6 +201,7 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     expect(response.status).toBe(200)
     const body = responseBody<AuthResponse>(response)
     expect(body.user.roles).toEqual(['RECEPTIONIST'])
+    expect(body.portal).toBe('receptionist')
     expect(body.permissions).toContain('visit.end')
     expect(body.csrfToken).toEqual(expect.any(String))
     expect(body).not.toHaveProperty('sessionToken')
@@ -128,15 +209,17 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     expect(response.headers['set-cookie']?.[0]).toContain('SameSite=Lax')
     const me = await agent.get('/api/v1/auth/me')
     expect(me.status).toBe(200)
-    expect(responseBody<AuthResponse>(me).user.username).toBe('valid_user')
+    expect(responseBody<AuthResponse>(me).user.username).toBe(testUsername('valid_user'))
     expect(responseBody<AuthResponse>(me).user.roles).toEqual(['RECEPTIONIST'])
+    expect(responseBody<AuthResponse>(me).portal).toBe('receptionist')
 
-    const [rows] = await databasePool.execute<(RowDataPacket & { length: number })[]>(
-      `SELECT OCTET_LENGTH(token_hash) AS length FROM auth_sessions AS s
+    const [rows] = await databasePool.execute<(RowDataPacket & { length: number; portal: string })[]>(
+      `SELECT OCTET_LENGTH(token_hash) AS length, portal FROM auth_sessions AS s
        JOIN users AS u ON u.id = s.user_id WHERE u.username = ?`,
-      ['valid_user'],
+      [testUsername('valid_user')],
     )
     expect(Number(rows[0]?.length)).toBe(32)
+    expect(rows[0]?.portal).toBe('receptionist')
   })
 
   it('returns current venue and organization-wide role codes, excluding foreign and revoked grants', async () => {
@@ -154,17 +237,16 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
       [organizationId, fixture.membershipId],
     )
     const agent = request.agent(app)
-    const signedIn = await login(agent, 'role_payload_user')
+    const signedIn = await login(agent, 'role_payload_user', undefined, 'admin')
     expect(signedIn.status).toBe(200)
-    expect(responseBody<AuthResponse>(signedIn).user.roles).toEqual(['CUSTOMER_CARE', 'OWNER_ADMIN'])
+    expect(responseBody<AuthResponse>(signedIn).user.roles).toEqual(['OWNER_ADMIN'])
     await databasePool.execute(
       `UPDATE membership_roles SET revoked_at = UTC_TIMESTAMP(3), revoked_by_user_id = ?
        WHERE membership_id = ? AND role_id = (SELECT id FROM roles WHERE code = 'OWNER_ADMIN')`,
       [fixture.userId, fixture.membershipId],
     )
     const me = await agent.get('/api/v1/auth/me')
-    expect(me.status).toBe(200)
-    expect(responseBody<AuthResponse>(me).user.roles).toEqual(['CUSTOMER_CARE'])
+    expect(me.status).toBe(401)
   })
 
   it('requires the correct session-bound CSRF token and invalidates it on logout', async () => {
@@ -214,7 +296,7 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     expect((await agent.get('/api/v1/auth/me')).status).toBe(401)
   })
 
-  it('observes permission revocation after login without a permission cache', async () => {
+  it('invalidates a portal session when its portal role is revoked', async () => {
     const fixture = await createUser('revoked_permission_user', { roleCode: 'RECEPTIONIST' })
     await grantRole(fixture.membershipId, 'CUSTOMER_CARE')
     const agent = request.agent(app)
@@ -232,8 +314,8 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
       .set('Origin', origin)
       .set('X-CSRF-Token', signedInBody.csrfToken)
       .send({ version: 1, mode: 'MANUAL', reason: 'GUEST_LEFT' })
-    expect(denied.status).toBe(403)
-    expect(responseBody<ErrorResponse>(denied).error.code).toBe('PERMISSION_DENIED')
+    expect(denied.status).toBe(401)
+    expect(responseBody<ErrorResponse>(denied).error.code).toBe('SESSION_INVALID')
   })
 
   it('closes a visit through the authenticated endpoint and records the authenticated user', async () => {
@@ -280,7 +362,7 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
   it('rejects an authenticated user without visit.end', async () => {
     await createUser('no_close_permission_user', { roleCode: 'CUSTOMER_CARE' })
     const agent = request.agent(app)
-    const signedIn = responseBody<AuthResponse>(await login(agent, 'no_close_permission_user'))
+    const signedIn = responseBody<AuthResponse>(await login(agent, 'no_close_permission_user', undefined, 'customer-care'))
     const denied = await agent
       .post('/api/v1/visits/1/close')
       .set('Origin', origin)
@@ -298,7 +380,7 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     const agent = request.agent(app)
     const denied = await login(agent, 'cross_venue_user')
     expect(denied.status).toBe(403)
-    expect(responseBody<ErrorResponse>(denied).error.code).toBe('VENUE_ACCESS_UNAVAILABLE')
+    expect(responseBody<ErrorResponse>(denied).error.code).toBe('PORTAL_ACCESS_DENIED')
   })
 
   it('rate-limits repeated failed logins for the same IP and username', async () => {

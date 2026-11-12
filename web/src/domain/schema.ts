@@ -112,6 +112,7 @@ export interface AuthSessionRow {
 /* ---------------- Venue / floorplan ---------------- */
 
 export interface VenueRow extends Versioned {
+  settings?: { quick_times: string[]; upcoming_minutes: number; no_show_minutes: number }
   id: Id
   organizationId: Id
   code: string
@@ -223,6 +224,8 @@ export interface ReservationRow extends Versioned {
   expectedAt: Date
   businessDate: BusinessDate
   customerClassification: BookingClassification
+  guestType?: "REGULAR" | "NEW" | null
+  isBirthday?: boolean
   status: ReservationStatus
   note: string | null
   visitId: Id | null

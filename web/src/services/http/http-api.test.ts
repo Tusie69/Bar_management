@@ -60,6 +60,102 @@ afterEach(() => {
 })
 
 describe("Phase 2A HTTP API", () => {
+  it("posts C1 create, add-members and versioned idle split without using the claim version", async () => {
+    const calls: { path: string; body: unknown; key: string | null }[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string, init: RequestInit) => {
+        calls.push({
+          path: new URL(input).pathname,
+          body: JSON.parse(String(init.body)),
+          key: new Headers(init.headers).get("Idempotency-Key"),
+        })
+        return json({ operationId: 10, changeSeq: 42, undoable: false, summary: "ok" })
+      }),
+    )
+    const client = new HttpClient("http://api.test")
+    client.setCsrfToken("csrf")
+    const api = createHttpApi(client, 1)
+    await api.createTableGroup({ tableIds: [1, 2], name: "Cặp bàn", idempotencyKey: "create-group" })
+    await api.addTableGroupMembers({ groupId: 9, version: 42, tableIds: [3], idempotencyKey: "add-member" })
+    await api.splitGroup({ groupId: 9, version: 43, mode: "ALL_TO_SINGLE", idempotencyKey: "idle-split" })
+    await api.splitGroup({ groupId: 9, keepTableIds: [1], idempotencyKey: "ba-021" })
+    expect(calls).toEqual([
+      { path: "/api/v1/tables/groups", body: { tableIds: [1, 2], name: "Cặp bàn" }, key: "create-group" },
+      { path: "/api/v1/tables/groups/9/members", body: { version: 42, tableIds: [3] }, key: "add-member" },
+      { path: "/api/v1/tables/groups/9/split", body: { version: 43, mode: "ALL_TO_SINGLE" }, key: "idle-split" },
+      { path: "/api/v1/tables/groups/9/split", body: { keepTableIds: [1] }, key: "ba-021" },
+    ])
+  })
+  it.each(["members", "booking"])(
+    "refetches the selected floor on a %s group-version conflict without retrying the write",
+    async (operation) => {
+      let floorReads = 0
+      let writes = 0
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: string, init: RequestInit) => {
+          const url = new URL(input)
+          if (url.pathname === "/api/v1/tables/catalog") return json(catalog)
+          if (url.pathname === "/api/v1/bookings/sources")
+            return json({ sources: [{ code: "HOTLINE", name: "Hotline" }] })
+          if (url.pathname === "/api/v1/tables") {
+            floorReads++
+            expect(url.searchParams.get("date")).toBe("2026-11-11")
+            return json({
+              ...emptyProjection("2026-11-11"),
+              changeSeq: String(floorReads),
+              groups: [
+                {
+                  id: 9,
+                  version: floorReads,
+                  symbolNo: 1,
+                  displayCode: "N1",
+                  tableIds: [1, 2],
+                  claim: null,
+                  displayState: "EMPTY",
+                  seatedTurnCount: 0,
+                },
+              ],
+            })
+          }
+          expect(init.method).toBe("POST")
+          writes++
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: "TABLE_GROUP_VERSION_CONFLICT",
+                message: "stale",
+                details: { currentVersion: 2, changeSeq: "2" },
+              },
+            }),
+            { status: 409, headers: { "content-type": "application/json" } },
+          )
+        }),
+      )
+      const client = new HttpClient("http://api.test")
+      client.setCsrfToken("csrf")
+      const api = createHttpApi(client, 1)
+      const floor = await api.getFloorState(new Date("2026-11-11T12:00:00Z"), "2026-11-11")
+      expect(floor.groups[0]).toMatchObject({ version: 1, seatedTurnCount: 0, claim: null, state: "free" })
+      const request =
+        operation === "members"
+          ? api.addTableGroupMembers({ groupId: 9, version: 1, tableIds: [3] })
+          : api.createReservation({
+              contactName: "Guest",
+              expectedAt: new Date("2026-11-11T12:00:00Z"),
+              partySize: 2,
+              sourceCode: "HOTLINE",
+            })
+      await expect(request).rejects.toMatchObject({
+        code: "TABLE_GROUP_VERSION_CONFLICT",
+        details: { currentVersion: 2, changeSeq: "2" },
+        message: expect.stringContaining("tải lại sơ đồ"),
+      })
+      expect(floorReads).toBe(2)
+      expect(writes).toBe(1)
+    },
+  )
   it("uses only real read endpoints for catalog and floor state", async () => {
     const requested: string[] = []
     vi.stubGlobal(
@@ -73,21 +169,25 @@ describe("Phase 2A HTTP API", () => {
           return json({ sources: [{ code: "HOTLINE", name: "Hotline" }] })
         }
         if (parsed.pathname === "/api/v1/tables") {
-          return json(emptyProjection(parsed.searchParams.get("date"), [{
-            tableId: 1,
-            tableCode: "A1",
-            catalogStatus: "ACTIVE",
-            isSpare: false,
-            displayState: "EMPTY",
-            arrivalPhase: null,
-            arrivalTime: null,
-            minutesLate: 0,
-            claim: null,
-            groupId: null,
-            groupDisplayCode: null,
-            groupMemberTableIds: [],
-            staleFromPreviousDay: false,
-          }]))
+          return json(
+            emptyProjection(parsed.searchParams.get("date"), [
+              {
+                tableId: 1,
+                tableCode: "A1",
+                catalogStatus: "ACTIVE",
+                isSpare: false,
+                displayState: "EMPTY",
+                arrivalPhase: null,
+                arrivalTime: null,
+                minutesLate: 0,
+                claim: null,
+                groupId: null,
+                groupDisplayCode: null,
+                groupMemberTableIds: [],
+                staleFromPreviousDay: false,
+              },
+            ]),
+          )
         }
         if (parsed.pathname === "/api/v1/bookings") {
           return json({ businessDate: parsed.searchParams.get("date"), bookings: [] })
@@ -162,42 +262,46 @@ describe("HTTP catalog cache", () => {
           floorCall += 1
           const stale = floorCall === 2
           return json({
-            ...emptyProjection(url.searchParams.get("date"), [{
-              tableId: 1,
-              tableCode: "A1",
-              catalogStatus: "ACTIVE",
-              isSpare: false,
-              displayState: stale ? "EMPTY" : "NO_SHOW",
-              arrivalPhase: stale ? null : "NO_SHOW",
-              arrivalTime: stale ? null : "2026-10-28T12:30:00.000Z",
-              minutesLate: stale ? 0 : 30,
-              claim: stale ? null : {
-                kind: "RESERVATION",
-                reservationId: 11,
-                visitId: null,
-                waitlistEntryId: null,
-                holdId: 41,
-                guestName: "Khách",
-                phoneLast3: "123",
-                partySize: 2,
-                turnNo: null,
-                flags: [],
+            ...emptyProjection(url.searchParams.get("date"), [
+              {
+                tableId: 1,
+                tableCode: "A1",
+                catalogStatus: "ACTIVE",
+                isSpare: false,
+                displayState: stale ? "EMPTY" : "NO_SHOW",
+                arrivalPhase: stale ? null : "NO_SHOW",
+                arrivalTime: stale ? null : "2026-10-28T12:30:00.000Z",
+                minutesLate: stale ? 0 : 30,
+                claim: stale
+                  ? null
+                  : {
+                      kind: "RESERVATION",
+                      reservationId: 11,
+                      visitId: null,
+                      waitlistEntryId: null,
+                      holdId: 41,
+                      guestName: "Khách",
+                      phoneLast3: "123",
+                      partySize: 2,
+                      turnNo: null,
+                      flags: [],
+                      groupId: null,
+                      groupDisplayCode: null,
+                      groupMemberTableIds: [],
+                      startsAt: "2026-10-28T12:30:00.000Z",
+                      deadlineAt: null,
+                      holdOverdue: false,
+                      paid: false,
+                      origin: null,
+                      sourceCode: "HOTLINE",
+                      version: 1,
+                    },
                 groupId: null,
                 groupDisplayCode: null,
                 groupMemberTableIds: [],
-                startsAt: "2026-10-28T12:30:00.000Z",
-                deadlineAt: null,
-                holdOverdue: false,
-                paid: false,
-                origin: null,
-                sourceCode: "HOTLINE",
-                version: 1,
+                staleFromPreviousDay: false,
               },
-              groupId: null,
-              groupDisplayCode: null,
-              groupMemberTableIds: [],
-              staleFromPreviousDay: false,
-            }]),
+            ]),
             serverNow: stale ? "2026-10-28T12:59:00.000Z" : "2026-10-28T13:00:00.000Z",
             changeSeq: stale ? "4" : "5",
           })
@@ -224,43 +328,45 @@ describe("HTTP catalog cache", () => {
           floorCall += 1
           const noShow = floorCall === 2
           return json({
-            ...emptyProjection(url.searchParams.get("date"), [{
-              tableId: 1,
-              tableCode: "A1",
-              catalogStatus: "ACTIVE",
-              isSpare: false,
-              displayState: noShow ? "NO_SHOW" : "LATE_CONFIRMED",
-              arrivalPhase: noShow ? "NO_SHOW" : "LATE_CONFIRMED",
-              arrivalTime: "2026-10-28T12:30:00.000Z",
-              minutesLate: noShow ? 30 : 29,
-              claim: {
-                kind: "RESERVATION",
-                reservationId: 11,
-                visitId: null,
-                waitlistEntryId: null,
-                holdId: 41,
-                guestName: "Khách",
-                phoneLast3: "123",
-                partySize: 2,
-                turnNo: null,
-                flags: [],
+            ...emptyProjection(url.searchParams.get("date"), [
+              {
+                tableId: 1,
+                tableCode: "A1",
+                catalogStatus: "ACTIVE",
+                isSpare: false,
+                displayState: noShow ? "NO_SHOW" : "LATE_CONFIRMED",
+                arrivalPhase: noShow ? "NO_SHOW" : "LATE_CONFIRMED",
+                arrivalTime: "2026-10-28T12:30:00.000Z",
+                minutesLate: noShow ? 30 : 29,
+                claim: {
+                  kind: "RESERVATION",
+                  reservationId: 11,
+                  visitId: null,
+                  waitlistEntryId: null,
+                  holdId: 41,
+                  guestName: "Khách",
+                  phoneLast3: "123",
+                  partySize: 2,
+                  turnNo: null,
+                  flags: [],
+                  groupId: null,
+                  groupDisplayCode: null,
+                  groupMemberTableIds: [],
+                  startsAt: "2026-10-28T12:30:00.000Z",
+                  deadlineAt: null,
+                  holdOverdue: false,
+                  paid: false,
+                  origin: null,
+                  sourceCode: "HOTLINE",
+                  version: 2,
+                  lateConfirmedAt: "2026-10-28T12:42:00.000Z",
+                },
                 groupId: null,
                 groupDisplayCode: null,
                 groupMemberTableIds: [],
-                startsAt: "2026-10-28T12:30:00.000Z",
-                deadlineAt: null,
-                holdOverdue: false,
-                paid: false,
-                origin: null,
-                sourceCode: "HOTLINE",
-                version: 2,
-                lateConfirmedAt: "2026-10-28T12:42:00.000Z",
+                staleFromPreviousDay: false,
               },
-              groupId: null,
-              groupDisplayCode: null,
-              groupMemberTableIds: [],
-              staleFromPreviousDay: false,
-            }]),
+            ]),
             serverNow: noShow ? "2026-10-28T13:00:00.000Z" : "2026-10-28T12:59:59.000Z",
             changeSeq: "5",
           })
@@ -416,13 +522,6 @@ describe("HTTP catalog cache", () => {
     paths.length = 0
     vi.advanceTimersByTime(15_000)
     await poll()
-    expect(paths.sort()).toEqual([
-      "/bookings",
-      "/bookings",
-      "/tables",
-      "/tables",
-      "/waitlist",
-      "/waitlist",
-    ])
+    expect(paths.sort()).toEqual(["/bookings", "/bookings", "/tables", "/tables", "/waitlist", "/waitlist"])
   })
 })

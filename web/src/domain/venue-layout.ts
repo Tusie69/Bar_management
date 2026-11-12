@@ -68,13 +68,13 @@ export interface FixtureSpec {
   estimated: boolean
 }
 
-const A = (code: string, y: number): TableSpec => ({
+const A = (code: string, y: number, h = 35): TableSpec => ({
   code,
   zone: "A",
   x: 80,
   y,
-  w: 46,
-  h: 32,
+  w: 52,
+  h,
   capacity: 4,
   isSpare: false,
   seating: "banquette",
@@ -82,33 +82,33 @@ const A = (code: string, y: number): TableSpec => ({
 
 export const TABLES: TableSpec[] = [
   // Khu A: banquette run along the west wall + A10 (spare)
-  A("A7", 382),
-  A("A6", 419),
-  A("A5", 468),
-  A("A4", 516),
-  A("A3", 562),
-  A("A2", 609),
-  A("A1", 654),
-  A("A0", 696),
-  { code: "A10", zone: "A", x: 231, y: 685, w: 38, h: 38, capacity: 4, isSpare: true, seating: "four-sides" },
+  A("A7", 382, 33),
+  A("A6", 419, 33),
+  A("A5", 468, 35),
+  A("A4", 516, 35),
+  A("A3", 562, 35),
+  A("A2", 609, 35),
+  A("A1", 654, 35),
+  { ...A("A0", 696, 35), isSpare: true },
+  { code: "A10", zone: "A", x: 231, y: 685, w: 42, h: 42, capacity: 4, isSpare: true, seating: "four-sides" },
 
   // Khu B
-  { code: "B7", zone: "B", x: 107, y: 213, w: 34, h: 30, capacity: 4, isSpare: false, seating: "pairs-tb" },
-  { code: "B8", zone: "B", x: 67, y: 259, w: 34, h: 30, capacity: 4, isSpare: false, seating: "pairs-tb" },
-  { code: "B6", zone: "B", x: 107, y: 259, w: 34, h: 30, capacity: 4, isSpare: false, seating: "pairs-tb" },
-  { code: "B5", zone: "B", x: 107, y: 306, w: 34, h: 30, capacity: 4, isSpare: false, seating: "pairs-tb" },
-  { code: "B3", zone: "B", x: 248, y: 223, w: 42, h: 42, capacity: 4, isSpare: false, seating: "four-sides" },
-  { code: "B4", zone: "B", x: 248, y: 285, w: 42, h: 42, capacity: 4, isSpare: false, seating: "four-sides" },
-  { code: "B21", zone: "B", x: 381, y: 205, w: 48, h: 30, capacity: 4, isSpare: false, seating: "pairs-lr" },
-  { code: "B22", zone: "B", x: 381, y: 243, w: 48, h: 30, capacity: 4, isSpare: false, seating: "pairs-lr" },
-  { code: "B11", zone: "B", x: 381, y: 286, w: 48, h: 30, capacity: 4, isSpare: false, seating: "pairs-lr" },
-  { code: "B12", zone: "B", x: 381, y: 325, w: 48, h: 30, capacity: 4, isSpare: false, seating: "pairs-lr" },
+  { code: "B7", zone: "B", x: 107, y: 213, w: 36, h: 33, capacity: 4, isSpare: false, seating: "pairs-tb" },
+  { code: "B8", zone: "B", x: 67, y: 259, w: 36, h: 33, capacity: 4, isSpare: true, seating: "pairs-tb" },
+  { code: "B6", zone: "B", x: 107, y: 259, w: 36, h: 33, capacity: 4, isSpare: false, seating: "pairs-tb" },
+  { code: "B5", zone: "B", x: 107, y: 306, w: 36, h: 33, capacity: 4, isSpare: false, seating: "pairs-tb" },
+  { code: "B3", zone: "B", x: 248, y: 223, w: 48, h: 46, capacity: 4, isSpare: false, seating: "four-sides" },
+  { code: "B4", zone: "B", x: 248, y: 285, w: 48, h: 46, capacity: 4, isSpare: false, seating: "four-sides" },
+  { code: "B21", zone: "B", x: 381, y: 205, w: 54, h: 33, capacity: 4, isSpare: false, seating: "pairs-lr" },
+  { code: "B22", zone: "B", x: 381, y: 243, w: 54, h: 33, capacity: 4, isSpare: false, seating: "pairs-lr" },
+  { code: "B11", zone: "B", x: 381, y: 286, w: 54, h: 33, capacity: 4, isSpare: false, seating: "pairs-lr" },
+  { code: "B12", zone: "B", x: 381, y: 325, w: 54, h: 33, capacity: 4, isSpare: false, seating: "pairs-lr" },
 
-  // Khu C (C4, C5 marked spare on the survey)
-  { code: "C4", zone: "C", x: 284, y: 80, w: 34, h: 34, capacity: 4, isSpare: true, seating: "pairs-lr" },
-  { code: "C5", zone: "C", x: 284, y: 127, w: 34, h: 34, capacity: 4, isSpare: true, seating: "pairs-lr" },
-  { code: "C1", zone: "C", x: 337, y: 75, w: 44, h: 32, capacity: 4, isSpare: false, seating: "pairs-tb" },
-  { code: "C2", zone: "C", x: 391, y: 75, w: 44, h: 32, capacity: 4, isSpare: false, seating: "pairs-tb" },
+  // Khu C (C4, C5 normal per HU-32)
+  { code: "C4", zone: "C", x: 284, y: 80, w: 38, h: 38, capacity: 4, isSpare: false, seating: "pairs-lr" },
+  { code: "C5", zone: "C", x: 284, y: 127, w: 38, h: 38, capacity: 4, isSpare: false, seating: "pairs-lr" },
+  { code: "C1", zone: "C", x: 337, y: 75, w: 48, h: 36, capacity: 4, isSpare: false, seating: "pairs-tb" },
+  { code: "C2", zone: "C", x: 391, y: 75, w: 48, h: 36, capacity: 4, isSpare: false, seating: "pairs-tb" },
 ]
 
 /** Bar seats in counter order 1..21 (exact centres from the brief). */
@@ -144,8 +144,9 @@ export const ZONES: ZoneSpec[] = [
     name: "Khu C",
     rects: [[250, 44, 220, 108]],
     label: { x: 462, y: 60, anchor: "end" },
-    isBookable: false,
-    isWaitingArea: true,
+    // Mock catalog follows 08/11; HTTP keeps the zone flags supplied by the server.
+    isBookable: true,
+    isWaitingArea: false,
   },
   {
     code: "B",

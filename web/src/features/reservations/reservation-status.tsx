@@ -9,6 +9,6 @@ export function ReservationStatusChip({ r }: { r: ReservationView }) {
     return <StateChip state="free">Chờ phân bàn</StateChip>
   }
   if (r.status === "CHECKED_IN") return <StateChip state="seated">Đã check-in</StateChip>
-  if (r.status === "NO_SHOW") return <StateChip state="noshow">Không đến</StateChip>
+  if (r.status === "NO_SHOW") return <StateChip state="noshow">Không tới</StateChip>
   return <StateChip state="oos">Đã hủy</StateChip>
 }

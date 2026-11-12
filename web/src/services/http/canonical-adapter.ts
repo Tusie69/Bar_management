@@ -18,13 +18,20 @@ export function mapReservation(booking: HttpBooking, catalog: Catalog): Reservat
     version: booking.version,
     customerId: null,
     displayName: booking.guestName,
+    // WF-01: an older backend omits the flag; assume a real name only then.
+    hasGuestName: booking.hasGuestName ?? true,
     phoneLast3: booking.phoneLast3,
     partySize: booking.partySize,
     expectedAt: booking.expectedAt,
     businessDate: booking.businessDate,
     classification: booking.classification,
+    guestType: booking.guestType,
+    isBirthday: booking.isBirthday,
+    iconKeys: booking.iconKeys ?? [],
+    honorific: booking.honorific ?? null,
     status: booking.status,
     sourceCode: booking.sourceCode,
+    socialPlatform: booking.socialPlatform ?? null,
     note: booking.note,
     tableIds,
     holdId: null,
@@ -46,6 +53,7 @@ export function mapReservation(booking: HttpBooking, catalog: Catalog): Reservat
     createdAt: null,
     createdByName: "Chưa có dữ liệu người tạo",
     lateConfirmedAt: booking.lateConfirmedAt ?? null,
+    canCall: booking.canCall,
   }
 }
 
@@ -120,9 +128,9 @@ export function deriveAvailability(
     } else if (live.staleFromPreviousDay) {
       status = "reserved"
       reason = "Bàn chưa nhả từ hôm trước. Cần nhả bàn thủ công."
-    } else if (["reserved", "late", "noshow", "hold", "hold_overdue"].includes(live.state)) {
+    } else if (["reserved", "upcoming", "late", "late_confirmed", "noshow", "hold", "hold_overdue"].includes(live.state)) {
       status = "reserved"
-      reason = "Máy chủ đang giữ bàn."
+      reason = "Bàn đã có khách đặt trong ngày này."
     } else if (table.isSpare || live.state === "spare") {
       status = "spare"
       reason = "Bàn sơ cua."

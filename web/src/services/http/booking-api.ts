@@ -1,6 +1,8 @@
 import { ApiError } from "../contracts"
 import type { BusinessDate } from "@/lib/time"
+import type { ReceptionSearchResult } from "@/domain/models"
 import type { HttpClient } from "./http-client"
+import type { CapacityConfirmation } from "./visit-api"
 import {
   assignmentPayload,
   cancelBookingPayload,
@@ -10,6 +12,7 @@ import {
   mapBooking,
   type BackendBookingPayload,
   type BookingWriteFields,
+  type BookingWriteOptions,
   type HttpBooking,
 } from "./booking-adapter"
 
@@ -18,9 +21,15 @@ const dateReviver = (key: string, value: unknown) =>
 
 export class HttpBookingApi {
   private readonly client: HttpClient
+  private readonly capabilities: BookingWriteOptions
 
-  constructor(client: HttpClient) {
+  constructor(client: HttpClient, capabilities: BookingWriteOptions = {}) {
     this.client = client
+    this.capabilities = {
+      iconKeysSupported: capabilities.iconKeysSupported ?? false,
+      honorificSupported: capabilities.honorificSupported ?? false,
+      socialPlatformSupported: capabilities.socialPlatformSupported ?? false,
+    }
   }
 
   async list(businessDate: BusinessDate, search = ""): Promise<HttpBooking[]> {
@@ -37,6 +46,20 @@ export class HttpBookingApi {
     return response.bookings.map(mapBooking)
   }
 
+  async searchReception(
+    businessDate: BusinessDate,
+    query: { last3?: string; name?: string },
+  ): Promise<ReceptionSearchResult> {
+    const params = new URLSearchParams({ date: businessDate })
+    if (query.last3) params.set("last3", query.last3)
+    if (query.name) params.set("name", query.name)
+    const response = await this.client.get<ReceptionSearchResult>(`/bookings/search?${params}`)
+    if (response.businessDate !== businessDate) {
+      throw new ApiError(502, "BUSINESS_DATE_RESPONSE_MISMATCH", "Unexpected business date in search response.")
+    }
+    return response
+  }
+
   exportDailyText(businessDate: BusinessDate): Promise<string> {
     return this.client.get<string>(`/bookings/export?date=${encodeURIComponent(businessDate)}`)
   }
@@ -51,16 +74,21 @@ export class HttpBookingApi {
   async create(fields: BookingWriteFields, idempotencyKey?: string): Promise<HttpBooking> {
     const response = await this.client.post<{ booking: BackendBookingPayload }>(
       "/bookings",
-      createBookingPayload(fields),
+      createBookingPayload(fields, this.capabilities),
       { reviver: dateReviver, idempotencyKey },
     )
     return mapBooking(response.booking)
   }
 
-  async createAndAssign(fields: BookingWriteFields, tableIds: number[], idempotencyKey?: string): Promise<HttpBooking> {
+  async createAndAssign(
+    fields: BookingWriteFields,
+    tableIds: number[],
+    idempotencyKey?: string,
+    confirmations: CapacityConfirmation = {},
+  ): Promise<HttpBooking> {
     const response = await this.client.post<{ booking: BackendBookingPayload }>(
       "/bookings/direct",
-      directBookingCreatePayload(fields, tableIds),
+      { ...directBookingCreatePayload(fields, tableIds, this.capabilities), ...confirmations },
       { reviver: dateReviver, idempotencyKey },
     )
     return mapBooking(response.booking)
@@ -69,7 +97,7 @@ export class HttpBookingApi {
   async update(current: HttpBooking, fields: Partial<BookingWriteFields>): Promise<HttpBooking> {
     const response = await this.client.put<{ booking: BackendBookingPayload }>(
       `/bookings/${current.id}`,
-      fullUpdateBookingPayload(current, fields),
+      fullUpdateBookingPayload(current, fields, this.capabilities),
       { reviver: dateReviver },
     )
     return mapBooking(response.booking)
@@ -93,7 +121,10 @@ export class HttpBookingApi {
     return mapBooking(response.booking)
   }
 
-  async confirmLate(id: number, version: number): Promise<{
+  async confirmLate(
+    id: number,
+    version: number,
+  ): Promise<{
     bookingId: number
     lateConfirmed: true
     lateConfirmedAt: Date
@@ -106,27 +137,53 @@ export class HttpBookingApi {
       lateConfirmedAt: Date
       version: number
       changeSeq: string
-    }>(
-      `/bookings/${id}/late-confirm`,
-      { version },
+    }>(`/bookings/${id}/late-confirm`, { version }, { reviver: dateReviver })
+  }
+
+  async startCall(id: number): Promise<{ callId: number; bookingId: number; initiatedAt: Date; telUri: string }> {
+    return this.client.post(`/bookings/${id}/call`, {}, { reviver: dateReviver })
+  }
+
+  async recordCallOutcome(
+    bookingId: number,
+    callId: number,
+    outcome: "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED",
+    bookingVersion?: number,
+  ): Promise<void> {
+    await this.client.post(
+      `/bookings/${bookingId}/calls/${callId}/outcome`,
+      {
+        outcome,
+        ...(bookingVersion === undefined ? {} : { bookingVersion }),
+      },
       { reviver: dateReviver },
     )
   }
 
-  async assignVersion(id: number, version: number, tableIds: number[]): Promise<HttpBooking> {
+  async assignVersion(
+    id: number,
+    version: number,
+    tableIds: number[],
+    confirmations: CapacityConfirmation = {},
+  ): Promise<HttpBooking> {
     const response = await this.client.post<{ booking: BackendBookingPayload }>(
       `/bookings/${id}/assign`,
-      assignmentPayload(version, tableIds),
+      { ...assignmentPayload(version, tableIds), ...confirmations },
       { reviver: dateReviver },
     )
     return mapBooking(response.booking)
   }
 
-  async merge(id: number, version: number, tableIds: number[]): Promise<{ booking: HttpBooking; groupId: number }> {
+  async merge(
+    id: number,
+    version: number,
+    tableIds: number[],
+    confirmations: CapacityConfirmation = {},
+  ): Promise<{ booking: HttpBooking; groupId: number }> {
     const response = await this.client.post<{
       booking: BackendBookingPayload
       group: { id: number; symbolNo: number; tableIds: number[] }
-    }>(`/bookings/${id}/merge`, { version, tableIds }, { reviver: dateReviver })
+    }>(`/bookings/${id}/merge`, { version, tableIds, ...confirmations }, { reviver: dateReviver })
     return { booking: mapBooking(response.booking), groupId: response.group.id }
   }
 

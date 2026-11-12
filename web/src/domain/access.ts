@@ -18,6 +18,7 @@ export type Permission =
   | "visit.move"
   | "visit.combine"
   | "visit.split"
+  | "table.group.manage"
   | "visit.end"
   | "visit.mark_paid"
   | "waitlist.create"
@@ -29,6 +30,7 @@ export type Permission =
   | "hold.release"
   | "customer.view_masked"
   | "customer.phone.reveal"
+  | "booking.phone.call"
   | "booking.phone.reveal"
   | "customer.anonymize"
   | "audit.read"
@@ -54,6 +56,9 @@ export const PERMISSION_MATRIX: Record<Permission, RoleCode[]> = {
   "visit.move": [OA, R],
   "visit.combine": [OA, R],
   "visit.split": [OA, R],
+  // C1: a layout cluster is managed without touching a guest, so it has its own
+  // permission; the server grants it to Lễ tân and the management roles.
+  "table.group.manage": [OA, R],
   "visit.end": [OA, R, C],
   "visit.mark_paid": [OA, C],
   "waitlist.create": [OA, R, CC],
@@ -65,6 +70,7 @@ export const PERMISSION_MATRIX: Record<Permission, RoleCode[]> = {
   "hold.release": [OA, R],
   "customer.view_masked": [OA, R, CC, C],
   "customer.phone.reveal": [OA],
+  "booking.phone.call": [OA, R],
   "booking.phone.reveal": [OA],
   "customer.anonymize": [OA],
   "audit.read": [OA],
@@ -78,7 +84,7 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "reservation.create": "Tạo booking",
   "reservation.update": "Sửa booking",
   "reservation.cancel": "Hủy booking",
-  "reservation.mark_no_show": "Xác nhận không đến",
+  "reservation.mark_no_show": "Xác nhận không tới",
   "table.assign": "Phân bàn",
   "table.assign_override": "Phân bàn vượt quy tắc (sơ cua, quá sức chứa)",
   "visit.checkin": "Check-in",
@@ -86,6 +92,7 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "visit.move": "Đổi bàn",
   "visit.combine": "Ghép bàn",
   "visit.split": "Tách bàn",
+  "table.group.manage": "Ghép / tách cụm bàn",
   "visit.end": "Nhả bàn khi khách rời",
   "visit.mark_paid": "Đánh dấu đã thanh toán",
   "waitlist.create": "Thêm vào danh sách chờ",
@@ -97,7 +104,8 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "hold.release": "Nhả giữ bàn",
   "customer.view_masked": "Xem khách (SĐT che)",
   "customer.phone.reveal": "Xem SĐT đầy đủ",
-  "booking.phone.reveal": "Mở SĐT của booking để gọi khách",
+  "booking.phone.call": "Gọi khách qua trình gọi điện",
+  "booking.phone.reveal": "Xem SĐT đầy đủ của booking",
   "customer.anonymize": "Ẩn danh khách",
   "audit.read": "Xem nhật ký",
   "report.read": "Xem báo cáo",
@@ -130,6 +138,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
       "visit.move",
       "visit.combine",
       "visit.split",
+      "table.group.manage",
       "visit.end",
       "visit.mark_paid",
     ],
@@ -151,6 +160,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
     items: [
       "customer.view_masked",
       "customer.phone.reveal",
+      "booking.phone.call",
       "booking.phone.reveal",
       "customer.anonymize",
       "audit.read",

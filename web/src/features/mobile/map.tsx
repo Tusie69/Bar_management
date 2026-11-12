@@ -1,18 +1,27 @@
-import { X } from "lucide-react"
+import { Menu, X } from "lucide-react"
 import { useMemo } from "react"
-import type { TableLiveState } from "@/domain/models"
+import type { TableLiveState, TableView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAvailability } from "@/hooks/use-data"
-import { fmtBusinessDate, fmtTime12 } from "@/lib/time"
+import { fmtBusinessDate, fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { api } from "@/services"
 import { useUi } from "@/state/ui"
+import { useReceptionSearch } from "@/hooks/use-reception-search"
 import { FloorCanvas } from "../floor/floor-canvas"
-import { groupCode } from "../floor/floor-visual-rules"
+import { SpareButton } from "../floor/spare-button"
+import { LayoutActions, LayoutMergeControls } from "../floor/layout-merge-controls"
+import { independentLayoutEnabled, layoutMembers, toggleLayoutTable } from "../floor/layout-merge"
+import { StatusLegend } from "../floor/status-legend"
+import { CallCustomerControl } from "../bookings/call-customer"
+import { groupCode, groupDisplayName } from "../floor/floor-visual-rules"
+import { ReceptionControls } from "../floor/reception-controls"
+import { QuickForm } from "../floor/quick-form"
+import { isWaitingForTable } from "../floor/reception-rules"
+import { useBookingDraft } from "../floor/use-booking-draft"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
 import { codesOf, duration, type Tone, toneStyle } from "./model"
-import { PlainHeader } from "./ui"
+import { BellButton, PlainHeader, UndoRedoButtons } from "./ui"
 
 const ZONE_TABS: [ZoneCode | "ALL", string][] = [
   ["ALL", "Tất cả"],
@@ -42,20 +51,25 @@ export function MapScreen({
   pickBusy: boolean
 }) {
   const m = useM()
-  const zone = useUi((s) => s.zone)
+  const receptionist = m.role === "RECEPTIONIST"
+  const search = useReceptionSearch(m.businessDate, receptionist)
+  const zone = useUi((s) => (receptionist ? "ALL" : s.zone))
   const setZone = useUi((s) => s.setZone)
+  const d = useBookingDraft(m.model)
+  const draft = d.draft
+  const layoutPick = useUi((s) => s.pick?.intent === "layout")
+  const layoutIds = useUi((s) => s.pickSelection)
+  const waitingCount = (m.waitlist ?? []).filter(isWaitingForTable).length
 
   const isAssignPick = !!pick?.targetExpectedAt
   const pickAvail = useAvailability(isAssignPick ? pick.targetExpectedAt! : null, pick?.targetParty ?? 2)
-  const pickAvailMap = useMemo(
-    () => new Map((pickAvail.data?.tables ?? []).map((t) => [t.tableId, t])),
-    [pickAvail.data],
-  )
+  const pickSnapshot = pickAvail.isPlaceholderData || pickAvail.isError ? undefined : pickAvail.data
+  const pickAvailMap = useMemo(() => new Map((pickSnapshot?.tables ?? []).map((t) => [t.tableId, t])), [pickSnapshot])
 
   const pickable = useMemo(() => {
     if (!pick) return null
     if (isAssignPick) {
-      const availTables = pickAvail.data?.tables ?? []
+      const availTables = pickSnapshot?.tables ?? []
       const ids = new Set<number>()
       for (const t of availTables) {
         if (t.status === "available" || t.status === "too_small") {
@@ -69,63 +83,49 @@ export function MapScreen({
     const ids = new Set(pick.only ?? [...m.model.freeIds, ...(pick.preselected ?? [])])
     for (const id of pick.exclude ?? []) ids.delete(id)
     return ids
-  }, [pick, isAssignPick, pickAvail.data, m.model.freeIds])
+  }, [pick, isAssignPick, pickSnapshot, m.model.freeIds])
 
   return (
-    <>
-      <PlainHeader
-        title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"}
-      />
-      <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
-        {m.model.catalog ? (
-          <FloorCanvas
-            className="absolute inset-0"
-            tables={m.model.tables}
-            zones={m.model.catalog.zones}
-            mode={isAssignPick ? "availability" : "live"}
-            states={m.model.states}
-            availability={isAssignPick ? pickAvailMap : undefined}
-            groups={isAssignPick ? [] : m.model.floor?.groups}
-            selectedIds={pick ? pickSel : selected ? [selected] : []}
-            pickable={pickable}
-            zoneFocus={zone}
-            now={m.now}
-            onTableClick={(id) => (pick ? onPickToggle(id) : onSelect(id))}
-            onBackgroundClick={() => (pick ? undefined : onSelect(null))}
-            ariaLabel={
-              isAssignPick
-                ? `Sơ đồ khả dụng lúc ${pick.targetTime} ngày ${fmtBusinessDate(pick.targetDate!, "short")}`
-                : "Sơ đồ bàn. Kéo để di chuyển, chụm hai ngón để phóng to"
-            }
-          />
-        ) : null}
-
-        {pick ? (
-          <div className="absolute inset-x-3 top-2.5 z-[6] flex items-start gap-2 rounded-[14px] border border-primary bg-surface-1 py-2.5 pr-1.5 pl-3.5 shadow-[var(--shadow-soft)]">
-            <span className="flex min-w-0 flex-1 flex-col">
-              <span className="text-[14px] font-semibold text-tx-strong">{pick.title}</span>
-              <span className="text-[13px] text-pretty text-[var(--text-muted)]">{pick.hint}</span>
-              {pick.targetDate ? (
-                <span className="mt-0.5 text-[12px] font-medium text-primary">
-                  Lịch đặt: {pick.targetTime} · {fmtBusinessDate(pick.targetDate, "short")} ({pick.targetParty} khách)
-                </span>
-              ) : null}
-            </span>
+    <main className="contents">
+      {receptionist ? (
+        <header className="z-[5] shrink-0 bg-background px-4 pt-[var(--top-safe)]">
+          <div className="flex h-[48px] items-center gap-3">
             <button
               type="button"
-              onClick={onPickCancel}
-              aria-label="Hủy chọn bàn"
-              className="grid size-11 shrink-0 place-items-center rounded-full text-[var(--text-muted)]"
+              onClick={m.openAccount}
+              aria-label="Menu"
+              className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-surface-1 text-tx-strong shadow-[var(--shadow-xs)]"
             >
-              <X className="size-5" />
+              <Menu className="size-5" />
             </button>
+            <h1 className="m-0 min-w-0 flex-1 truncate text-[22px] font-semibold text-tx-strong">Sơ đồ bàn</h1>
+            <UndoRedoButtons />
+            <BellButton />
           </div>
-        ) : (
-          <div className="absolute inset-x-3 top-2.5 z-[6] flex justify-center">
+          {!pick && !draft ? (
+            <div className="pb-1.5">
+              <ReceptionControls
+                search={search}
+                onCount={m.openCount}
+                onOpenBooking={m.openDetail}
+                onDateChange={() => onSelect(null)}
+              />
+            </div>
+          ) : null}
+        </header>
+      ) : (
+        <PlainHeader
+          title={pick?.targetDate ? `Sơ đồ bàn · ${fmtBusinessDate(pick.targetDate, "short")}` : "Sơ đồ bàn"}
+        />
+      )}
+      {!pick && !(receptionist && draft) ? (
+        <div className="z-[4] flex shrink-0 flex-col gap-1.5 bg-background px-4 pt-0 pb-1.5">
+          {/* The receptionist always works on the whole floor; zone tabs stay for other roles. */}
+          {receptionist ? null : (
             <div
               role="tablist"
               aria-label="Lọc khu"
-              className="flex max-w-full gap-0.5 overflow-x-auto rounded-[14px] border border-border bg-surface-1 p-[3px] shadow-[var(--shadow-xs)]"
+              className="flex w-full max-w-full gap-0.5 overflow-x-auto rounded-[14px] border border-border bg-surface-1 p-[3px] shadow-[var(--shadow-xs)]"
             >
               {ZONE_TABS.map(([k, label]) => {
                 const on = zone === k
@@ -137,7 +137,7 @@ export function MapScreen({
                     aria-selected={on}
                     onClick={() => setZone(k)}
                     className={cn(
-                      "flex h-[38px] shrink-0 items-center rounded-[11px] px-[13px] text-[13px] whitespace-nowrap",
+                      "flex h-[38px] min-w-0 flex-1 shrink-0 items-center justify-center rounded-[11px] px-1 text-[13px] whitespace-nowrap",
                       on ? "bg-tx-strong font-semibold text-background" : "font-medium text-tx-2",
                     )}
                   >
@@ -146,33 +146,121 @@ export function MapScreen({
                 )
               })}
             </div>
-          </div>
-        )}
+          )}
+          {draft ? null : <StatusLegend tables={m.model.tables} states={m.model.states} />}
+        </div>
+      ) : null}
+      {!pick ? (
+        <div className="shrink-0 px-3 pb-1">
+          <LayoutMergeControls model={m.model} />
+        </div>
+      ) : null}
+      {pick ? (
+        <div className="z-[6] mx-3 mt-1 mb-2 flex shrink-0 items-start gap-2 rounded-[14px] border border-primary bg-surface-1 py-2.5 pr-1.5 pl-3.5 shadow-[var(--shadow-soft)]">
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="text-[14px] font-semibold text-tx-strong">{pick.title}</span>
+            <span className="text-[13px] text-pretty text-[var(--text-muted)]">{pick.hint}</span>
+            {pick.targetDate ? (
+              <span className="mt-0.5 text-[12px] font-medium text-primary">
+                Lịch đặt: {pick.targetTime} · {fmtBusinessDate(pick.targetDate, "short")} ({pick.targetParty} khách)
+              </span>
+            ) : null}
+          </span>
+          <button
+            type="button"
+            onClick={onPickCancel}
+            aria-label="Hủy chọn bàn"
+            className="grid size-11 shrink-0 place-items-center rounded-full text-[var(--text-muted)]"
+          >
+            <X className="size-5" />
+          </button>
+        </div>
+      ) : null}
 
-        {pick ? (
-          <div className="absolute inset-x-0 bottom-0 z-[12] flex flex-col gap-2.5 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-4 shadow-[var(--shadow-float)]">
-            <span className="text-[13px] text-[var(--text-muted)]">
-              {pickSel.length ? (
-                <>
-                  Đã chọn {codesOf(pickSel, m.model)} ·{" "}
-                  {pickSel.reduce((sum, id) => sum + (m.model.byId.get(id)?.capacity ?? 0), 0)} chỗ
-                </>
-              ) : (
-                "Chưa chọn bàn"
-              )}
-            </span>
-            <button
-              type="button"
-              disabled={!pickSel.length || pickBusy}
-              onClick={onPickConfirm}
-              className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground disabled:opacity-50"
-            >
-              {pickBusy ? "Đang gửi..." : pick.confirmLabel}
-            </button>
-          </div>
+      <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
+        {m.model.catalog ? (
+          <FloorCanvas
+            className="absolute inset-0"
+            tables={m.model.tables}
+            zones={m.model.catalog.zones}
+            mode={isAssignPick || d.bookingDraft ? "availability" : "live"}
+            states={m.model.states}
+            availability={d.bookingDraft ? d.availabilityMap : isAssignPick ? pickAvailMap : undefined}
+            groups={independentLayoutEnabled || (!isAssignPick && !d.bookingDraft) ? m.model.floor?.groups : []}
+            selectedIds={draft ? draft.tableIds : layoutPick ? layoutIds : pick ? pickSel : selected ? [selected] : []}
+            searchHighlightedIds={!pick && !draft ? search.tableIds : []}
+            pickable={layoutPick ? null : d.bookingDraft ? d.pickable : draft ? null : pickable}
+            zoneFocus={receptionist ? "ALL" : zone}
+            now={m.now}
+            waitingCount={draft || pick ? undefined : waitingCount}
+            onOpenWaitlist={draft || pick ? undefined : () => m.go("wait")}
+            onTableClick={(id) =>
+              layoutPick
+                ? toggleLayoutTable(m.model, id)
+                : draft
+                  ? d.onTableClick(id)
+                  : pick
+                    ? onPickToggle(id)
+                    : onSelect(id)
+            }
+            onBlockedTableClick={draft ? d.onTableClick : undefined}
+            onBackgroundClick={() => (pick || draft || layoutPick ? undefined : onSelect(null))}
+            ariaLabel={
+              d.bookingDraft
+                ? `Sơ đồ khả dụng lúc ${d.bookingDraft.time} để chọn bàn`
+                : isAssignPick
+                  ? `Sơ đồ khả dụng lúc ${pick.targetTime} ngày ${fmtBusinessDate(pick.targetDate!, "short")}`
+                  : "Sơ đồ bàn. Kéo để di chuyển, chụm hai ngón để phóng to"
+            }
+          />
         ) : null}
       </div>
-    </>
+      {pick ? (
+        <div className="z-[12] flex shrink-0 flex-col gap-2.5 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-4 shadow-[var(--shadow-float)]">
+          {pick.question && pickSel.length ? (
+            <span className="text-[15px] font-medium text-tx-strong">{pick.question(codesOf(pickSel, m.model))}</span>
+          ) : null}
+          <span className="text-[13px] text-[var(--text-muted)]">
+            {pickSel.length ? (
+              <>
+                Đã chọn {codesOf(pickSel, m.model)} ·{" "}
+                {pickSel.reduce((sum, id) => sum + (m.model.byId.get(id)?.capacity ?? 0), 0)} chỗ
+              </>
+            ) : (
+              "Chưa chọn bàn"
+            )}
+          </span>
+          <button
+            type="button"
+            disabled={!pickSel.length || pickBusy}
+            onClick={onPickConfirm}
+            className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground disabled:opacity-50"
+          >
+            {pickBusy ? "Đang gửi..." : pick.confirmLabel}
+          </button>
+        </div>
+      ) : null}
+      {draft ? (
+        <section
+          role="dialog"
+          aria-label="Đặt bàn trên sơ đồ"
+          className="z-[12] flex max-h-[calc(100dvh-210px)] shrink-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)]"
+        >
+          <div className="flex shrink-0 justify-center pt-2" aria-hidden>
+            <span className="h-[5px] w-9 rounded-full bg-strong" />
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <QuickForm
+              compact
+              model={m.model}
+              availability={d.status === "ready" ? d.availability.data : undefined}
+              availabilityStatus={d.status}
+              onRetryAvailability={() => void d.availability.refetch()}
+            />
+          </div>
+        </section>
+      ) : null}
+    </main>
   )
 }
 
@@ -180,11 +268,11 @@ const STATE_TEXT = (st: TableLiveState, late: number, noshow: number): [string, 
   ({
     free: ["Trống", null],
     reserved: ["Đã đặt", "reserved"],
-    upcoming: ["Sắp đến", "reserved"],
-    late: [`Trễ ${late} phút`, "late"],
-    late_confirmed: [`Đã báo muộn · ${late} phút`, "late"],
-    noshow: [`Trễ ${noshow} phút`, "noshow"],
-    seated: ["Có khách", "seated"],
+    upcoming: ["Sắp tới", "upcoming"],
+    late: [`Tới muộn · ${late} phút`, "noshow"],
+    late_confirmed: [`Tới muộn · đã báo muộn · ${late} phút`, "noshow"],
+    noshow: [`Tới muộn · ${noshow} phút`, "noshow"],
+    seated: ["Đã tới", "seated"],
     hold: ["Đang giữ", "reserved"],
     hold_overdue: ["Quá hạn giữ", "late"],
     oos: ["Ngưng phục vụ", null],
@@ -193,75 +281,140 @@ const STATE_TEXT = (st: TableLiveState, late: number, noshow: number): [string, 
 
 interface Action {
   label: string
-  go: () => void
+  go?: () => void
   primary?: boolean
   danger?: boolean
   wide?: boolean
+  disabled?: boolean
+  title?: string
 }
 
 /** Bottom sheet over the lower half; the map stays visible and other tables stay tappable. */
 export function TableSheet({ id, onClose }: { id: number; onClose: () => void }) {
   const m = useM()
   const a = useMobileActions()
+  const pending = a.pending
   const t = m.model.byId.get(id)
   if (!t) return null
   const fs = m.model.states.get(id)
   const st = fs?.state ?? "free"
   const c = fs?.claim ?? null
-  const zone = m.model.catalog?.zones.find((z) => z.id === t.zoneId)
+  const members = layoutMembers(m.model, id)
+  const isGroup = members.length > 1
+  const memberTables = members.map((mid) => m.model.byId.get(mid)).filter((x): x is TableView => !!x)
+  const group = m.model.floor?.groups.find((g) => g.tableIds.includes(id))
+  const groupName = isGroup ? groupDisplayName(memberTables, group) : ""
   const isBar = t.kind === "BAR_SEAT"
+  const groupTitle = isGroup ? `Bàn ${groupName}` : isBar ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`
+  const totalCapacity = memberTables.reduce((sum, x) => sum + x.capacity, 0)
+  const zone = m.model.catalog?.zones.find((z) => z.id === t.zoneId)
   const [chip, tone] = STATE_TEXT(st, m.th.late, m.th.noshow)
   const r = c?.reservationId ? m.reservations?.find((x) => x.id === c.reservationId) : undefined
+  const linkedEntry = c?.waitlistEntryId
+    ? m.waitlist?.find((x) => x.id === c.waitlistEntryId)
+    : r
+      ? m.waitlist?.find((x) => x.reservationId === r.id && x.status === "HOLD_ACTIVE")
+      : undefined
 
   let who = ""
   let when = ""
   let info = ""
   let actions: Action[] = []
-  if (c?.kind === "reservation") {
+  if (c?.kind === "visit") {
     who = `${c.displayName}, ${c.partySize} khách`
-    when = `Booking ${fmtTime12(c.startsAt)}${st === "late" || st === "late_confirmed" || st === "noshow" ? `, trễ ${c.minutesLate} phút` : st === "upcoming" ? ", sắp đến" : ", đã đặt"}`
+    when = `Đang ngồi từ ${fmtTime(c.startsAt)}, ${duration(m.now.getTime() - c.startsAt.getTime())}`
+    actions = [
+      { label: "Đổi bàn", go: () => a.moveVisit(c, id) },
+      ...(c.reservationId ? [{ label: "Xem booking", go: () => m.openDetail(c.reservationId!, m.today) }] : []),
+      { label: "Nhả bàn", danger: true, wide: !c.reservationId, go: () => a.endVisit(c) },
+    ]
+  } else if (c?.kind === "waitlist_hold" || (c?.kind === "reservation" && linkedEntry)) {
+    const entry = linkedEntry ?? (c?.waitlistEntryId ? m.waitlist?.find((x) => x.id === c.waitlistEntryId) : undefined)
+    who = `${c.displayName}, ${c.partySize} khách`
+    when = c.deadlineAt ? `Giữ từ danh sách chờ đến ${fmtTime(c.deadlineAt)}` : "Đang giữ bàn từ danh sách chờ"
+
+    const hold = a.heldPolicy(entry, r)
+    actions = [
+      {
+        label: "Khách đã đến",
+        primary: true,
+        wide: true,
+        disabled: !hold.canArrival,
+        title: !hold.supported ? "Chưa hỗ trợ" : undefined,
+        go: () =>
+          a.arrival({ entry, reservation: r, partySize: c.partySize, tableCodes: codesOf(c.tableIds, m.model) }),
+      },
+      {
+        label: "Quản lý đơn",
+        go: () =>
+          r ? m.openDetail(r.id, r.businessDate) : m.openEntryDetail(entry?.id ?? c.waitlistEntryId!, m.businessDate),
+      },
+      {
+        label: "Đổi / Ghép bàn",
+        disabled: !hold.canReassign,
+        title: !hold.supported ? "Chưa hỗ trợ" : undefined,
+        go: () => a.reassignHold(entry, r),
+      },
+      {
+        label: "Đổi trạng thái",
+        disabled: r
+          ? !hold.canBookingStatus ||
+            (!m.can("reservation.cancel") && !m.can("reservation.mark_no_show") && !m.can("reservation.update"))
+          : !m.can("waitlist.cancel"),
+        go: () => (r ? m.openStatus(r) : entry && a.cancelEntry(entry)),
+      },
+      ...(r
+        ? [
+            {
+              label: "Hủy booking",
+              danger: true,
+              disabled: !m.can("reservation.cancel") || !hold.canBookingStatus,
+              go: () => a.cancel(r),
+            },
+            { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
+          ]
+        : []),
+      {
+        label: "Xem đơn chờ",
+        wide: true,
+        disabled: !entry,
+        go: () => entry && m.openEntryDetail(entry.id, entry.businessDate),
+      },
+    ]
+  } else if (c?.kind === "reservation") {
+    who = `${c.displayName}, ${c.partySize} khách`
+    when = `Booking ${fmtTime(c.startsAt)}${st === "late" || st === "late_confirmed" || st === "noshow" ? `, trễ ${c.minutesLate} phút` : st === "upcoming" ? ", sắp đến" : ", đã đặt"}`
     actions = r
       ? [
           { label: "Khách đã đến", primary: true, go: () => void a.checkIn(r) },
-          ...(!r.lateConfirmedAt && r.businessDate === m.today && m.now.getTime() >= r.expectedAt.getTime() && r.minutesLate < m.th.noshow
+          ...(!r.lateConfirmedAt &&
+          r.businessDate === m.today &&
+          m.now.getTime() >= r.expectedAt.getTime() &&
+          r.minutesLate < m.th.noshow
             ? [{ label: "Tới muộn", go: () => a.confirmLate(r) }]
             : []),
           { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
           { label: "Đổi bàn", go: () => a.assign(r) },
+          { label: "Hủy booking", danger: true, disabled: !m.can("reservation.cancel"), go: () => a.cancel(r) },
           { label: "Đổi trạng thái", go: () => m.openStatus(r) },
         ]
       : []
-  } else if (c?.kind === "visit") {
-    who = `${c.displayName}, ${c.partySize} khách`
-    when = `Đang ngồi từ ${fmtTime12(c.startsAt)}, ${duration(m.now.getTime() - c.startsAt.getTime())}`
-    actions = [
-      { label: "Đổi bàn", go: () => a.moveVisit(c, id) },
-      c.tableIds.length > 1 && c.groupId && api.mode !== "http"
-        ? { label: "Tách bàn", go: () => a.split(c, id) }
-        : { label: "Ghép bàn", go: () => a.combine(c) },
-      ...(c.reservationId ? [{ label: "Xem booking", go: () => m.openDetail(c.reservationId!, m.today) }] : []),
-      { label: "Nhả bàn", danger: true, wide: !c.reservationId, go: () => a.endVisit(c) },
-    ]
-  } else if (c?.kind === "waitlist_hold") {
-    who = `${c.displayName}, ${c.partySize} khách`
-    when = c.deadlineAt ? `Giữ từ danh sách chờ đến ${fmtTime12(c.deadlineAt)}` : "Đang giữ bàn từ danh sách chờ"
-    actions = [{ label: "Mở đơn chờ", primary: true, wide: true, go: () => m.go("wait") }]
   } else if (st === "spare") {
     info = m.isOwner
       ? "Bàn sơ cua chỉ mở khi quản lý chấp nhận vượt quy tắc."
       : "Bàn sơ cua. Cần Chủ quán/Admin mở vượt quy tắc."
     actions = m.isOwner
-      ? [{ label: "Mở bàn vượt quy tắc", wide: true, go: () => m.openForm({ mode: "walkin", tableIds: [id] }) }]
+      ? [{ label: "Mở bàn vượt quy tắc", wide: true, go: () => m.openForm({ mode: "walkin", tableIds: members }) }]
       : []
   } else if (st === "oos") {
     info = "Bàn đang ngưng phục vụ."
   } else {
     info = zone?.isWaitingArea ? `${zone.name} là khu chờ, không nhận đặt trước.` : "Bàn đang trống lúc này."
     actions = [
-      { label: "Mở bàn Walk-in", primary: true, go: () => m.openForm({ mode: "walkin", tableIds: [id] }) },
+      { label: "Mở bàn Walk-in", primary: true, go: () => m.openForm({ mode: "walkin", tableIds: members }) },
       {
         label: "Tạo đặt trước",
-        go: () => m.openForm({ mode: "booking", tableIds: zone?.isBookable ? [id] : [] }),
+        go: () => m.openForm({ mode: "booking", tableIds: zone?.isBookable ? members : [] }),
       },
     ]
   }
@@ -269,16 +422,16 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
   return (
     <div
       role="dialog"
-      aria-label={`Chi tiết ${t.code}`}
+      aria-label={`Chi tiết ${isGroup ? groupTitle : t.code}`}
       className="absolute inset-x-0 bottom-[var(--nav-h)] z-[12] flex flex-col gap-3 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-2 pb-4 shadow-[var(--shadow-float)]"
     >
       <div className="mx-auto mb-0.5 h-[5px] w-9 rounded-[3px] bg-strong" />
       <div className="flex items-center gap-2.5">
         <span className="text-2xl font-semibold tracking-[-0.01em] text-tx-strong">
-          {isBar ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`}
+          {groupTitle}
         </span>
         <span className="rounded-full px-2.5 text-xs leading-6 font-medium" style={toneStyle(tone)}>
-          {chip}
+          {isGroup ? `${chip} - ghép ${members.length} bàn` : chip}
         </span>
         <span className="flex-1" />
         <button
@@ -290,8 +443,13 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
           <X className="size-5" />
         </button>
       </div>
+      {isGroup ? (
+        <span className="-mt-1 text-[13px] text-[var(--text-muted)]">
+          Trạng thái: <strong className="font-semibold text-tx-strong">{chip}</strong> · ghép {members.length} bàn
+        </span>
+      ) : null}
       <span className="-mt-2 text-[13px] text-[var(--text-muted)]">
-        {zone?.name}, {isBar ? "1 ghế" : `${t.capacity} chỗ`}
+        {zone?.name}, {isBar && !isGroup ? "1 ghế" : `${totalCapacity} chỗ`}
         {t.isSpare ? ", bàn sơ cua" : ""}
       </span>
       {who ? (
@@ -317,16 +475,34 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
         </div>
       ) : null}
       {info ? <span className="text-[13px] text-pretty text-[var(--text-muted)]">{info}</span> : null}
+      <LayoutActions model={m.model} tableId={id} />
+      {t ? (
+        <SpareButton
+          table={t}
+          state={st}
+          hasClaim={Boolean(c)}
+          inGroup={isGroup}
+        />
+      ) : null}
       {actions.length ? (
         <div className="grid grid-cols-2 gap-2">
+          {c?.kind === "reservation" && c.reservationId ? (
+            <CallCustomerControl
+              bookingId={c.reservationId}
+              bookingVersion={c.version}
+              canCall={c.canCall === true}
+              className="col-span-2"
+            />
+          ) : null}
           {actions.map((x) => (
             <button
               key={x.label}
               type="button"
               onClick={x.go}
-              disabled={a.pending}
+              disabled={x.disabled || a.pending || pending}
+              title={x.title}
               className={cn(
-                "h-12 rounded-xl border text-[15px] font-medium",
+                "h-12 rounded-xl border text-[15px] font-medium disabled:opacity-45",
                 x.wide && "col-span-2",
                 x.primary
                   ? "border-primary bg-primary text-primary-foreground"

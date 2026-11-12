@@ -8,6 +8,7 @@
  */
 import { create } from "zustand"
 import type { Permission } from "@/domain/access"
+import { PORTAL_CONFIG, portalLoginPath, type AuthPortal } from "@/domain/auth-portal"
 import type { RoleCode } from "@/domain/enums"
 import { roleCan } from "@/domain/access"
 import type { SessionUser } from "@/domain/models"
@@ -44,7 +45,7 @@ function applyTheme(theme: Theme) {
 const users = api.listDemoUsers()
 const stored = load()
 const initialUser = users.find((user) => user.id === stored.userId) ?? users[0]
-const initialTheme: Theme = stored.theme ?? "dark"
+const initialTheme: Theme = stored.theme ?? "light"
 if (api.mode === "mock" && initialUser) api.setSession(initialUser)
 applyTheme(initialTheme)
 
@@ -55,13 +56,14 @@ interface SessionState {
   // HTTP identity and server-authoritative permissions.
   principal: AuthenticatedUser | null
   permissions: string[]
+  portal: AuthPortal | null
   authStatus: AuthStatus
   authError: string | null
   theme: Theme
   setUser: (id: number) => void
   setTheme: (theme: Theme) => void
   bootstrap: () => Promise<void>
-  login: (username: string, password: string) => Promise<void>
+  login: (username: string, password: string, portal: AuthPortal) => Promise<void>
   logout: () => Promise<void>
   expire: (message?: string) => void
 }
@@ -76,15 +78,15 @@ const fallbackMockUser: SessionUser = initialUser ?? {
 let bootstrapPromise: Promise<void> | null = null
 
 function applyServerSession(session: AuthSession) {
-  // Presentation role: highest privilege first, independent of server array order.
-  // HTTP authorization continues to use server permissions, not this role.
-  const priority: RoleCode[] = ["OWNER_ADMIN", "CUSTOMER_CARE", "CASHIER", "RECEPTIONIST"]
-  const role = priority.find((candidate) => session.user.roles.includes(candidate))
-  if (!role) throw new ApiError(502, "INVALID_RESPONSE", "Server session has no supported role.")
+  const role = PORTAL_CONFIG[session.portal].role as RoleCode
+  if (!session.user.roles.includes(role)) {
+    throw new ApiError(502, "INVALID_RESPONSE", "Vai trò phiên đăng nhập không khớp cổng đã xác nhận.")
+  }
   useSession.setState({
     user: { id: session.user.id, displayName: session.user.displayName, role, deviceLabel: "" },
     principal: session.user,
     permissions: [...session.permissions],
+    portal: session.portal,
     authStatus: "authenticated",
     authError: null,
   })
@@ -95,6 +97,7 @@ export const useSession = create<SessionState>((set, get) => ({
   users,
   principal: null,
   permissions: [],
+  portal: null,
   authStatus: api.mode === "mock" ? "authenticated" : "loading",
   authError: null,
   theme: initialTheme,
@@ -133,16 +136,20 @@ export const useSession = create<SessionState>((set, get) => ({
       })
     return bootstrapPromise
   },
-  login: async (username, password) => {
+  login: async (username, password, portal) => {
     if (!authApi) throw new ApiError(0, "AUTH_UNAVAILABLE", "HTTP authentication chưa được cấu hình.")
     set({ authError: null })
-    const session = await authApi.login(username, password)
+    const session = await authApi.login(username, password, portal)
     applyServerSession(session)
   },
   logout: async () => {
     if (!authApi) return
+    const portal = get().portal
     await authApi.logout()
-    set({ principal: null, permissions: [], authStatus: "anonymous", authError: null })
+    set({ principal: null, permissions: [], authStatus: "anonymous", authError: null, portal })
+    if (portal && typeof window !== "undefined" && window.location?.replace) {
+      window.location.replace(portalLoginPath(portal))
+    }
   },
   expire: (message = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.") => {
     authApi?.clear()

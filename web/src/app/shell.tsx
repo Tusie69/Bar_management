@@ -21,6 +21,7 @@ import { useEffect, useMemo, useState } from "react"
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router"
 import { toast } from "sonner"
 import { Kbd } from "@/components/common"
+import { useUndoRedo, useUndoRedoShortcuts } from "@/features/operations/use-undo-redo"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -115,7 +116,11 @@ function AppSidebar() {
         <nav aria-label="Điều hướng chính">
           <SidebarGroup className="p-3">
             <SidebarMenu className="gap-1">
-              {NAV.filter((n) => !n.permission || roleCan(user.role, n.permission)).map((item) => (
+              {NAV.filter(
+                (n) =>
+                  (user.role !== "RECEPTIONIST" || n.to === "/floor") &&
+                  (!n.permission || roleCan(user.role, n.permission)),
+              ).map((item) => (
                 <SidebarMenuItem key={item.to}>
                   <SidebarMenuButton
                     asChild
@@ -169,28 +174,29 @@ function TopBar() {
   const { toggleSidebar } = useSidebar()
   const navigate = useNavigate()
   const location = useLocation()
+  const receptionist = useSession((state) => state.user.role === "RECEPTIONIST")
   const pageTitle =
     NAV.find((n) => location.pathname.startsWith(n.to))?.label ??
     (location.pathname === "/overview" ? "Tổng quan" : "21GAM")
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background px-3 md:px-4">
+    <header className="flex h-14 shrink-0 items-center gap-2 sm:gap-3 border-b bg-background px-2.5 sm:px-3 md:px-4">
       <h1 className="sr-only">{pageTitle}</h1>
       <Button variant="ghost" size="icon" className="md:hidden" aria-label="Mở menu" onClick={toggleSidebar}>
         <Menu />
       </Button>
       <div className="mr-auto flex min-w-0 items-center gap-2">
         <AccountMenu />
-        <Button className="hidden h-9 px-3 sm:inline-flex" onClick={() => navigate("/reservations")}>
+        {!receptionist ? <Button className="hidden h-9 px-3 sm:inline-flex" onClick={() => navigate("/reservations")}>
           Theo dõi đơn đặt bàn
-        </Button>
+        </Button> : null}
       </div>
       <div className="flex items-center gap-1 md:gap-2">
-        <SyncPill />
+        {!receptionist ? <SyncPill /> : null}
         <ClockMenu />
-        {api.mode === "mock" ? <UndoRedo /> : null}
+        <UndoRedo />
         <ThemeToggle />
         <AlertsBell />
-        <Identity />
+        {!receptionist ? <Identity /> : null}
       </div>
     </header>
   )
@@ -233,7 +239,7 @@ function ClockMenu() {
       <PopoverTrigger asChild>
         <Button
           variant="ghost"
-          className="tnum gap-2 px-2 text-sm font-medium"
+          className="tnum h-11 min-h-[44px] gap-2 px-2 text-sm font-medium"
           aria-label={`Giờ ${clock.isSimulated ? "mô phỏng" : "thực"} ${fmtTime(now)}. Mở điều khiển thời gian`}
         >
           <Clock4 className="text-muted-foreground" />
@@ -346,8 +352,35 @@ function DemoTools({
 }
 
 function UndoRedo() {
-  if (api.mode === "http") return null
-  return <UndoRedoContent />
+  return api.mode === "http" ? <HttpUndoRedo /> : <UndoRedoContent />
+}
+
+function HttpUndoRedo() {
+  const controller = useUndoRedo()
+  const { undo, redo, pending, apply } = controller
+  useUndoRedoShortcuts(controller)
+
+  if (!controller.enabled) return null
+  return (
+    <div className="flex items-center">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label="Hoàn tác" disabled={!undo || pending} onClick={() => void apply("undo")}>
+            <Undo2 />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{undo ? <>Hoàn tác: {undo.summary} <Kbd>Ctrl Z</Kbd></> : "Chưa có thao tác để hoàn tác"}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label="Làm lại" disabled={!redo || pending} onClick={() => void apply("redo")}>
+            <Redo2 />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{redo ? <>Làm lại: {redo.summary}</> : "Chưa có thao tác để làm lại"}</TooltipContent>
+      </Tooltip>
+    </div>
+  )
 }
 
 function UndoRedoContent() {
@@ -436,7 +469,7 @@ function ThemeToggle() {
           size="icon"
           aria-label="Đổi giao diện sáng / tối"
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          className="hidden size-10 bg-transparent sm:inline-flex"
+          className="hidden size-11 min-h-[44px] min-w-[44px] bg-transparent sm:inline-flex"
         >
           {theme === "dark" ? <Moon /> : <Sun />}
         </Button>
@@ -448,13 +481,15 @@ function ThemeToggle() {
 
 /** v2 bell: same alert source as the "Cần xử lý" tab, reachable from every page. */
 export function AlertsBell({ className }: { className?: string }) {
-  const model = useFloorModel()
+  const ui = useUi()
+  const receptionist = useSession((state) => state.user.role === "RECEPTIONIST")
   const now = useNow(15_000)
-  const bd = model.floor?.businessDate ?? businessDateOf(now)
+  const selectedDate = receptionist && ui.floorMode !== "live" ? ui.availDate : businessDateOf(now)
+  const model = useFloorModel(receptionist ? selectedDate : undefined)
+  const bd = model.floor?.businessDate ?? selectedDate
   const reservations = useReservations(bd)
   const booked = useMemo(() => (reservations.data ?? []).filter((r) => r.status === "BOOKED"), [reservations.data])
   const alerts = useShiftAlerts(model, booked, now)
-  const ui = useUi()
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   return (
@@ -463,8 +498,8 @@ export function AlertsBell({ className }: { className?: string }) {
         <Button
           variant="outline"
           size="icon"
-          className={cn("relative size-10 bg-transparent", className)}
-          aria-label={`Cần xử lý: ${alerts.length}`}
+          className={cn("relative size-11 min-h-[44px] min-w-[44px] bg-transparent", className)}
+          aria-label={`${receptionist ? "Thông báo" : "Cần xử lý"}: ${alerts.length}`}
         >
           <Bell />
           {alerts.length ? (
@@ -476,7 +511,7 @@ export function AlertsBell({ className }: { className?: string }) {
       </PopoverTrigger>
       <PopoverContent align="end" className="w-96 max-w-[calc(100vw-16px)] p-0">
         <div className="flex items-center gap-2 py-2.5 pr-2 pl-4">
-          <span className="text-sm font-semibold">Cần xử lý</span>
+          <span className="text-sm font-semibold">{receptionist ? "Thông báo" : "Cần xử lý"}</span>
           <span className="tnum text-xs text-tx-3">{alerts.length}</span>
           <Button variant="ghost" size="icon-sm" className="ml-auto" aria-label="Đóng" onClick={() => setOpen(false)}>
             <X />
@@ -552,7 +587,7 @@ function AccountMenu() {
       <DropdownMenuTrigger asChild>
         <Button
           variant="outline"
-          className="h-9 max-w-[220px] gap-2 bg-surface-1 pr-2 pl-2.5 text-sm font-medium"
+          className="h-11 min-h-[44px] max-w-[220px] gap-2 bg-surface-1 pr-2 pl-2.5 text-sm font-medium"
           aria-label={`Tài khoản: ${displayName}`}
         >
           <UserRound className="text-muted-foreground" />

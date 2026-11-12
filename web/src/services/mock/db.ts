@@ -35,7 +35,14 @@ export interface MockUser {
 export type MockTable = DiningTableRow & { seating: SeatingStyle | "bar" }
 export type MockCombination = TableCombinationRow & { members: number[]; pendingConfirmation: boolean }
 export type MockCustomer = CustomerRow & { phoneE164: string | null; notes: string | null }
-export type MockGroup = TableGroupRow & { version: number }
+// Mock-only independent layout membership, pending C1. Never used by the HTTP adapter.
+export type MockGroup = TableGroupRow & { version: number; layoutTableIds?: number[]; name?: string }
+// Mock-only booking form metadata, pending backend support.
+export type MockReservation = ReservationRow & {
+  socialPlatform?: string | null
+  iconKeys?: string[]
+  honorific?: "MR" | "MS" | null
+}
 export type MockAllocation = TableAllocationRow & { version: number }
 export type MockAttempt = WaitlistContactAttemptRow & { version: number }
 export type MockPref = WaitlistTablePreferenceRow & { version: number }
@@ -61,7 +68,7 @@ export interface Collections {
   combinations: Map<number, MockCombination>
   sources: Map<number, BookingSourceRow>
   customers: Map<number, MockCustomer>
-  reservations: Map<number, ReservationRow>
+  reservations: Map<number, MockReservation>
   visits: Map<number, VisitRow>
   waitlist: Map<number, WaitlistEntryRow>
   prefs: Map<number, MockPref>

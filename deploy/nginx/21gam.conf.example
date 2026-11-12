@@ -1,0 +1,108 @@
+# Nginx cho 21GAM Bar Management — web tĩnh và API cùng một origin.
+#
+# Cài đặt:
+#   sudo cp deploy/nginx/21gam.conf.example /etc/nginx/sites-available/21gam.conf
+#   sudo sed -i 's/APP_DOMAIN/ten-mien-that/g' /etc/nginx/sites-available/21gam.conf
+#   sudo ln -s /etc/nginx/sites-available/21gam.conf /etc/nginx/sites-enabled/
+#   sudo nginx -t && sudo systemctl reload nginx
+#   sudo certbot --nginx -d ten-mien-that
+#
+# Thay APP_DOMAIN bằng tên miền thật ở mọi chỗ. Giữ web và API cùng origin để
+# cookie phiên chạy với SameSite=lax và không cần CORS cross-site.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name APP_DOMAIN;
+
+    # Certbot sẽ thêm block 443 và chuyển hướng tại đây.
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    # Tham so http2 cua listen chay tu nginx 1.9.5 den nay. Ubuntu 24.04 giao
+    # nginx 1.24, chua co directive "http2 on" cua 1.25+, nen dung dang nay.
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name APP_DOMAIN;
+
+    # Certbot quản lý các đường dẫn chứng chỉ bên dưới.
+    ssl_certificate     /etc/letsencrypt/live/APP_DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/APP_DOMAIN/privkey.pem;
+
+    root /srv/21gam/web/dist;
+    index index.html;
+
+    charset utf-8;
+    client_max_body_size 2m;   # API giới hạn JSON 1MB
+    server_tokens off;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    # SSE: luồng realtime của sàn. Phải đứng TRƯỚC location /api/ vì nginx ưu tiên
+    # prefix dài hơn, nhưng viết rõ ra đây để không ai vô tình gộp lại.
+    #
+    # Ba điểm sống còn, nếu thiếu thì sàn vẫn "chạy" nhưng trễ hoặc đứt:
+    #   - proxy_buffering off: nginx không giữ event lại trong buffer của nó.
+    #     API đã gửi X-Accel-Buffering: no, đây là lớp phòng thủ thứ hai.
+    #   - gzip off: nén làm nginx gom dữ liệu trước khi đẩy đi.
+    #   - proxy_read_timeout dài: heartbeat mặc định 20s (REALTIME_HEARTBEAT_MS),
+    #     nên 30s là quá sát. 1 giờ cho phép hạ heartbeat mà không đứt stream.
+    location = /api/v1/tables/stream {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header Origin            $http_origin;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection        "";
+        proxy_buffering off;
+        proxy_cache off;
+        gzip off;
+        chunked_transfer_encoding off;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+    }
+
+    # API: giữ nguyên tiền tố /api/v1 vì Express mount đúng đường dẫn này.
+    location /api/ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header Origin            $http_origin;   # middleware so sánh với WEB_ORIGIN
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 30s;
+    }
+
+    # Asset có hash trong tên: cache dài hạn.
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # SPA: mọi route còn lại trả index.html, và index.html không được cache.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+    }
+}

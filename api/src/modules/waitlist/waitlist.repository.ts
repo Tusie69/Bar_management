@@ -4,8 +4,10 @@ import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
+import { lockOccupancyConflicts } from '../tables/table-occupancy.js'
 import { assertNoteHasNoPhoneNumber, redactPhoneNumbersInNote } from '../../security/note-privacy.js'
-import { assertBusinessDateNotPast } from '../bookings/business-date.js'
+import { normalizeSearchText } from '../../lib/search-text.js'
+import { assertBusinessDateNotPast, assertCheckInBusinessDate } from '../bookings/business-date.js'
 import { protectPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from '../bookings/phone-security.js'
 import { createTableGroup, dissolveUnusedGroups, lockAndValidateAssignableTables } from '../tables/table-group.repository.js'
 
@@ -109,7 +111,7 @@ function toView(row: WaitlistRow): WaitlistEntryView {
 }
 
 const waitlistSelect = `SELECT w.id, w.kind,
-  COALESCE(c.display_name, r.contact_name, w.contact_name, 'Khách chờ') AS guest_name,
+  COALESCE(r.contact_name, w.contact_name, c.display_name, 'Khách chờ') AS guest_name,
   COALESCE(c.phone_last3, r.phone_last3) AS phone_last3,
   COALESCE(r.party_size, w.party_size) AS resolved_party_size,
   w.business_date, w.queued_at, w.status, w.contact_channel,
@@ -158,12 +160,14 @@ export async function createWaitlistEntry(
   actor: AuthenticatedActor,
   input: CreateWaitlistInput,
   now = new Date(),
+  transaction?: PoolConnection,
 ): Promise<WaitlistEntryView> {
   assertNoteHasNoPhoneNumber(input.note)
   assertBusinessDateNotPast(input.businessDate, now)
-  const connection = await databasePool.getConnection()
+  const connection = transaction ?? await databasePool.getConnection()
+  const ownsTransaction = transaction === undefined
   try {
-    await connection.beginTransaction()
+    if (ownsTransaction) await connection.beginTransaction()
     if (input.kind === 'ADVANCE_RESERVATION') {
       const [reservations] = await connection.execute<(RowDataPacket & { status: string; business_date: Date | string })[]>(
         `SELECT status, business_date FROM reservations
@@ -204,8 +208,8 @@ export async function createWaitlistEntry(
           `INSERT INTO customers
             (organization_id, display_name, name_search, phone_ciphertext, phone_key_id,
              phone_hmac, phone_hmac_key_id, phone_last3, created_by_user_id)
-           VALUES (?, ?, LOWER(?), ?, ?, ?, ?, ?, ?)`,
-          [actor.organizationId, input.guestName, input.guestName, ...protectedPhoneValues(phone), actor.userId],
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [actor.organizationId, input.guestName, normalizeSearchText(input.guestName), ...protectedPhoneValues(phone), actor.userId],
         )
         customerId = customer.insertId
       }
@@ -249,13 +253,13 @@ export async function createWaitlistEntry(
     )
     const created = rows[0]
     if (!created) throw new AppError(500, 'WAITLIST_READ_FAILED', 'Không đọc lại được khách vừa thêm vào danh sách chờ.')
-    await connection.commit()
+    if (ownsTransaction) await connection.commit()
     return toView(created)
   } catch (error) {
-    await connection.rollback()
+    if (ownsTransaction) await connection.rollback()
     throw error
   } finally {
-    connection.release()
+    if (ownsTransaction) connection.release()
   }
 }
 
@@ -276,6 +280,7 @@ async function nextVenueChangeSequence(connection: PoolConnection, actor: Authen
 }
 
 export interface SeatWaitlistInput {
+  arrived?: boolean
   entryId: number
   expectedVersion: number
   tableIds: number[]
@@ -426,11 +431,27 @@ export async function recordWaitlistContact(actor: AuthenticatedActor, input: Re
   }
 }
 
+interface SeatWaitlistResult {
+  entry: WaitlistEntryView
+  reservationId: number | null
+  groupId: number | null
+}
+
+export function seatWaitlistEntry(
+  actor: AuthenticatedActor,
+  input: SeatWaitlistInput & { arrived?: false },
+  now?: Date,
+): Promise<SeatWaitlistResult & { reservationId: number }>
+export function seatWaitlistEntry(
+  actor: AuthenticatedActor,
+  input: SeatWaitlistInput,
+  now?: Date,
+): Promise<SeatWaitlistResult>
 export async function seatWaitlistEntry(
   actor: AuthenticatedActor,
   input: SeatWaitlistInput,
   now = new Date(),
-): Promise<{ entry: WaitlistEntryView; reservationId: number; groupId: number | null }> {
+): Promise<SeatWaitlistResult> {
   const connection = await databasePool.getConnection()
   try {
     await connection.beginTransaction()
@@ -484,21 +505,64 @@ export async function seatWaitlistEntry(
 
     const tableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
     if (!tableIds.length) throw new AppError(400, 'TABLE_REQUIRED', 'Cần chọn ít nhất một bàn.')
-    const placeholders = tableIds.map(() => '?').join(',')
     const tables = await lockAndValidateAssignableTables(connection, actor, tableIds)
     const capacity = tables.reduce((total, table) => total + Number(table.capacity), 0)
     if (capacity < Number(entry.party_size)) {
       throw new AppError(409, 'INSUFFICIENT_TABLE_CAPACITY', `Bàn đã chọn chỉ có ${capacity} chỗ cho ${entry.party_size} khách.`)
     }
     const businessDate = dateOnly(entry.business_date)
-    const [conflicts] = await connection.execute<RowDataPacket[]>(
-      `SELECT id FROM table_allocations
-       WHERE organization_id = ? AND venue_id = ? AND business_date = ?
-         AND released_at IS NULL AND table_id IN (${placeholders})
-       ORDER BY table_id, id FOR UPDATE`,
-      [actor.organizationId, actor.venueId, businessDate, ...tableIds],
-    )
+    const conflicts = await lockOccupancyConflicts(connection, actor, 'USAGE', tableIds, businessDate)
     if (conflicts.length) throw new AppError(409, 'TABLE_ALREADY_OCCUPIED', 'Một hoặc nhiều bàn đã được giữ hoặc sử dụng.')
+
+    if (input.arrived) {
+      if (entry.kind !== 'WALK_IN') {
+        throw new AppError(409, 'WAITLIST_NOT_WALK_IN', 'Khách đặt trước cần check-in từ booking.')
+      }
+      assertCheckInBusinessDate(businessDate, now)
+      const startedAt = now.toISOString().slice(0, 23).replace('T', ' ')
+      const group = tableIds.length > 1 ? await createTableGroup(connection, actor, { businessDate }) : null
+      const [visit] = await connection.execute<ResultSetHeader>(
+        `INSERT INTO visits
+          (organization_id, venue_id, origin, customer_id, contact_name, guest_count,
+           started_at, business_date, note, created_by_user_id)
+         VALUES (?, ?, 'WAITLIST', ?, ?, ?, ?, ?, ?, ?)`,
+        [actor.organizationId, actor.venueId, entry.customer_id, entry.contact_name,
+          entry.party_size, startedAt, businessDate, entry.note, actor.userId],
+      )
+      for (const tableId of tableIds) {
+        await connection.execute(
+          `INSERT INTO table_allocations
+            (organization_id, venue_id, table_id, kind, visit_id, group_id, starts_at, business_date, created_by_user_id)
+           VALUES (?, ?, ?, 'USAGE', ?, ?, ?, ?, ?)`,
+          [actor.organizationId, actor.venueId, tableId, visit.insertId, group?.id ?? null,
+            startedAt, businessDate, actor.userId],
+        )
+      }
+      await connection.execute(
+        `UPDATE waitlist_entries SET status = 'SEATED', visit_id = ?, closed_at = ?,
+           closed_by_user_id = ?, version = version + 1, updated_at = UTC_TIMESTAMP(3)
+         WHERE organization_id = ? AND venue_id = ? AND id = ?`,
+        [visit.insertId, startedAt, actor.userId, actor.organizationId, actor.venueId, entry.id],
+      )
+      const changeSequence = await nextVenueChangeSequence(connection, actor)
+      await connection.execute(
+        `INSERT INTO operation_log
+          (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
+           auth_session_id, action, entity_type, entity_id, entity_version_before,
+           entity_version_after, changes, reason_code, is_undoable)
+         VALUES (?, ?, ?, 'USER', ?, ?, ?, 'WAITLIST_SEATED', 'waitlist_entry', ?, ?, ?, ?, 'STAFF_CONFIRMED', 0)`,
+        [actor.organizationId, actor.venueId, changeSequence, actor.userId, actor.membershipId,
+          actor.authSessionId ?? null, entry.id, input.expectedVersion, input.expectedVersion + 1,
+          JSON.stringify([{ type: 'waitlist_seated', visitId: visit.insertId, groupId: group?.id ?? null, tableIds }])],
+      )
+      const [rows] = await connection.execute<WaitlistRow[]>(
+        `${waitlistSelect} WHERE w.organization_id = ? AND w.venue_id = ? AND w.id = ?`,
+        [actor.organizationId, actor.venueId, entry.id],
+      )
+      if (!rows[0]) throw new AppError(500, 'WAITLIST_READ_FAILED', 'Không đọc lại được khách vừa gán bàn.')
+      await connection.commit()
+      return { entry: toView(rows[0]), reservationId: null, groupId: group?.id ?? null }
+    }
 
     let reservationId = Number(entry.reservation_id)
     if (entry.kind === 'WALK_IN') {
@@ -512,10 +576,10 @@ export async function seatWaitlistEntry(
         `INSERT INTO reservations
           (organization_id, venue_id, customer_id, contact_name, contact_name_search, source_id,
            party_size, expected_at, business_date, customer_classification, status, note, created_by_user_id)
-         VALUES (?, ?, ?, ?, LOWER(?), ?, ?, UTC_TIMESTAMP(3), ?, 'UNCLASSIFIED', 'BOOKED', ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(3), ?, 'UNCLASSIFIED', 'BOOKED', ?, ?)`,
         [actor.organizationId, actor.venueId, entry.customer_id,
           entry.customer_id === null ? entry.contact_name : null,
-          entry.customer_id === null ? entry.contact_name : null,
+          entry.customer_id === null && entry.contact_name ? normalizeSearchText(entry.contact_name) : null,
           source.id, entry.party_size, businessDate, entry.note, actor.userId],
       )
       reservationId = createdReservation.insertId
@@ -533,7 +597,7 @@ export async function seatWaitlistEntry(
       [actor.organizationId, actor.venueId, reservationId, actor.userId],
     )
     const group = tableIds.length > 1
-      ? await createTableGroup(connection, actor, businessDate)
+      ? await createTableGroup(connection, actor, { businessDate })
       : null
     const allocationIds: number[] = []
     for (const tableId of tableIds) {

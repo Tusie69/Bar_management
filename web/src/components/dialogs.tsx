@@ -61,6 +61,39 @@ export function ConflictDialog() {
   )
 }
 
+/**
+ * A yes/no the server asked for before it will write: over capacity, or a spare
+ * table joining a cluster. The answer goes back as a confirmation flag and the
+ * server checks it again, so dismissing this dialog genuinely saves nothing.
+ */
+export function ConfirmDialog() {
+  const request = useUi((s) => s.confirmRequest)
+  const resolve = useUi((s) => s.resolveConfirm)
+  return (
+    <AlertDialog open={!!request} onOpenChange={(open) => !open && resolve(false)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <div className="mb-1 grid size-10 place-items-center rounded-full bg-st-late-tint text-st-late">
+            <AlertTriangle className="size-5" aria-hidden />
+          </div>
+          <AlertDialogTitle>{request?.title}</AlertDialogTitle>
+          <AlertDialogDescription className="text-[15px] leading-relaxed text-foreground">
+            {request?.message}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel className="min-h-11" onClick={() => resolve(false)}>
+            Hủy
+          </AlertDialogCancel>
+          <AlertDialogAction className="min-h-11" onClick={() => resolve(true)}>
+            {request?.confirmLabel}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
 const OVERRIDE_QUICK = ["Khách quen, Chủ quán đồng ý", "Cuối tuần đông, mở bàn sơ cua", "Khách chấp nhận ngồi chật"]
 
 /** Owner-only override reason (spare table, over capacity). */

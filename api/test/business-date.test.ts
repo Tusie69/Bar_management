@@ -37,12 +37,19 @@ describe('booking business date validation', () => {
   it.each([
     ['19:00', '2026-10-24'],
     ['21:00', '2026-10-24'],
+    ['21:15', '2026-10-24'],
+    ['00:45', '2026-10-25'],
     ['23:30', '2026-10-24'],
     ['00:30', '2026-10-25'],
     ['01:00', '2026-10-25'],
   ])('accepts booking boundary %s', (time, calendarDate) => {
     expect(validateBookingSchedule(`${calendarDate}T${time}:00+07:00`, '2026-10-24', beforeBooking).businessDate)
       .toBe('2026-10-24')
+  })
+
+  it.each(['20:17:00', '20:15:01', '20:15:00.001'])('rejects off-grid time %s', (time) => {
+    expect(() => validateBookingSchedule(`2026-10-24T${time}+07:00`, '2026-10-24', beforeBooking))
+      .toThrowError(expect.objectContaining({ code: 'EXPECTED_AT_OFF_SLOT' }))
   })
 
   it('rejects a business date that disagrees with an after-midnight arrival', () => {
@@ -127,6 +134,7 @@ describe('FX-18 past business date guard for the waitlist', () => {
     ['2026-11-01T22:00:00.000Z', '2026-11-02'], // 05:00 sang ngày nghiệp vụ mới
     ['2026-11-02T04:31:00.000Z', '2026-11-02'], // 11:31 ban ngày, không ném lỗi ngoài ca
     ['2026-11-02T10:00:00.000Z', '2026-11-02'], // 17:00
+    ['2026-11-01T17:00:00.000Z', '2026-11-01'], // 00:00 ngày 02/11 vẫn thuộc ca 01/11
   ])('derives the business date at %s without throwing outside the shift', (nowValue, expected) => {
     expect(businessDateAt(new Date(nowValue))).toBe(expected)
   })

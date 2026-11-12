@@ -37,10 +37,12 @@ import type {
   PhoneReveal,
   ReportQuery,
   ReportResult,
+  ReceptionSearchResult,
   ReservationView,
   SessionUser,
   ShiftOverview,
   VenueConfig,
+  VenueSettingsView,
   VisitView,
   WaitlistEntryView,
 } from "@/domain/models"
@@ -59,6 +61,9 @@ export type KnownApiErrorCode =
   | "IDEMPOTENCY_KEY_REUSED"
   | "INVALID_STATE"
   | "OVERRIDE_REQUIRED"
+  | "CAPACITY_OVERRIDE_REQUIRED"
+  | "SPARE_TABLE_OVERRIDE_REQUIRED"
+  | "TABLE_GROUP_IN_USE"
   | "NOT_SUPPORTED_BY_BACKEND"
 
 export type ApiErrorCode = KnownApiErrorCode | (string & {})
@@ -89,11 +94,18 @@ export interface CreateReservationInput {
   partySize: number
   expectedAt: Date
   sourceCode: BookingSourceCode
+  socialPlatform?: string | null
   note?: string
   /** Selected tables are created with the booking atomically. Empty/omitted creates an unassigned booking. */
   tableIds?: number[]
   overrideReason?: string
+  /** §3.1: explicit go-ahead to seat more guests than the tables''' capacity. */
+  capacityOverrideConfirmed?: boolean
   classification?: BookingClassification
+  guestType?: "REGULAR" | "NEW" | null
+  isBirthday?: boolean
+  iconKeys?: string[]
+  honorific?: "MR" | "MS" | null
   /** FX-04: mã chống trùng của lần mở form; gửi lại cùng mã thì máy chủ trả lại kết quả cũ. */
   idempotencyKey?: string
 }
@@ -105,8 +117,13 @@ export interface UpdateReservationInput {
   partySize?: number
   expectedAt?: Date
   sourceCode?: BookingSourceCode
+  socialPlatform?: string | null
   note?: string | null
   classification?: BookingClassification
+  guestType?: "REGULAR" | "NEW" | null
+  isBirthday?: boolean
+  iconKeys?: string[]
+  honorific?: "MR" | "MS" | null
 }
 
 export interface WalkInInput {
@@ -114,6 +131,7 @@ export interface WalkInInput {
   guestCount: number
   contactName?: string
   overrideReason?: string
+  capacityOverrideConfirmed?: boolean
   /** FX-04: mã chống trùng của lần mở form; gửi lại cùng mã thì máy chủ trả lại kết quả cũ. */
   idempotencyKey?: string
 }
@@ -124,12 +142,14 @@ export interface CheckInInput {
   guestCount: number
   tableIds?: number[]
   overrideReason?: string
+  capacityOverrideConfirmed?: boolean
 }
 
 export type MoveInput = {
   /** Visit or reservation whose claim moves. */
   claim: { visitId?: number; reservationId?: number; waitlistEntryId?: number; version?: number }
   overrideReason?: string
+  capacityOverrideConfirmed?: boolean
 } & (
   | { fromTableId: number; toTableId: number; tableIds?: never }
   /** Replace the complete destination set, including single-table to grouped moves. */
@@ -140,12 +160,65 @@ export interface CombineInput {
   claim: { visitId?: number; reservationId?: number; version?: number }
   addTableIds: number[]
   overrideReason?: string
+  capacityOverrideConfirmed?: boolean
+  /** Explicit go-ahead to pull a spare table into the cluster. */
+  spareOverrideConfirmed?: boolean
 }
 
-export interface SplitInput {
+/** BA-022: an account as the admin account screen shows it. Never any credential. */
+export interface AccountSummary {
+  id: number
+  username: string
+  displayName: string
+  status: "ACTIVE" | "DISABLED"
+  membershipStatus: string
+  roles: string[]
+  lastLoginAt: string | null
+  version: number
+}
+
+export interface AccountsView {
+  accounts: AccountSummary[]
+  /** Role codes an account may be created with: only those the backend seeds. */
+  roles: { code: string; name: string }[]
+}
+
+export interface CreateAccountInput {
+  username: string
+  displayName: string
+  password: string
+  roleCode: string
+}
+
+export interface DissolveTableGroupInput {
   groupId: number
-  /** Tables that stay with the party. Others are released (SPLIT). */
-  keepTableIds: number[]
+  version: number
+  idempotencyKey?: string
+}
+
+export type SplitInput = {
+  groupId: number
+  /** SPL-03: same key + same payload on a retry replays the committed split. */
+  idempotencyKey?: string
+} & (
+  | { keepTableIds: number[]; mode?: never; version?: never }
+  | { version: number; mode: "ALL_TO_SINGLE"; keepTableIds?: never }
+)
+
+export interface CreateTableGroupInput {
+  tableIds: number[]
+  name?: string
+  /** Explicit go-ahead to pull a spare table into the cluster. */
+  spareOverrideConfirmed?: boolean
+  idempotencyKey?: string
+}
+
+export interface AddTableGroupMembersInput {
+  groupId: number
+  version: number
+  tableIds: number[]
+  spareOverrideConfirmed?: boolean
+  idempotencyKey?: string
 }
 
 export interface AddWaitlistInput {
@@ -174,6 +247,7 @@ export interface RecordContactInput {
 }
 
 export interface SeatWaitlistInput {
+  arrived?: boolean
   entryId: number
   version: number
   guestCount: number
@@ -193,9 +267,26 @@ export interface VenueConfigPatch {
   groupSymbolCount?: number
 }
 
+export interface VenueSettingsUpdate {
+  quickTimes: string[]
+  upcomingMinutes: number
+  noShowMinutes: number
+}
+
 export interface ReservationQuery {
   businessDate: BusinessDate
   search?: string
+}
+
+export interface UndoStateItem {
+  operationId: number
+  action: string
+  summary: string
+}
+
+export interface UndoState {
+  undo: UndoStateItem | null
+  redo: UndoStateItem | null
 }
 
 /* ---------------- Interface ---------------- */
@@ -209,16 +300,22 @@ export interface GamApi {
 
   // Queries
   getCatalog(): Promise<Catalog>
+  getVenueSettings(): Promise<VenueSettingsView>
   getFloorState(at: Date, businessDate?: BusinessDate): Promise<FloorState>
   getAvailability(at: Date, partySize: number): Promise<AvailabilityResult>
   getShiftOverview(): Promise<ShiftOverview>
   listReservations(q: ReservationQuery): Promise<ReservationView[]>
+  searchReception(businessDate: BusinessDate, query: { last3?: string; name?: string }): Promise<ReceptionSearchResult>
   exportDailyBookingText(businessDate: BusinessDate): Promise<string>
   listVisits(businessDate: BusinessDate): Promise<VisitView[]>
   listWaitlist(businessDate: BusinessDate): Promise<WaitlistEntryView[]>
   searchCustomers(query: string): Promise<CustomerSummary[]>
   getCustomer(id: number): Promise<CustomerProfile>
   listOperations(limit: number): Promise<OperationView[]>
+  listAccounts(): Promise<AccountsView>
+  createAccount(input: CreateAccountInput): Promise<AccountSummary>
+  setAccountStatus(userId: number, version: number, status: "ACTIVE" | "DISABLED"): Promise<AccountSummary>
+  getUndoState(): Promise<UndoState>
   /** table_allocations of a business date, optionally for one table (history + timeline). */
   listAllocations(businessDate: BusinessDate, tableId?: number): Promise<AllocationView[]>
   getReport(q: ReportQuery): Promise<ReportResult>
@@ -235,13 +332,24 @@ export interface GamApi {
   cancelReservation(id: number, version: number, reason: ReservationCloseReason, note?: string): Promise<MutationResult>
   markNoShow(id: number, version: number): Promise<MutationResult>
   confirmLate(id: number, version: number): Promise<MutationResult>
+  startBookingCall(id: number): Promise<{ callId: number; bookingId: number; initiatedAt: Date; telUri: string }>
+  recordBookingCallOutcome(
+    bookingId: number,
+    callId: number,
+    outcome: "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED",
+    bookingVersion?: number,
+  ): Promise<MutationResult>
   checkIn(input: CheckInInput): Promise<MutationResult>
 
   // Floor
   seatWalkIn(input: WalkInInput): Promise<MutationResult & { visitId: number }>
   moveClaim(input: MoveInput): Promise<MutationResult>
   combineTables(input: CombineInput): Promise<MutationResult>
+  createTableGroup(input: CreateTableGroupInput): Promise<MutationResult>
+  addTableGroupMembers(input: AddTableGroupMembersInput): Promise<MutationResult>
   splitGroup(input: SplitInput): Promise<MutationResult>
+  /** Tách bàn: ends a layout cluster and returns every member to a single table. */
+  dissolveTableGroup(input: DissolveTableGroupInput): Promise<MutationResult>
   endVisit(visitId: number, version: number): Promise<MutationResult>
   markPaid(visitId: number, version: number): Promise<MutationResult>
   setTableStatus(
@@ -256,7 +364,9 @@ export interface GamApi {
   releaseClaim(entryId: number, version: number): Promise<MutationResult>
   recordContact(input: RecordContactInput): Promise<MutationResult>
   /** Target backend assigns a reservation hold, with a group for multiple tables. */
-  seatWaitlist(input: SeatWaitlistInput): Promise<MutationResult & { reservationId: number; groupId: number | null }>
+  seatWaitlist(
+    input: SeatWaitlistInput,
+  ): Promise<MutationResult & { reservationId: number | null; groupId: number | null }>
   cancelWaitlist(entryId: number, version: number, reason: WaitlistCloseReason, note?: string): Promise<MutationResult>
   setHoldDeadline(holdId: number, version: number, deadlineAt: Date, reason: string): Promise<MutationResult>
   releaseHold(holdId: number, version: number, reason: HoldReleaseReason, note?: string): Promise<MutationResult>
@@ -274,6 +384,7 @@ export interface GamApi {
   undo(operationId: number): Promise<MutationResult>
   redo(undoOperationId: number): Promise<MutationResult>
   updateVenueConfig(patch: VenueConfigPatch): Promise<MutationResult & { venue: VenueConfig }>
+  updateVenueSettings(input: VenueSettingsUpdate): Promise<VenueSettingsView>
   setZoneFlags(
     zoneId: number,
     version: number,
@@ -283,10 +394,15 @@ export interface GamApi {
 
 /** Implemented backend paths, relative to /api/v1. */
 export const REST_ENDPOINTS = {
+  settings: "GET, PUT /settings",
+  accounts: "GET /accounts",
+  createAccount: "POST /accounts",
+  setAccountStatus: "POST /accounts/:id/status",
   catalog: "GET /tables/catalog",
   sources: "GET /bookings/sources",
   floorState: "GET /tables?date=YYYY-MM-DD",
   reservations: "GET /bookings?date=YYYY-MM-DD",
+  receptionSearch: "GET /bookings/search?date=YYYY-MM-DD&last3=123",
   exportDailyBookingText: "GET /bookings/export?date=YYYY-MM-DD",
   createReservation: "POST /bookings",
   createDirectReservation: "POST /bookings/direct",
@@ -294,10 +410,18 @@ export const REST_ENDPOINTS = {
   assignTables: "POST /bookings/:id/assign",
   cancelReservation: "POST /bookings/:id/cancel",
   markNoShow: "POST /bookings/:id/no-show",
+  startBookingCall: "POST /bookings/:id/call",
+  recordBookingCallOutcome: "POST /bookings/:id/calls/:callId/outcome",
   checkIn: "POST /bookings/:id/check-in",
   walkIn: "POST /bookings/walk-ins",
   move: "POST /visits/:id/move",
   combine: "POST /visits/:id/merge",
+  tableGroups: "GET, POST /tables/groups",
+  tableGroup: "GET /tables/groups/:id",
+  tableGroupMembers: "POST /tables/groups/:id/members",
+  tableGroupDissolve: "POST /tables/groups/:id/dissolve",
+  tableGroupSplit: "POST /tables/groups/:id/split",
+  floorStream: "GET /tables/stream (SSE)",
   endVisit: "POST /visits/:id/close",
   waitlist: "GET /waitlist?date=YYYY-MM-DD",
   addWaitlist: "POST /waitlist",
@@ -305,6 +429,9 @@ export const REST_ENDPOINTS = {
   seatWaitlist: "POST /waitlist/:id/seat",
   cancelWaitlist: "POST /waitlist/:id/cancel",
   revealPhone: "POST /bookings/:id/phone:reveal",
+  undoState: "GET /operations/undo-state",
+  undo: "POST /operations/undo",
+  redo: "POST /operations/redo",
 } as const
 
 export const DEMO_ROLE_ORDER: RoleCode[] = ["RECEPTIONIST", "OWNER_ADMIN", "CUSTOMER_CARE", "CASHIER"]

@@ -1,12 +1,13 @@
-import { LogIn, ShieldCheck } from "lucide-react"
+import { Construction, LogIn, ShieldCheck } from "lucide-react"
 import { type FormEvent, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { PORTAL_CONFIG, type AuthPortal } from "@/domain/auth-portal"
 import { isApiError } from "@/services"
 import { useSession } from "@/state/session"
 
-export function LoginPage() {
+export function LoginPage({ portal }: { portal: AuthPortal }) {
   const login = useSession((state) => state.login)
   const sessionMessage = useSession((state) => state.authError)
   const [username, setUsername] = useState("")
@@ -20,8 +21,9 @@ export function LoginPage() {
     setPending(true)
     setError(null)
     try {
-      await login(username.trim(), password)
+      await login(username.trim(), password, portal)
       setPassword("")
+      window.location.replace(PORTAL_CONFIG[portal].home)
     } catch (cause) {
       setPassword("")
       setError(isApiError(cause) ? cause.message : "Không thể đăng nhập. Vui lòng thử lại.")
@@ -36,8 +38,11 @@ export function LoginPage() {
         <header className="grid gap-3 text-center">
           <img src="/21gam-logo.png" alt="21GAM" className="mx-auto size-14 rounded-xl object-cover" />
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Đăng nhập 21GAM</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Sử dụng tài khoản vận hành do quản trị viên cấp.</p>
+            <h1 className="text-2xl font-semibold tracking-tight">Đăng nhập {PORTAL_CONFIG[portal].label}</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Chỉ tài khoản được cấp quyền cho cổng {PORTAL_CONFIG[portal].label.toLocaleLowerCase("vi-VN")} mới có thể
+              đăng nhập.
+            </p>
           </div>
         </header>
 
@@ -82,6 +87,22 @@ export function LoginPage() {
           <ShieldCheck className="size-4" /> Phiên đăng nhập dùng cookie HttpOnly và CSRF protection.
         </p>
       </div>
+    </main>
+  )
+}
+
+export function PortalUnderConstruction({ label }: { label: string }) {
+  return (
+    <main className="grid min-h-dvh place-items-center bg-background p-4">
+      <section className="grid w-full max-w-md gap-4 rounded-3xl border bg-surface-1 p-8 text-center shadow-xl">
+        <Construction className="mx-auto size-12 text-amber-500" aria-hidden="true" />
+        <div>
+          <h1 className="text-2xl font-semibold">Cổng {label} đang xây dựng</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Vai trò và quyền truy cập của cổng này đang chờ phê duyệt. Hệ thống chưa cho phép đăng nhập tại đây.
+          </p>
+        </div>
+      </section>
     </main>
   )
 }

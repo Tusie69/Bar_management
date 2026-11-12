@@ -13,7 +13,7 @@ export type FloorMode = "live" | "availability"
 export type FloorView = "list" | "timeline" | "map"
 
 export interface PickRequest {
-  intent: "walkin" | "assign" | "move" | "combine" | "checkin" | "offer" | "seat-waitlist" | "booking"
+  intent: "walkin" | "assign" | "move" | "combine" | "checkin" | "offer" | "seat-waitlist" | "booking" | "layout"
   title: string
   hint: string
   multi: boolean
@@ -42,11 +42,25 @@ interface OverrideRequest {
   resolve: (reason: string | null) => void
 }
 
+/**
+ * A yes/no the server asked for: it refused the write until someone takes
+ * responsibility, so the answer travels back as a confirmation flag on the retry.
+ * Unlike an override it needs no reason text, and the server still re-checks it.
+ */
+export interface ConfirmRequest {
+  title: string
+  message: string
+  confirmLabel: string
+  resolve: (confirmed: boolean) => void
+}
+
 export interface BookingPrefill {
   tableIds?: number[]
   date?: BusinessDate
   time?: string
   party?: number
+  /** Flow B: an advance booking without a table goes straight into Bàn chờ. */
+  toWaitlist?: boolean
 }
 
 /** v2 inline form on Điều phối (right column). Tables are picked on the map. */
@@ -56,6 +70,9 @@ export interface QuickDraft {
   time: string
   party: number
   tableIds: number[]
+  toWaitlist?: boolean
+  /** "Đổi bàn": the next table tapped replaces the selection instead of joining it. */
+  replacing?: boolean
 }
 
 export interface UndoItem {
@@ -84,12 +101,14 @@ interface UiState {
   availTime: string
   availParty: number
   zone: ZoneCode | "ALL"
+  zoneRefitTick: number
   selectedTableId: number | null
   pick: PickRequest | null
   pickSelection: number[]
 
   conflict: ConflictInfo | null
   override: OverrideRequest | null
+  confirmRequest: ConfirmRequest | null
 
   bookingOpen: boolean
   bookingPrefill: BookingPrefill
@@ -105,6 +124,7 @@ interface UiState {
   setView: (view: FloorView) => void
   setAvailability: (patch: Partial<{ date: BusinessDate; time: string; party: number }>) => void
   setZone: (zone: ZoneCode | "ALL") => void
+  refitZone: () => void
   selectTable: (id: number | null) => void
   startPick: (req: PickRequest) => void
   togglePick: (id: number) => void
@@ -114,6 +134,8 @@ interface UiState {
   closeConflict: () => void
   askOverride: (needs: string) => Promise<string | null>
   resolveOverride: (reason: string | null) => void
+  askConfirm: (request: { title: string; message: string; confirmLabel?: string }) => Promise<boolean>
+  resolveConfirm: (confirmed: boolean) => void
 
   openBooking: (prefill?: BookingPrefill) => void
   closeBooking: () => void
@@ -138,11 +160,13 @@ export const useUi = create<UiState>((set, get) => ({
   availTime: defaultTime(),
   availParty: 2,
   zone: "ALL",
+  zoneRefitTick: 0,
   selectedTableId: null,
   pick: null,
   pickSelection: [],
   conflict: null,
   override: null,
+  confirmRequest: null,
   bookingOpen: false,
   bookingPrefill: {},
   walkInOpen: false,
@@ -160,7 +184,8 @@ export const useUi = create<UiState>((set, get) => ({
       availTime: patch.time ?? s.availTime,
       availParty: patch.party ?? s.availParty,
     })),
-  setZone: (zone) => set({ zone }),
+  setZone: (zone) => set((s) => ({ zone, zoneRefitTick: s.zoneRefitTick + 1 })),
+  refitZone: () => set((s) => ({ zoneRefitTick: s.zoneRefitTick + 1 })),
   selectTable: (selectedTableId) => set({ selectedTableId }),
   startPick: (pick) =>
     set((s) => ({
@@ -193,6 +218,12 @@ export const useUi = create<UiState>((set, get) => ({
     get().override?.resolve(reason)
     set({ override: null })
   },
+  askConfirm: ({ title, message, confirmLabel = "Xác nhận và tiếp tục" }) =>
+    new Promise((resolve) => set({ confirmRequest: { title, message, confirmLabel, resolve } })),
+  resolveConfirm: (confirmed) => {
+    get().confirmRequest?.resolve(confirmed)
+    set({ confirmRequest: null })
+  },
 
   openBooking: (bookingPrefill = {}) =>
     set({
@@ -205,7 +236,7 @@ export const useUi = create<UiState>((set, get) => ({
       draft: {
         kind: "booking",
         date: bookingPrefill.date ?? businessDateOf(clock.now()),
-        // Booking arrival must be one of the 13 slots (19:00 → 01:00, 30'). Availability mode keeps defaultTime().
+        // Booking arrival must be a quarter-hour slot (19:00 → 01:00). Availability mode keeps defaultTime().
         time: isBookingSlot(bookingPrefill.time)
           ? bookingPrefill.time
           : (defaultBookingSlot(bookingPrefill.date ?? businessDateOf(clock.now()), clock.now()) ?? "19:00"),
@@ -213,6 +244,7 @@ export const useUi = create<UiState>((set, get) => ({
           bookingPrefill.party ??
           (bookingPrefill.tableIds?.length ? Math.min(8, bookingPrefill.tableIds.length * 4) : 4),
         tableIds: bookingPrefill.tableIds ?? [],
+        toWaitlist: bookingPrefill.toWaitlist,
       },
     }),
   closeBooking: () => set({ bookingOpen: false, draft: null }),
@@ -241,9 +273,12 @@ export const useUi = create<UiState>((set, get) => ({
         ? {
             draft: {
               ...s.draft,
-              tableIds: s.draft.tableIds.includes(id)
-                ? s.draft.tableIds.filter((x) => x !== id)
-                : [...s.draft.tableIds, id],
+              replacing: false,
+              tableIds: s.draft.replacing
+                ? [id]
+                : s.draft.tableIds.includes(id)
+                  ? s.draft.tableIds.filter((x) => x !== id)
+                  : [...s.draft.tableIds, id],
             },
           }
         : {},

@@ -15,14 +15,20 @@ export type BookingClassification = (typeof classifications)[number]
 export interface BackendBookingPayload {
   id: number
   guestName: string
+  hasGuestName?: boolean
   phoneLast3: string | null
   partySize: number
   expectedAt: Date
   businessDate: string
   classification: string
+  guestType?: "REGULAR" | "NEW" | null
+  isBirthday?: boolean
   status: string
   source: string
   sourceCode: string
+  socialPlatform?: string | null
+  iconKeys?: string[]
+  honorific?: "MR" | "MS" | null
   tableCodes: string[]
   note: string | null
   version: number
@@ -30,19 +36,26 @@ export interface BackendBookingPayload {
   minutesLate: number
   autoNoShowDue: boolean
   lateConfirmedAt?: Date | null
+  canCall?: boolean
 }
 
 export interface HttpBooking {
   id: number
   guestName: string
+  hasGuestName?: boolean
   phoneLast3: string | null
   partySize: number
   expectedAt: Date
   businessDate: BusinessDate
   classification: BookingClassification
+  guestType: "REGULAR" | "NEW" | null
+  isBirthday: boolean
   status: BookingStatus
   source: string
   sourceCode: BookingSourceCode
+  socialPlatform?: string | null
+  iconKeys?: string[]
+  honorific?: "MR" | "MS" | null
   tableCodes: string[]
   note: string | null
   version: number
@@ -50,28 +63,39 @@ export interface HttpBooking {
   minutesLate: number
   autoNoShowDue: boolean
   lateConfirmedAt?: Date | null
+  canCall?: boolean
 }
 
 export interface BookingWriteFields {
-  guestName: string
+  guestName?: string
   partySize: number
   expectedAt: Date
   businessDate: BusinessDate
   sourceCode: BookingSourceCode
+  socialPlatform?: string | null
   note?: string | null
   phoneNumber?: string | null
   classification?: BookingClassification
+  guestType?: "REGULAR" | "NEW" | null
+  isBirthday?: boolean
+  iconKeys?: string[]
+  honorific?: "MR" | "MS" | null
 }
 
 export interface BookingCreatePayload {
-  guestName: string
+  guestName?: string
   partySize: number
   expectedAt: string
   businessDate: BusinessDate
   sourceCode: BookingSourceCode
+  socialPlatform?: string | null
   note?: string
   phoneNumber?: string | null
   classification?: BookingClassification
+  guestType?: "REGULAR" | "NEW" | null
+  isBirthday?: boolean
+  iconKeys?: string[]
+  honorific?: "MR" | "MS" | null
 }
 
 export interface DirectBookingCreatePayload extends BookingCreatePayload {
@@ -96,6 +120,19 @@ function requireDate(value: Date, id: number): Date {
 }
 
 export function mapBooking(payload: BackendBookingPayload): HttpBooking {
+  const expectedGuestType = payload.classification === "RETURNING" ? "REGULAR" : payload.classification === "NEW" ? "NEW" : null
+  const guestType = payload.guestType === undefined ? expectedGuestType : payload.guestType
+  if (guestType !== expectedGuestType || (payload.isBirthday !== undefined && typeof payload.isBirthday !== "boolean")) {
+    contractError("INVALID_BOOKING_METADATA", `Booking #${payload.id} có metadata không hợp lệ.`)
+  }
+  if (
+    payload.honorific !== undefined &&
+    payload.honorific !== null &&
+    payload.honorific !== "MR" &&
+    payload.honorific !== "MS"
+  ) {
+    contractError("INVALID_BOOKING_METADATA", `Booking #${payload.id} có danh xưng không hợp lệ.`)
+  }
   if (!includes(statuses, payload.status)) {
     contractError("UNSUPPORTED_BOOKING_STATUS", `Booking #${payload.id} có trạng thái không được hỗ trợ.`)
   }
@@ -114,6 +151,7 @@ export function mapBooking(payload: BackendBookingPayload): HttpBooking {
   return {
     ...payload,
     id: Number(payload.id),
+    hasGuestName: payload.hasGuestName ?? true,
     version: Number(payload.version),
     partySize: Number(payload.partySize),
     minutesLate: Number(payload.minutesLate),
@@ -122,16 +160,25 @@ export function mapBooking(payload: BackendBookingPayload): HttpBooking {
     status: payload.status,
     displayStatus: payload.displayStatus,
     sourceCode: payload.sourceCode,
+    socialPlatform: payload.socialPlatform ?? null,
+    iconKeys: payload.iconKeys ? [...payload.iconKeys] : [],
+    honorific: payload.honorific ?? null,
     classification: payload.classification,
+    guestType,
+    isBirthday: payload.isBirthday ?? false,
+    canCall: payload.canCall ?? false,
     tableCodes: [...payload.tableCodes],
   }
 }
 
-function commonPayload(fields: BookingWriteFields): BookingCreatePayload {
-  const guestName = fields.guestName.trim()
-  if (!guestName || guestName.length > 120) {
-    throw new ApiError(400, "INVALID_GUEST_NAME", "Tên khách phải dài từ 1 đến 120 ký tự.")
-  }
+export interface BookingWriteOptions {
+  iconKeysSupported?: boolean
+  honorificSupported?: boolean
+  socialPlatformSupported?: boolean
+}
+
+function commonPayload(fields: BookingWriteFields, options: BookingWriteOptions, hasRetainedPhone = false): BookingCreatePayload {
+  const guestName = fields.guestName?.trim()
   if (!Number.isSafeInteger(fields.partySize) || fields.partySize <= 0) {
     throw new ApiError(400, "INVALID_PARTY_SIZE", "Số khách không hợp lệ.")
   }
@@ -140,17 +187,29 @@ function commonPayload(fields: BookingWriteFields): BookingCreatePayload {
   }
   const note = fields.note?.trim()
   const phoneNumber = typeof fields.phoneNumber === "string" ? fields.phoneNumber.trim() : fields.phoneNumber
+  if (guestName && guestName.length > 120) {
+    throw new ApiError(400, "INVALID_GUEST_NAME", "Tên khách không được vượt quá 120 ký tự.")
+  }
   if (typeof phoneNumber === "string" && !isPlausibleVnPhone(phoneNumber)) {
     throw new ApiError(422, "INVALID_PHONE_NUMBER", "Số điện thoại không hợp lệ.")
   }
+  if (!guestName && !phoneNumber && !hasRetainedPhone) {
+    throw new ApiError(400, "BOOKING_CONTACT_REQUIRED", "Cần ít nhất tên khách hoặc số điện thoại.")
+  }
   if (note && note.length > 500) throw new ApiError(400, "INVALID_NOTE", "Ghi chú không được vượt quá 500 ký tự.")
   return {
-    guestName,
+    ...(guestName ? { guestName } : {}),
     partySize: fields.partySize,
     expectedAt: venueRfc3339(fields.expectedAt),
     businessDate: fields.businessDate,
     sourceCode: fields.sourceCode,
+    ...(options.socialPlatformSupported !== false && fields.sourceCode === "SOCIAL" && fields.socialPlatform
+      ? { socialPlatform: fields.socialPlatform } : {}),
     ...(fields.classification === undefined ? {} : { classification: fields.classification }),
+    ...(fields.guestType === undefined ? {} : { guestType: fields.guestType }),
+    ...(fields.isBirthday === undefined ? {} : { isBirthday: fields.isBirthday }),
+    ...(options.iconKeysSupported !== false && fields.iconKeys?.length ? { iconKeys: fields.iconKeys } : {}),
+    ...(options.honorificSupported !== false && fields.honorific ? { honorific: fields.honorific } : {}),
     ...(note ? { note } : {}),
     ...(phoneNumber === undefined ? {} : { phoneNumber }),
   }
@@ -162,35 +221,51 @@ function venueRfc3339(value: Date): string {
   return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}:00+07:00`
 }
 
-export function createBookingPayload(fields: BookingWriteFields): BookingCreatePayload {
-  return commonPayload(fields)
+export function createBookingPayload(fields: BookingWriteFields, options: BookingWriteOptions = {}): BookingCreatePayload {
+  return commonPayload(fields, options)
 }
 
-export function directBookingCreatePayload(fields: BookingWriteFields, tableIds: number[]): DirectBookingCreatePayload {
+export function directBookingCreatePayload(fields: BookingWriteFields, tableIds: number[], options: BookingWriteOptions = {}): DirectBookingCreatePayload {
   const uniqueTableIds = [...new Set(tableIds)]
   if (!uniqueTableIds.length || uniqueTableIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
     throw new ApiError(400, "TABLE_REQUIRED", "Cần chọn ít nhất một bàn hợp lệ.")
   }
-  return { ...commonPayload(fields), tableIds: uniqueTableIds }
+  return { ...commonPayload(fields, options), tableIds: uniqueTableIds }
 }
 
 export function fullUpdateBookingPayload(
   current: HttpBooking,
   fields: Partial<BookingWriteFields>,
+  options: BookingWriteOptions = {},
 ): BookingUpdatePayload {
   // Canonical callers use null for "unchanged". A string (including "") is an intentional edit.
   const editedNote = typeof fields.note === "string" ? fields.note.trim() : undefined
+  const targetSource = fields.sourceCode ?? current.sourceCode
+  const targetPlatform =
+    targetSource === "SOCIAL"
+      ? (fields.socialPlatform !== undefined ? fields.socialPlatform : current.socialPlatform)
+      : null
+  const targetIconKeys = fields.iconKeys !== undefined ? fields.iconKeys : (current.iconKeys ?? [])
+  const targetHonorific = fields.honorific !== undefined ? fields.honorific : (current.honorific ?? null)
   const merged: BookingWriteFields = {
-    guestName: fields.guestName ?? current.guestName,
+    ...(fields.guestName === undefined
+      ? current.hasGuestName !== false ? { guestName: current.guestName } : {}
+      : { guestName: fields.guestName }),
     partySize: fields.partySize ?? current.partySize,
     expectedAt: fields.expectedAt ?? current.expectedAt,
     businessDate: fields.businessDate ?? current.businessDate,
-    sourceCode: fields.sourceCode ?? current.sourceCode,
+    sourceCode: targetSource,
+    socialPlatform: targetPlatform,
     classification: fields.classification ?? current.classification,
+    guestType: fields.guestType === undefined ? current.guestType : fields.guestType,
+    isBirthday: fields.isBirthday ?? current.isBirthday,
     ...(Object.prototype.hasOwnProperty.call(fields, "phoneNumber") ? { phoneNumber: fields.phoneNumber } : {}),
   }
   return {
-    ...commonPayload(merged),
+    ...commonPayload(merged, options, current.phoneLast3 !== null),
+    ...(options.socialPlatformSupported !== false ? { socialPlatform: targetPlatform ?? null } : {}),
+    ...(options.iconKeysSupported !== false ? { iconKeys: targetIconKeys } : {}),
+    ...(options.honorificSupported !== false ? { honorific: targetHonorific } : {}),
     ...(editedNote === undefined ? {} : { note: editedNote }),
     version: current.version,
   }
