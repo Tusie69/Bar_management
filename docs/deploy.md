@@ -335,8 +335,11 @@ chối chạy khi API còn sống, và bắt gõ đúng tên database để xác
 VPS tự kéo, không phải GitHub đẩy xuống. Nghĩa là không khóa riêng nào rời
 khỏi máy chủ, không cần secret trên GitHub, và không phải mở thêm cổng nào.
 
+Các script đã mang sẵn bit thực thi trong Git, nên không cần `chmod`. Nếu
+bạn vẫn `chmod +x` một file mà Git lưu là `100644`, Git coi đó là thay đổi
+chưa commit và script sẽ từ chối triển khai.
+
 ```bash
-sudo chmod +x /srv/21gam/deploy/scripts/*.sh
 sudo cp /srv/21gam/deploy/systemd/21gam-deploy.* /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now 21gam-deploy.timer
