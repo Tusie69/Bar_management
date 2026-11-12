@@ -97,6 +97,17 @@ interface View {
 }
 
 const PAD = 18
+/**
+ * Slack svgHeight leaves under the plan on desktop so the bottom shadow is not
+ * clipped. The desktop fit reserves the same amount, so the two agree and a
+ * fitted plan never overflows into a scrollbar.
+ */
+const CANVAS_BOTTOM_GAP = 28
+/**
+ * Narrowest the whole-floor plan may be rendered on desktop before fitting it
+ * to the height does more harm than the scrollbar it avoids.
+ */
+const MIN_FIT_MAP_WIDTH = 240
 const TABLE_SPEC_BY_CODE = new Map(TABLES.map((s) => [s.code, s]))
 
 /**
@@ -285,18 +296,37 @@ export function FloorCanvas(props: Props) {
     }
 
     // Desktop or tablet mode:
-    // Use width well with a maximum rendered map width of ~640px, centered horizontally,
-    // so the map stays close to one screen without shrinking back to 330px at 1366x768.
+    // Fit on BOTH axes, same as the phone. Fitting width only was written for
+    // the older, wider floor; the plan redrawn to the phone mockup is tall and
+    // narrow (about 402x732), so a 640px-wide map ran roughly 1170px tall and
+    // the lower half of Khu A sat below the fold behind a scrollbar.
+    // MAX_MAP_WIDTH still caps the map on a very tall window so it does not
+    // stretch into a giant plan, and CANVAS_BOTTOM_GAP matches the slack
+    // svgHeight adds below, so the fitted plan never brings the scrollbar back.
     if (!compact && isAll) {
       const padH = 16
+      const padV = CANVAS_BOTTOM_GAP / 2
       const MAX_MAP_WIDTH = 640
       const availableWidth = Math.max(320, size.w - padH * 2)
       const targetMapWidth = Math.min(MAX_MAP_WIDTH, availableWidth)
-      const k = targetMapWidth / b.w
+      const fittedK = Math.min(targetMapWidth / b.w, (size.h - padV * 2) / b.h)
+      const minK = Math.min(targetMapWidth, MIN_FIT_MAP_WIDTH) / b.w
+
+      if (fittedK >= minK) {
+        return {
+          k: fittedK,
+          x: (size.w - b.w * fittedK) / 2 - b.x * fittedK,
+          y: Math.max(padV, (size.h - b.h * fittedK) / 2) - b.y * fittedK,
+        }
+      }
+
+      // Short, wide window: fitting the height would shrink the plan below
+      // what table numbers and times can be read at. Keep it readable and let
+      // the canvas scroll instead, which is what it did before.
       return {
-        k,
-        x: (size.w - b.w * k) / 2 - b.x * k,
-        y: 12 - b.y * k,
+        k: minK,
+        x: (size.w - b.w * minK) / 2 - b.x * minK,
+        y: padV - b.y * minK,
       }
     }
 
@@ -526,7 +556,7 @@ export function FloorCanvas(props: Props) {
   const isPhone = phoneViewport
   // When the plan is fitted to the viewport the SVG must not grow past it:
   // any extra height brings the vertical scrollbar straight back.
-  const neededHeight = isAllZone ? Math.ceil((FLOOR_H - 20) * view.k + (isPhone ? 4 : 28)) : size.h
+  const neededHeight = isAllZone ? Math.ceil((FLOOR_H - 20) * view.k + (isPhone ? 4 : CANVAS_BOTTOM_GAP)) : size.h
   const svgHeight = planLocked ? size.h : Math.max(size.h, neededHeight)
 
   return (
