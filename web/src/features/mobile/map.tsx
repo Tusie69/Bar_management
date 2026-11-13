@@ -419,6 +419,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
   let who = ""
   let when = ""
   let info = ""
+  /** Nút thường; các nút huỷ tách ra `tailActions` để luôn nằm dưới cùng. */
   let actions: Action[] = []
   if (c?.kind === "visit") {
     who = `${c.displayName}, ${c.partySize} khách`
@@ -455,31 +456,34 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
         title: !hold.supported ? "Chưa hỗ trợ" : undefined,
         go: () => a.reassignHold(entry, r),
       },
+      ...(r ? [{ label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) }] : []),
       {
-        label: "Đổi trạng thái",
-        disabled: r
-          ? !hold.canBookingStatus ||
-            (!m.can("reservation.cancel") && !m.can("reservation.mark_no_show") && !m.can("reservation.update"))
-          : !m.can("waitlist.cancel"),
-        go: () => (r ? m.openStatus(r) : entry && a.cancelEntry(entry)),
+        label: "Xem đơn chờ",
+        wide: !r,
+        disabled: !entry,
+        go: () => entry && m.openEntryDetail(entry.id, entry.businessDate),
       },
+      // Huỷ cũng xuống cuối. Với đơn chờ không gắn booking thì đây là lối huỷ
+      // duy nhất từ sheet này, nên nó ở lại, dưới đúng tên của nó.
       ...(r
         ? [
             {
               label: "Hủy booking",
               danger: true,
+              wide: true,
               disabled: !m.can("reservation.cancel") || !hold.canBookingStatus,
               go: () => a.cancel(r),
             },
-            { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
           ]
-        : []),
-      {
-        label: "Xem đơn chờ",
-        wide: true,
-        disabled: !entry,
-        go: () => entry && m.openEntryDetail(entry.id, entry.businessDate),
-      },
+        : [
+            {
+              label: "Hủy đơn chờ",
+              danger: true,
+              wide: true,
+              disabled: !entry || !m.can("waitlist.cancel"),
+              go: () => entry && a.cancelEntry(entry),
+            },
+          ]),
     ]
   } else if (c?.kind === "reservation") {
     who = `${c.displayName}, ${c.partySize} khách`
@@ -495,8 +499,15 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
             : []),
           { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
           { label: "Đổi bàn", go: () => a.assign(r) },
-          { label: "Hủy booking", danger: true, disabled: !m.can("reservation.cancel"), go: () => a.cancel(r) },
-          { label: "Đổi trạng thái", go: () => m.openStatus(r) },
+          // Hủy booking đứng cuối và chiếm cả dòng: thao tác không lùi lại
+          // được thì không nên nằm lẫn giữa những nút bấm hằng ngày.
+          {
+            label: "Hủy booking",
+            danger: true,
+            wide: true,
+            disabled: !m.can("reservation.cancel"),
+            go: () => a.cancel(r),
+          },
         ]
       : []
   } else if (st === "spare") {
@@ -518,6 +529,10 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
       },
     ]
   }
+
+  // Nút huỷ luôn ở dưới cùng và chiếm cả dòng, dưới cả nút Sơ cua.
+  const tailActions = actions.filter((x) => x.danger && x.wide)
+  const mainActions = actions.filter((x) => !(x.danger && x.wide))
 
   return (
     <div
@@ -543,11 +558,8 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
           <X className="size-5" />
         </button>
       </div>
-      {isGroup ? (
-        <span className="-mt-1 text-[13px] text-[var(--text-muted)]">
-          Trạng thái: <strong className="font-semibold text-tx-strong">{chip}</strong> · ghép {members.length} bàn
-        </span>
-      ) : null}
+      {/* Trạng thái chỉ nói một lần, ở chip có khung màu cạnh tên bàn. Dòng
+          "Trạng thái: ... · ghép N bàn" ở đây lặp lại đúng từng chữ của chip. */}
       <span className="-mt-2 text-[13px] text-[var(--text-muted)]">
         {zone?.name}, {isBar && !isGroup ? "1 ghế" : `${totalCapacity} chỗ`}
         {t.isSpare ? ", bàn sơ cua" : ""}
@@ -576,15 +588,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
       ) : null}
       {info ? <span className="text-[13px] text-pretty text-[var(--text-muted)]">{info}</span> : null}
       <LayoutActions model={m.model} tableId={id} />
-      {t ? (
-        <SpareButton
-          table={t}
-          state={st}
-          hasClaim={Boolean(c)}
-          inGroup={isGroup}
-        />
-      ) : null}
-      {actions.length ? (
+      {actions.length || t ? (
         <div className="grid grid-cols-2 gap-2">
           {c?.kind === "reservation" && c.reservationId ? (
             <>
@@ -597,7 +601,10 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
               <CallHistory bookingId={c.reservationId} className="col-span-2" />
             </>
           ) : null}
-          {actions.map((x) => (
+          {/* Sơ cua không phải việc hằng ngày nên nó rơi xuống cạnh Đổi bàn,
+              thay vì đứng riêng một khối ngay trên các nút chính. Các nút huỷ
+              chiếm cả dòng nên luôn ở dưới cùng, sau cả Sơ cua. */}
+          {mainActions.map((x) => (
             <button
               key={x.label}
               type="button"
@@ -611,6 +618,23 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
                   ? "border-primary bg-primary text-primary-foreground"
                   : cn("border-strong bg-transparent", x.danger ? "text-st-noshow-ink" : "text-tx-1"),
               )}
+            >
+              {x.label}
+            </button>
+          ))}
+          {t ? (
+            <div className={cn(mainActions.length % 2 === 0 && "col-span-2")}>
+              <SpareButton table={t} state={st} hasClaim={Boolean(c)} inGroup={isGroup} />
+            </div>
+          ) : null}
+          {tailActions.map((x) => (
+            <button
+              key={x.label}
+              type="button"
+              onClick={x.go}
+              disabled={x.disabled || a.pending || pending}
+              title={x.title}
+              className="col-span-2 h-12 rounded-xl border border-strong bg-transparent text-[15px] font-medium text-st-noshow-ink disabled:opacity-45"
             >
               {x.label}
             </button>
