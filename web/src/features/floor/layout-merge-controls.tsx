@@ -99,63 +99,76 @@ export function LayoutMergeControls({ model, overlay = false }: { model: FloorMo
       className={cn(
         "grid text-sm",
         overlay
-          ? // Mockup 03: the panel COVERS the top of the plan instead of pushing
-            // it down. Pushing re-fits the camera, which is what made the plan
-            // jump back to the top twice during one merge.
-            "gap-1.5 rounded-[18px] bg-[#1b1a17] px-3 pt-2 pb-2.5 text-white shadow-[var(--shadow-float)]"
+          ? // Sits in the strip UNDER the plan, where the undo pair normally is.
+            // The mockup drew it over the top of the plan, but in the real app
+            // that hid the whole of Khu C; and pushing the plan down the old way
+            // shrank it until the tables were hard to hit. Below the plan it
+            // covers no table at all and costs the camera about 8% of its scale.
+            "gap-1.5 rounded-[18px] border border-border bg-surface-1 px-3 pt-2 pb-2.5 shadow-[var(--shadow-float)]"
           : "gap-2 rounded-lg border bg-surface-1 p-2",
       )}
       aria-label="Chế độ ghép bàn"
     >
-      <div className="flex items-center justify-between gap-2">
-        <strong>Đang ghép bàn</strong>
-        <Button
-          variant="ghost"
-          aria-label="Hủy"
-          className={overlay ? "h-8 px-2 text-white hover:bg-white/10 hover:text-white" : undefined}
-          onClick={useUi.getState().cancelPick}
-        >
-          Hủy
-        </Button>
-      </div>
-      <p className={cn("text-xs", overlay ? "text-white/70" : "text-muted-foreground")}>
-        Chạm {overlay && ids.length ? "tiếp " : ""}các bàn cần ghép trên sơ đồ.
-      </p>
-      {ids.length && overlay ? (
-        // The chips say what is selected at a glance; the old sentence made the
-        // panel taller than the 172px the mockup gives it.
-        <p className="flex flex-wrap items-center gap-1.5" aria-live="polite">
-          <span className="sr-only">Đang chọn {ids.length} vị trí:</span>
-          {ids.map((id) => (
-            <span key={id} className="rounded-md bg-white/15 px-2 py-0.5 text-[13px] font-semibold">
-              {model.label(id)}
-            </span>
-          ))}
-          <span className="rounded-md bg-white px-2 py-0.5 text-[13px] font-bold text-[#1b1a17]">
-            {total}
-            <span className="sr-only"> chỗ</span>
+      {overlay ? (
+        // Everything that can share a line does. The strip lives under the plan
+        // and every pixel it takes is a pixel the camera loses, so the title,
+        // the chips and Hủy sit on one row and the hint shares the next with
+        // the reason.
+        <div className="flex min-w-0 items-center gap-1.5">
+          <strong className="shrink-0 text-[13px]">Ghép bàn</strong>
+          <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1" aria-live="polite">
+            <span className="sr-only">Đang chọn {ids.length} vị trí:</span>
+            {ids.map((id) => (
+              <span key={id} className="rounded-md bg-surface-3 px-1.5 py-0.5 text-[13px] font-semibold text-tx-strong">
+                {model.label(id)}
+              </span>
+            ))}
+            {ids.length ? (
+              <span className="rounded-md bg-tx-strong px-1.5 py-0.5 text-[13px] font-bold text-background">
+                {total}
+                <span className="sr-only"> chỗ</span>
+              </span>
+            ) : null}
+            {existingGroup ? (
+              <span className="truncate text-[12px] text-muted-foreground">
+                + cụm {existingGroup.displayCode ?? "#" + existingGroup.id}
+              </span>
+            ) : null}
           </span>
-          {existingGroup ? (
-            <span className="text-[12px] text-white/70">
-              thêm vào cụm {existingGroup.displayCode ?? "#" + existingGroup.id}
-            </span>
-          ) : null}
+          <Button variant="ghost" aria-label="Hủy" className="h-8 shrink-0 px-2" onClick={useUi.getState().cancelPick}>
+            Hủy
+          </Button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-2">
+          <strong>Đang ghép bàn</strong>
+          <Button variant="ghost" aria-label="Hủy" onClick={useUi.getState().cancelPick}>
+            Hủy
+          </Button>
+        </div>
+      )}
+      {overlay ? (
+        <p className="truncate text-xs text-muted-foreground" id={reason ? "layout-merge-reason" : undefined}>
+          {reason ?? `Chạm ${ids.length ? "tiếp " : ""}các bàn cần ghép trên sơ đồ.`}
         </p>
-      ) : ids.length ? (
+      ) : (
+        <p className="text-xs text-muted-foreground">Chạm các bàn cần ghép trên sơ đồ.</p>
+      )}
+      {!overlay && ids.length ? (
         <p aria-live="polite">
           Đang chọn ({ids.length} vị trí): {ids.map((id) => model.label(id)).join(" - ")} · tổng {total} chỗ
           {existingGroup ? ` · thêm vào cụm ${existingGroup.displayCode ?? "#" + existingGroup.id}` : ""}
         </p>
       ) : null}
-      {reason ? (
-        <p id="layout-merge-reason" className={cn("text-xs", overlay ? "text-white/70" : "text-muted-foreground")}>
+      {reason && !overlay ? (
+        <p id="layout-merge-reason" className="text-xs text-muted-foreground">
           {reason}
         </p>
       ) : null}
       {api.mode === "mock" && !overlay ? (
         <p className="text-xs text-muted-foreground">Bản mô phỏng: chỉ lưu trên máy này.</p>
       ) : null}
-      <div className={cn("flex flex-wrap gap-2", overlay && "mt-0.5 flex-row-reverse")}>
+      <div className={cn("flex gap-2", overlay ? "flex-row-reverse [&>button]:h-10" : "flex-wrap")}>
         <GuardedButton
           permission={owner ? "visit.combine" : "table.group.manage"}
           disabled={pending || !!reason}

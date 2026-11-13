@@ -210,22 +210,14 @@ export function MapScreen({
       <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
         {/* Mockup 03: the merge panel floats OVER the plan. In the document flow
             it shortened the canvas, the camera re-fitted, and the plan jumped. */}
-        {(planChrome && search.active) || (!pick && layoutPick) ? (
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-[11] flex flex-col gap-1.5 px-2">
-            {/* Cả hai khối này trước nằm trong luồng tài liệu nên chúng ăn chiều
-                cao của sơ đồ: tìm một số điện thoại là mất 74px, đang ghép bàn
-                thì mất thêm hơn 200px nữa, sơ đồ co lại tới mức khó bấm. Giờ
-                chúng nổi lên trên, sơ đồ giữ nguyên kích thước. */}
-            {planChrome && search.active ? (
-              <div className="pointer-events-auto rounded-[14px] border border-border/80 bg-background/95 px-3 py-2 shadow-lg backdrop-blur dark:border-slate-700/80 dark:bg-[#1e232d]/95">
-                <ReceptionSearchResults search={search} onOpenBooking={m.openDetail} />
-              </div>
-            ) : null}
-            {!pick && layoutPick ? (
-              <div className="pointer-events-auto">
-                <LayoutMergeControls model={m.model} overlay />
-              </div>
-            ) : null}
+        {planChrome && search.active ? (
+          // Kết quả tìm kiếm nổi trên sơ đồ thay vì nằm trong luồng: trong luồng
+          // nó lấy mất 74px chiều cao của sơ đồ. Nó chỉ cao hai dòng và biến mất
+          // ngay khi xoá ô tìm kiếm, nên che tạm góc trên là chấp nhận được.
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-[11] px-2">
+            <div className="pointer-events-auto rounded-[14px] border border-border/80 bg-background/95 px-3 py-2 shadow-lg backdrop-blur dark:border-slate-700/80 dark:bg-[#1e232d]/95">
+              <ReceptionSearchResults search={search} onOpenBooking={m.openDetail} />
+            </div>
           </div>
         ) : null}
         {m.model.catalog ? (
@@ -300,7 +292,14 @@ export function MapScreen({
           />
         ) : null}
       </div>
-      {planChrome && undoEnabled ? (
+      {/* Dải dưới cùng: đang ghép bàn thì nó là bảng ghép, còn lại là cặp
+          hoàn tác. Ghép bàn không che ô bàn nào, và hoàn tác cũng không cần
+          tới giữa chừng một thao tác ghép. */}
+      {!pick && layoutPick ? (
+        <div className="z-[11] shrink-0 px-2 pb-[var(--bottom-safe)]">
+          <LayoutMergeControls model={m.model} overlay />
+        </div>
+      ) : planChrome && undoEnabled ? (
         // Mockup 01 ends the screen with a 52px row holding just these two.
         // Floating them over the plan put them on top of Khu A. The row is
         // dropped entirely where undo is not available (mock build), so there
