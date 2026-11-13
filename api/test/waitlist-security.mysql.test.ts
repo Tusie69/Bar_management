@@ -278,7 +278,7 @@ mysqlDescribe('waitlist mutations and route security integration', () => {
       expect(response.text).not.toContain('Foreign guest')
       expect(response.text).not.toContain('Masked guest')
       expect(response.text).not.toContain('Waiting guest')
-      expect(response.text).not.toContain('B1')
+      expect(response.text).not.toContain('ZZ9')
     }
     const homeBooking = await createBooking(actor, bookingInput)
     await createWaitlistEntry(actor, waitlistInput)

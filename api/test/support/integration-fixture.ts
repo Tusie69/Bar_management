@@ -102,9 +102,14 @@ async function populateFixture(): Promise<void> {
     "INSERT INTO zones (id, organization_id, venue_id, code, name) VALUES (?, ?, ?, 'A', 'A'), (?, ?, ?, 'B', 'B')",
     [tableId, actor.organizationId, actor.venueId, foreignTableId, actor.organizationId, otherVenueId],
   )
+  // Bàn của venue lạ mang mã ZZ9, cố ý nằm ngoài mọi mã bàn thật của quán.
+  // Nó là mồi phát hiện rò rỉ dữ liệu chéo venue: bản export của venue nhà mà
+  // chứa mã này nghĩa là có rò rỉ. Trước đây mồi là 'B1', nhưng bản export
+  // mới in ra một sơ đồ cố định gồm cả ô B1 kể cả khi ô đó trống, nên mồi
+  // trùng với dữ liệu hợp lệ và test báo động giả.
   await databasePool.execute(
     `INSERT INTO dining_tables (id, organization_id, venue_id, zone_id, code, display_name, kind, capacity, pos_x, pos_y)
-     VALUES (?, ?, ?, ?, 'A1', 'A1', 'TABLE', 4, 10, 10), (?, ?, ?, ?, 'B1', 'B1', 'TABLE', 4, 10, 10)`,
+     VALUES (?, ?, ?, ?, 'A1', 'A1', 'TABLE', 4, 10, 10), (?, ?, ?, ?, 'ZZ9', 'ZZ9', 'TABLE', 4, 10, 10)`,
     [tableId, actor.organizationId, actor.venueId, tableId, foreignTableId, actor.organizationId, otherVenueId, foreignTableId],
   )
   await databasePool.execute("INSERT INTO booking_sources (organization_id, code, name) VALUES (?, 'HOTLINE', 'Hotline')", [actor.organizationId])
