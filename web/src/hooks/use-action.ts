@@ -39,6 +39,11 @@ export interface ActionConfirmations {
 const CONFLICT_TITLE: Record<string, string> = {
   TABLE_CONFLICT: "Bàn không còn trống",
   VERSION_CONFLICT: "Dữ liệu vừa thay đổi",
+  // Ba mã dưới đây là luật ghép bàn từ chối, không phải dữ liệu đổi trên máy
+  // khác. Gọi đúng tên để lễ tân biết tải lại trang cũng không giúp được gì.
+  TABLE_GROUP_MULTIPLE_CLAIMS: "Không ghép được hai booking",
+  TABLE_GROUP_MIXED_STATE: "Không ghép bàn trống với bàn đang có khách",
+  TABLE_ALREADY_GROUPED: "Bàn đã thuộc cụm khác",
   ENTRY_ALREADY_CLAIMED: "Người khác đang liên hệ",
   NO_SYMBOL_AVAILABLE: "Hết ký hiệu ghép bàn",
   UNDO_CONFLICT_MODIFIED: "Không thể hoàn tác",

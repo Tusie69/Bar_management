@@ -1,12 +1,13 @@
-import { useMemo } from "react"
+import { useEffect, useMemo } from "react"
 import type { FloorTableState, TableLiveState, TableView } from "@/domain/models"
 import { useCatalog, useFloorState } from "@/hooks/use-data"
 import type { BusinessDate } from "@/lib/time"
+import { setTableCodeResolver } from "@/services/error-messages"
 
 export function useFloorModel(businessDate?: BusinessDate) {
   const catalog = useCatalog()
   const floor = useFloorState(businessDate)
-  return useMemo(() => {
+  const model = useMemo(() => {
     const snapshot = floor.isPlaceholderData || floor.isError ? undefined : floor.data
     const tables = catalog.data?.tables ?? []
     const byId = new Map<number, TableView>(tables.map((t) => [t.id, t]))
@@ -43,6 +44,14 @@ export function useFloorModel(businessDate?: BusinessDate) {
       freeIds,
     }
   }, [catalog.data, floor.data, catalog.isLoading, floor.isLoading, floor.isPlaceholderData, floor.isError, catalog.error, floor.error])
+
+  // Lets a server error name the tables it is complaining about.
+  useEffect(() => {
+    setTableCodeResolver((id) => model.byId.get(id)?.code ?? null)
+    return () => setTableCodeResolver(null)
+  }, [model])
+
+  return model
 }
 
 export type FloorModel = ReturnType<typeof useFloorModel>
