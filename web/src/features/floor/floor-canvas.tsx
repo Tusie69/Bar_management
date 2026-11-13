@@ -156,6 +156,11 @@ function ClusterCircleRing({ r }: { r: number }) {
   )
 }
 
+/** Pill width for a cluster code such as "G01" or "◆A". */
+function formatGroupCodeWidth(code: string): number {
+  return Math.max(18, code.length * 5.6 + 8)
+}
+
 const PAD = 18
 /**
  * Slack svgHeight leaves under the plan on desktop so the bottom shadow is not
@@ -592,6 +597,49 @@ export function FloorCanvas(props: Props) {
     return repMap
   }, [groups, states, tableById])
 
+  /**
+   * One outline around every cluster of two or more tables.
+   *
+   * A finished cluster used to look like ordinary tables side by side: the
+   * only mark was the group code in a corner of one cell, which disappears at
+   * arm's length. The receptionist could not tell from across the room that
+   * B5, B6, B7 and B8 are one party's table.
+   *
+   * The box is the bounding box of the members plus a small margin, drawn
+   * behind the tables so it never hides a status colour, a badge or an icon.
+   * Clusters are adjacent by construction, so the box does not swallow
+   * unrelated tables.
+   */
+  const clusterOutlines = useMemo(() => {
+    const seen = new Set<string>()
+    const out: { key: string; x: number; y: number; w: number; h: number; code: string | null }[] = []
+
+    const add = (ids: number[], code: string | null) => {
+      const members = ids.map((id) => tableById.get(id)).filter((t): t is TableView => !!t)
+      if (members.length < 2) return
+      const key = [...ids].sort((a, b) => a - b).join(",")
+      if (seen.has(key)) return
+      seen.add(key)
+      const pad = 7
+      const left = Math.min(...members.map((t) => t.x - t.w / 2)) - pad
+      const right = Math.max(...members.map((t) => t.x + t.w / 2)) + pad
+      const top = Math.min(...members.map((t) => t.y - t.h / 2)) - pad
+      const bottom = Math.max(...members.map((t) => t.y + t.h / 2)) + pad
+      out.push({ key, x: left, y: top, w: right - left, h: bottom - top, code })
+    }
+
+    for (const g of groups) add(g.tableIds, formatGroupCode(g.displayCode ?? g.symbolNo))
+    if (states) {
+      for (const fs of states.values()) {
+        const claim = fs?.claim
+        if (claim?.tableIds && claim.tableIds.length > 1) {
+          add(claim.tableIds, formatGroupCode(claim.groupDisplayCode ?? claim.symbolNo))
+        }
+      }
+    }
+    return out
+  }, [groups, states, tableById])
+
   // Zone tracking chip state (Item 2b)
   const isZoomed = userView !== null && Math.abs(userView.view.k - baseK) > 0.05
   const isZoneActive = zoneFocus !== "ALL"
@@ -757,6 +805,46 @@ export function FloorCanvas(props: Props) {
               </button>
             </foreignObject>
           ) : null}
+
+          {clusterOutlines.map((c) => (
+            <g key={`cluster-${c.key}`} data-cluster-outline="1" pointerEvents="none">
+              <rect
+                x={c.x}
+                y={c.y}
+                width={c.w}
+                height={c.h}
+                rx={10}
+                fill="var(--primary)"
+                fillOpacity={0.07}
+                stroke="var(--primary)"
+                strokeOpacity={0.55}
+                strokeWidth={1.6}
+              />
+              {c.code ? (
+                <>
+                  <rect
+                    x={c.x + 4}
+                    y={c.y - 7}
+                    width={formatGroupCodeWidth(c.code)}
+                    height={13}
+                    rx={6.5}
+                    fill="var(--primary)"
+                  />
+                  <text
+                    x={c.x + 4 + formatGroupCodeWidth(c.code) / 2}
+                    y={c.y + 2.6}
+                    textAnchor="middle"
+                    className="tnum"
+                    fontSize={8.5}
+                    fontWeight={700}
+                    fill="var(--primary-foreground)"
+                  >
+                    {c.code}
+                  </text>
+                </>
+              ) : null}
+            </g>
+          ))}
 
           {tables.map((t) => {
             const group = tableGroupMap.get(t.id) ?? null
