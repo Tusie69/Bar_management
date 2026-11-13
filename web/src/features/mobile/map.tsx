@@ -149,7 +149,7 @@ export function MapScreen({
           so neither the zone tabs nor the legend card take screen height from the plan. */}
       {!receptionist && !pick ? (
         <div className="z-[4] flex shrink-0 flex-col gap-1.5 bg-background px-4 pt-0 pb-1.5">
-          {(
+          {
             <div
               role="tablist"
               aria-label="Lọc khu"
@@ -174,7 +174,7 @@ export function MapScreen({
                 )
               })}
             </div>
-          )}
+          }
           {draft ? null : <StatusLegend tables={m.model.tables} states={m.model.states} />}
         </div>
       ) : null}
@@ -233,6 +233,7 @@ export function MapScreen({
             searchHighlightedIds={!pick && !draft ? search.tableIds : []}
             pickable={layoutPick ? null : d.bookingDraft ? d.pickable : draft ? null : pickable}
             zoneFocus={receptionist ? (draftZone ?? "ALL") : zone}
+            preserveWidthFit={!!draft}
             now={m.now}
             planOverlay={
               planChrome
@@ -542,9 +543,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
     >
       <div className="mx-auto mb-0.5 h-[5px] w-9 rounded-[3px] bg-strong" />
       <div className="flex items-center gap-2.5">
-        <span className="text-2xl font-semibold tracking-[-0.01em] text-tx-strong">
-          {groupTitle}
-        </span>
+        <span className="text-2xl font-semibold tracking-[-0.01em] text-tx-strong">{groupTitle}</span>
         <span className="rounded-full px-2.5 text-xs leading-6 font-medium" style={toneStyle(tone)}>
           {isGroup ? `${chip} - ghép ${members.length} bàn` : chip}
         </span>

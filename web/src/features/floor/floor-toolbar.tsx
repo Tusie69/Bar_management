@@ -34,23 +34,33 @@ export function DateField({
   onChange,
   minDate,
   label,
+  compactCalendar = false,
 }: {
   value: BusinessDate
   onChange: (bd: BusinessDate) => void
   minDate: BusinessDate
   label?: string
+  compactCalendar?: boolean
 }) {
   const [open, setOpen] = useState(false)
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" className="h-11 min-h-[44px] justify-start gap-2 font-normal" aria-label="Chọn ngày kinh doanh">
+        <Button
+          variant="outline"
+          className="h-11 min-h-[44px] justify-start gap-2 font-normal"
+          aria-label="Chọn ngày kinh doanh"
+        >
           <CalendarDays className="text-muted-foreground" />
           {label ?? fmtBusinessDate(value, "short")}
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-auto p-0" align="start">
         <Calendar
+          className={cn(
+            compactCalendar &&
+              "py-2 [&_.rdp-month]:gap-2 [&_.rdp-week]:mt-1 [&_button[data-day]]:aspect-auto [&_button[data-day]]:h-6",
+          )}
           mode="single"
           locale={vi}
           selected={toLocalDate(value)}
@@ -116,7 +126,7 @@ function DayNav({ today }: { today: BusinessDate }) {
       <Button
         variant="outline"
         size="icon"
-        className="h-11 w-11 min-h-[44px] min-w-[44px] bg-surface-1"
+        className="h-11 min-h-[44px] w-11 min-w-[44px] bg-surface-1"
         disabled={date <= today}
         onClick={() => go(addDays(date, -1))}
         aria-label="Ngày trước"
@@ -155,7 +165,7 @@ function DayNav({ today }: { today: BusinessDate }) {
       <Button
         variant="outline"
         size="icon"
-        className="h-11 w-11 min-h-[44px] min-w-[44px] bg-surface-1"
+        className="h-11 min-h-[44px] w-11 min-w-[44px] bg-surface-1"
         onClick={() => go(addDays(date, 1))}
         aria-label="Ngày sau"
       >
@@ -189,7 +199,7 @@ export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
                 aria-label={v.label}
                 onClick={() => ui.setView(v.id)}
                 className={cn(
-                  "flex h-11 min-h-[44px] items-center gap-2 rounded-sm border px-3 sm:px-4 text-sm whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                  "flex h-11 min-h-[44px] items-center gap-2 rounded-sm border px-3 text-sm whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:px-4",
                   on
                     ? "border-primary bg-primary font-medium text-primary-foreground"
                     : "border-transparent text-tx-1 hover:text-primary-ink",
@@ -207,7 +217,13 @@ export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
       <Sep />
       <div role="group" aria-label="Tạo mới" className="flex shrink-0 items-center gap-2">
         {onOpenList ? (
-          <Button variant="outline" size="icon" onClick={onOpenList} aria-label="Danh sách booking" className="h-11 w-11 min-h-[44px] min-w-[44px] bg-transparent">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={onOpenList}
+            aria-label="Danh sách booking"
+            className="h-11 min-h-[44px] w-11 min-w-[44px] bg-transparent"
+          >
             <ListTodo />
           </Button>
         ) : null}

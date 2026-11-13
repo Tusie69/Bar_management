@@ -75,6 +75,8 @@ interface Props {
   onBlockedTableClick?: (tableId: number) => void
   onBackgroundClick?: () => void
   compact?: boolean
+  /** Keep the whole-floor width scale when a bottom sheet shortens the canvas. */
+  preserveWidthFit?: boolean
   className?: string
   ariaLabel?: string
 
@@ -118,12 +120,37 @@ function PickedRectRing({ w, h }: { w: number; h: number }) {
   const hh = h / 2
   return (
     <g data-selection-ring="1" pointerEvents="none">
-      <rect x={-hw - 6.5} y={-hh - 6.5} width={w + 13} height={h + 13} rx={9} fill="none"
-        stroke="var(--primary)" strokeOpacity={0.22} strokeWidth={5} />
-      <rect x={-hw - 4.6} y={-hh - 4.6} width={w + 9.2} height={h + 9.2} rx={8} fill="none"
-        stroke="var(--floor)" strokeWidth={3.4} />
-      <rect x={-hw - 3} y={-hh - 3} width={w + 6} height={h + 6} rx={7} fill="none"
-        stroke="var(--primary)" strokeWidth={2.4} />
+      <rect
+        x={-hw - 6.5}
+        y={-hh - 6.5}
+        width={w + 13}
+        height={h + 13}
+        rx={9}
+        fill="none"
+        stroke="var(--primary)"
+        strokeOpacity={0.22}
+        strokeWidth={5}
+      />
+      <rect
+        x={-hw - 4.6}
+        y={-hh - 4.6}
+        width={w + 9.2}
+        height={h + 9.2}
+        rx={8}
+        fill="none"
+        stroke="var(--floor)"
+        strokeWidth={3.4}
+      />
+      <rect
+        x={-hw - 3}
+        y={-hh - 3}
+        width={w + 6}
+        height={h + 6}
+        rx={7}
+        fill="none"
+        stroke="var(--primary)"
+        strokeWidth={2.4}
+      />
     </g>
   )
 }
@@ -144,15 +171,24 @@ function ClusterRectRing({ w, h }: { w: number; h: number }) {
   const hw = w / 2
   const hh = h / 2
   return (
-    <rect x={-hw - 2.6} y={-hh - 2.6} width={w + 5.2} height={h + 5.2} rx={6} fill="none"
-      stroke="#64748B" strokeWidth={1.5} strokeDasharray="5 3" data-selection-ring="1" />
+    <rect
+      x={-hw - 2.6}
+      y={-hh - 2.6}
+      width={w + 5.2}
+      height={h + 5.2}
+      rx={6}
+      fill="none"
+      stroke="#64748B"
+      strokeWidth={1.5}
+      strokeDasharray="5 3"
+      data-selection-ring="1"
+    />
   )
 }
 
 function ClusterCircleRing({ r }: { r: number }) {
   return (
-    <circle r={r + 2.8} fill="none" stroke="#64748B" strokeWidth={1.6} strokeDasharray="5 3"
-      data-selection-ring="1" />
+    <circle r={r + 2.8} fill="none" stroke="#64748B" strokeWidth={1.6} strokeDasharray="5 3" data-selection-ring="1" />
   )
 }
 
@@ -218,6 +254,7 @@ export function FloorCanvas(props: Props) {
     onBlockedTableClick,
     onBackgroundClick,
     compact,
+    preserveWidthFit,
     className,
     ariaLabel,
     waitingCount,
@@ -226,6 +263,7 @@ export function FloorCanvas(props: Props) {
   } = props
 
   const tables = useMemo(() => rawTables.map(normalizeTableGeometry), [rawTables])
+  const selectedTableId = selectedIds[0]
 
   const wrapRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -330,6 +368,32 @@ export function FloorCanvas(props: Props) {
 
     const isPhone = phoneViewport
 
+    if (preserveWidthFit && selectedTableId !== undefined) {
+      // Opening the booking sheet removes more than half of the available
+      // height. Fitting both axes again made the whole plan (and its tap
+      // targets) collapse. Keep the exact whole-floor width fit used before
+      // the sheet opened, then move only the y axis to reveal the picked table.
+      const wholeFloor = computeZoneBounds(tables, "ALL", 0) ?? b
+      const padH = isPhone ? 8 : 16
+      const padV = isPhone ? 6 : CANVAS_BOTTOM_GAP / 2
+      const k = (size.w - padH * 2) / wholeFloor.w
+      const selected = tables.find((table) => table.id === selectedTableId)
+      const centeredY = size.h / 2 - (selected?.y ?? wholeFloor.y + wholeFloor.h / 2) * k
+      const topLimit = padV - wholeFloor.y * k
+      const bottomLimit = size.h - padV - (wholeFloor.y + wholeFloor.h) * k
+      const y =
+        wholeFloor.h * k <= size.h - padV * 2
+          ? (size.h - wholeFloor.h * k) / 2 - wholeFloor.y * k
+          : Math.min(topLimit, Math.max(bottomLimit, centeredY))
+
+      return {
+        k,
+        x: (size.w - wholeFloor.w * k) / 2 - wholeFloor.x * k,
+        y,
+        contained: true,
+      }
+    }
+
     if (isPhone) {
       if (isAll) {
         // Fit the floor on BOTH axes, then centre the leftover space.
@@ -404,7 +468,7 @@ export function FloorCanvas(props: Props) {
       x: (size.w - b.w * k) / 2 - b.x * k,
       y: (size.h - b.h * k) / 2 - b.y * k,
     }
-  }, [size.w, size.h, zoneFocus, tables, compact, phoneViewport])
+  }, [size.w, size.h, zoneFocus, tables, compact, phoneViewport, preserveWidthFit, selectedTableId])
 
   const view = !planLocked && userView && userView.zone === zoneFocus ? userView.view : fitView
 
@@ -687,13 +751,7 @@ export function FloorCanvas(props: Props) {
         }
       }}
     >
-      <svg
-        width={size.w}
-        height={svgHeight}
-        className="block"
-        role="group"
-        aria-label={ariaLabel ?? "Sơ đồ bàn 21GAM"}
-      >
+      <svg width={size.w} height={svgHeight} className="block" role="group" aria-label={ariaLabel ?? "Sơ đồ bàn 21GAM"}>
         <defs>
           <pattern id="dot-grid" width="12" height="12" patternUnits="userSpaceOnUse">
             <circle cx="1" cy="1" r="0.7" fill="var(--floor-grid)" />
@@ -825,7 +883,7 @@ export function FloorCanvas(props: Props) {
               >
                 <span
                   style={{ height: waitlistPos.height, width: waitlistPos.width }}
-                  className="pointer-events-none flex items-center justify-center gap-2 rounded-full border border-border/80 bg-background/95 px-3 text-foreground shadow-lg backdrop-blur transition-transform group-active:scale-95 dark:bg-[#1e232d]/95 dark:border-slate-700/80"
+                  className="pointer-events-none flex items-center justify-center gap-2 rounded-full border border-border/80 bg-background/95 px-3 text-foreground shadow-lg backdrop-blur transition-transform group-active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
                 >
                   <List className="size-4 shrink-0 text-foreground" />
                   <span className="text-xs font-bold whitespace-nowrap">
@@ -874,14 +932,7 @@ export function FloorCanvas(props: Props) {
             if (mode === "availability") {
               return <AvailabilityGlyph key={t.id} {...common} avail={availability?.get(t.id)} />
             }
-            return (
-              <LiveGlyph
-                key={t.id}
-                {...common}
-                state={states?.get(t.id)}
-                now={now}
-              />
-            )
+            return <LiveGlyph key={t.id} {...common} state={states?.get(t.id)} now={now} />
           })}
         </g>
       </svg>
@@ -897,12 +948,12 @@ export function FloorCanvas(props: Props) {
 
       {/* Zone tracking chip (Item 2b) */}
       {showTrackingChip && !compact ? (
-        <div className="pointer-events-auto absolute top-2.5 left-2.5 z-10 flex items-center gap-2 rounded-full border border-slate-700/40 bg-[#162238]/90 py-1 pr-1.5 pl-3 text-white shadow-md backdrop-blur dark:bg-[#1a2639]/95 dark:border-slate-600/50">
+        <div className="pointer-events-auto absolute top-2.5 left-2.5 z-10 flex items-center gap-2 rounded-full border border-slate-700/40 bg-[#162238]/90 py-1 pr-1.5 pl-3 text-white shadow-md backdrop-blur dark:border-slate-600/50 dark:bg-[#1a2639]/95">
           <span className="text-[11px] font-semibold tracking-wide">{zoneLabel} · Đang theo dõi</span>
           <button
             type="button"
             onClick={handleResetToAll}
-            className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-900 shadow-xs hover:bg-slate-100 active:scale-95 transition-transform"
+            className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-900 shadow-xs transition-transform hover:bg-slate-100 active:scale-95"
           >
             Thu về toàn bộ
           </button>
@@ -920,7 +971,7 @@ export function FloorCanvas(props: Props) {
             }}
             onPointerDown={(e) => e.stopPropagation()}
             aria-label={waitingCount !== undefined ? `Bàn chờ, ${waitingCount} khách đang chờ` : "Bàn chờ"}
-            className="group flex h-10 items-center justify-center gap-2 rounded-full border border-border/80 bg-background/95 px-3 py-1.5 text-foreground shadow-lg backdrop-blur transition-transform hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-[#1e232d]/95 dark:border-slate-700/80"
+            className="group flex h-10 items-center justify-center gap-2 rounded-full border border-border/80 bg-background/95 px-3 py-1.5 text-foreground shadow-lg backdrop-blur transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
           >
             <List className="size-4 shrink-0 text-foreground" />
             <span className="text-xs font-bold whitespace-nowrap">
@@ -1102,17 +1153,7 @@ function describe(t: TableView, state: TableLiveState, fs?: FloorTableState) {
  * - Number only (e.g. `7`), centered inside status-colored pill, thin white border
  * - No people icon, no "7 khach", never multiplied by tables
  */
-function GuestCountBadge({
-  count,
-  x,
-  y,
-  color,
-}: {
-  count?: number | null
-  x: number
-  y: number
-  color: string
-}) {
+function GuestCountBadge({ count, x, y, color }: { count?: number | null; x: number; y: number; color: string }) {
   if (!count || count <= 0) return null
   const w = count >= 100 ? 18 : count >= 10 ? 15 : 12
   const h = 11
@@ -1124,16 +1165,7 @@ function GuestCountBadge({
       aria-label={`${count} khách`}
       pointerEvents="none"
     >
-      <rect
-        x={-w / 2}
-        y={-h / 2}
-        width={w}
-        height={h}
-        rx={h / 2}
-        fill={color}
-        stroke="#ffffff"
-        strokeWidth={0.9}
-      />
+      <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={h / 2} fill={color} stroke="#ffffff" strokeWidth={0.9} />
       <text
         x={0}
         y={2.8}
@@ -1195,7 +1227,8 @@ const LiveGlyph = memo(function LiveGlyph({
   const groupId = group?.id ?? claim?.groupId
 
   const isAnchor =
-    isRepresentative ?? (!isGroup || (group ? group.tableIds?.[0] === t.id : claim?.tableIds ? claim.tableIds[0] === t.id : true))
+    isRepresentative ??
+    (!isGroup || (group ? group.tableIds?.[0] === t.id : claim?.tableIds ? claim.tableIds[0] === t.id : true))
   const isTurnAnchor = isAnchor
 
   // Corner icons per J1 Section 3
@@ -1578,14 +1611,16 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
   const faded = !ok && !blocked && status !== "spare"
   const isGroup = !!group
   const groupId = group?.id
-  const stroke = ok
-    ? "var(--foreground)"
-    : blocked
-      ? "var(--st-reserved)"
-      : "var(--table-line)"
+  const stroke = selected
+    ? "var(--st-reserved)"
+    : ok
+      ? "var(--foreground)"
+      : blocked
+        ? "var(--st-reserved)"
+        : "var(--table-line)"
   const strokeWidth = isGroup ? 3 : 2
   const fill = selected
-    ? "var(--primary)"
+    ? "var(--st-reserved-tint)"
     : ok
       ? "var(--surface-2)"
       : blocked
@@ -1595,7 +1630,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
           : status === "spare"
             ? STATE_META.spare.tint
             : "var(--surface-1)"
-  const textColor = selected ? "var(--primary-foreground)" : blocked ? "var(--st-reserved-ink)" : "var(--foreground)"
+  const textColor = selected || blocked ? "var(--st-reserved-ink)" : "var(--foreground)"
   const sub =
     status === "reserved" && avail?.claimStartsAt
       ? fmtTime(avail.claimStartsAt)
