@@ -102,7 +102,7 @@ export function LayoutMergeControls({ model, overlay = false }: { model: FloorMo
           ? // Mockup 03: the panel COVERS the top of the plan instead of pushing
             // it down. Pushing re-fits the camera, which is what made the plan
             // jump back to the top twice during one merge.
-            "gap-1.5 rounded-b-[18px] bg-[#1b1a17] px-3 pt-2 pb-2.5 text-white shadow-[var(--shadow-float)]"
+            "gap-1.5 rounded-[18px] bg-[#1b1a17] px-3 pt-2 pb-2.5 text-white shadow-[var(--shadow-float)]"
           : "gap-2 rounded-lg border bg-surface-1 p-2",
       )}
       aria-label="Chế độ ghép bàn"

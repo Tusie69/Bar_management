@@ -1,4 +1,4 @@
-import { Construction, LogIn, ShieldCheck } from "lucide-react"
+import { Construction, Eye, EyeOff, LogIn, ShieldCheck } from "lucide-react"
 import { type FormEvent, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,6 +13,7 @@ export function LoginPage({ portal }: { portal: AuthPortal }) {
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [pending, setPending] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const submit = async (event: FormEvent) => {
@@ -62,16 +63,31 @@ export function LoginPage({ portal }: { portal: AuthPortal }) {
           </div>
           <div className="grid gap-2">
             <Label htmlFor="password">Mật khẩu</Label>
-            <Input
-              id="password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              disabled={pending}
-              required
-            />
+            {/* Lễ tân gõ mật khẩu trên bàn phím điện thoại giữa ca đông, gõ sai
+                mà không thấy gì thì chỉ còn cách xoá hết gõ lại. */}
+            <div className="relative">
+              <Input
+                id="password"
+                name="password"
+                type={showPassword ? "text" : "password"}
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                disabled={pending}
+                required
+                className="pr-11"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                aria-pressed={showPassword}
+                title={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
+                className="absolute inset-y-0 right-0 grid w-11 place-items-center rounded-r-xl text-muted-foreground hover:text-foreground"
+              >
+                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </button>
+            </div>
           </div>
           {error || sessionMessage ? (
             <p role="alert" className="rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">

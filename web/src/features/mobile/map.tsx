@@ -139,7 +139,6 @@ export function MapScreen({
               <span>Xuất Text</span>
             </button>
           </div>
-          {planChrome ? <ReceptionSearchResults search={search} onOpenBooking={m.openDetail} /> : null}
         </header>
       ) : (
         <PlainHeader
@@ -211,11 +210,22 @@ export function MapScreen({
       <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
         {/* Mockup 03: the merge panel floats OVER the plan. In the document flow
             it shortened the canvas, the camera re-fitted, and the plan jumped. */}
-        {!pick && layoutPick ? (
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-[11] px-2">
-            <div className="pointer-events-auto">
-              <LayoutMergeControls model={m.model} overlay />
-            </div>
+        {(planChrome && search.active) || (!pick && layoutPick) ? (
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-[11] flex flex-col gap-1.5 px-2">
+            {/* Cả hai khối này trước nằm trong luồng tài liệu nên chúng ăn chiều
+                cao của sơ đồ: tìm một số điện thoại là mất 74px, đang ghép bàn
+                thì mất thêm hơn 200px nữa, sơ đồ co lại tới mức khó bấm. Giờ
+                chúng nổi lên trên, sơ đồ giữ nguyên kích thước. */}
+            {planChrome && search.active ? (
+              <div className="pointer-events-auto rounded-[14px] border border-border/80 bg-background/95 px-3 py-2 shadow-lg backdrop-blur dark:border-slate-700/80 dark:bg-[#1e232d]/95">
+                <ReceptionSearchResults search={search} onOpenBooking={m.openDetail} />
+              </div>
+            ) : null}
+            {!pick && layoutPick ? (
+              <div className="pointer-events-auto">
+                <LayoutMergeControls model={m.model} overlay />
+              </div>
+            ) : null}
           </div>
         ) : null}
         {m.model.catalog ? (

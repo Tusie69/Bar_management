@@ -1,4 +1,4 @@
-import { CalendarPlus, Clock, ListPlus, UserPlus, X, type LucideIcon } from "lucide-react"
+import { CalendarPlus, Clock, ListPlus, LogOut, UserPlus, X, type LucideIcon } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { useNavigate } from "react-router"
 import { roleCan, type Permission } from "@/domain/access"
@@ -143,8 +143,9 @@ export function AlertsSheet({
 
 /** Demo user, theme and the pages that are not in the tab bar (Khách, Báo cáo, Cài đặt). */
 export function AccountSheet({ onClose }: { onClose: () => void }) {
-  const { user, users, theme, setUser, setTheme } = useSession()
+  const { user, users, theme, setUser, setTheme, principal, logout } = useSession()
   const navigate = useNavigate()
+  const [loggingOut, setLoggingOut] = useState(false)
   const more = NAV.filter((n) => ["/guests", "/reports", "/settings"].includes(n.to)).filter(
     (n) => !n.permission || roleCan(user.role, n.permission),
   )
@@ -178,6 +179,34 @@ export function AccountSheet({ onClose }: { onClose: () => void }) {
           <span className="text-[13px] text-[var(--text-muted)]">{ROLE_LABEL[u.role]}</span>
         </button>
       ))}
+      {/* Máy lễ tân chạy cả ca trên một tài khoản và trước đây không có chỗ nào
+          thoát ra: đăng xuất chỉ có trong menu của bản desktop. */}
+      {principal ? (
+        <>
+          <span className="pt-2 text-[13px] text-[var(--text-muted)]">Phiên đăng nhập</span>
+          <div className="flex min-h-12 items-center justify-between rounded-2xl border border-border bg-background px-3.5">
+            <span className="min-w-0 truncate text-[15px] font-medium text-tx-strong">
+              {principal.displayName}
+            </span>
+            <span className="shrink-0 text-[13px] text-[var(--text-muted)]">{ROLE_LABEL[user.role]}</span>
+          </div>
+          <button
+            type="button"
+            disabled={loggingOut}
+            onClick={() => {
+              setLoggingOut(true)
+              void logout().finally(() => {
+                setLoggingOut(false)
+                onClose()
+              })
+            }}
+            className="flex min-h-12 items-center gap-2.5 rounded-2xl border border-destructive/40 bg-destructive/10 px-3.5 text-left text-[15px] font-medium text-destructive disabled:opacity-60"
+          >
+            <LogOut className="size-4 shrink-0" aria-hidden />
+            {loggingOut ? "Đang đăng xuất…" : "Đăng xuất"}
+          </button>
+        </>
+      ) : null}
       {more.length ? <span className="pt-2 text-[13px] text-[var(--text-muted)]">Trang khác</span> : null}
       {more.map((n) => (
         <SheetItem
