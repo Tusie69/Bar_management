@@ -3,8 +3,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { env } from '../src/config/env.js'
 import { databasePool } from '../src/database/pool.js'
-import { checkInBooking, createBooking } from '../src/modules/bookings/booking.repository.js'
-import { runBusinessDayEndSweep } from '../src/modules/visits/business-day.worker.js'
+import { assignBookingTables, checkInBooking, createBooking } from '../src/modules/bookings/booking.repository.js'
+import { runBusinessDayEndSweep, runStaleHoldSweep } from '../src/modules/visits/business-day.worker.js'
 import { actor, businessDate, clearFixture, initializeFixture, login, resetFixture, tableId } from './support/integration-fixture.js'
 
 const mysqlDescribe = process.env.RUN_MYSQL_INTEGRATION === '1' ? describe : describe.skip
@@ -77,6 +77,49 @@ mysqlDescribe('business-day auto-close reconciles canonical floor and waitlist H
     ])
     expect(await runBusinessDayEndSweep({ organizationId: actor.organizationId, venueId: actor.venueId, now: cutoff }))
       .toEqual({ closed: 0, skipped: 0 })
+  })
+
+  it('releases a hold nobody closed once its business day is over, and only then', async () => {
+    // A booking that holds a table and is never checked in: the case that used
+    // to leave the table permanently unmergeable, because the merge check reads
+    // table_allocations without filtering by business date.
+    const booking = await createBooking(actor, { guestName: 'Khach khong toi', partySize: 2,
+      businessDate, expectedAt: `${businessDate}T21:00:00+07:00`, sourceCode: 'HOTLINE' })
+    const assigned = await assignBookingTables(actor, booking.id, booking.version, [tableId])
+    expect(assigned.tableCodes.length).toBe(1)
+
+    const open = async () => {
+      const [rows] = await databasePool.execute<RowDataPacket[]>(
+        `SELECT a.id FROM table_allocations a WHERE a.hold_id IS NOT NULL AND a.released_at IS NULL`)
+      return rows.length
+    }
+    expect(await open()).toBe(1)
+
+    // Before the cutoff the hold is live and must not be touched.
+    expect(await runStaleHoldSweep({ organizationId: actor.organizationId, venueId: actor.venueId,
+      now: new Date(cutoff.getTime() - 1) })).toEqual({ released: 0, skipped: 0 })
+    expect(await open()).toBe(1)
+
+    expect(await runStaleHoldSweep({ organizationId: actor.organizationId, venueId: actor.venueId, now: cutoff }))
+      .toEqual({ released: 1, skipped: 0 })
+    expect(await open()).toBe(0)
+
+    const [holds] = await databasePool.execute<RowDataPacket[]>(
+      'SELECT status, released_by_user_id, release_reason_code FROM table_holds WHERE reservation_id = ?', [booking.id])
+    expect(holds[0]).toMatchObject({ status: 'RELEASED', released_by_user_id: null, release_reason_code: 'BUSINESS_DAY_END' })
+
+    // The booking is left alone: calling it a no-show is the venue's decision.
+    const [reservations] = await databasePool.execute<RowDataPacket[]>(
+      'SELECT status FROM reservations WHERE id = ?', [booking.id])
+    expect(reservations[0]?.status).toBe('BOOKED')
+
+    const [audits] = await databasePool.execute<RowDataPacket[]>(
+      "SELECT action FROM operation_log WHERE action = 'HOLD_AUTO_RELEASED_BUSINESS_DAY'")
+    expect(audits.length).toBe(1)
+
+    // Running again finds nothing left to do.
+    expect(await runStaleHoldSweep({ organizationId: actor.organizationId, venueId: actor.venueId, now: cutoff }))
+      .toEqual({ released: 0, skipped: 0 })
   })
 
   it('rolls back visit, allocations, group and change sequence when system audit fails', async () => {
