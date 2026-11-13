@@ -19,9 +19,9 @@ import { toast } from "sonner"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { NAV } from "@/app/nav"
 import { useShiftAlerts } from "../floor/alerts"
+import { buildGuestCount } from "../floor/guest-count"
 import { useFloorModel } from "../floor/use-floor-model"
 import { isWaitingForTable } from "../floor/reception-rules"
-import { ZaloBookingExport } from "../reservations/zalo-booking-export"
 import { MobileContext, type Confirm, type FormRequest, type MobileCtx, type TablePick, type Tab } from "./context"
 import { DetailScreen } from "./detail"
 import { FormScreen } from "./form"
@@ -29,15 +29,7 @@ import { HomeScreen } from "./home"
 import { ListScreen } from "./list"
 import { MapScreen, TableSheet } from "./map"
 import { isOpenEntry } from "./model"
-import {
-  AccountSheet,
-  AlertsSheet,
-  ConfirmDialog,
-  CreateSheet,
-  Scrim,
-  StatusDialog,
-  Toast15,
-} from "./overlays"
+import { AccountSheet, AlertsSheet, ConfirmDialog, CreateSheet, Scrim, StatusDialog, Toast15 } from "./overlays"
 import { PlainHeader } from "./ui"
 import { EntryDetailScreen, WaitScreen } from "./wait"
 import "./mobile.css"
@@ -78,6 +70,7 @@ export default function MobileApp() {
   const [handled, setHandled] = useState<Set<string>>(() => new Set())
 
   const booked = useMemo(() => (reservations ?? []).filter((r) => r.status === "BOOKED"), [reservations])
+  const guestCount = useMemo(() => buildGuestCount(reservations), [reservations])
   const alerts = useShiftAlerts(model, booked, now)
   const unread = alerts.filter((a) => !seen.has(a.key)).length
   const handle = (key: string) => setHandled((s) => new Set(s).add(key))
@@ -307,11 +300,27 @@ export default function MobileApp() {
         ) : null}
         {overlay === "create" ? <CreateSheet onClose={() => setOverlay(null)} /> : null}
         {overlay === "account" ? <AccountSheet onClose={() => setOverlay(null)} /> : null}
-        <ZaloBookingExport
-          businessDate={selectedDate}
-          open={overlay === "count"}
-          onOpenChange={(open) => !open && setOverlay(null)}
-        />
+        <Sheet open={overlay === "count"} onOpenChange={(open) => !open && setOverlay(null)}>
+          <SheetContent data-gm side="bottom" className="gap-0 rounded-t-[24px] px-4 pt-5 pb-6">
+            <SheetTitle className="text-lg">Đếm khách</SheetTitle>
+            <SheetDescription className="pb-3 text-xs">Tổng hợp khách và bàn đặt trong ngày đang xem.</SheetDescription>
+            <div className="grid grid-cols-2 gap-2" data-testid="guest-count-summary">
+              {[
+                [`Trước ${guestCount.splitLabel}`, guestCount.arrivedBefore],
+                [`Sau ${guestCount.splitLabel}`, guestCount.arrivedAfter],
+                ["Tổng đã tới", guestCount.arrivedTotal],
+                ["Tổng bàn đặt", guestCount.bookedTables],
+                ["Tổng khách đặt", guestCount.bookedGuests],
+                ["Khách quen (O)", guestCount.returningGuests],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl border border-border/80 bg-background px-3 py-2.5">
+                  <div className="text-[12px] text-tx-2">{label}</div>
+                  <div className="tnum mt-0.5 text-xl font-bold text-tx-strong">{value}</div>
+                </div>
+              ))}
+            </div>
+          </SheetContent>
+        </Sheet>
         <Sheet open={overlay === "wait"} onOpenChange={(open) => !open && setOverlay(null)}>
           <SheetContent data-gm side="bottom" className="h-[85dvh] gap-0 overflow-hidden p-0">
             <SheetTitle className="px-4 pt-5 text-lg">

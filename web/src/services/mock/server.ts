@@ -852,12 +852,14 @@ export class MockGamApi implements GamApi, DemoControls {
         expectedAt: row.expectedAt,
         checkedInAt: row.checkedInAt,
         status: row.status,
+        sourceCode: row.sourceCode,
+        socialPlatform: row.socialPlatform ?? null,
+        honorific: row.honorific ?? null,
         tables: cat.tables.filter((table) => row.tableIds.includes(table.id)).map(tableInfo),
-        // bossTable, designated and round have no field yet (B01, awaiting the PO);
-        // birthday is real data, so it comes from the reservation.
+        // Round has no persisted field yet; the other flags come from the reservation.
         metadata: {
-          bossTable: false,
-          designated: false,
+          bossTable: row.iconKeys?.includes("star") ?? false,
+          designated: row.iconKeys?.includes("pin") ?? false,
           birthday: row.isBirthday,
           round: null,
           returningCustomer: row.classification === "RETURNING" ? true : row.classification === "NEW" ? false : null,

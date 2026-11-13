@@ -20,11 +20,12 @@ import { buildGuestCount } from "./guest-count"
 
 const STORAGE_KEY = "gam21.guest-count-open"
 
-function loadOpen(): boolean {
+function loadOpen(defaultOpen: boolean): boolean {
   try {
-    return localStorage.getItem(STORAGE_KEY) !== "0"
+    const stored = localStorage.getItem(STORAGE_KEY)
+    return stored === null ? defaultOpen : stored !== "0"
   } catch {
-    return true
+    return defaultOpen
   }
 }
 
@@ -39,10 +40,7 @@ function saveOpen(open: boolean) {
 function Row({ label, value, divided }: { label: string; value: number; divided?: boolean }): ReactElement {
   return (
     <div
-      className={cn(
-        "flex items-baseline justify-between gap-1.5",
-        divided && "mt-0.5 border-t border-border/70 pt-1",
-      )}
+      className={cn("flex items-baseline justify-between gap-1.5", divided && "mt-0.5 border-t border-border/70 pt-1")}
     >
       <span className="truncate text-[9px] leading-tight text-tx-2">{label}</span>
       <span className="tnum shrink-0 text-[9px] leading-tight font-bold text-tx-strong">{value}</span>
@@ -53,13 +51,16 @@ function Row({ label, value, divided }: { label: string; value: number; divided?
 export function GuestCountCard({
   reservations,
   onOpen,
+  initialOpen = true,
   className,
 }: {
   reservations: readonly ReservationView[] | undefined
   onOpen?: () => void
+  /** Initial state when this device has no remembered preference yet. */
+  initialOpen?: boolean
   className?: string
 }): ReactElement {
-  const [open, setOpen] = useState(loadOpen)
+  const [open, setOpen] = useState(() => loadOpen(initialOpen))
   const c = buildGuestCount(reservations)
 
   const toggle = () => {
@@ -80,11 +81,15 @@ export function GuestCountCard({
         aria-expanded={false}
         aria-label="Mở bảng đếm khách"
         data-testid="guest-count-card-collapsed"
-        className={cn(shell, "inline-flex h-9 items-center gap-1.5 px-2.5 active:scale-95", className)}
+        className={cn(
+          shell,
+          "inline-flex h-9 items-center gap-1.5 px-2.5 active:scale-95 max-[359px]:size-11 max-[359px]:justify-center max-[359px]:p-0",
+          className,
+        )}
       >
         <Users className="size-4 shrink-0" aria-hidden />
-        <span className="text-[13px] font-semibold text-tx-strong">Đếm khách</span>
-        <ChevronDown className="size-3.5 text-tx-2" aria-hidden />
+        <span className="text-[13px] font-semibold text-tx-strong max-[359px]:sr-only">Đếm khách</span>
+        <ChevronDown className="size-3.5 text-tx-2 max-[359px]:hidden" aria-hidden />
       </button>
     )
   }

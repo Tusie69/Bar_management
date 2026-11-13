@@ -676,7 +676,16 @@ export function FloorCanvas(props: Props) {
    */
   const clusterOutlines = useMemo(() => {
     const seen = new Set<string>()
-    const out: { key: string; x: number; y: number; w: number; h: number; code: string | null }[] = []
+    const out: {
+      key: string
+      x: number
+      y: number
+      w: number
+      h: number
+      code: string | null
+      isBar: boolean
+      orientation: "horizontal" | "vertical" | null
+    }[] = []
 
     const add = (ids: number[], code: string | null) => {
       const members = ids.map((id) => tableById.get(id)).filter((t): t is TableView => !!t)
@@ -684,12 +693,18 @@ export function FloorCanvas(props: Props) {
       const key = [...ids].sort((a, b) => a - b).join(",")
       if (seen.has(key)) return
       seen.add(key)
-      const pad = 7
+      const isBar = members.every((t) => t.kind === "BAR_SEAT")
+      const spreadX = Math.max(...members.map((t) => t.x)) - Math.min(...members.map((t) => t.x))
+      const spreadY = Math.max(...members.map((t) => t.y)) - Math.min(...members.map((t) => t.y))
+      const orientation = isBar ? (spreadY > spreadX ? "vertical" : "horizontal") : null
+      // Bar seats leave only about 3-4px between circles. The regular 7px
+      // table padding crosses that gap and visually absorbs an unrelated seat.
+      const pad = isBar ? 2 : 7
       const left = Math.min(...members.map((t) => t.x - t.w / 2)) - pad
       const right = Math.max(...members.map((t) => t.x + t.w / 2)) + pad
       const top = Math.min(...members.map((t) => t.y - t.h / 2)) - pad
       const bottom = Math.max(...members.map((t) => t.y + t.h / 2)) + pad
-      out.push({ key, x: left, y: top, w: right - left, h: bottom - top, code })
+      out.push({ key, x: left, y: top, w: right - left, h: bottom - top, code, isBar, orientation })
     }
 
     for (const g of groups) add(g.tableIds, formatGroupCode(g.displayCode ?? g.symbolNo))
@@ -813,36 +828,6 @@ export function FloorCanvas(props: Props) {
               </g>
             )
           })}
-          {/* Mã nhóm vẽ SAU các ô bàn: vẽ cùng lớp với khung thì ghế quầy bar
-              nằm đè lên và che mất chữ. Viền vẫn ở dưới để không che màu
-              trạng thái, chỉ riêng viên thuốc chữ nổi lên trên. */}
-          {clusterOutlines.map((c) =>
-            c.code ? (
-              <g key={`cluster-code-${c.key}`} data-cluster-code="1" pointerEvents="none">
-                <rect
-                  x={c.x + 3}
-                  y={c.y - 7.5}
-                  width={formatGroupCodeWidth(c.code)}
-                  height={14}
-                  rx={7}
-                  fill="var(--primary)"
-                  stroke="var(--floor)"
-                  strokeWidth={1.4}
-                />
-                <text
-                  x={c.x + 3 + formatGroupCodeWidth(c.code) / 2}
-                  y={c.y + 2.4}
-                  textAnchor="middle"
-                  className="tnum"
-                  fontSize={8.5}
-                  fontWeight={700}
-                  fill="var(--primary-foreground)"
-                >
-                  {c.code}
-                </text>
-              </g>
-            ) : null,
-          )}
           <Fixtures />
 
           {/* Bar guest list inside floor SVG */}
@@ -895,13 +880,19 @@ export function FloorCanvas(props: Props) {
           ) : null}
 
           {clusterOutlines.map((c) => (
-            <g key={`cluster-${c.key}`} data-cluster-outline="1" pointerEvents="none">
+            <g
+              key={`cluster-${c.key}`}
+              data-cluster-outline="1"
+              data-cluster-kind={c.isBar ? "bar" : "table"}
+              data-cluster-orientation={c.orientation ?? undefined}
+              pointerEvents="none"
+            >
               <rect
                 x={c.x}
                 y={c.y}
                 width={c.w}
                 height={c.h}
-                rx={10}
+                rx={c.isBar ? Math.min(c.w, c.h) / 2 : 10}
                 fill="var(--primary)"
                 fillOpacity={0.07}
                 stroke="var(--primary)"
@@ -934,6 +925,47 @@ export function FloorCanvas(props: Props) {
             }
             return <LiveGlyph key={t.id} {...common} state={states?.get(t.id)} now={now} />
           })}
+
+          {/* Keep the outline below the cells, but render its code after every
+              table/seat so the first Bar seat cannot cover the text. Vertical
+              Bar groups put the pill to the left, outside the tight seat gap. */}
+          {clusterOutlines.map((c) => {
+            if (!c.code) return null
+            const codeWidth = formatGroupCodeWidth(c.code)
+            const labelOnLeft = c.isBar && c.orientation === "vertical"
+            const labelX = labelOnLeft ? c.x - codeWidth - 4 : c.x + 3
+            const labelY = labelOnLeft ? c.y + 2 : c.y - 7.5
+            return (
+              <g
+                key={`cluster-code-${c.key}`}
+                data-cluster-code="1"
+                data-cluster-label-side={labelOnLeft ? "left" : "top"}
+                pointerEvents="none"
+              >
+                <rect
+                  x={labelX}
+                  y={labelY}
+                  width={codeWidth}
+                  height={14}
+                  rx={7}
+                  fill="var(--primary)"
+                  stroke="var(--floor)"
+                  strokeWidth={1.4}
+                />
+                <text
+                  x={labelX + codeWidth / 2}
+                  y={labelY + 9.9}
+                  textAnchor="middle"
+                  className="tnum"
+                  fontSize={8.5}
+                  fontWeight={700}
+                  fill="var(--primary-foreground)"
+                >
+                  {c.code}
+                </text>
+              </g>
+            )
+          })}
         </g>
       </svg>
 
@@ -962,7 +994,7 @@ export function FloorCanvas(props: Props) {
 
       {/* Floating HTML overlay waitlist marker for Zone Khu A/B/C/Bar (outside camera transform) */}
       {onOpenWaitlist && !isAllZone ? (
-        <div className="pointer-events-auto absolute bottom-3 right-3 z-10">
+        <div className="pointer-events-auto absolute right-3 bottom-3 z-10">
           <button
             type="button"
             onClick={(e) => {

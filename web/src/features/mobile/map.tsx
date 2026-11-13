@@ -237,21 +237,24 @@ export function MapScreen({
             now={m.now}
             planOverlay={
               planChrome
-                ? (r) => (
-                    <div
-                      className="pointer-events-none absolute"
-                      style={{ left: r.left, top: r.top, width: r.width, height: r.height }}
-                    >
+                ? () => (
+                    // Anchor to the canvas, not the wall. On a short phone the
+                    // whole-floor fit leaves useful side gutters; pinning the
+                    // controls to the wall put them directly over C4/C5 and
+                    // B21/B22. The canvas edges use those gutters and return
+                    // the toolbar's full height to the plan.
+                    <div className="reception-plan-overlay pointer-events-none absolute inset-0">
                       <GuestCountCard
                         reservations={m.reservations}
                         onOpen={m.openCount}
+                        initialOpen={typeof window === "undefined" || window.innerWidth > 480}
                         className="pointer-events-auto absolute top-2 left-2"
                       />
                       <div className="pointer-events-auto absolute top-2 right-2 flex flex-col items-end gap-1.5">
                         <StatusLegend variant="badge" tables={m.model.tables} states={m.model.states} />
                         <ReceptionDatePicker
                           onDateChange={() => onSelect(null)}
-                          className="[&>button]:h-9 [&>button]:min-h-[36px] [&>button]:px-2.5 [&>button]:shadow-lg"
+                          className="[&>button]:h-9 [&>button]:min-h-[36px] [&>button]:px-1.5 [&>button]:shadow-lg"
                         />
                         {/* The mockup puts Bàn chờ here, right under the date. Drawn in
                             floor space it scaled with the plan while the date chip kept
@@ -263,7 +266,9 @@ export function MapScreen({
                           className="inline-flex h-9 items-center gap-2 rounded-xl border border-border/80 bg-background/95 px-2.5 text-[13px] font-semibold text-tx-strong shadow-lg backdrop-blur active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
                         >
                           <ListOrdered className="size-4 shrink-0" aria-hidden />
-                          Bàn chờ {waitingCount > 0 ? `+${waitingCount}` : ""}
+                          <span className="hidden min-[481px]:inline">Bàn chờ</span>
+                          <span className="hidden min-[375px]:inline min-[481px]:hidden">Chờ</span>
+                          {waitingCount > 0 ? `+${waitingCount}` : ""}
                         </button>
                       </div>
                     </div>

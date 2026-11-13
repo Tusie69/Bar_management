@@ -1,4 +1,3 @@
-
 /*
  * Mobile V1 tokens (< 768px), copied from "GAM Mobile Screen" round 2.
  * Scoped to [data-gm] so Desktop/Tablet keep index.css. Light by default, html.dark = Service.
@@ -179,6 +178,9 @@
 [data-gm] header > div.flex {
   gap: 8px;
 }
+
+/* Reception controls always float at the canvas edges. Keeping them out of
+   document flow gives their former toolbar height back to the floor plan. */
 
 /* Reclaim space from intermediate controls above the map */
 [data-gm] .z-\[4\].flex.shrink-0 {

@@ -13,6 +13,11 @@ interface ExportRow extends RowDataPacket {
   status: BookingStatus
   customer_classification: BookingClassification | null
   is_birthday: number
+  is_boss_table: number
+  is_designated: number
+  social_platform: string | null
+  honorific: string | null
+  source_code: string
   allocation_id: number | null
   table_code: string | null
   zone_code: string | null
@@ -44,6 +49,9 @@ export interface DailyBookingTextItem {
   expectedAt: Date
   checkedInAt: Date | null
   status: BookingStatus
+  sourceCode: string
+  socialPlatform: string | null
+  honorific: 'MR' | 'MS' | null
   tables: Array<{ code: string; zoneCode: string; zoneName: string }>
   metadata: BookingExportMetadata
 }
@@ -88,16 +96,16 @@ function dateTitle(businessDate: string): string {
   if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
     throw new Error('Invalid business date')
   }
-  const weekday = ['Chủ nhật', 'thứ Hai', 'thứ Ba', 'thứ Tư', 'thứ Năm', 'thứ Sáu', 'thứ Bảy'][
+  const weekday = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][
     new Date(Date.UTC(year, month - 1, day, 12)).getUTCDay()
   ]
-  return `Danh sách bàn đặt 21Gam ${weekday}, ${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}/${year}`
+  return `Danh sách bàn đặt 21Gam ${weekday}, ${day}/${month}`
 }
 
 function venueTime(value: Date): string {
   return new Intl.DateTimeFormat('vi-VN', {
     timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(value)
+  }).format(value).replace(':', 'h')
 }
 
 function barSeatNumber(code: string): number | null {
@@ -154,8 +162,31 @@ function icons(item: DailyBookingTextItem): string {
   return values.length ? ` ${values.join(' ')}` : ''
 }
 
-function bookingLine(item: DailyBookingTextItem): string {
-  return `${tableLabel(item)}: ${venueTime(item.expectedAt)} · ${safeText(item.guestName)} · ${item.partySize} khách${icons(item)}`
+function sourceLabel(item: DailyBookingTextItem): string {
+  if (item.sourceCode === 'SOCIAL') return safeText(item.socialPlatform ?? 'Social')
+  return ({ HOTLINE: 'hotline', FANPAGE: 'FB', ZALO: 'Zalo', SHAREHOLDER: 'CĐ', STAFF: 'NV', OTHER: 'khác' } as Record<string, string>)[item.sourceCode]
+    ?? safeText(item.sourceCode)
+}
+
+function bookingDetails(item: DailyBookingTextItem): string {
+  const honorific = item.honorific === 'MR' ? 'Mr ' : item.honorific === 'MS' ? 'Ms ' : ''
+  return `${honorific}${safeText(item.guestName)} ${item.partySize}p ${venueTime(item.expectedAt)} (${sourceLabel(item)})${icons(item)}`
+}
+
+function slotLabel(zone: (typeof ZONE_ORDER)[number], slot: string): string {
+  return zone === 'A' && /^A[1-6]$/.test(slot) || zone === 'B' && /^(B1|B2)$/.test(slot)
+    ? `${slot} (sofa)`
+    : slot
+}
+
+function outputSlot(item: DailyBookingTextItem, zone: (typeof ZONE_ORDER)[number]): string {
+  const label = tableLabel(item)
+  if (zone !== 'BAR') return label
+  const seats = item.tables.map((table) => barSeatNumber(table.code)).filter((seat): seat is number => seat !== null)
+  return FIXED_TABLE_ORDER.BAR.find((slot) => {
+    const slotSeats = slot.split('+').map(Number)
+    return seats.length > 0 && seats.every((seat) => slotSeats.includes(seat))
+  }) ?? label
 }
 
 function ordered(items: DailyBookingTextItem[], zone: string): DailyBookingTextItem[] {
@@ -193,14 +224,24 @@ function arrivalCounts(input: DailyBookingTextInput, active: DailyBookingTextIte
 export function formatDailyBookingText(input: DailyBookingTextInput): string {
   const active = input.bookings.filter((item) => item.status === 'BOOKED' || item.status === 'CHECKED_IN')
   const cancelled = input.bookings.filter((item) => item.status === 'CANCELLED')
-  const noShows = input.bookings.filter((item) => item.status === 'NO_SHOW')
-  const lines = [dateTitle(input.businessDate), '']
+  const title = dateTitle(input.businessDate)
+  const sections: string[] = [title]
 
   for (const zone of ZONE_ORDER) {
-    lines.push(ZONE_LABEL[zone])
-    if (zone === 'A') lines.push(`BC (Bàn Chờ +${input.waitlistCount})`)
     const zoneItems = active.filter((item) => zoneKey(item) === zone)
-    lines.push(...ordered(zoneItems, zone).map(bookingLine), '')
+    const used = new Set<number>()
+    const rows: string[] = []
+    if (zone === 'A') rows.push(`-BC (Bàn Chờ +${input.waitlistCount}):`)
+    for (const slot of FIXED_TABLE_ORDER[zone]) {
+      const matches = ordered(zoneItems, zone).filter((item) => outputSlot(item, zone) === slot)
+      matches.forEach((item) => used.add(item.id))
+      const details = matches.map(bookingDetails).join(' / ')
+      rows.push(`-${slotLabel(zone, slot)}:${details ? ` ${details}` : ''}`)
+    }
+    for (const item of ordered(zoneItems.filter((candidate) => !used.has(candidate.id)), zone)) {
+      rows.push(`-${tableLabel(item)}: ${bookingDetails(item)}`)
+    }
+    sections.push([ZONE_LABEL[zone], ...rows].join('\n\n'))
   }
 
   const additionalZones = [...new Set(active.map(zoneKey))]
@@ -209,55 +250,40 @@ export function formatDailyBookingText(input: DailyBookingTextInput): string {
     .sort((left, right) => left.localeCompare(right, 'vi', { numeric: true }))
   for (const zone of additionalZones) {
     const zoneName = active.flatMap((item) => item.tables).find((table) => table.zoneCode === zone)?.zoneName
-    lines.push(`KHU ${safeText(zoneName ?? zone)}`, ...ordered(active.filter((item) => zoneKey(item) === zone), zone).map(bookingLine), '')
+    const rows = ordered(active.filter((item) => zoneKey(item) === zone), zone)
+      .map((item) => `-${tableLabel(item)}: ${bookingDetails(item)}`)
+    sections.push([`KHU ${safeText(zoneName ?? zone)}`, ...rows].join('\n\n'))
   }
 
   const unassigned = active.filter((item) => zoneKey(item) === 'UNASSIGNED')
   const multiZone = active.filter((item) => zoneKey(item) === 'MULTI_ZONE')
-  if (unassigned.length) lines.push('CHƯA GÁN BÀN', ...ordered(unassigned, 'UNASSIGNED').map(bookingLine), '')
-  if (multiZone.length) lines.push('LIÊN KHU', ...ordered(multiZone, 'MULTI_ZONE').map(bookingLine), '')
-
-  lines.push('BÀN OUT')
-  if (input.outTables.length) {
-    const out = [...input.outTables].sort((left, right) => {
-      const leftZone = ZONE_ORDER.indexOf(left.zoneCode as (typeof ZONE_ORDER)[number])
-      const rightZone = ZONE_ORDER.indexOf(right.zoneCode as (typeof ZONE_ORDER)[number])
-      return (leftZone < 0 ? ZONE_ORDER.length : leftZone) - (rightZone < 0 ? ZONE_ORDER.length : rightZone)
-        || tableRank(left.zoneCode, left.code) - tableRank(right.zoneCode, right.code)
-        || left.code.localeCompare(right.code, 'vi', { numeric: true })
-    })
-    lines.push(...out.map((table) => table.code))
-  } else lines.push('Không có')
-  lines.push('', 'BÀN HUỶ')
-  lines.push(...(cancelled.length ? ordered(cancelled, '').map(bookingLine) : ['Không có']))
-  if (noShows.length) lines.push('', 'KHÔNG TỚI', ...ordered(noShows, '').map(bookingLine))
+  if (unassigned.length) sections.push(['CHƯA GÁN BÀN', ...ordered(unassigned, 'UNASSIGNED').map((item) => `-${tableLabel(item)}: ${bookingDetails(item)}`)].join('\n\n'))
+  if (multiZone.length) sections.push(['LIÊN KHU', ...ordered(multiZone, 'MULTI_ZONE').map((item) => `-${tableLabel(item)}: ${bookingDetails(item)}`)].join('\n\n'))
 
   const arrivals = arrivalCounts(input, active)
   const returning = active.filter((item) => item.metadata.returningCustomer === true).length
   const newCustomers = active.filter((item) => item.metadata.returningCustomer === false).length
-  const unclassified = active.filter((item) => item.metadata.returningCustomer === null).length
-  lines.push(
-    '',
-    'THỐNG KÊ',
-    `Khách vào trước/bằng 21:30: ${arrivals.before}`,
-    `Khách vào sau 21:30: ${arrivals.after}`,
-    `Tổng bàn đặt: ${active.length}`,
-    `Tổng khách đặt: ${active.reduce((total, item) => total + item.partySize, 0)}`,
+  const statistics = [
+    `Lượng khách vào trước/sau 9h30: ${arrivals.before}/${arrivals.after}`,
+    `Tổng bàn đặt/ Tổng khách đặt: ${active.length}/${active.reduce((total, item) => total + item.partySize, 0)}`,
     `Bàn khách quen O: ${returning}`,
     `Bàn khách mới N: ${newCustomers}`,
-    `Bàn chưa phân loại: ${unclassified}`,
     `Tổng khách đã đến: ${active.filter((item) => item.status === 'CHECKED_IN').reduce((total, item) => total + item.partySize, 0)}`,
-  )
-  return `${lines.join('\n').trimEnd()}\n`
+  ].join('\n')
+  const legend = ['⭐️Bàn sếp', '🔥Khách quen', '📌Chỉ định', '🎂Sinh nhật', '✅bàn đã tới', '1️⃣ bàn đặt lượt 1', '2️⃣ bàn đặt lượt 2'].join('\n')
+  sections.push(`_____\nBàn Out: ${input.outTables.length}\n\nBàn Huỷ: ${cancelled.length}`, title, statistics, legend)
+  return `${sections.join('\n\n')}\n`
 }
 
 async function loadBookingRows(connection: PoolConnection, actor: AuthenticatedActor, businessDate: string) {
   const [rows] = await connection.execute<ExportRow[]>(
     `SELECT r.id, COALESCE(r.contact_name, c.display_name, 'Khách') AS guest_name,
        r.party_size, r.expected_at, r.checked_in_at, r.status, r.customer_classification, r.is_birthday,
+       r.is_boss_table, r.is_designated, r.social_platform, r.honorific, bs.code AS source_code,
        a.id AS allocation_id, dt.code AS table_code, z.code AS zone_code, z.name AS zone_name
      FROM reservations AS r
      LEFT JOIN customers AS c ON c.organization_id = r.organization_id AND c.id = r.customer_id
+     JOIN booking_sources AS bs ON bs.organization_id = r.organization_id AND bs.id = r.source_id
      LEFT JOIN table_holds AS h ON h.organization_id = r.organization_id
        AND h.venue_id = r.venue_id AND h.reservation_id = r.id
      LEFT JOIN table_allocations AS a ON a.organization_id = r.organization_id AND a.venue_id = r.venue_id
@@ -283,13 +309,15 @@ function normalizeBookings(rows: ExportRow[]): DailyBookingTextItem[] {
     if (!item) {
       item = {
         id: Number(row.id), guestName: row.guest_name, partySize: Number(row.party_size),
-        expectedAt: row.expected_at, checkedInAt: row.checked_in_at, status: row.status, tables: [],
+        expectedAt: row.expected_at, checkedInAt: row.checked_in_at, status: row.status,
+        sourceCode: row.source_code, socialPlatform: row.social_platform,
+        honorific: row.honorific === 'MR' || row.honorific === 'MS' ? row.honorific : null, tables: [],
         metadata: {
-          bossTable: false,
+          bossTable: Number(row.is_boss_table) !== 0,
           returningCustomer: row.customer_classification === 'RETURNING'
             ? true
             : row.customer_classification === 'NEW' ? false : null,
-          designated: false,
+          designated: Number(row.is_designated) !== 0,
           birthday: Number(row.is_birthday) !== 0,
           round: null,
         },

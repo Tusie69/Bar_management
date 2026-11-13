@@ -103,7 +103,9 @@ describe("MockGamApi", () => {
       (await api.listReservations({ businessDate: bd })).find((r) => r.id === created.reservationId)!
     let row = await read()
     expect(row.honorific).toBe("MR")
-    expect((await api.getFloorState(clock.now())).tables.find((t) => t.tableId === tableId)!.claim?.honorific).toBe("MR")
+    expect((await api.getFloorState(clock.now())).tables.find((t) => t.tableId === tableId)!.claim?.honorific).toBe(
+      "MR",
+    )
 
     // Update to MS
     await api.updateReservation({ id: row.id, version: row.version, honorific: "MS" })
@@ -122,7 +124,9 @@ describe("MockGamApi", () => {
       expectedAt: atBusinessTime(bd, "23:30"),
       sourceCode: "HOTLINE",
     })
-    const unselectedRow = (await api.listReservations({ businessDate: bd })).find((r) => r.id === unselected.reservationId)!
+    const unselectedRow = (await api.listReservations({ businessDate: bd })).find(
+      (r) => r.id === unselected.reservationId,
+    )!
     expect(unselectedRow.honorific).toBeNull()
   })
 
@@ -386,7 +390,7 @@ describe("MockGamApi", () => {
     expect(row.classification).toBe("NEW")
     const exported = await api.exportDailyBookingText(bd)
     expect(exported).toContain("Export guest")
-    expect(exported).toContain("THỐNG KÊ")
+    expect(exported).toContain("Lượng khách vào trước/sau 9h30:")
     expect(exported).toContain("Bàn khách mới N: 1")
     expect(exported).not.toContain("0901234567")
   })

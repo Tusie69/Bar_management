@@ -278,7 +278,6 @@ describe("guest-type icon priority (Item 5)", () => {
   it("defines full approved priority order: ⭐ VIP > 📌 Chỉ định > 🎂 Sinh nhật > 🔥 Khách quen > 🆕 Khách mới", () => {
     expect(GUEST_ICON_PRIORITY).toEqual(["VIP", "DESIGNATED", "BIRTHDAY", "RETURNING", "NEW"])
   })
-
 })
 
 describe("StatusLegend counts and deduplication (Item 8)", () => {
@@ -737,7 +736,12 @@ describe("waitlist marker display per zone mode (Section MARKER)", () => {
       // Exactly one marker rendered at any moment (never both)
       expect(countMarkers(html)).toBe(1)
       // Floating HTML overlay used outside camera transform
-      expect(html).toContain("pointer-events-auto absolute bottom-3 right-3 z-10")
+      const overlayClass = html.match(
+        /<div class="([^"]*pointer-events-auto[^"]*)"><button[^>]*aria-label="Bàn chờ/,
+      )?.[1]
+      expect(overlayClass?.split(" ")).toEqual(
+        expect.arrayContaining(["pointer-events-auto", "absolute", "bottom-3", "right-3", "z-10"]),
+      )
       expect(html).toContain("Bàn chờ +3")
       expect(html).toContain('aria-label="Bàn chờ, 3 khách đang chờ"')
       // No SVG foreignObject waitlist marker
@@ -842,8 +846,34 @@ describe("Group border redesign - status-colored thick borders and neutral selec
     const group = { id: 101, symbolNo: 1, tableIds: [tB5.id, tB6.id] }
 
     const states = new Map<number, FloorTableState>([
-      [tB5.id, { state: "reserved", tableId: tB5.id, claim: { reservationId: 1, tableIds: [tB5.id, tB6.id], displayName: "Nam", partySize: 4, startsAt: new Date() } } as any],
-      [tB6.id, { state: "reserved", tableId: tB6.id, claim: { reservationId: 1, tableIds: [tB5.id, tB6.id], displayName: "Nam", partySize: 4, startsAt: new Date() } } as any],
+      [
+        tB5.id,
+        {
+          state: "reserved",
+          tableId: tB5.id,
+          claim: {
+            reservationId: 1,
+            tableIds: [tB5.id, tB6.id],
+            displayName: "Nam",
+            partySize: 4,
+            startsAt: new Date(),
+          },
+        } as any,
+      ],
+      [
+        tB6.id,
+        {
+          state: "reserved",
+          tableId: tB6.id,
+          claim: {
+            reservationId: 1,
+            tableIds: [tB5.id, tB6.id],
+            displayName: "Nam",
+            partySize: 4,
+            startsAt: new Date(),
+          },
+        } as any,
+      ],
     ])
 
     const html = renderCanvas({
@@ -870,8 +900,22 @@ describe("Group border redesign - status-colored thick borders and neutral selec
     const group = { id: 102, symbolNo: 1, tableIds: [tA0.id, tC1.id] }
 
     const states = new Map<number, FloorTableState>([
-      [tA0.id, { state: "seated", tableId: tA0.id, claim: { visitId: 10, tableIds: [tA0.id, tC1.id], displayName: "Party", partySize: 6, startsAt: new Date() } } as any],
-      [tC1.id, { state: "seated", tableId: tC1.id, claim: { visitId: 10, tableIds: [tA0.id, tC1.id], displayName: "Party", partySize: 6, startsAt: new Date() } } as any],
+      [
+        tA0.id,
+        {
+          state: "seated",
+          tableId: tA0.id,
+          claim: { visitId: 10, tableIds: [tA0.id, tC1.id], displayName: "Party", partySize: 6, startsAt: new Date() },
+        } as any,
+      ],
+      [
+        tC1.id,
+        {
+          state: "seated",
+          tableId: tC1.id,
+          claim: { visitId: 10, tableIds: [tA0.id, tC1.id], displayName: "Party", partySize: 6, startsAt: new Date() },
+        } as any,
+      ],
     ])
 
     const html = renderCanvas({
@@ -905,6 +949,38 @@ describe("Group border redesign - status-colored thick borders and neutral selec
     expect(html).toContain(">2<")
     expect(html).not.toContain("data-group-color")
     expect(html).toContain('stroke-width="3"')
+  })
+
+  it("keeps adjacent vertical Bar groups clear of an unrelated seat and draws their codes last", () => {
+    const barSeat = (no: number) => realTables.find((t) => t.kind === "BAR_SEAT" && t.seqNo === no)!
+    const upper = [11, 10, 9, 8, 7, 6].map(barSeat)
+    const lower = [4, 3, 2, 1].map(barSeat)
+    const seat5 = barSeat(5)
+    const groups = [
+      { id: 201, symbolNo: 1, tableIds: upper.map((t) => t.id) },
+      { id: 202, symbolNo: 2, tableIds: lower.map((t) => t.id) },
+    ]
+
+    const html = renderCanvas({
+      tables: [...upper, seat5, ...lower],
+      mode: "live",
+      groups,
+      selectedIds: [],
+    })
+
+    // The rendered 21px seats on a 24px pitch leave a 3px gap. A 2px
+    // capsule pad stays clear of the independent Bar 5, including its stroke.
+    expect(html).toContain(
+      'data-cluster-kind="bar" data-cluster-orientation="vertical" pointer-events="none"><rect x="143.5" y="409.5" width="25" height="145" rx="12.5"',
+    )
+    expect(html).toContain(
+      'data-cluster-kind="bar" data-cluster-orientation="vertical" pointer-events="none"><rect x="143.5" y="577.5" width="25" height="97" rx="12.5"',
+    )
+    expect(seat5.y - seat5.h / 2).toBe(555.5)
+    expect(seat5.y + seat5.h / 2).toBe(576.5)
+
+    expect((html.match(/data-cluster-label-side="left"/g) || []).length).toBe(2)
+    expect(html.indexOf('data-cluster-code="1"')).toBeGreaterThan(html.lastIndexOf("data-group-id="))
   })
 
   it("renders normal 2px border for single tables versus 3px for grouped tables", () => {
@@ -960,8 +1036,34 @@ describe("Group border redesign - status-colored thick borders and neutral selec
     const group = { id: 106, symbolNo: 1, tableIds: [tB5.id, tB6.id] }
 
     const states = new Map<number, FloorTableState>([
-      [tB5.id, { state: "seated", tableId: tB5.id, claim: { visitId: 11, tableIds: [tB5.id, tB6.id], displayName: "Anh Nam", partySize: 5, startsAt: new Date() } } as any],
-      [tB6.id, { state: "seated", tableId: tB6.id, claim: { visitId: 11, tableIds: [tB5.id, tB6.id], displayName: "Anh Nam", partySize: 5, startsAt: new Date() } } as any],
+      [
+        tB5.id,
+        {
+          state: "seated",
+          tableId: tB5.id,
+          claim: {
+            visitId: 11,
+            tableIds: [tB5.id, tB6.id],
+            displayName: "Anh Nam",
+            partySize: 5,
+            startsAt: new Date(),
+          },
+        } as any,
+      ],
+      [
+        tB6.id,
+        {
+          state: "seated",
+          tableId: tB6.id,
+          claim: {
+            visitId: 11,
+            tableIds: [tB5.id, tB6.id],
+            displayName: "Anh Nam",
+            partySize: 5,
+            startsAt: new Date(),
+          },
+        } as any,
+      ],
     ])
 
     const html = renderCanvas({
@@ -1269,7 +1371,7 @@ describe("Group border redesign - status-colored thick borders and neutral selec
       // K1 Section 2: No connector, curve, SVG path, long bracket or standalone link icon
       expect(htmlFar).not.toContain("data-group-bracket")
       expect(htmlFar).not.toContain("data-group-arc")
-      expect(htmlFar).not.toContain("data-testid=\"group-link-icon\"")
+      expect(htmlFar).not.toContain('data-testid="group-link-icon"')
       expect(htmlFar).not.toContain("data-link-placement")
 
       // K1 Section 7: One guest count badge on the representative table, number only

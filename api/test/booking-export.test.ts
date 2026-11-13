@@ -28,6 +28,9 @@ function booking(
     expectedAt: new Date('2026-10-31T13:00:00.000Z'),
     checkedInAt: null,
     status: 'BOOKED',
+    sourceCode: 'HOTLINE',
+    socialPlatform: null,
+    honorific: null,
     tables: tableCodes.map((code) => ({ code, zoneCode, zoneName: `Khu ${zoneCode}` })),
     metadata,
     ...options,
@@ -47,7 +50,7 @@ function input(bookings: DailyBookingTextItem[], options: Partial<DailyBookingTe
 
 describe('daily Zalo booking text formatter', () => {
   it('K1 derives the Vietnamese weekday from businessDate without the runtime timezone', () => {
-    expect(formatDailyBookingText(input([]))).toMatch(/^Danh sách bàn đặt 21Gam thứ Bảy, 31\/10\/2026\n/)
+    expect(formatDailyBookingText(input([]))).toMatch(/^Danh sách bàn đặt 21Gam T7, 31\/10\n/)
   })
 
   it('K2 keeps the confirmed zone and table order, including combined B and Bar tables', () => {
@@ -64,9 +67,9 @@ describe('daily Zalo booking text formatter', () => {
     expect(text.indexOf('KHU A')).toBeLessThan(text.indexOf('KHU B'))
     expect(text.indexOf('KHU B')).toBeLessThan(text.indexOf('KHU C'))
     expect(text.indexOf('KHU C')).toBeLessThan(text.indexOf('QUẦY BAR'))
-    expect(text.indexOf('A2:')).toBeLessThan(text.indexOf('A10:'))
-    expect(text.indexOf('A10:')).toBeLessThan(text.indexOf('A7:'))
-    expect(text.indexOf('B1:')).toBeLessThan(text.indexOf('B2:'))
+    expect(text.indexOf('-A2 (sofa):')).toBeLessThan(text.indexOf('-A10:'))
+    expect(text.indexOf('-A10:')).toBeLessThan(text.indexOf('-A7:'))
+    expect(text.indexOf('-B1 (sofa):')).toBeLessThan(text.indexOf('-B2 (sofa):'))
     expect(text.indexOf('1+2:')).toBeLessThan(text.indexOf('20+21:'))
   })
 
@@ -84,11 +87,10 @@ describe('daily Zalo booking text formatter', () => {
     const text = formatDailyBookingText(input([checkedIn, cancelled], {
       outTables: [{ code: 'C4', zoneCode: 'C', zoneName: 'Khu C' }],
     }))
-    expect(text).toContain('A1: 20:00 · Khách 1 · 4 khách ✅')
-    expect(text).toMatch(/BÀN OUT\nC4/)
-    expect(text).toMatch(/BÀN HUỶ\nB3:/)
-    expect(text).toContain('Tổng bàn đặt: 1')
-    expect(text).toContain('Tổng khách đặt: 4')
+    expect(text).toContain('-A1 (sofa): Khách 1 4p 20h00 (hotline) ✅')
+    expect(text).toContain('Bàn Out: 1')
+    expect(text).toContain('Bàn Huỷ: 1')
+    expect(text).toContain('Tổng bàn đặt/ Tổng khách đặt: 1/4')
     expect(text).toContain('Tổng khách đã đến: 4')
   })
 
@@ -98,11 +100,9 @@ describe('daily Zalo booking text formatter', () => {
     })
     const suspiciousName = booking(2, ['A2'], { guestName: 'Boss khách quen sinh nhật vòng 1' })
     const text = formatDailyBookingText(input([explicit, suspiciousName]))
-    expect(text).toContain('⭐️ 🔥 📌 🎂 2️⃣')
-    expect(text.match(/⭐️/g)).toHaveLength(1)
-    expect(text.match(/🔥/g)).toHaveLength(1)
-    expect(text.match(/🎂/g)).toHaveLength(1)
-    expect(text).not.toContain('1️⃣')
+    expect(text).toContain('-A1 (sofa): Khách 1 2p 20h00 (hotline) ⭐️ 🔥 📌 🎂 2️⃣')
+    expect(text).toContain('-A2 (sofa): Boss khách quen sinh nhật vòng 1 2p 20h00 (hotline)\n')
+    expect(text).not.toContain('(hotline) 1️⃣')
   })
 
   it('K5 uses an explicit privacy allowlist and redacts phone-like guest text', () => {
@@ -122,11 +122,9 @@ describe('daily Zalo booking text formatter', () => {
 
   it('reports verified zero values and keeps unclassified bookings out of O/N', () => {
     const text = formatDailyBookingText(input([booking(1, ['A1'])]))
-    expect(text).toContain('Khách vào trước/bằng 21:30: 2')
-    expect(text).toContain('Khách vào sau 21:30: 0')
+    expect(text).toContain('Lượng khách vào trước/sau 9h30: 2/0')
     expect(text).toContain('Bàn khách quen O: 0')
     expect(text).toContain('Bàn khách mới N: 0')
-    expect(text).toContain('Bàn chưa phân loại: 1')
   })
 
   it('classifies every confirmed 21:30 expected_at boundary including post-midnight bookings', () => {
@@ -139,8 +137,7 @@ describe('daily Zalo booking text formatter', () => {
       booking(6, ['A6'], { partySize: 6, expectedAt: new Date('2026-10-31T17:30:00.000Z') }),
     ]))
     // BE-04: the 21:30 booking of 3 now counts before the cutoff, not after.
-    expect(text).toContain('Khách vào trước/bằng 21:30: 6')
-    expect(text).toContain('Khách vào sau 21:30: 15')
+    expect(text).toContain('Lượng khách vào trước/sau 9h30: 6/15')
   })
 
   it('uses expected_at even when check-in happens on the other side of the cutoff', () => {
@@ -156,8 +153,7 @@ describe('daily Zalo booking text formatter', () => {
         checkedInAt: new Date('2026-10-31T14:00:00.000Z'),
       }),
     ]))
-    expect(text).toContain('Khách vào trước/bằng 21:30: 2')
-    expect(text).toContain('Khách vào sau 21:30: 7')
+    expect(text).toContain('Lượng khách vào trước/sau 9h30: 2/7')
   })
 
   it('counts each multi-table booking once and aggregates manual O/N only', () => {
@@ -166,10 +162,9 @@ describe('daily Zalo booking text formatter', () => {
       booking(2, ['B3'], { metadata: { ...metadata, returningCustomer: false } }),
       booking(3, ['C4'], { metadata }),
     ]))
-    expect(text).toContain('Tổng bàn đặt: 3')
+    expect(text).toContain('Tổng bàn đặt/ Tổng khách đặt: 3/6')
     expect(text).toContain('Bàn khách quen O: 1')
     expect(text).toContain('Bàn khách mới N: 1')
-    expect(text).toContain('Bàn chưa phân loại: 1')
   })
 
   it('does not drop bookings from a catalog zone outside the confirmed fixed list', () => {
@@ -179,5 +174,28 @@ describe('daily Zalo booking text formatter', () => {
     const text = formatDailyBookingText(input([otherZone]))
     expect(text).toContain('KHU Sảnh chính')
     expect(text).toContain('T1:')
+  })
+
+  it('matches the approved compact Zalo layout, including empty tables, source and honorific', () => {
+    const text = formatDailyBookingText(input([
+      booking(1, ['A6'], {
+        guestName: 'abc', partySize: 4, status: 'CHECKED_IN', honorific: 'MR',
+        expectedAt: new Date('2026-11-01T14:20:00.000Z'),
+      }),
+      booking(2, ['BAR09', 'BAR10'], {
+        guestName: 'vũ', partySize: 3, sourceCode: 'SOCIAL', socialPlatform: 'FB',
+        expectedAt: new Date('2026-11-01T14:15:00.000Z'),
+      }),
+    ], { businessDate: '2026-11-01' }))
+
+    expect(text).toContain('Danh sách bàn đặt 21Gam CN, 1/11\n\nKHU A')
+    expect(text).toContain('-BC (Bàn Chờ +0):\n\n-A1 (sofa):')
+    expect(text).toContain('-A6 (sofa): Mr abc 4p 21h20 (hotline) ✅')
+    expect(text).toContain('QUẦY BAR\n\n-1+2:')
+    expect(text).toContain('-9+10: vũ 3p 21h15 (FB)')
+    expect(text).toContain('_____\nBàn Out: 0\n\nBàn Huỷ: 0')
+    expect(text.match(/Danh sách bàn đặt 21Gam CN, 1\/11/g)).toHaveLength(2)
+    expect(text).toContain('Lượng khách vào trước/sau 9h30: 7/0')
+    expect(text).toContain('⭐️Bàn sếp\n🔥Khách quen\n📌Chỉ định\n🎂Sinh nhật\n✅bàn đã tới')
   })
 })
