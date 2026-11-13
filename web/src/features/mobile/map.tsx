@@ -1,5 +1,5 @@
 import { ListOrdered, Menu, MessageSquareText, X } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import type { TableLiveState, TableView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAvailability } from "@/hooks/use-data"
@@ -391,6 +391,25 @@ const STATE_TEXT = (st: TableLiveState, late: number, noshow: number): [string, 
     spare: ["Sơ cua", null],
   })[st] as [string, Tone]
 
+/**
+ * Chia các nút nửa dòng thành từng hàng: hai nút một hàng, hàng cuối ba nút
+ * khi tổng số lẻ.
+ *
+ * Trước đây nút Gọi khách chiếm nguyên một dòng còn Sơ cua thì nằm trong một
+ * lưới con, nên "Xem booking" hay rơi lại một mình nửa dòng và cả khối trông
+ * lệch hẳn. Quy tắc của quán: một dòng hai nút, nhiều nhất ba; chỉ nút chốt
+ * và nút huỷ mới được chiếm cả dòng. Một nút lẻ duy nhất thì cho chiếm cả
+ * dòng, vì một nút nửa dòng đứng trơ bên trái còn xấu hơn.
+ */
+function actionRows(cells: ReactNode[]): ReactNode[][] {
+  if (cells.length <= 1) return cells.length ? [cells] : []
+  const paired = cells.length % 2 === 0 ? cells : cells.slice(0, cells.length - 3)
+  const rows: ReactNode[][] = []
+  for (let index = 0; index < paired.length; index += 2) rows.push(paired.slice(index, index + 2))
+  if (cells.length % 2 !== 0) rows.push(cells.slice(cells.length - 3))
+  return rows
+}
+
 interface Action {
   label: string
   go?: () => void
@@ -399,8 +418,6 @@ interface Action {
   wide?: boolean
   disabled?: boolean
   title?: string
-  /** Nút này đứng cùng hàng với nút Sơ cua. */
-  withSpare?: boolean
 }
 
 /** Bottom sheet over the lower half; the map stays visible and other tables stay tappable. */
@@ -440,7 +457,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
     who = `${c.displayName}, ${c.partySize} khách`
     when = `Đang ngồi từ ${fmtTime(c.startsAt)}, ${duration(m.now.getTime() - c.startsAt.getTime())}`
     actions = [
-      { label: "Đổi bàn", withSpare: true, go: () => a.moveVisit(c, id) },
+      { label: "Đổi bàn", go: () => a.moveVisit(c, id) },
       ...(c.reservationId ? [{ label: "Xem booking", go: () => m.openDetail(c.reservationId!, m.today) }] : []),
       { label: "Nhả bàn", danger: true, wide: true, go: () => a.endVisit(c) },
     ]
@@ -474,7 +491,6 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
       ...(r ? [{ label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) }] : []),
       {
         label: "Xem đơn chờ",
-        wide: !r,
         disabled: !entry,
         go: () => entry && m.openEntryDetail(entry.id, entry.businessDate),
       },
@@ -513,7 +529,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
             ? [{ label: "Tới muộn", go: () => a.confirmLate(r) }]
             : []),
           { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
-          { label: "Đổi bàn", withSpare: true, go: () => a.assign(r) },
+          { label: "Đổi bàn", go: () => a.assign(r) },
           // Hủy booking đứng cuối và chiếm cả dòng: thao tác không lùi lại
           // được thì không nên nằm lẫn giữa những nút bấm hằng ngày.
           {
@@ -545,11 +561,11 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
     ]
   }
 
-  // Nút huỷ luôn ở dưới cùng và chiếm cả dòng, dưới cả nút Sơ cua.
-  const tailActions = actions.filter((x) => x.danger && x.wide)
-  const mainActions = actions.filter((x) => !(x.danger && x.wide))
-  /** Có nút nào kéo Sơ cua lên cùng hàng chưa; nếu chưa thì Sơ cua đứng một mình như cũ. */
-  const pairedSpare = Boolean(t) && mainActions.some((x) => x.withSpare)
+  // Chốt (Khách đã đến) đứng riêng một dòng ở trên, huỷ đứng riêng một dòng ở
+  // dưới cùng. Chỉ hai loại đó mới được chiếm cả dòng.
+  const leadActions = actions.filter((x) => x.wide && !x.danger)
+  const tailActions = actions.filter((x) => x.wide && x.danger)
+  const pairActions = actions.filter((x) => !x.wide)
 
   const actionButton = (x: Action) => (
     <button
@@ -559,8 +575,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
       disabled={x.disabled || a.pending || pending}
       title={x.title}
       className={cn(
-        "h-12 rounded-xl border text-[15px] font-medium disabled:opacity-45",
-        x.wide && "col-span-2",
+        "min-h-12 rounded-xl border px-2 text-[15px] leading-tight font-medium disabled:opacity-45",
         x.primary
           ? "border-primary bg-primary text-primary-foreground"
           : cn("border-strong bg-transparent", x.danger ? "text-st-noshow-ink" : "text-tx-1"),
@@ -569,6 +584,24 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
       {x.label}
     </button>
   )
+
+  /** Nút nửa dòng, theo đúng thứ tự xuất hiện. */
+  const cells: ReactNode[] = []
+  if (callTarget) {
+    cells.push(
+      <CallCustomerControl
+        key="call"
+        target={callTarget}
+        canCall={c?.canCall === true || c?.phoneLast3 != null}
+      />,
+    )
+  }
+  for (const x of pairActions) cells.push(actionButton(x))
+  if (t) {
+    cells.push(
+      <SpareButton key="spare" table={t} state={st} hasClaim={Boolean(c)} inGroup={isGroup} />,
+    )
+  }
 
   return (
     <div
@@ -622,39 +655,21 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
       {info ? <span className="text-[13px] text-pretty text-[var(--text-muted)]">{info}</span> : null}
       <LayoutActions model={m.model} tableId={id} />
       {actions.length || t ? (
-        <div className="grid grid-cols-2 gap-2">
-          {/* Mọi loại chỗ giữ còn booking đều gọi được, không chỉ booking chưa
-              check-in: khách chờ đã có booking và khách đang ngồi cũng cần gọi. */}
-          {callTarget ? (
-            <>
-              <CallCustomerControl
-                target={callTarget}
-                canCall={c?.canCall === true || c?.phoneLast3 != null}
-                className="col-span-2"
-              />
-              <CallHistory target={callTarget} className="col-span-2" />
-            </>
-          ) : null}
-          {/* Sơ cua không phải việc hằng ngày nên nó đứng cùng hàng với Đổi bàn
-              thay vì chiếm riêng một khối ngay trên các nút chính. Cặp này nằm
-              trong lưới hai cột của riêng nó: dù phía trên có lẻ nút thì Sơ cua
-              vẫn không bị đẩy xuống dòng sau. Các nút huỷ chiếm cả dòng nên luôn
-              ở dưới cùng, sau cả Sơ cua. */}
-          {mainActions.map((x) =>
-            x.withSpare && t ? (
-              <div key={x.label} className="col-span-2 grid grid-cols-2 items-start gap-2">
-                {actionButton(x)}
-                <SpareButton table={t} state={st} hasClaim={Boolean(c)} inGroup={isGroup} />
-              </div>
-            ) : (
-              actionButton(x)
-            ),
-          )}
-          {t && !pairedSpare ? (
-            <div className={cn(mainActions.length % 2 === 0 && "col-span-2")}>
-              <SpareButton table={t} state={st} hasClaim={Boolean(c)} inGroup={isGroup} />
+        <div className="flex flex-col gap-2">
+          {leadActions.map((x) => actionButton(x))}
+          {actionRows(cells).map((row, index) => (
+            <div
+              key={index}
+              className={cn(
+                "grid items-start gap-2",
+                // Ba cột thì mỗi ô chỉ còn ~110px: hạ cỡ chữ để nhãn dài như
+                // "Đổi / Ghép bàn" nằm gọn một dòng, hàng không cao vống lên.
+                row.length === 3 ? "grid-cols-3 [&_button]:text-[13px]" : "grid-cols-2",
+              )}
+            >
+              {row}
             </div>
-          ) : null}
+          ))}
           {tailActions.map((x) => (
             <button
               key={x.label}
@@ -662,13 +677,16 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
               onClick={x.go}
               disabled={x.disabled || a.pending || pending}
               title={x.title}
-              className="col-span-2 h-12 rounded-xl border border-strong bg-transparent text-[15px] font-medium text-st-noshow-ink disabled:opacity-45"
+              className="h-12 rounded-xl border border-strong bg-transparent text-[15px] font-medium text-st-noshow-ink disabled:opacity-45"
             >
               {x.label}
             </button>
           ))}
         </div>
       ) : null}
+      {/* Lịch sử gọi là một dòng chữ gập lại, không phải nút, nên nó đứng
+          ngoài lưới và không tính vào số nút chẵn/lẻ. */}
+      {callTarget ? <CallHistory target={callTarget} /> : null}
     </div>
   )
 }

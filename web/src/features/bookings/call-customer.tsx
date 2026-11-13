@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { BadgeCheck, Phone, PhoneOff, TimerReset } from "lucide-react"
+import { BadgeCheck, PhoneOff, Smartphone, TimerReset } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
@@ -14,11 +14,22 @@ import {
 } from "@/components/ui/dialog"
 import type { CallTarget } from "@/domain/models"
 import { reportError } from "@/hooks/use-action"
+import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useCan } from "@/state/session"
 import { usePendingCall, usePendingCalls } from "./pending-calls"
 
 type Outcome = "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED"
+
+/**
+ * Xanh lá, không phải viền xám như mọi nút khác.
+ *
+ * Gọi khách là thao tác lễ tân tìm bằng mắt giữa một rổ nút cùng màu, dưới
+ * ánh sáng quán bar, trong lúc khách đang đứng trước mặt. Màu riêng và biểu
+ * tượng điện thoại di động làm nó nhận ra được mà không cần đọc chữ. Dùng
+ * token st-seated nên tự đổi theo nền sáng/tối, không phải mã màu cứng.
+ */
+const CALL_TONE = "border-st-seated bg-st-seated-tint text-st-seated-ink hover:bg-st-seated-tint hover:brightness-95"
 
 export function CallCustomerControl({
   target,
@@ -132,16 +143,21 @@ export function CallCustomerControl({
           permission="booking.phone.call"
           type="button"
           variant="outline"
-          className={className}
+          className={cn(CALL_TONE, className)}
           disabled={pending}
           disabledReason={canCall ? null : "Khách này chưa có số điện thoại"}
           onClick={() => void start()}
         >
-          <Phone /> {pending ? "Đang mở cuộc gọi..." : (label ?? "Gọi khách")}
+          <Smartphone /> {pending ? "Đang mở..." : (label ?? "Gọi khách")}
         </GuardedButton>
       ) : (
-        <Button type="button" variant="outline" className={className} onClick={() => setOutcomeOpen(true)}>
-          <Phone /> Ghi kết quả cuộc gọi
+        <Button
+          type="button"
+          variant="outline"
+          className={cn(CALL_TONE, className)}
+          onClick={() => setOutcomeOpen(true)}
+        >
+          <Smartphone /> Ghi kết quả
         </Button>
       )}
       <Dialog open={outcomeOpen} onOpenChange={setOutcomeOpen}>
@@ -158,7 +174,7 @@ export function CallCustomerControl({
               rel="noreferrer"
               className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium"
             >
-              <Phone className="size-4" /> Máy chưa mở trình gọi? Bấm để gọi lại
+              <Smartphone className="size-4" /> Máy chưa mở trình gọi? Bấm để gọi lại
             </a>
           ) : null}
           <div className={bookingVersion === null ? "grid gap-2 sm:grid-cols-2" : "grid gap-2 sm:grid-cols-3"}>
