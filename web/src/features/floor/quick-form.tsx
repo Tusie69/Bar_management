@@ -528,7 +528,23 @@ export function QuickForm({
                   </div>
                 ) : (
                   <>
-                    <span className={label12}>Ngày</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={label12}>Ngày</span>
+                      {/* Mở ra được thì phải thu lại được: trước đây khối ngày
+                          chỉ gập lại khi chọn xong một ngày. */}
+                      {compact ? (
+                        <button
+                          type="button"
+                          onClick={() => setDateOpen(false)}
+                          aria-expanded
+                          aria-label="Thu gọn danh sách ngày"
+                          className="inline-flex h-7 items-center gap-1 rounded-sm px-2 text-xs text-tx-2"
+                        >
+                          Thu gọn
+                          <ChevronDown className="size-3.5 rotate-180" aria-hidden />
+                        </button>
+                      ) : null}
+                    </div>
                     <div role="radiogroup" aria-label="Ngày" className="flex flex-wrap gap-1.5">
                       {dates.map((bd, i) => {
                         const on = draft.date === bd

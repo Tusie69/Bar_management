@@ -755,6 +755,36 @@ export function FloorCanvas(props: Props) {
               </g>
             )
           })}
+          {/* Mã nhóm vẽ SAU các ô bàn: vẽ cùng lớp với khung thì ghế quầy bar
+              nằm đè lên và che mất chữ. Viền vẫn ở dưới để không che màu
+              trạng thái, chỉ riêng viên thuốc chữ nổi lên trên. */}
+          {clusterOutlines.map((c) =>
+            c.code ? (
+              <g key={`cluster-code-${c.key}`} data-cluster-code="1" pointerEvents="none">
+                <rect
+                  x={c.x + 3}
+                  y={c.y - 7.5}
+                  width={formatGroupCodeWidth(c.code)}
+                  height={14}
+                  rx={7}
+                  fill="var(--primary)"
+                  stroke="var(--floor)"
+                  strokeWidth={1.4}
+                />
+                <text
+                  x={c.x + 3 + formatGroupCodeWidth(c.code) / 2}
+                  y={c.y + 2.4}
+                  textAnchor="middle"
+                  className="tnum"
+                  fontSize={8.5}
+                  fontWeight={700}
+                  fill="var(--primary-foreground)"
+                >
+                  {c.code}
+                </text>
+              </g>
+            ) : null,
+          )}
           <Fixtures />
 
           {/* Bar guest list inside floor SVG */}
@@ -820,29 +850,6 @@ export function FloorCanvas(props: Props) {
                 strokeOpacity={0.55}
                 strokeWidth={1.6}
               />
-              {c.code ? (
-                <>
-                  <rect
-                    x={c.x + 4}
-                    y={c.y - 7}
-                    width={formatGroupCodeWidth(c.code)}
-                    height={13}
-                    rx={6.5}
-                    fill="var(--primary)"
-                  />
-                  <text
-                    x={c.x + 4 + formatGroupCodeWidth(c.code) / 2}
-                    y={c.y + 2.6}
-                    textAnchor="middle"
-                    className="tnum"
-                    fontSize={8.5}
-                    fontWeight={700}
-                    fill="var(--primary-foreground)"
-                  >
-                    {c.code}
-                  </text>
-                </>
-              ) : null}
             </g>
           ))}
 
