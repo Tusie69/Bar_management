@@ -13,6 +13,7 @@ import {
   checkInBooking,
   confirmBookingLate,
   initiateBookingCall,
+  listBookingCalls,
   recordBookingCallOutcome,
   createAndAssignBooking,
   closeBooking,
@@ -230,6 +231,18 @@ bookingRouter.post(
   },
 )
 
+/**
+ * Opens the dialer on the caller's device.
+ *
+ * Known and accepted: the reply carries the number itself in `telUri`, so a
+ * receptionist who has `booking.phone.call` but not `booking.phone.reveal`
+ * still receives it on their device and can read it from the browser's network
+ * tab. The browser cannot open a dialer without the number, so the only way to
+ * close that gap is a click-to-call bridge that dials from the server. Until
+ * there is one, every attempt is written to booking_call_logs and to
+ * operation_log as BOOKING_CALL_INITIATED with the user on it, so misuse is
+ * traceable. See docs/deploy.md, mục 4.
+ */
 bookingRouter.post(
   '/:id/call',
   requireAuthentication,
@@ -250,6 +263,22 @@ bookingRouter.post(
     .set('Pragma', 'no-cache')
     .status(201)
     .json(result)
+  },
+)
+
+bookingRouter.get(
+  '/:id/calls',
+  requireAuthentication,
+  requirePermission('booking.phone.call'),
+  async (request, response) => {
+    // No number is returned, so whoever may place a call may also read who
+    // already tried. No rate limit either: this discloses nothing to limit.
+    response.json({
+      calls: await listBookingCalls(
+        requireAuthenticatedActor(request),
+        positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.'),
+      ),
+    })
   },
 )
 

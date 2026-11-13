@@ -256,6 +256,7 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
       return result("Đã ghi nhận khách sẽ tới muộn.")
     },
     startBookingCall: (id) => bookings.startCall(id),
+    listBookingCalls: (id) => bookings.listCalls(id),
     recordBookingCallOutcome: async (bookingId, callId, outcome, bookingVersion) => {
       await bookings.recordCallOutcome(bookingId, callId, outcome, bookingVersion)
       return result(outcome === "LATE_CONFIRMED" ? "Đã ghi nhận khách sẽ tới muộn." : "Đã ghi kết quả cuộc gọi.")

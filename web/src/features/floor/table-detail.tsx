@@ -79,6 +79,7 @@ import { layoutMembers } from "./layout-merge"
 import { SpareButton } from "./spare-button"
 import { GuestCountDialog } from "./floor-dialogs"
 import { CallCustomerControl } from "../bookings/call-customer"
+import { CallHistory } from "../bookings/call-history"
 import type { FloorModel } from "./use-floor-model"
 import { useHeldOrderActions } from "../mobile/actions"
 
@@ -614,6 +615,7 @@ function ReservationSection({
           canCall={claim.canCall === true}
           className="col-span-2"
         />
+        <CallHistory bookingId={claim.reservationId!} className="col-span-2" />
         <GuardedButton
           permission="visit.checkin"
           size="lg"

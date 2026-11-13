@@ -192,6 +192,27 @@ beforeEach(() => {
       if (path.endsWith("phone:reveal")) return json({ phoneNumber: "+84901234123" })
       if (path === "/bookings/11/call")
         return json({ callId: 71, bookingId: 11, initiatedAt: at.toISOString(), telUri: "tel:+84901234123" }, 201)
+      if (path === "/bookings/11/calls")
+        return json({
+          calls: [
+            {
+              callId: 71,
+              initiatedAt: at.toISOString(),
+              initiatedBy: "Lễ tân 1",
+              outcome: "NO_ANSWER",
+              outcomeAt: at.toISOString(),
+              outcomeBy: "Lễ tân 1",
+            },
+            {
+              callId: 70,
+              initiatedAt: at.toISOString(),
+              initiatedBy: "Lễ tân 2",
+              outcome: null,
+              outcomeAt: null,
+              outcomeBy: null,
+            },
+          ],
+        })
       if (path === "/bookings/11/calls/71/outcome")
         return json({ callId: 71, bookingId: 11, outcome: body.outcome, outcomeAt: at.toISOString() })
       if (path === "/waitlist/21/seat" && (body as { arrived?: boolean })?.arrived) {
@@ -394,6 +415,16 @@ describe("canonical contract writes", () => {
       },
     ])
     expect(JSON.stringify(writes())).not.toContain("+84901234123")
+  })
+
+  it("reads the call history without ever asking for a phone number", async () => {
+    const calls = await api.listBookingCalls(11)
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).toMatchObject({ callId: 71, initiatedBy: "Lễ tân 1", outcome: "NO_ANSWER" })
+    // A call nobody closed must come back as such, not be hidden.
+    expect(calls[1]).toMatchObject({ callId: 70, outcome: null, outcomeBy: null })
+    expect(calls[0].initiatedAt).toBeInstanceOf(Date)
+    expect(JSON.stringify(calls)).not.toContain("+84")
   })
 
   it("forwards a full destination set for grouped visit and booking moves", async () => {

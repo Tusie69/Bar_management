@@ -34,6 +34,7 @@ import {
 } from "@/components/common"
 import { ConfirmAction } from "@/components/dialogs"
 import { RevealPhone } from "@/components/reveal-phone"
+import { CallCustomerControl } from "@/features/bookings/call-customer"
 import { StateChip } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import {
@@ -462,6 +463,22 @@ function EntryCard({
           </StateChip>
         ) : null}
       </div>
+
+      {/* A waitlist guest could only be rung by an owner revealing the number by
+          hand, even though one of the three reveal reasons is literally "gọi lại
+          cho khách trong danh sách chờ". Where the entry is backed by a booking
+          the receptionist can now call it like any other, number unseen. An
+          entry with no booking still cannot: booking_call_logs.reservation_id is
+          NOT NULL, so logging that call needs a schema change of its own. */}
+      {e.reservationId && e.phoneLast3 ? (
+        <CallCustomerControl
+          bookingId={e.reservationId}
+          bookingVersion={null}
+          canCall
+          label="Gọi khách chờ"
+          className="w-full"
+        />
+      ) : null}
 
       {canReveal && e.customerId && (e.callbackRequested || e.channel === "PHONE_CALLBACK") ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-2 px-3 py-2 text-sm">

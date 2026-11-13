@@ -14,6 +14,7 @@ import { independentLayoutEnabled, layoutMembers, toggleLayoutTable } from "../f
 import { GuestCountCard } from "../floor/guest-count-card"
 import { StatusLegend } from "../floor/status-legend"
 import { CallCustomerControl } from "../bookings/call-customer"
+import { CallHistory } from "../bookings/call-history"
 import { groupCode, groupDisplayName } from "../floor/floor-visual-rules"
 import { ReceptionDatePicker, ReceptionSearchField, ReceptionSearchResults } from "../floor/reception-controls"
 import { ZaloBookingExport } from "../reservations/zalo-booking-export"
@@ -577,12 +578,15 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
       {actions.length ? (
         <div className="grid grid-cols-2 gap-2">
           {c?.kind === "reservation" && c.reservationId ? (
-            <CallCustomerControl
-              bookingId={c.reservationId}
-              bookingVersion={c.version}
-              canCall={c.canCall === true}
-              className="col-span-2"
-            />
+            <>
+              <CallCustomerControl
+                bookingId={c.reservationId}
+                bookingVersion={c.version}
+                canCall={c.canCall === true}
+                className="col-span-2"
+              />
+              <CallHistory bookingId={c.reservationId} className="col-span-2" />
+            </>
           ) : null}
           {actions.map((x) => (
             <button

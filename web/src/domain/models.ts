@@ -380,6 +380,16 @@ export interface WaitlistEntryView {
   closedAt: Date | null
 }
 
+/** One row of a booking's call history. Never carries a phone number. */
+export interface BookingCallHistoryEntry {
+  callId: number
+  initiatedAt: Date
+  initiatedBy: string
+  outcome: "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED" | null
+  outcomeAt: Date | null
+  outcomeBy: string | null
+}
+
 /* ---------------- Customers ---------------- */
 
 export interface CustomerSummary {

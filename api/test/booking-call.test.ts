@@ -9,7 +9,6 @@ const base = {
   businessDate: '2026-11-02',
   lateConfirmedAt: null,
   hasPhone: true,
-  hasActiveClaim: true,
   thresholds: { upcomingMinutes: 10, lateAfterMinutes: 15, noShowAfterMinutes: 30 },
 }
 
@@ -45,9 +44,14 @@ describe('booking call eligibility', () => {
     })).toBe(true)
   })
 
+  it('calls a booking that has no table yet: that guest is the one to ring', () => {
+    // The old rule asked for an active hold, which silenced exactly the case
+    // the receptionist cares about - booked by phone, no table, now overdue.
+    expect(canCallBooking({ ...base, now: new Date('2026-11-02T14:46:00.000Z') })).toBe(true)
+  })
+
   it.each([
     { hasPhone: false },
-    { hasActiveClaim: false },
     { status: 'CHECKED_IN' as const },
     { status: 'CANCELLED' as const },
     { status: 'NO_SHOW' as const },

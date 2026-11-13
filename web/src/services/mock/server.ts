@@ -126,6 +126,16 @@ export class MockGamApi implements GamApi, DemoControls {
   private listeners = new Set<(event: ChangeEvent) => void>()
   private armed = false
   private quickTimes = ["21:00", "21:30", "22:00", "22:30"]
+  /** In-memory stand-in for booking_call_logs, so the history panel has data. */
+  private callLog: {
+    callId: number
+    bookingId: number
+    initiatedAt: Date
+    initiatedBy: string
+    outcome: "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED" | null
+    outcomeAt: Date | null
+    outcomeBy: string | null
+  }[] = []
   private readonly businessDayWorkerEnabled: boolean
 
   constructor(options: { businessDayWorkerEnabled?: boolean } = {}) {
@@ -1273,12 +1283,37 @@ export class MockGamApi implements GamApi, DemoControls {
     const r = this.res(id)
     const customer = r.customerId ? this.db.customers.get(r.customerId) : null
     if (!customer?.phoneE164) this.fail("Booking không có số điện thoại hợp lệ.", "VALIDATION_FAILED")
-    return {
-      callId: Date.now(),
+    const callId = Date.now()
+    const initiatedAt = new Date(this.now)
+    // Mock keeps the log in memory so the history panel has something real to
+    // show; the server writes it to booking_call_logs.
+    this.callLog.push({
+      callId,
       bookingId: id,
-      initiatedAt: new Date(this.now),
-      telUri: `tel:${customer.phoneE164}`,
-    }
+      initiatedAt,
+      initiatedBy: this.session.displayName,
+      outcome: null,
+      outcomeAt: null,
+      outcomeBy: null,
+    })
+    return { callId, bookingId: id, initiatedAt, telUri: `tel:${customer.phoneE164}` }
+  }
+
+  async listBookingCalls(id: number) {
+    await this.latency("q")
+    this.require("booking.phone.call")
+    return this.callLog
+      .filter((c) => c.bookingId === id)
+      .slice()
+      .sort((a, b) => b.initiatedAt.getTime() - a.initiatedAt.getTime())
+      .map((c) => ({
+        callId: c.callId,
+        initiatedAt: c.initiatedAt,
+        initiatedBy: c.initiatedBy,
+        outcome: c.outcome,
+        outcomeAt: c.outcomeAt,
+        outcomeBy: c.outcomeBy,
+      }))
   }
 
   async recordBookingCallOutcome(
@@ -1296,6 +1331,12 @@ export class MockGamApi implements GamApi, DemoControls {
     }
     await this.latency("q")
     this.require("booking.phone.call")
+    const entry = this.callLog.find((c) => c.callId === _callId && c.bookingId === bookingId)
+    if (entry && entry.outcome === null) {
+      entry.outcome = outcome
+      entry.outcomeAt = new Date(this.now)
+      entry.outcomeBy = this.session.displayName
+    }
     return { operationId: null, changeSeq: null, undoable: false, summary: "Đã ghi kết quả cuộc gọi." }
   }
 

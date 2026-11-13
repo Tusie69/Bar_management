@@ -635,6 +635,14 @@ export function reservationView(db: MockDb, r: MockReservation, now: Date): Rese
     createdAt: r.createdAt,
     createdByName: creator?.displayName ?? "Hệ thống",
     lateConfirmedAt: r.lateConfirmedAt,
+    // Mirrors canCallBooking in api/src/modules/bookings/booking-call.ts: a
+    // booking that still has a phone and has reached its upcoming window can
+    // be called, whether or not a table is held for it. The booking list used
+    // to have no canCall at all here, so the mock never showed the button.
+    canCall:
+      r.status === "BOOKED" &&
+      customerOf(db, r.customerId)?.phoneLast3 != null &&
+      now.getTime() >= r.expectedAt.getTime() - venue.upcomingWarningMinutes * MS.MIN,
   }
 }
 

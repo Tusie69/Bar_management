@@ -41,6 +41,7 @@ import type {
   ReservationView,
   SessionUser,
   ShiftOverview,
+  BookingCallHistoryEntry,
   VenueConfig,
   VenueSettingsView,
   VisitView,
@@ -333,6 +334,8 @@ export interface GamApi {
   markNoShow(id: number, version: number): Promise<MutationResult>
   confirmLate(id: number, version: number): Promise<MutationResult>
   startBookingCall(id: number): Promise<{ callId: number; bookingId: number; initiatedAt: Date; telUri: string }>
+  /** Calls already placed on this booking, newest first. Carries no phone number. */
+  listBookingCalls(id: number): Promise<BookingCallHistoryEntry[]>
   recordBookingCallOutcome(
     bookingId: number,
     callId: number,
@@ -411,6 +414,7 @@ export const REST_ENDPOINTS = {
   cancelReservation: "POST /bookings/:id/cancel",
   markNoShow: "POST /bookings/:id/no-show",
   startBookingCall: "POST /bookings/:id/call",
+  listBookingCalls: "GET /bookings/:id/calls",
   recordBookingCallOutcome: "POST /bookings/:id/calls/:callId/outcome",
   checkIn: "POST /bookings/:id/check-in",
   walkIn: "POST /bookings/walk-ins",

@@ -24,11 +24,21 @@ export function CallCustomerControl({
   bookingVersion,
   canCall,
   className,
+  label,
 }: {
   bookingId: number
-  bookingVersion: number
+  /**
+   * Version of the booking, required by the "Tới muộn" outcome because that
+   * one also moves the reservation. Pass null where the screen does not hold
+   * it - the waitlist knows the entry version, not the booking's - and the
+   * outcome dialog then offers only the two that touch the call log alone,
+   * rather than sending a version that would be refused.
+   */
+  bookingVersion: number | null
   canCall: boolean
   className?: string
+  /** Defaults to "Gọi khách". */
+  label?: string
 }) {
   const allowedToCall = useCan("booking.phone.call")
   const queryClient = useQueryClient()
@@ -80,7 +90,7 @@ export function CallCustomerControl({
         bookingId,
         callId,
         outcome,
-        outcome === "LATE_CONFIRMED" ? bookingVersion : undefined,
+        outcome === "LATE_CONFIRMED" && bookingVersion !== null ? bookingVersion : undefined,
       )
       setOutcomeOpen(false)
       clearPendingCall(bookingId)
@@ -113,7 +123,7 @@ export function CallCustomerControl({
           disabled={pending}
           onClick={() => void start()}
         >
-          <Phone /> {pending ? "Đang mở cuộc gọi..." : "Gọi khách"}
+          <Phone /> {pending ? "Đang mở cuộc gọi..." : (label ?? "Gọi khách")}
         </GuardedButton>
       ) : (
         <Button type="button" variant="outline" className={className} onClick={() => setOutcomeOpen(true)}>
@@ -128,16 +138,18 @@ export function CallCustomerControl({
               Trình duyệt không thể biết cuộc gọi có kết nối hay không. Hãy chọn kết quả thực tế.
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className={bookingVersion === null ? "grid gap-2 sm:grid-cols-2" : "grid gap-2 sm:grid-cols-3"}>
             <Button type="button" variant="outline" disabled={pending} onClick={() => void record("CONTACTED")}>
               <BadgeCheck /> Đã liên hệ
             </Button>
             <Button type="button" variant="outline" disabled={pending} onClick={() => void record("NO_ANSWER")}>
               <PhoneOff /> Không nghe máy
             </Button>
-            <Button type="button" variant="outline" disabled={pending} onClick={() => void record("LATE_CONFIRMED")}>
-              <TimerReset /> Tới muộn
-            </Button>
+            {bookingVersion === null ? null : (
+              <Button type="button" variant="outline" disabled={pending} onClick={() => void record("LATE_CONFIRMED")}>
+                <TimerReset /> Tới muộn
+              </Button>
+            )}
           </div>
         </DialogContent>
       </Dialog>

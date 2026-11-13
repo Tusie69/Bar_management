@@ -218,6 +218,47 @@ sudo -u gam21 pnpm build
 
 Bundle ra `/srv/21gam/web/dist`, đúng `root` mà nginx trỏ tới.
 
+### Khóa số điện thoại
+
+Bốn biến `PHONE_*` trong `api/.env.production` để trống thì **lưu số điện thoại
+và gọi khách đều hỏng**, trả 503 `PHONE_KEYS_UNAVAILABLE` hoặc
+`PHONE_REVEAL_POLICY_UNAVAILABLE`. Sinh khóa ngay trên VPS:
+
+```bash
+cd /srv/21gam/api
+node -e "const{randomBytes}=require('crypto');console.log('PHONE_ENCRYPTION_KEYS=1:'+randomBytes(32).toString('base64'));console.log('PHONE_HMAC_KEYS=1:'+randomBytes(32).toString('base64'))"
+```
+
+Dán hai dòng in ra vào `.env.production`, đặt cả hai id hoạt động bằng `1`:
+
+```
+PHONE_ACTIVE_ENCRYPTION_KEY_ID=1
+PHONE_ACTIVE_HMAC_KEY_ID=1
+PHONE_REVEAL_RATE_LIMIT_MAX=10
+PHONE_REVEAL_RATE_LIMIT_WINDOW_MS=600000
+```
+
+Khóa mã hóa **không được đổi hay mất**: mất là không mở lại được số nào đã lưu.
+Sao lưu database không chứa khóa, nên khóa phải được cất riêng cùng chỗ với
+`SESSION_SECRET`.
+
+Hạn mức là 10 lần trong 10 phút cho mỗi cặp (người dùng, booking), đếm chung cho
+cả xem số lẫn gọi khách. Bộ đếm nằm trong RAM của tiến trình API nên mỗi lần
+khởi động lại - kể cả lần tự triển khai hằng đêm - là về 0.
+
+### Số điện thoại đi tới máy lễ tân: quyết định đã biết
+
+Lễ tân có quyền `booking.phone.call` nhưng **không** có `booking.phone.reveal`,
+nên giao diện không bao giờ hiện số. Tuy vậy `POST /bookings/:id/call` trả về
+`telUri` dạng `tel:+84...` trong thân phản hồi, vì trình duyệt phải cầm số mới
+mở được trình gọi điện của máy. Mở tab Network của trình duyệt là đọc được.
+
+Đây là **đánh đổi có chủ ý**, không phải lỗi: muốn kín hẳn thì phải có tổng đài
+hoặc dịch vụ click-to-call đứng giữa, lúc đó máy chủ quay số và máy lễ tân chỉ
+nhận cuộc gọi, không bao giờ thấy số khách. Chừng nào chưa có, mọi lần bấm gọi
+đều được ghi lại trong `booking_call_logs` và `operation_log`
+(`BOOKING_CALL_INITIATED`) kèm người bấm, nên việc lạm dụng truy ra được.
+
 ## 5. Dịch vụ API
 
 ```bash

@@ -11,6 +11,7 @@ import { api, isApiError } from "@/services"
 import { useCan, useSession } from "@/state/session"
 import type { FloorModel } from "../floor/use-floor-model"
 import { assignWaitlistTables } from "../waitlist/assign-waitlist"
+import { CallCustomerControl } from "../bookings/call-customer"
 import { useMobileActions } from "./actions"
 import { useM } from "./context"
 import { codesOf, isOpenEntry, type Tone, toneStyle } from "./model"
@@ -352,6 +353,18 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
             </button>
           ) : null}
         </div>
+      ) : null}
+      {/* Khách chờ gắn với một booking thì gọi được ngay từ đây, lễ tân không
+          phải nhờ chủ quán mở số. Đơn chờ không có booking thì chưa gọi được:
+          booking_call_logs.reservation_id là NOT NULL. */}
+      {e.reservationId && e.phoneLast3 && !closed ? (
+        <CallCustomerControl
+          bookingId={e.reservationId}
+          bookingVersion={null}
+          canCall
+          label="Gọi khách chờ"
+          className="w-full"
+        />
       ) : null}
     </div>
   )

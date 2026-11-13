@@ -1,6 +1,6 @@
 import { ApiError } from "../contracts"
 import type { BusinessDate } from "@/lib/time"
-import type { ReceptionSearchResult } from "@/domain/models"
+import type { BookingCallHistoryEntry, ReceptionSearchResult } from "@/domain/models"
 import type { HttpClient } from "./http-client"
 import type { CapacityConfirmation } from "./visit-api"
 import {
@@ -142,6 +142,13 @@ export class HttpBookingApi {
 
   async startCall(id: number): Promise<{ callId: number; bookingId: number; initiatedAt: Date; telUri: string }> {
     return this.client.post(`/bookings/${id}/call`, {}, { reviver: dateReviver })
+  }
+
+  async listCalls(id: number): Promise<BookingCallHistoryEntry[]> {
+    const payload = await this.client.get<{ calls: BookingCallHistoryEntry[] }>(`/bookings/${id}/calls`, {
+      reviver: dateReviver,
+    })
+    return payload.calls ?? []
   }
 
   async recordCallOutcome(

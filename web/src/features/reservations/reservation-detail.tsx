@@ -58,6 +58,7 @@ import { api } from "@/services"
 import { useUi } from "@/state/ui"
 import { GuestCountDialog } from "../floor/floor-dialogs"
 import { CallCustomerControl } from "../bookings/call-customer"
+import { CallHistory } from "../bookings/call-history"
 import { ReservationStatusChip } from "./reservation-status"
 import { useFloorModel } from "../floor/use-floor-model"
 import { bookingOrderPolicy, useHeldOrderActions } from "../mobile/actions"
@@ -281,6 +282,7 @@ function Detail({ r }: { r: ReservationView }) {
               canCall={r.canCall === true}
               className="col-span-2"
             />
+            <CallHistory bookingId={r.id} className="col-span-2" />
             {r.tableIds.length ? (
               <GuardedButton
                 permission="visit.checkin"

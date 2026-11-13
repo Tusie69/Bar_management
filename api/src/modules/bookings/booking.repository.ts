@@ -165,7 +165,6 @@ function toBooking(row: BookingRow, now = applicationNow()): BookingView {
       businessDate,
       lateConfirmedAt: row.late_confirmed_at,
       hasPhone: row.phone_last3 !== null,
-      hasActiveClaim: Boolean(row.table_codes),
       now,
       thresholds: {
         upcomingMinutes: Number(row.upcoming_warning_minutes),
@@ -958,7 +957,6 @@ interface BookingCallRow extends RowDataPacket {
   upcoming_warning_minutes: number
   late_warning_minutes: number
   no_show_warning_minutes: number
-  has_active_claim: number
 }
 
 interface StoredCallRow extends RowDataPacket {
@@ -966,6 +964,15 @@ interface StoredCallRow extends RowDataPacket {
   reservation_id: number
   outcome: BookingCallOutcome | null
   outcome_at: Date | string | null
+}
+
+export interface BookingCallHistoryEntry {
+  callId: number
+  initiatedAt: string
+  initiatedBy: string
+  outcome: BookingCallOutcome | null
+  outcomeAt: string | null
+  outcomeBy: string | null
 }
 
 export interface BookingCallStartResult {
@@ -995,14 +1002,7 @@ export async function initiateBookingCall(
       `SELECT r.id, r.status, r.version, r.expected_at, r.business_date, r.late_confirmed_at,
          COALESCE(r.phone_ciphertext, c.phone_ciphertext) AS phone_ciphertext,
          COALESCE(r.phone_key_id, c.phone_key_id) AS phone_key_id,
-         v.upcoming_warning_minutes, v.late_warning_minutes, v.no_show_warning_minutes,
-         EXISTS(
-           SELECT 1 FROM table_holds h
-           JOIN table_allocations a ON a.organization_id = h.organization_id AND a.venue_id = h.venue_id
-             AND a.hold_id = h.id AND a.kind = 'HOLD' AND a.released_at IS NULL
-           WHERE h.organization_id = r.organization_id AND h.venue_id = r.venue_id
-             AND h.reservation_id = r.id AND h.status = 'ACTIVE'
-         ) AS has_active_claim
+         v.upcoming_warning_minutes, v.late_warning_minutes, v.no_show_warning_minutes
        FROM reservations r
        JOIN venues v ON v.organization_id = r.organization_id AND v.id = r.venue_id
        LEFT JOIN customers c ON c.organization_id = r.organization_id AND c.id = r.customer_id
@@ -1023,7 +1023,6 @@ export async function initiateBookingCall(
       businessDate: dateOnly(booking.business_date),
       lateConfirmedAt: booking.late_confirmed_at,
       hasPhone: booking.phone_ciphertext !== null && booking.phone_key_id !== null,
-      hasActiveClaim: Boolean(booking.has_active_claim),
       now,
       thresholds: {
         upcomingMinutes: Number(booking.upcoming_warning_minutes),
@@ -1057,6 +1056,51 @@ export async function initiateBookingCall(
   } finally {
     connection.release()
   }
+}
+
+interface CallHistoryRow extends RowDataPacket {
+  id: number
+  initiated_at: Date
+  initiated_by: string | null
+  outcome: string | null
+  outcome_at: Date | null
+  outcome_by: string | null
+}
+
+/**
+ * Every call placed on a booking, newest first.
+ *
+ * booking_call_logs was written and never read back: nobody in the app could
+ * see that a colleague had already rung this guest twice, nor that a call was
+ * left without an outcome. The rows existed only for an audit nobody could
+ * reach from a screen.
+ *
+ * No phone number is returned - the history says who rang and how it went,
+ * which needs no number, so this stays readable by anyone who may call.
+ */
+export async function listBookingCalls(
+  actor: AuthenticatedActor,
+  bookingId: number,
+): Promise<BookingCallHistoryEntry[]> {
+  const [rows] = await databasePool.execute<CallHistoryRow[]>(
+    `SELECT l.id, l.initiated_at, iu.display_name AS initiated_by,
+            l.outcome, l.outcome_at, ou.display_name AS outcome_by
+       FROM booking_call_logs l
+       JOIN users iu ON iu.id = l.initiated_by_user_id
+       LEFT JOIN users ou ON ou.id = l.outcome_by_user_id
+      WHERE l.organization_id = ? AND l.venue_id = ? AND l.reservation_id = ?
+      ORDER BY l.initiated_at DESC, l.id DESC
+      LIMIT 50`,
+    [actor.organizationId, actor.venueId, bookingId],
+  )
+  return rows.map((row) => ({
+    callId: Number(row.id),
+    initiatedAt: isoDateTime(row.initiated_at),
+    initiatedBy: row.initiated_by ?? 'Không rõ',
+    outcome: (row.outcome as BookingCallOutcome | null) ?? null,
+    outcomeAt: row.outcome_at === null ? null : isoDateTime(row.outcome_at),
+    outcomeBy: row.outcome_by ?? null,
+  }))
 }
 
 export async function recordBookingCallOutcome(

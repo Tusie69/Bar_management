@@ -6,13 +6,19 @@ export interface BookingCallEligibility {
   businessDate: string
   lateConfirmedAt?: Date | string | null
   hasPhone: boolean
-  hasActiveClaim: boolean
   now: Date
   thresholds: TableStateThresholds
 }
 
+/**
+ * A booking with no table used to be uncallable, because the rule asked for an
+ * active hold. That is backwards: a guest who booked by phone, has no table
+ * assigned and is now overdue is precisely the one the receptionist has to
+ * ring. Holding a table is an operational detail of the floor, not a condition
+ * for picking up the phone, so the rule now turns on the booking alone.
+ */
 export function canCallBooking(input: BookingCallEligibility): boolean {
-  if (!input.hasPhone || !input.hasActiveClaim || input.status !== 'BOOKED') return false
+  if (!input.hasPhone || input.status !== 'BOOKED') return false
   const state = deriveTableDisplayState({
     catalogState: 'ACTIVE',
     isSpare: false,
