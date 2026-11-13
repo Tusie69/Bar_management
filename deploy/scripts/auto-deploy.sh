@@ -109,6 +109,15 @@ for part in api web; do
     fi
   done
 done
+# Database test phải được migrate TRƯỚC khi chạy test. Thiếu bước này thì bất
+# kỳ commit nào kèm migration mới cũng rớt cổng kiểm thử: code mới ghi giá trị
+# mà CHECK constraint cũ chưa cho phép, và lỗi hiện ra như một bug nghiệp vụ
+# chứ không phải như một database lạc hậu. Chỉ đụng vào database test.
+if ! (cd "$REPO/api" && as_app env NODE_ENV=test DB_NAME=gam21_platform_it_test       pnpm db:migrate >/tmp/21gam-deploy-testmigrate.log 2>&1); then
+  log "migrate database test hỏng:"; tail -10 /tmp/21gam-deploy-testmigrate.log | sed 's/^/    /'
+  rollback; die "không chuẩn bị được database test"
+fi
+
 # Chạy cả test tích hợp MySQL, trên database test riêng. dotenv không ghi đè
 # biến môi trường đã có, nên các biến truyền ở đây thắng api/.env. Fixture còn
 # tự từ chối chạy nếu DB_NAME khác gam21_platform_it_test, nên database thật
