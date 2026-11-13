@@ -131,6 +131,8 @@ export interface WalkInInput {
   tableIds: number[]
   guestCount: number
   contactName?: string
+  /** Optional customer phone, stored protected and only exposed as last 3 digits. */
+  phone?: string
   overrideReason?: string
   capacityOverrideConfirmed?: boolean
   /** FX-04: mã chống trùng của lần mở form; gửi lại cùng mã thì máy chủ trả lại kết quả cũ. */

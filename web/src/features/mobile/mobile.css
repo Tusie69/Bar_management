@@ -113,6 +113,10 @@
   --destructive: var(--st-noshow);
   --font-ui: var(--font-sans);
   --top-safe: max(6px, env(safe-area-inset-top));
+  /* Dải dưới cùng (hoàn tác, bảng ghép bàn) nằm ngay trên vạch Home của iPhone X
+     trở lên. Thiếu biến này thì `pb-[var(--bottom-safe)]` là giá trị rỗng, trình
+     duyệt bỏ luôn padding và hai nút bị vạch Home che mất. */
+  --bottom-safe: env(safe-area-inset-bottom, 0px);
   --nav-h: calc(56px + env(safe-area-inset-bottom));
 
   background: var(--background);

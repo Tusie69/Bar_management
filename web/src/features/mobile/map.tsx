@@ -7,6 +7,7 @@ import { fmtBusinessDate, fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useUi } from "@/state/ui"
 import { useReceptionSearch } from "@/hooks/use-reception-search"
+import { usePlanWidth } from "@/hooks/use-plan-width"
 import { FloorCanvas } from "../floor/floor-canvas"
 import { SpareButton } from "../floor/spare-button"
 import { LayoutActions, LayoutMergeControls } from "../floor/layout-merge-controls"
@@ -67,6 +68,9 @@ export function MapScreen({
   const undoEnabled = useUndoRedo().enabled
   const [exportOpen, setExportOpen] = useState(false)
   const canExport = m.can("customer.view_masked")
+  // Cỡ máy thật, không phải cỡ viewport: Safari thu nhỏ trang thì iPhone X báo
+  // ~506px và trước đây nhận bộ chrome của máy to, đè lên Khu B/Khu C.
+  const planWidth = usePlanWidth()
   // The plan owns the screen: its own controls float on it instead of stacking above it.
   const planChrome = receptionist && !pick && !draft
 
@@ -246,8 +250,10 @@ export function MapScreen({
                     <div className="reception-plan-overlay pointer-events-none absolute inset-0">
                       <GuestCountCard
                         reservations={m.reservations}
+                        claims={[...m.model.states.values()].flatMap((state) => (state.claim ? [state.claim] : []))}
                         onOpen={m.openCount}
-                        initialOpen={typeof window === "undefined" || window.innerWidth > 480}
+                        initialOpen={planWidth > 480}
+                        tiny={planWidth <= 359}
                         className="pointer-events-auto absolute top-2 left-2"
                       />
                       <div className="pointer-events-auto absolute top-2 right-2 flex flex-col items-end gap-1.5">
@@ -266,8 +272,7 @@ export function MapScreen({
                           className="inline-flex h-9 items-center gap-2 rounded-xl border border-border/80 bg-background/95 px-2.5 text-[13px] font-semibold text-tx-strong shadow-lg backdrop-blur active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
                         >
                           <ListOrdered className="size-4 shrink-0" aria-hidden />
-                          <span className="hidden min-[481px]:inline">Bàn chờ</span>
-                          <span className="hidden min-[375px]:inline min-[481px]:hidden">Chờ</span>
+                          {planWidth > 480 ? <span>Bàn chờ</span> : planWidth >= 375 ? <span>Chờ</span> : null}
                           {waitingCount > 0 ? `+${waitingCount}` : ""}
                         </button>
                       </div>
@@ -393,6 +398,8 @@ interface Action {
   wide?: boolean
   disabled?: boolean
   title?: string
+  /** Nút này đứng cùng hàng với nút Sơ cua. */
+  withSpare?: boolean
 }
 
 /** Bottom sheet over the lower half; the map stays visible and other tables stay tappable. */
@@ -431,9 +438,9 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
     who = `${c.displayName}, ${c.partySize} khách`
     when = `Đang ngồi từ ${fmtTime(c.startsAt)}, ${duration(m.now.getTime() - c.startsAt.getTime())}`
     actions = [
-      { label: "Đổi bàn", go: () => a.moveVisit(c, id) },
+      { label: "Đổi bàn", withSpare: true, go: () => a.moveVisit(c, id) },
       ...(c.reservationId ? [{ label: "Xem booking", go: () => m.openDetail(c.reservationId!, m.today) }] : []),
-      { label: "Nhả bàn", danger: true, wide: !c.reservationId, go: () => a.endVisit(c) },
+      { label: "Nhả bàn", danger: true, wide: true, go: () => a.endVisit(c) },
     ]
   } else if (c?.kind === "waitlist_hold" || (c?.kind === "reservation" && linkedEntry)) {
     const entry = linkedEntry ?? (c?.waitlistEntryId ? m.waitlist?.find((x) => x.id === c.waitlistEntryId) : undefined)
@@ -504,7 +511,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
             ? [{ label: "Tới muộn", go: () => a.confirmLate(r) }]
             : []),
           { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
-          { label: "Đổi bàn", go: () => a.assign(r) },
+          { label: "Đổi bàn", withSpare: true, go: () => a.assign(r) },
           // Hủy booking đứng cuối và chiếm cả dòng: thao tác không lùi lại
           // được thì không nên nằm lẫn giữa những nút bấm hằng ngày.
           {
@@ -539,6 +546,27 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
   // Nút huỷ luôn ở dưới cùng và chiếm cả dòng, dưới cả nút Sơ cua.
   const tailActions = actions.filter((x) => x.danger && x.wide)
   const mainActions = actions.filter((x) => !(x.danger && x.wide))
+  /** Có nút nào kéo Sơ cua lên cùng hàng chưa; nếu chưa thì Sơ cua đứng một mình như cũ. */
+  const pairedSpare = Boolean(t) && mainActions.some((x) => x.withSpare)
+
+  const actionButton = (x: Action) => (
+    <button
+      key={x.label}
+      type="button"
+      onClick={x.go}
+      disabled={x.disabled || a.pending || pending}
+      title={x.title}
+      className={cn(
+        "h-12 rounded-xl border text-[15px] font-medium disabled:opacity-45",
+        x.wide && "col-span-2",
+        x.primary
+          ? "border-primary bg-primary text-primary-foreground"
+          : cn("border-strong bg-transparent", x.danger ? "text-st-noshow-ink" : "text-tx-1"),
+      )}
+    >
+      {x.label}
+    </button>
+  )
 
   return (
     <div
@@ -562,8 +590,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
           <X className="size-5" />
         </button>
       </div>
-      {/* Trạng thái chỉ nói một lần, ở chip có khung màu cạnh tên bàn. Dòng
-          "Trạng thái: ... · ghép N bàn" ở đây lặp lại đúng từng chữ của chip. */}
+      {/* Trạng thái chỉ hiển thị một lần ở chip cạnh tên bàn. */}
       <span className="-mt-2 text-[13px] text-[var(--text-muted)]">
         {zone?.name}, {isBar && !isGroup ? "1 ghế" : `${totalCapacity} chỗ`}
         {t.isSpare ? ", bàn sơ cua" : ""}
@@ -575,9 +602,9 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
           {c?.phoneLast3 ? <span className="text-[13px] text-[var(--text-muted)]">SĐT: ••• {c.phoneLast3}</span> : null}
           {c?.flags?.length ? (
             <span className="text-[13px] text-[var(--text-muted)]">
-              {c.flags.includes("RETURNING") ? "🔥 Khách quen" : ""}
+              {c.flags.includes("RETURNING") ? "🔥 Đã từng đặt bàn" : ""}
               {c.flags.includes("RETURNING") && c.flags.includes("NEW") ? " · " : ""}
-              {c.flags.includes("NEW") ? "🆕 Khách mới" : ""}
+              {c.flags.includes("NEW") ? "🆕 Chưa từng đặt bàn" : ""}
             </span>
           ) : null}
           {c && c.tableIds.length > 1 ? (
@@ -605,28 +632,22 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
               <CallHistory bookingId={c.reservationId} className="col-span-2" />
             </>
           ) : null}
-          {/* Sơ cua không phải việc hằng ngày nên nó rơi xuống cạnh Đổi bàn,
-              thay vì đứng riêng một khối ngay trên các nút chính. Các nút huỷ
-              chiếm cả dòng nên luôn ở dưới cùng, sau cả Sơ cua. */}
-          {mainActions.map((x) => (
-            <button
-              key={x.label}
-              type="button"
-              onClick={x.go}
-              disabled={x.disabled || a.pending || pending}
-              title={x.title}
-              className={cn(
-                "h-12 rounded-xl border text-[15px] font-medium disabled:opacity-45",
-                x.wide && "col-span-2",
-                x.primary
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : cn("border-strong bg-transparent", x.danger ? "text-st-noshow-ink" : "text-tx-1"),
-              )}
-            >
-              {x.label}
-            </button>
-          ))}
-          {t ? (
+          {/* Sơ cua không phải việc hằng ngày nên nó đứng cùng hàng với Đổi bàn
+              thay vì chiếm riêng một khối ngay trên các nút chính. Cặp này nằm
+              trong lưới hai cột của riêng nó: dù phía trên có lẻ nút thì Sơ cua
+              vẫn không bị đẩy xuống dòng sau. Các nút huỷ chiếm cả dòng nên luôn
+              ở dưới cùng, sau cả Sơ cua. */}
+          {mainActions.map((x) =>
+            x.withSpare && t ? (
+              <div key={x.label} className="col-span-2 grid grid-cols-2 items-start gap-2">
+                {actionButton(x)}
+                <SpareButton table={t} state={st} hasClaim={Boolean(c)} inGroup={isGroup} />
+              </div>
+            ) : (
+              actionButton(x)
+            ),
+          )}
+          {t && !pairedSpare ? (
             <div className={cn(mainActions.length % 2 === 0 && "col-span-2")}>
               <SpareButton table={t} state={st} hasClaim={Boolean(c)} inGroup={isGroup} />
             </div>

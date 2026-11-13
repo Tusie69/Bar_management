@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { ReservationView } from "@/domain/models"
+import type { ClaimView, ReservationView } from "@/domain/models"
 import { buildGuestCount, GUEST_COUNT_SPLIT } from "./guest-count"
 
 const at = (hhmm: string) => {
@@ -78,6 +78,20 @@ describe("buildGuestCount", () => {
     expect(c.arrivedAfter).toBe(3)
   })
 
+  it("counts a direct walk-in immediately and only once across multiple tables", () => {
+    const walkIn = {
+      kind: "visit",
+      visitId: 91,
+      reservationId: null,
+      partySize: 4,
+      startsAt: at("20:03"),
+    } as ClaimView
+    const c = buildGuestCount([], undefined, [walkIn, walkIn])
+    expect(c.arrivedBefore).toBe(4)
+    expect(c.arrivedTotal).toBe(4)
+    expect(c.bookedGuests).toBe(0)
+  })
+
   it("falls back to the booked time when a seated booking has no check-in time", () => {
     const c = buildGuestCount([
       booking({ partySize: 5, status: "CHECKED_IN", checkedInAt: null, expectedAt: at("19:00") }),
@@ -96,7 +110,7 @@ describe("buildGuestCount", () => {
     expect(c.returningGuests).toBe(0)
   })
 
-  it("counts a table once when several bookings share it, and counts Khách quen from classification", () => {
+  it("counts a table once when several bookings share it, and counts Đã từng đặt bàn from classification", () => {
     const c = buildGuestCount([
       booking({ partySize: 2, tableIds: [5, 6], classification: "RETURNING" }),
       booking({ partySize: 3, tableIds: [6, 7], classification: "NEW" }),

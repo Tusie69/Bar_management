@@ -113,7 +113,7 @@ describe("BarGuestList presentational component", () => {
     expect(html).toContain("🎂")
     expect(html).toContain('aria-label="VIP"')
     expect(html).toContain("⭐")
-    expect(html).toContain('aria-label="Khách quen"')
+    expect(html).toContain('aria-label="Đã từng đặt bàn"')
     expect(html).toContain("🔥")
     expect(html).toContain('aria-label="Chỉ định"')
     expect(html).toContain("📌")
@@ -235,7 +235,7 @@ describe("BarGuestList presentational component", () => {
     expect(html).toContain("+2")
 
     // Full list in accessible label
-    expect(html).toContain('aria-label="Bar2-4, lúc 22:00, 12 khách, Overflow guest, Sinh nhật, VIP, Khách quen, Chỉ định, Trạng thái: Đã đặt"')
+    expect(html).toContain('aria-label="Bar2-4, lúc 22:00, 12 khách, Overflow guest, Sinh nhật, VIP, Đã từng đặt bàn, Chỉ định, Trạng thái: Đã đặt"')
 
     // Guest count 12 must be present and never clipped
     expect(html).toContain("22:00")
@@ -246,7 +246,7 @@ describe("BarGuestList presentational component", () => {
 
     // Accessible hidden icons for screen readers
     expect(html).toContain("sr-only")
-    expect(html).toContain("Khách quen")
+    expect(html).toContain("Đã từng đặt bàn")
     expect(html).toContain("Chỉ định")
   })
 

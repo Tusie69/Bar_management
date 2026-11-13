@@ -252,23 +252,9 @@ stops a buffering reverse proxy from spending the latency budget. Tuning: `REALT
 
 ### Capacity is guidance, not a limit
 
-A table's capacity no longer blocks a booking. What replaced the old hard `409 INSUFFICIENT_TABLE_CAPACITY` is **not**
-"no check": the server still computes the real capacity from the member tables' own data, still refuses the write when
-nobody took responsibility, and proceeds only when the request carries `capacityOverrideConfirmed: true`. The
-confirmation is therefore verified on the server — a dialog in the browser is not evidence on its own — and is written
-to the audit row as `changes[0].capacityOverride`.
-
-Without the flag the server answers `409 CAPACITY_OVERRIDE_REQUIRED` and writes nothing:
-
-```json
-{"error":{"code":"CAPACITY_OVERRIDE_REQUIRED",
-  "message":"Bàn B3 có sức chứa đề xuất 4 người. Bạn đang đặt 6 khách. Xác nhận để tiếp tục.",
-  "details":{"requestedGuests":6,"totalCapacity":4,"tableCodes":["B3"]}}}
-```
-
-It applies to `POST /bookings/direct`, `POST /bookings/walk-ins`, `POST /bookings/:id/assign`,
-`POST /bookings/:id/merge`, `POST /visits/:id/move` and `POST /visits/:id/merge`. A non-boolean value answers
-`400 INVALID_CAPACITY_OVERRIDE`.
+A table's capacity no longer blocks a booking and does not require confirmation. Booking, walk-in, assignment, merge,
+and visit-move requests proceed normally when the party is larger than the selected tables' suggested capacity. The
+legacy `capacityOverrideConfirmed` field is still accepted during rolling deployments but is no longer required.
 
 Every other rule is untouched. Party size must still be a positive whole number; a table still cannot be double-booked
 (`TABLE_ALREADY_OCCUPIED`), confirmation or no confirmation; a spare table is still not bookable directly; and the
@@ -281,9 +267,8 @@ keep their own capacity checks for the same reason.
 All of this is additive. `POST /tables/groups/:id/split` with `{keepTableIds}` behaves exactly as before. `groups[]` and
 `FloorTableProjection` only gain optional fields, and clients that ignore them keep working. `table_allocations.group_id`
 keeps its meaning. `AppError` responses may now carry `error.details`; a client that reads only `code` and `message` is
-unaffected. The one intentional behaviour change is the capacity codes above: a client that hard-coded
-`INSUFFICIENT_TABLE_CAPACITY` for booking, walk-in, assign, merge or move must also handle
-`CAPACITY_OVERRIDE_REQUIRED`.
+unaffected. The intentional behaviour change is that booking, walk-in, assign, merge and move no longer return a
+capacity error.
 
 ### Migration
 

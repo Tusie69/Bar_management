@@ -30,10 +30,7 @@ const unsupported = (capability: string): never => {
   throw new ApiError(501, "NOT_SUPPORTED_BY_BACKEND", `Máy chủ chưa hỗ trợ ${capability}.`)
 }
 
-/**
- * §3.1: only forward the confirmation when it is actually set, so a request that
- * nobody confirmed stays a request the server refuses.
- */
+/** Legacy flag is forwarded only when an older caller still provides it. */
 function capacityConfirmation(input: { capacityOverrideConfirmed?: boolean }): { capacityOverrideConfirmed?: boolean } {
   return input.capacityOverrideConfirmed ? { capacityOverrideConfirmed: true } : {}
 }
@@ -289,6 +286,7 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
           businessDate: businessDateOf(clock.now()),
           tableIds: input.tableIds,
           ...(input.contactName ? { guestName: input.contactName } : {}),
+          ...(input.phone ? { phoneNumber: input.phone } : {}),
           ...capacityConfirmation(input),
         },
         input.idempotencyKey,

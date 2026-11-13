@@ -1663,22 +1663,21 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     expect(allocations[1]?.released_at).toBeNull()
   })
 
-  it('rejects an active visit move with insufficient capacity and preserves the source allocation', async () => {
+  it('allows an active visit move when guests exceed the target capacity', async () => {
     const assigned = await createAssignedBooking(tableOneId)
     await checkInBooking(actor, assigned.id, assigned.version, checkInNow)
     const reservation = await row('SELECT visit_id FROM reservations WHERE id = ?', [assigned.id])
     const visitId = Number(reservation.visit_id)
     await databasePool.execute('UPDATE dining_tables SET capacity = 2 WHERE id = ?', [tableTwoId])
-    await expect(moveVisit(actor, { visitId, expectedVersion: 1, tableIds: [tableTwoId] }))
-      .rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
+    await moveVisit(actor, { visitId, expectedVersion: 1, tableIds: [tableTwoId] })
     const active = await row(
       `SELECT table_id FROM table_allocations
        WHERE visit_id = ? AND kind = 'USAGE' AND released_at IS NULL`,
       [visitId],
     )
-    expect(Number(active.table_id)).toBe(tableOneId)
+    expect(Number(active.table_id)).toBe(tableTwoId)
     const visit = await row('SELECT version FROM visits WHERE id = ?', [visitId])
-    expect(Number(visit.version)).toBe(1)
+    expect(Number(visit.version)).toBe(2)
   })
 
   it('keeps a waitlist entry unique and creates a booking hold after a table is released', async () => {

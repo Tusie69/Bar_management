@@ -1461,12 +1461,13 @@ export class MockGamApi implements GamApi, DemoControls {
         partySize: input.guestCount,
         overrideReason: input.overrideReason,
       })
+      const customerId = this.upsertCustomer(tx, input.contactName, input.phone)
       const v = tx.insert("visits", {
         organizationId: ORG_ID,
         venueId: VENUE_ID,
         origin: "WALK_IN",
-        customerId: null,
-        contactName: input.contactName?.trim() || null,
+        customerId,
+        contactName: customerId === null ? input.contactName?.trim() || null : null,
         guestCount: input.guestCount,
         startedAt: this.now,
         businessDate: bd,

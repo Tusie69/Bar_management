@@ -275,7 +275,7 @@ describe("merge-group G-code numbering (Item 6 & 8)", () => {
 })
 
 describe("guest-type icon priority (Item 5)", () => {
-  it("defines full approved priority order: ⭐ VIP > 📌 Chỉ định > 🎂 Sinh nhật > 🔥 Khách quen > 🆕 Khách mới", () => {
+  it("defines full approved priority order: ⭐ VIP > 📌 Chỉ định > 🎂 Sinh nhật > 🔥 Đã từng đặt bàn > 🆕 Chưa từng đặt bàn", () => {
     expect(GUEST_ICON_PRIORITY).toEqual(["VIP", "DESIGNATED", "BIRTHDAY", "RETURNING", "NEW"])
   })
 })

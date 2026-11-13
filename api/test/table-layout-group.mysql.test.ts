@@ -455,31 +455,15 @@ mysqlDescribe('C1 layout table groups', () => {
 
   /* ---------------- AC04: capacity ---------------- */
 
-  it('AC04 refuses an over-capacity booking until it is confirmed, then saves it and audits it', async () => {
+  it('AC04 saves an over-capacity booking without confirmation', async () => {
     // B3 seats 4; this is 6 guests on it.
-    await expect(createAndAssignBooking(actor, { ...bookingInput('Vượt sức chứa', 6), tableIds: [b3] }))
-      .rejects.toMatchObject({
-        code: 'CAPACITY_OVERRIDE_REQUIRED',
-        status: 409,
-        details: { requestedGuests: 6, totalCapacity: 4, tableCodes: ['B3'] },
-      })
-    const [refused] = await databasePool.execute<RowDataPacket[]>(
-      'SELECT id FROM reservations WHERE contact_name = ?', ['Vượt sức chứa'],
-    )
-    expect(refused).toHaveLength(0)
-
     const saved = await createAndAssignBooking(actor, {
       ...bookingInput('Vượt sức chứa', 6),
       tableIds: [b3],
-      capacityOverrideConfirmed: true,
     })
     expect(saved.partySize).toBe(6)
     const audit = await auditChanges('RESERVATION_CREATED_AND_ASSIGNED')
-    expect(audit.capacityOverride).toMatchObject({
-      requestedGuests: 6,
-      totalCapacity: 4,
-      acknowledged: true,
-    })
+    expect(audit.capacityOverride).toBeUndefined()
   })
 
   it('AC04 keeps every other rule: a positive party size, and no double booking', async () => {
@@ -495,11 +479,9 @@ mysqlDescribe('C1 layout table groups', () => {
     })).rejects.toMatchObject({ code: 'TABLE_ALREADY_OCCUPIED' })
   })
 
-  it('AC04 gates an over-capacity assign on the same confirmation', async () => {
+  it('AC04 allows an over-capacity assign without confirmation', async () => {
     const booking = await createBooking(actor, bookingInput('Gán vượt', 9))
-    await expect(assignBookingTables(actor, booking.id, booking.version, [b3]))
-      .rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
-    const assigned = await assignBookingTables(actor, booking.id, booking.version, [b3], true)
+    const assigned = await assignBookingTables(actor, booking.id, booking.version, [b3])
     expect(assigned.tableCodes).toEqual(['B3'])
   })
 

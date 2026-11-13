@@ -440,9 +440,9 @@ try {
         return { groupCode: group.groupCode }
       })
 
-      await step(`${label} · AC04 over capacity warns, and only saves once confirmed`, async () => {
-        // 14 guests on a 12-seat cluster: the server refuses until someone says yes.
-        const refused = await page.evaluate(
+      await step(`${label} · AC04 over capacity saves without confirmation`, async () => {
+        // Capacity is advisory: 14 guests can be saved on a 12-seat cluster.
+        const saved = await page.evaluate(
           async ({ base, date }) => {
             const me = await (await fetch(`${base}/api/v1/auth/me`, { credentials: "include" })).json()
             const send = (body) =>
@@ -462,30 +462,21 @@ try {
             }
             const catalog = await (await fetch(`${base}/api/v1/tables/catalog`, { credentials: "include" })).json()
             payload.tableIds = [catalog.tables.find((row) => row.code === "B3").id]
-            const first = await send(payload)
-            const firstBody = await first.json()
-            const second = await send({ ...payload, capacityOverrideConfirmed: true })
-            const secondBody = await second.json()
+            const response = await send(payload)
+            const body = await response.json()
             return {
-              refusedStatus: first.status,
-              refusedCode: firstBody.error?.code,
-              details: firstBody.error?.details,
-              savedStatus: second.status,
-              savedPartySize: secondBody.booking?.partySize,
-              savedTableCodes: secondBody.booking?.tableCodes,
+              savedStatus: response.status,
+              savedPartySize: body.booking?.partySize,
+              savedTableCodes: body.booking?.tableCodes,
             }
           },
           { base: apiUrl, date: businessDate },
         )
-        assert.equal(refused.refusedStatus, 409)
-        assert.equal(refused.refusedCode, "CAPACITY_OVERRIDE_REQUIRED")
-        assert.equal(refused.details.totalCapacity, 12)
-        assert.equal(refused.details.requestedGuests, 14)
-        assert.equal(refused.savedStatus, 201)
-        assert.equal(refused.savedPartySize, 14)
+        assert.equal(saved.savedStatus, 201)
+        assert.equal(saved.savedPartySize, 14)
         // Booking one member booked the whole cluster.
-        assert.deepEqual(refused.savedTableCodes, ["B3", "B4", "B5"])
-        return refused
+        assert.deepEqual(saved.savedTableCodes, ["B3", "B4", "B5"])
+        return saved
       })
 
       await step(`${label} · AC06 a cluster serving a party is not offered the dissolve`, async () => {

@@ -182,8 +182,8 @@ export function BarGuestList({
               const activeIcons: { key: string; emoji: string; label: string }[] = []
               if (row.icons.cake) activeIcons.push({ key: "cake", emoji: "🎂", label: "Sinh nhật" })
               if (row.icons.vip) activeIcons.push({ key: "vip", emoji: "⭐", label: "VIP" })
-              if (row.icons.returning) activeIcons.push({ key: "returning", emoji: "🔥", label: "Khách quen" })
-              if (row.icons.newGuest) activeIcons.push({ key: "newGuest", emoji: "🆕", label: "Khách mới" })
+              if (row.icons.returning) activeIcons.push({ key: "returning", emoji: "🔥", label: "Đã từng đặt bàn" })
+              if (row.icons.newGuest) activeIcons.push({ key: "newGuest", emoji: "🆕", label: "Chưa từng đặt bàn" })
               if (row.icons.pin) activeIcons.push({ key: "pin", emoji: "📌", label: "Chỉ định" })
 
               // Display at most 2 icons + (+N) marker; full list in accessible label

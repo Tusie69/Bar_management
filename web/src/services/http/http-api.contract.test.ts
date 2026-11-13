@@ -220,23 +220,64 @@ beforeEach(() => {
       }
       if (path === "/waitlist" || path.startsWith("/waitlist/")) return json({ entry, reservationId: 11, groupId: 1 })
       if (/^\/tables\/groups\/\d+\/split$/.test(path))
-        return json({ operationId: 91, changeSeq: 12, summary: "Đã tách nhóm bàn.", undoable: false,
-          splitGroupId: 1, group: null, keptTableIds: [1], releasedTableIds: [2] })
+        return json({
+          operationId: 91,
+          changeSeq: 12,
+          summary: "Đã tách nhóm bàn.",
+          undoable: false,
+          splitGroupId: 1,
+          group: null,
+          keptTableIds: [1],
+          releasedTableIds: [2],
+        })
       if (path === "/accounts" && init.method === "POST")
-        return json({ account: { id: 5, username: "le_tan", displayName: "Lễ tân", status: "ACTIVE",
-          membershipStatus: "ACTIVE", roles: ["RECEPTIONIST"], lastLoginAt: null, version: 1 } })
+        return json({
+          account: {
+            id: 5,
+            username: "le_tan",
+            displayName: "Lễ tân",
+            status: "ACTIVE",
+            membershipStatus: "ACTIVE",
+            roles: ["RECEPTIONIST"],
+            lastLoginAt: null,
+            version: 1,
+          },
+        })
       if (path === "/accounts")
         return json({
-          accounts: [{ id: 5, username: "le_tan", displayName: "Lễ tân", status: "ACTIVE",
-            membershipStatus: "ACTIVE", roles: ["RECEPTIONIST"], lastLoginAt: null, version: 3 }],
+          accounts: [
+            {
+              id: 5,
+              username: "le_tan",
+              displayName: "Lễ tân",
+              status: "ACTIVE",
+              membershipStatus: "ACTIVE",
+              roles: ["RECEPTIONIST"],
+              lastLoginAt: null,
+              version: 3,
+            },
+          ],
           roles: [{ code: "RECEPTIONIST", name: "Lễ tân" }],
         })
       if (/^\/accounts\/\d+\/status$/.test(path))
-        return json({ account: { id: 5, username: "le_tan", displayName: "Lễ tân", status: "DISABLED",
-          membershipStatus: "ACTIVE", roles: ["RECEPTIONIST"], lastLoginAt: null, version: 4 },
-          revokedSessions: 2 })
+        return json({
+          account: {
+            id: 5,
+            username: "le_tan",
+            displayName: "Lễ tân",
+            status: "DISABLED",
+            membershipStatus: "ACTIVE",
+            roles: ["RECEPTIONIST"],
+            lastLoginAt: null,
+            version: 4,
+          },
+          revokedSessions: 2,
+        })
       if (path === "/operations/undo-state")
-        return json({ undo: { operationId: 81, action: "VISIT_TABLES_MOVED", summary: "đổi bàn lượt khách" }, redo: null })
+        return json({
+          undo: { operationId: 81, action: "VISIT_TABLES_MOVED", summary: "đổi bàn lượt khách" },
+          redo: null,
+        })
       if (path === "/operations/undo" || path === "/operations/redo")
         return json({ operationId: 82, changeSeq: 9, summary: "Đã áp dụng.", undoable: true })
       if (path.startsWith("/visits/"))
@@ -529,8 +570,11 @@ describe("canonical contract writes", () => {
     await api.updateReservation({ id: 11, version: 1, partySize: 5, ...metadata })
     await api.updateReservation({ id: 11, version: 1, iconKeys: [], honorific: null, socialPlatform: null })
     expect(writes().map(({ method, path }) => [method, path])).toEqual([
-      ["POST", "/bookings"], ["POST", "/bookings/direct"], ["PUT", "/bookings/11"],
-      ["PUT", "/bookings/11"], ["PUT", "/bookings/11"],
+      ["POST", "/bookings"],
+      ["POST", "/bookings/direct"],
+      ["PUT", "/bookings/11"],
+      ["PUT", "/bookings/11"],
+      ["PUT", "/bookings/11"],
     ])
     const [create, direct, socialUpdate, hotlineUpdate, cleared] = writes()
     for (const write of [create, direct, socialUpdate]) {
@@ -598,9 +642,9 @@ describe("canonical contract writes", () => {
     },
     {
       name: "walk-in",
-      run: (api) => api.seatWalkIn({ tableIds: [2], guestCount: 4, contactName: "An" }),
+      run: (api) => api.seatWalkIn({ tableIds: [2], guestCount: 4, contactName: "An", phone: "0901234123" }),
       path: "/bookings/walk-ins",
-      body: { tableIds: [2], partySize: 4, guestName: "An", businessDate: date },
+      body: { tableIds: [2], partySize: 4, guestName: "An", phoneNumber: "0901234123", businessDate: date },
     },
     {
       name: "end visit",
@@ -877,9 +921,7 @@ describe("BA-021 Split HTTP contract", () => {
       changeSeq: 12,
       undoable: false,
     })
-    expect(calls).toEqual([
-      { method: "POST", path: "/tables/groups/7/split", body: { keepTableIds: [1] } },
-    ])
+    expect(calls).toEqual([{ method: "POST", path: "/tables/groups/7/split", body: { keepTableIds: [1] } }])
   })
 })
 
@@ -890,7 +932,10 @@ describe("BA-022 account management HTTP contract", () => {
     expect(view.roles).toEqual([{ code: "RECEPTIONIST", name: "Lễ tân" }])
 
     const created = await api.createAccount({
-      username: "le_tan", displayName: "Lễ tân", password: "a-very-long-password", roleCode: "RECEPTIONIST",
+      username: "le_tan",
+      displayName: "Lễ tân",
+      password: "a-very-long-password",
+      roleCode: "RECEPTIONIST",
     })
     expect(created.id).toBe(5)
 

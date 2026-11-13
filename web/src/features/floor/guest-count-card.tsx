@@ -14,7 +14,7 @@
 
 import { ChevronDown, Users } from "lucide-react"
 import { useState, type ReactElement } from "react"
-import type { ReservationView } from "@/domain/models"
+import type { ClaimView, ReservationView } from "@/domain/models"
 import { cn } from "@/lib/utils"
 import { buildGuestCount } from "./guest-count"
 
@@ -50,18 +50,23 @@ function Row({ label, value, divided }: { label: string; value: number; divided?
 
 export function GuestCountCard({
   reservations,
+  claims,
   onOpen,
   initialOpen = true,
+  tiny = false,
   className,
 }: {
   reservations: readonly ReservationView[] | undefined
+  claims?: readonly ClaimView[]
   onOpen?: () => void
   /** Initial state when this device has no remembered preference yet. */
   initialOpen?: boolean
+  /** Máy rất hẹp (<= 359pt): thu nút gọn còn mỗi biểu tượng. */
+  tiny?: boolean
   className?: string
 }): ReactElement {
   const [open, setOpen] = useState(() => loadOpen(initialOpen))
-  const c = buildGuestCount(reservations)
+  const c = buildGuestCount(reservations, undefined, claims)
 
   const toggle = () => {
     setOpen((v) => {
@@ -83,13 +88,14 @@ export function GuestCountCard({
         data-testid="guest-count-card-collapsed"
         className={cn(
           shell,
-          "inline-flex h-9 items-center gap-1.5 px-2.5 active:scale-95 max-[359px]:size-11 max-[359px]:justify-center max-[359px]:p-0",
+          "inline-flex h-9 items-center gap-1.5 px-2.5 active:scale-95",
+          tiny && "size-11 justify-center p-0",
           className,
         )}
       >
         <Users className="size-4 shrink-0" aria-hidden />
-        <span className="text-[13px] font-semibold text-tx-strong max-[359px]:sr-only">Đếm khách</span>
-        <ChevronDown className="size-3.5 text-tx-2 max-[359px]:hidden" aria-hidden />
+        <span className={cn("text-[13px] font-semibold text-tx-strong", tiny && "sr-only")}>Đếm khách</span>
+        {tiny ? null : <ChevronDown className="size-3.5 text-tx-2" aria-hidden />}
       </button>
     )
   }
@@ -124,7 +130,7 @@ export function GuestCountCard({
         <Row label="Tổng đã tới" value={c.arrivedTotal} divided />
         <Row label="Tổng bàn đặt" value={c.bookedTables} />
         <Row label="Tổng khách đặt" value={c.bookedGuests} />
-        <Row label="Khách quen (O)" value={c.returningGuests} />
+        <Row label="Đã từng đặt bàn" value={c.returningGuests} />
       </button>
     </div>
   )

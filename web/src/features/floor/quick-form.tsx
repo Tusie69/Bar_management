@@ -195,7 +195,7 @@ export function QuickForm({
 
   const errors: { name?: string; phone?: string; note?: string; time?: string; party?: string; platform?: string } = {}
   if (isB && !name.trim() && !phone.trim()) errors.name = "Cần ít nhất tên hoặc số điện thoại"
-  if (isB && phone.trim() && !isPlausibleVnPhone(phone)) errors.phone = "Số điện thoại 10 số, bắt đầu bằng 0"
+  if (phone.trim() && !isPlausibleVnPhone(phone)) errors.phone = "Số điện thoại 10 số, bắt đầu bằng 0"
   if (isB && noteHasPhoneNumber(note)) errors.note = NOTE_PHONE_ERROR
   if (timeError) errors.time = timeError
   const pErr = guestError(guest)
@@ -310,6 +310,7 @@ export function QuickForm({
           tableIds: ids,
           guestCount: party,
           contactName: name.trim() || undefined,
+          phone: phone.trim() || undefined,
           overrideReason: o,
           idempotencyKey,
         }),
@@ -325,6 +326,7 @@ export function QuickForm({
       api.addWaitlist({
         kind: "WALK_IN",
         contactName: name.trim() || `Khách Walk-in ${party} người`,
+        phone: phone.trim() || undefined,
         partySize: party,
         channel: "IN_PERSON",
         preferenceMode: "ANY",
@@ -448,58 +450,50 @@ export function QuickForm({
                 aria-invalid={!!shown.name}
                 onChange={(e) => setName(e.target.value)}
               />
-              {isB ? (
-                <HonorificPicker
-                  value={honorific}
-                  onChange={setHonorific}
-                  disabled={pending}
-                />
-              ) : null}
+              {isB ? <HonorificPicker value={honorific} onChange={setHonorific} disabled={pending} /> : null}
             </div>
             <FieldError>{shown.name}</FieldError>
           </div>
-          {isB ? (
-            <div className="flex min-w-0 flex-col gap-1.5">
-              <label htmlFor="qf-phone" className={label12}>
-                Số điện thoại
-              </label>
-              <input
-                id="qf-phone"
-                className={cn(inputCls, "tnum")}
-                inputMode="tel"
-                autoComplete="off"
-                maxLength={20}
-                placeholder="0xxx xxx xxx"
-                value={phone}
-                aria-invalid={!!shown.phone}
-                onChange={(e) => setPhone(e.target.value)}
-              />
-              <FieldError>{shown.phone}</FieldError>
-            </div>
-          ) : null}
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <label htmlFor="qf-phone" className={label12}>
+              Số điện thoại (không bắt buộc)
+            </label>
+            <input
+              id="qf-phone"
+              className={cn(inputCls, "tnum")}
+              inputMode="tel"
+              autoComplete="tel"
+              maxLength={20}
+              placeholder="0xxx xxx xxx"
+              value={phone}
+              aria-invalid={!!shown.phone}
+              onChange={(e) => setPhone(e.target.value)}
+            />
+            <FieldError>{shown.phone}</FieldError>
+          </div>
         </section>
 
         {isB ? (
-          <section className="flex shrink-0 flex-col gap-1.5" aria-label="Khách quen / mới">
-            <span className={label12}>Khách quen / mới</span>
-            <div role="radiogroup" aria-label="Khách quen / mới" className="grid grid-cols-2 gap-2">
+          <section className="flex shrink-0 flex-col gap-1.5" aria-label="Khách đã từng / chưa từng đặt bàn">
+            <span className={label12}>Khách đã từng / chưa từng đặt bàn</span>
+            <div role="radiogroup" aria-label="Khách đã từng / chưa từng đặt bàn" className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 role="radio"
                 aria-checked={classification === "RETURNING"}
-                className={chip(classification === "RETURNING")}
+                className={cn(chip(classification === "RETURNING"), "px-1.5 text-[13px] whitespace-normal")}
                 onClick={() => setClassification((c) => (c === "RETURNING" ? "UNCLASSIFIED" : "RETURNING"))}
               >
-                Khách quen (O)
+                Đã từng đặt bàn
               </button>
               <button
                 type="button"
                 role="radio"
                 aria-checked={classification === "NEW"}
-                className={chip(classification === "NEW")}
+                className={cn(chip(classification === "NEW"), "px-1.5 text-[13px] whitespace-normal")}
                 onClick={() => setClassification((c) => (c === "NEW" ? "UNCLASSIFIED" : "NEW"))}
               >
-                Khách mới (N)
+                Chưa từng đặt bàn
               </button>
             </div>
           </section>

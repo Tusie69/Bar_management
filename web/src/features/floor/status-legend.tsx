@@ -216,11 +216,11 @@ export function StatusLegend({ tables = [], states, className, variant = "card" 
               <div className="grid grid-cols-2 gap-2 text-muted-foreground">
                 <div className="flex items-center gap-1.5">
                   <span className="text-base" aria-hidden>🔥</span>
-                  <span>Khách quen (O)</span>
+                  <span>Đã từng đặt bàn</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-base" aria-hidden>🆕</span>
-                  <span>Khách mới (N)</span>
+                  <span>Chưa từng đặt bàn</span>
                 </div>
               </div>
             </div>

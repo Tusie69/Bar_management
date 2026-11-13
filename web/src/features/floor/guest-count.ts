@@ -9,7 +9,7 @@
  *   Tổng đã tới    18
  *   Tổng bàn đặt    9
  *   Tổng khách đặt 42
- *   Khách quen (O)  5
+ *   Đã từng đặt bàn  5
  *
  * 12 + 6 = 18, so the first two rows split the guests who have ALREADY
  * ARRIVED by when they arrived - they are not a split of the whole booking
@@ -21,7 +21,7 @@
  * for it yet; move it into venue settings when there is one.
  */
 
-import type { ReservationView } from "@/domain/models"
+import type { ClaimView, ReservationView } from "@/domain/models"
 
 /** Reporting boundary between the early and the late crowd, venue local time. */
 export const GUEST_COUNT_SPLIT = { hour: 21, minute: 30 } as const
@@ -40,7 +40,7 @@ export interface GuestCount {
   /** Guests on every live booking tonight, arrived or not. */
   bookedGuests: number
   /**
-   * Live bookings classified "Khách quen (O)". Counted from `classification`,
+   * Live bookings classified "Đã từng đặt bàn" (RETURNING). Counted from `classification`,
    * the field the booking form writes and the Zalo report reads - NOT from
    * `iconKeys`, which demo data and decoration also write to and which must
    * never move a business figure.
@@ -59,20 +59,10 @@ const pad2 = (n: number) => String(n).padStart(2, "0")
 export function buildGuestCount(
   reservations: readonly ReservationView[] | undefined,
   split: { hour: number; minute: number } = GUEST_COUNT_SPLIT,
+  claims: readonly ClaimView[] = [],
 ): GuestCount {
   const splitLabel = `${pad2(split.hour)}:${pad2(split.minute)}`
-  const empty: GuestCount = {
-    splitLabel,
-    arrivedBefore: 0,
-    arrivedAfter: 0,
-    arrivedTotal: 0,
-    bookedTables: 0,
-    bookedGuests: 0,
-    returningGuests: 0,
-  }
-  if (!reservations?.length) return empty
-
-  const live = reservations.filter((r) => !DEAD.includes(r.status))
+  const live = (reservations ?? []).filter((r) => !DEAD.includes(r.status))
   const tables = new Set<number>()
   let bookedGuests = 0
   let returning = 0
@@ -96,6 +86,19 @@ export function buildGuestCount(
     const isEarly = minutes >= 12 * 60 && minutes < split.hour * 60 + split.minute
     if (isEarly) before += r.partySize
     else after += r.partySize
+  }
+
+  // Direct walk-ins have no reservation row. Count each visit once even when
+  // it owns several tables; reservation-backed visits are already counted above.
+  const directVisits = new Map<number, ClaimView>()
+  for (const claim of claims) {
+    if (claim.kind === "visit" && claim.visitId && !claim.reservationId) directVisits.set(claim.visitId, claim)
+  }
+  for (const claim of directVisits.values()) {
+    const minutes = claim.startsAt.getHours() * 60 + claim.startsAt.getMinutes()
+    const isEarly = minutes >= 12 * 60 && minutes < split.hour * 60 + split.minute
+    if (isEarly) before += claim.partySize
+    else after += claim.partySize
   }
 
   return {

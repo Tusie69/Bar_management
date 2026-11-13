@@ -19,11 +19,6 @@ import { useUi } from "@/state/ui"
  * decision is recorded on the server and audited there, not assumed in the browser.
  */
 const CONFIRM_REQUIRED: Record<string, { key: keyof ActionConfirmations; title: string; confirmLabel: string }> = {
-  CAPACITY_OVERRIDE_REQUIRED: {
-    key: "capacityOverrideConfirmed",
-    title: "Vượt sức chứa đề xuất",
-    confirmLabel: "Vẫn đặt số khách này",
-  },
   SPARE_TABLE_OVERRIDE_REQUIRED: {
     key: "spareOverrideConfirmed",
     title: "Có bàn sơ cua trong cụm",
@@ -161,8 +156,14 @@ export function useAction() {
         return null
       } finally {
         inFlight.current = false
-        setPending(false)
-        void qc.invalidateQueries()
+        // Keep the action pending until active screens have fresh data. Forms
+        // close only after this resolves, so counters do not briefly show the
+        // value from before the write.
+        try {
+          await qc.invalidateQueries()
+        } finally {
+          setPending(false)
+        }
       }
     },
     [qc],

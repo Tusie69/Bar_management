@@ -124,9 +124,9 @@ export function DetailScreen({
           k: "Loại khách",
           v:
             r.classification === "RETURNING"
-              ? "Khách quen (O)"
+              ? "Đã từng đặt bàn"
               : r.classification === "NEW"
-                ? "Khách mới (N)"
+                ? "Chưa từng đặt bàn"
                 : "Chưa phân loại",
           btn: canUpdate ? { label: "Sửa", go: () => setEditOpen(true) } : undefined,
         },

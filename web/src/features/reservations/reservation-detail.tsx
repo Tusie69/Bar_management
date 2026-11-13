@@ -224,9 +224,9 @@ function Detail({ r }: { r: ReservationView }) {
             k="Loại khách"
             v={
               r.classification === "RETURNING"
-                ? "Khách quen (O)"
+                ? "Đã từng đặt bàn"
                 : r.classification === "NEW"
-                  ? "Khách mới (N)"
+                  ? "Chưa từng đặt bàn"
                   : "Chưa phân loại"
             }
           />
@@ -572,8 +572,8 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="UNCLASSIFIED">Chưa phân loại</SelectItem>
-                <SelectItem value="NEW">Khách mới (N)</SelectItem>
-                <SelectItem value="RETURNING">Khách quen (O)</SelectItem>
+                <SelectItem value="NEW">Chưa từng đặt bàn</SelectItem>
+                <SelectItem value="RETURNING">Đã từng đặt bàn</SelectItem>
               </SelectContent>
             </Select>
           </div>

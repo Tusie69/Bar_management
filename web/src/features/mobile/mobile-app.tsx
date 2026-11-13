@@ -70,7 +70,15 @@ export default function MobileApp() {
   const [handled, setHandled] = useState<Set<string>>(() => new Set())
 
   const booked = useMemo(() => (reservations ?? []).filter((r) => r.status === "BOOKED"), [reservations])
-  const guestCount = useMemo(() => buildGuestCount(reservations), [reservations])
+  const guestCount = useMemo(
+    () =>
+      buildGuestCount(
+        reservations,
+        undefined,
+        [...model.states.values()].flatMap((state) => (state.claim ? [state.claim] : [])),
+      ),
+    [reservations, model.states],
+  )
   const alerts = useShiftAlerts(model, booked, now)
   const unread = alerts.filter((a) => !seen.has(a.key)).length
   const handle = (key: string) => setHandled((s) => new Set(s).add(key))
@@ -311,7 +319,7 @@ export default function MobileApp() {
                 ["Tổng đã tới", guestCount.arrivedTotal],
                 ["Tổng bàn đặt", guestCount.bookedTables],
                 ["Tổng khách đặt", guestCount.bookedGuests],
-                ["Khách quen (O)", guestCount.returningGuests],
+                ["Đã từng đặt bàn", guestCount.returningGuests],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-xl border border-border/80 bg-background px-3 py-2.5">
                   <div className="text-[12px] text-tx-2">{label}</div>

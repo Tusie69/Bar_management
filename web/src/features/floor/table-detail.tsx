@@ -69,6 +69,7 @@ import { symbolByNo } from "@/domain/symbols"
 import { useAction } from "@/hooks/use-action"
 import { useNow, useReservations, useTableHistory, useVenueSettings, useWaitlist } from "@/hooks/use-data"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
+import { isPlausibleVnPhone } from "@/lib/text"
 import { businessDateOf, fmtCountdown, fmtElapsed, fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
@@ -176,7 +177,8 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
             </h2>
             {isGroup ? (
               <p className="mt-1 text-sm text-muted-foreground">
-                Trạng thái: <strong className="font-semibold text-foreground">{STATE_META[state].label}</strong> · ghép {memberIds.length} bàn
+                Trạng thái: <strong className="font-semibold text-foreground">{STATE_META[state].label}</strong> · ghép{" "}
+                {memberIds.length} bàn
               </p>
             ) : null}
             <p className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
@@ -201,14 +203,7 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
 
         <div className="grid gap-5 px-4 pb-6">
           <LayoutActions model={model} tableId={tableId} />
-          {t ? (
-            <SpareButton
-              table={t}
-              state={state}
-              hasClaim={Boolean(claim)}
-              inGroup={isGroup}
-            />
-          ) : null}
+          {t ? <SpareButton table={t} state={state} hasClaim={Boolean(claim)} inGroup={isGroup} /> : null}
           {claim?.kind === "visit" ? <SeatedSection tableId={tableId} claim={claim} model={model} now={now} /> : null}
           {claim?.kind === "reservation" && !linkedEntry ? (
             <ReservationSection tableId={tableId} claim={claim} model={model} now={now} />
@@ -418,8 +413,8 @@ function ClaimCard({ claim, children, model }: { claim: ClaimView; children?: Re
       </div>
       {flags.length || displayCode ? (
         <div className="flex flex-wrap gap-1.5 text-xs">
-          {flags.includes("RETURNING") ? <span className="rounded-full border px-2 py-1">🔥 Khách quen</span> : null}
-          {flags.includes("NEW") ? <span className="rounded-full border px-2 py-1">🆕 Khách mới</span> : null}
+          {flags.includes("RETURNING") ? <span className="rounded-full border px-2 py-1">🔥 Đã từng đặt bàn</span> : null}
+          {flags.includes("NEW") ? <span className="rounded-full border px-2 py-1">🆕 Chưa từng đặt bàn</span> : null}
           {displayCode ? (
             <span className="rounded-full border px-2 py-1 font-semibold">
               Nhóm {displayCode} · {claim.tableIds.map((id) => model.label(id)).join(" + ")}
@@ -991,6 +986,8 @@ function FreeSection({
   const t = model.byId.get(tableId)!
   const [count, setCount] = useState(Math.min(t.capacity, 2))
   const [name, setName] = useState("")
+  const [phone, setPhone] = useState("")
+  const phoneInvalid = !!phone.trim() && !isPlausibleVnPhone(phone)
   const { run, pending } = useAction()
   const ui = useUi()
   const navigate = useNavigate()
@@ -1024,10 +1021,23 @@ function FreeSection({
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
+        <Input
+          id="walkin-phone"
+          className="h-11"
+          type="tel"
+          inputMode="tel"
+          autoComplete="tel"
+          placeholder="Số điện thoại (không bắt buộc)"
+          aria-label="Số điện thoại khách Walk-in (không bắt buộc)"
+          aria-invalid={phoneInvalid}
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+        />
+        {phoneInvalid ? <p className="text-xs text-destructive">SĐT phải có 10 số và bắt đầu bằng 0.</p> : null}
         <GuardedButton
           permission="visit.walkin"
           size="lg"
-          disabled={pending}
+          disabled={pending || phoneInvalid}
           aria-label={`Mở ${title} cho ${count} khách`}
           onClick={async () => {
             const r = await run((o) =>
@@ -1035,6 +1045,7 @@ function FreeSection({
                 tableIds: [tableId],
                 guestCount: count,
                 contactName: name || undefined,
+                phone: phone.trim() || undefined,
                 overrideReason: o,
                 idempotencyKey,
               }),
@@ -1042,16 +1053,12 @@ function FreeSection({
             if (r) {
               renewIdempotencyKey()
               setName("")
+              setPhone("")
             }
           }}
         >
           Mở bàn · {count} khách
         </GuardedButton>
-        {count > t.capacity ? (
-          <p className="flex items-center gap-1.5 text-xs text-st-late-ink">
-            <TriangleAlert className="size-3.5" aria-hidden /> Vượt {t.capacity} chỗ, cần Chủ quán duyệt
-          </p>
-        ) : null}
       </section>
       <GuardedButton
         permission="reservation.create"

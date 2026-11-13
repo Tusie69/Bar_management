@@ -77,7 +77,7 @@ import { useAction } from "@/hooks/use-action"
 import { useBusinessDate, useNow, useReservations, useWaitlist } from "@/hooks/use-data"
 import { useDragScroll } from "@/hooks/use-drag-scroll"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
-import { NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
+import { isPlausibleVnPhone, NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
 import { businessDateOf, fmtCountdown, fmtElapsed, fmtTime, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api, isApiError } from "@/services"
@@ -373,7 +373,11 @@ function EntryCard({
   const overdue = !!e.hold && now > e.hold.deadlineAt
   const ChannelIcon = e.channel === "PHONE_CALLBACK" ? Phone : e.channel === "IN_PERSON" ? Hand : MessageCircle
   const linkedRes = reservations?.find((r) => (e.reservationId ? r.id === e.reservationId : r.waitlistEntryId === e.id))
-  const heldCodes = linkedRes?.tableIds?.length ? model.codes(linkedRes.tableIds) : (e.hold?.tableIds?.length ? model.codes(e.hold.tableIds) : [])
+  const heldCodes = linkedRes?.tableIds?.length
+    ? model.codes(linkedRes.tableIds)
+    : e.hold?.tableIds?.length
+      ? model.codes(e.hold.tableIds)
+      : []
   const held = useHeldOrderActions(model)
   const policy = held.policy(e, linkedRes)
   const today = e.businessDate === businessDateOf(now)
@@ -604,10 +608,7 @@ function EntryCard({
               <ArrowRightLeft /> Đổi / Ghép bàn
             </GuardedButton>
             {linkedRes ? (
-              <Button
-                variant="outline"
-                onClick={() => openReservation(linkedRes.id, e.businessDate)}
-              >
+              <Button variant="outline" onClick={() => openReservation(linkedRes.id, e.businessDate)}>
                 Xem booking
               </Button>
             ) : null}
@@ -630,11 +631,7 @@ function EntryCard({
                 Đổi trạng thái
               </GuardedButton>
             ) : (
-              <GuardedButton
-                permission="waitlist.cancel"
-                variant="outline"
-                onClick={() => setCancelOpen(true)}
-              >
+              <GuardedButton permission="waitlist.cancel" variant="outline" onClick={() => setCancelOpen(true)}>
                 Đổi trạng thái
               </GuardedButton>
             )}
@@ -652,11 +649,7 @@ function EntryCard({
             >
               Thả
             </Button>
-            <GuardedButton
-              permission="table.assign"
-              variant="outline"
-              onClick={() => setSeatOpen(true)}
-            >
+            <GuardedButton permission="table.assign" variant="outline" onClick={() => setSeatOpen(true)}>
               <Armchair /> {e.channel === "IN_PERSON" ? "Khách nhận bàn ngay" : "Gán giữ bàn"}
             </GuardedButton>
           </>
@@ -724,8 +717,12 @@ function EntryCard({
 
       {api.mode === "mock" && e.hold ? (
         <div className="flex gap-2">
-          <GuardedButton permission="hold.set_deadline" variant="outline" onClick={() => setExtendOpen(true)}>Gia hạn giữ</GuardedButton>
-          <GuardedButton permission="hold.release" variant="outline" onClick={() => setReleaseOpen(true)}>Nhả giữ</GuardedButton>
+          <GuardedButton permission="hold.set_deadline" variant="outline" onClick={() => setExtendOpen(true)}>
+            Gia hạn giữ
+          </GuardedButton>
+          <GuardedButton permission="hold.release" variant="outline" onClick={() => setReleaseOpen(true)}>
+            Nhả giữ
+          </GuardedButton>
         </div>
       ) : null}
 
@@ -736,7 +733,14 @@ function EntryCard({
         model={model}
         presetTable={presetTable}
       />
-      <SeatDialog onArrival={arrival ?? undefined} open={seatOpen} onOpenChange={setSeatOpen} entry={e} model={model} presetTable={presetTable} />
+      <SeatDialog
+        onArrival={arrival ?? undefined}
+        open={seatOpen}
+        onOpenChange={setSeatOpen}
+        entry={e}
+        model={model}
+        presetTable={presetTable}
+      />
       {e.hold ? (
         <>
           <ExtendHoldDialog
@@ -755,9 +759,10 @@ function EntryCard({
             title="Nhả giữ bàn?"
             description="Bàn trở về trống. Khách quay lại danh sách chờ."
             confirmLabel="Nhả giữ"
-            reasons={(
-              ["CUSTOMER_CANCELLED", "STAFF_REASSIGNED", "OTHER"] as HoldReleaseReason[]
-            ).map((v) => ({ value: v, label: HOLD_RELEASE_LABEL[v] }))}
+            reasons={(["CUSTOMER_CANCELLED", "STAFF_REASSIGNED", "OTHER"] as HoldReleaseReason[]).map((v) => ({
+              value: v,
+              label: HOLD_RELEASE_LABEL[v],
+            }))}
             requireNoteFor="OTHER"
             onConfirm={async (reason, note) => {
               if (!held.can("hold.release")) return
@@ -849,7 +854,9 @@ function EntryCard({
             requireNoteFor="OTHER"
             onConfirm={async (reason, note) => {
               await run(() =>
-                held.can("reservation.cancel") && held.policy(e, linkedRes).canBookingStatus ? api.cancelReservation(linkedRes.id, linkedRes.version, reason as ReservationCloseReason, note) : Promise.reject(new Error("Chưa hỗ trợ hoặc thiếu quyền hủy booking")),
+                held.can("reservation.cancel") && held.policy(e, linkedRes).canBookingStatus
+                  ? api.cancelReservation(linkedRes.id, linkedRes.version, reason as ReservationCloseReason, note)
+                  : Promise.reject(new Error("Chưa hỗ trợ hoặc thiếu quyền hủy booking")),
               )
             }}
           />
@@ -1119,7 +1126,7 @@ function ContactBody({ entry: e, model, presetTable, close }: EntryDialogProps &
             onChange={(ev) => setNote(ev.target.value)}
             aria-invalid={invalid}
           />
-          {invalid ? <p className="text-sm text-destructive">{NOTE_PHONE_ERROR}</p> : null}
+          {noteHasPhoneNumber(note) ? <p className="text-sm text-destructive">{NOTE_PHONE_ERROR}</p> : null}
         </div>
       </div>
       <DialogFooter>
@@ -1163,7 +1170,7 @@ function SeatDialog({
 
   if (isArrival) {
     const res = reservations?.find((r) => (e.reservationId ? r.id === e.reservationId : r.waitlistEntryId === e.id))
-    const tableIds = res?.tableIds?.length ? res.tableIds : e.hold?.tableIds ?? []
+    const tableIds = res?.tableIds?.length ? res.tableIds : (e.hold?.tableIds ?? [])
     const tableCodes = model.codes(tableIds)
     const storedParty = e.partySize || res?.partySize || 1
 
@@ -1175,10 +1182,13 @@ function SeatDialog({
         description={
           tableCodes.length > 0 ? (
             <>
-              Khách: {e.displayName} · Bàn: {tableCodes.join(" + ")} · Số khách: {storedParty} khách. Xác nhận khách nhận bàn và hoàn tất mục chờ.
+              Khách: {e.displayName} · Bàn: {tableCodes.join(" + ")} · Số khách: {storedParty} khách. Xác nhận khách
+              nhận bàn và hoàn tất mục chờ.
             </>
           ) : (
-            <>Khách: {e.displayName} · Số khách: {storedParty} khách. Xác nhận khách nhận bàn và hoàn tất mục chờ.</>
+            <>
+              Khách: {e.displayName} · Số khách: {storedParty} khách. Xác nhận khách nhận bàn và hoàn tất mục chờ.
+            </>
           )
         }
         initial={storedParty}
@@ -1209,8 +1219,14 @@ function SeatBody({ entry: e, model, presetTable, close }: EntryDialogProps & { 
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{arrived ? "Mở bàn cho khách đã đến" : "Gán giữ bàn cho khách"} · {e.displayName}</DialogTitle>
-        <DialogDescription>{arrived ? "Xác nhận khách đang có mặt để mở bàn ngay." : "Hệ thống sẽ giữ bàn cho khách. Khách sẽ check-in sau từ booking."}</DialogDescription>
+        <DialogTitle>
+          {arrived ? "Mở bàn cho khách đã đến" : "Gán giữ bàn cho khách"} · {e.displayName}
+        </DialogTitle>
+        <DialogDescription>
+          {arrived
+            ? "Xác nhận khách đang có mặt để mở bàn ngay."
+            : "Hệ thống sẽ giữ bàn cho khách. Khách sẽ check-in sau từ booking."}
+        </DialogDescription>
       </DialogHeader>
       <div className="grid gap-4">
         <div className="grid gap-1.5 py-1">
@@ -1274,6 +1290,7 @@ function AddWaitlistBody({ model, close }: { model: FloorModel; close: () => voi
   const { run, pending } = useAction()
   const [kind, setKind] = useState<WaitlistKind>("WALK_IN")
   const [name, setName] = useState("")
+  const [phone, setPhone] = useState("")
   const [party, setParty] = useState(2)
   const [channel, setChannel] = useState<WaitlistChannel>("IN_PERSON")
   const [mode, setMode] = useState<WaitlistPreferenceMode>("ANY")
@@ -1292,7 +1309,8 @@ function AddWaitlistBody({ model, close }: { model: FloorModel; close: () => voi
     (r) => r.status === "BOOKED" && r.tableIds.length === 0 && !r.waitlistEntryId && !activeResIds.has(r.id),
   )
   const prefs = [...(tableId ? [{ tableId: Number(tableId) }] : []), ...zones.map((z) => ({ zoneCode: z }))]
-  const invalid = noteHasPhoneNumber(note) || noteHasPhoneNumber(name)
+  const phoneInvalid = !!phone.trim() && !isPlausibleVnPhone(phone)
+  const invalid = noteHasPhoneNumber(note) || noteHasPhoneNumber(name) || phoneInvalid
   const valid = kind === "WALK_IN" ? name.trim().length > 0 && party > 0 : !!resId
   // FX-04: 1 mã chống trùng cho lần mở form; đổi mã sau mỗi lần tạo thành công.
   const [idempotencyKey, renewIdempotencyKey] = useIdempotencyKey()
@@ -1330,6 +1348,21 @@ function AddWaitlistBody({ model, close }: { model: FloorModel; close: () => voi
                 onChange={(ev) => setName(ev.target.value)}
                 placeholder="Ví dụ: chị Lan, nhóm áo xanh"
               />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="wl-phone">Số điện thoại (không bắt buộc)</Label>
+              <Input
+                id="wl-phone"
+                className="h-11"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                value={phone}
+                onChange={(ev) => setPhone(ev.target.value)}
+                placeholder="09xx xxx xxx"
+                aria-invalid={phoneInvalid}
+              />
+              {phoneInvalid ? <p className="text-sm text-destructive">SĐT phải có 10 số và bắt đầu bằng 0.</p> : null}
             </div>
             <div className="flex flex-wrap items-end gap-4">
               <div className="grid gap-1.5">
@@ -1427,6 +1460,7 @@ function AddWaitlistBody({ model, close }: { model: FloorModel; close: () => voi
                   ? {
                       kind,
                       contactName: name.trim(),
+                      phone: phone.trim() || undefined,
                       partySize: party,
                       channel,
                       preferenceMode: api.mode === "http" ? "ANY" : mode,

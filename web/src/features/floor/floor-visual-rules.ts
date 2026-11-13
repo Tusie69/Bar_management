@@ -3,7 +3,7 @@ import { FIXTURES, FLOOR_H, FLOOR_W, WAITLIST_MARKER, type ZoneCode } from "@/do
 
 /**
  * Approved icon priority (Nam 2026-11-04):
- * ⭐ VIP > 📌 Chỉ định > 🎂 Sinh nhật > 🔥 Khách quen > 🆕 Khách mới
+ * ⭐ VIP > 📌 Chỉ định > 🎂 Sinh nhật > 🔥 Đã từng đặt bàn > 🆕 Chưa từng đặt bàn
  */
 export const GUEST_ICON_PRIORITY = ["VIP", "DESIGNATED", "BIRTHDAY", "RETURNING", "NEW"] as const
 export type GuestFlag = (typeof GUEST_ICON_PRIORITY)[number]
@@ -12,8 +12,8 @@ export const GUEST_FLAG_META: Record<GuestFlag, { glyph: string; label: string }
   VIP: { glyph: "⭐", label: "VIP" },
   DESIGNATED: { glyph: "📌", label: "Chỉ định" },
   BIRTHDAY: { glyph: "🎂", label: "Sinh nhật" },
-  RETURNING: { glyph: "🔥", label: "Khách quen" },
-  NEW: { glyph: "🆕", label: "Khách mới" },
+  RETURNING: { glyph: "🔥", label: "Đã từng đặt bàn" },
+  NEW: { glyph: "🆕", label: "Chưa từng đặt bàn" },
 }
 
 /**

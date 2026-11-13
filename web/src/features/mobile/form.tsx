@@ -92,7 +92,10 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const phoneOk = !phone.trim() || isPlausibleVnPhone(phone)
   const guestMissing = isBooking && !phone.trim() && !name.trim()
   const noteBad = noteHasPhoneNumber(note)
-  const platformErr = isBooking && socialPlatformSupported && source === "SOCIAL" && !platform ? "Vui lòng chọn nền tảng mạng xã hội." : null
+  const platformErr =
+    isBooking && socialPlatformSupported && source === "SOCIAL" && !platform
+      ? "Vui lòng chọn nền tảng mạng xã hội."
+      : null
   const errTime = isBooking && !!timeErr && (tried || !!slot)
   const errGuest = tried && (guestMissing || !phoneOk)
 
@@ -286,7 +289,8 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const submit = async () => {
     if (
       guests === null ||
-      (isBooking ? guestMissing || !phoneOk || !at || !!bookingSelectionError || !!platformErr : false) ||
+      (isBooking ? guestMissing || !at || !!bookingSelectionError || !!platformErr : false) ||
+      !phoneOk ||
       noteBad
     ) {
       setTried(true)
@@ -331,6 +335,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
               tableIds: ids,
               guestCount: guests,
               contactName: name.trim() || undefined,
+              phone: phone.trim() || undefined,
               overrideReason: o,
               idempotencyKey,
             }),
@@ -339,6 +344,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             api.addWaitlist({
               kind: "WALK_IN",
               contactName: name.trim() || `Khách Walk-in ${guests} người`,
+              phone: phone.trim() || undefined,
               partySize: guests,
               channel: "IN_PERSON",
               preferenceMode: "ANY",
@@ -380,9 +386,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
 
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pt-4 pb-6">
         <section className="flex flex-col gap-3">
-          <h2 className="m-0 text-base font-semibold text-tx-strong">
-            {isBooking ? "Số khách" : "Khách vừa đến"}
-          </h2>
+          <h2 className="m-0 text-base font-semibold text-tx-strong">{isBooking ? "Số khách" : "Khách vừa đến"}</h2>
           <div className="flex flex-col gap-3.5 rounded-2xl border border-border bg-surface-1 p-4">
             <GuestPicker
               value={guest}
@@ -435,23 +439,21 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                 ) : null}
               </div>
             </div>
-            {isBooking ? (
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[13px] font-medium text-tx-2">Số điện thoại</span>
-                <input
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  value={phone}
-                  onChange={(e) => {
-                    setPhone(e.target.value)
-                    touch()
-                  }}
-                  placeholder="09xx xxx xxx"
-                  className={field}
-                />
-              </label>
-            ) : null}
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[13px] font-medium text-tx-2">Số điện thoại (không bắt buộc)</span>
+              <input
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                value={phone}
+                onChange={(e) => {
+                  setPhone(e.target.value)
+                  touch()
+                }}
+                placeholder="09xx xxx xxx"
+                className={field}
+              />
+            </label>
             {errGuest ? (
               <span role="alert" className="text-[13px] text-st-noshow-ink">
                 {!phoneOk ? "SĐT chưa đúng định dạng (10 số, bắt đầu bằng 0)." : "Nhập ít nhất tên hoặc số điện thoại."}
@@ -459,14 +461,18 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             ) : null}
             {isBooking ? (
               <div className="flex flex-col gap-1.5">
-                <span className="text-[13px] font-medium text-tx-2">Khách quen / mới</span>
-                <div role="radiogroup" aria-label="Khách quen / mới" className="grid grid-cols-2 gap-2">
+                <span className="text-[13px] font-medium text-tx-2">Khách đã từng / chưa từng đặt bàn</span>
+                <div
+                  role="radiogroup"
+                  aria-label="Khách đã từng / chưa từng đặt bàn"
+                  className="grid grid-cols-2 gap-2"
+                >
                   <button
                     type="button"
                     role="radio"
                     aria-checked={classification === "RETURNING"}
                     className={cn(
-                      "h-12 rounded-xl border text-[14px] font-medium transition-colors",
+                      "h-12 rounded-xl border px-1.5 text-[13px] leading-tight font-medium transition-colors",
                       classification === "RETURNING"
                         ? "border-primary bg-primary-tint font-semibold text-primary-ink"
                         : "border-strong bg-background text-tx-1",
@@ -476,14 +482,14 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                       touch()
                     }}
                   >
-                    Khách quen (O)
+                    Đã từng đặt bàn
                   </button>
                   <button
                     type="button"
                     role="radio"
                     aria-checked={classification === "NEW"}
                     className={cn(
-                      "h-12 rounded-xl border text-[14px] font-medium transition-colors",
+                      "h-12 rounded-xl border px-1.5 text-[13px] leading-tight font-medium transition-colors",
                       classification === "NEW"
                         ? "border-primary bg-primary-tint font-semibold text-primary-ink"
                         : "border-strong bg-background text-tx-1",
@@ -493,7 +499,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                       touch()
                     }}
                   >
-                    Khách mới (N)
+                    Chưa từng đặt bàn
                   </button>
                 </div>
               </div>
