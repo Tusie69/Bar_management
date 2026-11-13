@@ -2,7 +2,6 @@ import { Router } from 'express'
 
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
-import { env } from '../../config/env.js'
 import { AppError } from '../../errors/app-error.js'
 import { idempotent, idempotencyTransaction } from '../../middleware/idempotency.js'
 import { parseCapacityOverride } from '../tables/table-capacity.js'
@@ -30,18 +29,18 @@ import {
 } from './booking.repository.js'
 import { formatDailyBookingText, getDailyBookingTextInput } from './booking-export.js'
 import { assertCurrentBusinessDate, validateCalendarDate } from './business-date.js'
-import { assertPhoneDisclosureAllowed, PhoneRevealRateLimiter } from './phone-rate-limit.js'
+import { assertPhoneDisclosureAllowed, phoneDisclosureLimiter } from './phone-rate-limit.js'
 import { resolveBookingMetadata, type GuestType } from './booking-metadata.js'
 import { parseHonorific, parseIconKeys, parseSocialPlatform } from './booking-flags.js'
 import { searchReception } from './reception-search.repository.js'
 
 export const bookingRouter: Router = Router()
-const phoneRevealLimiter = env.phone.revealRateLimitMax && env.phone.revealRateLimitWindowMs
-  ? new PhoneRevealRateLimiter(env.phone.revealRateLimitMax, env.phone.revealRateLimitWindowMs)
-  : null
-
-function assertPhoneDisclosurePolicy(actor: ReturnType<typeof requireAuthenticatedActor>, bookingId: number): void {
-  assertPhoneDisclosureAllowed(phoneRevealLimiter, actor.userId, bookingId)
+function assertPhoneDisclosurePolicy(
+  actor: ReturnType<typeof requireAuthenticatedActor>,
+  bookingId: number,
+  whenUnconfigured: 'block' | 'allow' = 'block',
+): void {
+  assertPhoneDisclosureAllowed(phoneDisclosureLimiter, actor.userId, bookingId, whenUnconfigured)
 }
 
 function objectBody(value: unknown): Record<string, unknown> {
@@ -252,7 +251,7 @@ bookingRouter.post(
   objectBody(request.body)
   const id = positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.')
   const actor = requireAuthenticatedActor(request)
-  assertPhoneDisclosurePolicy(actor, id)
+  assertPhoneDisclosurePolicy(actor, id, 'allow')
   const result = await initiateBookingCall(
     actor,
     id,

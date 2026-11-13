@@ -221,8 +221,7 @@ Bundle ra `/srv/21gam/web/dist`, đúng `root` mà nginx trỏ tới.
 ### Khóa số điện thoại
 
 Bốn biến `PHONE_*` trong `api/.env.production` để trống thì **lưu số điện thoại
-và gọi khách đều hỏng**, trả 503 `PHONE_KEYS_UNAVAILABLE` hoặc
-`PHONE_REVEAL_POLICY_UNAVAILABLE`. Sinh khóa ngay trên VPS:
+hỏng**, trả 503 `PHONE_KEYS_UNAVAILABLE`. Sinh khóa ngay trên VPS:
 
 ```bash
 cd /srv/21gam/api
@@ -245,6 +244,12 @@ Sao lưu database không chứa khóa, nên khóa phải được cất riêng c
 Hạn mức là 10 lần trong 10 phút cho mỗi cặp (người dùng, booking), đếm chung cho
 cả xem số lẫn gọi khách. Bộ đếm nằm trong RAM của tiến trình API nên mỗi lần
 khởi động lại - kể cả lần tự triển khai hằng đêm - là về 0.
+
+Thiếu hai biến `PHONE_REVEAL_RATE_LIMIT_*` thì **xem số** bị chặn hẳn (503
+`PHONE_REVEAL_POLICY_UNAVAILABLE`), nhưng **gọi khách vẫn chạy** và không bị
+hạn mức. Trước đây thiếu hai biến này là cả quán không gọi được khách nào suốt
+đêm; mỗi lần gọi đều đã ghi `booking_call_logs` và `operation_log`, nên vẫn
+truy vết được. Dù vậy, vẫn nên đặt đủ hai biến.
 
 ### Số điện thoại đi tới máy lễ tân: quyết định đã biết
 

@@ -19,7 +19,10 @@ import {
   type ReservationCloseReason,
   type WaitlistCloseReason,
 } from "@/domain/enums"
+import { callTargetKey } from "@/domain/call-target"
 import type {
+  CallOutcome,
+  CallTarget,
   ChangeEvent,
   CustomerSummary,
   MutationResult,
@@ -129,7 +132,8 @@ export class MockGamApi implements GamApi, DemoControls {
   /** In-memory stand-in for booking_call_logs, so the history panel has data. */
   private callLog: {
     callId: number
-    bookingId: number
+    /** `booking:11`, `waitlist:4`, `visit:9` - ba không gian id riêng. */
+    targetKey: string
     initiatedAt: Date
     initiatedBy: string
     outcome: "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED" | null
@@ -1279,33 +1283,54 @@ export class MockGamApi implements GamApi, DemoControls {
     )
   }
 
-  async startBookingCall(id: number) {
+  /**
+   * Số điện thoại của người đang được gọi.
+   *
+   * Khách chờ và lượt ghé đều chỉ giữ customerId, y như server; một đơn chờ
+   * gắn booking hoặc một lượt ghé check-in từ booking thì lấy số của booking
+   * trước, giống thứ tự COALESCE bên contact-call.repository.ts.
+   */
+  private callPhone(target: CallTarget): string | null {
+    const ofCustomer = (customerId: number | null | undefined) =>
+      customerId ? this.db.customers.get(customerId)?.phoneE164 ?? null : null
+    if (target.kind === "booking") return ofCustomer(this.res(target.id).customerId)
+    if (target.kind === "waitlist") {
+      const entry = this.entry(target.id)
+      const viaBooking = entry.reservationId ? ofCustomer(this.res(entry.reservationId).customerId) : null
+      return viaBooking ?? ofCustomer(entry.customerId)
+    }
+    const visit = this.visit(target.id)
+    const booking = [...this.db.reservations.values()].find((r) => r.visitId === visit.id)
+    return (booking ? ofCustomer(booking.customerId) : null) ?? ofCustomer(visit.customerId)
+  }
+
+  async startCall(target: CallTarget) {
     await this.latency("q")
     this.require("booking.phone.call")
-    const r = this.res(id)
-    const customer = r.customerId ? this.db.customers.get(r.customerId) : null
-    if (!customer?.phoneE164) this.fail("Booking không có số điện thoại hợp lệ.", "VALIDATION_FAILED")
+    const phone = this.callPhone(target)
+    if (!phone) this.fail("Khách này chưa có số điện thoại hợp lệ.", "VALIDATION_FAILED")
     const callId = Date.now()
     const initiatedAt = new Date(this.now)
     // Mock keeps the log in memory so the history panel has something real to
     // show; the server writes it to booking_call_logs.
     this.callLog.push({
       callId,
-      bookingId: id,
+      targetKey: callTargetKey(target),
       initiatedAt,
       initiatedBy: this.session.displayName,
       outcome: null,
       outcomeAt: null,
       outcomeBy: null,
     })
-    return { callId, bookingId: id, initiatedAt, telUri: `tel:${customer.phoneE164}` }
+    return { callId, initiatedAt, telUri: `tel:${phone}` }
   }
 
-  async listBookingCalls(id: number) {
+  async listCalls(target: CallTarget) {
     await this.latency("q")
     this.require("booking.phone.call")
+    const key = callTargetKey(target)
     return this.callLog
-      .filter((c) => c.bookingId === id)
+      .filter((c) => c.targetKey === key)
       .slice()
       .sort((a, b) => b.initiatedAt.getTime() - a.initiatedAt.getTime())
       .map((c) => ({
@@ -1318,22 +1343,24 @@ export class MockGamApi implements GamApi, DemoControls {
       }))
   }
 
-  async recordBookingCallOutcome(
-    bookingId: number,
+  async recordCallOutcome(
+    target: CallTarget,
     _callId: number,
-    outcome: "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED",
+    outcome: CallOutcome,
     bookingVersion?: number,
   ) {
     if (outcome === "LATE_CONFIRMED") {
-      const reservation = this.res(bookingId)
+      if (target.kind !== "booking") this.fail("Kết quả cuộc gọi không hợp lệ.", "VALIDATION_FAILED")
+      const reservation = this.res(target.id)
       if (reservation.lateConfirmedAt && bookingVersion === reservation.version) {
         return { operationId: null, changeSeq: null, undoable: false, summary: "Khách đã được ghi nhận tới muộn." }
       }
-      return this.confirmLate(bookingId, bookingVersion ?? 0)
+      return this.confirmLate(target.id, bookingVersion ?? 0)
     }
     await this.latency("q")
     this.require("booking.phone.call")
-    const entry = this.callLog.find((c) => c.callId === _callId && c.bookingId === bookingId)
+    const key = callTargetKey(target)
+    const entry = this.callLog.find((c) => c.callId === _callId && c.targetKey === key)
     if (entry && entry.outcome === null) {
       entry.outcome = outcome
       entry.outcomeAt = new Date(this.now)

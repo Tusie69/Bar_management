@@ -6,12 +6,15 @@
  * in booking_call_logs then kept outcome NULL for ever, with no screen able to
  * finish it, and the next attempt created a second orphan row.
  *
- * Only the booking id, the call id and when it started are kept. No phone
+ * Only the target key, the call id and when it started are kept. No phone
  * number ever reaches this store, so nothing sensitive lands in localStorage.
  * Entries are dropped after MAX_AGE_MS: a call nobody closed within a shift is
  * stale, and a stale "Ghi kết quả cuộc gọi" button is worse than none.
  */
 import { create } from "zustand"
+
+import { callTargetKey } from "@/domain/call-target"
+import type { CallTarget } from "@/domain/models"
 
 const STORAGE_KEY = "gam21.pending-calls"
 /** One service night, generous: a shift runs 19:00 to 01:00. */
@@ -23,30 +26,33 @@ export interface PendingCall {
   startedAt: number
 }
 
+type Calls = Record<string, PendingCall>
+
 type Store = {
-  calls: Record<number, PendingCall>
-  start: (bookingId: number, callId: number, startedAt?: number) => void
-  clear: (bookingId: number) => void
+  calls: Calls
+  start: (target: CallTarget, callId: number, startedAt?: number) => void
+  clear: (target: CallTarget) => void
 }
 
-function fresh(calls: Record<number, PendingCall>, now: number): Record<number, PendingCall> {
-  const out: Record<number, PendingCall> = {}
-  for (const [id, call] of Object.entries(calls)) {
-    if (now - call.startedAt <= MAX_AGE_MS) out[Number(id)] = call
+function fresh(calls: Calls, now: number): Calls {
+  const out: Calls = {}
+  for (const [key, call] of Object.entries(calls)) {
+    if (now - call.startedAt <= MAX_AGE_MS) out[key] = call
   }
   return out
 }
 
-function load(now = Date.now()): Record<number, PendingCall> {
+function load(now = Date.now()): Calls {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as Record<string, PendingCall>
     if (!raw || typeof raw !== "object") return {}
-    const parsed: Record<number, PendingCall> = {}
-    for (const [id, call] of Object.entries(raw)) {
-      const bookingId = Number(id)
-      if (!Number.isSafeInteger(bookingId) || bookingId <= 0) continue
+    const parsed: Calls = {}
+    for (const [key, call] of Object.entries(raw)) {
+      // Khóa cũ (trước khi gọi được khách chờ) là id booking trần; bỏ qua, một
+      // cuộc gọi dở từ ca trước không đáng để đoán xem nó thuộc loại nào.
+      if (!/^(booking|waitlist|visit):[1-9][0-9]*$/.test(key)) continue
       if (!call || typeof call.callId !== "number" || typeof call.startedAt !== "number") continue
-      parsed[bookingId] = { callId: call.callId, startedAt: call.startedAt }
+      parsed[key] = { callId: call.callId, startedAt: call.startedAt }
     }
     return fresh(parsed, now)
   } catch {
@@ -54,7 +60,7 @@ function load(now = Date.now()): Record<number, PendingCall> {
   }
 }
 
-function save(calls: Record<number, PendingCall>) {
+function save(calls: Calls) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(calls))
   } catch {
@@ -65,20 +71,21 @@ function save(calls: Record<number, PendingCall>) {
 
 export const usePendingCalls = create<Store>((set, get) => ({
   calls: load(),
-  start: (bookingId, callId, startedAt = Date.now()) => {
-    const calls = { ...fresh(get().calls, startedAt), [bookingId]: { callId, startedAt } }
+  start: (target, callId, startedAt = Date.now()) => {
+    const calls = { ...fresh(get().calls, startedAt), [callTargetKey(target)]: { callId, startedAt } }
     save(calls)
     set({ calls })
   },
-  clear: (bookingId) => {
+  clear: (target) => {
     const calls = { ...get().calls }
-    delete calls[bookingId]
+    delete calls[callTargetKey(target)]
     save(calls)
     set({ calls })
   },
 }))
 
-/** The unfinished call for one booking, or null. */
-export function usePendingCall(bookingId: number): PendingCall | null {
-  return usePendingCalls((s) => s.calls[bookingId] ?? null)
+/** The unfinished call for one guest, or null. */
+export function usePendingCall(target: CallTarget): PendingCall | null {
+  const key = callTargetKey(target)
+  return usePendingCalls((s) => s.calls[key] ?? null)
 }

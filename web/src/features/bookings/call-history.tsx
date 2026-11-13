@@ -1,5 +1,5 @@
 /**
- * Calls already placed on one booking.
+ * Calls already placed on one guest.
  *
  * booking_call_logs was write-only: nothing in the app could show that a
  * colleague had already rung this guest twice, or that a call was left without
@@ -13,7 +13,8 @@
 import { useQuery } from "@tanstack/react-query"
 import { ChevronDown, History } from "lucide-react"
 import { useState, type ReactElement } from "react"
-import type { BookingCallHistoryEntry } from "@/domain/models"
+import { callTargetKey } from "@/domain/call-target"
+import type { BookingCallHistoryEntry, CallTarget } from "@/domain/models"
 import { fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
@@ -25,12 +26,12 @@ const OUTCOME_LABEL: Record<NonNullable<BookingCallHistoryEntry["outcome"]>, str
   LATE_CONFIRMED: "Khách báo tới muộn",
 }
 
-export function CallHistory({ bookingId, className }: { bookingId: number; className?: string }): ReactElement | null {
+export function CallHistory({ target, className }: { target: CallTarget; className?: string }): ReactElement | null {
   const allowed = useCan("booking.phone.call")
   const [open, setOpen] = useState(false)
   const calls = useQuery({
-    queryKey: ["booking-calls", bookingId],
-    queryFn: () => api.listBookingCalls(bookingId),
+    queryKey: ["calls", callTargetKey(target)],
+    queryFn: () => api.listCalls(target),
     enabled: allowed && open,
     staleTime: 10_000,
   })

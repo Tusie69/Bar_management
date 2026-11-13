@@ -252,10 +252,10 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
       await bookings.confirmLate(id, version)
       return result("Đã ghi nhận khách sẽ tới muộn.")
     },
-    startBookingCall: (id) => bookings.startCall(id),
-    listBookingCalls: (id) => bookings.listCalls(id),
-    recordBookingCallOutcome: async (bookingId, callId, outcome, bookingVersion) => {
-      await bookings.recordCallOutcome(bookingId, callId, outcome, bookingVersion)
+    startCall: (target) => bookings.startCall(target),
+    listCalls: (target) => bookings.listCalls(target),
+    recordCallOutcome: async (target, callId, outcome, bookingVersion) => {
+      await bookings.recordCallOutcome(target, callId, outcome, bookingVersion)
       return result(outcome === "LATE_CONFIRMED" ? "Đã ghi nhận khách sẽ tới muộn." : "Đã ghi kết quả cuộc gọi.")
     },
     checkIn: async (input) => {

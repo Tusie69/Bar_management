@@ -224,8 +224,10 @@ mysqlDescribe('venue settings API and dynamic configuration', () => {
       tableIds: [tableId],
     }, createNow)
 
+    // canCall không còn đi theo displayState: có số điện thoại là gọi được,
+    // kể cả trước cửa sổ UPCOMING và sau ngưỡng no-show.
     const before = await getFloorProjection(actor, '2026-11-05', new Date('2026-11-05T14:19:00.000Z'))
-    expect(before.tables[0]).toMatchObject({ displayState: 'BOOKED', claim: { canCall: false } })
+    expect(before.tables[0]).toMatchObject({ displayState: 'BOOKED', claim: { canCall: true } })
     const boundary = await getFloorProjection(actor, '2026-11-05', new Date('2026-11-05T14:20:00.000Z'))
     expect(boundary.tables[0]).toMatchObject({ displayState: 'UPCOMING', claim: { canCall: true } })
 
@@ -238,7 +240,7 @@ mysqlDescribe('venue settings API and dynamic configuration', () => {
     const lateConfirmed = await getFloorProjection(actor, '2026-11-05', new Date('2026-11-05T14:46:00.000Z'))
     expect(lateConfirmed.tables[0]).toMatchObject({ displayState: 'LATE_CONFIRMED', claim: { canCall: true } })
     const noShow = await getFloorProjection(actor, '2026-11-05', new Date('2026-11-05T15:00:00.000Z'))
-    expect(noShow.tables[0]).toMatchObject({ displayState: 'NO_SHOW', claim: { canCall: false } })
+    expect(noShow.tables[0]).toMatchObject({ displayState: 'NO_SHOW', claim: { canCall: true } })
 
     const [reservations] = await databasePool.execute<RowDataPacket[]>(
       'SELECT status FROM reservations WHERE id = ?', [booking.id],

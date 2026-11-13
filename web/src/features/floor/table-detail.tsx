@@ -79,6 +79,7 @@ import { LayoutActions } from "./layout-merge-controls"
 import { layoutMembers } from "./layout-merge"
 import { SpareButton } from "./spare-button"
 import { GuestCountDialog } from "./floor-dialogs"
+import { claimCallTarget } from "@/domain/call-target"
 import { CallCustomerControl } from "../bookings/call-customer"
 import { CallHistory } from "../bookings/call-history"
 import type { FloorModel } from "./use-floor-model"
@@ -478,6 +479,7 @@ function SeatedSection({
 }) {
   const { run } = useAction()
   const pick = usePickActions(tableId, claim, model)
+  const callTarget = claimCallTarget(claim)
   const [endOpen, setEndOpen] = useState(false)
   const ui = useUi()
   const stale = model.states.get(tableId)?.staleFromPreviousDay
@@ -505,6 +507,18 @@ function SeatedSection({
         </Note>
       ) : null}
       <div className="grid grid-cols-2 gap-2">
+        {/* Khách đã ngồi vẫn phải gọi được: đồ bỏ quên, thiếu người trong nhóm,
+            cần dọn bàn. Chỉ hiện khi lượt ghé còn giữ booking để ghi log. */}
+        {callTarget ? (
+          <>
+            <CallCustomerControl
+              target={callTarget}
+              canCall={claim.canCall === true || claim.phoneLast3 !== null}
+              className="col-span-2"
+            />
+            <CallHistory target={callTarget} className="col-span-2" />
+          </>
+        ) : null}
         <GuardedButton permission="visit.move" variant="outline" onClick={pick.move}>
           <ArrowRightLeft /> Đổi bàn
         </GuardedButton>
@@ -561,6 +575,7 @@ function ReservationSection({
 }) {
   const { run, pending } = useAction()
   const pick = usePickActions(tableId, claim, model)
+  const callTarget = claimCallTarget(claim)
   const [checkInOpen, setCheckInOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
   const ui = useUi()
@@ -604,13 +619,16 @@ function ReservationSection({
         </Note>
       ) : null}
       <div className="grid grid-cols-2 gap-2">
-        <CallCustomerControl
-          bookingId={claim.reservationId!}
-          bookingVersion={claim.version}
-          canCall={claim.canCall === true}
-          className="col-span-2"
-        />
-        <CallHistory bookingId={claim.reservationId!} className="col-span-2" />
+        {callTarget ? (
+          <>
+            <CallCustomerControl
+              target={callTarget}
+              canCall={claim.canCall === true || claim.phoneLast3 !== null}
+              className="col-span-2"
+            />
+            <CallHistory target={callTarget} className="col-span-2" />
+          </>
+        ) : null}
         <GuardedButton
           permission="visit.checkin"
           size="lg"
@@ -701,6 +719,7 @@ function HoldSection({
 }) {
   const { run, pending } = useAction()
   const held = useHeldOrderActions(model)
+  const callTarget = claimCallTarget(claim)
   const [seatOpen, setSeatOpen] = useState(false)
   const [arrival, setArrival] = useState<(() => Promise<unknown>) | null>(null)
   const [statusOpen, setStatusOpen] = useState(false)
@@ -759,6 +778,23 @@ function HoldSection({
         </Note>
       ) : null}
       <div className="grid grid-cols-2 gap-2">
+        {/* Khách chờ / khách đang giữ bàn cũng cần gọi được: trước đây khối này
+            không có nút gọi nào, nên booking đến từ Bàn chờ là trường hợp lễ
+            tân phải đi nhờ chủ quán mở số. */}
+        {callTarget ? (
+          <>
+            <CallCustomerControl
+              target={
+                callTarget.kind === "booking"
+                  ? { ...callTarget, version: linkedRes?.version ?? null }
+                  : callTarget
+              }
+              canCall={claim.canCall === true || claim.phoneLast3 !== null}
+              className="col-span-2"
+            />
+            <CallHistory target={callTarget} className="col-span-2" />
+          </>
+        ) : null}
         <GuardedButton
           permission="visit.checkin"
           size="lg"

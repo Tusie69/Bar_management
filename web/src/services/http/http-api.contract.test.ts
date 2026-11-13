@@ -192,6 +192,11 @@ beforeEach(() => {
       if (path.endsWith("phone:reveal")) return json({ phoneNumber: "+84901234123" })
       if (path === "/bookings/11/call")
         return json({ callId: 71, bookingId: 11, initiatedAt: at.toISOString(), telUri: "tel:+84901234123" }, 201)
+      if (path === "/waitlist/4/call")
+        return json(
+          { callId: 81, targetKind: "WAITLIST_ENTRY", targetId: 4, initiatedAt: at.toISOString(), telUri: "tel:+84901234123" },
+          201,
+        )
       if (path === "/bookings/11/calls")
         return json({
           calls: [
@@ -444,9 +449,9 @@ describe("canonical contract writes", () => {
     expect(writes()).toEqual([{ method: "PUT", path: "/settings", body: input }])
   })
   it("starts a call without sending a phone and records the selected outcome against the same call", async () => {
-    const call = await api.startBookingCall(11)
-    expect(call).toMatchObject({ callId: 71, bookingId: 11, telUri: "tel:+84901234123" })
-    await api.recordBookingCallOutcome(11, 71, "LATE_CONFIRMED", 3)
+    const call = await api.startCall({ kind: "booking", id: 11 })
+    expect(call).toMatchObject({ callId: 71, telUri: "tel:+84901234123" })
+    await api.recordCallOutcome({ kind: "booking", id: 11 }, 71, "LATE_CONFIRMED", 3)
     expect(writes()).toEqual([
       { method: "POST", path: "/bookings/11/call", body: {} },
       {
@@ -458,8 +463,17 @@ describe("canonical contract writes", () => {
     expect(JSON.stringify(writes())).not.toContain("+84901234123")
   })
 
+  it("calls a waitlist entry that has no booking through the waitlist route", async () => {
+    // Một đơn chờ Walk-in không có booking nào để gắn, nên nó phải có tuyến
+    // riêng; trước đây lễ tân không gọi được những người này.
+    const call = await api.startCall({ kind: "waitlist", id: 4 })
+    expect(call).toMatchObject({ callId: 81, telUri: "tel:+84901234123" })
+    expect(writes()).toEqual([{ method: "POST", path: "/waitlist/4/call", body: {} }])
+    expect(JSON.stringify(writes())).not.toContain("+84901234123")
+  })
+
   it("reads the call history without ever asking for a phone number", async () => {
-    const calls = await api.listBookingCalls(11)
+    const calls = await api.listCalls({ kind: "booking", id: 11 })
     expect(calls).toHaveLength(2)
     expect(calls[0]).toMatchObject({ callId: 71, initiatedBy: "Lễ tân 1", outcome: "NO_ANSWER" })
     // A call nobody closed must come back as such, not be hidden.

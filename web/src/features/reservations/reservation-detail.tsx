@@ -277,12 +277,11 @@ function Detail({ r }: { r: ReservationView }) {
         {booked ? (
           <div className="mt-5 grid grid-cols-2 gap-2">
             <CallCustomerControl
-              bookingId={r.id}
-              bookingVersion={r.version}
-              canCall={r.canCall === true}
+              target={{ kind: "booking", id: r.id, version: r.version }}
+              canCall={r.canCall === true || r.phoneLast3 !== null}
               className="col-span-2"
             />
-            <CallHistory bookingId={r.id} className="col-span-2" />
+            <CallHistory target={{ kind: "booking", id: r.id }} className="col-span-2" />
             {r.tableIds.length ? (
               <GuardedButton
                 permission="visit.checkin"

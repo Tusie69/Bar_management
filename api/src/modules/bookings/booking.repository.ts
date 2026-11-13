@@ -159,19 +159,7 @@ function toBooking(row: BookingRow, now = applicationNow()): BookingView {
     note: redactPhoneNumbersInNote(row.note),
     version: row.version,
     lateConfirmedAt: row.late_confirmed_at === null ? null : isoDateTime(row.late_confirmed_at),
-    canCall: canCallBooking({
-      status: row.status,
-      expectedAt: isoDateTime(row.expected_at),
-      businessDate,
-      lateConfirmedAt: row.late_confirmed_at,
-      hasPhone: row.phone_last3 !== null,
-      now,
-      thresholds: {
-        upcomingMinutes: Number(row.upcoming_warning_minutes),
-        lateAfterMinutes: Number(row.late_warning_minutes),
-        noShowAfterMinutes: Number(row.no_show_warning_minutes),
-      },
-    }),
+    canCall: canCallBooking({ hasPhone: row.phone_last3 !== null }),
     ...timing,
   }
 }
@@ -1011,24 +999,13 @@ export async function initiateBookingCall(
     )
     const booking = rows[0]
     if (!booking) throw new AppError(404, 'BOOKING_NOT_FOUND', 'Không tìm thấy đặt bàn.')
-    if (dateOnly(booking.business_date) !== currentBusinessDate(now)) {
-      throw new AppError(409, 'BOOKING_BUSINESS_DATE_NOT_CURRENT', 'Chỉ gọi booking thuộc ngày nghiệp vụ hiện tại.')
-    }
+    // Không chặn theo ngày nghiệp vụ nữa: lễ tân vẫn phải gọi nhắc khách của
+    // đêm mai, hoặc gọi lại khách của đêm qua để xin lỗi / xác nhận.
     if (!booking.phone_ciphertext || booking.phone_key_id === null) {
       throw new AppError(422, 'BOOKING_PHONE_UNAVAILABLE', 'Booking không có số điện thoại hợp lệ.')
     }
     const eligible = canCallBooking({
-      status: booking.status,
-      expectedAt: isoDateTime(booking.expected_at),
-      businessDate: dateOnly(booking.business_date),
-      lateConfirmedAt: booking.late_confirmed_at,
       hasPhone: booking.phone_ciphertext !== null && booking.phone_key_id !== null,
-      now,
-      thresholds: {
-        upcomingMinutes: Number(booking.upcoming_warning_minutes),
-        lateAfterMinutes: Number(booking.late_warning_minutes),
-        noShowAfterMinutes: Number(booking.no_show_warning_minutes),
-      },
     })
     if (!eligible) throw new AppError(409, 'BOOKING_CALL_NOT_ALLOWED', 'Booking chưa đủ điều kiện gọi khách.')
     const phone = revealPhoneNumber(booking.phone_ciphertext, Number(booking.phone_key_id), phoneKeyRing())

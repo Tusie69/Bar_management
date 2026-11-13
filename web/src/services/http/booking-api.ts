@@ -1,6 +1,6 @@
 import { ApiError } from "../contracts"
 import type { BusinessDate } from "@/lib/time"
-import type { BookingCallHistoryEntry, ReceptionSearchResult } from "@/domain/models"
+import type { BookingCallHistoryEntry, CallOutcome, CallTarget, ReceptionSearchResult } from "@/domain/models"
 import type { HttpClient } from "./http-client"
 import type { CapacityConfirmation } from "./visit-api"
 import {
@@ -18,6 +18,13 @@ import {
 
 const dateReviver = (key: string, value: unknown) =>
   key.endsWith("At") && typeof value === "string" ? new Date(value) : value
+
+/** Ba nhóm tuyến gọi khách: cùng hình dạng, khác tiền tố. */
+function callBase(target: CallTarget): string {
+  if (target.kind === "waitlist") return "/waitlist"
+  if (target.kind === "visit") return "/visits"
+  return "/bookings"
+}
 
 export class HttpBookingApi {
   private readonly client: HttpClient
@@ -140,25 +147,26 @@ export class HttpBookingApi {
     }>(`/bookings/${id}/late-confirm`, { version }, { reviver: dateReviver })
   }
 
-  async startCall(id: number): Promise<{ callId: number; bookingId: number; initiatedAt: Date; telUri: string }> {
-    return this.client.post(`/bookings/${id}/call`, {}, { reviver: dateReviver })
+  async startCall(target: CallTarget): Promise<{ callId: number; initiatedAt: Date; telUri: string }> {
+    return this.client.post(`${callBase(target)}/${target.id}/call`, {}, { reviver: dateReviver })
   }
 
-  async listCalls(id: number): Promise<BookingCallHistoryEntry[]> {
-    const payload = await this.client.get<{ calls: BookingCallHistoryEntry[] }>(`/bookings/${id}/calls`, {
-      reviver: dateReviver,
-    })
+  async listCalls(target: CallTarget): Promise<BookingCallHistoryEntry[]> {
+    const payload = await this.client.get<{ calls: BookingCallHistoryEntry[] }>(
+      `${callBase(target)}/${target.id}/calls`,
+      { reviver: dateReviver },
+    )
     return payload.calls ?? []
   }
 
   async recordCallOutcome(
-    bookingId: number,
+    target: CallTarget,
     callId: number,
-    outcome: "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED",
+    outcome: CallOutcome,
     bookingVersion?: number,
   ): Promise<void> {
     await this.client.post(
-      `/bookings/${bookingId}/calls/${callId}/outcome`,
+      `${callBase(target)}/${target.id}/calls/${callId}/outcome`,
       {
         outcome,
         ...(bookingVersion === undefined ? {} : { bookingVersion }),

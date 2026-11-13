@@ -7,6 +7,8 @@ import { useReservations, useWaitlist } from "@/hooks/use-data"
 import { fmtBusinessDate, fmtDayMonth, fmtTime12, MS, venueDateString, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useCan } from "@/state/session"
+import { CallCustomerControl } from "../bookings/call-customer"
+import { CallHistory } from "../bookings/call-history"
 import { EditReservationDialog } from "../reservations/reservation-detail"
 import { useMobileActions } from "./actions"
 import { useM } from "./context"
@@ -259,6 +261,19 @@ export function DetailScreen({
             </div>
           </section>
         ))}
+
+        {/* Màn chi tiết booking trên điện thoại trước đây chỉ có SĐT che và nút
+            "Mở số" - nút này cần quyền customer.phone.reveal mà lễ tân không
+            có, nên từ đây lễ tân không gọi được khách bằng cách nào cả. */}
+        <section className="flex flex-col gap-2">
+          <h2 className="m-0 pl-0.5 text-[15px] font-semibold text-tx-strong">Gọi khách</h2>
+          <CallCustomerControl
+            target={{ kind: "booking", id: r.id, version: r.version }}
+            canCall={r.canCall === true || r.phoneLast3 !== null}
+            className="w-full"
+          />
+          <CallHistory target={{ kind: "booking", id: r.id }} className="w-full" />
+        </section>
       </div>
       {hold.reason ? <p role="alert" className="px-4 py-2 text-sm text-destructive">{hold.reason}</p> : null}
       {primary ? (

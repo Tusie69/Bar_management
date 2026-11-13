@@ -14,6 +14,7 @@ import { LayoutActions, LayoutMergeControls } from "../floor/layout-merge-contro
 import { independentLayoutEnabled, layoutMembers, toggleLayoutTable } from "../floor/layout-merge"
 import { GuestCountCard } from "../floor/guest-count-card"
 import { StatusLegend } from "../floor/status-legend"
+import { claimCallTarget } from "@/domain/call-target"
 import { CallCustomerControl } from "../bookings/call-customer"
 import { CallHistory } from "../bookings/call-history"
 import { groupCode, groupDisplayName } from "../floor/floor-visual-rules"
@@ -412,6 +413,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
   const fs = m.model.states.get(id)
   const st = fs?.state ?? "free"
   const c = fs?.claim ?? null
+  const callTarget = c ? claimCallTarget(c) : null
   const members = layoutMembers(m.model, id)
   const isGroup = members.length > 1
   const memberTables = members.map((mid) => m.model.byId.get(mid)).filter((x): x is TableView => !!x)
@@ -621,15 +623,16 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
       <LayoutActions model={m.model} tableId={id} />
       {actions.length || t ? (
         <div className="grid grid-cols-2 gap-2">
-          {c?.kind === "reservation" && c.reservationId ? (
+          {/* Mọi loại chỗ giữ còn booking đều gọi được, không chỉ booking chưa
+              check-in: khách chờ đã có booking và khách đang ngồi cũng cần gọi. */}
+          {callTarget ? (
             <>
               <CallCustomerControl
-                bookingId={c.reservationId}
-                bookingVersion={c.version}
-                canCall={c.canCall === true}
+                target={callTarget}
+                canCall={c?.canCall === true || c?.phoneLast3 != null}
                 className="col-span-2"
               />
-              <CallHistory bookingId={c.reservationId} className="col-span-2" />
+              <CallHistory target={callTarget} className="col-span-2" />
             </>
           ) : null}
           {/* Sơ cua không phải việc hằng ngày nên nó đứng cùng hàng với Đổi bàn

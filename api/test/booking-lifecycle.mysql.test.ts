@@ -879,11 +879,12 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       expect(JSON.stringify(projection)).not.toContain('phone_hmac')
     })
 
-    it('enforces server eligibility, writes one log per accepted call and keeps result retries idempotent', async () => {
+    it('writes one log per accepted call and keeps result retries idempotent', async () => {
       const created = await createBooking(actor, { ...bookingInput(), phoneNumber: '0901234567' })
       const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
-      await expect(initiateBookingCall(actor, created.id, new Date('2030-10-24T20:49:00+07:00')))
-        .rejects.toMatchObject({ code: 'BOOKING_CALL_NOT_ALLOWED' })
+      // Sớm hơn cửa sổ cảnh báo vẫn gọi được: lễ tân gọi nhắc trước giờ hẹn.
+      const early = await initiateBookingCall(actor, created.id, new Date('2030-10-24T20:49:00+07:00'))
+      expect(early.telUri).toBe('tel:+84901234567')
 
       const first = await initiateBookingCall(actor, created.id, new Date('2030-10-24T20:50:00+07:00'))
       const second = await initiateBookingCall(actor, created.id, new Date('2030-10-24T20:51:00+07:00'))
@@ -896,8 +897,9 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         actor, created.id, first.callId, 'CONTACTED', undefined, new Date('2030-10-24T20:53:00+07:00'),
       )
       expect(replay.outcomeAt).toBe(result.outcomeAt)
-      expect(Number((await row('SELECT COUNT(*) AS total FROM booking_call_logs WHERE reservation_id = ?', [created.id])).total)).toBe(2)
-      expect(assigned.canCall).toBe(false)
+      expect(Number((await row('SELECT COUNT(*) AS total FROM booking_call_logs WHERE reservation_id = ?', [created.id])).total)).toBe(3)
+      // canCall chỉ còn phụ thuộc việc booking có số điện thoại hay không.
+      expect(assigned.canCall).toBe(true)
     })
 
     it('records Tới muộn through TU-12 and rejects a stale state transition', async () => {
@@ -915,8 +917,9 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
 
       const checkedIn = await checkInBooking(actor, created.id, booking.version, new Date('2030-10-24T21:17:00+07:00'))
       expect(checkedIn.status).toBe('CHECKED_IN')
-      await expect(initiateBookingCall(actor, created.id, new Date('2030-10-24T21:18:00+07:00')))
-        .rejects.toMatchObject({ code: 'BOOKING_CALL_NOT_ALLOWED' })
+      // Khách đã ngồi vẫn gọi được (bỏ quên đồ, thiếu người trong nhóm).
+      const afterCheckIn = await initiateBookingCall(actor, created.id, new Date('2030-10-24T21:18:00+07:00'))
+      expect(afterCheckIn.telUri).toBe('tel:+84901234567')
     })
 
     it('records a new Tới muộn call outcome for an already confirmed booking using its current version', async () => {

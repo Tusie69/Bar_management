@@ -380,7 +380,22 @@ export interface WaitlistEntryView {
   closedAt: Date | null
 }
 
-/** One row of a booking's call history. Never carries a phone number. */
+/**
+ * Ai đang được gọi.
+ *
+ * Lễ tân gọi ba loại người: khách có booking, khách trong danh sách chờ và
+ * khách đang ngồi. Chỉ booking mới mang `version`, vì chỉ nó có kết quả
+ * "Tới muộn" - kết quả đó chuyển trạng thái đặt bàn nên cần kiểm tra phiên bản.
+ */
+export type CallTarget =
+  | { kind: "booking"; id: number; version?: number | null }
+  | { kind: "waitlist"; id: number }
+  | { kind: "visit"; id: number }
+
+/** Kết quả một lần gọi. "Tới muộn" chỉ hợp lệ với một booking. */
+export type CallOutcome = "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED"
+
+/** One row of a guest's call history. Never carries a phone number. */
 export interface BookingCallHistoryEntry {
   callId: number
   initiatedAt: Date

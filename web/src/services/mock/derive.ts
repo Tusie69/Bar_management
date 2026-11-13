@@ -339,12 +339,9 @@ export function floorState(
             note: r.note,
             version: r.version,
             lateConfirmedAt: r.lateConfirmedAt,
-            canCall:
-              customerOf(db, r.customerId)?.phoneLast3 != null &&
-              // "noshow" belongs here: the table is still held and the guest is
-              // past the threshold, which is when the receptionist rings them.
-              // Mirrors canCallBooking in api/src/modules/bookings/booking-call.ts.
-              (state === "upcoming" || state === "late" || state === "late_confirmed" || state === "noshow"),
+            // Giống floor-projection.repository.ts: có chỗ ghi log cuộc gọi và
+            // có số là gọi được, không phụ thuộc trạng thái bàn hay giờ hẹn.
+            canCall: customerOf(db, r.customerId)?.phoneLast3 != null,
           }
         }
       }
@@ -635,14 +632,9 @@ export function reservationView(db: MockDb, r: MockReservation, now: Date): Rese
     createdAt: r.createdAt,
     createdByName: creator?.displayName ?? "Hệ thống",
     lateConfirmedAt: r.lateConfirmedAt,
-    // Mirrors canCallBooking in api/src/modules/bookings/booking-call.ts: a
-    // booking that still has a phone and has reached its upcoming window can
-    // be called, whether or not a table is held for it. The booking list used
-    // to have no canCall at all here, so the mock never showed the button.
-    canCall:
-      r.status === "BOOKED" &&
-      customerOf(db, r.customerId)?.phoneLast3 != null &&
-      now.getTime() >= r.expectedAt.getTime() - venue.upcomingWarningMinutes * MS.MIN,
+    // Mirrors canCallBooking in api/src/modules/bookings/booking-call.ts: còn
+    // số điện thoại là lễ tân gọi được, bất kể trạng thái hay giờ hẹn.
+    canCall: customerOf(db, r.customerId)?.phoneLast3 != null,
   }
 }
 

@@ -357,15 +357,14 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
       {/* Khách chờ gắn với một booking thì gọi được ngay từ đây, lễ tân không
           phải nhờ chủ quán mở số. Đơn chờ không có booking thì chưa gọi được:
           booking_call_logs.reservation_id là NOT NULL. */}
-      {e.reservationId && e.phoneLast3 && !closed ? (
+      {closed ? null : (
         <CallCustomerControl
-          bookingId={e.reservationId}
-          bookingVersion={null}
-          canCall
+          target={e.reservationId ? { kind: "booking", id: e.reservationId } : { kind: "waitlist", id: e.id }}
+          canCall={e.phoneLast3 !== null}
           label="Gọi khách chờ"
           className="w-full"
         />
-      ) : null}
+      )}
     </div>
   )
 }

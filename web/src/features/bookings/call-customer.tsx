@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import type { CallTarget } from "@/domain/models"
 import { reportError } from "@/hooks/use-action"
 import { api } from "@/services"
 import { useCan } from "@/state/session"
@@ -20,21 +21,26 @@ import { usePendingCall, usePendingCalls } from "./pending-calls"
 type Outcome = "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED"
 
 export function CallCustomerControl({
-  bookingId,
-  bookingVersion,
+  target,
   canCall,
   className,
   label,
 }: {
-  bookingId: number
   /**
-   * Version of the booking, required by the "Tới muộn" outcome because that
-   * one also moves the reservation. Pass null where the screen does not hold
-   * it - the waitlist knows the entry version, not the booking's - and the
-   * outcome dialog then offers only the two that touch the call log alone,
-   * rather than sending a version that would be refused.
+   * Người đang được gọi: một booking, một mục chờ hay một lượt ghé.
+   *
+   * Booking mang thêm `version` vì kết quả "Tới muộn" còn chuyển trạng thái
+   * đặt bàn. Nơi nào không cầm version - danh sách chờ chỉ biết version của
+   * mục chờ - thì bỏ trống, hộp kết quả khi đó chỉ hiện hai lựa chọn chạm vào
+   * nhật ký gọi, thay vì gửi một version chắc chắn bị từ chối.
    */
-  bookingVersion: number | null
+  target: CallTarget
+  /**
+   * Whether the server believes this guest has a number to dial. False only
+   * disables the button and says why - it never hides it. A receptionist who
+   * cannot find the button assumes the feature is broken and rings the owner
+   * for the number, which is exactly what this control exists to avoid.
+   */
   canCall: boolean
   className?: string
   /** Defaults to "Gọi khách". */
@@ -44,12 +50,17 @@ export function CallCustomerControl({
   const queryClient = useQueryClient()
   const [pending, setPending] = useState(false)
   const [outcomeOpen, setOutcomeOpen] = useState(false)
+  // Giữ trong bộ nhớ của lần gọi hiện tại, không ghi vào localStorage: dùng
+  // cho liên kết mở lại trình gọi khi máy không bắt được tel: lần đầu (máy
+  // tính lễ tân chưa gán ứng dụng gọi, hoặc trình duyệt chặn điều hướng).
+  const [telUri, setTelUri] = useState<string | null>(null)
   // Kept outside the component: this sheet is closed and reopened constantly,
   // and an unfinished call must survive that, and a reload.
   const startPendingCall = usePendingCalls((s) => s.start)
   const clearPendingCall = usePendingCalls((s) => s.clear)
-  const callId = usePendingCall(bookingId)?.callId ?? null
+  const callId = usePendingCall(target)?.callId ?? null
   const leftPage = useRef(false)
+  const bookingVersion = target.kind === "booking" ? target.version ?? null : null
 
   useEffect(() => {
     if (callId === null) return
@@ -61,20 +72,20 @@ export function CallCustomerControl({
     return () => document.removeEventListener("visibilitychange", onVisibility)
   }, [callId])
 
-  const canStartCall = canCall && allowedToCall
-  const hasPendingOutcome = callId !== null && allowedToCall
-  if (!canStartCall && !hasPendingOutcome) return null
+  // Chỉ ẩn khi tài khoản không có quyền gọi (thu ngân, CSKH): với họ đây là
+  // thao tác không tồn tại. Người có quyền thì luôn thấy nút.
+  if (!allowedToCall) return null
 
   const start = async () => {
     setPending(true)
     try {
-      const call = await api.startBookingCall(bookingId)
-      startPendingCall(bookingId, call.callId)
+      const call = await api.startCall(target)
+      startPendingCall(target, call.callId)
+      setTelUri(call.telUri)
       leftPage.current = false
-      const link = document.createElement("a")
-      link.href = call.telUri
-      link.rel = "noreferrer"
-      link.click()
+      // window.location thay cho thẻ <a> rời: thẻ chưa gắn vào document bị một
+      // số WebView bỏ qua, cuộc gọi không mở mà lễ tân vẫn thấy "đang gọi".
+      window.location.href = call.telUri
     } catch (error) {
       reportError(error)
     } finally {
@@ -86,14 +97,15 @@ export function CallCustomerControl({
     if (callId === null || pending) return
     setPending(true)
     try {
-      await api.recordBookingCallOutcome(
-        bookingId,
+      await api.recordCallOutcome(
+        target,
         callId,
         outcome,
         outcome === "LATE_CONFIRMED" && bookingVersion !== null ? bookingVersion : undefined,
       )
       setOutcomeOpen(false)
-      clearPendingCall(bookingId)
+      clearPendingCall(target)
+      setTelUri(null)
       leftPage.current = false
       toast.success(outcome === "LATE_CONFIRMED" ? "Đã ghi nhận khách sẽ tới muộn." : "Đã ghi kết quả cuộc gọi.")
       await queryClient.invalidateQueries()
@@ -102,8 +114,9 @@ export function CallCustomerControl({
       if (code === "BOOKING_CALL_NOT_FOUND" || code === "BOOKING_CALL_OUTCOME_CONFLICT") {
         // The server has closed this call already - from another device, or an
         // earlier attempt whose reply never arrived. Nothing left to record.
-        clearPendingCall(bookingId)
+        clearPendingCall(target)
         setOutcomeOpen(false)
+        setTelUri(null)
       }
       reportError(error)
       await queryClient.invalidateQueries()
@@ -121,6 +134,7 @@ export function CallCustomerControl({
           variant="outline"
           className={className}
           disabled={pending}
+          disabledReason={canCall ? null : "Khách này chưa có số điện thoại"}
           onClick={() => void start()}
         >
           <Phone /> {pending ? "Đang mở cuộc gọi..." : (label ?? "Gọi khách")}
@@ -138,6 +152,15 @@ export function CallCustomerControl({
               Trình duyệt không thể biết cuộc gọi có kết nối hay không. Hãy chọn kết quả thực tế.
             </DialogDescription>
           </DialogHeader>
+          {telUri ? (
+            <a
+              href={telUri}
+              rel="noreferrer"
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium"
+            >
+              <Phone className="size-4" /> Máy chưa mở trình gọi? Bấm để gọi lại
+            </a>
+          ) : null}
           <div className={bookingVersion === null ? "grid gap-2 sm:grid-cols-2" : "grid gap-2 sm:grid-cols-3"}>
             <Button type="button" variant="outline" disabled={pending} onClick={() => void record("CONTACTED")}>
               <BadgeCheck /> Đã liên hệ

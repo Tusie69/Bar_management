@@ -1,44 +1,22 @@
-import { deriveTableDisplayState, type TableStateThresholds } from '../tables/table-display-state.js'
-
 export interface BookingCallEligibility {
-  status: 'BOOKED' | 'CHECKED_IN' | 'CANCELLED' | 'NO_SHOW'
-  expectedAt: Date | string
-  businessDate: string
-  lateConfirmedAt?: Date | string | null
+  /** Whether a number is stored on the booking or its customer. */
   hasPhone: boolean
-  now: Date
-  thresholds: TableStateThresholds
 }
 
 /**
- * A booking with no table used to be uncallable, because the rule asked for an
- * active hold. That is backwards: a guest who booked by phone, has no table
- * assigned and is now overdue is precisely the one the receptionist has to
- * ring. Holding a table is an operational detail of the floor, not a condition
- * for picking up the phone, so the rule now turns on the booking alone.
+ * Lễ tân gọi khách được bất cứ lúc nào, miễn là có số điện thoại.
+ *
+ * Quy tắc cũ chặn theo trạng thái bàn và theo cửa sổ thời gian: chỉ gọi được
+ * khi booking đang BOOKED và đã bước vào khung UPCOMING/LATE/NO_SHOW. Hệ quả
+ * là đúng những lúc cần gọi nhất thì nút lại biến mất - khách đặt lúc 22h mà
+ * giờ mới 19h (chưa tới khung), khách vừa bị hủy cần gọi xác nhận lại, khách
+ * đã check-in bỏ quên đồ, hay khách của ngày mai cần nhắc. Giữ số liên lạc
+ * là việc của lễ tân, không phải một trạng thái của sơ đồ bàn.
+ *
+ * Mọi lần gọi vẫn được ghi vào booking_call_logs và operation_log
+ * (BOOKING_CALL_INITIATED) kèm người gọi, nên việc mở rộng này vẫn truy vết
+ * được; phần kiểm soát thật nằm ở quyền booking.phone.call.
  */
 export function canCallBooking(input: BookingCallEligibility): boolean {
-  if (!input.hasPhone || input.status !== 'BOOKED') return false
-  const state = deriveTableDisplayState({
-    catalogState: 'ACTIVE',
-    isSpare: false,
-    activeVisit: null,
-    reservation: {
-      status: input.status,
-      expectedAt: input.expectedAt,
-      businessDate: input.businessDate,
-      ...(input.lateConfirmedAt === undefined ? {} : { lateConfirmedAt: input.lateConfirmedAt }),
-    },
-    businessDate: input.businessDate,
-    now: input.now,
-    thresholds: input.thresholds,
-  }).displayState
-  // NO_SHOW is in the list on purpose. It is the display state a booking lands
-  // in once it is past the no-show threshold while the table is still held, and
-  // it is exactly when the receptionist needs to ring the guest to find out
-  // whether they are still coming. Leaving it out took the Gọi khách button
-  // away from the latest - and usually largest - party on the floor.
-  // The reservation status is still BOOKED here; a reservation actually closed
-  // as NO_SHOW fails the status check above and stays uncallable.
-  return state === 'UPCOMING' || state === 'LATE' || state === 'LATE_CONFIRMED' || state === 'NO_SHOW'
+  return input.hasPhone
 }

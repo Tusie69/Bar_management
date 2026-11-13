@@ -474,15 +474,12 @@ function EntryCard({
           the receptionist can now call it like any other, number unseen. An
           entry with no booking still cannot: booking_call_logs.reservation_id is
           NOT NULL, so logging that call needs a schema change of its own. */}
-      {e.reservationId && e.phoneLast3 ? (
-        <CallCustomerControl
-          bookingId={e.reservationId}
-          bookingVersion={null}
-          canCall
-          label="Gọi khách chờ"
-          className="w-full"
-        />
-      ) : null}
+      <CallCustomerControl
+        target={e.reservationId ? { kind: "booking", id: e.reservationId } : { kind: "waitlist", id: e.id }}
+        canCall={e.phoneLast3 !== null}
+        label="Gọi khách chờ"
+        className="w-full"
+      />
 
       {canReveal && e.customerId && (e.callbackRequested || e.channel === "PHONE_CALLBACK") ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-2 px-3 py-2 text-sm">

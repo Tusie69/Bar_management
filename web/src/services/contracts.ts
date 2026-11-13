@@ -42,6 +42,8 @@ import type {
   SessionUser,
   ShiftOverview,
   BookingCallHistoryEntry,
+  CallOutcome,
+  CallTarget,
   VenueConfig,
   VenueSettingsView,
   VisitView,
@@ -335,13 +337,13 @@ export interface GamApi {
   cancelReservation(id: number, version: number, reason: ReservationCloseReason, note?: string): Promise<MutationResult>
   markNoShow(id: number, version: number): Promise<MutationResult>
   confirmLate(id: number, version: number): Promise<MutationResult>
-  startBookingCall(id: number): Promise<{ callId: number; bookingId: number; initiatedAt: Date; telUri: string }>
-  /** Calls already placed on this booking, newest first. Carries no phone number. */
-  listBookingCalls(id: number): Promise<BookingCallHistoryEntry[]>
-  recordBookingCallOutcome(
-    bookingId: number,
+  startCall(target: CallTarget): Promise<{ callId: number; initiatedAt: Date; telUri: string }>
+  /** Calls already placed on this guest, newest first. Carries no phone number. */
+  listCalls(target: CallTarget): Promise<BookingCallHistoryEntry[]>
+  recordCallOutcome(
+    target: CallTarget,
     callId: number,
-    outcome: "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED",
+    outcome: CallOutcome,
     bookingVersion?: number,
   ): Promise<MutationResult>
   checkIn(input: CheckInInput): Promise<MutationResult>
@@ -415,9 +417,9 @@ export const REST_ENDPOINTS = {
   assignTables: "POST /bookings/:id/assign",
   cancelReservation: "POST /bookings/:id/cancel",
   markNoShow: "POST /bookings/:id/no-show",
-  startBookingCall: "POST /bookings/:id/call",
-  listBookingCalls: "GET /bookings/:id/calls",
-  recordBookingCallOutcome: "POST /bookings/:id/calls/:callId/outcome",
+  startCall: "POST /bookings|waitlist|visits/:id/call",
+  listCalls: "GET /bookings|waitlist|visits/:id/calls",
+  recordCallOutcome: "POST /bookings|waitlist|visits/:id/calls/:callId/outcome",
   checkIn: "POST /bookings/:id/check-in",
   walkIn: "POST /bookings/walk-ins",
   move: "POST /visits/:id/move",

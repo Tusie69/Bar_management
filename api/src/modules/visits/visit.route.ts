@@ -4,6 +4,7 @@ import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { AppError } from '../../errors/app-error.js'
 import { assertNoteHasNoPhoneNumber } from '../../security/note-privacy.js'
+import { mountContactCallRoutes } from '../contacts/contact-call.route.js'
 import { parseCapacityOverride } from '../tables/table-capacity.js'
 import { closeVisit, mergeVisitTables, moveVisit, type CloseVisitMode, type ManualCloseReason } from './visit.repository.js'
 import { listTableTurns } from './table-turn.repository.js'
@@ -153,3 +154,6 @@ visitRouter.post(
     }) })
   },
 )
+
+// Gọi khách đang ngồi: bỏ quên đồ, thiếu người trong nhóm, cần dọn bàn.
+mountContactCallRoutes(visitRouter, 'VISIT', 'INVALID_VISIT_ID', 'Mã lượt khách không hợp lệ.')
