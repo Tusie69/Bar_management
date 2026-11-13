@@ -103,6 +103,59 @@ interface View {
   contained?: boolean
 }
 
+/**
+ * Ring around a table the receptionist has picked - for a merge, a move, an
+ * assignment. It used to be the same thin grey dashes as the cluster
+ * highlight, which on a coloured table top read as nothing at all.
+ *
+ * Three strokes, outside the table body so none of them hide the state colour:
+ * a wide halo in the floor colour to lift the ring off whatever is underneath,
+ * the solid primary ring itself, and a faint outer glow so the pick is still
+ * obvious when the plan is scaled down on a phone.
+ */
+function PickedRectRing({ w, h }: { w: number; h: number }) {
+  const hw = w / 2
+  const hh = h / 2
+  return (
+    <g data-selection-ring="1" pointerEvents="none">
+      <rect x={-hw - 6.5} y={-hh - 6.5} width={w + 13} height={h + 13} rx={9} fill="none"
+        stroke="var(--primary)" strokeOpacity={0.22} strokeWidth={5} />
+      <rect x={-hw - 4.6} y={-hh - 4.6} width={w + 9.2} height={h + 9.2} rx={8} fill="none"
+        stroke="var(--floor)" strokeWidth={3.4} />
+      <rect x={-hw - 3} y={-hh - 3} width={w + 6} height={h + 6} rx={7} fill="none"
+        stroke="var(--primary)" strokeWidth={2.4} />
+    </g>
+  )
+}
+
+/** Same ring for a bar seat. */
+function PickedCircleRing({ r }: { r: number }) {
+  return (
+    <g data-selection-ring="1" pointerEvents="none">
+      <circle r={r + 6} fill="none" stroke="var(--primary)" strokeOpacity={0.22} strokeWidth={4.5} />
+      <circle r={r + 4.2} fill="none" stroke="var(--floor)" strokeWidth={3} />
+      <circle r={r + 2.7} fill="none" stroke="var(--primary)" strokeWidth={2.2} />
+    </g>
+  )
+}
+
+/** Cluster members that are not picked keep the old, quieter dashes. */
+function ClusterRectRing({ w, h }: { w: number; h: number }) {
+  const hw = w / 2
+  const hh = h / 2
+  return (
+    <rect x={-hw - 2.6} y={-hh - 2.6} width={w + 5.2} height={h + 5.2} rx={6} fill="none"
+      stroke="#64748B" strokeWidth={1.5} strokeDasharray="5 3" data-selection-ring="1" />
+  )
+}
+
+function ClusterCircleRing({ r }: { r: number }) {
+  return (
+    <circle r={r + 2.8} fill="none" stroke="#64748B" strokeWidth={1.6} strokeDasharray="5 3"
+      data-selection-ring="1" />
+  )
+}
+
 const PAD = 18
 /**
  * Slack svgHeight leaves under the plan on desktop so the bottom shadow is not
@@ -1156,15 +1209,10 @@ const LiveGlyph = memo(function LiveGlyph({
         {searchHighlighted ? (
           <circle className="animate-pulse" r={r + 5} fill="none" stroke="var(--primary)" strokeWidth={3} />
         ) : null}
-        {selected || groupHighlighted ? (
-          <circle
-            r={r + 2.8}
-            fill="none"
-            stroke="#64748B"
-            strokeWidth={1.6}
-            strokeDasharray="5 3"
-            data-selection-ring="1"
-          />
+        {selected ? (
+          <PickedCircleRing r={r} />
+        ) : groupHighlighted ? (
+          <ClusterCircleRing r={r} />
         ) : pickHint ? (
           <circle
             r={r + 2.8}
@@ -1262,19 +1310,10 @@ const LiveGlyph = memo(function LiveGlyph({
           strokeWidth={3}
         />
       ) : null}
-      {selected || groupHighlighted ? (
-        <rect
-          x={-hw - 2.6}
-          y={-hh - 2.6}
-          width={t.w + 5.2}
-          height={t.h + 5.2}
-          rx={6}
-          fill="none"
-          stroke="#64748B"
-          strokeWidth={1.5}
-          strokeDasharray="5 3"
-          data-selection-ring="1"
-        />
+      {selected ? (
+        <PickedRectRing w={t.w} h={t.h} />
+      ) : groupHighlighted ? (
+        <ClusterRectRing w={t.w} h={t.h} />
       ) : pickHint ? (
         <rect
           x={-hw - 2.6}
@@ -1506,16 +1545,11 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
           strokeWidth={1.5}
           strokeDasharray="2 2"
         />
-        {selected || groupHighlighted ? (
-          <circle
-            r={r + 2.8}
-            fill="none"
-            stroke="#64748B"
-            strokeWidth={1.6}
-            strokeDasharray="5 3"
-            data-selection-ring="1"
-          />
-        ) : pickHint && !selected ? (
+        {selected ? (
+          <PickedCircleRing r={r} />
+        ) : groupHighlighted ? (
+          <ClusterCircleRing r={r} />
+        ) : pickHint ? (
           <circle r={r + 2.8} fill="none" stroke="var(--foreground)" strokeOpacity={0.3} strokeDasharray="2 2" />
         ) : null}
         <circle
