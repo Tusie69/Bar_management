@@ -43,7 +43,9 @@ function ReportsContent() {
   if (!allowed) {
     return (
       <EmptyState title="Báo cáo chỉ dành cho Chủ quán / Admin" icon={<Lock />} className="h-full">
-        Đổi vai trò ở góc phải trên cùng để xem bản demo.
+        {api.mode === "http"
+          ? "Tài khoản của bạn không có quyền xem báo cáo. Liên hệ chủ quán nếu cần."
+          : "Đổi vai trò ở góc phải trên cùng để xem bản thử."}
       </EmptyState>
     )
   }

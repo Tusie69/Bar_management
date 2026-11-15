@@ -162,25 +162,33 @@ export function AccountSheet({ onClose }: { onClose: () => void }) {
           ["dark", "Tối"],
         ]}
       />
-      <span className="pt-2 text-[13px] text-[var(--text-muted)]">Người dùng demo</span>
-      {users.map((u) => (
-        <button
-          key={u.id}
-          type="button"
-          aria-pressed={u.id === user.id}
-          onClick={() => {
-            setUser(u.id)
-            onClose()
-          }}
-          className={cn(
-            "flex min-h-12 items-center justify-between rounded-2xl border px-3.5 text-left",
-            u.id === user.id ? "border-primary bg-primary-tint" : "border-border bg-background",
-          )}
-        >
-          <span className="text-[15px] font-medium text-tx-strong">{u.displayName}</span>
-          <span className="text-[13px] text-[var(--text-muted)]">{ROLE_LABEL[u.role]}</span>
-        </button>
-      ))}
+      {/* Bộ đổi vai trò là công cụ của bản mock: nó bấm một phát là thành
+          người khác, nên trên bản đã deploy nó vừa vô nghĩa vừa gây hiểu nhầm
+          rằng tài khoản thật đổi được vai ngay tại đây. Bản HTTP chỉ hiện khối
+          "Phiên đăng nhập" bên dưới, là phiên thật do server cấp. */}
+      {api.mode === "mock" ? (
+        <>
+          <span className="pt-2 text-[13px] text-[var(--text-muted)]">Đổi vai trò để thử</span>
+          {users.map((u) => (
+            <button
+              key={u.id}
+              type="button"
+              aria-pressed={u.id === user.id}
+              onClick={() => {
+                setUser(u.id)
+                onClose()
+              }}
+              className={cn(
+                "flex min-h-12 items-center justify-between rounded-2xl border px-3.5 text-left",
+                u.id === user.id ? "border-primary bg-primary-tint" : "border-border bg-background",
+              )}
+            >
+              <span className="text-[15px] font-medium text-tx-strong">{u.displayName}</span>
+              <span className="text-[13px] text-[var(--text-muted)]">{ROLE_LABEL[u.role]}</span>
+            </button>
+          ))}
+        </>
+      ) : null}
       {/* Máy lễ tân chạy cả ca trên một tài khoản và trước đây không có chỗ nào
           thoát ra: đăng xuất chỉ có trong menu của bản desktop. */}
       {principal ? (

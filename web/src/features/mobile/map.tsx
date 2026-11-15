@@ -26,8 +26,7 @@ import { useBookingDraft } from "../floor/use-booking-draft"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
 import { codesOf, duration, type Tone, toneStyle } from "./model"
-import { useUndoRedo } from "@/features/operations/use-undo-redo"
-import { PlainHeader, UndoRedoButtons } from "./ui"
+import { BellButton, PlainHeader, UndoRedoButtons } from "./ui"
 
 const ZONE_TABS: [ZoneCode | "ALL", string][] = [
   ["ALL", "Tất cả"],
@@ -66,7 +65,6 @@ export function MapScreen({
   const layoutPick = useUi((s) => s.pick?.intent === "layout")
   const layoutIds = useUi((s) => s.pickSelection)
   const waitingCount = (m.waitlist ?? []).filter(isWaitingForTable).length
-  const undoEnabled = useUndoRedo().enabled
   const canExport = m.can("customer.view_masked")
   // Cỡ máy thật, không phải cỡ viewport: Safari thu nhỏ trang thì iPhone X báo
   // ~506px và trước đây nhận bộ chrome của máy to, đè lên Khu B/Khu C.
@@ -313,14 +311,17 @@ export function MapScreen({
         <div className="z-[11] shrink-0 px-2 pb-[var(--bottom-safe)]">
           <LayoutMergeControls model={m.model} overlay />
         </div>
-      ) : planChrome && undoEnabled ? (
-        // Mockup 01 ends the screen with a 52px row holding just these two.
-        // Floating them over the plan put them on top of Khu A. The row is
-        // dropped entirely where undo is not available (mock build), so there
-        // is no empty strip; api.mode is fixed per build, so the plan height
-        // cannot change under the camera mid-session.
+      ) : planChrome ? (
+        // Mockup 01 ends the screen with a 52px row. Trái: cặp hoàn tác/làm
+        // lại (tự ẩn khi server không cho hoàn tác). Phải: chuông thông báo —
+        // màn sơ đồ của lễ tân dùng header riêng không có chuông, nên trước
+        // đây cả ca không có chỗ nào xem cảnh báo mà không rời màn hình.
+        // Floating them over the plan put them on top of Khu A. api.mode is
+        // fixed per build, so the plan height cannot change mid-session.
         <div className="z-[5] flex h-[52px] shrink-0 items-center gap-1 bg-background px-2 pb-[var(--bottom-safe)]">
           <UndoRedoButtons square />
+          <span className="flex-1" />
+          <BellButton square />
         </div>
       ) : null}
       {pick ? (

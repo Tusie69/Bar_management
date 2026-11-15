@@ -68,7 +68,7 @@ export function UndoRedoButtons({ glass, square }: { glass?: boolean; square?: b
   )
 }
 
-export function BellButton({ glass }: { glass?: boolean }) {
+export function BellButton({ glass, square }: { glass?: boolean; square?: boolean }) {
   const m = useM()
   return (
     <button
@@ -76,13 +76,23 @@ export function BellButton({ glass }: { glass?: boolean }) {
       onClick={m.openAlerts}
       aria-label={`Thông báo, ${m.unread} chưa xem`}
       className={cn(
-        "relative grid size-11 shrink-0 place-items-center rounded-full text-tx-1",
-        glass ? "bg-[var(--glass)] shadow-[var(--shadow-xs)]" : "-mr-1.5 active:bg-surface-2",
+        "relative grid shrink-0 place-items-center text-tx-1",
+        // `square` khớp cặp hoàn tác ở dải dưới cùng của màn sơ đồ: 36x36,
+        // bo 10, viền mảnh. Vùng chạm vẫn đủ 44 nhờ padding của chính dải đó.
+        square
+          ? "size-9 rounded-[10px] border border-border bg-surface-1 active:bg-surface-2"
+          : "size-11 rounded-full",
+        !square && (glass ? "bg-[var(--glass)] shadow-[var(--shadow-xs)]" : "-mr-1.5 active:bg-surface-2"),
       )}
     >
-      <Bell className="size-[21px]" strokeWidth={1.8} />
+      <Bell className={square ? "size-[19px]" : "size-[21px]"} strokeWidth={1.8} />
       {m.unread ? (
-        <span className="absolute top-0.5 right-0 h-[18px] min-w-[18px] rounded-full bg-st-noshow px-[5px] text-center text-[11px] leading-[18px] font-semibold text-white">
+        <span
+          className={cn(
+            "absolute h-[18px] min-w-[18px] rounded-full bg-st-noshow px-[5px] text-center text-[11px] leading-[18px] font-semibold text-white",
+            square ? "-top-1.5 -right-1.5" : "top-0.5 right-0",
+          )}
+        >
           {m.unread}
         </span>
       ) : null}

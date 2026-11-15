@@ -29,9 +29,14 @@ import { ListScreen } from "./list"
 import { MapScreen, TableSheet } from "./map"
 import { isOpenEntry } from "./model"
 import { AccountSheet, AlertsSheet, ConfirmDialog, CreateSheet, Scrim, StatusDialog, Toast15 } from "./overlays"
+import { useSeenKeys } from "./seen-keys"
 import { PlainHeader } from "./ui"
 import { EntryDetailScreen, WaitScreen } from "./wait"
 import "./mobile.css"
+
+/** Khoá localStorage cho cảnh báo đã xem (chuông) và toast "tới muộn" đã xử lý. */
+const SEEN_STORAGE_KEY = "21gam.mobile.alerts.seen.v1"
+const HANDLED_STORAGE_KEY = "21gam.mobile.alerts.handled.v1"
 
 const PATH: Record<Tab, string> = { home: "/home", list: "/reservations", map: "/floor", wait: "/waitlist" }
 const TAB_OF: Record<string, Tab> = { "/home": "home", "/reservations": "list", "/floor": "map", "/waitlist": "wait" }
@@ -76,13 +81,15 @@ export default function MobileApp() {
   const [pick, setPick] = useState<TablePick | null>(null)
   const [pickSel, setPickSel] = useState<number[]>([])
   const [pickBusy, setPickBusy] = useState(false)
-  const [seen, setSeen] = useState<Set<string>>(() => new Set())
-  const [handled, setHandled] = useState<Set<string>>(() => new Set())
+  // Đã xem / đã xử lý đọc từ localStorage theo ngày nghiệp vụ, nên F5 giữa ca
+  // không làm cảnh báo cũ hiện lại như mới. Xem seen-keys.ts.
+  const [seen, markSeen] = useSeenKeys(SEEN_STORAGE_KEY, selectedDate)
+  const [handled, markHandled] = useSeenKeys(HANDLED_STORAGE_KEY, selectedDate)
 
   const booked = useMemo(() => (reservations ?? []).filter((r) => r.status === "BOOKED"), [reservations])
   const alerts = useShiftAlerts(model, booked, now)
   const unread = alerts.filter((a) => !seen.has(a.key)).length
-  const handle = (key: string) => setHandled((s) => new Set(s).add(key))
+  const handle = (key: string) => markHandled([key])
   const toast15 = booked.find((r) => r.warning === "late" && !handled.has(`l${r.id}`)) ?? null
   const busy = !!(overlay || statusFor || confirm || detail || entryDetail || form || pick || ui.draft)
   const keyboardSafeHeight = useKeyboardSafeHeight()
@@ -137,7 +144,7 @@ export default function MobileApp() {
     unread,
     go,
     openAlerts: () => {
-      setSeen(new Set(alerts.map((a) => a.key)))
+      markSeen(alerts.map((a) => a.key))
       setOverlay("alerts")
     },
     openAccount: () => setOverlay("account"),
