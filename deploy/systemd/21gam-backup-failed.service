@@ -1,0 +1,26 @@
+# Chạy khi 21gam-backup.service thất bại (OnFailure=).
+#
+# Mục đích: một lần backup hỏng phải tạo ra dấu vết mà người vận hành gặp được,
+# không phải một dòng trong journal mà không ai mở. Mặc định script này ghi một
+# bản ghi rõ ràng vào journal và đặt một "cờ" trên đĩa để lần kiểm tra sau nhìn
+# thấy ngay quán đã mấy ngày không có backup tốt.
+#
+# Muốn gửi Zalo/Telegram/email thì đặt BACKUP_ALERT_COMMAND trong
+# deploy/env/backup.env — backup-mysql.sh gọi nó kèm thông điệp lỗi, và nó chạy
+# trong ngữ cảnh của chính script nên biết lý do cụ thể hơn unit này.
+#
+#   sudo cp deploy/systemd/21gam-backup-failed.service /etc/systemd/system/
+
+[Unit]
+Description=21GAM backup thất bại - ghi dấu vết
+
+[Service]
+Type=oneshot
+User=gam21
+Group=gam21
+ExecStart=/usr/bin/bash -c 'printf "%%s BACKUP THAT BAI - xem: journalctl -u 21gam-backup.service -n 50\\n" "$(date -Is)" | tee -a /srv/21gam/backups/BACKUP-FAILED.log; systemd-cat -t 21gam-backup -p err echo "21GAM backup that bai luc $(date -Is)"'
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/srv/21gam/backups

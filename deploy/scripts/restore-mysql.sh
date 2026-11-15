@@ -2,11 +2,15 @@
 # Phục hồi database 21GAM từ một bản sao lưu .sql.gz.
 #
 #   sudo systemctl stop 21gam-api
-#   sudo -u gam21 /srv/21gam/deploy/scripts/restore-mysql.sh /srv/21gam/backups/gam21_platform-20261111-030000.sql.gz
+#   sudo -u gam21 /srv/21gam/deploy/scripts/restore-mysql.sh /srv/21gam/backups/21gam_20261116_0600.sql.gz
 #   sudo systemctl start 21gam-api
 #
 # Script này GHI ĐÈ dữ liệu đang có. Nó luôn chụp một bản an toàn của trạng
 # thái hiện tại trước khi ghi, và bắt gõ đúng tên database để xác nhận.
+#
+# Muốn DIỄN TẬP phục hồi thì dùng restore-verify.sh: script đó chỉ nhận database
+# có hậu tố `_test` nên không thể chạm vào dữ liệu quán. Script này là thao tác
+# phá huỷ trên database vận hành.
 set -euo pipefail
 
 archive="${1:-}"
@@ -43,7 +47,7 @@ fi
 # sao lưu hoá ra không phải bản mình tưởng.
 mkdir -p "$DESTINATION"
 safety="$DESTINATION/${DATABASE}-pre-restore-$(date +%Y%m%d-%H%M%S).sql.gz"
-mysqldump --defaults-file="$HOME/.my.cnf" --single-transaction --quick --no-tablespaces \
+mysqldump --defaults-file="$HOME/.my.cnf" --single-transaction --quick --no-tablespaces --set-gtid-purged=OFF \
   --routines --events --triggers --default-character-set=utf8mb4 \
   "$DATABASE" | gzip -9 > "$safety"
 chmod 600 "$safety"
