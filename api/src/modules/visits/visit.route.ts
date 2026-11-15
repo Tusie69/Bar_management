@@ -63,12 +63,19 @@ function turnQuery(query: Record<string, unknown>): TurnQuery {
   if (closedByUserId !== undefined && (typeof closedByUserId !== 'string' || !/^[1-9]\d*$/.test(closedByUserId))) {
     throw new AppError(400, 'INVALID_CLOSED_BY_USER_ID', 'closedByUserId phải là số nguyên dương.')
   }
+  const checkedInByUserId = query.checkedInByUserId
+  if (checkedInByUserId !== undefined && (typeof checkedInByUserId !== 'string' || !/^[1-9]\d*$/.test(checkedInByUserId))) {
+    throw new AppError(400, 'INVALID_CHECKED_IN_BY_USER_ID', 'checkedInByUserId phải là số nguyên dương.')
+  }
   return {
     from,
     to,
     page,
     pageSize,
     countedOnly: includeUncounted !== 'true',
+    ...(checkedInByUserId === undefined ? {} : {
+      checkedInByUserId: positiveInteger(checkedInByUserId, 'INVALID_CHECKED_IN_BY_USER_ID', 'checkedInByUserId phải là số nguyên dương.'),
+    }),
     ...(closedByUserId === undefined ? {} : {
       closedByUserId: positiveInteger(closedByUserId, 'INVALID_CLOSED_BY_USER_ID', 'closedByUserId phải là số nguyên dương.'),
     }),

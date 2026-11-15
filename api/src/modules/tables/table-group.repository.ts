@@ -205,8 +205,9 @@ export async function dissolveUnusedGroups(
       [actor.venueId, groupId],
     )
     if (!active.length) {
+      // A database clock adjustment must not put dissolution before formation.
       await connection.execute(
-        `UPDATE table_groups SET dissolved_at = UTC_TIMESTAMP(3), dissolved_by_user_id = ?
+        `UPDATE table_groups SET dissolved_at = GREATEST(formed_at, UTC_TIMESTAMP(3)), dissolved_by_user_id = ?
          WHERE organization_id = ? AND venue_id = ? AND id = ? AND dissolved_at IS NULL
            AND origin = 'CLAIM'`,
         [actor.userId, actor.organizationId, actor.venueId, groupId],

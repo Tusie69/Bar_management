@@ -35,6 +35,7 @@ describe.each(['/visits/turns', '/visits/turns/summary'])('%s validation and acc
     'from=2030-10-28&to=2030-10-27', 'from=2030-10-21',
     'from=2020-01-01&to=2030-01-01',
     ...['0', '-1', '1.5', 'abc', '9007199254740992', '', '1&closedByUserId=2'].map((value) => `${range}&closedByUserId=${value}`),
+    ...['0', '-1', '1.5', 'abc', '9007199254740992', '', '1&checkedInByUserId=2'].map((value) => `${range}&checkedInByUserId=${value}`),
     `${range}&includeUncounted=1`, `${range}&page=0`, `${range}&pageSize=201`,
   ])('rejects invalid filter %s before reading ledger', async (query) => {
     expect((await request(app).get(`${path}?${query}`)).status).toBe(400)
@@ -50,6 +51,7 @@ describe.each(['/visits/turns', '/visits/turns/summary'])('%s validation and acc
 })
 it('passes identical range/staff/counting filters and returns each response unchanged', async () => {
   const turn = {
+    status: 'CLOSED' as const, checkedInByUserId: 5, checkedInByDisplayName: 'Reception',
     turnId: 11, turnNo: 9, businessDate: '2030-10-21', scope: 'GROUP' as const,
     groupId: 7, groupCode: 'C1', tableId: null, tableCodes: ['B3', 'B4'], memberTableIds: [3, 4],
     guestName: 'Group', guestCount: 8, sourceCode: null, origin: 'WALK_IN',
@@ -61,14 +63,14 @@ it('passes identical range/staff/counting filters and returns each response unch
     total: 2, completedTotal: 2, guestTotal: 16, turns: [turn] }
   const summary = { from: list.from, to: list.to, completedTotal: 2, guestTotal: 16,
     byBusinessDate: [{ businessDate: '2030-10-21', turns: 2, guests: 16 }],
-    byStaff: [{ closedByUserId: 3, closedByDisplayName: 'Owner', turns: 2, guests: 16 }],
+    byStaff: [{ checkedInByUserId: 5, checkedInByDisplayName: 'Reception', turns: 2, guests: 16 }],
     byScope: [{ scope: 'GROUP' as const, groupId: 7, tableId: null, label: 'C1', turns: 2, guests: 16 }] }
   vi.mocked(listTableTurns).mockResolvedValue(list)
   vi.mocked(summarizeTableTurns).mockResolvedValue(summary)
-  const query = `${range}&closedByUserId=3&includeUncounted=true&page=2&pageSize=1`
+  const query = `${range}&closedByUserId=3&checkedInByUserId=5&includeUncounted=true&page=2&pageSize=1`
   expect((await request(app).get(`/visits/turns?${query}`)).body).toEqual(list)
   expect((await request(app).get(`/visits/turns/summary?${query}`)).body).toEqual(summary)
-  const filters = { from: list.from, to: list.to, page: 2, pageSize: 1, closedByUserId: 3, countedOnly: false }
+  const filters = { from: list.from, to: list.to, page: 2, pageSize: 1, closedByUserId: 3, checkedInByUserId: 5, countedOnly: false }
   expect(listTableTurns).toHaveBeenCalledWith(actor, filters)
   expect(summarizeTableTurns).toHaveBeenCalledWith(actor, filters)
 })

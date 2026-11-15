@@ -307,6 +307,7 @@ export interface TableTurnQuery {
   from: string
   to: string
   closedByUserId?: number
+  checkedInByUserId?: number
   includeUncounted?: boolean
 }
 export interface TableTurnsParams extends TableTurnQuery {
@@ -314,7 +315,9 @@ export interface TableTurnsParams extends TableTurnQuery {
   pageSize?: number
 }
 export interface TableTurnView {
-  turnId: number
+  /** Null for OPEN turns; visitId remains stable after release. */
+  turnId: number | null
+  status: "OPEN" | "CLOSED"
   turnNo: number
   businessDate: string
   scope: "TABLE" | "GROUP"
@@ -328,11 +331,13 @@ export interface TableTurnView {
   sourceCode: string | null
   origin: string
   seatedAt: string
-  releasedAt: string
-  endReason: string
+  releasedAt: string | null
+  endReason: string | null
   counted: boolean
   visitId: number
   reservationId: number | null
+  checkedInByUserId: number | null
+  checkedInByDisplayName: string | null
   /** Người trả bàn, null for system closes. */
   closedByUserId: number | null
   closedByDisplayName: string | null
@@ -353,7 +358,7 @@ export interface TableTurnSummary {
   completedTotal: number
   guestTotal: number
   byBusinessDate: { businessDate: string; turns: number; guests: number }[]
-  byStaff: { closedByUserId: number | null; closedByDisplayName: string | null; turns: number; guests: number }[]
+  byStaff: { checkedInByUserId: number | null; checkedInByDisplayName: string | null; turns: number; guests: number }[]
   byScope: {
     scope: "TABLE" | "GROUP"
     tableId: number | null

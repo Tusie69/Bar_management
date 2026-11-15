@@ -25,6 +25,7 @@ import type {
   ReservationView,
   ShiftOverview,
   TableLiveState,
+  TableTurnView,
   TableView,
   VenueConfig,
   VisitView,
@@ -215,6 +216,69 @@ function sourceCode(db: MockDb, sourceId: number): BookingSourceCode {
   return (db.sources.get(sourceId)?.code ?? "OTHER") as BookingSourceCode
 }
 
+// shortcut: demo closed turns derive allocation history; use API snapshots for historical edits.
+export function projectTableTurns(db: MockDb): TableTurnView[] {
+  const rows: TableTurnView[] = []
+  for (const visit of [...db.visits.values()].sort(
+    (a, b) => a.startedAt.getTime() - b.startedAt.getTime() || a.id - b.id,
+  )) {
+    const allocations = [...db.allocations.values()]
+      .filter(
+        (a) =>
+          a.visitId === visit.id &&
+          a.kind === "USAGE" &&
+          (visit.endedAt ? a.releasedAt !== null && a.releaseReason === visit.endReason : a.releasedAt === null),
+      )
+      .sort((a, b) => a.tableId - b.tableId)
+    if (!allocations.length) continue
+    const groupIds = [...new Set(allocations.flatMap((a) => (a.groupId === null ? [] : [a.groupId])))]
+    const group = groupIds.length === 1 ? db.groups.get(groupIds[0]!) : undefined
+    const groupId = group?.layoutTableIds ? group.id : null
+    const tableId = groupId === null ? allocations[0]!.tableId : null
+    const reservation = [...db.reservations.values()].find((r) => r.visitId === visit.id)
+    const counted = visit.endedAt === null || visit.endReason === "GUEST_LEFT"
+    rows.push({
+      turnId: visit.endedAt ? visit.id : null,
+      status: visit.endedAt ? "CLOSED" : "OPEN",
+      turnNo:
+        1 +
+        rows.filter(
+          (row) =>
+            row.businessDate === visit.businessDate &&
+            row.counted &&
+            row.groupId === groupId &&
+            row.tableId === tableId,
+        ).length,
+      businessDate: visit.businessDate,
+      scope: groupId === null ? "TABLE" : "GROUP",
+      tableId,
+      groupId,
+      groupCode: groupId === null ? null : (group?.name ?? groupDisplayCode(db, groupId)),
+      tableCodes: allocations.map((a) => db.tables.get(a.tableId)!.code),
+      memberTableIds: allocations.map((a) => a.tableId),
+      guestName:
+        visit.contactName ??
+        (visit.customerId === null ? null : db.customers.get(visit.customerId)?.displayName) ??
+        "Khách",
+      guestCount: visit.guestCount,
+      sourceCode: reservation ? (db.sources.get(reservation.sourceId)?.code ?? null) : null,
+      origin: visit.origin,
+      seatedAt: visit.startedAt.toISOString(),
+      releasedAt: visit.endedAt?.toISOString() ?? null,
+      endReason: visit.endReason,
+      counted,
+      visitId: visit.id,
+      reservationId: reservation?.id ?? null,
+      checkedInByUserId: visit.createdByUserId,
+      checkedInByDisplayName: db.users.get(visit.createdByUserId)?.displayName ?? null,
+      closedByUserId: visit.endedByUserId,
+      closedByDisplayName:
+        visit.endedByUserId === null ? null : (db.users.get(visit.endedByUserId)?.displayName ?? null),
+    })
+  }
+  return rows
+}
+
 /* ---------------- floor ---------------- */
 
 export function floorState(
@@ -227,6 +291,13 @@ export function floorState(
   const bd = selectedBusinessDate ?? businessDateOf(now)
   // A future preview timestamp must not turn carry-over on before the live clock rolls over.
   const includeStale = bd === liveBusinessDate
+  const countedTurns = projectTableTurns(db).filter((turn) => turn.businessDate === bd && turn.counted)
+  const scopeCount = (tableIds: number[], groupId: number | null) =>
+    countedTurns.filter((turn) =>
+      db.groups.get(groupId ?? 0)?.layoutTableIds
+        ? turn.groupId === groupId
+        : turn.scope === "TABLE" && turn.tableId === Math.min(...tableIds),
+    ).length
   const tables: FloorTableState[] = []
   for (const t of db.tables.values()) {
     if (t.status === "RETIRED") continue
@@ -361,12 +432,11 @@ export function floorState(
       }
       if (reservation?.isBirthday) claim.flags.push("BIRTHDAY")
     }
-    // shortcut: mock-only counts use allocation history, replace with Tu's turn ledger when shipped.
-    const seatedTurnCount = new Set(
-      [...db.allocations.values()]
-        .filter((a) => a.tableId === t.id && a.kind === "USAGE" && a.businessDate === bd)
-        .map((a) => a.visitId),
-    ).size
+    const layoutGroup = [...db.groups.values()].find((g) => !g.dissolvedAt && g.layoutTableIds?.includes(t.id))
+    const seatedTurnCount = scopeCount(
+      layoutGroup?.layoutTableIds ?? claim?.tableIds ?? [t.id],
+      layoutGroup?.id ?? claim?.groupId ?? null,
+    )
     tables.push({
       tableId: t.id,
       state,
@@ -381,20 +451,19 @@ export function floorState(
   )
   const groups = [...db.groups.values()]
     .filter((g) => !g.dissolvedAt)
-    .map((g) => ({
-      id: g.id,
-      version: g.version,
-      name: g.name ?? groupDisplayCode(db, g.id)!,
-      symbolNo: g.symbolNo,
-      displayCode: groupDisplayCode(db, g.id)!,
-      tableIds: g.layoutTableIds ?? live.filter((a) => a.groupId === g.id).map((a) => a.tableId),
-      businessDate: g.businessDate,
-      seatedTurnCount: new Set(
-        [...db.allocations.values()]
-          .filter((a) => a.groupId === g.id && a.kind === "USAGE" && a.businessDate === bd)
-          .map((a) => a.visitId),
-      ).size,
-    }))
+    .map((g) => {
+      const tableIds = g.layoutTableIds ?? live.filter((a) => a.groupId === g.id).map((a) => a.tableId)
+      return {
+        id: g.id,
+        version: g.version,
+        name: g.name ?? groupDisplayCode(db, g.id)!,
+        symbolNo: g.symbolNo,
+        displayCode: groupDisplayCode(db, g.id)!,
+        tableIds,
+        businessDate: g.businessDate,
+        seatedTurnCount: scopeCount(tableIds, g.id),
+      }
+    })
     .filter((g) => g.tableIds.length > 1)
     .map((g) => {
       const members = tables.filter((t) => g.tableIds.includes(t.tableId))

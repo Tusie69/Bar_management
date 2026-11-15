@@ -1,9 +1,50 @@
 import { describe, expect, it } from "vitest"
 import { mockTableTurns, mockTableTurnSummary, seedTableTurns } from "./table-turns"
+import { projectTableTurns } from "./derive"
+import { seedDb } from "./seed"
 
 describe("table turn mock ledger", () => {
   const rows = seedTableTurns(new Date("2030-10-24T14:00:00Z"))
   const range = { from: "2030-10-24", to: "2030-10-24" }
+  it.each(["MOVED", "REGROUPED", "SPLIT"] as const)(
+    "excludes %s history from a closed visit's final tables",
+    (reason) => {
+      const db = seedDb(new Date("2030-10-24T14:00:00Z"))
+      const visit = [...db.visits.values()].find((row) => !row.endedAt)!
+      const allocations = [...db.allocations.values()].filter((row) => row.visitId === visit.id)
+      const finalTable = [...db.tables.values()].find((row) => row.code === "C4")!
+      const previousTable = [...db.tables.values()].find((row) => row.code === "C5")!
+      for (const allocation of allocations) db.allocations.delete(allocation.id)
+      const endedAt = new Date("2030-10-24T15:00:00Z")
+      const finalAllocation = {
+        ...allocations[0]!,
+        tableId: finalTable.id,
+        groupId: null,
+        releasedAt: new Date(endedAt.getTime() - 1),
+        releaseReason: "GUEST_LEFT" as const,
+      }
+      db.allocations.set(finalAllocation.id, finalAllocation)
+      const historyId = Math.max(...db.allocations.keys()) + 1
+      db.allocations.set(historyId, {
+        ...finalAllocation,
+        id: historyId,
+        tableId: previousTable.id,
+        releasedAt: new Date(endedAt.getTime() - 2),
+        releaseReason: reason,
+      })
+      visit.endedAt = endedAt
+      visit.endReason = "GUEST_LEFT"
+      expect(projectTableTurns(db).filter((row) => row.visitId === visit.id)).toMatchObject([
+        {
+          status: "CLOSED",
+          counted: true,
+          tableId: finalTable.id,
+          tableCodes: ["C4"],
+          memberTableIds: [finalTable.id],
+        },
+      ])
+    },
+  )
   it.each(["TABLE", "GROUP"] as const)("uses the highest matching turn ID for a backdated %s snapshot", (scope) => {
     const original = rows.find((row) => row.scope === scope && row.counted && row.businessDate === range.from)!
     const history = [
@@ -44,19 +85,19 @@ describe("table turn mock ledger", () => {
     expect(summary.byScope.find((row) => row.scope === "GROUP")).toMatchObject({ turns: 1, guests: 8 })
     expect(summary.byBusinessDate).toEqual([{ businessDate: range.from, turns: 3, guests: 13 }])
   })
-  it("includes corrections/system closes only with the flag and filters by closing user", () => {
+  it("includes corrections/system closes only with the flag and attributes them to check-in staff", () => {
     const list = mockTableTurns(rows, { ...range, includeUncounted: true })
     expect(list.total).toBe(5)
     expect(list.completedTotal).toBe(3)
     expect(list.turns.map((row) => row.endReason)).toEqual(expect.arrayContaining(["ENTRY_ERROR", "BUSINESS_DAY_END"]))
     const all = mockTableTurnSummary(rows, { ...range, includeUncounted: true })
-    expect(all.byStaff.find((row) => row.closedByUserId === null)).toEqual({
-      closedByUserId: null,
-      closedByDisplayName: null,
-      turns: 1,
-      guests: 6,
+    expect(all.byStaff.find((row) => row.checkedInByUserId === 1)).toEqual({
+      checkedInByUserId: 1,
+      checkedInByDisplayName: "Lễ tân 1",
+      turns: 3,
+      guests: 16,
     })
-    const filtered = { ...range, closedByUserId: 2, includeUncounted: true }
+    const filtered = { ...range, checkedInByUserId: 2, includeUncounted: true }
     expect(mockTableTurns(rows, filtered)).toMatchObject({ total: 2, completedTotal: 1, guestTotal: 3 })
     expect(mockTableTurnSummary(rows, filtered).byStaff).toHaveLength(1)
     expect(mockTableTurnSummary(rows, { from: "2020-01-01", to: "2020-01-01" })).toMatchObject({
@@ -66,5 +107,39 @@ describe("table turn mock ledger", () => {
       byStaff: [],
       byScope: [],
     })
+  })
+
+  it("counts OPEN turns and groups by check-in staff when another person releases", () => {
+    const closed = {
+      ...rows[0]!,
+      businessDate: range.from,
+      visitId: 80,
+      closedByUserId: 2,
+      closedByDisplayName: "Closer",
+    }
+    const open = {
+      ...closed,
+      visitId: 81,
+      turnId: null,
+      status: "OPEN" as const,
+      releasedAt: null,
+      endReason: null,
+      closedByUserId: null,
+      closedByDisplayName: null,
+    }
+    const filters = { ...range, checkedInByUserId: 1 }
+    expect(mockTableTurns([closed, open], { ...filters, pageSize: 1 })).toMatchObject({
+      total: 2,
+      completedTotal: 2,
+      guestTotal: 4,
+    })
+    expect(mockTableTurnSummary([closed, open], filters).byStaff).toEqual([
+      {
+        checkedInByUserId: 1,
+        checkedInByDisplayName: "Lễ tân 1",
+        turns: 2,
+        guests: 4,
+      },
+    ])
   })
 })

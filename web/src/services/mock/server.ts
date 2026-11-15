@@ -82,6 +82,7 @@ import {
   floorState,
   holdTableIds,
   operationView,
+  projectTableTurns,
   report,
   reservationView,
   reservationWarning,
@@ -95,7 +96,7 @@ import {
   waitlistView,
 } from "./derive"
 import { DEMO_USERS, REMOTE_USER_ID, seedDb } from "./seed"
-import { mockTableTurns, mockTableTurnSummary, seedTableTurns } from "./table-turns"
+import { mockTableTurns, mockTableTurnSummary } from "./table-turns"
 import { Tx } from "./tx"
 import { formatDailyBookingText } from "./booking-export"
 import { apiErrorMessage } from "../error-messages"
@@ -164,18 +165,16 @@ export class MockGamApi implements GamApi, DemoControls {
     return clock.now()
   }
 
-  private readonly tableTurns = seedTableTurns(clock.now())
-
   async getTableTurns(params: TableTurnsParams) {
     await this.latency("q")
     this.require("report.read")
-    return mockTableTurns(this.tableTurns, params)
+    return mockTableTurns(projectTableTurns(this.db), params)
   }
 
   async getTableTurnSummary(params: TableTurnQuery) {
     await this.latency("q")
     this.require("report.read")
-    return mockTableTurnSummary(this.tableTurns, params)
+    return mockTableTurnSummary(projectTableTurns(this.db), params)
   }
 
   private get venue() {

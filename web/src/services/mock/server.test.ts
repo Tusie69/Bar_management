@@ -55,6 +55,109 @@ describe("MockGamApi", () => {
     bd = businessDateOf(clock.now())
   })
 
+  it.each([
+    { codes: ["C4"], moveTo: null },
+    { codes: ["C4", "C5"], moveTo: null },
+    { codes: ["C4"], moveTo: "C5" },
+  ])("keeps the counted check-in after clock-ticking release: %j", async ({ codes, moveTo }) => {
+    api.setSession(owner)
+    const filters = { from: bd, to: bd, checkedInByUserId: receptionist.id }
+    const before = await api.getTableTurnSummary(filters)
+    api.setSession(receptionist)
+    const catalog = await api.getCatalog()
+    let tableIds = codes.map((code) => catalog.tables.find((row) => row.code === code)!.id)
+    const seated = await api.seatWalkIn({ tableIds, guestCount: 2, contactName: "NA-34 open mock" })
+    let claim = (await api.getFloorState(clock.now())).tables.find((row) => row.tableId === tableIds[0])!.claim!
+    if (moveTo) {
+      tableIds = [catalog.tables.find((row) => row.code === moveTo)!.id]
+      await api.moveClaim({ claim: { visitId: seated.visitId, version: claim.version }, tableIds })
+      claim = (await api.getFloorState(clock.now())).tables.find((row) => row.tableId === tableIds[0])!.claim!
+    }
+    api.setSession(owner)
+    const open = await api.getTableTurns({ ...filters, pageSize: 200 })
+    expect(open.turns.find((row) => row.visitId === seated.visitId)).toMatchObject({
+      status: "OPEN",
+      turnId: null,
+      releasedAt: null,
+      counted: true,
+      checkedInByUserId: receptionist.id,
+      memberTableIds: tableIds,
+    })
+    expect(await api.getTableTurnSummary(filters)).toMatchObject({
+      completedTotal: before.completedTotal + 1,
+      guestTotal: before.guestTotal + 2,
+    })
+    let closeTime = clock.now().getTime()
+    const tickingClock = vi.spyOn(clock, "now").mockImplementation(() => new Date(closeTime++))
+    try {
+      await api.endVisit(seated.visitId, claim.version)
+    } finally {
+      tickingClock.mockRestore()
+    }
+    const closed = await api.getTableTurns({ ...filters, pageSize: 200 })
+    expect(closed.turns.filter((row) => row.visitId === seated.visitId)).toHaveLength(1)
+    expect(closed.turns.find((row) => row.visitId === seated.visitId)).toMatchObject({
+      status: "CLOSED",
+      checkedInByUserId: receptionist.id,
+      closedByUserId: owner.id,
+      memberTableIds: tableIds,
+      turnNo: open.turns.find((row) => row.visitId === seated.visitId)!.turnNo,
+    })
+    expect(await api.getTableTurnSummary(filters)).toMatchObject({
+      completedTotal: before.completedTotal + 1,
+      guestTotal: before.guestTotal + 2,
+    })
+    const floor = await api.getFloorState(clock.now(), bd)
+    const summary = await api.getTableTurnSummary(filters)
+    const anchor = Math.min(...tableIds)
+    const count = summary.byScope.find((row) => row.tableId === anchor)!.turns
+    expect(floor.tables.find((row) => row.tableId === anchor)?.seatedTurnCount).toBe(count)
+    if (moveTo) {
+      const previousTable = catalog.tables.find((row) => row.code === codes[0])!
+      expect(floor.tables.find((row) => row.tableId === previousTable.id)?.seatedTurnCount).toBe(0)
+    }
+  })
+
+  it("keeps layout badges and ledger in sync through close and entry correction", async () => {
+    const catalog = await api.getCatalog()
+    const tableIds = ["C4", "C5"].map((code) => catalog.tables.find((row) => row.code === code)!.id)
+    await api.createTableGroup({ tableIds })
+    const seated = await api.seatWalkIn({ tableIds, guestCount: 2 })
+    const open = await api.getFloorState(clock.now(), bd)
+    const group = open.groups.find((row) => row.tableIds.includes(tableIds[0]))!
+    api.setSession(owner)
+    expect(open.groups.find((row) => row.id === group.id)?.seatedTurnCount).toBe(1)
+    expect(open.tables.filter((row) => tableIds.includes(row.tableId)).map((row) => row.seatedTurnCount)).toEqual([
+      1, 1,
+    ])
+    expect(
+      (await api.getTableTurnSummary({ from: bd, to: bd })).byScope.find((row) => row.groupId === group.id)?.turns,
+    ).toBe(1)
+    await api.endVisit(seated.visitId, group.claim!.version)
+    expect((await api.getFloorState(clock.now(), bd)).groups.find((row) => row.id === group.id)?.seatedTurnCount).toBe(
+      1,
+    )
+    const db = (api as unknown as { db: MockDb }).db
+    db.visits.get(seated.visitId)!.endReason = "ENTRY_ERROR"
+    for (const allocation of db.allocations.values()) {
+      if (allocation.visitId === seated.visitId && allocation.releaseReason === "GUEST_LEFT")
+        allocation.releaseReason = "ENTRY_ERROR"
+    }
+    const corrected = await api.getFloorState(clock.now(), bd)
+    expect(corrected.groups.find((row) => row.id === group.id)?.seatedTurnCount).toBe(0)
+    expect(corrected.tables.filter((row) => tableIds.includes(row.tableId)).map((row) => row.seatedTurnCount)).toEqual([
+      0, 0,
+    ])
+    expect((await api.getTableTurnSummary({ from: bd, to: bd })).byScope.some((row) => row.groupId === group.id)).toBe(
+      false,
+    )
+    expect(
+      (await api.getTableTurns({ from: bd, to: bd, includeUncounted: true })).turns.find(
+        (row) => row.visitId === seated.visitId,
+      ),
+    ).toMatchObject({ status: "CLOSED", counted: false, endReason: "ENTRY_ERROR" })
+  })
+
   it("mock-only booking metadata survives create, update, floor claims and source changes", async () => {
     const tableId = (await api.getCatalog()).tables.find((t) => t.code === "C4")!.id
     const created = await api.createReservation({
@@ -743,6 +846,17 @@ describe("MockGamApi", () => {
       expect(floor.groups.some((row) => row.id === group.id)).toBe(false)
       const closed = (await api.listVisits(bd)).find((row) => row.id === visit.id)!
       expect(closed).toMatchObject({ endedAt: cutoff, endReason: "BUSINESS_DAY_END", version: visit.version + 1 })
+      api.setSession(owner)
+      const history = await api.getFloorState(clock.now(), bd)
+      expect(history.tables.find((row) => row.tableId === Math.min(...ids))?.seatedTurnCount).toBe(0)
+      expect(
+        (await api.getTableTurnSummary({ from: bd, to: bd })).byScope.some((row) => row.tableId === Math.min(...ids)),
+      ).toBe(false)
+      expect(
+        (await api.getTableTurns({ from: bd, to: bd, includeUncounted: true, pageSize: 200 })).turns.find(
+          (row) => row.visitId === visit.id,
+        ),
+      ).toMatchObject({ status: "CLOSED", counted: false, endReason: "BUSINESS_DAY_END" })
       expect((await api.listVisits(nextDate)).some((row) => row.id === visit.id)).toBe(false)
       expect(
         (await api.listReservations({ businessDate: nextDate })).every((row) => row.businessDate === nextDate),

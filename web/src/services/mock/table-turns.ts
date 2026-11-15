@@ -22,6 +22,7 @@ export function seedTableTurns(now: Date): TableTurnView[] {
       const turnId = rows.length + 1
       rows.push({
         turnId,
+        status: "CLOSED",
         turnNo: index === 0 || index === 1 || group ? 1 : index - 1,
         businessDate,
         scope: group ? "GROUP" : "TABLE",
@@ -40,6 +41,8 @@ export function seedTableTurns(now: Date): TableTurnView[] {
         counted: endReason === "GUEST_LEFT",
         visitId: 1000 + turnId,
         reservationId: 2000 + turnId,
+        checkedInByUserId: staffId,
+        checkedInByDisplayName: `Lễ tân ${staffId}`,
         closedByUserId: system ? null : staffId,
         closedByDisplayName: system ? null : `Lễ tân ${staffId}`,
       })
@@ -55,9 +58,13 @@ function filteredTurns(rows: TableTurnView[], params: TableTurnQuery): TableTurn
         row.businessDate >= params.from &&
         row.businessDate <= params.to &&
         (params.includeUncounted || row.counted) &&
-        (params.closedByUserId === undefined || row.closedByUserId === params.closedByUserId),
+        (params.closedByUserId === undefined || row.closedByUserId === params.closedByUserId) &&
+        (params.checkedInByUserId === undefined || row.checkedInByUserId === params.checkedInByUserId),
     )
-    .sort((a, b) => b.businessDate.localeCompare(a.businessDate) || b.turnId - a.turnId)
+    .sort(
+      (a, b) =>
+        b.businessDate.localeCompare(a.businessDate) || b.seatedAt.localeCompare(a.seatedAt) || b.visitId - a.visitId,
+    )
 }
 function totals(rows: TableTurnView[]) {
   const counted = rows.filter((row) => row.counted)
@@ -78,15 +85,20 @@ export function mockTableTurns(rows: TableTurnView[], params: TableTurnsParams):
   }
 }
 export function mockTableTurnSummary(rows: TableTurnView[], params: TableTurnQuery): TableTurnSummary {
-  const filtered = filteredTurns(rows, params).sort((a, b) => b.turnId - a.turnId)
+  const filtered = filteredTurns(rows, params).sort(
+    (a, b) =>
+      Number(b.status === "OPEN") - Number(a.status === "OPEN") ||
+      (b.turnId ?? 0) - (a.turnId ?? 0) ||
+      b.visitId - a.visitId,
+  )
   const dates = new Map<string, TableTurnSummary["byBusinessDate"][number]>()
   const staff = new Map<number | null, TableTurnSummary["byStaff"][number]>()
   const scopes = new Map<string, TableTurnSummary["byScope"][number]>()
   for (const row of filtered) {
     const date = dates.get(row.businessDate) ?? { businessDate: row.businessDate, turns: 0, guests: 0 }
-    const person = staff.get(row.closedByUserId) ?? {
-      closedByUserId: row.closedByUserId,
-      closedByDisplayName: row.closedByDisplayName,
+    const person = staff.get(row.checkedInByUserId) ?? {
+      checkedInByUserId: row.checkedInByUserId,
+      checkedInByDisplayName: row.checkedInByDisplayName,
       turns: 0,
       guests: 0,
     }
@@ -104,7 +116,7 @@ export function mockTableTurnSummary(rows: TableTurnView[], params: TableTurnQue
       aggregate.guests += row.guestCount
     }
     dates.set(row.businessDate, date)
-    staff.set(row.closedByUserId, person)
+    staff.set(row.checkedInByUserId, person)
     scopes.set(key, scope)
   }
   return {
@@ -115,8 +127,8 @@ export function mockTableTurnSummary(rows: TableTurnView[], params: TableTurnQue
     byStaff: [...staff.values()].sort(
       (a, b) =>
         b.turns - a.turns ||
-        (a.closedByDisplayName ?? "").localeCompare(b.closedByDisplayName ?? "") ||
-        (a.closedByUserId ?? 0) - (b.closedByUserId ?? 0),
+        (a.checkedInByDisplayName ?? "").localeCompare(b.checkedInByDisplayName ?? "") ||
+        (a.checkedInByUserId ?? 0) - (b.checkedInByUserId ?? 0),
     ),
     byScope: [...scopes.values()].sort((a, b) => b.turns - a.turns || a.label.localeCompare(b.label)),
   }

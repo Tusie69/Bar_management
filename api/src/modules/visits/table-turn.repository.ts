@@ -1,10 +1,8 @@
 /**
  * C2 — ghi nhận lượt khách (table turn ledger).
  *
- * A table or a cluster earns +1 turn when both are true: it was IN_USE, and the
- * receptionist completed Trả bàn. Check-in records the moment the party sat down
- * (visits.started_at); closing the visit is what closes the turn, so the ledger is
- * written inside the close transaction and never from a separate call.
+ * A check-in earns one turn immediately. Open visits are projected alongside
+ * the immutable ledger, which is written inside the close transaction.
  *
  * Everything the turn needs is snapshotted at that moment: editing the booking or
  * splitting the cluster afterwards cannot change what the ledger says happened.
@@ -46,12 +44,9 @@ export interface RecordedTurn {
 }
 
 /**
- * A turn counts only when the close was a real Trả bàn. The business-day worker
+ * A closed turn counts only when the close was a real Trả bàn. The business-day worker
  * closing a forgotten visit, an entry correction and a merge all leave history
  * behind without claiming the table served another party.
- *
- * [?] Whether the end-of-shift auto-close should count is not confirmed; the row
- * is written either way, so flipping this is a one-line change, not a backfill.
  */
 function countsAsServed(endReason: string): boolean {
   return endReason === 'GUEST_LEFT' || endReason === 'AFTER_PAYMENT'
@@ -232,9 +227,8 @@ export interface TurnCounts {
 }
 
 /**
- * Completed turns for one operating day, for the floor badge. Counts only turns
- * that count, so a visit auto-closed at the end of the shift does not inflate the
- * badge even though its row is in the ledger.
+ * Count check-ins, including seated visits, for the floor badge. Corrections and
+ * business-day closes remain in history without contributing to the badge.
  */
 export async function completedTurnCounts(
   connection: PoolConnection,
@@ -242,10 +236,10 @@ export async function completedTurnCounts(
   businessDate: string,
 ): Promise<TurnCounts> {
   const [rows] = await connection.execute<(RowDataPacket & { scope: TurnScope; scope_key: number; total: number })[]>(
-    `SELECT scope, scope_key, COUNT(*) AS total FROM table_turns
-     WHERE organization_id = ? AND venue_id = ? AND business_date = ? AND completed_at IS NOT NULL
-     GROUP BY scope, scope_key`,
-    [actor.organizationId, actor.venueId, businessDate],
+    `${turnProjection}
+     SELECT scope, COALESCE(group_id, table_id) AS scope_key, COUNT(*) AS total FROM turns
+     WHERE counted = 1 GROUP BY scope, COALESCE(group_id, table_id)`,
+    [actor.organizationId, actor.venueId, businessDate, businessDate],
   )
   const byTable = new Map<number, number>()
   const byGroup = new Map<number, number>()
@@ -257,7 +251,9 @@ export async function completedTurnCounts(
 }
 
 export interface TurnView {
-  turnId: number
+  /** Null until the visit closes; visitId is the stable identity. */
+  turnId: number | null
+  status: 'OPEN' | 'CLOSED'
   turnNo: number
   businessDate: string
   scope: TurnScope
@@ -272,11 +268,13 @@ export interface TurnView {
   sourceCode: string | null
   origin: string
   seatedAt: string
-  releasedAt: string
-  endReason: string
+  releasedAt: string | null
+  endReason: string | null
   counted: boolean
   visitId: number
   reservationId: number | null
+  checkedInByUserId: number | null
+  checkedInByDisplayName: string | null
   closedByUserId: number | null
   closedByDisplayName: string | null
 }
@@ -289,15 +287,16 @@ export interface TurnQuery {
   /** Only turns that count as served; the default, which is what statistics mean. */
   countedOnly: boolean
   closedByUserId?: number
+  checkedInByUserId?: number
 }
-type TurnFilters = Pick<TurnQuery, 'from' | 'to' | 'countedOnly' | 'closedByUserId'>
+type TurnFilters = Pick<TurnQuery, 'from' | 'to' | 'countedOnly' | 'closedByUserId' | 'checkedInByUserId'>
 export interface TurnSummary {
   from: string
   to: string
   completedTotal: number
   guestTotal: number
   byBusinessDate: { businessDate: string; turns: number; guests: number }[]
-  byStaff: { closedByUserId: number | null; closedByDisplayName: string | null; turns: number; guests: number }[]
+  byStaff: { checkedInByUserId: number | null; checkedInByDisplayName: string | null; turns: number; guests: number }[]
   byScope: { scope: TurnScope; tableId: number | null; groupId: number | null; label: string; turns: number; guests: number }[]
 }
 
@@ -332,13 +331,16 @@ function parseJsonStrings(value: unknown): string[] {
 }
 
 interface TurnRow extends RowDataPacket {
-  id: number
-  turn_no: number
+  id: number | null
+  status: 'OPEN' | 'CLOSED'
+  counted: number
+  display_turn_no: number
   business_date: Date | string
   scope: TurnScope
   table_id: number | null
   group_id: number | null
   group_code_snapshot: string | null
+  group_symbol_no: number | null
   table_codes_snapshot: unknown
   member_table_ids: unknown
   guest_name: string
@@ -346,30 +348,90 @@ interface TurnRow extends RowDataPacket {
   source_code: string | null
   origin: string
   seated_at: Date | string
-  released_at: Date | string
-  end_reason: string
-  completed_at: Date | string | null
+  released_at: Date | string | null
+  end_reason: string | null
   visit_id: number
   reservation_id: number | null
+  checked_in_by_user_id: number | null
+  checked_in_by_display_name: string | null
   closed_by_user_id: number | null
   closed_by_display_name: string | null
 }
+
+// One row per visit: live allocations supply open turns; close snapshots replace
+// them atomically. Keep this source shared with the badge, list and aggregates.
+const turnProjection = `WITH target_visits AS (
+  SELECT * FROM visits WHERE organization_id = ? AND venue_id = ? AND business_date BETWEEN ? AND ?
+), closed_turns AS (
+  SELECT t.id, 'CLOSED' AS status, t.turn_no, t.business_date, t.scope, t.table_id, t.group_id,
+    t.group_code_snapshot, NULL AS group_symbol_no, t.table_codes_snapshot, t.member_table_ids,
+    t.guest_name, t.guest_count, t.source_code, t.origin, t.seated_at, t.released_at, t.end_reason,
+    (t.completed_at IS NOT NULL) AS counted, t.visit_id, t.reservation_id,
+    v.created_by_user_id AS checked_in_by_user_id, t.closed_by_user_id, t.organization_id, t.venue_id
+  FROM target_visits v JOIN table_turns t
+    ON t.visit_id = v.id AND t.organization_id = v.organization_id AND t.venue_id = v.venue_id
+), open_allocations AS (
+  SELECT v.id AS visit_id, MIN(a.table_id) AS anchor_id,
+    CASE WHEN COUNT(DISTINCT a.group_id) = 1 AND MAX(g.origin) = 'LAYOUT' THEN MAX(g.id) END AS group_id,
+    MAX(g.name) AS group_name, MAX(g.symbol_no) AS group_symbol_no,
+    JSON_ARRAYAGG(d.code) AS table_codes, JSON_ARRAYAGG(a.table_id) AS member_ids
+  FROM target_visits v JOIN table_allocations a
+    ON a.visit_id = v.id AND a.organization_id = v.organization_id AND a.venue_id = v.venue_id
+      AND a.kind = 'USAGE' AND a.released_at IS NULL
+  JOIN dining_tables d ON d.id = a.table_id AND d.organization_id = v.organization_id AND d.venue_id = v.venue_id
+  LEFT JOIN table_groups g ON g.id = a.group_id AND g.organization_id = v.organization_id AND g.venue_id = v.venue_id
+  WHERE v.ended_at IS NULL AND NOT EXISTS (
+    SELECT 1 FROM closed_turns t WHERE t.visit_id = v.id
+  )
+  GROUP BY v.id
+), visit_bookings AS (
+  SELECT r.visit_id, MIN(r.id) AS id FROM reservations r JOIN target_visits v
+    ON r.visit_id = v.id AND r.organization_id = v.organization_id AND r.venue_id = v.venue_id
+  GROUP BY r.visit_id
+), raw_turns AS (
+  SELECT * FROM closed_turns
+  UNION ALL
+  SELECT NULL AS id, 'OPEN' AS status,
+    NULL AS turn_no,
+    v.business_date, IF(a.group_id IS NULL, 'TABLE', 'GROUP') AS scope,
+    IF(a.group_id IS NULL, a.anchor_id, NULL) AS table_id, a.group_id,
+    IF(a.group_id IS NULL, NULL, a.group_name) AS group_code_snapshot,
+    IF(a.group_id IS NULL, NULL, a.group_symbol_no) AS group_symbol_no,
+    a.table_codes, a.member_ids, COALESCE(v.contact_name, c.display_name, 'Khách') AS guest_name,
+    v.guest_count, bs.code AS source_code, v.origin, v.started_at, NULL AS released_at, NULL AS end_reason,
+    1 AS counted, v.id AS visit_id, r.id AS reservation_id, v.created_by_user_id AS checked_in_by_user_id,
+    NULL AS closed_by_user_id, v.organization_id, v.venue_id
+  FROM target_visits v JOIN open_allocations a ON a.visit_id = v.id
+  LEFT JOIN customers c ON c.id = v.customer_id AND c.organization_id = v.organization_id
+  LEFT JOIN visit_bookings vb ON vb.visit_id = v.id
+  LEFT JOIN reservations r ON r.id = vb.id AND r.organization_id = v.organization_id AND r.venue_id = v.venue_id
+  LEFT JOIN booking_sources bs ON bs.id = r.source_id AND bs.organization_id = v.organization_id
+), turns AS (
+  SELECT raw_turns.*, COUNT(CASE WHEN counted = 1 THEN 1 END) OVER (
+    PARTITION BY business_date, scope, table_id, group_id ORDER BY seated_at, visit_id
+    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+  ) + IF(counted = 0, 1, 0) AS display_turn_no FROM raw_turns
+)`
+
 function turnFilter(actor: { organizationId: number; venueId: number }, query: TurnFilters) {
   return {
-    sql: `t.organization_id = ? AND t.venue_id = ? AND t.business_date BETWEEN ? AND ?
-      ${query.countedOnly ? 'AND t.completed_at IS NOT NULL' : ''}
-      ${query.closedByUserId === undefined ? '' : 'AND t.closed_by_user_id = ?'}`,
+    sql: `1 = 1 ${query.countedOnly ? 'AND t.counted = 1' : ''}
+      ${query.closedByUserId === undefined ? '' : 'AND t.closed_by_user_id = ?'}
+      ${query.checkedInByUserId === undefined ? '' : 'AND t.checked_in_by_user_id = ?'}`,
     values: [actor.organizationId, actor.venueId, query.from, query.to,
-      ...(query.closedByUserId === undefined ? [] : [query.closedByUserId])],
+      ...(query.closedByUserId === undefined ? [] : [query.closedByUserId]),
+      ...(query.checkedInByUserId === undefined ? [] : [query.checkedInByUserId])],
   }
 }
 // Retain historical names after role revocation, while requiring an org/venue association.
-const closingUserJoin = `LEFT JOIN users u ON u.id = t.closed_by_user_id AND EXISTS (
+function turnUserJoin(column: 'closed_by_user_id' | 'checked_in_by_user_id', alias: 'u' | 'cu') {
+  return `LEFT JOIN users ${alias} ON ${alias}.id = t.${column} AND EXISTS (
   SELECT 1 FROM memberships m JOIN membership_roles mr
     ON mr.membership_id = m.id AND mr.organization_id = m.organization_id
-  WHERE m.user_id = u.id AND m.organization_id = t.organization_id
+  WHERE m.user_id = ${alias}.id AND m.organization_id = t.organization_id
     AND (mr.venue_id = t.venue_id OR mr.venue_id IS NULL)
 )`
+}
 
 /** Turns over a range of operating days. Built for statistics in a later sprint. */
 export async function listTableTurns(
@@ -382,21 +444,19 @@ export async function listTableTurns(
     const [totals] = await connection.execute<(RowDataPacket & {
       total: number; completed_total: number; guest_total: number
     })[]>(
-      `SELECT COUNT(*) AS total,
-         COUNT(completed_at) AS completed_total,
-         COALESCE(SUM(IF(completed_at IS NOT NULL, guest_count, 0)), 0) AS guest_total
-       FROM table_turns t WHERE ${filter.sql}`,
+      `${turnProjection} SELECT COUNT(*) AS total,
+         COUNT(CASE WHEN counted = 1 THEN 1 END) AS completed_total,
+         COALESCE(SUM(IF(counted = 1, guest_count, 0)), 0) AS guest_total
+       FROM turns t WHERE ${filter.sql}`,
       filter.values,
     )
     const offset = (query.page - 1) * query.pageSize
     const [rows] = await connection.execute<TurnRow[]>(
-      `SELECT t.id, turn_no, business_date, scope, table_id, group_id, group_code_snapshot,
-         table_codes_snapshot, member_table_ids, guest_name, guest_count, source_code, origin,
-         seated_at, released_at, end_reason, completed_at, visit_id, reservation_id,
-         closed_by_user_id, u.display_name AS closed_by_display_name
-       FROM table_turns t ${closingUserJoin}
+      `${turnProjection} SELECT t.*, u.display_name AS closed_by_display_name,
+         cu.display_name AS checked_in_by_display_name
+       FROM turns t ${turnUserJoin('closed_by_user_id', 'u')} ${turnUserJoin('checked_in_by_user_id', 'cu')}
        WHERE ${filter.sql}
-       ORDER BY business_date DESC, t.id DESC
+       ORDER BY business_date DESC, seated_at DESC, visit_id DESC
        LIMIT ${query.pageSize} OFFSET ${offset}`,
       filter.values,
     )
@@ -409,11 +469,12 @@ export async function listTableTurns(
       completedTotal: Number(totals[0]?.completed_total ?? 0),
       guestTotal: Number(totals[0]?.guest_total ?? 0),
       turns: rows.map((row) => ({
-        turnId: Number(row.id),
-        turnNo: Number(row.turn_no),
+        turnId: row.id === null ? null : Number(row.id),
+        status: row.status,
+        turnNo: Number(row.display_turn_no),
         businessDate: dateOnly(row.business_date),
         scope: row.scope,
-        groupCode: row.group_code_snapshot,
+        groupCode: row.group_code_snapshot ?? (row.group_symbol_no === null ? null : groupDisplayCode(Number(row.group_symbol_no))),
         groupId: row.group_id === null ? null : Number(row.group_id),
         tableId: row.table_id === null ? null : Number(row.table_id),
         tableCodes: parseJsonStrings(row.table_codes_snapshot),
@@ -423,11 +484,13 @@ export async function listTableTurns(
         sourceCode: row.source_code,
         origin: row.origin,
         seatedAt: isoDateTime(row.seated_at),
-        releasedAt: isoDateTime(row.released_at),
+        releasedAt: row.released_at === null ? null : isoDateTime(row.released_at),
         endReason: row.end_reason,
-        counted: row.completed_at !== null,
+        counted: Number(row.counted) === 1,
         visitId: Number(row.visit_id),
         reservationId: row.reservation_id === null ? null : Number(row.reservation_id),
+        checkedInByUserId: row.checked_in_by_user_id === null ? null : Number(row.checked_in_by_user_id),
+        checkedInByDisplayName: row.checked_in_by_display_name,
         closedByUserId: row.closed_by_user_id === null ? null : Number(row.closed_by_user_id),
         closedByDisplayName: row.closed_by_display_name,
       })),
@@ -446,39 +509,37 @@ export async function summarizeTableTurns(
   type AggregateRow = RowDataPacket & { turns: number; guests: number }
   try {
     const [totals] = await connection.execute<AggregateRow[]>(
-      `SELECT COUNT(t.completed_at) AS turns,
-        COALESCE(SUM(IF(t.completed_at IS NOT NULL, t.guest_count, 0)), 0) AS guests
-       FROM table_turns t WHERE ${filter.sql}`, filter.values,
+      `${turnProjection} SELECT COUNT(CASE WHEN t.counted = 1 THEN 1 END) AS turns,
+        COALESCE(SUM(IF(t.counted = 1, t.guest_count, 0)), 0) AS guests
+       FROM turns t WHERE ${filter.sql}`, filter.values,
     )
     const [dates] = await connection.execute<(AggregateRow & { business_date: Date | string })[]>(
-      `SELECT t.business_date, COUNT(*) AS turns, SUM(t.guest_count) AS guests
-       FROM table_turns t WHERE ${filter.sql} GROUP BY t.business_date ORDER BY t.business_date`, filter.values,
+      `${turnProjection} SELECT t.business_date, COUNT(*) AS turns, SUM(t.guest_count) AS guests
+       FROM turns t WHERE ${filter.sql} GROUP BY t.business_date ORDER BY t.business_date`, filter.values,
     )
     const [staff] = await connection.execute<(AggregateRow & {
-      closed_by_user_id: number | null; display_name: string | null
+      checked_in_by_user_id: number | null; display_name: string | null
     })[]>(
-      `SELECT t.closed_by_user_id, u.display_name, COUNT(*) AS turns, SUM(t.guest_count) AS guests
-       FROM table_turns t ${closingUserJoin} WHERE ${filter.sql}
-       GROUP BY t.closed_by_user_id, u.display_name
-       ORDER BY turns DESC, u.display_name, t.closed_by_user_id`, filter.values,
+      `${turnProjection} SELECT t.checked_in_by_user_id, cu.display_name, COUNT(*) AS turns, SUM(t.guest_count) AS guests
+       FROM turns t ${turnUserJoin('checked_in_by_user_id', 'cu')} WHERE ${filter.sql}
+       GROUP BY t.checked_in_by_user_id, cu.display_name
+       ORDER BY turns DESC, cu.display_name, t.checked_in_by_user_id`, filter.values,
     )
     const [scopes] = await connection.execute<(AggregateRow & {
       scope: TurnScope; table_id: number | null; group_id: number | null
-      group_code_snapshot: string | null; table_codes_snapshot: unknown
+      group_code_snapshot: string | null; group_symbol_no: number | null; table_codes_snapshot: unknown
     })[]>(
-      `SELECT a.scope, a.table_id, a.group_id, a.turns, a.guests,
-         latest.group_code_snapshot, latest.table_codes_snapshot
-       FROM (
-         SELECT t.scope,
-           CASE WHEN t.scope = 'TABLE' THEN t.table_id ELSE NULL END AS table_id,
-           CASE WHEN t.scope = 'GROUP' THEN t.group_id ELSE NULL END AS group_id,
-           COUNT(*) AS turns, SUM(t.guest_count) AS guests, MAX(t.id) AS latest_id
-         FROM table_turns t WHERE ${filter.sql}
-         GROUP BY t.scope, CASE WHEN t.scope = 'TABLE' THEN t.table_id ELSE NULL END,
-           CASE WHEN t.scope = 'GROUP' THEN t.group_id ELSE NULL END
-       ) a JOIN table_turns latest ON latest.id = a.latest_id
-         AND latest.organization_id = ? AND latest.venue_id = ?`,
-      [...filter.values, actor.organizationId, actor.venueId],
+      `${turnProjection}, ranked_turns AS (
+         SELECT t.*, ROW_NUMBER() OVER (
+           PARTITION BY scope, table_id, group_id ORDER BY (id IS NULL) DESC, id DESC, visit_id DESC
+         ) AS latest FROM turns t WHERE ${filter.sql}
+       )
+       SELECT scope, table_id, group_id, COUNT(*) AS turns, SUM(guest_count) AS guests,
+         MAX(CASE WHEN latest = 1 THEN group_code_snapshot END) AS group_code_snapshot,
+         MAX(CASE WHEN latest = 1 THEN group_symbol_no END) AS group_symbol_no,
+         MAX(CASE WHEN latest = 1 THEN CAST(table_codes_snapshot AS CHAR) END) AS table_codes_snapshot
+       FROM ranked_turns GROUP BY scope, table_id, group_id`,
+      filter.values,
     )
     return {
       from: query.from, to: query.to,
@@ -488,14 +549,15 @@ export async function summarizeTableTurns(
         businessDate: dateOnly(row.business_date), turns: Number(row.turns), guests: Number(row.guests),
       })),
       byStaff: staff.map((row) => ({
-        closedByUserId: row.closed_by_user_id === null ? null : Number(row.closed_by_user_id),
-        closedByDisplayName: row.display_name, turns: Number(row.turns), guests: Number(row.guests),
+        checkedInByUserId: row.checked_in_by_user_id === null ? null : Number(row.checked_in_by_user_id),
+        checkedInByDisplayName: row.display_name, turns: Number(row.turns), guests: Number(row.guests),
       })),
       byScope: scopes.map((row) => ({
         scope: row.scope,
         tableId: row.table_id === null ? null : Number(row.table_id),
         groupId: row.group_id === null ? null : Number(row.group_id),
-        label: (row.scope === 'GROUP' ? row.group_code_snapshot : null)
+        label: (row.scope === 'GROUP' ? row.group_code_snapshot
+          ?? (row.group_symbol_no === null ? null : groupDisplayCode(Number(row.group_symbol_no))) : null)
           ?? parseJsonStrings(row.table_codes_snapshot).join(' + '),
         turns: Number(row.turns), guests: Number(row.guests),
       })).sort((a, b) => b.turns - a.turns || a.label.localeCompare(b.label)),
