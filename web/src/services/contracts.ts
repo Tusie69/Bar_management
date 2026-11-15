@@ -195,9 +195,37 @@ export interface AccountsView {
 export interface CreateAccountInput {
   username: string
   displayName: string
-  password: string
+  /** TU-34: bỏ trống để máy chủ sinh mật khẩu tạm. */
+  password?: string
   roleCode: string
   accessLevel?: "WRITE" | "READ_ONLY"
+}
+
+/**
+ * TU-34: mật khẩu tạm chỉ về đúng một lần, trong response tạo hoặc reset.
+ * Không có endpoint nào đọc lại được nó, kể cả OWNER.
+ */
+export interface AccountCredentialResult {
+  account: AccountSummary
+  temporaryPassword: string | null
+}
+
+/** Một quyền trong bảng checkbox của màn Tài khoản & phân quyền. */
+export interface AccountPermissionView {
+  code: string
+  /** Vai trò của tài khoản có cho phép quyền này không (trần cứng). */
+  grantedByRole: boolean
+  /** Quyền hiệu dụng: trong trần vai trò và chưa bị tắt riêng. */
+  enabled: boolean
+  /** Có bản ghi override riêng cho tài khoản này. */
+  overridden: boolean
+  /** Checkbox có sửa được không (trong trần và không thuộc nhóm bảo vệ). */
+  editable: boolean
+}
+
+export interface AccountPermissionsView {
+  account: AccountSummary
+  permissions: AccountPermissionView[]
 }
 
 export interface DissolveTableGroupInput {
@@ -327,10 +355,18 @@ export interface GamApi {
   getCustomer(id: number): Promise<CustomerProfile>
   listOperations(limit: number): Promise<OperationView[]>
   listAccounts(): Promise<AccountsView>
-  createAccount(input: CreateAccountInput): Promise<AccountSummary>
+  createAccount(input: CreateAccountInput): Promise<AccountCredentialResult>
   setAccountStatus(userId: number, version: number, status: "ACTIVE" | "DISABLED"): Promise<AccountSummary>
   setAdminAccessLevel(userId: number, version: number, accessLevel: "WRITE" | "READ_ONLY"): Promise<AccountSummary>
-  resetAccountPassword(userId: number, version: number, newPassword: string): Promise<AccountSummary>
+  resetAccountPassword(userId: number, version: number, newPassword?: string): Promise<AccountCredentialResult>
+  /** TU-34: quyền riêng của một tài khoản (đọc để hiện checkbox). */
+  getAccountPermissions(userId: number): Promise<AccountPermissionsView>
+  /** TU-34: lưu checkbox. `permissions` chỉ gửi các mã muốn đặt lại trạng thái. */
+  updateAccountPermissions(
+    userId: number,
+    version: number,
+    permissions: Record<string, boolean>,
+  ): Promise<AccountPermissionsView>
   changeOwnPassword(currentPassword: string, newPassword: string): Promise<void>
   getUndoState(): Promise<UndoState>
   /** table_allocations of a business date, optionally for one table (history + timeline). */
@@ -419,6 +455,8 @@ export const REST_ENDPOINTS = {
   setAccountStatus: "POST /accounts/:id/status",
   setAdminAccessLevel: "POST /accounts/:id/access-level",
   resetAccountPassword: "POST /accounts/:id/password-reset",
+  accountPermissions: "GET /accounts/:id/permissions",
+  updateAccountPermissions: "POST /accounts/:id/permissions",
   changeOwnPassword: "POST /accounts/me/password",
   catalog: "GET /tables/catalog",
   sources: "GET /bookings/sources",

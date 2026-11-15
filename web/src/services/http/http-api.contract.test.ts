@@ -237,6 +237,7 @@ beforeEach(() => {
         })
       if (path === "/accounts" && init.method === "POST")
         return json({
+          temporaryPassword: null,
           account: {
             id: 5,
             username: "le_tan",
@@ -964,7 +965,9 @@ describe("BA-022 account management HTTP contract", () => {
       password: "a-very-long-password",
       roleCode: "RECEPTIONIST",
     })
-    expect(created.id).toBe(5)
+    expect(created.account.id).toBe(5)
+    // TU-34: mật khẩu do người quản trị đặt thì không có mật khẩu tạm trả về.
+    expect(created.temporaryPassword).toBeNull()
 
     const locked = await api.setAccountStatus(5, 3, "DISABLED")
     expect(locked.status).toBe("DISABLED")

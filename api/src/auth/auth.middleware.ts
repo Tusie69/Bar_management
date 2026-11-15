@@ -25,7 +25,10 @@ export const requireTrustedOrigin: RequestHandler = (request, _response, next) =
   next()
 }
 
-export const requireAuthentication: RequestHandler = async (request, _response, next) => {
+/**
+ * Xác thực phiên và gắn vào request. Không quan tâm mật khẩu tạm.
+ */
+async function authenticate(request: Parameters<RequestHandler>[0]): Promise<void> {
   const token = readSessionCookie(request)
   if (!token) throw new AppError(401, 'AUTHENTICATION_REQUIRED', 'Vui lòng đăng nhập để tiếp tục.')
   const inspection = await inspectSession(token)
@@ -39,6 +42,30 @@ export const requireAuthentication: RequestHandler = async (request, _response, 
   // expires_at quyết định, không do cột này.
   const sessionId = inspection.authentication.actor.authSessionId
   if (sessionId !== undefined) void touchSessionActivity(sessionId)
+}
+
+/**
+ * TU-34: phiên hợp lệ nhưng tài khoản còn mật khẩu tạm.
+ *
+ * Dùng cho đúng những chỗ người dùng PHẢI làm được trước khi đổi mật khẩu:
+ * đọc phiên của mình, đổi mật khẩu, và đăng xuất. Mọi endpoint nghiệp vụ khác
+ * đi qua `requireAuthentication` và bị chặn — mặc định là chặn, nên quên gắn
+ * middleware ở một route mới sẽ không mở ra lỗ hổng.
+ */
+export const requireAuthenticationPendingPassword: RequestHandler = async (request, _response, next) => {
+  await authenticate(request)
+  next()
+}
+
+export const requireAuthentication: RequestHandler = async (request, _response, next) => {
+  await authenticate(request)
+  if (getAuthentication(request)?.mustChangePassword) {
+    throw new AppError(
+      403,
+      'PASSWORD_CHANGE_REQUIRED',
+      'Tài khoản đang dùng mật khẩu tạm. Hãy đổi mật khẩu trước khi tiếp tục.',
+    )
+  }
   next()
 }
 

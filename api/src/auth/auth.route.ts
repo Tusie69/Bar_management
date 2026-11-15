@@ -3,7 +3,12 @@ import { Router } from 'express'
 import { AppError } from '../errors/app-error.js'
 import { isAuthPortal } from './auth-portal.js'
 import { attachAuthentication, getAuthentication, requireAuthenticatedActor } from './authenticated-actor.js'
-import { requireAuthentication, requireCsrfProtection, requirePermission } from './auth.middleware.js'
+import {
+  requireAuthentication,
+  requireAuthenticationPendingPassword,
+  requireCsrfProtection,
+  requirePermission,
+} from './auth.middleware.js'
 import { getAdminAccessLevel, listPermissions, listRoles, login, logoutSession } from './auth.service.js'
 import { DEVICE_ID_HEADER } from './device-identity.js'
 import { forceLogoutSession, listActiveSessions } from './session-directory.js'
@@ -70,6 +75,9 @@ async function authPayload(request: Parameters<typeof getAuthentication>[0]) {
     permissions,
     csrfToken: createCsrfToken(authentication.sessionToken),
     portal: authentication.portal,
+    // TU-34: web dùng cờ này để bắt đổi mật khẩu tạm trước khi vào app. API
+    // không tin cờ này — `requireAuthentication` mới là nơi chặn.
+    mustChangePassword: authentication.mustChangePassword,
   }
 }
 
@@ -116,11 +124,13 @@ authRouter.post('/login', async (request, response) => {
   }
 })
 
-authRouter.get('/me', requireAuthentication, async (request, response) => {
+// /me và /logout dùng biến thể cho phép mật khẩu tạm: người dùng phải đọc
+// được phiên của mình để biết cần đổi mật khẩu, và phải thoát ra được.
+authRouter.get('/me', requireAuthenticationPendingPassword, async (request, response) => {
   response.json(await authPayload(request))
 })
 
-authRouter.post('/logout', requireAuthentication, requireCsrfProtection, async (request, response) => {
+authRouter.post('/logout', requireAuthenticationPendingPassword, requireCsrfProtection, async (request, response) => {
   await logoutSession(requireAuthenticatedActor(request))
   clearSessionCookie(response)
   response.status(204).end()

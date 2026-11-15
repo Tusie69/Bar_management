@@ -50,7 +50,7 @@ export function AccountsSection() {
       roleCode,
       ...(roleCode === "ADMIN" ? { accessLevel: draft.accessLevel } : {}),
     })
-    toast.success(`Đã tạo tài khoản ${created.username}.`)
+    toast.success(`Đã tạo tài khoản ${created.account.username}.`)
     setDraft(emptyDraft)
     setOpen(false)
     await refresh()

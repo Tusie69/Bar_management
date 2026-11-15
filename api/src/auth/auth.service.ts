@@ -10,6 +10,7 @@ import { createSessionToken, hashSessionToken } from './session-security.js'
 import { describeDevice, resolveDeviceId, shortDeviceId } from './device-identity.js'
 import { recordAuthAudit } from './auth-audit.js'
 import { notifySessionsRevoked, type SessionEndCode } from './session-lifecycle.js'
+import { READ_ONLY_ADMIN_PERMISSIONS } from './read-only-permissions.js'
 
 interface LoginRow extends RowDataPacket {
   user_id: number
@@ -17,6 +18,7 @@ interface LoginRow extends RowDataPacket {
   display_name: string
   password_hash: string
   user_status: 'ACTIVE' | 'DISABLED'
+  must_change_password: number
   membership_id: number | null
   membership_status: 'ACTIVE' | 'SUSPENDED' | 'ENDED' | null
 }
@@ -33,6 +35,7 @@ interface SessionRow extends RowDataPacket {
   revoke_reason: string | null
   session_expired: number
   user_status: 'ACTIVE' | 'DISABLED'
+  must_change_password: number
   membership_status: 'ACTIVE' | 'SUSPENDED' | 'ENDED'
   venue_status: string
   portal_role_active: number
@@ -61,7 +64,7 @@ export async function login(
 ): Promise<LoginResult> {
   const [rows] = await databasePool.execute<LoginRow[]>(
     `SELECT u.id AS user_id, u.username, u.display_name, u.password_hash,
-       u.status AS user_status, m.id AS membership_id, m.status AS membership_status
+       u.status AS user_status, u.must_change_password, m.id AS membership_id, m.status AS membership_status
      FROM users AS u
      LEFT JOIN memberships AS m
        ON m.user_id = u.id AND m.organization_id = ?
@@ -238,6 +241,7 @@ export async function login(
       displayName: user.display_name,
       sessionToken: token,
       portal,
+      mustChangePassword: Number(user.must_change_password) === 1,
     },
     expiresAt: expiresAt.toISOString(),
   }
@@ -250,7 +254,7 @@ async function selectLoginUser(
 ): Promise<LoginRow | undefined> {
   const [rows] = await connection.execute<LoginRow[]>(
     `SELECT u.id AS user_id, u.username, u.display_name, u.password_hash,
-       u.status AS user_status, m.id AS membership_id, m.status AS membership_status
+       u.status AS user_status, u.must_change_password, m.id AS membership_id, m.status AS membership_status
      FROM users AS u
      LEFT JOIN memberships AS m
        ON m.user_id = u.id AND m.organization_id = ?
@@ -288,7 +292,7 @@ export async function inspectSession(sessionToken: string): Promise<SessionInspe
   const portalRoleMatch = portalRoleMatchSql('s.portal')
   const [rows] = await databasePool.execute<SessionRow[]>(
     `SELECT s.id AS session_id, s.organization_id, s.membership_id, s.user_id,
-       u.username, u.display_name, s.portal,
+       u.username, u.display_name, s.portal, u.must_change_password,
        (s.revoked_at IS NOT NULL) AS session_revoked, s.revoke_reason,
        (s.expires_at <= UTC_TIMESTAMP(3)) AS session_expired,
        u.status AS user_status, m.status AS membership_status, v.status AS venue_status,
@@ -355,6 +359,7 @@ export async function inspectSession(sessionToken: string): Promise<SessionInspe
       displayName: row.display_name,
       sessionToken,
       portal: row.portal,
+      mustChangePassword: Number(row.must_change_password) === 1,
     },
   }
 }
@@ -388,6 +393,7 @@ export async function listPermissions(actor: AuthenticatedActor): Promise<string
   if (!actor.portal) return []
   const portalRoles = rolesForPortal(actor.portal)
   const rolePlaceholders = portalRoles.map(() => '?').join(', ')
+  const readOnlyPlaceholders = READ_ONLY_ADMIN_PERMISSIONS.map(() => '?').join(', ')
   const [rows] = await databasePool.execute<(RowDataPacket & { code: string })[]>(
     `SELECT DISTINCT p.code
      FROM memberships AS m
@@ -402,21 +408,21 @@ export async function listPermissions(actor: AuthenticatedActor): Promise<string
        AND (
          r.code <> 'ADMIN'
          OR mr.access_level = 'WRITE'
-         OR p.code IN (
-           'customer.view_masked', 'customer.phone.reveal', 'booking.phone.reveal',
-           'audit.read', 'report.read', 'user.read',
-           -- TU-33: xem danh sach phien la chan doan, cung loai voi audit.read.
-           -- session.revoke co y KHONG co o day: buoc dang xuat day mot nhan
-           -- vien ra khoi he thong giua ca, nen no la mutation va Admin
-           -- Read-Only khong duoc lam.
-           'session.read',
-           -- Ba permission order.* / payment.* cua TU-32: Admin Read-Only chi
-           -- duoc doc, nen chi order.read nam trong danh sach nay.
-           'order.read'
-         )
+         OR p.code IN (${readOnlyPlaceholders})
+       )
+       -- TU-34: quyen rieng tung tai khoan. Bo loc nam o day, tai cho duy nhat
+       -- tinh quyen hieu dung, nen moi endpoint dung requirePermission deu
+       -- chiu rang buoc nay, khong chi man Quan tri.
+       AND NOT EXISTS (
+         SELECT 1 FROM user_permission_overrides AS o
+         WHERE o.organization_id = m.organization_id AND o.user_id = m.user_id
+           AND o.permission_id = p.id AND o.is_enabled = 0
        )
      ORDER BY p.code`,
-    [actor.organizationId, actor.membershipId, actor.userId, actor.venueId, ...portalRoles],
+    [
+      actor.organizationId, actor.membershipId, actor.userId, actor.venueId,
+      ...portalRoles, ...READ_ONLY_ADMIN_PERMISSIONS,
+    ],
   )
   return rows.map((row) => row.code)
 }

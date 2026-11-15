@@ -160,12 +160,12 @@ Ba điều cần nhớ:
 
 Hai mục đã có sẵn chỗ trong registry:
 
-| Màn                         | `path`     | Tiêu đề header         | Permission đọc                     | Khoá trong `ADMIN_PAGE_COMPONENTS` |
-| --------------------------- | ---------- | ---------------------- | ---------------------------------- | ---------------------------------- |
-| 01 Tổng quan ca (NA-33)     | `overview` | Tổng quan              | _(chưa có — chỉ cần vào `/admin`)_ | `overview`                         |
-| 08 Sổ lượt tới quán (NA-34) | `visits`   | Sổ lượt tới quán       | `customer.view_masked`             | `visits`                           |
-| 02 Tài khoản (TU-34)        | `accounts` | Tài khoản & phân quyền | `user.read`                        | `accounts`                         |
-| 03 Nhật ký (TU-35)          | `audit`    | Nhật ký thao tác       | `audit.read`                       | `audit`                            |
+| Màn                            | `path`     | Tiêu đề header         | Permission đọc                     | Khoá trong `ADMIN_PAGE_COMPONENTS` |
+| ------------------------------ | ---------- | ---------------------- | ---------------------------------- | ---------------------------------- |
+| 01 Tổng quan ca (NA-33)        | `overview` | Tổng quan              | _(chưa có — chỉ cần vào `/admin`)_ | `overview`                         |
+| 08 Sổ lượt tới quán (NA-34)    | `visits`   | Sổ lượt tới quán       | `customer.view_masked`             | `visits`                           |
+| 02 Tài khoản (TU-34 — đã ghép) | `accounts` | Tài khoản & phân quyền | `user.read`                        | `accounts`                         |
+| 03 Nhật ký (TU-35)             | `audit`    | Nhật ký thao tác       | `audit.read`                       | `audit`                            |
 
 Các bước cho Nam:
 
@@ -183,6 +183,24 @@ Dữ liệu lấy qua `GamApi` (`web/src/services/contracts.ts`) như mọi màn
 đã xong: số trong prototype là số minh hoạ.
 
 ---
+
+## 6b. Màn Tài khoản & phân quyền (TU-34) — tham khảo khi làm màn mới
+
+Màn đầu tiên ghép vào khung này là `pages/accounts-page.tsx`. Nó là ví dụ sống cho ba việc mọi màn admin đều phải làm:
+
+1. **Dữ liệu qua `api` (GamApi), không fetch thẳng.** Ở đây là `api.listAccounts()`, `api.getAccountPermissions(id)`,
+   `api.updateAccountPermissions(id, version, { [code]: boolean })`.
+2. **Bốn trạng thái, không màn trắng:** `isPending` → dòng "Đang tải…", `isError` → hộp đỏ kèm nút "Thử lại", danh
+   sách rỗng → câu giải thích khác nhau cho "rỗng vì bộ lọc" và "rỗng thật", và trạng thái đang lưu làm mờ nút.
+3. **Quyền:** `useAdminSession().can(...)` cho permission, `readOnly` cho Admin Read-Only, và `canActOn()` trong
+   `accounts-model.ts` cho luật "ai sửa được ai". Tất cả chỉ để làm mờ nút — server vẫn từ chối nếu bấm được.
+
+Bảy checkbox của prototype ánh xạ sang permission thật trong `permission-groups.ts`. Một dòng chữ có thể ứng với nhiều
+mã (sửa và hủy booking là hai permission), và nhóm "Duyệt giảm giá, hủy món" chưa có mã nào nên hiện ở trạng thái
+"chưa hỗ trợ". Khi module gọi món có permission thật, chỉ cần điền `codes` cho nhóm đó.
+
+Mật khẩu tạm: tạo tài khoản và đặt lại mật khẩu đều để server sinh chuỗi, hiện đúng một lần. Tài khoản đó đăng nhập
+được nhưng mọi API nghiệp vụ trả 403 cho tới khi đổi mật khẩu; `AuthBoundary` chặn trước bằng `PasswordChangeGate`.
 
 ## 7. Kiểm tra bằng tay (layout)
 

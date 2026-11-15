@@ -2,7 +2,7 @@ import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/prom
 
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { recordAuthAudit } from '../../auth/auth-audit.js'
-import { hashPassword, verifyPassword } from '../../auth/password.js'
+import { generateTemporaryPassword, hashPassword, verifyPassword } from '../../auth/password.js'
 import { notifySessionsRevoked } from '../../auth/session-lifecycle.js'
 import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
@@ -36,9 +36,19 @@ export interface AccountSummary {
 export interface CreateAccountInput {
   username: string
   displayName: string
-  password: string
+  /** Bỏ trống để server sinh mật khẩu tạm (TU-34). */
+  password?: string
   roleCode: string
   accessLevel?: AdminAccessLevel
+}
+
+/**
+ * TU-34: mật khẩu tạm chỉ trả về đúng một lần, ngay trong response tạo tài
+ * khoản hoặc reset. Nó không được lưu ở dạng rõ và không bao giờ vào log.
+ */
+export interface AccountWithTemporaryPassword {
+  account: AccountSummary
+  temporaryPassword: string | null
 }
 
 export interface AccountStatusResult {
@@ -46,7 +56,7 @@ export interface AccountStatusResult {
   revokedSessions: number
 }
 
-interface AccountRow extends RowDataPacket {
+export interface AccountRow extends RowDataPacket {
   id: number
   username: string
   display_name: string
@@ -63,7 +73,7 @@ interface Authority {
   accessLevel: AdminAccessLevel | null
 }
 
-function toSummary(row: AccountRow): AccountSummary {
+export function toSummary(row: AccountRow): AccountSummary {
   return {
     id: Number(row.id), username: row.username, displayName: row.display_name,
     status: row.status, membershipStatus: row.membership_status,
@@ -80,7 +90,7 @@ function assertNewPassword(password: string): void {
   }
 }
 
-async function selectAccounts(
+export async function selectAccounts(
   connection: Pick<PoolConnection, 'execute'>,
   actor: AuthenticatedActor,
   userId?: number,
@@ -114,7 +124,7 @@ async function selectAccounts(
   return rows
 }
 
-async function authority(connection: Pick<PoolConnection, 'execute'>, actor: AuthenticatedActor): Promise<Authority> {
+export async function authority(connection: Pick<PoolConnection, 'execute'>, actor: AuthenticatedActor): Promise<Authority> {
   const [rows] = await connection.execute<(RowDataPacket & {
     code: 'OWNER' | 'ADMIN'; access_level: AdminAccessLevel | null
   })[]>(
@@ -137,7 +147,7 @@ function requireWrite(value: Authority): void {
   }
 }
 
-function targetKind(account: AccountSummary): 'OWNER' | 'ADMIN' | 'STAFF' | 'UNKNOWN' {
+export function targetKind(account: AccountSummary): 'OWNER' | 'ADMIN' | 'STAFF' | 'UNKNOWN' {
   if (account.roles.includes('OWNER')) return 'OWNER'
   if (account.roles.includes('ADMIN')) return 'ADMIN'
   if (account.roles.some((role) => STAFF_ROLES.has(role))) return 'STAFF'
@@ -156,7 +166,7 @@ function assertTargetAllowed(actor: AuthenticatedActor, value: Authority, accoun
   if (kind === 'UNKNOWN') throw new AppError(403, 'TARGET_ROLE_DENIED', 'Vai trò mục tiêu không thuộc phạm vi quản lý.')
 }
 
-async function recordAccountAudit(
+export async function recordAccountAudit(
   connection: PoolConnection,
   actor: AuthenticatedActor,
   action: string,
@@ -219,14 +229,24 @@ export async function listAccounts(actor: AuthenticatedActor): Promise<AccountSu
   }
 }
 
-export async function createAccount(actor: AuthenticatedActor, input: CreateAccountInput): Promise<AccountSummary> {
+export async function createAccount(
+  actor: AuthenticatedActor,
+  input: CreateAccountInput,
+): Promise<AccountWithTemporaryPassword> {
   const username = input.username.trim()
   const displayName = input.displayName.trim()
   if (!username || username.length > USERNAME_MAX) throw new AppError(400, 'INVALID_USERNAME', 'Tên đăng nhập không hợp lệ.')
   if (!displayName || displayName.length > DISPLAY_NAME_MAX) throw new AppError(400, 'INVALID_DISPLAY_NAME', 'Tên hiển thị không hợp lệ.')
-  assertNewPassword(input.password)
+  // TU-34: không truyền mật khẩu thì server sinh mật khẩu tạm, và tài khoản
+  // phải đổi nó trước khi dùng được API nghiệp vụ. Khi người quản trị tự đặt
+  // mật khẩu (đường cũ của màn Cài đặt), đó là mật khẩu họ chọn chứ không
+  // phải mật khẩu tạm, nên không ép đổi — ép đổi ở đó sẽ khóa các luồng đang
+  // chạy mà không thêm được gì về an toàn.
+  const generated = input.password === undefined
+  const password: string = input.password ?? generateTemporaryPassword()
+  assertNewPassword(password)
   if (input.roleCode === 'OWNER') throw new AppError(403, 'OWNER_CREATION_DENIED', 'Không thể tạo OWNER qua API.')
-  const passwordHash = await hashPassword(input.password)
+  const passwordHash = await hashPassword(password)
   const connection = await databasePool.getConnection()
   try {
     await connection.beginTransaction()
@@ -250,8 +270,9 @@ export async function createAccount(actor: AuthenticatedActor, input: CreateAcco
     if (existing.length) throw new AppError(409, 'USERNAME_TAKEN', 'Tên đăng nhập này đã được dùng.')
 
     const [userResult] = await connection.execute<ResultSetHeader>(
-      `INSERT INTO users (username, display_name, password_hash, status) VALUES (?, ?, ?, 'ACTIVE')`,
-      [username, displayName, passwordHash],
+      `INSERT INTO users (username, display_name, password_hash, status, must_change_password)
+       VALUES (?, ?, ?, 'ACTIVE', ?)`,
+      [username, displayName, passwordHash, generated ? 1 : 0],
     )
     const [membershipResult] = await connection.execute<ResultSetHeader>(
       'INSERT INTO memberships (organization_id, user_id) VALUES (?, ?)',
@@ -264,12 +285,14 @@ export async function createAccount(actor: AuthenticatedActor, input: CreateAcco
       [actor.organizationId, membershipResult.insertId, role.id, actor.venueId,
         input.roleCode === 'ADMIN' ? (input.accessLevel ?? null) : null, actor.userId],
     )
+    // Không ghi mật khẩu (kể cả mật khẩu tạm) vào audit, chỉ ghi việc đã sinh.
     await recordAccountAudit(connection, actor, 'USER_ACCOUNT_CREATED', userResult.insertId, null, 1, {
       roleCode: role.code, accessLevel: input.roleCode === 'ADMIN' ? input.accessLevel : null, venueId: actor.venueId,
+      temporaryPassword: generated, mustChangePassword: generated,
     })
     const rows = await selectAccounts(connection, actor, userResult.insertId)
     await connection.commit()
-    return toSummary(rows[0]!)
+    return { account: toSummary(rows[0]!), temporaryPassword: generated ? password : null }
   } catch (error) {
     await connection.rollback()
     throw error
@@ -362,10 +385,12 @@ export async function setAdminAccessLevel(
 }
 
 export async function resetAccountPassword(
-  actor: AuthenticatedActor, userId: number, expectedVersion: number, newPassword: string,
-): Promise<AccountStatusResult> {
-  assertNewPassword(newPassword)
-  const passwordHash = await hashPassword(newPassword)
+  actor: AuthenticatedActor, userId: number, expectedVersion: number, newPassword?: string,
+): Promise<AccountStatusResult & { temporaryPassword: string | null }> {
+  const generated = newPassword === undefined
+  const password: string = newPassword ?? generateTemporaryPassword()
+  assertNewPassword(password)
+  const passwordHash = await hashPassword(password)
   const connection = await databasePool.getConnection()
   let revokedIds: number[]
   try {
@@ -378,17 +403,22 @@ export async function resetAccountPassword(
     assertTargetAllowed(actor, acting, current)
     if (current.version !== expectedVersion) throw new AppError(409, 'VERSION_CONFLICT', 'Tài khoản vừa được thay đổi, hãy tải lại.')
     await connection.execute(
-      `UPDATE users SET password_hash = ?, version = version + 1, updated_at = UTC_TIMESTAMP(3)
-       WHERE id = ? AND version = ?`, [passwordHash, userId, expectedVersion],
+      `UPDATE users SET password_hash = ?, must_change_password = ?,
+         version = version + 1, updated_at = UTC_TIMESTAMP(3)
+       WHERE id = ? AND version = ?`, [passwordHash, generated ? 1 : 0, userId, expectedVersion],
     )
     revokedIds = await revokeSessions(connection, actor.organizationId, userId, 'PASSWORD_RESET')
     await recordAccountAudit(connection, actor, 'USER_PASSWORD_RESET', userId, expectedVersion, expectedVersion + 1, {
-      revokedSessions: revokedIds.length,
+      revokedSessions: revokedIds.length, temporaryPassword: generated, mustChangePassword: generated,
     })
     const rows = await selectAccounts(connection, actor, userId)
     await connection.commit()
     notifyRevoked(revokedIds, userId)
-    return { account: toSummary(rows[0]!), revokedSessions: revokedIds.length }
+    return {
+      account: toSummary(rows[0]!),
+      revokedSessions: revokedIds.length,
+      temporaryPassword: generated ? password : null,
+    }
   } catch (error) {
     await connection.rollback()
     throw error
@@ -417,8 +447,10 @@ export async function changeOwnPassword(
       throw new AppError(409, 'PASSWORD_UNCHANGED', 'Mật khẩu mới phải khác mật khẩu hiện tại.')
     }
     const passwordHash = await hashPassword(newPassword)
+    // Đổi mật khẩu thành công là lúc duy nhất cờ mật khẩu tạm được gỡ.
     await connection.execute(
-      'UPDATE users SET password_hash = ?, version = version + 1, updated_at = UTC_TIMESTAMP(3) WHERE id = ?',
+      `UPDATE users SET password_hash = ?, must_change_password = 0,
+         version = version + 1, updated_at = UTC_TIMESTAMP(3) WHERE id = ?`,
       [passwordHash, actor.userId],
     )
     revokedIds = await revokeSessions(connection, actor.organizationId, actor.userId, 'PASSWORD_CHANGED')

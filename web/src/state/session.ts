@@ -58,6 +58,8 @@ interface SessionState {
   principal: AuthenticatedUser | null
   permissions: string[]
   portal: AuthPortal | null
+  /** TU-34: phải đổi mật khẩu tạm trước khi dùng được app. */
+  mustChangePassword: boolean
   authStatus: AuthStatus
   authError: string | null
   /**
@@ -85,7 +87,8 @@ const fallbackMockUser: SessionUser = initialUser ?? {
 let bootstrapPromise: Promise<void> | null = null
 
 function applyServerSession(session: AuthSession) {
-  const role = PORTAL_CONFIG[session.portal].roles.find((candidate) => session.user.roles.includes(candidate)) as RoleCode | undefined
+  const role = PORTAL_CONFIG[session.portal].roles.find((candidate) => session.user.roles.includes(candidate)) as
+    RoleCode | undefined
   if (!role) {
     throw new ApiError(502, "INVALID_RESPONSE", "Vai trò phiên đăng nhập không khớp cổng đã xác nhận.")
   }
@@ -94,6 +97,7 @@ function applyServerSession(session: AuthSession) {
     principal: session.user,
     permissions: [...session.permissions],
     portal: session.portal,
+    mustChangePassword: session.mustChangePassword === true,
     authStatus: "authenticated",
     authError: null,
     authEndCode: null,
@@ -106,6 +110,7 @@ export const useSession = create<SessionState>((set, get) => ({
   principal: null,
   permissions: [],
   portal: null,
+  mustChangePassword: false,
   authStatus: api.mode === "mock" ? "authenticated" : "loading",
   authError: null,
   authEndCode: null,
@@ -134,11 +139,18 @@ export const useSession = create<SessionState>((set, get) => ({
       .catch((error: unknown) => {
         currentAuthApi.clear()
         if (error instanceof ApiError && error.status === 401) {
-          set({ principal: null, permissions: [], authStatus: "anonymous", authError: null, authEndCode: null })
+          set({
+            principal: null,
+            permissions: [],
+            mustChangePassword: false,
+            authStatus: "anonymous",
+            authError: null,
+            authEndCode: null,
+          })
           return
         }
         const message = error instanceof ApiError ? error.message : "Không thể kiểm tra phiên đăng nhập."
-        set({ principal: null, permissions: [], authStatus: "error", authError: message })
+        set({ principal: null, permissions: [], mustChangePassword: false, authStatus: "error", authError: message })
       })
       .finally(() => {
         bootstrapPromise = null
@@ -155,7 +167,15 @@ export const useSession = create<SessionState>((set, get) => ({
     if (!authApi) return
     const portal = get().portal
     await authApi.logout()
-    set({ principal: null, permissions: [], authStatus: "anonymous", authError: null, authEndCode: null, portal })
+    set({
+      principal: null,
+      permissions: [],
+      mustChangePassword: false,
+      authStatus: "anonymous",
+      authError: null,
+      authEndCode: null,
+      portal,
+    })
     if (portal && typeof window !== "undefined" && window.location?.replace) {
       window.location.replace(portalLoginPath(portal))
     }
@@ -163,7 +183,15 @@ export const useSession = create<SessionState>((set, get) => ({
   expire: (message = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.", code?: string) => {
     const portal = get().portal
     authApi?.clear()
-    set({ principal: null, permissions: [], authStatus: "anonymous", authError: message, authEndCode: code ?? null, portal })
+    set({
+      principal: null,
+      permissions: [],
+      mustChangePassword: false,
+      authStatus: "anonymous",
+      authError: message,
+      authEndCode: code ?? null,
+      portal,
+    })
     if (portal && typeof window !== "undefined" && window.location?.replace) {
       window.location.replace(portalLoginPath(portal))
     }

@@ -45,7 +45,9 @@ async function truncateFixtureTables(): Promise<void> {
   for (const table of ['booking_call_logs', 'operation_log', 'reception_guest_counts', 'table_turns', 'table_allocations', 'table_group_members', 'table_groups', 'table_holds',
     'waitlist_table_preferences', 'waitlist_contact_attempts', 'waitlist_entries', 'reservations', 'visits',
     'customers', 'table_combination_members', 'table_combinations', 'table_adjacencies', 'dining_tables',
-    'zones', 'floors', 'auth_sessions', 'membership_roles', 'memberships', 'idempotency_keys', 'users',
+    'zones', 'floors', 'auth_sessions', 'membership_roles', 'memberships', 'idempotency_keys',
+    // TU-34: override quyền tham chiếu users, nên phải xoá trước users.
+    'user_permission_overrides', 'users',
     'booking_sources', 'venues', 'organizations']) {
     await databasePool.execute(`DELETE FROM ${table}`)
   }

@@ -93,8 +93,7 @@ export const ADMIN_PAGES: readonly AdminPage[] = [
     label: "Tài khoản",
     title: "Tài khoản & phân quyền",
     permission: "user.read",
-    status: "pending",
-    owner: "TU-34",
+    status: "integrated",
     note: "Danh sách tài khoản theo cổng đăng nhập, tạo tài khoản và đổi cấp truy cập.",
   },
   {

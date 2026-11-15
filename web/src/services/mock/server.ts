@@ -767,6 +767,31 @@ export class MockGamApi implements GamApi, DemoControls {
     }
   }
 
+  /**
+   * TU-34: bảng checkbox ở chế độ demo được suy từ ma trận vai trò, không có
+   * override. Đủ để xem layout; mọi thay đổi vẫn phải làm trên máy chủ thật.
+   */
+  async getAccountPermissions(userId: number) {
+    await this.latency("q")
+    this.require("user.read")
+    const account = (await this.listAccounts()).accounts.find((item) => item.id === userId)
+    if (!account) return this.fail("Không tìm thấy tài khoản trong dữ liệu mẫu.")
+    const role = (account.roles[0] ?? "RECEPTIONIST") as RoleCode
+    return {
+      account,
+      permissions: (Object.keys(PERMISSION_LABEL) as Permission[]).sort().map((code) => {
+        const grantedByRole = roleCan(role, code)
+        return { code, grantedByRole, enabled: grantedByRole, overridden: false, editable: grantedByRole }
+      }),
+    }
+  }
+
+  async updateAccountPermissions(): Promise<never> {
+    await this.latency("q")
+    this.require("user.manage")
+    return this.fail("Chế độ demo không lưu được quyền. Dùng máy chủ thật để đổi quyền tài khoản.")
+  }
+
   async createAccount(): Promise<never> {
     await this.latency("q")
     this.require("user.manage")

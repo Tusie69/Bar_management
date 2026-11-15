@@ -18,6 +18,12 @@ export interface AuthSession {
   csrfToken: string
   expiresAt?: string
   portal: AuthPortal
+  /**
+   * TU-34: tài khoản đang dùng mật khẩu tạm. API nghiệp vụ trả 403
+   * PASSWORD_CHANGE_REQUIRED cho tới khi đổi xong, nên web phải chặn ở cửa
+   * thay vì để người dùng gặp lỗi ở từng màn.
+   */
+  mustChangePassword?: boolean
 }
 
 function validSession(value: unknown): value is AuthSession {

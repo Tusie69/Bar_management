@@ -52,3 +52,30 @@ export async function verifyPassword(password: string, encodedHash: string): Pro
     return false
   }
 }
+
+/**
+ * TU-34 — mật khẩu tạm cho tài khoản mới và cho reset.
+ *
+ * Sinh ở server chứ không để người quản trị tự nghĩ: mật khẩu do người nghĩ
+ * ra trong lúc tạo tài khoản giữa ca luôn là "21gam2026". Bảng chữ bỏ các ký
+ * tự dễ đọc nhầm (0/O, 1/l/I) vì chuỗi này được đọc to qua điện thoại hoặc
+ * chép tay cho nhân viên. Chỉ hiện một lần, không bao giờ ghi log.
+ */
+const TEMP_PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+const TEMP_PASSWORD_LENGTH = 16
+
+export function generateTemporaryPassword(): string {
+  const alphabet = TEMP_PASSWORD_ALPHABET
+  // Rejection sampling: lấy modulo thẳng trên byte ngẫu nhiên sẽ lệch về
+  // những ký tự đầu bảng chữ.
+  const limit = Math.floor(256 / alphabet.length) * alphabet.length
+  let out = ''
+  while (out.length < TEMP_PASSWORD_LENGTH) {
+    for (const byte of randomBytes(TEMP_PASSWORD_LENGTH)) {
+      if (byte >= limit) continue
+      out += alphabet[byte % alphabet.length]
+      if (out.length === TEMP_PASSWORD_LENGTH) break
+    }
+  }
+  return out
+}

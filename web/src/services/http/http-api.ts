@@ -2,7 +2,15 @@
 import type { Catalog, ClaimView, FloorState, MutationResult, ReceptionGuestCount, SessionUser, VenueSettingsView } from "@/domain/models"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { clock } from "../clock"
-import { ApiError, type AccountsView, type AccountSummary, type GamApi, type UndoState } from "../contracts"
+import {
+  ApiError,
+  type AccountCredentialResult,
+  type AccountPermissionsView,
+  type AccountsView,
+  type AccountSummary,
+  type GamApi,
+  type UndoState,
+} from "../contracts"
 import { HttpBookingApi } from "./booking-api"
 import { createAndAssignDirectBooking } from "./direct-booking"
 import { openFloorStream } from "./floor-stream"
@@ -497,13 +505,17 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     releaseHold: rejectUnsupported("nhả giữ bàn"),
     updateCustomerNotes: rejectUnsupported("ghi chú hồ sơ khách"),
     listAccounts: () => get<AccountsView>("/accounts"),
-    createAccount: async (input) => (await post<{ account: AccountSummary }>("/accounts", input)).account,
+    createAccount: (input) => post<AccountCredentialResult>("/accounts", input),
     setAccountStatus: async (userId, version, status) =>
       (await post<{ account: AccountSummary }>(`/accounts/${userId}/status`, { version, status })).account,
     setAdminAccessLevel: async (userId, version, accessLevel) =>
       (await post<{ account: AccountSummary }>(`/accounts/${userId}/access-level`, { version, accessLevel })).account,
-    resetAccountPassword: async (userId, version, newPassword) =>
-      (await post<{ account: AccountSummary }>(`/accounts/${userId}/password-reset`, { version, newPassword })).account,
+    resetAccountPassword: (userId, version, newPassword) =>
+      post<AccountCredentialResult>(`/accounts/${userId}/password-reset`,
+        { version, ...(newPassword === undefined ? {} : { newPassword }) }),
+    getAccountPermissions: (userId) => get<AccountPermissionsView>(`/accounts/${userId}/permissions`),
+    updateAccountPermissions: (userId, version, permissions) =>
+      post<AccountPermissionsView>(`/accounts/${userId}/permissions`, { version, permissions }),
     changeOwnPassword: async (currentPassword, newPassword) => {
       await post<{ revokedSessions: number }>("/accounts/me/password", { currentPassword, newPassword })
     },

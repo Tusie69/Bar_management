@@ -19,7 +19,12 @@ Base URL: `http://localhost:3000/api/v1`. This document describes the implemente
 Errors use:
 
 ```json
-{"error":{"code":"VERSION_CONFLICT","message":"Booking vừa được thay đổi. Vui lòng tải lại."}}
+{
+  "error": {
+    "code": "VERSION_CONFLICT",
+    "message": "Booking vừa được thay đổi. Vui lòng tải lại."
+  }
+}
 ```
 
 Common status codes: 400 `INVALID_*` validation, 401 `AUTHENTICATION_REQUIRED` / `SESSION_REPLACED` /
@@ -31,14 +36,14 @@ conflict, 422 `INVALID_PHONE_NUMBER` / `BOOKING_PHONE_UNAVAILABLE`, 429 rate lim
 
 ## Health and session
 
-| Method | Path | Access | Response |
-| --- | --- | --- | --- |
-| GET | `/health` | Public | `{ok:true}`; process liveness, not a database check |
-| POST | `/auth/login` | Trusted origin | Body `{username,password,portal}`; returns `{user,permissions,csrfToken,portal,expiresAt}` and session cookie |
-| GET | `/auth/me` | Session | `{user,permissions,csrfToken,portal}` |
-| POST | `/auth/logout` | Session + CSRF | 204, no body |
-| GET | `/auth/sessions` | Session + `session.read` | `{sessions:[...]}`; các phiên đang hoạt động trong organization (TU-33) |
-| POST | `/auth/sessions/:id/revoke` | Session + CSRF + `session.revoke` | `{revokedSessions,targetUserId}`; buộc đăng xuất một phiên (TU-33) |
+| Method | Path                        | Access                            | Response                                                                                                      |
+| ------ | --------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| GET    | `/health`                   | Public                            | `{ok:true}`; process liveness, not a database check                                                           |
+| POST   | `/auth/login`               | Trusted origin                    | Body `{username,password,portal}`; returns `{user,permissions,csrfToken,portal,expiresAt}` and session cookie |
+| GET    | `/auth/me`                  | Session                           | `{user,permissions,csrfToken,portal}`                                                                         |
+| POST   | `/auth/logout`              | Session + CSRF                    | 204, no body                                                                                                  |
+| GET    | `/auth/sessions`            | Session + `session.read`          | `{sessions:[...]}`; các phiên đang hoạt động trong organization (TU-33)                                       |
+| POST   | `/auth/sessions/:id/revoke` | Session + CSRF + `session.revoke` | `{revokedSessions,targetUserId}`; buộc đăng xuất một phiên (TU-33)                                            |
 
 `portal` is one of `admin`, `receptionist`, `customer-care`, `cashier` or `waiter`. The server verifies the password before checking portal eligibility, creates no session for a denied portal and stores the verified portal on the server-side session. Mapping is `admin → OWNER | ADMIN`, `receptionist → RECEPTIONIST`, `customer-care → CUSTOMER_CARE`, `cashier → CASHIER`, `waiter → WAITER`. The mapping lives in one place (`PORTAL_ROLE_CODES` in `api/src/auth/auth-portal.ts`) and the session-validation SQL is generated from it, so login and session checks cannot disagree about which roles a portal accepts. ADMIN must have access level `WRITE` or `READ_ONLY` on its active venue grant. A multi-role account receives only roles and permissions mapped to the selected portal; the request value never grants a role. Changing a client URL cannot change the session portal. Invalid portal is `INVALID_PORTAL` (400); valid credentials at a disallowed portal are `PORTAL_ACCESS_DENIED` (403).
 
@@ -62,18 +67,23 @@ from the session; neither token is stored in browser local storage or sent in a 
 
 Session failures are based on the current database row, not client claims:
 
-| Code | Meaning | Vietnamese message |
-| --- | --- | --- |
-| `SESSION_REPLACED` | A later successful login replaced this session | `Tài khoản này vừa được đăng nhập trên thiết bị khác. Phiên đăng nhập hiện tại đã kết thúc.` |
-| `SESSION_EXPIRED` | `expires_at` has passed | `Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.` |
-| `SESSION_REVOKED` | Logout, role/membership loss or another explicit revocation | `Phiên đăng nhập đã bị thu hồi. Vui lòng đăng nhập lại.` |
-| `ACCOUNT_LOCKED` | User is disabled or the session was revoked by account lock | `Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên.` |
-| `SESSION_INVALID` | No matching server-side session or malformed legacy state | `Phiên đăng nhập không hợp lệ.` |
+| Code               | Meaning                                                     | Vietnamese message                                                                           |
+| ------------------ | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `SESSION_REPLACED` | A later successful login replaced this session              | `Tài khoản này vừa được đăng nhập trên thiết bị khác. Phiên đăng nhập hiện tại đã kết thúc.` |
+| `SESSION_EXPIRED`  | `expires_at` has passed                                     | `Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.`                                        |
+| `SESSION_REVOKED`  | Logout, role/membership loss or another explicit revocation | `Phiên đăng nhập đã bị thu hồi. Vui lòng đăng nhập lại.`                                     |
+| `ACCOUNT_LOCKED`   | User is disabled or the session was revoked by account lock | `Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên.`                                      |
+| `SESSION_INVALID`  | No matching server-side session or malformed legacy state   | `Phiên đăng nhập không hợp lệ.`                                                              |
 
 Example replaced-session response:
 
 ```json
-{"error":{"code":"SESSION_REPLACED","message":"Tài khoản này vừa được đăng nhập trên thiết bị khác. Phiên đăng nhập hiện tại đã kết thúc."}}
+{
+  "error": {
+    "code": "SESSION_REPLACED",
+    "message": "Tài khoản này vừa được đăng nhập trên thiết bị khác. Phiên đăng nhập hiện tại đã kết thúc."
+  }
+}
 ```
 
 The web client clears the in-memory principal, permissions and CSRF state, closes its mounted SSE subscription and
@@ -88,14 +98,14 @@ but never exposes secrets or corrupts the session transaction.
 Biên bản họp 15/11/2026 mô tả sáu cấp nghiệp vụ. Chúng ánh xạ vào **sáu role database**, trong đó ba cấp quản trị dùng
 hai role cộng với `access_level` — không tạo ba role riêng chỉ vì nghiệp vụ có ba cấp.
 
-| Cấp | Vai trò nghiệp vụ | Role + access level | Cổng đăng nhập |
-| --- | --- | --- | --- |
-| 1 | SuperAdmin | `OWNER` | `/admin` |
-| 2 | Admin Edit | `ADMIN` + `WRITE` | `/admin` |
-| 3 | Admin Read-Only | `ADMIN` + `READ_ONLY` | `/admin` |
-| 4 | Lễ tân | `RECEPTIONIST` | `/letan` |
-| 5 | Thu ngân | `CASHIER` | `/thungan` |
-| 6 | Phục vụ | `WAITER` | `/phucvu` |
+| Cấp | Vai trò nghiệp vụ | Role + access level   | Cổng đăng nhập |
+| --- | ----------------- | --------------------- | -------------- |
+| 1   | SuperAdmin        | `OWNER`               | `/admin`       |
+| 2   | Admin Edit        | `ADMIN` + `WRITE`     | `/admin`       |
+| 3   | Admin Read-Only   | `ADMIN` + `READ_ONLY` | `/admin`       |
+| 4   | Lễ tân            | `RECEPTIONIST`        | `/letan`       |
+| 5   | Thu ngân          | `CASHIER`             | `/thungan`     |
+| 6   | Phục vụ           | `WAITER`              | `/phucvu`      |
 
 `CUSTOMER_CARE` vẫn tồn tại cùng toàn bộ membership của nó tại cổng `/customer-care`. Biên bản không nhắc tới vai trò
 này, và "không nhắc tới" không phải là "bỏ đi".
@@ -115,11 +125,11 @@ có chỗ neo, và để bảng role × permission phản ánh đúng sáu cấp
 
 Grants của ba permission mới:
 
-| Permission | OWNER | ADMIN | CASHIER | WAITER | RECEPTIONIST | CUSTOMER_CARE |
-| --- | --- | --- | --- | --- | --- | --- |
-| `order.create` | Có | Có (chỉ WRITE ghi được) | Có | Có | Không | Không |
-| `order.read` | Có | Có | Có | Có | Không | Không |
-| `payment.collect` | Có | Có (chỉ WRITE ghi được) | Có | **Không** | Không | Không |
+| Permission        | OWNER | ADMIN                   | CASHIER | WAITER    | RECEPTIONIST | CUSTOMER_CARE |
+| ----------------- | ----- | ----------------------- | ------- | --------- | ------------ | ------------- |
+| `order.create`    | Có    | Có (chỉ WRITE ghi được) | Có      | Có        | Không        | Không         |
+| `order.read`      | Có    | Có                      | Có      | Có        | Không        | Không         |
+| `payment.collect` | Có    | Có (chỉ WRITE ghi được) | Có      | **Không** | Không        | Không         |
 
 Phục vụ không có `payment.collect` và không có `visit.mark_paid`: cấp 6 gọi món và xem trạng thái chờ thanh toán, không
 chốt thanh toán. Phục vụ cũng không có `customer.view_masked`, nên không thấy cả ba số cuối SĐT — biên bản không cấp cho
@@ -148,11 +158,26 @@ nào là máy mình.
 `GET /auth/sessions` trả mỗi phiên dạng:
 
 ```json
-{"sessions":[{"sessionId":41,"userId":9874,"username":"letan01","displayName":"Lễ tân 1",
-  "roles":["RECEPTIONIST"],"accessLevel":null,"portal":"receptionist",
-  "deviceRef":"letan-ta","deviceLabel":"Chrome trên Android",
-  "loggedInAt":"2026-11-18T12:00:00.000Z","lastSeenAt":"2026-11-18T12:04:31.000Z",
-  "expiresAt":"2026-11-19T00:00:00.000Z","status":"ACTIVE","isCurrent":false}]}
+{
+  "sessions": [
+    {
+      "sessionId": 41,
+      "userId": 9874,
+      "username": "letan01",
+      "displayName": "Lễ tân 1",
+      "roles": ["RECEPTIONIST"],
+      "accessLevel": null,
+      "portal": "receptionist",
+      "deviceRef": "letan-ta",
+      "deviceLabel": "Chrome trên Android",
+      "loggedInAt": "2026-11-18T12:00:00.000Z",
+      "lastSeenAt": "2026-11-18T12:04:31.000Z",
+      "expiresAt": "2026-11-19T00:00:00.000Z",
+      "status": "ACTIVE",
+      "isCurrent": false
+    }
+  ]
+}
 ```
 
 `deviceRef` là 8 ký tự đầu của `device_id`. Response gửi kèm `Cache-Control: no-store` và **không bao giờ** chứa
@@ -164,17 +189,17 @@ Read-Only có `session.read` nhưng không có `session.revoke`.
 
 Thẩm quyền của `POST /auth/sessions/:id/revoke`, kiểm trong transaction tại repository chứ không chỉ ở middleware:
 
-| Tình huống | Kết quả |
-| --- | --- |
-| OWNER buộc đăng xuất ADMIN hoặc nhân viên | 200 |
-| ADMIN WRITE buộc đăng xuất nhân viên | 200 |
-| ADMIN buộc đăng xuất OWNER | 403 `OWNER_PROTECTED` |
-| ADMIN buộc đăng xuất ADMIN khác | 403 `ADMIN_TARGET_DENIED` |
-| ADMIN READ_ONLY buộc đăng xuất bất kỳ ai | 403 |
-| Nhân viên buộc đăng xuất bất kỳ ai | 403 `PERMISSION_DENIED` |
-| Buộc đăng xuất phiên của chính mình | 409 `CANNOT_REVOKE_SELF` (dùng `/auth/logout`) |
-| Phiên đã bị thu hồi | 409 `SESSION_ALREADY_REVOKED` |
-| Phiên không tồn tại trong organization | 404 `SESSION_NOT_FOUND` |
+| Tình huống                                | Kết quả                                        |
+| ----------------------------------------- | ---------------------------------------------- |
+| OWNER buộc đăng xuất ADMIN hoặc nhân viên | 200                                            |
+| ADMIN WRITE buộc đăng xuất nhân viên      | 200                                            |
+| ADMIN buộc đăng xuất OWNER                | 403 `OWNER_PROTECTED`                          |
+| ADMIN buộc đăng xuất ADMIN khác           | 403 `ADMIN_TARGET_DENIED`                      |
+| ADMIN READ_ONLY buộc đăng xuất bất kỳ ai  | 403                                            |
+| Nhân viên buộc đăng xuất bất kỳ ai        | 403 `PERMISSION_DENIED`                        |
+| Buộc đăng xuất phiên của chính mình       | 409 `CANNOT_REVOKE_SELF` (dùng `/auth/logout`) |
+| Phiên đã bị thu hồi                       | 409 `SESSION_ALREADY_REVOKED`                  |
+| Phiên không tồn tại trong organization    | 404 `SESSION_NOT_FOUND`                        |
 
 Phiên bị thu hồi mang `revoke_reason = 'FORCED_LOGOUT'`, SSE của nó bị đóng ngay sau commit, và nó không tự khôi phục.
 
@@ -194,24 +219,24 @@ lưu trước đó không bị ảnh hưởng.
 
 Migration `0024_owner_admin_access_model.sql` renames the existing `OWNER_ADMIN` role row to `OWNER` in place, preserving its role id and every membership foreign key. It adds role `ADMIN`, nullable `membership_roles.access_level` constrained to `WRITE | READ_ONLY`, and permission `user.read`. It does not create `SUPER_ADMIN`, separate editor/viewer roles, or new staff roles.
 
-| Role / level | Admin portal | Business mutation | Account administration | Full phone | Venue configuration |
-| --- | --- | --- | --- | --- | --- |
-| OWNER | Yes | Yes | Create/manage ADMIN and staff; change ADMIN level; reset passwords | Yes | Yes |
-| ADMIN WRITE | Yes | Yes | Create/manage/reset staff only | Yes | No |
-| ADMIN READ_ONLY | Yes | No | Read scoped account list; may change own password | Yes | No |
-| RECEPTIONIST | No | Existing receptionist matrix | No | Last three digits only; call permission unchanged | No |
-| CUSTOMER_CARE | No | Existing customer-care matrix | No | Last three digits only | No |
-| CASHIER | No | Existing cashier matrix | No | Last three digits only | No |
-| WAITER | No | Order only (TU-32) | No | None, not even the last three digits | No |
+| Role / level    | Admin portal | Business mutation             | Account administration                                             | Full phone                                        | Venue configuration |
+| --------------- | ------------ | ----------------------------- | ------------------------------------------------------------------ | ------------------------------------------------- | ------------------- |
+| OWNER           | Yes          | Yes                           | Create/manage ADMIN and staff; change ADMIN level; reset passwords | Yes                                               | Yes                 |
+| ADMIN WRITE     | Yes          | Yes                           | Create/manage/reset staff only                                     | Yes                                               | No                  |
+| ADMIN READ_ONLY | Yes          | No                            | Read scoped account list; may change own password                  | Yes                                               | No                  |
+| RECEPTIONIST    | No           | Existing receptionist matrix  | No                                                                 | Last three digits only; call permission unchanged | No                  |
+| CUSTOMER_CARE   | No           | Existing customer-care matrix | No                                                                 | Last three digits only                            | No                  |
+| CASHIER         | No           | Existing cashier matrix       | No                                                                 | Last three digits only                            | No                  |
+| WAITER          | No           | Order only (TU-32)            | No                                                                 | None, not even the last three digits              | No                  |
 
 ADMIN grants are resolved on every request. For `READ_ONLY`, the backend returns only `customer.view_masked`, both explicit phone-reveal permissions, `audit.read`, `report.read`, `user.read`, `session.read` and `order.read`; mutation permissions are removed. UI state is advisory and never bypasses this server calculation. Changing an ADMIN access level revokes every existing session with `ACCESS_LEVEL_CHANGED`, so an old session cannot retain WRITE authority or keep an SSE subscription.
 
 ## Venue settings
 
-| Method | Path | Access | Request / response |
-| --- | --- | --- | --- |
-| GET | `/settings` | Authenticated session | `{quickTimes:string[],upcomingMinutes:number,noShowMinutes:number}` |
-| PUT | `/settings` | Session + CSRF + `venue.configure` | Full body and response use the same camelCase shape |
+| Method | Path        | Access                             | Request / response                                                  |
+| ------ | ----------- | ---------------------------------- | ------------------------------------------------------------------- |
+| GET    | `/settings` | Authenticated session              | `{quickTimes:string[],upcomingMinutes:number,noShowMinutes:number}` |
+| PUT    | `/settings` | Session + CSRF + `venue.configure` | Full body and response use the same camelCase shape                 |
 
 Both endpoints derive organization and venue exclusively from the authenticated actor. There is no venue selector in the URL or body. `GET` is read-only, sends `Cache-Control: no-store`, never initializes missing rows and uses `['21:00','21:30','22:00','22:30']` only as the fallback when the venue has no valid `quick_times` row. The existing `GET /venues/:id/settings` compatibility endpoint and its snake_case wrapper remain unchanged.
 
@@ -223,13 +248,13 @@ Floor Projection and booking views continue to read thresholds directly from `ve
 
 ## Tables and catalog
 
-| Method | Path | Permission | Request / response |
-| --- | --- | --- | --- |
-| GET | `/tables/catalog` | `customer.view_masked` | `{venue,zones,tables,combinations}` |
-| GET | `/tables?date=YYYY-MM-DD` | `customer.view_masked` | Atomic `{businessDate,serverNow,changeSeq,tables:FloorTableProjection[],groups:FloorGroupProjection[]}` |
-| PATCH | `/tables/:id/status` | `table.assign` | Body `{businessDate,state,expectedVersion?,reason?}`; see limitation below |
-| PATCH | `/tables/:id/configuration` | `venue.configure` | Body `{isSpare?:boolean,status?:"ACTIVE"|"OUT_OF_SERVICE",version,reason}`; returns `{table:{id,code,isBackup,status,version}}` |
-| POST | `/tables/groups/:id/split` | `table.group.manage` or `visit.split` | Body `{keepTableIds}`, or `{version,mode:"ALL_TO_SINGLE"}` to dissolve a cluster; `{operationId,changeSeq,summary,undoable:false,splitGroupId,group,keptTableIds,releasedTableIds,owner}`. See **Table groups** below for the cluster endpoints. |
+| Method | Path                        | Permission                            | Request / response                                                                                                                                                                                                                               |
+| ------ | --------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GET    | `/tables/catalog`           | `customer.view_masked`                | `{venue,zones,tables,combinations}`                                                                                                                                                                                                              |
+| GET    | `/tables?date=YYYY-MM-DD`   | `customer.view_masked`                | Atomic `{businessDate,serverNow,changeSeq,tables:FloorTableProjection[],groups:FloorGroupProjection[]}`                                                                                                                                          |
+| PATCH  | `/tables/:id/status`        | `table.assign`                        | Body `{businessDate,state,expectedVersion?,reason?}`; see limitation below                                                                                                                                                                       |
+| PATCH  | `/tables/:id/configuration` | `venue.configure`                     | Body `{isSpare?:boolean,status?:"ACTIVE"                                                                                                                                                                                                         | "OUT_OF_SERVICE",version,reason}`; returns `{table:{id,code,isBackup,status,version}}` |
+| POST   | `/tables/groups/:id/split`  | `table.group.manage` or `visit.split` | Body `{keepTableIds}`, or `{version,mode:"ALL_TO_SINGLE"}` to dissolve a cluster; `{operationId,changeSeq,summary,undoable:false,splitGroupId,group,keptTableIds,releasedTableIds,owner}`. See **Table groups** below for the cluster endpoints. |
 
 `FloorTableProjection` retains the legacy table fields additively and exposes `{tableId,tableCode,catalogStatus,isSpare,displayState,arrivalPhase,arrivalTime,minutesLate,claim,groupId,groupDisplayCode,groupMemberTableIds}`. `displayState` is `EMPTY`, `BOOKED`, `UPCOMING`, `LATE`, `NO_SHOW`, `IN_USE` or `OUT_OF_SERVICE`; it is computed with the venue thresholds and server clock. `NO_SHOW` is visual while the reservation may remain `BOOKED` with an active allocation. Active visits have precedence over holds. Reservation and waitlist holds for another business date are excluded; an unreleased visit from an earlier date remains visible and is marked stale.
 
@@ -267,15 +292,15 @@ separate and nothing here conflates them: **layout** (single table, or member of
 **operation** (empty / booked / in use — `table_allocations`, unchanged) and **history** (the bookings and visits that
 happened — append-only, never rewritten by a layout change).
 
-| Method | Path | Permission | Request | Response | Error codes |
-| --- | --- | --- | --- | --- | --- |
-| GET | `/tables/groups?includeDissolved=true` | `customer.view_masked` | — | `{groups:LayoutGroupView[]}` | — |
-| GET | `/tables/groups/:id` | `customer.view_masked` | — | `{group:LayoutGroupView}` | `INVALID_GROUP_ID`, `TABLE_GROUP_NOT_FOUND` |
-| POST | `/tables/groups` | `table.group.manage` | `{tableCodes:["B3","B4","B5"]}` or `{tableIds:[101,102,103]}`, optional `name`, `spareOverrideConfirmed` | 201 `{operationId,changeSeq,summary,undoable:false,group:LayoutGroupView}` | `INVALID_TABLE_CODES`, `DUPLICATE_TABLE_CODE`, `MERGE_REQUIRES_MULTIPLE_TABLES`, `TABLE_NOT_FOUND`, `TABLE_ALREADY_GROUPED`, `SPARE_TABLE_OVERRIDE_REQUIRED`, `INVALID_SPARE_OVERRIDE`, `ZONE_NOT_BOOKABLE`, `TABLE_KIND_MISMATCH`, `CROSS_ZONE_MERGE_DISABLED`, `TABLE_NOT_ADJACENT`, `TABLE_GROUP_MIXED_STATE`, `TABLE_GROUP_MULTIPLE_CLAIMS`, `TABLE_GROUP_CONFLICT`, `GROUP_SYMBOL_UNAVAILABLE`, `FORBIDDEN` |
-| POST | `/tables/groups/:id/members` | `table.group.manage` | `{version, tableCodes|tableIds}`, optional `spareOverrideConfirmed` | `{operationId,changeSeq,summary,undoable:false,group:LayoutGroupView}` | as POST `/tables/groups`, plus `INVALID_VERSION`, `TABLE_GROUP_VERSION_CONFLICT`, `TABLE_GROUP_ALREADY_DISSOLVED`, `TABLE_ASSIGNMENT_UNCHANGED` |
-| POST | `/tables/groups/:id/dissolve` | `table.group.manage` | `{}` or `{version}` | `{operationId,changeSeq,summary,undoable:false,groupId,groupCode,status:"DISSOLVED",releasedTableIds,releasedTables}` | `INVALID_GROUP_ID`, `TABLE_GROUP_NOT_FOUND`, `TABLE_GROUP_ALREADY_DISSOLVED`, `TABLE_GROUP_IN_USE`, `TABLE_GROUP_VERSION_CONFLICT`, `TABLE_GROUP_CONFLICT`, `FORBIDDEN` |
-| POST | `/tables/groups/:id/split` | `table.group.manage` or `visit.split` | `{keepTableIds}` **or** `{version, mode:"ALL_TO_SINGLE"}` | the BA-021 split result, or the dissolve result for `ALL_TO_SINGLE` | BA-021 codes below, plus `INVALID_SPLIT_MODE` and the dissolve codes |
-| GET | `/tables/stream` | `customer.view_masked` | — | `text/event-stream` | — |
+| Method | Path                                   | Permission                            | Request                                                                                                  | Response                                                                                                              | Error codes                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------ | -------------------------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/tables/groups?includeDissolved=true` | `customer.view_masked`                | —                                                                                                        | `{groups:LayoutGroupView[]}`                                                                                          | —                                                                                                                                                                                                                                                                                                                                                                                                                |
+| GET    | `/tables/groups/:id`                   | `customer.view_masked`                | —                                                                                                        | `{group:LayoutGroupView}`                                                                                             | `INVALID_GROUP_ID`, `TABLE_GROUP_NOT_FOUND`                                                                                                                                                                                                                                                                                                                                                                      |
+| POST   | `/tables/groups`                       | `table.group.manage`                  | `{tableCodes:["B3","B4","B5"]}` or `{tableIds:[101,102,103]}`, optional `name`, `spareOverrideConfirmed` | 201 `{operationId,changeSeq,summary,undoable:false,group:LayoutGroupView}`                                            | `INVALID_TABLE_CODES`, `DUPLICATE_TABLE_CODE`, `MERGE_REQUIRES_MULTIPLE_TABLES`, `TABLE_NOT_FOUND`, `TABLE_ALREADY_GROUPED`, `SPARE_TABLE_OVERRIDE_REQUIRED`, `INVALID_SPARE_OVERRIDE`, `ZONE_NOT_BOOKABLE`, `TABLE_KIND_MISMATCH`, `CROSS_ZONE_MERGE_DISABLED`, `TABLE_NOT_ADJACENT`, `TABLE_GROUP_MIXED_STATE`, `TABLE_GROUP_MULTIPLE_CLAIMS`, `TABLE_GROUP_CONFLICT`, `GROUP_SYMBOL_UNAVAILABLE`, `FORBIDDEN` |
+| POST   | `/tables/groups/:id/members`           | `table.group.manage`                  | `{version, tableCodes                                                                                    | tableIds}`, optional `spareOverrideConfirmed`                                                                         | `{operationId,changeSeq,summary,undoable:false,group:LayoutGroupView}`                                                                                                                                                                                                                                                                                                                                           | as POST `/tables/groups`, plus `INVALID_VERSION`, `TABLE_GROUP_VERSION_CONFLICT`, `TABLE_GROUP_ALREADY_DISSOLVED`, `TABLE_ASSIGNMENT_UNCHANGED` |
+| POST   | `/tables/groups/:id/dissolve`          | `table.group.manage`                  | `{}` or `{version}`                                                                                      | `{operationId,changeSeq,summary,undoable:false,groupId,groupCode,status:"DISSOLVED",releasedTableIds,releasedTables}` | `INVALID_GROUP_ID`, `TABLE_GROUP_NOT_FOUND`, `TABLE_GROUP_ALREADY_DISSOLVED`, `TABLE_GROUP_IN_USE`, `TABLE_GROUP_VERSION_CONFLICT`, `TABLE_GROUP_CONFLICT`, `FORBIDDEN`                                                                                                                                                                                                                                          |
+| POST   | `/tables/groups/:id/split`             | `table.group.manage` or `visit.split` | `{keepTableIds}` **or** `{version, mode:"ALL_TO_SINGLE"}`                                                | the BA-021 split result, or the dissolve result for `ALL_TO_SINGLE`                                                   | BA-021 codes below, plus `INVALID_SPLIT_MODE` and the dissolve codes                                                                                                                                                                                                                                                                                                                                             |
+| GET    | `/tables/stream`                       | `customer.view_masked`                | —                                                                                                        | `text/event-stream`                                                                                                   | —                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 `mode:"ALL_TO_SINGLE"` is the shipped client's spelling of Tách bàn on a cluster and delegates to the same dissolve
 implementation, so the two paths cannot drift apart. A body with neither `mode` nor `keepTableIds` still answers
@@ -308,11 +333,25 @@ Idempotency-Key: 8e0f1b2c-3d4e-5f60-7182-93a4b5c6d7e8
   "summary": "Đã ghép B3 + B4 + B5 thành cụm ◆A (12 chỗ).",
   "undoable": false,
   "group": {
-    "groupId": 101, "groupCode": "TG-101", "symbolNo": 1, "displayCode": "◆A", "name": "◆A",
-    "status": "ACTIVE", "version": 1, "zoneId": 2,
-    "tableIds": [101, 102, 103], "tableCodes": ["B3", "B4", "B5"],
-    "tables": [{"id":101,"code":"B3","capacity":4},{"id":102,"code":"B4","capacity":4},{"id":103,"code":"B5","capacity":4}],
-    "totalCapacity": 12, "formedAt": "2026-11-10T13:02:11.421Z", "dissolvedAt": null, "inUseBy": null
+    "groupId": 101,
+    "groupCode": "TG-101",
+    "symbolNo": 1,
+    "displayCode": "◆A",
+    "name": "◆A",
+    "status": "ACTIVE",
+    "version": 1,
+    "zoneId": 2,
+    "tableIds": [101, 102, 103],
+    "tableCodes": ["B3", "B4", "B5"],
+    "tables": [
+      { "id": 101, "code": "B3", "capacity": 4 },
+      { "id": 102, "code": "B4", "capacity": 4 },
+      { "id": 103, "code": "B5", "capacity": 4 }
+    ],
+    "totalCapacity": 12,
+    "formedAt": "2026-11-10T13:02:11.421Z",
+    "dissolvedAt": null,
+    "inUseBy": null
   }
 }
 ```
@@ -324,10 +363,15 @@ POST /api/v1/tables/groups/101/dissolve
 
 ```json
 {
-  "operationId": 418, "changeSeq": 1891, "undoable": false,
+  "operationId": 418,
+  "changeSeq": 1891,
+  "undoable": false,
   "summary": "Đã tách cụm ◆A, trả lại B3, B4, B5.",
-  "groupId": 101, "groupCode": "TG-101", "status": "DISSOLVED",
-  "releasedTableIds": [101, 102, 103], "releasedTables": ["B3", "B4", "B5"]
+  "groupId": 101,
+  "groupCode": "TG-101",
+  "status": "DISSOLVED",
+  "releasedTableIds": [101, 102, 103],
+  "releasedTables": ["B3", "B4", "B5"]
 }
 ```
 
@@ -503,46 +547,46 @@ Chrome.
 
 ## Bookings
 
-| Method | Path | Permission | Request / response |
-| --- | --- | --- | --- |
-| GET | `/bookings?date=YYYY-MM-DD` | `customer.view_masked` | `{businessDate,bookings:BookingView[]}` |
-| GET | `/bookings/sources` | `customer.view_masked` | `{sources:[{code,name}]}`; active organization sources |
-| GET | `/bookings/search?date=YYYY-MM-DD&last3=123` | `customer.view_masked` | Fast reception search: exact last 3 digits, scoped to session venue/date; returns masked booking/waitlist matches, real assigned `tableIds`, and a deduplicated summary |
-| GET | `/bookings/search?date=YYYY-MM-DD&name=...` | `customer.view_masked` | Optional accent-insensitive reception name search; same masked response |
-| GET | `/bookings/search?date=YYYY-MM-DD&q=...` | `customer.view_masked` | Backward-compatible booking search response `{businessDate,query,bookings}`; up to 100 results |
-| GET | `/bookings/export?date=YYYY-MM-DD` | `customer.view_masked` | UTF-8 `text/plain` Zalo summary and booking statistics, no phone fields |
-| GET | `/bookings/:id` | `customer.view_masked` | `{booking:BookingView}` |
-| POST | `/bookings` | `reservation.create` | Body `BookingInput`; 201 `{booking}` |
-| POST | `/bookings/direct` | `reservation.create` + `table.assign` | Body `BookingInput` plus `tableIds`; 201 `{booking}` with assigned table codes |
-| PUT | `/bookings/:id` | `reservation.update` | Body `BookingInput` plus `version`; `{booking}` |
-| POST | `/bookings/:id/assign` | `table.assign` | Body `{version,tableIds}`; `{booking}` |
-| POST | `/bookings/:id/merge` | `visit.combine` | Body `{version,tableIds}`; `{booking,group:{id,symbolNo,tableIds}}` |
-| POST | `/bookings/:id/cancel` | `reservation.cancel` | Body `{version,reasonNote?}`; `{booking}` |
-| POST | `/bookings/:id/no-show` | `reservation.mark_no_show` | Body `{version}`; `{booking}` |
-| POST | `/bookings/:id/late-confirm` | `reservation.update` | Body `{version}`; returns `{bookingId,lateConfirmed,lateConfirmedAt,version,changeSeq}` only |
-| POST | `/bookings/:id/call` | `booking.phone.call` | Empty object; 201 `{callId,bookingId,initiatedAt,telUri}` with `Cache-Control: no-store` |
-| POST | `/bookings/:id/calls/:callId/outcome` | `booking.phone.call` | Body `{outcome,bookingVersion?}`; records one result for the call |
-| GET | `/bookings/:id/calls` | `booking.phone.call` | `{calls}`, newest first, never a phone number |
-| POST | `/bookings/:id/check-in` | `visit.checkin` | Body `{version}`; `{booking}` |
-| POST | `/bookings/:id/phone:reveal` | Both `booking.phone.reveal` and `customer.phone.reveal` | `{phoneNumber}`; OWNER and ADMIN only |
-| POST | `/bookings/walk-ins` | `visit.walkin` | Body `{partySize,businessDate,tableIds,guestName?,phoneNumber?}`; 201 `{visitId}` |
+| Method | Path                                         | Permission                                              | Request / response                                                                                                                                                      |
+| ------ | -------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/bookings?date=YYYY-MM-DD`                  | `customer.view_masked`                                  | `{businessDate,bookings:BookingView[]}`                                                                                                                                 |
+| GET    | `/bookings/sources`                          | `customer.view_masked`                                  | `{sources:[{code,name}]}`; active organization sources                                                                                                                  |
+| GET    | `/bookings/search?date=YYYY-MM-DD&last3=123` | `customer.view_masked`                                  | Fast reception search: exact last 3 digits, scoped to session venue/date; returns masked booking/waitlist matches, real assigned `tableIds`, and a deduplicated summary |
+| GET    | `/bookings/search?date=YYYY-MM-DD&name=...`  | `customer.view_masked`                                  | Optional accent-insensitive reception name search; same masked response                                                                                                 |
+| GET    | `/bookings/search?date=YYYY-MM-DD&q=...`     | `customer.view_masked`                                  | Backward-compatible booking search response `{businessDate,query,bookings}`; up to 100 results                                                                          |
+| GET    | `/bookings/export?date=YYYY-MM-DD`           | `customer.view_masked`                                  | UTF-8 `text/plain` Zalo summary and booking statistics, no phone fields                                                                                                 |
+| GET    | `/bookings/:id`                              | `customer.view_masked`                                  | `{booking:BookingView}`                                                                                                                                                 |
+| POST   | `/bookings`                                  | `reservation.create`                                    | Body `BookingInput`; 201 `{booking}`                                                                                                                                    |
+| POST   | `/bookings/direct`                           | `reservation.create` + `table.assign`                   | Body `BookingInput` plus `tableIds`; 201 `{booking}` with assigned table codes                                                                                          |
+| PUT    | `/bookings/:id`                              | `reservation.update`                                    | Body `BookingInput` plus `version`; `{booking}`                                                                                                                         |
+| POST   | `/bookings/:id/assign`                       | `table.assign`                                          | Body `{version,tableIds}`; `{booking}`                                                                                                                                  |
+| POST   | `/bookings/:id/merge`                        | `visit.combine`                                         | Body `{version,tableIds}`; `{booking,group:{id,symbolNo,tableIds}}`                                                                                                     |
+| POST   | `/bookings/:id/cancel`                       | `reservation.cancel`                                    | Body `{version,reasonNote?}`; `{booking}`                                                                                                                               |
+| POST   | `/bookings/:id/no-show`                      | `reservation.mark_no_show`                              | Body `{version}`; `{booking}`                                                                                                                                           |
+| POST   | `/bookings/:id/late-confirm`                 | `reservation.update`                                    | Body `{version}`; returns `{bookingId,lateConfirmed,lateConfirmedAt,version,changeSeq}` only                                                                            |
+| POST   | `/bookings/:id/call`                         | `booking.phone.call`                                    | Empty object; 201 `{callId,bookingId,initiatedAt,telUri}` with `Cache-Control: no-store`                                                                                |
+| POST   | `/bookings/:id/calls/:callId/outcome`        | `booking.phone.call`                                    | Body `{outcome,bookingVersion?}`; records one result for the call                                                                                                       |
+| GET    | `/bookings/:id/calls`                        | `booking.phone.call`                                    | `{calls}`, newest first, never a phone number                                                                                                                           |
+| POST   | `/bookings/:id/check-in`                     | `visit.checkin`                                         | Body `{version}`; `{booking}`                                                                                                                                           |
+| POST   | `/bookings/:id/phone:reveal`                 | Both `booking.phone.reveal` and `customer.phone.reveal` | `{phoneNumber}`; OWNER and ADMIN only                                                                                                                                   |
+| POST   | `/bookings/walk-ins`                         | `visit.walkin`                                          | Body `{partySize,businessDate,tableIds,guestName?,phoneNumber?}`; 201 `{visitId}`                                                                                       |
 
 `BookingInput`:
 
 ```json
 {
-  "guestName":"Khách đặt bàn",
-  "partySize":4,
-  "expectedAt":"2030-10-24T20:00:00+07:00",
-  "businessDate":"2030-10-24",
-  "sourceCode":"HOTLINE",
-  "note":"Ghi chú tùy chọn",
-  "phoneNumber":"0987654321",
-  "classification":"NEW",
-  "isBirthday":false,
-  "iconKeys":["star","pin"],
-  "honorific":"MR",
-  "socialPlatform":"IG"
+  "guestName": "Khách đặt bàn",
+  "partySize": 4,
+  "expectedAt": "2030-10-24T20:00:00+07:00",
+  "businessDate": "2030-10-24",
+  "sourceCode": "HOTLINE",
+  "note": "Ghi chú tùy chọn",
+  "phoneNumber": "0987654321",
+  "classification": "NEW",
+  "isBirthday": false,
+  "iconKeys": ["star", "pin"],
+  "honorific": "MR",
+  "socialPlatform": "IG"
 }
 ```
 
@@ -567,11 +611,11 @@ columns, so a venue already on 0016 needs no schema change.
 
 `POST /bookings`, `POST /bookings/direct` and `PUT /bookings/:id` accept:
 
-| Field | Values | Stored as |
-| --- | --- | --- |
-| `iconKeys` | array of `star` (⭐ Bàn sếp) and `pin` (📌 Chỉ định); `[]` or `null` clears both | `is_boss_table`, `is_designated` |
-| `honorific` | `MR`, `MS`; `null` or `""` clears it | `honorific` |
-| `socialPlatform` | `FB`, `IG`, `TIKTOK`, `THREADS`, `GG_REVIEW`; `null` or `""` clears it | `social_platform` |
+| Field            | Values                                                                           | Stored as                        |
+| ---------------- | -------------------------------------------------------------------------------- | -------------------------------- |
+| `iconKeys`       | array of `star` (⭐ Bàn sếp) and `pin` (📌 Chỉ định); `[]` or `null` clears both | `is_boss_table`, `is_designated` |
+| `honorific`      | `MR`, `MS`; `null` or `""` clears it                                             | `honorific`                      |
+| `socialPlatform` | `FB`, `IG`, `TIKTOK`, `THREADS`, `GG_REVIEW`; `null` or `""` clears it           | `social_platform`                |
 
 `BookingView` returns `iconKeys` (always an array, `[]` when nothing is set),
 `honorific` and `socialPlatform` (both nullable). A booking written before 0016
@@ -579,28 +623,28 @@ has all four columns at their defaults and reads back as `{"iconKeys":[],"honori
 
 Rules:
 
-* `🎂 Sinh nhật` is **not** an icon key — it stays the existing `isBirthday` boolean.
+- `🎂 Sinh nhật` is **not** an icon key — it stays the existing `isBirthday` boolean.
   🔥 Khách quen and 🆕 Khách mới are derived from `classification` and are not sent either.
   Any other key is refused rather than dropped in silence.
-* `socialPlatform` is only stored while `sourceCode` is `SOCIAL`. For every other
+- `socialPlatform` is only stored while `sourceCode` is `SOCIAL`. For every other
   source the server writes `NULL`, whether the client sent a platform or not, and
   an update that moves a booking off `SOCIAL` clears the stored platform. A CHECK
   constraint cannot read the source code through the `booking_sources` foreign key,
   so this is enforced by the API.
-* An omitted field keeps the stored value on update; an explicit `null` (or `[]`
+- An omitted field keeps the stored value on update; an explicit `null` (or `[]`
   for `iconKeys`) clears it. A change to any of the three alone counts as a change,
   so such an edit is not rejected with `BOOKING_NOT_CHANGED`.
-* The atomic Floor Projection claim also carries `honorific` and `iconKeys`, for a
+- The atomic Floor Projection claim also carries `honorific` and `iconKeys`, for a
   `RESERVATION`, a `WAITLIST_HOLD` and the `VISIT` a booking was checked in to, so
   the floor can render `Mr Nam` and the ⭐/📌 markers without a second request.
 
 Errors, all 400:
 
-| Code | Cause |
-| --- | --- |
-| `INVALID_ICON_KEYS` | not an array, more entries than there are icon keys, or a key outside `star`/`pin` |
-| `INVALID_HONORIFIC` | a value outside `MR`/`MS` (case-sensitive) |
-| `INVALID_SOCIAL_PLATFORM` | a value outside `FB`/`IG`/`TIKTOK`/`THREADS`/`GG_REVIEW` |
+| Code                      | Cause                                                                              |
+| ------------------------- | ---------------------------------------------------------------------------------- |
+| `INVALID_ICON_KEYS`       | not an array, more entries than there are icon keys, or a key outside `star`/`pin` |
+| `INVALID_HONORIFIC`       | a value outside `MR`/`MS` (case-sensitive)                                         |
+| `INVALID_SOCIAL_PLATFORM` | a value outside `FB`/`IG`/`TIKTOK`/`THREADS`/`GG_REVIEW`                           |
 
 `POST /bookings/walk-ins` does not accept these three fields; a walk-in carries no
 icons, honorific or platform.
@@ -630,7 +674,6 @@ Payload tạo/sửa booking nhận `classification`: `RETURNING`, `NEW` hoặc `
 giá trị hiện tại. Response list/detail luôn trả một trong ba giá trị; database `NULL` cũ được ánh xạ thành
 `UNCLASSIFIED`. Classification thuộc booking, không thuộc customer profile.
 
-
 ### `GET /bookings/export?date=YYYY-MM-DD`
 
 Yêu cầu session hợp lệ và quyền `customer.view_masked`. Response là `text/plain; charset=utf-8`, lấy booking,
@@ -638,8 +681,6 @@ allocation, bàn `OUT_OF_SERVICE` và bộ đếm waitlist trong cùng một MyS
 không đọc/xuất số điện thoại, `phoneLast3`, ciphertext, HMAC hay customer ID. Thống kê trước/sau cộng `party_size`
 theo `expected_at` với cutoff 21:30 giờ Việt Nam; đúng 21:30 thuộc nhóm trước (`<=` thuộc nhóm trước, chỉ `>` mới thuộc nhóm sau) và dòng text là `Khách vào trước/bằng 21:30`; O/N đếm booking theo classification và báo
 riêng số `UNCLASSIFIED`. Endpoint chỉ trả text; không gửi sang Zalo.
-
-
 
 ### Phone protection
 
@@ -651,12 +692,12 @@ BA-023 records the approved PO decision: Receptionist calling uses the dedicated
 
 ## Visits
 
-| Method | Path | Permission | Request / response |
-| --- | --- | --- | --- |
-| POST | `/visits/:id/close` | `visit.end` | Body `{version,mode:"MANUAL",reason,note?}`; `{visit:ClosedVisitView}` |
-| POST | `/visits/:id/move` | `visit.move` | Body `{version,tableIds,note?}`; `{visit:MovedVisitView}` |
-| POST | `/visits/:id/merge` | `visit.combine` | Body `{version,tableIds}`; `{visit:MovedVisitView,group:{id,symbolNo,tableIds}}` |
-| GET | `/visits/turns?from=&to=` | `report.read` | Table-turn ledger over a range of operating days; see **Table turns** below |
+| Method | Path                      | Permission      | Request / response                                                               |
+| ------ | ------------------------- | --------------- | -------------------------------------------------------------------------------- |
+| POST   | `/visits/:id/close`       | `visit.end`     | Body `{version,mode:"MANUAL",reason,note?}`; `{visit:ClosedVisitView}`           |
+| POST   | `/visits/:id/move`        | `visit.move`    | Body `{version,tableIds,note?}`; `{visit:MovedVisitView}`                        |
+| POST   | `/visits/:id/merge`       | `visit.combine` | Body `{version,tableIds}`; `{visit:MovedVisitView,group:{id,symbolNo,tableIds}}` |
+| GET    | `/visits/turns?from=&to=` | `report.read`   | Table-turn ledger over a range of operating days; see **Table turns** below      |
 
 Manual close reasons are `GUEST_LEFT` or `ENTRY_ERROR`; note is optional, at most 500 characters. Closing releases the visit allocations and dissolves unused groups. `ClosedVisitView` is `{id,businessDate,status:"CLOSED",endedAt,endReason,version,releasedTables:[{id,code}],turn}`, where `turn` is the table turn this close recorded (see **Table turns** below) or null when the visit already had one. Closing releases the operational state only: it never dissolves a LAYOUT cluster. `MovedVisitView` is `{id,businessDate,version,previousTables:[{id,code}],tables:[{id,code}]}`. Move validates capacity and same-kind targets, allows multiple tables across bookable zones without adjacency configuration, and creates or retains their shared group. It rejects every unreleased USAGE allocation on target tables regardless of business date, plus holds on the visit's business date. Merge follows the group rules above.
 
@@ -733,12 +774,12 @@ is the same cell the client already draws a cluster's badge on, so the number ap
 
 `completed_at` is the gate, not the row's existence:
 
-| Close | Row written | Counted |
-| --- | --- | --- |
-| `GUEST_LEFT` (Trả bàn) | yes | **yes** |
-| `ENTRY_ERROR` (sửa nhập sai) | yes | no |
-| `BUSINESS_DAY_END` (worker cuối ca) | yes | no — see `[?]` below |
-| A booking cancelled or marked No-show before check-in | no row at all | no |
+| Close                                                 | Row written   | Counted              |
+| ----------------------------------------------------- | ------------- | -------------------- |
+| `GUEST_LEFT` (Trả bàn)                                | yes           | **yes**              |
+| `ENTRY_ERROR` (sửa nhập sai)                          | yes           | no                   |
+| `BUSINESS_DAY_END` (worker cuối ca)                   | yes           | no — see `[?]` below |
+| A booking cancelled or marked No-show before check-in | no row at all | no                   |
 
 A booking that never reached `IN_USE` writes nothing: the turn is written by the close path, which only runs on a visit.
 
@@ -767,9 +808,9 @@ and they deliberately do **not** migrate to the now-single tables, whose badge i
 
 ### `GET /api/v1/visits/turns`
 
-| Method | Path | Permission | Request | Response | Error codes |
-| --- | --- | --- | --- | --- | --- |
-| GET | `/visits/turns?from=&to=&page=&pageSize=&includeUncounted=` | `report.read` | query only | `{from,to,page,pageSize,total,completedTotal,guestTotal,turns:TurnView[]}` | `INVALID_BUSINESS_DATE`, `INVALID_DATE_RANGE`, `DATE_RANGE_TOO_WIDE`, `INVALID_PAGE`, `INVALID_PAGE_SIZE`, `INVALID_INCLUDE_UNCOUNTED`, `PERMISSION_DENIED` |
+| Method | Path                                                        | Permission    | Request    | Response                                                                   | Error codes                                                                                                                                                 |
+| ------ | ----------------------------------------------------------- | ------------- | ---------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GET    | `/visits/turns?from=&to=&page=&pageSize=&includeUncounted=` | `report.read` | query only | `{from,to,page,pageSize,total,completedTotal,guestTotal,turns:TurnView[]}` | `INVALID_BUSINESS_DATE`, `INVALID_DATE_RANGE`, `DATE_RANGE_TOO_WIDE`, `INVALID_PAGE`, `INVALID_PAGE_SIZE`, `INVALID_INCLUDE_UNCOUNTED`, `PERMISSION_DENIED` |
 
 `from` and `to` are operating days, `YYYY-MM-DD`, inclusive, at most 366 days apart. `page` starts at 1, `pageSize` is
 1–200 and defaults to 50. `includeUncounted=true` also returns the rows that do not count; the default returns only
@@ -785,18 +826,36 @@ GET /api/v1/visits/turns?from=2026-11-11&to=2026-11-11
 
 ```json
 {
-  "from": "2026-11-11", "to": "2026-11-11", "page": 1, "pageSize": 50,
-  "total": 1, "completedTotal": 1, "guestTotal": 12,
-  "turns": [{
-    "turnId": 31, "turnNo": 1, "businessDate": "2026-11-11",
-    "scope": "GROUP", "groupCode": "◆A", "groupId": 101, "tableId": null,
-    "tableCodes": ["B3", "B4", "B5"], "memberTableIds": [101, 102, 103],
-    "guestName": "Đoàn 12 khách", "guestCount": 12,
-    "sourceCode": "HOTLINE", "origin": "RESERVATION",
-    "seatedAt": "2026-11-11T14:31:02.117Z", "releasedAt": "2026-11-11T16:04:55.903Z",
-    "endReason": "GUEST_LEFT", "counted": true,
-    "visitId": 77, "reservationId": 54
-  }]
+  "from": "2026-11-11",
+  "to": "2026-11-11",
+  "page": 1,
+  "pageSize": 50,
+  "total": 1,
+  "completedTotal": 1,
+  "guestTotal": 12,
+  "turns": [
+    {
+      "turnId": 31,
+      "turnNo": 1,
+      "businessDate": "2026-11-11",
+      "scope": "GROUP",
+      "groupCode": "◆A",
+      "groupId": 101,
+      "tableId": null,
+      "tableCodes": ["B3", "B4", "B5"],
+      "memberTableIds": [101, 102, 103],
+      "guestName": "Đoàn 12 khách",
+      "guestCount": 12,
+      "sourceCode": "HOTLINE",
+      "origin": "RESERVATION",
+      "seatedAt": "2026-11-11T14:31:02.117Z",
+      "releasedAt": "2026-11-11T16:04:55.903Z",
+      "endReason": "GUEST_LEFT",
+      "counted": true,
+      "visitId": 77,
+      "reservationId": 54
+    }
+  ]
 }
 ```
 
@@ -804,8 +863,14 @@ GET /api/v1/visits/turns?from=2026-11-11&to=2026-11-11
 already had one:
 
 ```json
-{"visit": {"id": 77, "status": "CLOSED", "releasedTables": [{"id":101,"code":"B3"}],
-  "turn": {"turnId": 31, "scope": "GROUP", "turnNo": 1, "counted": true}}}
+{
+  "visit": {
+    "id": 77,
+    "status": "CLOSED",
+    "releasedTables": [{ "id": 101, "code": "B3" }],
+    "turn": { "turnId": 31, "scope": "GROUP", "turnNo": 1, "counted": true }
+  }
+}
 ```
 
 ### Migration
@@ -846,19 +911,19 @@ rolled-back close leaving nothing behind.
 
 ## Waitlist
 
-| Method | Path | Permission | Request / response |
-| --- | --- | --- | --- |
-| GET | `/waitlist?date=YYYY-MM-DD` | `customer.view_masked` | `{businessDate,entries:WaitlistEntryView[]}` |
-| POST | `/waitlist` | `waitlist.create` | Body WALK_IN `{kind?:"WALK_IN",guestName,partySize,businessDate,contactChannel,phoneNumber?,note?}` or ADVANCE `{kind:"ADVANCE_RESERVATION",reservationId,businessDate,contactChannel,note?}`; 201 `{entry}` |
-| POST | `/waitlist/:id/seat` | `waitlist.accept_offer` + `reservation.create` + `table.assign`, plus `visit.walkin` when `arrived` is true | Body `{version,tableIds,arrived?}`; `{entry,reservationId,groupId}` where `reservationId` is null for an arrived Walk-in that creates a Visit without a reservation |
-| POST | `/waitlist/:id/cancel` | `waitlist.cancel` | Body `{version,reasonCode,note?}`; `{entry}` |
-| POST | `/waitlist/:id/contact-attempts` | `waitlist.record_contact` | Body `{version,channel,outcome,note?}`; `{entry}` |
-| POST | `/waitlist/:id/call` | `booking.phone.call` | Empty object; 201 `{callId,targetKind,targetId,initiatedAt,telUri}` with `Cache-Control: no-store` |
-| GET | `/waitlist/:id/calls` | `booking.phone.call` | `{calls}`, newest first, never a phone number |
-| POST | `/waitlist/:id/calls/:callId/outcome` | `booking.phone.call` | Body `{outcome}`, only `CONTACTED` or `NO_ANSWER` |
-| POST | `/visits/:id/call` | `booking.phone.call` | Empty object; 201 `{callId,targetKind,targetId,initiatedAt,telUri}` with `Cache-Control: no-store` |
-| GET | `/visits/:id/calls` | `booking.phone.call` | `{calls}`, newest first, never a phone number |
-| POST | `/visits/:id/calls/:callId/outcome` | `booking.phone.call` | Body `{outcome}`, only `CONTACTED` or `NO_ANSWER` |
+| Method | Path                                  | Permission                                                                                                  | Request / response                                                                                                                                                                                           |
+| ------ | ------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GET    | `/waitlist?date=YYYY-MM-DD`           | `customer.view_masked`                                                                                      | `{businessDate,entries:WaitlistEntryView[]}`                                                                                                                                                                 |
+| POST   | `/waitlist`                           | `waitlist.create`                                                                                           | Body WALK_IN `{kind?:"WALK_IN",guestName,partySize,businessDate,contactChannel,phoneNumber?,note?}` or ADVANCE `{kind:"ADVANCE_RESERVATION",reservationId,businessDate,contactChannel,note?}`; 201 `{entry}` |
+| POST   | `/waitlist/:id/seat`                  | `waitlist.accept_offer` + `reservation.create` + `table.assign`, plus `visit.walkin` when `arrived` is true | Body `{version,tableIds,arrived?}`; `{entry,reservationId,groupId}` where `reservationId` is null for an arrived Walk-in that creates a Visit without a reservation                                          |
+| POST   | `/waitlist/:id/cancel`                | `waitlist.cancel`                                                                                           | Body `{version,reasonCode,note?}`; `{entry}`                                                                                                                                                                 |
+| POST   | `/waitlist/:id/contact-attempts`      | `waitlist.record_contact`                                                                                   | Body `{version,channel,outcome,note?}`; `{entry}`                                                                                                                                                            |
+| POST   | `/waitlist/:id/call`                  | `booking.phone.call`                                                                                        | Empty object; 201 `{callId,targetKind,targetId,initiatedAt,telUri}` with `Cache-Control: no-store`                                                                                                           |
+| GET    | `/waitlist/:id/calls`                 | `booking.phone.call`                                                                                        | `{calls}`, newest first, never a phone number                                                                                                                                                                |
+| POST   | `/waitlist/:id/calls/:callId/outcome` | `booking.phone.call`                                                                                        | Body `{outcome}`, only `CONTACTED` or `NO_ANSWER`                                                                                                                                                            |
+| POST   | `/visits/:id/call`                    | `booking.phone.call`                                                                                        | Empty object; 201 `{callId,targetKind,targetId,initiatedAt,telUri}` with `Cache-Control: no-store`                                                                                                           |
+| GET    | `/visits/:id/calls`                   | `booking.phone.call`                                                                                        | `{calls}`, newest first, never a phone number                                                                                                                                                                |
+| POST   | `/visits/:id/calls/:callId/outcome`   | `booking.phone.call`                                                                                        | Body `{outcome}`, only `CONTACTED` or `NO_ANSWER`                                                                                                                                                            |
 
 `WaitlistEntryView` is `{id,kind,guestName,phoneLast3,partySize,businessDate,queuedAt,status,contactChannel,reservationId,reservationExpectedAt,visitId,note,version}`. `kind` is `ADVANCE_RESERVATION` or `WALK_IN`; omitted kind creates `WALK_IN`. Advance entries require a BOOKED reservation in the actor organization/venue on the same business date, without active holds or allocations; an existing non-terminal entry returns 409. Guest name and party size come from the reservation and must not be sent for advance entries. `reservationExpectedAt` is the ISO UTC appointment time for advance entries and null for walk-ins. Lists order by priority_class (advance before walk-in), queuedAt, then id. `status` is `WAITING`, `CONTACTING`, `OFFERED`, `HOLD_ACTIVE`, `SEATED`, `DECLINED` or `CANCELLED`. Only `phoneLast3` is returned. Optional WALK_IN `phoneNumber` uses the existing encrypted customer identity and duplicate checks. Phone numbers in creation notes are rejected.
 
@@ -872,11 +937,11 @@ Contact recording uses the existing `waitlist_contact_attempts` table. Its chann
 
 ## Operations (undo/redo)
 
-| Method | Path | Permission | Request / response |
-| --- | --- | --- | --- |
-| GET | `/operations/undo-state` | `operation.undo` | `{undo,redo}`, each null or `{operationId,action,summary}` |
-| POST | `/operations/undo` | `operation.undo` | Body `{operationId}`; `{operationId,changeSeq,summary,undoable}` |
-| POST | `/operations/redo` | `operation.undo` | Body `{operationId}`; same shape |
+| Method | Path                     | Permission       | Request / response                                               |
+| ------ | ------------------------ | ---------------- | ---------------------------------------------------------------- |
+| GET    | `/operations/undo-state` | `operation.undo` | `{undo,redo}`, each null or `{operationId,action,summary}`       |
+| POST   | `/operations/undo`       | `operation.undo` | Body `{operationId}`; `{operationId,changeSeq,summary,undoable}` |
+| POST   | `/operations/redo`       | `operation.undo` | Body `{operationId}`; same shape                                 |
 
 Undo is a compensating mutation with its own audit row; nothing is deleted and no past audit row is rewritten. Only the
 single latest `operation_log` row of the caller's organization, venue and server-side `auth_session_id` is eligible, so
@@ -890,19 +955,49 @@ steps may be undone and any time window remain open with the PO; the API exposes
 
 ## Accounts
 
-| Method | Path | Permission | Request / response |
-| --- | --- | --- | --- |
-| GET | `/accounts` | `user.read` | `{accounts:AccountSummary[],roles:[{code,name}]}`; assignable roles depend on actor |
-| POST | `/accounts` | `user.manage` | Body `{username,displayName,password,roleCode,accessLevel?}`; 201 `{account}` |
-| POST | `/accounts/:id/status` | `user.manage` | Body `{version,status:"ACTIVE"\|"DISABLED"}`; `{account,revokedSessions}` |
-| POST | `/accounts/:id/access-level` | `user.manage`, OWNER target rule | Body `{version,accessLevel:"WRITE"\|"READ_ONLY"}`; `{account,revokedSessions}` |
-| POST | `/accounts/:id/password-reset` | `user.manage` + target rule | Body `{version,newPassword}`; `{account,revokedSessions}` |
-| POST | `/accounts/me/password` | Session + CSRF | Body `{currentPassword,newPassword}`; `{revokedSessions}` |
+| Method | Path                           | Permission                                                   | Request / response                                                                               |
+| ------ | ------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| GET    | `/accounts`                    | `user.read`                                                  | `{accounts:AccountSummary[],roles:[{code,name}]}`; assignable roles depend on actor              |
+| POST   | `/accounts`                    | `user.manage`                                                | Body `{username,displayName,password?,roleCode,accessLevel?}`; 201 `{account,temporaryPassword}` |
+| POST   | `/accounts/:id/status`         | `user.manage`                                                | Body `{version,status:"ACTIVE"\|"DISABLED"}`; `{account,revokedSessions}`                        |
+| POST   | `/accounts/:id/access-level`   | `user.manage`, OWNER target rule                             | Body `{version,accessLevel:"WRITE"\|"READ_ONLY"}`; `{account,revokedSessions}`                   |
+| POST   | `/accounts/:id/password-reset` | `user.manage` + target rule                                  | Body `{version,newPassword?}`; `{account,revokedSessions,temporaryPassword}`                     |
+| POST   | `/accounts/me/password`        | Session + CSRF (works while a temporary password is pending) | Body `{currentPassword,newPassword}`; `{revokedSessions}`                                        |
+| GET    | `/accounts/:id/permissions`    | `user.read`                                                  | `{account,permissions:AccountPermissionView[]}` (TU-34)                                          |
+| POST   | `/accounts/:id/permissions`    | `user.manage` + target rule                                  | Body `{version,permissions:{[code]:boolean}}`; `{account,permissions,changed}` (TU-34)           |
 
 `AccountSummary` is `{id,username,displayName,status,membershipStatus,roles,accessLevel,lastLoginAt,version}`; password,
 hash, token and reset secret are never returned. Listing and every mutation require an active target role at the
 actor's organization and venue. OWNER may create ADMIN (`accessLevel` required) or one of the four staff roles.
 ADMIN WRITE may create only `RECEPTIONIST`, `CUSTOMER_CARE`, `CASHIER`, or `WAITER` (TU-32 adds `WAITER`).
+
+### Temporary passwords (TU-34)
+
+`POST /accounts` and `POST /accounts/:id/password-reset` generate a 16-character password when the body omits one, and
+return it as `temporaryPassword` exactly once — no endpoint reads it back, and it never reaches `operation_log`. A
+generated password sets `users.must_change_password`; a password the admin supplies explicitly does not, because that
+is the password they chose rather than a temporary one. While the flag is set the account authenticates normally but
+every business endpoint answers
+`403 PASSWORD_CHANGE_REQUIRED` until `POST /accounts/me/password` succeeds. Only `GET /auth/me`, `POST /auth/logout`
+and that password change accept a session in this state. A successful change clears the flag and revokes all sessions,
+so the staff member signs in again with the password they chose.
+
+### Per-account permissions (TU-34)
+
+`effective = role_permissions(role, access_level) ∩ enabled_overrides`. An override can only switch a permission
+**off**; a row enabling a permission the role does not grant changes nothing, so a mis-click can never hand a
+receptionist the right to take payments. The intersection is applied inside `listPermissions`, which is the single
+place permissions are computed, so `requirePermission` enforces it on every endpoint — not just the admin screen.
+
+`AccountPermissionView` is `{code,grantedByRole,enabled,overridden,editable}`. `grantedByRole` is the role ceiling,
+`enabled` the effective permission, and `editable` is false for permissions outside the ceiling and for the protected
+set (`user.read`), which cannot be switched off.
+
+Writing requires `user.manage`, an unchanged `version` (otherwise `409 VERSION_CONFLICT`), and the target rules:
+nobody edits their own permissions (`409 CANNOT_MANAGE_SELF`), OWNER accounts are untouchable
+(`403 OWNER_PROTECTED`), and only OWNER may edit an ADMIN (`403 ADMIN_TARGET_DENIED`). A code outside the role ceiling
+is rejected with `400 PERMISSION_NOT_IN_ROLE` rather than silently ignored. Saving does not revoke sessions: the next
+request of the affected account is already computed against the new set.
 No request may create OWNER. ADMIN cannot
 manage another ADMIN or OWNER, and no actor can change its own status/access through target-management endpoints.
 Because OWNER is never a valid management target and cannot be created through the API, the last OWNER cannot be
@@ -923,13 +1018,31 @@ raw token/cookie, or unnecessary account PII.
 Example ADMIN creation:
 
 ```json
-{"username":"admin_ca_2","displayName":"Admin ca 2","password":"<entered securely>","roleCode":"ADMIN","accessLevel":"WRITE"}
+{
+  "username": "admin_ca_2",
+  "displayName": "Admin ca 2",
+  "password": "<entered securely>",
+  "roleCode": "ADMIN",
+  "accessLevel": "WRITE"
+}
 ```
 
 Example account response:
 
 ```json
-{"account":{"id":42,"username":"admin_ca_2","displayName":"Admin ca 2","status":"ACTIVE","membershipStatus":"ACTIVE","roles":["ADMIN"],"accessLevel":"WRITE","lastLoginAt":null,"version":1}}
+{
+  "account": {
+    "id": 42,
+    "username": "admin_ca_2",
+    "displayName": "Admin ca 2",
+    "status": "ACTIVE",
+    "membershipStatus": "ACTIVE",
+    "roles": ["ADMIN"],
+    "accessLevel": "WRITE",
+    "lastLoginAt": null,
+    "version": 1
+  }
+}
 ```
 
 ## Unavailable capabilities

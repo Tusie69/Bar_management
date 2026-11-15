@@ -6,6 +6,7 @@ import { api } from "@/services"
 import { useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
 import { LoginPage, PortalUnderConstruction } from "./login-page"
+import { PasswordChangeGate } from "./password-change-gate"
 import {
   DEFAULT_AUTH_PORTAL,
   canonicalPortalPath,
@@ -15,6 +16,7 @@ import {
 
 export function AuthBoundary({ children }: { children: ReactNode }) {
   const status = useSession((state) => state.authStatus)
+  const mustChangePassword = useSession((state) => state.mustChangePassword)
   const error = useSession((state) => state.authError)
   const bootstrap = useSession((state) => state.bootstrap)
   const sessionPortal = useSession((state) => state.portal)
@@ -33,7 +35,9 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
   }, [queryClient, status])
 
   if (api.mode === "mock") return children
-  if (status === "authenticated") return children
+  // TU-34: mật khẩu tạm chặn toàn app, không riêng một màn. Backend đã chặn
+  // bằng 403; đây là cánh cửa để người dùng biết phải làm gì.
+  if (status === "authenticated") return mustChangePassword ? <PasswordChangeGate /> : children
   if (status === "anonymous") {
     const pathname = typeof window === "undefined" ? "" : window.location.pathname
     const unavailablePortal = unavailablePortalFromPath(pathname)
