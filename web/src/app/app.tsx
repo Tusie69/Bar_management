@@ -7,6 +7,7 @@ import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { FloorPage } from "@/features/floor/floor-page"
 import { AuthBoundary } from "@/features/auth/auth-boundary"
+import { adminRoute } from "@/features/admin/admin-routes"
 import { useRealtimeSync } from "@/hooks/use-data"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { AppShell } from "./shell"
@@ -56,6 +57,9 @@ function HomeRoute() {
 }
 
 const router = createBrowserRouter([
+  // TU-39: Trang Quản trị có shell, sidebar và registry riêng. Nó đứng trước
+  // route "/" vì route đó bắt mọi URL còn lại và sẽ nuốt /admin.
+  adminRoute,
   {
     path: "/",
     element: <Root />,

@@ -59,7 +59,9 @@ export const PORTAL_CONFIG: Record<
   // Read-Only cùng đăng nhập ở đây rồi backend phân quyền theo role và
   // access_level. Tách thành ba URL sẽ gợi ý rằng cổng quyết định quyền, mà
   // cổng thì người dùng tự gõ được.
-  admin: { label: "Quản trị", roles: ["OWNER", "ADMIN"], home: "/overview" },
+  // TU-39: cổng quản trị có khung riêng ở /admin. Giá trị này phải khớp
+  // ADMIN_HOME_PATH trong features/admin/admin-pages.ts (có test ràng buộc).
+  admin: { label: "Quản trị", roles: ["OWNER", "ADMIN"], home: "/admin/overview" },
   receptionist: { label: "Lễ tân", roles: ["RECEPTIONIST"], home: "/floor" },
   "customer-care": { label: "Chăm sóc khách hàng", roles: ["CUSTOMER_CARE"], home: "/waitlist" },
   cashier: { label: "Thu ngân", roles: ["CASHIER"], home: "/floor" },
@@ -79,6 +81,10 @@ function slugFromPath(pathname: string): string | null {
   const parts = pathname.split("/").filter(Boolean)
   if (parts[0] === "login") return parts[1] ?? null
   if (parts[1] === "login" || parts.length === 1) return parts[0] ?? null
+  // TU-39: một cổng có thể có nhiều trang dưới tiền tố của nó (/admin/audit).
+  // Deep link vào trang con khi chưa đăng nhập phải ra form đăng nhập ĐÚNG
+  // cổng đó; nếu không, người dùng rơi về form lễ tân và tưởng mình gõ sai URL.
+  if (parts[0] && PORTAL_ALIASES[parts[0]]) return parts[0]
   return null
 }
 
