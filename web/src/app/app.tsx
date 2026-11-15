@@ -5,6 +5,7 @@ import { ConfirmDialog, ConflictDialog, OverrideDialog } from "@/components/dial
 import { Skeleton } from "@/components/ui/skeleton"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { adminRouteObject } from "@/features/admin"
 import { FloorPage } from "@/features/floor/floor-page"
 import { AuthBoundary } from "@/features/auth/auth-boundary"
 import { useRealtimeSync } from "@/hooks/use-data"
@@ -57,6 +58,7 @@ function HomeRoute() {
 }
 
 const routes = [
+  adminRouteObject,
   {
     path: "/",
     element: <Root />,
