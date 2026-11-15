@@ -22,38 +22,9 @@ set -euo pipefail
 export TZ='Asia/Ho_Chi_Minh'
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${BACKUP_CONFIG_FILE:-$SCRIPT_DIR/../env/backup.env}"
-
-# Script tự nạp deploy/env/backup.env thay vì chỉ dựa vào môi trường.
-#
-# 21gam-backup.service nạp file đó bằng EnvironmentFile, nhưng auto-deploy.sh
-# gọi script này trực tiếp bằng `sudo -u gam21 env HOME=...` nên không có gì
-# nạp hộ. Nếu script chỉ đọc biến môi trường thì bản triển khai tự động sẽ chết
-# ở bước sao lưu với lý do "chưa cấu hình BACKUP_REMOTE" — tức là không deploy
-# được gì cả, dù cấu hình trên máy hoàn toàn đúng.
-#
-# Biến đã có trong môi trường THẮNG file, để `DB_NAME=... ./backup-mysql.sh`
-# và `BACKUP_DRY_RUN=1 ...` vẫn còn tác dụng, và để lần nạp thứ hai dưới
-# systemd không ghi đè cái systemd vừa đặt.
-load_config() {
-  local file="$1" line key value
-  [[ -r "$file" ]] || return 0
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    line="${line%$'\r'}"
-    [[ "$line" == *=* ]] || continue
-    key="${line%%=*}"
-    value="${line#*=}"
-    key="${key#"${key%%[![:space:]]*}"}"
-    key="${key%"${key##*[![:space:]]}"}"
-    # Bỏ comment, dòng rỗng và mọi thứ không phải tên biến hợp lệ.
-    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-    [[ -n "${!key+x}" ]] && continue
-    value="${value#"${value%%[![:space:]]*}"}"
-    value="${value%"${value##*[![:space:]]}"}"
-    export "$key=$value"
-  done < "$file"
-}
-load_config "$CONFIG_FILE"
+# shellcheck source=backup-config.sh
+. "$SCRIPT_DIR/backup-config.sh"
+load_backup_config "$(backup_config_path "$SCRIPT_DIR")"
 
 DATABASE="${DB_NAME:-gam21_platform}"
 DESTINATION="${BACKUP_DIR:-/srv/21gam/backups}"

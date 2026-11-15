@@ -13,6 +13,14 @@
 # phá huỷ trên database vận hành.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# Cùng lý do như hai script kia: lệnh này luôn được gõ tay. Nếu DB_NAME và
+# BACKUP_DIR ở đây không khớp với cái backup-mysql.sh đã dùng thì bản an toàn
+# chụp trước khi ghi đè sẽ rơi vào thư mục khác, đúng lúc cần nó nhất.
+# shellcheck source=backup-config.sh
+. "$SCRIPT_DIR/backup-config.sh"
+load_backup_config "$(backup_config_path "$SCRIPT_DIR")"
+
 archive="${1:-}"
 DATABASE="${DB_NAME:-gam21_platform}"
 DESTINATION="${BACKUP_DIR:-/srv/21gam/backups}"

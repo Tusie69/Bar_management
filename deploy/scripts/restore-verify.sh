@@ -15,6 +15,14 @@ set -euo pipefail
 
 export TZ='Asia/Ho_Chi_Minh'
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# Diễn tập luôn được gõ tay, không qua systemd, nên không có EnvironmentFile
+# nào nạp hộ: thiếu bước này thì script không biết remote ở đâu và buổi diễn
+# tập dừng ngay ở dòng đầu.
+# shellcheck source=backup-config.sh
+. "$SCRIPT_DIR/backup-config.sh"
+load_backup_config "$(backup_config_path "$SCRIPT_DIR")"
+
 SOURCE="${1:-}"
 TARGET_DB="${RESTORE_TEST_DB:-gam21_restore_test}"
 REMOTE="${BACKUP_REMOTE:-}"
@@ -106,7 +114,32 @@ else
   fail 'Không có bảng schema_migrations. Bản dump không phải database 21GAM.'
 fi
 
+# Một bản dump cũ hơn schema hiện tại thì thiếu bảng là ĐÚNG, không phải hỏng.
+# Phân biệt hai trường hợp đó bằng cách đối chiếu migration đã áp dụng trong
+# bản phục hồi với các file migration có trong repo. Thiếu bảng khi bản dump
+# đã ngang schema mới nhất mới là bản dump hỏng.
+#
+# Không phân biệt thì buổi diễn tập báo đỏ mỗi lần khôi phục một bản cũ, và
+# người trực học cách bỏ qua màu đỏ — đúng thói quen không được phép có ở
+# người đang khôi phục dữ liệu thật.
+migrations_dir="$SCRIPT_DIR/../../api/database/migrations"
+pending_migrations=0
+if [[ -d "$migrations_dir" ]]; then
+  for migration_file in "$migrations_dir"/*.sql; do
+    [[ -e "$migration_file" ]] || continue
+    name="$(basename "$migration_file")"
+    if [[ "$(query "SELECT COUNT(*) FROM schema_migrations WHERE filename='$name'")" != '1' ]]; then
+      pending_migrations=$((pending_migrations + 1))
+    fi
+  done
+fi
+if [[ "$pending_migrations" -gt 0 ]]; then
+  log "Lưu ý: bản dump này cũ hơn schema trong repo $pending_migrations migration."
+  log 'Bảng do những migration đó tạo ra sẽ thiếu, và đó là đúng.'
+fi
+
 log '--- Row count các bảng nghiệp vụ ---'
+missing_tables=''
 for table in organizations venues users memberships roles permissions \
              role_permissions membership_roles auth_sessions \
              floors zones dining_tables reservations customers \
@@ -114,6 +147,11 @@ for table in organizations venues users memberships roles permissions \
              operation_log venue_settings reception_guest_counts; do
   if [[ "$(query "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$TARGET_DB' AND table_name='$table'")" == '1' ]]; then
     printf '  %-26s %s\n' "$table" "$(query "SELECT COUNT(*) FROM \`$table\`")"
+  elif [[ "$pending_migrations" -gt 0 ]]; then
+    # Gom lại rồi báo một lần ở cuối: dừng ở bảng thiếu đầu tiên sẽ giấu mất
+    # row count của những bảng còn lại, mà đó mới là thứ cần nhìn.
+    printf '  %-26s %s\n' "$table" '(chưa có ở phiên bản schema này)'
+    missing_tables="$missing_tables $table"
   else
     fail "Thiếu bảng nghiệp vụ '$table' trong bản phục hồi."
   fi
@@ -149,6 +187,11 @@ if [[ "$(query "SELECT COUNT(*) FROM information_schema.columns WHERE table_sche
 fi
 
 log ''
+if [[ -n "$missing_tables" ]]; then
+  log "Bảng chưa có ở phiên bản schema của bản dump này:$missing_tables"
+  log 'Chúng sẽ xuất hiện trong các bản sao lưu chụp sau khi migration tương'
+  log 'ứng được áp dụng. Không phải lỗi của bản sao lưu.'
+fi
 log "DIỄN TẬP THÀNH CÔNG: '$TARGET_DB' phục hồi từ $(basename "$archive")"
 log 'Bước còn lại phải làm tay (cần API test riêng):'
 log "  1. Trỏ api/.env của một API test vào DB_NAME=$TARGET_DB"

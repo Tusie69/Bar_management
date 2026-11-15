@@ -396,8 +396,11 @@ sudo -u gam21 nano /srv/21gam/deploy/env/backup.env
 File này **bắt buộc phải có trước lần auto-deploy kế tiếp**. `auto-deploy.sh`
 gọi `backup-mysql.sh` trực tiếp qua `sudo -u gam21 env HOME=...`, không qua
 systemd, nên `EnvironmentFile=` của `21gam-backup.service` không có tác dụng ở
-đường đi đó. Vì vậy `backup-mysql.sh` tự nạp file này theo đường dẫn
-`<repo>/deploy/env/backup.env` (đổi bằng `BACKUP_CONFIG_FILE`). Thiếu file thì
+đường đi đó. Vì vậy cả ba script `backup-mysql.sh`, `restore-verify.sh` và
+`restore-mysql.sh` đều tự nạp file này qua `deploy/scripts/backup-config.sh`,
+theo đường dẫn `<repo>/deploy/env/backup.env` (đổi bằng `BACKUP_CONFIG_FILE`).
+Hai script phục hồi luôn được gõ tay nên chưa bao giờ có systemd nạp hộ.
+Thiếu file thì
 `BACKUP_REMOTE` trống, script từ chối chạy, và auto-deploy dừng ở bước sao lưu
 **trước khi** chạm vào database — code bị lùi về commit cũ, dữ liệu còn nguyên,
 nhưng không bản nào triển khai được cho tới khi file này tồn tại.
@@ -586,6 +589,25 @@ chú khách, nên kết quả an toàn để chụp ảnh làm bằng chứng ng
 Tham số là tên file trên remote — script tự tải về. Đó là chủ ý: diễn tập phải
 chứng minh bản **trên Drive** dùng được, vì một bản local tốt không nói gì về
 bản đã upload.
+
+Database test phải **trống**: còn bảng thì script dừng, vì đó có thể không
+phải database mình tưởng. Diễn tập lại thì `DROP DATABASE` rồi tạo lại.
+
+Khi phục hồi một bản sao lưu **cũ hơn** schema hiện tại — ví dụ bản chụp trước
+một migration vừa chạy — những bảng do migration mới tạo sẽ thiếu. Script đối
+chiếu `schema_migrations` trong bản phục hồi với các file trong
+`api/database/migrations` để phân biệt, và chỉ báo lỗi khi bản dump đã ngang
+schema mới nhất mà vẫn thiếu bảng. Thiếu vì bản dump cũ thì nó ghi rõ là không
+phải lỗi và vẫn chạy tiếp. Không phân biệt thì diễn tập báo đỏ mỗi lần khôi
+phục bản cũ, và người trực học cách bỏ qua màu đỏ — đúng thói quen không được
+phép có ở người đang khôi phục dữ liệu thật.
+
+**Xoá database diễn tập ngay sau khi xong.** Nó chứa bản sao đầy đủ dữ liệu
+khách, kể cả khi số điện thoại vẫn ở dạng mã hoá:
+
+```bash
+sudo mysql -e "DROP DATABASE gam21_restore_test;"
+```
 
 ### 8.2 Kiểm tra sau khi phục hồi
 
