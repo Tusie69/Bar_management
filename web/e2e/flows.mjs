@@ -721,18 +721,19 @@ await flow("mobile booking creation with classification and Zalo export (phone 3
   if (await closeToast.isVisible()) await closeToast.click()
 
   await page.getByRole("button", { name: "Tạo mới" }).click()
-  await page.getByRole("button", { name: "Tạo đặt trước" }).click()
+  await page.getByRole("dialog", { name: "Tạo mới" }).getByRole("button", { name: /^Đặt bàn\b/ }).click()
 
-  await page.getByPlaceholder("Ví dụ: Chị Lan").fill("Khách Mobile E2E")
-  await page.getByPlaceholder("09xx xxx xxx").fill("0988776655")
-  const classTrigger = page.locator("#bk-classification")
-  if (await classTrigger.isVisible()) {
-    await classTrigger.click()
-    await page.getByRole("option", { name: "Khách quen (O)" }).click()
-  } else {
-    await page.getByRole("radio", { name: "Khách quen (O)" }).or(page.getByRole("button", { name: "Khách quen (O)" })).click()
-  }
-  await page.getByRole("button", { name: "Đặt bàn" }).click()
+  const formDialog = page.getByRole("dialog", { name: "Tạo đơn đặt bàn" })
+  await formDialog.waitFor()
+  await formDialog.getByRole("button", { name: "Kiểm tra bàn trống" }).click()
+  const floorPicker = formDialog.locator('[aria-label="Sơ đồ chọn bàn đặt trước"]')
+  await floorPicker.waitFor()
+  await floorPicker.locator('[role="button"][aria-disabled="false"]').first().click()
+
+  await formDialog.getByPlaceholder("Ví dụ: Chị Lan").fill("Khách Mobile E2E")
+  await formDialog.getByPlaceholder("09xx xxx xxx").fill("0988776655")
+  await formDialog.getByRole("radio", { name: "Đã từng đặt bàn" }).click()
+  await formDialog.getByRole("button", { name: "Đặt bàn" }).click()
 
   await page.getByText("Khách Mobile E2E").first().waitFor()
 
@@ -741,14 +742,45 @@ await flow("mobile booking creation with classification and Zalo export (phone 3
   const closeToast2 = page.getByRole("button", { name: "Đóng thông báo" })
   if (await closeToast2.isVisible()) await closeToast2.click()
 
+  // R3 export: success copies directly to clipboard with toast and no fallback dialog
+  await page.evaluate(() => {
+    window.__copiedExports = []
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (txt) => {
+          window.__copiedExports.push(txt)
+        },
+      },
+    })
+  })
   await page.getByRole("button", { name: "Xuất text Zalo" }).click()
-  const exportDialog = page.getByRole("dialog").last()
-  const exportInput = exportDialog.getByLabel("Nội dung text booking")
-  await exportInput.waitFor()
-  const text = await exportInput.inputValue()
+  await page.getByText("Đã sao chép danh sách bàn đặt").waitFor()
+  assert.equal(await page.getByRole("dialog", { name: "Sao chép danh sách bàn đặt" }).count(), 0, "No fallback dialog when clipboard succeeds")
+  const text = await page.evaluate(() => window.__copiedExports.at(-1) ?? "")
   if (!text.includes("Khách Mobile E2E")) throw new Error("Created booking missing from Zalo export")
   if (!text.includes("Bàn khách quen O: 1")) throw new Error("Classification not reflected in Zalo export")
   if (/0988|776655/i.test(text)) throw new Error("Sensitive phone leaked in export")
+
+  // R3 export fallback: forced clipboard failure opens manual copy dialog
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async () => {
+          throw new DOMException("Clipboard denied", "NotAllowedError")
+        },
+      },
+    })
+  })
+  await page.getByRole("button", { name: "Xuất text Zalo" }).click()
+  const exportDialog = page.getByRole("dialog", { name: "Sao chép danh sách bàn đặt" })
+  const exportInput = exportDialog.getByLabel("Nội dung danh sách bàn đặt để sao chép thủ công")
+  await exportInput.waitFor()
+  const fallbackText = await exportInput.inputValue()
+  if (!fallbackText.includes("Khách Mobile E2E")) throw new Error("Fallback dialog missing created booking")
+  if (!fallbackText.includes("Bàn khách quen O: 1")) throw new Error("Fallback dialog missing classification")
+  if (/0988|776655/i.test(fallbackText)) throw new Error("Sensitive phone leaked in fallback dialog")
   await page.keyboard.press("Escape")
 })
 
@@ -761,17 +793,19 @@ await flow("bar seat: single walk-in from table detail", 1, async (page) => {
   await expectOccupied(barSeat(page, 13), 1)
 })
 
-await flow("bar seat: multi-seat booking without capacity warning & group reservation", 1, async (page) => {
+await flow("bar seat: multi-seat booking with non-blocking capacity warning & group reservation", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await barSeat(page, 8).click()
   await page.getByRole("button", { name: "Đặt bàn", exact: true }).click()
-  // Capacity is left to staff, including a two-guest booking on one Bar seat.
+  // Capacity is a non-blocking guideline: 2 guests on 1 Bar seat shows a clear warning without blocking.
   await page.getByRole("radio", { name: "2 khách" }).click()
   await page.getByText(/Bar 8 còn trống.*1 chỗ/).waitFor()
+  await page.getByText("Vượt sức chứa: 1 chỗ cho 2 khách").waitFor()
 
-  // Select adjacent Bar 7 to exercise the multi-table reservation path.
+  // Select adjacent Bar 7 to exercise the multi-table reservation path and clear the warning.
   await barSeat(page, 7).click()
   await page.getByText(/2 chỗ, đủ 2 khách/).waitFor()
+  assert.equal(await page.getByTestId("capacity-warning").count(), 0)
 
   // Draft inputs
   await page.locator("#qf-name").fill("Khách Bar Ghép")
@@ -786,8 +820,8 @@ await flow("bar seat: multi-seat booking without capacity warning & group reserv
   await expect(cell.first().locator('circle[stroke-width="3"]')).toHaveCount(1)
   await cell.first().click()
   await expect(cell.first()).toHaveAttribute("aria-pressed", "true")
-  await expect(page.locator('[data-combined-codes~="BAR07"][data-combined-codes~="BAR08"] circle[data-selection-ring="1"]')).toHaveCount(2)
-  await cell.first().click()
+  await expect(page.locator('[data-combined-codes~="BAR07"][data-combined-codes~="BAR08"] circle[data-selection-ring="1"]')).toHaveCount(1)
+  await page.keyboard.press("Escape")
   await expect(cell.first()).toHaveAttribute("aria-pressed", "false")
   await expect(page.locator('[data-combined-codes~="BAR07"][data-combined-codes~="BAR08"] circle[data-selection-ring="1"]')).toHaveCount(0)
 

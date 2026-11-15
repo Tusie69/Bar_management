@@ -21,10 +21,11 @@ vi.hoisted(() => {
 })
 
 import { checkDirectTableCompatibility, draftBlockReason, draftPickable } from "./quick-form"
+import { capacityWarningText, selectedTablesCapacity } from "./reception-rules"
 import type { FloorModel } from "./use-floor-model"
 import type { AvailabilityResult, TableView } from "@/domain/models"
 import { checkBookingCompatibility } from "../mobile/booking-table-selection"
-import { walkInSelectionIssues } from "../mobile/walk-in-selection"
+import { selectedCapacity, walkInSelectionIssues } from "../mobile/walk-in-selection"
 
 describe("G7 - Remove capacity warnings and never block on capacity", () => {
   const table4Seat: TableView = {
@@ -214,5 +215,33 @@ describe("G7 - Remove capacity warnings and never block on capacity", () => {
     const phone = ""
     const guestMissing = !name.trim() && !phone.trim()
     expect(guestMissing).toBe(true)
+  })
+
+  it("11. R4 non-blocking capacity warning triggers on tables, Bar seats, and insufficient combinations", () => {
+    const t2: TableView = { ...table4Seat, id: 10, code: "C1", capacity: 2 }
+    const t2b: TableView = { ...table4Seat, id: 11, code: "C2", capacity: 2 }
+    const bar8: TableView = { ...table4Seat, id: 12, code: "BAR08", kind: "BAR_SEAT", zoneId: 4, zoneCode: "BAR", capacity: 1 }
+    const bar7: TableView = { ...bar8, id: 13, code: "BAR07", capacity: 0 }
+    const byId = new Map<number, TableView>([
+      [t2.id, t2],
+      [t2b.id, t2b],
+      [bar8.id, bar8],
+      [bar7.id, bar7],
+    ])
+
+    // 2 seats for 4 guests -> clear warning; combining to 4 seats clears it
+    expect(selectedTablesCapacity([t2.id], byId)).toBe(2)
+    expect(capacityWarningText(1, selectedTablesCapacity([t2.id], byId), 4)).toBe("Vượt sức chứa: 2 chỗ cho 4 khách")
+    expect(capacityWarningText(2, selectedTablesCapacity([t2.id, t2b.id], byId), 4)).toBeNull()
+
+    // Bar seats always count as 1 guest each; 1 Bar seat for 2 guests warns, 2 Bar seats clears it
+    expect(selectedTablesCapacity([bar8.id], byId)).toBe(1)
+    expect(selectedCapacity([bar8.id, bar7.id], byId)).toBe(2)
+    expect(capacityWarningText(1, selectedTablesCapacity([bar8.id], byId), 2)).toBe("Vượt sức chứa: 1 chỗ cho 2 khách")
+    expect(capacityWarningText(2, selectedTablesCapacity([bar8.id, bar7.id], byId), 2)).toBeNull()
+
+    // No table selected (e.g. waitlist) or missing party -> no warning
+    expect(capacityWarningText(0, 0, 4)).toBeNull()
+    expect(capacityWarningText(1, 2, null)).toBeNull()
   })
 })

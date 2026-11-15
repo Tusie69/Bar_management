@@ -1,4 +1,5 @@
 import type { FloorTableState, TableView } from "@/domain/models"
+import { selectedTablesCapacity } from "../floor/reception-rules"
 
 const occupiedReason: Partial<Record<FloorTableState["state"], string>> = {
   reserved: "đã được đặt trước",
@@ -60,5 +61,5 @@ export function walkInSelectionIssues(
 }
 
 export function selectedCapacity(selectedIds: number[], byId: ReadonlyMap<number, TableView>): number {
-  return selectedIds.reduce((total, id) => total + (byId.get(id)?.capacity ?? 0), 0)
+  return selectedTablesCapacity(selectedIds, byId)
 }

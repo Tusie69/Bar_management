@@ -8,7 +8,7 @@ import { Clock4, LayoutDashboard, List, ListOrdered, Map as MapIcon, Plus, type 
 import { Suspense, useEffect, useMemo, useState, type CSSProperties } from "react"
 import { Outlet, useLocation, useNavigate } from "react-router"
 import type { ReservationView } from "@/domain/models"
-import { useNow, useReceptionGuestCount, useReservations, useWaitlist } from "@/hooks/use-data"
+import { useNow, useReservations, useWaitlist } from "@/hooks/use-data"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useSession } from "@/state/session"
@@ -19,6 +19,7 @@ import { toast } from "sonner"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { NAV } from "@/app/nav"
 import { useShiftAlerts } from "../floor/alerts"
+import { GuestCountSheet } from "../floor/guest-count-card"
 import { useFloorModel } from "../floor/use-floor-model"
 import { isWaitingForTable } from "../floor/reception-rules"
 import { MobileContext, type Confirm, type FormRequest, type MobileCtx, type TablePick, type Tab } from "./context"
@@ -50,23 +51,12 @@ export default function MobileApp() {
   const selectedDate = isReceptionist && ui.floorMode !== "live" ? ui.availDate : today
   const model = useFloorModel(selectedDate)
   const reservations = useReservations(selectedDate).data
-  const guestCount = useReceptionGuestCount(selectedDate).data ?? {
-    businessDate: selectedDate,
-    arrivedBefore: 0,
-    arrivedAfter: 0,
-    arrivedTotal: 0,
-    bookedTables: 0,
-    bookedGuests: 0,
-    returningGuests: 0,
-    version: 0,
-    updatedAt: null,
-  }
   const waitlistQuery = useWaitlist(selectedDate)
   const waitlist = waitlistQuery.isPlaceholderData ? undefined : waitlistQuery.data
   const venue = model.catalog?.venue
   const th = { late: venue?.lateWarningMinutes ?? 15, noshow: venue?.noShowWarningMinutes ?? 30 }
 
-  const [overlay, setOverlay] = useState<null | "create" | "alerts" | "account" | "wait" | "count">(null)
+  const [overlay, setOverlay] = useState<null | "create" | "alerts" | "account" | "wait" | "count" | "count-edit">(null)
   const [statusFor, setStatusFor] = useState<ReservationView | null>(null)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [detail, setDetail] = useState<{ id: number; bd: BusinessDate } | null>(null)
@@ -104,7 +94,7 @@ export default function MobileApp() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return
       if (statusFor) setStatusFor(null)
-      else if (overlay) setOverlay(null)
+      else if (overlay && overlay !== "count" && overlay !== "count-edit" && overlay !== "wait") setOverlay(null)
       else if (entryDetail) setEntryDetail(null)
       else if (tableSel) setTableSel(null)
     }
@@ -142,6 +132,7 @@ export default function MobileApp() {
     },
     openAccount: () => setOverlay("account"),
     openCount: () => setOverlay("count"),
+    openCountEdit: () => setOverlay("count-edit"),
     openDetail: (id, bd) => {
       setOverlay(null)
       setTableSel(null)
@@ -205,7 +196,10 @@ export default function MobileApp() {
             ...(keyboardSafeHeight ? { height: keyboardSafeHeight } : {}),
           } as CSSProperties
         }
-        className="fixed inset-0 h-dvh w-full touch-manipulation overflow-hidden"
+        className={cn(
+          "fixed inset-y-0 inset-x-0 h-dvh w-full touch-manipulation overflow-hidden",
+          isReceptionist && "mx-auto max-w-[var(--gm-max-w)] md:border-x md:border-border/70 md:shadow-[var(--shadow-float)]",
+        )}
       >
         <div className="absolute inset-x-0 top-0 bottom-[var(--nav-h)] flex flex-col overflow-hidden">
           {tab === "home" ? (
@@ -298,7 +292,7 @@ export default function MobileApp() {
           />
         ) : null}
 
-        {(overlay && overlay !== "wait" && overlay !== "count") || statusFor || confirm ? (
+        {(overlay && overlay !== "wait" && overlay !== "count" && overlay !== "count-edit") || statusFor || confirm ? (
           <Scrim
             onClick={() => {
               if (confirm) return
@@ -309,29 +303,23 @@ export default function MobileApp() {
         ) : null}
         {overlay === "create" ? <CreateSheet onClose={() => setOverlay(null)} /> : null}
         {overlay === "account" ? <AccountSheet onClose={() => setOverlay(null)} /> : null}
-        <Sheet open={overlay === "count"} onOpenChange={(open) => !open && setOverlay(null)}>
-          <SheetContent data-gm side="bottom" className="gap-0 rounded-t-[24px] px-4 pt-5 pb-6">
-            <SheetTitle className="text-lg">Đếm khách</SheetTitle>
-            <SheetDescription className="pb-3 text-xs">Tổng hợp khách và bàn đặt trong ngày đang xem.</SheetDescription>
-            <div className="grid grid-cols-2 gap-2" data-testid="guest-count-summary">
-              {[
-                ["Trước 21:30", guestCount.arrivedBefore],
-                ["Sau 21:30", guestCount.arrivedAfter],
-                ["Tổng đã tới", guestCount.arrivedTotal],
-                ["Tổng bàn đặt", guestCount.bookedTables],
-                ["Tổng khách đặt", guestCount.bookedGuests],
-                ["Đã từng đặt bàn", guestCount.returningGuests],
-              ].map(([label, value]) => (
-                <div key={label} className="rounded-xl border border-border/80 bg-background px-3 py-2.5">
-                  <div className="text-[12px] text-tx-2">{label}</div>
-                  <div className="tnum mt-0.5 text-xl font-bold text-tx-strong">{value}</div>
-                </div>
-              ))}
-            </div>
-          </SheetContent>
-        </Sheet>
+        <GuestCountSheet
+          businessDate={selectedDate}
+          open={overlay === "count" || overlay === "count-edit"}
+          initialMode={overlay === "count-edit" ? "edit" : "view"}
+          onClose={() => setOverlay(null)}
+          isReceptionist={isReceptionist}
+        />
         <Sheet open={overlay === "wait"} onOpenChange={(open) => !open && setOverlay(null)}>
-          <SheetContent data-gm side="bottom" className="h-[85dvh] gap-0 overflow-hidden p-0">
+          <SheetContent
+            data-gm
+            data-receptionist-frame={isReceptionist ? "true" : undefined}
+            side="bottom"
+            className={cn(
+              "h-[85dvh] w-full gap-0 overflow-hidden rounded-t-[24px] p-0",
+              isReceptionist && "mx-auto max-w-[var(--gm-max-w)]",
+            )}
+          >
             <SheetTitle className="px-4 pt-5 text-lg">
               Bàn chờ ảo <span aria-hidden>({(waitlist ?? []).filter(isWaitingForTable).length})</span>
             </SheetTitle>
@@ -426,7 +414,7 @@ function BottomNav({
   return (
     <nav
       aria-label="Điều hướng chính"
-      className="fixed inset-x-0 bottom-0 z-[30] grid h-[var(--nav-h)] grid-cols-5 items-start border-t border-border bg-surface-1 px-1.5 pb-[env(safe-area-inset-bottom)]"
+      className="absolute inset-x-0 bottom-0 z-[30] grid h-[var(--nav-h)] grid-cols-5 items-start border-t border-border bg-surface-1 px-1.5 pb-[env(safe-area-inset-bottom)]"
     >
       {left.map(item)}
       <div className="relative z-[31] grid place-items-center">

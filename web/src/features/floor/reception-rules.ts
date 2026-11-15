@@ -25,3 +25,28 @@ export function phoneMatches(rows: ReservationView[] | undefined, businessDate: 
     ? (rows ?? []).filter((row) => row.businessDate === businessDate && row.phoneLast3 === suffix)
     : []
 }
+
+/** Sum nominal seats of selected tables/Bar seats (each Bar seat counts as at least 1 guest). */
+export function selectedTablesCapacity(ids: readonly number[], byId: ReadonlyMap<number, TableView>): number {
+  let total = 0
+  for (const id of ids) {
+    const t = byId.get(id)
+    if (!t) continue
+    total += t.kind === "BAR_SEAT" ? Math.max(1, t.capacity || 1) : Math.max(0, t.capacity)
+  }
+  return total
+}
+
+/**
+ * Non-blocking capacity guideline warning (R4): shown whenever at least one table/seat
+ * is selected and combined capacity < partySize. Returns null when sufficient or unknown.
+ */
+export function capacityWarningText(
+  tableCount: number,
+  capacity: number,
+  partySize: number | null | undefined,
+): string | null {
+  if (tableCount <= 0 || !partySize || partySize <= 0) return null
+  if (capacity >= partySize) return null
+  return `Vượt sức chứa: ${capacity} chỗ cho ${partySize} khách`
+}

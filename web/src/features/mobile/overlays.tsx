@@ -16,7 +16,7 @@ import { tableText } from "./model"
 import { Seg } from "./ui"
 
 export function Scrim({ onClick }: { onClick?: () => void }) {
-  return <div aria-hidden onClick={onClick} className="fixed inset-0 z-[45] bg-[var(--scrim)]" />
+  return <div aria-hidden onClick={onClick} className="absolute inset-0 z-[45] bg-[var(--scrim)]" />
 }
 
 function BottomSheet({ label, children, onClose }: { label: string; children: ReactNode; onClose: () => void }) {
@@ -24,7 +24,7 @@ function BottomSheet({ label, children, onClose }: { label: string; children: Re
     <div
       role="dialog"
       aria-label={label}
-      className="fixed inset-x-0 bottom-0 z-[50] flex max-h-[85dvh] flex-col rounded-t-[24px] bg-surface-1 px-4 pt-2 pb-[calc(16px+env(safe-area-inset-bottom))] shadow-[var(--shadow-float)]"
+      className="absolute inset-x-0 bottom-0 z-[50] flex max-h-[85dvh] flex-col rounded-t-[24px] bg-surface-1 px-4 pt-2 pb-[calc(16px+env(safe-area-inset-bottom))] shadow-[var(--shadow-float)]"
     >
       <div className="mx-auto mb-3.5 h-[5px] w-9 shrink-0 rounded-[3px] bg-strong" />
       <h2 className="m-0 mb-1.5 text-lg font-semibold text-tx-strong">{label}</h2>
@@ -252,7 +252,7 @@ export function StatusDialog({ r, onClose }: { r: ReservationView; onClose: () =
     <div
       role="dialog"
       aria-label="Đổi trạng thái booking"
-      className="fixed inset-x-6 top-1/2 z-[50] flex -translate-y-1/2 flex-col overflow-hidden rounded-[22px] bg-surface-1 shadow-[var(--shadow-float)]"
+      className="absolute inset-x-6 top-1/2 z-[50] flex -translate-y-1/2 flex-col overflow-hidden rounded-[22px] bg-surface-1 shadow-[var(--shadow-float)]"
     >
       <div className="flex flex-col items-center gap-0.5 border-b border-border px-4 pt-4 pb-3 text-center">
         <span className="text-[17px] font-semibold text-tx-strong">Đổi trạng thái booking</span>
@@ -298,7 +298,7 @@ export function ConfirmDialog({ c, onClose }: { c: Confirm; onClose: () => void 
     <div
       role="alertdialog"
       aria-label={c.title}
-      className="fixed inset-x-6 top-1/2 z-[55] flex -translate-y-1/2 flex-col gap-3 rounded-[22px] bg-surface-1 p-5 shadow-[var(--shadow-float)]"
+      className="absolute inset-x-6 top-1/2 z-[55] flex -translate-y-1/2 flex-col gap-3 rounded-[22px] bg-surface-1 p-5 shadow-[var(--shadow-float)]"
     >
       <span className="text-[17px] font-semibold text-tx-strong">{c.title}</span>
       <span className="text-[14px] text-pretty text-[var(--text-muted)]">{c.body}</span>
@@ -335,7 +335,7 @@ export function Toast15({ r, onView, onClose }: { r: ReservationView; onView: ()
   return (
     <div
       role="status"
-      className="fixed inset-x-3 top-[calc(var(--top-safe)+8px)] z-[42] flex items-center gap-2.5 rounded-[18px] border border-border bg-surface-1 py-2.5 pr-1.5 pl-3 shadow-[var(--shadow-float)]"
+      className="absolute inset-x-3 top-[calc(var(--top-safe)+8px)] z-[42] flex items-center gap-2.5 rounded-[18px] border border-border bg-surface-1 py-2.5 pr-1.5 pl-3 shadow-[var(--shadow-float)]"
     >
       <span className="grid size-[34px] shrink-0 place-items-center rounded-full bg-st-late-tint text-st-late-ink">
         <Clock className="size-[17px]" />

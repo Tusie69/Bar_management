@@ -1,3 +1,4 @@
+import { formatHonorificName } from "@/domain/booking-identity"
 import type { FloorGroup, FloorTableState, TableLiveState, TableView } from "@/domain/models"
 import { FIXTURES, FLOOR_H, FLOOR_W, WAITLIST_MARKER, type ZoneCode } from "@/domain/venue-layout"
 
@@ -20,7 +21,8 @@ export const GUEST_FLAG_META: Record<GuestFlag, { glyph: string; label: string }
  * Formats the guest name shown only on a compact floor/table label.
  * - Walk-ins without a real customer name show a short suitable label ("Khách lẻ" / "Lẻ"), never a fake name.
  * - Whitespace is normalized for display without changing the source value.
- * - A short full name is kept; a long multi-word name falls back to its final word.
+ * - Non-bar table cells preserve the beginning of the name (including honorifics like "Anh", "Chị") and truncate at the end with "…".
+ * - Bar seats keep the compact trailing word when long.
  * - Unicode code points are truncated safely so a surrogate pair is never split.
  */
 export function formatCellGuestName(displayName?: string | null, maxChars = 9, isBarSeat = false): string {
@@ -28,11 +30,56 @@ export function formatCellGuestName(displayName?: string | null, maxChars = 9, i
   if (!raw || /^(khách walk-in|walk-in|khách vãng lai|khách lẻ|khách)$/i.test(raw)) {
     return isBarSeat ? "Lẻ" : "Khách lẻ"
   }
-  const parts = raw.split(" ")
-  const candidate = isBarSeat || Array.from(raw).length > maxChars ? (parts.at(-1) ?? raw) : raw
+  const candidate = isBarSeat && Array.from(raw).length > maxChars ? (raw.split(" ").at(-1) ?? raw) : raw
   const chars = Array.from(candidate)
   if (chars.length <= maxChars) return candidate
-  return `${chars.slice(0, Math.max(2, maxChars - 1)).join("")}…`
+  return `${chars.slice(0, Math.max(2, maxChars - 1)).join("").trimEnd()}…`
+}
+
+function estimateCellCharWidth(ch: string): number {
+  if (ch === "…") return 7.4
+  if ("iíìỉĩịlI1trfj.,:;'\"- ".includes(ch)) return 2.5
+  if ("MWQĐƠƯmw".includes(ch)) return 6.0
+  if ((ch >= "A" && ch <= "Z") || (ch >= "0" && ch <= "9") || (ch.toUpperCase() !== ch.toLowerCase() && ch === ch.toUpperCase())) {
+    return 4.9
+  }
+  return 4.0
+}
+
+function estimateCellLabelWidth(text: string): number {
+  let width = 0
+  for (const ch of text) width += estimateCellCharWidth(ch)
+  return width
+}
+
+/**
+ * Formats the single-line ordinary table label ("<code> - <guest>") at the
+ * fixed 8.2 SVG unit font size, applying honorific metadata before end-ellipsis
+ * truncation so the prefix and honorific stay intact and the text fits inside `cellWidth`.
+ */
+export function formatTableCellLabel(
+  tableCode: string,
+  displayName?: string | null,
+  honorific?: "MR" | "MS" | null,
+  cellWidth = 46,
+): string {
+  const raw = (displayName ?? "").trim().replace(/\s+/gu, " ")
+  const isWalkInFallback = !raw || /^(khách walk-in|walk-in|khách vãng lai|khách lẻ|khách)$/i.test(raw)
+  const fullName = isWalkInFallback ? "Khách lẻ" : formatHonorificName(raw, honorific)
+  const prefix = `${tableCode} - `
+  const fullLabel = `${prefix}${fullName}`
+  const maxWidth = Math.max(24, cellWidth - 3)
+  if (estimateCellLabelWidth(fullLabel) <= maxWidth) return fullLabel
+
+  const chars = Array.from(fullName)
+  const minKeep = Math.min(chars.length, honorific ? 2 : 2)
+  for (let len = chars.length - 1; len >= minKeep; len--) {
+    const trimmed = chars.slice(0, len).join("").trimEnd()
+    if (!trimmed) continue
+    const candidate = `${prefix}${trimmed}…`
+    if (estimateCellLabelWidth(candidate) <= maxWidth) return candidate
+  }
+  return `${prefix}${chars.slice(0, minKeep).join("").trimEnd()}…`
 }
 
 export interface CellCornerIcons {

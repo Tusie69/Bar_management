@@ -10,6 +10,7 @@ import { AuthBoundary } from "@/features/auth/auth-boundary"
 import { useRealtimeSync } from "@/hooks/use-data"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { AppShell } from "./shell"
+import { shouldUseMobileShell } from "./shell-mode"
 import { useSession } from "@/state/session"
 
 const OverviewPage = lazy(() => import("@/features/overview/overview-page"))
@@ -42,7 +43,7 @@ function Root() {
   const location = useLocation()
   const role = useSession((state) => state.user.role)
   if (role === "RECEPTIONIST" && location.pathname !== "/floor") return <Navigate to="/floor" replace />
-  return mobile ? page(<MobileApp />) : <AppShell />
+  return shouldUseMobileShell(role, mobile) ? page(<MobileApp />) : <AppShell />
 }
 
 // Phone opens the role home (Tiếp đón / Tổng quan). Deep links keep their route.
@@ -55,7 +56,7 @@ function HomeRoute() {
   return useIsMobile() ? null : <Navigate to="/floor" replace />
 }
 
-const router = createBrowserRouter([
+const routes = [
   {
     path: "/",
     element: <Root />,
@@ -72,7 +73,9 @@ const router = createBrowserRouter([
       { path: "*", element: <Navigate to="/floor" replace /> },
     ],
   },
-])
+]
+
+const router = createBrowserRouter(routes)
 
 function GlobalLayer() {
   useRealtimeSync()

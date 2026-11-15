@@ -83,13 +83,14 @@ describe("BarGuestList presentational component", () => {
     expect(html).toContain("Bar5, 17")
   })
 
-  it("handles long Vietnamese names with ellipsis and full title tooltip", () => {
+  it("handles long Vietnamese names with up to 2 lines and full title tooltip", () => {
     const longName = "Nguyễn Thị Hoàng Oanh"
     const rows = [makeSampleRow({ guestName: longName })]
 
     const html = renderToString(createElement(BarGuestList, { rows, as: "html" }))
     expect(html).toContain(`title="${longName}"`)
     expect(html).toContain(longName)
+    expect(html).toContain("line-clamp-2")
     expect(html).toContain("truncate")
   })
 

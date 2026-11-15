@@ -212,57 +212,59 @@ export function BarGuestList({
                     onClick={() => onRowClick?.(row)}
                     aria-label={rowAriaLabel}
                     className={cn(
-                      "flex h-6 w-full min-w-0 items-center gap-1 overflow-hidden rounded px-1 text-left transition-colors focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
+                      "flex min-h-6 w-full min-w-0 flex-col items-stretch gap-0.5 overflow-hidden rounded px-1.5 py-1 text-left transition-colors focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
                       onRowClick ? "cursor-pointer hover:bg-muted/60" : "cursor-default hover:bg-muted/30",
                     )}
                   >
-                    <span className="inline-flex min-w-0 shrink-0 items-center gap-1">
-                      <span
-                        className="inline-block size-1.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: statusColor }}
-                        aria-hidden="true"
-                      />
-                      <span className="max-w-12 truncate text-[10px] font-semibold tracking-tight text-foreground">
-                        {row.seatsLabel}
+                    <div className="flex w-full min-w-0 items-center gap-1">
+                      <span className="inline-flex min-w-0 shrink-0 items-center gap-1">
+                        <span
+                          className="inline-block size-1.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: statusColor }}
+                          aria-hidden="true"
+                        />
+                        <span className="max-w-14 truncate text-[10px] font-semibold tracking-tight text-foreground">
+                          {row.seatsLabel}
+                        </span>
                       </span>
-                    </span>
-                    <span className="shrink-0 text-[9.5px] text-muted-foreground">
-                      {row.time ?? (row.seatedTime ? `vào ${row.seatedTime}` : "")}
-                    </span>
-                    <span className="inline-flex shrink-0 items-center gap-0.5 text-[9.5px] text-muted-foreground">
-                      <Users className="size-2 opacity-70" aria-hidden="true" />
-                      {row.partySize}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate font-medium text-foreground" title={row.guestName}>
+                      <span className="shrink-0 text-[9.5px] text-muted-foreground">
+                        {row.time ?? (row.seatedTime ? `vào ${row.seatedTime}` : "")}
+                      </span>
+                      <span className="inline-flex shrink-0 items-center gap-0.5 text-[9.5px] text-muted-foreground">
+                        <Users className="size-2 opacity-70" aria-hidden="true" />
+                        {row.partySize}
+                      </span>
+                      {activeIcons.length > 0 ? (
+                        <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-[9px]">
+                          {visibleIcons.map((icon) => (
+                            <span key={icon.key} title={icon.label} aria-label={icon.label}>
+                              {icon.emoji}
+                            </span>
+                          ))}
+                          {overflowCount > 0 ? (
+                            <span
+                              title={overflowLabels}
+                              aria-label={`và ${overflowCount} mục khác: ${overflowLabels}`}
+                              className="text-[9px] font-semibold text-muted-foreground/80 select-none"
+                            >
+                              {`+${overflowCount}`}
+                            </span>
+                          ) : null}
+                          {overflowIcons.length > 0 ? (
+                            <span className="sr-only">
+                              {overflowIcons.map((icon) => (
+                                <span key={icon.key} title={icon.label} aria-label={icon.label}>
+                                  {icon.emoji}
+                                </span>
+                              ))}
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : null}
+                    </div>
+                    <span className="line-clamp-2 w-full min-w-0 font-medium break-words text-foreground" title={row.guestName}>
                       {row.guestName}
                     </span>
-                    {activeIcons.length > 0 ? (
-                      <span className="inline-flex shrink-0 items-center gap-0.5 text-[9px]">
-                        {visibleIcons.map((icon) => (
-                          <span key={icon.key} title={icon.label} aria-label={icon.label}>
-                            {icon.emoji}
-                          </span>
-                        ))}
-                        {overflowCount > 0 ? (
-                          <span
-                            title={overflowLabels}
-                            aria-label={`và ${overflowCount} mục khác: ${overflowLabels}`}
-                            className="text-[9px] font-semibold text-muted-foreground/80 select-none"
-                          >
-                            {`+${overflowCount}`}
-                          </span>
-                        ) : null}
-                        {overflowIcons.length > 0 ? (
-                          <span className="sr-only">
-                            {overflowIcons.map((icon) => (
-                              <span key={icon.key} title={icon.label} aria-label={icon.label}>
-                                {icon.emoji}
-                              </span>
-                            ))}
-                          </span>
-                        ) : null}
-                      </span>
-                    ) : null}
                     <span className="sr-only">{` (${statusShort})`}</span>
                   </button>
                 </li>

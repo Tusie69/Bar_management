@@ -112,6 +112,7 @@
   --ring: var(--primary);
   --destructive: var(--st-noshow);
   --font-ui: var(--font-sans);
+  --gm-max-w: 628px;
   --top-safe: max(6px, env(safe-area-inset-top));
   /* Dải dưới cùng (hoàn tác, bảng ghép bàn) nằm ngay trên vạch Home của iPhone X
      trở lên. Thiếu biến này thì `pb-[var(--bottom-safe)]` là giá trị rỗng, trình
@@ -230,4 +231,23 @@ button[aria-label*="Bàn chờ"],
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
+}
+
+/* Constrain portalled Radix bottom sheets to the same reception frame */
+[data-gm][data-receptionist-frame][data-slot="sheet-content"] {
+  max-width: var(--gm-max-w, 540px);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Respect prefers-reduced-motion per Apple HIG Accessibility -> Motion */
+@media (prefers-reduced-motion: reduce) {
+  [data-gm] *,
+  [data-gm] *::before,
+  [data-gm] *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

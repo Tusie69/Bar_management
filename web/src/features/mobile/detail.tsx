@@ -71,7 +71,7 @@ export function DetailScreen({
 
   if (!r) {
     return (
-      <div role="dialog" aria-label="Chi tiết booking" className="fixed inset-0 z-[40] flex flex-col bg-background">
+      <div role="dialog" aria-label="Chi tiết booking" className="absolute inset-0 z-[40] flex flex-col bg-background">
         {header}
         <p className="px-4 text-[14px] text-[var(--text-muted)]">{res ? "Không tìm thấy booking." : "Đang tải..."}</p>
       </div>
@@ -198,7 +198,7 @@ export function DetailScreen({
         : null
 
   return (
-    <div role="dialog" aria-label="Chi tiết booking" className="fixed inset-0 z-[40] flex flex-col bg-background">
+    <div role="dialog" aria-label="Chi tiết booking" className="absolute inset-0 z-[40] flex flex-col bg-background">
       {header}
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-1 pb-6">
         <div
