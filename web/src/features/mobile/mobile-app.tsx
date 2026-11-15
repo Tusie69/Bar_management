@@ -8,7 +8,7 @@ import { Clock4, LayoutDashboard, List, ListOrdered, Map as MapIcon, Plus, type 
 import { Suspense, useEffect, useMemo, useState, type CSSProperties } from "react"
 import { Outlet, useLocation, useNavigate } from "react-router"
 import type { ReservationView } from "@/domain/models"
-import { useNow, useReservations, useWaitlist } from "@/hooks/use-data"
+import { useNow, useReceptionGuestCount, useReservations, useWaitlist } from "@/hooks/use-data"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useSession } from "@/state/session"
@@ -19,7 +19,6 @@ import { toast } from "sonner"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { NAV } from "@/app/nav"
 import { useShiftAlerts } from "../floor/alerts"
-import { buildGuestCount } from "../floor/guest-count"
 import { useFloorModel } from "../floor/use-floor-model"
 import { isWaitingForTable } from "../floor/reception-rules"
 import { MobileContext, type Confirm, type FormRequest, type MobileCtx, type TablePick, type Tab } from "./context"
@@ -51,6 +50,17 @@ export default function MobileApp() {
   const selectedDate = isReceptionist && ui.floorMode !== "live" ? ui.availDate : today
   const model = useFloorModel(selectedDate)
   const reservations = useReservations(selectedDate).data
+  const guestCount = useReceptionGuestCount(selectedDate).data ?? {
+    businessDate: selectedDate,
+    arrivedBefore: 0,
+    arrivedAfter: 0,
+    arrivedTotal: 0,
+    bookedTables: 0,
+    bookedGuests: 0,
+    returningGuests: 0,
+    version: 0,
+    updatedAt: null,
+  }
   const waitlistQuery = useWaitlist(selectedDate)
   const waitlist = waitlistQuery.isPlaceholderData ? undefined : waitlistQuery.data
   const venue = model.catalog?.venue
@@ -70,15 +80,6 @@ export default function MobileApp() {
   const [handled, setHandled] = useState<Set<string>>(() => new Set())
 
   const booked = useMemo(() => (reservations ?? []).filter((r) => r.status === "BOOKED"), [reservations])
-  const guestCount = useMemo(
-    () =>
-      buildGuestCount(
-        reservations,
-        undefined,
-        [...model.states.values()].flatMap((state) => (state.claim ? [state.claim] : [])),
-      ),
-    [reservations, model.states],
-  )
   const alerts = useShiftAlerts(model, booked, now)
   const unread = alerts.filter((a) => !seen.has(a.key)).length
   const handle = (key: string) => setHandled((s) => new Set(s).add(key))
@@ -314,8 +315,8 @@ export default function MobileApp() {
             <SheetDescription className="pb-3 text-xs">Tổng hợp khách và bàn đặt trong ngày đang xem.</SheetDescription>
             <div className="grid grid-cols-2 gap-2" data-testid="guest-count-summary">
               {[
-                [`Trước ${guestCount.splitLabel}`, guestCount.arrivedBefore],
-                [`Sau ${guestCount.splitLabel}`, guestCount.arrivedAfter],
+                ["Trước 21:30", guestCount.arrivedBefore],
+                ["Sau 21:30", guestCount.arrivedAfter],
                 ["Tổng đã tới", guestCount.arrivedTotal],
                 ["Tổng bàn đặt", guestCount.bookedTables],
                 ["Tổng khách đặt", guestCount.bookedGuests],

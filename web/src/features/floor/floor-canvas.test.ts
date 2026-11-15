@@ -885,8 +885,8 @@ describe("Group border redesign - status-colored thick borders and neutral selec
     })
 
     // Both tables render their own individual cells
-    expect(html).toContain(">B5<")
-    expect(html).toContain(">B6<")
+    expect(html).toContain(">B5 - Nam<")
+    expect(html).toContain(">B6 - Nam<")
     // Border uses business status color, not group palette
     expect(html).not.toContain("data-group-color")
     expect(html).toContain(`stroke="${STATE_META.reserved.color}"`)
@@ -926,8 +926,8 @@ describe("Group border redesign - status-colored thick borders and neutral selec
       selectedIds: [],
     })
 
-    expect(html).toContain(">A0<")
-    expect(html).toContain(">C1<")
+    expect(html).toContain(">A0 - Party<")
+    expect(html).toContain(">C1 - Party<")
     expect(html).not.toContain("data-group-color")
     expect(html).toContain(`stroke="${STATE_META.seated.color}"`)
     expect(html).toContain('stroke-width="3"')
@@ -1196,17 +1196,19 @@ describe("Group border redesign - status-colored thick borders and neutral selec
         selectedIds: [],
       })
 
-      expect(html).toContain(">B21<")
+      expect(html).toContain(">B21 - Chị Lan<")
       expect(html).toContain(">22:30<")
-      expect(html).toContain(">B3<")
-      expect(html).toContain(">Anh Nam<")
+      expect(html).toContain(">B3 - Anh Nam<")
       // Walk-in without a real name shows "Khách lẻ", never fake name or "N khách"
-      expect(html).toContain(">Khách lẻ<")
+      expect(html).toContain(">A3 - Khách lẻ<")
       expect(html).not.toContain("4 khách<")
       expect(html).not.toContain("2 khách<")
 
       // Long name truncation helper check
-      expect(formatCellGuestName("Nguyễn Hoàng Bảo Trâm", 10)).toBe("Nguyễn Ho…")
+      expect(formatCellGuestName("Nguyễn Hoàng Bảo Trâm", 10)).toBe("Trâm")
+      expect(formatCellGuestName("  Nguyễn   Văn   Tùng  ", 8)).toBe("Tùng")
+      expect(formatCellGuestName("Tùng", 8)).toBe("Tùng")
+      expect(formatCellGuestName("Minh Anh", 8)).toBe("Minh Anh")
     })
 
     it("BR-03: shows seat number plus booked time in cell for booked Bar seat (e.g. Bar16 at 22:15)", () => {

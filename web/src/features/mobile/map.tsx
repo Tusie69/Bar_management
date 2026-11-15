@@ -1,5 +1,5 @@
 import { ListOrdered, Menu, MessageSquareText, X } from "lucide-react"
-import { useMemo, useState, type ReactNode } from "react"
+import { useMemo, type ReactNode } from "react"
 import type { TableLiveState, TableView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAvailability } from "@/hooks/use-data"
@@ -67,7 +67,6 @@ export function MapScreen({
   const layoutIds = useUi((s) => s.pickSelection)
   const waitingCount = (m.waitlist ?? []).filter(isWaitingForTable).length
   const undoEnabled = useUndoRedo().enabled
-  const [exportOpen, setExportOpen] = useState(false)
   const canExport = m.can("customer.view_masked")
   // Cỡ máy thật, không phải cỡ viewport: Safari thu nhỏ trang thì iPhone X báo
   // ~506px và trước đây nhận bộ chrome của máy to, đè lên Khu B/Khu C.
@@ -129,20 +128,24 @@ export function MapScreen({
             ) : (
               <h1 className="m-0 min-w-0 flex-1 truncate text-[18px] font-semibold text-tx-strong">Sơ đồ bàn</h1>
             )}
-            <button
-              type="button"
-              disabled={!canExport}
-              onClick={() => setExportOpen(true)}
-              aria-label="Xuất text Zalo"
-              title="Xuất text booking để gửi nhóm Zalo"
-              className={cn(
-                "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-3 text-[14px] font-semibold text-primary-foreground",
-                !canExport && "cursor-not-allowed opacity-50",
+            <ZaloBookingExport businessDate={m.businessDate} enabled={canExport}>
+              {({ copy, loading }) => (
+                <button
+                  type="button"
+                  disabled={!canExport || loading}
+                  onClick={() => void copy()}
+                  aria-label="Xuất text Zalo"
+                  title="Xuất text booking để gửi nhóm Zalo"
+                  className={cn(
+                    "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-3 text-[14px] font-semibold text-primary-foreground",
+                    (!canExport || loading) && "cursor-not-allowed opacity-50",
+                  )}
+                >
+                  <MessageSquareText className="size-4 shrink-0" aria-hidden />
+                  <span>Xuất Text</span>
+                </button>
               )}
-            >
-              <MessageSquareText className="size-4 shrink-0" aria-hidden />
-              <span>Xuất Text</span>
-            </button>
+            </ZaloBookingExport>
           </div>
         </header>
       ) : (
@@ -250,10 +253,9 @@ export function MapScreen({
                     // the toolbar's full height to the plan.
                     <div className="reception-plan-overlay pointer-events-none absolute inset-0">
                       <GuestCountCard
-                        reservations={m.reservations}
-                        claims={[...m.model.states.values()].flatMap((state) => (state.claim ? [state.claim] : []))}
+                        businessDate={m.businessDate}
                         onOpen={m.openCount}
-                        initialOpen={planWidth > 480}
+                        initialOpen
                         tiny={planWidth <= 359}
                         className="pointer-events-auto absolute top-2 left-2"
                       />
@@ -371,7 +373,6 @@ export function MapScreen({
           </div>
         </section>
       ) : null}
-      <ZaloBookingExport businessDate={m.businessDate} open={exportOpen} onOpenChange={setExportOpen} />
     </main>
   )
 }
@@ -555,7 +556,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
     actions = [
       { label: "Mở bàn Walk-in", primary: true, go: () => m.openForm({ mode: "walkin", tableIds: members }) },
       {
-        label: "Tạo đặt trước",
+        label: "Đặt bàn",
         go: () => m.openForm({ mode: "booking", tableIds: zone?.isBookable ? members : [] }),
       },
     ]
@@ -589,18 +590,12 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
   const cells: ReactNode[] = []
   if (callTarget) {
     cells.push(
-      <CallCustomerControl
-        key="call"
-        target={callTarget}
-        canCall={c?.canCall === true || c?.phoneLast3 != null}
-      />,
+      <CallCustomerControl key="call" target={callTarget} canCall={c?.canCall === true || c?.phoneLast3 != null} />,
     )
   }
   for (const x of pairActions) cells.push(actionButton(x))
   if (t) {
-    cells.push(
-      <SpareButton key="spare" table={t} state={st} hasClaim={Boolean(c)} inGroup={isGroup} />,
-    )
+    cells.push(<SpareButton key="spare" table={t} state={st} hasClaim={Boolean(c)} inGroup={isGroup} />)
   }
 
   return (

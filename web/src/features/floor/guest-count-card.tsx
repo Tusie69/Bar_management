@@ -1,137 +1,116 @@
-/**
- * "Đếm khách" card that floats on the top left of the plan, as the approved
- * mockup draws it: the six figures on the card itself, not hidden behind a
- * pill that has to be tapped first. Tapping the figures still opens the full
- * report.
- *
- * It can be folded away. Expanded it covers a corner of Khu C, and the
- * receptionist needs that corner when the plan is busy, so the chevron folds
- * it to a pill and the choice is remembered on the device.
- *
- * Size follows the mockup (124 x 112 at k = 1) but in real pixels, so the
- * figures stay readable when the plan scales down on a small phone.
- */
-
-import { ChevronDown, Users } from "lucide-react"
-import { useState, type ReactElement } from "react"
-import type { ClaimView, ReservationView } from "@/domain/models"
+import { Check, ChevronDown, Pencil, Users, X } from "lucide-react"
+import { useEffect, useMemo, useState, type ReactElement } from "react"
+import { toast } from "sonner"
+import type { ReceptionGuestCount } from "@/domain/models"
+import { useReceptionGuestCount, useUpdateReceptionGuestCount } from "@/hooks/use-data"
+import type { BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { buildGuestCount } from "./guest-count"
+import { ApiError } from "@/services/contracts"
+import { useCan } from "@/state/session"
+import { guestCountDraft, guestCountKeys, parseGuestCountDraft, type GuestCountDraft, type GuestCountKey } from "./guest-count-values"
 
-const STORAGE_KEY = "gam21.guest-count-open"
+const emptyCount = (businessDate: BusinessDate): ReceptionGuestCount => ({
+  businessDate, arrivedBefore: 0, arrivedAfter: 0, arrivedTotal: 0, bookedTables: 0,
+  bookedGuests: 0, returningGuests: 0, version: 0, updatedAt: null,
+})
 
-function loadOpen(defaultOpen: boolean): boolean {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    return stored === null ? defaultOpen : stored !== "0"
-  } catch {
-    return defaultOpen
-  }
-}
-
-function saveOpen(open: boolean) {
-  try {
-    localStorage.setItem(STORAGE_KEY, open ? "1" : "0")
-  } catch {
-    // Private mode: the card just reopens next load.
-  }
-}
-
-function Row({ label, value, divided }: { label: string; value: number; divided?: boolean }): ReactElement {
+function Row({ label, value, divided, editing, onChange }: {
+  label: string; value: number | string; divided?: boolean; editing?: boolean; onChange?: (value: string) => void
+}): ReactElement {
   return (
-    <div
-      className={cn("flex items-baseline justify-between gap-1.5", divided && "mt-0.5 border-t border-border/70 pt-1")}
-    >
-      <span className="truncate text-[9px] leading-tight text-tx-2">{label}</span>
-      <span className="tnum shrink-0 text-[9px] leading-tight font-bold text-tx-strong">{value}</span>
+    <div className={cn("flex min-h-4 items-center justify-between gap-1", divided && "mt-0.5 border-t border-border/70 pt-1")}>
+      <span className="min-w-0 truncate text-[9px] leading-tight text-tx-2">{label}</span>
+      {editing ? (
+        <input type="number" min={0} step={1} inputMode="numeric" aria-label={label} value={value}
+          onChange={(event) => { const next = event.target.value; if (/^\d*$/.test(next)) onChange?.(next) }}
+          className="tnum h-6 w-[60px] shrink-0 rounded-md border border-border bg-background px-1.5 text-right text-[11px] font-semibold text-tx-strong outline-none focus:border-primary" />
+      ) : <span className="tnum shrink-0 text-[9px] leading-tight font-bold text-tx-strong">{value}</span>}
     </div>
   )
 }
 
-export function GuestCountCard({
-  reservations,
-  claims,
-  onOpen,
-  initialOpen = true,
-  tiny = false,
-  className,
-}: {
-  reservations: readonly ReservationView[] | undefined
-  claims?: readonly ClaimView[]
-  onOpen?: () => void
-  /** Initial state when this device has no remembered preference yet. */
-  initialOpen?: boolean
-  /** Máy rất hẹp (<= 359pt): thu nút gọn còn mỗi biểu tượng. */
-  tiny?: boolean
-  className?: string
+export function GuestCountCard({ businessDate, onOpen, initialOpen = true, tiny = false, className }: {
+  businessDate: BusinessDate; onOpen?: () => void; initialOpen?: boolean; tiny?: boolean; className?: string
 }): ReactElement {
-  const [open, setOpen] = useState(() => loadOpen(initialOpen))
-  const c = buildGuestCount(reservations, undefined, claims)
+  const [open, setOpen] = useState(initialOpen)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState<GuestCountDraft | null>(null)
+  const [baseVersion, setBaseVersion] = useState(0)
+  const query = useReceptionGuestCount(businessDate)
+  const update = useUpdateReceptionGuestCount()
+  const canEdit = useCan("reservation.update")
+  const count = query.data ?? emptyCount(businessDate)
+  const parsed = draft ? parseGuestCountDraft(draft) : null
+  const dirty = useMemo(() => Boolean(draft && guestCountKeys.some((key) => draft[key] !== String(count[key]))), [count, draft])
+  const remoteChanged = editing && count.version !== baseVersion
 
+  useEffect(() => {
+    if (!editing || !dirty) return
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault()
+    window.addEventListener("beforeunload", warn)
+    return () => window.removeEventListener("beforeunload", warn)
+  }, [dirty, editing])
+
+  const discard = () => !dirty || window.confirm("Bỏ các thay đổi bộ đếm khách chưa lưu?")
+  const startEdit = () => { setDraft(guestCountDraft(count)); setBaseVersion(count.version); setEditing(true) }
+  const cancelEdit = () => { if (discard()) { setEditing(false); setDraft(null) } }
   const toggle = () => {
-    setOpen((v) => {
-      saveOpen(!v)
-      return !v
-    })
+    if (open && editing && !discard()) return
+    if (open) { setEditing(false); setDraft(null) }
+    setOpen((value) => !value)
   }
-
-  const shell =
-    "rounded-lg border border-border/80 bg-background/95 shadow-lg backdrop-blur dark:border-slate-700/80 dark:bg-[#1e232d]/95"
-
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={toggle}
-        aria-expanded={false}
-        aria-label="Mở bảng đếm khách"
-        data-testid="guest-count-card-collapsed"
-        className={cn(
-          shell,
-          "inline-flex h-9 items-center gap-1.5 px-2.5 active:scale-95",
-          tiny && "size-11 justify-center p-0",
-          className,
-        )}
-      >
-        <Users className="size-4 shrink-0" aria-hidden />
-        <span className={cn("text-[13px] font-semibold text-tx-strong", tiny && "sr-only")}>Đếm khách</span>
-        {tiny ? null : <ChevronDown className="size-3.5 text-tx-2" aria-hidden />}
-      </button>
-    )
+  const reload = () => { setDraft(guestCountDraft(count)); setBaseVersion(count.version) }
+  const save = async () => {
+    if (!parsed || remoteChanged) return
+    try {
+      await update.mutateAsync({ businessDate, version: baseVersion, ...parsed })
+      setEditing(false); setDraft(null); toast.success("Đã lưu bộ đếm khách")
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        void query.refetch()
+        toast.error("Dữ liệu đã thay đổi trên máy khác. Bản nháp của bạn vẫn được giữ.")
+      } else toast.error(error instanceof Error ? error.message : "Không thể lưu bộ đếm khách.")
+    }
   }
+  const shell = "rounded-lg border border-border/80 bg-background/95 shadow-lg backdrop-blur dark:border-slate-700/80 dark:bg-[#1e232d]/95"
 
+  if (!open) return (
+    <button type="button" onClick={toggle} aria-expanded={false} aria-label="Mở bảng đếm khách" data-testid="guest-count-card-collapsed"
+      className={cn(shell, "inline-flex h-9 items-center gap-1.5 px-2.5 active:scale-95", tiny && "size-11 justify-center p-0", className)}>
+      <Users className="size-4 shrink-0" aria-hidden />
+      <span className={cn("text-[13px] font-semibold text-tx-strong", tiny && "sr-only")}>Đếm khách</span>
+      {tiny ? null : <ChevronDown className="size-3.5 text-tx-2" aria-hidden />}
+    </button>
+  )
+
+  const rows: [string, GuestCountKey, boolean?][] = [
+    ["Trước 21:30", "arrivedBefore"], ["Sau 21:30", "arrivedAfter"], ["Tổng đã tới", "arrivedTotal", true],
+    ["Tổng bàn đặt", "bookedTables"], ["Tổng khách đặt", "bookedGuests"], ["Đã từng đặt bàn", "returningGuests"],
+  ]
   return (
-    <div
-      data-testid="guest-count-card"
-      className={cn(shell, "flex w-[124px] flex-col gap-0.5 px-[7px] py-1.5 text-left", className)}
-    >
+    <div data-testid="guest-count-card" className={cn(shell, "flex w-[124px] flex-col gap-0.5 px-[7px] py-1.5 text-left", className)}>
       <div className="flex items-center gap-1">
         <Users className="size-3 shrink-0" aria-hidden />
-        <span className="flex-1 text-[10px] leading-tight font-bold text-tx-strong">Đếm khách</span>
-        <button
-          type="button"
-          onClick={toggle}
-          aria-expanded
-          aria-label="Thu gọn bảng đếm khách"
-          className="-mr-1 grid size-5 shrink-0 place-items-center rounded text-tx-2 active:scale-95"
-        >
-          <ChevronDown className="size-3.5 rotate-180" aria-hidden />
-        </button>
+        <span className="min-w-0 flex-1 truncate text-[10px] leading-tight font-bold text-tx-strong">Đếm khách</span>
+        {canEdit && !editing ? <button type="button" onClick={startEdit} aria-label="Sửa bộ đếm khách" title="Sửa"
+          className="inline-flex h-5 shrink-0 items-center gap-0.5 rounded px-0.5 text-[9px] font-semibold text-tx-2 active:scale-95"><Pencil className="size-3" aria-hidden />Sửa</button> : null}
+        <button type="button" onClick={toggle} aria-expanded aria-label="Thu gọn bảng đếm khách"
+          className="-mr-1 grid size-5 shrink-0 place-items-center rounded text-tx-2 active:scale-95"><ChevronDown className="size-3.5 rotate-180" aria-hidden /></button>
       </div>
-      <button
-        type="button"
-        onClick={onOpen}
-        title="Đếm khách và xem báo cáo hiện có"
-        aria-label={`Đếm khách. Trước ${c.splitLabel} ${c.arrivedBefore}, sau ${c.splitLabel} ${c.arrivedAfter}, tổng đã tới ${c.arrivedTotal}, tổng bàn đặt ${c.bookedTables}, tổng khách đặt ${c.bookedGuests}, khách quen ${c.returningGuests}. Mở báo cáo.`}
-        className="flex flex-col gap-0.5 text-left active:scale-[0.98]"
-      >
-        <Row label={`Trước ${c.splitLabel}`} value={c.arrivedBefore} />
-        <Row label={`Sau ${c.splitLabel}`} value={c.arrivedAfter} />
-        <Row label="Tổng đã tới" value={c.arrivedTotal} divided />
-        <Row label="Tổng bàn đặt" value={c.bookedTables} />
-        <Row label="Tổng khách đặt" value={c.bookedGuests} />
-        <Row label="Đã từng đặt bàn" value={c.returningGuests} />
-      </button>
+      {editing ? <div className="flex flex-col gap-0.5">
+        {rows.map(([label, key, divided]) => <Row key={key} label={label} value={draft?.[key] ?? ""} divided={divided}
+          editing onChange={(value) => setDraft((current) => current ? { ...current, [key]: value } : current)} />)}
+      </div> : <button type="button" onClick={onOpen} className="flex flex-col gap-0.5 text-left active:scale-[0.98]"
+        aria-label={`Đếm khách. Trước 21:30 ${count.arrivedBefore}, sau 21:30 ${count.arrivedAfter}, tổng đã tới ${count.arrivedTotal}, tổng bàn đặt ${count.bookedTables}, tổng khách đặt ${count.bookedGuests}, đã từng đặt bàn ${count.returningGuests}.`}>
+        {rows.map(([label, key, divided]) => <Row key={key} label={label} value={count[key]} divided={divided} />)}
+      </button>}
+      {editing ? <>
+        {remoteChanged ? <button type="button" onClick={reload} className="mt-1 text-left text-[9px] leading-tight text-warning underline">Có dữ liệu mới · Tải lại</button> : null}
+        <div className="mt-1 grid grid-cols-2 gap-1">
+          <button type="button" onClick={cancelEdit} disabled={update.isPending} className="inline-flex h-7 items-center justify-center gap-0.5 rounded-md border border-border text-[10px] font-semibold"><X className="size-3" aria-hidden /> Hủy</button>
+          <button type="button" onClick={() => void save()} disabled={!parsed || remoteChanged || update.isPending} className="inline-flex h-7 items-center justify-center gap-0.5 rounded-md bg-primary text-[10px] font-semibold text-primary-foreground disabled:opacity-50"><Check className="size-3" aria-hidden /> Lưu</button>
+        </div>
+      </> : null}
     </div>
   )
 }

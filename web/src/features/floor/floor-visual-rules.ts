@@ -17,31 +17,22 @@ export const GUEST_FLAG_META: Record<GuestFlag, { glyph: string; label: string }
 }
 
 /**
- * Formats the guest name shown inside a checked-in table or Bar seat cell (J1 Section 2 & 5).
+ * Formats the guest name shown only on a compact floor/table label.
  * - Walk-ins without a real customer name show a short suitable label ("Khách lẻ" / "Lẻ"), never a fake name.
- * - Long names are truncated with an ellipsis so they never overflow the cell.
+ * - Whitespace is normalized for display without changing the source value.
+ * - A short full name is kept; a long multi-word name falls back to its final word.
+ * - Unicode code points are truncated safely so a surrogate pair is never split.
  */
-export function formatCellGuestName(
-  displayName?: string | null,
-  maxChars = 9,
-  isBarSeat = false,
-): string {
-  const raw = (displayName ?? "").trim()
+export function formatCellGuestName(displayName?: string | null, maxChars = 9, isBarSeat = false): string {
+  const raw = (displayName ?? "").trim().replace(/\s+/gu, " ")
   if (!raw || /^(khách walk-in|walk-in|khách vãng lai|khách lẻ|khách)$/i.test(raw)) {
     return isBarSeat ? "Lẻ" : "Khách lẻ"
   }
-  if (isBarSeat) {
-    const parts = raw.split(/\s+/).filter(Boolean)
-    const shortWord = parts[parts.length - 1] ?? raw
-    if (shortWord.length > maxChars) {
-      return `${shortWord.slice(0, Math.max(2, maxChars - 1))}…`
-    }
-    return shortWord
-  }
-  if (raw.length > maxChars) {
-    return `${raw.slice(0, Math.max(3, maxChars - 1)).trimEnd()}…`
-  }
-  return raw
+  const parts = raw.split(" ")
+  const candidate = isBarSeat || Array.from(raw).length > maxChars ? (parts.at(-1) ?? raw) : raw
+  const chars = Array.from(candidate)
+  if (chars.length <= maxChars) return candidate
+  return `${chars.slice(0, Math.max(2, maxChars - 1)).join("")}…`
 }
 
 export interface CellCornerIcons {
@@ -92,12 +83,8 @@ export function resolveCellCornerIcons(
     result.bottomLeft.push("new")
   }
 
-  const hasStar = tokens.some(
-    (k) => k === "star" || k === "vip" || k === "boss" || k === "bàn sếp" || k === "ban sep",
-  )
-  const hasPin = tokens.some(
-    (k) => k === "pin" || k === "designated" || k === "chỉ định" || k === "chi dinh",
-  )
+  const hasStar = tokens.some((k) => k === "star" || k === "vip" || k === "boss" || k === "bàn sếp" || k === "ban sep")
+  const hasPin = tokens.some((k) => k === "pin" || k === "designated" || k === "chỉ định" || k === "chi dinh")
   // Order follows the mockup's own list for this corner: VIP, then Chỉ định,
   // then Sinh nhật.
   if (hasStar) result.bottomRight.push("star")
@@ -249,7 +236,9 @@ export function findGroupRepresentativeId(members: TableView[]): number {
 export function groupDisplayName(members: TableView[], group?: FloorGroup | null): string {
   if (group?.displayCode) return group.displayCode
   const sorted = [...members].sort((a, b) =>
-    a.kind === "BAR_SEAT" ? (a.seqNo ?? 0) - (b.seqNo ?? 0) : a.code.localeCompare(b.code, undefined, { numeric: true }),
+    a.kind === "BAR_SEAT"
+      ? (a.seqNo ?? 0) - (b.seqNo ?? 0)
+      : a.code.localeCompare(b.code, undefined, { numeric: true }),
   )
   if (sorted[0]?.kind === "BAR_SEAT") {
     const numbers = sorted.map((t) => t.seqNo ?? 0)

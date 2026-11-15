@@ -214,8 +214,9 @@
   min-width: 44px;
 }
 
-/* Ensure Bàn chờ marker has at least 44px touch target and remains visible on floor */
-foreignObject {
+/* Only the Bàn chờ marker may escape its SVG touch box. A global override
+   breaks WebKit clipping for the bar guest list on iPhone X/15. */
+foreignObject[data-mobile-waitlist-marker] {
   overflow: visible !important;
 }
 

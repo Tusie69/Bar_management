@@ -27,6 +27,8 @@ import type {
   CustomerSummary,
   MutationResult,
   PhoneReveal,
+  ReceptionGuestCount,
+  ReceptionGuestCountValues,
   ReportQuery,
   ReservationView,
   SessionUser,
@@ -128,6 +130,7 @@ export class MockGamApi implements GamApi, DemoControls {
   private seq: number
   private listeners = new Set<(event: ChangeEvent) => void>()
   private armed = false
+  private guestCounts = new Map<BusinessDate, ReceptionGuestCount>()
   private quickTimes = ["21:00", "21:30", "22:00", "22:30"]
   /** In-memory stand-in for booking_call_logs, so the history panel has data. */
   private callLog: {
@@ -165,6 +168,53 @@ export class MockGamApi implements GamApi, DemoControls {
   private async latency(kind: "q" | "m") {
     const [min, max] = kind === "q" ? [50, 130] : [140, 320]
     await sleep(min + Math.random() * (max - min))
+  }
+
+  async getReceptionGuestCount(businessDate: BusinessDate): Promise<ReceptionGuestCount> {
+    await this.latency("q")
+    this.require("customer.view_masked")
+    const stored = this.guestCounts.get(businessDate)
+    return stored
+      ? structuredClone(stored)
+      : {
+          businessDate,
+          arrivedBefore: 0,
+          arrivedAfter: 0,
+          arrivedTotal: 0,
+          bookedTables: 0,
+          bookedGuests: 0,
+          returningGuests: 0,
+          version: 0,
+          updatedAt: null,
+        }
+  }
+
+  async updateReceptionGuestCount(
+    input: ReceptionGuestCountValues & { businessDate: BusinessDate; version: number },
+  ): Promise<ReceptionGuestCount> {
+    await this.latency("m")
+    this.require("reservation.update")
+    const current = await this.getReceptionGuestCount(input.businessDate)
+    if (input.version !== current.version) {
+      throw new ApiError(409, "GUEST_COUNT_VERSION_CONFLICT", "Bộ đếm khách vừa được cập nhật trên máy khác.")
+    }
+    const saved: ReceptionGuestCount = {
+      ...input,
+      version: current.version + 1,
+      updatedAt: this.now,
+    }
+    this.guestCounts.set(input.businessDate, structuredClone(saved))
+    this.seq += 1
+    this.venue.changeSeq = this.seq
+    this.emit({
+      latestSeq: this.seq,
+      action: "RECEPTION_GUEST_COUNT_UPDATED",
+      entityType: "guest_count",
+      actorKind: "USER",
+      actorUserId: this.session.id,
+      summary: "Đã cập nhật bộ đếm khách",
+    })
+    return structuredClone(saved)
   }
 
   private require(p: Permission) {
@@ -1934,7 +1984,8 @@ export class MockGamApi implements GamApi, DemoControls {
     patch: { status?: "ACTIVE" | "OUT_OF_SERVICE"; isSpare?: boolean },
   ) {
     await this.latency("m")
-    this.require("venue.configure")
+    if (patch.status) this.require("venue.configure")
+    if (patch.isSpare !== undefined) this.require("table.spare.configure")
     const t = this.db.tables.get(tableId)
     if (!t) throw new ApiError(404, "NOT_FOUND", "Không tìm thấy bàn.")
     this.checkVersion("tables", t, version, `Bàn ${t.code}`)
@@ -2688,6 +2739,7 @@ export class MockGamApi implements GamApi, DemoControls {
 
   reset() {
     this.db = seedDb(clock.now())
+    this.guestCounts.clear()
     this.quickTimes = ["21:00", "21:30", "22:00", "22:30"]
     this.seq = venueOf(this.db).changeSeq
     this.emit({

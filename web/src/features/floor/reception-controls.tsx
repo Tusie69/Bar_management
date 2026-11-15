@@ -1,4 +1,4 @@
-import { Search, Users } from "lucide-react"
+import { MessageSquareText, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useBusinessDate } from "@/hooks/use-data"
@@ -118,12 +118,14 @@ export function ReceptionSearchResults({
 
 export function ReceptionControls({
   search,
-  onCount,
+  onExport,
+  exportLoading = false,
   onOpenBooking,
   onDateChange,
 }: {
   search: ReceptionSearch
-  onCount: () => void
+  onExport: () => void
+  exportLoading?: boolean
   onOpenBooking: (id: number, businessDate: BusinessDate) => void
   onDateChange?: () => void
 }) {
@@ -139,11 +141,12 @@ export function ReceptionControls({
           variant="outline"
           size="icon"
           className="h-11 min-h-[44px] w-11 min-w-[44px] shrink-0 bg-surface-1"
-          onClick={onCount}
-          aria-label="Đếm khách"
-          title="Đếm khách và xem báo cáo hiện có"
+          onClick={onExport}
+          disabled={exportLoading}
+          aria-label="Xuất text Zalo"
+          title="Sao chép danh sách bàn đặt"
         >
-          <Users className="size-5" />
+          <MessageSquareText className="size-5" />
         </Button>
       </div>
       <ReceptionSearchResults search={search} onOpenBooking={onOpenBooking} />

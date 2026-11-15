@@ -14,6 +14,7 @@ import { visitRouter } from './modules/visits/visit.route.js'
 import { waitlistRouter } from './modules/waitlist/waitlist.route.js'
 import { settingsRouter, venueSettingsRouter } from './modules/venues/venue-settings.route.js'
 import { healthRouter } from './routes/health.route.js'
+import { receptionRouter } from './modules/reception/guest-count.route.js'
 
 export const app: Express = express()
 
@@ -36,6 +37,7 @@ app.use('/api/v1/visits', visitRouter)
 app.use('/api/v1/waitlist', waitlistRouter)
 app.use('/api/v1/settings', settingsRouter)
 app.use('/api/v1/venues', venueSettingsRouter)
+app.use('/api/v1/reception', receptionRouter)
 
 app.use(notFoundHandler)
 app.use(errorHandler)

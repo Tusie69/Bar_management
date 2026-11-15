@@ -38,7 +38,6 @@ export function ListScreen() {
   const [src, setSrc] = useState<BookingSourceCode | null>(null)
   const [status, setStatus] = useState<Status>("all")
   const [dateIdx, setDateIdx] = useState(0)
-  const [exportOpen, setExportOpen] = useState(false)
   const canExport = useCan("customer.view_masked")
   const bd = addDays(m.today, dateIdx)
   const resQuery = useReservations(bd)
@@ -79,19 +78,23 @@ export function ListScreen() {
                 ]}
               />
             </div>
-            <button
-              type="button"
-              aria-label="Xuất text Zalo"
-              disabled={!canExport}
-              onClick={() => setExportOpen(true)}
-              className={cn(
-                "inline-flex h-11 shrink-0 items-center gap-1.5 rounded-xl border border-border bg-surface-1 px-3 text-[14px] font-medium text-tx-1 transition-colors",
-                !canExport && "cursor-not-allowed opacity-50",
+            <ZaloBookingExport businessDate={bd} enabled={canExport}>
+              {({ copy, loading }) => (
+                <button
+                  type="button"
+                  aria-label="Xuất text Zalo"
+                  disabled={!canExport || loading}
+                  onClick={() => void copy()}
+                  className={cn(
+                    "inline-flex h-11 shrink-0 items-center gap-1.5 rounded-xl border border-border bg-surface-1 px-3 text-[14px] font-medium text-tx-1 transition-colors",
+                    (!canExport || loading) && "cursor-not-allowed opacity-50",
+                  )}
+                >
+                  <MessageSquareText className="size-4 shrink-0" aria-hidden />
+                  <span>Xuất text Zalo</span>
+                </button>
               )}
-            >
-              <MessageSquareText className="size-4 shrink-0" aria-hidden />
-              <span>Xuất text Zalo</span>
-            </button>
+            </ZaloBookingExport>
           </div>
           {mode === "list" ? (
             <>
@@ -195,12 +198,11 @@ export function ListScreen() {
             <EmptyBox
               title="Chưa có booking cho ngày này"
               body="Tạo booking mới, giờ đến từ 7:00 PM đến 1:00 AM."
-              action={{ label: "Tạo đặt trước", onClick: () => m.openForm({ mode: "booking" }) }}
+              action={{ label: "Đặt bàn", onClick: () => m.openForm({ mode: "booking" }) }}
             />
           )}
         </div>
       )}
-      <ZaloBookingExport businessDate={bd} open={exportOpen} onOpenChange={setExportOpen} />
     </>
   )
 }

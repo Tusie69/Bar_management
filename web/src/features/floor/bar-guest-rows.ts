@@ -114,9 +114,7 @@ export function formatBarGuestName(displayName?: string | null): string {
   if (!raw) return "Khách Walk-in"
 
   // Check if string contains only phone number digits / separators (e.g. 0901234567, +84..., 090-123)
-  const isPhoneOnly =
-    (!/[a-zA-ZÀ-ỹ]/.test(raw) && /\d{4,}/.test(raw)) ||
-    /^\+?[\d\s.\-()]{6,}$/.test(raw)
+  const isPhoneOnly = (!/[a-zA-ZÀ-ỹ]/.test(raw) && /\d{4,}/.test(raw)) || /^\+?[\d\s.\-()]{6,}$/.test(raw)
   if (isPhoneOnly) {
     return "Khách Walk-in"
   }
@@ -135,10 +133,7 @@ export function formatBarGuestName(displayName?: string | null): string {
  * - After check-in (seated / visit): uses reservedExpectedAt when present.
  *   Never shows the entry time (startsAt) as if it were the booked time. Absent shows nothing (null).
  */
-export function formatBarBookedTime(
-  claim: ClaimView | null | undefined,
-  state: TableLiveState,
-): string | null {
+export function formatBarBookedTime(claim: ClaimView | null | undefined, state: TableLiveState): string | null {
   if (!claim) return null
 
   const isCheckedIn = state === "seated" || claim.kind === "visit"
@@ -197,9 +192,7 @@ export function extractBarGuestIcons(claim: ClaimView | null | undefined): BarGu
     icons.cake = true
   }
 
-  if (
-    tokens.some((k) => k === "star" || k === "vip" || k === "boss" || k === "bàn sếp" || k === "ban sep")
-  ) {
+  if (tokens.some((k) => k === "star" || k === "vip" || k === "boss" || k === "bàn sếp" || k === "ban sep")) {
     icons.vip = true
   }
 
@@ -224,6 +217,7 @@ export function extractBarGuestIcons(claim: ClaimView | null | undefined): BarGu
 interface GroupedBooking {
   bookingKey: string
   seatNumbers: number[]
+  tableIds: number[]
   claim: ClaimView
   state: TableLiveState
 }
@@ -242,17 +236,20 @@ interface GroupedBooking {
 export function buildBarGuestRows(
   tablesOrOptions: TableView[] | BuildBarGuestRowsOptions,
   maybeStates?: Map<number, FloorTableState> | FloorTableState[] | null,
-  _maybeGroups?: FloorGroup[] | null,
+  maybeGroups?: FloorGroup[] | null,
 ): BarGuestRow[] {
   let tables: TableView[]
   let statesInput: Map<number, FloorTableState> | FloorTableState[] | null | undefined
+  let groups: FloorGroup[] = []
 
   if (Array.isArray(tablesOrOptions)) {
     tables = tablesOrOptions
     statesInput = maybeStates
+    groups = maybeGroups ?? []
   } else if (tablesOrOptions && typeof tablesOrOptions === "object") {
     tables = tablesOrOptions.tables
     statesInput = tablesOrOptions.states
+    groups = tablesOrOptions.groups ?? []
   } else {
     return []
   }
@@ -321,6 +318,7 @@ export function buildBarGuestRows(
       existing = {
         bookingKey,
         seatNumbers: [],
+        tableIds: [],
         claim,
         state,
       }
@@ -330,6 +328,7 @@ export function buildBarGuestRows(
     if (!existing.seatNumbers.includes(seatNo)) {
       existing.seatNumbers.push(seatNo)
     }
+    if (!existing.tableIds.includes(table.id)) existing.tableIds.push(table.id)
 
     // If one of the seats has a more advanced state (e.g. seated), prefer seated
     if (state === "seated") {
@@ -342,7 +341,12 @@ export function buildBarGuestRows(
 
   for (const item of bookingMap.values()) {
     item.seatNumbers.sort((a, b) => a - b)
-    const seatsLabel = formatBarSeatLabel(item.seatNumbers)
+    const realGroup = groups.find(
+      (group) =>
+        (item.claim.groupId !== null && group.id === item.claim.groupId) ||
+        (item.tableIds.length > 1 && item.tableIds.every((tableId) => group.tableIds.includes(tableId))),
+    )
+    const seatsLabel = realGroup?.displayCode || formatBarSeatLabel(item.seatNumbers)
     const time = formatBarBookedTime(item.claim, item.state)
     const seatedTime = time ? null : formatBarSeatedTime(item.claim, item.state)
     const partySize = item.claim.partySize ?? 1

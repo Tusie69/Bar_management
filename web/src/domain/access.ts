@@ -13,6 +13,7 @@ export type Permission =
   | "reservation.mark_no_show"
   | "table.assign"
   | "table.assign_override"
+  | "table.spare.configure"
   | "visit.checkin"
   | "visit.walkin"
   | "visit.move"
@@ -54,6 +55,7 @@ export const PERMISSION_MATRIX: Record<Permission, RoleCode[]> = {
   "reservation.mark_no_show": [...M, R],
   "table.assign": [...M, R],
   "table.assign_override": M,
+  "table.spare.configure": [...M, R],
   "visit.checkin": [...M, R],
   "visit.walkin": [...M, R],
   "visit.move": [...M, R],
@@ -91,6 +93,7 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "reservation.mark_no_show": "Xác nhận không tới",
   "table.assign": "Phân bàn",
   "table.assign_override": "Phân bàn vượt quy tắc (sơ cua, quá sức chứa)",
+  "table.spare.configure": "Đặt hoặc bỏ bàn sơ cua",
   "visit.checkin": "Check-in",
   "visit.walkin": "Nhận Walk-in",
   "visit.move": "Đổi bàn",
@@ -133,6 +136,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
       "reservation.mark_no_show",
       "table.assign",
       "table.assign_override",
+      "table.spare.configure",
     ],
   },
   {

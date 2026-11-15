@@ -73,7 +73,7 @@ export function CreateSheet({ onClose }: { onClose: () => void }) {
   const items: { icon: LucideIcon; label: string; sub: string; permission: Permission; go: () => void }[] = [
     {
       icon: CalendarPlus,
-      label: "Tạo đặt trước",
+      label: "Đặt bàn",
       sub: "Booking cho giờ sau, có hẹn giờ đến",
       permission: "reservation.create",
       go: () => m.openForm({ mode: "booking" }),
@@ -148,7 +148,8 @@ export function AccountSheet({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate()
   const [loggingOut, setLoggingOut] = useState(false)
   const more = NAV.filter((n) => ["/guests", "/reports", "/settings"].includes(n.to)).filter(
-    (n) => !n.permission || (api.mode === "http" ? permissions.includes(n.permission) : roleCan(user.role, n.permission)),
+    (n) =>
+      !n.permission || (api.mode === "http" ? permissions.includes(n.permission) : roleCan(user.role, n.permission)),
   )
   return (
     <BottomSheet label="Tài khoản" onClose={onClose}>
@@ -186,9 +187,7 @@ export function AccountSheet({ onClose }: { onClose: () => void }) {
         <>
           <span className="pt-2 text-[13px] text-[var(--text-muted)]">Phiên đăng nhập</span>
           <div className="flex min-h-12 items-center justify-between rounded-2xl border border-border bg-background px-3.5">
-            <span className="min-w-0 truncate text-[15px] font-medium text-tx-strong">
-              {principal.displayName}
-            </span>
+            <span className="min-w-0 truncate text-[15px] font-medium text-tx-strong">{principal.displayName}</span>
             <span className="shrink-0 text-[13px] text-[var(--text-muted)]">{ROLE_LABEL[user.role]}</span>
           </div>
           <button
@@ -242,9 +241,7 @@ export function StatusDialog({ r, onClose }: { r: ReservationView; onClose: () =
 
   const opts: { label: string; dot: string; sub?: string; disabled?: boolean; go: () => void }[] =
     r.status === "BOOKED"
-      ? [
-          ...(canLate ? [{ label: "Tới muộn", dot: "var(--st-late)", go: close(() => a.confirmLate(r)) }] : []),
-        ]
+      ? [...(canLate ? [{ label: "Tới muộn", dot: "var(--st-late)", go: close(() => a.confirmLate(r)) }] : [])]
       : r.status === "CHECKED_IN"
         ? [
             { label: "Đổi bàn", dot: "var(--st-reserved)", go: close(() => a.move(r)) },

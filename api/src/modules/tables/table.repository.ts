@@ -433,6 +433,7 @@ export async function configureTable(
   isBackup: boolean
   status: 'ACTIVE' | 'OUT_OF_SERVICE'
   version: number
+  changeSeq: string
 }> {
   const connection = await databasePool.getConnection()
   try {
@@ -530,6 +531,7 @@ export async function configureTable(
       isBackup: isSpare,
       status,
       version: input.expectedVersion + 1,
+      changeSeq: changeSequence,
     }
   } catch (error) {
     await connection.rollback()

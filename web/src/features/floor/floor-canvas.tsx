@@ -848,6 +848,7 @@ export function FloorCanvas(props: Props) {
           {/* Waitlist marker button anchored to floor space for Zone Tất cả */}
           {onOpenWaitlist && isAllZone ? (
             <foreignObject
+              data-mobile-waitlist-marker="true"
               x={waitlistPos.x - waitlistPos.width / 2}
               y={waitlistPos.y - waitlistPos.touchHeight / 2}
               width={waitlistPos.width}
@@ -1285,12 +1286,14 @@ const LiveGlyph = memo(function LiveGlyph({
     state === "hold_overdue"
 
   const maxNameChars = Math.max(6, Math.floor((t.w - 6) / 4.2))
+  const shortGuestName = claim ? formatCellGuestName(claim.displayName, maxNameChars, false) : ""
+  const tableTitle = claim && t.kind !== "BAR_SEAT" ? `${t.code} - ${shortGuestName}` : t.code
   let cellSubText = ""
   let showTimeIcon = false
 
   if (seated) {
-    // J1 Section 2: Checked in shows code plus GUEST NAME instead of time or "N khách"
-    cellSubText = formatCellGuestName(claim?.displayName, maxNameChars, false)
+    // The primary label already contains "mã bàn - tên ngắn".
+    cellSubText = ""
   } else if (isBookedState) {
     // J1 Section 2: Booked, not checked in shows code plus booked time (e.g. 22:30)
     if (state === "hold" && !claim?.reservationId && !claim?.reservedExpectedAt) {
@@ -1505,13 +1508,13 @@ const LiveGlyph = memo(function LiveGlyph({
       <text
         y={cellSubText ? -1.5 : 4}
         textAnchor="middle"
-        fontSize={11}
+        fontSize={claim ? 8.2 : 11}
         fontWeight={700}
         fontFamily="var(--font-sans)"
         letterSpacing={-0.4}
         fill={textColor}
       >
-        {t.code}
+        {tableTitle}
       </text>
       {cellSubText ? (
         <g>

@@ -437,6 +437,21 @@ export interface PhoneReveal {
 
 /* ---------------- Operations / realtime ---------------- */
 
+export interface ReceptionGuestCountValues {
+  arrivedBefore: number
+  arrivedAfter: number
+  arrivedTotal: number
+  bookedTables: number
+  bookedGuests: number
+  returningGuests: number
+}
+
+export interface ReceptionGuestCount extends ReceptionGuestCountValues {
+  businessDate: BusinessDate
+  version: number
+  updatedAt: Date | null
+}
+
 export interface OperationView {
   id: number
   occurredAt: Date

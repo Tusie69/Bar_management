@@ -255,10 +255,12 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     expect(reception.portal).toBe('receptionist')
     expect(reception.user.roles).toEqual(['RECEPTIONIST'])
     expect(reception.permissions).not.toContain('venue.configure')
+    expect(reception.permissions).toContain('table.spare.configure')
     expect(reception.permissions).toContain('booking.phone.call')
     expect(reception.permissions).not.toContain('customer.phone.reveal')
     const deniedAdminWrite = await receptionAgent.patch('/api/v1/tables/1/configuration')
-      .set('Origin', origin).set('X-CSRF-Token', reception.csrfToken).send({})
+      .set('Origin', origin).set('X-CSRF-Token', reception.csrfToken)
+      .send({ version: 1, status: 'OUT_OF_SERVICE', reason: 'Admin-only configuration' })
     expect(deniedAdminWrite.status).toBe(403)
     expect(responseBody<ErrorResponse>(deniedAdminWrite).error.code).toBe('PERMISSION_DENIED')
 

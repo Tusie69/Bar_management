@@ -32,6 +32,8 @@ import type {
   CustomerSummary,
   FloorState,
   MutationResult,
+  ReceptionGuestCount,
+  ReceptionGuestCountValues,
   AllocationView,
   OperationView,
   PhoneReveal,
@@ -310,6 +312,10 @@ export interface GamApi {
   getCatalog(): Promise<Catalog>
   getVenueSettings(): Promise<VenueSettingsView>
   getFloorState(at: Date, businessDate?: BusinessDate): Promise<FloorState>
+  getReceptionGuestCount(businessDate: BusinessDate): Promise<ReceptionGuestCount>
+  updateReceptionGuestCount(
+    input: ReceptionGuestCountValues & { businessDate: BusinessDate; version: number },
+  ): Promise<ReceptionGuestCount>
   getAvailability(at: Date, partySize: number): Promise<AvailabilityResult>
   getShiftOverview(): Promise<ShiftOverview>
   listReservations(q: ReservationQuery): Promise<ReservationView[]>

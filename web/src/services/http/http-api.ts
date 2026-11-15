@@ -1,5 +1,5 @@
 /** Canonical GamApi backed exclusively by the frozen /api/v1 contract. */
-import type { Catalog, ClaimView, FloorState, MutationResult, SessionUser, VenueSettingsView } from "@/domain/models"
+import type { Catalog, ClaimView, FloorState, MutationResult, ReceptionGuestCount, SessionUser, VenueSettingsView } from "@/domain/models"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { clock } from "../clock"
 import { ApiError, type AccountsView, type AccountSummary, type GamApi, type UndoState } from "../contracts"
@@ -168,6 +168,10 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     getCatalog: loadCatalog,
     getVenueSettings: () => get<VenueSettingsView>("/settings"),
     getFloorState: async (at, date = businessDateOf(at)) => floor(date),
+    getReceptionGuestCount: async (date) =>
+      (await get<{ guestCount: ReceptionGuestCount }>(`/reception/guest-counts?date=${date}`)).guestCount,
+    updateReceptionGuestCount: async (input) =>
+      (await put<{ guestCount: ReceptionGuestCount }>("/reception/guest-counts", input)).guestCount,
     getAvailability: async (at, party) => {
       const data = await snapshot(at)
       return deriveAvailability(at, party, data.floor, data.bookings, data.catalog)

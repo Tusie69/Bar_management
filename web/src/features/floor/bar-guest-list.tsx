@@ -133,7 +133,7 @@ export function BarGuestList({
       data-testid={testId}
       style={containerStyle}
       className={cn(
-        "flex flex-col select-none overflow-hidden rounded-md border border-border/80 bg-card/95 text-card-foreground shadow-xs backdrop-blur-xs pointer-events-auto",
+        "pointer-events-auto flex flex-col overflow-hidden rounded-md border border-border/80 bg-card/95 text-card-foreground shadow-xs backdrop-blur-xs select-none",
         className,
       )}
       onPointerDown={(e) => e.stopPropagation()}
@@ -146,8 +146,8 @@ export function BarGuestList({
       onWheel={(e) => e.stopPropagation()}
     >
       {/* Title bar: 12-13px, medium bold, line-height 1.3-1.4 */}
-      <div className="shrink-0 border-b border-border/60 px-2 py-1 bg-muted/30">
-        <div className="text-[12px] font-semibold leading-[1.3] tracking-tight text-foreground break-words">
+      <div className="shrink-0 border-b border-border/60 bg-muted/30 px-2 py-1">
+        <div className="text-[12px] leading-[1.3] font-semibold tracking-tight break-words text-foreground">
           {title}
         </div>
       </div>
@@ -157,21 +157,17 @@ export function BarGuestList({
         role="region"
         tabIndex={0}
         aria-label={ariaLabel}
-        className="flex-1 overflow-y-auto overflow-x-hidden p-1 space-y-1 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:bg-border-strong [&::-webkit-scrollbar-thumb]:rounded touch-pan-y overscroll-contain"
+        className="[&::-webkit-scrollbar-thumb]:bg-border-strong flex-1 touch-pan-y [scrollbar-width:thin] space-y-1 overflow-x-hidden overflow-y-auto overscroll-contain p-1 focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:rounded"
       >
         {rows.length === 0 ? (
           <div
             data-testid="bar-guest-list-empty"
-            className="flex h-full items-center justify-center p-2 text-center text-[11px] italic text-muted-foreground/70 leading-[1.35]"
+            className="flex h-full items-center justify-center p-2 text-center text-[11px] leading-[1.35] text-muted-foreground/70 italic"
           >
             Chưa có khách
           </div>
         ) : (
-          <ul
-            role="list"
-            aria-label="Danh sách khách quầy bar"
-            className="space-y-1"
-          >
+          <ul role="list" aria-label="Danh sách khách quầy bar" className="space-y-1">
             {rows.map((row) => {
               const meta = STATE_META[row.state] ?? STATE_META.free
               const statusColor = meta.color
@@ -209,91 +205,65 @@ export function BarGuestList({
                 <li
                   key={row.bookingKey}
                   role="listitem"
-                  className="rounded text-[10.5px] leading-[1.25] overflow-hidden min-w-0"
+                  className="min-w-0 overflow-hidden rounded text-[10.5px] leading-[1.25]"
                 >
                   <button
                     type="button"
                     onClick={() => onRowClick?.(row)}
                     aria-label={rowAriaLabel}
                     className={cn(
-                      "flex flex-col w-full text-left rounded px-0.5 py-0.5 transition-colors space-y-0.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring overflow-hidden min-w-0",
-                      onRowClick ? "cursor-pointer hover:bg-muted/60" : "hover:bg-muted/30 cursor-default",
+                      "flex h-6 w-full min-w-0 items-center gap-1 overflow-hidden rounded px-1 text-left transition-colors focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
+                      onRowClick ? "cursor-pointer hover:bg-muted/60" : "cursor-default hover:bg-muted/30",
                     )}
                   >
-                    {/* Line 1: seats & metadata icons */}
-                    <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5 min-w-0 w-full">
-                      <span className="inline-flex items-center gap-1 min-w-0 max-w-full">
-                        <span
-                          className="inline-block size-1.5 rounded-full shrink-0"
-                          style={{ backgroundColor: statusColor }}
-                          aria-hidden="true"
-                        />
-                        <span className="font-semibold text-foreground text-[10px] tracking-tight break-words">
-                          {row.seatsLabel}
-                        </span>
+                    <span className="inline-flex min-w-0 shrink-0 items-center gap-1">
+                      <span
+                        className="inline-block size-1.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: statusColor }}
+                        aria-hidden="true"
+                      />
+                      <span className="max-w-12 truncate text-[10px] font-semibold tracking-tight text-foreground">
+                        {row.seatsLabel}
                       </span>
-
-                      {/* Metadata icons: wrap to own line when needed, show max 2 + marker */}
-                      {activeIcons.length > 0 && (
-                        <span className="inline-flex items-center gap-0.5 min-w-0 text-[9px] ml-auto shrink-0">
-                          {visibleIcons.map((icon) => (
-                            <span key={icon.key} title={icon.label} aria-label={icon.label}>
-                              {icon.emoji}
-                            </span>
-                          ))}
-                          {overflowCount > 0 && (
-                            <span
-                              title={overflowLabels}
-                              aria-label={`và ${overflowCount} mục khác: ${overflowLabels}`}
-                              className="text-[9px] font-semibold text-muted-foreground/80 select-none"
-                            >
-                              {`+${overflowCount}`}
-                            </span>
-                          )}
-                          {overflowIcons.length > 0 && (
-                            <span className="sr-only">
-                              {overflowIcons.map((icon) => (
-                                <span key={icon.key} title={icon.label} aria-label={icon.label}>
-                                  {icon.emoji}
-                                </span>
-                              ))}
-                            </span>
-                          )}
-                        </span>
-                      )}
-                      <span className="sr-only">{` (${statusShort})`}</span>
-                    </div>
-
-                    {/* Line 2: time and guest count (count never clipped) */}
-                    <div className="flex items-center gap-0.5 text-[10px] text-muted-foreground min-w-0 w-full font-medium tracking-tight">
-                      {row.time || row.seatedTime ? (
-                        <>
-                          <span className="shrink-0">
-                            {/* "vào" marks an entry time, so a walk-in row is never
-                                read as if the guest had booked that hour. */}
-                            {row.time ?? `vào ${row.seatedTime}`}
-                          </span>
-                          <span className="text-muted-foreground/60 select-none shrink-0 text-[9px]">·</span>
-                          <span className="inline-flex items-center gap-0.5 shrink-0">
-                            <Users className="size-2 opacity-70 shrink-0" aria-hidden="true" />
-                            <span className="shrink-0">{row.partySize}</span>
-                          </span>
-                        </>
-                      ) : (
-                        <span className="inline-flex items-center gap-0.5 shrink-0">
-                          <Users className="size-2 opacity-70 shrink-0" aria-hidden="true" />
-                          <span className="shrink-0">{row.partySize} khách</span>
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Line 3: name with an ellipsis */}
-                    <div
-                      className="truncate font-medium text-foreground text-[10.5px] min-w-0 w-full"
-                      title={row.guestName}
-                    >
+                    </span>
+                    <span className="shrink-0 text-[9.5px] text-muted-foreground">
+                      {row.time ?? (row.seatedTime ? `vào ${row.seatedTime}` : "")}
+                    </span>
+                    <span className="inline-flex shrink-0 items-center gap-0.5 text-[9.5px] text-muted-foreground">
+                      <Users className="size-2 opacity-70" aria-hidden="true" />
+                      {row.partySize}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate font-medium text-foreground" title={row.guestName}>
                       {row.guestName}
-                    </div>
+                    </span>
+                    {activeIcons.length > 0 ? (
+                      <span className="inline-flex shrink-0 items-center gap-0.5 text-[9px]">
+                        {visibleIcons.map((icon) => (
+                          <span key={icon.key} title={icon.label} aria-label={icon.label}>
+                            {icon.emoji}
+                          </span>
+                        ))}
+                        {overflowCount > 0 ? (
+                          <span
+                            title={overflowLabels}
+                            aria-label={`và ${overflowCount} mục khác: ${overflowLabels}`}
+                            className="text-[9px] font-semibold text-muted-foreground/80 select-none"
+                          >
+                            {`+${overflowCount}`}
+                          </span>
+                        ) : null}
+                        {overflowIcons.length > 0 ? (
+                          <span className="sr-only">
+                            {overflowIcons.map((icon) => (
+                              <span key={icon.key} title={icon.label} aria-label={icon.label}>
+                                {icon.emoji}
+                              </span>
+                            ))}
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : null}
+                    <span className="sr-only">{` (${statusShort})`}</span>
                   </button>
                 </li>
               )
@@ -311,7 +281,7 @@ export function BarGuestList({
         y={y}
         width={width}
         height={height}
-        className="overflow-hidden pointer-events-auto"
+        className="pointer-events-auto overflow-hidden"
         data-testid={`${testId}-foreign-object`}
       >
         {content}

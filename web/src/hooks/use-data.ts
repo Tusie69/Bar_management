@@ -2,10 +2,10 @@
  * Server-state hooks (TanStack Query) over GamApi + realtime sync.
  * Swapping the mock for the HTTP implementation does not change this file.
  */
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
-import type { ReportQuery } from "@/domain/models"
+import type { ReceptionGuestCountValues, ReportQuery } from "@/domain/models"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { api, clock } from "@/services"
 import { useSession } from "@/state/session"
@@ -16,6 +16,7 @@ export const qk = {
   settings: ["settings"] as const,
   accounts: ["accounts"] as const,
   floor: (at: string) => ["floor", at] as const,
+  guestCount: (bd: string) => ["guest-count", bd] as const,
   availability: (at: string, party: number) => ["availability", at, party] as const,
   overview: ["overview"] as const,
   reservations: (bd: string, search: string) => ["reservations", bd, search] as const,
@@ -81,6 +82,24 @@ export function useFloorState(businessDate?: BusinessDate) {
     queryFn: () => api.getFloorState(clock.now(), selectedDate),
     refetchInterval: 15_000,
     refetchIntervalInBackground: true,
+  })
+}
+
+export function useReceptionGuestCount(bd: BusinessDate) {
+  return useQuery({
+    queryKey: qk.guestCount(bd),
+    retry: api.mode === "mock" ? 1 : false,
+    queryFn: () => api.getReceptionGuestCount(bd),
+    enabled: Boolean(bd),
+  })
+}
+
+export function useUpdateReceptionGuestCount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: ReceptionGuestCountValues & { businessDate: BusinessDate; version: number }) =>
+      api.updateReceptionGuestCount(input),
+    onSuccess: (value) => qc.setQueryData(qk.guestCount(value.businessDate), value),
   })
 }
 
