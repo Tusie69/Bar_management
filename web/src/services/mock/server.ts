@@ -32,6 +32,8 @@ import type {
   ReportQuery,
   ReservationView,
   SessionUser,
+  TableTurnQuery,
+  TableTurnsParams,
 } from "@/domain/models"
 import type { ReservationRow, TableHoldRow, VisitRow, WaitlistEntryRow } from "@/domain/schema"
 import { symbolByNo } from "@/domain/symbols"
@@ -93,6 +95,7 @@ import {
   waitlistView,
 } from "./derive"
 import { DEMO_USERS, REMOTE_USER_ID, seedDb } from "./seed"
+import { mockTableTurns, mockTableTurnSummary, seedTableTurns } from "./table-turns"
 import { Tx } from "./tx"
 import { formatDailyBookingText } from "./booking-export"
 import { apiErrorMessage } from "../error-messages"
@@ -159,6 +162,20 @@ export class MockGamApi implements GamApi, DemoControls {
 
   private get now() {
     return clock.now()
+  }
+
+  private readonly tableTurns = seedTableTurns(clock.now())
+
+  async getTableTurns(params: TableTurnsParams) {
+    await this.latency("q")
+    this.require("report.read")
+    return mockTableTurns(this.tableTurns, params)
+  }
+
+  async getTableTurnSummary(params: TableTurnQuery) {
+    await this.latency("q")
+    this.require("report.read")
+    return mockTableTurnSummary(this.tableTurns, params)
   }
 
   private get venue() {

@@ -49,6 +49,10 @@ import type {
   VenueConfig,
   VenueSettingsView,
   VisitView,
+  TableTurnQuery,
+  TableTurnsParams,
+  TableTurnsResult,
+  TableTurnSummary,
   WaitlistEntryView,
 } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
@@ -322,6 +326,8 @@ export interface GamApi {
   searchReception(businessDate: BusinessDate, query: { last3?: string; name?: string }): Promise<ReceptionSearchResult>
   exportDailyBookingText(businessDate: BusinessDate): Promise<string>
   listVisits(businessDate: BusinessDate): Promise<VisitView[]>
+  getTableTurns(params: TableTurnsParams): Promise<TableTurnsResult>
+  getTableTurnSummary(params: TableTurnQuery): Promise<TableTurnSummary>
   listWaitlist(businessDate: BusinessDate): Promise<WaitlistEntryView[]>
   searchCustomers(query: string): Promise<CustomerSummary[]>
   getCustomer(id: number): Promise<CustomerProfile>

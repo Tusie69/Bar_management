@@ -7,7 +7,7 @@ import { assertNoteHasNoPhoneNumber } from '../../security/note-privacy.js'
 import { mountContactCallRoutes } from '../contacts/contact-call.route.js'
 import { parseCapacityOverride } from '../tables/table-capacity.js'
 import { closeVisit, mergeVisitTables, moveVisit, type CloseVisitMode, type ManualCloseReason } from './visit.repository.js'
-import { listTableTurns } from './table-turn.repository.js'
+import { listTableTurns, summarizeTableTurns, type TurnQuery } from './table-turn.repository.js'
 
 export const visitRouter: Router = Router()
 
@@ -38,43 +38,57 @@ function businessDateParam(value: unknown, field: string): string {
   return value
 }
 
-/**
- * C2 — lượt khách over a range of operating days, for the statistics screen a
- * later sprint will build. Read-only, so it needs no CSRF token; gated on
- * report.read because it is a statistics read, not floor operation.
- */
+function turnQuery(query: Record<string, unknown>): TurnQuery {
+  const from = businessDateParam(query.from, 'from')
+  const to = businessDateParam(query.to, 'to')
+  if (from > to) throw new AppError(400, 'INVALID_DATE_RANGE', 'from phải nhỏ hơn hoặc bằng to.')
+  // A whole year of operating days is the widest range worth serving in one call.
+  const spanDays = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000
+  if (spanDays > 366) throw new AppError(400, 'DATE_RANGE_TOO_WIDE', 'Khoảng ngày không được vượt quá 366 ngày.')
+
+  const page = query.page === undefined ? 1 : Number(query.page)
+  if (!Number.isSafeInteger(page) || page < 1) {
+    throw new AppError(400, 'INVALID_PAGE', 'page phải là số nguyên dương.')
+  }
+  const pageSize = query.pageSize === undefined ? 50 : Number(query.pageSize)
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 200) {
+    throw new AppError(400, 'INVALID_PAGE_SIZE', 'pageSize phải từ 1 đến 200.')
+  }
+  const includeUncounted = query.includeUncounted
+  if (includeUncounted !== undefined && includeUncounted !== 'true' && includeUncounted !== 'false') {
+    throw new AppError(400, 'INVALID_INCLUDE_UNCOUNTED', 'includeUncounted phải là true hoặc false.')
+  }
+
+  const closedByUserId = query.closedByUserId
+  if (closedByUserId !== undefined && (typeof closedByUserId !== 'string' || !/^[1-9]\d*$/.test(closedByUserId))) {
+    throw new AppError(400, 'INVALID_CLOSED_BY_USER_ID', 'closedByUserId phải là số nguyên dương.')
+  }
+  return {
+    from,
+    to,
+    page,
+    pageSize,
+    countedOnly: includeUncounted !== 'true',
+    ...(closedByUserId === undefined ? {} : {
+      closedByUserId: positiveInteger(closedByUserId, 'INVALID_CLOSED_BY_USER_ID', 'closedByUserId phải là số nguyên dương.'),
+    }),
+  }
+}
+
 visitRouter.get(
   '/turns',
   requireAuthentication,
   requirePermission('report.read'),
   async (request, response) => {
-    const from = businessDateParam(request.query.from, 'from')
-    const to = businessDateParam(request.query.to, 'to')
-    if (from > to) throw new AppError(400, 'INVALID_DATE_RANGE', 'from phải nhỏ hơn hoặc bằng to.')
-    // A whole year of operating days is the widest range worth serving in one call.
-    const spanDays = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000
-    if (spanDays > 366) throw new AppError(400, 'DATE_RANGE_TOO_WIDE', 'Khoảng ngày không được vượt quá 366 ngày.')
-
-    const page = request.query.page === undefined ? 1 : Number(request.query.page)
-    if (!Number.isSafeInteger(page) || page < 1) {
-      throw new AppError(400, 'INVALID_PAGE', 'page phải là số nguyên dương.')
-    }
-    const pageSize = request.query.pageSize === undefined ? 50 : Number(request.query.pageSize)
-    if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 200) {
-      throw new AppError(400, 'INVALID_PAGE_SIZE', 'pageSize phải từ 1 đến 200.')
-    }
-    const includeUncounted = request.query.includeUncounted
-    if (includeUncounted !== undefined && includeUncounted !== 'true' && includeUncounted !== 'false') {
-      throw new AppError(400, 'INVALID_INCLUDE_UNCOUNTED', 'includeUncounted phải là true hoặc false.')
-    }
-
-    response.json(await listTableTurns(requireAuthenticatedActor(request), {
-      from,
-      to,
-      page,
-      pageSize,
-      countedOnly: includeUncounted !== 'true',
-    }))
+    response.json(await listTableTurns(requireAuthenticatedActor(request), turnQuery(request.query)))
+  },
+)
+visitRouter.get(
+  '/turns/summary',
+  requireAuthentication,
+  requirePermission('report.read'),
+  async (request, response) => {
+    response.json(await summarizeTableTurns(requireAuthenticatedActor(request), turnQuery(request.query)))
   },
 )
 

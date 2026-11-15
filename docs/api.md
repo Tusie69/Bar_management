@@ -547,6 +547,7 @@ BA-023 records the approved PO decision: Receptionist calling uses the dedicated
 | POST | `/visits/:id/move` | `visit.move` | Body `{version,tableIds,note?}`; `{visit:MovedVisitView}` |
 | POST | `/visits/:id/merge` | `visit.combine` | Body `{version,tableIds}`; `{visit:MovedVisitView,group:{id,symbolNo,tableIds}}` |
 | GET | `/visits/turns?from=&to=` | `report.read` | Table-turn ledger over a range of operating days; see **Table turns** below |
+| GET | `/visits/turns/summary?from=&to=` | `report.read` | Totals and aggregates by business date, closing user and logical table/group scope |
 
 Manual close reasons are `GUEST_LEFT` or `ENTRY_ERROR`; note is optional, at most 500 characters. Closing releases the visit allocations and dissolves unused groups. `ClosedVisitView` is `{id,businessDate,status:"CLOSED",endedAt,endReason,version,releasedTables:[{id,code}],turn}`, where `turn` is the table turn this close recorded (see **Table turns** below) or null when the visit already had one. Closing releases the operational state only: it never dissolves a LAYOUT cluster. `MovedVisitView` is `{id,businessDate,version,previousTables:[{id,code}],tables:[{id,code}]}`. Move validates capacity and same-kind targets, allows multiple tables across bookable zones without adjacency configuration, and creates or retains their shared group. It rejects every unreleased USAGE allocation on target tables regardless of business date, plus holds on the visit's business date. Merge follows the group rules above.
 
@@ -659,11 +660,16 @@ and they deliberately do **not** migrate to the now-single tables, whose badge i
 
 | Method | Path | Permission | Request | Response | Error codes |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/visits/turns?from=&to=&page=&pageSize=&includeUncounted=` | `report.read` | query only | `{from,to,page,pageSize,total,completedTotal,guestTotal,turns:TurnView[]}` | `INVALID_BUSINESS_DATE`, `INVALID_DATE_RANGE`, `DATE_RANGE_TOO_WIDE`, `INVALID_PAGE`, `INVALID_PAGE_SIZE`, `INVALID_INCLUDE_UNCOUNTED`, `PERMISSION_DENIED` |
+| GET | `/visits/turns?from=&to=&page=&pageSize=&includeUncounted=&closedByUserId=` | `report.read` | query only | `{from,to,page,pageSize,total,completedTotal,guestTotal,turns:TurnView[]}` | `INVALID_BUSINESS_DATE`, `INVALID_DATE_RANGE`, `DATE_RANGE_TOO_WIDE`, `INVALID_PAGE`, `INVALID_PAGE_SIZE`, `INVALID_INCLUDE_UNCOUNTED`, `INVALID_CLOSED_BY_USER_ID`, `PERMISSION_DENIED` |
 
 `from` and `to` are operating days, `YYYY-MM-DD`, inclusive, at most 366 days apart. `page` starts at 1, `pageSize` is
 1–200 and defaults to 50. `includeUncounted=true` also returns the rows that do not count; the default returns only
 served turns. `completedTotal` and `guestTotal` are totals for the whole range, not for the page.
+`closedByUserId` is an optional positive safe integer that filters page, count and totals together.
+It identifies **người trả bàn**, the user who closed the turn. `closedByUserId` and `closedByDisplayName`
+are null on system closes. Display names come from current users with an organization and venue membership
+(an organization-wide role also qualifies); they are not historical name snapshots. Revoked roles still
+provide historical venue association. A user ID without a matching association has a null display name.
 
 It is gated on `report.read`, which **RECEPTIONIST does not hold**: a receptionist reads the badge from the floor
 projection, not the statistics ledger. This endpoint exists for the statistics screen of a later sprint; no report
@@ -685,7 +691,8 @@ GET /api/v1/visits/turns?from=2026-11-11&to=2026-11-11
     "sourceCode": "HOTLINE", "origin": "RESERVATION",
     "seatedAt": "2026-11-11T14:31:02.117Z", "releasedAt": "2026-11-11T16:04:55.903Z",
     "endReason": "GUEST_LEFT", "counted": true,
-    "visitId": 77, "reservationId": 54
+    "visitId": 77, "reservationId": 54,
+    "closedByUserId": 3, "closedByDisplayName": "Chủ quán"
   }]
 }
 ```
@@ -697,6 +704,37 @@ already had one:
 {"visit": {"id": 77, "status": "CLOSED", "releasedTables": [{"id":101,"code":"B3"}],
   "turn": {"turnId": 31, "scope": "GROUP", "turnNo": 1, "counted": true}}}
 ```
+
+### `GET /api/v1/visits/turns/summary`
+
+Requires authentication and `report.read`, with the same date, staff and `includeUncounted` validation and
+venue/organization scope as the list. Pagination does not truncate aggregates. No write or CSRF token is required.
+Dates are existing `business_date` values; the client supplies Monday-Sunday ranges for a business week.
+
+```http
+GET /api/v1/visits/turns/summary?from=2026-11-09&to=2026-11-15&closedByUserId=3
+```
+
+```json
+{
+  "from": "2026-11-09", "to": "2026-11-15", "completedTotal": 1, "guestTotal": 12,
+  "byBusinessDate": [{"businessDate": "2026-11-11", "turns": 1, "guests": 12}],
+  "byStaff": [{"closedByUserId": 3, "closedByDisplayName": "Chủ quán", "turns": 1, "guests": 12}],
+  "byScope": [{"scope": "GROUP", "tableId": null, "groupId": 101, "label": "◆A", "turns": 1, "guests": 12}]
+}
+```
+
+Every aggregate counts ledger rows, never sums `turnNo` or expands group members. `byScope` groups by
+`(scope, groupId|tableId)` and labels from the latest matching ledger row (highest turn ID): group code,
+or table snapshot codes joined with ` + `. It sorts by turns descending, then label. Dates sort ascending;
+staff sorts by turns descending, then current display name and user ID. Days without turns have no bucket.
+
+By default all returned rows and buckets are counted. With `includeUncounted=true`, buckets include corrections
+and system closes, with a null user bucket for system. `completedTotal` and `guestTotal` still count only served
+turns, matching the existing list totals, so bucket sums can exceed these two totals when this flag is enabled.
+An empty range returns zero totals and empty arrays. No payment verification or counting rule changes are implied.
+The summary uses four aggregate SQL queries regardless of row count; staff associations use `EXISTS` so multiple
+roles cannot multiply counts. This addition requires no schema migration.
 
 ### Migration
 

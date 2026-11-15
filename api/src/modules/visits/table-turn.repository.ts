@@ -277,6 +277,8 @@ export interface TurnView {
   counted: boolean
   visitId: number
   reservationId: number | null
+  closedByUserId: number | null
+  closedByDisplayName: string | null
 }
 
 export interface TurnQuery {
@@ -286,6 +288,17 @@ export interface TurnQuery {
   pageSize: number
   /** Only turns that count as served; the default, which is what statistics mean. */
   countedOnly: boolean
+  closedByUserId?: number
+}
+type TurnFilters = Pick<TurnQuery, 'from' | 'to' | 'countedOnly' | 'closedByUserId'>
+export interface TurnSummary {
+  from: string
+  to: string
+  completedTotal: number
+  guestTotal: number
+  byBusinessDate: { businessDate: string; turns: number; guests: number }[]
+  byStaff: { closedByUserId: number | null; closedByDisplayName: string | null; turns: number; guests: number }[]
+  byScope: { scope: TurnScope; tableId: number | null; groupId: number | null; label: string; turns: number; guests: number }[]
 }
 
 export interface TurnQueryResult {
@@ -338,7 +351,25 @@ interface TurnRow extends RowDataPacket {
   completed_at: Date | string | null
   visit_id: number
   reservation_id: number | null
+  closed_by_user_id: number | null
+  closed_by_display_name: string | null
 }
+function turnFilter(actor: { organizationId: number; venueId: number }, query: TurnFilters) {
+  return {
+    sql: `t.organization_id = ? AND t.venue_id = ? AND t.business_date BETWEEN ? AND ?
+      ${query.countedOnly ? 'AND t.completed_at IS NOT NULL' : ''}
+      ${query.closedByUserId === undefined ? '' : 'AND t.closed_by_user_id = ?'}`,
+    values: [actor.organizationId, actor.venueId, query.from, query.to,
+      ...(query.closedByUserId === undefined ? [] : [query.closedByUserId])],
+  }
+}
+// Retain historical names after role revocation, while requiring an org/venue association.
+const closingUserJoin = `LEFT JOIN users u ON u.id = t.closed_by_user_id AND EXISTS (
+  SELECT 1 FROM memberships m JOIN membership_roles mr
+    ON mr.membership_id = m.id AND mr.organization_id = m.organization_id
+  WHERE m.user_id = u.id AND m.organization_id = t.organization_id
+    AND (mr.venue_id = t.venue_id OR mr.venue_id IS NULL)
+)`
 
 /** Turns over a range of operating days. Built for statistics in a later sprint. */
 export async function listTableTurns(
@@ -347,27 +378,27 @@ export async function listTableTurns(
 ): Promise<TurnQueryResult> {
   const connection = await databasePool.getConnection()
   try {
-    const countedFilter = query.countedOnly ? 'AND completed_at IS NOT NULL' : ''
+    const filter = turnFilter(actor, query)
     const [totals] = await connection.execute<(RowDataPacket & {
       total: number; completed_total: number; guest_total: number
     })[]>(
       `SELECT COUNT(*) AS total,
-         SUM(completed_at IS NOT NULL) AS completed_total,
+         COUNT(completed_at) AS completed_total,
          COALESCE(SUM(IF(completed_at IS NOT NULL, guest_count, 0)), 0) AS guest_total
-       FROM table_turns
-       WHERE organization_id = ? AND venue_id = ? AND business_date BETWEEN ? AND ? ${countedFilter}`,
-      [actor.organizationId, actor.venueId, query.from, query.to],
+       FROM table_turns t WHERE ${filter.sql}`,
+      filter.values,
     )
     const offset = (query.page - 1) * query.pageSize
     const [rows] = await connection.execute<TurnRow[]>(
-      `SELECT id, turn_no, business_date, scope, table_id, group_id, group_code_snapshot,
+      `SELECT t.id, turn_no, business_date, scope, table_id, group_id, group_code_snapshot,
          table_codes_snapshot, member_table_ids, guest_name, guest_count, source_code, origin,
-         seated_at, released_at, end_reason, completed_at, visit_id, reservation_id
-       FROM table_turns
-       WHERE organization_id = ? AND venue_id = ? AND business_date BETWEEN ? AND ? ${countedFilter}
-       ORDER BY business_date DESC, id DESC
+         seated_at, released_at, end_reason, completed_at, visit_id, reservation_id,
+         closed_by_user_id, u.display_name AS closed_by_display_name
+       FROM table_turns t ${closingUserJoin}
+       WHERE ${filter.sql}
+       ORDER BY business_date DESC, t.id DESC
        LIMIT ${query.pageSize} OFFSET ${offset}`,
-      [actor.organizationId, actor.venueId, query.from, query.to],
+      filter.values,
     )
     return {
       from: query.from,
@@ -397,7 +428,77 @@ export async function listTableTurns(
         counted: row.completed_at !== null,
         visitId: Number(row.visit_id),
         reservationId: row.reservation_id === null ? null : Number(row.reservation_id),
+        closedByUserId: row.closed_by_user_id === null ? null : Number(row.closed_by_user_id),
+        closedByDisplayName: row.closed_by_display_name,
       })),
+    }
+  } finally {
+    connection.release()
+  }
+}
+
+export async function summarizeTableTurns(
+  actor: { organizationId: number; venueId: number },
+  query: TurnFilters,
+): Promise<TurnSummary> {
+  const filter = turnFilter(actor, query)
+  const connection = await databasePool.getConnection()
+  type AggregateRow = RowDataPacket & { turns: number; guests: number }
+  try {
+    const [totals] = await connection.execute<AggregateRow[]>(
+      `SELECT COUNT(t.completed_at) AS turns,
+        COALESCE(SUM(IF(t.completed_at IS NOT NULL, t.guest_count, 0)), 0) AS guests
+       FROM table_turns t WHERE ${filter.sql}`, filter.values,
+    )
+    const [dates] = await connection.execute<(AggregateRow & { business_date: Date | string })[]>(
+      `SELECT t.business_date, COUNT(*) AS turns, SUM(t.guest_count) AS guests
+       FROM table_turns t WHERE ${filter.sql} GROUP BY t.business_date ORDER BY t.business_date`, filter.values,
+    )
+    const [staff] = await connection.execute<(AggregateRow & {
+      closed_by_user_id: number | null; display_name: string | null
+    })[]>(
+      `SELECT t.closed_by_user_id, u.display_name, COUNT(*) AS turns, SUM(t.guest_count) AS guests
+       FROM table_turns t ${closingUserJoin} WHERE ${filter.sql}
+       GROUP BY t.closed_by_user_id, u.display_name
+       ORDER BY turns DESC, u.display_name, t.closed_by_user_id`, filter.values,
+    )
+    const [scopes] = await connection.execute<(AggregateRow & {
+      scope: TurnScope; table_id: number | null; group_id: number | null
+      group_code_snapshot: string | null; table_codes_snapshot: unknown
+    })[]>(
+      `SELECT a.scope, a.table_id, a.group_id, a.turns, a.guests,
+         latest.group_code_snapshot, latest.table_codes_snapshot
+       FROM (
+         SELECT t.scope,
+           CASE WHEN t.scope = 'TABLE' THEN t.table_id ELSE NULL END AS table_id,
+           CASE WHEN t.scope = 'GROUP' THEN t.group_id ELSE NULL END AS group_id,
+           COUNT(*) AS turns, SUM(t.guest_count) AS guests, MAX(t.id) AS latest_id
+         FROM table_turns t WHERE ${filter.sql}
+         GROUP BY t.scope, CASE WHEN t.scope = 'TABLE' THEN t.table_id ELSE NULL END,
+           CASE WHEN t.scope = 'GROUP' THEN t.group_id ELSE NULL END
+       ) a JOIN table_turns latest ON latest.id = a.latest_id
+         AND latest.organization_id = ? AND latest.venue_id = ?`,
+      [...filter.values, actor.organizationId, actor.venueId],
+    )
+    return {
+      from: query.from, to: query.to,
+      completedTotal: Number(totals[0]?.turns ?? 0),
+      guestTotal: Number(totals[0]?.guests ?? 0),
+      byBusinessDate: dates.map((row) => ({
+        businessDate: dateOnly(row.business_date), turns: Number(row.turns), guests: Number(row.guests),
+      })),
+      byStaff: staff.map((row) => ({
+        closedByUserId: row.closed_by_user_id === null ? null : Number(row.closed_by_user_id),
+        closedByDisplayName: row.display_name, turns: Number(row.turns), guests: Number(row.guests),
+      })),
+      byScope: scopes.map((row) => ({
+        scope: row.scope,
+        tableId: row.table_id === null ? null : Number(row.table_id),
+        groupId: row.group_id === null ? null : Number(row.group_id),
+        label: (row.scope === 'GROUP' ? row.group_code_snapshot : null)
+          ?? parseJsonStrings(row.table_codes_snapshot).join(' + '),
+        turns: Number(row.turns), guests: Number(row.guests),
+      })).sort((a, b) => b.turns - a.turns || a.label.localeCompare(b.label)),
     }
   } finally {
     connection.release()

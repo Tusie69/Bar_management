@@ -303,6 +303,67 @@ export interface ReceptionSearchResult {
   summary: { bookingCount: number; waitlistCount: number; totalCount: number }
 }
 
+export interface TableTurnQuery {
+  from: string
+  to: string
+  closedByUserId?: number
+  includeUncounted?: boolean
+}
+export interface TableTurnsParams extends TableTurnQuery {
+  page?: number
+  pageSize?: number
+}
+export interface TableTurnView {
+  turnId: number
+  turnNo: number
+  businessDate: string
+  scope: "TABLE" | "GROUP"
+  groupCode: string | null
+  groupId: number | null
+  tableId: number | null
+  tableCodes: string[]
+  memberTableIds: number[]
+  guestName: string
+  guestCount: number
+  sourceCode: string | null
+  origin: string
+  seatedAt: string
+  releasedAt: string
+  endReason: string
+  counted: boolean
+  visitId: number
+  reservationId: number | null
+  /** Người trả bàn, null for system closes. */
+  closedByUserId: number | null
+  closedByDisplayName: string | null
+}
+export interface TableTurnsResult {
+  from: string
+  to: string
+  page: number
+  pageSize: number
+  total: number
+  completedTotal: number
+  guestTotal: number
+  turns: TableTurnView[]
+}
+export interface TableTurnSummary {
+  from: string
+  to: string
+  completedTotal: number
+  guestTotal: number
+  byBusinessDate: { businessDate: string; turns: number; guests: number }[]
+  byStaff: { closedByUserId: number | null; closedByDisplayName: string | null; turns: number; guests: number }[]
+  byScope: {
+    scope: "TABLE" | "GROUP"
+    tableId: number | null
+    groupId: number | null
+    label: string
+    turns: number
+    guests: number
+  }[]
+}
+
 export interface VisitView {
   id: number
   version: number
