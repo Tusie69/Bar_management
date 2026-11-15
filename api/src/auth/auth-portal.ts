@@ -3,7 +3,7 @@ export const AUTH_PORTALS = ['admin', 'receptionist', 'customer-care', 'cashier'
 export type AuthPortal = typeof AUTH_PORTALS[number]
 
 export const PORTAL_ROLE_CODES: Readonly<Record<AuthPortal, readonly string[]>> = {
-  admin: ['OWNER_ADMIN'],
+  admin: ['OWNER', 'ADMIN'],
   receptionist: ['RECEPTIONIST'],
   'customer-care': ['CUSTOMER_CARE'],
   cashier: ['CASHIER'],

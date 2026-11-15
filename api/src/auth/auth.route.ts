@@ -4,8 +4,9 @@ import { AppError } from '../errors/app-error.js'
 import { isAuthPortal } from './auth-portal.js'
 import { attachAuthentication, getAuthentication, requireAuthenticatedActor } from './authenticated-actor.js'
 import { requireAuthentication, requireCsrfProtection } from './auth.middleware.js'
-import { listPermissions, listRoles, login, logoutSession } from './auth.service.js'
+import { getAdminAccessLevel, listPermissions, listRoles, login, logoutSession } from './auth.service.js'
 import { clearSessionCookie, createCsrfToken, setSessionCookie } from './session-security.js'
+import { recordAuthAudit } from './auth-audit.js'
 
 export const authRouter: Router = Router()
 
@@ -49,9 +50,10 @@ function recordFailure(key: string): void {
 async function authPayload(request: Parameters<typeof getAuthentication>[0]) {
   const authentication = getAuthentication(request)
   if (!authentication) throw new AppError(401, 'AUTHENTICATION_REQUIRED', 'Vui lòng đăng nhập để tiếp tục.')
-  const [permissions, roles] = await Promise.all([
+  const [permissions, roles, accessLevel] = await Promise.all([
     listPermissions(authentication.actor),
     listRoles(authentication.actor),
+    getAdminAccessLevel(authentication.actor),
   ])
   return {
     user: {
@@ -61,6 +63,7 @@ async function authPayload(request: Parameters<typeof getAuthentication>[0]) {
       organizationId: authentication.actor.organizationId,
       venueId: authentication.actor.venueId,
       roles,
+      accessLevel,
     },
     permissions,
     csrfToken: createCsrfToken(authentication.sessionToken),
@@ -77,11 +80,19 @@ authRouter.post('/login', async (request, response) => {
     throw new AppError(400, 'INVALID_PASSWORD', 'Mật khẩu không hợp lệ.')
   }
   if (!isAuthPortal(body.portal)) {
+    await recordAuthAudit({ action: 'AUTH_LOGIN_FAILED', reasonCode: 'INVALID_PORTAL' })
     throw new AppError(400, 'INVALID_PORTAL', 'Cổng đăng nhập không hợp lệ.')
   }
   const username = body.username.trim()
   const key = attemptKey(request.ip, username)
-  assertLoginAllowed(key)
+  try {
+    assertLoginAllowed(key)
+  } catch (error) {
+    if (error instanceof AppError && error.code === 'LOGIN_RATE_LIMITED') {
+      await recordAuthAudit({ action: 'AUTH_LOGIN_FAILED', portal: body.portal, reasonCode: error.code })
+    }
+    throw error
+  }
   try {
     const result = await login(username, body.password, body.portal, request.header('user-agent'))
     attempts.delete(key)

@@ -43,7 +43,7 @@ export default function MobileApp() {
   const tab: Tab | null = TAB_OF[loc.pathname] ?? null
   const role = useSession((s) => s.user.role)
   const permissions = useSession((s) => s.permissions)
-  const isOwner = role === "OWNER_ADMIN"
+  const isOwner = role === "OWNER"
   const isReceptionist = role === "RECEPTIONIST"
   const ui = useUi()
   const now = useNow(15_000)

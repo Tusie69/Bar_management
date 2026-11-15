@@ -15,12 +15,12 @@ const UNAVAILABLE_PORTALS: Readonly<Record<string, string>> = {
 
 export const PORTAL_CONFIG: Record<
   AuthPortal,
-  { label: string; role: "OWNER_ADMIN" | "RECEPTIONIST" | "CUSTOMER_CARE" | "CASHIER"; home: string }
+  { label: string; roles: readonly ("OWNER" | "ADMIN" | "RECEPTIONIST" | "CUSTOMER_CARE" | "CASHIER")[]; home: string }
 > = {
-  admin: { label: "Quản trị", role: "OWNER_ADMIN", home: "/overview" },
-  receptionist: { label: "Lễ tân", role: "RECEPTIONIST", home: "/floor" },
-  "customer-care": { label: "Chăm sóc khách hàng", role: "CUSTOMER_CARE", home: "/waitlist" },
-  cashier: { label: "Thu ngân", role: "CASHIER", home: "/floor" },
+  admin: { label: "Quản trị", roles: ["OWNER", "ADMIN"], home: "/overview" },
+  receptionist: { label: "Lễ tân", roles: ["RECEPTIONIST"], home: "/floor" },
+  "customer-care": { label: "Chăm sóc khách hàng", roles: ["CUSTOMER_CARE"], home: "/waitlist" },
+  cashier: { label: "Thu ngân", roles: ["CASHIER"], home: "/floor" },
 }
 
 export function isAuthPortal(value: unknown): value is AuthPortal {

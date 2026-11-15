@@ -11,6 +11,7 @@ import type { Permission } from "@/domain/access"
 import { PORTAL_CONFIG, portalLoginPath, type AuthPortal } from "@/domain/auth-portal"
 import type { RoleCode } from "@/domain/enums"
 import { roleCan } from "@/domain/access"
+import { sessionEndMessage } from "@/domain/session-end"
 import type { SessionUser } from "@/domain/models"
 import { api, ApiError, authApi, httpClient, type AuthSession, type AuthenticatedUser } from "@/services"
 
@@ -78,8 +79,8 @@ const fallbackMockUser: SessionUser = initialUser ?? {
 let bootstrapPromise: Promise<void> | null = null
 
 function applyServerSession(session: AuthSession) {
-  const role = PORTAL_CONFIG[session.portal].role as RoleCode
-  if (!session.user.roles.includes(role)) {
+  const role = PORTAL_CONFIG[session.portal].roles.find((candidate) => session.user.roles.includes(candidate)) as RoleCode | undefined
+  if (!role) {
     throw new ApiError(502, "INVALID_RESPONSE", "Vai trò phiên đăng nhập không khớp cổng đã xác nhận.")
   }
   useSession.setState({
@@ -152,13 +153,19 @@ export const useSession = create<SessionState>((set, get) => ({
     }
   },
   expire: (message = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.") => {
+    const portal = get().portal
     authApi?.clear()
-    set({ principal: null, permissions: [], authStatus: "anonymous", authError: message })
+    set({ principal: null, permissions: [], authStatus: "anonymous", authError: message, portal })
+    if (portal && typeof window !== "undefined" && window.location?.replace) {
+      window.location.replace(portalLoginPath(portal))
+    }
   },
 }))
 
-httpClient?.setUnauthorizedHandler(() => {
-  if (useSession.getState().authStatus === "authenticated") useSession.getState().expire()
+httpClient?.setUnauthorizedHandler((error) => {
+  if (useSession.getState().authStatus === "authenticated") {
+    useSession.getState().expire(sessionEndMessage(error.code))
+  }
 })
 
 httpClient?.setCsrfFailureHandler(() => {

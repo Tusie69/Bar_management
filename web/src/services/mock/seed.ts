@@ -15,7 +15,7 @@ import { emptyDb, allocId, ORG_ID, VENUE_ID, type MockDb, type MockUser } from "
 export const DEMO_USERS: MockUser[] = [
   { id: 1, displayName: "Lễ tân 1", role: "RECEPTIONIST", deviceLabel: "iPad quầy" },
   { id: 2, displayName: "Lễ tân 2", role: "RECEPTIONIST", deviceLabel: "iPad cửa" },
-  { id: 3, displayName: "Chủ quán", role: "OWNER_ADMIN", deviceLabel: "Laptop văn phòng" },
+  { id: 3, displayName: "Chủ quán", role: "OWNER", deviceLabel: "Laptop văn phòng" },
   { id: 4, displayName: "CSKH", role: "CUSTOMER_CARE", deviceLabel: "Điện thoại CSKH" },
   { id: 5, displayName: "Thu ngân", role: "CASHIER", deviceLabel: "Máy thu ngân" },
 ]

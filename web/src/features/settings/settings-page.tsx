@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils"
 import { api, REST_ENDPOINTS } from "@/services"
 import { useCan, useSession } from "@/state/session"
 
-const ROLES: RoleCode[] = ["OWNER_ADMIN", "RECEPTIONIST", "CUSTOMER_CARE", "CASHIER"]
+const ROLES: RoleCode[] = ["OWNER", "ADMIN", "RECEPTIONIST", "CUSTOMER_CARE", "CASHIER"]
 
 export default function SettingsPage() {
   const canConfigure = useCan("venue.configure")

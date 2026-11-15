@@ -161,8 +161,8 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     listDemoUsers: () => (session ? [session] : []),
     // §10: one SSE stream per device. The listener only learns that the floor
     // moved, then useRealtimeSync refetches, so the server stays authoritative.
-    subscribe: (listener) => {
-      const stream = openFloorStream(client.root, listener)
+    subscribe: (listener, onSessionEnded) => {
+      const stream = openFloorStream(client.root, listener, onSessionEnded)
       return () => stream.close()
     },
     getCatalog: loadCatalog,
@@ -496,6 +496,13 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     createAccount: async (input) => (await post<{ account: AccountSummary }>("/accounts", input)).account,
     setAccountStatus: async (userId, version, status) =>
       (await post<{ account: AccountSummary }>(`/accounts/${userId}/status`, { version, status })).account,
+    setAdminAccessLevel: async (userId, version, accessLevel) =>
+      (await post<{ account: AccountSummary }>(`/accounts/${userId}/access-level`, { version, accessLevel })).account,
+    resetAccountPassword: async (userId, version, newPassword) =>
+      (await post<{ account: AccountSummary }>(`/accounts/${userId}/password-reset`, { version, newPassword })).account,
+    changeOwnPassword: async (currentPassword, newPassword) => {
+      await post<{ revokedSessions: number }>("/accounts/me/password", { currentPassword, newPassword })
+    },
     getUndoState: () => get<UndoState>("/operations/undo-state"),
     undo: (operationId) => post<MutationResult>("/operations/undo", { operationId }, crypto.randomUUID()),
     redo: (operationId) => post<MutationResult>("/operations/redo", { operationId }, crypto.randomUUID()),

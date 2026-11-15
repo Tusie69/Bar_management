@@ -440,7 +440,7 @@ describe("HTTP catalog cache", () => {
     await api.getCatalog()
     const other = createHttpApi(new HttpClient("http://api.test"), 2)
     await other.getCatalog()
-    api.setSession({ id: 2, displayName: "Another user", role: "OWNER_ADMIN", deviceLabel: "test" })
+    api.setSession({ id: 2, displayName: "Another user", role: "OWNER", deviceLabel: "test" })
     await api.getCatalog()
     expect(paths.filter((path) => path === "/tables/catalog")).toHaveLength(3)
   })
@@ -457,7 +457,7 @@ describe("HTTP catalog cache", () => {
     })
     const api = createHttpApi(client, 1)
     const pending = api.getCatalog()
-    api.setSession({ id: 2, displayName: "Another user", role: "OWNER_ADMIN", deviceLabel: "test" })
+    api.setSession({ id: 2, displayName: "Another user", role: "OWNER", deviceLabel: "test" })
     await api.getCatalog()
     resolveOld({ ...catalog, tables: [] })
     await pending

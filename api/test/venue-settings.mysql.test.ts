@@ -100,7 +100,9 @@ mysqlDescribe('venue settings API and dynamic configuration', () => {
       'SELECT version, change_seq, updated_at FROM venues WHERE id = ?',
       [actor.venueId],
     )
-    const [beforeOperations] = await databasePool.execute<RowDataPacket[]>('SELECT COUNT(*) AS total FROM operation_log')
+    const [beforeOperations] = await databasePool.execute<RowDataPacket[]>(
+      "SELECT COUNT(*) AS total FROM operation_log WHERE entity_type <> 'auth_session'",
+    )
 
     const { agent } = await login()
     const response = await agent.get('/api/v1/settings')
@@ -116,7 +118,9 @@ mysqlDescribe('venue settings API and dynamic configuration', () => {
       'SELECT * FROM venue_settings WHERE organization_id = ? AND venue_id = ?',
       [actor.organizationId, actor.venueId],
     )
-    const [afterOperations] = await databasePool.execute<RowDataPacket[]>('SELECT COUNT(*) AS total FROM operation_log')
+    const [afterOperations] = await databasePool.execute<RowDataPacket[]>(
+      "SELECT COUNT(*) AS total FROM operation_log WHERE entity_type <> 'auth_session'",
+    )
     expect(afterVenue).toEqual(beforeVenue)
     expect(settings).toEqual([])
     expect(afterOperations).toEqual(beforeOperations)

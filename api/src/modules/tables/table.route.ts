@@ -6,7 +6,8 @@ import {
   requireCsrfProtection,
   requirePermission,
 } from '../../auth/auth.middleware.js'
-import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
+import { getAuthentication, requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
+import { hasPermission, inspectSession } from '../../auth/auth.service.js'
 import { AppError } from '../../errors/app-error.js'
 import { idempotent, idempotencyTransaction } from '../../middleware/idempotency.js'
 import { getFloorProjection } from './floor-projection.repository.js'
@@ -186,7 +187,7 @@ function parseGroupVersion(value: unknown): number {
 
 /** Pushes the committed change so other devices see it well inside two seconds. */
 function announce(actor: { organizationId: number; venueId: number }, changeSeq: number): void {
-  publishFloorChange({
+  void publishFloorChange({
     organizationId: actor.organizationId,
     venueId: actor.venueId,
     changeSeq: String(changeSeq),
@@ -216,8 +217,22 @@ tableRouter.get(
   requireAuthentication,
   requirePermission('customer.view_masked'),
   (request, response) => {
-    const actor = requireAuthenticatedActor(request)
-    subscribeToFloorChanges({ organizationId: actor.organizationId, venueId: actor.venueId, response })
+    const authentication = getAuthentication(request)!
+    const actor = authentication.actor
+    subscribeToFloorChanges({
+      organizationId: actor.organizationId,
+      venueId: actor.venueId,
+      authSessionId: actor.authSessionId!,
+      userId: actor.userId,
+      response,
+      authorize: async () => {
+        const current = await inspectSession(authentication.sessionToken)
+        if (!current.ok) return current.code
+        return await hasPermission(current.authentication.actor, 'customer.view_masked')
+          ? null
+          : 'SESSION_REVOKED'
+      },
+    })
   },
 )
 

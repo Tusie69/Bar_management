@@ -7,7 +7,7 @@ import {
   getAuthentication,
   requireAuthenticatedActor,
 } from './authenticated-actor.js'
-import { authenticateSession, hasPermission } from './auth.service.js'
+import { hasPermission, inspectSession } from './auth.service.js'
 import { readSessionCookie, requireCsrfHeader } from './session-security.js'
 
 const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS'])
@@ -27,9 +27,9 @@ export const requireTrustedOrigin: RequestHandler = (request, _response, next) =
 export const requireAuthentication: RequestHandler = async (request, _response, next) => {
   const token = readSessionCookie(request)
   if (!token) throw new AppError(401, 'AUTHENTICATION_REQUIRED', 'Vui lòng đăng nhập để tiếp tục.')
-  const authentication = await authenticateSession(token)
-  if (!authentication) throw new AppError(401, 'SESSION_INVALID', 'Phiên đăng nhập đã hết hạn hoặc bị thu hồi.')
-  attachAuthentication(request, authentication)
+  const inspection = await inspectSession(token)
+  if (!inspection.ok) throw new AppError(401, inspection.code, inspection.message)
+  attachAuthentication(request, inspection.authentication)
   next()
 }
 

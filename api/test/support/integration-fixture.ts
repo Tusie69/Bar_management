@@ -89,7 +89,7 @@ async function populateFixture(): Promise<void> {
     [actor.venueId, actor.organizationId, otherVenueId, actor.organizationId, otherOrganizationId, otherOrganizationId],
   )
   for (const [id, username, role] of [[9801, 'integration_reception', 'RECEPTIONIST'],
-    [9802, 'integration_owner', 'OWNER_ADMIN'], [9803, 'integration_care', 'CUSTOMER_CARE']] as const) {
+    [9802, 'integration_owner', 'OWNER'], [9803, 'integration_care', 'CUSTOMER_CARE']] as const) {
     await databasePool.execute("INSERT INTO users (id, username, display_name, password_hash) VALUES (?, ?, ?, ?)",
       [id, username, username, passwordHash])
     await databasePool.execute('INSERT INTO memberships (id, organization_id, user_id) VALUES (?, ?, ?)', [id, actor.organizationId, id])
@@ -121,6 +121,17 @@ export async function login(username = 'integration_reception') {
     ? 'admin'
     : username === 'integration_care' ? 'customer-care' : 'receptionist'
   const response = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password, portal })
-  if (response.status !== 200) throw new Error(`Fixture login failed: ${response.status}`)
+  if (response.status !== 200) {
+    const code = (response.body as { error?: { code?: string } }).error?.code ?? 'UNKNOWN'
+    throw new Error(`Fixture login failed: ${response.status} ${code}`)
+  }
   return { agent, csrfToken: (response.body as { csrfToken: string }).csrfToken }
+}
+
+/** Test-only login at an explicit portal using the fixture credential. */
+export async function loginAtPortal(
+  username: string,
+  portal: 'admin' | 'receptionist' | 'customer-care' | 'cashier',
+): Promise<import('supertest').Response> {
+  return request(app).post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password, portal })
 }

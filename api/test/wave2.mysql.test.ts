@@ -36,11 +36,14 @@ mysqlDescribe('Wave 2 owner-approved integration', () => {
        ORDER BY p.code, r.code`,
     )
     expect(grants).toEqual([
-      { role: 'OWNER_ADMIN', permission: 'booking.phone.call' },
+      { role: 'ADMIN', permission: 'booking.phone.call' },
+      { role: 'OWNER', permission: 'booking.phone.call' },
       { role: 'RECEPTIONIST', permission: 'booking.phone.call' },
-      { role: 'OWNER_ADMIN', permission: 'booking.phone.reveal' },
-      { role: 'OWNER_ADMIN', permission: 'customer.phone.reveal' },
-      { role: 'OWNER_ADMIN', permission: 'venue.configure' }])
+      { role: 'ADMIN', permission: 'booking.phone.reveal' },
+      { role: 'OWNER', permission: 'booking.phone.reveal' },
+      { role: 'ADMIN', permission: 'customer.phone.reveal' },
+      { role: 'OWNER', permission: 'customer.phone.reveal' },
+      { role: 'OWNER', permission: 'venue.configure' }])
     const receptionist = await login()
     const me = await receptionist.agent.get('/api/v1/auth/me')
     expect((me.body as { permissions: string[] }).permissions).toContain('booking.phone.call')
@@ -273,7 +276,8 @@ mysqlDescribe('Wave 2 owner-approved integration', () => {
     expect(changed.closed_at).not.toBeNull()
     expect(after.waitlist_entries!.filter(row => Number(row.id) !== entry.id))
       .toEqual(before.waitlist_entries!.filter(row => Number(row.id) !== entry.id))
-    const addedAudits = after.operation_log!.filter(row => !before.operation_log!.some(old => old.id === row.id))
+    const addedAudits = after.operation_log!.filter(row => row.entity_type !== 'auth_session'
+      && !before.operation_log!.some(old => old.id === row.id))
     expect(addedAudits).toHaveLength(2)
     const audit = addedAudits.find(row => row.entity_type === 'waitlist_entry')!
     expect(audit).toMatchObject({ action: 'WAITLIST_CANCELLED', entity_id: String(entry.id),

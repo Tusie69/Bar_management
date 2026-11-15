@@ -244,6 +244,7 @@ beforeEach(() => {
             status: "ACTIVE",
             membershipStatus: "ACTIVE",
             roles: ["RECEPTIONIST"],
+            accessLevel: null,
             lastLoginAt: null,
             version: 1,
           },
@@ -258,11 +259,22 @@ beforeEach(() => {
               status: "ACTIVE",
               membershipStatus: "ACTIVE",
               roles: ["RECEPTIONIST"],
+              accessLevel: null,
               lastLoginAt: null,
               version: 3,
             },
           ],
           roles: [{ code: "RECEPTIONIST", name: "Lễ tân" }],
+        })
+      if (path === "/accounts/me/password") return json({ revokedSessions: 1 })
+      if (/^\/accounts\/\d+\/(access-level|password-reset)$/.test(path))
+        return json({
+          account: {
+            id: 5, username: "le_tan", displayName: "Lễ tân", status: "ACTIVE",
+            membershipStatus: "ACTIVE", roles: ["ADMIN"], accessLevel: "READ_ONLY",
+            lastLoginAt: null, version: 4,
+          },
+          revokedSessions: 1,
         })
       if (/^\/accounts\/\d+\/status$/.test(path))
         return json({
@@ -273,6 +285,7 @@ beforeEach(() => {
             status: "DISABLED",
             membershipStatus: "ACTIVE",
             roles: ["RECEPTIONIST"],
+            accessLevel: null,
             lastLoginAt: null,
             version: 4,
           },
@@ -940,7 +953,7 @@ describe("BA-021 Split HTTP contract", () => {
 })
 
 describe("BA-022 account management HTTP contract", () => {
-  it("reads accounts and posts create and status changes to the account routes", async () => {
+  it("uses the account, access-level and password routes without retaining secrets", async () => {
     const view = await api.listAccounts()
     expect(view.accounts[0]).toMatchObject({ id: 5, username: "le_tan", status: "ACTIVE", version: 3 })
     expect(view.roles).toEqual([{ code: "RECEPTIONIST", name: "Lễ tân" }])
@@ -955,7 +968,9 @@ describe("BA-022 account management HTTP contract", () => {
 
     const locked = await api.setAccountStatus(5, 3, "DISABLED")
     expect(locked.status).toBe("DISABLED")
-
+    expect((await api.setAdminAccessLevel(5, 3, "READ_ONLY")).accessLevel).toBe("READ_ONLY")
+    await api.resetAccountPassword(5, 3, "replacement-password")
+    await api.changeOwnPassword("current-password", "next-password")
     expect(calls).toEqual([
       { method: "GET", path: "/accounts", body: undefined },
       {
@@ -969,6 +984,9 @@ describe("BA-022 account management HTTP contract", () => {
         },
       },
       { method: "POST", path: "/accounts/5/status", body: { version: 3, status: "DISABLED" } },
+      { method: "POST", path: "/accounts/5/access-level", body: { version: 3, accessLevel: "READ_ONLY" } },
+      { method: "POST", path: "/accounts/5/password-reset", body: { version: 3, newPassword: "replacement-password" } },
+      { method: "POST", path: "/accounts/me/password", body: { currentPassword: "current-password", newPassword: "next-password" } },
     ])
   })
 })

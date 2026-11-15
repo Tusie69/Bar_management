@@ -6,6 +6,7 @@ import { ROLE_LABEL } from "@/domain/enums"
 import type { ReservationView } from "@/domain/models"
 import { fmtTime12 } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { api } from "@/services"
 import { useSession } from "@/state/session"
 import { NAV } from "@/app/nav"
 import type { Alert } from "../floor/alerts"
@@ -143,11 +144,11 @@ export function AlertsSheet({
 
 /** Demo user, theme and the pages that are not in the tab bar (Khách, Báo cáo, Cài đặt). */
 export function AccountSheet({ onClose }: { onClose: () => void }) {
-  const { user, users, theme, setUser, setTheme, principal, logout } = useSession()
+  const { user, users, theme, setUser, setTheme, principal, permissions, logout } = useSession()
   const navigate = useNavigate()
   const [loggingOut, setLoggingOut] = useState(false)
   const more = NAV.filter((n) => ["/guests", "/reports", "/settings"].includes(n.to)).filter(
-    (n) => !n.permission || roleCan(user.role, n.permission),
+    (n) => !n.permission || (api.mode === "http" ? permissions.includes(n.permission) : roleCan(user.role, n.permission)),
   )
   return (
     <BottomSheet label="Tài khoản" onClose={onClose}>

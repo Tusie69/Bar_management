@@ -8,7 +8,7 @@ import { DEMO_USERS } from "./seed"
 import { MockGamApi } from "./server"
 
 const receptionist = DEMO_USERS[0]
-const owner = DEMO_USERS.find((u) => u.role === "OWNER_ADMIN")!
+const owner = DEMO_USERS.find((u) => u.role === "OWNER")!
 
 async function expectApiError(p: Promise<unknown>, code: string) {
   try {

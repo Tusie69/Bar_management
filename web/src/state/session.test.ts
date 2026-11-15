@@ -3,6 +3,7 @@ import { ApiError } from "@/services/contracts"
 import type { AuthPortal } from "@/domain/auth-portal"
 
 const auth = vi.hoisted(() => ({ login: vi.fn(), me: vi.fn(), clear: vi.fn() }))
+const replace = vi.hoisted(() => vi.fn())
 vi.mock("@/services", () => ({
   ApiError,
   api: { mode: "http", listDemoUsers: () => [] },
@@ -17,6 +18,7 @@ beforeAll(async () => {
     querySelector: () => null,
   })
   vi.stubGlobal("localStorage", { getItem: () => null, setItem: vi.fn() })
+  vi.stubGlobal("window", { location: { replace } })
   useSession = (await import("./session")).useSession
 })
 beforeEach(() => {
@@ -26,7 +28,10 @@ beforeEach(() => {
 afterAll(() => vi.unstubAllGlobals())
 
 const session = (roles: string[], portal: AuthPortal) => ({
-  user: { id: 7, username: "operator", displayName: "Operator", organizationId: 1, venueId: 1, roles },
+  user: {
+    id: 7, username: "operator", displayName: "Operator", organizationId: 1, venueId: 1, roles,
+    accessLevel: roles.includes("ADMIN") ? "WRITE" as const : null,
+  },
   permissions: ["customer.view_masked"],
   csrfToken: "csrf",
   portal,
@@ -34,8 +39,9 @@ const session = (roles: string[], portal: AuthPortal) => ({
 
 describe("HTTP portal-bound session role selection", () => {
   it.each([
-    [["RECEPTIONIST", "CASHIER", "CUSTOMER_CARE", "OWNER_ADMIN"], "receptionist", "RECEPTIONIST"],
-    [["OWNER_ADMIN", "CUSTOMER_CARE", "CASHIER", "RECEPTIONIST"], "admin", "OWNER_ADMIN"],
+    [["RECEPTIONIST", "CASHIER", "CUSTOMER_CARE", "OWNER"], "receptionist", "RECEPTIONIST"],
+    [["OWNER", "CUSTOMER_CARE", "CASHIER", "RECEPTIONIST"], "admin", "OWNER"],
+    [["ADMIN"], "admin", "ADMIN"],
     [["RECEPTIONIST", "CASHIER", "CUSTOMER_CARE"], "customer-care", "CUSTOMER_CARE"],
     [["RECEPTIONIST", "CASHIER"], "cashier", "CASHIER"],
   ] as const)("selects only the %s portal role", async (roles, portal, expected) => {
@@ -47,9 +53,9 @@ describe("HTTP portal-bound session role selection", () => {
   })
 
   it("uses the same role mapping when restoring /auth/me", async () => {
-    auth.me.mockResolvedValue(session(["OWNER_ADMIN"], "admin"))
+    auth.me.mockResolvedValue(session(["OWNER"], "admin"))
     await useSession.getState().bootstrap()
-    expect(useSession.getState().user.role).toBe("OWNER_ADMIN")
+    expect(useSession.getState().user.role).toBe("OWNER")
     expect(useSession.getState().authStatus).toBe("authenticated")
   })
 
@@ -59,6 +65,23 @@ describe("HTTP portal-bound session role selection", () => {
       code: "INVALID_RESPONSE",
     })
     expect(useSession.getState().principal).toBeNull()
+  })
+
+  it("clears auth state and returns to the matching portal login when a session ends", async () => {
+    auth.login.mockResolvedValue(session(["OWNER"], "admin"))
+    await useSession.getState().login("operator", "password", "admin")
+
+    useSession.getState().expire("Phiên đã bị thay thế.")
+
+    expect(auth.clear).toHaveBeenCalled()
+    expect(useSession.getState()).toMatchObject({
+      principal: null,
+      permissions: [],
+      authStatus: "anonymous",
+      authError: "Phiên đã bị thay thế.",
+      portal: "admin",
+    })
+    expect(replace).toHaveBeenCalledWith("/admin/login")
   })
 })
 

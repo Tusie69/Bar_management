@@ -59,7 +59,7 @@ mysqlDescribe('waitlist mutations and route security integration', () => {
         const result = await session.agent[method](`/api/v1${path}`).set('Origin', env.webOrigin)
           .set('X-CSRF-Token', session.csrfToken).send({})
         expect(result.status, `${method} ${path}`).toBe(401)
-        expect((result.body as { error: { code: string } }).error.code).toBe('SESSION_INVALID')
+        expect((result.body as { error: { code: string } }).error.code).toBe('SESSION_REVOKED')
       }
     } finally {
       await databasePool.execute('DELETE FROM membership_roles WHERE role_id = ?', [role.insertId])

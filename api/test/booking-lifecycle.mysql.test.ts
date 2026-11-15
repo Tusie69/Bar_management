@@ -193,7 +193,7 @@ async function createHttpUserWithRole(username: string, roleCode: string) {
     [organizationId, membership.insertId, venueId, roleCode],
   )
   const agent = request.agent(app)
-  const portal = roleCode === 'OWNER_ADMIN' ? 'admin'
+  const portal = roleCode === 'OWNER' || roleCode === 'ADMIN' ? 'admin'
     : roleCode === 'CUSTOMER_CARE' ? 'customer-care'
       : roleCode === 'CASHIER' ? 'cashier' : 'receptionist'
   const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password, portal })
@@ -1082,7 +1082,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         phoneNumber: '0901234567',
       })
       await assignBookingTables(actor, created.id, created.version, [tableOneId])
-      const owner = await createHttpUserWithRole('booking_rate_owner', 'OWNER_ADMIN')
+      const owner = await createHttpUserWithRole('booking_rate_owner', 'OWNER')
       const statuses: number[] = []
       for (let count = 0; count < (env.phone.revealRateLimitMax ?? 0) + 1; count += 1) {
         const response = await owner.agent.post(`/api/v1/bookings/${created.id}/call`)
@@ -1124,7 +1124,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       )
       await databasePool.execute(
         `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
-         SELECT ?, ?, id, ? FROM roles WHERE code = 'OWNER_ADMIN'`,
+         SELECT ?, ?, id, ? FROM roles WHERE code = 'OWNER'`,
         [organizationId, membership.insertId, venueId],
       )
       const ownerAgent = request.agent(app)
@@ -1267,7 +1267,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
           await countRows('idempotency_keys'),
         ]).toEqual([0, 0, 0, 0])
         const rolledBackEffects = await row(
-          'SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log) AS audits',
+          "SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log WHERE entity_type <> 'auth_session') AS audits",
           [],
         )
         expect([
@@ -1284,7 +1284,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         await countRows('idempotency_keys'),
       ]).toEqual([2, 1, 1, 4])
       const effects = await row(
-        'SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log) AS audits',
+        "SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log WHERE entity_type <> 'auth_session') AS audits",
         [],
       )
       expect([Number(effects.holds), Number(effects.allocations), Number(effects.audits)]).toEqual([1, 2, 3])
@@ -1308,7 +1308,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         await countRows('reservations'), await countRows('idempotency_keys'),
         Number((await row('SELECT COUNT(*) AS total FROM table_holds', [])).total),
         Number((await row('SELECT COUNT(*) AS total FROM table_allocations', [])).total),
-        Number((await row('SELECT COUNT(*) AS total FROM operation_log', [])).total),
+        Number((await row("SELECT COUNT(*) AS total FROM operation_log WHERE entity_type <> 'auth_session'", [])).total),
       ]).toEqual([0, 0, 0, 0, 0])
       expect(Number((await row('SELECT change_seq FROM venues WHERE id = ?', [venueId])).change_seq)).toBe(0)
 
@@ -1355,7 +1355,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       expect(replay.headers['idempotent-replayed']).toBe('true')
       expect([await countRows('reservations'), await countRows('idempotency_keys')]).toEqual([1, 1])
       const effects = await row(
-        'SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log) AS audits',
+        "SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log WHERE entity_type <> 'auth_session') AS audits",
         [],
       )
       expect([Number(effects.holds), Number(effects.allocations), Number(effects.audits)]).toEqual([1, 1, 1])

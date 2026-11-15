@@ -24,6 +24,10 @@ import type { RowDataPacket } from 'mysql2/promise'
 
 import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
+import {
+  subscribeToSessionRevocations,
+  type SessionEndCode,
+} from '../../auth/session-lifecycle.js'
 
 export interface FloorChangeEvent {
   venueId: number
@@ -33,12 +37,35 @@ export interface FloorChangeEvent {
 interface Subscriber {
   organizationId: number
   venueId: number
+  authSessionId: number
+  userId: number
+  authorize: () => Promise<SessionEndCode | null>
   response: Response
+  heartbeat?: NodeJS.Timeout
 }
 
 const subscribers = new Set<Subscriber>()
 const lastSeenByVenue = new Map<string, string>()
 let timer: NodeJS.Timeout | null = null
+
+function closeSubscriber(subscriber: Subscriber, code?: SessionEndCode): void {
+  if (!subscribers.delete(subscriber)) return
+  if (subscriber.heartbeat) clearInterval(subscriber.heartbeat)
+  if (code) write(subscriber, 'session-ended', { code })
+  try {
+    subscriber.response.end()
+  } catch {
+    // Socket already closed.
+  }
+  stopBroadcasterWhenIdle()
+}
+
+subscribeToSessionRevocations((notice) => {
+  const ids = new Set(notice.sessionIds)
+  for (const subscriber of [...subscribers]) {
+    if (ids.has(subscriber.authSessionId)) closeSubscriber(subscriber, notice.code)
+  }
+})
 
 function venueKey(organizationId: number, venueId: number): string {
   return `${organizationId}:${venueId}`
@@ -63,10 +90,10 @@ function write(subscriber: Subscriber, event: string, data: unknown): void {
  * which only the poll against the database can observe. Without it the cached
  * high-water mark would silence the stream until the database caught back up.
  */
-export function publishFloorChange(
+export async function publishFloorChange(
   event: FloorChangeEvent & { organizationId: number },
   options: { rebase?: boolean } = {},
-): void {
+): Promise<void> {
   const key = venueKey(event.organizationId, event.venueId)
   const previous = lastSeenByVenue.get(key)
   if (previous !== undefined) {
@@ -75,10 +102,16 @@ export function publishFloorChange(
     if (moved < 0n && !options.rebase) return
   }
   lastSeenByVenue.set(key, event.changeSeq)
-  for (const subscriber of subscribers) {
-    if (subscriber.organizationId !== event.organizationId || subscriber.venueId !== event.venueId) continue
+  const matching = [...subscribers].filter((subscriber) =>
+    subscriber.organizationId === event.organizationId && subscriber.venueId === event.venueId)
+  await Promise.all(matching.map(async (subscriber) => {
+    const denied = await subscriber.authorize()
+    if (denied) {
+      closeSubscriber(subscriber, denied)
+      return
+    }
     write(subscriber, 'floor-changed', { venueId: event.venueId, changeSeq: event.changeSeq })
-  }
+  }))
 }
 
 async function pollOnce(): Promise<void> {
@@ -97,7 +130,7 @@ async function pollOnce(): Promise<void> {
     const changeSeq = rows[0]?.change_seq
     if (changeSeq === undefined) continue
     // The database is the truth for this venue's cursor, so a poll may rebase.
-    publishFloorChange({ organizationId, venueId, changeSeq: String(changeSeq) }, { rebase: true })
+    await publishFloorChange({ organizationId, venueId, changeSeq: String(changeSeq) }, { rebase: true })
   }
 }
 
@@ -127,7 +160,14 @@ function stopBroadcasterWhenIdle(): void {
  * authenticated and resolved the actor, so this never reads a cookie itself.
  */
 export function subscribeToFloorChanges(
-  options: { organizationId: number; venueId: number; response: Response },
+  options: {
+    organizationId: number
+    venueId: number
+    authSessionId: number
+    userId: number
+    authorize: () => Promise<SessionEndCode | null>
+    response: Response
+  },
 ): () => void {
   const { response } = options
   response.writeHead(200, {
@@ -144,6 +184,9 @@ export function subscribeToFloorChanges(
   const subscriber: Subscriber = {
     organizationId: options.organizationId,
     venueId: options.venueId,
+    authSessionId: options.authSessionId,
+    userId: options.userId,
+    authorize: options.authorize,
     response,
   }
   subscribers.add(subscriber)
@@ -154,13 +197,21 @@ export function subscribeToFloorChanges(
   const known = lastSeenByVenue.get(venueKey(options.organizationId, options.venueId))
   write(subscriber, 'hello', { venueId: options.venueId, changeSeq: known ?? null })
 
+  let validating = false
   const heartbeat = setInterval(() => {
-    try {
+    if (validating) return
+    validating = true
+    void subscriber.authorize().then((denied) => {
+      if (denied) {
+        closeSubscriber(subscriber, denied)
+        return
+      }
       response.write(': keep-alive\n\n')
-    } catch {
-      subscribers.delete(subscriber)
-    }
+    }).catch(() => closeSubscriber(subscriber, 'SESSION_INVALID')).finally(() => {
+      validating = false
+    })
   }, env.realtime.heartbeatMs)
+  subscriber.heartbeat = heartbeat
   heartbeat.unref()
 
   const close = (): void => {

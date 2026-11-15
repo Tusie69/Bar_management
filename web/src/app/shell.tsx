@@ -58,7 +58,7 @@ import { businessDateOf, fmtBusinessDate, fmtTime } from "@/lib/time"
 import { initials } from "@/lib/text"
 import { cn } from "@/lib/utils"
 import { api, clock, demo } from "@/services"
-import { useSession } from "@/state/session"
+import { useCan, useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
 import { useShiftAlerts } from "@/features/floor/alerts"
 import { useFloorModel } from "@/features/floor/use-floor-model"
@@ -100,6 +100,7 @@ function Wordmark() {
 
 function AppSidebar() {
   const user = useSession((s) => s.user)
+  const permissions = useSession((s) => s.permissions)
   const overview = useOverview()
   const { setOpenMobile } = useSidebar()
   const location = useLocation()
@@ -119,7 +120,7 @@ function AppSidebar() {
               {NAV.filter(
                 (n) =>
                   (user.role !== "RECEPTIONIST" || n.to === "/floor") &&
-                  (!n.permission || roleCan(user.role, n.permission)),
+                  (!n.permission || (api.mode === "http" ? permissions.includes(n.permission) : roleCan(user.role, n.permission))),
               ).map((item) => (
                 <SidebarMenuItem key={item.to}>
                   <SidebarMenuButton
@@ -386,7 +387,7 @@ function HttpUndoRedo() {
 function UndoRedoContent() {
   const undoStack = useUi((s) => s.undoStack)
   const redoStack = useUi((s) => s.redoStack)
-  const canUndo = useSession((s) => roleCan(s.user.role, "operation.undo"))
+  const canUndo = useCan("operation.undo")
   const lastUndo = undoStack[undoStack.length - 1]
   const lastRedo = redoStack[redoStack.length - 1]
 

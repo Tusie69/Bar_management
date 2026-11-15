@@ -71,7 +71,9 @@ mysqlDescribe('business-day auto-close reconciles canonical floor and waitlist H
     expect(groups[0]?.dissolve_reason).toBe('BUSINESS_DAY_END')
     const [entryAfter] = await databasePool.execute<RowDataPacket[]>('SELECT * FROM waitlist_entries WHERE id = ?', [entryId])
     expect(entryAfter).toEqual(entryBefore)
-    const [audits] = await databasePool.execute<RowDataPacket[]>('SELECT action FROM operation_log ORDER BY change_seq')
+    const [audits] = await databasePool.execute<RowDataPacket[]>(
+      "SELECT action FROM operation_log WHERE entity_type <> 'auth_session' ORDER BY change_seq",
+    )
     expect(audits.map((row) => String(row.action))).toEqual([
       'WAITLIST_ADDED', 'WAITLIST_ASSIGNED_TO_RESERVATION', 'WAITLIST_SEATED', 'VISIT_AUTO_CLOSED_BUSINESS_DAY',
     ])

@@ -50,6 +50,7 @@ import type {
   WaitlistEntryView,
 } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
+import type { SessionEndCode } from "@/domain/session-end"
 
 export type KnownApiErrorCode =
   | "VALIDATION_FAILED"
@@ -178,6 +179,7 @@ export interface AccountSummary {
   status: "ACTIVE" | "DISABLED"
   membershipStatus: string
   roles: string[]
+  accessLevel: "WRITE" | "READ_ONLY" | null
   lastLoginAt: string | null
   version: number
 }
@@ -193,6 +195,7 @@ export interface CreateAccountInput {
   displayName: string
   password: string
   roleCode: string
+  accessLevel?: "WRITE" | "READ_ONLY"
 }
 
 export interface DissolveTableGroupInput {
@@ -301,7 +304,7 @@ export interface GamApi {
 
   setSession(user: SessionUser): void
   listDemoUsers(): SessionUser[]
-  subscribe(listener: (event: ChangeEvent) => void): () => void
+  subscribe(listener: (event: ChangeEvent) => void, onSessionEnded?: (code: SessionEndCode) => void): () => void
 
   // Queries
   getCatalog(): Promise<Catalog>
@@ -320,6 +323,9 @@ export interface GamApi {
   listAccounts(): Promise<AccountsView>
   createAccount(input: CreateAccountInput): Promise<AccountSummary>
   setAccountStatus(userId: number, version: number, status: "ACTIVE" | "DISABLED"): Promise<AccountSummary>
+  setAdminAccessLevel(userId: number, version: number, accessLevel: "WRITE" | "READ_ONLY"): Promise<AccountSummary>
+  resetAccountPassword(userId: number, version: number, newPassword: string): Promise<AccountSummary>
+  changeOwnPassword(currentPassword: string, newPassword: string): Promise<void>
   getUndoState(): Promise<UndoState>
   /** table_allocations of a business date, optionally for one table (history + timeline). */
   listAllocations(businessDate: BusinessDate, tableId?: number): Promise<AllocationView[]>
@@ -405,6 +411,9 @@ export const REST_ENDPOINTS = {
   accounts: "GET /accounts",
   createAccount: "POST /accounts",
   setAccountStatus: "POST /accounts/:id/status",
+  setAdminAccessLevel: "POST /accounts/:id/access-level",
+  resetAccountPassword: "POST /accounts/:id/password-reset",
+  changeOwnPassword: "POST /accounts/me/password",
   catalog: "GET /tables/catalog",
   sources: "GET /bookings/sources",
   floorState: "GET /tables?date=YYYY-MM-DD",
@@ -442,4 +451,4 @@ export const REST_ENDPOINTS = {
   redo: "POST /operations/redo",
 } as const
 
-export const DEMO_ROLE_ORDER: RoleCode[] = ["RECEPTIONIST", "OWNER_ADMIN", "CUSTOMER_CARE", "CASHIER"]
+export const DEMO_ROLE_ORDER: RoleCode[] = ["RECEPTIONIST", "OWNER", "ADMIN", "CUSTOMER_CARE", "CASHIER"]

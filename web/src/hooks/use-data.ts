@@ -9,6 +9,7 @@ import type { ReportQuery } from "@/domain/models"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { api, clock } from "@/services"
 import { useSession } from "@/state/session"
+import { sessionEndMessage } from "@/domain/session-end"
 
 export const qk = {
   catalog: ["catalog"] as const,
@@ -209,6 +210,7 @@ const WARNING_ACTIONS = new Set(["RESERVATION_LATE_WARNING", "RESERVATION_NO_SHO
 export function useRealtimeSync() {
   const qc = useQueryClient()
   const userId = useSession((s) => s.user.id)
+  const expire = useSession((s) => s.expire)
   useEffect(() => {
     const off = api.subscribe((event) => {
       qc.invalidateQueries()
@@ -218,11 +220,11 @@ export function useRealtimeSync() {
       } else if (event.actorKind === "USER" && event.actorUserId !== userId) {
         toast.info(`Thiết bị khác: ${event.summary}`, { description: "Đồng bộ mô phỏng giữa các máy" })
       }
-    })
+    }, (code) => expire(sessionEndMessage(code)))
     const offClock = clock.subscribe(() => qc.invalidateQueries())
     return () => {
       off()
       offClock()
     }
-  }, [qc, userId])
+  }, [expire, qc, userId])
 }

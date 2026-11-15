@@ -27,8 +27,8 @@ CREATE TEMPORARY TABLE _gam_seed_guard (
 START TRANSACTION;
 INSERT INTO _gam_seed_guard VALUES (
   IF(COALESCE(DATABASE() REGEXP '(_dev|_test)$', 0)
-    AND (SELECT COUNT(*) FROM roles WHERE code IN ('OWNER_ADMIN','RECEPTIONIST','CUSTOMER_CARE','CASHIER')) = 4
-    AND (SELECT COUNT(*) FROM permissions) IN (28, 29)
+    AND (SELECT COUNT(*) FROM roles WHERE code IN ('OWNER','ADMIN','RECEPTIONIST','CUSTOMER_CARE','CASHIER')) = 5
+    AND (SELECT COUNT(*) FROM permissions) = 32
     AND (SELECT COUNT(*) FROM organizations) = 0
     AND (SELECT COUNT(*) FROM venues) = 0
     AND (SELECT COUNT(*) FROM venue_settings) = 0
@@ -74,7 +74,7 @@ INSERT INTO memberships (id, organization_id, user_id) VALUES
 INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
 SELECT m.organization_id, m.id, r.id, m.organization_id
 FROM memberships m JOIN roles r ON r.code = CASE m.user_id
-  WHEN 3 THEN 'OWNER_ADMIN' WHEN 4 THEN 'CUSTOMER_CARE'
+  WHEN 3 THEN 'OWNER' WHEN 4 THEN 'CUSTOMER_CARE'
   WHEN 5 THEN 'CASHIER' ELSE 'RECEPTIONIST' END;
 
 -- Same IDs/order and geometry as src/domain/venue-layout.ts + mock/seed.ts.

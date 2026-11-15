@@ -700,7 +700,7 @@ export class MockGamApi implements GamApi, DemoControls {
    */
   async listAccounts() {
     await this.latency("q")
-    this.require("user.manage")
+    this.require("user.read")
     return {
       accounts: DEMO_USERS.filter((u) => u.id !== REMOTE_USER_ID).map((u) => ({
         id: u.id,
@@ -709,6 +709,7 @@ export class MockGamApi implements GamApi, DemoControls {
         status: "ACTIVE" as const,
         membershipStatus: "ACTIVE",
         roles: [u.role],
+        accessLevel: u.role === "ADMIN" ? "WRITE" as const : null,
         lastLoginAt: null,
         version: 1,
       })),
@@ -726,6 +727,23 @@ export class MockGamApi implements GamApi, DemoControls {
     await this.latency("q")
     this.require("user.manage")
     return this.fail("Chế độ demo không khóa/mở được tài khoản. Dùng máy chủ thật để quản lý tài khoản.")
+  }
+
+  async setAdminAccessLevel(): Promise<never> {
+    await this.latency("q")
+    this.require("user.manage")
+    return this.fail("Chế độ demo không đổi được cấp truy cập. Dùng máy chủ thật để quản lý tài khoản.")
+  }
+
+  async resetAccountPassword(): Promise<never> {
+    await this.latency("q")
+    this.require("user.manage")
+    return this.fail("Chế độ demo không đặt lại được mật khẩu. Dùng máy chủ thật để quản lý tài khoản.")
+  }
+
+  async changeOwnPassword(): Promise<never> {
+    await this.latency("q")
+    return this.fail("Chế độ demo không đổi được mật khẩu. Dùng máy chủ thật để quản lý tài khoản.")
   }
 
   listDemoUsers(): SessionUser[] {
@@ -1632,7 +1650,7 @@ export class MockGamApi implements GamApi, DemoControls {
   }
 
   private requireGroupManage() {
-    if (this.session.role !== "OWNER_ADMIN" && this.session.role !== "RECEPTIONIST")
+    if (this.session.role !== "OWNER" && this.session.role !== "ADMIN" && this.session.role !== "RECEPTIONIST")
       throw new ApiError(403, "PERMISSION_DENIED", "Bạn không có quyền quản lý nhóm bàn.", {
         permission: "table.group.manage",
       })
@@ -2405,7 +2423,7 @@ export class MockGamApi implements GamApi, DemoControls {
         "Thao tác này không hoàn tác được (liên hệ khách, xem SĐT, cảnh báo hệ thống).",
       )
     if (op.compensatedBy) throw new ApiError(422, "NOT_UNDOABLE", "Thao tác đã được hoàn tác trước đó.")
-    if (this.session.role !== "OWNER_ADMIN" && op.actorUserId !== this.session.id) {
+    if (this.session.role !== "OWNER" && this.session.role !== "ADMIN" && op.actorUserId !== this.session.id) {
       throw new ApiError(403, "PERMISSION_DENIED", "Lễ tân chỉ hoàn tác thao tác của chính mình.")
     }
     if (op.businessDate !== businessDateOf(this.now))

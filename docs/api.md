@@ -13,7 +13,8 @@ Base URL: `http://localhost:3000/api/v1`. This document describes the implemente
 - Existing-entity writes require the current positive integer `version`. The status compatibility route uses optional `expectedVersion`. Stale versions return 409. Do not automatically retry mutations.
 - `Idempotency-Key` is optional on protected create endpoints. When supplied, it is bound to the authenticated organization, endpoint and request fingerprint; concurrent/retried requests replay one committed response and share the domain transaction. Clients should still disable duplicate submission for user feedback.
 - `businessDate` is a valid `YYYY-MM-DD`; response instants are ISO-8601 UTC strings. Booking `expectedAt` must include an offset and represent local time in `Asia/Ho_Chi_Minh` (normally `+07:00`). Business hours are 17:00 through before 05:00 the next morning; after midnight belongs to the previous business date. New or changed booking times must be within 19:00-01:00 inclusive and must fall on a 15-minute slot with zero seconds; anything else is rejected as `EXPECTED_AT_OFF_SLOT` (for example 22:35). This records the interval the API enforces today and is not an approval of it: Q03 is still open with the PO, and the written sources S2/S3/S4 specify a 5-minute step, so the acceptance criteria, pickers and this paragraph change together once Q03 is decided. Updating other fields on a historical booking may retain its existing out-of-window timestamp. Walk-ins keep the operating-hours rule.
-- There is no subscription/change-feed endpoint. Clients may poll and refetch after successful mutations.
+- The authenticated `GET /tables/stream` SSE endpoint carries only a venue change cursor. Clients refetch protected
+  projections after a frame and retain their 15-second poll as fallback.
 
 Errors use:
 
@@ -21,7 +22,12 @@ Errors use:
 {"error":{"code":"VERSION_CONFLICT","message":"Booking vừa được thay đổi. Vui lòng tải lại."}}
 ```
 
-Common status codes: 400 `INVALID_*` validation, 401 `AUTHENTICATION_REQUIRED` / `SESSION_INVALID`, 403 `PERMISSION_DENIED` / `CSRF_TOKEN_INVALID` / `ORIGIN_NOT_ALLOWED`, 404 entity not found in the actor's scope, 409 stale version or allocation conflict, 422 `INVALID_PHONE_NUMBER` / `BOOKING_PHONE_UNAVAILABLE`, 429 rate limit, 503 `PHONE_*_UNAVAILABLE`. Duplicate keys map to `RESOURCE_CONFLICT`; database deadlocks/lock timeouts map to `CONCURRENT_UPDATE_RETRY`. Internal failures return a generic 500 without SQL or secrets.
+Common status codes: 400 `INVALID_*` validation, 401 `AUTHENTICATION_REQUIRED` / `SESSION_REPLACED` /
+`SESSION_EXPIRED` / `SESSION_REVOKED` / `ACCOUNT_LOCKED` / `SESSION_INVALID`, 403 `PERMISSION_DENIED` /
+`CSRF_TOKEN_INVALID` / `ORIGIN_NOT_ALLOWED`, 404 entity not found in the actor's scope, 409 stale version or allocation
+conflict, 422 `INVALID_PHONE_NUMBER` / `BOOKING_PHONE_UNAVAILABLE`, 429 rate limit, 503
+`PHONE_*_UNAVAILABLE`. Duplicate keys map to `RESOURCE_CONFLICT`; database deadlocks/lock timeouts map to
+`CONCURRENT_UPDATE_RETRY`. Internal failures return a generic 500 without SQL or secrets.
 
 ## Health and session
 
@@ -32,11 +38,63 @@ Common status codes: 400 `INVALID_*` validation, 401 `AUTHENTICATION_REQUIRED` /
 | GET | `/auth/me` | Session | `{user,permissions,csrfToken,portal}` |
 | POST | `/auth/logout` | Session + CSRF | 204, no body |
 
-`portal` is one of `admin`, `receptionist`, `customer-care` or `cashier`. The server verifies the password before checking portal eligibility, creates no session for a denied portal and stores the verified portal on the server-side session. Current conservative mapping is `admin → OWNER_ADMIN`, `receptionist → RECEPTIONIST`, `customer-care → CUSTOMER_CARE`, `cashier → CASHIER`. A multi-role account receives only roles and permissions mapped to the selected portal; the request value never grants a role. Changing a client URL cannot change the session portal. Invalid portal is `INVALID_PORTAL` (400); valid credentials at a disallowed portal are `PORTAL_ACCESS_DENIED` (403).
+`portal` is one of `admin`, `receptionist`, `customer-care` or `cashier`. The server verifies the password before checking portal eligibility, creates no session for a denied portal and stores the verified portal on the server-side session. Mapping is `admin → OWNER | ADMIN`, `receptionist → RECEPTIONIST`, `customer-care → CUSTOMER_CARE`, `cashier → CASHIER`. ADMIN must have access level `WRITE` or `READ_ONLY` on its active venue grant. A multi-role account receives only roles and permissions mapped to the selected portal; the request value never grants a role. Changing a client URL cannot change the session portal. Invalid portal is `INVALID_PORTAL` (400); valid credentials at a disallowed portal are `PORTAL_ACCESS_DENIED` (403).
 
-`user` contains `{id,username,displayName,organizationId,venueId,roles}`; `roles` contains only the active role codes eligible for the session portal and venue. Raw session tokens are never included in JSON. Login is limited after five failed credential attempts for the same IP/username in a 15-minute window. `/auth/me` restores the same portal after refresh. Disabled users, suspended memberships, expired/revoked sessions, or revocation of the last role eligible for the session portal make the next authenticated request return 401. Logout revokes the database session and clears the HttpOnly cookie. Migration `0012_add_auth_session_portal.sql` revokes legacy active sessions that had no server-verified portal instead of assigning one heuristically.
+`user` contains `{id,username,displayName,organizationId,venueId,roles,accessLevel}`; `accessLevel` is `WRITE`, `READ_ONLY`, or `null` for non-ADMIN roles. `roles` contains only active role codes eligible for the session portal and venue. Raw session tokens are never included in JSON. Login is limited after five failed credential attempts for the same IP/username in a 15-minute window. `/auth/me` restores the same portal after refresh. Disabled users, suspended memberships, expired/revoked sessions, or revocation of the last role eligible for the session portal make the next authenticated request return 401. Logout revokes the database session and clears the HttpOnly cookie. Migration `0012_add_auth_session_portal.sql` revokes legacy active sessions that had no server-verified portal instead of assigning one heuristically.
 
-The current API schema does not contain `SUPER_ADMIN`, a read-only admin role, Service/Waiter, Bar or Warehouse roles. Their portal mapping remains `[?]` pending an approved NA-07 matrix; no role, permission or grant is synthesized by TU-07. See `docs/security/tu07-tu08-audit.md` for the endpoint RBAC and TU-08 audit.
+### Single Active Session
+
+Each account has at most one valid session across all portals and devices. After credentials and portal eligibility pass,
+login starts a transaction, locks the `users` row with `SELECT ... FOR UPDATE`, rechecks the active user, membership,
+venue and portal role, revokes every unexpired active session with reason `SESSION_REPLACED`, inserts the new hashed
+session and commits. The cookie is sent only after commit. Concurrent logins therefore serialize on the same user row;
+the session from the transaction committed last is the only valid one. A wrong password, invalid portal or denied
+portal returns before the replacement transaction and does not affect the current session. Refresh and multiple tabs
+reuse the same cookie and do not create a session. A logout request carrying a replaced cookie receives 401 and cannot
+revoke the newer session.
+
+The cookie contains the raw random session token and is `HttpOnly`, `SameSite` from
+`SESSION_COOKIE_SAME_SITE`, `Secure` when configured (mandatory in production), scoped to `/api/v1`, and expires with
+the server session TTL. The database stores only SHA-256 of that token. CSRF remains an in-memory client value derived
+from the session; neither token is stored in browser local storage or sent in a URL.
+
+Session failures are based on the current database row, not client claims:
+
+| Code | Meaning | Vietnamese message |
+| --- | --- | --- |
+| `SESSION_REPLACED` | A later successful login replaced this session | `Tài khoản của bạn đã được đăng nhập trên một thiết bị khác. Phiên hiện tại đã kết thúc.` |
+| `SESSION_EXPIRED` | `expires_at` has passed | `Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.` |
+| `SESSION_REVOKED` | Logout, role/membership loss or another explicit revocation | `Phiên đăng nhập đã bị thu hồi. Vui lòng đăng nhập lại.` |
+| `ACCOUNT_LOCKED` | User is disabled or the session was revoked by account lock | `Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên.` |
+| `SESSION_INVALID` | No matching server-side session or malformed legacy state | `Phiên đăng nhập không hợp lệ.` |
+
+Example replaced-session response:
+
+```json
+{"error":{"code":"SESSION_REPLACED","message":"Tài khoản của bạn đã được đăng nhập trên một thiết bị khác. Phiên hiện tại đã kết thúc."}}
+```
+
+The web client clears the in-memory principal, permissions and CSRF state, closes its mounted SSE subscription and
+returns to the matching portal login. It does not refresh or automatically log in a replaced session. A failed
+`POST /auth/login` deliberately does not trigger the global protected-request 401 handler, so it cannot clear a valid
+session. Login success/failure, replacement, logout and session revocation write redacted `operation_log` events; no
+username, password/hash, raw token, cookie, IP or customer PII is included. Audit write failure is reported server-side
+but never exposes secrets or corrupts the session transaction.
+
+### OWNER and ADMIN access model
+
+Migration `0024_owner_admin_access_model.sql` renames the existing `OWNER_ADMIN` role row to `OWNER` in place, preserving its role id and every membership foreign key. It adds role `ADMIN`, nullable `membership_roles.access_level` constrained to `WRITE | READ_ONLY`, and permission `user.read`. It does not create `SUPER_ADMIN`, separate editor/viewer roles, or new staff roles.
+
+| Role / level | Admin portal | Business mutation | Account administration | Full phone | Venue configuration |
+| --- | --- | --- | --- | --- | --- |
+| OWNER | Yes | Yes | Create/manage ADMIN and staff; change ADMIN level; reset passwords | Yes | Yes |
+| ADMIN WRITE | Yes | Yes | Create/manage/reset staff only | Yes | No |
+| ADMIN READ_ONLY | Yes | No | Read scoped account list; may change own password | Yes | No |
+| RECEPTIONIST | No | Existing receptionist matrix | No | Last three digits only; call permission unchanged | No |
+| CUSTOMER_CARE | No | Existing customer-care matrix | No | Last three digits only | No |
+| CASHIER | No | Existing cashier matrix | No | Last three digits only | No |
+
+ADMIN grants are resolved on every request. For `READ_ONLY`, the backend returns only `customer.view_masked`, both explicit phone-reveal permissions, `audit.read`, `report.read`, and `user.read`; mutation permissions are removed. UI state is advisory and never bypasses this server calculation. Changing an ADMIN access level revokes every existing session with `ACCESS_LEVEL_CHANGED`, so an old session cannot retain WRITE authority or keep an SSE subscription.
 
 ## Venue settings
 
@@ -47,7 +105,7 @@ The current API schema does not contain `SUPER_ADMIN`, a read-only admin role, S
 
 Both endpoints derive organization and venue exclusively from the authenticated actor. There is no venue selector in the URL or body. `GET` is read-only, sends `Cache-Control: no-store`, never initializes missing rows and uses `['21:00','21:30','22:00','22:30']` only as the fallback when the venue has no valid `quick_times` row. The existing `GET /venues/:id/settings` compatibility endpoint and its snake_case wrapper remain unchanged.
 
-`PUT` requires exactly `quickTimes`, `upcomingMinutes` and `noShowMinutes`; unknown or missing fields return 400. `quickTimes` contains 1–24 unique `HH:mm` values inside 19:00–01:00 inclusive. `upcomingMinutes` is an integer from 1 through 240. `noShowMinutes` is an unsigned-smallint value and must also remain greater than the venue's unchanged `late_warning_minutes`. Invalid settings use `INVALID_SETTINGS_PAYLOAD`, `INVALID_QUICK_TIMES`, `INVALID_UPCOMING_MINUTES` or `INVALID_NO_SHOW_MINUTES`. Seeded roles grant `venue.configure` only to `OWNER_ADMIN`; the backend checks the permission itself, so a read-only admin or staff role receives 403 while any separately provisioned super-admin role must explicitly have the same permission.
+`PUT` requires exactly `quickTimes`, `upcomingMinutes` and `noShowMinutes`; unknown or missing fields return 400. `quickTimes` contains 1–24 unique `HH:mm` values inside 19:00–01:00 inclusive. `upcomingMinutes` is an integer from 1 through 240. `noShowMinutes` is an unsigned-smallint value and must also remain greater than the venue's unchanged `late_warning_minutes`. Invalid settings use `INVALID_SETTINGS_PAYLOAD`, `INVALID_QUICK_TIMES`, `INVALID_UPCOMING_MINUTES` or `INVALID_NO_SHOW_MINUTES`. Only OWNER receives `venue.configure`; ADMIN and staff receive 403.
 
 The update locks the venue and writes `venue_settings.quick_times`, `venues.upcoming_warning_minutes`, `venues.no_show_warning_minutes`, the venue version/change sequence and a redacted `VENUE_SETTINGS_UPDATED` audit in one transaction. `late_warning_minutes` is not modified. Failure of any write rolls everything back. Other venues are unaffected. Each committed update bumps `change_seq`; current floor polling and the settings query's 15-second polling refetch server-derived state without introducing another realtime channel. The booking forms show the database quick times as shortcuts and never replace the time already entered by the user. The pickers offer the slots the API accepts, which is the 15-minute step described under Transport while Q03 is open; they do not offer a 30-minute-only list.
 
@@ -89,7 +147,7 @@ Catalog venue fields include `id,version,name,timezone,businessDayStartLocal,bus
 
 **Direct status changes are unsupported in v1.** The status route accepts `AVAILABLE`, `RESERVED` or `IN_USE`, verifies table organization/venue (404 outside scope), checks `expectedVersion` if present (409 `VERSION_CONFLICT`), then returns 409 `TABLE_STATE_DERIVED`. It never creates an allocation, modifies the table or writes a mutation audit event. Use assign, check-in, move and close instead. Use the owner-only configuration route for manual `OUT_OF_SERVICE` / `ACTIVE` changes.
 
-Spare configuration is persistent rather than per-day. `reason` is required, at most 500 characters. Provide at least one of `isSpare` or `status`; status supports `ACTIVE` and `OUT_OF_SERVICE`. The table must have no unreleased allocations (holds or visits, on any date), and at least one supplied value must change. `venue.configure` is granted only to OWNER_ADMIN. Successful configuration changes audit the actor and bump the table version. Sending `isBackup` to the status route returns 400 `FIXED_SPARE_TABLE`.
+Spare configuration is persistent rather than per-day. `reason` is required, at most 500 characters. Provide at least one of `isSpare` or `status`; status supports `ACTIVE` and `OUT_OF_SERVICE`. The table must have no unreleased allocations (holds or visits, on any date), and at least one supplied value must change. `venue.configure` is granted only to OWNER. Successful configuration changes audit the actor and bump the table version. Sending `isBackup` to the status route returns 400 `FIXED_SPARE_TABLE`.
 
 ## Table groups — cụm bàn (C1)
 
@@ -250,6 +308,16 @@ and a comment heartbeat every `REALTIME_HEARTBEAT_MS` keep proxies from closing 
 stops a buffering reverse proxy from spending the latency budget. Tuning: `REALTIME_POLL_INTERVAL_MS` (default 500) and
 `REALTIME_HEARTBEAT_MS` (default 20000). The clients keep their 15-second poll as the fallback for a blocked stream.
 
+Every connection is bound to the authenticated server-side session ID established by the handshake. Before each
+`floor-changed` frame, the server re-reads the session/account/portal role and rechecks `customer.view_masked`; a lost
+session never receives that protected frame. Replacement, logout and account lock also publish an in-process revocation
+notice immediately after their database commit, closing matching streams without waiting for the heartbeat. Expiry or
+an out-of-process database revocation is detected by the same pre-event check and by the periodic heartbeat validation.
+The final non-PII frame is `event: session-ended` with one of the documented session error codes, after which the server
+ends the connection. Reconnect performs the complete HTTP authentication and permission middleware again. The browser
+closes native `EventSource` on an error instead of allowing an authentication failure to create an infinite retry loop;
+protected polling remains the fallback and surfaces the exact 401 code.
+
 ### Capacity is guidance, not a limit
 
 A table's capacity no longer blocks a booking and does not require confirmation. Booking, walk-in, assignment, merge,
@@ -278,7 +346,7 @@ capacity error.
   `version`, a stored `active_layout_symbol` and `uq_table_groups_active_layout_symbol`.
 - `table_group_members` is created with `uq_group_member_active (venue_id, active_table_key)`, foreign keys to venue,
   group and table, and an append-only `left_at` / `left_by_user_id` / `left_reason`.
-- Permission `table.group.manage` is inserted and granted to `OWNER_ADMIN` and `RECEPTIONIST`.
+- Permission `table.group.manage` is granted to OWNER, ADMIN WRITE, and RECEPTIONIST. ADMIN READ_ONLY loses it during per-request permission resolution.
 
 No row is updated or deleted. Migrations are forward-only (doc 10 §2); there is no down step. Apply with
 `npm run db:migrate` from `Bar_management/api`, with `DB_NAME` pointing at the target database. Test databases that
@@ -346,7 +414,7 @@ Chrome.
 | POST | `/bookings/:id/calls/:callId/outcome` | `booking.phone.call` | Body `{outcome,bookingVersion?}`; records one result for the call |
 | GET | `/bookings/:id/calls` | `booking.phone.call` | `{calls}`, newest first, never a phone number |
 | POST | `/bookings/:id/check-in` | `visit.checkin` | Body `{version}`; `{booking}` |
-| POST | `/bookings/:id/phone:reveal` | Both `booking.phone.reveal` and `customer.phone.reveal` | `{phoneNumber}`; owner-only under seeded roles |
+| POST | `/bookings/:id/phone:reveal` | Both `booking.phone.reveal` and `customer.phone.reveal` | `{phoneNumber}`; OWNER and ADMIN only |
 | POST | `/bookings/walk-ins` | `visit.walkin` | Body `{partySize,businessDate,tableIds,guestName?,phoneNumber?}`; 201 `{visitId}` |
 
 `BookingInput`:
@@ -439,7 +507,7 @@ The atomic Floor Projection and `BookingView` expose only `canCall` plus the exi
 
 A waiting guest and a seated guest are called the same way, through `/waitlist/:id/call` and `/visits/:id/call`. They exist because `booking_call_logs.reservation_id` used to be `NOT NULL`, so a Walk-in on the waiting list - exactly the guest to ring when a table frees up or a hold runs out - could not be called at all. Migration 0023 makes that column nullable and adds `waitlist_entry_id` and `visit_id`, with a check constraint keeping exactly one of the three set. Their outcome route accepts only `CONTACTED` and `NO_ANSWER`: `LATE_CONFIRMED` moves a reservation, and these targets may have none. The per-user rate limiter counts booking, waitlist and visit ids in separate buckets, and `POST /bookings/:id/call` and the two new routes let a call through when no limit is configured, instead of the 503 that silenced the whole venue.
 
-`POST /bookings/:id/call` accepts no phone number. BA-023 gives OWNER_ADMIN and RECEPTIONIST the dedicated sensitive permission `booking.phone.call`; it does not grant either reveal permission. The endpoint keeps the per-user/booking rate limiter and actor organization/venue scope, rechecks that a dialable phone exists, decrypts only after authorization, creates one `booking_call_logs` row, and returns a private/no-store RFC 3966 `tel:` response. Neither the URI nor the full number is written to `operation_log`, the floor projection, normal application logs or browser storage. The user must directly press the call action; the client creates a transient `tel:` link and does not retain it in application state or web storage. A `tel:` URI necessarily sends the full number to the browser and OS/dialer, may be visible in developer tools, and does not prove that a call connected. The outcome dialog therefore requires a human result. Backend-controlled telephony/hidden-number calling is not implemented.
+`POST /bookings/:id/call` accepts no phone number. BA-023 gives OWNER, ADMIN WRITE and RECEPTIONIST the dedicated sensitive permission `booking.phone.call`; ADMIN READ_ONLY does not receive it at runtime. The endpoint keeps the per-user/booking rate limiter and actor organization/venue scope, rechecks that a dialable phone exists, decrypts only after authorization, creates one `booking_call_logs` row, and returns a private/no-store RFC 3966 `tel:` response. Neither the URI nor the full number is written to `operation_log`, the floor projection, normal application logs or browser storage. The user must directly press the call action; the client creates a transient `tel:` link and does not retain it in application state or web storage. A `tel:` URI necessarily sends the full number to the receiving browser and OS/dialer, may be visible in developer tools, and does not prove that a call connected. The outcome dialog therefore requires a human result. Backend-controlled telephony/hidden-number calling is not implemented.
 
 Recording an outcome is independent from starting another call: an existing `callId` can still receive `CONTACTED`, `NO_ANSWER` or `LATE_CONFIRMED` after time-based call eligibility expires. `LATE_CONFIRMED` runs inside the same database transaction as the call outcome. If the booking is already late-confirmed, the endpoint validates the current booking version and records the new call result without repeating the TU-12 transition.
 
@@ -467,7 +535,7 @@ riêng số `UNCLASSIFIED`. Endpoint chỉ trả text; không gửi sang Zalo.
 
 Receptionists never receive a full stored phone, including from `phone:reveal`. That route requires both permissions above; an owner can explicitly reveal a number. It applies per-user/booking rate limits, writes a redacted audit record before returning a number, and sets `Cache-Control: no-store, private, max-age=0` plus `Pragma: no-cache`. Audit failure prevents disclosure. Missing encryption/HMAC keys or rate-limit policy fail closed with 503.
 
-Migration 0005 (`0005_revoke_receptionist_phone_reveal.sql`) revokes the historical `booking.phone.reveal` grant from RECEPTIONIST. Migration 0014 adds `booking.phone.call` to OWNER_ADMIN and RECEPTIONIST. Both `booking.phone.reveal` and `customer.phone.reveal` remain owner-only and are still required by the separate `phone:reveal` endpoint.
+Migration 0005 (`0005_revoke_receptionist_phone_reveal.sql`) revokes the historical `booking.phone.reveal` grant from RECEPTIONIST. Migration 0014 adds `booking.phone.call`; migration 0024 grants it to ADMIN WRITE through the ADMIN matrix. Both `booking.phone.reveal` and `customer.phone.reveal` are granted to OWNER and both ADMIN access levels and remain required by the separate `phone:reveal` endpoint. Staff retain masked last-three-digit projections only.
 
 BA-023 records the approved PO decision: Receptionist calling uses the dedicated sensitive `booking.phone.call` permission and the controlled `tel:` response described above. This is an explicit exception for transferring the number to the browser/OS dialer; it does not broaden either general-purpose reveal permission.
 
@@ -714,23 +782,44 @@ steps may be undone and any time window remain open with the PO; the API exposes
 
 | Method | Path | Permission | Request / response |
 | --- | --- | --- | --- |
-| GET | `/accounts` | `user.manage` | `{accounts:AccountSummary[],roles:[{code,name}]}` |
-| POST | `/accounts` | `user.manage` | Body `{username,displayName,password,roleCode}`; 201 `{account}` |
+| GET | `/accounts` | `user.read` | `{accounts:AccountSummary[],roles:[{code,name}]}`; assignable roles depend on actor |
+| POST | `/accounts` | `user.manage` | Body `{username,displayName,password,roleCode,accessLevel?}`; 201 `{account}` |
 | POST | `/accounts/:id/status` | `user.manage` | Body `{version,status:"ACTIVE"\|"DISABLED"}`; `{account,revokedSessions}` |
+| POST | `/accounts/:id/access-level` | `user.manage`, OWNER target rule | Body `{version,accessLevel:"WRITE"\|"READ_ONLY"}`; `{account,revokedSessions}` |
+| POST | `/accounts/:id/password-reset` | `user.manage` + target rule | Body `{version,newPassword}`; `{account,revokedSessions}` |
+| POST | `/accounts/me/password` | Session + CSRF | Body `{currentPassword,newPassword}`; `{revokedSessions}` |
 
-`user.manage` is sensitive and granted to `OWNER_ADMIN` only. `AccountSummary` is
-`{id,username,displayName,status,membershipStatus,roles,lastLoginAt,version}`; no password, hash or customer data is
-ever returned. Listing is scoped to the caller's organization and reports the roles effective at its venue, and
-`roles` offers only the four roles the baseline seeds, so an unseeded code is rejected `ROLE_NOT_FOUND`. Creating an
-account inserts the user, its membership and one role grant in one transaction, hashing the password with the existing
-scrypt helper; the limits are username 80, display name 120 and password at least 12 characters (`WEAK_PASSWORD`,
-`USERNAME_TAKEN`). Locking requires the current version and revokes every live session of that account with reason
-`ACCOUNT_LOCKED`; `authenticateSession` re-checks user and membership status on every request, so a lock also takes
-effect immediately on its own. An admin cannot lock itself (`CANNOT_LOCK_SELF`) and the last active admin is protected
-(`LAST_ADMIN_PROTECTED`). Account changes audit on `entity_type = 'user'` with `is_undoable = 0` and deliberately do
-not advance `change_seq`, because they are not floor state. Changing an existing account's role, resetting a password,
-viewing another account's screen, and the SuperAdmin / view-only Admin levels are not implemented: the owner deferred
-the admin RBAC model, so no role is created here.
+`AccountSummary` is `{id,username,displayName,status,membershipStatus,roles,accessLevel,lastLoginAt,version}`; password,
+hash, token and reset secret are never returned. Listing and every mutation require an active target role at the
+actor's organization and venue. OWNER may create ADMIN (`accessLevel` required) or one of the three staff roles.
+ADMIN WRITE may create only `RECEPTIONIST`, `CUSTOMER_CARE`, or `CASHIER`. No request may create OWNER. ADMIN cannot
+manage another ADMIN or OWNER, and no actor can change its own status/access through target-management endpoints.
+Because OWNER is never a valid management target and cannot be created through the API, the last OWNER cannot be
+removed by these endpoints.
+
+Locking revokes all live sessions with `ACCOUNT_LOCKED`; unlocking never restores them. Changing ADMIN access revokes
+all live sessions with `ACCESS_LEVEL_CHANGED`. Internal reset accepts a caller-supplied replacement password over the
+authenticated CSRF-protected request, stores only its scrypt hash, returns no secret, creates no delivery link/token,
+and revokes sessions with `PASSWORD_RESET`. Self change first verifies the current password, rejects reuse, updates the
+hash, then revokes every session including the caller with `PASSWORD_CHANGED`; the web client clears auth state and
+requires login again. Passwords are 12–1024 characters.
+
+Account changes are non-undoable `operation_log` events: `USER_ACCOUNT_CREATED`, `USER_ACCOUNT_LOCKED`,
+`USER_ACCOUNT_UNLOCKED`, `ADMIN_ACCESS_LEVEL_CHANGED`, `USER_PASSWORD_RESET`, and `USER_PASSWORD_CHANGED`.
+Associated session revocation uses the existing redacted auth audit. Neither audit stream contains password/hash,
+raw token/cookie, or unnecessary account PII.
+
+Example ADMIN creation:
+
+```json
+{"username":"admin_ca_2","displayName":"Admin ca 2","password":"<entered securely>","roleCode":"ADMIN","accessLevel":"WRITE"}
+```
+
+Example account response:
+
+```json
+{"account":{"id":42,"username":"admin_ca_2","displayName":"Admin ca 2","status":"ACTIVE","membershipStatus":"ACTIVE","roles":["ADMIN"],"accessLevel":"WRITE","lastLoginAt":null,"version":1}}
+```
 
 ## Unavailable capabilities
 
