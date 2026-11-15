@@ -3,8 +3,10 @@ import { Router } from 'express'
 import { AppError } from '../errors/app-error.js'
 import { isAuthPortal } from './auth-portal.js'
 import { attachAuthentication, getAuthentication, requireAuthenticatedActor } from './authenticated-actor.js'
-import { requireAuthentication, requireCsrfProtection } from './auth.middleware.js'
+import { requireAuthentication, requireCsrfProtection, requirePermission } from './auth.middleware.js'
 import { getAdminAccessLevel, listPermissions, listRoles, login, logoutSession } from './auth.service.js'
+import { DEVICE_ID_HEADER } from './device-identity.js'
+import { forceLogoutSession, listActiveSessions } from './session-directory.js'
 import { clearSessionCookie, createCsrfToken, setSessionCookie } from './session-security.js'
 import { recordAuthAudit } from './auth-audit.js'
 
@@ -94,7 +96,13 @@ authRouter.post('/login', async (request, response) => {
     throw error
   }
   try {
-    const result = await login(username, body.password, body.portal, request.header('user-agent'))
+    const result = await login(
+      username,
+      body.password,
+      body.portal,
+      request.header('user-agent'),
+      request.header(DEVICE_ID_HEADER),
+    )
     attempts.delete(key)
     setSessionCookie(response, result.authentication.sessionToken)
     attachAuthentication(request, result.authentication)
@@ -117,3 +125,43 @@ authRouter.post('/logout', requireAuthentication, requireCsrfProtection, async (
   clearSessionCookie(response)
   response.status(204).end()
 })
+
+/**
+ * TU-33 — các phiên đang hoạt động trong phạm vi organization.
+ *
+ * Quyền `session.read` tách riêng khỏi `session.revoke`: xem danh sách là chẩn
+ * đoán, buộc đăng xuất là thao tác đẩy người ra khỏi hệ thống.
+ *
+ * Không trả token, không trả digest của token.
+ */
+authRouter.get(
+  '/sessions',
+  requireAuthentication,
+  requirePermission('session.read'),
+  async (request, response) => {
+    const sessions = await listActiveSessions(requireAuthenticatedActor(request))
+    response.set('Cache-Control', 'no-store')
+    response.json({ sessions })
+  },
+)
+
+/**
+ * TU-33 — buộc đăng xuất một phiên.
+ *
+ * Thẩm quyền chi tiết nằm trong repository: OWNER không bị ai buộc đăng xuất,
+ * ADMIN chỉ chạm được tài khoản nhân viên, và không ai buộc đăng xuất chính
+ * mình qua đường này.
+ */
+authRouter.post(
+  '/sessions/:id/revoke',
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission('session.revoke'),
+  async (request, response) => {
+    const sessionId = Number(request.params.id)
+    if (!Number.isSafeInteger(sessionId) || sessionId <= 0) {
+      throw new AppError(400, 'INVALID_SESSION_ID', 'Mã phiên không hợp lệ.')
+    }
+    response.json(await forceLogoutSession(requireAuthenticatedActor(request), sessionId))
+  },
+)

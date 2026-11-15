@@ -239,7 +239,7 @@ export function useRealtimeSync() {
       } else if (event.actorKind === "USER" && event.actorUserId !== userId) {
         toast.info(`Thiết bị khác: ${event.summary}`, { description: "Đồng bộ mô phỏng giữa các máy" })
       }
-    }, (code) => expire(sessionEndMessage(code)))
+    }, (code) => expire(sessionEndMessage(code), code))
     const offClock = clock.subscribe(() => qc.invalidateQueries())
     return () => {
       off()

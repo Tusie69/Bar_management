@@ -1,5 +1,6 @@
 import { ApiError, type ApiErrorCode } from "../contracts"
 import { apiErrorMessage } from "../error-messages"
+import { deviceId } from "./device-id"
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 
@@ -92,6 +93,10 @@ export class HttpClient {
     if (body !== undefined) headers["Content-Type"] = "application/json"
     if (method !== "GET" && this.csrfToken) headers["x-csrf-token"] = this.csrfToken
     if (method !== "GET" && options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey
+    // TU-33: mã thiết bị để màn hình quản trị gọi tên được máy đang đăng nhập.
+    // Backend chỉ đọc nó ở /auth/login; gửi kèm mọi request cũng không cấp
+    // thêm quyền gì, vì nó không bao giờ là yếu tố xác thực.
+    headers["X-Device-Id"] = deviceId()
 
     try {
       const response = await fetch(`${this.root}${path.startsWith("/") ? path : `/${path}`}`, {
