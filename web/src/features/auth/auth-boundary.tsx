@@ -34,7 +34,15 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
     const unavailablePortal = unavailablePortalFromPath(pathname)
     if (unavailablePortal) return <PortalUnderConstruction label={unavailablePortal} />
     const routePortal = portalFromPath(pathname)
-    return <LoginPage portal={routePortal ?? sessionPortal ?? DEFAULT_AUTH_PORTAL} />
+    const resolvedPortal = routePortal ?? sessionPortal ?? DEFAULT_AUTH_PORTAL
+    if (resolvedPortal === "admin") {
+      return (
+        <div className="admin-root">
+          <LoginPage portal="admin" />
+        </div>
+      )
+    }
+    return <LoginPage portal={resolvedPortal} />
   }
   if (status === "error") {
     return (

@@ -1,0 +1,465 @@
+@import "@fontsource/be-vietnam-pro/400.css";
+@import "@fontsource/be-vietnam-pro/500.css";
+@import "@fontsource/be-vietnam-pro/600.css";
+@import "@fontsource/be-vietnam-pro/700.css";
+
+/*
+ * Admin Application Shell scoped tokens & layout rules (Sprint 4 - NA-32)
+ * Source of truth: Figma node 2:30 (01 · Tổng quan ca) & node 10:2 (08 · Sổ lượt)
+ * Scoped strictly under .admin-root so global reception styles are untouched.
+ */
+.admin-root {
+  /* Figma color variables (node 2:30) */
+  --admin-brand-navy: #102a43;
+  --admin-text-primary: #1a1a1a;
+  --admin-text-muted: #6e6a62;
+  --admin-action-blue: #1d6fc2;
+  --admin-tint-blue: #e8f1fa;
+  --admin-surface: #ffffff;
+  --admin-surface-sunken: #f0eee9;
+  --admin-canvas: #f7f6f3;
+  --admin-border: #e2dfd8;
+  --admin-state-inuse: #2e9e57;
+  --admin-state-soon: #e0a106;
+  --admin-state-booked: #1d6fc2;
+  --admin-state-late: #d13b3b;
+  --admin-state-empty: #b9b4aa;
+  --admin-tint-red: #fbe9e9;
+  --admin-tint-amber: #fdf3dc;
+  --admin-text-invert: #ffffff;
+
+  /* Accessible ink pairings on tinted badges (WCAG AA >= 4.5:1) */
+  --admin-state-soon-ink: #854d0e;
+  --admin-state-late-ink: #991b1b;
+  --admin-state-inuse-ink: #1e3a0f;
+
+  /* Isolate shared Tailwind/shadcn tokens inside .admin-root from reception .dark theme */
+  color-scheme: light;
+  --background: var(--admin-canvas);
+  --foreground: var(--admin-text-primary);
+  --surface-1: var(--admin-surface);
+  --surface-2: var(--admin-surface-sunken);
+  --surface-3: var(--admin-border);
+  --card: var(--admin-surface);
+  --card-foreground: var(--admin-text-primary);
+  --popover: var(--admin-surface);
+  --popover-foreground: var(--admin-text-primary);
+  --primary: var(--admin-action-blue);
+  --primary-foreground: var(--admin-text-invert);
+  --secondary: var(--admin-surface-sunken);
+  --secondary-foreground: var(--admin-text-primary);
+  --muted: var(--admin-surface-sunken);
+  --muted-foreground: var(--admin-text-muted);
+  --text-muted: var(--admin-text-muted);
+  --text-subtle: var(--admin-text-muted);
+  --tx-1: var(--admin-text-primary);
+  --tx-2: var(--admin-text-muted);
+  --tx-3: var(--admin-text-muted);
+  --border: var(--admin-border);
+  --border-strong: var(--admin-border);
+  --input: var(--admin-border);
+  --ring: var(--admin-action-blue);
+
+  /* Layout geometry tokens (Figma 2:31, 2:53, 2:54) */
+  --admin-sidebar-width: 232px;
+  --admin-header-height: 75px;
+  --admin-content-padding-x: 32px;
+  --admin-content-padding-top: 24px;
+  --admin-content-padding-bottom: 32px;
+
+  font-family:
+    "Be Vietnam Pro",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  color: var(--admin-text-primary);
+  background-color: var(--admin-canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Figma Typography Scale (Be Vietnam Pro) */
+.admin-h1 {
+  font-size: 26px;
+  line-height: 34px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--admin-text-primary);
+}
+
+.admin-h2 {
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--admin-text-primary);
+}
+
+.admin-h3 {
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--admin-text-primary);
+}
+
+.admin-metric {
+  font-size: 30px;
+  line-height: 36px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--admin-text-primary);
+}
+
+.admin-body {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 400;
+  color: var(--admin-text-primary);
+}
+
+.admin-body-medium {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--admin-text-primary);
+}
+
+.admin-label {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--admin-text-muted);
+}
+
+/* Skip link for keyboard navigation (HIG accessibility.md › Keyboard & Focus Navigation) */
+.admin-skip-link {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 100;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background-color: var(--admin-brand-navy);
+  color: var(--admin-text-invert);
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: 0 4px 12px rgba(16, 42, 67, 0.2);
+  transform: translateY(-150%);
+  transition: transform 150ms ease;
+}
+
+.admin-skip-link:focus,
+.admin-skip-link:focus-visible {
+  transform: translateY(0);
+  outline: 2px solid var(--admin-action-blue);
+  outline-offset: 2px;
+}
+
+/* Keyboard focus ring inside admin shell (HIG accessibility.md › Keyboard & Focus Navigation) */
+.admin-root a:focus-visible,
+.admin-root button:focus-visible,
+.admin-root [tabindex]:focus-visible {
+  outline: 2px solid var(--admin-action-blue);
+  outline-offset: 2px;
+}
+
+/* Reserve scrollbar gutter on the document root while AdminShell is mounted so desktop content width stays stable across loading -> loaded transitions */
+html:has(.admin-shell) {
+  scrollbar-gutter: stable;
+  color-scheme: light;
+  background-color: #f7f6f3;
+}
+
+/* Shell container */
+.admin-shell {
+  position: relative;
+  display: flex;
+  min-height: 100dvh;
+  width: 100%;
+  overflow-x: clip;
+  background-color: var(--admin-canvas);
+}
+
+/* Left Sidebar (Figma 2:31 - 232px wide, #ffffff surface, 1px right border #e2dfd8) */
+.admin-sidebar {
+  width: var(--admin-sidebar-width);
+  min-width: var(--admin-sidebar-width);
+  max-width: var(--admin-sidebar-width);
+  height: 100dvh;
+  background-color: var(--admin-surface);
+  border-right: 1px solid var(--admin-border);
+  display: flex;
+  flex-direction: column;
+  padding: 24px 16px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+/* Brand block (Figma 2:32 - height 66px, inner left offset 10px -> 26px from viewport) */
+.admin-brand {
+  height: 66px;
+  padding-left: 10px;
+  padding-right: 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  margin-bottom: 4px;
+  box-sizing: border-box;
+}
+
+.admin-brand-title {
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 700;
+  color: var(--admin-brand-navy);
+  margin: 0;
+}
+
+.admin-brand-subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--admin-text-muted);
+}
+
+/* Sidebar Navigation (Figma 2:35..2:49 - 8 items, 42px height, 4px gap, 8px radius) */
+.admin-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.admin-nav-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--admin-text-primary);
+  text-decoration: none;
+  box-sizing: border-box;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.admin-nav-item:hover {
+  background-color: var(--admin-surface-sunken);
+}
+
+.admin-nav-item[aria-current="page"],
+.admin-nav-item-active {
+  background-color: var(--admin-tint-blue);
+  color: var(--admin-action-blue);
+  font-weight: 500;
+}
+
+.admin-nav-item[aria-current="page"]:hover,
+.admin-nav-item-active:hover {
+  background-color: var(--admin-tint-blue);
+  color: var(--admin-action-blue);
+}
+
+/* Sidebar Footer (Figma 2:50 - y=942, height=58px, padding 10px 12px 5px) */
+.admin-sidebar-footer {
+  margin-top: auto;
+  height: 58px;
+  min-height: 58px;
+  padding: 10px 12px 5px;
+  border-top: 1px solid var(--admin-border);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.admin-user-name {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--admin-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-user-role {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--admin-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Main Area (Figma 2:53 - 1208px at 1440px, #f7f6f3 canvas) */
+.admin-main-column {
+  flex: 1 1 0%;
+  min-width: 0;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--admin-canvas);
+}
+
+/* Header Row (Figma 2:54 - height 75px, #ffffff surface, 1px bottom border #e2dfd8, 32px side padding) */
+.admin-header {
+  min-height: var(--admin-header-height);
+  background-color: var(--admin-surface);
+  border-bottom: 1px solid var(--admin-border);
+  padding: 12px var(--admin-content-padding-x);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.admin-header-start {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.admin-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-shrink: 0;
+}
+
+.admin-header-shift {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 400;
+  color: var(--admin-text-muted);
+  white-space: nowrap;
+}
+
+.admin-header-date {
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  color: var(--admin-text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Main Content Area (Figma 6:2 / 2:91 - 32px horizontal padding, 24px top, 32px bottom) */
+.admin-content {
+  flex: 1 1 0%;
+  min-width: 0;
+  padding: var(--admin-content-padding-top) var(--admin-content-padding-x) var(--admin-content-padding-bottom);
+  box-sizing: border-box;
+}
+
+/* Tablet / touch menu button (hidden on laptop >= 1025px, shown on tablet <= 1024px) */
+.admin-menu-trigger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid var(--admin-border);
+  background-color: var(--admin-surface);
+  color: var(--admin-text-primary);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.admin-menu-trigger:hover {
+  background-color: var(--admin-surface-sunken);
+}
+
+/* Drawer panel for <= 1024px (portaled via SheetContent with .admin-root) */
+.admin-drawer-panel {
+  width: var(--admin-sidebar-width);
+  max-width: 85vw;
+  height: 100dvh;
+  background-color: var(--admin-surface);
+  color: var(--admin-text-primary);
+  border-right: 1px solid var(--admin-border);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 16px 24px;
+  box-sizing: border-box;
+  box-shadow: 0 12px 32px rgba(16, 42, 67, 0.18);
+  overflow-y: auto;
+}
+
+/* Responsive breakpoint:
+ * Laptop 1366/1440/1920 (>= 1025px) keeps persistent fixed 232px sidebar + continuous rail.
+ * Tablet 1024 landscape and 768/820 portrait (<= 1024px) collapses sidebar to accessible menu button + Sheet drawer.
+ */
+@media (max-width: 1024px) {
+  .admin-sidebar-desktop {
+    display: none;
+  }
+
+  .admin-menu-trigger {
+    display: inline-flex;
+  }
+
+  /* Ensure >= 44px touch targets on iPad / tablet (HIG accessibility.md › Mobility) */
+  .admin-drawer-panel .admin-nav-item {
+    min-height: 44px;
+  }
+}
+
+@media (min-width: 1025px) {
+  .admin-shell::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: var(--admin-sidebar-width);
+    background-color: var(--admin-surface);
+    border-right: 1px solid var(--admin-border);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .admin-sidebar-desktop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 20;
+    height: 100dvh;
+  }
+
+  .admin-main-column {
+    position: relative;
+    z-index: 1;
+    margin-left: var(--admin-sidebar-width);
+  }
+}
+
+/* Reduced motion compliance (HIG accessibility.md › Motion) */
+@media (prefers-reduced-motion: reduce) {
+  .admin-skip-link,
+  .admin-nav-item,
+  .admin-drawer-panel {
+    transition: none !important;
+  }
+}

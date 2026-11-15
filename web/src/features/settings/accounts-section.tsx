@@ -17,9 +17,14 @@ const PASSWORD_MIN = 12
 type AccessLevel = "WRITE" | "READ_ONLY"
 const emptyDraft = { username: "", displayName: "", password: "", roleCode: "", accessLevel: "WRITE" as AccessLevel }
 
-export function AccountsSection() {
-  const canRead = useCan("user.read")
-  const canManage = useCan("user.manage")
+export function AccountsSection({ readOnly = false }: { readOnly?: boolean } = {}) {
+  const canReadFromHook = useCan("user.read")
+  const canManageFromHook = useCan("user.manage")
+  const hasPrincipal = useSession((state) => state.principal !== null)
+  const serverPermissions = useSession((state) => state.permissions)
+  const canRead = api.mode === "http" || hasPrincipal ? serverPermissions.includes("user.read") : canReadFromHook
+  const canManage =
+    !readOnly && (api.mode === "http" || hasPrincipal ? serverPermissions.includes("user.manage") : canManageFromHook)
   const currentUserId = useSession((state) => state.user.id)
   const currentRole = useSession((state) => state.user.role)
   const queryClient = useQueryClient()
@@ -75,7 +80,7 @@ export function AccountsSection() {
             <TableHeader><TableRow>
               <TableHead className="pl-4">Tài khoản</TableHead><TableHead>Vai trò</TableHead>
               <TableHead>Truy cập</TableHead><TableHead>Trạng thái</TableHead>
-              <TableHead className="pr-4 text-right">Thao tác</TableHead>
+              {canManage ? <TableHead className="pr-4 text-right">Thao tác</TableHead> : null}
             </TableRow></TableHeader>
             <TableBody>{(accounts.data?.accounts ?? []).map((account) => {
               const isOwnerTarget = account.roles.includes("OWNER")
@@ -88,7 +93,7 @@ export function AccountsSection() {
                 <TableCell className="text-sm">{account.roles.map(roleLabel).join(", ") || "—"}</TableCell>
                 <TableCell className="text-sm">{account.accessLevel === "READ_ONLY" ? "Chỉ xem" : account.accessLevel === "WRITE" ? "Ghi" : "—"}</TableCell>
                 <TableCell className="text-sm">{account.status === "ACTIVE" ? "Đang hoạt động" : "Đã khóa"}</TableCell>
-                <TableCell className="pr-4 text-right"><div className="flex flex-wrap justify-end gap-1">
+                {canManage ? <TableCell className="pr-4 text-right"><div className="flex flex-wrap justify-end gap-1">
                   {isAdminTarget && currentRole === "OWNER" ? <Button variant="outline" size="sm" disabled={!canTarget || pending}
                     onClick={() => void run(async () => {
                       await api.setAdminAccessLevel(account.id, account.version,
@@ -104,13 +109,13 @@ export function AccountsSection() {
                       toast.success(account.status === "ACTIVE" ? "Đã khóa tài khoản." : "Đã mở khóa tài khoản.")
                       await refresh()
                     })}>{account.status === "ACTIVE" ? "Khóa" : "Mở khóa"}</Button>
-                </div></TableCell>
+                </div></TableCell> : null}
               </TableRow>
             })}</TableBody>
           </Table>
         </div>
 
-        {resetTarget !== null ? <div className="grid gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_auto_auto]">
+        {canManage && resetTarget !== null ? <div className="grid gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_auto_auto]">
           <Input type="password" autoComplete="new-password" value={resetPassword}
             placeholder={`Mật khẩu mới, tối thiểu ${PASSWORD_MIN} ký tự`}
             onChange={(event) => setResetPassword(event.target.value)} />
@@ -123,30 +128,32 @@ export function AccountsSection() {
           <Button variant="ghost" onClick={() => { setResetTarget(null); setResetPassword("") }}>Hủy</Button>
         </div> : null}
 
-        {!open ? <GuardedButton permission="user.manage" variant="outline" className="justify-self-start"
-          disabled={!liveServer || roles.length === 0} onClick={() => setOpen(true)}>Tạo tài khoản</GuardedButton> :
-          <div className="grid gap-3 rounded-2xl border p-4 sm:grid-cols-2">
-            <Field id="acc-username" label="Tên đăng nhập" value={draft.username}
-              onChange={(value) => setDraft((item) => ({ ...item, username: value }))} />
-            <Field id="acc-name" label="Tên hiển thị" value={draft.displayName}
-              onChange={(value) => setDraft((item) => ({ ...item, displayName: value }))} />
-            <Field id="acc-password" label={`Mật khẩu ban đầu (tối thiểu ${PASSWORD_MIN} ký tự)`} value={draft.password}
-              type="password" onChange={(value) => setDraft((item) => ({ ...item, password: value }))} />
-            <div className="grid gap-1.5"><Label>Vai trò</Label><ToggleGroup type="single"
-              value={draft.roleCode || roles[0]?.code || ""}
-              onValueChange={(value) => value && setDraft((item) => ({ ...item, roleCode: value }))}
-              className="flex-wrap justify-start">{roles.map((role) => <ToggleGroupItem key={role.code} value={role.code}>
-                {roleLabel(role.code)}</ToggleGroupItem>)}</ToggleGroup></div>
-            {(draft.roleCode || roles[0]?.code) === "ADMIN" ? <div className="grid gap-1.5 sm:col-span-2">
-              <Label>Cấp truy cập ADMIN</Label><ToggleGroup type="single" value={draft.accessLevel}
-                onValueChange={(value) => value && setDraft((item) => ({ ...item, accessLevel: value as AccessLevel }))}>
-                <ToggleGroupItem value="WRITE">Ghi</ToggleGroupItem><ToggleGroupItem value="READ_ONLY">Chỉ xem</ToggleGroupItem>
-              </ToggleGroup></div> : null}
-            <div className="flex gap-2 sm:col-span-2"><GuardedButton permission="user.manage"
-              disabled={pending || !draft.username.trim() || !draft.displayName.trim() || draft.password.length < PASSWORD_MIN}
-              onClick={() => void create()}>Tạo tài khoản</GuardedButton>
-              <Button variant="ghost" onClick={() => { setDraft(emptyDraft); setOpen(false) }}>Hủy</Button></div>
-          </div>}
+        {canManage ? (
+          !open ? <GuardedButton permission="user.manage" variant="outline" className="justify-self-start"
+            disabled={!liveServer || roles.length === 0} onClick={() => setOpen(true)}>Tạo tài khoản</GuardedButton> :
+            <div className="grid gap-3 rounded-2xl border p-4 sm:grid-cols-2">
+              <Field id="acc-username" label="Tên đăng nhập" value={draft.username}
+                onChange={(value) => setDraft((item) => ({ ...item, username: value }))} />
+              <Field id="acc-name" label="Tên hiển thị" value={draft.displayName}
+                onChange={(value) => setDraft((item) => ({ ...item, displayName: value }))} />
+              <Field id="acc-password" label={`Mật khẩu ban đầu (tối thiểu ${PASSWORD_MIN} ký tự)`} value={draft.password}
+                type="password" onChange={(value) => setDraft((item) => ({ ...item, password: value }))} />
+              <div className="grid gap-1.5"><Label>Vai trò</Label><ToggleGroup type="single"
+                value={draft.roleCode || roles[0]?.code || ""}
+                onValueChange={(value) => value && setDraft((item) => ({ ...item, roleCode: value }))}
+                className="flex-wrap justify-start">{roles.map((role) => <ToggleGroupItem key={role.code} value={role.code}>
+                  {roleLabel(role.code)}</ToggleGroupItem>)}</ToggleGroup></div>
+              {(draft.roleCode || roles[0]?.code) === "ADMIN" ? <div className="grid gap-1.5 sm:col-span-2">
+                <Label>Cấp truy cập ADMIN</Label><ToggleGroup type="single" value={draft.accessLevel}
+                  onValueChange={(value) => value && setDraft((item) => ({ ...item, accessLevel: value as AccessLevel }))}>
+                  <ToggleGroupItem value="WRITE">Ghi</ToggleGroupItem><ToggleGroupItem value="READ_ONLY">Chỉ xem</ToggleGroupItem>
+                </ToggleGroup></div> : null}
+              <div className="flex gap-2 sm:col-span-2"><GuardedButton permission="user.manage"
+                disabled={pending || !draft.username.trim() || !draft.displayName.trim() || draft.password.length < PASSWORD_MIN}
+                onClick={() => void create()}>Tạo tài khoản</GuardedButton>
+                <Button variant="ghost" onClick={() => { setDraft(emptyDraft); setOpen(false) }}>Hủy</Button></div>
+            </div>
+        ) : null}
       </section>
     </div>
   )
