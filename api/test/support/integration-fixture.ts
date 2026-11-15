@@ -131,7 +131,7 @@ export async function login(username = 'integration_reception') {
 /** Test-only login at an explicit portal using the fixture credential. */
 export async function loginAtPortal(
   username: string,
-  portal: 'admin' | 'receptionist' | 'customer-care' | 'cashier',
+  portal: 'admin' | 'receptionist' | 'customer-care' | 'cashier' | 'waiter',
 ): Promise<import('supertest').Response> {
   return request(app).post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password, portal })
 }

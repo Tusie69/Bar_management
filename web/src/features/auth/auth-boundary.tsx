@@ -6,7 +6,12 @@ import { api } from "@/services"
 import { useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
 import { LoginPage, PortalUnderConstruction } from "./login-page"
-import { DEFAULT_AUTH_PORTAL, portalFromPath, unavailablePortalFromPath } from "@/domain/auth-portal"
+import {
+  DEFAULT_AUTH_PORTAL,
+  canonicalPortalPath,
+  portalFromPath,
+  unavailablePortalFromPath,
+} from "@/domain/auth-portal"
 
 export function AuthBoundary({ children }: { children: ReactNode }) {
   const status = useSession((state) => state.authStatus)
@@ -34,6 +39,15 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
     const unavailablePortal = unavailablePortalFromPath(pathname)
     if (unavailablePortal) return <PortalUnderConstruction label={unavailablePortal} />
     const routePortal = portalFromPath(pathname)
+    // TU-32: URL công bố là tiếng Việt (/letan, /thungan, /phucvu). URL cũ vẫn
+    // mở được vì đang nằm trong bookmark nhân viên, nhưng đưa về URL chuẩn để
+    // thanh địa chỉ không dạy hai cách gọi cùng một cổng. Dùng replace chứ
+    // không push: alias không nên để lại một bước trong lịch sử back.
+    const canonical = routePortal ? canonicalPortalPath(pathname) : null
+    if (canonical && typeof window !== "undefined") {
+      window.location.replace(canonical)
+      return null
+    }
     return <LoginPage portal={routePortal ?? sessionPortal ?? DEFAULT_AUTH_PORTAL} />
   }
   if (status === "error") {

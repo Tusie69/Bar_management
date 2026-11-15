@@ -12,7 +12,11 @@ const USERNAME_MAX = 80
 const DISPLAY_NAME_MAX = 120
 const PASSWORD_MIN = 12
 const PASSWORD_MAX = 1024
-const STAFF_ROLES = new Set(['RECEPTIONIST', 'CUSTOMER_CARE', 'CASHIER'])
+// TU-32: WAITER (Phục vụ) là cấp 6 và thuộc nhóm nhân viên, nên ADMIN WRITE
+// quản lý được tài khoản Phục vụ giống Lễ tân và Thu ngân. Thiếu nó ở đây thì
+// `listAssignableRoles` không trả về WAITER và không ai tạo được tài khoản
+// Phục vụ, kể cả OWNER.
+const STAFF_ROLES = new Set(['RECEPTIONIST', 'CUSTOMER_CARE', 'CASHIER', 'WAITER'])
 
 export type AccountStatus = 'ACTIVE' | 'DISABLED'
 export type AdminAccessLevel = 'WRITE' | 'READ_ONLY'

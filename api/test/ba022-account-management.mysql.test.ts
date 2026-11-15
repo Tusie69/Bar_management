@@ -73,7 +73,12 @@ mysqlDescribe('TU-07/TU-08/TU-09 account and admin access model', () => {
     const [roles] = await databasePool.execute<(RowDataPacket & { id: number; code: string })[]>(
       'SELECT id, code FROM roles ORDER BY id',
     )
-    expect(roles.map((row) => row.code).sort()).toEqual(['ADMIN', 'CASHIER', 'CUSTOMER_CARE', 'OWNER', 'RECEPTIONIST'])
+    // WAITER vào danh sách từ TU-32 (migration 0027), theo biên bản 15/11:
+    // Phục vụ là cấp 6 của mô hình sáu cấp. Năm role còn lại không đổi, và
+    // CUSTOMER_CARE vẫn ở đây — biên bản không nhắc tới nó, và "không nhắc
+    // tới" không phải là "bỏ đi".
+    expect(roles.map((row) => row.code).sort())
+      .toEqual(['ADMIN', 'CASHIER', 'CUSTOMER_CARE', 'OWNER', 'RECEPTIONIST', 'WAITER'])
     expect(roles.some((row) => row.code === 'OWNER_ADMIN')).toBe(false)
     expect(Number(roles.find((row) => row.code === 'OWNER')?.id)).toBe(1)
     const [columns] = await databasePool.execute<RowDataPacket[]>(
