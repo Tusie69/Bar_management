@@ -2,6 +2,8 @@
 
 Phần mềm quản lý vận hành nội bộ 21GAM. Giao diện canonical hỗ trợ desktop, tablet và Mobile V1; API HTTP xử lý đặt bàn, sơ đồ bàn, waitlist, check-in và Move/Merge.
 
+Nếu tiếp quản dự án bằng AI hoặc bàn giao cho lập trình viên mới, hãy bắt đầu từ [AI_HANDOFF.md](AI_HANDOFF.md). Tài liệu này mô tả kiến trúc hiện tại, luồng nghiệp vụ, bảo mật, dữ liệu, cách kiểm tra và các bẫy cần tránh.
+
 Tài liệu tổng hợp trạng thái và lộ trình: [Báo cáo dự án ngày 24/10/2026](docs/PROJECT_STATUS_2026-10-24.md).
 
 ## Công nghệ

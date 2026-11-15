@@ -3,12 +3,22 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useBusinessDate } from "@/hooks/use-data"
 import type { useReceptionSearch } from "@/hooks/use-reception-search"
-import { fmtDayMonth, type BusinessDate } from "@/lib/time"
+import { addDays, fmtDayMonth, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useUi } from "@/state/ui"
 import { DateField } from "./floor-toolbar"
 
 type ReceptionSearch = ReturnType<typeof useReceptionSearch>
+
+/**
+ * Số ngày quá khứ lễ tân xem lại được trên sơ đồ.
+ *
+ * Bằng đúng khoảng mà trang Đặt bàn đã cho phép từ trước, để hai màn hình
+ * không trả lời khác nhau cho cùng một câu hỏi "tối hôm kia bàn nào ngồi ai".
+ * Backend phục vụ sẵn ngày quá khứ: `readProjection` giữ carry-over thật cho
+ * các view hiện tại/quá khứ, nên đây thuần tuý là mở khoá ở UI.
+ */
+const PAST_DAYS = 60
 
 export function ReceptionDatePicker({ onDateChange, className }: { onDateChange?: () => void; className?: string }) {
   const today = useBusinessDate()
@@ -23,7 +33,7 @@ export function ReceptionDatePicker({ onDateChange, className }: { onDateChange?
     >
       <DateField
         value={date}
-        minDate={today}
+        minDate={addDays(today, -PAST_DAYS)}
         compactCalendar
         label={fmtDayMonth(date)}
         onChange={(next) => {

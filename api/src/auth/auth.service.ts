@@ -4,9 +4,10 @@ import { env } from '../config/env.js'
 import { databasePool } from '../database/pool.js'
 import { AppError } from '../errors/app-error.js'
 import type { AuthenticatedActor, AuthenticatedSession } from './authenticated-actor.js'
-import { isAuthPortal, rolesForPortal, type AuthPortal } from './auth-portal.js'
+import { isAuthPortal, portalRoleMatchSql, rolesForPortal, type AuthPortal } from './auth-portal.js'
 import { verifyPassword } from './password.js'
 import { createSessionToken, hashSessionToken } from './session-security.js'
+import { describeDevice, resolveDeviceId, shortDeviceId } from './device-identity.js'
 import { recordAuthAudit } from './auth-audit.js'
 import { notifySessionsRevoked, type SessionEndCode } from './session-lifecycle.js'
 
@@ -51,6 +52,12 @@ export async function login(
   password: string,
   portal: AuthPortal,
   deviceLabel?: string,
+  /**
+   * TU-33: mã thiết bị do client khai. Chỉ dùng để quản lý/hiển thị thiết bị,
+   * KHÔNG BAO GIỜ là yếu tố xác thực — quyền truy cập vẫn do cookie session
+   * quyết định. Thiếu hoặc không hợp lệ thì `resolveDeviceId` sinh mã mới.
+   */
+  deviceId?: string,
 ): Promise<LoginResult> {
   const [rows] = await databasePool.execute<LoginRow[]>(
     `SELECT u.id AS user_id, u.username, u.display_name, u.password_hash,
@@ -104,6 +111,7 @@ export async function login(
   }
 
   const token = createSessionToken()
+  const resolvedDeviceId = resolveDeviceId(deviceId)
   const expiresAt = new Date(Date.now() + env.session.ttlHours * 60 * 60 * 1000)
   const connection = await databasePool.getConnection()
   let sessionId: number
@@ -127,13 +135,23 @@ export async function login(
       throw new AppError(403, 'PORTAL_ACCESS_DENIED', 'Tài khoản không được phép đăng nhập tại cổng này.')
     }
 
-    const [activeRows] = await connection.execute<(RowDataPacket & { id: number })[]>(
-      `SELECT id FROM auth_sessions
+    // Đọc kèm device_id/device_label: audit của TU-33 phải nói được THIẾT BỊ
+    // NÀO bị thay thế, không chỉ "đã thu hồi n phiên". Khi một nhân viên gọi
+    // lên báo "tôi bị đẩy ra", con số n không giúp gì; mã thiết bị thì giúp.
+    const [activeRows] = await connection.execute<(RowDataPacket & {
+      id: number; device_id: string | null; device_label: string | null
+    })[]>(
+      `SELECT id, device_id, device_label FROM auth_sessions
        WHERE organization_id = ? AND user_id = ? AND revoked_at IS NULL
          AND expires_at > UTC_TIMESTAMP(3)`,
       [env.organizationId, user.user_id],
     )
     replacedSessionIds = activeRows.map((row) => Number(row.id))
+    const replacedDevices = activeRows.map((row) => ({
+      sessionId: Number(row.id),
+      deviceRef: shortDeviceId(row.device_id),
+      deviceLabel: row.device_label,
+    }))
     if (replacedSessionIds.length) {
       await connection.execute(
         `UPDATE auth_sessions
@@ -146,14 +164,18 @@ export async function login(
 
     const [result] = await connection.execute<ResultSetHeader>(
       `INSERT INTO auth_sessions
-        (organization_id, membership_id, user_id, token_hash, device_label, expires_at, portal)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        (organization_id, membership_id, user_id, token_hash, device_label, device_id, expires_at, portal)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         env.organizationId,
         lockedUser.membership_id,
         lockedUser.user_id,
         hashSessionToken(token),
-        deviceLabel?.slice(0, 100) || null,
+        // Nhãn thiết bị được rút gọn về mức "Chrome trên Android" thay vì lưu
+        // nguyên User-Agent: nhân viên chỉ cần nhận ra máy nào là máy mình, và
+        // chuỗi UA đầy đủ mang nhiều thông tin hơn mức đó.
+        describeDevice(deviceLabel)?.slice(0, 100) ?? null,
+        resolvedDeviceId,
         expiresAt,
         portal,
       ],
@@ -166,7 +188,15 @@ export async function login(
     if (replacedSessionIds.length) {
       await recordAuthAudit({
         action: 'AUTH_SESSION_REVOKED', userId: Number(user.user_id), portal,
-        reasonCode: 'SESSION_REPLACED', metadata: { revokedSessions: replacedSessionIds.length },
+        reasonCode: 'SESSION_REPLACED',
+        metadata: {
+          revokedSessions: replacedSessionIds.length,
+          // Thiết bị bị thay thế và thiết bị vừa đăng nhập, cả hai ở dạng mã
+          // ngắn. Không ghi token, cookie hay User-Agent gốc.
+          replacedDevices,
+          newSessionId: sessionId,
+          newDeviceRef: shortDeviceId(resolvedDeviceId),
+        },
       }, connection)
     }
     await recordAuthAudit({
@@ -255,6 +285,7 @@ async function portalAllowed(
 }
 
 export async function inspectSession(sessionToken: string): Promise<SessionInspection> {
+  const portalRoleMatch = portalRoleMatchSql('s.portal')
   const [rows] = await databasePool.execute<SessionRow[]>(
     `SELECT s.id AS session_id, s.organization_id, s.membership_id, s.user_id,
        u.username, u.display_name, s.portal,
@@ -266,12 +297,7 @@ export async function inspectSession(sessionToken: string): Promise<SessionInspe
          JOIN roles AS r ON r.id = mr.role_id
          WHERE mr.organization_id = s.organization_id AND mr.membership_id = s.membership_id
            AND mr.revoked_at IS NULL AND (mr.venue_id IS NULL OR mr.venue_id = ?)
-           AND (
-             (s.portal = 'admin' AND (r.code = 'OWNER' OR (r.code = 'ADMIN' AND mr.access_level IN ('WRITE', 'READ_ONLY'))))
-             OR (s.portal = 'receptionist' AND r.code = 'RECEPTIONIST')
-             OR (s.portal = 'customer-care' AND r.code = 'CUSTOMER_CARE')
-             OR (s.portal = 'cashier' AND r.code = 'CASHIER')
-           )
+           AND ${portalRoleMatch.sql}
        ) AS portal_role_active
      FROM auth_sessions AS s
      JOIN memberships AS m
@@ -280,7 +306,7 @@ export async function inspectSession(sessionToken: string): Promise<SessionInspe
      JOIN venues AS v ON v.organization_id = s.organization_id AND v.id = ?
      WHERE s.organization_id = ? AND s.token_hash = ?
      LIMIT 1`,
-    [env.venueId, env.venueId, env.organizationId, hashSessionToken(sessionToken)],
+    [env.venueId, ...portalRoleMatch.parameters, env.venueId, env.organizationId, hashSessionToken(sessionToken)],
   )
   const row = rows[0]
   if (!row || !isAuthPortal(row.portal)) {
@@ -291,7 +317,9 @@ export async function inspectSession(sessionToken: string): Promise<SessionInspe
       return {
         ok: false,
         code: 'SESSION_REPLACED',
-        message: 'Tài khoản của bạn đã được đăng nhập trên một thiết bị khác. Phiên hiện tại đã kết thúc.',
+        // Câu chữ do TU-33 chốt; web dùng đúng câu này trong
+        // `sessionEndMessage` để nhân viên gặp một câu duy nhất ở mọi nơi.
+        message: 'Tài khoản này vừa được đăng nhập trên thiết bị khác. Phiên đăng nhập hiện tại đã kết thúc.',
       }
     }
     if (row.revoke_reason === 'ACCOUNT_LOCKED') {
@@ -376,7 +404,15 @@ export async function listPermissions(actor: AuthenticatedActor): Promise<string
          OR mr.access_level = 'WRITE'
          OR p.code IN (
            'customer.view_masked', 'customer.phone.reveal', 'booking.phone.reveal',
-           'audit.read', 'report.read', 'user.read'
+           'audit.read', 'report.read', 'user.read',
+           -- TU-33: xem danh sach phien la chan doan, cung loai voi audit.read.
+           -- session.revoke co y KHONG co o day: buoc dang xuat day mot nhan
+           -- vien ra khoi he thong giua ca, nen no la mutation va Admin
+           -- Read-Only khong duoc lam.
+           'session.read',
+           -- Ba permission order.* / payment.* cua TU-32: Admin Read-Only chi
+           -- duoc doc, nen chi order.read nam trong danh sach nay.
+           'order.read'
          )
        )
      ORDER BY p.code`,

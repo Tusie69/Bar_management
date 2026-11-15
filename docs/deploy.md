@@ -336,41 +336,302 @@ Nếu hạ `REALTIME_HEARTBEAT_MS`, giữ nó **nhỏ hơn** `proxy_read_timeout
 
 ## 7. Sao lưu tự động
 
-Script sao lưu đọc thông tin đăng nhập từ `~/.my.cnf` của user `gam21` thay vì
-nhận mật khẩu trên dòng lệnh, vì tham số dòng lệnh hiện ra trong `ps` cho mọi
-user trên máy. Tạo file đó một lần, quyền `600`, nội dung là một mục `[client]`
-khai ba khóa: `user` là `gam21`, `password` là mật khẩu MySQL bạn đặt ở mục 3,
-`host` là `127.0.0.1`.
+Ba thành phần: `deploy/scripts/backup-mysql.sh` chụp và đẩy bản sao lưu,
+`deploy/scripts/backup-retention.mjs` quyết định giữ/xoá bản nào, và
+`21gam-backup.timer` chạy nó lúc 06:00 hằng ngày.
+
+### 7.1 Bảo mật thông tin đăng nhập
+
+Script đọc thông tin đăng nhập từ MySQL option file thay vì nhận mật khẩu trên
+dòng lệnh, vì tham số dòng lệnh hiện ra trong `ps` cho mọi user trên máy. Tạo
+file đó một lần, quyền `600`, nội dung là một mục `[client]` khai ba khóa:
+`user` là `gam21`, `password` là mật khẩu MySQL bạn đặt ở mục 3, `host` là
+`127.0.0.1`.
 
 ```bash
-sudo -u gam21 install -m 600 /dev/null /srv/21gam/.my.cnf
-sudo -u gam21 nano /srv/21gam/.my.cnf     # tự gõ, đừng dán từ chỗ khác
+sudo -u gam21 install -m 600 /dev/null /home/gam21/.my.cnf
+sudo -u gam21 nano /home/gam21/.my.cnf     # tự gõ, đừng dán từ chỗ khác
 ```
 
-Rồi:
+Script **từ chối chạy** nếu quyền file khác `600`/`400`. Một lần `chmod 644` vô
+tình là đủ để mọi user trên máy đọc được mật khẩu database.
+
+Tài khoản backup chỉ cần quyền tối thiểu để dump một database. Nếu muốn tách
+khỏi user ứng dụng:
+
+```bash
+sudo mysql -e "CREATE USER 'gam21_backup'@'127.0.0.1' IDENTIFIED BY '<mật-khẩu>';"
+sudo mysql -e "GRANT SELECT, SHOW VIEW, EVENT, TRIGGER, LOCK TABLES
+  ON gam21_platform.* TO 'gam21_backup'@'127.0.0.1';"
+```
+
+Không cấp `PROCESS` toàn cục: script đã dùng `--no-tablespaces` đúng để không
+cần nó. Cấp `PROCESS` chỉ để im một dòng cảnh báo là nới quyền thừa.
+
+Những thứ **không bao giờ** được vào Git: `.my.cnf`, `rclone.conf`,
+`deploy/env/*.env`, và mọi file `*.sql.gz`. `.gitignore` đã loại trừ sẵn cả
+bốn nhóm; `deploy/env/` dùng allowlist nên chỉ file `*.example` đi vào repo.
+
+### 7.2 Cấu hình backup
+
+```bash
+sudo -u gam21 mkdir -p /srv/21gam/deploy/env
+sudo -u gam21 cp /srv/21gam/deploy/env/backup.env.example /srv/21gam/deploy/env/backup.env
+sudo -u gam21 chmod 600 /srv/21gam/deploy/env/backup.env
+sudo -u gam21 nano /srv/21gam/deploy/env/backup.env
+```
+
+Xem `deploy/env/backup.env.example` để biết từng biến. Quan trọng nhất là
+`BACKUP_REMOTE`: script **từ chối chạy** nếu nó trống, vì bản sao lưu nằm cùng
+ổ đĩa với database không chống được hỏng ổ — mà đó đúng là trường hợp cần tới
+backup nhất. Đặt `BACKUP_REMOTE=none` nếu thực sự chấp nhận chỉ lưu local.
+
+### 7.3 Cấu hình remote storage
+
+Dùng `rclone` tới Google Drive của dự án:
+
+```bash
+sudo apt install rclone
+sudo -u gam21 rclone config
+#   n) new remote
+#   name> gdrive-21gam
+#   storage> drive
+#   scope> 1 (full access) hoặc 3 (chỉ file do rclone tạo — đủ dùng và hẹp hơn)
+#   dùng "headless / remote setup" vì VPS không có browser
+sudo -u gam21 rclone mkdir gdrive-21gam:21GAM/backups
+sudo -u gam21 rclone lsd gdrive-21gam:21GAM        # xác nhận kết nối
+```
+
+Token OAuth nằm ở `/home/gam21/.config/rclone/rclone.conf`. Đặt quyền `600`.
+Nó là chìa khoá vào nơi lưu bản sao lưu nên được bảo vệ ngang mật khẩu
+database:
+
+```bash
+sudo -u gam21 chmod 600 /home/gam21/.config/rclone/rclone.conf
+```
+
+Thư mục Drive chứa dump dữ liệu khách thật, nên chỉ chia sẻ cho người cần:
+cấp quyền cho Hưng và Nam ở mức **Viewer**, không phải Editor, để không ai xoá
+được bản sao lưu từ giao diện Drive. Không bật link công khai.
+
+### 7.4 Cấu hình scheduler
 
 ```bash
 sudo chmod +x /srv/21gam/deploy/scripts/*.sh
-sudo cp /srv/21gam/deploy/systemd/21gam-backup.* /etc/systemd/system/
+sudo cp /srv/21gam/deploy/systemd/21gam-backup.service /etc/systemd/system/
+sudo cp /srv/21gam/deploy/systemd/21gam-backup.timer /etc/systemd/system/
+sudo cp /srv/21gam/deploy/systemd/21gam-backup-failed.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now 21gam-backup.timer
-sudo systemctl start 21gam-backup.service      # chạy thử ngay một lần
-ls -lh /srv/21gam/backups
 ```
 
-Sao lưu lúc 06:00 giờ Việt Nam, sau khi business day worker đã đóng lượt khách
-lúc 05:00, nên mỗi bản chụp đúng một ngày kinh doanh đã khép lại. Giữ 14 bản.
+Kiểm tra timezone ngay sau khi cài. Timer khai `Asia/Ho_Chi_Minh` thẳng trong
+`OnCalendar`, nhưng systemd dưới 252 không nhận hậu tố đó:
 
-Bản sao lưu nằm cùng ổ đĩa với database, nên nó chống được lỗi thao tác chứ
-**không** chống được hỏng ổ. Hãy đồng bộ `/srv/21gam/backups` sang nơi khác
-(`rclone`, `rsync` sang máy khác) nếu dữ liệu quan trọng.
+```bash
+systemctl list-timers 21gam-backup.timer   # NEXT phải là 06:00 giờ Việt Nam
+timedatectl                                # đối chiếu timezone máy
+systemd-analyze calendar '*-*-* 06:00:00 Asia/Ho_Chi_Minh'
+```
+
+Nếu lệnh thứ ba báo lỗi cú pháp thì systemd quá cũ: bỏ hậu tố timezone trong
+timer và đặt luôn máy về giờ Việt Nam bằng
+`sudo timedatectl set-timezone Asia/Ho_Chi_Minh`.
+
+Backup chạy 06:00, sau khi business day worker đóng lượt khách lúc 05:00, nên
+mỗi bản chụp đúng một ngày kinh doanh đã khép lại. Timer có `Persistent=true`
+nên chạy bù nếu VPS tắt vào đúng giờ đó, và `RandomizedDelaySec=300` để không
+đụng các job khác.
+
+Service không cần ai đăng nhập: nó chạy dưới user `gam21` do systemd khởi động.
+
+### 7.5 Chạy tay
+
+```bash
+# Xem chính sách retention sẽ làm gì, không chụp và không xoá gì:
+sudo -u gam21 BACKUP_DRY_RUN=1 /srv/21gam/deploy/scripts/backup-mysql.sh
+
+# Chạy thật một lần:
+sudo systemctl start 21gam-backup.service
+sudo journalctl -u 21gam-backup.service -n 40 --no-pager
+```
+
+Bắt buộc chạy tay một lần **trước mỗi migration** — xem mục 6.
+
+### 7.6 Kiểm tra backup
+
+```bash
+ls -lh /srv/21gam/backups                       # bản local
+sudo -u gam21 rclone lsl gdrive-21gam:21GAM/backups   # bản trên Drive
+sudo -u gam21 gzip -t /srv/21gam/backups/21gam_YYYYMMDD_HHmm.sql.gz
+```
+
+Bản sao lưu tốt phải thỏa cả bốn: tên đúng dạng `21gam_YYYYMMDD_HHmm.sql.gz`,
+`gzip -t` không báo lỗi, kích thước tương đương những bản trước, và **có mặt
+trên remote**. Script tự kiểm cả bốn: nó so kích thước file trên remote với
+local và chạy `rclone check`, rồi mới coi là thành công.
+
+Dòng log cuối cùng nói rõ trạng thái:
+
+```text
+HOÀN TẤT: 21gam_20261116_0600.sql.gz đã có bản local và bản remote đã xác minh.
+HOÀN TẤT (chỉ local): 21gam_20261116_0600.sql.gz. Chưa có bản ngoài server.
+```
+
+Dòng thứ hai nghĩa là chưa đạt yêu cầu go-live.
+
+### 7.7 Retention
+
+Chính sách: **giữ 7 bản daily gần nhất, cộng 1 bản weekly cho mỗi tuần trong 4
+tuần gần nhất.** Áp dụng cho cả thư mục local và remote.
+
+Chi tiết trong `deploy/scripts/backup-retention.mjs`:
+
+* giữ bản mới nhất của mỗi ngày, với 7 ngày có backup gần nhất;
+* giữ thêm bản mới nhất của mỗi tuần ISO, với 4 tuần có backup gần nhất;
+* một bản vừa là daily vừa là weekly không bị đếm hai lần;
+* bản weekly **không** bị xoá chỉ vì đã rơi ra khỏi 7 ngày gần nhất;
+* bản mới nhất tuyệt đối không bao giờ bị xoá;
+* file không khớp mẫu `21gam_YYYYMMDD_HHmm.sql.gz` không bao giờ bị chạm —
+  bản `.partial` của lần chạy hỏng, bản `pre-restore`, bản theo tên cũ
+  `gam21_platform-*` và file của người khác đều nằm ngoài phạm vi.
+
+Retention chỉ chạy **sau khi** bản mới đã chụp xong và đã xác minh trên remote.
+Một lần dump hoặc upload thất bại sẽ thoát trước đó, nên không có đường nào dẫn
+tới việc xoá bản cũ trong khi bản mới chưa tồn tại.
+
+Xem chính sách quyết định gì mà không xoá:
+
+```bash
+ls -1 /srv/21gam/backups | node /srv/21gam/deploy/scripts/backup-retention.mjs --json
+```
+
+Chính sách có test mô phỏng lịch sử nhiều tuần: `api/test/backup-retention.test.ts`.
+
+### 7.8 Xử lý backup thất bại
+
+Khi script thoát khác 0, systemd chạy `21gam-backup-failed.service`, unit này
+ghi một dòng vào `/srv/21gam/backups/BACKUP-FAILED.log` và vào journal với
+mức `err`. Đặt `BACKUP_ALERT_COMMAND` trong `backup.env` để gửi thêm Zalo,
+Telegram hay email.
+
+Chẩn đoán:
+
+```bash
+sudo systemctl status 21gam-backup.service
+sudo journalctl -u 21gam-backup.service -n 60 --no-pager
+cat /srv/21gam/backups/BACKUP-FAILED.log
+```
+
+Các lỗi hay gặp:
+
+| Dòng log | Nguyên nhân | Xử lý |
+| --- | --- | --- |
+| `đang có quyền 644, phải là 600` | option file bị nới quyền | `chmod 600` |
+| `mysqldump thoát với mã 2` | sai thông tin đăng nhập hoặc MySQL chưa chạy | kiểm tra `.my.cnf`, `systemctl status mysql` |
+| `Dump chỉ N byte, nhỏ hơn ngưỡng` | user backup thiếu quyền trên bảng, hoặc database rỗng | kiểm tra GRANT ở mục 7.1 |
+| `rclone copyto thất bại` | token hết hạn, hết dung lượng Drive, mất mạng | `rclone lsd gdrive-21gam:` để thử lại kết nối |
+| `Kích thước trên remote khác local` | upload đứt giữa đường | chạy lại; rclone sẽ ghi đè |
+| `Một lần backup khác đang chạy` | lần trước còn treo | `systemctl status`, xem có mysqldump nào treo |
+
+Backup thất bại **không** xoá bản cũ, nên một vài ngày hỏng không làm mất
+những bản đang giữ. Nhưng mỗi ngày không có bản mới là một ngày dữ liệu không
+được bảo vệ: xử lý trong ngày.
 
 ## 8. Phục hồi
 
+### 8.1 Diễn tập phục hồi trên database test
+
+Làm việc này **trước** khi cần tới nó thật. Script chỉ chấp nhận database có
+hậu tố `_test` và từ chối mọi tên khác, nên nó không thể chạm vào dữ liệu quán.
+
+```bash
+sudo mysql -e "CREATE DATABASE gam21_restore_test CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+sudo mysql -e "GRANT ALL PRIVILEGES ON gam21_restore_test.* TO 'gam21'@'127.0.0.1';"
+
+# Tải bản từ Drive về rồi phục hồi và kiểm chứng:
+sudo -u gam21 /srv/21gam/deploy/scripts/restore-verify.sh 21gam_20261116_0600.sql.gz
+```
+
+Script kiểm: gzip toàn vẹn, số bảng ≥ 30, có `schema_migrations` và migration
+cuối là gì, row count của 21 bảng nghiệp vụ, và ba phép kiểm tham chiếu mồ côi
+(`memberships`, `table_allocations`, `role_permissions`). Mọi truy vấn chỉ đếm
+và đọc `information_schema`; không câu nào SELECT tên, số điện thoại hay ghi
+chú khách, nên kết quả an toàn để chụp ảnh làm bằng chứng nghiệm thu.
+
+Tham số là tên file trên remote — script tự tải về. Đó là chủ ý: diễn tập phải
+chứng minh bản **trên Drive** dùng được, vì một bản local tốt không nói gì về
+bản đã upload.
+
+### 8.2 Kiểm tra sau khi phục hồi
+
+Bước cuối là khởi động một API test trỏ vào database vừa phục hồi rồi đăng nhập
+thật. Nếu bản phục hồi không còn tài khoản nào dùng được (ví dụ bản dump lấy từ
+một database test đã bị dọn dữ liệu), seed một tài khoản nghiệm thu:
+
+```bash
+# Script từ chối mọi database không kết thúc bằng _test.
+cd /srv/21gam/api
+DB_NAME=gam21_restore_test DRILL_PASSWORD='<gõ-tay>' node scripts/restore-drill-seed.mjs
+```
+
+```bash
+# Khởi động API test trỏ vào database vừa phục hồi (PORT khác API thật).
+cd /srv/21gam/api
+DB_NAME=gam21_restore_test PORT=3099 NODE_ENV=test npx tsx src/server.ts
+```
+
+```bash
+# Đăng nhập và đọc dữ liệu nghiệp vụ. Mật khẩu đọc từ file, không nằm trên
+# dòng lệnh, để nó không vào lịch sử shell hay vào `ps`.
+curl -s -c /tmp/c.txt -X POST http://localhost:3099/api/v1/auth/login \
+  -H 'Content-Type: application/json' -H 'Origin: http://localhost:5173' \
+  -d @/tmp/login.json | head -c 300
+curl -s -b /tmp/c.txt http://localhost:3099/api/v1/auth/sessions -H 'Origin: http://localhost:5173'
+```
+
+```bash
+# Dọn: xoá database diễn tập, file đăng nhập tạm và cookie.
+sudo mysql -e "DROP DATABASE gam21_restore_test;"
+rm -f /tmp/login.json /tmp/c.txt
+```
+
+Đừng dán mật khẩu vào lịch sử shell hay vào ảnh nghiệm thu.
+
+**`--set-gtid-purged=OFF` là điều kiện để diễn tập được.** Server bật binlog và
+GTID, nên mysqldump mặc định nhúng `SET @@GLOBAL.GTID_PURGED` vào bản dump. Lệnh
+đó làm mọi lần restore vào một database khác **trên cùng server** thất bại với
+`GTID_PURGED cannot be changed: the added gtid set must not overlap with
+GTID_EXECUTED` — mà đó đúng là cách mục 8.1 diễn tập. `backup-mysql.sh` và
+`restore-mysql.sh` đều đã truyền cờ này. Đánh đổi: bản dump không mang trạng
+thái GTID nên không dùng để khởi tạo một replica; 21GAM chạy một MySQL duy nhất
+và mục đích của bản dump là phục hồi dữ liệu.
+
+**Số điện thoại và khoá giải mã.** Bản dump chứa SĐT ở dạng đã mã hoá và
+**không** chứa khoá. Sau khi phục hồi, SĐT chỉ đọc được nếu còn
+`PHONE_ENCRYPTION_KEYS` và `PHONE_HMAC_KEYS` — hai khoá này phải được cất ở nơi
+khác bản backup (mục 5 và `docs/security/phone-encryption-setup.md`). Một bản
+sao lưu database đầy đủ nhưng mất khoá nghĩa là mất toàn bộ SĐT khách. Khi diễn
+tập, kiểm luôn rằng khoá lấy lại được từ nơi cất bí mật, không chỉ kiểm rằng
+database phục hồi được.
+
+### 8.3 Phục hồi database vận hành
+
+Đây là thao tác phá huỷ. Chỉ làm khi đã xác định đúng bản cần phục hồi, tốt
+nhất là sau khi diễn tập ở mục 8.1 với chính bản đó.
+
 ```bash
 sudo systemctl stop 21gam-api
-sudo -u gam21 /srv/21gam/deploy/scripts/restore-mysql.sh /srv/21gam/backups/gam21_platform-YYYYMMDD-HHMMSS.sql.gz
+sudo -u gam21 /srv/21gam/deploy/scripts/restore-mysql.sh \
+  /srv/21gam/backups/21gam_YYYYMMDD_HHmm.sql.gz
 sudo systemctl start 21gam-api
+```
+
+Nếu bản cần phục hồi chỉ còn trên Drive, tải về trước:
+
+```bash
+sudo -u gam21 rclone copyto gdrive-21gam:21GAM/backups/21gam_YYYYMMDD_HHmm.sql.gz \
+  /srv/21gam/backups/21gam_YYYYMMDD_HHmm.sql.gz
 ```
 
 Script tự chụp một bản an toàn của trạng thái hiện tại trước khi ghi đè, từ

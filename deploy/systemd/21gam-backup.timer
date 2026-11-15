@@ -1,11 +1,21 @@
-# Sao lưu lúc 06:00 giờ Việt Nam, tức là sau khi business day worker đã đóng
-# các lượt khách lúc 05:00, nên bản sao lưu luôn chụp một ngày đã khép lại.
+# Sao lưu lúc 06:00 giờ Việt Nam, sau khi business day worker đã đóng các lượt
+# khách lúc 05:00, nên bản sao lưu luôn chụp một ngày đã khép lại.
 
 [Unit]
 Description=Sao lưu MySQL 21GAM hằng ngày
 
 [Timer]
-OnCalendar=*-*-* 06:00:00
+# Múi giờ ghi thẳng trong OnCalendar (systemd >= 252). Nếu không ghi, systemd
+# dùng timezone của máy: một VPS đặt UTC sẽ chạy backup lúc 13:00 giờ Việt Nam,
+# tức là giữa giờ chuẩn bị mở quán, và không ai nhận ra cho tới khi xem log.
+#
+# Kiểm tra sau khi cài, hai lệnh này phải khớp nhau:
+#   systemctl list-timers 21gam-backup.timer
+#   timedatectl
+#
+# systemd < 252 không nhận hậu tố timezone. Khi đó bỏ hậu tố và đặt luôn máy
+# về Asia/Ho_Chi_Minh:  sudo timedatectl set-timezone Asia/Ho_Chi_Minh
+OnCalendar=*-*-* 06:00:00 Asia/Ho_Chi_Minh
 # Chạy bù nếu VPS tắt vào đúng giờ đó.
 Persistent=true
 RandomizedDelaySec=300

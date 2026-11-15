@@ -9,6 +9,7 @@ import {
 } from './authenticated-actor.js'
 import { hasPermission, inspectSession } from './auth.service.js'
 import { readSessionCookie, requireCsrfHeader } from './session-security.js'
+import { touchSessionActivity } from './session-directory.js'
 
 const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS'])
 
@@ -30,6 +31,14 @@ export const requireAuthentication: RequestHandler = async (request, _response, 
   const inspection = await inspectSession(token)
   if (!inspection.ok) throw new AppError(401, inspection.code, inspection.message)
   attachAuthentication(request, inspection.authentication)
+  // TU-33: mốc hoạt động cuối cho danh sách thiết bị. Không await: đây là
+  // thông tin phụ trợ cho một màn hình quản trị, nó không được phép thêm một
+  // lượt đi-về database vào độ trễ của mọi request nghiệp vụ. Hàm này tự tiết
+  // lưu (mặc định 60 giây) và tự nuốt lỗi, nên nó không tạo điểm ghi nóng và
+  // không làm thất bại request. Trạng thái xác thực vẫn do revoked_at và
+  // expires_at quyết định, không do cột này.
+  const sessionId = inspection.authentication.actor.authSessionId
+  if (sessionId !== undefined) void touchSessionActivity(sessionId)
   next()
 }
 

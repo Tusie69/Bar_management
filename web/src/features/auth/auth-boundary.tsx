@@ -6,7 +6,12 @@ import { api } from "@/services"
 import { useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
 import { LoginPage, PortalUnderConstruction } from "./login-page"
-import { DEFAULT_AUTH_PORTAL, portalFromPath, unavailablePortalFromPath } from "@/domain/auth-portal"
+import {
+  DEFAULT_AUTH_PORTAL,
+  canonicalPortalPath,
+  portalFromPath,
+  unavailablePortalFromPath,
+} from "@/domain/auth-portal"
 
 export function AuthBoundary({ children }: { children: ReactNode }) {
   const status = useSession((state) => state.authStatus)
@@ -34,6 +39,12 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
     const unavailablePortal = unavailablePortalFromPath(pathname)
     if (unavailablePortal) return <PortalUnderConstruction label={unavailablePortal} />
     const routePortal = portalFromPath(pathname)
+    // Canonicalize portal aliases without discarding admin deep links.
+    const canonical = routePortal ? canonicalPortalPath(pathname) : null
+    if (canonical && typeof window !== "undefined") {
+      window.location.replace(canonical + window.location.search + window.location.hash)
+      return null
+    }
     const resolvedPortal = routePortal ?? sessionPortal ?? DEFAULT_AUTH_PORTAL
     if (resolvedPortal === "admin") {
       return (

@@ -40,6 +40,12 @@ export type Permission =
   | "user.read"
   | "user.manage"
   | "operation.undo"
+  // TU-32: gian giao phan quyen cho module order. Chua co endpoint nao dung,
+  // nen UI cung chua co control nao doc chung; chung o day de bang role x
+  // permission phan anh dung sau cap va de route guard tuong lai co cho neo.
+  | "order.create"
+  | "order.read"
+  | "payment.collect"
 
 const O: RoleCode = "OWNER"
 const A: RoleCode = "ADMIN"
@@ -47,6 +53,7 @@ const M: RoleCode[] = [O, A]
 const R: RoleCode = "RECEPTIONIST"
 const CC: RoleCode = "CUSTOMER_CARE"
 const C: RoleCode = "CASHIER"
+const W: RoleCode = "WAITER"
 
 export const PERMISSION_MATRIX: Record<Permission, RoleCode[]> = {
   "reservation.create": [...M, R],
@@ -84,6 +91,12 @@ export const PERMISSION_MATRIX: Record<Permission, RoleCode[]> = {
   "user.read": M,
   "user.manage": M,
   "operation.undo": [...M, R],
+  // Phuc vu goi mon va xem trang thai cho thanh toan; Thu ngan lam ca hai cong
+  // viec nay cong them thu tien. Phuc vu KHONG co payment.collect va KHONG co
+  // quyen nao ve khach hang, ke ca 3 so cuoi: bien ban 15/11 khong cap.
+  "order.create": [...M, C, W],
+  "order.read": [...M, C, W],
+  "payment.collect": [...M, C],
 }
 
 export const PERMISSION_LABEL: Record<Permission, string> = {
@@ -120,6 +133,9 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "user.read": "Xem danh sách tài khoản",
   "user.manage": "Quản lý tài khoản",
   "operation.undo": "Hoàn tác / Làm lại",
+  "order.create": "Gọi món, lên đơn",
+  "order.read": "Xem đơn và trạng thái chờ thanh toán",
+  "payment.collect": "Thu tiền, in bill",
 }
 
 export function roleCan(role: RoleCode, permission: Permission): boolean {
@@ -177,4 +193,7 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
     ],
   },
   { title: "Quản trị", items: ["venue.configure", "user.read", "user.manage", "operation.undo"] },
+  // Nhóm này hiện chỉ để đối chiếu phân quyền sáu cấp. Chưa có màn hình nào
+  // trong web đọc ba permission đó vì module order chưa tồn tại.
+  { title: "Gọi món & thanh toán", items: ["order.create", "order.read", "payment.collect"] },
 ]

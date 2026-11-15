@@ -37,8 +37,10 @@ conflict, 422 `INVALID_PHONE_NUMBER` / `BOOKING_PHONE_UNAVAILABLE`, 429 rate lim
 | POST | `/auth/login` | Trusted origin | Body `{username,password,portal}`; returns `{user,permissions,csrfToken,portal,expiresAt}` and session cookie |
 | GET | `/auth/me` | Session | `{user,permissions,csrfToken,portal}` |
 | POST | `/auth/logout` | Session + CSRF | 204, no body |
+| GET | `/auth/sessions` | Session + `session.read` | `{sessions:[...]}`; các phiên đang hoạt động trong organization (TU-33) |
+| POST | `/auth/sessions/:id/revoke` | Session + CSRF + `session.revoke` | `{revokedSessions,targetUserId}`; buộc đăng xuất một phiên (TU-33) |
 
-`portal` is one of `admin`, `receptionist`, `customer-care` or `cashier`. The server verifies the password before checking portal eligibility, creates no session for a denied portal and stores the verified portal on the server-side session. Mapping is `admin → OWNER | ADMIN`, `receptionist → RECEPTIONIST`, `customer-care → CUSTOMER_CARE`, `cashier → CASHIER`. ADMIN must have access level `WRITE` or `READ_ONLY` on its active venue grant. A multi-role account receives only roles and permissions mapped to the selected portal; the request value never grants a role. Changing a client URL cannot change the session portal. Invalid portal is `INVALID_PORTAL` (400); valid credentials at a disallowed portal are `PORTAL_ACCESS_DENIED` (403).
+`portal` is one of `admin`, `receptionist`, `customer-care`, `cashier` or `waiter`. The server verifies the password before checking portal eligibility, creates no session for a denied portal and stores the verified portal on the server-side session. Mapping is `admin → OWNER | ADMIN`, `receptionist → RECEPTIONIST`, `customer-care → CUSTOMER_CARE`, `cashier → CASHIER`, `waiter → WAITER`. The mapping lives in one place (`PORTAL_ROLE_CODES` in `api/src/auth/auth-portal.ts`) and the session-validation SQL is generated from it, so login and session checks cannot disagree about which roles a portal accepts. ADMIN must have access level `WRITE` or `READ_ONLY` on its active venue grant. A multi-role account receives only roles and permissions mapped to the selected portal; the request value never grants a role. Changing a client URL cannot change the session portal. Invalid portal is `INVALID_PORTAL` (400); valid credentials at a disallowed portal are `PORTAL_ACCESS_DENIED` (403).
 
 `user` contains `{id,username,displayName,organizationId,venueId,roles,accessLevel}`; `accessLevel` is `WRITE`, `READ_ONLY`, or `null` for non-ADMIN roles. `roles` contains only active role codes eligible for the session portal and venue. Raw session tokens are never included in JSON. Login is limited after five failed credential attempts for the same IP/username in a 15-minute window. `/auth/me` restores the same portal after refresh. Disabled users, suspended memberships, expired/revoked sessions, or revocation of the last role eligible for the session portal make the next authenticated request return 401. Logout revokes the database session and clears the HttpOnly cookie. Migration `0012_add_auth_session_portal.sql` revokes legacy active sessions that had no server-verified portal instead of assigning one heuristically.
 
@@ -62,7 +64,7 @@ Session failures are based on the current database row, not client claims:
 
 | Code | Meaning | Vietnamese message |
 | --- | --- | --- |
-| `SESSION_REPLACED` | A later successful login replaced this session | `Tài khoản của bạn đã được đăng nhập trên một thiết bị khác. Phiên hiện tại đã kết thúc.` |
+| `SESSION_REPLACED` | A later successful login replaced this session | `Tài khoản này vừa được đăng nhập trên thiết bị khác. Phiên đăng nhập hiện tại đã kết thúc.` |
 | `SESSION_EXPIRED` | `expires_at` has passed | `Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.` |
 | `SESSION_REVOKED` | Logout, role/membership loss or another explicit revocation | `Phiên đăng nhập đã bị thu hồi. Vui lòng đăng nhập lại.` |
 | `ACCOUNT_LOCKED` | User is disabled or the session was revoked by account lock | `Tài khoản đã bị khóa. Vui lòng liên hệ quản trị viên.` |
@@ -71,7 +73,7 @@ Session failures are based on the current database row, not client claims:
 Example replaced-session response:
 
 ```json
-{"error":{"code":"SESSION_REPLACED","message":"Tài khoản của bạn đã được đăng nhập trên một thiết bị khác. Phiên hiện tại đã kết thúc."}}
+{"error":{"code":"SESSION_REPLACED","message":"Tài khoản này vừa được đăng nhập trên thiết bị khác. Phiên đăng nhập hiện tại đã kết thúc."}}
 ```
 
 The web client clears the in-memory principal, permissions and CSRF state, closes its mounted SSE subscription and
@@ -80,6 +82,113 @@ returns to the matching portal login. It does not refresh or automatically log i
 session. Login success/failure, replacement, logout and session revocation write redacted `operation_log` events; no
 username, password/hash, raw token, cookie, IP or customer PII is included. Audit write failure is reported server-side
 but never exposes secrets or corrupts the session transaction.
+
+### Sáu cấp tài khoản (TU-32)
+
+Biên bản họp 15/11/2026 mô tả sáu cấp nghiệp vụ. Chúng ánh xạ vào **sáu role database**, trong đó ba cấp quản trị dùng
+hai role cộng với `access_level` — không tạo ba role riêng chỉ vì nghiệp vụ có ba cấp.
+
+| Cấp | Vai trò nghiệp vụ | Role + access level | Cổng đăng nhập |
+| --- | --- | --- | --- |
+| 1 | SuperAdmin | `OWNER` | `/admin` |
+| 2 | Admin Edit | `ADMIN` + `WRITE` | `/admin` |
+| 3 | Admin Read-Only | `ADMIN` + `READ_ONLY` | `/admin` |
+| 4 | Lễ tân | `RECEPTIONIST` | `/letan` |
+| 5 | Thu ngân | `CASHIER` | `/thungan` |
+| 6 | Phục vụ | `WAITER` | `/phucvu` |
+
+`CUSTOMER_CARE` vẫn tồn tại cùng toàn bộ membership của nó tại cổng `/customer-care`. Biên bản không nhắc tới vai trò
+này, và "không nhắc tới" không phải là "bỏ đi".
+
+**URL và mã portal là hai lớp khác nhau.** URL công bố cho nhân viên là tiếng Việt; mã portal gửi lên API và lưu trong
+`auth_sessions.portal` vẫn là tiếng Anh (`receptionist`, `cashier`, `waiter`). Lý do: giá trị portal đã nằm trong
+database dưới CHECK constraint `ck_auth_sessions_portal`, nên đổi nó sẽ làm mọi session đang mở không khớp constraint và
+đẩy toàn bộ nhân viên ra khỏi hệ thống giữa ca. URL tiếng Anh cũ (`/receptionist/login`, `/cashier`, …) vẫn mở được và
+được redirect về URL tiếng Việt; backend luôn kiểm portal-role mapping, nên một URL alias không cấp thêm quyền gì.
+
+Migration `0027_waiter_role_and_order_permissions.sql` thêm role `WAITER`, ba permission `order.create`, `order.read`,
+`payment.collect`, và nới `ck_auth_sessions_portal` để nhận `waiter`.
+
+**Ba permission order/payment là giàn giáo phân quyền, không phải nghiệp vụ đã có.** Module order chưa tồn tại trong
+repository này và không có endpoint nào đang dùng chúng. Chúng được tạo trước để route guard của module order tương lai
+có chỗ neo, và để bảng role × permission phản ánh đúng sáu cấp.
+
+Grants của ba permission mới:
+
+| Permission | OWNER | ADMIN | CASHIER | WAITER | RECEPTIONIST | CUSTOMER_CARE |
+| --- | --- | --- | --- | --- | --- | --- |
+| `order.create` | Có | Có (chỉ WRITE ghi được) | Có | Có | Không | Không |
+| `order.read` | Có | Có | Có | Có | Không | Không |
+| `payment.collect` | Có | Có (chỉ WRITE ghi được) | Có | **Không** | Không | Không |
+
+Phục vụ không có `payment.collect` và không có `visit.mark_paid`: cấp 6 gọi món và xem trạng thái chờ thanh toán, không
+chốt thanh toán. Phục vụ cũng không có `customer.view_masked`, nên không thấy cả ba số cuối SĐT — biên bản không cấp cho
+Phục vụ quyền nào về khách hàng.
+
+Số permission sau 0027 và 0028: 36 cho `OWNER`, 34 cho `ADMIN` (= 36 trừ `venue.configure` và `customer.anonymize`),
+23 `RECEPTIONIST`, 7 `CUSTOMER_CARE`, 6 `CASHIER`, 2 `WAITER`.
+
+### Quản lý thiết bị và phiên (TU-33)
+
+Cơ chế Single Active Session không đổi. TU-33 thêm phần nhìn và điều khiển các phiên đó.
+
+Migration `0028_session_device_management.sql` thêm `auth_sessions.device_id` và hai permission `session.read`,
+`session.revoke`.
+
+**Định danh thiết bị.** Client sinh một mã ngẫu nhiên, lưu trong `localStorage`, gửi ở header `X-Device-Id`. Mã không
+hợp lệ hoặc thiếu thì server tự sinh một mã mới chứ không từ chối đăng nhập.
+
+`device_id` **không bao giờ là yếu tố xác thực**: client tự khai nó nên nó chỉ đáng tin ở mức "cùng một trình duyệt".
+Quyền truy cập vẫn do cookie session quyết định. Cố ý không dùng IP (toàn quán đi ra bằng một IP NAT, và một điện thoại
+chuyển wifi sang 4G lại đổi IP giữa ca) và cố ý không dùng browser fingerprinting.
+
+`device_label` lưu nhãn rút gọn kiểu `Chrome trên Android`, không lưu nguyên User-Agent: nhân viên chỉ cần nhận ra máy
+nào là máy mình.
+
+`GET /auth/sessions` trả mỗi phiên dạng:
+
+```json
+{"sessions":[{"sessionId":41,"userId":9874,"username":"letan01","displayName":"Lễ tân 1",
+  "roles":["RECEPTIONIST"],"accessLevel":null,"portal":"receptionist",
+  "deviceRef":"letan-ta","deviceLabel":"Chrome trên Android",
+  "loggedInAt":"2026-11-18T12:00:00.000Z","lastSeenAt":"2026-11-18T12:04:31.000Z",
+  "expiresAt":"2026-11-19T00:00:00.000Z","status":"ACTIVE","isCurrent":false}]}
+```
+
+`deviceRef` là 8 ký tự đầu của `device_id`. Response gửi kèm `Cache-Control: no-store` và **không bao giờ** chứa
+`token_hash` hay token thật. `lastSeenAt` được cập nhật có tiết lưu (mặc định 60 giây một lần) ngoài đường đi của
+request, nên nó là thông tin phụ trợ chứ không phải nguồn trạng thái xác thực.
+
+**Hai quyền tách biệt.** `session.read` là chẩn đoán; `session.revoke` đẩy một nhân viên ra khỏi hệ thống giữa ca. Admin
+Read-Only có `session.read` nhưng không có `session.revoke`.
+
+Thẩm quyền của `POST /auth/sessions/:id/revoke`, kiểm trong transaction tại repository chứ không chỉ ở middleware:
+
+| Tình huống | Kết quả |
+| --- | --- |
+| OWNER buộc đăng xuất ADMIN hoặc nhân viên | 200 |
+| ADMIN WRITE buộc đăng xuất nhân viên | 200 |
+| ADMIN buộc đăng xuất OWNER | 403 `OWNER_PROTECTED` |
+| ADMIN buộc đăng xuất ADMIN khác | 403 `ADMIN_TARGET_DENIED` |
+| ADMIN READ_ONLY buộc đăng xuất bất kỳ ai | 403 |
+| Nhân viên buộc đăng xuất bất kỳ ai | 403 `PERMISSION_DENIED` |
+| Buộc đăng xuất phiên của chính mình | 409 `CANNOT_REVOKE_SELF` (dùng `/auth/logout`) |
+| Phiên đã bị thu hồi | 409 `SESSION_ALREADY_REVOKED` |
+| Phiên không tồn tại trong organization | 404 `SESSION_NOT_FOUND` |
+
+Phiên bị thu hồi mang `revoke_reason = 'FORCED_LOGOUT'`, SSE của nó bị đóng ngay sau commit, và nó không tự khôi phục.
+
+**Audit.** `AUTH_SESSION_FORCE_REVOKED` ghi `actor_user_id` là người **thực hiện** và `entity_id` là người **bị tác
+động**, kèm `revokedDeviceRef`. `AUTH_SESSION_REVOKED` của luồng thay thế phiên ghi thêm `replacedDevices` và
+`newDeviceRef`. Không bản ghi nào chứa token, cookie, mật khẩu hay User-Agent gốc.
+
+**Khởi động lại API không làm ai bị đăng xuất.** Nguồn trạng thái phiên là bảng `auth_sessions`; không có phiên hợp lệ
+nào chỉ tồn tại trong bộ nhớ process. `notifySessionsRevoked` chỉ là đường đóng SSE sớm hơn, không phải nơi lưu trạng
+thái.
+
+**Dữ liệu chưa lưu.** Hệ thống chưa có cơ chế lưu nháp. Khi một phiên bị thay thế hoặc bị buộc đăng xuất, nội dung đang
+gõ dở trong form là mất, và trang đăng nhập nói đúng điều đó thay vì để nhân viên tự suy ra rằng dữ liệu còn. Booking đã
+lưu trước đó không bị ảnh hưởng.
 
 ### OWNER and ADMIN access model
 
@@ -93,8 +202,9 @@ Migration `0024_owner_admin_access_model.sql` renames the existing `OWNER_ADMIN`
 | RECEPTIONIST | No | Existing receptionist matrix | No | Last three digits only; call permission unchanged | No |
 | CUSTOMER_CARE | No | Existing customer-care matrix | No | Last three digits only | No |
 | CASHIER | No | Existing cashier matrix | No | Last three digits only | No |
+| WAITER | No | Order only (TU-32) | No | None, not even the last three digits | No |
 
-ADMIN grants are resolved on every request. For `READ_ONLY`, the backend returns only `customer.view_masked`, both explicit phone-reveal permissions, `audit.read`, `report.read`, and `user.read`; mutation permissions are removed. UI state is advisory and never bypasses this server calculation. Changing an ADMIN access level revokes every existing session with `ACCESS_LEVEL_CHANGED`, so an old session cannot retain WRITE authority or keep an SSE subscription.
+ADMIN grants are resolved on every request. For `READ_ONLY`, the backend returns only `customer.view_masked`, both explicit phone-reveal permissions, `audit.read`, `report.read`, `user.read`, `session.read` and `order.read`; mutation permissions are removed. UI state is advisory and never bypasses this server calculation. Changing an ADMIN access level revokes every existing session with `ACCESS_LEVEL_CHANGED`, so an old session cannot retain WRITE authority or keep an SSE subscription.
 
 ## Venue settings
 
@@ -845,8 +955,9 @@ steps may be undone and any time window remain open with the PO; the API exposes
 
 `AccountSummary` is `{id,username,displayName,status,membershipStatus,roles,accessLevel,lastLoginAt,version}`; password,
 hash, token and reset secret are never returned. Listing and every mutation require an active target role at the
-actor's organization and venue. OWNER may create ADMIN (`accessLevel` required) or one of the three staff roles.
-ADMIN WRITE may create only `RECEPTIONIST`, `CUSTOMER_CARE`, or `CASHIER`. No request may create OWNER. ADMIN cannot
+actor's organization and venue. OWNER may create ADMIN (`accessLevel` required) or one of the four staff roles.
+ADMIN WRITE may create only `RECEPTIONIST`, `CUSTOMER_CARE`, `CASHIER`, or `WAITER` (TU-32 adds `WAITER`).
+No request may create OWNER. ADMIN cannot
 manage another ADMIN or OWNER, and no actor can change its own status/access through target-management endpoints.
 Because OWNER is never a valid management target and cannot be created through the API, the last OWNER cannot be
 removed by these endpoints.
@@ -877,7 +988,8 @@ Example account response:
 
 ## Unavailable capabilities
 
-There are no implemented endpoints for customer search/profile/notes, operation-log listing, reports, zone flags, hold deadlines/releases, booking statistics as JSON, waitlist claim/release-claim, or standalone visits/allocations lists. Undo/redo, the table-group endpoints (merge, add members, dissolve, split), the floor SSE stream, the table-turn ledger read, venue configuration and account management do exist and are documented above. The turn ledger is a read for a later statistics screen; no report screen exists. A catalog exposing lease/hold configuration does not imply that those write APIs exist. Unknown routes return 404; HTTP adapters may expose these unavailable methods as explicit 501 `NOT_SUPPORTED_BY_BACKEND` errors. Direct table-state writes and payment-verified closing have the restrictions described above.
+There is no order or payment module: permissions `order.create`, `order.read` and `payment.collect` exist from TU-32 as
+RBAC scaffolding for the six account levels, but no endpoint reads them yet. There are no implemented endpoints for customer search/profile/notes, operation-log listing, reports, zone flags, hold deadlines/releases, booking statistics as JSON, waitlist claim/release-claim, or standalone visits/allocations lists. Undo/redo, the table-group endpoints (merge, add members, dissolve, split), the floor SSE stream, the table-turn ledger read, venue configuration and account management do exist and are documented above. The turn ledger is a read for a later statistics screen; no report screen exists. A catalog exposing lease/hold configuration does not imply that those write APIs exist. Unknown routes return 404; HTTP adapters may expose these unavailable methods as explicit 501 `NOT_SUPPORTED_BY_BACKEND` errors. Direct table-state writes and payment-verified closing have the restrictions described above.
 
 ## Verification
 

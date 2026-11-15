@@ -26,6 +26,7 @@ import { Toaster } from "sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { adminRouteObject } from "@/features/admin/admin-routes"
 import { AuthBoundary } from "@/features/auth/auth-boundary"
+import { useRealtimeSync } from "@/hooks/use-data"
 import { api } from "@/services"
 import { useSession } from "@/state/session"
 
@@ -60,11 +61,17 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 1000, retry: false } },
 })
 
+function CaptureRealtimeSync() {
+  useRealtimeSync()
+  return null
+}
+
 const router = createBrowserRouter([
   { path: "/", element: createElement(Navigate, { to: "/admin/overview", replace: true }) },
   { path: "/floor", element: createElement("div", { "data-testid": "portal-floor-stub" }, "Sơ đồ bàn") },
   { path: "/cashier", element: createElement("div", { "data-testid": "portal-cashier-stub" }, "Thu ngân") },
   adminRouteObject,
+  { path: "*", element: createElement("div") },
 ])
 
 createRoot(document.getElementById("root")).render(
@@ -77,7 +84,12 @@ createRoot(document.getElementById("root")).render(
       createElement(
         TooltipProvider,
         { delayDuration: 150 },
-        createElement(AuthBoundary, null, createElement(RouterProvider, { router })),
+        createElement(
+          AuthBoundary,
+          null,
+          api.mode === "http" ? createElement(CaptureRealtimeSync) : null,
+          createElement(RouterProvider, { router }),
+        ),
         createElement(Toaster, { position: "bottom-right", richColors: true, closeButton: true }),
       ),
     ),
@@ -215,7 +227,7 @@ try {
         return {
           footerRect: footerRect ? { x: footerRect.x, y: footerRect.y, width: footerRect.width, height: footerRect.height } : null,
           sidebarRect: sidebarRect ? { x: sidebarRect.x, y: sidebarRect.y, width: sidebarRect.width, height: sidebarRect.height } : null,
-          overflowX: document.documentElement.scrollWidth - window.innerWidth,
+          overflowX: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
           hasDeveloperText: /Figma|Frame\s*\d+|NA-3[234]|TU-35|admin-preview-harness|AdminShell/i.test(text),
         }
       })
@@ -412,6 +424,18 @@ try {
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1024 } })
     let serverSession = null
+    const deviceIds = []
+    await context.addInitScript(() => {
+      window.__sessionStreams = []
+      window.EventSource = class extends EventTarget {
+        closed = false
+        constructor() {
+          super()
+          window.__sessionStreams.push(this)
+        }
+        close() { this.closed = true }
+      }
+    })
 
     await context.route("**/api/v1/**", async (route) => {
       const req = route.request()
@@ -433,6 +457,9 @@ try {
 
       if (apiPath === "/api/v1/auth/login" && req.method() === "POST") {
         const body = req.postDataJSON()
+        deviceIds.push(req.headers()["x-device-id"])
+        const role = { admin: "OWNER", receptionist: "RECEPTIONIST", cashier: "CASHIER", waiter: "WAITER" }[body.portal]
+        assert(role, `Unexpected login portal ${body.portal}`)
         serverSession = {
           user: {
             id: 3,
@@ -440,7 +467,7 @@ try {
             displayName: "Chủ quán",
             organizationId: 1,
             venueId: 1,
-            roles: ["OWNER"],
+            roles: [role],
             accessLevel: null,
           },
           permissions: [
@@ -539,6 +566,52 @@ try {
       cashierPortalIntact: true,
     }
     report.screenshots.push(shot)
+
+    // Exercise the actual realtime hook, session store and boundary with the admin shell mounted.
+    report.checks.adminSessionEnded = []
+    for (const code of ["SESSION_REPLACED", "SESSION_REVOKED"]) {
+      serverSession = null
+      const ended = await page.evaluate(async (sessionCode) => {
+        const { useSession } = await import("/src/state/session.ts")
+        const streams = window.__sessionStreams.filter((stream) => !stream.closed)
+        if (!streams.length) throw new Error("No active realtime stream in admin shell")
+        streams.at(-1).dispatchEvent(new MessageEvent("session-ended", { data: JSON.stringify({ code: sessionCode }) }))
+        const state = useSession.getState()
+        return { status: state.authStatus, principal: state.principal, permissions: state.permissions, code: state.authEndCode }
+      }, code)
+      assert.deepEqual(ended, { status: "anonymous", principal: null, permissions: [], code })
+      await page.waitForURL("**/admin/login")
+      await page.getByRole("heading", { name: "Đăng nhập Quản trị" }).waitFor()
+      assert.equal(await page.getByTestId("admin-shell").count(), 0)
+      report.checks.adminSessionEnded.push(code)
+      await page.goto(`${httpVite.baseUrl}/admin/turns`, { waitUntil: "networkidle" })
+      await page.getByLabel("Tên đăng nhập", { exact: true }).fill("owner")
+      await page.getByLabel("Mật khẩu", { exact: true }).fill("StrongPassword123!")
+      await page.getByRole("button", { name: "Đăng nhập", exact: true }).click()
+      await page.getByTestId("turn-ledger-page").waitFor()
+    }
+
+    report.checks.staffPortalLogin = []
+    for (const [alias, canonical, portal, label] of [
+      ["receptionist", "letan", "receptionist", "Lễ tân"],
+      ["cashier", "thungan", "cashier", "Thu ngân"],
+      ["waiter", "phucvu", "waiter", "Phục vụ"],
+    ]) {
+      serverSession = null
+      await page.goto(`${httpVite.baseUrl}/${alias}/login`, { waitUntil: "networkidle" })
+      await page.waitForURL(`**/${canonical}/login`)
+      await page.getByRole("heading", { name: `Đăng nhập ${label}` }).waitFor()
+      await page.getByLabel("Tên đăng nhập", { exact: true }).fill(portal)
+      await page.getByLabel("Mật khẩu", { exact: true }).fill("StrongPassword123!")
+      await page.getByRole("button", { name: "Đăng nhập", exact: true }).click()
+      await page.getByTestId("portal-floor-stub").waitFor()
+      assert.equal(new URL(page.url()).pathname, "/floor")
+      assert.equal(serverSession.portal, portal)
+      report.checks.staffPortalLogin.push(portal)
+    }
+    assert(deviceIds.every((id) => typeof id === "string" && id.length >= 16), "Every login must include a device ID")
+    assert.equal(new Set(deviceIds).size, 1, "Device ID must survive login redirects and account changes")
+    assert.deepEqual(errors, [], `Console/page errors: ${errors.join(" | ")}`)
     await context.close()
   } finally {
     await httpVite.server.close()

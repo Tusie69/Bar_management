@@ -60,13 +60,19 @@ interface SessionState {
   portal: AuthPortal | null
   authStatus: AuthStatus
   authError: string | null
+  /**
+   * TU-33: mã lý do phiên kết thúc, để trang đăng nhập nói thêm được rằng nội
+   * dung đang gõ dở đã mất. Chỉ có message thì không phân biệt được "hết hạn
+   * bình thường" với "bị đẩy ra giữa lúc đang nhập booking".
+   */
+  authEndCode: string | null
   theme: Theme
   setUser: (id: number) => void
   setTheme: (theme: Theme) => void
   bootstrap: () => Promise<void>
   login: (username: string, password: string, portal: AuthPortal) => Promise<void>
   logout: () => Promise<void>
-  expire: (message?: string) => void
+  expire: (message?: string, code?: string) => void
 }
 
 const fallbackMockUser: SessionUser = initialUser ?? {
@@ -90,6 +96,7 @@ function applyServerSession(session: AuthSession) {
     portal: session.portal,
     authStatus: "authenticated",
     authError: null,
+    authEndCode: null,
   })
 }
 
@@ -101,6 +108,7 @@ export const useSession = create<SessionState>((set, get) => ({
   portal: null,
   authStatus: api.mode === "mock" ? "authenticated" : "loading",
   authError: null,
+  authEndCode: null,
   theme: initialTheme,
   setUser: (id) => {
     if (api.mode !== "mock") return
@@ -119,14 +127,14 @@ export const useSession = create<SessionState>((set, get) => ({
     if (api.mode === "mock" || !authApi || get().authStatus === "authenticated") return
     const currentAuthApi = authApi
     if (bootstrapPromise) return bootstrapPromise
-    set({ authStatus: "loading", authError: null })
+    set({ authStatus: "loading", authError: null, authEndCode: null })
     bootstrapPromise = currentAuthApi
       .me()
       .then(applyServerSession)
       .catch((error: unknown) => {
         currentAuthApi.clear()
         if (error instanceof ApiError && error.status === 401) {
-          set({ principal: null, permissions: [], authStatus: "anonymous", authError: null })
+          set({ principal: null, permissions: [], authStatus: "anonymous", authError: null, authEndCode: null })
           return
         }
         const message = error instanceof ApiError ? error.message : "Không thể kiểm tra phiên đăng nhập."
@@ -139,7 +147,7 @@ export const useSession = create<SessionState>((set, get) => ({
   },
   login: async (username, password, portal) => {
     if (!authApi) throw new ApiError(0, "AUTH_UNAVAILABLE", "HTTP authentication chưa được cấu hình.")
-    set({ authError: null })
+    set({ authError: null, authEndCode: null })
     const session = await authApi.login(username, password, portal)
     applyServerSession(session)
   },
@@ -147,15 +155,15 @@ export const useSession = create<SessionState>((set, get) => ({
     if (!authApi) return
     const portal = get().portal
     await authApi.logout()
-    set({ principal: null, permissions: [], authStatus: "anonymous", authError: null, portal })
+    set({ principal: null, permissions: [], authStatus: "anonymous", authError: null, authEndCode: null, portal })
     if (portal && typeof window !== "undefined" && window.location?.replace) {
       window.location.replace(portalLoginPath(portal))
     }
   },
-  expire: (message = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.") => {
+  expire: (message = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.", code?: string) => {
     const portal = get().portal
     authApi?.clear()
-    set({ principal: null, permissions: [], authStatus: "anonymous", authError: message, portal })
+    set({ principal: null, permissions: [], authStatus: "anonymous", authError: message, authEndCode: code ?? null, portal })
     if (portal && typeof window !== "undefined" && window.location?.replace) {
       window.location.replace(portalLoginPath(portal))
     }
@@ -164,7 +172,7 @@ export const useSession = create<SessionState>((set, get) => ({
 
 httpClient?.setUnauthorizedHandler((error) => {
   if (useSession.getState().authStatus === "authenticated") {
-    useSession.getState().expire(sessionEndMessage(error.code))
+    useSession.getState().expire(sessionEndMessage(error.code), error.code)
   }
 })
 

@@ -378,7 +378,7 @@ describe("Sprint 4 NA-32 Admin shell", () => {
         )
         expect(receptionistHtml).toContain("Đăng nhập Lễ tân")
 
-        vi.stubGlobal("window", { location: { pathname: "/cashier/login" } })
+        vi.stubGlobal("window", { location: { pathname: "/thungan/login" } })
         const cashierHtml = renderToStaticMarkup(
           React.createElement(
             QueryClientProvider,

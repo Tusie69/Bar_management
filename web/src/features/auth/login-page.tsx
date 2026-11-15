@@ -4,12 +4,17 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PORTAL_CONFIG, resolvePortalLoginDestination, type AuthPortal } from "@/domain/auth-portal"
+import { sessionEndUnsavedWarning } from "@/domain/session-end"
 import { isApiError } from "@/services"
 import { useSession } from "@/state/session"
 
 export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirectTo?: string | null }) {
   const login = useSession((state) => state.login)
   const sessionMessage = useSession((state) => state.authError)
+  const sessionEndCode = useSession((state) => state.authEndCode)
+  // TU-33: hệ thống chưa có cơ chế lưu nháp, nên khi phiên bị đẩy ra giữa lúc
+  // đang gõ thì phải nói rõ là mất, không để nhân viên tự suy ra là còn.
+  const unsavedWarning = sessionEndCode ? sessionEndUnsavedWarning(sessionEndCode) : null
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [pending, setPending] = useState(false)
@@ -99,9 +104,12 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
             </div>
           </div>
           {error || sessionMessage ? (
-            <p role="alert" className="rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
-              {error ?? sessionMessage}
-            </p>
+            <div role="alert" className="grid gap-1 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
+              <p>{error ?? sessionMessage}</p>
+              {!error && unsavedWarning ? (
+                <p className="text-xs text-muted-foreground">{unsavedWarning}</p>
+              ) : null}
+            </div>
           ) : null}
           <Button type="submit" size="lg" disabled={pending || !username.trim() || !password}>
             <LogIn /> {pending ? "Đang đăng nhập…" : "Đăng nhập"}
