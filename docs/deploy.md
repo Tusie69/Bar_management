@@ -199,8 +199,20 @@ bỏ mọi lệnh khác trong file.
 ### Tài khoản quản trị đầu tiên
 
 ```bash
-cd /srv/21gam/api && sudo -u gam21 env HOME=/home/gam21 pnpm auth:bootstrap   --username <ten-dang-nhap> --display-name "<Ten hien thi>"   --organization-id 1 --venue-id 1 --role OWNER_ADMIN
+cd /srv/21gam/api && sudo -u gam21 env HOME=/home/gam21 pnpm auth:bootstrap \
+  --username <ten-dang-nhap> --display-name "<Ten hien thi>" \
+  --organization-id 1 --venue-id 1 --role-code OWNER
 ```
+
+Tham số là `--role-code`, không phải `--role`, và mã role là `OWNER` —
+migration `0024` đã đổi tên `OWNER_ADMIN` thành `OWNER` ngay trên dòng cũ để
+giữ nguyên id và toàn bộ grant. Gõ mã cũ thì lệnh báo "Không tìm thấy
+organization, venue hoặc role hợp lệ".
+
+Role `ADMIN` phải khai thêm `--access-level WRITE` hoặc
+`--access-level READ_ONLY`; năm role còn lại (`OWNER`, `RECEPTIONIST`,
+`CASHIER`, `WAITER`) không nhận tham số đó. Phân biệt sáu cấp: xem
+`docs/api.md` mục "Sáu cấp tài khoản (TU-32)".
 
 Lệnh này **bắt buộc chạy trong terminal tương tác**: nó hỏi một chuỗi xác nhận
 rồi yêu cầu nhập mật khẩu hai lần, ẩn trên màn hình. Thiết kế như vậy để mật
@@ -380,6 +392,18 @@ sudo -u gam21 cp /srv/21gam/deploy/env/backup.env.example /srv/21gam/deploy/env/
 sudo -u gam21 chmod 600 /srv/21gam/deploy/env/backup.env
 sudo -u gam21 nano /srv/21gam/deploy/env/backup.env
 ```
+
+File này **bắt buộc phải có trước lần auto-deploy kế tiếp**. `auto-deploy.sh`
+gọi `backup-mysql.sh` trực tiếp qua `sudo -u gam21 env HOME=...`, không qua
+systemd, nên `EnvironmentFile=` của `21gam-backup.service` không có tác dụng ở
+đường đi đó. Vì vậy `backup-mysql.sh` tự nạp file này theo đường dẫn
+`<repo>/deploy/env/backup.env` (đổi bằng `BACKUP_CONFIG_FILE`). Thiếu file thì
+`BACKUP_REMOTE` trống, script từ chối chạy, và auto-deploy dừng ở bước sao lưu
+**trước khi** chạm vào database — code bị lùi về commit cũ, dữ liệu còn nguyên,
+nhưng không bản nào triển khai được cho tới khi file này tồn tại.
+
+Biến đã có trong môi trường thắng file, nên `DB_NAME=... ./backup-mysql.sh` và
+`BACKUP_DRY_RUN=1 ...` vẫn còn tác dụng.
 
 Xem `deploy/env/backup.env.example` để biết từng biến. Quan trọng nhất là
 `BACKUP_REMOTE`: script **từ chối chạy** nếu nó trống, vì bản sao lưu nằm cùng
