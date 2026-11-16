@@ -125,14 +125,22 @@ describe("ai bấm được nút thao tác", () => {
 })
 
 describe("bảy checkbox của prototype", () => {
-  const views = (entries: [string, { role: boolean; enabled: boolean }][]) =>
-    entries.map(([code, state]) => ({
-      code,
-      grantedByRole: state.role,
-      enabled: state.enabled,
-      overridden: state.role && !state.enabled,
-      editable: state.role && code !== "user.read",
-    }))
+  /**
+   * `role` = vai trò có sẵn quyền, `on` = quyền hiệu dụng, `ceiling` = cấp
+   * thêm được. Mặc định mọi quyền đều trong trần, trừ khi test nói khác.
+   */
+  const views = (entries: [string, { role: boolean; on: boolean; ceiling?: boolean }][]) =>
+    entries.map(([code, state]) => {
+      const grantable = state.ceiling ?? true
+      return {
+        code,
+        grantedByRole: state.role,
+        enabled: state.on,
+        overridden: state.role !== state.on,
+        editable: grantable && code !== "user.read",
+        grantable,
+      }
+    })
 
   it("giữ đúng bảy dòng, đúng thứ tự Figma", () => {
     expect(PERMISSION_GROUPS.map((group) => group.label)).toEqual([
@@ -147,31 +155,38 @@ describe("bảy checkbox của prototype", () => {
   })
 
   it("checkbox phản ánh quyền hiệu dụng chứ không phải quyền vai trò", () => {
-    const states = groupStates(
-      views([
-        ["report.read", { role: true, enabled: false }],
-        ["audit.read", { role: true, enabled: true }],
-      ]),
-    )
+    const states = groupStates(views([
+      ["report.read", { role: true, on: false }],
+      ["audit.read", { role: true, on: true }],
+    ]))
     expect(states.find((state) => state.group.key === "report")!.checked).toBe(false)
     expect(states.find((state) => state.group.key === "audit")!.checked).toBe(true)
   })
 
   it("nhóm nhiều quyền chỉ tick khi mọi quyền trong nhóm đều bật", () => {
-    const half = groupStates(
-      views([
-        ["reservation.update", { role: true, enabled: true }],
-        ["reservation.cancel", { role: true, enabled: false }],
-      ]),
-    )
+    const half = groupStates(views([
+      ["reservation.update", { role: true, on: true }],
+      ["reservation.cancel", { role: true, on: false }],
+    ]))
     expect(half.find((state) => state.group.key === "booking")!.checked).toBe(false)
   })
 
-  it("quyền ngoài vai trò thì không tick và không sửa được", () => {
-    const states = groupStates(views([["venue.configure", { role: false, enabled: false }]]))
+  it("quyền ngoài vai trò nhưng trong trần thì vẫn tick được để cấp thêm", () => {
+    // TU-32: SuperAdmin cấp thêm quyền cho vai trò chưa có.
+    const states = groupStates(views([["report.read", { role: false, on: false }]]))
+    const report = states.find((state) => state.group.key === "report")!
+    expect(report.checked).toBe(false)
+    expect(report.editable).toBe(true)
+    expect(report.outOfCeiling).toBe(false)
+    expect(groupPayload(report, true)).toEqual({ "report.read": true })
+  })
+
+  it("quyền ngoài trần thì khóa hẳn và nói rõ là không cấp được", () => {
+    const states = groupStates(views([["venue.configure", { role: false, on: false, ceiling: false }]]))
     const venue = states.find((state) => state.group.key === "venue")!
-    expect(venue.checked).toBe(false)
     expect(venue.editable).toBe(false)
+    expect(venue.outOfCeiling).toBe(true)
+    expect(groupPayload(venue, true)).toEqual({})
   })
 
   it("nhóm chưa có permission trong backend hiện là chưa hỗ trợ", () => {
@@ -181,19 +196,12 @@ describe("bảy checkbox của prototype", () => {
     expect(groupPayload(discount, true)).toEqual({})
   })
 
-  it("payload chỉ gửi những mã nằm trong trần vai trò", () => {
-    const states = groupStates(
-      views([
-        ["customer.phone.reveal", { role: true, enabled: true }],
-        ["booking.phone.reveal", { role: false, enabled: false }],
-      ]),
-    )
-    expect(
-      groupPayload(
-        states.find((state) => state.group.key === "phone")!,
-        false,
-      ),
-    ).toEqual({
+  it("payload chỉ gửi những mã sửa được", () => {
+    const states = groupStates(views([
+      ["customer.phone.reveal", { role: true, on: true }],
+      ["booking.phone.reveal", { role: false, on: false, ceiling: false }],
+    ]))
+    expect(groupPayload(states.find((state) => state.group.key === "phone")!, false)).toEqual({
       "customer.phone.reveal": false,
     })
   })

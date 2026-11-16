@@ -186,6 +186,52 @@ export interface AccountSummary {
   version: number
 }
 
+/** TU-35: một dòng nhật ký thao tác. Không bao giờ chứa số điện thoại. */
+export interface AuditEntryView {
+  id: number
+  occurredAt: string
+  actor: string
+  actorUsername: string | null
+  action: string
+  actionLabel: string
+  actionType: string | null
+  target: string
+  device: string
+  detail: string
+}
+
+export interface AuditPageView {
+  entries: AuditEntryView[]
+  hasMore: boolean
+  nextCursor: number | null
+  /** Số ngày lưu nhật ký, đọc từ cấu hình quán. */
+  retentionDays: number
+  windowStart: string
+}
+
+export interface AuditFilterView {
+  type: string
+  label: string
+  /** false = nhóm chưa có thao tác nào trong hệ thống. */
+  supported: boolean
+  note?: string
+}
+
+export interface AuditFiltersView {
+  filters: AuditFilterView[]
+  retentionDays: number
+  /** Quyền xuất file, đọc từ cấu hình chứ không suy từ vai trò ở web. */
+  canExport: boolean
+}
+
+export interface AuditQuery {
+  from?: string
+  to?: string
+  types?: string[]
+  limit?: number
+  before?: number
+}
+
 export interface AccountsView {
   accounts: AccountSummary[]
   /** Role codes an account may be created with: only those the backend seeds. */
@@ -221,6 +267,8 @@ export interface AccountPermissionView {
   overridden: boolean
   /** Checkbox có sửa được không (trong trần và không thuộc nhóm bảo vệ). */
   editable: boolean
+  /** Quyền có nằm trong trần của tài khoản không — cấp thêm được hay không. */
+  grantable: boolean
 }
 
 export interface AccountPermissionsView {
@@ -359,6 +407,11 @@ export interface GamApi {
   setAccountStatus(userId: number, version: number, status: "ACTIVE" | "DISABLED"): Promise<AccountSummary>
   setAdminAccessLevel(userId: number, version: number, accessLevel: "WRITE" | "READ_ONLY"): Promise<AccountSummary>
   resetAccountPassword(userId: number, version: number, newPassword?: string): Promise<AccountCredentialResult>
+  /** TU-35: nhật ký thao tác — nhóm lọc, số ngày lưu, quyền xuất file. */
+  getAuditFilters(): Promise<AuditFiltersView>
+  listAuditEntries(query: AuditQuery): Promise<AuditPageView>
+  /** Trả về nội dung CSV; web tự tạo file tải xuống. */
+  exportAuditCsv(query: AuditQuery): Promise<string>
   /** TU-34: quyền riêng của một tài khoản (đọc để hiện checkbox). */
   getAccountPermissions(userId: number): Promise<AccountPermissionsView>
   /** TU-34: lưu checkbox. `permissions` chỉ gửi các mã muốn đặt lại trạng thái. */
@@ -456,6 +509,9 @@ export const REST_ENDPOINTS = {
   setAdminAccessLevel: "POST /accounts/:id/access-level",
   resetAccountPassword: "POST /accounts/:id/password-reset",
   accountPermissions: "GET /accounts/:id/permissions",
+  auditFilters: "GET /operations/audit/filters",
+  auditEntries: "GET /operations/audit",
+  auditExport: "GET /operations/audit/export",
   updateAccountPermissions: "POST /accounts/:id/permissions",
   changeOwnPassword: "POST /accounts/me/password",
   catalog: "GET /tables/catalog",

@@ -982,84 +982,67 @@ every business endpoint answers
 and that password change accept a session in this state. A successful change clears the flag and revokes all sessions,
 so the staff member signs in again with the password they chose.
 
-### Per-account permissions (TU-34)
+### Per-account permissions (TU-34, grant model since 16/11)
 
-`effective = role_permissions(role, access_level) ∩ enabled_overrides`. An override can only switch a permission
-**off**; a row enabling a permission the role does not grant changes nothing, so a mis-click can never hand a
-receptionist the right to take payments. The intersection is applied inside `listPermissions`, which is the single
-place permissions are computed, so `requirePermission` enforces it on every endpoint — not just the admin screen.
+`effective = (role_permissions ∪ enabled_overrides) ∩ ceiling`. SuperAdmin grants a permission the role does not
+carry — that is what the 15/11 minutes mean by level 1 "phân quyền cho mọi vai" — and switches one off again. Three
+rails keep the six levels meaningful:
 
-`AccountPermissionView` is `{code,grantedByRole,enabled,overridden,editable}`. `grantedByRole` is the role ceiling,
-`enabled` the effective permission, and `editable` is false for permissions outside the ceiling and for the protected
-set (`user.read`), which cannot be switched off.
+1. **Owner-only work is never granted piecemeal.** `venue.configure` and `customer.anonymize` are the line between
+   level 1 and level 2; granting them would make "cấp 2 KHÔNG cấu hình tính năng" meaningless. Promote the person to
+   SuperAdmin instead.
+2. **Admin Read-Only only ever gains read permissions** (the `READ_ONLY_ADMIN_PERMISSIONS` list). Level 3 is defined
+   as read-only, so a write grant would contradict the level itself.
+3. **`user.read` cannot be switched off** — it is the only door to the accounts screen.
 
-Writing requires `user.manage`, an unchanged `version` (otherwise `409 VERSION_CONFLICT`), and the target rules:
-nobody edits their own permissions (`409 CANNOT_MANAGE_SELF`), OWNER accounts are untouchable
-(`403 OWNER_PROTECTED`), and only OWNER may edit an ADMIN (`403 ADMIN_TARGET_DENIED`). A code outside the role ceiling
-is rejected with `400 PERMISSION_NOT_IN_ROLE` rather than silently ignored. Saving does not revoke sessions: the next
-request of the affected account is already computed against the new set.
-No request may create OWNER. ADMIN cannot
-manage another ADMIN or OWNER, and no actor can change its own status/access through target-management endpoints.
-Because OWNER is never a valid management target and cannot be created through the API, the last OWNER cannot be
-removed by these endpoints.
+Anything else is grantable. The price is that "what can role X do" no longer reads off the role matrix alone: the
+per-account overrides must be read too. Every tick lands in the audit log (TU-35) as `USER_PERMISSIONS_CHANGED` with
+the old and new value, so the grant is attributable.
 
-Locking revokes all live sessions with `ACCOUNT_LOCKED`; unlocking never restores them. Changing ADMIN access revokes
-all live sessions with `ACCESS_LEVEL_CHANGED`. Internal reset accepts a caller-supplied replacement password over the
-authenticated CSRF-protected request, stores only its scrypt hash, returns no secret, creates no delivery link/token,
-and revokes sessions with `PASSWORD_RESET`. Self change first verifies the current password, rejects reuse, updates the
-hash, then revokes every session including the caller with `PASSWORD_CHANGED`; the web client clears auth state and
-requires login again. Passwords are 12–1024 characters.
+The intersection is computed inside `listPermissions` — the single place permissions are computed — so
+`requirePermission` enforces it on every endpoint, not just the admin screen. A grant takes effect on the target's
+next request; no session is revoked.
 
-Account changes are non-undoable `operation_log` events: `USER_ACCOUNT_CREATED`, `USER_ACCOUNT_LOCKED`,
-`USER_ACCOUNT_UNLOCKED`, `ADMIN_ACCESS_LEVEL_CHANGED`, `USER_PASSWORD_RESET`, and `USER_PASSWORD_CHANGED`.
-Associated session revocation uses the existing redacted auth audit. Neither audit stream contains password/hash,
-raw token/cookie, or unnecessary account PII.
+`AccountPermissionView` is `{code,grantedByRole,enabled,overridden,editable,grantable}`. `grantedByRole` is what the
+role carries, `enabled` the effective permission, `grantable` whether it is inside the ceiling, and `editable` is
+`grantable` minus the protected set.
 
-Example ADMIN creation:
+Both endpoints are **OWNER only** (`403 PERMISSION_MANAGEMENT_DENIED` for anyone else), which is TU-32's rule: Admin
+Edit uses every operational feature but assigns permissions to nobody, not even staff, and Admin Read-Only cannot even
+read the table. Writing additionally requires `user.manage`, an unchanged `version` (otherwise `409 VERSION_CONFLICT`),
+and the target rules: nobody edits their own permissions (`409 CANNOT_MANAGE_SELF`) and OWNER accounts are untouchable
+(`403 OWNER_PROTECTED`). A code outside the ceiling is rejected with `400 PERMISSION_NOT_GRANTABLE` rather than
+silently ignored.
 
-```json
-{
-  "username": "admin_ca_2",
-  "displayName": "Admin ca 2",
-  "password": "<entered securely>",
-  "roleCode": "ADMIN",
-  "accessLevel": "WRITE"
-}
-```
+## Audit log (TU-35)
 
-Example account response:
+| Method | Path                        | Permission                  | Request / response                                                                            |
+| ------ | --------------------------- | --------------------------- | --------------------------------------------------------------------------------------------- |
+| GET    | `/operations/audit/filters` | `audit.read`                | `{filters:[{type,label,supported,note?}],retentionDays,canExport}`                            |
+| GET    | `/operations/audit`         | `audit.read`                | `?from=&to=&types=&limit=&before=` → `{entries,hasMore,nextCursor,retentionDays,windowStart}` |
+| GET    | `/operations/audit/export`  | `audit.read` + export level | Same query; `text/csv; charset=utf-8` as an attachment                                        |
 
-```json
-{
-  "account": {
-    "id": 42,
-    "username": "admin_ca_2",
-    "displayName": "Admin ca 2",
-    "status": "ACTIVE",
-    "membershipStatus": "ACTIVE",
-    "roles": ["ADMIN"],
-    "accessLevel": "WRITE",
-    "lastLoginAt": null,
-    "version": 1
-  }
-}
-```
+`operation_log` is the audit trail and is append-only: nothing in the codebase updates or deletes a row, and the read
+API above adds no write path. Entries come from the writes that already exist — `RESERVATION_CANCELLED`,
+`VISIT_TABLES_MOVED`, `VISIT_TABLES_MERGED`, `TABLES_SPLIT`, `TABLE_GROUP_*`, `CUSTOMER_PHONE_REVEAL`,
+`AUTH_LOGIN_*`, `AUTH_SESSION_REVOKED` (TU-33 "pushed off by another device"), `ADMIN_ACCESS_LEVEL_CHANGED`,
+`USER_PERMISSIONS_CHANGED` and the `USER_ACCOUNT_*` family. `src/modules/operations/audit-actions.ts` maps each action
+code to one of the seven filter groups in the prototype; an unmapped action still appears under "Tất cả" rather than
+being hidden. The `discount` group has no action codes yet — ordering and payment do not exist — and reports
+`supported: false` instead of pretending.
 
-## Unavailable capabilities
+An entry is `{id,occurredAt,actor,actorUsername,action,actionLabel,actionType,target,device,detail}`. `target` is built
+from the customer name, table code or account name of the referenced entity; `device` comes from
+`auth_sessions.device_label` (TU-33), so a worker with no session reads "Hệ thống". `detail` is filtered through an
+allowlist of keys from `changes` — a new key is dropped until someone considers it, so a sensitive field cannot leak
+into the screen or the export by accident. **No phone number ever reaches the log**: the reveal action records that a
+number was viewed, never the number.
 
-There is no order or payment module: permissions `order.create`, `order.read` and `payment.collect` exist from TU-32 as
-RBAC scaffolding for the six account levels, but no endpoint reads them yet. There are no implemented endpoints for customer search/profile/notes, operation-log listing, reports, zone flags, hold deadlines/releases, booking statistics as JSON, waitlist claim/release-claim, or standalone visits/allocations lists. Undo/redo, the table-group endpoints (merge, add members, dissolve, split), the floor SSE stream, the table-turn ledger read, venue configuration and account management do exist and are documented above. The turn ledger is a read for a later statistics screen; no report screen exists. A catalog exposing lease/hold configuration does not imply that those write APIs exist. Unknown routes return 404; HTTP adapters may expose these unavailable methods as explicit 501 `NOT_SUPPORTED_BY_BACKEND` errors. Direct table-state writes and payment-verified closing have the restrictions described above.
+Paging is cursor-based (`before` = last id of the previous page) because a large `OFFSET` makes MySQL read and discard
+rows. Queries are bounded by `organization_id`, `venue_id` and `occurred_at`, which is what `ix_oplog_venue_time`
+covers, so a one-month window stays an index range scan.
 
-## Verification
-
-Run from `Bar_management/api`:
-
-```powershell
-pnpm typecheck
-pnpm lint
-$env:DB_NAME='gam21_platform_it_test'
-$env:RUN_MYSQL_INTEGRATION='1'
-npx vitest run --no-file-parallelism
-```
-
-The test setup refuses any other database when MySQL integration is enabled. It generates throwaway encryption/HMAC keys and an explicit reveal rate-limit policy before application imports. No deployment phone key or `.env` edit is needed. Fixtures are destructive and belong only to the isolated, migrated integration database. Never run them against the development database.
+`retentionDays` and the export allowlist are read from `venue_settings` (`audit_retention_days`,
+`audit_export_levels`), defaulting to 90 days and `["OWNER","ADMIN_WRITE"]` — the values pending anh Luân's answer to
+C3. Reads never return rows older than the retention window. Physical deletion of expired rows is deliberately not
+implemented: purging an audit trail is a decision, not a default, and C3 is still open.

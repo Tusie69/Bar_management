@@ -11,6 +11,7 @@ import { describeDevice, resolveDeviceId, shortDeviceId } from './device-identit
 import { recordAuthAudit } from './auth-audit.js'
 import { notifySessionsRevoked, type SessionEndCode } from './session-lifecycle.js'
 import { READ_ONLY_ADMIN_PERMISSIONS } from './read-only-permissions.js'
+import { OWNER_ONLY_PERMISSIONS } from '../modules/accounts/permission-model.js'
 
 interface LoginRow extends RowDataPacket {
   user_id: number
@@ -394,6 +395,16 @@ export async function listPermissions(actor: AuthenticatedActor): Promise<string
   const portalRoles = rolesForPortal(actor.portal)
   const rolePlaceholders = portalRoles.map(() => '?').join(', ')
   const readOnlyPlaceholders = READ_ONLY_ADMIN_PERMISSIONS.map(() => '?').join(', ')
+  const ownerOnlyPlaceholders = [...OWNER_ONLY_PERMISSIONS].map(() => '?').join(', ')
+  const ownerOnly = [...OWNER_ONLY_PERMISSIONS]
+
+  // TU-32/TU-34: quyen hieu dung = (quyen vai tro ∪ override bat) ∩ tran.
+  //
+  // Day la CHO DUY NHAT tinh quyen hieu dung, nen moi endpoint di qua
+  // requirePermission deu chiu dung mot luat — khong chi man Quan tri.
+  //
+  // Nhanh 1: quyen tu vai tro, tru nhung quyen bi tat rieng.
+  // Nhanh 2: quyen SuperAdmin cap them, cat theo tran cua tai khoan.
   const [rows] = await databasePool.execute<(RowDataPacket & { code: string })[]>(
     `SELECT DISTINCT p.code
      FROM memberships AS m
@@ -410,18 +421,39 @@ export async function listPermissions(actor: AuthenticatedActor): Promise<string
          OR mr.access_level = 'WRITE'
          OR p.code IN (${readOnlyPlaceholders})
        )
-       -- TU-34: quyen rieng tung tai khoan. Bo loc nam o day, tai cho duy nhat
-       -- tinh quyen hieu dung, nen moi endpoint dung requirePermission deu
-       -- chiu rang buoc nay, khong chi man Quan tri.
        AND NOT EXISTS (
          SELECT 1 FROM user_permission_overrides AS o
          WHERE o.organization_id = m.organization_id AND o.user_id = m.user_id
            AND o.permission_id = p.id AND o.is_enabled = 0
        )
-     ORDER BY p.code`,
+
+     UNION
+
+     SELECT DISTINCT p.code
+     FROM memberships AS m
+     JOIN membership_roles AS mr
+       ON mr.organization_id = m.organization_id AND mr.membership_id = m.id
+     JOIN roles AS r ON r.id = mr.role_id
+     JOIN user_permission_overrides AS o
+       ON o.organization_id = m.organization_id AND o.user_id = m.user_id AND o.is_enabled = 1
+     JOIN permissions AS p ON p.id = o.permission_id
+     WHERE m.organization_id = ? AND m.id = ? AND m.user_id = ? AND m.status = 'ACTIVE'
+       AND mr.revoked_at IS NULL AND (mr.venue_id IS NULL OR mr.venue_id = ?)
+       AND r.code IN (${rolePlaceholders})
+       -- Tran 1: viec cua rieng cap 1 thi khong cap le cho ai.
+       AND p.code NOT IN (${ownerOnlyPlaceholders})
+       -- Tran 2: Admin Read-Only chi nhan them quyen doc.
+       AND (
+         r.code <> 'ADMIN'
+         OR mr.access_level = 'WRITE'
+         OR p.code IN (${readOnlyPlaceholders})
+       )
+     ORDER BY code`,
     [
       actor.organizationId, actor.membershipId, actor.userId, actor.venueId,
       ...portalRoles, ...READ_ONLY_ADMIN_PERMISSIONS,
+      actor.organizationId, actor.membershipId, actor.userId, actor.venueId,
+      ...portalRoles, ...ownerOnly, ...READ_ONLY_ADMIN_PERMISSIONS,
     ],
   )
   return rows.map((row) => row.code)

@@ -4,6 +4,9 @@ import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { clock } from "../clock"
 import {
   ApiError,
+  type AuditFiltersView,
+  type AuditPageView,
+  type AuditQuery,
   type AccountCredentialResult,
   type AccountPermissionsView,
   type AccountsView,
@@ -49,6 +52,18 @@ function spareConfirmation(input: { spareOverrideConfirmed?: boolean }): { spare
 }
 const rejectUnsupported = (capability: string) => async () => unsupported(capability)
 const catalogMaxAgeMs = 60_000
+
+/** Chuỗi truy vấn cho các endpoint nhật ký; bỏ qua tham số không đặt. */
+function auditQueryString(query: AuditQuery): string {
+  const parameters = new URLSearchParams()
+  if (query.from) parameters.set("from", query.from)
+  if (query.to) parameters.set("to", query.to)
+  if (query.types?.length) parameters.set("types", query.types.join(","))
+  if (query.limit !== undefined) parameters.set("limit", String(query.limit))
+  if (query.before !== undefined) parameters.set("before", String(query.before))
+  const text = parameters.toString()
+  return text ? `?${text}` : ""
+}
 
 export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
   // Venue is scoped by the server session; never sent as a client-selected actor scope.
@@ -513,6 +528,10 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     resetAccountPassword: (userId, version, newPassword) =>
       post<AccountCredentialResult>(`/accounts/${userId}/password-reset`,
         { version, ...(newPassword === undefined ? {} : { newPassword }) }),
+    getAuditFilters: () => get<AuditFiltersView>("/operations/audit/filters"),
+    listAuditEntries: (query) => get<AuditPageView>(`/operations/audit${auditQueryString(query)}`),
+    // CSV về dạng text; HttpClient trả nguyên chuỗi khi content-type không phải JSON.
+    exportAuditCsv: (query) => get<string>(`/operations/audit/export${auditQueryString(query)}`),
     getAccountPermissions: (userId) => get<AccountPermissionsView>(`/accounts/${userId}/permissions`),
     updateAccountPermissions: (userId, version, permissions) =>
       post<AccountPermissionsView>(`/accounts/${userId}/permissions`, { version, permissions }),

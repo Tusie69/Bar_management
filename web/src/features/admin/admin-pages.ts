@@ -111,8 +111,7 @@ export const ADMIN_PAGES: readonly AdminPage[] = [
     label: "Nhật ký",
     title: "Nhật ký thao tác",
     permission: "audit.read",
-    status: "pending",
-    owner: "TU-35",
+    status: "integrated",
     note: "Lưu vết thao tác nhạy cảm: hủy booking, xem SĐT đầy đủ, giảm giá, đổi quyền.",
   },
 ]

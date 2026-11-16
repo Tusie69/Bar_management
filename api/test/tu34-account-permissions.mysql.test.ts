@@ -33,6 +33,7 @@ interface PermissionView {
   enabled: boolean
   overridden: boolean
   editable: boolean
+  grantable: boolean
 }
 
 interface Session {
@@ -176,17 +177,58 @@ mysqlDescribe('TU-34 · quyền riêng từng tài khoản', () => {
     expect(view(await permissionsOf(owner, second.account.id), 'customer.view_masked').enabled).toBe(true)
   })
 
-  it('không bật được quyền ngoài trần vai trò', async () => {
-    const staff = await createStaff(owner, 'tu34_ceiling')
-    const response = await post(owner, `/api/v1/accounts/${staff.account.id}/permissions`, {
-      version: staff.account.version,
-      permissions: { 'payment.collect': true },
+  it('SuperAdmin cấp thêm được quyền ngoài vai trò, và quyền đó có hiệu lực thật', async () => {
+    const created = await createStaff(owner, 'tu34_grant')
+    const granted = await post(owner, `/api/v1/accounts/${created.account.id}/permissions`, {
+      version: created.account.version,
+      permissions: { 'report.read': true },
     })
-    expect(response.status).toBe(400)
-    expect((response.body as { error: { code: string } }).error.code).toBe('PERMISSION_NOT_IN_ROLE')
+    expect(granted.status).toBe(200)
+    expect(view(await permissionsOf(owner, created.account.id), 'report.read'))
+      .toMatchObject({ grantedByRole: false, enabled: true, overridden: true, grantable: true })
+
+    // Quyền hiệu dụng của chính tài khoản đó, nhìn từ phiên của họ.
+    const staff = await signIn('tu34_grant', created.temporaryPassword, 'receptionist')
+    await post(staff, '/api/v1/accounts/me/password', {
+      currentPassword: created.temporaryPassword, newPassword: 'TU34-Grant-Password-1',
+    })
+    const working = await signIn('tu34_grant', 'TU34-Grant-Password-1', 'receptionist')
+    const me = await working.agent.get('/api/v1/auth/me').set('Origin', env.webOrigin)
+    expect((me.body as { permissions: string[] }).permissions).toContain('report.read')
   })
 
-  it('Admin Edit không đổi được quyền của Admin khác; SuperAdmin thì được', async () => {
+  it('không cấp được việc của riêng SuperAdmin cho ai', async () => {
+    const staff = await createStaff(owner, 'tu34_ceiling')
+    for (const code of ['venue.configure', 'customer.anonymize']) {
+      const response = await post(owner, `/api/v1/accounts/${staff.account.id}/permissions`, {
+        version: staff.account.version,
+        permissions: { [code]: true },
+      })
+      expect(response.status, code).toBe(400)
+      expect((response.body as { error: { code: string } }).error.code).toBe('PERMISSION_NOT_GRANTABLE')
+    }
+  })
+
+  it('không cấp được quyền ghi cho Admin Read-Only', async () => {
+    const created = await post(owner, '/api/v1/accounts', {
+      username: 'tu34_ro_ceiling', displayName: 'RO Ceiling', roleCode: 'ADMIN', accessLevel: 'READ_ONLY',
+    })
+    expect(created.status).toBe(201)
+    const account = (created.body as { account: Account }).account
+    const denied = await post(owner, `/api/v1/accounts/${account.id}/permissions`, {
+      version: account.version, permissions: { 'reservation.cancel': true },
+    })
+    expect(denied.status).toBe(400)
+    expect((denied.body as { error: { code: string } }).error.code).toBe('PERMISSION_NOT_GRANTABLE')
+
+    // Nhưng quyền đọc thì cấp thêm được.
+    const allowed = await post(owner, `/api/v1/accounts/${account.id}/permissions`, {
+      version: account.version, permissions: { 'audit.read': true },
+    })
+    expect(allowed.status).toBe(200)
+  })
+
+  it('Admin Edit không dùng được chức năng phân quyền; SuperAdmin thì được', async () => {
     const adminEdit = await post(owner, '/api/v1/accounts', {
       username: 'tu34_admin_edit', displayName: 'Admin Edit', roleCode: 'ADMIN', accessLevel: 'WRITE',
     })
@@ -208,7 +250,18 @@ mysqlDescribe('TU-34 · quyền riêng từng tài khoản', () => {
       version: otherBody.account.version, permissions: { 'report.read': false },
     })
     expect(denied.status).toBe(403)
-    expect((denied.body as { error: { code: string } }).error.code).toBe('ADMIN_TARGET_DENIED')
+    expect((denied.body as { error: { code: string } }).error.code).toBe('PERMISSION_MANAGEMENT_DENIED')
+
+    // TU-32 AC: cấp 2 không phân quyền cho AI CẢ, kể cả nhân viên, và cũng
+    // không xem được bảng quyền.
+    const staff = await createStaff(owner, 'tu34_admin_edit_staff')
+    const deniedStaff = await post(admin, `/api/v1/accounts/${staff.account.id}/permissions`, {
+      version: staff.account.version, permissions: { 'customer.view_masked': false },
+    })
+    expect(deniedStaff.status).toBe(403)
+    const deniedRead = await admin.agent.get(`/api/v1/accounts/${staff.account.id}/permissions`)
+      .set('Origin', env.webOrigin)
+    expect(deniedRead.status).toBe(403)
 
     const allowed = await post(owner, `/api/v1/accounts/${otherBody.account.id}/permissions`, {
       version: otherBody.account.version, permissions: { 'report.read': false },
@@ -216,7 +269,7 @@ mysqlDescribe('TU-34 · quyền riêng từng tài khoản', () => {
     expect(allowed.status).toBe(200)
   })
 
-  it('Admin Read-Only xem được bảng quyền nhưng không lưu được', async () => {
+  it('Admin Read-Only không xem và không lưu được bảng quyền', async () => {
     const readOnly = await post(owner, '/api/v1/accounts', {
       username: 'tu34_admin_ro', displayName: 'Admin RO', roleCode: 'ADMIN', accessLevel: 'READ_ONLY',
     })
@@ -229,15 +282,14 @@ mysqlDescribe('TU-34 · quyền riêng từng tài khoản', () => {
     const session = await signIn('tu34_admin_ro', 'TU34-AdminRO-Pass-01', 'admin')
     const staff = await createStaff(owner, 'tu34_ro_target')
 
+    // Admin Read-Only cũng không thuộc nhóm được phân quyền.
     const read = await session.agent.get(`/api/v1/accounts/${staff.account.id}/permissions`)
       .set('Origin', env.webOrigin)
-    expect(read.status).toBe(200)
+    expect(read.status).toBe(403)
 
     const write = await post(session, `/api/v1/accounts/${staff.account.id}/permissions`, {
       version: staff.account.version, permissions: { 'customer.view_masked': false },
     })
-    // user.manage không nằm trong quyền của Admin Read-Only, nên dừng ngay ở
-    // tầng permission trước khi tới luật đổi quyền.
     expect(write.status).toBe(403)
   })
 

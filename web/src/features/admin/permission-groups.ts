@@ -44,31 +44,37 @@ export const PERMISSION_GROUPS: readonly PermissionGroup[] = [
 
 export interface GroupState {
   group: PermissionGroup
-  /** Vai trò của tài khoản có cho phép (ít nhất một mã trong nhóm) không. */
+  /** Các mã SuperAdmin tick được cho tài khoản này (nằm trong trần). */
   availableCodes: string[]
   checked: boolean
   editable: boolean
   /** Nhóm chưa có permission tương ứng trong backend. */
   unsupported: boolean
+  /** Nhóm nằm ngoài trần của tài khoản: không cấp được, không phải "chưa làm". */
+  outOfCeiling: boolean
 }
 
 /**
  * Trạng thái checkbox của một nhóm.
  *
- * `checked` chỉ đúng khi MỌI mã trong trần vai trò đều đang bật: nửa bật nửa
+ * `checked` chỉ đúng khi MỌI mã cấp được trong nhóm đều đang bật: nửa bật nửa
  * tắt mà hiện dấu tick sẽ nói dối về quyền thực tế.
+ *
+ * Từ TU-32 (quyết định 16/11), một quyền ngoài vai trò vẫn tick được miễn là
+ * nằm trong trần của tài khoản — backend trả `grantable` cho đúng việc đó.
  */
 export function groupStates(permissions: readonly AccountPermissionView[]): GroupState[] {
   const byCode = new Map(permissions.map((permission) => [permission.code, permission]))
   return PERMISSION_GROUPS.map((group) => {
     const views = group.codes.map((code) => byCode.get(code)).filter((view) => view !== undefined)
-    const inRole = views.filter((view) => view.grantedByRole)
+    const grantable = views.filter((view) => view.grantable)
     return {
       group,
-      availableCodes: inRole.map((view) => view.code),
-      checked: inRole.length > 0 && inRole.every((view) => view.enabled),
-      editable: inRole.some((view) => view.editable),
+      availableCodes: views.filter((view) => view.editable).map((view) => view.code),
+      checked: grantable.length > 0 && grantable.every((view) => view.enabled),
+      editable: views.some((view) => view.editable),
       unsupported: group.codes.length === 0,
+      outOfCeiling: group.codes.length > 0 && grantable.length === 0,
     }
   })
 }

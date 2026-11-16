@@ -768,6 +768,54 @@ export class MockGamApi implements GamApi, DemoControls {
   }
 
   /**
+   * TU-35: chế độ demo không có nhật ký thật.
+   *
+   * Trả về đúng bộ nhóm lọc và một trang rỗng, thay vì bịa vài dòng mẫu: một
+   * nhật ký giả trông y như thật là thứ nguy hiểm nhất trong màn này — nó
+   * được dùng để truy trách nhiệm.
+   */
+  async getAuditFilters() {
+    await this.latency("q")
+    this.require("audit.read")
+    return {
+      filters: [
+        { type: "booking_cancel", label: "Hủy booking", supported: true },
+        { type: "table_move", label: "Đổi bàn", supported: true },
+        { type: "phone_reveal", label: "Xem SĐT đầy đủ", supported: true },
+        {
+          type: "discount",
+          label: "Giảm giá / hủy món",
+          supported: false,
+          note: "Chưa có module gọi món và thanh toán nên chưa có thao tác nào thuộc nhóm này.",
+        },
+        { type: "login", label: "Đăng nhập", supported: true },
+        { type: "permission", label: "Đổi quyền", supported: true },
+        { type: "account", label: "Tài khoản", supported: true },
+      ],
+      retentionDays: 90,
+      canExport: false,
+    }
+  }
+
+  async listAuditEntries() {
+    await this.latency("q")
+    this.require("audit.read")
+    return {
+      entries: [],
+      hasMore: false,
+      nextCursor: null,
+      retentionDays: 90,
+      windowStart: new Date(Date.now() - 90 * 86_400_000).toISOString(),
+    }
+  }
+
+  async exportAuditCsv(): Promise<never> {
+    await this.latency("q")
+    this.require("audit.read")
+    return this.fail("Chế độ demo không có nhật ký để xuất. Dùng máy chủ thật.")
+  }
+
+  /**
    * TU-34: bảng checkbox ở chế độ demo được suy từ ma trận vai trò, không có
    * override. Đủ để xem layout; mọi thay đổi vẫn phải làm trên máy chủ thật.
    */
@@ -781,7 +829,9 @@ export class MockGamApi implements GamApi, DemoControls {
       account,
       permissions: (Object.keys(PERMISSION_LABEL) as Permission[]).sort().map((code) => {
         const grantedByRole = roleCan(role, code)
-        return { code, grantedByRole, enabled: grantedByRole, overridden: false, editable: grantedByRole }
+        // Demo không có override: trần = mọi quyền trừ việc riêng của OWNER.
+        const grantable = code !== "venue.configure" && code !== "customer.anonymize"
+        return { code, grantedByRole, enabled: grantedByRole, overridden: false, editable: grantable, grantable }
       }),
     }
   }

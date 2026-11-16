@@ -23,6 +23,8 @@ import {
 } from './account.repository.js'
 import {
   assertCanEditPermissions,
+  assertCanViewPermissions,
+  grantableCeiling,
   permissionViews,
   planOverrideChanges,
   type PermissionView,
@@ -32,6 +34,11 @@ export interface AccountPermissionsResult {
   account: AccountSummary
   /** Mọi permission của hệ thống, kèm trạng thái cho tài khoản này. */
   permissions: PermissionView[]
+}
+
+/** Mô tả mục tiêu cho `grantableCeiling`: loại tài khoản + cấp truy cập. */
+function targetOf(account: AccountSummary): { kind: ReturnType<typeof targetKind>; accessLevel: 'WRITE' | 'READ_ONLY' | null } {
+  return { kind: targetKind(account), accessLevel: account.accessLevel }
 }
 
 function toSummaryRow(rows: readonly AccountRow[], userId: number): AccountSummary {
@@ -97,14 +104,15 @@ export async function getAccountPermissions(
 ): Promise<AccountPermissionsResult> {
   const connection = await databasePool.getConnection()
   try {
-    await authority(connection, actor)
+    assertCanViewPermissions((await authority(connection, actor)).role)
     const account = toSummaryRow(await selectAccounts(connection, actor, userId), userId)
     const [all, base, overrides] = await Promise.all([
       allPermissionCodes(connection),
       basePermissions(connection, actor, userId),
       overridesOf(connection, actor.organizationId, userId),
     ])
-    return { account, permissions: permissionViews(all, base, overrides) }
+    const ceiling = grantableCeiling(all, targetOf(account), READ_ONLY_ADMIN_PERMISSIONS)
+    return { account, permissions: permissionViews(all, base, overrides, ceiling) }
   } finally {
     connection.release()
   }
@@ -142,7 +150,9 @@ export async function updateAccountPermissions(
 
     const base = await basePermissions(connection, actor, userId)
     const overrides = await overridesOf(connection, actor.organizationId, userId)
-    const changes = planOverrideChanges(requested, base, overrides)
+    const all = await allPermissionCodes(connection)
+    const ceiling = grantableCeiling(all, targetOf(account), READ_ONLY_ADMIN_PERMISSIONS)
+    const changes = planOverrideChanges(requested, base, overrides, ceiling)
 
     if (changes.length) {
       const [permissionRows] = await connection.execute<(RowDataPacket & { id: number; code: string })[]>(
@@ -178,13 +188,18 @@ export async function updateAccountPermissions(
     }
 
     const account2 = toSummaryRow(await selectAccounts(connection, actor, userId), userId)
-    const [all, base2, overrides2] = await Promise.all([
+    const [all2, base2, overrides2] = await Promise.all([
       allPermissionCodes(connection),
       basePermissions(connection, actor, userId),
       overridesOf(connection, actor.organizationId, userId),
     ])
+    const ceiling2 = grantableCeiling(all2, targetOf(account2), READ_ONLY_ADMIN_PERMISSIONS)
     await connection.commit()
-    return { account: account2, permissions: permissionViews(all, base2, overrides2), changed: changes.length }
+    return {
+      account: account2,
+      permissions: permissionViews(all2, base2, overrides2, ceiling2),
+      changed: changes.length,
+    }
   } catch (error) {
     await connection.rollback()
     throw error

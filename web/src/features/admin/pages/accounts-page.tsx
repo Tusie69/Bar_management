@@ -262,6 +262,8 @@ export default function AdminAccountsPage() {
         </section>
 
         <PermissionPanel
+          // TU-32: phân quyền là chức năng của riêng SuperAdmin.
+          superAdmin={actorRole === "OWNER"}
           // key: đổi tài khoản thì panel dựng lại, nháp checkbox của người
           // trước không theo sang người sau.
           key={selected?.id ?? "none"}
@@ -304,10 +306,12 @@ function RowButton({
 function PermissionPanel({
   account,
   canManage,
+  superAdmin,
   actor,
 }: {
   account: AccountSummary | null
   canManage: boolean
+  superAdmin: boolean
   actor: { userId: number; role: string; readOnly: boolean }
 }) {
   const queryClient = useQueryClient()
@@ -316,7 +320,9 @@ function PermissionPanel({
   const query = useQuery({
     queryKey: permissionsKey(account?.id ?? 0),
     queryFn: () => api.getAccountPermissions(account!.id),
-    enabled: account !== null,
+    // Admin Edit và Admin Read-Only không được xem bảng quyền; gọi API sẽ bị
+    // 403, nên đừng gọi rồi hiện hộp lỗi đỏ như thể hệ thống hỏng.
+    enabled: account !== null && superAdmin,
     retry: false,
   })
 
@@ -334,6 +340,18 @@ function PermissionPanel({
     onError: reportError,
   })
 
+  if (!superAdmin) {
+    return (
+      <section className="adm-card grid gap-2 p-5">
+        <h2 className="adm-h2">Quyền của tài khoản</h2>
+        <p className="adm-body text-[var(--adm-text-muted)]">
+          Chỉ SuperAdmin xem và đổi được bảng phân quyền. Tài khoản Admin dùng được mọi tính năng vận hành, nhưng không
+          phân quyền cho người khác.
+        </p>
+      </section>
+    )
+  }
+
   if (!account) {
     return (
       <section className="adm-card grid gap-2 p-5">
@@ -344,7 +362,7 @@ function PermissionPanel({
   }
 
   const states = groupStates(query.data?.permissions ?? [])
-  const editable = canManage && canActOn(actor, account)
+  const editable = superAdmin && canManage && canActOn(actor, account)
   const dirty = Object.keys(draft).length > 0
 
   return (
@@ -387,8 +405,12 @@ function PermissionPanel({
                     {state.group.label}
                     {state.unsupported ? (
                       <span className="adm-label block">Chưa hỗ trợ — {state.group.unsupportedNote}</span>
+                    ) : state.outOfCeiling ? (
+                      <span className="adm-label block">Không cấp được cho loại tài khoản này.</span>
                     ) : !state.editable ? (
-                      <span className="adm-label block">Vai trò này không có quyền trên.</span>
+                      <span className="adm-label block">Quyền này không tắt được.</span>
+                    ) : !state.checked ? (
+                      <span className="adm-label block">Vai trò chưa có — tick để cấp thêm.</span>
                     ) : null}
                   </span>
                 </label>
@@ -399,8 +421,9 @@ function PermissionPanel({
       )}
 
       <p className="adm-body rounded-lg bg-[var(--adm-surface-sunken)] p-3 text-[var(--adm-text-muted)]">
-        Dùng checkbox thay cho droplist theo yêu cầu 08/11 của anh Luân. Bỏ tick chỉ thu hẹp quyền trong phạm vi vai
-        trò, không bao giờ cấp thêm.
+        Dùng checkbox thay cho droplist theo yêu cầu 08/11 của anh Luân. SuperAdmin cấp thêm được quyền ngoài vai trò
+        của tài khoản; riêng cấu hình quán và ẩn danh khách thì không cấp lẻ cho ai, và Admin Read-Only chỉ nhận thêm
+        quyền xem.
       </p>
 
       <button

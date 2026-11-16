@@ -8,6 +8,19 @@ import { sessionEndUnsavedWarning } from "@/domain/session-end"
 import { isApiError } from "@/services"
 import { useSession } from "@/state/session"
 
+/**
+ * Ghi chú cổng riêng, theo prototype màn 00. Mỗi cổng liệt kê đúng những vai
+ * KHÔNG vào được ở đây, để nhân viên biết mình phải gõ URL nào.
+ */
+const PORTAL_NOTE: Record<AuthPortal, string> = {
+  admin: "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản Thu ngân, Lễ tân, Phục vụ không đăng nhập được tại cổng này.",
+  receptionist:
+    "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản Quản trị, Thu ngân, Phục vụ không đăng nhập được tại cổng này.",
+  cashier: "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản Quản trị, Lễ tân, Phục vụ không đăng nhập được tại cổng này.",
+  waiter: "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản Quản trị, Lễ tân, Thu ngân không đăng nhập được tại cổng này.",
+  "customer-care": "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản của vai khác không đăng nhập được tại cổng này.",
+}
+
 export function LoginPage({ portal }: { portal: AuthPortal }) {
   const login = useSession((state) => state.login)
   const sessionMessage = useSession((state) => state.authError)
@@ -52,6 +65,13 @@ export function LoginPage({ portal }: { portal: AuthPortal }) {
           </div>
         </header>
 
+        {/*
+          TU-32 AC: prototype màn "00 · Đăng nhập /admin" yêu cầu nói rõ mỗi vai
+          có cổng riêng. Nhân viên gõ nhầm cổng là chuyện xảy ra hằng tuần, và
+          "sai tên đăng nhập hoặc mật khẩu" là câu trả lời sai cho việc đó.
+        */}
+        <p className="rounded-xl bg-surface-2 px-3 py-2 text-xs text-tx-2">{PORTAL_NOTE[portal]}</p>
+
         <form className="grid gap-4" onSubmit={submit}>
           <div className="grid gap-2">
             <Label htmlFor="username">Tên đăng nhập</Label>
@@ -95,11 +115,12 @@ export function LoginPage({ portal }: { portal: AuthPortal }) {
             </div>
           </div>
           {error || sessionMessage ? (
-            <div role="alert" className="grid gap-1 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm">
+            <div
+              role="alert"
+              className="grid gap-1 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
+            >
               <p>{error ?? sessionMessage}</p>
-              {!error && unsavedWarning ? (
-                <p className="text-xs text-muted-foreground">{unsavedWarning}</p>
-              ) : null}
+              {!error && unsavedWarning ? <p className="text-xs text-muted-foreground">{unsavedWarning}</p> : null}
             </div>
           ) : null}
           <Button type="submit" size="lg" disabled={pending || !username.trim() || !password}>

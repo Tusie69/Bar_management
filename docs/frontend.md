@@ -165,7 +165,7 @@ Hai mục đã có sẵn chỗ trong registry:
 | 01 Tổng quan ca (NA-33)        | `overview` | Tổng quan              | _(chưa có — chỉ cần vào `/admin`)_ | `overview`                         |
 | 08 Sổ lượt tới quán (NA-34)    | `visits`   | Sổ lượt tới quán       | `customer.view_masked`             | `visits`                           |
 | 02 Tài khoản (TU-34 — đã ghép) | `accounts` | Tài khoản & phân quyền | `user.read`                        | `accounts`                         |
-| 03 Nhật ký (TU-35)             | `audit`    | Nhật ký thao tác       | `audit.read`                       | `audit`                            |
+| 03 Nhật ký (TU-35 — đã ghép)   | `audit`    | Nhật ký thao tác       | `audit.read`                       | `audit`                            |
 
 Các bước cho Nam:
 
@@ -201,6 +201,19 @@ mã (sửa và hủy booking là hai permission), và nhóm "Duyệt giảm giá
 
 Mật khẩu tạm: tạo tài khoản và đặt lại mật khẩu đều để server sinh chuỗi, hiện đúng một lần. Tài khoản đó đăng nhập
 được nhưng mọi API nghiệp vụ trả 403 cho tới khi đổi mật khẩu; `AuthBoundary` chặn trước bằng `PasswordChangeGate`.
+
+## 6c. Màn Nhật ký thao tác (TU-35)
+
+`pages/audit-page.tsx` đọc ba endpoint: `getAuditFilters()` (nhóm lọc + số ngày lưu + quyền xuất),
+`listAuditEntries(query)` và `exportAuditCsv(query)`. Vài điểm đáng chép lại khi làm màn khác:
+
+- **Nhóm lọc do server quyết định.** Web không tự biết nhóm nào đã có thao tác thật; `supported: false` làm mờ ô lọc
+  kèm lời giải thích. Đừng viết cứng danh sách nhóm ở web.
+- **Quyền xuất file cũng do server trả về** (`canExport`), đọc từ cấu hình quán. Web chỉ làm mờ nút; server vẫn trả
+  403 `AUDIT_EXPORT_DENIED` nếu gọi thẳng.
+- **Tải file** bằng cách lấy chuỗi CSV qua `api` rồi tạo Blob, không mở URL trong tab mới — như vậy request vẫn đi
+  kèm cookie phiên và lỗi quyền hiện ra như mọi lỗi khác.
+- **Giờ hiển thị là giờ quán**, qua `fmtAuditTime` trong `audit-format.ts`; đừng dùng `toLocaleString` của máy.
 
 ## 7. Kiểm tra bằng tay (layout)
 
