@@ -123,6 +123,7 @@ export function mockTableTurnSummary(rows: TableTurnView[], params: TableTurnQue
     from: params.from,
     to: params.to,
     ...totals(filtered),
+    openTotal: filtered.filter((row) => row.status === "OPEN").length,
     byBusinessDate: [...dates.values()].sort((a, b) => a.businessDate.localeCompare(b.businessDate)),
     byStaff: [...staff.values()].sort(
       (a, b) =>

@@ -44,7 +44,7 @@ export function TurnsDailyChart({ days }: TurnsDailyChartProps) {
       aria-labelledby="turns-daily-heading"
       data-testid="turns-daily-section"
     >
-      <div className="turns-card-header">
+      <div className={`turns-card-header${viewMode === "chart" ? " turns-card-header-bordered" : ""}`}>
         <div>
           <h2 id="turns-daily-heading" className="turns-card-title">
             Theo ngày
@@ -103,9 +103,9 @@ export function TurnsDailyChart({ days }: TurnsDailyChartProps) {
             <div
               role="img"
               aria-label={`Biểu đồ lượt và khách theo ngày: ${summaryLine}`}
-              className="grid items-end gap-3"
+              className="grid items-end gap-2.5"
               style={{
-                gridTemplateColumns: `repeat(${days.length}, minmax(92px, 1fr))`,
+                gridTemplateColumns: `repeat(${days.length}, minmax(${days.length > 10 ? "68px" : "92px"}, 1fr))`,
               }}
               data-testid="turns-daily-bars"
             >

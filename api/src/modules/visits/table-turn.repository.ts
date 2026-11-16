@@ -294,6 +294,7 @@ export interface TurnSummary {
   from: string
   to: string
   completedTotal: number
+  openTotal: number
   guestTotal: number
   byBusinessDate: { businessDate: string; turns: number; guests: number }[]
   byStaff: { checkedInByUserId: number | null; checkedInByDisplayName: string | null; turns: number; guests: number }[]
@@ -360,7 +361,7 @@ interface TurnRow extends RowDataPacket {
 
 // One row per visit: live allocations supply open turns; close snapshots replace
 // them atomically. Keep this source shared with the badge, list and aggregates.
-const turnProjection = `WITH target_visits AS (
+export const turnProjection = `WITH target_visits AS (
   SELECT * FROM visits WHERE organization_id = ? AND venue_id = ? AND business_date BETWEEN ? AND ?
 ), closed_turns AS (
   SELECT t.id, 'CLOSED' AS status, t.turn_no, t.business_date, t.scope, t.table_id, t.group_id,
@@ -508,8 +509,9 @@ export async function summarizeTableTurns(
   const connection = await databasePool.getConnection()
   type AggregateRow = RowDataPacket & { turns: number; guests: number }
   try {
-    const [totals] = await connection.execute<AggregateRow[]>(
+    const [totals] = await connection.execute<(AggregateRow & { open_total: number })[]>(
       `${turnProjection} SELECT COUNT(CASE WHEN t.counted = 1 THEN 1 END) AS turns,
+        COUNT(CASE WHEN t.status = 'OPEN' THEN 1 END) AS open_total,
         COALESCE(SUM(IF(t.counted = 1, t.guest_count, 0)), 0) AS guests
        FROM turns t WHERE ${filter.sql}`, filter.values,
     )
@@ -544,6 +546,7 @@ export async function summarizeTableTurns(
     return {
       from: query.from, to: query.to,
       completedTotal: Number(totals[0]?.turns ?? 0),
+      openTotal: Number(totals[0]?.open_total ?? 0),
       guestTotal: Number(totals[0]?.guests ?? 0),
       byBusinessDate: dates.map((row) => ({
         businessDate: dateOnly(row.business_date), turns: Number(row.turns), guests: Number(row.guests),

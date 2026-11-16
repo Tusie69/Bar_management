@@ -148,6 +148,35 @@ mysqlDescribe('C2 table turn ledger', () => {
   })
   afterAll(clearFixture)
 
+  it('splits OPEN turns from counted and uncounted CLOSED turns under the same staff filters', async () => {
+    const otherStaff = { ...actor, userId: 9802, membershipId: 9802 }
+    await seatBooking('Still seated', [b3], 2)
+    const completed = await seatBooking('Released', [b4], 3)
+    const correction = await seatBooking('Correction', [b5], 4)
+    await closeVisit(otherStaff, {
+      visitId: completed.visitId, expectedVersion: completed.version, mode: 'MANUAL', reason: 'GUEST_LEFT',
+    })
+    await closeVisit(otherStaff, {
+      visitId: correction.visitId, expectedVersion: correction.version, mode: 'MANUAL', reason: 'ENTRY_ERROR',
+    })
+    await seatBooking('Other staff seated', [b5], 5, otherStaff)
+    for (const countedOnly of [true, false]) {
+      const query = { from: businessDate, to: businessDate, countedOnly }
+      for (const [filters, expected] of [
+        [{}, { completedTotal: 3, openTotal: 2, guestTotal: 10 }],
+        [{ checkedInByUserId: actor.userId }, { completedTotal: 2, openTotal: 1, guestTotal: 5 }],
+        [{ checkedInByUserId: otherStaff.userId }, { completedTotal: 1, openTotal: 1, guestTotal: 5 }],
+        [{ closedByUserId: otherStaff.userId }, { completedTotal: 1, openTotal: 0, guestTotal: 3 }],
+        [{ checkedInByUserId: 999999 }, { completedTotal: 0, openTotal: 0, guestTotal: 0 }],
+      ] as const) {
+        const summary = await summarizeTableTurns(actor, { ...query, ...filters })
+        expect(summary).toMatchObject(expected)
+        expect(summary.openTotal).toBeGreaterThanOrEqual(0)
+        expect(summary.openTotal).toBeLessThanOrEqual(summary.completedTotal)
+      }
+    }
+  })
+
   it('NA-34 counts an open check-in immediately and keeps one visit after release', async () => {
     const seated = await seatBooking('Open booking', [b3], 3)
     const query = { from: businessDate, to: businessDate, countedOnly: true, page: 1, pageSize: 50 }
@@ -155,7 +184,7 @@ mysqlDescribe('C2 table turn ledger', () => {
     expect(open).toMatchObject({ total: 1, completedTotal: 1, guestTotal: 3 })
     expect(open.turns[0]).toMatchObject({ visitId: seated.visitId, status: 'OPEN', releasedAt: null,
       counted: true, turnNo: 1, checkedInByUserId: actor.userId, checkedInByDisplayName: 'integration_reception' })
-    expect(await summarizeTableTurns(actor, query)).toMatchObject({ completedTotal: 1, guestTotal: 3 })
+    expect(await summarizeTableTurns(actor, query)).toMatchObject({ completedTotal: 1, openTotal: 1, guestTotal: 3 })
     await closeVisit({ ...actor, userId: 9802, membershipId: 9802 }, {
       visitId: seated.visitId, expectedVersion: seated.version, mode: 'MANUAL', reason: 'GUEST_LEFT',
     })
@@ -163,7 +192,7 @@ mysqlDescribe('C2 table turn ledger', () => {
     expect(closed).toMatchObject({ total: 1, completedTotal: 1, guestTotal: 3 })
     expect(closed.turns[0]).toMatchObject({ visitId: seated.visitId, status: 'CLOSED',
       checkedInByUserId: actor.userId, closedByUserId: 9802 })
-    expect(await summarizeTableTurns(actor, query)).toMatchObject({ byStaff: [{
+    expect(await summarizeTableTurns(actor, query)).toMatchObject({ openTotal: 0, byStaff: [{
       checkedInByUserId: actor.userId, checkedInByDisplayName: 'integration_reception', turns: 1, guests: 3,
     }] })
   })
@@ -209,7 +238,7 @@ mysqlDescribe('C2 table turn ledger', () => {
     expect(route.body).toMatchObject({ total: 2, completedTotal: 2, guestTotal: 6 })
     const routeSummary = await owner.agent.get(`/api/v1/visits/turns/summary?from=${businessDate}&to=${businessDate}&checkedInByUserId=${otherStaff.userId}`)
     expect(routeSummary.status).toBe(200)
-    expect(routeSummary.body).toMatchObject({ byStaff: [{
+    expect(routeSummary.body).toMatchObject({ openTotal: 2, byStaff: [{
       checkedInByUserId: otherStaff.userId, checkedInByDisplayName: 'integration_owner', turns: 2, guests: 6,
     }] })
     await closeVisit(actor, { visitId: booking.visitId, expectedVersion: booking.version, mode: 'MANUAL', reason: 'ENTRY_ERROR' })

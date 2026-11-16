@@ -6,6 +6,38 @@ import { seedDb } from "./seed"
 describe("table turn mock ledger", () => {
   const rows = seedTableTurns(new Date("2030-10-24T14:00:00Z"))
   const range = { from: "2030-10-24", to: "2030-10-24" }
+  it("splits OPEN turns from counted and uncounted CLOSED turns with the same staff filters", () => {
+    const closed = rows.find((row) => row.counted && row.businessDate === range.from)!
+    const open = {
+      ...closed,
+      status: "OPEN" as const,
+      turnId: null,
+      releasedAt: null,
+      endReason: null,
+      closedByUserId: null,
+      closedByDisplayName: null,
+    }
+    const mixed = [
+      { ...open, visitId: 80, guestCount: 2 },
+      { ...closed, visitId: 81, guestCount: 3, closedByUserId: 2 },
+      { ...closed, visitId: 82, guestCount: 4, counted: false, endReason: "ENTRY_ERROR", closedByUserId: 2 },
+      { ...open, visitId: 83, guestCount: 5, checkedInByUserId: 2 },
+    ]
+    for (const includeUncounted of [false, true]) {
+      for (const [filters, expected] of [
+        [{}, { completedTotal: 3, openTotal: 2, guestTotal: 10 }],
+        [{ checkedInByUserId: 1 }, { completedTotal: 2, openTotal: 1, guestTotal: 5 }],
+        [{ checkedInByUserId: 2 }, { completedTotal: 1, openTotal: 1, guestTotal: 5 }],
+        [{ closedByUserId: 2 }, { completedTotal: 1, openTotal: 0, guestTotal: 3 }],
+        [{ checkedInByUserId: 999999 }, { completedTotal: 0, openTotal: 0, guestTotal: 0 }],
+      ] as const) {
+        const summary = mockTableTurnSummary(mixed, { ...range, includeUncounted, ...filters })
+        expect(summary).toMatchObject(expected)
+        expect(summary.openTotal).toBeGreaterThanOrEqual(0)
+        expect(summary.openTotal).toBeLessThanOrEqual(summary.completedTotal)
+      }
+    }
+  })
   it.each(["MOVED", "REGROUPED", "SPLIT"] as const)(
     "excludes %s history from a closed visit's final tables",
     (reason) => {
@@ -102,6 +134,7 @@ describe("table turn mock ledger", () => {
     expect(mockTableTurnSummary(rows, filtered).byStaff).toHaveLength(1)
     expect(mockTableTurnSummary(rows, { from: "2020-01-01", to: "2020-01-01" })).toMatchObject({
       completedTotal: 0,
+      openTotal: 0,
       guestTotal: 0,
       byBusinessDate: [],
       byStaff: [],

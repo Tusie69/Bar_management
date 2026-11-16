@@ -15,6 +15,7 @@ import { waitlistRouter } from './modules/waitlist/waitlist.route.js'
 import { settingsRouter, venueSettingsRouter } from './modules/venues/venue-settings.route.js'
 import { healthRouter } from './routes/health.route.js'
 import { receptionRouter } from './modules/reception/guest-count.route.js'
+import { customerHistoryRouter } from './modules/visits/customer-history.route.js'
 
 export const app: Express = express()
 
@@ -28,6 +29,7 @@ app.use(express.json({ limit: '1mb' }))
 app.use('/api/v1', requireTrustedOrigin)
 
 app.use('/api/v1/health', healthRouter)
+app.use('/api/v1', customerHistoryRouter)
 app.use('/api/v1/auth', authRouter)
 app.use('/api/v1/tables', tableRouter)
 app.use('/api/v1/bookings', bookingRouter)

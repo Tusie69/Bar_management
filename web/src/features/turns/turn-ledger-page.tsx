@@ -9,17 +9,22 @@ import { useBusinessDate, useTableTurnSummary, useTableTurns } from "@/hooks/use
 import { fmtBusinessDate, fromLocalDate, toLocalDate, type BusinessDate } from "@/lib/time"
 import { api, isApiError } from "@/services"
 import { useCan, useSession } from "@/state/session"
+import {
+  AnonymousVisitsCard,
+  DuplicateCustomersCard,
+} from "./turns-customer-history-cards"
 import { TurnsDailyChart } from "./turns-daily-chart"
 import {
   buildListParams,
   buildSummaryQuery,
+  computeTurnKpis,
   fillBusinessDateSeries,
-  formatRangeCaption,
+  formatLedgerRangeCaption,
   formatStaffName,
-  getSummaryUncountedTotal,
   hasCheckedInByStaffField,
   resolveStaffIdentity,
   resolveTurnDateRange,
+  resolveTurnWriteAccess,
   type TurnRangePreset,
 } from "./turns-helpers"
 import { TurnsHistoryTable } from "./turns-history-table"
@@ -31,6 +36,7 @@ const RANGE_PRESET_OPTIONS: readonly TurnsRadioOption<Exclude<TurnRangePreset, "
   { id: "today", label: "Ca hôm nay", testId: "turns-range-today" },
   { id: "week", label: "Tuần này", testId: "turns-range-week" },
   { id: "7days", label: "7 ngày", testId: "turns-range-7days" },
+  { id: "30days", label: "30 ngày", testId: "turns-range-30days" },
 ]
 
 const DEFAULT_PAGE_SIZE = 20
@@ -45,54 +51,59 @@ function useCanReadTurnLedger(): boolean {
   return canFromRole
 }
 
+function useTurnHistoryReadOnly(): boolean {
+  const role = useSession((state) => state.user?.role)
+  const userAccessLevel = useSession((state) => state.user?.accessLevel ?? null)
+  const principal = useSession((state) => state.principal)
+  const permissions = useSession((state) => state.permissions)
+  return resolveTurnWriteAccess({
+    mode: api.mode,
+    role,
+    userAccessLevel,
+    principalAccessLevel: principal?.accessLevel ?? null,
+    hasPrincipal: principal !== null,
+    permissions,
+  }).isReadOnly
+}
+
 function isForbiddenError(error: unknown): boolean {
   return isApiError(error) && (error.status === 403 || error.code === "PERMISSION_DENIED")
 }
 
-function TurnsLoadingSkeleton({ showUncounted }: { showUncounted: boolean }) {
+function TurnsLoadingSkeleton() {
   return (
     <div
-      className="grid gap-5"
+      className="grid gap-[18px]"
       role="status"
       aria-live="polite"
       aria-label="Đang tải sổ lượt tới quán"
       data-testid="turns-loading-skeleton"
     >
       <div className="turns-metrics-grid">
-        <div className="turns-card turns-metric-card">
-          <Skeleton className="h-4 w-28" />
-          <Skeleton className="mt-1 h-9 w-20" />
-          <Skeleton className="h-3.5 w-40" />
-        </div>
-        <div className="turns-card turns-metric-card">
-          <Skeleton className="h-4 w-24" />
-          <Skeleton className="mt-1 h-9 w-20" />
-          <Skeleton className="h-3.5 w-36" />
-        </div>
-        {showUncounted ? (
-          <div className="turns-card turns-metric-card">
-            <Skeleton className="h-4 w-28" />
-            <Skeleton className="mt-1 h-9 w-16" />
-            <Skeleton className="h-3.5 w-44" />
+        {[0, 1, 2, 3].map((idx) => (
+          <div key={idx} className="turns-card turns-metric-card">
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-9 w-16" />
+            <Skeleton className="h-3.5 w-36" />
           </div>
-        ) : null}
+        ))}
       </div>
 
       <div className="turns-main-grid">
         <div className="turns-card p-5">
-          <Skeleton className="h-6 w-40" />
-          <Skeleton className="mt-2 h-4 w-64" />
+          <Skeleton className="h-5 w-44" />
+          <Skeleton className="mt-2 h-4 w-72" />
           <div className="mt-5 grid gap-3">
+            <Skeleton className="h-8 w-full" />
             <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
-            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
           </div>
         </div>
         <div className="turns-side-stack">
           <div className="turns-card p-5">
-            <Skeleton className="h-6 w-36" />
+            <Skeleton className="h-5 w-36" />
             <div className="mt-4 grid gap-2.5">
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-10 w-full" />
@@ -100,11 +111,28 @@ function TurnsLoadingSkeleton({ showUncounted }: { showUncounted: boolean }) {
             </div>
           </div>
           <div className="turns-card p-5">
-            <Skeleton className="h-6 w-44" />
+            <Skeleton className="h-5 w-44" />
             <div className="mt-4 grid gap-2.5">
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-10 w-full" />
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="turns-bottom-grid">
+        <div className="turns-card p-5">
+          <Skeleton className="h-5 w-36" />
+          <div className="mt-4 grid gap-2.5">
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-full" />
+          </div>
+        </div>
+        <div className="turns-card p-5">
+          <Skeleton className="h-5 w-44" />
+          <div className="mt-4 grid gap-2.5">
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-full" />
           </div>
         </div>
       </div>
@@ -123,6 +151,7 @@ export interface TurnLedgerPageProps {
  */
 export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps) {
   const canRead = useCanReadTurnLedger()
+  const isReadOnly = useTurnHistoryReadOnly()
   const currentBusinessDate = useBusinessDate()
 
   const [preset, setPreset] = useState<TurnRangePreset>(initialPreset)
@@ -136,6 +165,7 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
     () => resolveTurnDateRange(preset, currentBusinessDate, pickedDate),
     [preset, currentBusinessDate, pickedDate],
   )
+  const isMultiDay = from !== to
 
   const summaryParams = useMemo<TableTurnQuery>(
     () => buildSummaryQuery(from, to, includeUncounted),
@@ -167,8 +197,8 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
   const turnsData = turnsQuery.data
 
   const dailySeries = useMemo(
-    () => (from !== to && summary ? fillBusinessDateSeries(from, to, summary.byBusinessDate) : []),
-    [from, to, summary],
+    () => (isMultiDay && summary ? fillBusinessDateSeries(from, to, summary.byBusinessDate) : []),
+    [isMultiDay, from, to, summary],
   )
 
   const selectedStaffLabel = useMemo(() => {
@@ -257,7 +287,8 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
     void turnsQuery.refetch()
   }
 
-  const uncountedTotal = summary ? getSummaryUncountedTotal(summary) : 0
+  const kpis = summary ? computeTurnKpis(summary) : null
+  const rangeCaption = formatLedgerRangeCaption(preset, from, to)
   const isRangeEmpty =
     summary !== undefined &&
     summary.completedTotal === 0 &&
@@ -303,10 +334,6 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
               />
             </PopoverContent>
           </Popover>
-
-          <span className="turns-range-caption" data-testid="turns-range-caption">
-            {formatRangeCaption(preset, from, to)}
-          </span>
         </div>
 
         <div className="turns-toolbar-right">
@@ -353,7 +380,7 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
 
       {/* Content states */}
       {isInitialLoading ? (
-        <TurnsLoadingSkeleton showUncounted={includeUncounted} />
+        <TurnsLoadingSkeleton />
       ) : fatalError ? (
         <section
           className="turns-card grid place-items-center gap-4 px-6 py-12 text-center"
@@ -391,38 +418,39 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
             Thử lại
           </button>
         </section>
-      ) : summary ? (
+      ) : summary && kpis ? (
         <>
-          {/* Summary Metric Cards (exclusively from API summary) */}
+          {/* 4-card KPI row matching Figma geometry (exclusively from API summary) */}
           <dl className="turns-metrics-grid" data-testid="turns-metrics-grid">
             <div className="turns-card turns-metric-card" data-testid="turns-metric-completed">
               <dt className="turns-metric-label">Lượt tới quán</dt>
-              <dd className="turns-metric-value m-0">{summary.completedTotal}</dd>
-              <dd className="turns-metric-caption m-0">lượt check-in được ghi nhận</dd>
+              <dd className="turns-metric-value m-0">{kpis.arrivedTotal}</dd>
+              <dd className="turns-metric-caption m-0">lượt tính vào chỉ số</dd>
             </div>
 
             <div className="turns-card turns-metric-card" data-testid="turns-metric-guests">
               <dt className="turns-metric-label">Tổng khách</dt>
-              <dd className="turns-metric-value m-0">{summary.guestTotal}</dd>
+              <dd className="turns-metric-value m-0">{kpis.guestTotal}</dd>
               <dd className="turns-metric-caption m-0">tổng số khách phục vụ</dd>
             </div>
 
-            {includeUncounted ? (
-              <div className="turns-card turns-metric-card" data-testid="turns-metric-uncounted">
-                <dt className="turns-metric-label">Lượt không tính</dt>
-                <dd
-                  className="turns-metric-value m-0"
-                  style={{ color: "var(--turns-amber-ink)" }}
-                >
-                  {uncountedTotal}
-                </dd>
-                <dd className="turns-metric-caption m-0">nhập nhầm / hệ thống đóng ca</dd>
-              </div>
-            ) : null}
+            <div className="turns-card turns-metric-card" data-testid="turns-metric-open">
+              <dt className="turns-metric-label">Đang ngồi</dt>
+              <dd className="turns-metric-value turns-metric-value-amber m-0">{kpis.openTotal}</dd>
+              <dd className="turns-metric-caption m-0">lượt đang phục vụ trong khoảng</dd>
+            </div>
+
+            <div className="turns-card turns-metric-card" data-testid="turns-metric-closed">
+              <dt className="turns-metric-label">Đã trả bàn</dt>
+              <dd className="turns-metric-value turns-metric-value-green m-0">
+                {kpis.closedCountedTotal}
+              </dd>
+              <dd className="turns-metric-caption m-0">lượt đã kết thúc hợp lệ</dd>
+            </div>
           </dl>
 
-          {/* Daily Breakdown (when range > 1 business day) */}
-          {from !== to ? <TurnsDailyChart days={dailySeries} /> : null}
+          {/* Daily Breakdown (only for multi-day ranges) */}
+          {isMultiDay ? <TurnsDailyChart days={dailySeries} /> : null}
 
           {/* Empty state vs Two-column detail */}
           {isRangeEmpty ? (
@@ -446,18 +474,34 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
               </p>
             </section>
           ) : (
-            <div className="turns-main-grid" data-testid="turns-main-grid">
-              <TurnsHistoryTable
-                result={turnsData}
-                isFetching={turnsQuery.isFetching}
-                includeUncounted={includeUncounted}
-                selectedStaffId={selectedStaffId}
-                selectedStaffLabel={selectedStaffLabel}
-                onClearStaff={() => handleSelectStaff(undefined)}
-                onPageChange={setPage}
-              />
+            <>
+              <div className="turns-main-grid" data-testid="turns-main-grid">
+                <TurnsHistoryTable
+                  result={turnsData}
+                  rangeCaption={rangeCaption}
+                  isMultiDay={isMultiDay}
+                  isFetching={turnsQuery.isFetching}
+                  includeUncounted={includeUncounted}
+                  selectedStaffId={selectedStaffId}
+                  selectedStaffLabel={selectedStaffLabel}
+                  onClearStaff={() => handleSelectStaff(undefined)}
+                  onPageChange={setPage}
+                />
 
-              <div className="turns-side-stack">
+                <div className="turns-side-stack" data-testid="turns-side-stack">
+                  <AnonymousVisitsCard
+                    key={`${from}:${to}`}
+                    from={from}
+                    to={to}
+                    currentBusinessDate={currentBusinessDate}
+                    turns={turnsData?.turns}
+                    isReadOnly={isReadOnly}
+                  />
+                  <DuplicateCustomersCard isReadOnly={isReadOnly} />
+                </div>
+              </div>
+
+              <div className="turns-bottom-grid" data-testid="turns-bottom-grid">
                 <StaffBreakdownCard
                   byStaff={summary.byStaff}
                   selectedStaffId={selectedStaffId}
@@ -465,7 +509,7 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
                 />
                 <TopScopesCard byScope={summary.byScope} />
               </div>
-            </div>
+            </>
           )}
         </>
       ) : null}

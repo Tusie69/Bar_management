@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react"
-import { AlertCircle, Bot, CheckCircle2, ChevronLeft, ChevronRight, Clock, Layers, X } from "lucide-react"
+import { Fragment, useCallback, useEffect, useRef, useState } from "react"
+import { ChevronLeft, ChevronRight, Layers, X } from "lucide-react"
 import type { TableTurnsResult } from "@/domain/models"
-import { fmtBusinessDate } from "@/lib/time"
+import { fmtBusinessDate, fmtDayMonth } from "@/lib/time"
 import {
   formatEndReason,
   formatScopeLabel,
   formatStaffName,
   formatTimeRange,
+  formatTurnCode,
   formatTurnSource,
   isTurnOpen,
   maskPhoneNumbersInText,
@@ -16,6 +17,8 @@ import {
 
 interface TurnsHistoryTableProps {
   result: TableTurnsResult | undefined
+  rangeCaption: string
+  isMultiDay: boolean
   isFetching: boolean
   includeUncounted: boolean
   selectedStaffId: number | undefined
@@ -24,12 +27,35 @@ interface TurnsHistoryTableProps {
   onPageChange: (nextPage: number) => void
 }
 
+function isAnonymousGuestName(name: string): boolean {
+  const normalized = name.trim()
+  return normalized === "" || normalized === "Khách" || normalized.startsWith("Khách Walk-in")
+}
+
 /**
- * Paginated turn history table ("Lịch sử lượt") driven directly by `useTableTurns`.
- * Uncounted rows (`ENTRY_ERROR`, `BUSINESS_DAY_END`) are visibly tagged when `includeUncounted` is enabled.
+ * Renders multi-table cluster strings (`A + B + C`) so wrapping only happens
+ * after a ` + ` separator, never mid-code or leaving `+` orphaned on its own line.
+ */
+function renderScopeLabel(scopeLabel: string) {
+  if (!scopeLabel.includes(" + ")) return scopeLabel
+  const codes = scopeLabel.split(" + ")
+  return codes.map((code, index) => (
+    <Fragment key={`${index}-${code}`}>
+      <span className="whitespace-nowrap">{index < codes.length - 1 ? `${code} +` : code}</span>
+      {index < codes.length - 1 ? " " : null}
+    </Fragment>
+  ))
+}
+
+/**
+ * Paginated turn ledger table ("Sổ lượt - <range caption>") driven by `useTableTurns`.
+ * Matches the Figma column order, adding "NGÀY CA" only on multi-day ranges and keeping
+ * "NGƯỜI CHECK-IN" as the rightmost column.
  */
 export function TurnsHistoryTable({
   result,
+  rangeCaption,
+  isMultiDay,
   isFetching,
   includeUncounted,
   selectedStaffId,
@@ -70,7 +96,7 @@ export function TurnsHistoryTable({
     const observer = new ResizeObserver(updateScrollState)
     observer.observe(el)
     return () => observer.disconnect()
-  }, [updateScrollState, turns.length, page])
+  }, [updateScrollState, turns.length, page, isMultiDay])
 
   return (
     <section
@@ -82,7 +108,7 @@ export function TurnsHistoryTable({
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <h2 id="turns-history-heading" className="turns-card-title">
-              Lịch sử lượt
+              {`Sổ lượt - ${rangeCaption}`}
             </h2>
             {isFetching ? (
               <span
@@ -96,29 +122,40 @@ export function TurnsHistoryTable({
               </span>
             ) : null}
           </div>
-          <p className="turns-card-subtitle">
-            {includeUncounted
-              ? `${completedTotal} lượt tính chỉ số · ${total} bản ghi gồm lượt không tính`
-              : `${completedTotal} lượt check-in được ghi nhận`}
-          </p>
+          <p className="turns-card-subtitle">Mỗi lần khách ngồi bàn là một bản ghi</p>
         </div>
 
-        {selectedStaffId !== undefined ? (
-          <button
-            type="button"
-            onClick={onClearStaff}
-            className="inline-flex min-h-[34px] items-center gap-1.5 rounded-full border px-3 text-xs font-medium"
-            style={{
-              borderColor: "var(--turns-blue)",
-              backgroundColor: "var(--turns-tint-blue)",
-              color: "var(--turns-blue-ink)",
-            }}
-            data-testid="turns-active-staff-chip"
-          >
-            <span>Người check-in: {selectedStaffLabel ?? `#${selectedStaffId}`}</span>
-            <X className="size-3.5" aria-hidden="true" />
-          </button>
-        ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {includeUncounted && result ? (
+            <span
+              className="rounded-full px-2.5 py-1 text-xs font-medium"
+              style={{
+                backgroundColor: "var(--turns-sunken)",
+                color: "var(--turns-muted)",
+              }}
+              data-testid="turns-history-count-meta"
+            >
+              {completedTotal} tính chỉ số · {total} bản ghi
+            </span>
+          ) : null}
+
+          {selectedStaffId !== undefined ? (
+            <button
+              type="button"
+              onClick={onClearStaff}
+              className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border px-3 text-xs font-medium"
+              style={{
+                borderColor: "var(--turns-blue)",
+                backgroundColor: "var(--turns-tint-blue)",
+                color: "var(--turns-blue-ink)",
+              }}
+              data-testid="turns-active-staff-chip"
+            >
+              <span>Người check-in: {selectedStaffLabel ?? `#${selectedStaffId}`}</span>
+              <X className="size-3.5" aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {turns.length === 0 ? (
@@ -161,145 +198,172 @@ export function TurnsHistoryTable({
               className="turns-table-scroll"
               tabIndex={0}
               role="region"
-              aria-label="Bảng lịch sử lượt tới quán"
+              aria-label="Bảng sổ lượt tới quán"
             >
               <table className="turns-table turns-history-table" data-testid="turns-history-table">
                 <thead>
                   <tr>
-                    <th scope="col" className="turns-sticky-col">
-                      Ngày ca
+                    <th scope="col" className="turns-sticky-col turns-history-code-col">
+                      Mã lượt
                     </th>
-                    <th scope="col">Giờ tới → về</th>
-                    <th scope="col">Bàn / Cụm</th>
-                    <th scope="col" className="turns-history-guest-col">
-                      Khách
+                    {isMultiDay ? (
+                      <th scope="col" className="turns-history-date-col">
+                        Ngày ca
+                      </th>
+                    ) : null}
+                    <th scope="col" className="turns-history-time-col">
+                      Tới → về
                     </th>
-                    <th scope="col" className="text-right">
+                    <th scope="col" className="turns-history-scope-col">
+                      Bàn
+                    </th>
+                    <th scope="col" className="turns-history-pax-col text-right">
                       Pax
                     </th>
-                    <th scope="col">Nguồn</th>
-                    <th scope="col">Trạng thái</th>
-                    <th scope="col">Người check-in</th>
+                    <th scope="col" className="turns-history-guest-col">
+                      Khách hàng
+                    </th>
+                    <th scope="col" className="turns-history-source-col">
+                      Nguồn
+                    </th>
+                    <th scope="col" className="turns-history-end-col">
+                      Kết thúc
+                    </th>
+                    <th scope="col" className="turns-history-staff-col">
+                      Người check-in
+                    </th>
                   </tr>
                 </thead>
-              <tbody>
-                {(turns as ExtendedTableTurnView[]).map((row) => {
-                  const scopeLabel = formatScopeLabel(row)
-                  const open = isTurnOpen(row)
-                  const reason = formatEndReason(row.endReason, row.status ?? (open ? "OPEN" : "CLOSED"))
-                  const isUncountedRow = !row.counted || reason.isUncounted
-                  const isEntryError = row.endReason === "ENTRY_ERROR"
-                  const isSystemEnd = row.endReason === "BUSINESS_DAY_END"
-                  const { userId: staffUserId, displayName: staffDisplayName } = resolveStaffIdentity(row)
-                  const staffName = formatStaffName(staffUserId, staffDisplayName)
-                  const safeGuestName = maskPhoneNumbersInText(row.guestName)
+                <tbody>
+                  {(turns as ExtendedTableTurnView[]).map((row) => {
+                    const scopeLabel = formatScopeLabel(row)
+                    const open = isTurnOpen(row)
+                    const reason = formatEndReason(row.endReason, row.status ?? (open ? "OPEN" : "CLOSED"))
+                    const isUncountedRow = !row.counted || reason.isUncounted
+                    const isEntryError = row.endReason === "ENTRY_ERROR"
+                    const isSystemEnd = row.endReason === "BUSINESS_DAY_END"
+                    const { userId: staffUserId, displayName: staffDisplayName } = resolveStaffIdentity(row)
+                    const staffName = formatStaffName(staffUserId, staffDisplayName)
+                    const safeGuestName = maskPhoneNumbersInText(row.guestName)
+                    const anonymousGuest = isAnonymousGuestName(safeGuestName)
 
-                  const rowClass = isEntryError
-                    ? "turns-row-error"
-                    : isUncountedRow
-                      ? "turns-row-uncounted"
-                      : undefined
+                    const rowClass = isEntryError
+                      ? "turns-row-error"
+                      : isUncountedRow
+                        ? "turns-row-uncounted"
+                        : undefined
 
-                  return (
-                    <tr
-                      key={row.visitId}
-                      className={rowClass}
-                      data-visit-id={row.visitId}
-                      data-turn-id={row.turnId ?? undefined}
-                      data-status={open ? "OPEN" : "CLOSED"}
-                      data-counted={row.counted ? "true" : "false"}
-                    >
-                      <td className="turns-sticky-col font-medium whitespace-nowrap">
-                        {fmtBusinessDate(row.businessDate, "short")}
-                      </td>
-                      <td className="whitespace-nowrap" style={{ color: "var(--turns-text)" }}>
-                        {formatTimeRange(
-                          row.seatedAt,
-                          row.releasedAt,
-                          row.status ?? (open ? "OPEN" : "CLOSED"),
-                        )}
-                      </td>
-                      <td className="whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1.5">
-                          <span className="font-semibold" style={{ color: "var(--turns-navy)" }}>
-                            {scopeLabel}
-                          </span>
-                          {row.scope === "GROUP" ? (
-                            <span
-                              className="turns-badge turns-badge-group"
-                              title="Cụm bàn ghép"
-                            >
-                              <Layers className="size-3" aria-hidden="true" />
-                              Cụm
-                            </span>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="turns-history-guest-col">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="font-medium">{safeGuestName || "—"}</span>
-                          {isUncountedRow ? (
-                            <span
-                              className="rounded px-1.5 py-0.5 text-[11px] leading-4 font-semibold"
-                              style={{
-                                backgroundColor: "var(--turns-sunken)",
-                                color: "var(--turns-muted)",
-                              }}
-                              data-testid="turns-uncounted-mark"
-                            >
-                              Không tính
-                            </span>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="text-right font-semibold">{row.guestCount}</td>
-                      <td className="whitespace-nowrap" style={{ color: "var(--turns-muted)" }}>
-                        {formatTurnSource(row.sourceCode, row.origin)}
-                      </td>
-                      <td className="whitespace-nowrap">
-                        <span
-                          className={`turns-badge ${
-                            reason.isOpen
-                              ? "turns-badge-open"
-                              : isEntryError
-                                ? "turns-badge-entry-error"
-                                : isSystemEnd || isUncountedRow
-                                  ? "turns-badge-system-end"
-                                  : "turns-badge-counted"
-                          }`}
-                          data-testid={reason.isOpen ? "turns-open-chip" : undefined}
-                        >
-                          {reason.isOpen ? (
-                            <Clock className="size-3.5" aria-hidden="true" />
-                          ) : isEntryError ? (
-                            <AlertCircle className="size-3.5" aria-hidden="true" />
-                          ) : isSystemEnd ? (
-                            <Bot className="size-3.5" aria-hidden="true" />
-                          ) : (
-                            <CheckCircle2 className="size-3.5" aria-hidden="true" />
-                          )}
-                          {reason.label}
-                        </span>
-                      </td>
-                      <td
-                        className="whitespace-nowrap"
-                        style={{
-                          color: staffUserId === null ? "var(--turns-muted)" : "var(--turns-text)",
-                        }}
+                    return (
+                      <tr
+                        key={row.visitId}
+                        className={rowClass}
+                        data-visit-id={row.visitId}
+                        data-turn-id={row.turnId ?? undefined}
+                        data-status={open ? "OPEN" : "CLOSED"}
+                        data-counted={row.counted ? "true" : "false"}
                       >
-                        {staffName}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                        <td className="turns-sticky-col turns-history-code-col font-medium whitespace-nowrap">
+                          {formatTurnCode(row.visitId)}
+                        </td>
+                        {isMultiDay ? (
+                          <td
+                            className="turns-history-date-col whitespace-nowrap"
+                            style={{ color: "var(--turns-muted)" }}
+                            title={fmtBusinessDate(row.businessDate, "long")}
+                          >
+                            {fmtDayMonth(row.businessDate)}
+                          </td>
+                        ) : null}
+                        <td
+                          className="turns-history-time-col whitespace-nowrap"
+                          style={{ color: "var(--turns-text)" }}
+                        >
+                          {formatTimeRange(
+                            row.seatedAt,
+                            row.releasedAt,
+                            row.status ?? (open ? "OPEN" : "CLOSED"),
+                          )}
+                        </td>
+                        <td className="turns-history-scope-col">
+                          <span className="inline-flex flex-wrap items-center gap-1">
+                            <span className="font-medium" style={{ color: "var(--turns-text)" }}>
+                              {renderScopeLabel(scopeLabel)}
+                            </span>
+                            {row.scope === "GROUP" ? (
+                              <span className="turns-badge turns-badge-group" title="Cụm bàn ghép">
+                                <Layers className="size-3" aria-hidden="true" />
+                                Cụm
+                              </span>
+                            ) : null}
+                          </span>
+                        </td>
+                        <td className="turns-history-pax-col text-right font-medium whitespace-nowrap">
+                          {row.guestCount}
+                        </td>
+                        <td className="turns-history-guest-col">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span
+                              style={{
+                                color: anonymousGuest ? "var(--turns-muted)" : "var(--turns-text)",
+                              }}
+                            >
+                              {safeGuestName || "—"}
+                            </span>
+                            {isUncountedRow ? (
+                              <span
+                                className="whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] leading-4 font-semibold"
+                                style={{
+                                  backgroundColor: "var(--turns-sunken)",
+                                  color: "var(--turns-muted)",
+                                }}
+                                data-testid="turns-uncounted-mark"
+                              >
+                                Không tính
+                              </span>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="turns-history-source-col" style={{ color: "var(--turns-text)" }}>
+                          <span className="turns-cell-wrap">
+                            {formatTurnSource(row.sourceCode, row.origin)}
+                          </span>
+                        </td>
+                        <td className="turns-history-end-col">
+                          <span
+                            className="turns-cell-wrap"
+                            data-testid={reason.isOpen ? "turns-open-chip" : undefined}
+                            style={{
+                              color: isEntryError
+                                ? "var(--turns-red-ink)"
+                                : isSystemEnd || isUncountedRow
+                                  ? "var(--turns-amber-ink)"
+                                  : "var(--turns-text)",
+                            }}
+                          >
+                            {reason.label}
+                          </span>
+                        </td>
+                        <td
+                          className="turns-history-staff-col"
+                          style={{
+                            color: staffUserId === null ? "var(--turns-muted)" : "var(--turns-text)",
+                          }}
+                        >
+                          <span className="turns-staff-name" title={staffName}>
+                            {staffName}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
 
           <div className="turns-pagination" data-testid="turns-pagination">
             <span className="text-xs font-medium" style={{ color: "var(--turns-muted)" }}>
-              Hiển thị {startRow}–{endRow} / {total} bản ghi · Trang {page} / {totalPages}
+              Hiển thị {startRow}-{endRow} / {total} bản ghi · Trang {page} / {totalPages}
             </span>
             <div className="flex items-center gap-2">
               <button

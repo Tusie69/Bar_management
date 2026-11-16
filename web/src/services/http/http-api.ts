@@ -10,6 +10,12 @@ import type {
   TableTurnsParams,
   TableTurnsResult,
   TableTurnSummary,
+  AnonymousVisitsResult,
+  AnonymousAssignmentResult,
+  UndoAnonymousAssignmentResult,
+  DuplicateCustomersResult,
+  CustomerMergeResult,
+  DuplicateDismissalResult,
 } from "@/domain/models"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { clock } from "../clock"
@@ -495,6 +501,17 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
       }
     },
     listVisits: rejectUnsupported("danh sách lượt khách"),
+    getAnonymousVisits: (params) => client.get<AnonymousVisitsResult>(`/visits/anonymous?${tableTurnSearch(params)}`),
+    assignAnonymousVisit: ({ visitId, idempotencyKey, ...input }) => client.post<AnonymousAssignmentResult>(
+      `/visits/${visitId}/customer-assignment`, input, { idempotencyKey }),
+    undoAnonymousAssignment: ({ visitId, operationId, version }) => client.post<UndoAnonymousAssignmentResult>(
+      `/visits/${visitId}/customer-assignment/undo`, { operationId, version }),
+    getDuplicateCustomers: (params = {}) => client.get<DuplicateCustomersResult>(
+      `/customers/duplicates?${new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))}`),
+    mergeDuplicateCustomers: ({ idempotencyKey, ...input }) => client.post<CustomerMergeResult>(
+      '/customers/duplicates/merge', input, { idempotencyKey }),
+    dismissDuplicateCustomers: ({ idempotencyKey, ...input }) => client.post<DuplicateDismissalResult>(
+      '/customers/duplicates/dismiss', input, { idempotencyKey }),
     getTableTurns: (params) => client.get<TableTurnsResult>(`/visits/turns?${tableTurnSearch(params)}`),
     getTableTurnSummary: (params) => client.get<TableTurnSummary>(`/visits/turns/summary?${tableTurnSearch(params)}`),
     searchCustomers: rejectUnsupported("tìm khách hàng"),

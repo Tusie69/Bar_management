@@ -61,7 +61,7 @@ it('passes identical range/staff/counting filters and returns each response unch
   }
   const list = { from: '2030-10-21', to: '2030-10-27', page: 2, pageSize: 1,
     total: 2, completedTotal: 2, guestTotal: 16, turns: [turn] }
-  const summary = { from: list.from, to: list.to, completedTotal: 2, guestTotal: 16,
+  const summary = { from: list.from, to: list.to, completedTotal: 2, openTotal: 0, guestTotal: 16,
     byBusinessDate: [{ businessDate: '2030-10-21', turns: 2, guests: 16 }],
     byStaff: [{ checkedInByUserId: 5, checkedInByDisplayName: 'Reception', turns: 2, guests: 16 }],
     byScope: [{ scope: 'GROUP' as const, groupId: 7, tableId: null, label: 'C1', turns: 2, guests: 16 }] }

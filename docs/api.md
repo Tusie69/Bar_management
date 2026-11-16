@@ -844,7 +844,7 @@ GET /api/v1/visits/turns/summary?from=2026-11-09&to=2026-11-15&checkedInByUserId
 
 ```json
 {
-  "from": "2026-11-09", "to": "2026-11-15", "completedTotal": 1, "guestTotal": 12,
+  "from": "2026-11-09", "to": "2026-11-15", "completedTotal": 1, "openTotal": 0, "guestTotal": 12,
   "byBusinessDate": [{"businessDate": "2026-11-11", "turns": 1, "guests": 12}],
   "byStaff": [{"checkedInByUserId": 2, "checkedInByDisplayName": "Lễ tân", "turns": 1, "guests": 12}],
   "byScope": [{"scope": "GROUP", "tableId": null, "groupId": 101, "label": "◆A", "turns": 1, "guests": 12}]
@@ -860,6 +860,10 @@ By default all returned rows and buckets are counted. With `includeUncounted=tru
 and system closes; these stay attributed to their check-in user even when the closer is the system.
 `completedTotal` and `guestTotal` still count only counted OPEN/CLOSED
 turns, matching the existing list totals, so bucket sums can exceed these two totals when this flag is enabled.
+`openTotal` counts OPEN turns under the same date, counting and staff filters, before pagination.
+OPEN turns are always counted, so `0 <= openTotal <= completedTotal`; counted CLOSED turns equal
+`completedTotal - openTotal`. Uncounted CLOSED turns never contribute to either total, even with
+`includeUncounted=true`. Filtering by `closedByUserId` yields `openTotal: 0`, because OPEN turns have no closer.
 An empty range returns zero totals and empty arrays. Payment verification is unchanged.
 The summary uses four aggregate SQL queries regardless of row count; staff associations use `EXISTS` so multiple
 roles cannot multiply counts. This addition requires no schema migration.
@@ -1004,3 +1008,21 @@ npx vitest run --no-file-parallelism
 ```
 
 The test setup refuses any other database when MySQL integration is enabled. It generates throwaway encryption/HMAC keys and an explicit reveal rate-limit policy before application imports. No deployment phone key or `.env` edit is needed. Fixtures are destructive and belong only to the isolated, migrated integration database. Never run them against the development database.
+
+
+## NA-34 - Anonymous visit assignment and duplicate customer review
+
+Requires migration `0029_customer_history.sql`. Admin portal only. Reads use `report.read`; writes use `customer.history.manage`, granted to OWNER/ADMIN WRITE. Anonymous visit reads, assignment and undo are restricted to the server-selected actor venue. Duplicate suggestions are org-wide for OWNER/org-wide ADMIN, while venue-scoped ADMIN sees only pairs with either profile active in visits/reservations/waitlist at the actor venue and counts restricted to that venue. Only OWNER/org-wide ADMIN WRITE may merge or dismiss; venue ADMIN WRITE receives `403 CUSTOMER_ORG_WRITE_REQUIRED`; READ_ONLY writes receive `403 PERMISSION_DENIED`.
+
+| Method | Path | Contract |
+| --- | --- | --- |
+| GET | `/visits/anonymous?from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&pageSize=20` | Counted anonymous visits, newest first, `{visits,page,pageSize,hasMore}`; each row includes visitId, displayCode `L-<visitId>`, tableLabel, guestCount, seatedAt, businessDate, version. Inclusive range, max 366-day span; pageSize 1-50. |
+| POST | `/visits/:id/customer-assignment` | `{version,phone,displayName?}` finds ACTIVE customer by org + protected phone HMAC, or creates with required displayName (422 CUSTOMER_NAME_REQUIRED if missing), then assigns atomically. Returns `{visitId,version,customer,customerCreated,undo:{operationId,visitId,version,previousCustomerId:null}}`. |
+| POST | `/visits/:id/customer-assignment/undo` | `{version,operationId}` checks persisted assignment and unchanged visit, restores null customer, returns `{visitId,customerId:null,version,operationId}`. Newly created profile remains to avoid deleting identity used elsewhere. Dedicated undo, no redo. |
+| GET | `/customers/duplicates?page=1&pageSize=20` | `{pairs:[{source,target}],page,pageSize,total,canMerge,canDismiss}`. Each profile has id/displayName/maskedPhone/version/visitCount/bookingCount. Source ACTIVE without phone, target ACTIVE with phone, identical nonempty normalized name_search and org; excludes MERGED/ANONYMIZED and permanently dismissed pairs. |
+| POST | `/customers/duplicates/merge` | `{sourceCustomerId,targetCustomerId,sourceVersion,targetVersion}` locks and rechecks pair, repoints visits/reservations/waitlist_entries and existing merged customer links across the org, increments changed-row versions, marks source MERGED and preserves target identity. Returns IDs/new versions/moved counts/operationId. No undo; UI confirmation required. |
+| POST | `/customers/duplicates/dismiss` | Same versioned pair body; permanently persists the decision and audit, returns sourceCustomerId/targetCustomerId/operationId. |
+
+All writes use Origin/CSRF protection, optional `Idempotency-Key`, transactional audits with actor/time/before-after customer IDs, and optimistic versions. Full phone only enters requests; responses use `••• <last3>` or null and never return HMAC/ciphertext. Call logs and waitlist contacts retain parent IDs; immutable dismissal/audit history is not rewritten by merge. Typical errors: 403 permission/scope, 404 entity outside scope or missing, 409 version/undo/pair conflict, 422 validation/name/phone, 503 missing phone keys. Idempotency errors are 400 `INVALID_IDEMPOTENCY_KEY` for malformed keys, 409 `IDEMPOTENCY_IN_PROGRESS` while processing, and 422 `IDEMPOTENCY_KEY_REUSED` for a key bound to another user, venue, path or body; an exact successful retry replays the original response. The complete request/response and UI integration contract is `D:\GAM-APP\docs\contracts\na34-anonymous-visits-and-duplicates.md`.
+
+Assignment, undo, merge and dismissal advance the existing realtime cursors for every venue in the organization in the domain/audit transaction, covering org-wide readers connected through any venue and cross-venue customer references. Rollback and idempotent replay produce no extra cursor advance; other organizations are unaffected.

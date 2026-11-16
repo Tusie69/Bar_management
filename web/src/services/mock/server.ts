@@ -8,6 +8,7 @@
  *   the 30-second system job that raises late / no-show / hold warnings.
  */
 import { foldVietnamese, NOTE_PHONE_ERROR, noteHasPhoneNumber, normalizePhone } from "@/lib/text"
+import { MockCustomerHistory } from "./customer-history"
 import { addDays, businessDateOf, fmtTime, fromVenueLocal, MS, type BusinessDate } from "@/lib/time"
 import { roleCan, PERMISSION_LABEL, type Permission } from "@/domain/access"
 import { BOOKING_MINUTE_STEP, isWithinBookingReceptionWindow } from "@/domain/booking-rules"
@@ -129,6 +130,26 @@ export interface DemoControls {
 
 export class MockGamApi implements GamApi, DemoControls {
   readonly mode = "mock" as const
+  private history = this.createCustomerHistory()
+  private createCustomerHistory() {
+    return new MockCustomerHistory(() => this.db, () => this.session, () => this.now, (action, entity, id, before, after) => {
+      this.systemLog(action, entity, id, action, this.session.id)
+      const op = this.db.ops[this.db.ops.length - 1]
+      op.actorKind = "USER"
+      op.actorUserId = this.session.id
+      op.actorMembershipId = this.session.id
+      op.changes = [{ type: entity, id, before, after }]
+      op.entityVersionBefore = typeof before.version === "number" ? before.version : null
+      op.entityVersionAfter = typeof after.version === "number" ? after.version : null
+      return op.id
+    })
+  }
+  getAnonymousVisits: GamApi["getAnonymousVisits"] = (query) => this.history.getAnonymousVisits(query)
+  assignAnonymousVisit: GamApi["assignAnonymousVisit"] = (input) => this.history.assignAnonymousVisit(input)
+  undoAnonymousAssignment: GamApi["undoAnonymousAssignment"] = (input) => this.history.undoAnonymousAssignment(input)
+  getDuplicateCustomers: GamApi["getDuplicateCustomers"] = (query) => this.history.getDuplicateCustomers(query)
+  mergeDuplicateCustomers: GamApi["mergeDuplicateCustomers"] = (input) => this.history.mergeDuplicateCustomers(input)
+  dismissDuplicateCustomers: GamApi["dismissDuplicateCustomers"] = (input) => this.history.dismissDuplicateCustomers(input)
   private db: MockDb
   private session: SessionUser
   private seq: number
@@ -342,7 +363,7 @@ export class MockGamApi implements GamApi, DemoControls {
     }
   }
 
-  private systemLog(action: string, entityType: string, entityId: number, summary: string) {
+  private systemLog(action: string, entityType: string, entityId: number, summary: string, actorUserId: number | null = null) {
     this.seq += 1
     this.venue.changeSeq = this.seq
     this.db.ops.push({
@@ -351,8 +372,8 @@ export class MockGamApi implements GamApi, DemoControls {
       venueId: VENUE_ID,
       changeSeq: this.seq,
       occurredAt: this.now,
-      actorKind: "SYSTEM",
-      actorUserId: null,
+      actorKind: actorUserId === null ? "SYSTEM" : "USER",
+      actorUserId,
       actorMembershipId: null,
       authSessionId: null,
       requestId: null,
@@ -372,7 +393,7 @@ export class MockGamApi implements GamApi, DemoControls {
       undo: [],
       compensatedBy: null,
     })
-    this.emit({ latestSeq: this.seq, action, entityType, actorKind: "SYSTEM", actorUserId: null, summary })
+    this.emit({ latestSeq: this.seq, action, entityType, actorKind: actorUserId === null ? "SYSTEM" : "USER", actorUserId, summary })
   }
 
   /* ================= claim helpers ================= */
@@ -2755,6 +2776,7 @@ export class MockGamApi implements GamApi, DemoControls {
 
   reset() {
     this.db = seedDb(clock.now())
+    this.history = this.createCustomerHistory()
     this.guestCounts.clear()
     this.quickTimes = ["21:00", "21:30", "22:00", "22:30"]
     this.seq = venueOf(this.db).changeSeq

@@ -30,7 +30,76 @@ export interface SessionUser {
   displayName: string
   role: RoleCode
   deviceLabel: string
+  /** Mock admin scope; HTTP capabilities are determined by the server session. */
+  accessLevel?: "WRITE" | "READ_ONLY"
+  adminScope?: "ORGANIZATION" | "VENUE"
 }
+
+export interface AnonymousVisitQuery { from: string; to: string; page?: number; pageSize?: number }
+export interface AnonymousVisit {
+  visitId: number
+  displayCode: string
+  tableLabel: string
+  guestCount: number
+  seatedAt: string
+  businessDate: string
+  version: number
+}
+export interface AnonymousVisitsResult {
+  visits: AnonymousVisit[]
+  page: number
+  pageSize: number
+  hasMore: boolean
+}
+export interface DuplicateCustomer {
+  id: number
+  displayName: string | null
+  maskedPhone: string | null
+  version: number
+  visitCount: number
+  bookingCount: number
+}
+export interface DuplicateCustomerPair { source: DuplicateCustomer; target: DuplicateCustomer }
+export interface DuplicateCustomersResult {
+  pairs: DuplicateCustomerPair[]
+  page: number
+  pageSize: number
+  total: number
+  canMerge: boolean
+  canDismiss: boolean
+}
+export interface AssignAnonymousVisitInput {
+  visitId: number
+  version: number
+  phone: string
+  displayName?: string
+  idempotencyKey?: string
+}
+export interface AssignmentUndo { operationId: number; visitId: number; version: number; previousCustomerId: null }
+export interface AnonymousAssignmentResult {
+  visitId: number
+  version: number
+  customer: DuplicateCustomer
+  customerCreated: boolean
+  undo: AssignmentUndo
+}
+export interface UndoAnonymousAssignmentResult { visitId: number; customerId: null; version: number; operationId: number }
+export interface DuplicateDecisionInput {
+  sourceCustomerId: number
+  targetCustomerId: number
+  sourceVersion: number
+  targetVersion: number
+  idempotencyKey?: string
+}
+export interface CustomerMergeResult {
+  sourceCustomerId: number
+  targetCustomerId: number
+  sourceVersion: number
+  targetVersion: number
+  moved: Record<string, number>
+  operationId: number
+}
+export interface DuplicateDismissalResult { sourceCustomerId: number; targetCustomerId: number; operationId: number }
 
 export interface VenueConfig {
   id: number
@@ -356,6 +425,7 @@ export interface TableTurnSummary {
   from: string
   to: string
   completedTotal: number
+  openTotal: number
   guestTotal: number
   byBusinessDate: { businessDate: string; turns: number; guests: number }[]
   byStaff: { checkedInByUserId: number | null; checkedInByDisplayName: string | null; turns: number; guests: number }[]
