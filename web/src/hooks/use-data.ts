@@ -2,25 +2,29 @@
  * Server-state hooks (TanStack Query) over GamApi + realtime sync.
  * Swapping the mock for the HTTP implementation does not change this file.
  */
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
-import type { ReportQuery } from "@/domain/models"
+import type { ReceptionGuestCountValues, ReportQuery, TableTurnQuery, TableTurnsParams } from "@/domain/models"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { api, clock } from "@/services"
 import { useSession } from "@/state/session"
+import { sessionEndMessage } from "@/domain/session-end"
 
 export const qk = {
   catalog: ["catalog"] as const,
   settings: ["settings"] as const,
   accounts: ["accounts"] as const,
   floor: (at: string) => ["floor", at] as const,
+  guestCount: (bd: string) => ["guest-count", bd] as const,
   availability: (at: string, party: number) => ["availability", at, party] as const,
   overview: ["overview"] as const,
   reservations: (bd: string, search: string) => ["reservations", bd, search] as const,
   receptionSearch: (bd: string, last3: string) => ["reception-search", bd, last3] as const,
   bookingExport: (bd: string) => ["booking-export", bd] as const,
   visits: (bd: string) => ["visits", bd] as const,
+  tableTurns: (params: TableTurnsParams) => ["table-turns", params] as const,
+  tableTurnSummary: (params: TableTurnQuery) => ["table-turn-summary", params] as const,
   waitlist: (bd: string) => ["waitlist", bd] as const,
   customers: (q: string) => ["customers", q] as const,
   customer: (id: number) => ["customer", id] as const,
@@ -80,6 +84,24 @@ export function useFloorState(businessDate?: BusinessDate) {
     queryFn: () => api.getFloorState(clock.now(), selectedDate),
     refetchInterval: 15_000,
     refetchIntervalInBackground: true,
+  })
+}
+
+export function useReceptionGuestCount(bd: BusinessDate) {
+  return useQuery({
+    queryKey: qk.guestCount(bd),
+    retry: api.mode === "mock" ? 1 : false,
+    queryFn: () => api.getReceptionGuestCount(bd),
+    enabled: Boolean(bd),
+  })
+}
+
+export function useUpdateReceptionGuestCount() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: ReceptionGuestCountValues & { businessDate: BusinessDate; version: number }) =>
+      api.updateReceptionGuestCount(input),
+    onSuccess: (value) => qc.setQueryData(qk.guestCount(value.businessDate), value),
   })
 }
 
@@ -188,6 +210,24 @@ export function useDayAllocations(bd: BusinessDate) {
   })
 }
 
+export function useTableTurns(params: TableTurnsParams, enabled = true) {
+  return useQuery({
+    queryKey: qk.tableTurns(params),
+    queryFn: () => api.getTableTurns(params),
+    enabled,
+    retry: api.mode === "mock" ? 1 : false,
+    placeholderData: keepPreviousData,
+  })
+}
+export function useTableTurnSummary(params: TableTurnQuery, enabled = true) {
+  return useQuery({
+    queryKey: qk.tableTurnSummary(params),
+    queryFn: () => api.getTableTurnSummary(params),
+    enabled,
+    retry: api.mode === "mock" ? 1 : false,
+    placeholderData: keepPreviousData,
+  })
+}
 export function useReport(q: ReportQuery, enabled: boolean) {
   return useQuery({
     queryKey: qk.report(q),
@@ -209,20 +249,24 @@ const WARNING_ACTIONS = new Set(["RESERVATION_LATE_WARNING", "RESERVATION_NO_SHO
 export function useRealtimeSync() {
   const qc = useQueryClient()
   const userId = useSession((s) => s.user.id)
+  const expire = useSession((s) => s.expire)
   useEffect(() => {
-    const off = api.subscribe((event) => {
-      qc.invalidateQueries()
-      if (event.action === "RESET") return
-      if (event.actorKind === "SYSTEM" && WARNING_ACTIONS.has(event.action)) {
-        toast.warning(event.summary, { description: "Cảnh báo tự động. Không tự hủy booking hay nhả bàn." })
-      } else if (event.actorKind === "USER" && event.actorUserId !== userId) {
-        toast.info(`Thiết bị khác: ${event.summary}`, { description: "Đồng bộ mô phỏng giữa các máy" })
-      }
-    })
+    const off = api.subscribe(
+      (event) => {
+        qc.invalidateQueries()
+        if (event.action === "RESET") return
+        if (event.actorKind === "SYSTEM" && WARNING_ACTIONS.has(event.action)) {
+          toast.warning(event.summary, { description: "Cảnh báo tự động. Không tự hủy booking hay nhả bàn." })
+        } else if (event.actorKind === "USER" && event.actorUserId !== userId) {
+          toast.info(`Thiết bị khác: ${event.summary}`, { description: "Đồng bộ mô phỏng giữa các máy" })
+        }
+      },
+      (code) => expire(sessionEndMessage(code), code),
+    )
     const offClock = clock.subscribe(() => qc.invalidateQueries())
     return () => {
       off()
       offClock()
     }
-  }, [qc, userId])
+  }, [expire, qc, userId])
 }

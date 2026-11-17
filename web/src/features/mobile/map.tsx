@@ -1,5 +1,5 @@
-import { Menu, MessageSquareText, Users, X } from "lucide-react"
-import { useMemo, useState } from "react"
+import { AlertTriangle, ListOrdered, Menu, MessageSquareText, X } from "lucide-react"
+import { useMemo, type ReactNode } from "react"
 import type { TableLiveState, TableView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAvailability } from "@/hooks/use-data"
@@ -7,17 +7,21 @@ import { fmtBusinessDate, fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useUi } from "@/state/ui"
 import { useReceptionSearch } from "@/hooks/use-reception-search"
+import { usePlanWidth } from "@/hooks/use-plan-width"
 import { FloorCanvas } from "../floor/floor-canvas"
 import { SpareButton } from "../floor/spare-button"
 import { LayoutActions, LayoutMergeControls } from "../floor/layout-merge-controls"
 import { independentLayoutEnabled, layoutMembers, toggleLayoutTable } from "../floor/layout-merge"
+import { GuestCountCard } from "../floor/guest-count-card"
 import { StatusLegend } from "../floor/status-legend"
+import { claimCallTarget } from "@/domain/call-target"
 import { CallCustomerControl } from "../bookings/call-customer"
+import { CallHistory } from "../bookings/call-history"
 import { groupCode, groupDisplayName } from "../floor/floor-visual-rules"
 import { ReceptionDatePicker, ReceptionSearchField, ReceptionSearchResults } from "../floor/reception-controls"
 import { ZaloBookingExport } from "../reservations/zalo-booking-export"
 import { QuickForm } from "../floor/quick-form"
-import { isWaitingForTable } from "../floor/reception-rules"
+import { capacityWarningText, isWaitingForTable, selectedTablesCapacity } from "../floor/reception-rules"
 import { useBookingDraft } from "../floor/use-booking-draft"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
@@ -61,8 +65,10 @@ export function MapScreen({
   const layoutPick = useUi((s) => s.pick?.intent === "layout")
   const layoutIds = useUi((s) => s.pickSelection)
   const waitingCount = (m.waitlist ?? []).filter(isWaitingForTable).length
-  const [exportOpen, setExportOpen] = useState(false)
   const canExport = m.can("customer.view_masked")
+  // Cỡ máy thật, không phải cỡ viewport: Safari thu nhỏ trang thì iPhone X báo
+  // ~506px và trước đây nhận bộ chrome của máy to, đè lên Khu B/Khu C.
+  const planWidth = usePlanWidth()
   // The plan owns the screen: its own controls float on it instead of stacking above it.
   const planChrome = receptionist && !pick && !draft
 
@@ -120,22 +126,25 @@ export function MapScreen({
             ) : (
               <h1 className="m-0 min-w-0 flex-1 truncate text-[18px] font-semibold text-tx-strong">Sơ đồ bàn</h1>
             )}
-            <button
-              type="button"
-              disabled={!canExport}
-              onClick={() => setExportOpen(true)}
-              aria-label="Xuất text Zalo"
-              title="Xuất text booking để gửi nhóm Zalo"
-              className={cn(
-                "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-3 text-[14px] font-semibold text-primary-foreground",
-                !canExport && "cursor-not-allowed opacity-50",
+            <ZaloBookingExport businessDate={m.businessDate} enabled={canExport}>
+              {({ copy, loading }) => (
+                <button
+                  type="button"
+                  disabled={!canExport || loading}
+                  onClick={() => void copy()}
+                  aria-label="Xuất text Zalo"
+                  title="Xuất text booking để gửi nhóm Zalo"
+                  className={cn(
+                    "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-3 text-[14px] font-semibold text-primary-foreground",
+                    (!canExport || loading) && "cursor-not-allowed opacity-50",
+                  )}
+                >
+                  <MessageSquareText className="size-4 shrink-0" aria-hidden />
+                  <span>Xuất Text</span>
+                </button>
               )}
-            >
-              <MessageSquareText className="size-4 shrink-0" aria-hidden />
-              <span>Xuất Text</span>
-            </button>
+            </ZaloBookingExport>
           </div>
-          {planChrome ? <ReceptionSearchResults search={search} onOpenBooking={m.openDetail} /> : null}
         </header>
       ) : (
         <PlainHeader
@@ -146,7 +155,7 @@ export function MapScreen({
           so neither the zone tabs nor the legend card take screen height from the plan. */}
       {!receptionist && !pick ? (
         <div className="z-[4] flex shrink-0 flex-col gap-1.5 bg-background px-4 pt-0 pb-1.5">
-          {(
+          {
             <div
               role="tablist"
               aria-label="Lọc khu"
@@ -171,13 +180,13 @@ export function MapScreen({
                 )
               })}
             </div>
-          )}
+          }
           {draft ? null : <StatusLegend tables={m.model.tables} states={m.model.states} />}
         </div>
       ) : null}
       {/* Idle "Ghép bàn" button is off the receptionist's screen: merging starts from the
           table sheet. The active merge panel still shows so nobody gets stuck in pick mode. */}
-      {!pick && (!receptionist || layoutPick) ? (
+      {!pick && !layoutPick && !receptionist ? (
         <div className="shrink-0 px-3 pb-1">
           <LayoutMergeControls model={m.model} />
         </div>
@@ -205,9 +214,22 @@ export function MapScreen({
       ) : null}
 
       <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
+        {/* Mockup 03: the merge panel floats OVER the plan. In the document flow
+            it shortened the canvas, the camera re-fitted, and the plan jumped. */}
+        {planChrome && search.active ? (
+          // Kết quả tìm kiếm nổi trên sơ đồ thay vì nằm trong luồng: trong luồng
+          // nó lấy mất 74px chiều cao của sơ đồ. Nó chỉ cao hai dòng và biến mất
+          // ngay khi xoá ô tìm kiếm, nên che tạm góc trên là chấp nhận được.
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-[11] px-2">
+            <div className="pointer-events-auto rounded-[14px] border border-border/80 bg-background/95 px-3 py-2 shadow-lg backdrop-blur dark:border-slate-700/80 dark:bg-[#1e232d]/95">
+              <ReceptionSearchResults search={search} onOpenBooking={m.openDetail} />
+            </div>
+          </div>
+        ) : null}
         {m.model.catalog ? (
           <FloorCanvas
             className="absolute inset-0"
+            mobileShell={receptionist}
             tables={m.model.tables}
             zones={m.model.catalog.zones}
             mode={isAssignPick || d.bookingDraft ? "availability" : "live"}
@@ -218,36 +240,54 @@ export function MapScreen({
             searchHighlightedIds={!pick && !draft ? search.tableIds : []}
             pickable={layoutPick ? null : d.bookingDraft ? d.pickable : draft ? null : pickable}
             zoneFocus={receptionist ? (draftZone ?? "ALL") : zone}
+            preserveWidthFit={!!draft}
             now={m.now}
             planOverlay={
               planChrome
-                ? (r) => (
-                    <div
-                      className="pointer-events-none absolute"
-                      style={{ left: r.left, top: r.top, width: r.width, height: r.height }}
-                    >
-                      <button
-                        type="button"
-                        onClick={m.openCount}
-                        title="Đếm khách và xem báo cáo hiện có"
-                        className="pointer-events-auto absolute top-2 left-2 inline-flex h-9 items-center gap-1.5 rounded-xl border border-border/80 bg-background/95 px-2.5 text-[13px] font-semibold text-tx-strong shadow-lg backdrop-blur active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
-                      >
-                        <Users className="size-4 shrink-0" aria-hidden />
-                        <span>Đếm khách</span>
-                      </button>
-                      <div className="pointer-events-auto absolute top-2 right-2 flex flex-col items-end gap-1.5">
-                        <StatusLegend variant="badge" tables={m.model.tables} states={m.model.states} />
+                ? () => (
+                    // Anchor to the canvas, not the wall. On a short phone the
+                    // whole-floor fit leaves useful side gutters; pinning the
+                    // controls to the wall put them directly over C4/C5 and
+                    // B21/B22. The canvas edges use those gutters and return
+                    // the toolbar's full height to the plan.
+                    <div className="reception-plan-overlay pointer-events-none absolute inset-0">
+                      <GuestCountCard
+                        businessDate={m.businessDate}
+                        onOpen={m.openCount}
+                        onEdit={m.openCountEdit}
+                        className="pointer-events-auto absolute top-1.5 left-1.5 z-10"
+                      />
+                      <div className="pointer-events-auto absolute top-2 right-2 flex flex-col items-end gap-1">
+                        <StatusLegend
+                          variant="badge"
+                          tables={m.model.tables}
+                          states={m.model.states}
+                          className="size-11"
+                        />
                         <ReceptionDatePicker
                           onDateChange={() => onSelect(null)}
-                          className="[&>button]:h-9 [&>button]:min-h-[36px] [&>button]:px-2.5 [&>button]:shadow-lg"
+                          className="[&>button]:h-11 [&>button]:min-h-[44px] [&>button]:px-2 [&>button]:shadow-lg"
                         />
+                        {/* The mockup puts Bàn chờ here, right under the date. Drawn in
+                            floor space it scaled with the plan while the date chip kept
+                            real pixels, and the two overlapped by 8px on a 375 screen. */}
+                        <button
+                          type="button"
+                          onClick={() => m.go("wait")}
+                          aria-label={`Bàn chờ, ${waitingCount} nhóm đang đợi`}
+                          className="inline-flex h-11 min-h-[44px] min-w-[44px] items-center gap-2 rounded-xl border border-border/80 bg-background/95 px-2.5 text-[13px] font-semibold text-tx-strong shadow-lg backdrop-blur active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
+                        >
+                          <ListOrdered className="size-4 shrink-0" aria-hidden />
+                          {planWidth >= 375 ? <span>Chờ</span> : null}
+                          {waitingCount > 0 ? `+${waitingCount}` : ""}
+                        </button>
                       </div>
                     </div>
                   )
                 : undefined
             }
-            waitingCount={draft || pick ? undefined : waitingCount}
-            onOpenWaitlist={draft || pick ? undefined : () => m.go("wait")}
+            waitingCount={receptionist || draft || pick ? undefined : waitingCount}
+            onOpenWaitlist={receptionist || draft || pick ? undefined : () => m.go("wait")}
             onTableClick={(id) =>
               layoutPick
                 ? toggleLayoutTable(m.model, id)
@@ -264,7 +304,9 @@ export function MapScreen({
                 ? `Sơ đồ khả dụng lúc ${d.bookingDraft.time} để chọn bàn`
                 : isAssignPick
                   ? `Sơ đồ khả dụng lúc ${pick.targetTime} ngày ${fmtBusinessDate(pick.targetDate!, "short")}`
-                  : "Sơ đồ bàn. Kéo để di chuyển, chụm hai ngón để phóng to"
+                  : receptionist
+                    ? "Sơ đồ bàn, trạng thái hiện tại"
+                    : "Sơ đồ bàn. Kéo để di chuyển, chụm hai ngón để phóng to"
             }
           />
         ) : null}
@@ -276,36 +318,78 @@ export function MapScreen({
           </>
         ) : null}
       </div>
-      {pick ? (
-        <div className="z-[12] flex shrink-0 flex-col gap-2.5 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-4 shadow-[var(--shadow-float)]">
-          {pick.question && pickSel.length ? (
-            <span className="text-[15px] font-medium text-tx-strong">{pick.question(codesOf(pickSel, m.model))}</span>
-          ) : null}
-          <span className="text-[13px] text-[var(--text-muted)]">
-            {pickSel.length ? (
-              <>
-                Đã chọn {codesOf(pickSel, m.model)} ·{" "}
-                {pickSel.reduce((sum, id) => sum + (m.model.byId.get(id)?.capacity ?? 0), 0)} chỗ
-              </>
-            ) : (
-              "Chưa chọn bàn"
-            )}
-          </span>
-          <button
-            type="button"
-            disabled={!pickSel.length || pickBusy}
-            onClick={onPickConfirm}
-            className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground disabled:opacity-50"
-          >
-            {pickBusy ? "Đang gửi..." : pick.confirmLabel}
-          </button>
+      {/* Dải dưới cùng: đang ghép bàn thì nó là bảng ghép, còn lại là cặp
+          hoàn tác. Ghép bàn không che ô bàn nào, và hoàn tác cũng không cần
+          tới giữa chừng một thao tác ghép. */}
+      {!pick && layoutPick ? (
+        <div className="z-[11] shrink-0 px-2 pb-[var(--bottom-safe)]">
+          <LayoutMergeControls model={m.model} overlay />
         </div>
+      ) : planChrome ? (
+        // Mockup 01 ends the screen with a 52px row. Trái: cặp hoàn tác/làm
+        // lại (tự ẩn khi server không cho hoàn tác). Phải: chuông thông báo —
+        // màn sơ đồ của lễ tân dùng header riêng không có chuông, nên trước
+        // đây cả ca không có chỗ nào xem cảnh báo mà không rời màn hình.
+        // Floating them over the plan put them on top of Khu A. api.mode is
+        // fixed per build, so the plan height cannot change mid-session.
+        <div className="z-[5] flex h-[52px] shrink-0 items-center gap-1 bg-background px-2 pb-[var(--bottom-safe)]">
+          <UndoRedoButtons square />
+          <span className="flex-1" />
+          <BellButton square />
+        </div>
+      ) : null}
+      {pick
+        ? (() => {
+            const pickCap = selectedTablesCapacity(pickSel, m.model.byId)
+            const pickCapWarn = capacityWarningText(pickSel.length, pickCap, pick.targetParty)
+            return (
+              <div className="z-[12] flex shrink-0 flex-col gap-2.5 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-4 shadow-[var(--shadow-float)]">
+                {pick.question && pickSel.length ? (
+                  <span className="text-[15px] font-medium text-tx-strong">
+                    {pick.question(codesOf(pickSel, m.model))}
+                  </span>
+                ) : null}
+                <span className="tnum text-[13px] text-[var(--text-muted)]">
+                  {pickSel.length ? (
+                    <>
+                      Đã chọn {codesOf(pickSel, m.model)} · {pickCap} chỗ
+                    </>
+                  ) : (
+                    "Chưa chọn bàn"
+                  )}
+                </span>
+                {pickCapWarn ? (
+                  <p
+                    role="status"
+                    data-testid="capacity-warning"
+                    className="tnum m-0 flex items-start gap-2 rounded-lg border border-st-late/30 bg-st-late-tint px-2.5 py-1.5 text-[13px] font-medium text-st-late-ink"
+                  >
+                    <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                    <span>{pickCapWarn}</span>
+                  </p>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={!pickSel.length || pickBusy}
+                  onClick={onPickConfirm}
+                  className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground disabled:opacity-50"
+                >
+                  {pickBusy ? "Đang gửi..." : pick.confirmLabel}
+                </button>
+              </div>
+            )
+          })()
+        : null}
+      {draft && draftZone ? (
+        <p className="z-[11] shrink-0 bg-background px-4 pb-1 text-center text-[11px] font-medium tracking-wide text-[var(--text-muted)]">
+          KHU {draftZone} · chạm để chọn thêm
+        </p>
       ) : null}
       {draft ? (
         <section
           role="dialog"
           aria-label="Đặt bàn trên sơ đồ"
-          className="z-[12] flex max-h-[52dvh] shrink-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)]"
+          className="z-[12] flex max-h-[62dvh] shrink-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)]"
         >
           <div className="flex shrink-0 justify-center pt-2" aria-hidden>
             <span className="h-[5px] w-9 rounded-full bg-strong" />
@@ -341,6 +425,25 @@ const STATE_TEXT = (st: TableLiveState, late: number, noshow: number): [string, 
     spare: ["Sơ cua", null],
   })[st] as [string, Tone]
 
+/**
+ * Chia các nút nửa dòng thành từng hàng: hai nút một hàng, hàng cuối ba nút
+ * khi tổng số lẻ.
+ *
+ * Trước đây nút Gọi khách chiếm nguyên một dòng còn Sơ cua thì nằm trong một
+ * lưới con, nên "Xem booking" hay rơi lại một mình nửa dòng và cả khối trông
+ * lệch hẳn. Quy tắc của quán: một dòng hai nút, nhiều nhất ba; chỉ nút chốt
+ * và nút huỷ mới được chiếm cả dòng. Một nút lẻ duy nhất thì cho chiếm cả
+ * dòng, vì một nút nửa dòng đứng trơ bên trái còn xấu hơn.
+ */
+function actionRows(cells: ReactNode[]): ReactNode[][] {
+  if (cells.length <= 1) return cells.length ? [cells] : []
+  const paired = cells.length % 2 === 0 ? cells : cells.slice(0, cells.length - 3)
+  const rows: ReactNode[][] = []
+  for (let index = 0; index < paired.length; index += 2) rows.push(paired.slice(index, index + 2))
+  if (cells.length % 2 !== 0) rows.push(cells.slice(cells.length - 3))
+  return rows
+}
+
 interface Action {
   label: string
   go?: () => void
@@ -361,6 +464,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
   const fs = m.model.states.get(id)
   const st = fs?.state ?? "free"
   const c = fs?.claim ?? null
+  const callTarget = c ? claimCallTarget(c) : null
   const members = layoutMembers(m.model, id)
   const isGroup = members.length > 1
   const memberTables = members.map((mid) => m.model.byId.get(mid)).filter((x): x is TableView => !!x)
@@ -381,6 +485,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
   let who = ""
   let when = ""
   let info = ""
+  /** Nút thường; các nút huỷ tách ra `tailActions` để luôn nằm dưới cùng. */
   let actions: Action[] = []
   if (c?.kind === "visit") {
     who = `${c.displayName}, ${c.partySize} khách`
@@ -388,7 +493,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
     actions = [
       { label: "Đổi bàn", go: () => a.moveVisit(c, id) },
       ...(c.reservationId ? [{ label: "Xem booking", go: () => m.openDetail(c.reservationId!, m.today) }] : []),
-      { label: "Nhả bàn", danger: true, wide: !c.reservationId, go: () => a.endVisit(c) },
+      { label: "Nhả bàn", danger: true, wide: true, go: () => a.endVisit(c) },
     ]
   } else if (c?.kind === "waitlist_hold" || (c?.kind === "reservation" && linkedEntry)) {
     const entry = linkedEntry ?? (c?.waitlistEntryId ? m.waitlist?.find((x) => x.id === c.waitlistEntryId) : undefined)
@@ -417,31 +522,33 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
         title: !hold.supported ? "Chưa hỗ trợ" : undefined,
         go: () => a.reassignHold(entry, r),
       },
+      ...(r ? [{ label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) }] : []),
       {
-        label: "Đổi trạng thái",
-        disabled: r
-          ? !hold.canBookingStatus ||
-            (!m.can("reservation.cancel") && !m.can("reservation.mark_no_show") && !m.can("reservation.update"))
-          : !m.can("waitlist.cancel"),
-        go: () => (r ? m.openStatus(r) : entry && a.cancelEntry(entry)),
+        label: "Xem đơn chờ",
+        disabled: !entry,
+        go: () => entry && m.openEntryDetail(entry.id, entry.businessDate),
       },
+      // Huỷ cũng xuống cuối. Với đơn chờ không gắn booking thì đây là lối huỷ
+      // duy nhất từ sheet này, nên nó ở lại, dưới đúng tên của nó.
       ...(r
         ? [
             {
               label: "Hủy booking",
               danger: true,
+              wide: true,
               disabled: !m.can("reservation.cancel") || !hold.canBookingStatus,
               go: () => a.cancel(r),
             },
-            { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
           ]
-        : []),
-      {
-        label: "Xem đơn chờ",
-        wide: true,
-        disabled: !entry,
-        go: () => entry && m.openEntryDetail(entry.id, entry.businessDate),
-      },
+        : [
+            {
+              label: "Hủy đơn chờ",
+              danger: true,
+              wide: true,
+              disabled: !entry || !m.can("waitlist.cancel"),
+              go: () => entry && a.cancelEntry(entry),
+            },
+          ]),
     ]
   } else if (c?.kind === "reservation") {
     who = `${c.displayName}, ${c.partySize} khách`
@@ -457,8 +564,15 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
             : []),
           { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
           { label: "Đổi bàn", go: () => a.assign(r) },
-          { label: "Hủy booking", danger: true, disabled: !m.can("reservation.cancel"), go: () => a.cancel(r) },
-          { label: "Đổi trạng thái", go: () => m.openStatus(r) },
+          // Hủy booking đứng cuối và chiếm cả dòng: thao tác không lùi lại
+          // được thì không nên nằm lẫn giữa những nút bấm hằng ngày.
+          {
+            label: "Hủy booking",
+            danger: true,
+            wide: true,
+            disabled: !m.can("reservation.cancel"),
+            go: () => a.cancel(r),
+          },
         ]
       : []
   } else if (st === "spare") {
@@ -475,10 +589,46 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
     actions = [
       { label: "Mở bàn Walk-in", primary: true, go: () => m.openForm({ mode: "walkin", tableIds: members }) },
       {
-        label: "Tạo đặt trước",
+        label: "Đặt bàn",
         go: () => m.openForm({ mode: "booking", tableIds: zone?.isBookable ? members : [] }),
       },
     ]
+  }
+
+  // Chốt (Khách đã đến) đứng riêng một dòng ở trên, huỷ đứng riêng một dòng ở
+  // dưới cùng. Chỉ hai loại đó mới được chiếm cả dòng.
+  const leadActions = actions.filter((x) => x.wide && !x.danger)
+  const tailActions = actions.filter((x) => x.wide && x.danger)
+  const pairActions = actions.filter((x) => !x.wide)
+
+  const actionButton = (x: Action) => (
+    <button
+      key={x.label}
+      type="button"
+      onClick={x.go}
+      disabled={x.disabled || a.pending || pending}
+      title={x.title}
+      className={cn(
+        "min-h-12 rounded-xl border px-2 text-[15px] leading-tight font-medium disabled:opacity-45",
+        x.primary
+          ? "border-primary bg-primary text-primary-foreground"
+          : cn("border-strong bg-transparent", x.danger ? "text-st-noshow-ink" : "text-tx-1"),
+      )}
+    >
+      {x.label}
+    </button>
+  )
+
+  /** Nút nửa dòng, theo đúng thứ tự xuất hiện. */
+  const cells: ReactNode[] = []
+  if (callTarget) {
+    cells.push(
+      <CallCustomerControl key="call" target={callTarget} canCall={c?.canCall === true || c?.phoneLast3 != null} />,
+    )
+  }
+  for (const x of pairActions) cells.push(actionButton(x))
+  if (t) {
+    cells.push(<SpareButton key="spare" table={t} state={st} hasClaim={Boolean(c)} inGroup={isGroup} />)
   }
 
   return (
@@ -489,9 +639,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
     >
       <div className="mx-auto mb-0.5 h-[5px] w-9 rounded-[3px] bg-strong" />
       <div className="flex items-center gap-2.5">
-        <span className="text-2xl font-semibold tracking-[-0.01em] text-tx-strong">
-          {groupTitle}
-        </span>
+        <span className="text-2xl font-semibold tracking-[-0.01em] text-tx-strong">{groupTitle}</span>
         <span className="rounded-full px-2.5 text-xs leading-6 font-medium" style={toneStyle(tone)}>
           {isGroup ? `${chip} - ghép ${members.length} bàn` : chip}
         </span>
@@ -505,11 +653,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
           <X className="size-5" />
         </button>
       </div>
-      {isGroup ? (
-        <span className="-mt-1 text-[13px] text-[var(--text-muted)]">
-          Trạng thái: <strong className="font-semibold text-tx-strong">{chip}</strong> · ghép {members.length} bàn
-        </span>
-      ) : null}
+      {/* Trạng thái chỉ hiển thị một lần ở chip cạnh tên bàn. */}
       <span className="-mt-2 text-[13px] text-[var(--text-muted)]">
         {zone?.name}, {isBar && !isGroup ? "1 ghế" : `${totalCapacity} chỗ`}
         {t.isSpare ? ", bàn sơ cua" : ""}
@@ -521,9 +665,9 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
           {c?.phoneLast3 ? <span className="text-[13px] text-[var(--text-muted)]">SĐT: ••• {c.phoneLast3}</span> : null}
           {c?.flags?.length ? (
             <span className="text-[13px] text-[var(--text-muted)]">
-              {c.flags.includes("RETURNING") ? "🔥 Khách quen" : ""}
+              {c.flags.includes("RETURNING") ? "🔥 Đã từng đặt bàn" : ""}
               {c.flags.includes("RETURNING") && c.flags.includes("NEW") ? " · " : ""}
-              {c.flags.includes("NEW") ? "🆕 Khách mới" : ""}
+              {c.flags.includes("NEW") ? "🆕 Chưa từng đặt bàn" : ""}
             </span>
           ) : null}
           {c && c.tableIds.length > 1 ? (
@@ -538,44 +682,39 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
       ) : null}
       {info ? <span className="text-[13px] text-pretty text-[var(--text-muted)]">{info}</span> : null}
       <LayoutActions model={m.model} tableId={id} />
-      {t ? (
-        <SpareButton
-          table={t}
-          state={st}
-          hasClaim={Boolean(c)}
-          inGroup={isGroup}
-        />
-      ) : null}
-      {actions.length ? (
-        <div className="grid grid-cols-2 gap-2">
-          {c?.kind === "reservation" && c.reservationId ? (
-            <CallCustomerControl
-              bookingId={c.reservationId}
-              bookingVersion={c.version}
-              canCall={c.canCall === true}
-              className="col-span-2"
-            />
-          ) : null}
-          {actions.map((x) => (
+      {actions.length || t ? (
+        <div className="flex flex-col gap-2">
+          {leadActions.map((x) => actionButton(x))}
+          {actionRows(cells).map((row, index) => (
+            <div
+              key={index}
+              className={cn(
+                "grid items-start gap-2",
+                // Ba cột thì mỗi ô chỉ còn ~110px: hạ cỡ chữ để nhãn dài như
+                // "Đổi / Ghép bàn" nằm gọn một dòng, hàng không cao vống lên.
+                row.length === 3 ? "grid-cols-3 [&_button]:text-[13px]" : "grid-cols-2",
+              )}
+            >
+              {row}
+            </div>
+          ))}
+          {tailActions.map((x) => (
             <button
               key={x.label}
               type="button"
               onClick={x.go}
               disabled={x.disabled || a.pending || pending}
               title={x.title}
-              className={cn(
-                "h-12 rounded-xl border text-[15px] font-medium disabled:opacity-45",
-                x.wide && "col-span-2",
-                x.primary
-                  ? "border-primary bg-primary text-primary-foreground"
-                  : cn("border-strong bg-transparent", x.danger ? "text-st-noshow-ink" : "text-tx-1"),
-              )}
+              className="h-12 rounded-xl border border-strong bg-transparent text-[15px] font-medium text-st-noshow-ink disabled:opacity-45"
             >
               {x.label}
             </button>
           ))}
         </div>
       ) : null}
+      {/* Lịch sử gọi là một dòng chữ gập lại, không phải nút, nên nó đứng
+          ngoài lưới và không tính vào số nút chẵn/lẻ. */}
+      {callTarget ? <CallHistory target={callTarget} /> : null}
     </div>
   )
 }

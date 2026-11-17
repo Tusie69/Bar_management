@@ -42,7 +42,7 @@ export function SpareButton({
   showReason = true,
   onSuccess,
 }: SpareButtonProps) {
-  const userCanConfigure = useCan("venue.configure")
+  const userCanConfigure = useCan("table.spare.configure")
   const canConfigure = canConfigureProp ?? userCanConfigure
 
   const state: TableLiveState =

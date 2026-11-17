@@ -239,7 +239,7 @@ describe("5-minute wheel (Nam decision)", () => {
   })
 })
 
-describe("Khách quen (O) / Khách mới (N) exclusivity (Item 3)", () => {
+describe("Đã từng đặt bàn / Chưa từng đặt bàn exclusivity (Item 3)", () => {
   it("starts UNCLASSIFIED when nothing is selected", () => {
     const initial: BookingClassification = "UNCLASSIFIED"
     expect(initial).toBe("UNCLASSIFIED")

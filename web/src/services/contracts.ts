@@ -32,6 +32,8 @@ import type {
   CustomerSummary,
   FloorState,
   MutationResult,
+  ReceptionGuestCount,
+  ReceptionGuestCountValues,
   AllocationView,
   OperationView,
   PhoneReveal,
@@ -41,12 +43,32 @@ import type {
   ReservationView,
   SessionUser,
   ShiftOverview,
+  BookingCallHistoryEntry,
+  CallOutcome,
+  CallTarget,
   VenueConfig,
   VenueSettingsView,
   VisitView,
+  TableTurnQuery,
+  TableTurnsParams,
+  TableTurnsResult,
+  TableTurnSummary,
   WaitlistEntryView,
 } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
+import type { SessionEndCode } from "@/domain/session-end"
+import type {
+  AnonymousVisitQuery,
+  AnonymousVisitsResult,
+  AssignAnonymousVisitInput,
+  AnonymousAssignmentResult,
+  AssignmentUndo,
+  UndoAnonymousAssignmentResult,
+  DuplicateCustomersResult,
+  DuplicateDecisionInput,
+  CustomerMergeResult,
+  DuplicateDismissalResult,
+} from "@/domain/models"
 
 export type KnownApiErrorCode =
   | "VALIDATION_FAILED"
@@ -130,6 +152,8 @@ export interface WalkInInput {
   tableIds: number[]
   guestCount: number
   contactName?: string
+  /** Optional customer phone, stored protected and only exposed as last 3 digits. */
+  phone?: string
   overrideReason?: string
   capacityOverrideConfirmed?: boolean
   /** FX-04: mã chống trùng của lần mở form; gửi lại cùng mã thì máy chủ trả lại kết quả cũ. */
@@ -173,8 +197,55 @@ export interface AccountSummary {
   status: "ACTIVE" | "DISABLED"
   membershipStatus: string
   roles: string[]
+  accessLevel: "WRITE" | "READ_ONLY" | null
   lastLoginAt: string | null
   version: number
+}
+
+/** TU-35: một dòng nhật ký thao tác. Không bao giờ chứa số điện thoại. */
+export interface AuditEntryView {
+  id: number
+  occurredAt: string
+  actor: string
+  actorUsername: string | null
+  action: string
+  actionLabel: string
+  actionType: string | null
+  target: string
+  device: string
+  detail: string
+}
+
+export interface AuditPageView {
+  entries: AuditEntryView[]
+  hasMore: boolean
+  nextCursor: number | null
+  /** Số ngày lưu nhật ký, đọc từ cấu hình quán. */
+  retentionDays: number
+  windowStart: string
+}
+
+export interface AuditFilterView {
+  type: string
+  label: string
+  /** false = nhóm chưa có thao tác nào trong hệ thống. */
+  supported: boolean
+  note?: string
+}
+
+export interface AuditFiltersView {
+  filters: AuditFilterView[]
+  retentionDays: number
+  /** Quyền xuất file, đọc từ cấu hình chứ không suy từ vai trò ở web. */
+  canExport: boolean
+}
+
+export interface AuditQuery {
+  from?: string
+  to?: string
+  types?: string[]
+  limit?: number
+  before?: number
 }
 
 export interface AccountsView {
@@ -186,8 +257,39 @@ export interface AccountsView {
 export interface CreateAccountInput {
   username: string
   displayName: string
-  password: string
+  /** TU-34: bỏ trống để máy chủ sinh mật khẩu tạm. */
+  password?: string
   roleCode: string
+  accessLevel?: "WRITE" | "READ_ONLY"
+}
+
+/**
+ * TU-34: mật khẩu tạm chỉ về đúng một lần, trong response tạo hoặc reset.
+ * Không có endpoint nào đọc lại được nó, kể cả OWNER.
+ */
+export interface AccountCredentialResult {
+  account: AccountSummary
+  temporaryPassword: string | null
+}
+
+/** Một quyền trong bảng checkbox của màn Tài khoản & phân quyền. */
+export interface AccountPermissionView {
+  code: string
+  /** Vai trò của tài khoản có cho phép quyền này không (trần cứng). */
+  grantedByRole: boolean
+  /** Quyền hiệu dụng: trong trần vai trò và chưa bị tắt riêng. */
+  enabled: boolean
+  /** Có bản ghi override riêng cho tài khoản này. */
+  overridden: boolean
+  /** Checkbox có sửa được không (trong trần và không thuộc nhóm bảo vệ). */
+  editable: boolean
+  /** Quyền có nằm trong trần của tài khoản không — cấp thêm được hay không. */
+  grantable: boolean
+}
+
+export interface AccountPermissionsView {
+  account: AccountSummary
+  permissions: AccountPermissionView[]
 }
 
 export interface DissolveTableGroupInput {
@@ -293,28 +395,56 @@ export interface UndoState {
 
 export interface GamApi {
   readonly mode: "mock" | "http"
+  getAnonymousVisits(query: AnonymousVisitQuery): Promise<AnonymousVisitsResult>
+  assignAnonymousVisit(input: AssignAnonymousVisitInput): Promise<AnonymousAssignmentResult>
+  undoAnonymousAssignment(input: AssignmentUndo): Promise<UndoAnonymousAssignmentResult>
+  getDuplicateCustomers(query?: { page?: number; pageSize?: number }): Promise<DuplicateCustomersResult>
+  mergeDuplicateCustomers(input: DuplicateDecisionInput): Promise<CustomerMergeResult>
+  dismissDuplicateCustomers(input: DuplicateDecisionInput): Promise<DuplicateDismissalResult>
 
   setSession(user: SessionUser): void
   listDemoUsers(): SessionUser[]
-  subscribe(listener: (event: ChangeEvent) => void): () => void
+  subscribe(listener: (event: ChangeEvent) => void, onSessionEnded?: (code: SessionEndCode) => void): () => void
 
   // Queries
   getCatalog(): Promise<Catalog>
   getVenueSettings(): Promise<VenueSettingsView>
   getFloorState(at: Date, businessDate?: BusinessDate): Promise<FloorState>
+  getReceptionGuestCount(businessDate: BusinessDate): Promise<ReceptionGuestCount>
+  updateReceptionGuestCount(
+    input: ReceptionGuestCountValues & { businessDate: BusinessDate; version: number },
+  ): Promise<ReceptionGuestCount>
   getAvailability(at: Date, partySize: number): Promise<AvailabilityResult>
   getShiftOverview(): Promise<ShiftOverview>
   listReservations(q: ReservationQuery): Promise<ReservationView[]>
   searchReception(businessDate: BusinessDate, query: { last3?: string; name?: string }): Promise<ReceptionSearchResult>
   exportDailyBookingText(businessDate: BusinessDate): Promise<string>
   listVisits(businessDate: BusinessDate): Promise<VisitView[]>
+  getTableTurns(params: TableTurnsParams): Promise<TableTurnsResult>
+  getTableTurnSummary(params: TableTurnQuery): Promise<TableTurnSummary>
   listWaitlist(businessDate: BusinessDate): Promise<WaitlistEntryView[]>
   searchCustomers(query: string): Promise<CustomerSummary[]>
   getCustomer(id: number): Promise<CustomerProfile>
   listOperations(limit: number): Promise<OperationView[]>
   listAccounts(): Promise<AccountsView>
-  createAccount(input: CreateAccountInput): Promise<AccountSummary>
+  createAccount(input: CreateAccountInput): Promise<AccountCredentialResult>
   setAccountStatus(userId: number, version: number, status: "ACTIVE" | "DISABLED"): Promise<AccountSummary>
+  setAdminAccessLevel(userId: number, version: number, accessLevel: "WRITE" | "READ_ONLY"): Promise<AccountSummary>
+  resetAccountPassword(userId: number, version: number, newPassword?: string): Promise<AccountCredentialResult>
+  /** TU-35: nhật ký thao tác — nhóm lọc, số ngày lưu, quyền xuất file. */
+  getAuditFilters(): Promise<AuditFiltersView>
+  listAuditEntries(query: AuditQuery): Promise<AuditPageView>
+  /** Trả về nội dung CSV; web tự tạo file tải xuống. */
+  exportAuditCsv(query: AuditQuery): Promise<string>
+  /** TU-34: quyền riêng của một tài khoản (đọc để hiện checkbox). */
+  getAccountPermissions(userId: number): Promise<AccountPermissionsView>
+  /** TU-34: lưu checkbox. `permissions` chỉ gửi các mã muốn đặt lại trạng thái. */
+  updateAccountPermissions(
+    userId: number,
+    version: number,
+    permissions: Record<string, boolean>,
+  ): Promise<AccountPermissionsView>
+  changeOwnPassword(currentPassword: string, newPassword: string): Promise<void>
   getUndoState(): Promise<UndoState>
   /** table_allocations of a business date, optionally for one table (history + timeline). */
   listAllocations(businessDate: BusinessDate, tableId?: number): Promise<AllocationView[]>
@@ -332,11 +462,13 @@ export interface GamApi {
   cancelReservation(id: number, version: number, reason: ReservationCloseReason, note?: string): Promise<MutationResult>
   markNoShow(id: number, version: number): Promise<MutationResult>
   confirmLate(id: number, version: number): Promise<MutationResult>
-  startBookingCall(id: number): Promise<{ callId: number; bookingId: number; initiatedAt: Date; telUri: string }>
-  recordBookingCallOutcome(
-    bookingId: number,
+  startCall(target: CallTarget): Promise<{ callId: number; initiatedAt: Date; telUri: string }>
+  /** Calls already placed on this guest, newest first. Carries no phone number. */
+  listCalls(target: CallTarget): Promise<BookingCallHistoryEntry[]>
+  recordCallOutcome(
+    target: CallTarget,
     callId: number,
-    outcome: "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED",
+    outcome: CallOutcome,
     bookingVersion?: number,
   ): Promise<MutationResult>
   checkIn(input: CheckInInput): Promise<MutationResult>
@@ -394,10 +526,24 @@ export interface GamApi {
 
 /** Implemented backend paths, relative to /api/v1. */
 export const REST_ENDPOINTS = {
+  anonymousVisits: "GET /visits/anonymous?from=YYYY-MM-DD&to=YYYY-MM-DD",
+  assignAnonymousVisit: "POST /visits/:id/customer-assignment",
+  undoAnonymousAssignment: "POST /visits/:id/customer-assignment/undo",
+  duplicateCustomers: "GET /customers/duplicates",
+  mergeDuplicateCustomers: "POST /customers/duplicates/merge",
+  dismissDuplicateCustomers: "POST /customers/duplicates/dismiss",
   settings: "GET, PUT /settings",
   accounts: "GET /accounts",
   createAccount: "POST /accounts",
   setAccountStatus: "POST /accounts/:id/status",
+  setAdminAccessLevel: "POST /accounts/:id/access-level",
+  resetAccountPassword: "POST /accounts/:id/password-reset",
+  accountPermissions: "GET /accounts/:id/permissions",
+  auditFilters: "GET /operations/audit/filters",
+  auditEntries: "GET /operations/audit",
+  auditExport: "GET /operations/audit/export",
+  updateAccountPermissions: "POST /accounts/:id/permissions",
+  changeOwnPassword: "POST /accounts/me/password",
   catalog: "GET /tables/catalog",
   sources: "GET /bookings/sources",
   floorState: "GET /tables?date=YYYY-MM-DD",
@@ -410,8 +556,9 @@ export const REST_ENDPOINTS = {
   assignTables: "POST /bookings/:id/assign",
   cancelReservation: "POST /bookings/:id/cancel",
   markNoShow: "POST /bookings/:id/no-show",
-  startBookingCall: "POST /bookings/:id/call",
-  recordBookingCallOutcome: "POST /bookings/:id/calls/:callId/outcome",
+  startCall: "POST /bookings|waitlist|visits/:id/call",
+  listCalls: "GET /bookings|waitlist|visits/:id/calls",
+  recordCallOutcome: "POST /bookings|waitlist|visits/:id/calls/:callId/outcome",
   checkIn: "POST /bookings/:id/check-in",
   walkIn: "POST /bookings/walk-ins",
   move: "POST /visits/:id/move",
@@ -434,4 +581,4 @@ export const REST_ENDPOINTS = {
   redo: "POST /operations/redo",
 } as const
 
-export const DEMO_ROLE_ORDER: RoleCode[] = ["RECEPTIONIST", "OWNER_ADMIN", "CUSTOMER_CARE", "CASHIER"]
+export const DEMO_ROLE_ORDER: RoleCode[] = ["RECEPTIONIST", "OWNER", "ADMIN", "CUSTOMER_CARE", "CASHIER"]

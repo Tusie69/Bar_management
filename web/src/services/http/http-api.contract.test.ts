@@ -192,6 +192,38 @@ beforeEach(() => {
       if (path.endsWith("phone:reveal")) return json({ phoneNumber: "+84901234123" })
       if (path === "/bookings/11/call")
         return json({ callId: 71, bookingId: 11, initiatedAt: at.toISOString(), telUri: "tel:+84901234123" }, 201)
+      if (path === "/waitlist/4/call")
+        return json(
+          {
+            callId: 81,
+            targetKind: "WAITLIST_ENTRY",
+            targetId: 4,
+            initiatedAt: at.toISOString(),
+            telUri: "tel:+84901234123",
+          },
+          201,
+        )
+      if (path === "/bookings/11/calls")
+        return json({
+          calls: [
+            {
+              callId: 71,
+              initiatedAt: at.toISOString(),
+              initiatedBy: "Lễ tân 1",
+              outcome: "NO_ANSWER",
+              outcomeAt: at.toISOString(),
+              outcomeBy: "Lễ tân 1",
+            },
+            {
+              callId: 70,
+              initiatedAt: at.toISOString(),
+              initiatedBy: "Lễ tân 2",
+              outcome: null,
+              outcomeAt: null,
+              outcomeBy: null,
+            },
+          ],
+        })
       if (path === "/bookings/11/calls/71/outcome")
         return json({ callId: 71, bookingId: 11, outcome: body.outcome, outcomeAt: at.toISOString() })
       if (path === "/waitlist/21/seat" && (body as { arrived?: boolean })?.arrived) {
@@ -199,23 +231,84 @@ beforeEach(() => {
       }
       if (path === "/waitlist" || path.startsWith("/waitlist/")) return json({ entry, reservationId: 11, groupId: 1 })
       if (/^\/tables\/groups\/\d+\/split$/.test(path))
-        return json({ operationId: 91, changeSeq: 12, summary: "Đã tách nhóm bàn.", undoable: false,
-          splitGroupId: 1, group: null, keptTableIds: [1], releasedTableIds: [2] })
+        return json({
+          operationId: 91,
+          changeSeq: 12,
+          summary: "Đã tách nhóm bàn.",
+          undoable: false,
+          splitGroupId: 1,
+          group: null,
+          keptTableIds: [1],
+          releasedTableIds: [2],
+        })
       if (path === "/accounts" && init.method === "POST")
-        return json({ account: { id: 5, username: "le_tan", displayName: "Lễ tân", status: "ACTIVE",
-          membershipStatus: "ACTIVE", roles: ["RECEPTIONIST"], lastLoginAt: null, version: 1 } })
+        return json({
+          temporaryPassword: null,
+          account: {
+            id: 5,
+            username: "le_tan",
+            displayName: "Lễ tân",
+            status: "ACTIVE",
+            membershipStatus: "ACTIVE",
+            roles: ["RECEPTIONIST"],
+            accessLevel: null,
+            lastLoginAt: null,
+            version: 1,
+          },
+        })
       if (path === "/accounts")
         return json({
-          accounts: [{ id: 5, username: "le_tan", displayName: "Lễ tân", status: "ACTIVE",
-            membershipStatus: "ACTIVE", roles: ["RECEPTIONIST"], lastLoginAt: null, version: 3 }],
+          accounts: [
+            {
+              id: 5,
+              username: "le_tan",
+              displayName: "Lễ tân",
+              status: "ACTIVE",
+              membershipStatus: "ACTIVE",
+              roles: ["RECEPTIONIST"],
+              accessLevel: null,
+              lastLoginAt: null,
+              version: 3,
+            },
+          ],
           roles: [{ code: "RECEPTIONIST", name: "Lễ tân" }],
         })
+      if (path === "/accounts/me/password") return json({ revokedSessions: 1 })
+      if (/^\/accounts\/\d+\/(access-level|password-reset)$/.test(path))
+        return json({
+          account: {
+            id: 5,
+            username: "le_tan",
+            displayName: "Lễ tân",
+            status: "ACTIVE",
+            membershipStatus: "ACTIVE",
+            roles: ["ADMIN"],
+            accessLevel: "READ_ONLY",
+            lastLoginAt: null,
+            version: 4,
+          },
+          revokedSessions: 1,
+        })
       if (/^\/accounts\/\d+\/status$/.test(path))
-        return json({ account: { id: 5, username: "le_tan", displayName: "Lễ tân", status: "DISABLED",
-          membershipStatus: "ACTIVE", roles: ["RECEPTIONIST"], lastLoginAt: null, version: 4 },
-          revokedSessions: 2 })
+        return json({
+          account: {
+            id: 5,
+            username: "le_tan",
+            displayName: "Lễ tân",
+            status: "DISABLED",
+            membershipStatus: "ACTIVE",
+            roles: ["RECEPTIONIST"],
+            accessLevel: null,
+            lastLoginAt: null,
+            version: 4,
+          },
+          revokedSessions: 2,
+        })
       if (path === "/operations/undo-state")
-        return json({ undo: { operationId: 81, action: "VISIT_TABLES_MOVED", summary: "đổi bàn lượt khách" }, redo: null })
+        return json({
+          undo: { operationId: 81, action: "VISIT_TABLES_MOVED", summary: "đổi bàn lượt khách" },
+          redo: null,
+        })
       if (path === "/operations/undo" || path === "/operations/redo")
         return json({ operationId: 82, changeSeq: 9, summary: "Đã áp dụng.", undoable: true })
       if (path.startsWith("/visits/"))
@@ -382,9 +475,9 @@ describe("canonical contract writes", () => {
     expect(writes()).toEqual([{ method: "PUT", path: "/settings", body: input }])
   })
   it("starts a call without sending a phone and records the selected outcome against the same call", async () => {
-    const call = await api.startBookingCall(11)
-    expect(call).toMatchObject({ callId: 71, bookingId: 11, telUri: "tel:+84901234123" })
-    await api.recordBookingCallOutcome(11, 71, "LATE_CONFIRMED", 3)
+    const call = await api.startCall({ kind: "booking", id: 11 })
+    expect(call).toMatchObject({ callId: 71, telUri: "tel:+84901234123" })
+    await api.recordCallOutcome({ kind: "booking", id: 11 }, 71, "LATE_CONFIRMED", 3)
     expect(writes()).toEqual([
       { method: "POST", path: "/bookings/11/call", body: {} },
       {
@@ -394,6 +487,25 @@ describe("canonical contract writes", () => {
       },
     ])
     expect(JSON.stringify(writes())).not.toContain("+84901234123")
+  })
+
+  it("calls a waitlist entry that has no booking through the waitlist route", async () => {
+    // Một đơn chờ Walk-in không có booking nào để gắn, nên nó phải có tuyến
+    // riêng; trước đây lễ tân không gọi được những người này.
+    const call = await api.startCall({ kind: "waitlist", id: 4 })
+    expect(call).toMatchObject({ callId: 81, telUri: "tel:+84901234123" })
+    expect(writes()).toEqual([{ method: "POST", path: "/waitlist/4/call", body: {} }])
+    expect(JSON.stringify(writes())).not.toContain("+84901234123")
+  })
+
+  it("reads the call history without ever asking for a phone number", async () => {
+    const calls = await api.listCalls({ kind: "booking", id: 11 })
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).toMatchObject({ callId: 71, initiatedBy: "Lễ tân 1", outcome: "NO_ANSWER" })
+    // A call nobody closed must come back as such, not be hidden.
+    expect(calls[1]).toMatchObject({ callId: 70, outcome: null, outcomeBy: null })
+    expect(calls[0].initiatedAt).toBeInstanceOf(Date)
+    expect(JSON.stringify(calls)).not.toContain("+84")
   })
 
   it("forwards a full destination set for grouped visit and booking moves", async () => {
@@ -498,8 +610,11 @@ describe("canonical contract writes", () => {
     await api.updateReservation({ id: 11, version: 1, partySize: 5, ...metadata })
     await api.updateReservation({ id: 11, version: 1, iconKeys: [], honorific: null, socialPlatform: null })
     expect(writes().map(({ method, path }) => [method, path])).toEqual([
-      ["POST", "/bookings"], ["POST", "/bookings/direct"], ["PUT", "/bookings/11"],
-      ["PUT", "/bookings/11"], ["PUT", "/bookings/11"],
+      ["POST", "/bookings"],
+      ["POST", "/bookings/direct"],
+      ["PUT", "/bookings/11"],
+      ["PUT", "/bookings/11"],
+      ["PUT", "/bookings/11"],
     ])
     const [create, direct, socialUpdate, hotlineUpdate, cleared] = writes()
     for (const write of [create, direct, socialUpdate]) {
@@ -567,9 +682,9 @@ describe("canonical contract writes", () => {
     },
     {
       name: "walk-in",
-      run: (api) => api.seatWalkIn({ tableIds: [2], guestCount: 4, contactName: "An" }),
+      run: (api) => api.seatWalkIn({ tableIds: [2], guestCount: 4, contactName: "An", phone: "0901234123" }),
       path: "/bookings/walk-ins",
-      body: { tableIds: [2], partySize: 4, guestName: "An", businessDate: date },
+      body: { tableIds: [2], partySize: 4, guestName: "An", phoneNumber: "0901234123", businessDate: date },
     },
     {
       name: "end visit",
@@ -846,26 +961,31 @@ describe("BA-021 Split HTTP contract", () => {
       changeSeq: 12,
       undoable: false,
     })
-    expect(calls).toEqual([
-      { method: "POST", path: "/tables/groups/7/split", body: { keepTableIds: [1] } },
-    ])
+    expect(calls).toEqual([{ method: "POST", path: "/tables/groups/7/split", body: { keepTableIds: [1] } }])
   })
 })
 
 describe("BA-022 account management HTTP contract", () => {
-  it("reads accounts and posts create and status changes to the account routes", async () => {
+  it("uses the account, access-level and password routes without retaining secrets", async () => {
     const view = await api.listAccounts()
     expect(view.accounts[0]).toMatchObject({ id: 5, username: "le_tan", status: "ACTIVE", version: 3 })
     expect(view.roles).toEqual([{ code: "RECEPTIONIST", name: "Lễ tân" }])
 
     const created = await api.createAccount({
-      username: "le_tan", displayName: "Lễ tân", password: "a-very-long-password", roleCode: "RECEPTIONIST",
+      username: "le_tan",
+      displayName: "Lễ tân",
+      password: "a-very-long-password",
+      roleCode: "RECEPTIONIST",
     })
-    expect(created.id).toBe(5)
+    expect(created.account.id).toBe(5)
+    // TU-34: mật khẩu do người quản trị đặt thì không có mật khẩu tạm trả về.
+    expect(created.temporaryPassword).toBeNull()
 
     const locked = await api.setAccountStatus(5, 3, "DISABLED")
     expect(locked.status).toBe("DISABLED")
-
+    expect((await api.setAdminAccessLevel(5, 3, "READ_ONLY")).accessLevel).toBe("READ_ONLY")
+    await api.resetAccountPassword(5, 3, "replacement-password")
+    await api.changeOwnPassword("current-password", "next-password")
     expect(calls).toEqual([
       { method: "GET", path: "/accounts", body: undefined },
       {
@@ -879,6 +999,13 @@ describe("BA-022 account management HTTP contract", () => {
         },
       },
       { method: "POST", path: "/accounts/5/status", body: { version: 3, status: "DISABLED" } },
+      { method: "POST", path: "/accounts/5/access-level", body: { version: 3, accessLevel: "READ_ONLY" } },
+      { method: "POST", path: "/accounts/5/password-reset", body: { version: 3, newPassword: "replacement-password" } },
+      {
+        method: "POST",
+        path: "/accounts/me/password",
+        body: { currentPassword: "current-password", newPassword: "next-password" },
+      },
     ])
   })
 })

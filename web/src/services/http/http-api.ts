@@ -1,8 +1,36 @@
 /** Canonical GamApi backed exclusively by the frozen /api/v1 contract. */
-import type { Catalog, ClaimView, FloorState, MutationResult, SessionUser, VenueSettingsView } from "@/domain/models"
+import type {
+  Catalog,
+  ClaimView,
+  FloorState,
+  MutationResult,
+  ReceptionGuestCount,
+  SessionUser,
+  VenueSettingsView,
+  TableTurnsParams,
+  TableTurnsResult,
+  TableTurnSummary,
+  AnonymousVisitsResult,
+  AnonymousAssignmentResult,
+  UndoAnonymousAssignmentResult,
+  DuplicateCustomersResult,
+  CustomerMergeResult,
+  DuplicateDismissalResult,
+} from "@/domain/models"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { clock } from "../clock"
-import { ApiError, type AccountsView, type AccountSummary, type GamApi, type UndoState } from "../contracts"
+import {
+  ApiError,
+  type AuditFiltersView,
+  type AuditPageView,
+  type AuditQuery,
+  type AccountCredentialResult,
+  type AccountPermissionsView,
+  type AccountsView,
+  type AccountSummary,
+  type GamApi,
+  type UndoState,
+} from "../contracts"
 import { HttpBookingApi } from "./booking-api"
 import { createAndAssignDirectBooking } from "./direct-booking"
 import { openFloorStream } from "./floor-stream"
@@ -22,6 +50,13 @@ import {
 } from "./floor-adapter"
 import { HttpVisitApi } from "./visit-api"
 import type { HttpClient } from "./http-client"
+function tableTurnSearch(params: TableTurnsParams): string {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) query.set(key, String(value))
+  }
+  return query.toString()
+}
 
 const revive = (key: string, value: unknown) =>
   key.endsWith("At") && typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value) ? new Date(value) : value
@@ -30,10 +65,7 @@ const unsupported = (capability: string): never => {
   throw new ApiError(501, "NOT_SUPPORTED_BY_BACKEND", `Máy chủ chưa hỗ trợ ${capability}.`)
 }
 
-/**
- * §3.1: only forward the confirmation when it is actually set, so a request that
- * nobody confirmed stays a request the server refuses.
- */
+/** Legacy flag is forwarded only when an older caller still provides it. */
 function capacityConfirmation(input: { capacityOverrideConfirmed?: boolean }): { capacityOverrideConfirmed?: boolean } {
   return input.capacityOverrideConfirmed ? { capacityOverrideConfirmed: true } : {}
 }
@@ -44,6 +76,18 @@ function spareConfirmation(input: { spareOverrideConfirmed?: boolean }): { spare
 }
 const rejectUnsupported = (capability: string) => async () => unsupported(capability)
 const catalogMaxAgeMs = 60_000
+
+/** Chuỗi truy vấn cho các endpoint nhật ký; bỏ qua tham số không đặt. */
+function auditQueryString(query: AuditQuery): string {
+  const parameters = new URLSearchParams()
+  if (query.from) parameters.set("from", query.from)
+  if (query.to) parameters.set("to", query.to)
+  if (query.types?.length) parameters.set("types", query.types.join(","))
+  if (query.limit !== undefined) parameters.set("limit", String(query.limit))
+  if (query.before !== undefined) parameters.set("before", String(query.before))
+  const text = parameters.toString()
+  return text ? `?${text}` : ""
+}
 
 export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
   // Venue is scoped by the server session; never sent as a client-selected actor scope.
@@ -164,13 +208,17 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     listDemoUsers: () => (session ? [session] : []),
     // §10: one SSE stream per device. The listener only learns that the floor
     // moved, then useRealtimeSync refetches, so the server stays authoritative.
-    subscribe: (listener) => {
-      const stream = openFloorStream(client.root, listener)
+    subscribe: (listener, onSessionEnded) => {
+      const stream = openFloorStream(client.root, listener, onSessionEnded)
       return () => stream.close()
     },
     getCatalog: loadCatalog,
     getVenueSettings: () => get<VenueSettingsView>("/settings"),
     getFloorState: async (at, date = businessDateOf(at)) => floor(date),
+    getReceptionGuestCount: async (date) =>
+      (await get<{ guestCount: ReceptionGuestCount }>(`/reception/guest-counts?date=${date}`)).guestCount,
+    updateReceptionGuestCount: async (input) =>
+      (await put<{ guestCount: ReceptionGuestCount }>("/reception/guest-counts", input)).guestCount,
     getAvailability: async (at, party) => {
       const data = await snapshot(at)
       return deriveAvailability(at, party, data.floor, data.bookings, data.catalog)
@@ -255,9 +303,10 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
       await bookings.confirmLate(id, version)
       return result("Đã ghi nhận khách sẽ tới muộn.")
     },
-    startBookingCall: (id) => bookings.startCall(id),
-    recordBookingCallOutcome: async (bookingId, callId, outcome, bookingVersion) => {
-      await bookings.recordCallOutcome(bookingId, callId, outcome, bookingVersion)
+    startCall: (target) => bookings.startCall(target),
+    listCalls: (target) => bookings.listCalls(target),
+    recordCallOutcome: async (target, callId, outcome, bookingVersion) => {
+      await bookings.recordCallOutcome(target, callId, outcome, bookingVersion)
       return result(outcome === "LATE_CONFIRMED" ? "Đã ghi nhận khách sẽ tới muộn." : "Đã ghi kết quả cuộc gọi.")
     },
     checkIn: async (input) => {
@@ -288,6 +337,7 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
           businessDate: businessDateOf(clock.now()),
           tableIds: input.tableIds,
           ...(input.contactName ? { guestName: input.contactName } : {}),
+          ...(input.phone ? { phoneNumber: input.phone } : {}),
           ...capacityConfirmation(input),
         },
         input.idempotencyKey,
@@ -474,6 +524,28 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
       }
     },
     listVisits: rejectUnsupported("danh sách lượt khách"),
+    getAnonymousVisits: (params) => client.get<AnonymousVisitsResult>(`/visits/anonymous?${tableTurnSearch(params)}`),
+    assignAnonymousVisit: ({ visitId, idempotencyKey, ...input }) =>
+      client.post<AnonymousAssignmentResult>(`/visits/${visitId}/customer-assignment`, input, { idempotencyKey }),
+    undoAnonymousAssignment: ({ visitId, operationId, version }) =>
+      client.post<UndoAnonymousAssignmentResult>(`/visits/${visitId}/customer-assignment/undo`, {
+        operationId,
+        version,
+      }),
+    getDuplicateCustomers: (params = {}) =>
+      client.get<DuplicateCustomersResult>(
+        `/customers/duplicates?${new URLSearchParams(
+          Object.entries(params)
+            .filter(([, value]) => value !== undefined)
+            .map(([key, value]) => [key, String(value)]),
+        )}`,
+      ),
+    mergeDuplicateCustomers: ({ idempotencyKey, ...input }) =>
+      client.post<CustomerMergeResult>("/customers/duplicates/merge", input, { idempotencyKey }),
+    dismissDuplicateCustomers: ({ idempotencyKey, ...input }) =>
+      client.post<DuplicateDismissalResult>("/customers/duplicates/dismiss", input, { idempotencyKey }),
+    getTableTurns: (params) => client.get<TableTurnsResult>(`/visits/turns?${tableTurnSearch(params)}`),
+    getTableTurnSummary: (params) => client.get<TableTurnSummary>(`/visits/turns/summary?${tableTurnSearch(params)}`),
     searchCustomers: rejectUnsupported("tìm khách hàng"),
     getCustomer: rejectUnsupported("hồ sơ khách hàng"),
     listOperations: rejectUnsupported("nhật ký thao tác"),
@@ -494,9 +566,26 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     releaseHold: rejectUnsupported("nhả giữ bàn"),
     updateCustomerNotes: rejectUnsupported("ghi chú hồ sơ khách"),
     listAccounts: () => get<AccountsView>("/accounts"),
-    createAccount: async (input) => (await post<{ account: AccountSummary }>("/accounts", input)).account,
+    createAccount: (input) => post<AccountCredentialResult>("/accounts", input),
     setAccountStatus: async (userId, version, status) =>
       (await post<{ account: AccountSummary }>(`/accounts/${userId}/status`, { version, status })).account,
+    setAdminAccessLevel: async (userId, version, accessLevel) =>
+      (await post<{ account: AccountSummary }>(`/accounts/${userId}/access-level`, { version, accessLevel })).account,
+    resetAccountPassword: (userId, version, newPassword) =>
+      post<AccountCredentialResult>(`/accounts/${userId}/password-reset`, {
+        version,
+        ...(newPassword === undefined ? {} : { newPassword }),
+      }),
+    getAuditFilters: () => get<AuditFiltersView>("/operations/audit/filters"),
+    listAuditEntries: (query) => get<AuditPageView>(`/operations/audit${auditQueryString(query)}`),
+    // CSV về dạng text; HttpClient trả nguyên chuỗi khi content-type không phải JSON.
+    exportAuditCsv: (query) => get<string>(`/operations/audit/export${auditQueryString(query)}`),
+    getAccountPermissions: (userId) => get<AccountPermissionsView>(`/accounts/${userId}/permissions`),
+    updateAccountPermissions: (userId, version, permissions) =>
+      post<AccountPermissionsView>(`/accounts/${userId}/permissions`, { version, permissions }),
+    changeOwnPassword: async (currentPassword, newPassword) => {
+      await post<{ revokedSessions: number }>("/accounts/me/password", { currentPassword, newPassword })
+    },
     getUndoState: () => get<UndoState>("/operations/undo-state"),
     undo: (operationId) => post<MutationResult>("/operations/undo", { operationId }, crypto.randomUUID()),
     redo: (operationId) => post<MutationResult>("/operations/redo", { operationId }, crypto.randomUUID()),

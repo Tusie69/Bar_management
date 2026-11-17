@@ -7,7 +7,7 @@ import { guestCount, guestError, guestValueFrom, type GuestValue } from "@/domai
  * waitlist entry; walk-in with tables -> seatWalkIn; walk-in without tables -> WALK_IN waitlist.
  * The backend stays the final check against double booking (one active allocation per table per business date).
  */
-import { AlertCircle, Check, LoaderCircle, MousePointerClick, X } from "lucide-react"
+import { AlertCircle, AlertTriangle, Check, ChevronDown, LoaderCircle, MousePointerClick, X } from "lucide-react"
 import { useState, type KeyboardEvent } from "react"
 import {
   BookingTimePicker,
@@ -37,6 +37,7 @@ import { api } from "@/services"
 import { useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
 import type { TableView } from "@/domain/models"
+import { capacityWarningText, selectedTablesCapacity } from "./reception-rules"
 import type { FloorModel } from "./use-floor-model"
 
 const PICKABLE = new Set(["available", "too_small"])
@@ -173,6 +174,8 @@ export function QuickForm({
   const [classification, setClassification] = useState<BookingClassification>("UNCLASSIFIED")
   const [isBirthday, setIsBirthday] = useState(false)
   const [iconKeys, setIconKeys] = useState<string[]>([])
+  /** Phone only: the seven date chips stay folded until the night changes. */
+  const [dateOpen, setDateOpen] = useState(false)
   const [honorific, setHonorific] = useState<Honorific | null>(null)
   const [tried, setTried] = useState(false)
   const [guest, setGuest] = useState<GuestValue>(() => guestValueFrom(draft.party))
@@ -193,7 +196,7 @@ export function QuickForm({
 
   const errors: { name?: string; phone?: string; note?: string; time?: string; party?: string; platform?: string } = {}
   if (isB && !name.trim() && !phone.trim()) errors.name = "Cần ít nhất tên hoặc số điện thoại"
-  if (isB && phone.trim() && !isPlausibleVnPhone(phone)) errors.phone = "Số điện thoại 10 số, bắt đầu bằng 0"
+  if (phone.trim() && !isPlausibleVnPhone(phone)) errors.phone = "Số điện thoại 10 số, bắt đầu bằng 0"
   if (isB && noteHasPhoneNumber(note)) errors.note = NOTE_PHONE_ERROR
   if (timeError) errors.time = timeError
   const pErr = guestError(guest)
@@ -225,7 +228,11 @@ export function QuickForm({
   // A passed time is the time's problem, not the table's: fix the time first.
   const blocked =
     checking || timeError ? [] : tables.filter((id) => !draftPickable(draft.kind, id, model, availability, tables))
-  const cap = tables.reduce((s, id) => s + (model.byId.get(id)?.capacity ?? 0), 0)
+  const cap = selectedTablesCapacity(tables, model.byId)
+  const capWarn =
+    !blocked.length && !timeError && !compatError && !checking && availabilityStatus !== "error"
+      ? capacityWarningText(tables.length, cap, party)
+      : null
   // Receptionist flow A is table-first: no table never silently becomes an unassigned booking.
   const needsTable = receptionist && isB && !toWaitlist && tables.length === 0
   const choosing = !!draft.replacing || addingFrom === draft.tableIds.join()
@@ -308,6 +315,7 @@ export function QuickForm({
           tableIds: ids,
           guestCount: party,
           contactName: name.trim() || undefined,
+          phone: phone.trim() || undefined,
           overrideReason: o,
           idempotencyKey,
         }),
@@ -323,6 +331,7 @@ export function QuickForm({
       api.addWaitlist({
         kind: "WALK_IN",
         contactName: name.trim() || `Khách Walk-in ${party} người`,
+        phone: phone.trim() || undefined,
         partySize: party,
         channel: "IN_PERSON",
         preferenceMode: "ANY",
@@ -419,8 +428,11 @@ export function QuickForm({
 
       <div
         className={cn(
-          "flex min-h-0 flex-1 scrollbar-thin flex-col gap-4 overflow-x-hidden overflow-y-auto overscroll-contain pt-3 pb-4",
-          compact ? "px-4" : "px-5",
+          "flex min-h-0 flex-1 scrollbar-thin flex-col overflow-x-hidden overflow-y-auto overscroll-contain pt-3 pb-4",
+          // Eight sections at gap-4 spend 112px on air alone. On the phone the
+          // sheet is only ~440px tall, so that air is a quarter of what the
+          // receptionist can see.
+          compact ? "gap-2.5 px-4" : "gap-4 px-5",
           collapsed && "hidden",
         )}
       >
@@ -443,58 +455,50 @@ export function QuickForm({
                 aria-invalid={!!shown.name}
                 onChange={(e) => setName(e.target.value)}
               />
-              {isB ? (
-                <HonorificPicker
-                  value={honorific}
-                  onChange={setHonorific}
-                  disabled={pending}
-                />
-              ) : null}
+              {isB ? <HonorificPicker value={honorific} onChange={setHonorific} disabled={pending} /> : null}
             </div>
             <FieldError>{shown.name}</FieldError>
           </div>
-          {isB ? (
-            <div className="flex min-w-0 flex-col gap-1.5">
-              <label htmlFor="qf-phone" className={label12}>
-                Số điện thoại
-              </label>
-              <input
-                id="qf-phone"
-                className={cn(inputCls, "tnum")}
-                inputMode="tel"
-                autoComplete="off"
-                maxLength={20}
-                placeholder="0xxx xxx xxx"
-                value={phone}
-                aria-invalid={!!shown.phone}
-                onChange={(e) => setPhone(e.target.value)}
-              />
-              <FieldError>{shown.phone}</FieldError>
-            </div>
-          ) : null}
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <label htmlFor="qf-phone" className={label12}>
+              Số điện thoại (không bắt buộc)
+            </label>
+            <input
+              id="qf-phone"
+              className={cn(inputCls, "tnum")}
+              inputMode="tel"
+              autoComplete="tel"
+              maxLength={20}
+              placeholder="0xxx xxx xxx"
+              value={phone}
+              aria-invalid={!!shown.phone}
+              onChange={(e) => setPhone(e.target.value)}
+            />
+            <FieldError>{shown.phone}</FieldError>
+          </div>
         </section>
 
         {isB ? (
-          <section className="flex shrink-0 flex-col gap-1.5" aria-label="Khách quen / mới">
-            <span className={label12}>Khách quen / mới</span>
-            <div role="radiogroup" aria-label="Khách quen / mới" className="grid grid-cols-2 gap-2">
+          <section className="flex shrink-0 flex-col gap-1.5" aria-label="Khách đã từng / chưa từng đặt bàn">
+            <span className={label12}>Khách đã từng / chưa từng đặt bàn</span>
+            <div role="radiogroup" aria-label="Khách đã từng / chưa từng đặt bàn" className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 role="radio"
                 aria-checked={classification === "RETURNING"}
-                className={chip(classification === "RETURNING")}
+                className={cn(chip(classification === "RETURNING"), "px-1.5 text-[13px] whitespace-normal")}
                 onClick={() => setClassification((c) => (c === "RETURNING" ? "UNCLASSIFIED" : "RETURNING"))}
               >
-                Khách quen (O)
+                Đã từng đặt bàn
               </button>
               <button
                 type="button"
                 role="radio"
                 aria-checked={classification === "NEW"}
-                className={chip(classification === "NEW")}
+                className={cn(chip(classification === "NEW"), "px-1.5 text-[13px] whitespace-normal")}
                 onClick={() => setClassification((c) => (c === "NEW" ? "UNCLASSIFIED" : "NEW"))}
               >
-                Khách mới (N)
+                Chưa từng đặt bàn
               </button>
             </div>
           </section>
@@ -504,27 +508,68 @@ export function QuickForm({
           {isB ? (
             <>
               <div className="flex flex-col gap-1.5">
-                <span className={label12}>Ngày</span>
-                <div role="radiogroup" aria-label="Ngày" className="flex flex-wrap gap-1.5">
-                  {dates.map((bd, i) => {
-                    const on = draft.date === bd
-                    return (
-                      <button
-                        key={bd}
-                        type="button"
-                        role="radio"
-                        aria-checked={on}
-                        aria-label={dateLabel(bd, i)}
-                        className={chip(on)}
-                        onClick={() => ui.setDraft({ date: bd })}
-                      >
-                        {dateLabel(bd, i)}
-                      </button>
-                    )
-                  })}
-                </div>
+                {/* Seven date chips wrap to three rows and cost 166px. On the
+                    phone the date is almost always the one already showing on
+                    the plan, so it collapses to a single row that opens the
+                    chips when the booking really is for another night. */}
+                {compact && !dateOpen ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={label12}>Ngày</span>
+                    <button
+                      type="button"
+                      onClick={() => setDateOpen(true)}
+                      aria-expanded={false}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-sm border border-strong bg-background px-3 text-sm font-medium"
+                    >
+                      {dateLabel(draft.date, dates.indexOf(draft.date))}
+                      <ChevronDown className="size-4 text-tx-2" aria-hidden />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={label12}>Ngày</span>
+                      {/* Mở ra được thì phải thu lại được: trước đây khối ngày
+                          chỉ gập lại khi chọn xong một ngày. */}
+                      {compact ? (
+                        <button
+                          type="button"
+                          onClick={() => setDateOpen(false)}
+                          aria-expanded
+                          aria-label="Thu gọn danh sách ngày"
+                          className="inline-flex h-7 items-center gap-1 rounded-sm px-2 text-xs text-tx-2"
+                        >
+                          Thu gọn
+                          <ChevronDown className="size-3.5 rotate-180" aria-hidden />
+                        </button>
+                      ) : null}
+                    </div>
+                    <div role="radiogroup" aria-label="Ngày" className="flex flex-wrap gap-1.5">
+                      {dates.map((bd, i) => {
+                        const on = draft.date === bd
+                        return (
+                          <button
+                            key={bd}
+                            type="button"
+                            role="radio"
+                            aria-checked={on}
+                            aria-label={dateLabel(bd, i)}
+                            className={chip(on)}
+                            onClick={() => {
+                              ui.setDraft({ date: bd })
+                              if (compact) setDateOpen(false)
+                            }}
+                          >
+                            {dateLabel(bd, i)}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
               <BookingTimePicker
+                compact={compact}
                 date={draft.date}
                 value={draft.time}
                 now={now}
@@ -677,18 +722,30 @@ export function QuickForm({
             Đang kiểm tra {codes} ngày {fmtDayMonth(draft.date)}…
           </p>
         ) : tables.length ? (
-          <p role="status" className="tnum m-0 flex items-start gap-2 text-sm text-st-seated-ink">
-            <Check className="mt-0.5 size-4 shrink-0" aria-hidden />
-            {party === null
-              ? `${codes} còn trống · ${cap} chỗ`
-              : cap >= party
-                ? isB
-                  ? `${codes} còn trống ngày ${fmtDayMonth(draft.date)} · ${cap} chỗ, đủ ${party} khách`
-                  : `${codes} đang trống · ${cap} chỗ, đủ ${party} khách`
-                : isB
-                  ? `${codes} còn trống ngày ${fmtDayMonth(draft.date)} · ${cap} chỗ`
-                  : `${codes} đang trống · ${cap} chỗ`}
-          </p>
+          <>
+            <p role="status" className="tnum m-0 flex items-start gap-2 text-sm text-st-seated-ink">
+              <Check className="mt-0.5 size-4 shrink-0" aria-hidden />
+              {party === null
+                ? `${codes} còn trống · ${cap} chỗ`
+                : cap >= party
+                  ? isB
+                    ? `${codes} còn trống ngày ${fmtDayMonth(draft.date)} · ${cap} chỗ, đủ ${party} khách`
+                    : `${codes} đang trống · ${cap} chỗ, đủ ${party} khách`
+                  : isB
+                    ? `${codes} còn trống ngày ${fmtDayMonth(draft.date)} · ${cap} chỗ`
+                    : `${codes} đang trống · ${cap} chỗ`}
+            </p>
+            {capWarn ? (
+              <p
+                role="status"
+                data-testid="capacity-warning"
+                className="tnum m-0 flex items-start gap-2 rounded-lg border border-st-late/30 bg-st-late-tint px-2.5 py-1.5 text-sm font-medium text-st-late-ink"
+              >
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <span>{capWarn}</span>
+              </p>
+            ) : null}
+          </>
         ) : toWaitlist ? (
           <p role="status" className="m-0 text-sm text-tx-2">
             Lưu vào Bàn chờ ngày {fmtDayMonth(draft.date)}. Chưa giữ bàn cho đến khi chuyển bàn.

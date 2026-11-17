@@ -32,15 +32,22 @@ mysqlDescribe('Wave 2 owner-approved integration', () => {
     const [grants] = await databasePool.execute<RowDataPacket[]>(
       `SELECT r.code AS role, p.code AS permission FROM role_permissions rp
        JOIN roles r ON r.id = rp.role_id JOIN permissions p ON p.id = rp.permission_id
-       WHERE p.code IN ('booking.phone.call', 'booking.phone.reveal', 'customer.phone.reveal', 'venue.configure')
+      WHERE p.code IN ('booking.phone.call', 'booking.phone.reveal', 'customer.phone.reveal',
+        'table.spare.configure', 'venue.configure')
        ORDER BY p.code, r.code`,
     )
     expect(grants).toEqual([
-      { role: 'OWNER_ADMIN', permission: 'booking.phone.call' },
+      { role: 'ADMIN', permission: 'booking.phone.call' },
+      { role: 'OWNER', permission: 'booking.phone.call' },
       { role: 'RECEPTIONIST', permission: 'booking.phone.call' },
-      { role: 'OWNER_ADMIN', permission: 'booking.phone.reveal' },
-      { role: 'OWNER_ADMIN', permission: 'customer.phone.reveal' },
-      { role: 'OWNER_ADMIN', permission: 'venue.configure' }])
+      { role: 'ADMIN', permission: 'booking.phone.reveal' },
+      { role: 'OWNER', permission: 'booking.phone.reveal' },
+      { role: 'ADMIN', permission: 'customer.phone.reveal' },
+      { role: 'OWNER', permission: 'customer.phone.reveal' },
+      { role: 'ADMIN', permission: 'table.spare.configure' },
+      { role: 'OWNER', permission: 'table.spare.configure' },
+      { role: 'RECEPTIONIST', permission: 'table.spare.configure' },
+      { role: 'OWNER', permission: 'venue.configure' }])
     const receptionist = await login()
     const me = await receptionist.agent.get('/api/v1/auth/me')
     expect((me.body as { permissions: string[] }).permissions).toContain('booking.phone.call')
@@ -273,7 +280,8 @@ mysqlDescribe('Wave 2 owner-approved integration', () => {
     expect(changed.closed_at).not.toBeNull()
     expect(after.waitlist_entries!.filter(row => Number(row.id) !== entry.id))
       .toEqual(before.waitlist_entries!.filter(row => Number(row.id) !== entry.id))
-    const addedAudits = after.operation_log!.filter(row => !before.operation_log!.some(old => old.id === row.id))
+    const addedAudits = after.operation_log!.filter(row => row.entity_type !== 'auth_session'
+      && !before.operation_log!.some(old => old.id === row.id))
     expect(addedAudits).toHaveLength(2)
     const audit = addedAudits.find(row => row.entity_type === 'waitlist_entry')!
     expect(audit).toMatchObject({ action: 'WAITLIST_CANCELLED', entity_id: String(entry.id),
@@ -377,6 +385,41 @@ mysqlDescribe('Wave 2 owner-approved integration', () => {
     expect((await patch(owner, reopen)).status).toBe(200)
     const [audit] = await databasePool.execute<RowDataPacket[]>("SELECT actor_user_id, reason_note FROM operation_log WHERE action = 'TABLE_CONFIGURATION_UPDATED' ORDER BY id")
     expect(audit).toEqual([{ actor_user_id: '9802', reason_note: body.reason }, { actor_user_id: '9802', reason_note: 'Repair completed' }])
+  })
+
+  it('lets receptionists toggle an idle spare table without granting service configuration', async () => {
+    const receptionist = await login()
+    const me = await receptionist.agent.get('/api/v1/auth/me')
+    expect((me.body as { permissions: string[] }).permissions).toContain('table.spare.configure')
+    expect((me.body as { permissions: string[] }).permissions).not.toContain('venue.configure')
+    const patch = (value: object) => receptionist.agent.patch(`/api/v1/tables/${tableId}/configuration`)
+      .set('Origin', env.webOrigin).set('X-CSRF-Token', receptionist.csrfToken).send(value)
+
+    const denied = await patch({ version: 1, status: 'OUT_OF_SERVICE', reason: 'Not a receptionist setting' })
+    expect(denied.status).toBe(403)
+    expect((denied.body as { error: { code: string } }).error.code).toBe('PERMISSION_DENIED')
+
+    const marked = await patch({ version: 1, isSpare: true, reason: 'Chuẩn bị bàn sơ cua' })
+    expect(marked.status).toBe(200)
+    expect((marked.body as { table: { isBackup: boolean; version: number } }).table)
+      .toMatchObject({ isBackup: true, version: 2 })
+    const unmarked = await patch({ version: 2, isSpare: false, reason: 'Đưa bàn về phục vụ thường' })
+    expect(unmarked.status).toBe(200)
+    expect((unmarked.body as { table: { isBackup: boolean; version: number } }).table)
+      .toMatchObject({ isBackup: false, version: 3 })
+
+    const [rows] = await databasePool.execute<RowDataPacket[]>(
+      `SELECT is_spare, version FROM dining_tables WHERE id = ?`, [tableId],
+    )
+    expect(rows[0]).toMatchObject({ is_spare: 0, version: 3 })
+    const [audit] = await databasePool.execute<RowDataPacket[]>(
+      `SELECT actor_user_id, reason_note FROM operation_log
+       WHERE action = 'TABLE_CONFIGURATION_UPDATED' ORDER BY id`,
+    )
+    expect(audit).toEqual([
+      { actor_user_id: String(actor.userId), reason_note: 'Chuẩn bị bàn sơ cua' },
+      { actor_user_id: String(actor.userId), reason_note: 'Đưa bàn về phục vụ thường' },
+    ])
   })
 
   it.each([

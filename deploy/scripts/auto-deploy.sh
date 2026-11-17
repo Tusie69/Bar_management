@@ -6,7 +6,13 @@
 #
 #   Chạy tay ngay:        sudo systemctl start 21gam-deploy.service
 #   Bỏ qua cửa sổ giờ:    sudo DEPLOY_FORCE=1 /srv/21gam/deploy/scripts/auto-deploy.sh
+#   Build lại tại chỗ:    sudo DEPLOY_REBUILD=1 DEPLOY_FORCE=1 .../auto-deploy.sh
 #   Xem log:              journalctl -u 21gam-deploy -n 50
+#
+# DEPLOY_REBUILD dùng khi mã nguồn trên máy đã khớp develop nhưng bản build thì
+# chưa — chẳng hạn vừa có ai đó `git pull` bằng tay. Không có nó, script thấy
+# commit trùng nhau rồi thoát, và máy cứ phục vụ bundle cũ trong khi `git log`
+# nói mọi thứ đã mới.
 #
 # Thứ tự các bước được chọn để một lần hỏng không làm sập quán:
 #   1. Cổng kiểm thử (typecheck, lint, build, test) chạy TRƯỚC migration.
@@ -33,8 +39,17 @@ die() { log "THẤT BẠI: $*"; exit 1; }
 as_app() { sudo -u "$APP_USER" env HOME="$(getent passwd "$APP_USER" | cut -d: -f6)" "$@"; }
 
 # Hai lần chạy chồng nhau sẽ build cùng một cây thư mục và phá nhau.
+#
+# Timer chạy mỗi 2 phút nên nếu bận thì bỏ qua là đúng: lần sau nó gọi lại
+# ngay. Nhưng người gõ lệnh bằng tay thì không có "lần sau", mà lần timer chạy
+# không-làm-gì chỉ giữ lock khoảng một giây — thua cuộc đua đó rồi bị từ chối
+# là vô lý. Nên chạy tay thì đợi, chạy tự động thì bỏ qua.
 exec 9>/var/lock/21gam-deploy.lock
-flock -n 9 || { log "một lần triển khai khác đang chạy, bỏ qua"; exit 0; }
+if [ -n "${DEPLOY_FORCE:-}${DEPLOY_REBUILD:-}" ]; then
+  flock -w 600 9 || { log "chờ 10 phút mà lần triển khai khác vẫn chưa xong, bỏ cuộc"; exit 1; }
+else
+  flock -n 9 || { log "một lần triển khai khác đang chạy, bỏ qua"; exit 0; }
+fi
 
 hour=$(date +%-H)
 in_quiet_window() {
@@ -50,7 +65,7 @@ cd "$REPO" || die "không vào được $REPO"
 as_app git fetch -q origin "$BRANCH" || die "git fetch hỏng"
 current=$(as_app git rev-parse HEAD)
 target=$(as_app git rev-parse "origin/$BRANCH")
-[ "$current" = "$target" ] && exit 0
+if [ "$current" = "$target" ] && [ -z "${DEPLOY_REBUILD:-}" ]; then exit 0; fi
 
 # Có thay đổi thật. Giờ mới xét cửa sổ giờ, để log nói rõ là đang hoãn chứ
 # không phải không thấy gì.
@@ -63,8 +78,12 @@ if [ -n "$(as_app git status --porcelain)" ]; then
   die "cây làm việc có thay đổi chưa commit, không tự ghi đè"
 fi
 
-log "triển khai ${current:0:7} -> ${target:0:7}"
-as_app git log --oneline "$current..$target" | sed 's/^/    /'
+if [ "$current" = "$target" ]; then
+  log "build lại tại chỗ ở ${current:0:7} (DEPLOY_REBUILD)"
+else
+  log "triển khai ${current:0:7} -> ${target:0:7}"
+  as_app git log --oneline "$current..$target" | sed 's/^/    /'
+fi
 
 rollback() {
   log "hoàn tác về ${current:0:7}"
@@ -90,6 +109,15 @@ for part in api web; do
     fi
   done
 done
+# Database test phải được migrate TRƯỚC khi chạy test. Thiếu bước này thì bất
+# kỳ commit nào kèm migration mới cũng rớt cổng kiểm thử: code mới ghi giá trị
+# mà CHECK constraint cũ chưa cho phép, và lỗi hiện ra như một bug nghiệp vụ
+# chứ không phải như một database lạc hậu. Chỉ đụng vào database test.
+if ! (cd "$REPO/api" && as_app env NODE_ENV=test DB_NAME=gam21_platform_it_test       pnpm db:migrate >/tmp/21gam-deploy-testmigrate.log 2>&1); then
+  log "migrate database test hỏng:"; tail -10 /tmp/21gam-deploy-testmigrate.log | sed 's/^/    /'
+  rollback; die "không chuẩn bị được database test"
+fi
+
 # Chạy cả test tích hợp MySQL, trên database test riêng. dotenv không ghi đè
 # biến môi trường đã có, nên các biến truyền ở đây thắng api/.env. Fixture còn
 # tự từ chối chạy nếu DB_NAME khác gam21_platform_it_test, nên database thật

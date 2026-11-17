@@ -98,6 +98,24 @@ describe("floor change stream (AC09)", () => {
     expect(FakeEventSource.last!.closed).toBe(true)
   })
 
+  it("closes immediately and reports the precise server session end reason", () => {
+    const ended = vi.fn()
+    openFloorStream("/api/v1", () => {}, ended)
+    const source = FakeEventSource.last!
+
+    source.emit("session-ended", JSON.stringify({ code: "SESSION_REPLACED" }))
+
+    expect(source.closed).toBe(true)
+    expect(ended).toHaveBeenCalledWith("SESSION_REPLACED")
+  })
+
+  it("stops native EventSource from retrying forever after an auth or transport error", () => {
+    openFloorStream("/api/v1", () => {})
+    const source = FakeEventSource.last!
+    source.emit("error", "")
+    expect(source.closed).toBe(true)
+  })
+
   it("degrades to a no-op where EventSource does not exist, leaving the 15s poll", () => {
     delete (globalThis as { EventSource?: unknown }).EventSource
     const onChange = vi.fn()

@@ -1,14 +1,21 @@
 import { describe, expect, it } from "vitest"
-import type { ClaimView, FloorTableState, TableLiveState, TableView } from "@/domain/models"
+import type { ClaimView, FloorGroup, FloorTableState, TableLiveState, TableView } from "@/domain/models"
 import {
   buildBarGuestRows,
   extractBarGuestIcons,
   formatBarBookedTime,
+  formatBarSeatedTime,
   formatBarGuestName,
   formatBarSeatLabel,
 } from "./bar-guest-rows"
 
-function makeTable(id: number, seqNo: number, code = `BAR${String(seqNo).padStart(2, "0")}`, kind = "BAR_SEAT", zoneCode = "BAR"): TableView {
+function makeTable(
+  id: number,
+  seqNo: number,
+  code = `BAR${String(seqNo).padStart(2, "0")}`,
+  kind = "BAR_SEAT",
+  zoneCode = "BAR",
+): TableView {
   return {
     id,
     version: 1,
@@ -135,6 +142,28 @@ describe("bar-guest-rows formatting helpers", () => {
     expect(formatBarBookedTime(claimSeatedWalkIn, "seated")).toBeNull()
   })
 
+  it("gives a walk-in row its entry time, kept apart from the booked time", () => {
+    const walkIn = makeClaim({
+      kind: "visit",
+      startsAt: new Date("2026-11-09T14:45:00.000Z"),
+      reservedExpectedAt: null,
+    })
+    expect(formatBarBookedTime(walkIn, "seated")).toBeNull()
+    expect(formatBarSeatedTime(walkIn, "seated")).not.toBeNull()
+
+    // A booked party keeps its booked time; no entry time is offered beside it.
+    const booked = makeClaim({
+      kind: "visit",
+      startsAt: new Date("2026-11-09T14:45:00.000Z"),
+      reservedExpectedAt: new Date("2026-11-09T14:00:00.000Z"),
+    })
+    expect(formatBarBookedTime(booked, "seated")).not.toBeNull()
+
+    // Not seated yet: there is no entry time at all.
+    expect(formatBarSeatedTime(makeClaim({ kind: "reservation" }), "reserved")).toBeNull()
+    expect(formatBarSeatedTime(null, "seated")).toBeNull()
+  })
+
   it("extracts icons only from real metadata", () => {
     expect(extractBarGuestIcons(null)).toEqual({})
 
@@ -157,9 +186,7 @@ describe("bar-guest-rows formatting helpers", () => {
 describe("buildBarGuestRows", () => {
   it("handles one seat", () => {
     const tables = [makeTable(1, 1)]
-    const states = new Map([
-      [1, makeState(1, "reserved", makeClaim({ displayName: "Nam", partySize: 1 }))],
-    ])
+    const states = new Map([[1, makeState(1, "reserved", makeClaim({ displayName: "Nam", partySize: 1 }))]])
 
     const rows = buildBarGuestRows(tables, states)
     expect(rows).toHaveLength(1)
@@ -189,6 +216,22 @@ describe("buildBarGuestRows", () => {
     expect(rows[0]!.seatNumbers).toEqual([7, 8])
     expect(rows[0]!.guestName).toBe("Hưng")
     expect(rows[0]!.partySize).toBe(2)
+  })
+
+  it("uses the authoritative backend group code for grouped Bar seats", () => {
+    const tables = [makeTable(7, 7), makeTable(8, 8)]
+    const claim = makeClaim({ reservationId: 702, tableIds: [7, 8], groupId: 41, displayName: "Tùng" })
+    const states = new Map([
+      [7, makeState(7, "reserved", claim)],
+      [8, makeState(8, "reserved", claim)],
+    ])
+    const groups: FloorGroup[] = [{ id: 41, symbolNo: 5, displayCode: "G05", tableIds: [7, 8] }]
+
+    const rows = buildBarGuestRows(tables, states, groups)
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.seatsLabel).toBe("G05")
+    expect(rows[0]!.seatNumbers).toEqual([7, 8])
   })
 
   it("handles non-adjacent seats for one booking", () => {
@@ -367,9 +410,7 @@ describe("buildBarGuestRows", () => {
   it("preserves long Vietnamese name", () => {
     const table = makeTable(1, 1)
     const longName = "Nguyễn Thị Hoàng Oanh"
-    const states = new Map([
-      [1, makeState(1, "seated", makeClaim({ displayName: longName }))],
-    ])
+    const states = new Map([[1, makeState(1, "seated", makeClaim({ displayName: longName }))]])
 
     const rows = buildBarGuestRows([table], states)
     expect(rows).toHaveLength(1)

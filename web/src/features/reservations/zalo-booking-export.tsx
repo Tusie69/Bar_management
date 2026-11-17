@@ -1,5 +1,5 @@
-import { ClipboardCopy, RefreshCw } from "lucide-react"
-import { useState } from "react"
+import { ClipboardCopy } from "lucide-react"
+import { useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
@@ -10,81 +10,82 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { useBookingExport } from "@/hooks/use-data"
 import type { BusinessDate } from "@/lib/time"
+import { writeBookingExportToClipboard } from "./booking-clipboard"
 
+export interface ZaloBookingExportAction {
+  copy: () => Promise<void>
+  loading: boolean
+}
+
+/**
+ * Preloads the approved backend export so a click can call Clipboard API while
+ * the browser still has the user's transient activation (important on iOS).
+ * The dialog is rendered only after clipboard access fails, as a manual-copy
+ * fallback; it is never a preview step in the successful path.
+ */
 export function ZaloBookingExport({
   businessDate,
-  open,
-  onOpenChange,
+  enabled = true,
+  children,
 }: {
   businessDate: BusinessDate
-  open: boolean
-  onOpenChange: (open: boolean) => void
+  enabled?: boolean
+  children: (action: ZaloBookingExportAction) => ReactNode
 }) {
-  const [copyError, setCopyError] = useState<string | null>(null)
-  const exportText = useBookingExport(businessDate, open)
+  const exportText = useBookingExport(businessDate, enabled)
+  const [fallbackText, setFallbackText] = useState<string | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const copy = async () => {
-    if (!exportText.data) return
-    setCopyError(null)
+    let text = exportText.data
+    if (!text) text = (await exportText.refetch()).data
+    if (!text) {
+      toast.error("Không tải được danh sách bàn đặt.")
+      return
+    }
+
     try {
-      if (!navigator.clipboard?.writeText) throw new Error("Clipboard API không khả dụng trên trình duyệt này.")
-      await navigator.clipboard.writeText(exportText.data)
-      toast.success("Đã sao chép nội dung. Bạn có thể dán thủ công vào Zalo.")
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Không thể sao chép nội dung."
-      setCopyError(message)
-      toast.error("Sao chép thất bại.", { description: message })
+      await writeBookingExportToClipboard(text, globalThis.isSecureContext, navigator.clipboard)
+      toast.success("Đã sao chép danh sách bàn đặt")
+    } catch {
+      setFallbackText(text)
+      toast.error("Không thể tự động sao chép.", { description: "Hãy sao chép thủ công trong cửa sổ vừa mở." })
     }
   }
 
+  const selectAll = () => {
+    textareaRef.current?.focus()
+    textareaRef.current?.select()
+  }
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(value) => {
-        if (!value) setCopyError(null)
-        onOpenChange(value)
-      }}
-    >
-      <DialogContent className="max-h-[92dvh] sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>Xuất text booking cho Zalo</DialogTitle>
-          <DialogDescription>
-            Xem trước dữ liệu backend theo ngày nghiệp vụ. Website chỉ sao chép; không tự gửi hoặc mở Zalo.
-          </DialogDescription>
-        </DialogHeader>
-        {exportText.isLoading ? (
-          <Skeleton className="h-[52dvh] min-h-80" />
-        ) : exportText.error ? (
-          <div role="alert" className="rounded-lg border border-destructive/40 p-4 text-sm text-destructive">
-            Không tải được nội dung xuất:{" "}
-            {exportText.error instanceof Error ? exportText.error.message : "Lỗi backend."}
-          </div>
-        ) : (
+    <>
+      {children({ copy, loading: exportText.isLoading })}
+      <Dialog open={fallbackText !== null} onOpenChange={(open) => !open && setFallbackText(null)}>
+        <DialogContent className="max-h-[92dvh] sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Sao chép danh sách bàn đặt</DialogTitle>
+            <DialogDescription>
+              Trình duyệt đã từ chối clipboard. Chọn toàn bộ nội dung bên dưới và sao chép thủ công.
+            </DialogDescription>
+          </DialogHeader>
           <Textarea
-            aria-label="Nội dung text booking"
+            ref={textareaRef}
+            aria-label="Nội dung danh sách bàn đặt để sao chép thủ công"
             readOnly
-            value={exportText.data ?? ""}
+            value={fallbackText ?? ""}
             className="h-[52dvh] min-h-80 resize-none overflow-auto font-mono text-sm whitespace-pre"
           />
-        )}
-        {copyError ? (
-          <p role="alert" className="text-sm text-destructive">
-            {copyError}
-          </p>
-        ) : null}
-        <DialogFooter>
-          <Button variant="outline" disabled={exportText.isFetching} onClick={() => void exportText.refetch()}>
-            <RefreshCw className={exportText.isFetching ? "animate-spin" : ""} /> Cập nhật
-          </Button>
-          <Button disabled={!exportText.data || exportText.isFetching} onClick={() => void copy()}>
-            <ClipboardCopy /> Sao chép
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          <DialogFooter>
+            <Button onClick={selectAll}>
+              <ClipboardCopy /> Chọn toàn bộ
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }

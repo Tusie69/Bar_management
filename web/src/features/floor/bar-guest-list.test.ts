@@ -11,6 +11,7 @@ function makeSampleRow(overrides: Partial<BarGuestRow> = {}): BarGuestRow {
     seatNumbers: [1],
     seatsLabel: "Bar1",
     time: "21:00",
+    seatedTime: null,
     partySize: 2,
     guestName: "Nam",
     state: "seated" as TableLiveState,
@@ -21,18 +22,20 @@ function makeSampleRow(overrides: Partial<BarGuestRow> = {}): BarGuestRow {
 
 describe("BarGuestList presentational component", () => {
   it("keeps the scroll region keyboard accessible with a contextual name", () => {
-    const html = renderToString(createElement(BarGuestList, {
-      rows: [], as: "html", ariaLabel: "Khách quầy bar - Sơ đồ chọn bàn đặt trước",
-    }))
+    const html = renderToString(
+      createElement(BarGuestList, {
+        rows: [],
+        as: "html",
+        ariaLabel: "Khách quầy bar - Sơ đồ chọn bàn đặt trước",
+      }),
+    )
     expect(html).toContain('role="region" tabindex="0" aria-label="Khách quầy bar - Sơ đồ chọn bàn đặt trước"')
     expect(html).toContain("Khách quầy bar</div>")
   })
 
   it("renders in SVG mode inside a foreignObject with default bounds", () => {
     const rows = [makeSampleRow()]
-    const html = renderToString(
-      createElement("svg", null, createElement(BarGuestList, { rows, as: "svg" })),
-    )
+    const html = renderToString(createElement("svg", null, createElement(BarGuestList, { rows, as: "svg" })))
 
     expect(html).toContain("<foreignObject")
     expect(html).toContain(`x="${DEFAULT_BAR_GUEST_LIST_BOUNDS.x}"`)
@@ -82,13 +85,14 @@ describe("BarGuestList presentational component", () => {
     expect(html).toContain("Bar5, 17")
   })
 
-  it("handles long Vietnamese names with ellipsis and full title tooltip", () => {
+  it("handles long Vietnamese names with up to 2 lines and full title tooltip", () => {
     const longName = "Nguyễn Thị Hoàng Oanh"
     const rows = [makeSampleRow({ guestName: longName })]
 
     const html = renderToString(createElement(BarGuestList, { rows, as: "html" }))
     expect(html).toContain(`title="${longName}"`)
     expect(html).toContain(longName)
+    expect(html).toContain("line-clamp-2")
     expect(html).toContain("truncate")
   })
 
@@ -112,7 +116,7 @@ describe("BarGuestList presentational component", () => {
     expect(html).toContain("🎂")
     expect(html).toContain('aria-label="VIP"')
     expect(html).toContain("⭐")
-    expect(html).toContain('aria-label="Khách quen"')
+    expect(html).toContain('aria-label="Đã từng đặt bàn"')
     expect(html).toContain("🔥")
     expect(html).toContain('aria-label="Chỉ định"')
     expect(html).toContain("📌")
@@ -120,7 +124,9 @@ describe("BarGuestList presentational component", () => {
 
   it("supports empty state 'title-only' and 'hidden'", () => {
     // title-only renders frame with title and empty message
-    const htmlTitleOnly = renderToString(createElement(BarGuestList, { rows: [], as: "html", emptyState: "title-only" }))
+    const htmlTitleOnly = renderToString(
+      createElement(BarGuestList, { rows: [], as: "html", emptyState: "title-only" }),
+    )
     expect(htmlTitleOnly).toContain("Khách quầy bar")
     expect(htmlTitleOnly).toContain("Chưa có khách")
 
@@ -234,7 +240,9 @@ describe("BarGuestList presentational component", () => {
     expect(html).toContain("+2")
 
     // Full list in accessible label
-    expect(html).toContain('aria-label="Bar2-4, lúc 22:00, 12 khách, Overflow guest, Sinh nhật, VIP, Khách quen, Chỉ định, Trạng thái: Đã đặt"')
+    expect(html).toContain(
+      'aria-label="Bar2-4, lúc 22:00, 12 khách, Overflow guest, Sinh nhật, VIP, Đã từng đặt bàn, Chỉ định, Trạng thái: Đã đặt"',
+    )
 
     // Guest count 12 must be present and never clipped
     expect(html).toContain("22:00")
@@ -245,7 +253,7 @@ describe("BarGuestList presentational component", () => {
 
     // Accessible hidden icons for screen readers
     expect(html).toContain("sr-only")
-    expect(html).toContain("Khách quen")
+    expect(html).toContain("Đã từng đặt bàn")
     expect(html).toContain("Chỉ định")
   })
 

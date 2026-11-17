@@ -473,8 +473,8 @@ function BookingBody() {
                 placeholder="09xx xxx xxx"
               />
             </Field>
-            <Field id="bk-classification" label="Khách quen / mới">
-              <div role="radiogroup" aria-label="Khách quen / mới" className="grid grid-cols-2 gap-2">
+            <Field id="bk-classification" label="Khách đã từng / chưa từng đặt bàn">
+              <div role="radiogroup" aria-label="Khách đã từng / chưa từng đặt bàn" className="grid grid-cols-2 gap-2">
                 <Button
                   type="button"
                   variant={v.classification === "RETURNING" ? "default" : "outline"}
@@ -486,7 +486,7 @@ function BookingBody() {
                     )
                   }
                 >
-                  Khách quen (O)
+                  Đã từng đặt bàn
                 </Button>
                 <Button
                   type="button"
@@ -496,7 +496,7 @@ function BookingBody() {
                     form.setValue("classification", v.classification === "NEW" ? "UNCLASSIFIED" : "NEW")
                   }
                 >
-                  Khách mới (N)
+                  Chưa từng đặt bàn
                 </Button>
               </div>
             </Field>
@@ -573,9 +573,9 @@ function BookingBody() {
                 k="Loại khách"
                 v={
                   v.classification === "RETURNING"
-                    ? "Khách quen (O)"
+                    ? "Đã từng đặt bàn"
                     : v.classification === "NEW"
-                      ? "Khách mới (N)"
+                      ? "Chưa từng đặt bàn"
                       : "Chưa phân loại"
                 }
               />

@@ -37,6 +37,9 @@ function booking(id: number, expectedAt: string, partySize: number, status: Dail
     expectedAt: new Date(expectedAt),
     checkedInAt: null,
     status,
+    sourceCode: 'HOTLINE',
+    socialPlatform: null,
+    honorific: null,
     tables: [{ code: `A${id}`, zoneCode: 'A', zoneName: 'Khu A' }],
     metadata,
   }
@@ -53,9 +56,10 @@ function input(bookings: DailyBookingTextItem[]): DailyBookingTextInput {
 }
 
 function counts(text: string): { before: string | undefined; after: string | undefined } {
+  const match = /Lượng khách vào trước\/sau 9h30: (\d+)\/(\d+)/.exec(text)
   return {
-    before: /Khách vào trước\/bằng 21:30: (\d+)/.exec(text)?.[1],
-    after: /Khách vào sau 21:30: (\d+)/.exec(text)?.[1],
+    before: match?.[1],
+    after: match?.[2],
   }
 }
 
@@ -71,11 +75,9 @@ describe('BE-04 arrival cutoff boundary', () => {
     expect(counts(text)).toEqual({ before: '3', after: '4' })
   })
 
-  it('labels the bucket as before-or-equal so the text matches the rule', () => {
+  it('prints the approved combined before/after label', () => {
     const text = formatDailyBookingText(input([booking(1, '2026-10-31T14:30:00.000Z', 2)]))
-    expect(text).toContain('Khách vào trước/bằng 21:30: 2')
-    expect(text).toContain('Khách vào sau 21:30: 0')
-    expect(text).not.toContain('Khách vào trước 21:30')
+    expect(text).toContain('Lượng khách vào trước/sau 9h30: 2/0')
   })
 
   it('keeps the total guest count split across the two buckets', () => {
@@ -90,10 +92,10 @@ describe('BE-04 arrival cutoff boundary', () => {
   })
 })
 
-describe('BE-05 no-show label in the export', () => {
-  it('prints the settled label and not the old one', () => {
+describe('BE-05 no-show handling in the compact export', () => {
+  it('does not count a no-show as an active or cancelled booking', () => {
     const text = formatDailyBookingText(input([booking(1, '2026-10-31T13:00:00.000Z', 2, 'NO_SHOW')]))
-    expect(text).toContain('KHÔNG TỚI')
-    expect(text).not.toContain('KHÔNG ĐẾN')
+    expect(text).toContain('Tổng bàn đặt/ Tổng khách đặt: 0/0')
+    expect(text).toContain('Bàn Huỷ: 0')
   })
 })

@@ -19,6 +19,7 @@ const otherVenueId = 9702
 const receptionistId = 9701
 const cashierId = 9702
 const ownerId = 9703
+const adminId = 9704
 const receptionistActor: AuthenticatedActor = {
   organizationId,
   venueId,
@@ -76,13 +77,14 @@ async function resetFixture(): Promise<void> {
     `INSERT INTO users (id, username, display_name, password_hash, status) VALUES
       (?, 'phone_reception', 'Phone reception', ?, 'ACTIVE'),
       (?, 'phone_cashier', 'Phone cashier', ?, 'ACTIVE'),
-      (?, 'phone_owner', 'Phone owner', ?, 'ACTIVE')`,
-    [receptionistId, passwordHash, cashierId, passwordHash, ownerId, passwordHash],
+      (?, 'phone_owner', 'Phone owner', ?, 'ACTIVE'),
+      (?, 'phone_admin', 'Phone admin', ?, 'ACTIVE')`,
+    [receptionistId, passwordHash, cashierId, passwordHash, ownerId, passwordHash, adminId, passwordHash],
   )
   await databasePool.execute(
     `INSERT INTO memberships (id, organization_id, user_id, status) VALUES
-      (9701, ?, ?, 'ACTIVE'), (9702, ?, ?, 'ACTIVE'), (9703, ?, ?, 'ACTIVE')`,
-    [organizationId, receptionistId, organizationId, cashierId, organizationId, ownerId],
+      (9701, ?, ?, 'ACTIVE'), (9702, ?, ?, 'ACTIVE'), (9703, ?, ?, 'ACTIVE'), (9704, ?, ?, 'ACTIVE')`,
+    [organizationId, receptionistId, organizationId, cashierId, organizationId, ownerId, organizationId, adminId],
   )
   await databasePool.execute(
     `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
@@ -90,8 +92,13 @@ async function resetFixture(): Promise<void> {
      UNION ALL
      SELECT ?, 9702, id, ? FROM roles WHERE code = 'CASHIER'
      UNION ALL
-     SELECT ?, 9703, id, ? FROM roles WHERE code = 'OWNER_ADMIN'`,
-    [organizationId, venueId, organizationId, venueId, organizationId, venueId],
+     SELECT ?, 9703, id, ? FROM roles WHERE code = 'OWNER'
+     UNION ALL
+     SELECT ?, 9704, id, ? FROM roles WHERE code = 'ADMIN'`,
+    [organizationId, venueId, organizationId, venueId, organizationId, venueId, organizationId, venueId],
+  )
+  await databasePool.execute(
+    `UPDATE membership_roles SET access_level = 'READ_ONLY' WHERE membership_id = 9704`,
   )
   await databasePool.execute(
     `INSERT INTO booking_sources (id, organization_id, code, name) VALUES (9701, ?, 'HOTLINE', 'Hotline')`,
@@ -110,7 +117,8 @@ function input(phoneNumber?: string | null) {
 
 async function login(username: string) {
   const agent = request.agent(app)
-  const portal = username === 'phone_owner' ? 'admin' : username === 'phone_cashier' ? 'cashier' : 'receptionist'
+  const portal = username === 'phone_owner' || username === 'phone_admin'
+    ? 'admin' : username === 'phone_cashier' ? 'cashier' : 'receptionist'
   const response = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password, portal })
   expect(response.status).toBe(200)
   return { agent, csrfToken: (response.body as AuthBody).csrfToken }
@@ -212,6 +220,12 @@ mysqlDescribe('booking phone MySQL integration', () => {
     )
     expect(ownerAudit).toHaveLength(1)
     expect(Number(ownerAudit[0]?.actor_user_id)).toBe(ownerId)
+
+    const readOnlyAdmin = await login('phone_admin')
+    const adminReveal = await readOnlyAdmin.agent.post(`/api/v1/bookings/${created.id}/phone:reveal`)
+      .set('Origin', env.webOrigin).set('X-CSRF-Token', readOnlyAdmin.csrfToken).send({})
+    expect(adminReveal.status).toBe(200)
+    expect((adminReveal.body as RevealBody).phoneNumber).toBe('+84987654321')
 
     const cashier = await login('phone_cashier')
     const denied = await cashier.agent.post(`/api/v1/bookings/${created.id}/phone:reveal`)

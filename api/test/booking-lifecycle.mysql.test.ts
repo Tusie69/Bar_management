@@ -193,7 +193,7 @@ async function createHttpUserWithRole(username: string, roleCode: string) {
     [organizationId, membership.insertId, venueId, roleCode],
   )
   const agent = request.agent(app)
-  const portal = roleCode === 'OWNER_ADMIN' ? 'admin'
+  const portal = roleCode === 'OWNER' || roleCode === 'ADMIN' ? 'admin'
     : roleCode === 'CUSTOMER_CARE' ? 'customer-care'
       : roleCode === 'CASHIER' ? 'cashier' : 'receptionist'
   const login = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password, portal })
@@ -879,11 +879,12 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       expect(JSON.stringify(projection)).not.toContain('phone_hmac')
     })
 
-    it('enforces server eligibility, writes one log per accepted call and keeps result retries idempotent', async () => {
+    it('writes one log per accepted call and keeps result retries idempotent', async () => {
       const created = await createBooking(actor, { ...bookingInput(), phoneNumber: '0901234567' })
       const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
-      await expect(initiateBookingCall(actor, created.id, new Date('2030-10-24T20:49:00+07:00')))
-        .rejects.toMatchObject({ code: 'BOOKING_CALL_NOT_ALLOWED' })
+      // Sớm hơn cửa sổ cảnh báo vẫn gọi được: lễ tân gọi nhắc trước giờ hẹn.
+      const early = await initiateBookingCall(actor, created.id, new Date('2030-10-24T20:49:00+07:00'))
+      expect(early.telUri).toBe('tel:+84901234567')
 
       const first = await initiateBookingCall(actor, created.id, new Date('2030-10-24T20:50:00+07:00'))
       const second = await initiateBookingCall(actor, created.id, new Date('2030-10-24T20:51:00+07:00'))
@@ -896,8 +897,9 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         actor, created.id, first.callId, 'CONTACTED', undefined, new Date('2030-10-24T20:53:00+07:00'),
       )
       expect(replay.outcomeAt).toBe(result.outcomeAt)
-      expect(Number((await row('SELECT COUNT(*) AS total FROM booking_call_logs WHERE reservation_id = ?', [created.id])).total)).toBe(2)
-      expect(assigned.canCall).toBe(false)
+      expect(Number((await row('SELECT COUNT(*) AS total FROM booking_call_logs WHERE reservation_id = ?', [created.id])).total)).toBe(3)
+      // canCall chỉ còn phụ thuộc việc booking có số điện thoại hay không.
+      expect(assigned.canCall).toBe(true)
     })
 
     it('records Tới muộn through TU-12 and rejects a stale state transition', async () => {
@@ -915,8 +917,9 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
 
       const checkedIn = await checkInBooking(actor, created.id, booking.version, new Date('2030-10-24T21:17:00+07:00'))
       expect(checkedIn.status).toBe('CHECKED_IN')
-      await expect(initiateBookingCall(actor, created.id, new Date('2030-10-24T21:18:00+07:00')))
-        .rejects.toMatchObject({ code: 'BOOKING_CALL_NOT_ALLOWED' })
+      // Khách đã ngồi vẫn gọi được (bỏ quên đồ, thiếu người trong nhóm).
+      const afterCheckIn = await initiateBookingCall(actor, created.id, new Date('2030-10-24T21:18:00+07:00'))
+      expect(afterCheckIn.telUri).toBe('tel:+84901234567')
     })
 
     it('records a new Tới muộn call outcome for an already confirmed booking using its current version', async () => {
@@ -1079,7 +1082,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         phoneNumber: '0901234567',
       })
       await assignBookingTables(actor, created.id, created.version, [tableOneId])
-      const owner = await createHttpUserWithRole('booking_rate_owner', 'OWNER_ADMIN')
+      const owner = await createHttpUserWithRole('booking_rate_owner', 'OWNER')
       const statuses: number[] = []
       for (let count = 0; count < (env.phone.revealRateLimitMax ?? 0) + 1; count += 1) {
         const response = await owner.agent.post(`/api/v1/bookings/${created.id}/call`)
@@ -1121,7 +1124,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       )
       await databasePool.execute(
         `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
-         SELECT ?, ?, id, ? FROM roles WHERE code = 'OWNER_ADMIN'`,
+         SELECT ?, ?, id, ? FROM roles WHERE code = 'OWNER'`,
         [organizationId, membership.insertId, venueId],
       )
       const ownerAgent = request.agent(app)
@@ -1264,7 +1267,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
           await countRows('idempotency_keys'),
         ]).toEqual([0, 0, 0, 0])
         const rolledBackEffects = await row(
-          'SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log) AS audits',
+          "SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log WHERE entity_type <> 'auth_session') AS audits",
           [],
         )
         expect([
@@ -1281,7 +1284,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         await countRows('idempotency_keys'),
       ]).toEqual([2, 1, 1, 4])
       const effects = await row(
-        'SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log) AS audits',
+        "SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log WHERE entity_type <> 'auth_session') AS audits",
         [],
       )
       expect([Number(effects.holds), Number(effects.allocations), Number(effects.audits)]).toEqual([1, 2, 3])
@@ -1305,7 +1308,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
         await countRows('reservations'), await countRows('idempotency_keys'),
         Number((await row('SELECT COUNT(*) AS total FROM table_holds', [])).total),
         Number((await row('SELECT COUNT(*) AS total FROM table_allocations', [])).total),
-        Number((await row('SELECT COUNT(*) AS total FROM operation_log', [])).total),
+        Number((await row("SELECT COUNT(*) AS total FROM operation_log WHERE entity_type <> 'auth_session'", [])).total),
       ]).toEqual([0, 0, 0, 0, 0])
       expect(Number((await row('SELECT change_seq FROM venues WHERE id = ?', [venueId])).change_seq)).toBe(0)
 
@@ -1352,7 +1355,7 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
       expect(replay.headers['idempotent-replayed']).toBe('true')
       expect([await countRows('reservations'), await countRows('idempotency_keys')]).toEqual([1, 1])
       const effects = await row(
-        'SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log) AS audits',
+        "SELECT (SELECT COUNT(*) FROM table_holds) AS holds, (SELECT COUNT(*) FROM table_allocations) AS allocations, (SELECT COUNT(*) FROM operation_log WHERE entity_type <> 'auth_session') AS audits",
         [],
       )
       expect([Number(effects.holds), Number(effects.allocations), Number(effects.audits)]).toEqual([1, 1, 1])
@@ -1548,20 +1551,17 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     expect(exported.status).toBe(200)
     expect(exported.headers['content-type']).toContain('text/plain')
     expect(exported.headers['content-disposition']).toContain('21gam-bookings-2030-10-24.txt')
-    expect(exported.text).toContain('Danh sách bàn đặt 21Gam thứ Năm, 24/10/2030')
+    expect(exported.text).toContain('Danh sách bàn đặt 21Gam T5, 24/10')
     expect(exported.text).toContain('Nguyễn Minh Search')
-    expect(exported.text).toContain('T1+T2: 21:00 · Nguyễn Minh Search · 4 khách 🔥')
-    expect(exported.text).toContain('BC (Bàn Chờ +2)')
-    expect(exported.text).toMatch(/BÀN OUT\nT3/)
-    expect(exported.text).toMatch(/BÀN HUỶ\nChưa gán: 22:00 · Export cancelled/)
-    expect(exported.text).toContain('Tổng bàn đặt: 3')
-    expect(exported.text).toContain('Tổng khách đặt: 10')
+    expect(exported.text).toContain('-T1+T2: Nguyễn Minh Search 4p 21h00 (hotline) 🔥')
+    expect(exported.text).toContain('-BC (Bàn Chờ +2):')
+    expect(exported.text).toContain('Bàn Out: 1')
+    expect(exported.text).toContain('Bàn Huỷ: 1')
+    expect(exported.text).toContain('Tổng bàn đặt/ Tổng khách đặt: 3/10')
     // BE-04: 'New at cutoff' at exactly 21:30 now counts before the cutoff.
-    expect(exported.text).toContain('Khách vào trước/bằng 21:30: 8')
-    expect(exported.text).toContain('Khách vào sau 21:30: 2')
+    expect(exported.text).toContain('Lượng khách vào trước/sau 9h30: 8/2')
     expect(exported.text).toContain('Bàn khách quen O: 1')
     expect(exported.text).toContain('Bàn khách mới N: 1')
-    expect(exported.text).toContain('Bàn chưa phân loại: 1')
     expect(exported.text.match(/Nguyễn Minh Search/g)).toHaveLength(1)
     expect(atCutoff.classification).toBe('NEW')
     expect(afterMidnight.businessDate).toBe('2030-10-24')
@@ -1666,22 +1666,21 @@ mysqlDescribe('complete booking lifecycle MySQL integration', () => {
     expect(allocations[1]?.released_at).toBeNull()
   })
 
-  it('rejects an active visit move with insufficient capacity and preserves the source allocation', async () => {
+  it('allows an active visit move when guests exceed the target capacity', async () => {
     const assigned = await createAssignedBooking(tableOneId)
     await checkInBooking(actor, assigned.id, assigned.version, checkInNow)
     const reservation = await row('SELECT visit_id FROM reservations WHERE id = ?', [assigned.id])
     const visitId = Number(reservation.visit_id)
     await databasePool.execute('UPDATE dining_tables SET capacity = 2 WHERE id = ?', [tableTwoId])
-    await expect(moveVisit(actor, { visitId, expectedVersion: 1, tableIds: [tableTwoId] }))
-      .rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
+    await moveVisit(actor, { visitId, expectedVersion: 1, tableIds: [tableTwoId] })
     const active = await row(
       `SELECT table_id FROM table_allocations
        WHERE visit_id = ? AND kind = 'USAGE' AND released_at IS NULL`,
       [visitId],
     )
-    expect(Number(active.table_id)).toBe(tableOneId)
+    expect(Number(active.table_id)).toBe(tableTwoId)
     const visit = await row('SELECT version FROM visits WHERE id = ?', [visitId])
-    expect(Number(visit.version)).toBe(1)
+    expect(Number(visit.version)).toBe(2)
   })
 
   it('keeps a waitlist entry unique and creates a booking hold after a table is released', async () => {

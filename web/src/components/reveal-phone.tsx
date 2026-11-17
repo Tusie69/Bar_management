@@ -23,7 +23,7 @@ const REASONS = [
 ]
 
 /**
- * db08: only OWNER_ADMIN may reveal a full number, with a reason, audited as
+ * OWNER and ADMIN may reveal a full number, with a reason, audited as
  * CUSTOMER_PHONE_REVEALED. The number lives only in this component's state
  * (never in URL, storage or query cache) and is gone on unmount. Callers key
  * this component by customer id so a number never leaks across customers.

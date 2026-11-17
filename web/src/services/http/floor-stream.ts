@@ -14,6 +14,7 @@
  * 15-second poll in use-data.ts stays as the fallback for a blocked stream.
  */
 import type { ChangeEvent } from "@/domain/models"
+import { isSessionEndCode, type SessionEndCode } from "@/domain/session-end"
 
 export interface FloorStreamHandle {
   close: () => void
@@ -38,7 +39,11 @@ function parseFrame(data: string): FloorFrame | null {
  * `apiRoot` is the same /api/v1 root the HTTP client uses; the session cookie
  * authenticates the stream, so no token is ever put in the URL.
  */
-export function openFloorStream(apiRoot: string, onChange: (event: ChangeEvent) => void): FloorStreamHandle {
+export function openFloorStream(
+  apiRoot: string,
+  onChange: (event: ChangeEvent) => void,
+  onSessionEnded?: (code: SessionEndCode) => void,
+): FloorStreamHandle {
   if (typeof EventSource === "undefined") return { close: () => undefined }
 
   let latestSeq = -1
@@ -65,11 +70,25 @@ export function openFloorStream(apiRoot: string, onChange: (event: ChangeEvent) 
 
   source.addEventListener("floor-changed", handle as EventListener)
   source.addEventListener("hello", handle as EventListener)
+  const endSession = (event: MessageEvent<string>): void => {
+    const frame = parseFrame(event.data)
+    const code = frame && "code" in frame ? (frame as { code?: unknown }).code : undefined
+    source.close()
+    if (isSessionEndCode(code)) onSessionEnded?.(code)
+  }
+  source.addEventListener("session-ended", endSession as EventListener)
+  // Native EventSource retries forever, including after an authentication 401.
+  // Close on transport/auth failure; the existing protected polling path will
+  // either keep the UI fresh or surface the precise session error without a loop.
+  const stopRetryLoop = (): void => source.close()
+  source.addEventListener("error", stopRetryLoop as EventListener)
 
   return {
     close: () => {
       source.removeEventListener("floor-changed", handle as EventListener)
       source.removeEventListener("hello", handle as EventListener)
+      source.removeEventListener("session-ended", endSession as EventListener)
+      source.removeEventListener("error", stopRetryLoop as EventListener)
       source.close()
     },
   }

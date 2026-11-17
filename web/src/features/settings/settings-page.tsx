@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils"
 import { api, REST_ENDPOINTS } from "@/services"
 import { useCan, useSession } from "@/state/session"
 
-const ROLES: RoleCode[] = ["OWNER_ADMIN", "RECEPTIONIST", "CUSTOMER_CARE", "CASHIER"]
+const ROLES: RoleCode[] = ["OWNER", "ADMIN", "RECEPTIONIST", "CUSTOMER_CARE", "CASHIER", "WAITER"]
 
 export default function SettingsPage() {
   const canConfigure = useCan("venue.configure")
@@ -446,7 +446,6 @@ function FloorSettings({ readOnly }: { readOnly: boolean }) {
             <Row
               key={z.id}
               label={z.name}
-              pending={z.code === "C"}
               hint={
                 z.isWaitingArea
                   ? "Khu chờ: không nhận đặt bàn, không mở bàn."
@@ -566,14 +565,21 @@ function AccessSettings() {
     <div className="grid gap-6">
       <AccountsSection />
       <section className="grid gap-2">
-        <SectionTitle>Vai trò đang dùng (demo)</SectionTitle>
-        <div className="flex flex-wrap gap-2">
-          {users.map((u) => (
-            <Button key={u.id} variant={u.id === user.id ? "default" : "outline"} onClick={() => setUser(u.id)}>
-              {ROLE_LABEL[u.role]}
-            </Button>
-          ))}
-        </div>
+        {/* Bộ đổi vai trò chỉ có nghĩa ở bản mock. Trên bản đã deploy, vai trò
+            do server cấp theo tài khoản đăng nhập, nên hiện nó ở đây sẽ gợi ý
+            một thao tác không tồn tại. */}
+        {api.mode === "mock" ? (
+          <>
+            <SectionTitle>Vai trò đang dùng (bản thử)</SectionTitle>
+            <div className="flex flex-wrap gap-2">
+              {users.map((u) => (
+                <Button key={u.id} variant={u.id === user.id ? "default" : "outline"} onClick={() => setUser(u.id)}>
+                  {ROLE_LABEL[u.role]}
+                </Button>
+              ))}
+            </div>
+          </>
+        ) : null}
         <p className="text-xs text-subtle">
           Máy chủ là nơi kiểm tra quyền. Giao diện chỉ ẩn/khóa nút và giải thích lý do. Lễ tân không bao giờ nhận số
           điện thoại đầy đủ từ API.

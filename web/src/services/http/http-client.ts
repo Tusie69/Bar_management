@@ -1,5 +1,6 @@
 import { ApiError, type ApiErrorCode } from "../contracts"
 import { apiErrorMessage } from "../error-messages"
+import { deviceId } from "./device-id"
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 
@@ -8,9 +9,11 @@ interface RequestOptions {
   timeoutMs?: number
   /** FX-04: mã chống trùng cho request tạo; gửi lại cùng mã thì máy chủ trả lại kết quả cũ. */
   idempotencyKey?: string
+  /** Login failures must not expire an already valid browser session. */
+  notifyUnauthorized?: boolean
 }
 
-type SecurityHandler = () => void
+type SecurityHandler = (error: ApiError) => void
 
 function apiRoot(baseUrl: string): string {
   const normalized = baseUrl.replace(/\/+$/, "")
@@ -90,6 +93,10 @@ export class HttpClient {
     if (body !== undefined) headers["Content-Type"] = "application/json"
     if (method !== "GET" && this.csrfToken) headers["x-csrf-token"] = this.csrfToken
     if (method !== "GET" && options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey
+    // TU-33: mã thiết bị để màn hình quản trị gọi tên được máy đang đăng nhập.
+    // Backend chỉ đọc nó ở /auth/login; gửi kèm mọi request cũng không cấp
+    // thêm quyền gì, vì nó không bao giờ là yếu tố xác thực.
+    headers["X-Device-Id"] = deviceId()
 
     try {
       const response = await fetch(`${this.root}${path.startsWith("/") ? path : `/${path}`}`, {
@@ -102,11 +109,7 @@ export class HttpClient {
       const data = await responseBody(response, options.reviver)
       if (!response.ok) {
         const normalized = errorPayload(data)
-        if (response.status === 401) this.unauthorizedHandler?.()
-        if (response.status === 403 && normalized.code === "CSRF_TOKEN_INVALID") this.csrfFailureHandler?.()
-        if (normalized.code === "TABLE_GROUP_VERSION_CONFLICT")
-          await this.groupConflictHandler?.().catch(() => undefined)
-        throw new ApiError(
+        const failure = new ApiError(
           response.status,
           normalized.code,
           apiErrorMessage(
@@ -116,6 +119,11 @@ export class HttpClient {
           ),
           normalized.details,
         )
+        if (response.status === 401 && options.notifyUnauthorized !== false) this.unauthorizedHandler?.(failure)
+        if (response.status === 403 && normalized.code === "CSRF_TOKEN_INVALID") this.csrfFailureHandler?.(failure)
+        if (normalized.code === "TABLE_GROUP_VERSION_CONFLICT")
+          await this.groupConflictHandler?.().catch(() => undefined)
+        throw failure
       }
       return data as T
     } catch (error) {

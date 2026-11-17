@@ -35,6 +35,7 @@ import {
   ZONES,
   type ZoneCode,
 } from "@/domain/venue-layout"
+import { formatHonorificName } from "@/domain/booking-identity"
 import { fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { STATE_META } from "@/components/status-meta"
@@ -44,6 +45,7 @@ import {
   findGroupRepresentativeId,
   formatCellGuestName,
   formatGroupCode,
+  formatTableCellLabel,
   GUEST_FLAG_META,
   resolveCellCornerIcons,
   supportedFlags,
@@ -75,6 +77,10 @@ interface Props {
   onBlockedTableClick?: (tableId: number) => void
   onBackgroundClick?: () => void
   compact?: boolean
+  /** Reception/mobile shell: always lock and uniformly fit the whole floor regardless of viewport width. */
+  mobileShell?: boolean
+  /** Keep the whole-floor width scale when a bottom sheet shortens the canvas. */
+  preserveWidthFit?: boolean
   className?: string
   ariaLabel?: string
 
@@ -94,9 +100,119 @@ interface View {
   k: number
   x: number
   y: number
+  /**
+   * The fitted camera already shows the whole plan inside the viewport, so the
+   * SVG must be exactly as tall as the viewport. Without this the slack
+   * svgHeight adds below the plan brings back the scrollbar the fit removed.
+   * Absent on a camera the user panned or zoomed themselves.
+   */
+  contained?: boolean
+}
+
+/**
+ * Ring around a table the receptionist has picked - for a merge, a move, an
+ * assignment. It used to be the same thin grey dashes as the cluster
+ * highlight, which on a coloured table top read as nothing at all.
+ *
+ * Three strokes, outside the table body so none of them hide the state colour:
+ * a wide halo in the floor colour to lift the ring off whatever is underneath,
+ * the solid primary ring itself, and a faint outer glow so the pick is still
+ * obvious when the plan is scaled down on a phone.
+ */
+function PickedRectRing({ w, h }: { w: number; h: number }) {
+  const hw = w / 2
+  const hh = h / 2
+  return (
+    <g data-selection-ring="1" pointerEvents="none">
+      <rect
+        x={-hw - 6.5}
+        y={-hh - 6.5}
+        width={w + 13}
+        height={h + 13}
+        rx={9}
+        fill="none"
+        stroke="var(--primary)"
+        strokeOpacity={0.22}
+        strokeWidth={5}
+      />
+      <rect
+        x={-hw - 4.6}
+        y={-hh - 4.6}
+        width={w + 9.2}
+        height={h + 9.2}
+        rx={8}
+        fill="none"
+        stroke="var(--floor)"
+        strokeWidth={3.4}
+      />
+      <rect
+        x={-hw - 3}
+        y={-hh - 3}
+        width={w + 6}
+        height={h + 6}
+        rx={7}
+        fill="none"
+        stroke="var(--primary)"
+        strokeWidth={2.4}
+      />
+    </g>
+  )
+}
+
+/** Same ring for a bar seat. */
+function PickedCircleRing({ r }: { r: number }) {
+  return (
+    <g data-selection-ring="1" pointerEvents="none">
+      <circle r={r + 6} fill="none" stroke="var(--primary)" strokeOpacity={0.22} strokeWidth={4.5} />
+      <circle r={r + 4.2} fill="none" stroke="var(--floor)" strokeWidth={3} />
+      <circle r={r + 2.7} fill="none" stroke="var(--primary)" strokeWidth={2.2} />
+    </g>
+  )
+}
+
+/** Cluster members that are not picked keep the old, quieter dashes. */
+function ClusterRectRing({ w, h }: { w: number; h: number }) {
+  const hw = w / 2
+  const hh = h / 2
+  return (
+    <rect
+      x={-hw - 2.6}
+      y={-hh - 2.6}
+      width={w + 5.2}
+      height={h + 5.2}
+      rx={6}
+      fill="none"
+      stroke="#64748B"
+      strokeWidth={1.5}
+      strokeDasharray="5 3"
+      data-selection-ring="1"
+    />
+  )
+}
+
+function ClusterCircleRing({ r }: { r: number }) {
+  return (
+    <circle r={r + 2.8} fill="none" stroke="#64748B" strokeWidth={1.6} strokeDasharray="5 3" data-selection-ring="1" />
+  )
+}
+
+/** Pill width for a cluster code such as "G01" or "◆A". */
+function formatGroupCodeWidth(code: string): number {
+  return Math.max(18, code.length * 5.6 + 8)
 }
 
 const PAD = 18
+/**
+ * Slack svgHeight leaves under the plan on desktop so the bottom shadow is not
+ * clipped. The desktop fit reserves the same amount, so the two agree and a
+ * fitted plan never overflows into a scrollbar.
+ */
+const CANVAS_BOTTOM_GAP = 28
+/**
+ * Narrowest the whole-floor plan may be rendered on desktop before fitting it
+ * to the height does more harm than the scrollbar it avoids.
+ */
+const MIN_FIT_MAP_WIDTH = 240
 const TABLE_SPEC_BY_CODE = new Map(TABLES.map((s) => [s.code, s]))
 
 /**
@@ -142,6 +258,8 @@ export function FloorCanvas(props: Props) {
     onBlockedTableClick,
     onBackgroundClick,
     compact,
+    mobileShell,
+    preserveWidthFit,
     className,
     ariaLabel,
     waitingCount,
@@ -150,6 +268,7 @@ export function FloorCanvas(props: Props) {
   } = props
 
   const tables = useMemo(() => rawTables.map(normalizeTableGeometry), [rawTables])
+  const selectedTableId = selectedIds[0]
 
   const wrapRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
@@ -238,7 +357,10 @@ export function FloorCanvas(props: Props) {
   // has to drag the map, and the plan never jumps back to the top after an
   // action. Zone focus still allows the old free camera.
   const phoneViewport =
-    !compact && (size.w <= 480 || (typeof window !== "undefined" && window.innerWidth < 640 && size.w < 640))
+    !compact &&
+    (Boolean(mobileShell) ||
+      size.w <= 480 ||
+      (typeof window !== "undefined" && window.innerWidth < 640 && size.w < 640))
   const planLocked = phoneViewport && zoneFocus === "ALL"
 
   // Camera fit bounds computed from the REAL tables and bar seats coordinates
@@ -246,13 +368,39 @@ export function FloorCanvas(props: Props) {
     if (!size.w || !size.h) return { k: 1, x: 0, y: 0 }
     const isAll = zoneFocus === "ALL"
     const b = computeZoneBounds(tables, zoneFocus, isAll ? 0 : compact ? 12 : 24) ?? {
-      x: 20,
-      y: 20,
-      w: FLOOR_W - 40,
-      h: FLOOR_H - 20,
+      x: 0,
+      y: 0,
+      w: FLOOR_W,
+      h: FLOOR_H,
     }
 
     const isPhone = phoneViewport
+
+    if (preserveWidthFit && selectedTableId !== undefined) {
+      // Opening the booking sheet removes more than half of the available
+      // height. Fitting both axes again made the whole plan (and its tap
+      // targets) collapse. Keep the exact whole-floor width fit used before
+      // the sheet opened, then move only the y axis to reveal the picked table.
+      const wholeFloor = computeZoneBounds(tables, "ALL", 0) ?? b
+      const padH = isPhone ? 8 : 16
+      const padV = isPhone ? 6 : CANVAS_BOTTOM_GAP / 2
+      const k = (size.w - padH * 2) / wholeFloor.w
+      const selected = tables.find((table) => table.id === selectedTableId)
+      const centeredY = size.h / 2 - (selected?.y ?? wholeFloor.y + wholeFloor.h / 2) * k
+      const topLimit = padV - wholeFloor.y * k
+      const bottomLimit = size.h - padV - (wholeFloor.y + wholeFloor.h) * k
+      const y =
+        wholeFloor.h * k <= size.h - padV * 2
+          ? (size.h - wholeFloor.h * k) / 2 - wholeFloor.y * k
+          : Math.min(topLimit, Math.max(bottomLimit, centeredY))
+
+      return {
+        k,
+        x: (size.w - wholeFloor.w * k) / 2 - wholeFloor.x * k,
+        y,
+        contained: true,
+      }
+    }
 
     if (isPhone) {
       if (isAll) {
@@ -268,6 +416,7 @@ export function FloorCanvas(props: Props) {
           k,
           x: (size.w - b.w * k) / 2 - b.x * k,
           y: (size.h - b.h * k) / 2 - b.y * k,
+          contained: true,
         }
       }
 
@@ -285,18 +434,38 @@ export function FloorCanvas(props: Props) {
     }
 
     // Desktop or tablet mode:
-    // Use width well with a maximum rendered map width of ~640px, centered horizontally,
-    // so the map stays close to one screen without shrinking back to 330px at 1366x768.
+    // Fit on BOTH axes, same as the phone. Fitting width only was written for
+    // the older, wider floor; the plan redrawn to the phone mockup is tall and
+    // narrow (about 402x732), so a 640px-wide map ran roughly 1170px tall and
+    // the lower half of Khu A sat below the fold behind a scrollbar.
+    // MAX_MAP_WIDTH still caps the map on a very tall window so it does not
+    // stretch into a giant plan, and CANVAS_BOTTOM_GAP matches the slack
+    // svgHeight adds below, so the fitted plan never brings the scrollbar back.
     if (!compact && isAll) {
       const padH = 16
+      const padV = CANVAS_BOTTOM_GAP / 2
       const MAX_MAP_WIDTH = 640
       const availableWidth = Math.max(320, size.w - padH * 2)
       const targetMapWidth = Math.min(MAX_MAP_WIDTH, availableWidth)
-      const k = targetMapWidth / b.w
+      const fittedK = Math.min(targetMapWidth / b.w, (size.h - padV * 2) / b.h)
+      const minK = Math.min(targetMapWidth, MIN_FIT_MAP_WIDTH) / b.w
+
+      if (fittedK >= minK) {
+        return {
+          k: fittedK,
+          x: (size.w - b.w * fittedK) / 2 - b.x * fittedK,
+          y: Math.max(padV, (size.h - b.h * fittedK) / 2) - b.y * fittedK,
+          contained: true,
+        }
+      }
+
+      // Short, wide window: fitting the height would shrink the plan below
+      // what table numbers and times can be read at. Keep it readable and let
+      // the canvas scroll instead, which is what it did before.
       return {
-        k,
-        x: (size.w - b.w * k) / 2 - b.x * k,
-        y: 12 - b.y * k,
+        k: minK,
+        x: (size.w - b.w * minK) / 2 - b.x * minK,
+        y: padV - b.y * minK,
       }
     }
 
@@ -307,7 +476,7 @@ export function FloorCanvas(props: Props) {
       x: (size.w - b.w * k) / 2 - b.x * k,
       y: (size.h - b.h * k) / 2 - b.y * k,
     }
-  }, [size.w, size.h, zoneFocus, tables, compact, phoneViewport])
+  }, [size.w, size.h, zoneFocus, tables, compact, phoneViewport, preserveWidthFit, selectedTableId])
 
   const view = !planLocked && userView && userView.zone === zoneFocus ? userView.view : fitView
 
@@ -500,6 +669,64 @@ export function FloorCanvas(props: Props) {
     return repMap
   }, [groups, states, tableById])
 
+  /**
+   * One outline around every cluster of two or more tables.
+   *
+   * A finished cluster used to look like ordinary tables side by side: the
+   * only mark was the group code in a corner of one cell, which disappears at
+   * arm's length. The receptionist could not tell from across the room that
+   * B5, B6, B7 and B8 are one party's table.
+   *
+   * The box is the bounding box of the members plus a small margin, drawn
+   * behind the tables so it never hides a status colour, a badge or an icon.
+   * Clusters are adjacent by construction, so the box does not swallow
+   * unrelated tables.
+   */
+  const clusterOutlines = useMemo(() => {
+    const seen = new Set<string>()
+    const out: {
+      key: string
+      x: number
+      y: number
+      w: number
+      h: number
+      code: string | null
+      isBar: boolean
+      orientation: "horizontal" | "vertical" | null
+    }[] = []
+
+    const add = (ids: number[], code: string | null) => {
+      const members = ids.map((id) => tableById.get(id)).filter((t): t is TableView => !!t)
+      if (members.length < 2) return
+      const key = [...ids].sort((a, b) => a - b).join(",")
+      if (seen.has(key)) return
+      seen.add(key)
+      const isBar = members.every((t) => t.kind === "BAR_SEAT")
+      const spreadX = Math.max(...members.map((t) => t.x)) - Math.min(...members.map((t) => t.x))
+      const spreadY = Math.max(...members.map((t) => t.y)) - Math.min(...members.map((t) => t.y))
+      const orientation = isBar ? (spreadY > spreadX ? "vertical" : "horizontal") : null
+      // Bar seats leave only about 3-4px between circles. The regular 7px
+      // table padding crosses that gap and visually absorbs an unrelated seat.
+      const pad = isBar ? 2 : 7
+      const left = Math.min(...members.map((t) => t.x - t.w / 2)) - pad
+      const right = Math.max(...members.map((t) => t.x + t.w / 2)) + pad
+      const top = Math.min(...members.map((t) => t.y - t.h / 2)) - pad
+      const bottom = Math.max(...members.map((t) => t.y + t.h / 2)) + pad
+      out.push({ key, x: left, y: top, w: right - left, h: bottom - top, code, isBar, orientation })
+    }
+
+    for (const g of groups) add(g.tableIds, formatGroupCode(g.displayCode ?? g.symbolNo))
+    if (states) {
+      for (const fs of states.values()) {
+        const claim = fs?.claim
+        if (claim?.tableIds && claim.tableIds.length > 1) {
+          add(claim.tableIds, formatGroupCode(claim.groupDisplayCode ?? claim.symbolNo))
+        }
+      }
+    }
+    return out
+  }, [groups, states, tableById])
+
   // Zone tracking chip state (Item 2b)
   const isZoomed = userView !== null && Math.abs(userView.view.k - baseK) > 0.05
   const isZoneActive = zoneFocus !== "ALL"
@@ -526,8 +753,8 @@ export function FloorCanvas(props: Props) {
   const isPhone = phoneViewport
   // When the plan is fitted to the viewport the SVG must not grow past it:
   // any extra height brings the vertical scrollbar straight back.
-  const neededHeight = isAllZone ? Math.ceil((FLOOR_H - 20) * view.k + (isPhone ? 4 : 28)) : size.h
-  const svgHeight = planLocked ? size.h : Math.max(size.h, neededHeight)
+  const neededHeight = isAllZone ? Math.ceil(FLOOR_H * view.k + (isPhone ? 4 : CANVAS_BOTTOM_GAP)) : size.h
+  const svgHeight = planLocked || view.contained ? size.h : Math.max(size.h, neededHeight)
 
   return (
     <div
@@ -547,13 +774,7 @@ export function FloorCanvas(props: Props) {
         }
       }}
     >
-      <svg
-        width={size.w}
-        height={svgHeight}
-        className="block"
-        role="group"
-        aria-label={ariaLabel ?? "Sơ đồ bàn 21GAM"}
-      >
+      <svg width={size.w} height={svgHeight} className="block" role="group" aria-label={ariaLabel ?? "Sơ đồ bàn 21GAM"}>
         <defs>
           <pattern id="dot-grid" width="12" height="12" patternUnits="userSpaceOnUse">
             <circle cx="1" cy="1" r="0.7" fill="var(--floor-grid)" />
@@ -574,10 +795,10 @@ export function FloorCanvas(props: Props) {
         >
           <rect
             data-bg="1"
-            x={20}
-            y={20}
-            width={FLOOR_W - 40}
-            height={FLOOR_H - 20}
+            x={WALL_BOUNDS.x}
+            y={WALL_BOUNDS.y}
+            width={WALL_BOUNDS.w}
+            height={WALL_BOUNDS.h}
             fill={mode === "availability" ? "url(#avail-lines)" : "url(#dot-grid)"}
           />
           {ZONES.map((z) => {
@@ -585,9 +806,8 @@ export function FloorCanvas(props: Props) {
             const dim = focusZone && focusZone !== z.code
             return (
               <g key={z.code} opacity={dim ? 0.35 : 1} data-bg="1">
-                {z.rects.map(([x, y, w, h], i) => (
-                  <rect key={i} data-bg="1" x={x} y={y} width={w} height={h} rx={10} fill="var(--floor-zone)" />
-                ))}
+                {/* No tinted zone block: the approved mockup has none. z.rects
+                    is kept as the zone extent for zoom-to-zone and dimming. */}
                 {z.label ? (
                   <text
                     x={z.label.x}
@@ -636,6 +856,7 @@ export function FloorCanvas(props: Props) {
           {/* Waitlist marker button anchored to floor space for Zone Tất cả */}
           {onOpenWaitlist && isAllZone ? (
             <foreignObject
+              data-mobile-waitlist-marker="true"
               x={waitlistPos.x - waitlistPos.width / 2}
               y={waitlistPos.y - waitlistPos.touchHeight / 2}
               width={waitlistPos.width}
@@ -656,7 +877,7 @@ export function FloorCanvas(props: Props) {
               >
                 <span
                   style={{ height: waitlistPos.height, width: waitlistPos.width }}
-                  className="pointer-events-none flex items-center justify-center gap-2 rounded-full border border-border/80 bg-background/95 px-3 text-foreground shadow-lg backdrop-blur transition-transform group-active:scale-95 dark:bg-[#1e232d]/95 dark:border-slate-700/80"
+                  className="pointer-events-none flex items-center justify-center gap-2 rounded-full border border-border/80 bg-background/95 px-3 text-foreground shadow-lg backdrop-blur transition-transform group-active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
                 >
                   <List className="size-4 shrink-0 text-foreground" />
                   <span className="text-xs font-bold whitespace-nowrap">
@@ -666,6 +887,29 @@ export function FloorCanvas(props: Props) {
               </button>
             </foreignObject>
           ) : null}
+
+          {clusterOutlines.map((c) => (
+            <g
+              key={`cluster-${c.key}`}
+              data-cluster-outline="1"
+              data-cluster-kind={c.isBar ? "bar" : "table"}
+              data-cluster-orientation={c.orientation ?? undefined}
+              pointerEvents="none"
+            >
+              <rect
+                x={c.x}
+                y={c.y}
+                width={c.w}
+                height={c.h}
+                rx={c.isBar ? Math.min(c.w, c.h) / 2 : 10}
+                fill="var(--primary)"
+                fillOpacity={0.07}
+                stroke="var(--primary)"
+                strokeOpacity={0.55}
+                strokeWidth={1.6}
+              />
+            </g>
+          ))}
 
           {tables.map((t) => {
             const group = tableGroupMap.get(t.id) ?? null
@@ -688,13 +932,47 @@ export function FloorCanvas(props: Props) {
             if (mode === "availability") {
               return <AvailabilityGlyph key={t.id} {...common} avail={availability?.get(t.id)} />
             }
+            return <LiveGlyph key={t.id} {...common} state={states?.get(t.id)} now={now} />
+          })}
+
+          {/* Keep the outline below the cells, but render its code after every
+              table/seat so the first Bar seat cannot cover the text. Vertical
+              Bar groups put the pill to the left, outside the tight seat gap. */}
+          {clusterOutlines.map((c) => {
+            if (!c.code) return null
+            const codeWidth = formatGroupCodeWidth(c.code)
+            const labelOnLeft = c.isBar && c.orientation === "vertical"
+            const labelX = labelOnLeft ? c.x - codeWidth - 4 : c.x + 3
+            const labelY = labelOnLeft ? c.y + 2 : c.y - 7.5
             return (
-              <LiveGlyph
-                key={t.id}
-                {...common}
-                state={states?.get(t.id)}
-                now={now}
-              />
+              <g
+                key={`cluster-code-${c.key}`}
+                data-cluster-code="1"
+                data-cluster-label-side={labelOnLeft ? "left" : "top"}
+                pointerEvents="none"
+              >
+                <rect
+                  x={labelX}
+                  y={labelY}
+                  width={codeWidth}
+                  height={14}
+                  rx={7}
+                  fill="var(--primary)"
+                  stroke="var(--floor)"
+                  strokeWidth={1.4}
+                />
+                <text
+                  x={labelX + codeWidth / 2}
+                  y={labelY + 9.9}
+                  textAnchor="middle"
+                  className="tnum"
+                  fontSize={8.5}
+                  fontWeight={700}
+                  fill="var(--primary-foreground)"
+                >
+                  {c.code}
+                </text>
+              </g>
             )
           })}
         </g>
@@ -711,12 +989,12 @@ export function FloorCanvas(props: Props) {
 
       {/* Zone tracking chip (Item 2b) */}
       {showTrackingChip && !compact ? (
-        <div className="pointer-events-auto absolute top-2.5 left-2.5 z-10 flex items-center gap-2 rounded-full border border-slate-700/40 bg-[#162238]/90 py-1 pr-1.5 pl-3 text-white shadow-md backdrop-blur dark:bg-[#1a2639]/95 dark:border-slate-600/50">
+        <div className="pointer-events-auto absolute top-2.5 left-2.5 z-10 flex items-center gap-2 rounded-full border border-slate-700/40 bg-[#162238]/90 py-1 pr-1.5 pl-3 text-white shadow-md backdrop-blur dark:border-slate-600/50 dark:bg-[#1a2639]/95">
           <span className="text-[11px] font-semibold tracking-wide">{zoneLabel} · Đang theo dõi</span>
           <button
             type="button"
             onClick={handleResetToAll}
-            className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-900 shadow-xs hover:bg-slate-100 active:scale-95 transition-transform"
+            className="rounded-full bg-white px-2 py-0.5 text-[10px] font-bold text-slate-900 shadow-xs transition-transform hover:bg-slate-100 active:scale-95"
           >
             Thu về toàn bộ
           </button>
@@ -725,7 +1003,7 @@ export function FloorCanvas(props: Props) {
 
       {/* Floating HTML overlay waitlist marker for Zone Khu A/B/C/Bar (outside camera transform) */}
       {onOpenWaitlist && !isAllZone ? (
-        <div className="pointer-events-auto absolute bottom-3 right-3 z-10">
+        <div className="pointer-events-auto absolute right-3 bottom-3 z-10">
           <button
             type="button"
             onClick={(e) => {
@@ -734,7 +1012,7 @@ export function FloorCanvas(props: Props) {
             }}
             onPointerDown={(e) => e.stopPropagation()}
             aria-label={waitingCount !== undefined ? `Bàn chờ, ${waitingCount} khách đang chờ` : "Bàn chờ"}
-            className="group flex h-10 items-center justify-center gap-2 rounded-full border border-border/80 bg-background/95 px-3 py-1.5 text-foreground shadow-lg backdrop-blur transition-transform hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:bg-[#1e232d]/95 dark:border-slate-700/80"
+            className="group flex h-10 items-center justify-center gap-2 rounded-full border border-border/80 bg-background/95 px-3 py-1.5 text-foreground shadow-lg backdrop-blur transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
           >
             <List className="size-4 shrink-0 text-foreground" />
             <span className="text-xs font-bold whitespace-nowrap">
@@ -908,7 +1186,8 @@ function describe(t: TableView, state: TableLiveState, fs?: FloorTableState) {
   const flags = supportedFlags(c.flags ?? [])
   const flagLabels = flags.map((flag: GuestFlag) => GUEST_FLAG_META[flag]?.label ?? flag)
   const code = formatGroupCode(c.groupDisplayCode ?? c.symbolNo)
-  return `${base}${spare}, ${c.displayName}, ${c.partySize} khách${flagLabels.length ? `, ${flagLabels.join(", ")}` : ""}${code ? `, nhóm ${code}, ${c.tableIds.length} bàn` : ""}`
+  const guestName = formatHonorificName(c.displayName, c.honorific)
+  return `${base}${spare}, ${guestName}, ${c.partySize} khách${flagLabels.length ? `, ${flagLabels.join(", ")}` : ""}${code ? `, nhóm ${code}, ${c.tableIds.length} bàn` : ""}`
 }
 
 /**
@@ -916,17 +1195,7 @@ function describe(t: TableView, state: TableLiveState, fs?: FloorTableState) {
  * - Number only (e.g. `7`), centered inside status-colored pill, thin white border
  * - No people icon, no "7 khach", never multiplied by tables
  */
-function GuestCountBadge({
-  count,
-  x,
-  y,
-  color,
-}: {
-  count?: number | null
-  x: number
-  y: number
-  color: string
-}) {
+function GuestCountBadge({ count, x, y, color }: { count?: number | null; x: number; y: number; color: string }) {
   if (!count || count <= 0) return null
   const w = count >= 100 ? 18 : count >= 10 ? 15 : 12
   const h = 11
@@ -938,16 +1207,7 @@ function GuestCountBadge({
       aria-label={`${count} khách`}
       pointerEvents="none"
     >
-      <rect
-        x={-w / 2}
-        y={-h / 2}
-        width={w}
-        height={h}
-        rx={h / 2}
-        fill={color}
-        stroke="#ffffff"
-        strokeWidth={0.9}
-      />
+      <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={h / 2} fill={color} stroke="#ffffff" strokeWidth={0.9} />
       <text
         x={0}
         y={2.8}
@@ -1009,7 +1269,8 @@ const LiveGlyph = memo(function LiveGlyph({
   const groupId = group?.id ?? claim?.groupId
 
   const isAnchor =
-    isRepresentative ?? (!isGroup || (group ? group.tableIds?.[0] === t.id : claim?.tableIds ? claim.tableIds[0] === t.id : true))
+    isRepresentative ??
+    (!isGroup || (group ? group.tableIds?.[0] === t.id : claim?.tableIds ? claim.tableIds[0] === t.id : true))
   const isTurnAnchor = isAnchor
 
   // Corner icons per J1 Section 3
@@ -1033,13 +1294,14 @@ const LiveGlyph = memo(function LiveGlyph({
     state === "hold" ||
     state === "hold_overdue"
 
-  const maxNameChars = Math.max(6, Math.floor((t.w - 6) / 4.2))
+  const tableTitle =
+    claim && t.kind !== "BAR_SEAT" ? formatTableCellLabel(t.code, claim.displayName, claim.honorific, t.w) : t.code
   let cellSubText = ""
   let showTimeIcon = false
 
   if (seated) {
-    // J1 Section 2: Checked in shows code plus GUEST NAME instead of time or "N khách"
-    cellSubText = formatCellGuestName(claim?.displayName, maxNameChars, false)
+    // The primary label already contains "mã bàn - tên ngắn".
+    cellSubText = ""
   } else if (isBookedState) {
     // J1 Section 2: Booked, not checked in shows code plus booked time (e.g. 22:30)
     if (state === "hold" && !claim?.reservationId && !claim?.reservedExpectedAt) {
@@ -1118,15 +1380,10 @@ const LiveGlyph = memo(function LiveGlyph({
         {searchHighlighted ? (
           <circle className="animate-pulse" r={r + 5} fill="none" stroke="var(--primary)" strokeWidth={3} />
         ) : null}
-        {selected || groupHighlighted ? (
-          <circle
-            r={r + 2.8}
-            fill="none"
-            stroke="#64748B"
-            strokeWidth={1.6}
-            strokeDasharray="5 3"
-            data-selection-ring="1"
-          />
+        {selected ? (
+          <PickedCircleRing r={r} />
+        ) : groupHighlighted ? (
+          <ClusterCircleRing r={r} />
         ) : pickHint ? (
           <circle
             r={r + 2.8}
@@ -1224,19 +1481,10 @@ const LiveGlyph = memo(function LiveGlyph({
           strokeWidth={3}
         />
       ) : null}
-      {selected || groupHighlighted ? (
-        <rect
-          x={-hw - 2.6}
-          y={-hh - 2.6}
-          width={t.w + 5.2}
-          height={t.h + 5.2}
-          rx={6}
-          fill="none"
-          stroke="#64748B"
-          strokeWidth={1.5}
-          strokeDasharray="5 3"
-          data-selection-ring="1"
-        />
+      {selected ? (
+        <PickedRectRing w={t.w} h={t.h} />
+      ) : groupHighlighted ? (
+        <ClusterRectRing w={t.w} h={t.h} />
       ) : pickHint ? (
         <rect
           x={-hw - 2.6}
@@ -1268,13 +1516,13 @@ const LiveGlyph = memo(function LiveGlyph({
       <text
         y={cellSubText ? -1.5 : 4}
         textAnchor="middle"
-        fontSize={11}
+        fontSize={claim ? 8.2 : 11}
         fontWeight={700}
         fontFamily="var(--font-sans)"
         letterSpacing={-0.4}
         fill={textColor}
       >
-        {t.code}
+        {tableTitle}
       </text>
       {cellSubText ? (
         <g>
@@ -1315,17 +1563,7 @@ const LiveGlyph = memo(function LiveGlyph({
         <GuestCountBadge count={claim?.partySize} x={-hw + 3} y={-hh - 0.5} color={meta.color} />
       ) : null}
 
-      {/* Top-right: birthday cake icon when present */}
-      {hasActiveClaim && isAnchor && cornerIcons.topRight.length > 0 ? (
-        <TableIcons
-          iconKeys={cornerIcons.topRight}
-          x={hw - 1}
-          y={-hh + 0.5}
-          direction="left"
-          radius={5}
-          data-testid="table-icons"
-        />
-      ) : null}
+      {/* Top-right belongs to the turn badge alone, as the mockup draws it. */}
 
       {/* Bottom-left: new/regular guest icon */}
       {hasActiveClaim && isAnchor && cornerIcons.bottomLeft.length > 0 ? (
@@ -1416,14 +1654,16 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
   const faded = !ok && !blocked && status !== "spare"
   const isGroup = !!group
   const groupId = group?.id
-  const stroke = ok
-    ? "var(--foreground)"
-    : blocked
-      ? "var(--st-reserved)"
-      : "var(--table-line)"
+  const stroke = selected
+    ? "var(--st-reserved)"
+    : ok
+      ? "var(--foreground)"
+      : blocked
+        ? "var(--st-reserved)"
+        : "var(--table-line)"
   const strokeWidth = isGroup ? 3 : 2
   const fill = selected
-    ? "var(--primary)"
+    ? "var(--st-reserved-tint)"
     : ok
       ? "var(--surface-2)"
       : blocked
@@ -1433,7 +1673,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
           : status === "spare"
             ? STATE_META.spare.tint
             : "var(--surface-1)"
-  const textColor = selected ? "var(--primary-foreground)" : blocked ? "var(--st-reserved-ink)" : "var(--foreground)"
+  const textColor = selected || blocked ? "var(--st-reserved-ink)" : "var(--foreground)"
   const sub =
     status === "reserved" && avail?.claimStartsAt
       ? fmtTime(avail.claimStartsAt)
@@ -1478,16 +1718,11 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
           strokeWidth={1.5}
           strokeDasharray="2 2"
         />
-        {selected || groupHighlighted ? (
-          <circle
-            r={r + 2.8}
-            fill="none"
-            stroke="#64748B"
-            strokeWidth={1.6}
-            strokeDasharray="5 3"
-            data-selection-ring="1"
-          />
-        ) : pickHint && !selected ? (
+        {selected ? (
+          <PickedCircleRing r={r} />
+        ) : groupHighlighted ? (
+          <ClusterCircleRing r={r} />
+        ) : pickHint ? (
           <circle r={r + 2.8} fill="none" stroke="var(--foreground)" strokeOpacity={0.3} strokeDasharray="2 2" />
         ) : null}
         <circle

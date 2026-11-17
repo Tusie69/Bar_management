@@ -2,7 +2,6 @@ import { Router } from 'express'
 
 import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
-import { env } from '../../config/env.js'
 import { AppError } from '../../errors/app-error.js'
 import { idempotent, idempotencyTransaction } from '../../middleware/idempotency.js'
 import { parseCapacityOverride } from '../tables/table-capacity.js'
@@ -13,6 +12,7 @@ import {
   checkInBooking,
   confirmBookingLate,
   initiateBookingCall,
+  listBookingCalls,
   recordBookingCallOutcome,
   createAndAssignBooking,
   closeBooking,
@@ -29,18 +29,18 @@ import {
 } from './booking.repository.js'
 import { formatDailyBookingText, getDailyBookingTextInput } from './booking-export.js'
 import { assertCurrentBusinessDate, validateCalendarDate } from './business-date.js'
-import { assertPhoneDisclosureAllowed, PhoneRevealRateLimiter } from './phone-rate-limit.js'
+import { assertPhoneDisclosureAllowed, phoneDisclosureLimiter } from './phone-rate-limit.js'
 import { resolveBookingMetadata, type GuestType } from './booking-metadata.js'
 import { parseHonorific, parseIconKeys, parseSocialPlatform } from './booking-flags.js'
 import { searchReception } from './reception-search.repository.js'
 
 export const bookingRouter: Router = Router()
-const phoneRevealLimiter = env.phone.revealRateLimitMax && env.phone.revealRateLimitWindowMs
-  ? new PhoneRevealRateLimiter(env.phone.revealRateLimitMax, env.phone.revealRateLimitWindowMs)
-  : null
-
-function assertPhoneDisclosurePolicy(actor: ReturnType<typeof requireAuthenticatedActor>, bookingId: number): void {
-  assertPhoneDisclosureAllowed(phoneRevealLimiter, actor.userId, bookingId)
+function assertPhoneDisclosurePolicy(
+  actor: ReturnType<typeof requireAuthenticatedActor>,
+  bookingId: number,
+  whenUnconfigured: 'block' | 'allow' = 'block',
+): void {
+  assertPhoneDisclosureAllowed(phoneDisclosureLimiter, actor.userId, bookingId, whenUnconfigured)
 }
 
 function objectBody(value: unknown): Record<string, unknown> {
@@ -230,6 +230,18 @@ bookingRouter.post(
   },
 )
 
+/**
+ * Opens the dialer on the caller's device.
+ *
+ * Known and accepted: the reply carries the number itself in `telUri`, so a
+ * receptionist who has `booking.phone.call` but not `booking.phone.reveal`
+ * still receives it on their device and can read it from the browser's network
+ * tab. The browser cannot open a dialer without the number, so the only way to
+ * close that gap is a click-to-call bridge that dials from the server. Until
+ * there is one, every attempt is written to booking_call_logs and to
+ * operation_log as BOOKING_CALL_INITIATED with the user on it, so misuse is
+ * traceable. See docs/deploy.md, mục 4.
+ */
 bookingRouter.post(
   '/:id/call',
   requireAuthentication,
@@ -239,7 +251,7 @@ bookingRouter.post(
   objectBody(request.body)
   const id = positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.')
   const actor = requireAuthenticatedActor(request)
-  assertPhoneDisclosurePolicy(actor, id)
+  assertPhoneDisclosurePolicy(actor, id, 'allow')
   const result = await initiateBookingCall(
     actor,
     id,
@@ -250,6 +262,22 @@ bookingRouter.post(
     .set('Pragma', 'no-cache')
     .status(201)
     .json(result)
+  },
+)
+
+bookingRouter.get(
+  '/:id/calls',
+  requireAuthentication,
+  requirePermission('booking.phone.call'),
+  async (request, response) => {
+    // No number is returned, so whoever may place a call may also read who
+    // already tried. No rate limit either: this discloses nothing to limit.
+    response.json({
+      calls: await listBookingCalls(
+        requireAuthenticatedActor(request),
+        positiveInteger(request.params.id, 'INVALID_BOOKING_ID', 'Mã booking không hợp lệ.'),
+      ),
+    })
   },
 )
 

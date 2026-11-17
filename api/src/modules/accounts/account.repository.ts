@@ -1,40 +1,25 @@
-/**
- * BA-022 — Account Management (US-11).
- *
- * Approved scope only. US-11 and its role matrix approve, for an Admin with
- * edit rights: creating an Admin account, creating a staff account, and locking
- * or unlocking an account (TU-09). Those are the three mutations here, plus the
- * listing they need, all behind the baseline sensitive permission `user.manage`.
- *
- * Deliberately NOT implemented, because no approved contract exists:
- *   - SuperAdmin as a distinct role, and Admin "Sửa" vs "Chỉ xem" access levels.
- *     `docs/backlog/admin-portal-rbac.md` records these as deferred by the owner,
- *     with no authorized RBAC migration, and US-11 N6 still asks what SuperAdmin
- *     may do. No role is created here.
- *   - Changing an existing account's role. The matrix approves only
- *     "Đổi quyền Admin Sửa ↔ Chỉ xem" for SuperAdmin, and those levels do not
- *     exist, so there is no approved role-change semantics for staff.
- *   - Password reset. US-11 does not mention it at all.
- *   - Viewing another account's screen (impersonation).
- * See fix-reports/BA-022_ACCOUNT_MANAGEMENT.md.
- *
- * Roles are restricted to the four that migration 0001 already seeds. Nothing
- * grants a permission beyond what the role already has.
- */
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/promise'
 
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
-import { hashPassword } from '../../auth/password.js'
+import { recordAuthAudit } from '../../auth/auth-audit.js'
+import { generateTemporaryPassword, hashPassword, verifyPassword } from '../../auth/password.js'
+import { notifySessionsRevoked } from '../../auth/session-lifecycle.js'
 import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
 
-/** Same limits as the bootstrap-admin tool, so accounts stay consistent. */
 const USERNAME_MAX = 80
 const DISPLAY_NAME_MAX = 120
 const PASSWORD_MIN = 12
+const PASSWORD_MAX = 1024
+// TU-32: WAITER (Phục vụ) là cấp 6 và thuộc nhóm nhân viên, nên ADMIN WRITE
+// quản lý được tài khoản Phục vụ giống Lễ tân và Thu ngân. Thiếu nó ở đây thì
+// `listAssignableRoles` không trả về WAITER và không ai tạo được tài khoản
+// Phục vụ, kể cả OWNER.
+const STAFF_ROLES = new Set(['RECEPTIONIST', 'CUSTOMER_CARE', 'CASHIER', 'WAITER'])
 
 export type AccountStatus = 'ACTIVE' | 'DISABLED'
+export type AdminAccessLevel = 'WRITE' | 'READ_ONLY'
 
 export interface AccountSummary {
   id: number
@@ -43,6 +28,7 @@ export interface AccountSummary {
   status: AccountStatus
   membershipStatus: string
   roles: string[]
+  accessLevel: AdminAccessLevel | null
   lastLoginAt: string | null
   version: number
 }
@@ -50,17 +36,27 @@ export interface AccountSummary {
 export interface CreateAccountInput {
   username: string
   displayName: string
-  password: string
+  /** Bỏ trống để server sinh mật khẩu tạm (TU-34). */
+  password?: string
   roleCode: string
+  accessLevel?: AdminAccessLevel
+}
+
+/**
+ * TU-34: mật khẩu tạm chỉ trả về đúng một lần, ngay trong response tạo tài
+ * khoản hoặc reset. Nó không được lưu ở dạng rõ và không bao giờ vào log.
+ */
+export interface AccountWithTemporaryPassword {
+  account: AccountSummary
+  temporaryPassword: string | null
 }
 
 export interface AccountStatusResult {
   account: AccountSummary
-  /** Sessions revoked by this change; a lock ends the account's sessions now. */
   revokedSessions: number
 }
 
-interface AccountRow extends RowDataPacket {
+export interface AccountRow extends RowDataPacket {
   id: number
   username: string
   display_name: string
@@ -69,27 +65,33 @@ interface AccountRow extends RowDataPacket {
   last_login_at: Date | null
   version: number
   role_codes: string | null
+  admin_access_level: AdminAccessLevel | null
 }
 
-function toSummary(row: AccountRow): AccountSummary {
+interface Authority {
+  role: 'OWNER' | 'ADMIN'
+  accessLevel: AdminAccessLevel | null
+}
+
+export function toSummary(row: AccountRow): AccountSummary {
   return {
-    id: Number(row.id),
-    username: row.username,
-    displayName: row.display_name,
-    status: row.status,
-    membershipStatus: row.membership_status,
+    id: Number(row.id), username: row.username, displayName: row.display_name,
+    status: row.status, membershipStatus: row.membership_status,
     roles: row.role_codes ? row.role_codes.split(',').filter(Boolean).sort() : [],
+    accessLevel: row.admin_access_level,
     lastLoginAt: row.last_login_at ? new Date(row.last_login_at).toISOString() : null,
     version: Number(row.version),
   }
 }
 
-/**
- * Accounts are scoped by membership in the actor's organization, and the roles
- * reported are those effective at the actor's venue (venue_id NULL = all venues).
- */
-async function selectAccounts(
-  connection: PoolConnection,
+function assertNewPassword(password: string): void {
+  if (typeof password !== 'string' || password.length < PASSWORD_MIN || password.length > PASSWORD_MAX) {
+    throw new AppError(400, 'WEAK_PASSWORD', `Mật khẩu phải có từ ${PASSWORD_MIN} đến ${PASSWORD_MAX} ký tự.`)
+  }
+}
+
+export async function selectAccounts(
+  connection: Pick<PoolConnection, 'execute'>,
   actor: AuthenticatedActor,
   userId?: number,
   lock = false,
@@ -98,33 +100,73 @@ async function selectAccounts(
     `SELECT u.id, u.username, u.display_name, u.status, u.last_login_at, u.version,
        m.status AS membership_status,
        (SELECT GROUP_CONCAT(r.code ORDER BY r.code)
-          FROM membership_roles AS mr
-          JOIN roles AS r ON r.id = mr.role_id
+          FROM membership_roles AS mr JOIN roles AS r ON r.id = mr.role_id
+         WHERE mr.organization_id = m.organization_id AND mr.membership_id = m.id
+           AND mr.revoked_at IS NULL AND (mr.venue_id IS NULL OR mr.venue_id = ?)) AS role_codes,
+       (SELECT mr.access_level
+          FROM membership_roles AS mr JOIN roles AS r ON r.id = mr.role_id
          WHERE mr.organization_id = m.organization_id AND mr.membership_id = m.id
            AND mr.revoked_at IS NULL AND (mr.venue_id IS NULL OR mr.venue_id = ?)
-       ) AS role_codes
-     FROM memberships AS m
-     JOIN users AS u ON u.id = m.user_id
-     WHERE m.organization_id = ?${userId === undefined ? '' : ' AND u.id = ?'}
+           AND r.code = 'ADMIN' LIMIT 1) AS admin_access_level
+     FROM memberships AS m JOIN users AS u ON u.id = m.user_id
+     WHERE m.organization_id = ?
+       AND EXISTS (
+         SELECT 1 FROM membership_roles AS scoped_mr
+         WHERE scoped_mr.organization_id = m.organization_id AND scoped_mr.membership_id = m.id
+           AND scoped_mr.revoked_at IS NULL
+           AND (scoped_mr.venue_id IS NULL OR scoped_mr.venue_id = ?)
+       )${userId === undefined ? '' : ' AND u.id = ?'}
      ORDER BY u.username${lock ? ' FOR UPDATE' : ''}`,
     userId === undefined
-      ? [actor.venueId, actor.organizationId]
-      : [actor.venueId, actor.organizationId, userId],
+      ? [actor.venueId, actor.venueId, actor.organizationId, actor.venueId]
+      : [actor.venueId, actor.venueId, actor.organizationId, actor.venueId, userId],
   )
   return rows
 }
 
-export async function listAccounts(actor: AuthenticatedActor): Promise<AccountSummary[]> {
-  const connection = await databasePool.getConnection()
-  try {
-    return (await selectAccounts(connection, actor)).map(toSummary)
-  } finally {
-    connection.release()
+export async function authority(connection: Pick<PoolConnection, 'execute'>, actor: AuthenticatedActor): Promise<Authority> {
+  const [rows] = await connection.execute<(RowDataPacket & {
+    code: 'OWNER' | 'ADMIN'; access_level: AdminAccessLevel | null
+  })[]>(
+    `SELECT r.code, mr.access_level
+     FROM membership_roles AS mr JOIN roles AS r ON r.id = mr.role_id
+     WHERE mr.organization_id = ? AND mr.membership_id = ?
+       AND mr.revoked_at IS NULL AND (mr.venue_id IS NULL OR mr.venue_id = ?)
+       AND r.code IN ('OWNER', 'ADMIN')
+     ORDER BY FIELD(r.code, 'OWNER', 'ADMIN') LIMIT 1`,
+    [actor.organizationId, actor.membershipId, actor.venueId],
+  )
+  const row = rows[0]
+  if (!row) throw new AppError(403, 'ACCOUNT_MANAGEMENT_DENIED', 'Không có quyền quản lý tài khoản.')
+  return { role: row.code, accessLevel: row.access_level }
+}
+
+function requireWrite(value: Authority): void {
+  if (value.role === 'ADMIN' && value.accessLevel !== 'WRITE') {
+    throw new AppError(403, 'READ_ONLY_ACCOUNT', 'Tài khoản chỉ có quyền xem, không thể thực hiện thay đổi.')
   }
 }
 
-/** Audit row for an account change. No venue change_seq: this is not floor state. */
-async function recordAccountAudit(
+export function targetKind(account: AccountSummary): 'OWNER' | 'ADMIN' | 'STAFF' | 'UNKNOWN' {
+  if (account.roles.includes('OWNER')) return 'OWNER'
+  if (account.roles.includes('ADMIN')) return 'ADMIN'
+  if (account.roles.some((role) => STAFF_ROLES.has(role))) return 'STAFF'
+  return 'UNKNOWN'
+}
+
+function assertTargetAllowed(actor: AuthenticatedActor, value: Authority, account: AccountSummary): void {
+  if (account.id === actor.userId) {
+    throw new AppError(409, 'CANNOT_MANAGE_SELF', 'Không thể tự thay đổi quyền hoặc trạng thái tài khoản.')
+  }
+  const kind = targetKind(account)
+  if (kind === 'OWNER') throw new AppError(403, 'OWNER_PROTECTED', 'Không được phép quản lý tài khoản OWNER.')
+  if (value.role === 'ADMIN' && kind !== 'STAFF') {
+    throw new AppError(403, 'ADMIN_TARGET_DENIED', 'ADMIN chỉ được quản lý tài khoản nhân viên.')
+  }
+  if (kind === 'UNKNOWN') throw new AppError(403, 'TARGET_ROLE_DENIED', 'Vai trò mục tiêu không thuộc phạm vi quản lý.')
+}
+
+export async function recordAccountAudit(
   connection: PoolConnection,
   actor: AuthenticatedActor,
   action: string,
@@ -145,48 +187,92 @@ async function recordAccountAudit(
   )
 }
 
+async function revokeSessions(
+  connection: PoolConnection,
+  organizationId: number,
+  userId: number,
+  reason: string,
+): Promise<number[]> {
+  const [rows] = await connection.execute<(RowDataPacket & { id: number })[]>(
+    `SELECT id FROM auth_sessions
+     WHERE organization_id = ? AND user_id = ? AND revoked_at IS NULL FOR UPDATE`,
+    [organizationId, userId],
+  )
+  const ids = rows.map((row) => Number(row.id))
+  if (ids.length) {
+    await connection.execute(
+      `UPDATE auth_sessions SET revoked_at = UTC_TIMESTAMP(3), revoke_reason = ?
+       WHERE organization_id = ? AND user_id = ? AND revoked_at IS NULL`,
+      [reason, organizationId, userId],
+    )
+    await recordAuthAudit({
+      action: 'AUTH_SESSION_REVOKED', userId, reasonCode: reason,
+      metadata: { revokedSessions: ids.length },
+    }, connection)
+  }
+  return ids
+}
+
+function notifyRevoked(ids: number[], userId: number, locked = false): void {
+  if (ids.length) {
+    notifySessionsRevoked({ sessionIds: ids, userId, code: locked ? 'ACCOUNT_LOCKED' : 'SESSION_REVOKED' })
+  }
+}
+
+export async function listAccounts(actor: AuthenticatedActor): Promise<AccountSummary[]> {
+  const connection = await databasePool.getConnection()
+  try {
+    await authority(connection, actor)
+    return (await selectAccounts(connection, actor)).map(toSummary)
+  } finally {
+    connection.release()
+  }
+}
+
 export async function createAccount(
   actor: AuthenticatedActor,
   input: CreateAccountInput,
-): Promise<AccountSummary> {
+): Promise<AccountWithTemporaryPassword> {
   const username = input.username.trim()
   const displayName = input.displayName.trim()
-  if (!username || username.length > USERNAME_MAX) {
-    throw new AppError(400, 'INVALID_USERNAME', 'Tên đăng nhập không hợp lệ.')
-  }
-  if (!displayName || displayName.length > DISPLAY_NAME_MAX) {
-    throw new AppError(400, 'INVALID_DISPLAY_NAME', 'Tên hiển thị không hợp lệ.')
-  }
-  if (typeof input.password !== 'string' || input.password.length < PASSWORD_MIN) {
-    throw new AppError(400, 'WEAK_PASSWORD', `Mật khẩu phải có ít nhất ${PASSWORD_MIN} ký tự.`)
-  }
-
+  if (!username || username.length > USERNAME_MAX) throw new AppError(400, 'INVALID_USERNAME', 'Tên đăng nhập không hợp lệ.')
+  if (!displayName || displayName.length > DISPLAY_NAME_MAX) throw new AppError(400, 'INVALID_DISPLAY_NAME', 'Tên hiển thị không hợp lệ.')
+  // TU-34: không truyền mật khẩu thì server sinh mật khẩu tạm, và tài khoản
+  // phải đổi nó trước khi dùng được API nghiệp vụ. Khi người quản trị tự đặt
+  // mật khẩu (đường cũ của màn Cài đặt), đó là mật khẩu họ chọn chứ không
+  // phải mật khẩu tạm, nên không ép đổi — ép đổi ở đó sẽ khóa các luồng đang
+  // chạy mà không thêm được gì về an toàn.
+  const generated = input.password === undefined
+  const password: string = input.password ?? generateTemporaryPassword()
+  assertNewPassword(password)
+  if (input.roleCode === 'OWNER') throw new AppError(403, 'OWNER_CREATION_DENIED', 'Không thể tạo OWNER qua API.')
+  const passwordHash = await hashPassword(password)
   const connection = await databasePool.getConnection()
   try {
     await connection.beginTransaction()
+    const acting = await authority(connection, actor)
+    requireWrite(acting)
+    if (input.roleCode === 'ADMIN') {
+      if (acting.role !== 'OWNER') throw new AppError(403, 'ADMIN_CREATION_DENIED', 'Chỉ OWNER được tạo ADMIN.')
+      if (!input.accessLevel || !['WRITE', 'READ_ONLY'].includes(input.accessLevel)) {
+        throw new AppError(400, 'INVALID_ACCESS_LEVEL', 'Cấp truy cập ADMIN không hợp lệ.')
+      }
+    } else if (!STAFF_ROLES.has(input.roleCode)) {
+      throw new AppError(400, 'ROLE_NOT_ASSIGNABLE', 'Vai trò không được phép tạo.')
+    }
 
-    // Only a role the baseline already seeds. No role is created here.
     const [roleRows] = await connection.execute<(RowDataPacket & { id: number; code: string })[]>(
-      'SELECT id, code FROM roles WHERE code = ? LIMIT 1',
-      [input.roleCode],
+      'SELECT id, code FROM roles WHERE code = ? LIMIT 1', [input.roleCode],
     )
     const role = roleRows[0]
     if (!role) throw new AppError(400, 'ROLE_NOT_FOUND', 'Vai trò không tồn tại trong hệ thống.')
+    const [existing] = await connection.execute<RowDataPacket[]>('SELECT id FROM users WHERE username = ? FOR UPDATE', [username])
+    if (existing.length) throw new AppError(409, 'USERNAME_TAKEN', 'Tên đăng nhập này đã được dùng.')
 
-    const [existing] = await connection.execute<RowDataPacket[]>(
-      'SELECT id FROM users WHERE username = ? FOR UPDATE',
-      [username],
-    )
-    if (existing.length) {
-      throw new AppError(409, 'USERNAME_TAKEN', 'Tên đăng nhập này đã được dùng.')
-    }
-
-    // Hash before insert; the plaintext never leaves this call and is never logged.
-    const passwordHash = await hashPassword(input.password)
     const [userResult] = await connection.execute<ResultSetHeader>(
-      `INSERT INTO users (username, display_name, password_hash, status)
-       VALUES (?, ?, ?, 'ACTIVE')`,
-      [username, displayName, passwordHash],
+      `INSERT INTO users (username, display_name, password_hash, status, must_change_password)
+       VALUES (?, ?, ?, 'ACTIVE', ?)`,
+      [username, displayName, passwordHash, generated ? 1 : 0],
     )
     const [membershipResult] = await connection.execute<ResultSetHeader>(
       'INSERT INTO memberships (organization_id, user_id) VALUES (?, ?)',
@@ -194,18 +280,19 @@ export async function createAccount(
     )
     await connection.execute(
       `INSERT INTO membership_roles
-        (organization_id, membership_id, role_id, venue_id, granted_by_user_id)
-       VALUES (?, ?, ?, ?, ?)`,
-      [actor.organizationId, membershipResult.insertId, role.id, actor.venueId, actor.userId],
+        (organization_id, membership_id, role_id, venue_id, access_level, granted_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [actor.organizationId, membershipResult.insertId, role.id, actor.venueId,
+        input.roleCode === 'ADMIN' ? (input.accessLevel ?? null) : null, actor.userId],
     )
-    await recordAccountAudit(
-      connection, actor, 'USER_ACCOUNT_CREATED', userResult.insertId, null, 1,
-      { username, roleCode: role.code, venueId: actor.venueId },
-    )
-
+    // Không ghi mật khẩu (kể cả mật khẩu tạm) vào audit, chỉ ghi việc đã sinh.
+    await recordAccountAudit(connection, actor, 'USER_ACCOUNT_CREATED', userResult.insertId, null, 1, {
+      roleCode: role.code, accessLevel: input.roleCode === 'ADMIN' ? input.accessLevel : null, venueId: actor.venueId,
+      temporaryPassword: generated, mustChangePassword: generated,
+    })
     const rows = await selectAccounts(connection, actor, userResult.insertId)
     await connection.commit()
-    return toSummary(rows[0]!)
+    return { account: toSummary(rows[0]!), temporaryPassword: generated ? password : null }
   } catch (error) {
     await connection.rollback()
     throw error
@@ -215,77 +302,35 @@ export async function createAccount(
 }
 
 export async function setAccountStatus(
-  actor: AuthenticatedActor,
-  userId: number,
-  expectedVersion: number,
-  status: AccountStatus,
+  actor: AuthenticatedActor, userId: number, expectedVersion: number, status: AccountStatus,
 ): Promise<AccountStatusResult> {
-  // Fail closed: an admin must not lock themselves out of account management.
-  if (userId === actor.userId) {
-    throw new AppError(409, 'CANNOT_LOCK_SELF', 'Không thể tự khóa tài khoản đang đăng nhập.')
-  }
-
   const connection = await databasePool.getConnection()
+  let revokedIds: number[] = []
   try {
     await connection.beginTransaction()
-    const locked = await selectAccounts(connection, actor, userId, true)
-    const current = locked[0]
-    if (!current) throw new AppError(404, 'ACCOUNT_NOT_FOUND', 'Không tìm thấy tài khoản.')
-    if (Number(current.version) !== expectedVersion) {
-      throw new AppError(409, 'VERSION_CONFLICT', 'Tài khoản vừa được thay đổi, hãy tải lại.')
-    }
-    if (current.status === status) {
-      throw new AppError(409, 'ACCOUNT_STATUS_UNCHANGED', 'Tài khoản đã ở trạng thái này.')
-    }
-
-    // Fail closed: never leave the organization without a usable admin.
-    if (status === 'DISABLED') {
-      const [remaining] = await connection.execute<(RowDataPacket & { total: number })[]>(
-        `SELECT COUNT(*) AS total
-         FROM memberships AS m
-         JOIN users AS u ON u.id = m.user_id
-         JOIN membership_roles AS mr ON mr.organization_id = m.organization_id AND mr.membership_id = m.id
-         JOIN roles AS r ON r.id = mr.role_id
-         WHERE m.organization_id = ? AND m.status = 'ACTIVE' AND u.status = 'ACTIVE'
-           AND mr.revoked_at IS NULL AND (mr.venue_id IS NULL OR mr.venue_id = ?)
-           AND r.code = 'OWNER_ADMIN' AND u.id <> ?`,
-        [actor.organizationId, actor.venueId, userId],
-      )
-      if (!Number(remaining[0]?.total)) {
-        throw new AppError(409, 'LAST_ADMIN_PROTECTED',
-          'Đây là tài khoản Chủ quán / Admin hoạt động cuối cùng, không thể khóa.')
-      }
-    }
+    const acting = await authority(connection, actor)
+    requireWrite(acting)
+    const currentRow = (await selectAccounts(connection, actor, userId, true))[0]
+    if (!currentRow) throw new AppError(404, 'ACCOUNT_NOT_FOUND', 'Không tìm thấy tài khoản.')
+    const current = toSummary(currentRow)
+    assertTargetAllowed(actor, acting, current)
+    if (current.version !== expectedVersion) throw new AppError(409, 'VERSION_CONFLICT', 'Tài khoản vừa được thay đổi, hãy tải lại.')
+    if (current.status === status) throw new AppError(409, 'ACCOUNT_STATUS_UNCHANGED', 'Tài khoản đã ở trạng thái này.')
 
     await connection.execute(
       `UPDATE users SET status = ?, version = version + 1, updated_at = UTC_TIMESTAMP(3)
-       WHERE id = ? AND version = ?`,
-      [status, userId, expectedVersion],
+       WHERE id = ? AND version = ?`, [status, userId, expectedVersion],
     )
-
-    // A locked account's sessions end immediately. authenticateSession already
-    // re-checks user status on every request; revoking makes it explicit and
-    // leaves an auditable trace.
-    let revokedSessions = 0
-    if (status === 'DISABLED') {
-      const [revoked] = await connection.execute<ResultSetHeader>(
-        `UPDATE auth_sessions SET revoked_at = UTC_TIMESTAMP(3), revoke_reason = 'ACCOUNT_LOCKED'
-         WHERE organization_id = ? AND user_id = ? AND revoked_at IS NULL`,
-        [actor.organizationId, userId],
-      )
-      revokedSessions = revoked.affectedRows
-    }
-
+    if (status === 'DISABLED') revokedIds = await revokeSessions(connection, actor.organizationId, userId, 'ACCOUNT_LOCKED')
     await recordAccountAudit(
-      connection, actor,
-      status === 'DISABLED' ? 'USER_ACCOUNT_LOCKED' : 'USER_ACCOUNT_UNLOCKED',
+      connection, actor, status === 'DISABLED' ? 'USER_ACCOUNT_LOCKED' : 'USER_ACCOUNT_UNLOCKED',
       userId, expectedVersion, expectedVersion + 1,
-      { username: current.username, from: current.status, to: status, revokedSessions },
+      { from: current.status, to: status, revokedSessions: revokedIds.length },
     )
-
     const rows = await selectAccounts(connection, actor, userId)
     await connection.commit()
-    return { account: toSummary(rows[0]!), revokedSessions }
+    notifyRevoked(revokedIds, userId, true)
+    return { account: toSummary(rows[0]!), revokedSessions: revokedIds.length }
   } catch (error) {
     await connection.rollback()
     throw error
@@ -294,12 +339,144 @@ export async function setAccountStatus(
   }
 }
 
-/** Role codes an account may be created with: exactly what the baseline seeds. */
-export async function listAssignableRoles(): Promise<{ code: string; name: string }[]> {
+export async function setAdminAccessLevel(
+  actor: AuthenticatedActor, userId: number, expectedVersion: number, accessLevel: AdminAccessLevel,
+): Promise<AccountStatusResult> {
+  const connection = await databasePool.getConnection()
+  let revokedIds: number[]
+  try {
+    await connection.beginTransaction()
+    const acting = await authority(connection, actor)
+    if (acting.role !== 'OWNER') throw new AppError(403, 'ADMIN_ACCESS_DENIED', 'Chỉ OWNER được đổi cấp truy cập ADMIN.')
+    const currentRow = (await selectAccounts(connection, actor, userId, true))[0]
+    if (!currentRow) throw new AppError(404, 'ACCOUNT_NOT_FOUND', 'Không tìm thấy tài khoản.')
+    const current = toSummary(currentRow)
+    assertTargetAllowed(actor, acting, current)
+    if (targetKind(current) !== 'ADMIN') throw new AppError(409, 'TARGET_NOT_ADMIN', 'Tài khoản mục tiêu không phải ADMIN.')
+    if (current.version !== expectedVersion) throw new AppError(409, 'VERSION_CONFLICT', 'Tài khoản vừa được thay đổi, hãy tải lại.')
+    if (current.accessLevel === accessLevel) throw new AppError(409, 'ACCESS_LEVEL_UNCHANGED', 'Cấp truy cập không thay đổi.')
+
+    await connection.execute(
+      `UPDATE membership_roles AS mr JOIN roles AS r ON r.id = mr.role_id
+       JOIN memberships AS m ON m.organization_id = mr.organization_id AND m.id = mr.membership_id
+       SET mr.access_level = ?
+       WHERE mr.organization_id = ? AND m.user_id = ? AND r.code = 'ADMIN'
+         AND mr.revoked_at IS NULL AND (mr.venue_id IS NULL OR mr.venue_id = ?)`,
+      [accessLevel, actor.organizationId, userId, actor.venueId],
+    )
+    await connection.execute(
+      'UPDATE users SET version = version + 1, updated_at = UTC_TIMESTAMP(3) WHERE id = ? AND version = ?',
+      [userId, expectedVersion],
+    )
+    revokedIds = await revokeSessions(connection, actor.organizationId, userId, 'ACCESS_LEVEL_CHANGED')
+    await recordAccountAudit(connection, actor, 'ADMIN_ACCESS_LEVEL_CHANGED', userId, expectedVersion, expectedVersion + 1, {
+      from: current.accessLevel, to: accessLevel, revokedSessions: revokedIds.length,
+    })
+    const rows = await selectAccounts(connection, actor, userId)
+    await connection.commit()
+    notifyRevoked(revokedIds, userId)
+    return { account: toSummary(rows[0]!), revokedSessions: revokedIds.length }
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
+}
+
+export async function resetAccountPassword(
+  actor: AuthenticatedActor, userId: number, expectedVersion: number, newPassword?: string,
+): Promise<AccountStatusResult & { temporaryPassword: string | null }> {
+  const generated = newPassword === undefined
+  const password: string = newPassword ?? generateTemporaryPassword()
+  assertNewPassword(password)
+  const passwordHash = await hashPassword(password)
+  const connection = await databasePool.getConnection()
+  let revokedIds: number[]
+  try {
+    await connection.beginTransaction()
+    const acting = await authority(connection, actor)
+    requireWrite(acting)
+    const currentRow = (await selectAccounts(connection, actor, userId, true))[0]
+    if (!currentRow) throw new AppError(404, 'ACCOUNT_NOT_FOUND', 'Không tìm thấy tài khoản.')
+    const current = toSummary(currentRow)
+    assertTargetAllowed(actor, acting, current)
+    if (current.version !== expectedVersion) throw new AppError(409, 'VERSION_CONFLICT', 'Tài khoản vừa được thay đổi, hãy tải lại.')
+    await connection.execute(
+      `UPDATE users SET password_hash = ?, must_change_password = ?,
+         version = version + 1, updated_at = UTC_TIMESTAMP(3)
+       WHERE id = ? AND version = ?`, [passwordHash, generated ? 1 : 0, userId, expectedVersion],
+    )
+    revokedIds = await revokeSessions(connection, actor.organizationId, userId, 'PASSWORD_RESET')
+    await recordAccountAudit(connection, actor, 'USER_PASSWORD_RESET', userId, expectedVersion, expectedVersion + 1, {
+      revokedSessions: revokedIds.length, temporaryPassword: generated, mustChangePassword: generated,
+    })
+    const rows = await selectAccounts(connection, actor, userId)
+    await connection.commit()
+    notifyRevoked(revokedIds, userId)
+    return {
+      account: toSummary(rows[0]!),
+      revokedSessions: revokedIds.length,
+      temporaryPassword: generated ? password : null,
+    }
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
+}
+
+export async function changeOwnPassword(
+  actor: AuthenticatedActor, currentPassword: string, newPassword: string,
+): Promise<{ revokedSessions: number }> {
+  assertNewPassword(newPassword)
+  if (currentPassword.length > PASSWORD_MAX) throw new AppError(401, 'CURRENT_PASSWORD_INVALID', 'Mật khẩu hiện tại không chính xác.')
+  const connection = await databasePool.getConnection()
+  let revokedIds: number[]
+  try {
+    await connection.beginTransaction()
+    const [rows] = await connection.execute<(RowDataPacket & { password_hash: string; version: number })[]>(
+      'SELECT password_hash, version FROM users WHERE id = ? FOR UPDATE', [actor.userId],
+    )
+    const user = rows[0]
+    if (!user || !await verifyPassword(currentPassword, user.password_hash)) {
+      throw new AppError(401, 'CURRENT_PASSWORD_INVALID', 'Mật khẩu hiện tại không chính xác.')
+    }
+    if (await verifyPassword(newPassword, user.password_hash)) {
+      throw new AppError(409, 'PASSWORD_UNCHANGED', 'Mật khẩu mới phải khác mật khẩu hiện tại.')
+    }
+    const passwordHash = await hashPassword(newPassword)
+    // Đổi mật khẩu thành công là lúc duy nhất cờ mật khẩu tạm được gỡ.
+    await connection.execute(
+      `UPDATE users SET password_hash = ?, must_change_password = 0,
+         version = version + 1, updated_at = UTC_TIMESTAMP(3) WHERE id = ?`,
+      [passwordHash, actor.userId],
+    )
+    revokedIds = await revokeSessions(connection, actor.organizationId, actor.userId, 'PASSWORD_CHANGED')
+    await recordAccountAudit(connection, actor, 'USER_PASSWORD_CHANGED', actor.userId,
+      Number(user.version), Number(user.version) + 1, { revokedSessions: revokedIds.length })
+    await connection.commit()
+    notifyRevoked(revokedIds, actor.userId)
+    return { revokedSessions: revokedIds.length }
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
+}
+
+export async function listAssignableRoles(actor: AuthenticatedActor): Promise<{ code: string; name: string }[]> {
   const connection = await databasePool.getConnection()
   try {
+    const acting = await authority(connection, actor)
+    const codes = acting.role === 'OWNER'
+      ? ['ADMIN', ...STAFF_ROLES]
+      : acting.accessLevel === 'WRITE' ? [...STAFF_ROLES] : []
+    if (!codes.length) return []
     const [rows] = await connection.execute<(RowDataPacket & { code: string; name: string })[]>(
-      'SELECT code, name FROM roles WHERE is_system = 1 ORDER BY code',
+      `SELECT code, name FROM roles WHERE code IN (${codes.map(() => '?').join(', ')}) ORDER BY code`, codes,
     )
     return rows.map((row) => ({ code: row.code, name: row.name }))
   } finally {
@@ -307,7 +484,6 @@ export async function listAssignableRoles(): Promise<{ code: string; name: strin
   }
 }
 
-/** Single-tenant guard: the configured organization is the only one served. */
 export function assertConfiguredOrganization(actor: AuthenticatedActor): void {
   if (actor.organizationId !== env.organizationId) {
     throw new AppError(403, 'ORGANIZATION_MISMATCH', 'Không có quyền trên tổ chức này.')

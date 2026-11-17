@@ -1,4 +1,4 @@
-import { CalendarPlus, Clock, ListPlus, UserPlus, X, type LucideIcon } from "lucide-react"
+import { CalendarPlus, Clock, ListPlus, LogOut, UserPlus, X, type LucideIcon } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { useNavigate } from "react-router"
 import { roleCan, type Permission } from "@/domain/access"
@@ -6,6 +6,7 @@ import { ROLE_LABEL } from "@/domain/enums"
 import type { ReservationView } from "@/domain/models"
 import { fmtTime12 } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { api } from "@/services"
 import { useSession } from "@/state/session"
 import { NAV } from "@/app/nav"
 import type { Alert } from "../floor/alerts"
@@ -15,7 +16,7 @@ import { tableText } from "./model"
 import { Seg } from "./ui"
 
 export function Scrim({ onClick }: { onClick?: () => void }) {
-  return <div aria-hidden onClick={onClick} className="fixed inset-0 z-[45] bg-[var(--scrim)]" />
+  return <div aria-hidden onClick={onClick} className="absolute inset-0 z-[45] bg-[var(--scrim)]" />
 }
 
 function BottomSheet({ label, children, onClose }: { label: string; children: ReactNode; onClose: () => void }) {
@@ -23,7 +24,7 @@ function BottomSheet({ label, children, onClose }: { label: string; children: Re
     <div
       role="dialog"
       aria-label={label}
-      className="fixed inset-x-0 bottom-0 z-[50] flex max-h-[85dvh] flex-col rounded-t-[24px] bg-surface-1 px-4 pt-2 pb-[calc(16px+env(safe-area-inset-bottom))] shadow-[var(--shadow-float)]"
+      className="absolute inset-x-0 bottom-0 z-[50] flex max-h-[85dvh] flex-col rounded-t-[24px] bg-surface-1 px-4 pt-2 pb-[calc(16px+env(safe-area-inset-bottom))] shadow-[var(--shadow-float)]"
     >
       <div className="mx-auto mb-3.5 h-[5px] w-9 shrink-0 rounded-[3px] bg-strong" />
       <h2 className="m-0 mb-1.5 text-lg font-semibold text-tx-strong">{label}</h2>
@@ -72,7 +73,7 @@ export function CreateSheet({ onClose }: { onClose: () => void }) {
   const items: { icon: LucideIcon; label: string; sub: string; permission: Permission; go: () => void }[] = [
     {
       icon: CalendarPlus,
-      label: "Tạo đặt trước",
+      label: "Đặt bàn",
       sub: "Booking cho giờ sau, có hẹn giờ đến",
       permission: "reservation.create",
       go: () => m.openForm({ mode: "booking" }),
@@ -143,10 +144,12 @@ export function AlertsSheet({
 
 /** Demo user, theme and the pages that are not in the tab bar (Khách, Báo cáo, Cài đặt). */
 export function AccountSheet({ onClose }: { onClose: () => void }) {
-  const { user, users, theme, setUser, setTheme } = useSession()
+  const { user, users, theme, setUser, setTheme, principal, permissions, logout } = useSession()
   const navigate = useNavigate()
+  const [loggingOut, setLoggingOut] = useState(false)
   const more = NAV.filter((n) => ["/guests", "/reports", "/settings"].includes(n.to)).filter(
-    (n) => !n.permission || roleCan(user.role, n.permission),
+    (n) =>
+      !n.permission || (api.mode === "http" ? permissions.includes(n.permission) : roleCan(user.role, n.permission)),
   )
   return (
     <BottomSheet label="Tài khoản" onClose={onClose}>
@@ -159,25 +162,59 @@ export function AccountSheet({ onClose }: { onClose: () => void }) {
           ["dark", "Tối"],
         ]}
       />
-      <span className="pt-2 text-[13px] text-[var(--text-muted)]">Người dùng demo</span>
-      {users.map((u) => (
-        <button
-          key={u.id}
-          type="button"
-          aria-pressed={u.id === user.id}
-          onClick={() => {
-            setUser(u.id)
-            onClose()
-          }}
-          className={cn(
-            "flex min-h-12 items-center justify-between rounded-2xl border px-3.5 text-left",
-            u.id === user.id ? "border-primary bg-primary-tint" : "border-border bg-background",
-          )}
-        >
-          <span className="text-[15px] font-medium text-tx-strong">{u.displayName}</span>
-          <span className="text-[13px] text-[var(--text-muted)]">{ROLE_LABEL[u.role]}</span>
-        </button>
-      ))}
+      {/* Bộ đổi vai trò là công cụ của bản mock: nó bấm một phát là thành
+          người khác, nên trên bản đã deploy nó vừa vô nghĩa vừa gây hiểu nhầm
+          rằng tài khoản thật đổi được vai ngay tại đây. Bản HTTP chỉ hiện khối
+          "Phiên đăng nhập" bên dưới, là phiên thật do server cấp. */}
+      {api.mode === "mock" ? (
+        <>
+          <span className="pt-2 text-[13px] text-[var(--text-muted)]">Đổi vai trò để thử</span>
+          {users.map((u) => (
+            <button
+              key={u.id}
+              type="button"
+              aria-pressed={u.id === user.id}
+              onClick={() => {
+                setUser(u.id)
+                onClose()
+              }}
+              className={cn(
+                "flex min-h-12 items-center justify-between rounded-2xl border px-3.5 text-left",
+                u.id === user.id ? "border-primary bg-primary-tint" : "border-border bg-background",
+              )}
+            >
+              <span className="text-[15px] font-medium text-tx-strong">{u.displayName}</span>
+              <span className="text-[13px] text-[var(--text-muted)]">{ROLE_LABEL[u.role]}</span>
+            </button>
+          ))}
+        </>
+      ) : null}
+      {/* Máy lễ tân chạy cả ca trên một tài khoản và trước đây không có chỗ nào
+          thoát ra: đăng xuất chỉ có trong menu của bản desktop. */}
+      {principal ? (
+        <>
+          <span className="pt-2 text-[13px] text-[var(--text-muted)]">Phiên đăng nhập</span>
+          <div className="flex min-h-12 items-center justify-between rounded-2xl border border-border bg-background px-3.5">
+            <span className="min-w-0 truncate text-[15px] font-medium text-tx-strong">{principal.displayName}</span>
+            <span className="shrink-0 text-[13px] text-[var(--text-muted)]">{ROLE_LABEL[user.role]}</span>
+          </div>
+          <button
+            type="button"
+            disabled={loggingOut}
+            onClick={() => {
+              setLoggingOut(true)
+              void logout().finally(() => {
+                setLoggingOut(false)
+                onClose()
+              })
+            }}
+            className="flex min-h-12 items-center gap-2.5 rounded-2xl border border-destructive/40 bg-destructive/10 px-3.5 text-left text-[15px] font-medium text-destructive disabled:opacity-60"
+          >
+            <LogOut className="size-4 shrink-0" aria-hidden />
+            {loggingOut ? "Đang đăng xuất…" : "Đăng xuất"}
+          </button>
+        </>
+      ) : null}
       {more.length ? <span className="pt-2 text-[13px] text-[var(--text-muted)]">Trang khác</span> : null}
       {more.map((n) => (
         <SheetItem
@@ -212,9 +249,7 @@ export function StatusDialog({ r, onClose }: { r: ReservationView; onClose: () =
 
   const opts: { label: string; dot: string; sub?: string; disabled?: boolean; go: () => void }[] =
     r.status === "BOOKED"
-      ? [
-          ...(canLate ? [{ label: "Tới muộn", dot: "var(--st-late)", go: close(() => a.confirmLate(r)) }] : []),
-        ]
+      ? [...(canLate ? [{ label: "Tới muộn", dot: "var(--st-late)", go: close(() => a.confirmLate(r)) }] : [])]
       : r.status === "CHECKED_IN"
         ? [
             { label: "Đổi bàn", dot: "var(--st-reserved)", go: close(() => a.move(r)) },
@@ -225,7 +260,7 @@ export function StatusDialog({ r, onClose }: { r: ReservationView; onClose: () =
     <div
       role="dialog"
       aria-label="Đổi trạng thái booking"
-      className="fixed inset-x-6 top-1/2 z-[50] flex -translate-y-1/2 flex-col overflow-hidden rounded-[22px] bg-surface-1 shadow-[var(--shadow-float)]"
+      className="absolute inset-x-6 top-1/2 z-[50] flex -translate-y-1/2 flex-col overflow-hidden rounded-[22px] bg-surface-1 shadow-[var(--shadow-float)]"
     >
       <div className="flex flex-col items-center gap-0.5 border-b border-border px-4 pt-4 pb-3 text-center">
         <span className="text-[17px] font-semibold text-tx-strong">Đổi trạng thái booking</span>
@@ -271,7 +306,7 @@ export function ConfirmDialog({ c, onClose }: { c: Confirm; onClose: () => void 
     <div
       role="alertdialog"
       aria-label={c.title}
-      className="fixed inset-x-6 top-1/2 z-[55] flex -translate-y-1/2 flex-col gap-3 rounded-[22px] bg-surface-1 p-5 shadow-[var(--shadow-float)]"
+      className="absolute inset-x-6 top-1/2 z-[55] flex -translate-y-1/2 flex-col gap-3 rounded-[22px] bg-surface-1 p-5 shadow-[var(--shadow-float)]"
     >
       <span className="text-[17px] font-semibold text-tx-strong">{c.title}</span>
       <span className="text-[14px] text-pretty text-[var(--text-muted)]">{c.body}</span>
@@ -308,7 +343,7 @@ export function Toast15({ r, onView, onClose }: { r: ReservationView; onView: ()
   return (
     <div
       role="status"
-      className="fixed inset-x-3 top-[calc(var(--top-safe)+8px)] z-[42] flex items-center gap-2.5 rounded-[18px] border border-border bg-surface-1 py-2.5 pr-1.5 pl-3 shadow-[var(--shadow-float)]"
+      className="absolute inset-x-3 top-[calc(var(--top-safe)+8px)] z-[42] flex items-center gap-2.5 rounded-[18px] border border-border bg-surface-1 py-2.5 pr-1.5 pl-3 shadow-[var(--shadow-float)]"
     >
       <span className="grid size-[34px] shrink-0 place-items-center rounded-full bg-st-late-tint text-st-late-ink">
         <Clock className="size-[17px]" />

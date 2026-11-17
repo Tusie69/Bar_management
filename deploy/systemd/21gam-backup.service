@@ -1,22 +1,40 @@
 # Một lần sao lưu MySQL. Chạy theo 21gam-backup.timer, không enable trực tiếp.
 #   sudo cp deploy/systemd/21gam-backup.* /etc/systemd/system/
+#   sudo cp deploy/systemd/21gam-backup-failed.service /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now 21gam-backup.timer
 
 [Unit]
 Description=21GAM MySQL backup
-After=mysql.service
+After=mysql.service network-online.target
 Requires=mysql.service
+# Backup phải upload lên remote, nên cần mạng chứ không chỉ cần MySQL.
+Wants=network-online.target
+# Một lần backup thất bại phải để lại dấu vết chủ động, không chỉ nằm im trong
+# journal. Unit này chạy khi script thoát khác 0 vì bất kỳ lý do gì.
+OnFailure=21gam-backup-failed.service
 
 [Service]
 Type=oneshot
 User=gam21
 Group=gam21
+# BACKUP_REMOTE, BACKUP_ALERT_COMMAND và các biến khác nằm trong file này.
+# Dùng dấu '-' ở đầu để service vẫn khởi động được khi file chưa tồn tại:
+# script tự báo lỗi cấu hình rõ ràng hơn systemd.
+EnvironmentFile=-/srv/21gam/deploy/env/backup.env
 ExecStart=/srv/21gam/deploy/scripts/backup-mysql.sh
+# Backup không được tranh IO với API lúc quán còn khách.
 Nice=10
 IOSchedulingClass=idle
+# mysqldump trên database lớn có thể lâu, nhưng không được lâu vô hạn: một lần
+# treo sẽ chặn lần chạy hôm sau qua flock.
+TimeoutStartSec=3600
 
 NoNewPrivileges=true
-PrivateTmp=true
+PrivateTmp=false
 ProtectSystem=strict
 ProtectHome=read-only
+# Thư mục backup và thư mục làm việc của restore-verify.
 ReadWritePaths=/srv/21gam/backups
+# rclone đọc cấu hình remote ở ~/.config/rclone, mà ProtectHome=read-only vẫn
+# cho đọc. Nó cũng cần ghi cache token khi refresh OAuth:
+ReadWritePaths=/home/gam21/.config/rclone

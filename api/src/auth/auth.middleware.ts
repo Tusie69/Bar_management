@@ -7,8 +7,9 @@ import {
   getAuthentication,
   requireAuthenticatedActor,
 } from './authenticated-actor.js'
-import { authenticateSession, hasPermission } from './auth.service.js'
+import { hasPermission, inspectSession } from './auth.service.js'
 import { readSessionCookie, requireCsrfHeader } from './session-security.js'
+import { touchSessionActivity } from './session-directory.js'
 
 const safeMethods = new Set(['GET', 'HEAD', 'OPTIONS'])
 
@@ -24,12 +25,47 @@ export const requireTrustedOrigin: RequestHandler = (request, _response, next) =
   next()
 }
 
-export const requireAuthentication: RequestHandler = async (request, _response, next) => {
+/**
+ * Xác thực phiên và gắn vào request. Không quan tâm mật khẩu tạm.
+ */
+async function authenticate(request: Parameters<RequestHandler>[0]): Promise<void> {
   const token = readSessionCookie(request)
   if (!token) throw new AppError(401, 'AUTHENTICATION_REQUIRED', 'Vui lòng đăng nhập để tiếp tục.')
-  const authentication = await authenticateSession(token)
-  if (!authentication) throw new AppError(401, 'SESSION_INVALID', 'Phiên đăng nhập đã hết hạn hoặc bị thu hồi.')
-  attachAuthentication(request, authentication)
+  const inspection = await inspectSession(token)
+  if (!inspection.ok) throw new AppError(401, inspection.code, inspection.message)
+  attachAuthentication(request, inspection.authentication)
+  // TU-33: mốc hoạt động cuối cho danh sách thiết bị. Không await: đây là
+  // thông tin phụ trợ cho một màn hình quản trị, nó không được phép thêm một
+  // lượt đi-về database vào độ trễ của mọi request nghiệp vụ. Hàm này tự tiết
+  // lưu (mặc định 60 giây) và tự nuốt lỗi, nên nó không tạo điểm ghi nóng và
+  // không làm thất bại request. Trạng thái xác thực vẫn do revoked_at và
+  // expires_at quyết định, không do cột này.
+  const sessionId = inspection.authentication.actor.authSessionId
+  if (sessionId !== undefined) void touchSessionActivity(sessionId)
+}
+
+/**
+ * TU-34: phiên hợp lệ nhưng tài khoản còn mật khẩu tạm.
+ *
+ * Dùng cho đúng những chỗ người dùng PHẢI làm được trước khi đổi mật khẩu:
+ * đọc phiên của mình, đổi mật khẩu, và đăng xuất. Mọi endpoint nghiệp vụ khác
+ * đi qua `requireAuthentication` và bị chặn — mặc định là chặn, nên quên gắn
+ * middleware ở một route mới sẽ không mở ra lỗ hổng.
+ */
+export const requireAuthenticationPendingPassword: RequestHandler = async (request, _response, next) => {
+  await authenticate(request)
+  next()
+}
+
+export const requireAuthentication: RequestHandler = async (request, _response, next) => {
+  await authenticate(request)
+  if (getAuthentication(request)?.mustChangePassword) {
+    throw new AppError(
+      403,
+      'PASSWORD_CHANGE_REQUIRED',
+      'Tài khoản đang dùng mật khẩu tạm. Hãy đổi mật khẩu trước khi tiếp tục.',
+    )
+  }
   next()
 }
 

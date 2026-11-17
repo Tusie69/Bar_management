@@ -1,12 +1,18 @@
 /**
- * 21GAM spatial reference, rebuilt as data (coordinate space 414 x 752).
+ * 21GAM spatial reference, rebuilt as data (coordinate space 374 x 732).
  *
  * Source of truth for positions: the mobile floor-plan mockup approved on
- * 12/11/2026 (frame 374 x 732), mapped into this space with a +20 offset so
- * the venue wall lands on the frame the renderer draws at
- * (x 20, y 20, w FLOOR_W-40, h FLOOR_H-20). The room was then widened by 28
- * units on the right and the bar block moved 14 right, so the plan covers more
- * of a phone's width and the counter is not pressed against Khu A.
+ * 12/11/2026. The coordinate space IS the mockup's own plan frame, 374 x 732,
+ * and every number below is read straight off it, so a value here can be
+ * checked against the mockup without arithmetic. An earlier pass mapped the
+ * mockup into a 442 x 752 space with a +20 offset, widened the room by 28 and
+ * pushed the bar block 14 right; that is reverted - those nudges made the
+ * plan 15% wider than the approved frame and the zone spacing no longer
+ * matched the mockup anywhere.
+ *
+ * The approved responsive rule depends on this frame being exact:
+ * k = min(availableWidth / 374, availableHeight / 732), uniform on both axes,
+ * then centred. The top bar (48px) and bottom bar (52px) stay real pixels.
  *
  * CAUTION: these are NOT the surveyed coordinates from the product brief any
  * more. The plan is laid out for a phone screen, so distances on it no longer
@@ -16,29 +22,31 @@
  * Edit this file only: the renderer draws whatever is declared here.
  */
 
-export const FLOOR_W = 442
-export const FLOOR_H = 752
+export const FLOOR_W = 374
+export const FLOOR_H = 732
 
 /**
  * Inner face of the venue wall. Chrome that must read as being "inside the
  * plan" (Đếm khách, the date button, the legend) is positioned against this.
  */
-export const WALL_BOUNDS = { x: 22, y: 22, w: 398, h: 702 } as const
+export const WALL_BOUNDS = { x: 2, y: 2, w: 370, h: 702 } as const
 
 /**
- * Waitlist marker, placed by hand in the gap between Khu B and Khu A.
+ * Waitlist marker. The mockup puts it top right, under C1/C2 and clear of
+ * every table - not in the Khu B / Khu A gap, where it covered B5.
+ * Mockup rect: left 244, top 88, 120 x 34; x/y here are its centre.
  * `height` is the pill people see; `touchHeight` is the invisible area around it
  * that catches the tap, because mobile.css enforces a 44px minimum on buttons
- * inside a foreignObject. Keeping them apart lets the pill stay clear of the
- * tables above and below while the target stays big enough to hit.
+ * inside a foreignObject.
  */
-export const WAITLIST_MARKER = { x: 112, y: 295, width: 112, height: 30, touchHeight: 44 } as const
+export const WAITLIST_MARKER = { x: 304, y: 105, width: 120, height: 34, touchHeight: 44 } as const
 
 export type ZoneCode = "A" | "B" | "C" | "BAR"
 
 /** How chairs are drawn around a table top. "none" = no chairs, as the mockup shows. */
 export type SeatingStyle = "none" | "banquette" | "pairs-tb" | "pairs-lr" | "four-sides"
 
+/** x/y are the CENTRE of the box, as the renderer and the database expect. */
 export interface TableSpec {
   code: string
   zone: ZoneCode
@@ -57,8 +65,8 @@ export interface BarSeatSpec {
   y: number
 }
 
-/** Seat diameter. Pitch is 24, so 18 leaves a 6-unit gap between neighbours. */
-export const BAR_SEAT_SIZE = 18
+/** Seat diameter as drawn in the mockup. Vertical pitch is 24, so a 4-unit gap. */
+export const BAR_SEAT_SIZE = 20
 
 export interface ZoneSpec {
   code: ZoneCode
@@ -94,7 +102,7 @@ export interface FixtureSpec {
 const A = (code: string, y: number, isSpare = false): TableSpec => ({
   code,
   zone: "A",
-  x: 64,
+  x: 44,
   y,
   w: 56,
   h: 34,
@@ -129,34 +137,34 @@ const C = (code: string, x: number, y: number): TableSpec => ({
 })
 
 export const TABLES: TableSpec[] = [
-  // Khu A: banquette run along the west wall, pitch 44, + A10 (spare)
-  A("A7", 339),
-  A("A6", 385),
-  A("A5", 431),
-  A("A4", 477),
-  A("A3", 523),
-  A("A2", 569),
-  A("A1", 615),
-  A("A0", 661, true),
-  { code: "A10", zone: "A", x: 131, y: 661, w: 54, h: 34, capacity: 4, isSpare: true, seating: "none" },
+  // Khu A: banquette run along the west wall, mockup pitch 44, + A10 (spare)
+  A("A7", 319),
+  A("A6", 363),
+  A("A5", 407),
+  A("A4", 451),
+  A("A3", 495),
+  A("A2", 539),
+  A("A1", 583),
+  A("A0", 627, true),
+  { code: "A10", zone: "A", x: 111, y: 627, w: 54, h: 34, capacity: 4, isSpare: true, seating: "none" },
 
   // Khu B: left cluster (B7, B8, B6, B5) and right cluster (B3, B4, B21, B22, B11, B12)
-  B("B7", 83, 160),
-  B("B8", 59, 206, true),
-  B("B6", 109, 206),
-  B("B5", 83, 252),
-  B("B3", 183, 160),
-  B("B4", 183, 216),
-  B("B21", 277, 160),
-  B("B22", 277, 206),
-  B("B11", 277, 252),
-  B("B12", 277, 298),
+  B("B7", 63, 147),
+  B("B8", 39, 187, true),
+  B("B6", 89, 187),
+  B("B5", 63, 227),
+  B("B3", 163, 147),
+  B("B4", 163, 203),
+  B("B21", 257, 147),
+  B("B22", 257, 189),
+  B("B11", 257, 231),
+  B("B12", 257, 273),
 
   // Khu C (C4, C5 normal per HU-32)
-  C("C4", 196, 46),
-  C("C5", 196, 90),
-  C("C1", 240, 46),
-  C("C2", 284, 46),
+  C("C4", 176, 26),
+  C("C5", 176, 64),
+  C("C1", 220, 26),
+  C("C2", 264, 26),
 ]
 
 /**
@@ -165,65 +173,65 @@ export const TABLES: TableSpec[] = [
  * left to right, so together they wrap the counter.
  */
 export const BAR_SEATS: BarSeatSpec[] = [
-  { no: 1, x: 190, y: 682 },
-  { no: 2, x: 190, y: 658 },
-  { no: 3, x: 190, y: 634 },
-  { no: 4, x: 190, y: 610 },
-  { no: 5, x: 190, y: 586 },
-  { no: 6, x: 190, y: 562 },
-  { no: 7, x: 190, y: 538 },
-  { no: 8, x: 190, y: 514 },
-  { no: 9, x: 190, y: 490 },
-  { no: 10, x: 190, y: 466 },
-  { no: 11, x: 190, y: 442 },
-  { no: 12, x: 190, y: 418 },
-  { no: 13, x: 190, y: 394 },
-  { no: 14, x: 190, y: 370 },
-  { no: 15, x: 214, y: 346 },
-  { no: 16, x: 243, y: 346 },
-  { no: 17, x: 273, y: 346 },
-  { no: 18, x: 302, y: 346 },
-  { no: 19, x: 331, y: 346 },
-  { no: 20, x: 361, y: 346 },
-  { no: 21, x: 390, y: 346 },
+  { no: 1, x: 156, y: 662 },
+  { no: 2, x: 156, y: 638 },
+  { no: 3, x: 156, y: 614 },
+  { no: 4, x: 156, y: 590 },
+  { no: 5, x: 156, y: 566 },
+  { no: 6, x: 156, y: 542 },
+  { no: 7, x: 156, y: 518 },
+  { no: 8, x: 156, y: 494 },
+  { no: 9, x: 156, y: 470 },
+  { no: 10, x: 156, y: 446 },
+  { no: 11, x: 156, y: 422 },
+  { no: 12, x: 156, y: 398 },
+  { no: 13, x: 156, y: 374 },
+  { no: 14, x: 156, y: 350 },
+  { no: 15, x: 180, y: 326 },
+  { no: 16, x: 209, y: 326 },
+  { no: 17, x: 239, y: 326 },
+  { no: 18, x: 268, y: 326 },
+  { no: 19, x: 297, y: 326 },
+  { no: 20, x: 327, y: 326 },
+  { no: 21, x: 356, y: 326 },
 ]
 
 export const barSeatCode = (no: number) => `BAR${String(no).padStart(2, "0")}`
 
+/**
+ * Zones. `rects` is the zone's extent, used for zoom-to-zone and for dimming
+ * the other zones; it is NO LONGER painted as a tinted block, because the
+ * approved mockup has no zone blocks - a zone reads from its label and from
+ * the way its tables are grouped. Each rect is the bounding box of that zone's
+ * own tables, so zoom-to-zone frames exactly the tables it names.
+ */
 export const ZONES: ZoneSpec[] = [
   {
     code: "C",
     name: "Khu C",
-    rects: [[170, 24, 142, 98]],
-    label: { x: 220, y: 116 },
-    // Mock catalog follows 08/11; HTTP keeps the zone flags supplied by the server.
+    rects: [[156, 10, 128, 70]],
+    label: { x: 200, y: 95 },
+    // Khu C nhận đặt bàn từ migration 0019; HTTP vẫn dùng cờ do server trả về.
     isBookable: true,
     isWaitingArea: false,
   },
   {
     code: "B",
     name: "Khu B",
-    // Two clusters, so the gap between them stays untinted for the waitlist marker.
-    rects: [
-      [30, 136, 108, 142],
-      [154, 136, 152, 184],
-    ],
-    label: { x: 216, y: 316 },
+    rects: [[16, 130, 264, 160]],
+    label: { x: 196, y: 263 },
     isBookable: true,
     isWaitingArea: false,
   },
   {
     code: "A",
     name: "Khu A",
-    rects: [
-      [30, 316, 68, 378],
-      [98, 638, 66, 56],
-    ],
-    label: { x: 36, y: 690 },
+    rects: [[16, 302, 122, 342]],
+    label: { x: 16, y: 661 },
     isBookable: true,
     isWaitingArea: false,
   },
-  { code: "BAR", name: "Quầy Bar", rects: [[174, 330, 240, 370]], label: null, isBookable: true, isWaitingArea: false },
+  { code: "BAR", name: "Quầy Bar", rects: [[146, 316, 220, 358]], label: null, isBookable: true, isWaitingArea: false },
 ]
 
 /**
@@ -242,26 +250,27 @@ export const FIXTURES: FixtureSpec[] = [
   {
     id: "outer-wall",
     kind: "wall",
-    // Building outline with the entrance gap on the bottom wall (x 100..172).
-    d: "M100 724 H22 V22 H420 V724 H172",
+    // Mockup frame (2, 2, 370 x 702) with the entrance gap on the bottom wall
+    // (x 80..152), matching the notch the mockup draws there.
+    d: "M80 704 H2 V2 H372 V704 H152",
     estimated: true,
   },
   {
     id: "entrance",
     kind: "entrance",
     // Double door swinging into the room, plus the threshold tick.
-    d: "M108 724 V696 A28 28 0 0 1 136 724 M164 724 V696 A28 28 0 0 0 136 724 M136 726 V730",
+    d: "M88 704 V676 A28 28 0 0 1 116 704 M144 704 V676 A28 28 0 0 0 116 704 M116 706 V710",
     label: "Lối vào",
-    labelAt: { x: 136, y: 738 },
+    labelAt: { x: 116, y: 718 },
     estimated: true,
   },
   {
     id: "bar-counter",
     kind: "bar-counter",
-    // Straight counter; seats 1-14 sit to its left and 15-21 above it.
-    d: "M204 360 H230 V694 H204 Z",
+    // Mockup strip (170, 340, 26 x 334); seats 1-14 to its left, 15-21 above.
+    d: "M170 340 H196 V674 H170 Z",
     label: "Quầy Bar",
-    labelAt: { x: 217, y: 527, rotate: -90 },
+    labelAt: { x: 183, y: 507, rotate: -90 },
     estimated: true,
   },
 ]

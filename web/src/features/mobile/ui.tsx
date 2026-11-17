@@ -30,14 +30,17 @@ export function useKeepScroll(key: Tab | string) {
  * eligibility as the Desktop top bar; a button only enables when the server
  * reports a compensable operation for this device session.
  */
-export function UndoRedoButtons({ glass }: { glass?: boolean }) {
+export function UndoRedoButtons({ glass, square }: { glass?: boolean; square?: boolean }) {
   const controller = useUndoRedo()
   const { undo, redo, pending, apply } = controller
   useUndoRedoShortcuts(controller)
   if (!controller.enabled) return null
   const base = cn(
-    "grid size-11 shrink-0 place-items-center rounded-full text-tx-1 disabled:text-[var(--text-muted)] disabled:active:bg-transparent",
-    glass ? "bg-[var(--glass)] shadow-[var(--shadow-xs)]" : "active:bg-surface-2",
+    "grid shrink-0 place-items-center text-tx-1 disabled:text-[var(--text-muted)] disabled:active:bg-transparent",
+    // `square` is the mockup's bottom bar: a 44x44 rounded square with a hairline
+    // border so each button independently satisfies the 44x44pt Apple HIG touch target.
+    square ? "size-11 rounded-xl border border-border bg-surface-1 active:bg-surface-2" : "size-11 rounded-full",
+    !square && (glass ? "bg-[var(--glass)] shadow-[var(--shadow-xs)]" : "active:bg-surface-2"),
   )
   return (
     <>
@@ -63,7 +66,7 @@ export function UndoRedoButtons({ glass }: { glass?: boolean }) {
   )
 }
 
-export function BellButton({ glass }: { glass?: boolean }) {
+export function BellButton({ glass, square }: { glass?: boolean; square?: boolean }) {
   const m = useM()
   return (
     <button
@@ -71,13 +74,20 @@ export function BellButton({ glass }: { glass?: boolean }) {
       onClick={m.openAlerts}
       aria-label={`Thông báo, ${m.unread} chưa xem`}
       className={cn(
-        "relative grid size-11 shrink-0 place-items-center rounded-full text-tx-1",
-        glass ? "bg-[var(--glass)] shadow-[var(--shadow-xs)]" : "-mr-1.5 active:bg-surface-2",
+        "relative grid shrink-0 place-items-center text-tx-1",
+        // Match the undo controls and keep the button's own touch target at 44px.
+        square ? "size-11 rounded-xl border border-border bg-surface-1 active:bg-surface-2" : "size-11 rounded-full",
+        !square && (glass ? "bg-[var(--glass)] shadow-[var(--shadow-xs)]" : "-mr-1.5 active:bg-surface-2"),
       )}
     >
-      <Bell className="size-[21px]" strokeWidth={1.8} />
+      <Bell className={square ? "size-[19px]" : "size-[21px]"} strokeWidth={1.8} />
       {m.unread ? (
-        <span className="absolute top-0.5 right-0 h-[18px] min-w-[18px] rounded-full bg-st-noshow px-[5px] text-center text-[11px] leading-[18px] font-semibold text-white">
+        <span
+          className={cn(
+            "absolute h-[18px] min-w-[18px] rounded-full bg-st-noshow px-[5px] text-center text-[11px] leading-[18px] font-semibold text-white",
+            square ? "-top-1.5 -right-1.5" : "top-0.5 right-0",
+          )}
+        >
           {m.unread}
         </span>
       ) : null}

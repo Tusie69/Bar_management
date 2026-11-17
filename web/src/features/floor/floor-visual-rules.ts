@@ -1,9 +1,10 @@
+import { formatHonorificName } from "@/domain/booking-identity"
 import type { FloorGroup, FloorTableState, TableLiveState, TableView } from "@/domain/models"
 import { FIXTURES, FLOOR_H, FLOOR_W, WAITLIST_MARKER, type ZoneCode } from "@/domain/venue-layout"
 
 /**
  * Approved icon priority (Nam 2026-11-04):
- * ⭐ VIP > 📌 Chỉ định > 🎂 Sinh nhật > 🔥 Khách quen > 🆕 Khách mới
+ * ⭐ VIP > 📌 Chỉ định > 🎂 Sinh nhật > 🔥 Đã từng đặt bàn > 🆕 Chưa từng đặt bàn
  */
 export const GUEST_ICON_PRIORITY = ["VIP", "DESIGNATED", "BIRTHDAY", "RETURNING", "NEW"] as const
 export type GuestFlag = (typeof GUEST_ICON_PRIORITY)[number]
@@ -12,49 +13,99 @@ export const GUEST_FLAG_META: Record<GuestFlag, { glyph: string; label: string }
   VIP: { glyph: "⭐", label: "VIP" },
   DESIGNATED: { glyph: "📌", label: "Chỉ định" },
   BIRTHDAY: { glyph: "🎂", label: "Sinh nhật" },
-  RETURNING: { glyph: "🔥", label: "Khách quen" },
-  NEW: { glyph: "🆕", label: "Khách mới" },
+  RETURNING: { glyph: "🔥", label: "Đã từng đặt bàn" },
+  NEW: { glyph: "🆕", label: "Chưa từng đặt bàn" },
 }
 
 /**
- * Formats the guest name shown inside a checked-in table or Bar seat cell (J1 Section 2 & 5).
+ * Formats the guest name shown only on a compact floor/table label.
  * - Walk-ins without a real customer name show a short suitable label ("Khách lẻ" / "Lẻ"), never a fake name.
- * - Long names are truncated with an ellipsis so they never overflow the cell.
+ * - Whitespace is normalized for display without changing the source value.
+ * - Non-bar table cells preserve the beginning of the name (including honorifics like "Anh", "Chị") and truncate at the end with "…".
+ * - Bar seats keep the compact trailing word when long.
+ * - Unicode code points are truncated safely so a surrogate pair is never split.
  */
-export function formatCellGuestName(
-  displayName?: string | null,
-  maxChars = 9,
-  isBarSeat = false,
-): string {
-  const raw = (displayName ?? "").trim()
+export function formatCellGuestName(displayName?: string | null, maxChars = 9, isBarSeat = false): string {
+  const raw = (displayName ?? "").trim().replace(/\s+/gu, " ")
   if (!raw || /^(khách walk-in|walk-in|khách vãng lai|khách lẻ|khách)$/i.test(raw)) {
     return isBarSeat ? "Lẻ" : "Khách lẻ"
   }
-  if (isBarSeat) {
-    const parts = raw.split(/\s+/).filter(Boolean)
-    const shortWord = parts[parts.length - 1] ?? raw
-    if (shortWord.length > maxChars) {
-      return `${shortWord.slice(0, Math.max(2, maxChars - 1))}…`
-    }
-    return shortWord
+  const candidate = isBarSeat && Array.from(raw).length > maxChars ? (raw.split(" ").at(-1) ?? raw) : raw
+  const chars = Array.from(candidate)
+  if (chars.length <= maxChars) return candidate
+  return `${chars
+    .slice(0, Math.max(2, maxChars - 1))
+    .join("")
+    .trimEnd()}…`
+}
+
+function estimateCellCharWidth(ch: string): number {
+  if (ch === "…") return 7.4
+  if ("iíìỉĩịlI1trfj.,:;'\"- ".includes(ch)) return 2.5
+  if ("MWQĐƠƯmw".includes(ch)) return 6.0
+  if (
+    (ch >= "A" && ch <= "Z") ||
+    (ch >= "0" && ch <= "9") ||
+    (ch.toUpperCase() !== ch.toLowerCase() && ch === ch.toUpperCase())
+  ) {
+    return 4.9
   }
-  if (raw.length > maxChars) {
-    return `${raw.slice(0, Math.max(3, maxChars - 1)).trimEnd()}…`
+  return 4.0
+}
+
+function estimateCellLabelWidth(text: string): number {
+  let width = 0
+  for (const ch of text) width += estimateCellCharWidth(ch)
+  return width
+}
+
+/**
+ * Formats the single-line ordinary table label ("<code> - <guest>") at the
+ * fixed 8.2 SVG unit font size, applying honorific metadata before end-ellipsis
+ * truncation so the prefix and honorific stay intact and the text fits inside `cellWidth`.
+ */
+export function formatTableCellLabel(
+  tableCode: string,
+  displayName?: string | null,
+  honorific?: "MR" | "MS" | null,
+  cellWidth = 46,
+): string {
+  const raw = (displayName ?? "").trim().replace(/\s+/gu, " ")
+  const isWalkInFallback = !raw || /^(khách walk-in|walk-in|khách vãng lai|khách lẻ|khách)$/i.test(raw)
+  const fullName = isWalkInFallback ? "Khách lẻ" : formatHonorificName(raw, honorific)
+  const prefix = `${tableCode} - `
+  const fullLabel = `${prefix}${fullName}`
+  const maxWidth = Math.max(24, cellWidth - 3)
+  if (estimateCellLabelWidth(fullLabel) <= maxWidth) return fullLabel
+
+  const chars = Array.from(fullName)
+  const minKeep = Math.min(chars.length, honorific ? 2 : 2)
+  for (let len = chars.length - 1; len >= minKeep; len--) {
+    const trimmed = chars.slice(0, len).join("").trimEnd()
+    if (!trimmed) continue
+    const candidate = `${prefix}${trimmed}…`
+    if (estimateCellLabelWidth(candidate) <= maxWidth) return candidate
   }
-  return raw
+  return `${prefix}${chars.slice(0, minKeep).join("").trimEnd()}…`
 }
 
 export interface CellCornerIcons {
-  topRight: Array<"cake">
+  /**
+   * Empty since the approved mockup gave the top right corner to the turn
+   * badge alone. Kept so a caller that still reads it does not crash.
+   */
+  topRight: never[]
   bottomLeft: Array<"fire" | "new">
-  bottomRight: Array<"star" | "pin">
+  bottomRight: Array<"star" | "pin" | "cake">
 }
 
 /**
  * Resolves the corner icons for a table cell per J1 Section 3:
- * - Top right: cake if birthday.
+ * - Top right: nothing. The mockup puts the turn badge there, so an icon in
+ *   that corner would sit on top of it.
  * - Bottom left: new or regular guest icon. Never both (RETURNING > NEW). UNCLASSIFIED shows none.
- * - Bottom right: Bàn sếp (star) or Chỉ định (pin) when data exists. Hidden when absent.
+ * - Bottom right: table flags - Bàn sếp (star), Chỉ định (pin), Sinh nhật
+ *   (cake). The mockup lists all three together in that corner.
  */
 export function resolveCellCornerIcons(
   claim?: { flags?: string[] | null; iconKeys?: string[] | null } | null,
@@ -76,10 +127,6 @@ export function resolveCellCornerIcons(
   const hasBirthday = tokens.some(
     (k) => k === "birthday" || k === "cake" || k === "is_birthday" || k === "sinh nhật" || k === "sinh nhat",
   )
-  if (hasBirthday) {
-    result.topRight.push("cake")
-  }
-
   const hasReturning = tokens.some(
     (k) => k === "returning" || k === "fire" || k === "regular" || k === "khách quen" || k === "khach quen",
   )
@@ -90,14 +137,13 @@ export function resolveCellCornerIcons(
     result.bottomLeft.push("new")
   }
 
-  const hasStar = tokens.some(
-    (k) => k === "star" || k === "vip" || k === "boss" || k === "bàn sếp" || k === "ban sep",
-  )
-  const hasPin = tokens.some(
-    (k) => k === "pin" || k === "designated" || k === "chỉ định" || k === "chi dinh",
-  )
+  const hasStar = tokens.some((k) => k === "star" || k === "vip" || k === "boss" || k === "bàn sếp" || k === "ban sep")
+  const hasPin = tokens.some((k) => k === "pin" || k === "designated" || k === "chỉ định" || k === "chi dinh")
+  // Order follows the mockup's own list for this corner: VIP, then Chỉ định,
+  // then Sinh nhật.
   if (hasStar) result.bottomRight.push("star")
   if (hasPin) result.bottomRight.push("pin")
+  if (hasBirthday) result.bottomRight.push("cake")
 
   return result
 }
@@ -244,7 +290,9 @@ export function findGroupRepresentativeId(members: TableView[]): number {
 export function groupDisplayName(members: TableView[], group?: FloorGroup | null): string {
   if (group?.displayCode) return group.displayCode
   const sorted = [...members].sort((a, b) =>
-    a.kind === "BAR_SEAT" ? (a.seqNo ?? 0) - (b.seqNo ?? 0) : a.code.localeCompare(b.code, undefined, { numeric: true }),
+    a.kind === "BAR_SEAT"
+      ? (a.seqNo ?? 0) - (b.seqNo ?? 0)
+      : a.code.localeCompare(b.code, undefined, { numeric: true }),
   )
   if (sorted[0]?.kind === "BAR_SEAT") {
     const numbers = sorted.map((t) => t.seqNo ?? 0)
@@ -297,11 +345,14 @@ export function computeZoneBounds(tables: TableView[], zone: ZoneCode | "ALL", p
   if (zone === "ALL") {
     const pad = padding !== undefined ? padding : 0
 
-    // Floor frame rect the canvas draws: x=20, y=20, w=FLOOR_W-40, h=FLOOR_H-20
-    let minX = 20
-    let minY = 20
-    let maxX = 20 + FLOOR_W - 40
-    let maxY = 20 + FLOOR_H - 20
+    // The whole plan container, 374 x 732 - the frame plus the small margin
+    // the mockup leaves around it for the entrance label. Fitting against the
+    // container (not the frame) is what makes the camera scale exactly
+    // k = min(W / 374, H / 732), the rule the approved mockup states.
+    let minX: number = 0
+    let minY: number = 0
+    let maxX: number = FLOOR_W
+    let maxY: number = FLOOR_H
 
     // Union with every fixture, read from its own path. These used to be
     // hardcoded numbers per fixture kind, which silently kept the old floor's

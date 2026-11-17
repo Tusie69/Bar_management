@@ -160,9 +160,93 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     expect(Number(afterRows[0]?.count)).toBe(Number(beforeRows[0]?.count))
   })
 
+  it('keeps exactly one active session and a stale logout cannot revoke its replacement', async () => {
+    const fixture = await createUser('single_session_user', { roleCode: 'RECEPTIONIST' })
+    const firstAgent = request.agent(app)
+    const firstLogin = await login(firstAgent, 'single_session_user')
+    expect(firstLogin.status).toBe(200)
+    const firstAuth = responseBody<AuthResponse>(firstLogin)
+
+    const secondAgent = request.agent(app)
+    const secondLogin = await login(secondAgent, 'single_session_user')
+    expect(secondLogin.status).toBe(200)
+
+    const firstMe = await firstAgent.get('/api/v1/auth/me')
+    expect(firstMe.status).toBe(401)
+    expect(responseBody<ErrorResponse>(firstMe).error.code).toBe('SESSION_REPLACED')
+    expect((await secondAgent.get('/api/v1/auth/me')).status).toBe(200)
+    const staleReconnect = await firstAgent.get('/api/v1/tables/stream')
+    expect(staleReconnect.status).toBe(401)
+    expect(responseBody<ErrorResponse>(staleReconnect).error.code).toBe('SESSION_REPLACED')
+
+    const staleLogout = await firstAgent.post('/api/v1/auth/logout')
+      .set('Origin', origin).set('X-CSRF-Token', firstAuth.csrfToken)
+    expect(staleLogout.status).toBe(401)
+    expect(responseBody<ErrorResponse>(staleLogout).error.code).toBe('SESSION_REPLACED')
+    expect((await secondAgent.get('/api/v1/auth/me')).status).toBe(200)
+
+    const [active] = await databasePool.execute<(RowDataPacket & { total: number })[]>(
+      `SELECT COUNT(*) AS total FROM auth_sessions
+       WHERE user_id = ? AND revoked_at IS NULL AND expires_at > UTC_TIMESTAMP(3)`,
+      [fixture.userId],
+    )
+    expect(Number(active[0]?.total)).toBe(1)
+  })
+
+  it('does not revoke the current session when a later password or portal attempt fails', async () => {
+    await createUser('failed_relogin_user', { roleCode: 'RECEPTIONIST' })
+    const current = request.agent(app)
+    expect((await login(current, 'failed_relogin_user')).status).toBe(200)
+
+    expect((await login(request.agent(app), 'failed_relogin_user', 'wrong')).status).toBe(401)
+    const wrongPortal = await login(request.agent(app), 'failed_relogin_user', undefined, 'admin')
+    expect(wrongPortal.status).toBe(403)
+    expect((await current.get('/api/v1/auth/me')).status).toBe(200)
+  })
+
+  it('serializes concurrent logins so only the last committed session remains active', async () => {
+    const fixture = await createUser('concurrent_login_user', { roleCode: 'RECEPTIONIST' })
+    const first = request.agent(app)
+    const second = request.agent(app)
+    const [firstLogin, secondLogin] = await Promise.all([
+      login(first, 'concurrent_login_user'),
+      login(second, 'concurrent_login_user'),
+    ])
+    expect(firstLogin.status).toBe(200)
+    expect(secondLogin.status).toBe(200)
+
+    const [firstMe, secondMe] = await Promise.all([
+      first.get('/api/v1/auth/me'),
+      second.get('/api/v1/auth/me'),
+    ])
+    expect([firstMe.status, secondMe.status].sort()).toEqual([200, 401])
+    const rejected = firstMe.status === 401 ? firstMe : secondMe
+    expect(responseBody<ErrorResponse>(rejected).error.code).toBe('SESSION_REPLACED')
+
+    const [active] = await databasePool.execute<(RowDataPacket & { total: number })[]>(
+      `SELECT COUNT(*) AS total FROM auth_sessions
+       WHERE user_id = ? AND revoked_at IS NULL AND expires_at > UTC_TIMESTAMP(3)`,
+      [fixture.userId],
+    )
+    expect(Number(active[0]?.total)).toBe(1)
+  })
+
+  it('refresh and same-browser tabs reuse one cookie session without creating another row', async () => {
+    const fixture = await createUser('shared_browser_user', { roleCode: 'RECEPTIONIST' })
+    const browser = request.agent(app)
+    expect((await login(browser, 'shared_browser_user')).status).toBe(200)
+    expect((await browser.get('/api/v1/auth/me')).status).toBe(200)
+    expect((await browser.get('/api/v1/auth/me')).status).toBe(200)
+    const [active] = await databasePool.execute<(RowDataPacket & { total: number })[]>(
+      'SELECT COUNT(*) AS total FROM auth_sessions WHERE user_id = ? AND revoked_at IS NULL',
+      [fixture.userId],
+    )
+    expect(Number(active[0]?.total)).toBe(1)
+  })
+
   it('binds multi-role sessions to one portal without unioning permissions', async () => {
     const fixture = await createUser('multi_portal_user', { roleCode: 'RECEPTIONIST' })
-    await grantRole(fixture.membershipId, 'OWNER_ADMIN')
+    await grantRole(fixture.membershipId, 'OWNER')
 
     const receptionAgent = request.agent(app)
     const reception = responseBody<AuthResponse>(
@@ -171,23 +255,25 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     expect(reception.portal).toBe('receptionist')
     expect(reception.user.roles).toEqual(['RECEPTIONIST'])
     expect(reception.permissions).not.toContain('venue.configure')
+    expect(reception.permissions).toContain('table.spare.configure')
     expect(reception.permissions).toContain('booking.phone.call')
     expect(reception.permissions).not.toContain('customer.phone.reveal')
     const deniedAdminWrite = await receptionAgent.patch('/api/v1/tables/1/configuration')
-      .set('Origin', origin).set('X-CSRF-Token', reception.csrfToken).send({})
+      .set('Origin', origin).set('X-CSRF-Token', reception.csrfToken)
+      .send({ version: 1, status: 'OUT_OF_SERVICE', reason: 'Admin-only configuration' })
     expect(deniedAdminWrite.status).toBe(403)
     expect(responseBody<ErrorResponse>(deniedAdminWrite).error.code).toBe('PERMISSION_DENIED')
 
     const admin = responseBody<AuthResponse>(await login(request.agent(app), 'multi_portal_user', undefined, 'admin'))
     expect(admin.portal).toBe('admin')
-    expect(admin.user.roles).toEqual(['OWNER_ADMIN'])
+    expect(admin.user.roles).toEqual(['OWNER'])
     expect(admin.permissions).toContain('venue.configure')
     expect(admin.permissions).toContain('booking.phone.call')
     expect(admin.permissions).toContain('customer.phone.reveal')
   })
 
   it('allows an owner only through the admin portal', async () => {
-    await createUser('portal_owner', { roleCode: 'OWNER_ADMIN' })
+    await createUser('portal_owner', { roleCode: 'OWNER' })
     expect((await login(request.agent(app), 'portal_owner', undefined, 'receptionist')).status).toBe(403)
     const accepted = await login(request.agent(app), 'portal_owner', undefined, 'admin')
     expect(accepted.status).toBe(200)
@@ -223,7 +309,7 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
   })
 
   it('returns current venue and organization-wide role codes, excluding foreign and revoked grants', async () => {
-    const fixture = await createUser('role_payload_user', { roleCode: 'OWNER_ADMIN' })
+    const fixture = await createUser('role_payload_user', { roleCode: 'OWNER' })
     await grantRole(fixture.membershipId, 'CASHIER', otherVenueId)
     await grantRole(fixture.membershipId, 'RECEPTIONIST')
     await databasePool.execute(
@@ -239,10 +325,10 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     const agent = request.agent(app)
     const signedIn = await login(agent, 'role_payload_user', undefined, 'admin')
     expect(signedIn.status).toBe(200)
-    expect(responseBody<AuthResponse>(signedIn).user.roles).toEqual(['OWNER_ADMIN'])
+    expect(responseBody<AuthResponse>(signedIn).user.roles).toEqual(['OWNER'])
     await databasePool.execute(
       `UPDATE membership_roles SET revoked_at = UTC_TIMESTAMP(3), revoked_by_user_id = ?
-       WHERE membership_id = ? AND role_id = (SELECT id FROM roles WHERE code = 'OWNER_ADMIN')`,
+       WHERE membership_id = ? AND role_id = (SELECT id FROM roles WHERE code = 'OWNER')`,
       [fixture.userId, fixture.membershipId],
     )
     const me = await agent.get('/api/v1/auth/me')
@@ -262,6 +348,29 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
     expect(afterLogout.status).toBe(401)
   })
 
+  it('audits login failure, success, replacement, logout and revocation without credential material', async () => {
+    const fixture = await createUser('auth_audit_user', { roleCode: 'RECEPTIONIST' })
+    const first = request.agent(app)
+    expect((await login(first, 'auth_audit_user')).status).toBe(200)
+    expect((await login(request.agent(app), 'auth_audit_user', 'wrong')).status).toBe(401)
+    const second = request.agent(app)
+    const replacement = responseBody<AuthResponse>(await login(second, 'auth_audit_user'))
+    expect((await second.post('/api/v1/auth/logout').set('Origin', origin)
+      .set('X-CSRF-Token', replacement.csrfToken)).status).toBe(204)
+
+    const [rows] = await databasePool.execute<(RowDataPacket & { action: string; changes: string })[]>(
+      `SELECT action, CAST(changes AS CHAR) AS changes FROM operation_log
+       WHERE entity_type = 'auth_session' AND entity_id = ? ORDER BY id`,
+      [fixture.userId],
+    )
+    const actions = rows.map((row) => row.action)
+    expect(actions).toContain('AUTH_LOGIN_FAILED')
+    expect(actions.filter((action) => action === 'AUTH_LOGIN_SUCCEEDED')).toHaveLength(2)
+    expect(actions).toContain('AUTH_LOGOUT')
+    expect(actions.filter((action) => action === 'AUTH_SESSION_REVOKED').length).toBeGreaterThanOrEqual(2)
+    expect(JSON.stringify(rows)).not.toMatch(/Correct horse|password|token|cookie|auth_audit_user/i)
+  })
+
   it('rejects a database-revoked session on the next request', async () => {
     const fixture = await createUser('revoked_session_user', { roleCode: 'RECEPTIONIST' })
     const agent = request.agent(app)
@@ -271,7 +380,9 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
        WHERE user_id = ? AND revoked_at IS NULL`,
       [fixture.userId],
     )
-    expect((await agent.get('/api/v1/auth/me')).status).toBe(401)
+    const revoked = await agent.get('/api/v1/auth/me')
+    expect(revoked.status).toBe(401)
+    expect(responseBody<ErrorResponse>(revoked).error.code).toBe('SESSION_REVOKED')
   })
 
   it('rejects an expired session on the next request', async () => {
@@ -285,7 +396,9 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
        WHERE user_id = ?`,
       [fixture.userId],
     )
-    expect((await agent.get('/api/v1/auth/me')).status).toBe(401)
+    const expired = await agent.get('/api/v1/auth/me')
+    expect(expired.status).toBe(401)
+    expect(responseBody<ErrorResponse>(expired).error.code).toBe('SESSION_EXPIRED')
   })
 
   it('rejects a disabled membership on the next request', async () => {
@@ -315,7 +428,7 @@ mysqlDescribe('session authentication and RBAC MySQL integration', () => {
       .set('X-CSRF-Token', signedInBody.csrfToken)
       .send({ version: 1, mode: 'MANUAL', reason: 'GUEST_LEFT' })
     expect(denied.status).toBe(401)
-    expect(responseBody<ErrorResponse>(denied).error.code).toBe('SESSION_INVALID')
+    expect(responseBody<ErrorResponse>(denied).error.code).toBe('SESSION_REVOKED')
   })
 
   it('closes a visit through the authenticated endpoint and records the authenticated user', async () => {

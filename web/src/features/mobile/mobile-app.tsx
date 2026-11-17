@@ -19,9 +19,9 @@ import { toast } from "sonner"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { NAV } from "@/app/nav"
 import { useShiftAlerts } from "../floor/alerts"
+import { GuestCountSheet } from "../floor/guest-count-card"
 import { useFloorModel } from "../floor/use-floor-model"
 import { isWaitingForTable } from "../floor/reception-rules"
-import { ZaloBookingExport } from "../reservations/zalo-booking-export"
 import { MobileContext, type Confirm, type FormRequest, type MobileCtx, type TablePick, type Tab } from "./context"
 import { DetailScreen } from "./detail"
 import { FormScreen } from "./form"
@@ -29,18 +29,15 @@ import { HomeScreen } from "./home"
 import { ListScreen } from "./list"
 import { MapScreen, TableSheet } from "./map"
 import { isOpenEntry } from "./model"
-import {
-  AccountSheet,
-  AlertsSheet,
-  ConfirmDialog,
-  CreateSheet,
-  Scrim,
-  StatusDialog,
-  Toast15,
-} from "./overlays"
+import { AccountSheet, AlertsSheet, ConfirmDialog, CreateSheet, Scrim, StatusDialog, Toast15 } from "./overlays"
+import { useSeenKeys } from "./seen-keys"
 import { PlainHeader } from "./ui"
 import { EntryDetailScreen, WaitScreen } from "./wait"
 import "./mobile.css"
+
+/** Khoá localStorage cho cảnh báo đã xem (chuông) và toast "tới muộn" đã xử lý. */
+const SEEN_STORAGE_KEY = "21gam.mobile.alerts.seen.v1"
+const HANDLED_STORAGE_KEY = "21gam.mobile.alerts.handled.v1"
 
 const PATH: Record<Tab, string> = { home: "/home", list: "/reservations", map: "/floor", wait: "/waitlist" }
 const TAB_OF: Record<string, Tab> = { "/home": "home", "/reservations": "list", "/floor": "map", "/waitlist": "wait" }
@@ -51,7 +48,7 @@ export default function MobileApp() {
   const tab: Tab | null = TAB_OF[loc.pathname] ?? null
   const role = useSession((s) => s.user.role)
   const permissions = useSession((s) => s.permissions)
-  const isOwner = role === "OWNER_ADMIN"
+  const isOwner = role === "OWNER"
   const isReceptionist = role === "RECEPTIONIST"
   const ui = useUi()
   const now = useNow(15_000)
@@ -64,7 +61,7 @@ export default function MobileApp() {
   const venue = model.catalog?.venue
   const th = { late: venue?.lateWarningMinutes ?? 15, noshow: venue?.noShowWarningMinutes ?? 30 }
 
-  const [overlay, setOverlay] = useState<null | "create" | "alerts" | "account" | "wait" | "count">(null)
+  const [overlay, setOverlay] = useState<null | "create" | "alerts" | "account" | "wait" | "count" | "count-edit">(null)
   const [statusFor, setStatusFor] = useState<ReservationView | null>(null)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [detail, setDetail] = useState<{ id: number; bd: BusinessDate } | null>(null)
@@ -74,13 +71,15 @@ export default function MobileApp() {
   const [pick, setPick] = useState<TablePick | null>(null)
   const [pickSel, setPickSel] = useState<number[]>([])
   const [pickBusy, setPickBusy] = useState(false)
-  const [seen, setSeen] = useState<Set<string>>(() => new Set())
-  const [handled, setHandled] = useState<Set<string>>(() => new Set())
+  // Đã xem / đã xử lý đọc từ localStorage theo ngày nghiệp vụ, nên F5 giữa ca
+  // không làm cảnh báo cũ hiện lại như mới. Xem seen-keys.ts.
+  const [seen, markSeen] = useSeenKeys(SEEN_STORAGE_KEY, selectedDate)
+  const [handled, markHandled] = useSeenKeys(HANDLED_STORAGE_KEY, selectedDate)
 
   const booked = useMemo(() => (reservations ?? []).filter((r) => r.status === "BOOKED"), [reservations])
   const alerts = useShiftAlerts(model, booked, now)
   const unread = alerts.filter((a) => !seen.has(a.key)).length
-  const handle = (key: string) => setHandled((s) => new Set(s).add(key))
+  const handle = (key: string) => markHandled([key])
   const toast15 = booked.find((r) => r.warning === "late" && !handled.has(`l${r.id}`)) ?? null
   const busy = !!(overlay || statusFor || confirm || detail || entryDetail || form || pick || ui.draft)
   const keyboardSafeHeight = useKeyboardSafeHeight()
@@ -102,7 +101,7 @@ export default function MobileApp() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return
       if (statusFor) setStatusFor(null)
-      else if (overlay) setOverlay(null)
+      else if (overlay && overlay !== "count" && overlay !== "count-edit" && overlay !== "wait") setOverlay(null)
       else if (entryDetail) setEntryDetail(null)
       else if (tableSel) setTableSel(null)
     }
@@ -135,11 +134,12 @@ export default function MobileApp() {
     unread,
     go,
     openAlerts: () => {
-      setSeen(new Set(alerts.map((a) => a.key)))
+      markSeen(alerts.map((a) => a.key))
       setOverlay("alerts")
     },
     openAccount: () => setOverlay("account"),
     openCount: () => setOverlay("count"),
+    openCountEdit: () => setOverlay("count-edit"),
     openDetail: (id, bd) => {
       setOverlay(null)
       setTableSel(null)
@@ -203,7 +203,11 @@ export default function MobileApp() {
             ...(keyboardSafeHeight ? { height: keyboardSafeHeight } : {}),
           } as CSSProperties
         }
-        className="fixed inset-0 h-dvh w-full touch-manipulation overflow-hidden"
+        className={cn(
+          "fixed inset-x-0 inset-y-0 h-dvh w-full touch-manipulation overflow-hidden",
+          isReceptionist &&
+            "mx-auto max-w-[var(--gm-max-w)] md:border-x md:border-border/70 md:shadow-[var(--shadow-float)]",
+        )}
       >
         <div className="absolute inset-x-0 top-0 bottom-[var(--nav-h)] flex flex-col overflow-hidden">
           {tab === "home" ? (
@@ -296,7 +300,7 @@ export default function MobileApp() {
           />
         ) : null}
 
-        {(overlay && overlay !== "wait" && overlay !== "count") || statusFor || confirm ? (
+        {(overlay && overlay !== "wait" && overlay !== "count" && overlay !== "count-edit") || statusFor || confirm ? (
           <Scrim
             onClick={() => {
               if (confirm) return
@@ -307,13 +311,23 @@ export default function MobileApp() {
         ) : null}
         {overlay === "create" ? <CreateSheet onClose={() => setOverlay(null)} /> : null}
         {overlay === "account" ? <AccountSheet onClose={() => setOverlay(null)} /> : null}
-        <ZaloBookingExport
+        <GuestCountSheet
           businessDate={selectedDate}
-          open={overlay === "count"}
-          onOpenChange={(open) => !open && setOverlay(null)}
+          open={overlay === "count" || overlay === "count-edit"}
+          initialMode={overlay === "count-edit" ? "edit" : "view"}
+          onClose={() => setOverlay(null)}
+          isReceptionist={isReceptionist}
         />
         <Sheet open={overlay === "wait"} onOpenChange={(open) => !open && setOverlay(null)}>
-          <SheetContent data-gm side="bottom" className="h-[85dvh] gap-0 overflow-hidden p-0">
+          <SheetContent
+            data-gm
+            data-receptionist-frame={isReceptionist ? "true" : undefined}
+            side="bottom"
+            className={cn(
+              "h-[85dvh] w-full gap-0 overflow-hidden rounded-t-[24px] p-0",
+              isReceptionist && "mx-auto max-w-[var(--gm-max-w)]",
+            )}
+          >
             <SheetTitle className="px-4 pt-5 text-lg">
               Bàn chờ ảo <span aria-hidden>({(waitlist ?? []).filter(isWaitingForTable).length})</span>
             </SheetTitle>
@@ -408,7 +422,7 @@ function BottomNav({
   return (
     <nav
       aria-label="Điều hướng chính"
-      className="fixed inset-x-0 bottom-0 z-[30] grid h-[var(--nav-h)] grid-cols-5 items-start border-t border-border bg-surface-1 px-1.5 pb-[env(safe-area-inset-bottom)]"
+      className="absolute inset-x-0 bottom-0 z-[30] grid h-[var(--nav-h)] grid-cols-5 items-start border-t border-border bg-surface-1 px-1.5 pb-[env(safe-area-inset-bottom)]"
     >
       {left.map(item)}
       <div className="relative z-[31] grid place-items-center">

@@ -3,7 +3,7 @@
  * Follows HU-32 H4 with Nam's decisions:
  * - 4 supported icons:
  *     star: Bàn sếp (VIP / Boss table)
- *     fire: Khách quen (Regular / Returning customer)
+ *     fire: Đã từng đặt bàn (Regular / Returning customer)
  *     pin:  Chỉ định (Designated table)
  *     cake: Sinh nhật (Birthday customer)
  * - Multiple icons show together in one small row anchored at the top-right
@@ -44,10 +44,10 @@ export interface TableIconMeta {
 
 const TABLE_ICON_DEFS: Record<"star" | "fire" | "pin" | "cake" | "new", TableIconMeta> = {
   star: { key: "star", glyph: "⭐", label: "Bàn sếp" },
-  fire: { key: "fire", glyph: "🔥", label: "Khách quen" },
+  fire: { key: "fire", glyph: "🔥", label: "Đã từng đặt bàn" },
   pin: { key: "pin", glyph: "📌", label: "Chỉ định" },
   cake: { key: "cake", glyph: "🎂", label: "Sinh nhật" },
-  new: { key: "new", glyph: "🆕", label: "Khách mới" },
+  new: { key: "new", glyph: "🆕", label: "Chưa từng đặt bàn" },
 }
 
 export interface TableIconsProps {

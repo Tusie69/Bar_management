@@ -31,6 +31,17 @@ const messages: Record<string, string> = {
   PHONE_NOT_DIALABLE: "Thông tin điện thoại này không thể dùng để gọi.",
 }
 
+/**
+ * Maps a table id to the code the receptionist sees. The services layer has no
+ * catalog of its own, so the floor model registers one here; without it the
+ * message falls back to "#12", which means nothing to anyone on the floor.
+ */
+let tableCodeOf: ((id: number) => string | null) | null = null
+
+export function setTableCodeResolver(resolver: ((id: number) => string | null) | null) {
+  tableCodeOf = resolver
+}
+
 export function apiErrorMessage(code: string, fallback: string, details: Record<string, unknown> = {}) {
   const message = messages[code] ?? fallback
   const ids = details.conflictingTableIds
@@ -38,8 +49,8 @@ export function apiErrorMessage(code: string, fallback: string, details: Record<
     Array.isArray(ids) &&
     ids.length
     ? `${message} Bàn: ${ids
-        .filter((id) => Number.isSafeInteger(id) && id > 0)
-        .map((id) => `#${id}`)
+        .filter((id): id is number => Number.isSafeInteger(id) && (id as number) > 0)
+        .map((id) => tableCodeOf?.(id) ?? `#${id}`)
         .join(", ")}.`
     : message
 }

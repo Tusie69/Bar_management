@@ -235,16 +235,18 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     expect(stored[0]?.phone_ciphertext.toString('utf8')).not.toContain('987654321')
   })
 
-  it('asks for confirmation before two guests on one Bar seat, without creating an orphan booking', async () => {
-    await expect(createAndAssignBooking(actor, {
+  it('allows two guests on one Bar seat without confirmation', async () => {
+    const created = await createAndAssignBooking(actor, {
       ...bookingInput('Direct Bar too large'),
       partySize: 2,
       tableIds: [barSeatTwoId],
-    })).rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
+    })
+    expect(created.partySize).toBe(2)
+    expect(await activeTableIds(created.id)).toEqual([barSeatTwoId])
     const [rows] = await databasePool.execute<RowDataPacket[]>(
       'SELECT id FROM reservations WHERE contact_name = ?', ['Direct Bar too large'],
     )
-    expect(rows).toEqual([])
+    expect(rows).toHaveLength(1)
   })
 
   it('rejects a past direct booking before creating a reservation or allocation', async () => {
@@ -350,10 +352,10 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     expect(JSON.stringify(audits)).not.toContain('Phone Walk-in')
   })
 
-  it('WALK-07 rejects capacity, cross-zone and mixed-kind selections without partial data or orphan groups', async () => {
-    await expect(createWalkIn(actor, {
+  it('WALK-07 allows excess guests but still rejects cross-zone and mixed-kind selections', async () => {
+    await createWalkIn(actor, {
       partySize: 3, businessDate: '2030-10-24', tableIds: [lowCapacityTableId],
-    })).rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
+    })
     await expect(createWalkIn(actor, {
       partySize: 2, businessDate: '2030-10-24', tableIds: [tableOneId, tableB3Id],
     })).rejects.toMatchObject({ code: 'TABLE_ZONE_MISMATCH' })
@@ -363,7 +365,7 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     const [counts] = await databasePool.execute<RowDataPacket[]>(
       'SELECT (SELECT COUNT(*) FROM visits) visits, (SELECT COUNT(*) FROM table_allocations) allocations, (SELECT COUNT(*) FROM table_groups) group_count, (SELECT COUNT(*) FROM operation_log) audits',
     )
-    expect(Object.values(counts[0] ?? {}).map(Number)).toEqual([0, 0, 0, 0])
+    expect(Object.values(counts[0] ?? {}).map(Number)).toEqual([1, 1, 0, 1])
   })
 
   it('WALK-08 permits only one concurrent Walk-in on the same table', async () => {
@@ -481,9 +483,8 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
       .rejects.toMatchObject({ code: 'TABLE_NOT_FOUND' })
     await expect(assignBookingTables(actor, created.id, created.version, [spareTableId]))
       .rejects.toMatchObject({ code: 'SPARE_TABLE_NOT_BOOKABLE' })
-    await expect(assignBookingTables(actor, created.id, created.version, [lowCapacityTableId]))
-      .rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
-    const assigned = await assignBookingTables(actor, created.id, created.version, [tableOneId])
+    const overCapacity = await assignBookingTables(actor, created.id, created.version, [lowCapacityTableId])
+    const assigned = await assignBookingTables(actor, created.id, overCapacity.version, [tableOneId])
     await expect(assignBookingTables(actor, assigned.id, assigned.version, [tableOneId]))
       .rejects.toMatchObject({ code: 'TABLE_ASSIGNMENT_UNCHANGED' })
     const cancelled = await closeBooking(actor, assigned.id, assigned.version, 'CANCELLED')
@@ -716,7 +717,7 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
     })).rejects.toMatchObject({ code: 'TABLE_KIND_MISMATCH' })
   })
 
-  it('enforces merge capacity and version without changing allocations', async () => {
+  it('allows an over-capacity merge and still enforces version', async () => {
     const walkIn = await createWalkIn(actor, {
       guestName: 'Capacity merge',
       partySize: 4,
@@ -724,20 +725,20 @@ mysqlDescribe('booking table assignment MySQL integration', () => {
       tableIds: [tableOneId],
     })
     await databasePool.execute('UPDATE visits SET guest_count = 9 WHERE id = ?', [walkIn.visitId])
-    await expect(mergeVisitTables(actor, {
+    await mergeVisitTables(actor, {
       visitId: walkIn.visitId,
       expectedVersion: 1,
       tableIds: [tableOneId, tableA7Id],
-    })).rejects.toMatchObject({ code: 'CAPACITY_OVERRIDE_REQUIRED' })
+    })
     await expect(mergeVisitTables(actor, {
       visitId: walkIn.visitId,
-      expectedVersion: 2,
+      expectedVersion: 1,
       tableIds: [tableOneId, tableA7Id],
     })).rejects.toMatchObject({ code: 'VERSION_CONFLICT' })
     const [rows] = await databasePool.execute<(RowDataPacket & { table_id: number })[]>(
       'SELECT table_id FROM table_allocations WHERE visit_id = ? AND released_at IS NULL', [walkIn.visitId],
     )
-    expect(rows.map((row) => Number(row.table_id))).toEqual([tableOneId])
+    expect(rows.map((row) => Number(row.table_id))).toEqual([tableOneId, tableA7Id])
   })
 
   it('rolls back group and allocation writes when the audit insert fails', async () => {

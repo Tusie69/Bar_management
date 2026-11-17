@@ -4,7 +4,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest"
 vi.mock("@/state/session", () => ({
   useCan: vi.fn(() => true),
   useSession: Object.assign(vi.fn(), {
-    getState: () => ({ permissions: ["venue.configure"] }),
+    getState: () => ({ permissions: ["table.spare.configure"] }),
   }),
 }))
 

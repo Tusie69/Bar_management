@@ -59,9 +59,13 @@ const displayName = argument('display-name').trim()
 const organizationId = positiveIntegerArgument('organization-id')
 const venueId = positiveIntegerArgument('venue-id')
 const roleCode = argument('role-code').trim()
+const accessLevel = roleCode === 'ADMIN' ? argument('access-level').trim() : null
 
 if (!username || username.length > 80) throw new Error('Username không hợp lệ.')
 if (!displayName || displayName.length > 120) throw new Error('Display name không hợp lệ.')
+if (accessLevel !== null && accessLevel !== 'WRITE' && accessLevel !== 'READ_ONLY') {
+  throw new Error('--access-level phải là WRITE hoặc READ_ONLY khi role là ADMIN.')
+}
 
 const [targetRows] = await databasePool.execute<(RowDataPacket & {
   organization_code: string
@@ -109,9 +113,9 @@ try {
     [organizationId, userResult.insertId],
   )
   await connection.execute(
-    `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
-     VALUES (?, ?, ?, ?)`,
-    [organizationId, membershipResult.insertId, target.role_id, venueId],
+    `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id, access_level)
+     VALUES (?, ?, ?, ?, ?)`,
+    [organizationId, membershipResult.insertId, target.role_id, venueId, accessLevel],
   )
   await connection.commit()
   stdout.write(`Đã tạo tài khoản ${username} với role ${roleCode} tại venue ${target.venue_code}.\n`)

@@ -69,6 +69,7 @@ import { symbolByNo } from "@/domain/symbols"
 import { useAction } from "@/hooks/use-action"
 import { useNow, useReservations, useTableHistory, useVenueSettings, useWaitlist } from "@/hooks/use-data"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
+import { isPlausibleVnPhone } from "@/lib/text"
 import { businessDateOf, fmtCountdown, fmtElapsed, fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
@@ -78,7 +79,9 @@ import { LayoutActions } from "./layout-merge-controls"
 import { layoutMembers } from "./layout-merge"
 import { SpareButton } from "./spare-button"
 import { GuestCountDialog } from "./floor-dialogs"
+import { claimCallTarget } from "@/domain/call-target"
 import { CallCustomerControl } from "../bookings/call-customer"
+import { CallHistory } from "../bookings/call-history"
 import type { FloorModel } from "./use-floor-model"
 import { useHeldOrderActions } from "../mobile/actions"
 
@@ -175,7 +178,8 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
             </h2>
             {isGroup ? (
               <p className="mt-1 text-sm text-muted-foreground">
-                Trạng thái: <strong className="font-semibold text-foreground">{STATE_META[state].label}</strong> · ghép {memberIds.length} bàn
+                Trạng thái: <strong className="font-semibold text-foreground">{STATE_META[state].label}</strong> · ghép{" "}
+                {memberIds.length} bàn
               </p>
             ) : null}
             <p className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
@@ -200,14 +204,7 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
 
         <div className="grid gap-5 px-4 pb-6">
           <LayoutActions model={model} tableId={tableId} />
-          {t ? (
-            <SpareButton
-              table={t}
-              state={state}
-              hasClaim={Boolean(claim)}
-              inGroup={isGroup}
-            />
-          ) : null}
+          {t ? <SpareButton table={t} state={state} hasClaim={Boolean(claim)} inGroup={isGroup} /> : null}
           {claim?.kind === "visit" ? <SeatedSection tableId={tableId} claim={claim} model={model} now={now} /> : null}
           {claim?.kind === "reservation" && !linkedEntry ? (
             <ReservationSection tableId={tableId} claim={claim} model={model} now={now} />
@@ -417,8 +414,8 @@ function ClaimCard({ claim, children, model }: { claim: ClaimView; children?: Re
       </div>
       {flags.length || displayCode ? (
         <div className="flex flex-wrap gap-1.5 text-xs">
-          {flags.includes("RETURNING") ? <span className="rounded-full border px-2 py-1">🔥 Khách quen</span> : null}
-          {flags.includes("NEW") ? <span className="rounded-full border px-2 py-1">🆕 Khách mới</span> : null}
+          {flags.includes("RETURNING") ? <span className="rounded-full border px-2 py-1">🔥 Đã từng đặt bàn</span> : null}
+          {flags.includes("NEW") ? <span className="rounded-full border px-2 py-1">🆕 Chưa từng đặt bàn</span> : null}
           {displayCode ? (
             <span className="rounded-full border px-2 py-1 font-semibold">
               Nhóm {displayCode} · {claim.tableIds.map((id) => model.label(id)).join(" + ")}
@@ -482,6 +479,7 @@ function SeatedSection({
 }) {
   const { run } = useAction()
   const pick = usePickActions(tableId, claim, model)
+  const callTarget = claimCallTarget(claim)
   const [endOpen, setEndOpen] = useState(false)
   const ui = useUi()
   const stale = model.states.get(tableId)?.staleFromPreviousDay
@@ -509,6 +507,18 @@ function SeatedSection({
         </Note>
       ) : null}
       <div className="grid grid-cols-2 gap-2">
+        {/* Khách đã ngồi vẫn phải gọi được: đồ bỏ quên, thiếu người trong nhóm,
+            cần dọn bàn. Chỉ hiện khi lượt ghé còn giữ booking để ghi log. */}
+        {callTarget ? (
+          <>
+            <CallCustomerControl
+              target={callTarget}
+              canCall={claim.canCall === true || claim.phoneLast3 !== null}
+              className="col-span-2"
+            />
+            <CallHistory target={callTarget} className="col-span-2" />
+          </>
+        ) : null}
         <GuardedButton permission="visit.move" variant="outline" onClick={pick.move}>
           <ArrowRightLeft /> Đổi bàn
         </GuardedButton>
@@ -565,6 +575,7 @@ function ReservationSection({
 }) {
   const { run, pending } = useAction()
   const pick = usePickActions(tableId, claim, model)
+  const callTarget = claimCallTarget(claim)
   const [checkInOpen, setCheckInOpen] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
   const ui = useUi()
@@ -608,12 +619,16 @@ function ReservationSection({
         </Note>
       ) : null}
       <div className="grid grid-cols-2 gap-2">
-        <CallCustomerControl
-          bookingId={claim.reservationId!}
-          bookingVersion={claim.version}
-          canCall={claim.canCall === true}
-          className="col-span-2"
-        />
+        {callTarget ? (
+          <>
+            <CallCustomerControl
+              target={callTarget}
+              canCall={claim.canCall === true || claim.phoneLast3 !== null}
+              className="col-span-2"
+            />
+            <CallHistory target={callTarget} className="col-span-2" />
+          </>
+        ) : null}
         <GuardedButton
           permission="visit.checkin"
           size="lg"
@@ -704,6 +719,7 @@ function HoldSection({
 }) {
   const { run, pending } = useAction()
   const held = useHeldOrderActions(model)
+  const callTarget = claimCallTarget(claim)
   const [seatOpen, setSeatOpen] = useState(false)
   const [arrival, setArrival] = useState<(() => Promise<unknown>) | null>(null)
   const [statusOpen, setStatusOpen] = useState(false)
@@ -762,6 +778,23 @@ function HoldSection({
         </Note>
       ) : null}
       <div className="grid grid-cols-2 gap-2">
+        {/* Khách chờ / khách đang giữ bàn cũng cần gọi được: trước đây khối này
+            không có nút gọi nào, nên booking đến từ Bàn chờ là trường hợp lễ
+            tân phải đi nhờ chủ quán mở số. */}
+        {callTarget ? (
+          <>
+            <CallCustomerControl
+              target={
+                callTarget.kind === "booking"
+                  ? { ...callTarget, version: linkedRes?.version ?? null }
+                  : callTarget
+              }
+              canCall={claim.canCall === true || claim.phoneLast3 !== null}
+              className="col-span-2"
+            />
+            <CallHistory target={callTarget} className="col-span-2" />
+          </>
+        ) : null}
         <GuardedButton
           permission="visit.checkin"
           size="lg"
@@ -989,6 +1022,8 @@ function FreeSection({
   const t = model.byId.get(tableId)!
   const [count, setCount] = useState(Math.min(t.capacity, 2))
   const [name, setName] = useState("")
+  const [phone, setPhone] = useState("")
+  const phoneInvalid = !!phone.trim() && !isPlausibleVnPhone(phone)
   const { run, pending } = useAction()
   const ui = useUi()
   const navigate = useNavigate()
@@ -1022,10 +1057,23 @@ function FreeSection({
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
+        <Input
+          id="walkin-phone"
+          className="h-11"
+          type="tel"
+          inputMode="tel"
+          autoComplete="tel"
+          placeholder="Số điện thoại (không bắt buộc)"
+          aria-label="Số điện thoại khách Walk-in (không bắt buộc)"
+          aria-invalid={phoneInvalid}
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+        />
+        {phoneInvalid ? <p className="text-xs text-destructive">SĐT phải có 10 số và bắt đầu bằng 0.</p> : null}
         <GuardedButton
           permission="visit.walkin"
           size="lg"
-          disabled={pending}
+          disabled={pending || phoneInvalid}
           aria-label={`Mở ${title} cho ${count} khách`}
           onClick={async () => {
             const r = await run((o) =>
@@ -1033,6 +1081,7 @@ function FreeSection({
                 tableIds: [tableId],
                 guestCount: count,
                 contactName: name || undefined,
+                phone: phone.trim() || undefined,
                 overrideReason: o,
                 idempotencyKey,
               }),
@@ -1040,16 +1089,12 @@ function FreeSection({
             if (r) {
               renewIdempotencyKey()
               setName("")
+              setPhone("")
             }
           }}
         >
           Mở bàn · {count} khách
         </GuardedButton>
-        {count > t.capacity ? (
-          <p className="flex items-center gap-1.5 text-xs text-st-late-ink">
-            <TriangleAlert className="size-3.5" aria-hidden /> Vượt {t.capacity} chỗ, cần Chủ quán duyệt
-          </p>
-        ) : null}
       </section>
       <GuardedButton
         permission="reservation.create"

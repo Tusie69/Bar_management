@@ -11,7 +11,7 @@ Reviewed 2026-10-30 against `api/src/config/env.ts`, `api/src/modules/bookings/p
 | `PHONE_HMAC_KEYS` | Same format and length as the encryption ring, with independently generated keys. HMAC-SHA256 of the normalized E.164 phone. |
 | `PHONE_ACTIVE_HMAC_KEY_ID` | Optional positive integer; must exist in the HMAC ring when set. Both active ids must be configured together. |
 | `PHONE_REVEAL_RATE_LIMIT_MAX` | Optional positive integer; maximum reveal attempts per configured window, scoped by user and booking in the current in-process limiter. |
-| `PHONE_REVEAL_RATE_LIMIT_WINDOW_MS` | Optional positive integer in milliseconds; must be supplied together with the maximum. Without both, reveal returns 503 `PHONE_REVEAL_POLICY_UNAVAILABLE`. |
+| `PHONE_REVEAL_RATE_LIMIT_WINDOW_MS` | Optional positive integer in milliseconds; must be supplied together with the maximum. Without both, reveal returns 503 `PHONE_REVEAL_POLICY_UNAVAILABLE`, while `POST /bookings/:id/call` runs unlimited: reception must keep being able to dial, and every attempt is already written to `booking_call_logs` and `operation_log`. |
 | `SESSION_CSRF_SECRET` | UTF-8 string, at least 32 characters in production. HMAC-SHA256 secret for CSRF tokens, separate from both phone keys. In development an absent secret uses fresh process-local random bytes. |
 | `NODE_ENV` | Defaults to `development`; `production` enables the strict session-secret and secure-cookie requirements. |
 | `SESSION_COOKIE_NAME` | Non-empty string, default `21gam_session`. A name, not a secret. |

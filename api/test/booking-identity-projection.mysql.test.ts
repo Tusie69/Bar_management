@@ -168,8 +168,9 @@ mysqlDescribe('BF-02/B02 booking identity in projections', () => {
     expect(after?.phoneLast3).toBe(phoneNumber.slice(-3))
     expect(after?.sourceCode).toBe('HOTLINE')
     expect(after?.partySize).toBe(2)
-    // Still no full phone and no calling after check-in.
-    expect(after?.canCall).toBe(false)
+    // Vẫn không lộ số đầy đủ, nhưng khách đã ngồi thì lễ tân vẫn gọi được:
+    // lượt ghé còn giữ booking nên cuộc gọi vẫn ghi được log.
+    expect(after?.canCall).toBe(true)
     expect(JSON.stringify(after)).not.toContain(phoneNumber)
   })
 

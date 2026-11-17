@@ -15,6 +15,7 @@ import {
   resetFloorChangeStream,
   subscribeToFloorChanges,
 } from '../src/modules/tables/floor-change-stream.js'
+import { notifySessionsRevoked } from '../src/auth/session-lifecycle.js'
 
 interface FakeResponse {
   response: Response
@@ -51,13 +52,14 @@ function fakeResponse(): FakeResponse {
 }
 
 const venue = { organizationId: 1, venueId: 1 }
+const session = { authSessionId: 1, userId: 1, authorize: () => Promise.resolve(null) }
 
 afterEach(() => resetFloorChangeStream())
 
 describe('floor change stream', () => {
   it('opens a no-store event stream with proxy buffering turned off', () => {
     const device = fakeResponse()
-    subscribeToFloorChanges({ ...venue, response: device.response })
+    subscribeToFloorChanges({ ...venue, ...session, response: device.response })
 
     expect(device.headers['Content-Type']).toBe('text/event-stream; charset=utf-8')
     expect(device.headers['Cache-Control']).toContain('no-store')
@@ -66,87 +68,116 @@ describe('floor change stream', () => {
     expect(floorChangeSubscriberCount()).toBe(1)
   })
 
-  it('greets a new device with the cursor it already knows, so a late joiner resyncs', () => {
+  it('greets a new device with the cursor it already knows, so a late joiner resyncs', async () => {
     const first = fakeResponse()
-    subscribeToFloorChanges({ ...venue, response: first.response })
+    subscribeToFloorChanges({ ...venue, ...session, response: first.response })
     expect(first.frames).toEqual([{ event: 'hello', data: { venueId: 1, changeSeq: null } }])
 
-    publishFloorChange({ ...venue, changeSeq: '42' })
+    await publishFloorChange({ ...venue, changeSeq: '42' })
     const second = fakeResponse()
-    subscribeToFloorChanges({ ...venue, response: second.response })
+    subscribeToFloorChanges({ ...venue, ...session, response: second.response })
     expect(second.frames[0]).toEqual({ event: 'hello', data: { venueId: 1, changeSeq: '42' } })
   })
 
-  it('carries only the cursor — never a name, a phone or what changed', () => {
+  it('carries only the cursor — never a name, a phone or what changed', async () => {
     const device = fakeResponse()
-    subscribeToFloorChanges({ ...venue, response: device.response })
-    publishFloorChange({ ...venue, changeSeq: '7' })
+    subscribeToFloorChanges({ ...venue, ...session, response: device.response })
+    await publishFloorChange({ ...venue, changeSeq: '7' })
 
     const frame = device.frames.at(-1)!
     expect(frame.event).toBe('floor-changed')
     expect(Object.keys(frame.data).sort()).toEqual(['changeSeq', 'venueId'])
   })
 
-  it('publishes each cursor once and ignores a repeat', () => {
+  it('publishes each cursor once and ignores a repeat', async () => {
     const device = fakeResponse()
-    subscribeToFloorChanges({ ...venue, response: device.response })
-    publishFloorChange({ ...venue, changeSeq: '7' })
-    publishFloorChange({ ...venue, changeSeq: '7' })
-    publishFloorChange({ ...venue, changeSeq: '8' })
+    subscribeToFloorChanges({ ...venue, ...session, response: device.response })
+    await publishFloorChange({ ...venue, changeSeq: '7' })
+    await publishFloorChange({ ...venue, changeSeq: '7' })
+    await publishFloorChange({ ...venue, changeSeq: '8' })
 
     expect(device.frames.filter((frame) => frame.event === 'floor-changed').map((frame) => frame.data.changeSeq))
       .toEqual(['7', '8'])
   })
 
-  it('never rewinds on an announcement that raced behind a newer one', () => {
+  it('never rewinds on an announcement that raced behind a newer one', async () => {
     const device = fakeResponse()
-    subscribeToFloorChanges({ ...venue, response: device.response })
-    publishFloorChange({ ...venue, changeSeq: '9' })
-    publishFloorChange({ ...venue, changeSeq: '5' })
+    subscribeToFloorChanges({ ...venue, ...session, response: device.response })
+    await publishFloorChange({ ...venue, changeSeq: '9' })
+    await publishFloorChange({ ...venue, changeSeq: '5' })
 
     expect(device.frames.filter((frame) => frame.event === 'floor-changed').map((frame) => frame.data.changeSeq))
       .toEqual(['9'])
   })
 
-  it('rebases to the database when the venue cursor really moved backwards', () => {
+  it('rebases to the database when the venue cursor really moved backwards', async () => {
     const device = fakeResponse()
-    subscribeToFloorChanges({ ...venue, response: device.response })
-    publishFloorChange({ ...venue, changeSeq: '9' })
+    subscribeToFloorChanges({ ...venue, ...session, response: device.response })
+    await publishFloorChange({ ...venue, changeSeq: '9' })
     // Only the poll against the database may do this: a restored venue row would
     // otherwise sit below the cached high-water mark and silence the stream.
-    publishFloorChange({ ...venue, changeSeq: '4' }, { rebase: true })
-    publishFloorChange({ ...venue, changeSeq: '5' })
+    await publishFloorChange({ ...venue, changeSeq: '4' }, { rebase: true })
+    await publishFloorChange({ ...venue, changeSeq: '5' })
 
     expect(device.frames.filter((frame) => frame.event === 'floor-changed').map((frame) => frame.data.changeSeq))
       .toEqual(['9', '4', '5'])
   })
 
-  it('only reaches the devices watching that venue', () => {
+  it('only reaches the devices watching that venue', async () => {
     const home = fakeResponse()
     const other = fakeResponse()
-    subscribeToFloorChanges({ ...venue, response: home.response })
-    subscribeToFloorChanges({ organizationId: 1, venueId: 2, response: other.response })
+    subscribeToFloorChanges({ ...venue, ...session, response: home.response })
+    subscribeToFloorChanges({ organizationId: 1, venueId: 2, ...session, response: other.response })
 
-    publishFloorChange({ ...venue, changeSeq: '3' })
+    await publishFloorChange({ ...venue, changeSeq: '3' })
     expect(home.frames.some((frame) => frame.event === 'floor-changed')).toBe(true)
     expect(other.frames.some((frame) => frame.event === 'floor-changed')).toBe(false)
   })
 
-  it('forgets a device that disconnected', () => {
+  it('forgets a device that disconnected', async () => {
     const device = fakeResponse()
-    const unsubscribe = subscribeToFloorChanges({ ...venue, response: device.response })
+    const unsubscribe = subscribeToFloorChanges({ ...venue, ...session, response: device.response })
     expect(floorChangeSubscriberCount()).toBe(1)
     unsubscribe()
     expect(floorChangeSubscriberCount()).toBe(0)
 
-    publishFloorChange({ ...venue, changeSeq: '11' })
+    await publishFloorChange({ ...venue, changeSeq: '11' })
     expect(device.frames.some((frame) => frame.event === 'floor-changed')).toBe(false)
   })
 
   it('forgets a device whose socket closed on its own', () => {
     const device = fakeResponse()
-    subscribeToFloorChanges({ ...venue, response: device.response })
+    subscribeToFloorChanges({ ...venue, ...session, response: device.response })
     device.close()
     expect(floorChangeSubscriberCount()).toBe(0)
+  })
+
+  it('actively ends a matching stream when its session is replaced', () => {
+    const oldDevice = fakeResponse()
+    const otherAccount = fakeResponse()
+    subscribeToFloorChanges({ ...venue, ...session, authSessionId: 11, userId: 11, response: oldDevice.response })
+    subscribeToFloorChanges({ ...venue, ...session, authSessionId: 22, userId: 22, response: otherAccount.response })
+
+    notifySessionsRevoked({ sessionIds: [11], userId: 11, code: 'SESSION_REPLACED' })
+
+    expect(oldDevice.frames.at(-1)).toEqual({ event: 'session-ended', data: { code: 'SESSION_REPLACED' } })
+    expect(otherAccount.frames.some((frame) => frame.event === 'session-ended')).toBe(false)
+    expect(floorChangeSubscriberCount()).toBe(1)
+  })
+
+  it('checks authorization before every protected event and drops a revoked stream', async () => {
+    const revoked = fakeResponse()
+    const valid = fakeResponse()
+    subscribeToFloorChanges({
+      ...venue, ...session, authSessionId: 31, userId: 31,
+      authorize: () => Promise.resolve('SESSION_REVOKED'), response: revoked.response,
+    })
+    subscribeToFloorChanges({ ...venue, ...session, authSessionId: 32, userId: 32, response: valid.response })
+
+    await publishFloorChange({ ...venue, changeSeq: '100' })
+
+    expect(revoked.frames.some((frame) => frame.event === 'floor-changed')).toBe(false)
+    expect(revoked.frames.at(-1)).toEqual({ event: 'session-ended', data: { code: 'SESSION_REVOKED' } })
+    expect(valid.frames.at(-1)).toEqual({ event: 'floor-changed', data: { venueId: 1, changeSeq: '100' } })
   })
 })

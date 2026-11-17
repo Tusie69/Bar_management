@@ -35,11 +35,11 @@ describe("TableIcons", () => {
     expect(html).toContain("Bàn sếp")
   })
 
-  it("renders single fire icon (Khách quen)", () => {
+  it("renders single fire icon (Đã từng đặt bàn)", () => {
     const html = renderToString(createElement(TableIcons, { iconKeys: ["fire"] }))
     expect(html).toContain("🔥")
     expect(html).toContain('data-icon="fire"')
-    expect(html).toContain("Khách quen")
+    expect(html).toContain("Đã từng đặt bàn")
   })
 
   it("renders single pin icon (Chỉ định)", () => {
@@ -73,7 +73,7 @@ describe("TableIcons", () => {
     expect(html).toContain('transform="translate(0 0)"')
     expect(html).toContain('transform="translate(-12 0)"')
     expect(html).toContain('transform="translate(-24 0)"')
-    expect(html).toContain("Bàn sếp, Khách quen, Sinh nhật")
+    expect(html).toContain("Bàn sếp, Đã từng đặt bàn, Sinh nhật")
   })
 
   it("deduplicates identical icon keys", () => {
@@ -97,7 +97,7 @@ describe("TableIcons", () => {
     expect(html).toContain("🔥")
     expect(html).toContain("📌")
     expect(html).toContain("🎂")
-    expect(html).toContain("Bàn sếp, Khách quen, Chỉ định, Sinh nhật")
+    expect(html).toContain("Bàn sếp, Đã từng đặt bàn, Chỉ định, Sinh nhật")
   })
 
   it("supports HTML rendering mode", () => {

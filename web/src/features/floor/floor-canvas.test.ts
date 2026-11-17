@@ -2,7 +2,7 @@ import { createElement } from "react"
 import { renderToString } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 import type { FloorTableState, TableView, ZoneView } from "@/domain/models"
-import { BAR_SEATS, FIXTURES, FLOOR_H, FLOOR_W, TABLES, ZONES } from "@/domain/venue-layout"
+import { BAR_SEATS, FIXTURES, FLOOR_H, FLOOR_W, TABLES, WALL_BOUNDS, ZONES } from "@/domain/venue-layout"
 import { STATE_META } from "@/components/status-meta"
 import { FloorCanvas } from "./floor-canvas"
 import {
@@ -11,6 +11,7 @@ import {
   findGroupRepresentativeId,
   formatCellGuestName,
   formatGroupCode,
+  formatTableCellLabel,
   groupCode,
   groupDisplayName,
   resolveCellCornerIcons,
@@ -132,8 +133,8 @@ describe("floor camera fit bounds (Item 2 & 8)", () => {
     const allBounds = computeZoneBounds(realTables, "ALL", 0)
     expect(allBounds).not.toBeNull()
 
-    // 1. Contains the floor frame rect (x:20, y:20, w:FLOOR_W-40, h:FLOOR_H-20)
-    const frame = { x: 20, y: 20, w: FLOOR_W - 40, h: FLOOR_H - 20 }
+    // 1. Contains the venue wall the canvas draws
+    const frame = { x: WALL_BOUNDS.x, y: WALL_BOUNDS.y, w: WALL_BOUNDS.w, h: WALL_BOUNDS.h }
     expect(allBounds!.x).toBeLessThanOrEqual(frame.x)
     expect(allBounds!.y).toBeLessThanOrEqual(frame.y)
     expect(allBounds!.x + allBounds!.w).toBeGreaterThanOrEqual(frame.x + frame.w)
@@ -177,7 +178,7 @@ describe("floor camera fit bounds (Item 2 & 8)", () => {
 
   it("ensures transformed floor frame stays inside viewports at 360, 390, 768, and 1280 widths", () => {
     const allBounds = computeZoneBounds(realTables, "ALL", 0)!
-    const frame = { x: 20, y: 20, w: FLOOR_W - 40, h: FLOOR_H - 20 }
+    const frame = { x: WALL_BOUNDS.x, y: WALL_BOUNDS.y, w: WALL_BOUNDS.w, h: WALL_BOUNDS.h }
 
     const viewports = [
       { w: 360, h: 800, isPhone: true },
@@ -222,10 +223,11 @@ describe("floor camera fit bounds (Item 2 & 8)", () => {
 
       // On phones, horizontal padding is exactly 8px (P4: map enlarged)
       if (vp.isPhone) {
-        expect(Math.round(frameLeft)).toBe(8)
-        expect(Math.round(vp.w - frameRight)).toBe(8)
-        // Top alignment on phones: frameTop is exactly 0
-        expect(Math.round(frameTop)).toBe(0)
+        // 8px of padding around the 374 x 732 plan container, then the wall
+        // sits WALL_BOUNDS.x further in - the margin the mockup leaves.
+        expect(Math.round(frameLeft)).toBe(Math.round(8 + WALL_BOUNDS.x * k))
+        expect(Math.round(vp.w - frameRight)).toBe(Math.round(8 + (FLOOR_W - WALL_BOUNDS.x - WALL_BOUNDS.w) * k))
+        expect(Math.round(frameTop)).toBe(Math.round(WALL_BOUNDS.y * k))
       }
     }
   })
@@ -238,10 +240,10 @@ describe("floor camera fit bounds (Item 2 & 8)", () => {
   it("returns full default floor bounds for ALL when table list is empty", () => {
     const bounds = computeZoneBounds([], "ALL", 0)
     expect(bounds).toEqual({
-      x: 20,
-      y: 20,
-      w: FLOOR_W - 40,
-      h: FLOOR_H - 20,
+      x: 0,
+      y: 0,
+      w: FLOOR_W,
+      h: FLOOR_H,
     })
   })
 })
@@ -274,10 +276,9 @@ describe("merge-group G-code numbering (Item 6 & 8)", () => {
 })
 
 describe("guest-type icon priority (Item 5)", () => {
-  it("defines full approved priority order: ⭐ VIP > 📌 Chỉ định > 🎂 Sinh nhật > 🔥 Khách quen > 🆕 Khách mới", () => {
+  it("defines full approved priority order: ⭐ VIP > 📌 Chỉ định > 🎂 Sinh nhật > 🔥 Đã từng đặt bàn > 🆕 Chưa từng đặt bàn", () => {
     expect(GUEST_ICON_PRIORITY).toEqual(["VIP", "DESIGNATED", "BIRTHDAY", "RETURNING", "NEW"])
   })
-
 })
 
 describe("StatusLegend counts and deduplication (Item 8)", () => {
@@ -736,7 +737,12 @@ describe("waitlist marker display per zone mode (Section MARKER)", () => {
       // Exactly one marker rendered at any moment (never both)
       expect(countMarkers(html)).toBe(1)
       // Floating HTML overlay used outside camera transform
-      expect(html).toContain("pointer-events-auto absolute bottom-3 right-3 z-10")
+      const overlayClass = html.match(
+        /<div class="([^"]*pointer-events-auto[^"]*)"><button[^>]*aria-label="Bàn chờ/,
+      )?.[1]
+      expect(overlayClass?.split(" ")).toEqual(
+        expect.arrayContaining(["pointer-events-auto", "absolute", "bottom-3", "right-3", "z-10"]),
+      )
       expect(html).toContain("Bàn chờ +3")
       expect(html).toContain('aria-label="Bàn chờ, 3 khách đang chờ"')
       // No SVG foreignObject waitlist marker
@@ -841,8 +847,34 @@ describe("Group border redesign - status-colored thick borders and neutral selec
     const group = { id: 101, symbolNo: 1, tableIds: [tB5.id, tB6.id] }
 
     const states = new Map<number, FloorTableState>([
-      [tB5.id, { state: "reserved", tableId: tB5.id, claim: { reservationId: 1, tableIds: [tB5.id, tB6.id], displayName: "Nam", partySize: 4, startsAt: new Date() } } as any],
-      [tB6.id, { state: "reserved", tableId: tB6.id, claim: { reservationId: 1, tableIds: [tB5.id, tB6.id], displayName: "Nam", partySize: 4, startsAt: new Date() } } as any],
+      [
+        tB5.id,
+        {
+          state: "reserved",
+          tableId: tB5.id,
+          claim: {
+            reservationId: 1,
+            tableIds: [tB5.id, tB6.id],
+            displayName: "Nam",
+            partySize: 4,
+            startsAt: new Date(),
+          },
+        } as any,
+      ],
+      [
+        tB6.id,
+        {
+          state: "reserved",
+          tableId: tB6.id,
+          claim: {
+            reservationId: 1,
+            tableIds: [tB5.id, tB6.id],
+            displayName: "Nam",
+            partySize: 4,
+            startsAt: new Date(),
+          },
+        } as any,
+      ],
     ])
 
     const html = renderCanvas({
@@ -854,8 +886,8 @@ describe("Group border redesign - status-colored thick borders and neutral selec
     })
 
     // Both tables render their own individual cells
-    expect(html).toContain(">B5<")
-    expect(html).toContain(">B6<")
+    expect(html).toContain(">B5 - Nam<")
+    expect(html).toContain(">B6 - Nam<")
     // Border uses business status color, not group palette
     expect(html).not.toContain("data-group-color")
     expect(html).toContain(`stroke="${STATE_META.reserved.color}"`)
@@ -869,8 +901,22 @@ describe("Group border redesign - status-colored thick borders and neutral selec
     const group = { id: 102, symbolNo: 1, tableIds: [tA0.id, tC1.id] }
 
     const states = new Map<number, FloorTableState>([
-      [tA0.id, { state: "seated", tableId: tA0.id, claim: { visitId: 10, tableIds: [tA0.id, tC1.id], displayName: "Party", partySize: 6, startsAt: new Date() } } as any],
-      [tC1.id, { state: "seated", tableId: tC1.id, claim: { visitId: 10, tableIds: [tA0.id, tC1.id], displayName: "Party", partySize: 6, startsAt: new Date() } } as any],
+      [
+        tA0.id,
+        {
+          state: "seated",
+          tableId: tA0.id,
+          claim: { visitId: 10, tableIds: [tA0.id, tC1.id], displayName: "Party", partySize: 6, startsAt: new Date() },
+        } as any,
+      ],
+      [
+        tC1.id,
+        {
+          state: "seated",
+          tableId: tC1.id,
+          claim: { visitId: 10, tableIds: [tA0.id, tC1.id], displayName: "Party", partySize: 6, startsAt: new Date() },
+        } as any,
+      ],
     ])
 
     const html = renderCanvas({
@@ -881,8 +927,8 @@ describe("Group border redesign - status-colored thick borders and neutral selec
       selectedIds: [],
     })
 
-    expect(html).toContain(">A0<")
-    expect(html).toContain(">C1<")
+    expect(html).toContain(">A0 - Party<")
+    expect(html).toContain(">C1 - Party<")
     expect(html).not.toContain("data-group-color")
     expect(html).toContain(`stroke="${STATE_META.seated.color}"`)
     expect(html).toContain('stroke-width="3"')
@@ -904,6 +950,38 @@ describe("Group border redesign - status-colored thick borders and neutral selec
     expect(html).toContain(">2<")
     expect(html).not.toContain("data-group-color")
     expect(html).toContain('stroke-width="3"')
+  })
+
+  it("keeps adjacent vertical Bar groups clear of an unrelated seat and draws their codes last", () => {
+    const barSeat = (no: number) => realTables.find((t) => t.kind === "BAR_SEAT" && t.seqNo === no)!
+    const upper = [11, 10, 9, 8, 7, 6].map(barSeat)
+    const lower = [4, 3, 2, 1].map(barSeat)
+    const seat5 = barSeat(5)
+    const groups = [
+      { id: 201, symbolNo: 1, tableIds: upper.map((t) => t.id) },
+      { id: 202, symbolNo: 2, tableIds: lower.map((t) => t.id) },
+    ]
+
+    const html = renderCanvas({
+      tables: [...upper, seat5, ...lower],
+      mode: "live",
+      groups,
+      selectedIds: [],
+    })
+
+    // The rendered 21px seats on a 24px pitch leave a 3px gap. A 2px
+    // capsule pad stays clear of the independent Bar 5, including its stroke.
+    expect(html).toContain(
+      'data-cluster-kind="bar" data-cluster-orientation="vertical" pointer-events="none"><rect x="143.5" y="409.5" width="25" height="145" rx="12.5"',
+    )
+    expect(html).toContain(
+      'data-cluster-kind="bar" data-cluster-orientation="vertical" pointer-events="none"><rect x="143.5" y="577.5" width="25" height="97" rx="12.5"',
+    )
+    expect(seat5.y - seat5.h / 2).toBe(555.5)
+    expect(seat5.y + seat5.h / 2).toBe(576.5)
+
+    expect((html.match(/data-cluster-label-side="left"/g) || []).length).toBe(2)
+    expect(html.indexOf('data-cluster-code="1"')).toBeGreaterThan(html.lastIndexOf("data-group-id="))
   })
 
   it("renders normal 2px border for single tables versus 3px for grouped tables", () => {
@@ -959,8 +1037,34 @@ describe("Group border redesign - status-colored thick borders and neutral selec
     const group = { id: 106, symbolNo: 1, tableIds: [tB5.id, tB6.id] }
 
     const states = new Map<number, FloorTableState>([
-      [tB5.id, { state: "seated", tableId: tB5.id, claim: { visitId: 11, tableIds: [tB5.id, tB6.id], displayName: "Anh Nam", partySize: 5, startsAt: new Date() } } as any],
-      [tB6.id, { state: "seated", tableId: tB6.id, claim: { visitId: 11, tableIds: [tB5.id, tB6.id], displayName: "Anh Nam", partySize: 5, startsAt: new Date() } } as any],
+      [
+        tB5.id,
+        {
+          state: "seated",
+          tableId: tB5.id,
+          claim: {
+            visitId: 11,
+            tableIds: [tB5.id, tB6.id],
+            displayName: "Anh Nam",
+            partySize: 5,
+            startsAt: new Date(),
+          },
+        } as any,
+      ],
+      [
+        tB6.id,
+        {
+          state: "seated",
+          tableId: tB6.id,
+          claim: {
+            visitId: 11,
+            tableIds: [tB5.id, tB6.id],
+            displayName: "Anh Nam",
+            partySize: 5,
+            startsAt: new Date(),
+          },
+        } as any,
+      ],
     ])
 
     const html = renderCanvas({
@@ -1093,17 +1197,119 @@ describe("Group border redesign - status-colored thick borders and neutral selec
         selectedIds: [],
       })
 
-      expect(html).toContain(">B21<")
+      expect(html).toContain(">B21 - Chị…<")
       expect(html).toContain(">22:30<")
-      expect(html).toContain(">B3<")
-      expect(html).toContain(">Anh Nam<")
+      expect(html).toContain(">B3 - Anh…<")
       // Walk-in without a real name shows "Khách lẻ", never fake name or "N khách"
-      expect(html).toContain(">Khách lẻ<")
+      expect(html).toContain(">A3 - Khách lẻ<")
       expect(html).not.toContain("4 khách<")
       expect(html).not.toContain("2 khách<")
+      expect(html).not.toContain('font-size="7.3"')
 
-      // Long name truncation helper check
+      // Long name truncation helper check: preserves honorific / start and truncates at the end with "…"
       expect(formatCellGuestName("Nguyễn Hoàng Bảo Trâm", 10)).toBe("Nguyễn Ho…")
+      expect(formatCellGuestName("  Chị   Nguyễn   Lan   Anh  ", 11)).toBe("Chị Nguyễn…")
+      expect(formatCellGuestName("  Nguyễn   Văn   Tùng  ", 8)).toBe("Nguyễn…")
+      expect(formatCellGuestName("Anh Tùng", 11)).toBe("Anh Tùng")
+      expect(formatCellGuestName("Tùng", 8)).toBe("Tùng")
+      expect(formatCellGuestName("Minh Anh", 8)).toBe("Minh Anh")
+      expect(formatCellGuestName("Nguyễn Hoàng Bảo Trâm", 4, true)).toBe("Trâm")
+    })
+
+    it("applies separate MR/MS honorific metadata before end-ellipsis truncation at fixed 8.2 font size and keeps full name in aria-label", () => {
+      const tA7 = realTables.find((t) => t.code === "A7")!
+      const tB7 = realTables.find((t) => t.code === "B7")!
+      const tB5 = realTables.find((t) => t.code === "B5")!
+      const tB6 = realTables.find((t) => t.code === "B6")!
+
+      // Direct formatter unit coverage for MR, MS, null, short & long names
+      expect(formatTableCellLabel("A7", "Tùng", "MR", tA7.w)).toBe("A7 - Mr Tùng")
+      expect(formatTableCellLabel("B7", "Lan", "MS", tB7.w)).toBe("B7 - Ms Lan")
+      expect(formatTableCellLabel("B5", "Khoa", null, tB5.w)).toBe("B5 - Khoa")
+      expect(formatTableCellLabel("B7", "Tùng Nguyễn Hoàng Bảo Trâm", "MR", tB7.w)).toBe("B7 - Mr T…")
+      expect(formatTableCellLabel("A7", "Tùng Nguyễn Hoàng Bảo Trâm", "MS", tA7.w)).toBe("A7 - Ms Tùn…")
+      expect(formatTableCellLabel("A7", "Phạm Quốc Khoa", null, tA7.w)).toBe("A7 - Phạm Q…")
+
+      const states = new Map<number, FloorTableState>([
+        [
+          tA7.id,
+          {
+            tableId: tA7.id,
+            state: "upcoming",
+            claim: {
+              reservationId: 301,
+              displayName: "Tùng Nguyễn Hoàng Bảo Trâm",
+              honorific: "MS",
+              partySize: 4,
+              startsAt: new Date("2026-11-09T15:00:00Z"),
+              tableIds: [tA7.id],
+            },
+          } as any,
+        ],
+        [
+          tB7.id,
+          {
+            tableId: tB7.id,
+            state: "upcoming",
+            claim: {
+              reservationId: 302,
+              displayName: "Tùng Nguyễn Hoàng Bảo Trâm",
+              honorific: "MR",
+              partySize: 4,
+              startsAt: new Date("2026-11-09T15:00:00Z"),
+              tableIds: [tB7.id],
+            },
+          } as any,
+        ],
+        [
+          tB5.id,
+          {
+            tableId: tB5.id,
+            state: "seated",
+            claim: {
+              visitId: 303,
+              displayName: "Lan",
+              honorific: "MS",
+              partySize: 2,
+              startsAt: new Date("2026-11-09T14:00:00Z"),
+              tableIds: [tB5.id],
+            },
+          } as any,
+        ],
+        [
+          tB6.id,
+          {
+            tableId: tB6.id,
+            state: "seated",
+            claim: {
+              visitId: 304,
+              displayName: "Khoa",
+              honorific: null,
+              partySize: 2,
+              startsAt: new Date("2026-11-09T14:00:00Z"),
+              tableIds: [tB6.id],
+            },
+          } as any,
+        ],
+      ])
+
+      const html = renderCanvas({
+        tables: [tA7, tB7, tB5, tB6],
+        mode: "live",
+        states,
+        selectedIds: [],
+      })
+
+      expect(html).toContain(">A7 - Ms Tùn…<")
+      expect(html).toContain(">B7 - Mr T…<")
+      expect(html).toContain(">B5 - Ms Lan<")
+      expect(html).toContain(">B6 - Khoa<")
+      expect(html).toContain("Bàn A7, Sắp tới, Ms Tùng Nguyễn Hoàng Bảo Trâm, 4 khách")
+      expect(html).toContain("Bàn B7, Sắp tới, Mr Tùng Nguyễn Hoàng Bảo Trâm, 4 khách")
+      expect(html).toContain("Bàn B5, Đã tới, Ms Lan, 2 khách")
+      expect(html).toContain("Bàn B6, Đã tới, Khoa, 2 khách")
+      expect(html).toContain('font-size="8.2"')
+      expect(html).not.toContain('font-size="7.3"')
     })
 
     it("BR-03: shows seat number plus booked time in cell for booked Bar seat (e.g. Bar16 at 22:15)", () => {
@@ -1181,9 +1387,9 @@ describe("Group border redesign - status-colored thick borders and neutral selec
       ])
 
       const resolved = resolveCellCornerIcons(states.get(tA3.id)!.claim)
-      expect(resolved.topRight).toEqual(["cake"])
+      expect(resolved.topRight).toEqual([]) // the turn badge owns that corner
       expect(resolved.bottomLeft).toEqual(["fire"]) // RETURNING wins over NEW, never both
-      expect(resolved.bottomRight).toEqual(["star", "pin"])
+      expect(resolved.bottomRight).toEqual(["star", "pin", "cake"])
 
       const html = renderCanvas({
         tables: [tA3],
@@ -1268,7 +1474,7 @@ describe("Group border redesign - status-colored thick borders and neutral selec
       // K1 Section 2: No connector, curve, SVG path, long bracket or standalone link icon
       expect(htmlFar).not.toContain("data-group-bracket")
       expect(htmlFar).not.toContain("data-group-arc")
-      expect(htmlFar).not.toContain("data-testid=\"group-link-icon\"")
+      expect(htmlFar).not.toContain('data-testid="group-link-icon"')
       expect(htmlFar).not.toContain("data-link-placement")
 
       // K1 Section 7: One guest count badge on the representative table, number only

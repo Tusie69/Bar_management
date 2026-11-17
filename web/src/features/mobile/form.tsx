@@ -1,5 +1,5 @@
 import { guestCount, guestValueFrom, type GuestValue } from "@/domain/booking-rules"
-import { ChevronLeft } from "lucide-react"
+import { AlertTriangle, ChevronLeft } from "lucide-react"
 import { useMemo, useState } from "react"
 import {
   bookingCalendarDate,
@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { bookingTableCanSelect } from "./booking-table-selection"
 import { FloorCanvas } from "../floor/floor-canvas"
+import { capacityWarningText, selectedTablesCapacity } from "../floor/reception-rules"
 import { useM, type FormRequest } from "./context"
 import { useKeyboardSafeHeight } from "./mobile-app"
 import { codesOf } from "./model"
@@ -92,7 +93,10 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const phoneOk = !phone.trim() || isPlausibleVnPhone(phone)
   const guestMissing = isBooking && !phone.trim() && !name.trim()
   const noteBad = noteHasPhoneNumber(note)
-  const platformErr = isBooking && socialPlatformSupported && source === "SOCIAL" && !platform ? "Vui lòng chọn nền tảng mạng xã hội." : null
+  const platformErr =
+    isBooking && socialPlatformSupported && source === "SOCIAL" && !platform
+      ? "Vui lòng chọn nền tảng mạng xã hội."
+      : null
   const errTime = isBooking && !!timeErr && (tried || !!slot)
   const errGuest = tried && (guestMissing || !phoneOk)
 
@@ -225,6 +229,9 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const walkInCapacity = selectedCapacity(selectedWalkInIds, m.model.byId)
   const walkInIssues = walkInSelectionIssues(selectedWalkInIds, m.model.byId, m.model.states, bookableZoneIds)
   const walkInReady = !!guests && selectedWalkInIds.length > 0 && walkInIssues.length === 0
+  const activeIds = isBooking ? bookingIds : selectedWalkInIds
+  const activeCapacity = selectedTablesCapacity(activeIds, m.model.byId)
+  const activeCapacityWarning = capacityWarningText(activeIds.length, activeCapacity, guests)
 
   const reset = () => {
     // Revalidate the existing map selection when date/time/party changes.
@@ -286,7 +293,8 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const submit = async () => {
     if (
       guests === null ||
-      (isBooking ? guestMissing || !phoneOk || !at || !!bookingSelectionError || !!platformErr : false) ||
+      (isBooking ? guestMissing || !at || !!bookingSelectionError || !!platformErr : false) ||
+      !phoneOk ||
       noteBad
     ) {
       setTried(true)
@@ -331,6 +339,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
               tableIds: ids,
               guestCount: guests,
               contactName: name.trim() || undefined,
+              phone: phone.trim() || undefined,
               overrideReason: o,
               idempotencyKey,
             }),
@@ -339,6 +348,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             api.addWaitlist({
               kind: "WALK_IN",
               contactName: name.trim() || `Khách Walk-in ${guests} người`,
+              phone: phone.trim() || undefined,
               partySize: guests,
               channel: "IN_PERSON",
               preferenceMode: "ANY",
@@ -360,7 +370,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
       role="dialog"
       aria-label="Tạo đơn đặt bàn"
       style={{ height: keyboardSafeHeight ? `${keyboardSafeHeight}px` : "100dvh" }}
-      className="fixed inset-0 z-[40] flex flex-col overflow-hidden bg-background"
+      className="absolute inset-0 z-[40] flex flex-col overflow-hidden bg-background"
     >
       <div className="shrink-0 border-b border-border bg-background px-4 pt-[var(--top-safe)] pb-3">
         <div className="-ml-2.5 flex h-11 items-center gap-1">
@@ -380,9 +390,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
 
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pt-4 pb-6">
         <section className="flex flex-col gap-3">
-          <h2 className="m-0 text-base font-semibold text-tx-strong">
-            {isBooking ? "Số khách" : "Khách vừa đến"}
-          </h2>
+          <h2 className="m-0 text-base font-semibold text-tx-strong">{isBooking ? "Số khách" : "Khách vừa đến"}</h2>
           <div className="flex flex-col gap-3.5 rounded-2xl border border-border bg-surface-1 p-4">
             <GuestPicker
               value={guest}
@@ -435,23 +443,21 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                 ) : null}
               </div>
             </div>
-            {isBooking ? (
-              <label className="flex flex-col gap-1.5">
-                <span className="text-[13px] font-medium text-tx-2">Số điện thoại</span>
-                <input
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  value={phone}
-                  onChange={(e) => {
-                    setPhone(e.target.value)
-                    touch()
-                  }}
-                  placeholder="09xx xxx xxx"
-                  className={field}
-                />
-              </label>
-            ) : null}
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[13px] font-medium text-tx-2">Số điện thoại (không bắt buộc)</span>
+              <input
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                value={phone}
+                onChange={(e) => {
+                  setPhone(e.target.value)
+                  touch()
+                }}
+                placeholder="09xx xxx xxx"
+                className={field}
+              />
+            </label>
             {errGuest ? (
               <span role="alert" className="text-[13px] text-st-noshow-ink">
                 {!phoneOk ? "SĐT chưa đúng định dạng (10 số, bắt đầu bằng 0)." : "Nhập ít nhất tên hoặc số điện thoại."}
@@ -459,14 +465,18 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             ) : null}
             {isBooking ? (
               <div className="flex flex-col gap-1.5">
-                <span className="text-[13px] font-medium text-tx-2">Khách quen / mới</span>
-                <div role="radiogroup" aria-label="Khách quen / mới" className="grid grid-cols-2 gap-2">
+                <span className="text-[13px] font-medium text-tx-2">Khách đã từng / chưa từng đặt bàn</span>
+                <div
+                  role="radiogroup"
+                  aria-label="Khách đã từng / chưa từng đặt bàn"
+                  className="grid grid-cols-2 gap-2"
+                >
                   <button
                     type="button"
                     role="radio"
                     aria-checked={classification === "RETURNING"}
                     className={cn(
-                      "h-12 rounded-xl border text-[14px] font-medium transition-colors",
+                      "h-12 rounded-xl border px-1.5 text-[13px] leading-tight font-medium transition-colors",
                       classification === "RETURNING"
                         ? "border-primary bg-primary-tint font-semibold text-primary-ink"
                         : "border-strong bg-background text-tx-1",
@@ -476,14 +486,14 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                       touch()
                     }}
                   >
-                    Khách quen (O)
+                    Đã từng đặt bàn
                   </button>
                   <button
                     type="button"
                     role="radio"
                     aria-checked={classification === "NEW"}
                     className={cn(
-                      "h-12 rounded-xl border text-[14px] font-medium transition-colors",
+                      "h-12 rounded-xl border px-1.5 text-[13px] leading-tight font-medium transition-colors",
                       classification === "NEW"
                         ? "border-primary bg-primary-tint font-semibold text-primary-ink"
                         : "border-strong bg-background text-tx-1",
@@ -493,7 +503,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                       touch()
                     }}
                   >
-                    Khách mới (N)
+                    Chưa từng đặt bàn
                   </button>
                 </div>
               </div>
@@ -820,6 +830,16 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
           <span role="alert" className="text-[13px] text-st-noshow-ink">
             {selectionMessage}
           </span>
+        ) : null}
+        {activeCapacityWarning ? (
+          <p
+            role="status"
+            data-testid="capacity-warning"
+            className="tnum m-0 flex items-start gap-2 rounded-lg border border-st-late/30 bg-st-late-tint px-2.5 py-1.5 text-[13px] font-medium text-st-late-ink"
+          >
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <span>{activeCapacityWarning}</span>
+          </p>
         ) : null}
         <button
           type="button"

@@ -55,7 +55,6 @@ export default function ReservationsPage() {
   const [filter, setFilter] = useState<StatusFilter>("all")
   const [source, setSource] = useState<"ALL" | BookingSourceCode>("ALL")
   const [view, setView] = useState<"list" | "timeline">("list")
-  const [exportOpen, setExportOpen] = useState(false)
   const canExport = useCan("customer.view_masked")
   const ui = useUi()
   const list = useReservations(date, search)
@@ -119,14 +118,18 @@ export default function ReservationsPage() {
             ) : null}
           </div>
           <div className="ml-auto flex items-center gap-2">
-            <Button
-              variant="outline"
-              aria-label="Xuất text Zalo"
-              onClick={() => setExportOpen(true)}
-              disabled={!canExport}
-            >
-              <MessageSquareText /> <span className="hidden sm:inline">Xuất text Zalo</span>
-            </Button>
+            <ZaloBookingExport businessDate={date} enabled={canExport}>
+              {({ copy, loading }) => (
+                <Button
+                  variant="outline"
+                  aria-label="Xuất text Zalo"
+                  onClick={() => void copy()}
+                  disabled={!canExport || loading}
+                >
+                  <MessageSquareText /> <span className="hidden sm:inline">Xuất text Zalo</span>
+                </Button>
+              )}
+            </ZaloBookingExport>
             <ToggleGroup
               type="single"
               variant="outline"
@@ -218,7 +221,6 @@ export default function ReservationsPage() {
           <Timeline date={date} reservations={list.data ?? []} tables={catalog.data?.tables ?? []} />
         )}
       </div>
-      <ZaloBookingExport businessDate={date} open={exportOpen} onOpenChange={setExportOpen} />
     </div>
   )
 }
@@ -318,10 +320,7 @@ function ReservationList({
                   toast.error("Không thể ghép bàn thường với ghế Bar.")
                   return false
                 }
-                const totalCapacity = ids.reduce(
-                  (sum, id) => sum + (tables.find((t) => t.id === id)?.capacity ?? 0),
-                  0,
-                )
+                const totalCapacity = ids.reduce((sum, id) => sum + (tables.find((t) => t.id === id)?.capacity ?? 0), 0)
                 if (totalCapacity < r.partySize) {
                   toast.error(
                     `Tổng sức chứa (${totalCapacity}) thấp hơn số khách (${r.partySize}). Chọn thêm bàn cùng khu, cùng loại trước khi xác nhận.`,

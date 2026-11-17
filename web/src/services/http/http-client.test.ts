@@ -175,6 +175,20 @@ describe("HttpClient", () => {
 })
 
 describe("AuthApi", () => {
+  it("does not expire an existing client session when a new login attempt is rejected", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(json({ error: { code: "INVALID_CREDENTIALS", message: "Sai thông tin" } }, 401)),
+    )
+    const client = new HttpClient("https://api.example.test")
+    const unauthorized = vi.fn()
+    client.setUnauthorizedHandler(unauthorized)
+    const auth = new AuthApi(client)
+
+    await expect(auth.login("operator", "wrong", "admin")).rejects.toMatchObject({ code: "INVALID_CREDENTIALS" })
+    expect(unauthorized).not.toHaveBeenCalled()
+  })
+
   it("accepts login/me contracts and sends the returned CSRF token on logout", async () => {
     const session = {
       user: {
@@ -183,7 +197,8 @@ describe("AuthApi", () => {
         displayName: "Operator",
         organizationId: 1,
         venueId: 1,
-        roles: ["OWNER_ADMIN"],
+        roles: ["OWNER"],
+        accessLevel: null,
       },
       permissions: ["customer.view_masked"],
       csrfToken: "server-csrf",
@@ -217,7 +232,7 @@ describe("AuthApi", () => {
     await expect(auth.me()).rejects.toMatchObject({ code: "INVALID_RESPONSE" })
   })
 
-  it.each([undefined, "OWNER_ADMIN", ["OWNER_ADMIN", 7]])("rejects malformed role codes %j", async (roles) => {
+  it.each([undefined, "OWNER", ["OWNER", 7]])("rejects malformed role codes %j", async (roles) => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(

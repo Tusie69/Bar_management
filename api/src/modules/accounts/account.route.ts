@@ -1,27 +1,38 @@
 /**
  * BA-022 — Account Management routes (US-11).
  *
- * Every route needs authentication and the baseline sensitive permission
- * `user.manage`, which migration 0001 grants to OWNER_ADMIN only. Mutations
- * also need CSRF. Nothing here returns a password hash or any customer PII.
+ * Listing uses `user.read`; delegated mutations use `user.manage` plus
+ * repository-level actor/target checks. Self password change only requires the
+ * authenticated account and CSRF. Nothing returns credential material.
  */
 import { Router } from 'express'
 
-import { requireAuthentication, requireCsrfProtection, requirePermission } from '../../auth/auth.middleware.js'
+import {
+  requireAuthentication,
+  requireAuthenticationPendingPassword,
+  requireCsrfProtection,
+  requirePermission,
+} from '../../auth/auth.middleware.js'
 import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { AppError } from '../../errors/app-error.js'
 import {
   assertConfiguredOrganization,
+  changeOwnPassword,
   createAccount,
   listAccounts,
   listAssignableRoles,
+  resetAccountPassword,
+  setAdminAccessLevel,
   setAccountStatus,
+  type AdminAccessLevel,
   type AccountStatus,
 } from './account.repository.js'
+import { getAccountPermissions, updateAccountPermissions } from './permission.repository.js'
 
 export const accountRouter: Router = Router()
 
 const statuses = new Set<AccountStatus>(['ACTIVE', 'DISABLED'])
+const accessLevels = new Set<AdminAccessLevel>(['WRITE', 'READ_ONLY'])
 
 function objectBody(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -44,11 +55,11 @@ function positiveInteger(value: unknown, code: string, message: string): number 
 accountRouter.get(
   '/',
   requireAuthentication,
-  requirePermission('user.manage'),
+  requirePermission('user.read'),
   async (request, response) => {
     const actor = requireAuthenticatedActor(request)
     assertConfiguredOrganization(actor)
-    response.json({ accounts: await listAccounts(actor), roles: await listAssignableRoles() })
+    response.json({ accounts: await listAccounts(actor), roles: await listAssignableRoles(actor) })
   },
 )
 
@@ -61,13 +72,79 @@ accountRouter.post(
     const actor = requireAuthenticatedActor(request)
     assertConfiguredOrganization(actor)
     const body = objectBody(request.body)
+    // TU-34: không gửi `password` thì server sinh mật khẩu tạm và trả về đúng
+    // một lần trong response này.
     const account = await createAccount(actor, {
       username: text(body.username, 'INVALID_USERNAME', 'Tên đăng nhập không hợp lệ.'),
       displayName: text(body.displayName, 'INVALID_DISPLAY_NAME', 'Tên hiển thị không hợp lệ.'),
-      password: text(body.password, 'WEAK_PASSWORD', 'Mật khẩu không hợp lệ.'),
+      ...(body.password === undefined
+        ? {}
+        : { password: text(body.password, 'WEAK_PASSWORD', 'Mật khẩu không hợp lệ.') }),
       roleCode: text(body.roleCode, 'ROLE_NOT_FOUND', 'Vai trò không hợp lệ.'),
+      ...(body.accessLevel === undefined
+        ? {}
+        : { accessLevel: text(body.accessLevel, 'INVALID_ACCESS_LEVEL', 'Cấp truy cập không hợp lệ.') as AdminAccessLevel }),
     })
-    response.status(201).json({ account })
+    response.status(201).json(account)
+  },
+)
+
+accountRouter.post(
+  '/me/password',
+  // Đổi mật khẩu phải làm được KHI đang bị chặn vì mật khẩu tạm, nếu không
+  // tài khoản mới sẽ kẹt cứng ngay sau khi đăng nhập.
+  requireAuthenticationPendingPassword,
+  requireCsrfProtection,
+  async (request, response) => {
+    const actor = requireAuthenticatedActor(request)
+    assertConfiguredOrganization(actor)
+    const body = objectBody(request.body)
+    response.json(await changeOwnPassword(
+      actor,
+      text(body.currentPassword, 'INVALID_PASSWORD', 'Mật khẩu hiện tại không hợp lệ.'),
+      text(body.newPassword, 'WEAK_PASSWORD', 'Mật khẩu mới không hợp lệ.'),
+    ))
+  },
+)
+
+accountRouter.post(
+  '/:id/access-level',
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission('user.manage'),
+  async (request, response) => {
+    const actor = requireAuthenticatedActor(request)
+    assertConfiguredOrganization(actor)
+    const body = objectBody(request.body)
+    if (typeof body.accessLevel !== 'string' || !accessLevels.has(body.accessLevel as AdminAccessLevel)) {
+      throw new AppError(400, 'INVALID_ACCESS_LEVEL', 'Cấp truy cập ADMIN không hợp lệ.')
+    }
+    response.json(await setAdminAccessLevel(
+      actor,
+      positiveInteger(request.params.id, 'INVALID_ACCOUNT_ID', 'Mã tài khoản không hợp lệ.'),
+      positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản tài khoản không hợp lệ.'),
+      body.accessLevel as AdminAccessLevel,
+    ))
+  },
+)
+
+accountRouter.post(
+  '/:id/password-reset',
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission('user.manage'),
+  async (request, response) => {
+    const actor = requireAuthenticatedActor(request)
+    assertConfiguredOrganization(actor)
+    const body = objectBody(request.body)
+    response.json(await resetAccountPassword(
+      actor,
+      positiveInteger(request.params.id, 'INVALID_ACCOUNT_ID', 'Mã tài khoản không hợp lệ.'),
+      positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản tài khoản không hợp lệ.'),
+      body.newPassword === undefined
+        ? undefined
+        : text(body.newPassword, 'WEAK_PASSWORD', 'Mật khẩu mới không hợp lệ.'),
+    ))
   },
 )
 
@@ -88,6 +165,56 @@ accountRouter.post(
       positiveInteger(request.params.id, 'INVALID_ACCOUNT_ID', 'Mã tài khoản không hợp lệ.'),
       positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản tài khoản không hợp lệ.'),
       body.status as AccountStatus,
+    ))
+  },
+)
+
+/**
+ * TU-34 — quyền riêng của một tài khoản.
+ *
+ * GET chỉ cần `user.read` (Admin Read-Only xem được bảng checkbox). POST cần
+ * `user.manage` cộng thêm các luật trong `permission-model.ts`: không tự sửa
+ * mình, không chạm OWNER, và chỉ SuperAdmin đổi quyền của Admin khác.
+ */
+accountRouter.get(
+  '/:id/permissions',
+  requireAuthentication,
+  requirePermission('user.read'),
+  async (request, response) => {
+    const actor = requireAuthenticatedActor(request)
+    assertConfiguredOrganization(actor)
+    response.json(await getAccountPermissions(
+      actor,
+      positiveInteger(request.params.id, 'INVALID_ACCOUNT_ID', 'Mã tài khoản không hợp lệ.'),
+    ))
+  },
+)
+
+accountRouter.post(
+  '/:id/permissions',
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission('user.manage'),
+  async (request, response) => {
+    const actor = requireAuthenticatedActor(request)
+    assertConfiguredOrganization(actor)
+    const body = objectBody(request.body)
+    const requested = body.permissions
+    if (!requested || typeof requested !== 'object' || Array.isArray(requested)) {
+      throw new AppError(400, 'INVALID_PERMISSIONS', 'Danh sách quyền không hợp lệ.')
+    }
+    const entries = new Map<string, boolean>()
+    for (const [code, enabled] of Object.entries(requested as Record<string, unknown>)) {
+      if (typeof enabled !== 'boolean') {
+        throw new AppError(400, 'INVALID_PERMISSIONS', `Giá trị quyền "${code}" phải là true hoặc false.`)
+      }
+      entries.set(code, enabled)
+    }
+    response.json(await updateAccountPermissions(
+      actor,
+      positiveInteger(request.params.id, 'INVALID_ACCOUNT_ID', 'Mã tài khoản không hợp lệ.'),
+      positiveInteger(body.version, 'INVALID_VERSION', 'Phiên bản tài khoản không hợp lệ.'),
+      entries,
     ))
   },
 )

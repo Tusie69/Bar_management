@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label"
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { useAction } from "@/hooks/use-action"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
+import { isPlausibleVnPhone } from "@/lib/text"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
@@ -33,6 +34,7 @@ function WalkInBody() {
   const { run, pending } = useAction()
   const [party, setParty] = useState(2)
   const [name, setName] = useState("")
+  const [phone, setPhone] = useState("")
   // null = not touched yet: follow the best-fitting suggestion automatically (2-tap walk-in).
   const [picked, setPicked] = useState<number[] | null>(() => (ui.walkInPrefill.length ? ui.walkInPrefill : null))
 
@@ -50,6 +52,7 @@ function WalkInBody() {
   const bar = suggestions.filter((s) => s.t.kind === "BAR_SEAT")
   const chosen = picked ?? (tables[0] ? [tables[0].t.id] : [])
   const capacity = chosen.reduce((s, id) => s + (model.byId.get(id)?.capacity ?? 0), 0)
+  const phoneInvalid = !!phone.trim() && !isPlausibleVnPhone(phone)
 
   const toggle = (id: number) => setPicked(chosen.includes(id) ? chosen.filter((x) => x !== id) : [...chosen, id])
 
@@ -61,6 +64,7 @@ function WalkInBody() {
         tableIds: chosen,
         guestCount: party,
         contactName: name || undefined,
+        phone: phone.trim() || undefined,
         overrideReason: o,
         idempotencyKey,
       }),
@@ -87,6 +91,7 @@ function WalkInBody() {
             tableIds: ids,
             guestCount: party,
             contactName: name || undefined,
+            phone: phone.trim() || undefined,
             overrideReason: o,
             idempotencyKey,
           }),
@@ -100,6 +105,7 @@ function WalkInBody() {
       api.addWaitlist({
         kind: "WALK_IN",
         contactName: label,
+        phone: phone.trim() || undefined,
         partySize: party,
         channel: "IN_PERSON",
         preferenceMode: "ANY",
@@ -138,6 +144,23 @@ function WalkInBody() {
             onChange={(e) => setName(e.target.value)}
             placeholder="Ví dụ: anh Minh, nhóm áo trắng"
           />
+        </section>
+        <section className="grid gap-1.5">
+          <Label htmlFor="wi-phone" className="text-muted-foreground">
+            Số điện thoại (không bắt buộc)
+          </Label>
+          <Input
+            id="wi-phone"
+            className="h-11"
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="09xx xxx xxx"
+            aria-invalid={phoneInvalid}
+          />
+          {phoneInvalid ? <p className="text-sm text-destructive">SĐT phải có 10 số và bắt đầu bằng 0.</p> : null}
         </section>
         <section className="grid gap-2">
           <SectionTitle>Bàn trống phù hợp · {tables.length}</SectionTitle>
@@ -180,14 +203,29 @@ function WalkInBody() {
             {chosen.map((id) => model.label(id)).join(" + ")} · {capacity} chỗ
           </p>
         ) : null}
-        <GuardedButton permission="visit.walkin" size="lg" disabled={!chosen.length || pending} onClick={seat}>
+        <GuardedButton
+          permission="visit.walkin"
+          size="lg"
+          disabled={!chosen.length || pending || phoneInvalid}
+          onClick={seat}
+        >
           <UserPlus /> Mở bàn cho {party} khách
         </GuardedButton>
         <div className="grid grid-cols-2 gap-2">
-          <GuardedButton permission="visit.walkin" variant="outline" disabled={pending} onClick={pickOnMap}>
+          <GuardedButton
+            permission="visit.walkin"
+            variant="outline"
+            disabled={pending || phoneInvalid}
+            onClick={pickOnMap}
+          >
             <MapPinned /> Chọn trên sơ đồ
           </GuardedButton>
-          <GuardedButton permission="waitlist.create" variant="outline" disabled={pending} onClick={toWaitlist}>
+          <GuardedButton
+            permission="waitlist.create"
+            variant="outline"
+            disabled={pending || phoneInvalid}
+            onClick={toWaitlist}
+          >
             <ListPlus /> Vào danh sách chờ
           </GuardedButton>
         </div>

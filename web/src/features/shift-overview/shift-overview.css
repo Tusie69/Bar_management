@@ -1,0 +1,703 @@
+/* Scoped styling for Sprint 4 NA-33 Admin "Tổng quan ca" screen.
+ * Inherits --admin-* tokens from NA-32 AdminShell (.admin-root) with safe fallbacks
+ * so standalone preview harnesses also render identically. */
+
+.so-root {
+  --so-navy: var(--admin-brand-navy, #102a43);
+  --so-text: var(--admin-text-primary, #1a1a1a);
+  --so-muted: var(--admin-text-muted, #6e6a62);
+  --so-muted-strong: #57534c;
+  --so-blue: var(--admin-action-blue, #1d6fc2);
+  --so-tint-blue: var(--admin-tint-blue, #e8f1fa);
+  --so-surface: var(--admin-surface, #ffffff);
+  --so-sunken: var(--admin-surface-sunken, #f0eee9);
+  --so-canvas: var(--admin-canvas, #f7f6f3);
+  --so-border: var(--admin-border, #e2dfd8);
+
+  --so-inuse: var(--admin-state-inuse, #2e9e57);
+  --so-inuse-ink: var(--admin-state-inuse-ink, #157339);
+  --so-tint-inuse: #e9f7ee;
+
+  --so-soon: var(--admin-state-soon, #e0a106);
+  --so-soon-ink: var(--admin-state-soon-ink, #855200);
+  --so-tint-soon: var(--admin-tint-amber, #fdf3dc);
+
+  --so-booked: var(--admin-state-booked, #1d6fc2);
+  --so-booked-ink: #155699;
+  --so-tint-booked: var(--admin-tint-blue, #e8f1fa);
+
+  --so-late: var(--admin-state-late, #d13b3b);
+  --so-late-ink: var(--admin-state-late-ink, #a82424);
+  --so-tint-late: var(--admin-tint-red, #fbe9e9);
+
+  --so-empty: var(--admin-state-empty, #b9b4aa);
+  --so-empty-ink: #4d4942;
+  --so-tint-empty: #f5f4f0;
+
+  /* Solid floor chip fills with >= 4.5:1 WCAG AA contrast for #ffffff text */
+  --so-chip-booked: #1d6fc2;
+  --so-chip-soon: #a16700;
+  --so-chip-late: #d13b3b;
+  --so-chip-inuse: #268549;
+  --so-chip-empty: #77736c;
+
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 1144px;
+  color: var(--so-text);
+  font-family:
+    "Be Vietnam Pro",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  box-sizing: border-box;
+}
+
+.so-root *,
+.so-root *::before,
+.so-root *::after {
+  box-sizing: border-box;
+}
+
+/* KPI Grids */
+.so-kpi-row-1 {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.so-kpi-row-2 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.so-kpi-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 114px;
+  padding: 14px 16px;
+  background: var(--so-surface);
+  border: 1px solid var(--so-border);
+  border-radius: 10px;
+  min-width: 0;
+}
+
+.so-kpi-top {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.so-kpi-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.so-kpi-title {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--so-text);
+}
+
+.so-kpi-caption {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  color: var(--so-muted);
+}
+
+.so-kpi-subcaption {
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 500;
+  color: var(--so-muted-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.so-kpi-middle {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.so-kpi-value {
+  font-size: 30px;
+  line-height: 36px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--so-navy);
+}
+
+.so-kpi-value--inuse {
+  color: var(--so-inuse-ink);
+}
+
+.so-kpi-value--soon {
+  color: var(--so-soon-ink);
+}
+
+.so-kpi-value--danger {
+  color: var(--so-late-ink);
+}
+
+.so-kpi-value--unentered {
+  font-size: 18px;
+  line-height: 28px;
+  font-weight: 600;
+  color: var(--so-muted-strong);
+  letter-spacing: 0;
+}
+
+.so-kpi-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid #f1efe9;
+}
+
+.so-source-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 15px;
+  font-weight: 500;
+  color: var(--so-muted-strong);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.so-source-note--system {
+  color: var(--so-booked-ink);
+}
+
+.so-warning-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 2px 6px;
+  min-height: 24px;
+  border-radius: 6px;
+  border: 1px solid #f1b6b6;
+  background: var(--so-tint-late);
+  color: var(--so-late-ink);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.so-info-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--so-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.so-info-trigger:hover {
+  background: var(--so-sunken);
+  color: var(--so-navy);
+}
+
+.so-warning-trigger:focus-visible,
+.so-info-trigger:focus-visible,
+.so-retry-btn:focus-visible,
+.so-alert-list:focus-visible {
+  outline: 2px solid var(--so-blue);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+.so-chip:focus-visible {
+  outline: 2px solid var(--so-navy);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* Main Split Grid: Floor Left (~64%) + Alerts & Occupancy Right (~36%) */
+.so-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.81fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: stretch;
+}
+
+.so-right-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.so-panel {
+  background: var(--so-surface);
+  border: 1px solid var(--so-border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.so-panel--stretch {
+  height: 100%;
+}
+
+.so-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.so-panel-heading-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.so-panel-title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--so-navy);
+}
+
+.so-panel-subtitle {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--so-muted);
+}
+
+/* Floor Legend */
+.so-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 2px 0;
+}
+
+.so-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--so-text);
+}
+
+.so-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  flex-shrink: 0;
+}
+
+/* Floor Zones: sunken #f0eee9 surface + solid state-colored chips matching Figma */
+.so-zones-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  background: var(--so-sunken);
+  border-radius: 10px;
+}
+
+.so-zone-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.so-zone-heading {
+  margin: 0;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--so-muted-strong);
+}
+
+.so-chip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.so-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 62px;
+  height: 40px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+  cursor: default;
+  user-select: none;
+  border: 1px solid transparent;
+  transition:
+    transform 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.so-chip:hover {
+  box-shadow: 0 2px 6px rgba(16, 42, 67, 0.16);
+}
+
+.so-chip--booked {
+  background: var(--so-chip-booked);
+}
+
+.so-chip--soon {
+  background: var(--so-chip-soon);
+}
+
+.so-chip--late {
+  background: var(--so-chip-late);
+}
+
+.so-chip--inuse {
+  background: var(--so-chip-inuse);
+}
+
+.so-chip--empty {
+  background: var(--so-chip-empty);
+}
+
+/* Operational Alerts */
+.so-alerts-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 9999px;
+  background: var(--so-sunken);
+  color: var(--so-navy);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.so-alert-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 1121px) {
+  .so-alert-list {
+    max-height: 214px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+}
+
+.so-alert-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+
+.so-alert-card--critical {
+  background: var(--so-tint-late);
+  border-color: #f3c6c6;
+}
+
+.so-alert-card--warning {
+  background: var(--so-tint-soon);
+  border-color: #f2dda4;
+}
+
+.so-alert-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  margin-top: 5px;
+  flex-shrink: 0;
+}
+
+.so-alert-dot--critical {
+  background: var(--so-late);
+}
+
+.so-alert-dot--warning {
+  background: var(--so-soon);
+}
+
+.so-alert-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.so-alert-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.so-alert-badge {
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.so-alert-badge--critical {
+  color: var(--so-late-ink);
+}
+
+.so-alert-badge--warning {
+  color: var(--so-soon-ink);
+}
+
+.so-alert-title {
+  font-size: 13px;
+  line-height: 19px;
+  font-weight: 600;
+  color: var(--so-text);
+}
+
+.so-alert-detail {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--so-muted-strong);
+}
+
+.so-alerts-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 84px;
+  padding: 16px;
+  border-radius: 10px;
+  background: var(--so-canvas);
+  border: 1px dashed var(--so-border);
+  font-size: 13px;
+  color: var(--so-muted-strong);
+  font-weight: 500;
+}
+
+/* Zone Occupancy Bars */
+.so-occupancy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.so-occupancy-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.so-occupancy-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.so-occupancy-label {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+  color: var(--so-text);
+}
+
+.so-occupancy-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.so-occupancy-fraction {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--so-muted);
+}
+
+.so-occupancy-percent {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 700;
+  color: var(--so-navy);
+  min-width: 36px;
+  text-align: right;
+}
+
+.so-occupancy-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--so-sunken);
+  overflow: hidden;
+}
+
+.so-occupancy-fill {
+  height: 100%;
+  border-radius: 9999px;
+  background: var(--so-blue);
+  transition: width 220ms ease;
+}
+
+/* Error / Forbidden / Retry states */
+.so-state-card {
+  background: var(--so-surface);
+  border: 1px solid var(--so-border);
+  border-radius: 12px;
+  padding: 28px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.so-state-title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+  color: var(--so-navy);
+}
+
+.so-state-desc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--so-muted-strong);
+}
+
+.so-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid var(--so-navy);
+  background: var(--so-navy);
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.so-retry-btn:hover {
+  background: #1a3c5e;
+}
+
+/* Explicit high-contrast tooltip styling for portaled Radix content */
+.so-tooltip-content {
+  background: #102a43 !important;
+  color: #ffffff !important;
+  border: 1px solid #1e3a5f !important;
+  font-family:
+    "Be Vietnam Pro",
+    system-ui,
+    -apple-system,
+    sans-serif;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(16, 42, 67, 0.22);
+}
+
+/* Responsive Breakpoints */
+@media (max-width: 1120px) {
+  .so-kpi-row-1 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .so-kpi-row-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .so-main-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .so-kpi-row-1,
+  .so-kpi-row-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (pointer: coarse) {
+  .so-chip {
+    min-height: 44px;
+  }
+
+  .so-warning-trigger,
+  .so-retry-btn {
+    min-height: 44px;
+  }
+
+  .so-info-trigger::after {
+    content: "";
+    position: absolute;
+    inset: -13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .so-chip,
+  .so-occupancy-fill {
+    transition: none;
+  }
+}

@@ -321,7 +321,7 @@ function buildClaim(
       sourceCode: row.visit_reservation_source_code,
       version: Number(row.visit_version),
       lateConfirmedAt: null,
-      // Calling stays off after check-in; the guest is already here.
+      // Gán sau trong readProjection.
       canCall: false,
     }
   }
@@ -367,6 +367,7 @@ function buildClaim(
       sourceCode: directOffer ? null : row.reservation_source_code,
       version: Number(directOffer ? row.offer_waitlist_version : row.linked_waitlist_version),
       lateConfirmedAt: null,
+      // Gán sau trong readProjection, khi đã biết reservationId và phoneLast3.
       canCall: false,
     }
   }
@@ -395,6 +396,7 @@ function buildClaim(
     sourceCode: row.reservation_source_code,
     version: Number(row.reservation_version),
     lateConfirmedAt: row.reservation_late_confirmed_at === null ? null : isoDateTime(row.reservation_late_confirmed_at),
+    // Gán sau trong readProjection.
     canCall: false,
   }
 }
@@ -605,11 +607,14 @@ async function readProjection(
         noShowAfterMinutes: Number(venue.no_show_warning_minutes),
       },
     })
-    if (claim?.kind === 'RESERVATION') {
-      claim.canCall = claim.phoneLast3 !== null
-        && (derived.displayState === 'UPCOMING'
-          || derived.displayState === 'LATE'
-          || derived.displayState === 'LATE_CONFIRMED')
+    if (claim) {
+      // Một điều kiện duy nhất cho mọi loại chỗ giữ: có chỗ để ghi log cuộc
+      // gọi (booking, mục chờ hoặc lượt ghé) và có số điện thoại. Quy tắc cũ
+      // còn đòi displayState nằm trong UPCOMING/LATE/LATE_CONFIRMED, nên nút
+      // Gọi khách biến mất đúng lúc khách quá ngưỡng no-show - lúc cần gọi
+      // nhất - và chưa bao giờ xuất hiện trên khách chờ hay khách đã ngồi.
+      const target = claim.reservationId ?? claim.waitlistEntryId ?? claim.visitId
+      claim.canCall = target !== null && claim.phoneLast3 !== null
     }
     const allocationDate = dateOnly(selected?.allocation_business_date ?? null)
     // A LAYOUT cluster is the table's layout identity whether or not a guest is

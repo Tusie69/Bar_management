@@ -30,6 +30,97 @@ export interface SessionUser {
   displayName: string
   role: RoleCode
   deviceLabel: string
+  /** Mock admin scope; HTTP capabilities are determined by the server session. */
+  accessLevel?: "WRITE" | "READ_ONLY"
+  adminScope?: "ORGANIZATION" | "VENUE"
+}
+
+export interface AnonymousVisitQuery {
+  from: string
+  to: string
+  page?: number
+  pageSize?: number
+}
+export interface AnonymousVisit {
+  visitId: number
+  displayCode: string
+  tableLabel: string
+  guestCount: number
+  seatedAt: string
+  businessDate: string
+  version: number
+}
+export interface AnonymousVisitsResult {
+  visits: AnonymousVisit[]
+  page: number
+  pageSize: number
+  hasMore: boolean
+}
+export interface DuplicateCustomer {
+  id: number
+  displayName: string | null
+  maskedPhone: string | null
+  version: number
+  visitCount: number
+  bookingCount: number
+}
+export interface DuplicateCustomerPair {
+  source: DuplicateCustomer
+  target: DuplicateCustomer
+}
+export interface DuplicateCustomersResult {
+  pairs: DuplicateCustomerPair[]
+  page: number
+  pageSize: number
+  total: number
+  canMerge: boolean
+  canDismiss: boolean
+}
+export interface AssignAnonymousVisitInput {
+  visitId: number
+  version: number
+  phone: string
+  displayName?: string
+  idempotencyKey?: string
+}
+export interface AssignmentUndo {
+  operationId: number
+  visitId: number
+  version: number
+  previousCustomerId: null
+}
+export interface AnonymousAssignmentResult {
+  visitId: number
+  version: number
+  customer: DuplicateCustomer
+  customerCreated: boolean
+  undo: AssignmentUndo
+}
+export interface UndoAnonymousAssignmentResult {
+  visitId: number
+  customerId: null
+  version: number
+  operationId: number
+}
+export interface DuplicateDecisionInput {
+  sourceCustomerId: number
+  targetCustomerId: number
+  sourceVersion: number
+  targetVersion: number
+  idempotencyKey?: string
+}
+export interface CustomerMergeResult {
+  sourceCustomerId: number
+  targetCustomerId: number
+  sourceVersion: number
+  targetVersion: number
+  moved: Record<string, number>
+  operationId: number
+}
+export interface DuplicateDismissalResult {
+  sourceCustomerId: number
+  targetCustomerId: number
+  operationId: number
 }
 
 export interface VenueConfig {
@@ -303,6 +394,73 @@ export interface ReceptionSearchResult {
   summary: { bookingCount: number; waitlistCount: number; totalCount: number }
 }
 
+export interface TableTurnQuery {
+  from: string
+  to: string
+  closedByUserId?: number
+  checkedInByUserId?: number
+  includeUncounted?: boolean
+}
+export interface TableTurnsParams extends TableTurnQuery {
+  page?: number
+  pageSize?: number
+}
+export interface TableTurnView {
+  /** Null for OPEN turns; visitId remains stable after release. */
+  turnId: number | null
+  status: "OPEN" | "CLOSED"
+  turnNo: number
+  businessDate: string
+  scope: "TABLE" | "GROUP"
+  groupCode: string | null
+  groupId: number | null
+  tableId: number | null
+  tableCodes: string[]
+  memberTableIds: number[]
+  guestName: string
+  guestCount: number
+  sourceCode: string | null
+  origin: string
+  seatedAt: string
+  releasedAt: string | null
+  endReason: string | null
+  counted: boolean
+  visitId: number
+  reservationId: number | null
+  checkedInByUserId: number | null
+  checkedInByDisplayName: string | null
+  /** Người trả bàn, null for system closes. */
+  closedByUserId: number | null
+  closedByDisplayName: string | null
+}
+export interface TableTurnsResult {
+  from: string
+  to: string
+  page: number
+  pageSize: number
+  total: number
+  completedTotal: number
+  guestTotal: number
+  turns: TableTurnView[]
+}
+export interface TableTurnSummary {
+  from: string
+  to: string
+  completedTotal: number
+  openTotal: number
+  guestTotal: number
+  byBusinessDate: { businessDate: string; turns: number; guests: number }[]
+  byStaff: { checkedInByUserId: number | null; checkedInByDisplayName: string | null; turns: number; guests: number }[]
+  byScope: {
+    scope: "TABLE" | "GROUP"
+    tableId: number | null
+    groupId: number | null
+    label: string
+    turns: number
+    guests: number
+  }[]
+}
+
 export interface VisitView {
   id: number
   version: number
@@ -380,6 +538,31 @@ export interface WaitlistEntryView {
   closedAt: Date | null
 }
 
+/**
+ * Ai đang được gọi.
+ *
+ * Lễ tân gọi ba loại người: khách có booking, khách trong danh sách chờ và
+ * khách đang ngồi. Chỉ booking mới mang `version`, vì chỉ nó có kết quả
+ * "Tới muộn" - kết quả đó chuyển trạng thái đặt bàn nên cần kiểm tra phiên bản.
+ */
+export type CallTarget =
+  | { kind: "booking"; id: number; version?: number | null }
+  | { kind: "waitlist"; id: number }
+  | { kind: "visit"; id: number }
+
+/** Kết quả một lần gọi. "Tới muộn" chỉ hợp lệ với một booking. */
+export type CallOutcome = "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED"
+
+/** One row of a guest's call history. Never carries a phone number. */
+export interface BookingCallHistoryEntry {
+  callId: number
+  initiatedAt: Date
+  initiatedBy: string
+  outcome: "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED" | null
+  outcomeAt: Date | null
+  outcomeBy: string | null
+}
+
 /* ---------------- Customers ---------------- */
 
 export interface CustomerSummary {
@@ -411,6 +594,21 @@ export interface PhoneReveal {
 }
 
 /* ---------------- Operations / realtime ---------------- */
+
+export interface ReceptionGuestCountValues {
+  arrivedBefore: number
+  arrivedAfter: number
+  arrivedTotal: number
+  bookedTables: number
+  bookedGuests: number
+  returningGuests: number
+}
+
+export interface ReceptionGuestCount extends ReceptionGuestCountValues {
+  businessDate: BusinessDate
+  version: number
+  updatedAt: Date | null
+}
 
 export interface OperationView {
   id: number

@@ -19,6 +19,12 @@ export interface AuthenticatedSession {
   displayName: string
   sessionToken: string
   portal: AuthPortal
+  /**
+   * TU-34: tài khoản đang dùng mật khẩu tạm (vừa được tạo hoặc vừa reset).
+   * Phiên vẫn hợp lệ, nhưng `requireAuthentication` chặn mọi endpoint nghiệp
+   * vụ cho tới khi người dùng đổi mật khẩu.
+   */
+  mustChangePassword: boolean
 }
 
 interface RequestWithAuthentication extends Request {

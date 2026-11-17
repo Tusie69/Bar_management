@@ -8,6 +8,7 @@ import { idempotent, idempotencyTransaction } from '../../middleware/idempotency
 import { assertNoteHasNoPhoneNumber } from '../../security/note-privacy.js'
 import { applicationNow } from '../../time/application-clock.js'
 import { validateCalendarDate } from '../bookings/business-date.js'
+import { mountContactCallRoutes } from '../contacts/contact-call.route.js'
 import {
   createWaitlistEntry,
   cancelWaitlistEntry,
@@ -145,3 +146,6 @@ waitlistRouter.post(
     }, applicationNow()))
   },
 )
+
+// Gọi khách chờ: đơn có booking lẫn đơn Walk-in trần đều dùng đường này.
+mountContactCallRoutes(waitlistRouter, 'WAITLIST_ENTRY', 'INVALID_WAITLIST_ID', 'Mã khách chờ không hợp lệ.')

@@ -19,11 +19,6 @@ import { useUi } from "@/state/ui"
  * decision is recorded on the server and audited there, not assumed in the browser.
  */
 const CONFIRM_REQUIRED: Record<string, { key: keyof ActionConfirmations; title: string; confirmLabel: string }> = {
-  CAPACITY_OVERRIDE_REQUIRED: {
-    key: "capacityOverrideConfirmed",
-    title: "Vượt sức chứa đề xuất",
-    confirmLabel: "Vẫn đặt số khách này",
-  },
   SPARE_TABLE_OVERRIDE_REQUIRED: {
     key: "spareOverrideConfirmed",
     title: "Có bàn sơ cua trong cụm",
@@ -39,6 +34,11 @@ export interface ActionConfirmations {
 const CONFLICT_TITLE: Record<string, string> = {
   TABLE_CONFLICT: "Bàn không còn trống",
   VERSION_CONFLICT: "Dữ liệu vừa thay đổi",
+  // Ba mã dưới đây là luật ghép bàn từ chối, không phải dữ liệu đổi trên máy
+  // khác. Gọi đúng tên để lễ tân biết tải lại trang cũng không giúp được gì.
+  TABLE_GROUP_MULTIPLE_CLAIMS: "Không ghép được hai booking",
+  TABLE_GROUP_MIXED_STATE: "Không ghép bàn trống với bàn đang có khách",
+  TABLE_ALREADY_GROUPED: "Bàn đã thuộc cụm khác",
   ENTRY_ALREADY_CLAIMED: "Người khác đang liên hệ",
   NO_SYMBOL_AVAILABLE: "Hết ký hiệu ghép bàn",
   UNDO_CONFLICT_MODIFIED: "Không thể hoàn tác",
@@ -156,8 +156,14 @@ export function useAction() {
         return null
       } finally {
         inFlight.current = false
-        setPending(false)
-        void qc.invalidateQueries()
+        // Keep the action pending until active screens have fresh data. Forms
+        // close only after this resolves, so counters do not briefly show the
+        // value from before the write.
+        try {
+          await qc.invalidateQueries()
+        } finally {
+          setPending(false)
+        }
       }
     },
     [qc],

@@ -42,10 +42,13 @@ function serializeFixture<T>(operation: () => Promise<T>): Promise<T> {
 async function truncateFixtureTables(): Promise<void> {
   if (env.database.name !== 'gam21_platform_it_test') throw new Error('Refusing destructive fixture outside integration database')
   await databasePool.execute('UPDATE operation_log SET compensates_operation_id = NULL WHERE compensates_operation_id IS NOT NULL')
-  for (const table of ['booking_call_logs', 'operation_log', 'table_turns', 'table_allocations', 'table_group_members', 'table_groups', 'table_holds',
+  await databasePool.execute("UPDATE customers SET status = 'ACTIVE', merged_into_customer_id = NULL WHERE status = 'MERGED'")
+  for (const table of ['customer_duplicate_dismissals', 'booking_call_logs', 'operation_log', 'reception_guest_counts', 'table_turns', 'table_allocations', 'table_group_members', 'table_groups', 'table_holds',
     'waitlist_table_preferences', 'waitlist_contact_attempts', 'waitlist_entries', 'reservations', 'visits',
     'customers', 'table_combination_members', 'table_combinations', 'table_adjacencies', 'dining_tables',
-    'zones', 'floors', 'auth_sessions', 'membership_roles', 'memberships', 'idempotency_keys', 'users',
+    'zones', 'floors', 'auth_sessions', 'membership_roles', 'memberships', 'idempotency_keys',
+    // TU-34: override quyền tham chiếu users, nên phải xoá trước users.
+    'user_permission_overrides', 'users',
     'booking_sources', 'venues', 'organizations']) {
     await databasePool.execute(`DELETE FROM ${table}`)
   }
@@ -89,7 +92,7 @@ async function populateFixture(): Promise<void> {
     [actor.venueId, actor.organizationId, otherVenueId, actor.organizationId, otherOrganizationId, otherOrganizationId],
   )
   for (const [id, username, role] of [[9801, 'integration_reception', 'RECEPTIONIST'],
-    [9802, 'integration_owner', 'OWNER_ADMIN'], [9803, 'integration_care', 'CUSTOMER_CARE']] as const) {
+    [9802, 'integration_owner', 'OWNER'], [9803, 'integration_care', 'CUSTOMER_CARE']] as const) {
     await databasePool.execute("INSERT INTO users (id, username, display_name, password_hash) VALUES (?, ?, ?, ?)",
       [id, username, username, passwordHash])
     await databasePool.execute('INSERT INTO memberships (id, organization_id, user_id) VALUES (?, ?, ?)', [id, actor.organizationId, id])
@@ -102,9 +105,14 @@ async function populateFixture(): Promise<void> {
     "INSERT INTO zones (id, organization_id, venue_id, code, name) VALUES (?, ?, ?, 'A', 'A'), (?, ?, ?, 'B', 'B')",
     [tableId, actor.organizationId, actor.venueId, foreignTableId, actor.organizationId, otherVenueId],
   )
+  // Bàn của venue lạ mang mã ZZ9, cố ý nằm ngoài mọi mã bàn thật của quán.
+  // Nó là mồi phát hiện rò rỉ dữ liệu chéo venue: bản export của venue nhà mà
+  // chứa mã này nghĩa là có rò rỉ. Trước đây mồi là 'B1', nhưng bản export
+  // mới in ra một sơ đồ cố định gồm cả ô B1 kể cả khi ô đó trống, nên mồi
+  // trùng với dữ liệu hợp lệ và test báo động giả.
   await databasePool.execute(
     `INSERT INTO dining_tables (id, organization_id, venue_id, zone_id, code, display_name, kind, capacity, pos_x, pos_y)
-     VALUES (?, ?, ?, ?, 'A1', 'A1', 'TABLE', 4, 10, 10), (?, ?, ?, ?, 'B1', 'B1', 'TABLE', 4, 10, 10)`,
+     VALUES (?, ?, ?, ?, 'A1', 'A1', 'TABLE', 4, 10, 10), (?, ?, ?, ?, 'ZZ9', 'ZZ9', 'TABLE', 4, 10, 10)`,
     [tableId, actor.organizationId, actor.venueId, tableId, foreignTableId, actor.organizationId, otherVenueId, foreignTableId],
   )
   await databasePool.execute("INSERT INTO booking_sources (organization_id, code, name) VALUES (?, 'HOTLINE', 'Hotline')", [actor.organizationId])
@@ -116,6 +124,17 @@ export async function login(username = 'integration_reception') {
     ? 'admin'
     : username === 'integration_care' ? 'customer-care' : 'receptionist'
   const response = await agent.post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password, portal })
-  if (response.status !== 200) throw new Error(`Fixture login failed: ${response.status}`)
+  if (response.status !== 200) {
+    const code = (response.body as { error?: { code?: string } }).error?.code ?? 'UNKNOWN'
+    throw new Error(`Fixture login failed: ${response.status} ${code}`)
+  }
   return { agent, csrfToken: (response.body as { csrfToken: string }).csrfToken }
+}
+
+/** Test-only login at an explicit portal using the fixture credential. */
+export async function loginAtPortal(
+  username: string,
+  portal: 'admin' | 'receptionist' | 'customer-care' | 'cashier' | 'waiter',
+): Promise<import('supertest').Response> {
+  return request(app).post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password, portal })
 }

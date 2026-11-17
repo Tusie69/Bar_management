@@ -14,10 +14,24 @@ describe('phone reveal rate limiter', () => {
     expect(() => limiter.assertAllowed(1, 10, 1_101)).not.toThrow()
   })
 
+  it('keeps booking, waitlist and visit ids in separate buckets', () => {
+    // Ba dãy id độc lập: nếu đếm chung ô thì gọi booking 10 vài lần là khóa
+    // luôn mục chờ 10 và lượt ghé 10, hai người hoàn toàn khác.
+    const limiter = new PhoneRevealRateLimiter(1, 1_000)
+    limiter.assertAllowed(1, 10, 100)
+    expect(() => limiter.assertAllowed(1, 10, 101)).toThrow(AppError)
+    expect(() => limiter.assertAllowed(1, 'w10', 101)).not.toThrow()
+    expect(() => limiter.assertAllowed(1, 'v10', 101)).not.toThrow()
+  })
+
   it('fails closed when the phone disclosure policy is unavailable', () => {
     expect(() => assertPhoneDisclosureAllowed(null, 1, 10)).toThrow(expect.objectContaining({
       status: 503,
       code: 'PHONE_REVEAL_POLICY_UNAVAILABLE',
     }))
+  })
+
+  it('lets a call through when no limit is configured, so a missing env never silences the phone', () => {
+    expect(() => assertPhoneDisclosureAllowed(null, 1, 'w10', 'allow')).not.toThrow()
   })
 })

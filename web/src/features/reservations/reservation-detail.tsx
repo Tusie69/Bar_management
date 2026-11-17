@@ -58,6 +58,7 @@ import { api } from "@/services"
 import { useUi } from "@/state/ui"
 import { GuestCountDialog } from "../floor/floor-dialogs"
 import { CallCustomerControl } from "../bookings/call-customer"
+import { CallHistory } from "../bookings/call-history"
 import { ReservationStatusChip } from "./reservation-status"
 import { useFloorModel } from "../floor/use-floor-model"
 import { bookingOrderPolicy, useHeldOrderActions } from "../mobile/actions"
@@ -223,9 +224,9 @@ function Detail({ r }: { r: ReservationView }) {
             k="Loại khách"
             v={
               r.classification === "RETURNING"
-                ? "Khách quen (O)"
+                ? "Đã từng đặt bàn"
                 : r.classification === "NEW"
-                  ? "Khách mới (N)"
+                  ? "Chưa từng đặt bàn"
                   : "Chưa phân loại"
             }
           />
@@ -276,11 +277,11 @@ function Detail({ r }: { r: ReservationView }) {
         {booked ? (
           <div className="mt-5 grid grid-cols-2 gap-2">
             <CallCustomerControl
-              bookingId={r.id}
-              bookingVersion={r.version}
-              canCall={r.canCall === true}
+              target={{ kind: "booking", id: r.id, version: r.version }}
+              canCall={r.canCall === true || r.phoneLast3 !== null}
               className="col-span-2"
             />
+            <CallHistory target={{ kind: "booking", id: r.id }} className="col-span-2" />
             {r.tableIds.length ? (
               <GuardedButton
                 permission="visit.checkin"
@@ -570,8 +571,8 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="UNCLASSIFIED">Chưa phân loại</SelectItem>
-                <SelectItem value="NEW">Khách mới (N)</SelectItem>
-                <SelectItem value="RETURNING">Khách quen (O)</SelectItem>
+                <SelectItem value="NEW">Chưa từng đặt bàn</SelectItem>
+                <SelectItem value="RETURNING">Đã từng đặt bàn</SelectItem>
               </SelectContent>
             </Select>
           </div>

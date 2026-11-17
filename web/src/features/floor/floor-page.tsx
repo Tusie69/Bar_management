@@ -63,7 +63,7 @@ function Segmented<T extends string>({
             aria-selected={on}
             onClick={() => onChange(o.value)}
             className={cn(
-              "flex h-[30px] items-center gap-1 rounded-sm px-2.5 text-xs sm:text-sm whitespace-nowrap",
+              "flex h-[30px] items-center gap-1 rounded-sm px-2.5 text-xs whitespace-nowrap sm:text-sm",
               on ? "bg-primary-tint font-medium text-primary-ink" : "text-tx-2 hover:text-tx-1",
             )}
           >
@@ -87,7 +87,6 @@ export function FloorPage() {
   const search = useReceptionSearch(selectedDate, receptionist)
   const waitlist = useWaitlist(receptionist ? selectedDate : "")
   const [waitOpen, setWaitOpen] = useState(false)
-  const [countOpen, setCountOpen] = useState(false)
   const wide = useMediaQuery("(min-width: 1024px)")
   const xl = useMediaQuery("(min-width: 1280px)")
   const [listOpen, setListOpen] = useState(false)
@@ -237,12 +236,17 @@ export function FloorPage() {
       {!receptionist ? <FloorToolbar onOpenList={xl ? undefined : () => setListOpen(true)} /> : null}
       {receptionist ? (
         <div className="shrink-0 border-b px-4 py-2">
-          <ReceptionControls
-            search={search}
-            onCount={() => setCountOpen(true)}
-            onOpenBooking={ui.openReservation}
-            onDateChange={() => ui.selectTable(null)}
-          />
+          <ZaloBookingExport businessDate={date}>
+            {({ copy, loading }) => (
+              <ReceptionControls
+                search={search}
+                onExport={() => void copy()}
+                exportLoading={loading}
+                onOpenBooking={ui.openReservation}
+                onDateChange={() => ui.selectTable(null)}
+              />
+            )}
+          </ZaloBookingExport>
         </div>
       ) : null}
       {!live && !ui.pick ? (
@@ -352,7 +356,9 @@ export function FloorPage() {
                   }
                   states={model.states}
                   availability={bookingDraft ? draftAvailMap : isPickAssign ? pickAvailMap : availMap}
-                  groups={independentLayoutEnabled || (live && !bookingDraft && !isPickAssign) ? model.floor?.groups : []}
+                  groups={
+                    independentLayoutEnabled || (live && !bookingDraft && !isPickAssign) ? model.floor?.groups : []
+                  }
                   selectedIds={selectedIds}
                   searchHighlightedIds={!ui.pick && !draft ? search.tableIds : []}
                   pickable={bookingDraft ? draftBookingPickable : draft ? null : pickable}
@@ -427,7 +433,6 @@ export function FloorPage() {
       </div>
 
       <>
-        {receptionist ? <ZaloBookingExport businessDate={date} open={countOpen} onOpenChange={setCountOpen} /> : null}
         <Sheet open={waitOpen} onOpenChange={setWaitOpen}>
           <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-[920px]">
             <SheetTitle className="sr-only">Bàn chờ ảo</SheetTitle>

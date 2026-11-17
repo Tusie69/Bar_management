@@ -9,6 +9,7 @@ export interface AuthenticatedUser {
   organizationId: number
   venueId: number
   roles: string[]
+  accessLevel: "WRITE" | "READ_ONLY" | null
 }
 
 export interface AuthSession {
@@ -17,6 +18,12 @@ export interface AuthSession {
   csrfToken: string
   expiresAt?: string
   portal: AuthPortal
+  /**
+   * TU-34: tài khoản đang dùng mật khẩu tạm. API nghiệp vụ trả 403
+   * PASSWORD_CHANGE_REQUIRED cho tới khi đổi xong, nên web phải chặn ở cửa
+   * thay vì để người dùng gặp lỗi ở từng màn.
+   */
+  mustChangePassword?: boolean
 }
 
 function validSession(value: unknown): value is AuthSession {
@@ -32,6 +39,7 @@ function validSession(value: unknown): value is AuthSession {
     Number.isSafeInteger(user.venueId) &&
     Array.isArray(user.roles) &&
     user.roles.every((role) => typeof role === "string") &&
+    (user.accessLevel === null || user.accessLevel === "WRITE" || user.accessLevel === "READ_ONLY") &&
     Array.isArray(session.permissions) &&
     session.permissions.every((permission) => typeof permission === "string") &&
     typeof session.csrfToken === "string" &&
@@ -56,7 +64,11 @@ export class AuthApi {
   }
 
   async login(username: string, password: string, portal: AuthPortal): Promise<AuthSession> {
-    const result = await this.client.post<unknown>("/auth/login", { username, password, portal })
+    const result = await this.client.post<unknown>(
+      "/auth/login",
+      { username, password, portal },
+      { notifyUnauthorized: false },
+    )
     return this.accept(result)
   }
 

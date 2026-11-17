@@ -15,7 +15,7 @@ import { emptyDb, allocId, ORG_ID, VENUE_ID, type MockDb, type MockUser } from "
 export const DEMO_USERS: MockUser[] = [
   { id: 1, displayName: "Lễ tân 1", role: "RECEPTIONIST", deviceLabel: "iPad quầy" },
   { id: 2, displayName: "Lễ tân 2", role: "RECEPTIONIST", deviceLabel: "iPad cửa" },
-  { id: 3, displayName: "Chủ quán", role: "OWNER_ADMIN", deviceLabel: "Laptop văn phòng" },
+  { id: 3, displayName: "Chủ quán", role: "OWNER", deviceLabel: "Laptop văn phòng" },
   { id: 4, displayName: "CSKH", role: "CUSTOMER_CARE", deviceLabel: "Điện thoại CSKH" },
   { id: 5, displayName: "Thu ngân", role: "CASHIER", deviceLabel: "Máy thu ngân" },
 ]
@@ -153,8 +153,8 @@ export function seedDb(now: Date): MockDb {
       floorId: null,
       code: z.code,
       name: z.name,
-      isBookable: z.code === "C" ? true : z.isBookable,
-      isWaitingArea: z.code === "C" ? false : z.isWaitingArea,
+      isBookable: z.isBookable,
+      isWaitingArea: z.isWaitingArea,
       sortOrder: i,
       isActive: true,
       version: 1,
@@ -262,6 +262,12 @@ export function seedDb(now: Date): MockDb {
       phoneE164: phone,
       notes: i % 7 === 0 ? "Thích ngồi gần quầy Bar." : i % 9 === 0 ? "Hay đi nhóm đông, báo trước để ghép bàn." : null,
     })
+  }
+  // Three synthetic same-name profiles without phones for the ledger review panel.
+  for (const targetId of customerIds.slice(0, 3)) {
+    const target = db.customers.get(targetId)!
+    const id = allocId(db, "customers")
+    db.customers.set(id, { ...target, id, phoneE164: null, phoneLast3: null, notes: null })
   }
   // A handful of regulars get most of the visits.
   const regularWeight = customerIds.map((_, i) => (i < 10 ? 6 : i < 25 ? 2 : 1))

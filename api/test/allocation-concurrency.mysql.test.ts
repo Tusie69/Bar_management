@@ -18,7 +18,7 @@ mysqlDescribe('HTTP allocation concurrency on MySQL', () => {
 
   it.each([1, 2, 3])('permits exactly one concurrent booking assign (run %s)', async () => {
     const bookings = await Promise.all([createBooking(actor, bookingInput), createBooking(actor, bookingInput)])
-    const sessions = await Promise.all([login(), login()])
+    const sessions = await Promise.all([login(), login('integration_owner')])
     const results = await Promise.all(bookings.map((booking, index) => {
       const session = sessions[index]!
       return session.agent.post(`/api/v1/bookings/${booking.id}/assign`).set('Origin', env.webOrigin)
@@ -37,7 +37,7 @@ mysqlDescribe('HTTP allocation concurrency on MySQL', () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(`${businessDate}T12:00:00Z`))
     const booking = await createBooking(actor, bookingInput)
-    const [assigner, walker] = await Promise.all([login(), login()])
+    const [assigner, walker] = await Promise.all([login(), login('integration_owner')])
     const results = await Promise.all([
       assigner.agent.post(`/api/v1/bookings/${booking.id}/assign`).set('Origin', env.webOrigin)
         .set('X-CSRF-Token', assigner.csrfToken).send({ version: booking.version, tableIds: [tableId] }),

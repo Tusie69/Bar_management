@@ -6,7 +6,8 @@ import {
   requireCsrfProtection,
   requirePermission,
 } from '../../auth/auth.middleware.js'
-import { requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
+import { getAuthentication, requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
+import { hasPermission, inspectSession } from '../../auth/auth.service.js'
 import { AppError } from '../../errors/app-error.js'
 import { idempotent, idempotencyTransaction } from '../../middleware/idempotency.js'
 import { getFloorProjection } from './floor-projection.repository.js'
@@ -105,7 +106,7 @@ tableRouter.patch(
   '/:id/configuration',
   requireAuthentication,
   requireCsrfProtection,
-  requirePermission('venue.configure'),
+  requireAnyPermission('venue.configure', 'table.spare.configure'),
   async (request, response) => {
     const tableId = Number(request.params.id)
     if (!Number.isSafeInteger(tableId) || tableId <= 0)
@@ -123,14 +124,26 @@ tableRouter.patch(
       throw new AppError(400, 'REASON_REQUIRED', 'Cần nhập lý do thay đổi cấu hình bàn.')
     if (body.reason.trim().length > 500)
       throw new AppError(400, 'REASON_TOO_LONG', 'Lý do không được vượt quá 500 ký tự.')
-    response.json({
-      table: await configureTable(requireAuthenticatedActor(request), {
-        tableId,
-        ...(typeof body.isSpare === 'boolean' ? { isSpare: body.isSpare } : {}),
-        ...(body.status === 'ACTIVE' || body.status === 'OUT_OF_SERVICE' ? { status: body.status } : {}),
-        expectedVersion: Number(body.version),
-        reason: body.reason.trim(),
-      }),
+    const actor = requireAuthenticatedActor(request)
+    if (body.status !== undefined && !(await hasPermission(actor, 'venue.configure'))) {
+      throw new AppError(403, 'PERMISSION_DENIED', 'Bạn không có quyền thay đổi trạng thái phục vụ của bàn.')
+    }
+    if (body.isSpare !== undefined && !(await hasPermission(actor, 'table.spare.configure'))) {
+      throw new AppError(403, 'PERMISSION_DENIED', 'Bạn không có quyền quản lý bàn sơ cua.')
+    }
+    const result = await configureTable(actor, {
+      tableId,
+      ...(typeof body.isSpare === 'boolean' ? { isSpare: body.isSpare } : {}),
+      ...(body.status === 'ACTIVE' || body.status === 'OUT_OF_SERVICE' ? { status: body.status } : {}),
+      expectedVersion: Number(body.version),
+      reason: body.reason.trim(),
+    })
+    const { changeSeq, ...table } = result
+    response.json({ table })
+    void publishFloorChange({
+      organizationId: actor.organizationId,
+      venueId: actor.venueId,
+      changeSeq,
     })
   },
 )
@@ -186,7 +199,7 @@ function parseGroupVersion(value: unknown): number {
 
 /** Pushes the committed change so other devices see it well inside two seconds. */
 function announce(actor: { organizationId: number; venueId: number }, changeSeq: number): void {
-  publishFloorChange({
+  void publishFloorChange({
     organizationId: actor.organizationId,
     venueId: actor.venueId,
     changeSeq: String(changeSeq),
@@ -216,8 +229,22 @@ tableRouter.get(
   requireAuthentication,
   requirePermission('customer.view_masked'),
   (request, response) => {
-    const actor = requireAuthenticatedActor(request)
-    subscribeToFloorChanges({ organizationId: actor.organizationId, venueId: actor.venueId, response })
+    const authentication = getAuthentication(request)!
+    const actor = authentication.actor
+    subscribeToFloorChanges({
+      organizationId: actor.organizationId,
+      venueId: actor.venueId,
+      authSessionId: actor.authSessionId!,
+      userId: actor.userId,
+      response,
+      authorize: async () => {
+        const current = await inspectSession(authentication.sessionToken)
+        if (!current.ok) return current.code
+        return await hasPermission(current.authentication.actor, 'customer.view_masked')
+          ? null
+          : 'SESSION_REVOKED'
+      },
+    })
   },
 )
 

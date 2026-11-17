@@ -17,3 +17,16 @@ Thumbs.db
 # Ban sao luu database tren VPS nam o /srv/21gam/backups, tuc la ben trong cay
 # repo. Dump chua du lieu khach that nen tuyet doi khong duoc commit.
 backups/
+*.sql.gz
+
+# TU-31: cau hinh tren server. Pattern `.env.*` o tren chi bat file BAT DAU
+# bang `.env.`, nen `deploy/env/backup.env` va `deploy/env/api.env.production`
+# deu khong bi no loai tru. Dung allowlist thay vi liet ke duoi: thu muc nay
+# chi duoc phep chua file mau, nen bat ky ten moi nao cung bi loai tru san.
+deploy/env/*
+!deploy/env/*.example
+
+# MySQL option file va cau hinh rclone chua mat khau database va OAuth token.
+# Chung thuoc ve server, khong bao gio thuoc ve repo.
+.my.cnf
+rclone.conf

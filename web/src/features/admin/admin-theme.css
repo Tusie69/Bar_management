@@ -1,0 +1,168 @@
+/*
+ * TU-39 — Token riêng của Trang Quản trị, lấy từ Figma
+ * "21GAM — Prototype Trang Quản trị (Admin) v1.0".
+ *
+ * File này chỉ được import bởi admin-shell.tsx (đã lazy-load), và mọi biến đều
+ * nằm trong `.admin-portal`. Giao diện Lễ tân / Thu ngân / Phục vụ dùng token
+ * trong index.css và không nhìn thấy gì ở đây.
+ *
+ * Admin cố ý chỉ có một tông sáng: prototype không có bản tối, và một bản tối
+ * đoán mò sẽ lệch mọi màu trạng thái bàn mà Figma đã chốt. Nút đổi sáng/tối
+ * của Lễ tân vì thế không tác động lên khung Admin.
+ */
+@import "@fontsource/be-vietnam-pro/400.css";
+@import "@fontsource/be-vietnam-pro/500.css";
+@import "@fontsource/be-vietnam-pro/600.css";
+@import "@fontsource/be-vietnam-pro/700.css";
+
+.admin-portal {
+  --adm-canvas: #f7f6f3;
+  --adm-surface: #ffffff;
+  --adm-surface-sunken: #f0eee9;
+  --adm-border: #e2dfd8;
+  --adm-text: #1a1a1a;
+  --adm-text-muted: #6e6a62;
+  --adm-text-invert: #ffffff;
+  --adm-action: #1d6fc2;
+  --adm-tint-blue: #e8f1fa;
+  --adm-tint-amber: #fdf3dc;
+  --adm-tint-red: #fbe9e9;
+  --adm-brand-navy: #102a43;
+  --adm-state-booked: #1d6fc2;
+  --adm-state-soon: #e0a106;
+  --adm-state-late: #d13b3b;
+  --adm-state-inuse: #2e9e57;
+  --adm-state-empty: #b9b4aa;
+
+  --adm-sidebar-w: 232px;
+  --adm-header-h: 75px;
+
+  font-family: "Be Vietnam Pro", "Roboto", system-ui, sans-serif;
+  color: var(--adm-text);
+  background: var(--adm-canvas);
+}
+
+/*
+ * Cầu nối token cho hai màn NA-33 / NA-34: CSS của chúng đọc `--admin-*`
+ * (tên token theo Figma của Nam) và đã có fallback hex giống hệt bảng màu
+ * này. Alias ở đây để khi bảng màu Admin đổi thì hai màn đó đổi theo,
+ * thay vì giữ hex đóng cứng. `.admin-root` là lớp Nam đặt trên nội dung
+ * rải qua portal (dialog), nên không nạp được token từ `.admin-portal`.
+ */
+.admin-portal,
+.admin-root {
+  --admin-brand-navy: var(--adm-brand-navy);
+  --admin-text-primary: var(--adm-text);
+  --admin-text-muted: var(--adm-text-muted);
+  --admin-text-invert: var(--adm-text-invert);
+  --admin-action-blue: var(--adm-action);
+  --admin-tint-blue: var(--adm-tint-blue);
+  --admin-tint-amber: var(--adm-tint-amber);
+  --admin-tint-red: var(--adm-tint-red);
+  --admin-surface: var(--adm-surface);
+  --admin-surface-sunken: var(--adm-surface-sunken);
+  --admin-canvas: var(--adm-canvas);
+  --admin-border: var(--adm-border);
+  --admin-state-inuse: var(--adm-state-inuse);
+  --admin-state-soon: var(--adm-state-soon);
+  --admin-state-booked: var(--adm-state-booked);
+  --admin-state-late: var(--adm-state-late);
+  --admin-state-empty: var(--adm-state-empty);
+  --admin-state-soon-ink: #854d0e;
+  --admin-state-late-ink: #991b1b;
+  --admin-state-inuse-ink: #1e3a0f;
+}
+
+/* Bậc chữ của Figma. Dùng class thay vì rải số đo vào từng component. */
+.admin-portal .adm-h1 {
+  font-size: 26px;
+  line-height: 34px;
+  font-weight: 700;
+}
+.admin-portal .adm-h2 {
+  font-size: 18px;
+  line-height: 26px;
+  font-weight: 600;
+}
+.admin-portal .adm-h3 {
+  font-size: 15px;
+  line-height: 22px;
+  font-weight: 600;
+}
+.admin-portal .adm-body {
+  font-size: 14px;
+  line-height: 22px;
+}
+.admin-portal .adm-label {
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+}
+
+/* Mục sidebar: cao 42px, bo 8px, active là nền xanh nhạt như prototype. */
+.admin-portal .adm-nav-item {
+  display: flex;
+  align-items: center;
+  height: 42px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--adm-text);
+  text-decoration: none;
+}
+.admin-portal .adm-nav-item:hover {
+  background: var(--adm-surface-sunken);
+}
+.admin-portal .adm-nav-item[aria-current="page"] {
+  background: var(--adm-tint-blue);
+  color: var(--adm-action);
+  font-weight: 500;
+}
+.admin-portal .adm-nav-item:focus-visible {
+  outline: 2px solid var(--adm-action);
+  outline-offset: 2px;
+}
+
+/*
+ * Skip link: ẩn cho đến khi được focus bằng bàn phím. Dùng `position: fixed`
+ * vì `.admin-portal` không tạo containing block riêng.
+ */
+.admin-portal .adm-skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 60;
+  transform: translateY(-200%);
+  padding: 10px 14px;
+  border: 1px solid var(--adm-action);
+  border-radius: 8px;
+  background: var(--adm-surface);
+  color: var(--adm-action);
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  text-decoration: none;
+}
+.admin-portal .adm-skip-link:focus-visible {
+  transform: translateY(0);
+  outline: 2px solid var(--adm-action);
+  outline-offset: 2px;
+}
+
+/*
+ * Hộp thoại của Quản trị. Radix đặt nó qua portal ở cấp body, ngoài khung
+ * `.admin-portal`, nên chính nó phải mang lớp đó để có token. Khi đó nền
+ * của `.admin-portal` là màu nền trang, không phải màu mặt thẻ; chọn lại ở
+ * đây với độ ưu tiên cao hơn thay vì rải `style` vào từng hộp thoại.
+ */
+.admin-portal.adm-dialog {
+  background: var(--adm-surface);
+  color: var(--adm-text);
+}
+
+.admin-portal .adm-card {
+  background: var(--adm-surface);
+  border: 1px solid var(--adm-border);
+  border-radius: 10px;
+}

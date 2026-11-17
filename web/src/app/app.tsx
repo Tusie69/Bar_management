@@ -7,9 +7,11 @@ import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { FloorPage } from "@/features/floor/floor-page"
 import { AuthBoundary } from "@/features/auth/auth-boundary"
+import { adminRoute } from "@/features/admin/admin-routes"
 import { useRealtimeSync } from "@/hooks/use-data"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { AppShell } from "./shell"
+import { shouldUseMobileShell } from "./shell-mode"
 import { useSession } from "@/state/session"
 
 const OverviewPage = lazy(() => import("@/features/overview/overview-page"))
@@ -42,7 +44,7 @@ function Root() {
   const location = useLocation()
   const role = useSession((state) => state.user.role)
   if (role === "RECEPTIONIST" && location.pathname !== "/floor") return <Navigate to="/floor" replace />
-  return mobile ? page(<MobileApp />) : <AppShell />
+  return shouldUseMobileShell(role, mobile) ? page(<MobileApp />) : <AppShell />
 }
 
 // Phone opens the role home (Tiếp đón / Tổng quan). Deep links keep their route.
@@ -56,6 +58,9 @@ function HomeRoute() {
 }
 
 const router = createBrowserRouter([
+  // TU-39: Trang Quản trị có shell, sidebar và registry riêng. Nó đứng trước
+  // route "/" vì route đó bắt mọi URL còn lại và sẽ nuốt /admin.
+  adminRoute,
   {
     path: "/",
     element: <Root />,
