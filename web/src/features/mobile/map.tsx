@@ -11,7 +11,7 @@ import { usePlanWidth } from "@/hooks/use-plan-width"
 import { FloorCanvas } from "../floor/floor-canvas"
 import { SpareButton } from "../floor/spare-button"
 import { LayoutActions, LayoutMergeControls } from "../floor/layout-merge-controls"
-import { independentLayoutEnabled, layoutMembers, toggleLayoutTable } from "../floor/layout-merge"
+import { clusterMembersForDisplay, independentLayoutEnabled, toggleLayoutTable } from "../floor/layout-merge"
 import { GuestCountCard } from "../floor/guest-count-card"
 import { StatusLegend } from "../floor/status-legend"
 import { claimCallTarget } from "@/domain/call-target"
@@ -457,7 +457,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
   const st = fs?.state ?? "free"
   const c = fs?.claim ?? null
   const callTarget = c ? claimCallTarget(c) : null
-  const members = layoutMembers(m.model, id)
+  const members = clusterMembersForDisplay(m.model, id, c?.tableIds)
   const isGroup = members.length > 1
   const memberTables = members.map((mid) => m.model.byId.get(mid)).filter((x): x is TableView => !!x)
   const group = m.model.floor?.groups.find((g) => g.tableIds.includes(id))
