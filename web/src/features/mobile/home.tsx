@@ -9,9 +9,11 @@ import { cn } from "@/lib/utils"
 import { isApiError } from "@/services"
 import { useSession } from "@/state/session"
 import { useM } from "./context"
+import { menuButtonLabel } from "./menu-alerts"
 import { isOpenEntry, splitShift, tableText } from "./model"
 import {
   BellButton,
+  MenuUnreadDot,
   UndoRedoButtons,
   BookingCard,
   card,
@@ -63,10 +65,11 @@ function Hero({ title }: { title: string }) {
         <button
           type="button"
           onClick={m.openAccount}
-          aria-label="Tài khoản và giao diện"
-          className="grid size-10 shrink-0 place-items-center rounded-full bg-[var(--glass)] text-[15px] font-semibold text-tx-strong shadow-[var(--shadow-xs)]"
+          aria-label={menuButtonLabel("Tài khoản và giao diện", m.unread)}
+          className="relative grid size-10 shrink-0 place-items-center rounded-full bg-[var(--glass)] text-[15px] font-semibold text-tx-strong shadow-[var(--shadow-xs)]"
         >
           {initials(user.displayName).slice(0, 1)}
+          <MenuUnreadDot unread={m.unread} />
         </button>
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-base leading-tight font-semibold text-tx-strong">{user.displayName}</span>

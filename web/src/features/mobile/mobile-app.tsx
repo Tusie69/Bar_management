@@ -137,7 +137,12 @@ export default function MobileApp() {
       markSeen(alerts.map((a) => a.key))
       setOverlay("alerts")
     },
-    openAccount: () => setOverlay("account"),
+    openAccount: () => {
+      // Mục Thông báo nằm ngay đầu menu nên mở menu là đã thấy, giống hệt
+      // việc bấm chuông trước đây. Không đánh dấu thì chấm đỏ ở lại mãi.
+      markSeen(alerts.map((a) => a.key))
+      setOverlay("account")
+    },
     openCount: () => setOverlay("count"),
     openCountEdit: () => setOverlay("count-edit"),
     openDetail: (id, bd) => {
@@ -310,7 +315,17 @@ export default function MobileApp() {
           />
         ) : null}
         {overlay === "create" ? <CreateSheet onClose={() => setOverlay(null)} /> : null}
-        {overlay === "account" ? <AccountSheet onClose={() => setOverlay(null)} /> : null}
+        {overlay === "account" ? (
+          <AccountSheet
+            alerts={alerts}
+            onClose={() => setOverlay(null)}
+            onOpenAlert={(a) => {
+              setOverlay(null)
+              if (a.reservationId) setDetail({ id: a.reservationId, bd: selectedDate })
+              else if (a.tableId) ctx.openTable(a.tableId)
+            }}
+          />
+        ) : null}
         <GuestCountSheet
           businessDate={selectedDate}
           open={overlay === "count" || overlay === "count-edit"}

@@ -26,7 +26,8 @@ import { useBookingDraft } from "../floor/use-booking-draft"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
 import { codesOf, duration, type Tone, toneStyle } from "./model"
-import { BellButton, PlainHeader, UndoRedoButtons } from "./ui"
+import { menuButtonLabel } from "./menu-alerts"
+import { BellButton, MenuUnreadDot, PlainHeader, UndoRedoButtons } from "./ui"
 
 const ZONE_TABS: [ZoneCode | "ALL", string][] = [
   ["ALL", "Tất cả"],
@@ -113,13 +114,17 @@ export function MapScreen({
           {/* A single 48px row is the whole fixed chrome: menu, search, export.
               Undo/redo, date, Đếm khách and ⓘ float on the plan itself. */}
           <div className="flex h-[48px] items-center gap-2">
+            {/* Chấm đỏ báo có cảnh báo chưa xem. Hàng trên chỉ còn dư 39px, không
+                đủ cho một nút 44px, nên tín hiệu dán lên nút menu sẵn có và danh
+                sách nằm trong menu đó. */}
             <button
               type="button"
               onClick={m.openAccount}
-              aria-label="Menu"
-              className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-surface-1 text-tx-strong shadow-[var(--shadow-xs)]"
+              aria-label={menuButtonLabel("Menu", m.unread)}
+              className="relative grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-surface-1 text-tx-strong shadow-[var(--shadow-xs)]"
             >
               <Menu className="size-5" />
+              <MenuUnreadDot unread={m.unread} />
             </button>
             {planChrome ? (
               <ReceptionSearchField search={search} />

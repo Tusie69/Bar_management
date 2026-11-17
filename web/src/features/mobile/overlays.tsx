@@ -13,6 +13,7 @@ import type { Alert } from "../floor/alerts"
 import { useMobileActions } from "./actions"
 import { useM, type Confirm } from "./context"
 import { tableText } from "./model"
+import { alertSectionTitle } from "./menu-alerts"
 import { Seg } from "./ui"
 
 export function Scrim({ onClick }: { onClick?: () => void }) {
@@ -104,6 +105,32 @@ export function CreateSheet({ onClose }: { onClose: () => void }) {
   )
 }
 
+/** Một dòng cảnh báo. Dùng chung cho sheet Thông báo và mục Thông báo trong menu. */
+function AlertRow({ alert, onOpen }: { alert: Alert; onOpen: (a: Alert) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(alert)}
+      className="flex items-start gap-3 rounded-2xl border border-border bg-background px-3.5 py-3 text-left text-tx-1"
+    >
+      <span
+        className="grid size-8 shrink-0 place-items-center rounded-full"
+        style={{ background: `var(--st-${alert.tone}-tint)`, color: `var(--st-${alert.tone}-ink)` }}
+      >
+        <Clock className="size-4" />
+      </span>
+      <span className="flex flex-1 flex-col gap-0.5">
+        <span className="text-[14px] font-medium text-tx-strong">{alert.title}</span>
+        <span className="text-[13px] text-[var(--text-muted)]">{alert.detail}</span>
+      </span>
+    </button>
+  )
+}
+
+function NoAlerts() {
+  return <p className="m-0 py-6 text-center text-[14px] text-[var(--text-muted)]">Chưa có cảnh báo trong ca.</p>
+}
+
 export function AlertsSheet({
   alerts,
   onOpen,
@@ -115,35 +142,21 @@ export function AlertsSheet({
 }) {
   return (
     <BottomSheet label="Thông báo" onClose={onClose}>
-      {alerts.length ? (
-        alerts.map((a) => (
-          <button
-            key={a.key}
-            type="button"
-            onClick={() => onOpen(a)}
-            className="flex items-start gap-3 rounded-2xl border border-border bg-background px-3.5 py-3 text-left text-tx-1"
-          >
-            <span
-              className="grid size-8 shrink-0 place-items-center rounded-full"
-              style={{ background: `var(--st-${a.tone}-tint)`, color: `var(--st-${a.tone}-ink)` }}
-            >
-              <Clock className="size-4" />
-            </span>
-            <span className="flex flex-1 flex-col gap-0.5">
-              <span className="text-[14px] font-medium text-tx-strong">{a.title}</span>
-              <span className="text-[13px] text-[var(--text-muted)]">{a.detail}</span>
-            </span>
-          </button>
-        ))
-      ) : (
-        <p className="m-0 py-6 text-center text-[14px] text-[var(--text-muted)]">Chưa có cảnh báo trong ca.</p>
-      )}
+      {alerts.length ? alerts.map((a) => <AlertRow key={a.key} alert={a} onOpen={onOpen} />) : <NoAlerts />}
     </BottomSheet>
   )
 }
 
 /** Demo user, theme and the pages that are not in the tab bar (Khách, Báo cáo, Cài đặt). */
-export function AccountSheet({ onClose }: { onClose: () => void }) {
+export function AccountSheet({
+  alerts,
+  onOpenAlert,
+  onClose,
+}: {
+  alerts: Alert[]
+  onOpenAlert: (a: Alert) => void
+  onClose: () => void
+}) {
   const { user, users, theme, setUser, setTheme, principal, permissions, logout } = useSession()
   const navigate = useNavigate()
   const [loggingOut, setLoggingOut] = useState(false)
@@ -153,6 +166,11 @@ export function AccountSheet({ onClose }: { onClose: () => void }) {
   )
   return (
     <BottomSheet label="Tài khoản" onClose={onClose}>
+      {/* Mục Thông báo đứng đầu menu, vì chấm đỏ trên nút mở menu là thứ đưa
+          lễ tân vào đây. Để nó dưới phần đổi giao diện thì phải cuộn mới thấy,
+          tức chấm đỏ dẫn tới một chỗ không nhìn ra ngay. */}
+      <span className="text-[13px] text-[var(--text-muted)]">{alertSectionTitle(alerts.length)}</span>
+      {alerts.length ? alerts.map((a) => <AlertRow key={a.key} alert={a} onOpen={onOpenAlert} />) : <NoAlerts />}
       <Seg
         label="Giao diện"
         value={theme}

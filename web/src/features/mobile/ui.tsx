@@ -66,6 +66,23 @@ export function UndoRedoButtons({ glass, square }: { glass?: boolean; square?: b
   )
 }
 
+/**
+ * Chấm đỏ dán lên nút mở menu khi còn cảnh báo chưa xem.
+ *
+ * Cố ý là chấm trơn chứ không phải huy hiệu có số: nút này chỉ 40px và đứng
+ * cạnh ô tìm kiếm, thêm chữ vào là chật. Số cụ thể nằm ở tiêu đề mục
+ * Thông báo bên trong menu, cách đó đúng một lần bấm.
+ */
+export function MenuUnreadDot({ unread }: { unread: number }) {
+  if (unread <= 0) return null
+  return (
+    <span
+      aria-hidden
+      className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-st-noshow ring-2 ring-background"
+    />
+  )
+}
+
 export function BellButton({ glass, square }: { glass?: boolean; square?: boolean }) {
   const m = useM()
   return (
