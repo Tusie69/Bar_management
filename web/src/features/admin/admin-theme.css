@@ -37,6 +37,21 @@
   --adm-sidebar-w: 232px;
   --adm-header-h: 75px;
 
+  /*
+   * Token chuyển động. Lý do chọn từng con số nằm ở `admin-motion.ts`; thời
+   * lượng ở đây phải khớp `ADMIN_MOTION_MS` vì JS dựa vào đó để biết lúc nào
+   * gỡ drawer khỏi DOM.
+   *
+   * Không dùng `linear`: chuyển động tốc độ đều là thứ làm giao diện trông
+   * như máy móc. Vào thì phanh mềm ở cuối (ease-out), ra thì rời đi nhanh
+   * dần (ease-in).
+   */
+  --adm-dur-fast: 120ms;
+  --adm-dur-base: 200ms;
+  --adm-dur-exit: 150ms;
+  --adm-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --adm-ease-in: cubic-bezier(0.4, 0, 1, 1);
+
   font-family: "Be Vietnam Pro", "Roboto", system-ui, sans-serif;
   color: var(--adm-text);
   background: var(--adm-canvas);
@@ -166,3 +181,95 @@
   border: 1px solid var(--adm-border);
   border-radius: 10px;
 }
+
+/*
+ * ---------------------------------------------------------------------------
+ * Chuyển động
+ * ---------------------------------------------------------------------------
+ *
+ * Drawer điều hướng (dưới 1024px). Trước đây panel được mount/unmount thẳng
+ * nên nó hiện ra tức thì: mắt không thấy nó từ đâu tới, và người dùng mất
+ * một nhịp để hiểu vừa có cái gì đè lên trang. Giờ nó trượt từ mép trái vào.
+ *
+ * Dùng `@keyframes` chứ không dùng `transition`: phần tử vừa mount thì
+ * trình duyệt vẽ luôn trạng thái cuối, `transition` sẽ không chạy. Animation
+ * thì tự chạy ngay khi phần tử xuất hiện.
+ *
+ * `will-change: transform` để trình duyệt nhấc panel lên layer riêng. Trên
+ * tablet cũ của quán, thiếu dòng này thì khung trượt bị giật vì phải vẽ lại
+ * cả vùng nội dung bên dưới ở từng frame.
+ */
+@keyframes adm-drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+@keyframes adm-drawer-out {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+@keyframes adm-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes adm-overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.admin-portal .adm-drawer-panel {
+  will-change: transform;
+}
+.admin-portal [data-state="open"] > .adm-drawer-panel {
+  animation: adm-drawer-in var(--adm-dur-base) var(--adm-ease-out) both;
+}
+.admin-portal [data-state="closed"] > .adm-drawer-panel {
+  animation: adm-drawer-out var(--adm-dur-exit) var(--adm-ease-in) both;
+}
+.admin-portal [data-state="open"] > .adm-drawer-overlay {
+  animation: adm-overlay-in var(--adm-dur-base) linear both;
+}
+.admin-portal [data-state="closed"] > .adm-drawer-overlay {
+  animation: adm-overlay-out var(--adm-dur-exit) linear both;
+}
+
+/*
+ * Nền/màu của mục menu và nút trên header. 120ms vì đây là thứ xảy ra hàng
+ * trăm lần mỗi phiên tra cứu — chậm hơn là thành lầy.
+ *
+ * Chỉ chuyển `background-color` và `color`, không dùng `transition: all`:
+ * `all` sẽ bắt luôn cả `outline` của focus-visible, làm viền focus bò ra
+ * chậm một nhịp, đúng lúc người dùng bàn phím cần thấy nó ngay.
+ */
+.admin-portal .adm-nav-item {
+  transition:
+    background-color var(--adm-dur-fast) var(--adm-ease-out),
+    color var(--adm-dur-fast) var(--adm-ease-out);
+}
+
+/* Skip link: bật ra khi nhận focus, trượt xuống thay vì nhảy. */
+.admin-portal .adm-skip-link {
+  transition: transform var(--adm-dur-fast) var(--adm-ease-out);
+}
+
+/*
+ * `prefers-reduced-motion` đã được tắt chung ở index.css (animation và
+ * transition về 0.01ms). Không khai lại ở đây — nhưng JS vẫn phải tự đọc
+ * thiết lập đó để gỡ drawer ngay thay vì chờ 150ms rỗng; xem
+ * `drawerExitDelay` trong admin-motion.ts.
+ */
