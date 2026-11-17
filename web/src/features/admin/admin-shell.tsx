@@ -155,7 +155,7 @@ export function AdminShell() {
             id="admin-main-content"
             tabIndex={-1}
             data-testid="admin-main-content"
-            className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-[var(--adm-canvas)] p-4 outline-none md:p-6"
+            className="adm-content min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-[var(--adm-canvas)] p-4 outline-none md:p-6"
           >
             <Outlet />
           </main>

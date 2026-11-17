@@ -45,7 +45,12 @@
   flex-direction: column;
   gap: 16px;
   width: 100%;
-  max-width: 1144px;
+  /*
+   * 1144px trước đây là trần đóng cứng: màn 1920 bỏ trống 496px bên phải,
+   * tức 29% vùng nội dung. Vẫn giữ một trần vì kéo hết cỡ trên màn siêu
+   * rộng thì mắt phải quét ngang quá xa, đọc một dòng dễ lạc hàng.
+   */
+  max-width: 1600px;
   color: var(--so-text);
   font-family:
     "Be Vietnam Pro",
@@ -427,7 +432,7 @@
   list-style: none;
 }
 
-@media (min-width: 1121px) {
+@container adm-content (min-width: 841px) {
   .so-alert-list {
     max-height: 214px;
     overflow-y: auto;
@@ -657,7 +662,16 @@
 }
 
 /* Responsive Breakpoints */
-@media (max-width: 1120px) {
+/*
+ * Breakpoint đo KHUNG CHỨA, không đo cửa sổ: trang này luôn nằm trong vùng
+ * nội dung hẹp hơn cửa sổ 280px khi còn sidebar, và chỉ 32px khi sidebar thu
+ * thành drawer. Một con số theo cửa sổ không thể đúng cả hai trường hợp.
+ *
+ * 920px: dưới mức này sáu ô KPI mỗi ô hẹp hơn 142px, số và nhãn bắt đầu vỡ.
+ * Giữ trên 1000px để màn 1280 và 1366 vẫn hiện sáu ô như trước.
+ * 840px: dưới mức này cột phải còn chưa tới 300px, xếp dọc dễ đọc hơn.
+ */
+@container adm-content (max-width: 920px) {
   .so-kpi-row-1 {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -665,13 +679,15 @@
   .so-kpi-row-2 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
 
+@container adm-content (max-width: 840px) {
   .so-main-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
-@media (max-width: 640px) {
+@container adm-content (max-width: 608px) {
   .so-kpi-row-1,
   .so-kpi-row-2 {
     grid-template-columns: repeat(2, minmax(0, 1fr));

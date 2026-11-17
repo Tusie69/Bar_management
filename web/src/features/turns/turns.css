@@ -29,7 +29,12 @@
   display: grid;
   gap: 18px;
   width: 100%;
-  max-width: 1144px;
+  /*
+   * 1144px trước đây là trần đóng cứng: màn 1920 bỏ trống 496px bên phải
+   * trong khi vẫn phải cuộn 562px xuống dưới. Vẫn giữ trần để bảng không
+   * kéo dài quá tầm mắt trên màn siêu rộng.
+   */
+  max-width: 1600px;
   min-width: 0;
   font-family:
     "Be Vietnam Pro",
@@ -171,13 +176,18 @@
   gap: 14px;
 }
 
-@media (max-width: 900px) {
+/*
+ * Breakpoint đo KHUNG CHỨA chứ không đo cửa sổ. Xem ghi chú ở
+ * `admin-theme.css` về lý do: vùng nội dung hẹp hơn cửa sổ 280px khi còn
+ * sidebar và 32px khi sidebar thu thành drawer.
+ */
+@container adm-content (max-width: 700px) {
   .turns-metrics-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 520px) {
+@container adm-content (max-width: 480px) {
   .turns-metrics-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -241,7 +251,7 @@
   align-items: start;
 }
 
-@media (min-width: 1280px) {
+@container adm-content (min-width: 1000px) {
   .turns-main-grid {
     grid-template-columns: minmax(0, 1fr) 360px;
   }
@@ -260,7 +270,7 @@
   align-items: start;
 }
 
-@media (min-width: 1280px) {
+@container adm-content (min-width: 1000px) {
   .turns-bottom-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -856,7 +866,7 @@
   background-color: var(--turns-sunken);
 }
 
-@media (max-width: 1024px) {
+@container adm-content (max-width: 992px) {
   .turns-pill-btn,
   .turns-switch-btn,
   .turns-page-btn,

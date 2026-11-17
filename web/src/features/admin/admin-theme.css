@@ -151,6 +151,22 @@
 }
 
 /*
+ * Vùng nội dung là khung chứa mà các trang con đo theo.
+ *
+ * Breakpoint của hai trang Tổng quan và Sổ lượt trước đây đo bề ngang CỬA
+ * SỔ, trong khi chúng nằm trong vùng nội dung hẹp hơn 280px (sidebar 232 +
+ * padding 48). Hậu quả: `min-width: 1280px` kích hoạt khi khung thật chỉ còn
+ * 1048px, bố cục hai cột bật ra quá sớm và bảng bị ép.
+ *
+ * `container-type: inline-size` chỉ chứa trục ngang, không chứa trục dọc, nên
+ * `overflow-y: auto` của chính nó vẫn cuộn bình thường.
+ */
+.admin-portal .adm-content {
+  container-type: inline-size;
+  container-name: adm-content;
+}
+
+/*
  * Hộp thoại của Quản trị. Radix đặt nó qua portal ở cấp body, ngoài khung
  * `.admin-portal`, nên chính nó phải mang lớp đó để có token. Khi đó nền
  * của `.admin-portal` là màu nền trang, không phải màu mặt thẻ; chọn lại ở
