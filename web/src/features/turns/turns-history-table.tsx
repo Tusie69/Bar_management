@@ -13,6 +13,7 @@ import {
   isTurnOpen,
   maskPhoneNumbersInText,
   resolveStaffIdentity,
+  toggleSelectedVisitId,
   type ExtendedTableTurnView,
 } from "./turns-helpers"
 
@@ -77,6 +78,10 @@ export function TurnsHistoryTable({
   const [selectedVisitId, setSelectedVisitId] = useState<number | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [scrollState, setScrollState] = useState({ left: false, right: false })
+
+  const handleToggleRow = useCallback((visitId: number) => {
+    setSelectedVisitId((prev) => toggleSelectedVisitId(prev, visitId))
+  }, [])
 
   const updateScrollState = useCallback(() => {
     const el = scrollRef.current
@@ -231,6 +236,7 @@ export function TurnsHistoryTable({
                     const safeGuestName = maskPhoneNumbersInText(row.guestName)
                     const anonymousGuest = isAnonymousGuestName(safeGuestName)
                     const isSelected = selectedVisitId === row.visitId
+                    const turnCode = formatTurnCode(row.visitId)
 
                     const rowClass = [
                       "turns-history-row",
@@ -256,13 +262,25 @@ export function TurnsHistoryTable({
                         data-status={open ? "OPEN" : "CLOSED"}
                         data-counted={row.counted ? "true" : "false"}
                         data-state={isSelected ? "selected" : undefined}
-                        onClick={() => setSelectedVisitId((prev) => (prev === row.visitId ? null : row.visitId))}
+                        onClick={() => handleToggleRow(row.visitId)}
                       >
                         <td
                           className="turns-sticky-col turns-history-code-col font-semibold whitespace-nowrap"
                           data-label="Mã lượt"
                         >
-                          {formatTurnCode(row.visitId)}
+                          <button
+                            type="button"
+                            className="turns-row-select-btn"
+                            aria-pressed={isSelected}
+                            aria-label={`Chọn lượt ${turnCode} - ${safeGuestName || "Khách"}`}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              handleToggleRow(row.visitId)
+                            }}
+                            data-testid={`turns-row-select-${row.visitId}`}
+                          >
+                            {turnCode}
+                          </button>
                         </td>
                         {isMultiDay ? (
                           <td

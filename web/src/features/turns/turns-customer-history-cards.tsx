@@ -598,7 +598,7 @@ export function DuplicateMergeSummary({
     >
       <div className="turns-merge-compare">
         <div className="turns-merge-profile-box turns-merge-profile-box--keep">
-          <p className="m-0 text-xs font-semibold tracking-[0.02em] text-[var(--turns-blue-ink)] uppercase">
+          <p className="turns-merge-role-heading--keep m-0 text-xs font-semibold tracking-[0.02em] uppercase">
             Hồ sơ được giữ lại:
           </p>
           <p className="mt-1 mb-0 font-semibold text-[var(--admin-text-primary)]">
@@ -610,7 +610,7 @@ export function DuplicateMergeSummary({
         </div>
 
         <div className="turns-merge-profile-box turns-merge-profile-box--source">
-          <p className="m-0 text-xs font-semibold tracking-[0.02em] text-[var(--turns-red-ink)] uppercase">
+          <p className="turns-merge-role-heading--source m-0 text-xs font-semibold tracking-[0.02em] uppercase">
             Hồ sơ sẽ được gộp vào hồ sơ trên:
           </p>
           <p className="mt-1 mb-0 font-semibold text-[var(--admin-text-primary)]">

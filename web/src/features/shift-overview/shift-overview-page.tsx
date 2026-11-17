@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle, Lock, RotateCcw } from "lucide-react"
-import { useEffect, useMemo, useRef } from "react"
+import { useMemo, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -13,6 +13,7 @@ import { ShiftOverviewFloor } from "./shift-overview-floor"
 import { isForbiddenError, useCanReadShiftOverview } from "./shift-overview-hooks"
 import { ShiftOverviewKpis } from "./shift-overview-kpis"
 import { ShiftOverviewOccupancy } from "./shift-overview-occupancy"
+import { useShiftOverviewFirstReveal } from "./shift-overview-reveal"
 import {
   buildOperationalAlerts,
   selectActiveWaitlistCount,
@@ -126,35 +127,6 @@ function ShiftOverviewSkeleton() {
       </div>
     </div>
   )
-}
-
-/** Runs one short staggered entrance via `lib/motion.ts` tokens once data first arrives; never on realtime refreshes. */
-function useShiftOverviewFirstReveal(rootRef: React.RefObject<HTMLDivElement | null>, ready: boolean): void {
-  const revealedRef = useRef(false)
-
-  useEffect(() => {
-    if (!ready || revealedRef.current) return
-    const root = rootRef.current
-    if (!root) return
-
-    const targets = Array.from(root.querySelectorAll<HTMLElement>("[data-so-reveal]"))
-    if (targets.length === 0) return
-
-    revealedRef.current = true
-    let cancelled = false
-    let cleanup: (() => void) | undefined
-
-    void import("@/features/admin/admin-motion").then(({ setupRevealMatchMedia }) => {
-      if (cancelled) return
-      const mm = setupRevealMatchMedia(targets)
-      cleanup = () => mm.revert()
-    })
-
-    return () => {
-      cancelled = true
-      cleanup?.()
-    }
-  }, [ready, rootRef])
 }
 
 export function ShiftOverviewPage() {

@@ -1,6 +1,6 @@
 import { vi } from "date-fns/locale"
 import { AlertTriangle, CalendarDays, Inbox, Lock, RotateCcw } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -27,6 +27,7 @@ import {
 } from "./turns-helpers"
 import { TurnsHistoryTable } from "./turns-history-table"
 import { TurnsRadioGroup, type TurnsRadioOption } from "./turns-radio-group"
+import { useTurnsFirstReveal } from "./turns-reveal"
 import { StaffBreakdownCard, TopScopesCard } from "./turns-side-cards"
 import "./turns.css"
 
@@ -66,35 +67,6 @@ function useTurnHistoryReadOnly(): boolean {
 
 function isForbiddenError(error: unknown): boolean {
   return isApiError(error) && (error.status === 403 || error.code === "PERMISSION_DENIED")
-}
-
-/** Runs one short staggered entrance via `lib/motion.ts` tokens once on first load; never on refresh or filter change. */
-function useTurnsFirstReveal(rootRef: React.RefObject<HTMLDivElement | null>, ready: boolean): void {
-  const revealedRef = useRef(false)
-
-  useEffect(() => {
-    if (!ready || revealedRef.current) return
-    const root = rootRef.current
-    if (!root) return
-
-    const targets = Array.from(root.querySelectorAll<HTMLElement>("[data-turns-reveal]"))
-    if (targets.length === 0) return
-
-    revealedRef.current = true
-    let cancelled = false
-    let cleanup: (() => void) | undefined
-
-    void import("@/features/admin/admin-motion").then(({ setupRevealMatchMedia }) => {
-      if (cancelled) return
-      const mm = setupRevealMatchMedia(targets)
-      cleanup = () => mm.revert()
-    })
-
-    return () => {
-      cancelled = true
-      cleanup?.()
-    }
-  }, [ready, rootRef])
 }
 
 function TurnsLoadingSkeleton() {

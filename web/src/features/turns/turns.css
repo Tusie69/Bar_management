@@ -22,7 +22,6 @@
   --turns-green-ink: #1d6b3b;
   --turns-tint-green: var(--adm-tint-green, color-mix(in oklab, var(--turns-green) 12%, var(--turns-surface)));
   --turns-amber: var(--admin-state-soon, #e0a106);
-  --turns-amber-metric: #a66900;
   --turns-amber-ink: var(--admin-state-soon-ink, #854d0e);
   --turns-tint-amber: var(--admin-tint-amber, #fdf3dc);
   --turns-red: var(--admin-state-late, #d13b3b);
@@ -349,7 +348,7 @@
 }
 
 .turns-metric-value-amber {
-  color: var(--turns-amber-metric);
+  color: var(--turns-amber-ink);
 }
 
 .turns-metric-caption {
@@ -575,6 +574,34 @@
 
 .turns-history-row {
   cursor: pointer;
+}
+
+.turns-row-select-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 4px 6px;
+  margin: -4px -6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 8px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-press, 100ms) ease,
+    border-color var(--duration-press, 100ms) ease;
+}
+
+.turns-row-select-btn:hover {
+  background-color: color-mix(in oklab, var(--turns-tint-blue) 48%, transparent);
+}
+
+.turns-row-select-btn[aria-pressed="true"] {
+  background-color: var(--turns-tint-blue);
+  border-color: color-mix(in oklab, var(--turns-blue) 32%, transparent);
+  color: var(--turns-blue-ink);
 }
 
 .turns-table tbody tr:hover td {
@@ -1025,7 +1052,7 @@
   transform: scale(0.97);
 }
 
-/* Destructive Merge AlertDialog presentation */
+/* Destructive Merge AlertDialog presentation (portaled under .admin-root) */
 .turns-merge-dialog-badge {
   display: inline-flex;
   align-items: center;
@@ -1034,8 +1061,8 @@
   height: 44px;
   margin-bottom: 4px;
   border-radius: var(--radius-pill, 9999px);
-  background-color: var(--turns-tint-red);
-  color: var(--turns-red-ink);
+  background-color: var(--admin-tint-red, #fbe9e9);
+  color: var(--admin-state-late-ink, #991b1b);
 }
 
 .turns-merge-compare {
@@ -1046,16 +1073,24 @@
 .turns-merge-profile-box {
   padding: 10px 12px;
   border-radius: var(--radius-md, 10px);
-  border: 1px solid var(--turns-border);
-  background-color: var(--turns-canvas);
+  border: 1px solid var(--admin-border, #e2dfd8);
+  background-color: var(--admin-canvas, #f7f6f3);
 }
 
 .turns-merge-profile-box--keep {
-  border-left: 3px solid var(--turns-blue);
+  border-left: 3px solid var(--admin-action-blue, #1d6fc2);
 }
 
 .turns-merge-profile-box--source {
-  border-left: 3px solid var(--turns-red);
+  border-left: 3px solid var(--admin-state-late, #d13b3b);
+}
+
+.turns-merge-role-heading--keep {
+  color: color-mix(in oklab, var(--admin-action-blue, #1d6fc2) 84%, #000);
+}
+
+.turns-merge-role-heading--source {
+  color: var(--admin-state-late-ink, #991b1b);
 }
 
 .turns-merge-warning-box {
@@ -1064,9 +1099,9 @@
   gap: 8px;
   padding: 10px 12px;
   border-radius: var(--radius-md, 10px);
-  border: 1px solid color-mix(in oklab, var(--turns-red) 28%, transparent);
-  background-color: var(--turns-tint-red);
-  color: var(--turns-red-ink);
+  border: 1px solid color-mix(in oklab, var(--admin-state-late, #d13b3b) 28%, transparent);
+  background-color: var(--admin-tint-red, #fbe9e9);
+  color: var(--admin-state-late-ink, #991b1b);
 }
 
 /* Phone (375-430px): Clean stacked ledger cards with zero clipping and every column visible */
@@ -1182,6 +1217,11 @@
     order: 1;
   }
 
+  .turns-history-table .turns-row-select-btn {
+    margin: 4px 0 0;
+    padding: 8px 10px;
+  }
+
   .turns-history-table .turns-history-end-col {
     grid-column: 2 / 3;
     order: 2;
@@ -1251,8 +1291,13 @@
   .turns-undo-btn,
   .turns-dup-next-btn,
   .turns-filter-chip,
-  .turns-staff-filter-btn {
+  .turns-staff-filter-btn,
+  .turns-row-select-btn {
     min-height: 44px;
+  }
+
+  .turns-row-select-btn {
+    min-width: 44px;
   }
 
   .turns-dup-next-btn {
@@ -1269,6 +1314,7 @@
   .turns-switch-thumb,
   .turns-filter-chip,
   .turns-dup-next-btn,
+  .turns-row-select-btn,
   .turns-table td {
     transition: none !important;
   }

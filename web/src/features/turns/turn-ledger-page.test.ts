@@ -143,9 +143,9 @@ vi.mock("@/state/session", () => ({
 }))
 
 import TurnLedgerPage from "./turn-ledger-page"
-import { AnonymousVisitsCard, DuplicateCustomersCard, DuplicateMergeSummary } from "./turns-customer-history-cards"
+import { DuplicateCustomersCard, DuplicateMergeSummary, AnonymousVisitsCard } from "./turns-customer-history-cards"
 import { TurnsDailyChart } from "./turns-daily-chart"
-import { resolveRadioKeyTargetIndex } from "./turns-helpers"
+import { resolveRadioKeyTargetIndex, toggleSelectedVisitId } from "./turns-helpers"
 import { TurnsRadioGroup } from "./turns-radio-group"
 import { StaffBreakdownCard, TopScopesCard } from "./turns-side-cards"
 
@@ -1039,5 +1039,29 @@ describe("TurnLedgerPage & subcomponents (NA-34 UI)", () => {
 
     const dupHtml = renderToString(createElement(DuplicateCustomersCard, { isReadOnly: false }))
     expect(dupHtml).toMatch(/data-variant="destructive"[^>]*data-testid="turns-dup-merge-btn"/)
+  })
+
+  it("renders native keyboard-operable row selection buttons with aria-pressed and masked guest labels (P2A-02)", () => {
+    const pageHtml = renderToString(createElement(TurnLedgerPage))
+    expect(pageHtml).toContain('data-testid="turns-row-select-1101"')
+    expect(pageHtml).toContain('aria-pressed="false"')
+    expect(pageHtml).toContain('aria-label="Chọn lượt L-1101 - Nhóm bạn Hà ***678"')
+    expect(pageHtml).not.toContain("0912345678")
+
+    expect(toggleSelectedVisitId(null, 1101)).toBe(1101)
+    expect(toggleSelectedVisitId(1101, 1101)).toBeNull()
+    expect(toggleSelectedVisitId(1101, 1102)).toBe(1102)
+  })
+
+  it("uses portal-safe Admin role heading classes inside DuplicateMergeSummary (P2A-01)", () => {
+    const summaryHtml = renderToString(
+      createElement(DuplicateMergeSummary, {
+        pair: makeDuplicatesFixture().pairs[0]!,
+      }),
+    )
+    expect(summaryHtml).toContain("turns-merge-role-heading--keep")
+    expect(summaryHtml).toContain("turns-merge-role-heading--source")
+    expect(summaryHtml).not.toContain("var(--turns-blue-ink)")
+    expect(summaryHtml).not.toContain("var(--turns-red-ink)")
   })
 })
