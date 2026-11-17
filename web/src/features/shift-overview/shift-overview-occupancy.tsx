@@ -2,8 +2,13 @@ import type { ZoneOccupancyItem } from "./shift-overview-selectors"
 
 export function ShiftOverviewOccupancy({ items }: { items: ZoneOccupancyItem[] }) {
   return (
-    <section className="so-panel" aria-labelledby="so-occupancy-heading" data-testid="shift-overview-occupancy">
-      <div className="so-panel-header">
+    <section
+      className="so-panel"
+      aria-labelledby="so-occupancy-heading"
+      data-testid="shift-overview-occupancy"
+      data-so-reveal
+    >
+      <div className="so-panel-header so-panel-header--bordered">
         <div className="so-panel-heading-group">
           <h2 id="so-occupancy-heading" className="so-panel-title">
             Tỷ lệ lấp bàn theo khu

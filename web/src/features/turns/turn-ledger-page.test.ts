@@ -1028,4 +1028,16 @@ describe("TurnLedgerPage & subcomponents (NA-34 UI)", () => {
     )
     expect(dialogBodyHtml).not.toMatch(/0\d{9}/)
   })
+
+  it("keeps destructive variant on duplicate merge button, segmented filter controls, and mobile stacked-row labels", () => {
+    const pageHtml = renderToString(createElement(TurnLedgerPage))
+    expect(pageHtml).toContain("turns-segmented-track")
+    expect(pageHtml).toContain("turns-segmented-item")
+    expect(pageHtml).toContain('data-label="Mã lượt"')
+    expect(pageHtml).toContain('data-label="Khách hàng"')
+    expect(pageHtml).toContain('data-label="Người check-in"')
+
+    const dupHtml = renderToString(createElement(DuplicateCustomersCard, { isReadOnly: false }))
+    expect(dupHtml).toMatch(/data-variant="destructive"[^>]*data-testid="turns-dup-merge-btn"/)
+  })
 })

@@ -1,6 +1,7 @@
 import { vi } from "date-fns/locale"
 import { AlertTriangle, CalendarDays, Inbox, Lock, RotateCcw } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -65,6 +66,35 @@ function useTurnHistoryReadOnly(): boolean {
 
 function isForbiddenError(error: unknown): boolean {
   return isApiError(error) && (error.status === 403 || error.code === "PERMISSION_DENIED")
+}
+
+/** Runs one short staggered entrance via `lib/motion.ts` tokens once on first load; never on refresh or filter change. */
+function useTurnsFirstReveal(rootRef: React.RefObject<HTMLDivElement | null>, ready: boolean): void {
+  const revealedRef = useRef(false)
+
+  useEffect(() => {
+    if (!ready || revealedRef.current) return
+    const root = rootRef.current
+    if (!root) return
+
+    const targets = Array.from(root.querySelectorAll<HTMLElement>("[data-turns-reveal]"))
+    if (targets.length === 0) return
+
+    revealedRef.current = true
+    let cancelled = false
+    let cleanup: (() => void) | undefined
+
+    void import("@/features/admin/admin-motion").then(({ setupRevealMatchMedia }) => {
+      if (cancelled) return
+      const mm = setupRevealMatchMedia(targets)
+      cleanup = () => mm.revert()
+    })
+
+    return () => {
+      cancelled = true
+      cleanup?.()
+    }
+  }, [ready, rootRef])
 }
 
 function TurnsLoadingSkeleton() {
@@ -150,6 +180,7 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
   const canRead = useCanReadTurnLedger()
   const isReadOnly = useTurnHistoryReadOnly()
   const currentBusinessDate = useBusinessDate()
+  const rootRef = useRef<HTMLDivElement>(null)
 
   const [preset, setPreset] = useState<TurnRangePreset>(initialPreset)
   const [pickedDate, setPickedDate] = useState<BusinessDate>(currentBusinessDate)
@@ -196,6 +227,17 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
   }, [selectedStaffId, summary])
 
   const forbidden = !canRead || isForbiddenError(summaryQuery.error) || isForbiddenError(turnsQuery.error)
+  const isInitialLoading = (summaryQuery.isPending && !summary) || (turnsQuery.isPending && !turnsData)
+  const fatalError =
+    (summaryQuery.isError && !summary ? summaryQuery.error : null) ??
+    (turnsQuery.isError && !turnsData ? turnsQuery.error : null)
+  const backgroundError =
+    !fatalError && (summaryQuery.isError || turnsQuery.isError) ? (summaryQuery.error ?? turnsQuery.error) : null
+
+  const kpis = summary ? computeTurnKpis(summary) : null
+  const isContentReady = !forbidden && !isInitialLoading && !fatalError && Boolean(summary && kpis)
+
+  useTurnsFirstReveal(rootRef, isContentReady)
 
   if (forbidden) {
     return (
@@ -203,7 +245,7 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
         <section className="turns-card p-8" role="alert" aria-labelledby="turns-forbidden-heading">
           <div className="flex items-start gap-4">
             <div
-              className="flex size-11 shrink-0 items-center justify-center rounded-lg"
+              className="flex size-11 shrink-0 items-center justify-center rounded-full"
               style={{
                 backgroundColor: "var(--turns-tint-red)",
                 color: "var(--turns-red-ink)",
@@ -226,13 +268,6 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
       </div>
     )
   }
-
-  const isInitialLoading = (summaryQuery.isPending && !summary) || (turnsQuery.isPending && !turnsData)
-  const fatalError =
-    (summaryQuery.isError && !summary ? summaryQuery.error : null) ??
-    (turnsQuery.isError && !turnsData ? turnsQuery.error : null)
-  const backgroundError =
-    !fatalError && (summaryQuery.isError || turnsQuery.isError) ? (summaryQuery.error ?? turnsQuery.error) : null
 
   const handleSelectPreset = (nextPreset: Exclude<TurnRangePreset, "date">) => {
     setPreset(nextPreset)
@@ -264,7 +299,6 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
     void turnsQuery.refetch()
   }
 
-  const kpis = summary ? computeTurnKpis(summary) : null
   const rangeCaption = formatLedgerRangeCaption(preset, from, to)
   const isRangeEmpty =
     summary !== undefined &&
@@ -273,7 +307,7 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
     (turnsData?.total ?? 0) === 0
 
   return (
-    <div className="turns-page" data-testid="turn-ledger-page">
+    <div ref={rootRef} className="turns-page" data-testid="turn-ledger-page">
       {/* Filter Toolbar */}
       <div className="turns-toolbar" data-testid="turns-filter-bar">
         <div className="turns-filter-pills">
@@ -282,15 +316,15 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
             options={RANGE_PRESET_OPTIONS}
             value={preset === "date" ? undefined : preset}
             onValueChange={handleSelectPreset}
-            className="flex flex-wrap items-center gap-2"
-            itemClassName="turns-pill-btn"
+            className="turns-segmented-track"
+            itemClassName="turns-segmented-item"
           />
 
           <Popover open={datePopoverOpen} onOpenChange={setDatePopoverOpen}>
             <PopoverTrigger asChild>
               <button
                 type="button"
-                className="turns-pill-btn"
+                className="turns-date-chip-btn"
                 data-active={preset === "date" ? "true" : "false"}
                 aria-label="Chọn một ngày kinh doanh cụ thể"
                 data-testid="turns-date-picker-trigger"
@@ -346,10 +380,10 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
               {backgroundError instanceof Error ? backgroundError.message : "Lỗi kết nối"}
             </span>
           </div>
-          <button type="button" onClick={handleRetry} className="turns-page-btn">
+          <Button type="button" variant="outline" size="sm" onClick={handleRetry} className="turns-touch-btn">
             <RotateCcw className="size-3.5" aria-hidden="true" />
             Thử lại
-          </button>
+          </Button>
         </div>
       ) : null}
 
@@ -377,57 +411,62 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
               {fatalError instanceof Error ? fatalError.message : "Kết nối tới máy chủ bị gián đoạn. Vui lòng thử lại."}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={handleRetry}
-            className="inline-flex min-h-[44px] items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium"
-            style={{
-              backgroundColor: "var(--turns-blue)",
-              color: "#ffffff",
-            }}
-            data-testid="turns-retry-button"
-          >
+          <Button type="button" onClick={handleRetry} data-testid="turns-retry-button">
             <RotateCcw className="size-4" aria-hidden="true" />
             Thử lại
-          </button>
+          </Button>
         </section>
       ) : summary && kpis ? (
         <>
           {/* 4-card KPI row matching Figma geometry (exclusively from API summary) */}
-          <dl className="turns-metrics-grid" data-testid="turns-metrics-grid">
-            <div className="turns-card turns-metric-card" data-testid="turns-metric-completed">
+          <dl className="turns-metrics-grid" data-testid="turns-metrics-grid" data-turns-reveal>
+            <div
+              className="turns-card turns-metric-card turns-metric-card--completed"
+              data-testid="turns-metric-completed"
+            >
               <dt className="turns-metric-label">Lượt tới quán</dt>
               <dd className="turns-metric-value m-0">{kpis.arrivedTotal}</dd>
               <dd className="turns-metric-caption m-0">lượt tính vào chỉ số</dd>
             </div>
 
-            <div className="turns-card turns-metric-card" data-testid="turns-metric-guests">
+            <div className="turns-card turns-metric-card turns-metric-card--guests" data-testid="turns-metric-guests">
               <dt className="turns-metric-label">Tổng khách</dt>
               <dd className="turns-metric-value m-0">{kpis.guestTotal}</dd>
               <dd className="turns-metric-caption m-0">tổng số khách phục vụ</dd>
             </div>
 
-            <div className="turns-card turns-metric-card" data-testid="turns-metric-open">
-              <dt className="turns-metric-label">Đang ngồi</dt>
+            <div className="turns-card turns-metric-card turns-metric-card--open" data-testid="turns-metric-open">
+              <dt className="turns-metric-label">
+                <span className="turns-metric-dot turns-metric-dot--amber" aria-hidden="true" />
+                Đang ngồi
+              </dt>
               <dd className="turns-metric-value turns-metric-value-amber m-0">{kpis.openTotal}</dd>
               <dd className="turns-metric-caption m-0">lượt đang phục vụ trong khoảng</dd>
             </div>
 
-            <div className="turns-card turns-metric-card" data-testid="turns-metric-closed">
-              <dt className="turns-metric-label">Đã trả bàn</dt>
+            <div className="turns-card turns-metric-card turns-metric-card--closed" data-testid="turns-metric-closed">
+              <dt className="turns-metric-label">
+                <span className="turns-metric-dot turns-metric-dot--green" aria-hidden="true" />
+                Đã trả bàn
+              </dt>
               <dd className="turns-metric-value turns-metric-value-green m-0">{kpis.closedCountedTotal}</dd>
               <dd className="turns-metric-caption m-0">lượt đã kết thúc hợp lệ</dd>
             </div>
           </dl>
 
           {/* Daily Breakdown (only for multi-day ranges) */}
-          {isMultiDay ? <TurnsDailyChart days={dailySeries} /> : null}
+          {isMultiDay ? (
+            <div data-turns-reveal>
+              <TurnsDailyChart days={dailySeries} />
+            </div>
+          ) : null}
 
           {/* Empty state vs Two-column detail */}
           {isRangeEmpty ? (
             <section
               className="turns-card grid place-items-center gap-3 px-6 py-14 text-center"
               data-testid="turns-empty-state"
+              data-turns-reveal
             >
               <div
                 className="flex size-12 items-center justify-center rounded-full"
@@ -446,19 +485,21 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
           ) : (
             <>
               <div className="turns-main-grid" data-testid="turns-main-grid">
-                <TurnsHistoryTable
-                  result={turnsData}
-                  rangeCaption={rangeCaption}
-                  isMultiDay={isMultiDay}
-                  isFetching={turnsQuery.isFetching}
-                  includeUncounted={includeUncounted}
-                  selectedStaffId={selectedStaffId}
-                  selectedStaffLabel={selectedStaffLabel}
-                  onClearStaff={() => handleSelectStaff(undefined)}
-                  onPageChange={setPage}
-                />
+                <div className="min-w-0" data-turns-reveal>
+                  <TurnsHistoryTable
+                    result={turnsData}
+                    rangeCaption={rangeCaption}
+                    isMultiDay={isMultiDay}
+                    isFetching={turnsQuery.isFetching}
+                    includeUncounted={includeUncounted}
+                    selectedStaffId={selectedStaffId}
+                    selectedStaffLabel={selectedStaffLabel}
+                    onClearStaff={() => handleSelectStaff(undefined)}
+                    onPageChange={setPage}
+                  />
+                </div>
 
-                <div className="turns-side-stack" data-testid="turns-side-stack">
+                <div className="turns-side-stack" data-testid="turns-side-stack" data-turns-reveal>
                   <AnonymousVisitsCard
                     key={`${from}:${to}`}
                     from={from}
@@ -471,7 +512,7 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
                 </div>
               </div>
 
-              <div className="turns-bottom-grid" data-testid="turns-bottom-grid">
+              <div className="turns-bottom-grid" data-testid="turns-bottom-grid" data-turns-reveal>
                 <StaffBreakdownCard
                   byStaff={summary.byStaff}
                   selectedStaffId={selectedStaffId}

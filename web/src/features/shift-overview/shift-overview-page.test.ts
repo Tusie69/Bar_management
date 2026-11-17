@@ -287,4 +287,54 @@ describe("ShiftOverviewPage", () => {
     const htmlApi403 = renderPage()
     expect(htmlApi403).toContain('data-testid="shift-overview-forbidden"')
   })
+
+  it("differentiates primary/secondary KPI tiers, stretches desktop alerts shell, and preserves grouped floor chip classes", () => {
+    const tables = mockState.floorModel.tables
+    mockState.floorModel.floor = {
+      at: mockState.now,
+      businessDate: "2026-11-15",
+      tables: [],
+      groups: [{ id: 10, displayCode: "G01", symbolNo: 1, tableIds: [1] }],
+      changeSeq: 1,
+    }
+    mockState.floorModel.tables = tables
+    mockState.waitlist = {
+      data: [
+        {
+          id: 1,
+          version: 1,
+          kind: "WALK_IN",
+          displayName: "Khách chờ",
+          phoneLast3: "123",
+          customerId: null,
+          partySize: 2,
+          preferenceMode: null,
+          preferences: [],
+          channel: "IN_PERSON",
+          businessDate: "2026-11-15",
+          queuedAt: new Date(mockState.now.getTime() - 40 * 60_000),
+          status: "WAITING",
+          claimedBy: null,
+          claimExpiresAt: null,
+          offeredAt: null,
+          hold: null,
+          reservationId: null,
+          reservationExpectedAt: null,
+          attempts: null,
+          note: null,
+          callbackRequested: null,
+          closedAt: null,
+        },
+      ],
+      isLoading: false,
+      error: null,
+    }
+
+    const html = renderPage()
+    expect(html.match(/so-kpi-card--primary/g)).toHaveLength(6)
+    expect(html.match(/so-kpi-card--secondary/g)).toHaveLength(4)
+    expect(html).toContain('class="so-panel so-panel--alerts"')
+    expect(html).toContain('class="so-alerts-scroll-shell"')
+    expect(html).toContain('class="so-chip so-chip--inuse so-chip--grouped"')
+  })
 })

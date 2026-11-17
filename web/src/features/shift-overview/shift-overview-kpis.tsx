@@ -2,9 +2,18 @@ import { Activity, AlertTriangle, Info, PencilLine } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import type { OverviewKpiCard } from "./shift-overview-selectors"
 
-function KpiCardItem({ card }: { card: OverviewKpiCard }) {
+function resolveAccentKind(card: OverviewKpiCard): string {
+  if (!card.isUnentered && card.tone === "danger") return "danger"
+  if (!card.isUnentered && card.tone === "inuse") return "inuse"
+  if (!card.isUnentered && card.tone === "soon") return "soon"
+  if (card.sourceKind === "system") return "system"
+  return "manual"
+}
+
+function KpiCardItem({ card, tier }: { card: OverviewKpiCard; tier: "primary" | "secondary" }) {
   const valueClassName = [
     "so-kpi-value",
+    tier === "secondary" ? "so-kpi-value--secondary" : "",
     card.isUnentered ? "so-kpi-value--unentered" : "",
     !card.isUnentered && card.tone === "inuse" ? "so-kpi-value--inuse" : "",
     !card.isUnentered && card.tone === "soon" ? "so-kpi-value--soon" : "",
@@ -14,12 +23,15 @@ function KpiCardItem({ card }: { card: OverviewKpiCard }) {
     .join(" ")
 
   const isSystem = card.sourceKind === "system"
+  const accent = resolveAccentKind(card)
 
   return (
     <article
-      className="so-kpi-card"
+      className={`so-kpi-card so-kpi-card--${tier}`}
       data-testid={`kpi-card-${card.id}`}
       data-source-kind={card.sourceKind}
+      data-accent={accent}
+      data-unentered={card.isUnentered ? "true" : "false"}
       aria-label={`${card.title}: ${card.displayValue}`}
     >
       <div className="so-kpi-top">
@@ -52,7 +64,9 @@ function KpiCardItem({ card }: { card: OverviewKpiCard }) {
                   title={card.infoTooltip}
                   data-testid={`kpi-info-${card.id}`}
                 >
-                  <Info className="size-3.5" aria-hidden="true" />
+                  <span className="so-info-glyph" aria-hidden="true">
+                    <Info className="size-3.5" />
+                  </span>
                 </button>
               </TooltipTrigger>
               <TooltipContent side="top" className="so-tooltip-content">
@@ -80,7 +94,7 @@ function KpiCardItem({ card }: { card: OverviewKpiCard }) {
           ) : (
             <PencilLine className="size-3 shrink-0" aria-hidden="true" />
           )}
-          <span>{card.sourceNote}</span>
+          <span className="truncate">{card.sourceNote}</span>
         </span>
       </div>
     </article>
@@ -90,14 +104,14 @@ function KpiCardItem({ card }: { card: OverviewKpiCard }) {
 export function ShiftOverviewKpis({ row1, row2 }: { row1: OverviewKpiCard[]; row2: OverviewKpiCard[] }) {
   return (
     <>
-      <section className="so-kpi-row-1" aria-label="Chỉ số tổng quan ca">
+      <section className="so-kpi-row-1" aria-label="Chỉ số tổng quan ca" data-so-reveal>
         {row1.map((card) => (
-          <KpiCardItem key={card.id} card={card} />
+          <KpiCardItem key={card.id} card={card} tier="primary" />
         ))}
       </section>
-      <section className="so-kpi-row-2" aria-label="Phân loại khách trong ca">
+      <section className="so-kpi-row-2" aria-label="Phân loại khách trong ca" data-so-reveal>
         {row2.map((card) => (
-          <KpiCardItem key={card.id} card={card} />
+          <KpiCardItem key={card.id} card={card} tier="secondary" />
         ))}
       </section>
     </>
