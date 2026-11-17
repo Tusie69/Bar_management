@@ -194,6 +194,7 @@ const report = {
     overview: "mock",
     turns: "mock",
     drawer: "mock",
+    passwordDialog: "mock",
     readonlyAccounts: "mock",
     anonDeepLink: "http-stub",
   },
@@ -473,6 +474,89 @@ try {
         breakpoint1024: atBreakpoint,
       }
       report.screenshots.push(shot)
+      await context.close()
+    }
+
+    // (c2) TU-34 doi mat khau: hop thoai co o tu nhap, va man Xem thong tin
+    {
+      const context = await browser.newContext({ viewport: { width: 1440, height: 1024 } })
+      await context.addInitScript(() => {
+        localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 3, theme: "light" }))
+      })
+      const page = await context.newPage()
+      const errors = await attachErrorCollector(page)
+      await page.goto(`${mockVite.baseUrl}/admin/accounts`, { waitUntil: "networkidle" })
+      await page.getByTestId("admin-accounts-page").waitFor({ state: "visible" })
+      // Theme toi cua Le tan khong duoc tran vao hop thoai cua Quan tri.
+      await page.evaluate(() => document.documentElement.classList.add("dark"))
+
+      // Xem thong tin: khong duoc chua mat khau, va phai noi ro vi sao.
+      await page.getByRole("button", { name: "Xem", exact: true }).first().click()
+      const detail = page.getByTestId("admin-account-detail-dialog")
+      await detail.waitFor({ state: "visible" })
+      // Dialog cua radix co hieu ung fade/zoom 200ms. Chup ngay thi anh bat
+      // duoc trang thai nua trong suot va trong nhu loi layout.
+      await page.waitForTimeout(300)
+      const detailState = await page.evaluate(() => {
+        const node = document.querySelector('[data-testid="admin-account-detail-dialog"]')
+        return {
+          bg: node ? getComputedStyle(node).backgroundColor : null,
+          text: node ? node.innerText : "",
+        }
+      })
+      assert.equal(
+        detailState.bg,
+        "rgb(255, 255, 255)",
+        `Admin dialog must keep its light surface under html.dark, got ${detailState.bg}`,
+      )
+      assert(
+        detailState.text.includes("Không xem được"),
+        "Detail dialog must say plainly that the current password cannot be shown",
+      )
+      // Chan hoi quy: khong ai duoc "tien tay" do mot chuoi mat khau vao day.
+      assert(!/mật khẩu hiện tại[^.]*:/i.test(detailState.text), "Detail dialog must never render a password value")
+
+      const detailShot = path.join(outDir, "account-detail-1440x1024.png")
+      await page.screenshot({ path: detailShot })
+
+      // Tu day sang thang hop thoai doi mat khau.
+      await page.getByTestId("admin-detail-change-password").click()
+      await detail.waitFor({ state: "detached" })
+      const dialog = page.getByTestId("admin-password-dialog")
+      await dialog.waitFor({ state: "visible" })
+      await page.waitForTimeout(300)
+
+      // Diem cot loi cua yeu cau: bam "Doi mat khau" KHONG sinh chuoi ngay nua.
+      assert.equal(
+        await page.getByTestId("admin-password-issued").count(),
+        0,
+        "Opening the dialog must not reset the password by itself",
+      )
+      const submit = page.getByTestId("admin-password-submit")
+      assert.equal(await submit.isEnabled(), false, "Submit must stay disabled while the field is empty")
+      await page.getByTestId("admin-password-input").fill("ngan-qua")
+      assert.equal(await submit.isEnabled(), false, "Submit must stay disabled below the 12 character minimum")
+      await page.getByTestId("admin-password-input").fill("MatKhauMoi2026")
+      assert.equal(await submit.isEnabled(), true, "Submit must enable once the password is long enough")
+      assert.equal(
+        await page.getByTestId("admin-password-random").isEnabled(),
+        true,
+        "Random option must stay available",
+      )
+
+      const dialogShot = path.join(outDir, "password-dialog-1440x1024.png")
+      await page.screenshot({ path: dialogShot })
+      await page.keyboard.press("Escape")
+      await dialog.waitFor({ state: "detached" })
+
+      assert.deepEqual(errors, [], `Console/page errors: ${errors.join(" | ")}`)
+      report.checks.passwordDialog = {
+        opensWithoutResetting: true,
+        minLengthEnforced: 12,
+        randomOptionAvailable: true,
+        detailDialogHidesPassword: true,
+      }
+      report.screenshots.push(detailShot, dialogShot)
       await context.close()
     }
 

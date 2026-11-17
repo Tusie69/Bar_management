@@ -29,6 +29,8 @@ import {
 import { groupPayload, groupStates } from "../permission-groups"
 import { useAdminSession } from "../use-admin-session"
 import { CreateAccountForm } from "./accounts-create-form"
+import { AccountDetailDialog } from "./accounts-detail-dialog"
+import { PasswordResetDialog } from "./accounts-password-dialog"
 
 const TONE_DOT: Record<string, string> = {
   active: "var(--adm-state-inuse)",
@@ -49,6 +51,10 @@ export default function AdminAccountsPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [creating, setCreating] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
+  // Hai hộp thoại giữ ID chứ không giữ bản sao tài khoản: đổi mật khẩu làm
+  // `version` tăng, bản sao cũ sẽ gửi lên version hết hạn ở lần bấm sau.
+  const [passwordTargetId, setPasswordTargetId] = useState<number | null>(null)
+  const [detailTargetId, setDetailTargetId] = useState<number | null>(null)
 
   const accounts = useQuery({ queryKey: accountsKey, queryFn: () => api.listAccounts(), retry: false })
   const rows = filterAccounts(accounts.data?.accounts ?? [], filterKey, search)
@@ -61,6 +67,11 @@ export default function AdminAccountsPage() {
   const selected = rows.find((item) => item.id === selectedId) ?? rows[0] ?? null
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: accountsKey })
+
+  const byId = (id: number | null) =>
+    id === null ? null : ((accounts.data?.accounts ?? []).find((item) => item.id === id) ?? null)
+  const passwordTarget = byId(passwordTargetId)
+  const detailTarget = byId(detailTargetId)
 
   const run = async (account: AccountSummary, operation: () => Promise<string>) => {
     if (busyId !== null) return
@@ -212,17 +223,10 @@ export default function AdminAccountsPage() {
                             >
                               Đổi quyền
                             </RowButton>
-                            <RowButton
-                              disabled={!allowed || busy}
-                              onClick={() =>
-                                void run(account, async () => {
-                                  const result = await api.resetAccountPassword(account.id, account.version)
-                                  return result.temporaryPassword
-                                    ? `Mật khẩu tạm của ${account.displayName}: ${result.temporaryPassword} — chỉ hiện một lần.`
-                                    : "Đã đặt lại mật khẩu và thu hồi phiên cũ."
-                                })
-                              }
-                            >
+                            <RowButton disabled={busy} onClick={() => setDetailTargetId(account.id)}>
+                              Xem
+                            </RowButton>
+                            <RowButton disabled={!allowed || busy} onClick={() => setPasswordTargetId(account.id)}>
                               Đổi mật khẩu
                             </RowButton>
                             <RowButton
@@ -272,6 +276,29 @@ export default function AdminAccountsPage() {
           actor={actor}
         />
       </div>
+
+      {passwordTarget ? (
+        <PasswordResetDialog
+          account={passwordTarget}
+          onDone={() => void refresh()}
+          onClose={() => setPasswordTargetId(null)}
+        />
+      ) : null}
+
+      {detailTarget ? (
+        <AccountDetailDialog
+          account={detailTarget}
+          onChangePassword={
+            canActOn(actor, detailTarget) && can("user.manage")
+              ? () => {
+                  setDetailTargetId(null)
+                  setPasswordTargetId(detailTarget.id)
+                }
+              : null
+          }
+          onClose={() => setDetailTargetId(null)}
+        />
+      ) : null}
     </div>
   )
 }

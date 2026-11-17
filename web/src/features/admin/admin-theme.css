@@ -150,6 +150,17 @@
   outline-offset: 2px;
 }
 
+/*
+ * Hộp thoại của Quản trị. Radix đặt nó qua portal ở cấp body, ngoài khung
+ * `.admin-portal`, nên chính nó phải mang lớp đó để có token. Khi đó nền
+ * của `.admin-portal` là màu nền trang, không phải màu mặt thẻ; chọn lại ở
+ * đây với độ ưu tiên cao hơn thay vì rải `style` vào từng hộp thoại.
+ */
+.admin-portal.adm-dialog {
+  background: var(--adm-surface);
+  color: var(--adm-text);
+}
+
 .admin-portal .adm-card {
   background: var(--adm-surface);
   border: 1px solid var(--adm-border);

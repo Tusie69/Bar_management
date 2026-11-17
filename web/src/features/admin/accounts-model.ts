@@ -3,6 +3,7 @@
  * và cách đọc một tài khoản thành dòng trong bảng. Hàm thuần, test không cần
  * DOM.
  */
+import { venueParts } from "@/lib/time"
 import type { AccountSummary } from "@/services/contracts"
 
 /**
@@ -130,4 +131,40 @@ export function canActOn(actor: { userId: number; role: string; readOnly: boolea
   if (account.roles.includes("OWNER")) return false
   if (account.roles.includes("ADMIN") && actor.role !== "OWNER") return false
   return true
+}
+
+/**
+ * Giới hạn độ dài mật khẩu, phải khớp `PASSWORD_MIN` / `PASSWORD_MAX` trong
+ * `api/src/modules/accounts/account.repository.ts`. Lệch nhau thì người dùng
+ * gõ xong mới bị máy chủ từ chối, lúc đó không còn biết mình sai ở đâu.
+ */
+export const PASSWORD_MIN = 12
+export const PASSWORD_MAX = 1024
+
+/**
+ * Lý do từ chối một mật khẩu tự nhập, hoặc `null` khi dùng được.
+ *
+ * Không kiểm độ mạnh: máy chủ cũng chỉ kiểm độ dài, và bịa thêm luật ở
+ * trình duyệt sẽ chặn những chuỗi mà máy chủ chấp nhận.
+ */
+export function newPasswordIssue(password: string): string | null {
+  if (password.length === 0) return "Chưa nhập mật khẩu."
+  if (password.length < PASSWORD_MIN) return `Mật khẩu phải có ít nhất ${PASSWORD_MIN} ký tự.`
+  if (password.length > PASSWORD_MAX) return `Mật khẩu không được dài quá ${PASSWORD_MAX} ký tự.`
+  if (password.trim() !== password) return "Mật khẩu không được bắt đầu hoặc kết thúc bằng dấu cách."
+  return null
+}
+
+/**
+ * Mốc thời gian của một tài khoản (lần đăng nhập gần nhất), theo giờ quán.
+ * Trả "Chưa đăng nhập lần nào" thay vì để trống, vì ô trống trong bảng đọc
+ * như là dữ liệu chưa tải xong.
+ */
+export function fmtAccountTimestamp(iso: string | null): string {
+  if (!iso) return "Chưa đăng nhập lần nào"
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return "Không đọc được mốc thời gian"
+  const p = venueParts(at)
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${pad(p.hour)}:${pad(p.minute)} · ${pad(p.day)}/${pad(p.month)}/${p.year}`
 }

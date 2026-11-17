@@ -10,6 +10,9 @@ import {
   ACCOUNT_FILTERS,
   accountState,
   canActOn,
+  fmtAccountTimestamp,
+  newPasswordIssue,
+  PASSWORD_MIN,
   filterAccounts,
   filterCounts,
   portalPath,
@@ -215,5 +218,50 @@ describe("bảy checkbox của prototype", () => {
     ).toEqual({
       "customer.phone.reveal": false,
     })
+  })
+})
+
+describe("mật khẩu tự nhập khi đổi mật khẩu", () => {
+  it("nhận một chuỗi đủ dài", () => {
+    expect(newPasswordIssue("a".repeat(PASSWORD_MIN))).toBeNull()
+  })
+
+  it("từ chối chuỗi ngắn hơn giới hạn của máy chủ", () => {
+    // Lệch với `PASSWORD_MIN` trong account.repository.ts thì người dùng gõ
+    // xong mới bị từ chối, lúc đó không biết mình sai ở đâu.
+    expect(PASSWORD_MIN).toBe(12)
+    expect(newPasswordIssue("a".repeat(PASSWORD_MIN - 1))).toContain(String(PASSWORD_MIN))
+  })
+
+  it("nói rõ là chưa nhập gì, thay vì báo quá ngắn", () => {
+    expect(newPasswordIssue("")).toBe("Chưa nhập mật khẩu.")
+  })
+
+  it("chặn dấu cách ở hai đầu", () => {
+    // Chuỗi được đọc to hoặc chép tay cho nhân viên; dấu cách đầu cuối là
+    // thứ không ai đọc thấy và sẽ thành một cuộc gọi "tôi không đăng nhập được".
+    expect(newPasswordIssue(` ${"a".repeat(PASSWORD_MIN)}`)).not.toBeNull()
+    expect(newPasswordIssue(`${"a".repeat(PASSWORD_MIN)} `)).not.toBeNull()
+  })
+
+  it("không tự bịa luật độ mạnh máy chủ không có", () => {
+    // Máy chủ chỉ kiểm độ dài. Chặn thêm ở trình duyệt sẽ làm hỏng những
+    // chuỗi máy chủ chấp nhận, mà không làm hệ thống an toàn hơn.
+    expect(newPasswordIssue("123456789012")).toBeNull()
+    expect(newPasswordIssue("mat khau co dau cach o giua")).toBeNull()
+  })
+})
+
+describe("mốc đăng nhập gần nhất", () => {
+  it("đọc theo giờ quán (UTC+7), không theo giờ máy", () => {
+    expect(fmtAccountTimestamp("2026-11-17T02:05:00.000Z")).toBe("09:05 · 17/11/2026")
+  })
+
+  it("chưa đăng nhập thì nói rõ, không để ô trống", () => {
+    expect(fmtAccountTimestamp(null)).toBe("Chưa đăng nhập lần nào")
+  })
+
+  it("mốc hỏng thì nói là hỏng, không hiện Invalid Date", () => {
+    expect(fmtAccountTimestamp("không phải ngày")).toBe("Không đọc được mốc thời gian")
   })
 })
