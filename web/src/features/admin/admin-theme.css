@@ -124,6 +124,32 @@
   outline-offset: 2px;
 }
 
+/*
+ * Skip link: ẩn cho đến khi được focus bằng bàn phím. Dùng `position: fixed`
+ * vì `.admin-portal` không tạo containing block riêng.
+ */
+.admin-portal .adm-skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 60;
+  transform: translateY(-200%);
+  padding: 10px 14px;
+  border: 1px solid var(--adm-action);
+  border-radius: 8px;
+  background: var(--adm-surface);
+  color: var(--adm-action);
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  text-decoration: none;
+}
+.admin-portal .adm-skip-link:focus-visible {
+  transform: translateY(0);
+  outline: 2px solid var(--adm-action);
+  outline-offset: 2px;
+}
+
 .admin-portal .adm-card {
   background: var(--adm-surface);
   border: 1px solid var(--adm-border);

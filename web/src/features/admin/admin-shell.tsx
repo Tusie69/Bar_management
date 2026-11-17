@@ -10,13 +10,14 @@
  * sửa file này. Xem docs/frontend.md.
  */
 import { Menu, X } from "lucide-react"
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react"
+import { createContext, type RefObject, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { NavLink, Outlet, useLocation } from "react-router"
 import { useNow } from "@/hooks/use-data"
 import { initials } from "@/lib/text"
 import { useAdminSession } from "./use-admin-session"
 import { visibleAdminPages } from "./admin-access"
 import { adminBusinessDateLabel, ADMIN_SHIFT_LABEL } from "./admin-date"
+import { ADMIN_DESKTOP_MEDIA_QUERY, resolveDrawerCloseFocusTarget } from "./admin-focus"
 import { adminPageForPath, adminPagePath } from "./admin-pages"
 import "./admin-theme.css"
 
@@ -39,6 +40,10 @@ export function AdminShell() {
   const location = useLocation()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [override, setOverride] = useState<string | null>(null)
+  const menuTriggerRef = useRef<HTMLButtonElement>(null)
+  const drawerRef = useRef<HTMLDivElement>(null)
+  const desktopSidebarRef = useRef<HTMLDivElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
   const setTitle = useCallback((value: string | null) => setOverride(value), [])
   const titleApi = useMemo(() => ({ setTitle }), [setTitle])
 
@@ -47,20 +52,48 @@ export function AdminShell() {
   // unmount, nên không cần hiệu ứng nào canh theo pathname ở đây.
   const title = override ?? page?.title ?? "Quản trị"
 
+  /**
+   * Drawer là một lớp phủ: mở ra thì focus phải vào trong nó, đóng lại thì
+   * phải quay về chỗ cũ. Không làm vậy, người dùng bàn phím mở menu xong
+   * vẫn đang focus ở nút menu nằm sau lớp phủ, và Tab tiếp sẽ chạy vào
+   * những phần tử đang bị che.
+   */
+  const closeDrawer = useCallback(() => {
+    setDrawerOpen(false)
+    const isDesktop =
+      typeof window !== "undefined" && typeof window.matchMedia === "function"
+        ? window.matchMedia(ADMIN_DESKTOP_MEDIA_QUERY).matches
+        : false
+    resolveDrawerCloseFocusTarget({
+      trigger: menuTriggerRef.current,
+      isDesktop,
+      desktopSidebar: desktopSidebarRef.current,
+      mainContent: mainRef.current,
+    })?.focus()
+  }, [])
+
   useEffect(() => {
     if (!drawerOpen) return
+    drawerRef.current?.focus()
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setDrawerOpen(false)
+      if (event.key === "Escape") closeDrawer()
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [drawerOpen])
+  }, [closeDrawer, drawerOpen])
 
   return (
     <AdminTitleContext.Provider value={titleApi}>
       <div className="admin-portal flex h-dvh min-h-0 w-full overflow-hidden">
+        {/*
+          Sidebar của Quản trị có 8 mục đứng trước nội dung. Không có link này
+          thì người dùng bàn phím phải Tab qua cả 8 mục đó ở mọi trang.
+        */}
+        <a href="#admin-main-content" className="adm-skip-link">
+          Chuyển đến nội dung chính
+        </a>
         {/* Desktop ≥1024px: sidebar cố định. Dưới mức đó: drawer. */}
-        <div className="hidden w-[var(--adm-sidebar-w)] shrink-0 lg:block">
+        <div ref={desktopSidebarRef} className="hidden w-[var(--adm-sidebar-w)] shrink-0 lg:block">
           <AdminSidebar />
         </div>
         {drawerOpen ? (
@@ -69,17 +102,36 @@ export function AdminShell() {
               type="button"
               aria-label="Đóng menu"
               className="absolute inset-0 bg-black/40"
-              onClick={() => setDrawerOpen(false)}
+              onClick={closeDrawer}
             />
-            <div className="absolute inset-y-0 left-0 w-[var(--adm-sidebar-w)] shadow-xl">
-              <AdminSidebar onNavigate={() => setDrawerOpen(false)} />
+            <div
+              ref={drawerRef}
+              id="admin-drawer"
+              tabIndex={-1}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Điều hướng quản trị"
+              className="absolute inset-y-0 left-0 w-[var(--adm-sidebar-w)] shadow-xl outline-none"
+            >
+              <AdminSidebar onNavigate={closeDrawer} />
             </div>
           </div>
         ) : null}
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <AdminHeader title={title} drawerOpen={drawerOpen} onToggleDrawer={() => setDrawerOpen((open) => !open)} />
-          <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-[var(--adm-canvas)] p-4 md:p-6">
+          <AdminHeader
+            title={title}
+            drawerOpen={drawerOpen}
+            onToggleDrawer={() => (drawerOpen ? closeDrawer() : setDrawerOpen(true))}
+            triggerRef={menuTriggerRef}
+          />
+          {/* Đích của skip link, nên phải nhận được focus bằng chương trình. */}
+          <main
+            ref={mainRef}
+            id="admin-main-content"
+            tabIndex={-1}
+            className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-[var(--adm-canvas)] p-4 outline-none md:p-6"
+          >
             <Outlet />
           </main>
         </div>
@@ -125,20 +177,24 @@ function AdminHeader({
   title,
   drawerOpen,
   onToggleDrawer,
+  triggerRef,
 }: {
   title: string
   drawerOpen: boolean
   onToggleDrawer: () => void
+  triggerRef: RefObject<HTMLButtonElement | null>
 }) {
   // Ngày kinh doanh đổi lúc 05:00, không phải 00:00: nhịp 60s là đủ.
   const now = useNow(60_000)
   return (
     <header className="flex h-[var(--adm-header-h)] shrink-0 items-center gap-3 border-b border-[var(--adm-border)] bg-[var(--adm-surface)] px-4 md:px-6">
       <button
+        ref={triggerRef}
         type="button"
         className="grid size-10 shrink-0 place-items-center rounded-lg border border-[var(--adm-border)] lg:hidden"
         aria-label={drawerOpen ? "Đóng menu" : "Mở menu"}
         aria-expanded={drawerOpen}
+        aria-controls="admin-drawer"
         onClick={onToggleDrawer}
       >
         {drawerOpen ? <X className="size-5" /> : <Menu className="size-5" />}

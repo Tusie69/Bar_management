@@ -20,6 +20,7 @@ import {
   type AdminAccessLevel,
 } from "./admin-access"
 import { adminBusinessDateLabel, fmtAdminBusinessDate } from "./admin-date"
+import { ADMIN_DESKTOP_MEDIA_QUERY, resolveDrawerCloseFocusTarget } from "./admin-focus"
 import { ADMIN_HOME_PATH, ADMIN_PAGES, adminPageForPath, adminPagePath } from "./admin-pages"
 
 /** Quyền hiệu dụng của một vai trò, đúng như backend suy ra từ ma trận. */
@@ -182,5 +183,73 @@ describe("ngày kinh doanh trên header", () => {
   it("định dạng đúng kiểu Figma, có năm", () => {
     expect(fmtAdminBusinessDate("2026-11-12")).toBe("T5 · 12/11/2026")
     expect(fmtAdminBusinessDate("2027-01-03")).toBe("CN · 03/01/2027")
+  })
+})
+
+describe("focus sau khi đóng drawer sidebar", () => {
+  // Hàm chỉ gọi `getClientRects` và `querySelector`, nên dựng đúng hai thứ đó
+  // là đủ để test ở môi trường Node không có DOM.
+  const el = (options: { visible?: boolean; nav?: Record<string, unknown> } = {}) =>
+    ({
+      getClientRects: () => (options.visible === false ? [] : [{}]),
+      querySelector: (selector: string) => options.nav?.[selector] ?? null,
+    }) as unknown as HTMLElement
+
+  it("trả focus về nút mở menu khi nút đó còn hiện", () => {
+    const trigger = el()
+    expect(
+      resolveDrawerCloseFocusTarget({
+        trigger,
+        isDesktop: false,
+        desktopSidebar: el(),
+        mainContent: el(),
+      }),
+    ).toBe(trigger)
+  })
+
+  it("không focus vào nút đã bị ẩn khi màn hình rộng ra thành desktop", () => {
+    // `lg:hidden` ẩn nút mở menu ở ≥ 1024px. Focus vào phần tử ẩn thì trình
+    // duyệt bỏ qua và focus rơi về body, tức mất chỗ đọc.
+    const active = el()
+    const sidebar = el({ nav: { 'a.adm-nav-item[aria-current="page"]': active } })
+    expect(
+      resolveDrawerCloseFocusTarget({
+        trigger: el({ visible: false }),
+        isDesktop: true,
+        desktopSidebar: sidebar,
+        mainContent: el(),
+      }),
+    ).toBe(active)
+  })
+
+  it("lùi về mục đầu của sidebar khi không có mục nào đang mở", () => {
+    const first = el()
+    const sidebar = el({ nav: { "a.adm-nav-item": first } })
+    expect(
+      resolveDrawerCloseFocusTarget({
+        trigger: null,
+        isDesktop: true,
+        desktopSidebar: sidebar,
+        mainContent: el(),
+      }),
+    ).toBe(first)
+  })
+
+  it("cùng lắm thì về vùng nội dung, không bao giờ trả về body", () => {
+    const main = el()
+    expect(
+      resolveDrawerCloseFocusTarget({
+        trigger: null,
+        isDesktop: true,
+        desktopSidebar: null,
+        mainContent: main,
+      }),
+    ).toBe(main)
+  })
+
+  it("dùng đúng breakpoint lg của Tailwind", () => {
+    // Lệch giá trị này với `lg:` trong JSX là cách sinh ra dải màn hình mà
+    // sidebar đã hiện nhưng drawer vẫn tưởng mình đang ở mobile.
+    expect(ADMIN_DESKTOP_MEDIA_QUERY).toBe("(min-width: 64rem)")
   })
 })
