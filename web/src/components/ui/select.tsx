@@ -30,7 +30,8 @@ function SelectTrigger({
       data-slot="select-trigger"
       data-size={size}
       className={cn(
-        "group flex w-fit items-center justify-between gap-2 rounded-md border border-input bg-surface-1 px-3 py-2 text-sm whitespace-nowrap text-foreground shadow-xs transition-[border-color,box-shadow,background-color] duration-[var(--duration-hover)] ease-[var(--ease-spring-default)] outline-none",
+        "group relative flex w-fit items-center justify-between gap-2 rounded-md border border-input bg-surface-1 px-3 py-2 text-sm whitespace-nowrap text-foreground shadow-xs transition-[border-color,box-shadow,background-color] duration-[var(--duration-hover)] ease-[var(--ease-spring-default)] outline-none",
+        "[@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:top-1/2 [@media(pointer:coarse)]:after:left-1/2 [@media(pointer:coarse)]:after:h-full [@media(pointer:coarse)]:after:min-h-[44px] [@media(pointer:coarse)]:after:w-full [@media(pointer:coarse)]:after:min-w-[44px] [@media(pointer:coarse)]:after:-translate-x-1/2 [@media(pointer:coarse)]:after:-translate-y-1/2",
         "hover:border-border-strong hover:bg-surface-2/50",
         "focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/20",
         "disabled:cursor-not-allowed disabled:opacity-45",

@@ -6,7 +6,7 @@
 @import "@fontsource/roboto/700.css";
 @import "./styles/tokens.css";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:where(.dark, .dark *):not(:where(.admin-portal, .admin-portal *, .admin-root, .admin-root *)));
 
 /*
  * 21GAM tokens, GAM Dashboard v2 + P1 Design Foundation.
@@ -58,6 +58,8 @@
   --accent: var(--surface-3);
   --accent-foreground: var(--foreground);
   --destructive: oklch(0.53 0.18 27);
+  --destructive-foreground: #ffffff;
+  --destructive-badge-bg: var(--destructive);
   --destructive-tint: color-mix(in oklab, var(--destructive) 12%, transparent);
   --scrim: color-mix(in oklab, oklch(0.18 0.01 80) 38%, transparent);
   /* Wordmark only. */
@@ -130,6 +132,8 @@
   --primary-hover: color-mix(in oklab, var(--primary) 92%, #fff);
   --primary-active: color-mix(in oklab, var(--primary) 84%, #fff);
   --destructive: oklch(0.73 0.145 25);
+  --destructive-foreground: oklch(0.16 0.01 25);
+  --destructive-badge-bg: color-mix(in oklab, var(--destructive) 80%, transparent);
   --destructive-tint: color-mix(in oklab, var(--destructive) 18%, transparent);
   --scrim: color-mix(in oklab, oklch(0.08 0.005 80) 58%, transparent);
   --brand: oklch(0.83 0.075 88);
@@ -156,6 +160,31 @@
   --on-seated: oklch(0.2 0.02 158);
 
   --sidebar: oklch(0.215 0.005 80);
+}
+
+/* Reception accessibility preference overrides placed after palette defaults so they win the cascade. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --scrim: oklch(0.18 0.008 80 / 0.65);
+  }
+
+  .dark {
+    --scrim: oklch(0.08 0.005 80 / 0.8);
+  }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --border: oklch(0.62 0.01 80);
+    --border-strong: oklch(0.45 0.01 80);
+    --input: oklch(0.48 0.01 80);
+  }
+
+  .dark {
+    --border: oklch(0.55 0.01 80);
+    --border-strong: oklch(0.72 0.01 80);
+    --input: oklch(0.65 0.01 80);
+  }
 }
 
 @theme inline {

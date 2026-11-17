@@ -5,11 +5,45 @@
 import { useGSAP } from "@gsap/react"
 import gsap from "gsap"
 import { useRef } from "react"
-import { EASE, MOTION } from "@/lib/motion"
+import { EASE, MOTION, MOTION_MEDIA_QUERIES } from "@/lib/motion"
+import { registerMotion } from "@/lib/motion-matchmedia"
+
+registerMotion()
+
+/**
+ * Creates a `gsap.matchMedia()` reveal context with an always-matching `all`
+ * condition so both normal and reduced-motion profiles initialize reliably.
+ */
+export function setupRevealMatchMedia(targets: HTMLElement[]): gsap.MatchMedia {
+  let hasPlayed = false
+  const mm = gsap.matchMedia()
+  mm.add(MOTION_MEDIA_QUERIES, (context) => {
+    const reduceMotion = Boolean(context.conditions?.reduceMotion)
+    if (hasPlayed) {
+      gsap.set(targets, { clearProps: "transform,opacity,visibility,willChange" })
+      return
+    }
+    hasPlayed = true
+    for (const el of targets) {
+      el.style.willChange = "transform, opacity"
+    }
+    gsap.fromTo(targets, reduceMotion ? { autoAlpha: 0 } : { autoAlpha: 0, y: 10 }, {
+      autoAlpha: 1,
+      y: 0,
+      duration: reduceMotion ? MOTION.duration.reduced : MOTION.duration.section,
+      ease: reduceMotion ? EASE.reduced : EASE.springDefault,
+      stagger: reduceMotion ? 0 : 0.04,
+      overwrite: "auto",
+      clearProps: "transform,opacity,visibility,willChange",
+    })
+  })
+  return mm
+}
 
 /**
  * Staggered first reveal of `[data-adm-reveal]` card groups once per route visit.
- * Never re-runs on realtime data refreshes inside the same route.
+ * Reverts its matchMedia context when navigating away (`revertOnUpdate: true`)
+ * and never re-runs on realtime data refreshes inside the same route.
  */
 export function useAdminCardReveal(containerRef: React.RefObject<HTMLElement | null>, routeKey: string): void {
   const revealedRoutesRef = useRef<Set<string>>(new Set())
@@ -23,33 +57,12 @@ export function useAdminCardReveal(containerRef: React.RefObject<HTMLElement | n
       if (targets.length === 0) return
 
       revealedRoutesRef.current.add(routeKey)
-
-      const mm = gsap.matchMedia()
-      mm.add(
-        {
-          reduceMotion: "(prefers-reduced-motion: reduce)",
-        },
-        (context) => {
-          const reduceMotion = Boolean(context.conditions?.reduceMotion)
-          for (const el of targets) {
-            el.style.willChange = "transform, opacity"
-          }
-          gsap.fromTo(targets, reduceMotion ? { autoAlpha: 0 } : { autoAlpha: 0, y: 10 }, {
-            autoAlpha: 1,
-            y: 0,
-            duration: reduceMotion ? MOTION.duration.reduced : MOTION.duration.section,
-            ease: reduceMotion ? EASE.reduced : EASE.springDefault,
-            stagger: reduceMotion ? 0 : 0.04,
-            overwrite: "auto",
-            clearProps: "transform,opacity,visibility,willChange",
-          })
-        },
-      )
+      const mm = setupRevealMatchMedia(targets)
 
       return () => {
         mm.revert()
       }
     },
-    { scope: containerRef, dependencies: [routeKey] },
+    { scope: containerRef, dependencies: [routeKey], revertOnUpdate: true },
   )
 }

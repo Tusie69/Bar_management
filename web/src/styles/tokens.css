@@ -322,23 +322,8 @@
   }
 }
 
-@media (prefers-reduced-transparency: reduce) {
-  :root {
-    --scrim: oklch(0.18 0.008 80 / 0.65);
-  }
-}
-
 @media (prefers-contrast: more) {
   :root {
-    --border: oklch(0.62 0.01 80);
-    --border-strong: oklch(0.45 0.01 80);
-    --input: oklch(0.48 0.01 80);
     --ring-width: 3px;
-  }
-
-  .dark {
-    --border: oklch(0.55 0.01 80);
-    --border-strong: oklch(0.72 0.01 80);
-    --input: oklch(0.65 0.01 80);
   }
 }

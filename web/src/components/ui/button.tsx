@@ -19,7 +19,7 @@ const buttonVariants = cva(
         default:
           "bg-primary text-primary-foreground shadow-xs hover:bg-[var(--primary-hover)] active:bg-[var(--primary-active)]",
         destructive:
-          "bg-destructive text-white shadow-xs hover:brightness-95 focus-visible:border-destructive focus-visible:ring-destructive/30 dark:text-[oklch(0.16_0.01_25)] dark:focus-visible:ring-destructive/40",
+          "bg-destructive text-[var(--destructive-foreground)] shadow-xs hover:brightness-95 focus-visible:border-destructive focus-visible:ring-destructive/30 dark:focus-visible:ring-destructive/40",
         outline:
           "border border-border bg-surface-1 text-foreground shadow-xs hover:border-border-strong hover:bg-surface-2 dark:border-input dark:bg-surface-1 dark:hover:bg-surface-2",
         secondary: "border border-border-subtle bg-secondary text-secondary-foreground hover:bg-surface-3",
@@ -28,14 +28,14 @@ const buttonVariants = cva(
       },
       size: {
         default: "h-11 px-4 py-2 has-[>svg]:px-3.5",
-        xs: "relative h-7 gap-1 rounded-sm px-2.5 text-xs has-[>svg]:px-2 [&_svg:not([class*='size-'])]:size-3 [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:inset-x-0 [@media(pointer:coarse)]:after:-inset-y-2",
-        sm: "h-9 gap-1.5 rounded-sm px-3 has-[>svg]:px-2.5",
+        xs: "relative h-7 gap-1 rounded-sm px-2.5 text-xs has-[>svg]:px-2 [&_svg:not([class*='size-'])]:size-3 [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:top-1/2 [@media(pointer:coarse)]:after:left-1/2 [@media(pointer:coarse)]:after:h-full [@media(pointer:coarse)]:after:min-h-[44px] [@media(pointer:coarse)]:after:w-full [@media(pointer:coarse)]:after:min-w-[44px] [@media(pointer:coarse)]:after:-translate-x-1/2 [@media(pointer:coarse)]:after:-translate-y-1/2 [@media(pointer:coarse)]:active:after:scale-[1.04]",
+        sm: "relative h-9 gap-1.5 rounded-sm px-3 has-[>svg]:px-2.5 [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:top-1/2 [@media(pointer:coarse)]:after:left-1/2 [@media(pointer:coarse)]:after:h-full [@media(pointer:coarse)]:after:min-h-[44px] [@media(pointer:coarse)]:after:w-full [@media(pointer:coarse)]:after:min-w-[44px] [@media(pointer:coarse)]:after:-translate-x-1/2 [@media(pointer:coarse)]:after:-translate-y-1/2 [@media(pointer:coarse)]:active:after:scale-[1.04]",
         lg: "h-12 rounded-lg px-6 text-base has-[>svg]:px-5",
         icon: "size-11",
         "icon-xs":
-          "relative size-7 rounded-sm [&_svg:not([class*='size-'])]:size-3.5 [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:-inset-2",
+          "relative size-7 rounded-sm [&_svg:not([class*='size-'])]:size-3.5 [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:top-1/2 [@media(pointer:coarse)]:after:left-1/2 [@media(pointer:coarse)]:after:h-full [@media(pointer:coarse)]:after:min-h-[44px] [@media(pointer:coarse)]:after:w-full [@media(pointer:coarse)]:after:min-w-[44px] [@media(pointer:coarse)]:after:-translate-x-1/2 [@media(pointer:coarse)]:after:-translate-y-1/2 [@media(pointer:coarse)]:active:after:scale-[1.04]",
         "icon-sm":
-          "relative size-9 rounded-sm [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:-inset-1",
+          "relative size-9 rounded-sm [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:top-1/2 [@media(pointer:coarse)]:after:left-1/2 [@media(pointer:coarse)]:after:h-full [@media(pointer:coarse)]:after:min-h-[44px] [@media(pointer:coarse)]:after:w-full [@media(pointer:coarse)]:after:min-w-[44px] [@media(pointer:coarse)]:after:-translate-x-1/2 [@media(pointer:coarse)]:after:-translate-y-1/2 [@media(pointer:coarse)]:active:after:scale-[1.04]",
         "icon-lg": "size-12 rounded-lg",
       },
     },

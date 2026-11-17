@@ -1,24 +1,11 @@
 /**
- * 21GAM Motion System — GSAP + Apple HIG spring physics.
+ * 21GAM Motion System — lightweight tokens, spring math, presence state, and
+ * lazy GSAP controller loader.
  *
- * Centralizes plugin registration, shared timing/easing constants mirroring
- * `src/styles/tokens.css`, `prefers-reduced-motion` handling via
- * `gsap.matchMedia()`, and interruptible presence timelines for overlays.
+ * Keeps GSAP and `@gsap/react` out of Reception's initial `/floor` bundle; the
+ * runtime controller in `./motion-controller` loads on first overlay intent or open.
  */
-import { useGSAP } from "@gsap/react"
-import gsap from "gsap"
-import { useCallback, useRef, useState } from "react"
-
-let motionRegistered = false
-
-/** Idempotent one-time GSAP plugin registration. Safe to call repeatedly. */
-export function registerMotion(): void {
-  if (motionRegistered) return
-  gsap.registerPlugin(useGSAP)
-  motionRegistered = true
-}
-
-registerMotion()
+import { createElement, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 
 /** Shared motion tokens (seconds), mirrored in `src/styles/tokens.css`. */
 export const MOTION = {
@@ -40,6 +27,15 @@ export const MOTION = {
     default: 0.35,
     sheet: 0.3,
   },
+} as const
+
+/**
+ * Always-matching `all` condition paired with `prefers-reduced-motion: reduce`
+ * so `gsap.matchMedia()` initializes both normal and reduced motion paths.
+ */
+export const MOTION_MEDIA_QUERIES = {
+  all: "all",
+  reduceMotion: "(prefers-reduced-motion: reduce)",
 } as const
 
 /**
@@ -102,6 +98,32 @@ export function mergeRefs<T>(...refs: Array<React.Ref<T> | undefined>): React.Re
 }
 
 /**
+ * Stable callback ref that exposes the mounted DOM node in state (triggering
+ * setup only when the node actually mounts/unmounts) while forwarding `externalRef`.
+ */
+export function useStableNodeRef<T>(externalRef?: React.Ref<T>): [T | null, React.RefCallback<T>] {
+  const [node, setNode] = useState<T | null>(null)
+  const externalRefHolder = useRef(externalRef)
+
+  useLayoutEffect(() => {
+    externalRefHolder.current = externalRef
+  })
+
+  const callbackRef = useCallback((el: T | null) => {
+    setNode((prev) => (prev === el ? prev : el))
+    const ext = externalRefHolder.current
+    if (!ext) return
+    if (typeof ext === "function") {
+      ext(el)
+    } else {
+      ;(ext as React.MutableRefObject<T | null>).current = el
+    }
+  }, [])
+
+  return [node, callbackRef]
+}
+
+/**
  * Presence state controller that keeps an overlay mounted through its exit
  * animation while supporting both controlled and uncontrolled `open` props.
  */
@@ -142,226 +164,110 @@ export function usePresenceController({
   return { isOpen, present, handleOpenChange, markExited }
 }
 
-function setWillChange(els: Array<HTMLElement | null>, value: string) {
-  for (const el of els) {
-    if (el) el.style.willChange = value
+type MotionControllerModule = typeof import("./motion-controller")
+
+let cachedController: MotionControllerModule | null = null
+let pendingLoad: Promise<MotionControllerModule> | null = null
+
+/** Preloads the lazy GSAP controller on trigger hover/focus/pointer-down intent. */
+export function prewarmMotionController(): Promise<MotionControllerModule> {
+  if (cachedController) return Promise.resolve(cachedController)
+  if (!pendingLoad) {
+    pendingLoad = import("./motion-controller").then((mod) => {
+      cachedController = mod
+      return mod
+    })
   }
+  return pendingLoad
 }
 
-function sheetOffsetVars(side: SheetSide): { xPercent?: number; yPercent?: number } {
-  switch (side) {
-    case "left":
-      return { xPercent: -100 }
-    case "right":
-      return { xPercent: 100 }
-    case "top":
-      return { yPercent: -100 }
-    case "bottom":
-      return { yPercent: 100 }
-  }
-}
+/** Returns the cached GSAP controller synchronously once loaded, or fetches it when active. */
+export function useMotionController(active: boolean): MotionControllerModule | null {
+  const [loaded, setLoaded] = useState<MotionControllerModule | null>(() => cachedController)
+  const resolved = loaded ?? cachedController
 
-/** Shared interruptible overlay timeline builder used by dialogs, alert dialogs, and sheets. */
-function useOverlayPresenceTimeline({
-  open,
-  present,
-  overlayRef,
-  contentRef,
-  onExitComplete,
-  buildTimeline,
-  deps,
-}: {
-  open: boolean
-  present: boolean
-  overlayRef: React.RefObject<HTMLElement | null>
-  contentRef: React.RefObject<HTMLElement | null>
-  onExitComplete: () => void
-  buildTimeline: (params: {
-    tl: gsap.core.Timeline
-    overlay: HTMLElement
-    content: HTMLElement
-    reduceMotion: boolean
-  }) => void
-  deps: readonly unknown[]
-}) {
-  const tlRef = useRef<gsap.core.Timeline | null>(null)
-  const openRef = useRef(open)
-  const onExitRef = useRef(onExitComplete)
-  const buildRef = useRef(buildTimeline)
+  useEffect(() => {
+    if (!active || resolved) return
+    let cancelled = false
+    void prewarmMotionController().then((mod) => {
+      if (!cancelled) setLoaded(mod)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [active, resolved])
 
-  useGSAP(
-    () => {
-      buildRef.current = buildTimeline
-      if (!present) {
-        tlRef.current = null
-        return
-      }
-      const overlay = overlayRef.current
-      const content = contentRef.current
-      if (!overlay || !content) return
-
-      const mm = gsap.matchMedia()
-      mm.add(
-        {
-          reduceMotion: "(prefers-reduced-motion: reduce)",
-        },
-        (context) => {
-          const reduceMotion = Boolean(context.conditions?.reduceMotion)
-          const tl = gsap.timeline({
-            paused: true,
-            onStart: () => setWillChange([overlay, content], "transform, opacity"),
-            onComplete: () => setWillChange([overlay, content], "auto"),
-            onReverseComplete: () => {
-              setWillChange([overlay, content], "auto")
-              if (!openRef.current) onExitRef.current()
-            },
-          })
-
-          buildRef.current({ tl, overlay, content, reduceMotion })
-          tlRef.current = tl
-          if (openRef.current) {
-            tl.timeScale(1).play()
-          }
-          return () => {
-            tlRef.current = null
-          }
-        },
-      )
-
-      return () => {
-        mm.revert()
-      }
-    },
-    { scope: contentRef, dependencies: [present, ...deps] },
-  )
-
-  useGSAP(
-    () => {
-      openRef.current = open
-      onExitRef.current = onExitComplete
-      const tl = tlRef.current
-      if (!present) return
-      if (open) {
-        tl?.timeScale(1).play()
-      } else if (!tl || tl.progress() === 0) {
-        onExitRef.current()
-      } else {
-        tl.timeScale(1.25).reverse()
-      }
-    },
-    { scope: contentRef, dependencies: [open, present, onExitComplete] },
-  )
-}
-
-/** Interruptible GSAP presence timeline for centered dialogs and alert dialogs. */
-export function useDialogPresenceMotion({
-  open,
-  present,
-  overlayRef,
-  contentRef,
-  onExitComplete,
-}: {
-  open: boolean
-  present: boolean
-  overlayRef: React.RefObject<HTMLElement | null>
-  contentRef: React.RefObject<HTMLElement | null>
-  onExitComplete: () => void
-}) {
-  useOverlayPresenceTimeline({
-    open,
-    present,
-    overlayRef,
-    contentRef,
-    onExitComplete,
-    deps: [],
-    buildTimeline: ({ tl, overlay, content, reduceMotion }) => {
-      if (reduceMotion) {
-        tl.fromTo(
-          overlay,
-          { autoAlpha: 0 },
-          { autoAlpha: 1, duration: MOTION.duration.reduced, ease: EASE.reduced },
-          0,
-        ).fromTo(content, { autoAlpha: 0 }, { autoAlpha: 1, duration: MOTION.duration.reduced, ease: EASE.reduced }, 0)
-        return
-      }
-      tl.fromTo(
-        overlay,
-        { autoAlpha: 0 },
-        { autoAlpha: 1, duration: MOTION.duration.dialog * 0.9, ease: EASE.fadeIn },
-        0,
-      ).fromTo(
-        content,
-        { autoAlpha: 0, y: 10, scale: 0.965 },
-        {
-          autoAlpha: 1,
-          y: 0,
-          scale: 1,
-          duration: MOTION.duration.dialog,
-          ease: EASE.springDefault,
-        },
-        0,
-      )
-    },
-  })
+  return resolved
 }
 
 /**
- * Interruptible GSAP presence timeline for edge-anchored sheets and drawers.
- * Enters and exits along the exact same edge (`side`) with `EASE.springSheet`,
- * or cross-fades in place under `prefers-reduced-motion: reduce`.
+ * Hides first-open overlay opacity briefly while the lazy GSAP controller
+ * arrives on cold programmatic opens so there is no visible 1->0->1 flash,
+ * while keeping the modal focusable and interactive (falls back after 250ms).
  */
-export function useSheetPresenceMotion({
+export function useAwaitingMotionController(present: boolean, isOpen: boolean): boolean {
+  const controller = useMotionController(present)
+  const [timedOut, setTimedOut] = useState(false)
+
+  if ((!present || controller) && timedOut) {
+    setTimedOut(false)
+  }
+
+  useEffect(() => {
+    if (!present || !isOpen || controller) return
+    const id = window.setTimeout(() => setTimedOut(true), 250)
+    return () => window.clearTimeout(id)
+  }, [controller, isOpen, present])
+
+  return present && isOpen && !controller && !timedOut
+}
+
+/**
+ * Renders the lazy GSAP presence controller alongside already-mounted portal
+ * nodes without adding any DOM elements or replacing Radix focus scopes.
+ */
+export function OverlayMotionMount({
+  kind,
   open,
-  present,
-  side,
-  overlayRef,
-  contentRef,
+  side = "right",
+  duration,
+  overlay,
+  content,
   onExitComplete,
-  duration = MOTION.duration.sheet,
 }: {
+  kind: "dialog" | "sheet"
   open: boolean
-  present: boolean
-  side: SheetSide
-  overlayRef: React.RefObject<HTMLElement | null>
-  contentRef: React.RefObject<HTMLElement | null>
-  onExitComplete: () => void
+  side?: SheetSide
   duration?: number
+  overlay: HTMLElement
+  content: HTMLElement
+  onExitComplete: () => void
 }) {
-  useOverlayPresenceTimeline({
+  const controller = useMotionController(true)
+
+  useEffect(() => {
+    if (!open && !controller) {
+      onExitComplete()
+    }
+  }, [controller, onExitComplete, open])
+
+  if (!controller) return null
+
+  if (kind === "dialog") {
+    return createElement(controller.DialogPresenceController, {
+      open,
+      overlay,
+      content,
+      onExitComplete,
+    })
+  }
+
+  return createElement(controller.SheetPresenceController, {
     open,
-    present,
-    overlayRef,
-    contentRef,
+    side,
+    duration,
+    overlay,
+    content,
     onExitComplete,
-    deps: [side, duration],
-    buildTimeline: ({ tl, overlay, content, reduceMotion }) => {
-      if (reduceMotion) {
-        tl.fromTo(
-          overlay,
-          { autoAlpha: 0 },
-          { autoAlpha: 1, duration: MOTION.duration.reduced, ease: EASE.reduced },
-          0,
-        ).fromTo(
-          content,
-          { autoAlpha: 0, xPercent: 0, yPercent: 0 },
-          { autoAlpha: 1, xPercent: 0, yPercent: 0, duration: MOTION.duration.reduced, ease: EASE.reduced },
-          0,
-        )
-        return
-      }
-      const offset = sheetOffsetVars(side)
-      tl.fromTo(overlay, { autoAlpha: 0 }, { autoAlpha: 1, duration: duration * 0.8, ease: EASE.fadeIn }, 0).fromTo(
-        content,
-        { autoAlpha: 1, ...offset },
-        {
-          autoAlpha: 1,
-          xPercent: 0,
-          yPercent: 0,
-          duration,
-          ease: EASE.springSheet,
-        },
-        0,
-      )
-    },
   })
 }

@@ -37,6 +37,7 @@ export default defineConfig(({ command, mode }) => {
                 test: /node_modules[\\/](@tanstack|zustand|zod|react-hook-form|@hookform|date-fns)[\\/]/,
                 priority: 20,
               },
+              { name: "gsap", test: /node_modules[\\/](gsap|@gsap)[\\/]/, priority: 15 },
               { name: "vendor", test: /node_modules[\\/]/, priority: 10 },
               // Mock backend + seed: replaced by the HTTP client when VITE_API_MODE=http.
               { name: "mock-api", test: /src[\\/]services[\\/]mock[\\/]/, priority: 5 },

@@ -3,7 +3,13 @@
 import * as React from "react"
 import { XIcon } from "lucide-react"
 import { Dialog as SheetPrimitive } from "radix-ui"
-import { mergeRefs, usePresenceController, useSheetPresenceMotion } from "@/lib/motion"
+import {
+  OverlayMotionMount,
+  prewarmMotionController,
+  useAwaitingMotionController,
+  usePresenceController,
+  useStableNodeRef,
+} from "@/lib/motion"
 import { cn } from "@/lib/utils"
 
 interface SheetMotionState {
@@ -34,8 +40,30 @@ function Sheet({
   )
 }
 
-function SheetTrigger({ ...props }: React.ComponentProps<typeof SheetPrimitive.Trigger>) {
-  return <SheetPrimitive.Trigger data-slot="sheet-trigger" {...props} />
+function SheetTrigger({
+  onPointerEnter,
+  onPointerDown,
+  onFocus,
+  ...props
+}: React.ComponentProps<typeof SheetPrimitive.Trigger>) {
+  return (
+    <SheetPrimitive.Trigger
+      data-slot="sheet-trigger"
+      onPointerEnter={(event) => {
+        void prewarmMotionController()
+        onPointerEnter?.(event)
+      }}
+      onPointerDown={(event) => {
+        void prewarmMotionController()
+        onPointerDown?.(event)
+      }}
+      onFocus={(event) => {
+        void prewarmMotionController()
+        onFocus?.(event)
+      }}
+      {...props}
+    />
+  )
 }
 
 function SheetClose({ ...props }: React.ComponentProps<typeof SheetPrimitive.Close>) {
@@ -67,32 +95,31 @@ function SheetContent({
   side = "right",
   showCloseButton = true,
   ref,
+  style,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: "top" | "right" | "bottom" | "left"
   showCloseButton?: boolean
 }) {
   const motion = React.useContext(SheetMotionContext)
-  const overlayRef = React.useRef<HTMLDivElement>(null)
-  const contentRef = React.useRef<HTMLDivElement>(null)
-
-  useSheetPresenceMotion({
-    open: motion?.isOpen ?? true,
-    present: motion?.present ?? true,
-    side,
-    overlayRef,
-    contentRef,
-    onExitComplete: () => motion?.markExited(),
-  })
+  const isOpen = motion?.isOpen ?? true
+  const present = motion?.present ?? true
+  const [overlayEl, overlayCallbackRef] = useStableNodeRef<HTMLDivElement>()
+  const [contentEl, contentCallbackRef] = useStableNodeRef<HTMLDivElement>(ref)
+  const awaitingMotion = useAwaitingMotionController(present, isOpen)
+  const handleExitComplete = React.useCallback(() => {
+    motion?.markExited()
+  }, [motion])
 
   return (
     <SheetPortal>
-      <SheetOverlay ref={overlayRef} />
+      <SheetOverlay ref={overlayCallbackRef} style={awaitingMotion ? { opacity: 0 } : undefined} />
       <SheetPrimitive.Content
-        ref={mergeRefs(ref, contentRef)}
+        ref={contentCallbackRef}
         data-slot="sheet-content"
         data-side={side}
         data-motion-state={motion?.isOpen === false ? "closing" : "open"}
+        style={awaitingMotion ? { opacity: 0, ...style } : style}
         className={cn(
           "fixed z-[var(--z-drawer)] flex flex-col gap-4 bg-popover text-popover-foreground shadow-float outline-none",
           side === "right" && "inset-y-0 right-0 h-full w-3/4 border-l border-border sm:max-w-sm",
@@ -112,6 +139,16 @@ function SheetContent({
           </SheetPrimitive.Close>
         )}
       </SheetPrimitive.Content>
+      {present && overlayEl && contentEl ? (
+        <OverlayMotionMount
+          kind="sheet"
+          open={isOpen}
+          side={side}
+          overlay={overlayEl}
+          content={contentEl}
+          onExitComplete={handleExitComplete}
+        />
+      ) : null}
     </SheetPortal>
   )
 }

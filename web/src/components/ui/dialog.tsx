@@ -4,7 +4,13 @@ import * as React from "react"
 import { XIcon } from "lucide-react"
 import { Dialog as DialogPrimitive } from "radix-ui"
 import { Button } from "@/components/ui/button"
-import { mergeRefs, useDialogPresenceMotion, usePresenceController } from "@/lib/motion"
+import {
+  OverlayMotionMount,
+  prewarmMotionController,
+  useAwaitingMotionController,
+  usePresenceController,
+  useStableNodeRef,
+} from "@/lib/motion"
 import { cn } from "@/lib/utils"
 
 interface DialogMotionState {
@@ -35,8 +41,30 @@ function Dialog({
   )
 }
 
-function DialogTrigger({ ...props }: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
-  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
+function DialogTrigger({
+  onPointerEnter,
+  onPointerDown,
+  onFocus,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
+  return (
+    <DialogPrimitive.Trigger
+      data-slot="dialog-trigger"
+      onPointerEnter={(event) => {
+        void prewarmMotionController()
+        onPointerEnter?.(event)
+      }}
+      onPointerDown={(event) => {
+        void prewarmMotionController()
+        onPointerDown?.(event)
+      }}
+      onFocus={(event) => {
+        void prewarmMotionController()
+        onFocus?.(event)
+      }}
+      {...props}
+    />
+  )
 }
 
 function DialogPortal({ ...props }: React.ComponentProps<typeof DialogPrimitive.Portal>) {
@@ -67,29 +95,29 @@ function DialogContent({
   children,
   showCloseButton = true,
   ref,
+  style,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
 }) {
   const motion = React.useContext(DialogMotionContext)
-  const overlayRef = React.useRef<HTMLDivElement>(null)
-  const contentRef = React.useRef<HTMLDivElement>(null)
-
-  useDialogPresenceMotion({
-    open: motion?.isOpen ?? true,
-    present: motion?.present ?? true,
-    overlayRef,
-    contentRef,
-    onExitComplete: () => motion?.markExited(),
-  })
+  const isOpen = motion?.isOpen ?? true
+  const present = motion?.present ?? true
+  const [overlayEl, overlayCallbackRef] = useStableNodeRef<HTMLDivElement>()
+  const [contentEl, contentCallbackRef] = useStableNodeRef<HTMLDivElement>(ref)
+  const awaitingMotion = useAwaitingMotionController(present, isOpen)
+  const handleExitComplete = React.useCallback(() => {
+    motion?.markExited()
+  }, [motion])
 
   return (
     <DialogPortal data-slot="dialog-portal">
-      <DialogOverlay ref={overlayRef} />
+      <DialogOverlay ref={overlayCallbackRef} style={awaitingMotion ? { opacity: 0 } : undefined} />
       <DialogPrimitive.Content
-        ref={mergeRefs(ref, contentRef)}
+        ref={contentCallbackRef}
         data-slot="dialog-content"
         data-motion-state={motion?.isOpen === false ? "closing" : "open"}
+        style={awaitingMotion ? { opacity: 0, ...style } : style}
         className={cn(
           "fixed top-[50%] left-[50%] z-[var(--z-modal)] grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-xl border border-border bg-popover p-6 text-popover-foreground shadow-float outline-none sm:max-w-lg",
           motion && !motion.isOpen && "pointer-events-none",
@@ -108,6 +136,15 @@ function DialogContent({
           </DialogPrimitive.Close>
         )}
       </DialogPrimitive.Content>
+      {present && overlayEl && contentEl ? (
+        <OverlayMotionMount
+          kind="dialog"
+          open={isOpen}
+          overlay={overlayEl}
+          content={contentEl}
+          onExitComplete={handleExitComplete}
+        />
+      ) : null}
     </DialogPortal>
   )
 }

@@ -7,7 +7,8 @@ import { cn } from "@/lib/utils"
 
 const toggleVariants = cva(
   [
-    "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium tracking-[-0.005em] whitespace-nowrap outline-none select-none",
+    "relative inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium tracking-[-0.005em] whitespace-nowrap outline-none select-none",
+    "[@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:top-1/2 [@media(pointer:coarse)]:after:left-1/2 [@media(pointer:coarse)]:after:h-full [@media(pointer:coarse)]:after:min-h-[44px] [@media(pointer:coarse)]:after:w-full [@media(pointer:coarse)]:after:min-w-[44px] [@media(pointer:coarse)]:after:-translate-x-1/2 [@media(pointer:coarse)]:after:-translate-y-1/2 [@media(pointer:coarse)]:active:after:scale-[1.04] [@media(pointer:coarse)]:data-[spacing=0]:after:min-w-0",
     "transition-[color,background-color,border-color,box-shadow,transform] duration-[var(--duration-hover)] ease-[var(--ease-spring-default)]",
     "hover:bg-accent hover:text-foreground active:scale-[0.97]",
     "focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25",

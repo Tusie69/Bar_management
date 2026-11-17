@@ -95,6 +95,8 @@
   --accent: var(--adm-surface-sunken);
   --accent-foreground: var(--adm-text);
   --destructive: var(--adm-state-late);
+  --destructive-foreground: #ffffff;
+  --destructive-badge-bg: var(--adm-state-late);
   --destructive-tint: var(--adm-tint-red);
   --border: var(--adm-border);
   --border-strong: var(--adm-border-strong);

@@ -3,7 +3,13 @@
 import * as React from "react"
 import { AlertDialog as AlertDialogPrimitive } from "radix-ui"
 import { Button } from "@/components/ui/button"
-import { mergeRefs, useDialogPresenceMotion, usePresenceController } from "@/lib/motion"
+import {
+  OverlayMotionMount,
+  prewarmMotionController,
+  useAwaitingMotionController,
+  usePresenceController,
+  useStableNodeRef,
+} from "@/lib/motion"
 import { cn } from "@/lib/utils"
 
 interface AlertMotionState {
@@ -34,8 +40,30 @@ function AlertDialog({
   )
 }
 
-function AlertDialogTrigger({ ...props }: React.ComponentProps<typeof AlertDialogPrimitive.Trigger>) {
-  return <AlertDialogPrimitive.Trigger data-slot="alert-dialog-trigger" {...props} />
+function AlertDialogTrigger({
+  onPointerEnter,
+  onPointerDown,
+  onFocus,
+  ...props
+}: React.ComponentProps<typeof AlertDialogPrimitive.Trigger>) {
+  return (
+    <AlertDialogPrimitive.Trigger
+      data-slot="alert-dialog-trigger"
+      onPointerEnter={(event) => {
+        void prewarmMotionController()
+        onPointerEnter?.(event)
+      }}
+      onPointerDown={(event) => {
+        void prewarmMotionController()
+        onPointerDown?.(event)
+      }}
+      onFocus={(event) => {
+        void prewarmMotionController()
+        onFocus?.(event)
+      }}
+      {...props}
+    />
+  )
 }
 
 function AlertDialogPortal({ ...props }: React.ComponentProps<typeof AlertDialogPrimitive.Portal>) {
@@ -61,30 +89,30 @@ function AlertDialogContent({
   className,
   size = "default",
   ref,
+  style,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
   size?: "default" | "sm"
 }) {
   const motion = React.useContext(AlertDialogMotionContext)
-  const overlayRef = React.useRef<HTMLDivElement>(null)
-  const contentRef = React.useRef<HTMLDivElement>(null)
-
-  useDialogPresenceMotion({
-    open: motion?.isOpen ?? true,
-    present: motion?.present ?? true,
-    overlayRef,
-    contentRef,
-    onExitComplete: () => motion?.markExited(),
-  })
+  const isOpen = motion?.isOpen ?? true
+  const present = motion?.present ?? true
+  const [overlayEl, overlayCallbackRef] = useStableNodeRef<HTMLDivElement>()
+  const [contentEl, contentCallbackRef] = useStableNodeRef<HTMLDivElement>(ref)
+  const awaitingMotion = useAwaitingMotionController(present, isOpen)
+  const handleExitComplete = React.useCallback(() => {
+    motion?.markExited()
+  }, [motion])
 
   return (
     <AlertDialogPortal>
-      <AlertDialogOverlay ref={overlayRef} />
+      <AlertDialogOverlay ref={overlayCallbackRef} style={awaitingMotion ? { opacity: 0 } : undefined} />
       <AlertDialogPrimitive.Content
-        ref={mergeRefs(ref, contentRef)}
+        ref={contentCallbackRef}
         data-slot="alert-dialog-content"
         data-size={size}
         data-motion-state={motion?.isOpen === false ? "closing" : "open"}
+        style={awaitingMotion ? { opacity: 0, ...style } : style}
         className={cn(
           "group/alert-dialog-content fixed top-[50%] left-[50%] z-[var(--z-modal)] grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-xl border border-border bg-popover p-6 text-popover-foreground shadow-float outline-none data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-lg",
           motion && !motion.isOpen && "pointer-events-none",
@@ -92,6 +120,15 @@ function AlertDialogContent({
         )}
         {...props}
       />
+      {present && overlayEl && contentEl ? (
+        <OverlayMotionMount
+          kind="dialog"
+          open={isOpen}
+          overlay={overlayEl}
+          content={contentEl}
+          onExitComplete={handleExitComplete}
+        />
+      ) : null}
     </AlertDialogPortal>
   )
 }

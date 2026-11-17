@@ -21,7 +21,7 @@ function Switch({
         "disabled:cursor-not-allowed disabled:opacity-45",
         "data-[size=default]:h-6 data-[size=default]:w-10 data-[size=sm]:h-4 data-[size=sm]:w-7",
         "data-[state=checked]:bg-primary data-[state=unchecked]:bg-border-strong dark:data-[state=unchecked]:bg-surface-3",
-        "[@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:-inset-2",
+        "[@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:top-1/2 [@media(pointer:coarse)]:after:left-1/2 [@media(pointer:coarse)]:after:h-full [@media(pointer:coarse)]:after:min-h-[44px] [@media(pointer:coarse)]:after:w-full [@media(pointer:coarse)]:after:min-w-[44px] [@media(pointer:coarse)]:after:-translate-x-1/2 [@media(pointer:coarse)]:after:-translate-y-1/2",
         className,
       )}
       {...props}

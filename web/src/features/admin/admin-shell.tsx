@@ -21,7 +21,8 @@ import {
 import { createContext, type RefObject, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { NavLink, Outlet, useLocation } from "react-router"
 import { useNow } from "@/hooks/use-data"
-import { MOTION, usePresenceController, useSheetPresenceMotion } from "@/lib/motion"
+import { MOTION, usePresenceController, useStableNodeRef } from "@/lib/motion"
+import { SheetPresenceController } from "@/lib/motion-controller"
 import { initials } from "@/lib/text"
 import { visibleAdminPages } from "./admin-access"
 import { adminBusinessDateLabel, ADMIN_SHIFT_LABEL } from "./admin-date"
@@ -68,7 +69,8 @@ export function AdminShell() {
   const [override, setOverride] = useState<string | null>(null)
   const menuTriggerRef = useRef<HTMLButtonElement>(null)
   const drawerRef = useRef<HTMLDivElement>(null)
-  const drawerOverlayRef = useRef<HTMLButtonElement>(null)
+  const [drawerEl, drawerCallbackRef] = useStableNodeRef<HTMLDivElement>(drawerRef)
+  const [drawerOverlayEl, drawerOverlayCallbackRef] = useStableNodeRef<HTMLButtonElement>()
   const desktopSidebarRef = useRef<HTMLDivElement>(null)
   const headerRef = useRef<HTMLElement>(null)
   const mainRef = useRef<HTMLElement>(null)
@@ -99,16 +101,6 @@ export function AdminShell() {
       mainContent: mainRef.current,
     })?.focus()
   }, [setBackgroundInert, setDrawerOpen])
-
-  useSheetPresenceMotion({
-    open: drawerOpen,
-    present: drawerMounted,
-    side: "left",
-    overlayRef: drawerOverlayRef,
-    contentRef: drawerRef,
-    onExitComplete: markDrawerExited,
-    duration: MOTION.duration.drawer,
-  })
 
   useAdminCardReveal(mainRef, location.pathname)
 
@@ -173,7 +165,7 @@ export function AdminShell() {
             aria-hidden={!drawerOpen}
           >
             <button
-              ref={drawerOverlayRef}
+              ref={drawerOverlayCallbackRef}
               type="button"
               tabIndex={-1}
               aria-label="Đóng menu"
@@ -181,7 +173,7 @@ export function AdminShell() {
               onClick={closeDrawer}
             />
             <div
-              ref={drawerRef}
+              ref={drawerCallbackRef}
               id="admin-drawer"
               tabIndex={-1}
               role="dialog"
@@ -192,6 +184,16 @@ export function AdminShell() {
             >
               <AdminSidebar onNavigate={closeDrawer} />
             </div>
+            {drawerOverlayEl && drawerEl ? (
+              <SheetPresenceController
+                open={drawerOpen}
+                side="left"
+                duration={MOTION.duration.drawer}
+                overlay={drawerOverlayEl}
+                content={drawerEl}
+                onExitComplete={markDrawerExited}
+              />
+            ) : null}
           </div>
         ) : null}
 
@@ -304,15 +306,15 @@ function AdminHeader({
         <h1 className="adm-h1 truncate" data-testid="admin-page-title">
           {title}
         </h1>
-        <p className="adm-caption truncate sm:hidden" data-testid="admin-header-meta-compact">
+        <p className="adm-caption truncate md:hidden" data-testid="admin-header-meta-compact">
           {ADMIN_SHIFT_LABEL} · {dateLabel}
         </p>
       </div>
-      <div className="hidden shrink-0 items-center gap-2 sm:flex">
+      <div className="hidden shrink-0 items-center gap-2 md:flex">
         <span className="adm-supporting rounded-full border border-[var(--adm-border)] bg-[var(--adm-surface)] px-3 py-1 whitespace-nowrap">
           {ADMIN_SHIFT_LABEL}
         </span>
-        <span className="adm-supporting hidden rounded-full border border-[var(--adm-border)] bg-[var(--adm-surface-sunken)] px-3 py-1 font-medium whitespace-nowrap text-[var(--adm-text)] md:inline">
+        <span className="adm-supporting rounded-full border border-[var(--adm-border)] bg-[var(--adm-surface-sunken)] px-3 py-1 font-medium whitespace-nowrap text-[var(--adm-text)]">
           {dateLabel}
         </span>
       </div>

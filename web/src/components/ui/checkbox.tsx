@@ -16,7 +16,7 @@ function Checkbox({ className, ...props }: React.ComponentProps<typeof CheckboxP
         "disabled:cursor-not-allowed disabled:opacity-45",
         "aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/35",
         "data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground",
-        "[@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:-inset-3",
+        "[@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:top-1/2 [@media(pointer:coarse)]:after:left-1/2 [@media(pointer:coarse)]:after:h-full [@media(pointer:coarse)]:after:min-h-[44px] [@media(pointer:coarse)]:after:w-full [@media(pointer:coarse)]:after:min-w-[44px] [@media(pointer:coarse)]:after:-translate-x-1/2 [@media(pointer:coarse)]:after:-translate-y-1/2 [@media(pointer:coarse)]:active:after:scale-[1.06]",
         className,
       )}
       {...props}
