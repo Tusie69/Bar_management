@@ -1,3 +1,8 @@
+@import "@fontsource/be-vietnam-pro/400.css";
+@import "@fontsource/be-vietnam-pro/500.css";
+@import "@fontsource/be-vietnam-pro/600.css";
+@import "@fontsource/be-vietnam-pro/700.css";
+
 /*
  * Mobile V1 tokens (< 768px), copied from "GAM Mobile Screen" round 2.
  * Scoped to [data-gm] so Desktop/Tablet keep index.css. Light by default, html.dark = Service.
@@ -111,6 +116,7 @@
   --input: var(--border-strong);
   --ring: var(--primary);
   --destructive: var(--st-noshow);
+  --font-sans: "Be Vietnam Pro", "Roboto", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-ui: var(--font-sans);
   --gm-max-w: 628px;
   --top-safe: max(6px, env(safe-area-inset-top));

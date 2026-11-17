@@ -196,7 +196,7 @@ function TopBar() {
         <ClockMenu />
         <UndoRedo />
         <ThemeToggle />
-        <AlertsBell />
+        {!receptionist ? <AlertsBell /> : null}
         {!receptionist ? <Identity /> : null}
       </div>
     </header>
@@ -482,11 +482,16 @@ function ThemeToggle() {
 
 /** v2 bell: same alert source as the "Cần xử lý" tab, reachable from every page. */
 export function AlertsBell({ className }: { className?: string }) {
-  const ui = useUi()
   const receptionist = useSession((state) => state.user.role === "RECEPTIONIST")
+  if (receptionist) return null
+  return <AlertsBellContent className={className} />
+}
+
+function AlertsBellContent({ className }: { className?: string }) {
+  const ui = useUi()
   const now = useNow(15_000)
-  const selectedDate = receptionist && ui.floorMode !== "live" ? ui.availDate : businessDateOf(now)
-  const model = useFloorModel(receptionist ? selectedDate : undefined)
+  const selectedDate = businessDateOf(now)
+  const model = useFloorModel(undefined)
   const bd = model.floor?.businessDate ?? selectedDate
   const reservations = useReservations(bd)
   const booked = useMemo(() => (reservations.data ?? []).filter((r) => r.status === "BOOKED"), [reservations.data])
@@ -500,7 +505,7 @@ export function AlertsBell({ className }: { className?: string }) {
           variant="outline"
           size="icon"
           className={cn("relative size-11 min-h-[44px] min-w-[44px] bg-transparent", className)}
-          aria-label={`${receptionist ? "Thông báo" : "Cần xử lý"}: ${alerts.length}`}
+          aria-label={`Cần xử lý: ${alerts.length}`}
         >
           <Bell />
           {alerts.length ? (
@@ -512,7 +517,7 @@ export function AlertsBell({ className }: { className?: string }) {
       </PopoverTrigger>
       <PopoverContent align="end" className="w-96 max-w-[calc(100vw-16px)] p-0">
         <div className="flex items-center gap-2 py-2.5 pr-2 pl-4">
-          <span className="text-sm font-semibold">{receptionist ? "Thông báo" : "Cần xử lý"}</span>
+          <span className="text-sm font-semibold">Cần xử lý</span>
           <span className="tnum text-xs text-tx-3">{alerts.length}</span>
           <Button variant="ghost" size="icon-sm" className="ml-auto" aria-label="Đóng" onClick={() => setOpen(false)}>
             <X />

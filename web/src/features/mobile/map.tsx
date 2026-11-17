@@ -26,7 +26,7 @@ import { useBookingDraft } from "../floor/use-booking-draft"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
 import { codesOf, duration, type Tone, toneStyle } from "./model"
-import { BellButton, PlainHeader, UndoRedoButtons } from "./ui"
+import { PlainHeader, UndoRedoButtons } from "./ui"
 
 const ZONE_TABS: [ZoneCode | "ALL", string][] = [
   ["ALL", "Tất cả"],
@@ -109,7 +109,7 @@ export function MapScreen({
   return (
     <main className="contents">
       {receptionist ? (
-        <header className="z-[5] shrink-0 bg-background px-3 pt-[var(--top-safe)]">
+        <header className="z-[5] shrink-0 border-b border-border/60 bg-background px-3 pt-[var(--top-safe)]">
           {/* A single 48px row is the whole fixed chrome: menu, search, export.
               Undo/redo, date, Đếm khách and ⓘ float on the plan itself. */}
           <div className="flex h-[48px] items-center gap-2">
@@ -117,12 +117,15 @@ export function MapScreen({
               type="button"
               onClick={m.openAccount}
               aria-label="Menu"
-              className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-surface-1 text-tx-strong shadow-[var(--shadow-xs)]"
+              className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-surface-1 text-tx-strong shadow-[var(--shadow-xs)] transition-[transform,background-color] duration-100 hover:bg-surface-2 active:scale-[0.96] active:bg-surface-2"
             >
               <Menu className="size-5" />
             </button>
             {planChrome ? (
-              <ReceptionSearchField search={search} />
+              <ReceptionSearchField
+                search={search}
+                className="[&_input]:rounded-xl [&_input]:border-border [&_input]:pl-11 [&_input]:shadow-[var(--shadow-xs)]"
+              />
             ) : (
               <h1 className="m-0 min-w-0 flex-1 truncate text-[18px] font-semibold text-tx-strong">Sơ đồ bàn</h1>
             )}
@@ -135,7 +138,7 @@ export function MapScreen({
                   aria-label="Xuất text Zalo"
                   title="Xuất text booking để gửi nhóm Zalo"
                   className={cn(
-                    "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-3 text-[14px] font-semibold text-primary-foreground",
+                    "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-3 text-[14px] font-semibold text-primary-foreground shadow-[var(--shadow-xs)] transition-[transform,filter] duration-100 active:scale-[0.97]",
                     (!canExport || loading) && "cursor-not-allowed opacity-50",
                   )}
                 >
@@ -257,7 +260,7 @@ export function MapScreen({
                         onEdit={m.openCountEdit}
                         className="pointer-events-auto absolute top-1.5 left-1.5 z-10"
                       />
-                      <div className="pointer-events-auto absolute top-2 right-2 flex flex-col items-end gap-1">
+                      <div className="pointer-events-auto absolute top-1.5 right-1.5 flex flex-col items-end gap-1">
                         <StatusLegend
                           variant="badge"
                           tables={m.model.tables}
@@ -266,7 +269,7 @@ export function MapScreen({
                         />
                         <ReceptionDatePicker
                           onDateChange={() => onSelect(null)}
-                          className="[&>button]:h-11 [&>button]:min-h-[44px] [&>button]:px-2 [&>button]:shadow-lg"
+                          className="[&>button]:h-11 [&>button]:min-h-[44px] [&>button]:gap-1.5 [&>button]:rounded-xl [&>button]:border-border/80 [&>button]:bg-surface-1/92 [&>button]:px-2 [&>button]:text-[13px] [&>button]:shadow-[var(--shadow-soft)] [&>button]:backdrop-blur-md dark:[&>button]:border-slate-700/80 dark:[&>button]:bg-[#1e232d]/92"
                         />
                         {/* The mockup puts Bàn chờ here, right under the date. Drawn in
                             floor space it scaled with the plan while the date chip kept
@@ -275,9 +278,9 @@ export function MapScreen({
                           type="button"
                           onClick={() => m.go("wait")}
                           aria-label={`Bàn chờ, ${waitingCount} nhóm đang đợi`}
-                          className="inline-flex h-11 min-h-[44px] min-w-[44px] items-center gap-2 rounded-xl border border-border/80 bg-background/95 px-2.5 text-[13px] font-semibold text-tx-strong shadow-lg backdrop-blur active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
+                          className="inline-flex h-11 min-h-[44px] min-w-[44px] items-center gap-1 rounded-xl border border-border/80 bg-surface-1/92 px-2 text-[12.5px] font-semibold text-tx-strong shadow-[var(--shadow-soft)] backdrop-blur-md transition-transform duration-100 active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/92"
                         >
-                          <ListOrdered className="size-4 shrink-0" aria-hidden />
+                          <ListOrdered className="size-3.5 shrink-0" aria-hidden />
                           {planWidth >= 375 ? <span>Chờ</span> : null}
                           {waitingCount > 0 ? `+${waitingCount}` : ""}
                         </button>
@@ -319,16 +322,11 @@ export function MapScreen({
           <LayoutMergeControls model={m.model} overlay />
         </div>
       ) : planChrome ? (
-        // Mockup 01 ends the screen with a 52px row. Trái: cặp hoàn tác/làm
-        // lại (tự ẩn khi server không cho hoàn tác). Phải: chuông thông báo —
-        // màn sơ đồ của lễ tân dùng header riêng không có chuông, nên trước
-        // đây cả ca không có chỗ nào xem cảnh báo mà không rời màn hình.
-        // Floating them over the plan put them on top of Khu A. api.mode is
-        // fixed per build, so the plan height cannot change mid-session.
-        <div className="z-[5] flex h-[52px] shrink-0 items-center gap-1 bg-background px-2 pb-[var(--bottom-safe)]">
+        // Mockup 01 ends the screen with a 52px row. Trái: cặp hoàn tác/làm lại;
+        // nút chuông thông báo đã bỏ hoàn toàn cho role Lễ tân để không gây nhiễu
+        // và giữ nguyên chiều cao sơ đồ (52px).
+        <div className="z-[5] flex h-[52px] shrink-0 items-center gap-1.5 border-t border-border/60 bg-background px-2.5 pb-[var(--bottom-safe)]">
           <UndoRedoButtons square />
-          <span className="flex-1" />
-          <BellButton square />
         </div>
       ) : null}
       {pick
@@ -627,7 +625,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
     <div
       role="dialog"
       aria-label={`Chi tiết ${isGroup ? groupTitle : t.code}`}
-      className="absolute inset-x-0 bottom-[var(--nav-h)] z-[12] flex flex-col gap-3 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-2 pb-4 shadow-[var(--shadow-float)]"
+      className="absolute inset-x-0 bottom-[var(--nav-h)] z-[12] flex max-h-[82dvh] flex-col gap-3 overflow-y-auto rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-2 pb-4 shadow-[var(--shadow-float)]"
     >
       <div className="mx-auto mb-0.5 h-[5px] w-9 rounded-[3px] bg-strong" />
       <div className="flex items-center gap-2.5">
@@ -681,7 +679,7 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
             <div
               key={index}
               className={cn(
-                "grid items-start gap-2",
+                "grid items-stretch gap-2",
                 // Ba cột thì mỗi ô chỉ còn ~110px: hạ cỡ chữ để nhãn dài như
                 // "Đổi / Ghép bàn" nằm gọn một dòng, hàng không cao vống lên.
                 row.length === 3 ? "grid-cols-3 [&_button]:text-[13px]" : "grid-cols-2",

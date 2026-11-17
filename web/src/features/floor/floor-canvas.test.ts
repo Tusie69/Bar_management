@@ -7,6 +7,7 @@ import { STATE_META } from "@/components/status-meta"
 import { FloorCanvas } from "./floor-canvas"
 import {
   calculateStatusCounts,
+  computeClusterDecorations,
   computeZoneBounds,
   findGroupRepresentativeId,
   formatCellGuestName,
@@ -1490,5 +1491,137 @@ describe("Group border redesign - status-colored thick borders and neutral selec
       // Corner flags still present
       expect(htmlFar).toContain("🆕")
     })
+  })
+})
+
+describe("cluster outline & label collision clearance (F-02)", () => {
+  it("keeps stacked G02/G03 frames separated including 1.6-unit strokes and keeps code pills clear of guest-count badges and neighbouring cells", () => {
+    const byCode = (code: string) => realTables.find((t) => t.code === code)!
+    const tA6 = byCode("A6")
+    const tA7 = byCode("A7")
+    const tB6 = byCode("B6")
+    const tB8 = byCode("B8")
+    const tB11 = byCode("B11")
+    const tB12 = byCode("B12")
+    const tB21 = byCode("B21")
+    const tB22 = byCode("B22")
+    const bar5 = byCode("BAR05")
+    const bar6 = byCode("BAR06")
+    const bar10 = byCode("BAR10")
+    const bar11 = byCode("BAR11")
+    const bar12 = byCode("BAR12")
+    const bar16 = byCode("BAR16")
+    const bar17 = byCode("BAR17")
+
+    const groups = [
+      { id: 1, symbolNo: 1, displayCode: "G01", tableIds: [tA6.id, tA7.id] },
+      { id: 2, symbolNo: 2, displayCode: "G02", tableIds: [tB11.id, tB12.id] },
+      { id: 3, symbolNo: 3, displayCode: "G03", tableIds: [tB21.id, tB22.id] },
+      { id: 4, symbolNo: 4, displayCode: "G04", tableIds: [tB6.id, tB8.id] },
+      { id: 5, symbolNo: 5, displayCode: "G05", tableIds: [bar5.id, bar6.id] },
+      { id: 6, symbolNo: 6, displayCode: "G06", tableIds: [bar10.id, bar11.id, bar12.id] },
+      { id: 7, symbolNo: 7, displayCode: "G07", tableIds: [bar16.id, bar17.id] },
+    ]
+
+    const makeClaim = (tableIds: number[], partySize: number, symbolNo: number, flags: string[] = []) => ({
+      displayName: "Khách Test",
+      partySize,
+      tableIds,
+      groupId: symbolNo,
+      symbolNo,
+      groupDisplayCode: `G0${symbolNo}`,
+      flags,
+      startsAt: new Date("2026-11-17T15:30:00Z"),
+    })
+
+    const states = new Map<number, FloorTableState>([
+      [tA6.id, { tableId: tA6.id, state: "reserved", claim: makeClaim([tA6.id, tA7.id], 6, 1) } as any],
+      [tA7.id, { tableId: tA7.id, state: "reserved", claim: makeClaim([tA6.id, tA7.id], 6, 1) } as any],
+      [tB11.id, { tableId: tB11.id, state: "seated", seatedTurnCount: 2, claim: makeClaim([tB11.id, tB12.id], 7, 2, ["RETURNING"]) } as any],
+      [tB12.id, { tableId: tB12.id, state: "seated", claim: makeClaim([tB11.id, tB12.id], 7, 2, ["RETURNING"]) } as any],
+      [tB21.id, { tableId: tB21.id, state: "reserved", claim: makeClaim([tB21.id, tB22.id], 8, 3, ["NEW", "VIP", "BIRTHDAY"]) } as any],
+      [tB22.id, { tableId: tB22.id, state: "reserved", claim: makeClaim([tB21.id, tB22.id], 8, 3, ["NEW", "VIP", "BIRTHDAY"]) } as any],
+      [tB6.id, { tableId: tB6.id, state: "seated", claim: makeClaim([tB6.id, tB8.id], 7, 4) } as any],
+      [tB8.id, { tableId: tB8.id, state: "seated", claim: makeClaim([tB6.id, tB8.id], 7, 4) } as any],
+    ])
+
+    const tableById = new Map(realTables.map((t) => [t.id, t]))
+    const repMap = new Map<number, boolean>()
+    for (const g of groups) {
+      const members = g.tableIds.map((id) => tableById.get(id)!)
+      const repId = findGroupRepresentativeId(members)
+      for (const id of g.tableIds) repMap.set(id, id === repId)
+    }
+
+    const decorations = computeClusterDecorations({
+      tables: realTables,
+      groups,
+      states,
+      mode: "live",
+      groupRepresentativeMap: repMap,
+      tableById,
+    })
+
+    const g02 = decorations.find((d) => d.code === "G02")!
+    const g03 = decorations.find((d) => d.code === "G03")!
+    expect(g02).toBeTruthy()
+    expect(g03).toBeTruthy()
+
+    // Stroke-inclusive vertical separation between G03 (B21/B22) and G02 (B11/B12)
+    const g03BottomWithStroke = g03.y + g03.h + 0.8
+    const g02TopWithStroke = g02.y - 0.8
+    expect(g02TopWithStroke - g03BottomWithStroke).toBeGreaterThanOrEqual(0.8)
+
+    // Every cluster pill is present, inside WALL_BOUNDS, clear of all tables, guest-count badges, and other outlines
+    const overlaps = (
+      a: { left: number; top: number; right: number; bottom: number },
+      b: { left: number; top: number; right: number; bottom: number },
+    ) => !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top)
+
+    const b21Badge = {
+      left: tB21.x - tB21.w / 2 + 3 - 6,
+      top: tB21.y - tB21.h / 2 - 0.5 - 5.5,
+      right: tB21.x - tB21.w / 2 + 3 + 6,
+      bottom: tB21.y - tB21.h / 2 - 0.5 + 5.5,
+    }
+    const b11Badge = {
+      left: tB11.x - tB11.w / 2 + 3 - 6,
+      top: tB11.y - tB11.h / 2 - 0.5 - 5.5,
+      right: tB11.x - tB11.w / 2 + 3 + 6,
+      bottom: tB11.y - tB11.h / 2 - 0.5 + 5.5,
+    }
+
+    for (const d of decorations) {
+      expect(d.label).not.toBeNull()
+      const pill = {
+        left: d.label!.x - 0.7,
+        top: d.label!.y - 0.7,
+        right: d.label!.x + d.label!.width + 0.7,
+        bottom: d.label!.y + d.label!.height + 0.7,
+      }
+      expect(pill.left).toBeGreaterThanOrEqual(WALL_BOUNDS.x)
+      expect(pill.right).toBeLessThanOrEqual(WALL_BOUNDS.x + WALL_BOUNDS.w)
+      expect(pill.top).toBeGreaterThanOrEqual(WALL_BOUNDS.y)
+      expect(pill.bottom).toBeLessThanOrEqual(WALL_BOUNDS.y + WALL_BOUNDS.h)
+
+      expect(overlaps(pill, b21Badge)).toBe(false)
+      expect(overlaps(pill, b11Badge)).toBe(false)
+
+      for (const t of realTables) {
+        const cell = { left: t.x - t.w / 2, top: t.y - t.h / 2, right: t.x + t.w / 2, bottom: t.y + t.h / 2 }
+        expect(overlaps(pill, cell)).toBe(false)
+      }
+
+      for (const other of decorations) {
+        if (other.key === d.key) continue
+        const otherOutline = {
+          left: other.x - 0.8,
+          top: other.y - 0.8,
+          right: other.x + other.w + 0.8,
+          bottom: other.y + other.h + 0.8,
+        }
+        expect(overlaps(pill, otherOutline)).toBe(false)
+      }
+    }
   })
 })

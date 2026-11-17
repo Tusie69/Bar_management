@@ -1,6 +1,7 @@
 import { formatHonorificName } from "@/domain/booking-identity"
 import type { FloorGroup, FloorTableState, TableLiveState, TableView } from "@/domain/models"
-import { FIXTURES, FLOOR_H, FLOOR_W, WAITLIST_MARKER, type ZoneCode } from "@/domain/venue-layout"
+import { FIXTURES, FLOOR_H, FLOOR_W, WAITLIST_MARKER, WALL_BOUNDS, ZONES, type ZoneCode } from "@/domain/venue-layout"
+import { DEFAULT_BAR_GUEST_LIST_BOUNDS } from "./bar-guest-rows"
 
 /**
  * Approved icon priority (Nam 2026-11-04):
@@ -452,4 +453,399 @@ export function computeZoneBounds(tables: TableView[], zone: ZoneCode | "ALL", p
     w: maxX - minX + pad * 2,
     h: maxY - minY + pad * 2,
   }
+}
+
+export const CLUSTER_OUTLINE_STROKE = 1.6
+export const CLUSTER_CODE_STROKE = 1.4
+const CLUSTER_OUTLINE_HALF_STROKE = CLUSTER_OUTLINE_STROKE / 2
+const CLUSTER_CODE_HEIGHT = 14
+const CLUSTER_CODE_HALF_STROKE = CLUSTER_CODE_STROKE / 2
+const BAR_CLUSTER_PAD = 2
+const TABLE_CLUSTER_MAX_PAD = 3.0
+const TABLE_CLUSTER_MIN_PAD = 1.8
+const CLUSTER_MIN_STROKE_GAP = 1.2
+
+interface RectBox {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+export interface ClusterDecoration {
+  key: string
+  x: number
+  y: number
+  w: number
+  h: number
+  code: string | null
+  isBar: boolean
+  orientation: "horizontal" | "vertical" | null
+  label: {
+    x: number
+    y: number
+    width: number
+    height: number
+    side: "left" | "right" | "top" | "bottom"
+  } | null
+}
+
+/** Pill width for a cluster code such as "G01" or "◆A". */
+export function formatGroupCodeWidth(code: string): number {
+  return Math.max(18, code.length * 5.6 + 8)
+}
+
+function rectsOverlapWithGap(a: RectBox, b: RectBox, gap = 0): boolean {
+  return !(a.right + gap <= b.left || b.right + gap <= a.left || a.bottom + gap <= b.top || b.bottom + gap <= a.top)
+}
+
+function rectOverlapArea(a: RectBox, b: RectBox): number {
+  const ox = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left))
+  const oy = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top))
+  return ox * oy
+}
+
+function deriveTableClusterPad(raw: RectBox, memberIds: Set<number>, tables: TableView[]): number {
+  let minNeighborGap = Infinity
+  for (const other of tables) {
+    if (memberIds.has(other.id)) continue
+    const oLeft = other.x - other.w / 2
+    const oRight = other.x + other.w / 2
+    const oTop = other.y - other.h / 2
+    const oBottom = other.y + other.h / 2
+    const dx = Math.max(0, raw.left - oRight, oLeft - raw.right)
+    const dy = Math.max(0, raw.top - oBottom, oTop - raw.bottom)
+    if (dx === 0 && dy > 0) {
+      minNeighborGap = Math.min(minNeighborGap, dy)
+    } else if (dy === 0 && dx > 0) {
+      minNeighborGap = Math.min(minNeighborGap, dx)
+    } else if (dx > 0 && dy > 0 && Math.max(dx, dy) < 10) {
+      minNeighborGap = Math.min(minNeighborGap, Math.hypot(dx, dy))
+    }
+  }
+  if (!Number.isFinite(minNeighborGap)) return TABLE_CLUSTER_MAX_PAD
+  // Reserve half the gap per cluster so two adjacent outlines (including their
+  // 1.6-unit strokes) stay separated by at least CLUSTER_MIN_STROKE_GAP.
+  const available = minNeighborGap / 2 - CLUSTER_OUTLINE_HALF_STROKE - CLUSTER_MIN_STROKE_GAP / 2
+  return Math.min(TABLE_CLUSTER_MAX_PAD, Math.max(TABLE_CLUSTER_MIN_PAD, available))
+}
+
+/**
+ * Computes non-overlapping cluster outline frames and collision-free group
+ * label pill coordinates in SVG floor space without moving any table or seat.
+ */
+export function computeClusterDecorations({
+  tables,
+  groups,
+  states,
+  mode,
+  groupRepresentativeMap,
+  tableById,
+  includeWaitlistMarker = false,
+}: {
+  tables: TableView[]
+  groups: FloorGroup[]
+  states?: Map<number, FloorTableState>
+  mode: "live" | "availability"
+  groupRepresentativeMap: Map<number, boolean>
+  tableById: Map<number, TableView>
+  includeWaitlistMarker?: boolean
+}): ClusterDecoration[] {
+  const seen = new Set<string>()
+  const rawClusters: {
+    key: string
+    x: number
+    y: number
+    w: number
+    h: number
+    code: string | null
+    isBar: boolean
+    orientation: "horizontal" | "vertical" | null
+    members: TableView[]
+  }[] = []
+
+  const add = (ids: number[], code: string | null) => {
+    const members = ids.map((id) => tableById.get(id)).filter((t): t is TableView => !!t)
+    if (members.length < 2) return
+    const key = [...ids].sort((a, b) => a - b).join(",")
+    if (seen.has(key)) return
+    seen.add(key)
+    const isBar = members.every((t) => t.kind === "BAR_SEAT")
+    const spreadX = Math.max(...members.map((t) => t.x)) - Math.min(...members.map((t) => t.x))
+    const spreadY = Math.max(...members.map((t) => t.y)) - Math.min(...members.map((t) => t.y))
+    const orientation = isBar ? (spreadY > spreadX ? "vertical" : "horizontal") : null
+    const raw: RectBox = {
+      left: Math.min(...members.map((t) => t.x - t.w / 2)),
+      right: Math.max(...members.map((t) => t.x + t.w / 2)),
+      top: Math.min(...members.map((t) => t.y - t.h / 2)),
+      bottom: Math.max(...members.map((t) => t.y + t.h / 2)),
+    }
+    const memberIds = new Set(members.map((m) => m.id))
+    const pad = isBar ? BAR_CLUSTER_PAD : deriveTableClusterPad(raw, memberIds, tables)
+    rawClusters.push({
+      key,
+      x: raw.left - pad,
+      y: raw.top - pad,
+      w: raw.right - raw.left + pad * 2,
+      h: raw.bottom - raw.top + pad * 2,
+      code,
+      isBar,
+      orientation,
+      members,
+    })
+  }
+
+  for (const g of groups) add(g.tableIds, formatGroupCode(g.displayCode ?? g.symbolNo))
+  if (states) {
+    for (const fs of states.values()) {
+      const claim = fs?.claim
+      if (claim?.tableIds && claim.tableIds.length > 1) {
+        add(claim.tableIds, formatGroupCode(claim.groupDisplayCode ?? claim.symbolNo))
+      }
+    }
+  }
+
+  rawClusters.sort((a, b) => a.y - b.y || a.x - b.x || (a.code ?? a.key).localeCompare(b.code ?? b.key))
+
+  const baseObstacles: RectBox[] = []
+  for (const t of tables) {
+    if (t.kind === "BAR_SEAT") {
+      const r = Math.max(9, (t.w || 20) / 2)
+      baseObstacles.push({ left: t.x - r - 1.5, top: t.y - r - 1.5, right: t.x + r + 1.5, bottom: t.y + r + 1.5 })
+    } else {
+      const hw = t.w / 2
+      const hh = t.h / 2
+      const chairPad = t.seating === "none" ? 0 : 6.5
+      baseObstacles.push({
+        left: t.x - hw - 1.5 - chairPad,
+        top: t.y - hh - 1.5 - chairPad,
+        right: t.x + hw + 1.5 + chairPad,
+        bottom: t.y + hh + 1.5 + chairPad,
+      })
+    }
+
+    if (mode !== "live") continue
+    const fs = states?.get(t.id)
+    const rawState: TableLiveState = fs?.state ?? "free"
+    const state = rawState === "late_confirmed" ? "late" : rawState
+    const claim = fs?.claim
+    const isAnchor = groupRepresentativeMap.get(t.id) ?? true
+    const hasActiveClaim = !!claim && state !== "free" && state !== "spare" && state !== "oos"
+
+    if (t.kind !== "BAR_SEAT") {
+      const hw = t.w / 2
+      const hh = t.h / 2
+      if (hasActiveClaim && isAnchor) {
+        if (claim.partySize && claim.partySize > 0) {
+          const bw = claim.partySize >= 100 ? 18 : claim.partySize >= 10 ? 15 : 12
+          const bh = 11
+          const cx = t.x - hw + 3
+          const cy = t.y - hh - 0.5
+          baseObstacles.push({
+            left: cx - bw / 2 - 0.5,
+            top: cy - bh / 2 - 0.5,
+            right: cx + bw / 2 + 0.5,
+            bottom: cy + bh / 2 + 0.5,
+          })
+        }
+        const icons = resolveCellCornerIcons(claim)
+        if (icons.bottomLeft.length > 0) {
+          const cx = t.x - hw + 2.5
+          const cy = t.y + hh - 0.5
+          baseObstacles.push({
+            left: cx - 5.5,
+            top: cy - 5.5,
+            right: cx + 5.5 + (icons.bottomLeft.length - 1) * 10,
+            bottom: cy + 5.5,
+          })
+        }
+        if (icons.bottomRight.length > 0) {
+          const cx = t.x + hw - 2
+          const cy = t.y + hh - 0.5
+          baseObstacles.push({
+            left: cx - 5.5 - (icons.bottomRight.length - 1) * 10,
+            top: cy - 5.5,
+            right: cx + 5.5,
+            bottom: cy + 5.5,
+          })
+        } else if (claim.paid) {
+          const cx = t.x + hw - 2
+          const cy = t.y + hh - 0.5
+          baseObstacles.push({ left: cx - 5.5, top: cy - 5.5, right: cx + 5.5, bottom: cy + 5.5 })
+        }
+      }
+      const turnCount = fs?.seatedTurnCount
+      if (isAnchor && turnCount && turnCount > 0) {
+        const cx = t.x + hw
+        const cy = t.y
+        baseObstacles.push({ left: cx - 5.3, top: cy - 5.3, right: cx + 5.3, bottom: cy + 5.3 })
+      }
+      if (fs?.staleFromPreviousDay) {
+        baseObstacles.push({
+          left: t.x - hw - 5.5,
+          top: t.y - hh - 5.5,
+          right: t.x - hw + 5.5,
+          bottom: t.y - hh + 5.5,
+        })
+      }
+    }
+  }
+
+  for (const z of ZONES) {
+    if (!z.label) continue
+    if (z.label.anchor === "end") {
+      baseObstacles.push({ left: z.label.x - 42, top: z.label.y - 9, right: z.label.x + 2, bottom: z.label.y + 3 })
+    } else {
+      baseObstacles.push({ left: z.label.x - 2, top: z.label.y - 9, right: z.label.x + 42, bottom: z.label.y + 3 })
+    }
+  }
+  baseObstacles.push({ left: 170, top: 340, right: 196, bottom: 674 })
+  baseObstacles.push({
+    left: DEFAULT_BAR_GUEST_LIST_BOUNDS.x,
+    top: DEFAULT_BAR_GUEST_LIST_BOUNDS.y,
+    right: DEFAULT_BAR_GUEST_LIST_BOUNDS.x + DEFAULT_BAR_GUEST_LIST_BOUNDS.width,
+    bottom: DEFAULT_BAR_GUEST_LIST_BOUNDS.y + DEFAULT_BAR_GUEST_LIST_BOUNDS.height,
+  })
+  if (includeWaitlistMarker) {
+    baseObstacles.push({
+      left: WAITLIST_MARKER.x - WAITLIST_MARKER.width / 2,
+      top: WAITLIST_MARKER.y - WAITLIST_MARKER.height / 2,
+      right: WAITLIST_MARKER.x + WAITLIST_MARKER.width / 2,
+      bottom: WAITLIST_MARKER.y + WAITLIST_MARKER.height / 2,
+    })
+  }
+
+  const wallInner: RectBox = {
+    left: WALL_BOUNDS.x + 2,
+    top: WALL_BOUNDS.y + 2,
+    right: WALL_BOUNDS.x + WALL_BOUNDS.w - 2,
+    bottom: WALL_BOUNDS.y + WALL_BOUNDS.h - 2,
+  }
+
+  const placedLabels: RectBox[] = []
+
+  return rawClusters.map((c) => {
+    if (!c.code) {
+      return {
+        key: c.key,
+        x: c.x,
+        y: c.y,
+        w: c.w,
+        h: c.h,
+        code: null,
+        isBar: c.isBar,
+        orientation: c.orientation,
+        label: null,
+      }
+    }
+
+    const pw = formatGroupCodeWidth(c.code)
+    const ph = CLUSTER_CODE_HEIGHT
+    const otherOutlines: RectBox[] = rawClusters
+      .filter((o) => o.key !== c.key)
+      .map((o) => ({
+        left: o.x - CLUSTER_OUTLINE_HALF_STROKE,
+        top: o.y - CLUSTER_OUTLINE_HALF_STROKE,
+        right: o.x + o.w + CLUSTER_OUTLINE_HALF_STROKE,
+        bottom: o.y + o.h + CLUSTER_OUTLINE_HALF_STROKE,
+      }))
+    const obstacles = [...baseObstacles, ...otherOutlines, ...placedLabels]
+
+    const candidates: { x: number; y: number; side: "left" | "right" | "top" | "bottom" }[] = []
+    if (c.isBar && c.orientation === "vertical") {
+      candidates.push(
+        { x: c.x - pw - 4, y: c.y + 2, side: "left" },
+        { x: c.x - pw - 4, y: c.y + (c.h - ph) / 2, side: "left" },
+        { x: c.x - pw - 4, y: c.y + c.h - ph - 2, side: "left" },
+        { x: c.x + c.w + 4, y: c.y + 2, side: "right" },
+        { x: c.x + c.w + 4, y: c.y + (c.h - ph) / 2, side: "right" },
+        { x: c.x + (c.w - pw) / 2, y: c.y - ph - 1.5, side: "top" },
+        { x: c.x + (c.w - pw) / 2, y: c.y + c.h + 1.5, side: "bottom" },
+      )
+    } else if (c.isBar && c.orientation === "horizontal") {
+      candidates.push(
+        { x: c.x + 3, y: c.y - ph - 1.5, side: "top" },
+        { x: c.x + c.w - pw - 3, y: c.y - ph - 1.5, side: "top" },
+        { x: c.x + 3, y: c.y + c.h + 1.5, side: "bottom" },
+        { x: c.x + c.w - pw - 3, y: c.y + c.h + 1.5, side: "bottom" },
+        { x: c.x - pw - 4, y: c.y + (c.h - ph) / 2, side: "left" },
+        { x: c.x + c.w + 4, y: c.y + (c.h - ph) / 2, side: "right" },
+      )
+    } else {
+      const sortedMembers = [...c.members].sort((a, b) => a.y - b.y || a.x - b.x)
+      candidates.push(
+        { x: c.x + 2, y: c.y - ph - 1.2, side: "top" },
+        { x: c.x + c.w - pw - 2, y: c.y - ph - 1.2, side: "top" },
+        { x: c.x, y: c.y - ph - 1.2, side: "top" },
+        { x: c.x + c.w - pw, y: c.y - ph - 1.2, side: "top" },
+        { x: c.x - 2, y: c.y - ph - 1.2, side: "top" },
+        { x: c.x + (c.w - pw) / 2, y: c.y - ph - 1.2, side: "top" },
+      )
+      for (const m of sortedMembers) {
+        candidates.push({ x: c.x - pw - 3, y: m.y - ph / 2, side: "left" })
+      }
+      for (const m of sortedMembers) {
+        candidates.push({ x: c.x + c.w + 3, y: m.y - ph / 2, side: "right" })
+      }
+      candidates.push(
+        { x: c.x + 2, y: c.y + c.h + 1.2, side: "bottom" },
+        { x: c.x + c.w - pw - 2, y: c.y + c.h + 1.2, side: "bottom" },
+        { x: c.x, y: c.y + c.h + 1.2, side: "bottom" },
+        { x: c.x + c.w - pw, y: c.y + c.h + 1.2, side: "bottom" },
+        { x: c.x - 2, y: c.y + c.h + 1.2, side: "bottom" },
+        { x: c.x + (c.w - pw) / 2, y: c.y + c.h + 1.2, side: "bottom" },
+      )
+    }
+
+    const toBox = (cand: { x: number; y: number }): RectBox => ({
+      left: cand.x - CLUSTER_CODE_HALF_STROKE,
+      top: cand.y - CLUSTER_CODE_HALF_STROKE,
+      right: cand.x + pw + CLUSTER_CODE_HALF_STROKE,
+      bottom: cand.y + ph + CLUSTER_CODE_HALF_STROKE,
+    })
+
+    const fitsInWall = (box: RectBox) =>
+      box.left >= wallInner.left &&
+      box.right <= wallInner.right &&
+      box.top >= wallInner.top &&
+      box.bottom <= wallInner.bottom
+
+    let chosen = candidates[0]
+    let bestScore = Infinity
+    for (const cand of candidates) {
+      const box = toBox(cand)
+      if (!fitsInWall(box)) continue
+      const clear = obstacles.every((obs) => !rectsOverlapWithGap(box, obs, 0.4))
+      if (clear) {
+        chosen = cand
+        bestScore = 0
+        break
+      }
+      let score = 0
+      for (const obs of obstacles) score += rectOverlapArea(box, obs)
+      if (score < bestScore) {
+        bestScore = score
+        chosen = cand
+      }
+    }
+
+    placedLabels.push(toBox(chosen))
+    return {
+      key: c.key,
+      x: c.x,
+      y: c.y,
+      w: c.w,
+      h: c.h,
+      code: c.code,
+      isBar: c.isBar,
+      orientation: c.orientation,
+      label: {
+        x: chosen.x,
+        y: chosen.y,
+        width: pw,
+        height: ph,
+        side: chosen.side,
+      },
+    }
+  })
 }

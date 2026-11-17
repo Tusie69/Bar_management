@@ -36,11 +36,13 @@ export function UndoRedoButtons({ glass, square }: { glass?: boolean; square?: b
   useUndoRedoShortcuts(controller)
   if (!controller.enabled) return null
   const base = cn(
-    "grid shrink-0 place-items-center text-tx-1 disabled:text-[var(--text-muted)] disabled:active:bg-transparent",
+    "grid shrink-0 place-items-center text-tx-1 transition-[transform,background-color,opacity] duration-100 disabled:text-[var(--text-muted)] disabled:opacity-45 disabled:active:bg-transparent",
     // `square` is the mockup's bottom bar: a 44x44 rounded square with a hairline
     // border so each button independently satisfies the 44x44pt Apple HIG touch target.
-    square ? "size-11 rounded-xl border border-border bg-surface-1 active:bg-surface-2" : "size-11 rounded-full",
-    !square && (glass ? "bg-[var(--glass)] shadow-[var(--shadow-xs)]" : "active:bg-surface-2"),
+    square
+      ? "size-11 rounded-xl border border-border bg-surface-1 shadow-[var(--shadow-xs)] enabled:hover:bg-surface-2 enabled:active:scale-95 enabled:active:bg-surface-2"
+      : "size-11 rounded-full enabled:active:scale-95",
+    !square && (glass ? "bg-[var(--glass)] shadow-[var(--shadow-xs)]" : "enabled:active:bg-surface-2"),
   )
   return (
     <>
@@ -68,6 +70,7 @@ export function UndoRedoButtons({ glass, square }: { glass?: boolean; square?: b
 
 export function BellButton({ glass, square }: { glass?: boolean; square?: boolean }) {
   const m = useM()
+  if (m.role === "RECEPTIONIST") return null
   return (
     <button
       type="button"

@@ -100,7 +100,7 @@ export function StatusLegend({ tables = [], states, className, variant = "card" 
             type="button"
             aria-label="Ký hiệu: mở bảng chú giải trạng thái, ký hiệu khách và nhóm bàn"
             className={cn(
-              "grid size-9 place-items-center rounded-full border border-border/80 bg-background/95 text-tx-strong shadow-lg backdrop-blur transition-transform active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-slate-700/80 dark:bg-[#1e232d]/95",
+              "grid size-9 place-items-center rounded-full border border-border/80 bg-surface-1/92 text-tx-strong shadow-[var(--shadow-soft)] backdrop-blur-md transition-transform duration-100 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:border-slate-700/80 dark:bg-[#1e232d]/92",
               className,
             )}
           >
