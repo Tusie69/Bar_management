@@ -106,7 +106,7 @@ function SheetContent({
   const present = motion?.present ?? true
   const [overlayEl, overlayCallbackRef] = useStableNodeRef<HTMLDivElement>()
   const [contentEl, contentCallbackRef] = useStableNodeRef<HTMLDivElement>(ref)
-  const awaitingMotion = useAwaitingMotionController(present, isOpen)
+  const { awaitingMotion, fallbackShown } = useAwaitingMotionController(present, isOpen)
   const handleExitComplete = React.useCallback(() => {
     motion?.markExited()
   }, [motion])
@@ -144,6 +144,7 @@ function SheetContent({
           kind="sheet"
           open={isOpen}
           side={side}
+          skipInitialEnter={fallbackShown}
           overlay={overlayEl}
           content={contentEl}
           onExitComplete={handleExitComplete}

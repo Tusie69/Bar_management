@@ -384,6 +384,48 @@ describe("21GAM motion system", () => {
     expect(modes).toEqual([false, true])
   })
 
+  it("P1-11: settles immediately at open endpoint without replaying when skipInitialEnterRef is true", () => {
+    const mock = installMatchMediaMock(false)
+    cleanupMock = () => mock.restore()
+
+    const overlay = createFakeElement()
+    const content = createFakeElement()
+    const animState = { opacity: 0, y: 10 }
+    const openRef = { current: true }
+    const onExit = vi.fn()
+    const tlRef: { current: gsap.core.Timeline | null } = { current: null }
+    const skipInitialEnterRef = { current: true }
+
+    const mm = setupOverlayMatchMedia({
+      overlay,
+      content,
+      openRef,
+      onExitRef: { current: onExit },
+      tlRef,
+      skipInitialEnterRef,
+      buildTimeline: ({ tl }) => {
+        tl.fromTo(animState, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.24 }, 0)
+      },
+    })
+
+    expect(tlRef.current).not.toBeNull()
+    expect(tlRef.current!.progress()).toBe(1)
+    expect(tlRef.current!.paused()).toBe(true)
+    expect(animState.opacity).toBe(1)
+    expect(animState.y).toBe(0)
+    expect(overlay.style.willChange).toBe("auto")
+    expect(content.style.willChange).toBe("auto")
+
+    // Closing still reverses from 1 -> 0 and calls onExit upon completion.
+    openRef.current = false
+    tlRef.current!.reverse()
+    tlRef.current!.progress(0)
+    expect(onExit).toHaveBeenCalledTimes(1)
+
+    mm.revert()
+    expect(mock.activeListeners).toBe(0)
+  })
+
   it("P1-07: keeps GSAP and @gsap/react out of static imports in motion.ts", () => {
     expect(motionSource).not.toMatch(/^\s*import\b.*["']gsap["']/m)
     expect(motionSource).not.toMatch(/^\s*import\b.*["']@gsap\/react["']/m)

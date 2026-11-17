@@ -78,6 +78,7 @@ export function setupOverlayMatchMedia({
   openRef,
   onExitRef,
   tlRef,
+  skipInitialEnterRef,
   buildTimeline,
 }: {
   overlay: HTMLElement
@@ -85,6 +86,7 @@ export function setupOverlayMatchMedia({
   openRef: { current: boolean }
   onExitRef: { current: () => void }
   tlRef: { current: gsap.core.Timeline | null }
+  skipInitialEnterRef?: { current: boolean }
   buildTimeline: (params: TimelineBuilderParams) => void
 }): gsap.MatchMedia {
   let hasInitialized = false
@@ -121,7 +123,13 @@ export function setupOverlayMatchMedia({
           onExitRef.current()
         }
       } else if (openRef.current) {
-        tl.timeScale(1).play()
+        if (skipInitialEnterRef?.current) {
+          // Visible fallback was already displayed: land at open endpoint without replaying entrance.
+          tl.progress(1).pause()
+          setMotionWillChange([overlay, content], "auto")
+        } else {
+          tl.timeScale(1).play()
+        }
       } else {
         onExitRef.current()
       }

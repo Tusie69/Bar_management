@@ -20,6 +20,7 @@ function useOverlayPresenceTimeline({
   content,
   onExitComplete,
   buildTimeline,
+  skipInitialEnter = false,
   deps,
 }: {
   open: boolean
@@ -27,17 +28,20 @@ function useOverlayPresenceTimeline({
   content: HTMLElement
   onExitComplete: () => void
   buildTimeline: (params: TimelineBuilderParams) => void
+  skipInitialEnter?: boolean
   deps: readonly unknown[]
 }) {
   const tlRef = useRef<gsap.core.Timeline | null>(null)
   const openRef = useRef(open)
   const onExitRef = useRef(onExitComplete)
   const buildRef = useRef(buildTimeline)
+  const skipInitialEnterRef = useRef(skipInitialEnter)
 
   useLayoutEffect(() => {
     openRef.current = open
     onExitRef.current = onExitComplete
     buildRef.current = buildTimeline
+    skipInitialEnterRef.current = skipInitialEnter
   })
 
   useGSAP(
@@ -48,6 +52,7 @@ function useOverlayPresenceTimeline({
         openRef,
         onExitRef,
         tlRef,
+        skipInitialEnterRef,
         buildTimeline: (params) => buildRef.current(params),
       })
       return () => {
@@ -62,7 +67,9 @@ function useOverlayPresenceTimeline({
       openRef.current = open
       const tl = tlRef.current
       if (open) {
-        tl?.timeScale(1).play()
+        if (tl && tl.progress() < 1) {
+          tl.timeScale(1).play()
+        }
       } else if (!tl || tl.progress() === 0) {
         onExitRef.current()
       } else {
@@ -76,11 +83,13 @@ function useOverlayPresenceTimeline({
 /** Non-UI GSAP presence controller mounted inside portaled dialogs when DOM nodes exist. */
 export function DialogPresenceController({
   open,
+  skipInitialEnter = false,
   overlay,
   content,
   onExitComplete,
 }: {
   open: boolean
+  skipInitialEnter?: boolean
   overlay: HTMLElement
   content: HTMLElement
   onExitComplete: () => void
@@ -90,6 +99,7 @@ export function DialogPresenceController({
     overlay,
     content,
     onExitComplete,
+    skipInitialEnter,
     deps: [],
     buildTimeline: buildDialogTimeline,
   })
@@ -101,6 +111,7 @@ export function SheetPresenceController({
   open,
   side,
   duration = MOTION.duration.sheet,
+  skipInitialEnter = false,
   overlay,
   content,
   onExitComplete,
@@ -108,6 +119,7 @@ export function SheetPresenceController({
   open: boolean
   side: SheetSide
   duration?: number
+  skipInitialEnter?: boolean
   overlay: HTMLElement
   content: HTMLElement
   onExitComplete: () => void
@@ -117,6 +129,7 @@ export function SheetPresenceController({
     overlay,
     content,
     onExitComplete,
+    skipInitialEnter,
     deps: [side, duration],
     buildTimeline: (params) => buildSheetTimeline({ ...params, side, duration }),
   })

@@ -97,27 +97,76 @@ export function mergeRefs<T>(...refs: Array<React.Ref<T> | undefined>): React.Re
   }
 }
 
+interface AppliedRefState<T> {
+  ref: React.Ref<T> | undefined
+  node: T | null
+  cleanup?: () => void
+}
+
+function detachExternalRef<T>(applied: AppliedRefState<T>): void {
+  if (applied.node === null) return
+  if (applied.cleanup) {
+    applied.cleanup()
+  } else if (typeof applied.ref === "function") {
+    applied.ref(null)
+  } else if (applied.ref) {
+    ;(applied.ref as React.MutableRefObject<T | null>).current = null
+  }
+  applied.node = null
+  applied.cleanup = undefined
+}
+
+function attachExternalRef<T>(applied: AppliedRefState<T>, ref: React.Ref<T> | undefined, node: T | null): void {
+  applied.ref = ref
+  if (node === null || !ref) {
+    applied.node = null
+    applied.cleanup = undefined
+    return
+  }
+  applied.node = node
+  if (typeof ref === "function") {
+    const cleanup = ref(node)
+    applied.cleanup = typeof cleanup === "function" ? cleanup : undefined
+  } else {
+    ;(ref as React.MutableRefObject<T | null>).current = node
+    applied.cleanup = undefined
+  }
+}
+
 /**
  * Stable callback ref that exposes the mounted DOM node in state (triggering
- * setup only when the node actually mounts/unmounts) while forwarding `externalRef`.
+ * setup only when the node actually mounts/unmounts) while synchronizing
+ * `externalRef` changes independently of internal node readiness.
  */
 export function useStableNodeRef<T>(externalRef?: React.Ref<T>): [T | null, React.RefCallback<T>] {
   const [node, setNode] = useState<T | null>(null)
-  const externalRefHolder = useRef(externalRef)
+  const nodeRef = useRef<T | null>(null)
+  const latestExternalRef = useRef(externalRef)
+  const appliedRef = useRef<AppliedRefState<T>>({ ref: externalRef, node: null })
 
   useLayoutEffect(() => {
-    externalRefHolder.current = externalRef
-  })
+    latestExternalRef.current = externalRef
+    if (appliedRef.current.ref !== externalRef || appliedRef.current.node !== nodeRef.current) {
+      detachExternalRef(appliedRef.current)
+      attachExternalRef(appliedRef.current, externalRef, nodeRef.current)
+    }
+  }, [externalRef])
+
+  useLayoutEffect(() => {
+    const applied = appliedRef.current
+    return () => {
+      detachExternalRef(applied)
+    }
+  }, [])
 
   const callbackRef = useCallback((el: T | null) => {
+    nodeRef.current = el
     setNode((prev) => (prev === el ? prev : el))
-    const ext = externalRefHolder.current
-    if (!ext) return
-    if (typeof ext === "function") {
-      ext(el)
-    } else {
-      ;(ext as React.MutableRefObject<T | null>).current = el
+    if (appliedRef.current.node === el && appliedRef.current.ref === latestExternalRef.current) {
+      return
     }
+    detachExternalRef(appliedRef.current)
+    attachExternalRef(appliedRef.current, latestExternalRef.current, el)
   }, [])
 
   return [node, callbackRef]
@@ -201,25 +250,35 @@ export function useMotionController(active: boolean): MotionControllerModule | n
 }
 
 /**
- * Hides first-open overlay opacity briefly while the lazy GSAP controller
- * arrives on cold programmatic opens so there is no visible 1->0->1 flash,
- * while keeping the modal focusable and interactive (falls back after 250ms).
+ * Tracks cold-load fallback state for an overlay presence:
+ * - `awaitingMotion`: hides first-open overlay opacity briefly (up to 250ms) while
+ *   the lazy GSAP controller arrives so there is no visible 1->0->1 flash.
+ * - `fallbackShown`: remembers whether this presence already revealed its visible
+ *   fallback after 250ms so a late-arriving controller settles at the open endpoint
+ *   without resetting to 0 or replaying entrance.
  */
-export function useAwaitingMotionController(present: boolean, isOpen: boolean): boolean {
+export function useAwaitingMotionController(
+  present: boolean,
+  isOpen: boolean,
+): { awaitingMotion: boolean; fallbackShown: boolean } {
   const controller = useMotionController(present)
-  const [timedOut, setTimedOut] = useState(false)
+  const [fallbackShown, setFallbackShown] = useState(false)
 
-  if ((!present || controller) && timedOut) {
-    setTimedOut(false)
+  // Reset once the presence exits completely so subsequent opens animate normally.
+  if (!present && fallbackShown) {
+    setFallbackShown(false)
   }
 
   useEffect(() => {
-    if (!present || !isOpen || controller) return
-    const id = window.setTimeout(() => setTimedOut(true), 250)
+    if (!present || !isOpen || controller || fallbackShown) return
+    const id = window.setTimeout(() => setFallbackShown(true), 250)
     return () => window.clearTimeout(id)
-  }, [controller, isOpen, present])
+  }, [controller, fallbackShown, isOpen, present])
 
-  return present && isOpen && !controller && !timedOut
+  return {
+    awaitingMotion: present && isOpen && !controller && !fallbackShown,
+    fallbackShown,
+  }
 }
 
 /**
@@ -231,6 +290,7 @@ export function OverlayMotionMount({
   open,
   side = "right",
   duration,
+  skipInitialEnter = false,
   overlay,
   content,
   onExitComplete,
@@ -239,6 +299,7 @@ export function OverlayMotionMount({
   open: boolean
   side?: SheetSide
   duration?: number
+  skipInitialEnter?: boolean
   overlay: HTMLElement
   content: HTMLElement
   onExitComplete: () => void
@@ -256,6 +317,7 @@ export function OverlayMotionMount({
   if (kind === "dialog") {
     return createElement(controller.DialogPresenceController, {
       open,
+      skipInitialEnter,
       overlay,
       content,
       onExitComplete,
@@ -266,6 +328,7 @@ export function OverlayMotionMount({
     open,
     side,
     duration,
+    skipInitialEnter,
     overlay,
     content,
     onExitComplete,
