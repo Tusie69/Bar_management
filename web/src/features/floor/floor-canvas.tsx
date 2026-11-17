@@ -196,7 +196,7 @@ function ClusterCircleRing({ r }: { r: number }) {
   )
 }
 
-/** Pill width for a cluster code such as "G01" or "◆A". */
+/** Pill width for a cluster code such as "G01", or a name the user typed. */
 function formatGroupCodeWidth(code: string): number {
   return Math.max(18, code.length * 5.6 + 8)
 }
@@ -845,6 +845,11 @@ export function FloorCanvas(props: Props) {
             states={states}
             groups={groups}
             mapScale={view.k}
+            // Điện thoại: khung mặc định che 44% x 46% bản vẽ. Chưa có khách
+            // thì không vẽ gì, có khách thì cao vừa số dòng. Màn to vẫn giữ
+            // nguyên khung trong khu pha chế như mockup đã duyệt.
+            emptyState={isPhone ? "hidden" : "title-only"}
+            fitToRows={isPhone}
             onRowClick={(row) => {
               const table = tables.find(
                 (t) => (t.kind === "BAR_SEAT" || t.zoneCode === "BAR") && row.seatNumbers.includes(t.seqNo ?? -1),

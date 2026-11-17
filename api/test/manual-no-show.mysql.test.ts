@@ -370,11 +370,11 @@ mysqlDescribe('manual no-show policy on gam21_platform_test', () => {
     expect(projection.groups).toEqual([{
       id: organizationId,
       symbolNo: 27,
-      displayCode: '◆AA',
+      displayCode: 'G27',
       tableIds,
     }])
     expect(projection.tables.every((table) => table.groupId === organizationId
-      && table.groupDisplayCode === '◆AA'
+      && table.groupDisplayCode === 'G27'
       && table.groupMemberTableIds.join(',') === tableIds.join(','))).toBe(true)
   })
 

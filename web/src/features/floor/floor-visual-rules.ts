@@ -1,4 +1,5 @@
 import { formatHonorificName } from "@/domain/booking-identity"
+import { groupCodeFromSymbol, normalizeGroupCode } from "@/domain/group-code"
 import type { FloorGroup, FloorTableState, TableLiveState, TableView } from "@/domain/models"
 import { FIXTURES, FLOOR_H, FLOOR_W, WAITLIST_MARKER, type ZoneCode } from "@/domain/venue-layout"
 
@@ -203,39 +204,13 @@ export function calculateStatusCounts(
   return counts
 }
 
-export function groupCode(symbolNo: number | null | undefined): string | null {
-  if (!symbolNo || symbolNo < 1) return null
-  return `G${String(symbolNo).padStart(2, "0")}`
-}
-
-export function formatGroupCode(groupRef: number | string | null | undefined): string | null {
-  if (groupRef === null || groupRef === undefined || groupRef === "" || groupRef === 0) return null
-  if (typeof groupRef === "number") {
-    if (groupRef < 1) return null
-    return `G${String(groupRef).padStart(2, "0")}`
-  }
-  const str = String(groupRef).trim()
-  if (!str) return null
-  if (/^G\d+$/i.test(str)) {
-    const numPart = parseInt(str.slice(1), 10)
-    return `G${String(numPart).padStart(2, "0")}`
-  }
-  const matchLetter = str.match(/^[◆#]?([A-Za-z]+)$/)
-  if (matchLetter) {
-    const letters = matchLetter[1].toUpperCase()
-    let n = 0
-    for (let i = 0; i < letters.length; i++) {
-      n = n * 26 + (letters.charCodeAt(i) - 64)
-    }
-    return `G${String(n).padStart(2, "0")}`
-  }
-  const matchNum = str.match(/\d+/)
-  if (matchNum) {
-    const n = parseInt(matchNum[0], 10)
-    if (n > 0) return `G${String(n).padStart(2, "0")}`
-  }
-  return str
-}
+/**
+ * Giữ tên cũ cho ba chỗ gọi trong sơ đồ sàn. Luật đặt mã cụm giờ nằm ở
+ * `@/domain/group-code`, để sổ lượt và các màn khác dùng chung một nguồn —
+ * trước đây mỗi nơi tự quy đổi một kiểu nên cùng một cụm mang hai tên.
+ */
+export const groupCode = groupCodeFromSymbol
+export const formatGroupCode = normalizeGroupCode
 
 export function supportedFlags(flags: string[]): GuestFlag[] {
   return flags.filter(

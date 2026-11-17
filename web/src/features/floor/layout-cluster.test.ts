@@ -20,7 +20,7 @@ const model = {
     [1, 2, 3, 4].map((id) => [id, { id, zoneId: 1, kind: "TABLE", status: "ACTIVE", isSpare: false, capacity: 4 }]),
   ),
   states: new Map([1, 2, 3, 4].map((id) => [id, { tableId: id, state: "free", claim: null }])),
-  floor: { groups: [{ id: 11, symbolNo: 1, displayCode: "◆A", version: 3, tableIds: [1, 2, 3] }] },
+  floor: { groups: [{ id: 11, symbolNo: 1, displayCode: "G01", version: 3, tableIds: [1, 2, 3] }] },
 } as unknown as FloorModel
 
 describe("layout cluster selection (AC08)", () => {

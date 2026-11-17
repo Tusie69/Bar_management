@@ -263,15 +263,17 @@ describe("merge-group G-code numbering (Item 6 & 8)", () => {
     expect(groupCode(-5)).toBeNull()
   })
 
-  it("converts legacy ◆A / ◆B or letter group references to G-code", () => {
+  it("converts legacy ◆A / ◆B snapshots to G-code and leaves names alone", () => {
     expect(formatGroupCode("◆A")).toBe("G01")
     expect(formatGroupCode("◆B")).toBe("G02")
     expect(formatGroupCode("◆Z")).toBe("G26")
-    expect(formatGroupCode("A")).toBe("G01")
-    expect(formatGroupCode("B")).toBe("G02")
     expect(formatGroupCode("G01")).toBe("G01")
     expect(formatGroupCode(1)).toBe("G01")
     expect(formatGroupCode(null)).toBeNull()
+    // "C1" là mã bàn Khu C, "Bàn sếp" là tên người dùng đặt: cả hai phải đi
+    // qua nguyên vẹn, nếu không sổ lượt sẽ đổi tên dữ liệu của người dùng.
+    expect(formatGroupCode("C1")).toBe("C1")
+    expect(formatGroupCode("Bàn sếp")).toBe("Bàn sếp")
   })
 })
 

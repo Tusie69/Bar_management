@@ -177,7 +177,7 @@ mysqlDescribe('future floor projection MySQL integration', () => {
     expect(current.groups).toEqual([{
       id: groupId,
       symbolNo: 1,
-      displayCode: '◆A',
+      displayCode: 'G01',
       tableIds: [tableId, secondTableId],
       // C1: the projection now says which lifecycle a cluster has. This one is
       // the implicit cluster of a visit, not an independent layout cluster.

@@ -296,7 +296,7 @@ export interface FloorGroup {
   currentTurnNo?: number | null
   businessDate?: BusinessDate
   symbolNo: number
-  /** Authoritative, stable label supplied by the floor projection (for example ◆A). */
+  /** Authoritative, stable label supplied by the floor projection (for example G01). */
   displayCode?: string
   tableIds: number[]
 }
