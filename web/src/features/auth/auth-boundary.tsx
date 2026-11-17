@@ -67,24 +67,27 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
   }
   if (status === "error") {
     return (
-      <main className="grid min-h-dvh place-items-center bg-background p-4">
-        <section className="grid w-full max-w-md gap-4 rounded-3xl border bg-surface-1 p-6 text-center shadow-xl">
-          <AlertTriangle className="mx-auto size-10 text-amber-500" />
-          <div>
-            <h1 className="text-xl font-semibold">Không thể khôi phục phiên</h1>
-            <p className="mt-2 text-sm text-muted-foreground">{error}</p>
+      <main className="flex min-h-dvh flex-col overflow-y-auto bg-background px-4 py-6">
+        <section className="mx-auto my-auto grid w-full max-w-md gap-4 rounded-2xl border border-border bg-surface-1 p-6 text-center shadow-md sm:p-8">
+          <span className="mx-auto grid size-12 place-items-center rounded-2xl border border-amber-500/25 bg-amber-500/10">
+            <AlertTriangle className="size-6 text-amber-600" aria-hidden="true" />
+          </span>
+          <div className="grid gap-1.5">
+            <h1 className="text-xl font-semibold tracking-[-0.015em]">Không thể khôi phục phiên</h1>
+            <p className="text-sm leading-relaxed text-muted-foreground">{error}</p>
           </div>
-          <Button onClick={() => void bootstrap()}>
-            <RotateCcw /> Thử lại
+          <Button onClick={() => void bootstrap()} className="w-full">
+            <RotateCcw className="size-4" aria-hidden="true" /> Thử lại
           </Button>
         </section>
       </main>
     )
   }
   return (
-    <main className="grid min-h-dvh place-items-center bg-background">
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <LoaderCircle className="size-5 animate-spin" /> Đang kiểm tra phiên đăng nhập…
+    <main className="flex min-h-dvh flex-col items-center justify-center bg-background px-4">
+      <div className="flex items-center gap-2.5 rounded-full border border-border bg-surface-1 px-4 py-2.5 text-sm text-muted-foreground shadow-xs">
+        <LoaderCircle className="size-4 animate-spin text-primary" aria-hidden="true" />
+        <span>Đang kiểm tra phiên đăng nhập…</span>
       </div>
     </main>
   )

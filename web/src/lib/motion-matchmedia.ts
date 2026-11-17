@@ -146,24 +146,24 @@ export function setupOverlayMatchMedia({
 
 export function buildDialogTimeline({ tl, overlay, content, reduceMotion }: TimelineBuilderParams): void {
   if (reduceMotion) {
-    tl.fromTo(
-      overlay,
-      { autoAlpha: 0 },
-      { autoAlpha: 1, duration: MOTION.duration.reduced, ease: EASE.reduced },
+    tl.fromTo(overlay, { opacity: 0 }, { opacity: 1, duration: MOTION.duration.reduced, ease: EASE.reduced }, 0).fromTo(
+      content,
+      { opacity: 0 },
+      { opacity: 1, duration: MOTION.duration.reduced, ease: EASE.reduced },
       0,
-    ).fromTo(content, { autoAlpha: 0 }, { autoAlpha: 1, duration: MOTION.duration.reduced, ease: EASE.reduced }, 0)
+    )
     return
   }
   tl.fromTo(
     overlay,
-    { autoAlpha: 0 },
-    { autoAlpha: 1, duration: MOTION.duration.dialog * 0.9, ease: EASE.fadeIn },
+    { opacity: 0 },
+    { opacity: 1, duration: MOTION.duration.dialog * 0.9, ease: EASE.fadeIn },
     0,
   ).fromTo(
     content,
-    { autoAlpha: 0, y: 10, scale: 0.965 },
+    { opacity: 0, y: 10, scale: 0.965 },
     {
-      autoAlpha: 1,
+      opacity: 1,
       y: 0,
       scale: 1,
       duration: MOTION.duration.dialog,
@@ -182,20 +182,20 @@ export function buildSheetTimeline({
   duration,
 }: TimelineBuilderParams & { side: SheetSide; duration: number }): void {
   if (reduceMotion) {
-    tl.fromTo(
-      overlay,
-      { autoAlpha: 0 },
-      { autoAlpha: 1, duration: MOTION.duration.reduced, ease: EASE.reduced },
+    tl.fromTo(overlay, { opacity: 0 }, { opacity: 1, duration: MOTION.duration.reduced, ease: EASE.reduced }, 0).fromTo(
+      content,
+      { opacity: 0 },
+      { opacity: 1, duration: MOTION.duration.reduced, ease: EASE.reduced },
       0,
-    ).fromTo(content, { autoAlpha: 0 }, { autoAlpha: 1, duration: MOTION.duration.reduced, ease: EASE.reduced }, 0)
+    )
     return
   }
   const offset = sheetOffsetVars(side)
-  tl.fromTo(overlay, { autoAlpha: 0 }, { autoAlpha: 1, duration: duration * 0.8, ease: EASE.fadeIn }, 0).fromTo(
+  tl.fromTo(overlay, { opacity: 0 }, { opacity: 1, duration: duration * 0.8, ease: EASE.fadeIn }, 0).fromTo(
     content,
-    { autoAlpha: 1, ...offset },
+    { opacity: 1, ...offset },
     {
-      autoAlpha: 1,
+      opacity: 1,
       xPercent: 0,
       yPercent: 0,
       duration,

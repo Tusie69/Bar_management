@@ -7,6 +7,9 @@
  *   fallback has revealed, without resetting opacity or jumping offscreen.
  * - P1-12: External ref swaps (object & callback refs) clear previous ref and
  *   assign the same connected node without portal remount or timeline restart.
+ * - P1-13: Newly mounted default-open and initially-closed programmatic Dialog
+ *   and AlertDialog retain initial focus inside content, trap Tab/Shift+Tab,
+ *   and return/clear focus cleanly on Escape across normal and reduced motion.
  */
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
@@ -262,6 +265,21 @@ async function runP110Tests(browser, baseUrl) {
           presentOpen.every((s) => s.transform === "none"),
           `${kind} reduced-motion must keep transform fixed`,
         )
+      }
+
+      // Verify focus moved inside the open portal content and stays trapped.
+      const focusInside = await page.evaluate(() => {
+        const el = document.querySelector('[data-p1="content"]')
+        return Boolean(el && el.contains(document.activeElement))
+      })
+      assert.ok(focusInside, `${kind} (${motion}) programmatic open did not focus inside content`)
+      for (let i = 0; i < 3; i++) {
+        await page.keyboard.press("Tab")
+        const stillInside = await page.evaluate(() => {
+          const el = document.querySelector('[data-p1="content"]')
+          return Boolean(el && el.contains(document.activeElement))
+        })
+        assert.ok(stillInside, `${kind} (${motion}) Tab #${i + 1} escaped content`)
       }
 
       // Close via React state and verify mounted exit frames before unmount.
@@ -685,6 +703,146 @@ async function runP112RefSwapTests(browser, baseUrl) {
   console.log("PASS P1-12: object and callback ref swaps preserve node/timeline on Dialog, Sheet, AlertDialog")
 }
 
+async function runP113FocusContinuityTests(browser, baseUrl) {
+  for (const mode of ["no-preference", "reduce"]) {
+    for (const kind of ["dialog", "alert"]) {
+      for (const variant of ["defaultOpen", "programmatic"]) {
+        for (let trial = 0; trial < 5; trial++) {
+          const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: mode })
+          await ctx.addInitScript(() => {
+            localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 3, theme: "light" }))
+          })
+          const page = await ctx.newPage()
+          const errors = []
+          page.on("pageerror", (e) => errors.push(e.message))
+
+          await page.goto(`${baseUrl}/admin/overview`, { waitUntil: "networkidle" })
+          await page.evaluate(
+            async ({ kind, variant }) => {
+              const React = (await import("/node_modules/.vite/deps/react.js")).default
+              const { createRoot } = (await import("/node_modules/.vite/deps/react-dom_client.js")).default
+              const mods = {
+                dialog: await import("/src/components/ui/dialog.tsx"),
+                alert: await import("/src/components/ui/alert-dialog.tsx"),
+              }
+              await (await import("/src/lib/motion.ts")).prewarmMotionController()
+
+              const mod = mods[kind]
+              const prefix = kind === "dialog" ? "Dialog" : "AlertDialog"
+              const Root = mod[prefix]
+              const Trigger = mod[`${prefix}Trigger`]
+              const Content = mod[`${prefix}Content`]
+              const Title = mod[`${prefix}Title`]
+              const Description = mod[`${prefix}Description`]
+              const Close = mod[`${prefix}${kind === "alert" ? "Cancel" : "Close"}`]
+
+              const host = document.createElement("div")
+              document.body.appendChild(host)
+              const root = createRoot(host)
+
+              if (variant === "defaultOpen") {
+                root.render(
+                  React.createElement(
+                    Root,
+                    { defaultOpen: true },
+                    React.createElement(Trigger, { id: "p113-trigger" }, "Open"),
+                    React.createElement(
+                      Content,
+                      { "data-p113-content": "" },
+                      React.createElement(Title, {}, `Focus ${kind}`),
+                      React.createElement(Description, {}, "P1-13 focus probe"),
+                      React.createElement("input", { id: "p113-input" }),
+                      React.createElement(Close, { id: "p113-close" }, "Close"),
+                    ),
+                  ),
+                )
+              } else {
+                function ProgrammaticOwner() {
+                  const [open, setOpen] = React.useState(false)
+                  React.useEffect(() => {
+                    window.__openP113 = () => setOpen(true)
+                  }, [])
+                  return React.createElement(
+                    Root,
+                    { open, onOpenChange: setOpen },
+                    React.createElement(Trigger, { id: "p113-trigger" }, "Open"),
+                    React.createElement(
+                      Content,
+                      { "data-p113-content": "" },
+                      React.createElement(Title, {}, `Focus ${kind}`),
+                      React.createElement(Description, {}, "P1-13 programmatic probe"),
+                      React.createElement("input", { id: "p113-input" }),
+                      React.createElement(Close, { id: "p113-close" }, "Close"),
+                    ),
+                  )
+                }
+                root.render(React.createElement(ProgrammaticOwner))
+              }
+            },
+            { kind, variant },
+          )
+
+          if (variant === "programmatic") {
+            await page.locator("#p113-trigger").focus()
+            await page.evaluate(() => window.__openP113())
+          }
+
+          await page.waitForTimeout(450)
+
+          const initialInside = await page.evaluate(() => {
+            const el = document.querySelector("[data-p113-content]")
+            return {
+              mounted: Boolean(el),
+              inside: Boolean(el && el.contains(document.activeElement)),
+              activeTag: document.activeElement?.tagName ?? null,
+              visibility: el ? getComputedStyle(el).visibility : null,
+            }
+          })
+          assert.ok(
+            initialInside.mounted && initialInside.inside,
+            `P1-13 ${kind} (${mode}, ${variant}, trial ${trial}) lost initial focus: ${JSON.stringify(initialInside)}`,
+          )
+
+          for (let step = 0; step < 4; step++) {
+            await page.keyboard.press("Tab")
+            const tabState = await page.evaluate(() => {
+              const el = document.querySelector("[data-p113-content]")
+              return Boolean(el && el.contains(document.activeElement))
+            })
+            assert.ok(tabState, `P1-13 ${kind} (${mode}, ${variant}, trial ${trial}) Tab #${step + 1} escaped modal`)
+          }
+
+          await page.keyboard.press("Shift+Tab")
+          const shiftTabInside = await page.evaluate(() => {
+            const el = document.querySelector("[data-p113-content]")
+            return Boolean(el && el.contains(document.activeElement))
+          })
+          assert.ok(shiftTabInside, `P1-13 ${kind} (${mode}, ${variant}, trial ${trial}) Shift+Tab escaped modal`)
+
+          await page.keyboard.press("Escape")
+          await page.waitForTimeout(350)
+          const closedState = await page.evaluate(() => ({
+            remaining: document.querySelectorAll("[data-p113-content]").length,
+            activeId: document.activeElement?.id ?? null,
+          }))
+          assert.equal(closedState.remaining, 0, `P1-13 ${kind} (${mode}, ${variant}) failed to unmount on Escape`)
+          if (variant === "programmatic") {
+            assert.equal(
+              closedState.activeId,
+              "p113-trigger",
+              `P1-13 ${kind} (${mode}, programmatic) did not return focus to trigger`,
+            )
+          }
+
+          assert.deepEqual(errors, [], `Unexpected page errors in P1-13: ${errors.join("; ")}`)
+          await ctx.close()
+        }
+      }
+    }
+  }
+  console.log("PASS P1-13: defaultOpen and programmatic Dialog/AlertDialog preserve initial focus & Tab trap")
+}
+
 const server = await ensureDevServer()
 const browser = await chromium.launch(
   process.env.PW_CHROMIUM_PATH
@@ -699,6 +857,7 @@ try {
   await runP111DelayedChunkTest(browser, server.baseUrl, { width: 1440, height: 900 }, "1440x900")
   await runP111DelayedChunkTest(browser, server.baseUrl, { width: 390, height: 844 }, "390x844")
   await runP112RefSwapTests(browser, server.baseUrl)
+  await runP113FocusContinuityTests(browser, server.baseUrl)
 } finally {
   await browser.close()
   await server.stop()
