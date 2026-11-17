@@ -26,7 +26,7 @@ import { useBookingDraft } from "../floor/use-booking-draft"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
 import { codesOf, duration, type Tone, toneStyle } from "./model"
-import { PlainHeader, UndoRedoButtons } from "./ui"
+import { BellButton, PlainHeader, UndoRedoButtons } from "./ui"
 
 const ZONE_TABS: [ZoneCode | "ALL", string][] = [
   ["ALL", "Tất cả"],
@@ -405,7 +405,6 @@ export function MapScreen({
           </div>
         </section>
       ) : null}
-      <ZaloBookingExport businessDate={m.businessDate} open={exportOpen} onOpenChange={setExportOpen} />
     </main>
   )
 }
