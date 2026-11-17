@@ -58,11 +58,13 @@ export function PasswordResetDialog({ open, account, onClose, onDone, onCloseAut
   if (sessionKey !== prevSessionKey) {
     setPrevSessionKey(sessionKey)
     setSessionGeneration((current) => current + 1)
-    setPassword("")
-    setVisible(false)
-    setPending(null)
-    setIssued(null)
-    setTouched(false)
+    if (sessionKey !== "closed") {
+      setPassword("")
+      setVisible(false)
+      setPending(null)
+      setIssued(null)
+      setTouched(false)
+    }
   }
 
   useEffect(() => {

@@ -465,4 +465,60 @@ describe("PasswordResetDialog async session isolation", () => {
     expect(mockEnv.toastSuccess.mock.calls[0]?.[0]).toContain("CSKH")
     expect(onClose).toHaveBeenCalledTimes(1)
   })
+
+  it("keeps the issued-password view during closing render and resets cleanly on next open", async () => {
+    const req1 = deferred<{ temporaryPassword: string | null }>()
+    const req2 = deferred<{ temporaryPassword: string | null }>()
+    mockEnv.resetAccountPassword.mockReturnValueOnce(req1.promise).mockReturnValueOnce(req2.promise)
+
+    const onClose = vi.fn()
+    const onDone = vi.fn()
+    const h = createHarness()
+
+    h.render({ open: true, account: ACCOUNT_A, onClose, onDone })
+    h.clickRandom()
+    req1.resolve({ temporaryPassword: "ISSUED-EXIT-TEMP-PASSWORD" })
+    await flushMicrotasks()
+    h.rerender()
+
+    expect(findByTestId(h.getTree(), "admin-password-issued")).not.toBeNull()
+    expect(findByTestId(h.getTree(), "admin-password-input")).toBeNull()
+    expect(collectText(h.getTree())).toContain("ISSUED-EXIT-TEMP-PASSWORD")
+
+    // Closing must preserve the issued panel while open=false exit animation runs
+    h.requestClose()
+    expect(onClose).toHaveBeenCalledTimes(1)
+    h.render({ open: false, account: null })
+
+    expect(findDialog(h.getTree())?.props.open).toBe(false)
+    expect(findByTestId(h.getTree(), "admin-password-issued")).not.toBeNull()
+    expect(findByTestId(h.getTree(), "admin-password-input")).toBeNull()
+    expect(collectText(h.getTree())).toContain("ISSUED-EXIT-TEMP-PASSWORD")
+    expect(collectText(h.getTree())).toContain("Lễ tân 1")
+
+    // Reopening the same account A must start with a clean form and no old credential
+    h.render({ open: true, account: ACCOUNT_A, onClose, onDone })
+    expect(findByTestId(h.getTree(), "admin-password-issued")).toBeNull()
+    expect(findByTestId(h.getTree(), "admin-password-input")).not.toBeNull()
+    expect(findByTestId(h.getTree(), "admin-password-input")?.props.value).toBe("")
+    expect(collectText(h.getTree())).not.toContain("ISSUED-EXIT-TEMP-PASSWORD")
+
+    // Reopening another account B after closing issued view must also start clean
+    h.clickRandom()
+    req2.resolve({ temporaryPassword: "SECOND-EXIT-TEMP-PASSWORD" })
+    await flushMicrotasks()
+    h.rerender()
+    expect(findByTestId(h.getTree(), "admin-password-issued")).not.toBeNull()
+
+    h.requestClose()
+    h.render({ open: false, account: null })
+    expect(findByTestId(h.getTree(), "admin-password-issued")).not.toBeNull()
+    expect(collectText(h.getTree())).toContain("SECOND-EXIT-TEMP-PASSWORD")
+
+    h.render({ open: true, account: ACCOUNT_B, onClose, onDone })
+    expect(findByTestId(h.getTree(), "admin-password-issued")).toBeNull()
+    expect(findByTestId(h.getTree(), "admin-password-input")).not.toBeNull()
+    expect(collectText(h.getTree())).toContain("CSKH")
+    expect(collectText(h.getTree())).not.toContain("SECOND-EXIT-TEMP-PASSWORD")
+  })
 })
