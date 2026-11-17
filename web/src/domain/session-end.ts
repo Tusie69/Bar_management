@@ -50,3 +50,41 @@ export function sessionEndUnsavedWarning(code: string): string | null {
       return null
   }
 }
+
+/**
+ * Số giây màn thông báo đứng lại trước khi tự về trang đăng nhập.
+ *
+ * Đủ lâu để đọc hết một câu trong lúc đang bận — đây là quán bar lúc 22 giờ,
+ * không phải bàn làm việc. Ngắn hơn thì màn hình nhấp nháy rồi biến mất và
+ * nhân viên chỉ thấy mình đang đứng ở trang đăng nhập mà không hiểu vì sao.
+ */
+export const SESSION_END_NOTICE_SECONDS = 10
+
+/**
+ * Tiêu đề của màn thông báo. Nói NGUYÊN NHÂN chứ không nói hậu quả:
+ * "Đã đăng xuất" làm nhân viên tưởng mình bấm nhầm, còn "Tài khoản vừa được
+ * đăng nhập ở nơi khác" nói đúng việc họ cần biết để xử lý.
+ */
+export function sessionEndTitle(code: string): string {
+  switch (code) {
+    case "SESSION_REPLACED":
+      return "Tài khoản vừa được đăng nhập ở nơi khác"
+    case "ACCOUNT_LOCKED":
+      return "Tài khoản đã bị khóa"
+    case "SESSION_REVOKED":
+      return "Phiên đăng nhập đã bị thu hồi"
+    case "SESSION_EXPIRED":
+      return "Phiên đăng nhập đã hết hạn"
+    default:
+      return "Phiên đăng nhập đã kết thúc"
+  }
+}
+
+/**
+ * Dòng đếm ngược dưới nút. Đếm bằng chữ chứ không bằng vòng tròn chạy:
+ * nhân viên cần biết còn bao lâu để kịp đọc, không cần một hiệu ứng.
+ */
+export function sessionEndCountdownLabel(seconds: number): string {
+  if (seconds <= 0) return "Đang chuyển về trang đăng nhập…"
+  return `Tự chuyển về trang đăng nhập sau ${seconds} giây.`
+}

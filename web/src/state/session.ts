@@ -36,6 +36,38 @@ function save(data: { userId: number; theme: Theme }) {
   }
 }
 
+/**
+ * TU-33 — mang lý do kết thúc phiên qua lần tải lại trang.
+ *
+ * Về trang đăng nhập là một lần tải tài liệu mới, store dựng lại từ đầu, nên
+ * `authEndCode` trong bộ nhớ biến mất và trang đăng nhập không còn gì để nói.
+ * Đó là lý do câu "vừa được đăng nhập ở thiết bị khác" trước nay không
+ * bao giờ hiện ra: nó được đặt rồi bị xóa ngay trong cùng một nhịp.
+ *
+ * Dùng `sessionStorage` chứ không `localStorage`: lý do này thuộc về đúng cái
+ * tab vừa bị đẩy ra, không phải của mọi tab đang mở trên máy. Đọc là xóa,
+ * để lần mở sau không dựng lại một cảnh báo đã cũ.
+ */
+const END_REASON_KEY = "21gam.session-end.v1"
+
+function rememberSessionEnd(code: string) {
+  try {
+    sessionStorage.setItem(END_REASON_KEY, code)
+  } catch {
+    /* storage unavailable: trang đăng nhập sẽ không nói thêm được lý do */
+  }
+}
+
+function takeSessionEnd(): string | null {
+  try {
+    const code = sessionStorage.getItem(END_REASON_KEY)
+    if (code) sessionStorage.removeItem(END_REASON_KEY)
+    return code
+  } catch {
+    return null
+  }
+}
+
 function applyTheme(theme: Theme) {
   const root = document.documentElement
   root.classList.toggle("dark", theme === "dark")
@@ -47,6 +79,7 @@ const users = api.listDemoUsers()
 const stored = load()
 const initialUser = users.find((user) => user.id === stored.userId) ?? users[0]
 const initialTheme: Theme = stored.theme ?? "light"
+let carriedEnd = takeSessionEnd()
 if (api.mode === "mock" && initialUser) api.setSession(initialUser)
 applyTheme(initialTheme)
 
@@ -68,6 +101,13 @@ interface SessionState {
    * bình thường" với "bị đẩy ra giữa lúc đang nhập booking".
    */
   authEndCode: string | null
+  /**
+   * TU-33: phiên vừa kết thúc NGAY TRÊN MÀN HÌNH NÀY, nên phải dừng lại
+   * báo cho người dùng trước khi đưa họ về trang đăng nhập. Khác với một
+   * `authEndCode` mang sang từ lần tải trước — cái đó chỉ là ghi chú cho
+   * trang đăng nhập, không dựng lại màn thông báo một lần nữa.
+   */
+  sessionEndNotice: boolean
   theme: Theme
   setUser: (id: number) => void
   setTheme: (theme: Theme) => void
@@ -75,6 +115,8 @@ interface SessionState {
   login: (username: string, password: string, portal: AuthPortal) => Promise<void>
   logout: () => Promise<void>
   expire: (message?: string, code?: string) => void
+  /** Rời màn thông báo kết thúc phiên để về đúng cổng đăng nhập. */
+  leaveToLogin: () => void
 }
 
 const fallbackMockUser: SessionUser = initialUser ?? {
@@ -101,7 +143,10 @@ function applyServerSession(session: AuthSession) {
     authStatus: "authenticated",
     authError: null,
     authEndCode: null,
+    sessionEndNotice: false,
   })
+  // Đăng nhập thành công thì lý do cũ hết giá trị.
+  carriedEnd = null
 }
 
 export const useSession = create<SessionState>((set, get) => ({
@@ -112,8 +157,9 @@ export const useSession = create<SessionState>((set, get) => ({
   portal: null,
   mustChangePassword: false,
   authStatus: api.mode === "mock" ? "authenticated" : "loading",
-  authError: null,
-  authEndCode: null,
+  authError: carriedEnd ? sessionEndMessage(carriedEnd) : null,
+  authEndCode: carriedEnd,
+  sessionEndNotice: false,
   theme: initialTheme,
   setUser: (id) => {
     if (api.mode !== "mock") return
@@ -144,8 +190,10 @@ export const useSession = create<SessionState>((set, get) => ({
             permissions: [],
             mustChangePassword: false,
             authStatus: "anonymous",
-            authError: null,
-            authEndCode: null,
+            // 401 ở đây nghĩa là thật sự chưa đăng nhập. Nếu lần tải trước vừa
+            // bị đẩy ra thì đây chính là lúc trang đăng nhập cần nói lý do.
+            authError: carriedEnd ? sessionEndMessage(carriedEnd) : null,
+            authEndCode: carriedEnd,
           })
           return
         }
@@ -174,12 +222,26 @@ export const useSession = create<SessionState>((set, get) => ({
       authStatus: "anonymous",
       authError: null,
       authEndCode: null,
+      sessionEndNotice: false,
       portal,
     })
+    carriedEnd = null
     if (portal && typeof window !== "undefined" && window.location?.replace) {
       window.location.replace(portalLoginPath(portal))
     }
   },
+  /**
+   * TU-33 — phiên bị kết thúc từ phía máy chủ.
+   *
+   * KHÔNG chuyển trang ngay tại đây. Trước đây hàm này `location.replace`
+   * thẳng về cổng đăng nhập, nên nhân viên đang nhập dở bỗng thấy mình ở
+   * trang đăng nhập mà không một lời giải thích — câu giải thích cũng nằm
+   * trong store và chết theo lần tải lại trang. Giờ chỉ đặt trạng thái;
+   * `SessionEndedNotice` hiện màn báo rồi mới gọi `leaveToLogin`.
+   *
+   * Phiên đã bị thu hồi ở máy chủ trước khi sự kiện này tới đây, nên màn
+   * báo là để đọc, không phải để làm nốt việc đang dở.
+   */
   expire: (message = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.", code?: string) => {
     const portal = get().portal
     authApi?.clear()
@@ -190,11 +252,16 @@ export const useSession = create<SessionState>((set, get) => ({
       authStatus: "anonymous",
       authError: message,
       authEndCode: code ?? null,
+      sessionEndNotice: true,
       portal,
     })
-    if (portal && typeof window !== "undefined" && window.location?.replace) {
-      window.location.replace(portalLoginPath(portal))
-    }
+  },
+  leaveToLogin: () => {
+    const { portal, authEndCode } = get()
+    if (authEndCode) rememberSessionEnd(authEndCode)
+    set({ sessionEndNotice: false })
+    if (typeof window === "undefined" || !window.location?.replace) return
+    window.location.replace(portal ? portalLoginPath(portal) : window.location.pathname)
   },
 }))
 

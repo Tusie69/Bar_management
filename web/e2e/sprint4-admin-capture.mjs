@@ -794,10 +794,37 @@ try {
         }
       }, code)
       assert.deepEqual(ended, { status: "anonymous", principal: null, permissions: [], code })
+
+      // TU-33: phai NOI RO ly do truoc, roi moi ve trang dang nhap. Truoc day
+      // `expire()` chuyen trang ngay tai day, nen nhan vien dang nhap do bong
+      // thay minh o trang dang nhap ma khong mot loi giai thich.
+      const notice = page.getByTestId("session-ended-notice")
+      await notice.waitFor({ state: "visible" })
+      assert.equal(await page.getByTestId("admin-shell").count(), 0, "Admin shell must be gone behind the notice")
+      const noticeText = await notice.innerText()
+      if (code === "SESSION_REPLACED") {
+        assert(noticeText.includes("nơi khác"), `Notice must name the cause, got: ${noticeText}`)
+      }
+      assert(noticeText.includes("không được lưu"), `Notice must warn that unsaved input is gone, got: ${noticeText}`)
+      assert(
+        /Tự chuyển về trang đăng nhập sau \d+ giây/.test(noticeText),
+        `Notice must count down before leaving, got: ${noticeText}`,
+      )
+      if (code === "SESSION_REPLACED") {
+        const noticeShot = path.join(outDir, "session-ended-notice-1440x1024.png")
+        await page.screenshot({ path: noticeShot })
+        report.screenshots.push(noticeShot)
+      }
+
+      await page.getByTestId("session-ended-login").click()
       await page.waitForURL("**/admin/login")
       await page.getByRole("heading", { name: "Đăng nhập Quản trị" }).waitFor()
       assert.equal(await page.getByTestId("admin-shell").count(), 0)
-      report.checks.adminSessionEnded.push(code)
+      // Trang dang nhap duoc tai lai tu dau nen store dung lai tu dau: ly do
+      // phai di qua sessionStorage moi con, neu khong man hinh lai im lang.
+      const loginAlert = await page.getByRole("alert").first().innerText()
+      assert(loginAlert.length > 0, "Login page must still explain why the session ended after the reload")
+      report.checks.adminSessionEnded.push({ code, noticeShown: true, loginAlert: loginAlert.trim().slice(0, 90) })
       await page.goto(`${httpVite.baseUrl}/admin/visits`, { waitUntil: "networkidle" })
       await page.getByLabel("Tên đăng nhập", { exact: true }).fill("owner")
       await page.getByLabel("Mật khẩu", { exact: true }).fill("StrongPassword123!")

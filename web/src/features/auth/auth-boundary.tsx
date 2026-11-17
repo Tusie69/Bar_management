@@ -7,6 +7,7 @@ import { useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
 import { LoginPage, PortalUnderConstruction } from "./login-page"
 import { PasswordChangeGate } from "./password-change-gate"
+import { SessionEndedNotice } from "./session-ended-notice"
 import {
   DEFAULT_AUTH_PORTAL,
   canonicalPortalPath,
@@ -20,6 +21,7 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
   const error = useSession((state) => state.authError)
   const bootstrap = useSession((state) => state.bootstrap)
   const sessionPortal = useSession((state) => state.portal)
+  const sessionEndNotice = useSession((state) => state.sessionEndNotice)
   const queryClient = useQueryClient()
 
   useEffect(() => {
@@ -39,6 +41,10 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
   // bằng 403; đây là cánh cửa để người dùng biết phải làm gì.
   if (status === "authenticated") return mustChangePassword ? <PasswordChangeGate /> : children
   if (status === "anonymous") {
+    // TU-33: phiên vừa bị kết thúc ngay trên màn hình này. Nói lý do trước,
+    // rồi mới đưa về trang đăng nhập — nếu không thì màn hình đổi đột ngột
+    // và nhân viên đọc thành "máy tự thoát".
+    if (sessionEndNotice) return <SessionEndedNotice />
     const pathname = typeof window === "undefined" ? "" : window.location.pathname
     const unavailablePortal = unavailablePortalFromPath(pathname)
     if (unavailablePortal) return <PortalUnderConstruction label={unavailablePortal} />
