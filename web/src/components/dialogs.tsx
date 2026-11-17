@@ -39,17 +39,17 @@ export function ConflictDialog() {
     <AlertDialog open={!!conflict} onOpenChange={(open) => !open && handleClose()}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <div className="mb-1 grid size-10 place-items-center rounded-full bg-st-late-tint text-st-late">
+          <div className="mb-1 grid size-11 place-items-center rounded-full bg-st-late-tint text-st-late">
             <AlertTriangle className="size-5" aria-hidden />
           </div>
           <AlertDialogTitle>{conflict?.title}</AlertDialogTitle>
-          <AlertDialogDescription className="text-[15px] leading-relaxed text-foreground">
+          <AlertDialogDescription className="text-[0.9375rem] leading-relaxed text-foreground">
             {conflict?.message}
           </AlertDialogDescription>
         </AlertDialogHeader>
         {conflict?.by ? (
-          <p className="rounded-lg border bg-surface-1 px-3 py-2 text-sm text-muted-foreground">
-            Thay đổi gần nhất: <span className="text-foreground">{conflict.by}</span>
+          <p className="rounded-lg border border-border bg-surface-2/70 px-3.5 py-2.5 text-sm text-muted-foreground">
+            Thay đổi gần nhất: <span className="font-medium text-foreground">{conflict.by}</span>
           </p>
         ) : null}
         {conflict?.hint ? <p className="text-sm text-muted-foreground">{conflict.hint}</p> : null}
@@ -73,11 +73,11 @@ export function ConfirmDialog() {
     <AlertDialog open={!!request} onOpenChange={(open) => !open && resolve(false)}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <div className="mb-1 grid size-10 place-items-center rounded-full bg-st-late-tint text-st-late">
+          <div className="mb-1 grid size-11 place-items-center rounded-full bg-st-late-tint text-st-late">
             <AlertTriangle className="size-5" aria-hidden />
           </div>
           <AlertDialogTitle>{request?.title}</AlertDialogTitle>
-          <AlertDialogDescription className="text-[15px] leading-relaxed text-foreground">
+          <AlertDialogDescription className="text-[0.9375rem] leading-relaxed text-foreground">
             {request?.message}
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -100,9 +100,23 @@ const OVERRIDE_QUICK = ["Khách quen, Chủ quán đồng ý", "Cuối tuần đ
 export function OverrideDialog() {
   const req = useUi((s) => s.override)
   const resolve = useUi((s) => s.resolveOverride)
+  const [lastNeeds, setLastNeeds] = useState("")
+  const [sessionId, setSessionId] = useState(0)
+  const [wasOpen, setWasOpen] = useState(false)
+
+  if (req && !wasOpen) {
+    setWasOpen(true)
+    setLastNeeds(req.needs)
+    setSessionId((n) => n + 1)
+  } else if (!req && wasOpen) {
+    setWasOpen(false)
+  }
+
   return (
     <Dialog open={!!req} onOpenChange={(open) => !open && resolve(null)}>
-      <DialogContent>{req ? <OverrideBody needs={req.needs} resolve={resolve} /> : null}</DialogContent>
+      <DialogContent>
+        {lastNeeds ? <OverrideBody key={sessionId} needs={lastNeeds} resolve={resolve} /> : null}
+      </DialogContent>
     </Dialog>
   )
 }
@@ -113,11 +127,11 @@ function OverrideBody({ needs, resolve }: { needs: string; resolve: (reason: str
   return (
     <>
       <DialogHeader>
-        <div className="mb-1 grid size-10 place-items-center rounded-full bg-surface-3">
-          <ShieldCheck className="size-5" aria-hidden />
+        <div className="mb-1 grid size-11 place-items-center rounded-full border border-border-subtle bg-surface-2">
+          <ShieldCheck className="size-5 text-primary-ink" aria-hidden />
         </div>
         <DialogTitle>Duyệt ngoại lệ</DialogTitle>
-        <DialogDescription className="text-[15px] text-foreground">{needs}</DialogDescription>
+        <DialogDescription className="text-[0.9375rem] leading-relaxed text-foreground">{needs}</DialogDescription>
       </DialogHeader>
       <div className="flex flex-wrap gap-2">
         {OVERRIDE_QUICK.map((q) => (
@@ -135,7 +149,11 @@ function OverrideBody({ needs, resolve }: { needs: string; resolve: (reason: str
           rows={3}
           aria-invalid={invalid}
         />
-        {invalid ? <p className="text-sm text-destructive">{NOTE_PHONE_ERROR}</p> : null}
+        {invalid ? (
+          <p className="text-xs font-medium tracking-[0.008em] text-destructive" role="alert">
+            {NOTE_PHONE_ERROR}
+          </p>
+        ) : null}
       </div>
       <DialogFooter>
         <Button variant="ghost" onClick={() => resolve(null)}>
@@ -174,10 +192,20 @@ export function ConfirmAction({
   onOpenChange,
   ...props
 }: ConfirmProps & { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [sessionId, setSessionId] = useState(0)
+  const [wasOpen, setWasOpen] = useState(false)
+
+  if (open && !wasOpen) {
+    setWasOpen(true)
+    setSessionId((n) => n + 1)
+  } else if (!open && wasOpen) {
+    setWasOpen(false)
+  }
+
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent>
-        {open ? <ConfirmBody {...props} close={() => onOpenChange(false)} /> : null}
+        {sessionId > 0 ? <ConfirmBody key={sessionId} {...props} close={() => onOpenChange(false)} /> : null}
       </AlertDialogContent>
     </AlertDialog>
   )
@@ -202,19 +230,24 @@ function ConfirmBody({
   return (
     <>
       <AlertDialogHeader>
+        {destructive ? (
+          <div className="mb-1 grid size-11 place-items-center rounded-full bg-st-late-tint text-st-late">
+            <AlertTriangle className="size-5" aria-hidden />
+          </div>
+        ) : null}
         <AlertDialogTitle>{title}</AlertDialogTitle>
         <AlertDialogDescription asChild>
-          <div className="text-[15px] leading-relaxed text-muted-foreground">{description}</div>
+          <div className="text-[0.9375rem] leading-relaxed text-muted-foreground">{description}</div>
         </AlertDialogDescription>
       </AlertDialogHeader>
       {children}
       {reasons ? (
-        <RadioGroup value={reason ?? undefined} onValueChange={setReason} className="grid gap-1" aria-label="Lý do">
+        <RadioGroup value={reason ?? undefined} onValueChange={setReason} className="grid gap-1.5" aria-label="Lý do">
           {reasons.map((r) => (
             <Label
               key={r.value}
               htmlFor={`reason-${r.value}`}
-              className="flex h-11 cursor-pointer items-center gap-3 rounded-lg border px-3 font-normal has-[[data-state=checked]]:border-foreground has-[[data-state=checked]]:bg-surface-2"
+              className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border bg-surface-1 px-3.5 py-2 font-normal transition-colors duration-[var(--duration-press)] hover:bg-surface-2/60 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary-tint"
             >
               <RadioGroupItem id={`reason-${r.value}`} value={r.value} />
               {r.label}
@@ -234,7 +267,11 @@ function ConfirmBody({
             onChange={(e) => setNote(e.target.value)}
             aria-invalid={noteInvalid}
           />
-          {noteInvalid ? <p className="text-sm text-destructive">{NOTE_PHONE_ERROR}</p> : null}
+          {noteInvalid ? (
+            <p className="text-xs font-medium tracking-[0.008em] text-destructive" role="alert">
+              {NOTE_PHONE_ERROR}
+            </p>
+          ) : null}
         </div>
       ) : null}
       <AlertDialogFooter>

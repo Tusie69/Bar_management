@@ -1,13 +1,37 @@
 "use client"
 
 import * as React from "react"
-import { cn } from "@/lib/utils"
 import { AlertDialog as AlertDialogPrimitive } from "radix-ui"
-
 import { Button } from "@/components/ui/button"
+import { mergeRefs, useDialogPresenceMotion, usePresenceController } from "@/lib/motion"
+import { cn } from "@/lib/utils"
 
-function AlertDialog({ ...props }: React.ComponentProps<typeof AlertDialogPrimitive.Root>) {
-  return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
+interface AlertMotionState {
+  isOpen: boolean
+  present: boolean
+  markExited: () => void
+}
+
+const AlertDialogMotionContext = React.createContext<AlertMotionState | null>(null)
+
+function AlertDialog({
+  open: openProp,
+  defaultOpen,
+  onOpenChange,
+  ...props
+}: React.ComponentProps<typeof AlertDialogPrimitive.Root>) {
+  const { isOpen, present, handleOpenChange, markExited } = usePresenceController({
+    open: openProp,
+    defaultOpen,
+    onOpenChange,
+  })
+  const value = React.useMemo(() => ({ isOpen, present, markExited }), [isOpen, markExited, present])
+
+  return (
+    <AlertDialogMotionContext.Provider value={value}>
+      <AlertDialogPrimitive.Root data-slot="alert-dialog" open={present} onOpenChange={handleOpenChange} {...props} />
+    </AlertDialogMotionContext.Provider>
+  )
 }
 
 function AlertDialogTrigger({ ...props }: React.ComponentProps<typeof AlertDialogPrimitive.Trigger>) {
@@ -19,11 +43,13 @@ function AlertDialogPortal({ ...props }: React.ComponentProps<typeof AlertDialog
 }
 
 function AlertDialogOverlay({ className, ...props }: React.ComponentProps<typeof AlertDialogPrimitive.Overlay>) {
+  const motion = React.useContext(AlertDialogMotionContext)
   return (
     <AlertDialogPrimitive.Overlay
       data-slot="alert-dialog-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        "fixed inset-0 z-[var(--z-modal)] bg-[var(--scrim)]",
+        motion && !motion.isOpen && "pointer-events-none",
         className,
       )}
       {...props}
@@ -34,18 +60,34 @@ function AlertDialogOverlay({ className, ...props }: React.ComponentProps<typeof
 function AlertDialogContent({
   className,
   size = "default",
+  ref,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
   size?: "default" | "sm"
 }) {
+  const motion = React.useContext(AlertDialogMotionContext)
+  const overlayRef = React.useRef<HTMLDivElement>(null)
+  const contentRef = React.useRef<HTMLDivElement>(null)
+
+  useDialogPresenceMotion({
+    open: motion?.isOpen ?? true,
+    present: motion?.present ?? true,
+    overlayRef,
+    contentRef,
+    onExitComplete: () => motion?.markExited(),
+  })
+
   return (
     <AlertDialogPortal>
-      <AlertDialogOverlay />
+      <AlertDialogOverlay ref={overlayRef} />
       <AlertDialogPrimitive.Content
+        ref={mergeRefs(ref, contentRef)}
         data-slot="alert-dialog-content"
         data-size={size}
+        data-motion-state={motion?.isOpen === false ? "closing" : "open"}
         className={cn(
-          "group/alert-dialog-content fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-xl border bg-popover p-6 shadow-float duration-200 data-[size=sm]:max-w-xs data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[size=default]:sm:max-w-lg",
+          "group/alert-dialog-content fixed top-[50%] left-[50%] z-[var(--z-modal)] grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-xl border border-border bg-popover p-6 text-popover-foreground shadow-float outline-none data-[size=sm]:max-w-xs data-[size=default]:sm:max-w-lg",
+          motion && !motion.isOpen && "pointer-events-none",
           className,
         )}
         {...props}
@@ -72,7 +114,7 @@ function AlertDialogFooter({ className, ...props }: React.ComponentProps<"div">)
     <div
       data-slot="alert-dialog-footer"
       className={cn(
-        "flex flex-col-reverse gap-2 group-data-[size=sm]/alert-dialog-content:grid group-data-[size=sm]/alert-dialog-content:grid-cols-2 sm:flex-row sm:justify-end",
+        "flex flex-col-reverse gap-2 pt-1 group-data-[size=sm]/alert-dialog-content:grid group-data-[size=sm]/alert-dialog-content:grid-cols-2 sm:flex-row sm:justify-end",
         className,
       )}
       {...props}
@@ -85,7 +127,7 @@ function AlertDialogTitle({ className, ...props }: React.ComponentProps<typeof A
     <AlertDialogPrimitive.Title
       data-slot="alert-dialog-title"
       className={cn(
-        "font-heading text-lg font-extrabold tracking-tight sm:group-data-[size=default]/alert-dialog-content:group-has-data-[slot=alert-dialog-media]/alert-dialog-content:col-start-2",
+        "text-lg leading-snug font-semibold tracking-[-0.015em] sm:group-data-[size=default]/alert-dialog-content:group-has-data-[slot=alert-dialog-media]/alert-dialog-content:col-start-2",
         className,
       )}
       {...props}
@@ -100,7 +142,7 @@ function AlertDialogDescription({
   return (
     <AlertDialogPrimitive.Description
       data-slot="alert-dialog-description"
-      className={cn("text-sm text-muted-foreground", className)}
+      className={cn("text-sm leading-relaxed text-muted-foreground", className)}
       {...props}
     />
   )
@@ -111,7 +153,7 @@ function AlertDialogMedia({ className, ...props }: React.ComponentProps<"div">) 
     <div
       data-slot="alert-dialog-media"
       className={cn(
-        "mb-2 inline-flex size-16 items-center justify-center rounded-md bg-muted sm:group-data-[size=default]/alert-dialog-content:row-span-2 *:[svg:not([class*='size-'])]:size-8",
+        "mb-2 inline-flex size-14 items-center justify-center rounded-lg bg-muted sm:group-data-[size=default]/alert-dialog-content:row-span-2 *:[svg:not([class*='size-'])]:size-7",
         className,
       )}
       {...props}

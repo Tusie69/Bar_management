@@ -4,18 +4,17 @@
 @import "@fontsource/roboto/500.css";
 @import "@fontsource/roboto/600.css";
 @import "@fontsource/roboto/700.css";
+@import "./styles/tokens.css";
 
 @custom-variant dark (&:is(.dark *));
 
 /*
- * 21GAM tokens, GAM Dashboard v2.
+ * 21GAM tokens, GAM Dashboard v2 + P1 Design Foundation.
  * Chrome is monochrome + one blue action color (--primary). Hue for table/booking
  * state stays in --st-*. Text has three tiers (--tx-1 / --tx-2 / --tx-3), all >= 4.5:1.
  * Light = "Daylight". Dark = "Service" (default).
  */
 :root {
-  --radius: 2px;
-
   --background: oklch(0.95 0.008 100);
   --surface-1: oklch(1 0 0);
   --surface-2: oklch(0.965 0.006 100);
@@ -37,6 +36,7 @@
 
   --border: oklch(0.885 0.008 100);
   --border-strong: oklch(0.8 0.01 100);
+  --border-subtle: color-mix(in oklab, var(--border) 65%, transparent);
   --table-line: oklch(0.5 0.01 80);
   --input: oklch(0.8 0.01 100);
   --ring: oklch(0.205 0.008 80);
@@ -49,6 +49,8 @@
   --primary-foreground: oklch(0.99 0 0);
   --primary-ink: oklch(0.47 0.15 255);
   --primary-tint: oklch(0.5 0.15 255 / 0.09);
+  --primary-hover: color-mix(in oklab, var(--primary) 90%, #000);
+  --primary-active: color-mix(in oklab, var(--primary) 82%, #000);
   --secondary: var(--surface-2);
   --secondary-foreground: var(--foreground);
   --muted: var(--surface-2);
@@ -56,6 +58,8 @@
   --accent: var(--surface-3);
   --accent-foreground: var(--foreground);
   --destructive: oklch(0.53 0.18 27);
+  --destructive-tint: color-mix(in oklab, var(--destructive) 12%, transparent);
+  --scrim: color-mix(in oklab, oklch(0.18 0.01 80) 38%, transparent);
   /* Wordmark only. */
   --brand: oklch(0.5 0.085 75);
 
@@ -74,8 +78,6 @@
   --st-seated-tint: #d6f0c2;
   --st-seated-fill: #d6f0c2;
   --on-seated: #1b3a0e;
-
-  --shadow-float: 0 1px 2px oklch(0.2 0.01 80 / 0.06), 0 12px 32px -12px oklch(0.2 0.01 80 / 0.22);
 
   /* oklab, not oklch: oklch mixing shifted the reserved hue toward violet. */
   --st-reserved-ink: #1e40af;
@@ -116,6 +118,7 @@
 
   --border: oklch(0.365 0.008 80);
   --border-strong: oklch(0.45 0.009 80);
+  --border-subtle: color-mix(in oklab, var(--border) 65%, transparent);
   --table-line: oklch(0.66 0.008 85);
   --input: oklch(0.45 0.009 80);
   --ring: oklch(0.93 0.01 90);
@@ -124,7 +127,11 @@
   --primary-foreground: oklch(0.99 0 0);
   --primary-ink: oklch(0.77 0.1 250);
   --primary-tint: oklch(0.62 0.14 252 / 0.2);
+  --primary-hover: color-mix(in oklab, var(--primary) 92%, #fff);
+  --primary-active: color-mix(in oklab, var(--primary) 84%, #fff);
   --destructive: oklch(0.73 0.145 25);
+  --destructive-tint: color-mix(in oklab, var(--destructive) 18%, transparent);
+  --scrim: color-mix(in oklab, oklch(0.08 0.005 80) 58%, transparent);
   --brand: oklch(0.83 0.075 88);
 
   --st-reserved: oklch(0.74 0.1 245);
@@ -148,8 +155,6 @@
   --st-seated-fill: oklch(0.69 0.1 158);
   --on-seated: oklch(0.2 0.02 158);
 
-  --shadow-float: 0 1px 0 oklch(1 0 0 / 0.05) inset, 0 16px 36px -14px oklch(0 0 0 / 0.55);
-
   --sidebar: oklch(0.215 0.005 80);
 }
 
@@ -157,7 +162,7 @@
   --font-sans: "Roboto", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
 
-  /* v2 scale: body/buttons 13px, secondary 12px. No 12.5px anywhere. */
+  /* Reception v2 scale: 13px body/buttons, 12px secondary; keeps floor tile geometry unchanged. */
   --text-sm: 0.8125rem;
   --text-sm--line-height: 1.5;
 
@@ -179,6 +184,8 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-border-subtle: var(--border-subtle);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-brand: var(--brand);
@@ -222,16 +229,20 @@
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
 
-  /* v2 is square-ish: every rounded-* up to lg is 2px. */
-  --radius-sm: var(--radius);
-  --radius-md: var(--radius);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 2px);
-  --radius-2xl: calc(var(--radius) + 2px);
+  /* Deliberate concentric radius scale replacing the legacy 2px look. */
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-2xl: var(--radius-2xl);
 
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
   --shadow-float: var(--shadow-float);
 
-  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-quart: var(--ease-spring-default);
 }
 
 @layer base {
@@ -297,10 +308,10 @@
     font-variant-numeric: tabular-nums;
   }
   .eyebrow {
-    font-size: 0.75rem;
-    line-height: 1rem;
-    font-weight: 400;
-    letter-spacing: 0.08em;
+    font-size: var(--type-caption-size);
+    line-height: var(--type-caption-lh);
+    font-weight: 600;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
     color: var(--tx-3);
   }
@@ -322,9 +333,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *:not(.gam-pop-surface),
+  *:not(.gam-pop-surface)::before,
+  *:not(.gam-pop-surface)::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
@@ -362,4 +373,3 @@
 [data-sonner-toast] [data-close-button] {
   pointer-events: auto !important;
 }
-

@@ -1,12 +1,37 @@
 "use client"
 
 import * as React from "react"
-import { cn } from "@/lib/utils"
 import { XIcon } from "lucide-react"
 import { Dialog as SheetPrimitive } from "radix-ui"
+import { mergeRefs, usePresenceController, useSheetPresenceMotion } from "@/lib/motion"
+import { cn } from "@/lib/utils"
 
-function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
-  return <SheetPrimitive.Root data-slot="sheet" {...props} />
+interface SheetMotionState {
+  isOpen: boolean
+  present: boolean
+  markExited: () => void
+}
+
+const SheetMotionContext = React.createContext<SheetMotionState | null>(null)
+
+function Sheet({
+  open: openProp,
+  defaultOpen,
+  onOpenChange,
+  ...props
+}: React.ComponentProps<typeof SheetPrimitive.Root>) {
+  const { isOpen, present, handleOpenChange, markExited } = usePresenceController({
+    open: openProp,
+    defaultOpen,
+    onOpenChange,
+  })
+  const value = React.useMemo(() => ({ isOpen, present, markExited }), [isOpen, markExited, present])
+
+  return (
+    <SheetMotionContext.Provider value={value}>
+      <SheetPrimitive.Root data-slot="sheet" open={present} onOpenChange={handleOpenChange} {...props} />
+    </SheetMotionContext.Provider>
+  )
 }
 
 function SheetTrigger({ ...props }: React.ComponentProps<typeof SheetPrimitive.Trigger>) {
@@ -22,11 +47,13 @@ function SheetPortal({ ...props }: React.ComponentProps<typeof SheetPrimitive.Po
 }
 
 function SheetOverlay({ className, ...props }: React.ComponentProps<typeof SheetPrimitive.Overlay>) {
+  const motion = React.useContext(SheetMotionContext)
   return (
     <SheetPrimitive.Overlay
       data-slot="sheet-overlay"
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        "fixed inset-0 z-[var(--z-drawer)] bg-[var(--scrim)]",
+        motion && !motion.isOpen && "pointer-events-none",
         className,
       )}
       {...props}
@@ -39,33 +66,47 @@ function SheetContent({
   children,
   side = "right",
   showCloseButton = true,
+  ref,
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   side?: "top" | "right" | "bottom" | "left"
   showCloseButton?: boolean
 }) {
+  const motion = React.useContext(SheetMotionContext)
+  const overlayRef = React.useRef<HTMLDivElement>(null)
+  const contentRef = React.useRef<HTMLDivElement>(null)
+
+  useSheetPresenceMotion({
+    open: motion?.isOpen ?? true,
+    present: motion?.present ?? true,
+    side,
+    overlayRef,
+    contentRef,
+    onExitComplete: () => motion?.markExited(),
+  })
+
   return (
     <SheetPortal>
-      <SheetOverlay />
+      <SheetOverlay ref={overlayRef} />
       <SheetPrimitive.Content
+        ref={mergeRefs(ref, contentRef)}
         data-slot="sheet-content"
+        data-side={side}
+        data-motion-state={motion?.isOpen === false ? "closing" : "open"}
         className={cn(
-          "fixed z-50 flex flex-col gap-4 bg-popover shadow-float transition ease-[cubic-bezier(0.25,1,0.5,1)] ease-in-out data-[state=closed]:animate-out data-[state=closed]:duration-200 data-[state=open]:animate-in data-[state=open]:duration-300",
-          side === "right" &&
-            "inset-y-0 right-0 h-full w-3/4 border-l data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-sm",
-          side === "left" &&
-            "inset-y-0 left-0 h-full w-3/4 border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:max-w-sm",
-          side === "top" &&
-            "inset-x-0 top-0 h-auto border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top",
-          side === "bottom" &&
-            "inset-x-0 bottom-0 h-auto border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
+          "fixed z-[var(--z-drawer)] flex flex-col gap-4 bg-popover text-popover-foreground shadow-float outline-none",
+          side === "right" && "inset-y-0 right-0 h-full w-3/4 border-l border-border sm:max-w-sm",
+          side === "left" && "inset-y-0 left-0 h-full w-3/4 border-r border-border sm:max-w-sm",
+          side === "top" && "inset-x-0 top-0 h-auto rounded-b-2xl border-b border-border",
+          side === "bottom" && "inset-x-0 bottom-0 h-auto rounded-t-2xl border-t border-border",
+          motion && !motion.isOpen && "pointer-events-none",
           className,
         )}
         {...props}
       >
         {children}
         {showCloseButton && (
-          <SheetPrimitive.Close className="absolute top-3 right-3 grid size-11 place-items-center rounded-lg opacity-70 ring-offset-background transition-opacity hover:bg-accent hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-secondary">
+          <SheetPrimitive.Close className="absolute top-3 right-3 grid size-11 place-items-center rounded-md opacity-70 ring-offset-background transition-[opacity,background-color,transform] duration-[var(--duration-hover)] hover:bg-accent hover:opacity-100 focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-hidden active:scale-95 disabled:pointer-events-none">
             <XIcon className="size-4" />
             <span className="sr-only">Đóng</span>
           </SheetPrimitive.Close>
@@ -87,7 +128,7 @@ function SheetTitle({ className, ...props }: React.ComponentProps<typeof SheetPr
   return (
     <SheetPrimitive.Title
       data-slot="sheet-title"
-      className={cn("font-heading font-extrabold tracking-tight text-foreground", className)}
+      className={cn("text-lg leading-snug font-semibold tracking-[-0.015em] text-foreground", className)}
       {...props}
     />
   )
@@ -97,7 +138,7 @@ function SheetDescription({ className, ...props }: React.ComponentProps<typeof S
   return (
     <SheetPrimitive.Description
       data-slot="sheet-description"
-      className={cn("text-sm text-muted-foreground", className)}
+      className={cn("text-sm leading-relaxed text-muted-foreground", className)}
       {...props}
     />
   )

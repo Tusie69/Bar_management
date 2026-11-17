@@ -172,8 +172,12 @@ export function QuickCounts({
           aria-checked={value === n}
           onClick={() => onChange(n)}
           className={cn(
-            "tnum h-11 min-w-11 rounded-lg border px-3 text-base font-semibold transition-colors",
-            value === n ? "border-primary bg-primary text-primary-foreground" : "bg-surface-1 hover:bg-accent",
+            "tnum h-11 min-w-11 rounded-md border px-3 text-base font-semibold transition-[background-color,border-color,color,box-shadow,transform] duration-[var(--duration-hover)] ease-[var(--ease-spring-default)] outline-none select-none",
+            "active:scale-[0.96] active:duration-[var(--duration-press)] active:ease-[var(--ease-press)]",
+            "focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25",
+            value === n
+              ? "border-primary bg-primary text-primary-foreground shadow-xs"
+              : "border-border bg-surface-1 hover:border-border-strong hover:bg-surface-2",
           )}
         >
           {n}
@@ -212,24 +216,34 @@ export function EmptyState({
   className?: string
 }) {
   return (
-    <div className={cn("flex flex-col items-center justify-center gap-2 px-6 py-10 text-center", className)}>
-      {icon ? <div className="text-subtle [&_svg]:size-6">{icon}</div> : null}
-      <p className="text-sm font-medium">{title}</p>
-      {children ? <div className="max-w-sm text-sm text-muted-foreground">{children}</div> : null}
+    <div className={cn("flex flex-col items-center justify-center gap-2.5 px-6 py-10 text-center", className)}>
+      {icon ? (
+        <div className="grid size-12 place-items-center rounded-xl border border-border-subtle bg-surface-2 text-subtle [&_svg]:size-5">
+          {icon}
+        </div>
+      ) : null}
+      <p className="text-sm font-semibold tracking-[-0.005em]">{title}</p>
+      {children ? (
+        <div className="max-w-sm text-[0.8125rem] leading-relaxed text-muted-foreground">{children}</div>
+      ) : null}
     </div>
   )
 }
 
 export function PendingTag({ children = "Chờ PO duyệt" }: { children?: ReactNode }) {
   return (
-    <span className="inline-flex h-5 items-center rounded-md border border-dashed border-strong px-1.5 text-[11px] font-medium text-muted-foreground">
+    <span className="inline-flex h-5 items-center rounded-xs border border-dashed border-strong px-1.5 text-[11px] font-medium text-muted-foreground">
       {children}
     </span>
   )
 }
 
 export function Kbd({ children }: { children: ReactNode }) {
-  return <kbd className="rounded border bg-surface-2 px-1 font-mono text-[10px] text-muted-foreground">{children}</kbd>
+  return (
+    <kbd className="rounded-xs border border-border bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+      {children}
+    </kbd>
+  )
 }
 
 /** Initials on an identity tone. Decorative: the name is always printed next to it. */
