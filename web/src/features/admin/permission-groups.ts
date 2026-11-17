@@ -1,5 +1,5 @@
 /**
- * TU-34 — Bảy checkbox trong prototype, ánh xạ sang permission thật.
+ * TU-34/NA-34 - Các nhóm quyền, ánh xạ sang permission thật.
  *
  * Prototype nói bằng ngôn ngữ của quán ("Duyệt giảm giá, hủy món"), backend
  * nói bằng mã permission. Một dòng chữ có thể ứng với nhiều mã (sửa và hủy
@@ -31,6 +31,11 @@ export const PERMISSION_GROUPS: readonly PermissionGroup[] = [
     codes: ["customer.phone.reveal", "booking.phone.reveal"],
   },
   { key: "booking", label: "Sửa / hủy booking", codes: ["reservation.update", "reservation.cancel"] },
+  {
+    key: "customer-history",
+    label: "Gán lượt khuyết danh / xử lý hồ sơ trùng",
+    codes: ["customer.history.manage"],
+  },
   {
     key: "discount",
     label: "Duyệt giảm giá, hủy món",

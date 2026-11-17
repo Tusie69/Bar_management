@@ -127,7 +127,7 @@ describe("ai bấm được nút thao tác", () => {
   })
 })
 
-describe("bảy checkbox của prototype", () => {
+describe("nhóm quyền của tài khoản", () => {
   /**
    * `role` = vai trò có sẵn quyền, `on` = quyền hiệu dụng, `ceiling` = cấp
    * thêm được. Mặc định mọi quyền đều trong trần, trừ khi test nói khác.
@@ -145,16 +145,33 @@ describe("bảy checkbox của prototype", () => {
       }
     })
 
-  it("giữ đúng bảy dòng, đúng thứ tự Figma", () => {
+  it("giữ thứ tự nhóm quyền và thêm nhóm hồ sơ khách riêng", () => {
     expect(PERMISSION_GROUPS.map((group) => group.label)).toEqual([
       "Xem báo cáo doanh thu",
       "Xem số điện thoại đầy đủ",
       "Sửa / hủy booking",
+      "Gán lượt khuyết danh / xử lý hồ sơ trùng",
       "Duyệt giảm giá, hủy món",
       "Quản lý tài khoản nhân viên",
       "Cấu hình vận hành",
       "Xem nhật ký thao tác",
     ])
+  })
+
+  it.each([
+    { role: true, on: true, ceiling: true },
+    { role: true, on: false, ceiling: true },
+    { role: false, on: false, ceiling: true },
+    { role: false, on: false, ceiling: false },
+  ])("nhóm hồ sơ khách tuân theo quyền hiệu dụng và trần: %j", (state) => {
+    const history = groupStates(views([["customer.history.manage", state]]))
+      .find((item) => item.group.key === "customer-history")!
+    expect(history.checked).toBe(state.on)
+    expect(history.editable).toBe(state.ceiling)
+    expect(history.outOfCeiling).toBe(!state.ceiling)
+    expect(groupPayload(history, !state.on)).toEqual(
+      state.ceiling ? { "customer.history.manage": !state.on } : {},
+    )
   })
 
   it("checkbox phản ánh quyền hiệu dụng chứ không phải quyền vai trò", () => {
