@@ -20,7 +20,7 @@ import {
   type AdminAccessLevel,
 } from "./admin-access"
 import { adminBusinessDateLabel, fmtAdminBusinessDate } from "./admin-date"
-import { ADMIN_DESKTOP_MEDIA_QUERY, resolveDrawerCloseFocusTarget } from "./admin-focus"
+import { ADMIN_DESKTOP_MEDIA_QUERY, resolveDrawerCloseFocusTarget, resolveTrapTarget } from "./admin-focus"
 import { ADMIN_HOME_PATH, ADMIN_PAGES, adminPageForPath, adminPagePath } from "./admin-pages"
 
 /** Quyền hiệu dụng của một vai trò, đúng như backend suy ra từ ma trận. */
@@ -251,5 +251,37 @@ describe("focus sau khi đóng drawer sidebar", () => {
     // Lệch giá trị này với `lg:` trong JSX là cách sinh ra dải màn hình mà
     // sidebar đã hiện nhưng drawer vẫn tưởng mình đang ở mobile.
     expect(ADMIN_DESKTOP_MEDIA_QUERY).toBe("(min-width: 64rem)")
+  })
+})
+
+describe("bắt focus trong drawer đang mở", () => {
+  // `aria-modal="true"` nói với trình đọc màn hình rằng phần sau lớp phủ
+  // không với tới được. Nếu Tab vẫn đi ra ngoài được thì thuộc tính đó là
+  // một lời khai sai, tệ hơn là không khai gì.
+  const items = ["a", "b", "c"] as const
+
+  it("Tab từ phần tử cuối quay về phần tử đầu", () => {
+    expect(resolveTrapTarget({ focusables: items, active: "c", shiftKey: false })).toBe("a")
+  })
+
+  it("Shift+Tab từ phần tử đầu về phần tử cuối", () => {
+    expect(resolveTrapTarget({ focusables: items, active: "a", shiftKey: true })).toBe("c")
+  })
+
+  it("ở giữa thì không can thiệp, để trình duyệt tự đi", () => {
+    expect(resolveTrapTarget({ focusables: items, active: "b", shiftKey: false })).toBeNull()
+    expect(resolveTrapTarget({ focusables: items, active: "b", shiftKey: true })).toBeNull()
+  })
+
+  it("focus đang ở chính panel hoặc ngoài danh sách thì kéo về biên", () => {
+    // Lúc vừa mở, focus nằm trên panel (tabIndex -1) nên không có trong
+    // danh sách focusable.
+    expect(resolveTrapTarget({ focusables: items, active: "panel", shiftKey: false })).toBe("a")
+    expect(resolveTrapTarget({ focusables: items, active: "panel", shiftKey: true })).toBe("c")
+    expect(resolveTrapTarget({ focusables: items, active: null, shiftKey: false })).toBe("a")
+  })
+
+  it("drawer rỗng thì không chặn Tab, tránh bẫy focus", () => {
+    expect(resolveTrapTarget({ focusables: [], active: null, shiftKey: false })).toBeNull()
   })
 })

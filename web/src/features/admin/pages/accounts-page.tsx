@@ -77,7 +77,7 @@ export default function AdminAccountsPage() {
   }
 
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-4" data-testid="admin-accounts-page">
       <div className="flex flex-wrap items-center gap-2">
         <input
           type="search"

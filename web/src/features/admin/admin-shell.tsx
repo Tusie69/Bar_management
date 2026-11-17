@@ -17,7 +17,7 @@ import { initials } from "@/lib/text"
 import { useAdminSession } from "./use-admin-session"
 import { visibleAdminPages } from "./admin-access"
 import { adminBusinessDateLabel, ADMIN_SHIFT_LABEL } from "./admin-date"
-import { ADMIN_DESKTOP_MEDIA_QUERY, resolveDrawerCloseFocusTarget } from "./admin-focus"
+import { ADMIN_DESKTOP_MEDIA_QUERY, resolveDrawerCloseFocusTarget, resolveTrapTarget } from "./admin-focus"
 import { adminPageForPath, adminPagePath } from "./admin-pages"
 import "./admin-theme.css"
 
@@ -76,7 +76,26 @@ export function AdminShell() {
     if (!drawerOpen) return
     drawerRef.current?.focus()
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeDrawer()
+      if (event.key === "Escape") {
+        closeDrawer()
+        return
+      }
+      if (event.key !== "Tab") return
+      const panel = drawerRef.current
+      if (!panel) return
+      const focusables = Array.from(
+        panel.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      )
+      const target = resolveTrapTarget({
+        focusables,
+        active: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+        shiftKey: event.shiftKey,
+      })
+      if (!target) return
+      event.preventDefault()
+      target.focus()
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
@@ -84,7 +103,7 @@ export function AdminShell() {
 
   return (
     <AdminTitleContext.Provider value={titleApi}>
-      <div className="admin-portal flex h-dvh min-h-0 w-full overflow-hidden">
+      <div className="admin-portal flex h-dvh min-h-0 w-full overflow-hidden" data-testid="admin-shell">
         {/*
           Sidebar của Quản trị có 8 mục đứng trước nội dung. Không có link này
           thì người dùng bàn phím phải Tab qua cả 8 mục đó ở mọi trang.
@@ -93,7 +112,11 @@ export function AdminShell() {
           Chuyển đến nội dung chính
         </a>
         {/* Desktop ≥1024px: sidebar cố định. Dưới mức đó: drawer. */}
-        <div ref={desktopSidebarRef} className="hidden w-[var(--adm-sidebar-w)] shrink-0 lg:block">
+        <div
+          ref={desktopSidebarRef}
+          className="hidden w-[var(--adm-sidebar-w)] shrink-0 lg:block"
+          data-testid="admin-sidebar"
+        >
           <AdminSidebar />
         </div>
         {drawerOpen ? (
@@ -112,6 +135,7 @@ export function AdminShell() {
               aria-modal="true"
               aria-label="Điều hướng quản trị"
               className="absolute inset-y-0 left-0 w-[var(--adm-sidebar-w)] shadow-xl outline-none"
+              data-testid="admin-drawer-panel"
             >
               <AdminSidebar onNavigate={closeDrawer} />
             </div>
@@ -130,6 +154,7 @@ export function AdminShell() {
             ref={mainRef}
             id="admin-main-content"
             tabIndex={-1}
+            data-testid="admin-main-content"
             className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-[var(--adm-canvas)] p-4 outline-none md:p-6"
           >
             <Outlet />
@@ -153,14 +178,22 @@ function AdminSidebar({ onNavigate }: { onNavigate?: () => void }) {
         <ul className="grid gap-1">
           {pages.map((page) => (
             <li key={page.path}>
-              <NavLink to={adminPagePath(page)} className="adm-nav-item" onClick={onNavigate}>
+              <NavLink
+                to={adminPagePath(page)}
+                className="adm-nav-item"
+                onClick={onNavigate}
+                data-testid={`adm-nav-${page.path}`}
+              >
                 {page.label}
               </NavLink>
             </li>
           ))}
         </ul>
       </nav>
-      <div className="flex items-center gap-2.5 border-t border-[var(--adm-border)] px-4 py-4">
+      <div
+        className="flex items-center gap-2.5 border-t border-[var(--adm-border)] px-4 py-4"
+        data-testid="admin-sidebar-footer"
+      >
         <span className="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--adm-surface-sunken)] text-xs font-semibold">
           {initials(displayName)}
         </span>
@@ -195,11 +228,14 @@ function AdminHeader({
         aria-label={drawerOpen ? "Đóng menu" : "Mở menu"}
         aria-expanded={drawerOpen}
         aria-controls="admin-drawer"
+        data-testid="admin-menu-trigger"
         onClick={onToggleDrawer}
       >
         {drawerOpen ? <X className="size-5" /> : <Menu className="size-5" />}
       </button>
-      <h1 className="adm-h1 truncate">{title}</h1>
+      <h1 className="adm-h1 truncate" data-testid="admin-page-title">
+        {title}
+      </h1>
       <span className="adm-body hidden whitespace-nowrap text-[var(--adm-text-muted)] sm:inline">
         {ADMIN_SHIFT_LABEL}
       </span>

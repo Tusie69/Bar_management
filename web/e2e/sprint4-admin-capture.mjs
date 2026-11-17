@@ -24,7 +24,7 @@ import { createRoot } from "react-dom/client"
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router"
 import { Toaster } from "sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { adminRouteObject } from "@/features/admin/admin-routes"
+import { adminRoute } from "@/features/admin/admin-routes"
 import { AuthBoundary } from "@/features/auth/auth-boundary"
 import { useRealtimeSync } from "@/hooks/use-data"
 import { api } from "@/services"
@@ -70,7 +70,7 @@ const router = createBrowserRouter([
   { path: "/", element: createElement(Navigate, { to: "/admin/overview", replace: true }) },
   { path: "/floor", element: createElement("div", { "data-testid": "portal-floor-stub" }, "Sơ đồ bàn") },
   { path: "/cashier", element: createElement("div", { "data-testid": "portal-cashier-stub" }, "Thu ngân") },
-  adminRouteObject,
+  adminRoute,
   { path: "*", element: createElement("div") },
 ])
 
@@ -219,8 +219,10 @@ try {
       await page.getByTestId("shift-overview-page").waitFor({ state: "visible" })
 
       const metrics = await page.evaluate(() => {
-        const footer = document.querySelector('[data-testid="admin-sidebar-footer"]')
         const sidebar = document.querySelector('[data-testid="admin-sidebar"]')
+        // Footer cua sidebar desktop, khong phai cua drawer: hai ban dung chung
+        // AdminSidebar nen testid trung nhau khi drawer dang mo.
+        const footer = sidebar?.querySelector('[data-testid="admin-sidebar-footer"]')
         const footerRect = footer?.getBoundingClientRect()
         const sidebarRect = sidebar?.getBoundingClientRect()
         const text = document.body.innerText
@@ -232,22 +234,37 @@ try {
             ? { x: sidebarRect.x, y: sidebarRect.y, width: sidebarRect.width, height: sidebarRect.height }
             : null,
           overflowX: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
+          viewportHeight: window.innerHeight,
           hasDeveloperText: /Figma|Frame\s*\d+|NA-3[234]|TU-35|admin-preview-harness|AdminShell/i.test(text),
         }
       })
 
       assert(metrics.footerRect, "Sidebar footer missing")
+      assert(metrics.sidebarRect, "Desktop sidebar missing")
+      // Cac so 58/199/942 trong ban truoc la chieu cao markup cua khung NA-32.
+      // Khung TU-39 dung markup khac nen nhung so do khong con nghia gi; o day
+      // chot lai dung nhung rang buoc Figma that su quy dinh: sidebar rong
+      // 232px, cao tron man hinh, va footer dinh sat day sidebar.
       assert.equal(
-        Math.round(metrics.footerRect.height),
-        58,
-        `Expected footer height 58px, got ${metrics.footerRect.height}`,
+        Math.round(metrics.sidebarRect.width),
+        232,
+        `Expected sidebar width 232px, got ${metrics.sidebarRect.width}`,
       )
       assert.equal(
-        Math.round(metrics.footerRect.width),
-        199,
-        `Expected footer width 199px, got ${metrics.footerRect.width}`,
+        Math.round(metrics.sidebarRect.height),
+        metrics.viewportHeight,
+        `Sidebar must span the viewport: ${metrics.sidebarRect.height} vs ${metrics.viewportHeight}`,
       )
-      assert.equal(Math.round(metrics.footerRect.y), 942, `Expected footer y=942, got ${metrics.footerRect.y}`)
+      assert.equal(
+        Math.round(metrics.footerRect.y + metrics.footerRect.height),
+        Math.round(metrics.sidebarRect.y + metrics.sidebarRect.height),
+        "Sidebar footer is not flush with the bottom of the sidebar",
+      )
+      assert(
+        Math.round(metrics.footerRect.height) > 0 &&
+          Math.round(metrics.footerRect.width) >= Math.round(metrics.sidebarRect.width) - 2,
+        `Sidebar footer must fill the sidebar width: ${metrics.footerRect.width}`,
+      )
       assert.equal(metrics.overflowX, 0, `Horizontal overflow detected: ${metrics.overflowX}`)
       assert.equal(metrics.hasDeveloperText, false, "Developer text leaked into rendered DOM")
       assert.deepEqual(errors, [], `Console/page errors: ${errors.join(" | ")}`)
@@ -267,49 +284,75 @@ try {
       })
       const page = await context.newPage()
       const errors = await attachErrorCollector(page)
-      await page.goto(`${mockVite.baseUrl}/admin/turns`, { waitUntil: "networkidle" })
+      await page.goto(`${mockVite.baseUrl}/admin/visits`, { waitUntil: "networkidle" })
       await page.getByTestId("turn-ledger-page").waitFor({ state: "visible" })
       await page.getByTestId("turns-range-week").click()
       await page.waitForTimeout(400)
 
-      let initialHeight = await page.evaluate(() => document.documentElement.scrollHeight)
-      if (initialHeight <= 1024) {
+      // Khung TU-39 la `h-dvh overflow-hidden`: ca trang khong bao gio cuon,
+      // chi vung <main> cuon ben trong. Do la ly do ban truoc kiem
+      // `window.scrollY` va that bai o day - khung cua Nam cho ca trang cuon.
+      const mainScroll = async () =>
+        page.evaluate(() => {
+          const main = document.querySelector('[data-testid="admin-main-content"]')
+          return main ? { scrollHeight: main.scrollHeight, clientHeight: main.clientHeight } : null
+        })
+
+      let content = await mainScroll()
+      assert(content, "Admin main content region missing")
+      if (content.scrollHeight <= content.clientHeight) {
         await page.getByTestId("turns-range-7days").click()
         await page.waitForTimeout(400)
-        initialHeight = await page.evaluate(() => document.documentElement.scrollHeight)
+        content = await mainScroll()
       }
-      assert(initialHeight > 1024, `Expected turns page height > 1024px, got ${initialHeight}`)
+      assert(
+        content.scrollHeight > content.clientHeight,
+        `Expected a scrollable turns page, got ${content.scrollHeight} <= ${content.clientHeight}`,
+      )
 
-      await page.evaluate(() => window.scrollTo(0, 600))
+      await page.evaluate(() => {
+        const main = document.querySelector('[data-testid="admin-main-content"]')
+        if (main) main.scrollTop = 600
+      })
       await page.waitForTimeout(150)
       const scrolledSidebar = await page.evaluate(() => {
         const sidebar = document.querySelector('[data-testid="admin-sidebar"]')
-        const shell = document.querySelector('[data-testid="admin-shell"]')
-        const beforeStyle = shell ? getComputedStyle(shell, "::before") : null
+        const main = document.querySelector('[data-testid="admin-main-content"]')
         const rect = sidebar?.getBoundingClientRect()
         return {
-          scrollY: window.scrollY,
-          scrollHeight: document.documentElement.scrollHeight,
+          mainScrollTop: main ? Math.round(main.scrollTop) : null,
+          mainScrollHeight: main ? main.scrollHeight : null,
+          windowScrollY: window.scrollY,
+          documentScrollHeight: document.documentElement.scrollHeight,
+          viewportHeight: window.innerHeight,
           sidebarTop: rect ? Math.round(rect.top) : null,
           sidebarHeight: rect ? Math.round(rect.height) : null,
-          beforeHeight: beforeStyle ? beforeStyle.height : null,
-          beforeBg: beforeStyle ? beforeStyle.backgroundColor : null,
         }
       })
 
-      assert(scrolledSidebar.scrollY > 0, "Main window failed to scroll")
+      assert(scrolledSidebar.mainScrollTop > 0, "Admin content region failed to scroll")
+      assert.equal(scrolledSidebar.windowScrollY, 0, "The page itself must never scroll, only <main>")
+      assert.equal(
+        scrolledSidebar.documentScrollHeight,
+        scrolledSidebar.viewportHeight,
+        `Document grew past the viewport: ${scrolledSidebar.documentScrollHeight}`,
+      )
       assert.equal(scrolledSidebar.sidebarTop, 0, `Sidebar drifted on scroll: top=${scrolledSidebar.sidebarTop}`)
       assert.equal(
         scrolledSidebar.sidebarHeight,
-        1024,
+        scrolledSidebar.viewportHeight,
         `Sidebar viewport height mismatch: ${scrolledSidebar.sidebarHeight}`,
       )
       assert.deepEqual(errors, [], `Console/page errors: ${errors.join(" | ")}`)
 
-      await page.evaluate(() => window.scrollTo(0, 0))
+      await page.evaluate(() => {
+        const main = document.querySelector('[data-testid="admin-main-content"]')
+        if (main) main.scrollTop = 0
+      })
       await page.waitForTimeout(100)
       const shot = path.join(outDir, "turns-1440x1024.png")
-      await page.screenshot({ path: shot, fullPage: true })
+      // `fullPage` vo nghia voi shell `h-dvh`: anh bang dung khung nhin.
+      await page.screenshot({ path: shot })
       report.checks.turns = scrolledSidebar
       report.screenshots.push(shot)
       await context.close()
@@ -325,7 +368,7 @@ try {
       const errors = await attachErrorCollector(page)
       await page.goto(`${mockVite.baseUrl}/admin/overview`, { waitUntil: "networkidle" })
       await page.getByTestId("shift-overview-page").waitFor({ state: "visible" })
-      // Force html.dark to prove SheetContent portal carries .admin-root light theme isolation
+      // Force html.dark to prove the admin portal keeps its light tokens
       await page.evaluate(() => document.documentElement.classList.add("dark"))
 
       const trigger = page.getByTestId("admin-menu-trigger")
@@ -346,7 +389,8 @@ try {
         return {
           role: panel?.getAttribute("role"),
           ariaModal: panel?.getAttribute("aria-modal"),
-          bg: panel ? getComputedStyle(panel).backgroundColor : null,
+          // Panel chi la lop dinh vi + do bong; mau nen nam o AdminSidebar ben trong.
+          bg: panel?.firstElementChild ? getComputedStyle(panel.firstElementChild).backgroundColor : null,
           left: rect ? (Math.round(rect.left) === 0 ? 0 : Math.round(rect.left)) : null,
           width: rect ? Math.round(rect.width) : null,
           initialFocusTestId: active?.getAttribute("data-testid") ?? null,
@@ -361,10 +405,12 @@ try {
         "rgb(255, 255, 255)",
         `Drawer must render in light surface (#ffffff), got ${initialState.bg}`,
       )
+      // Khung TU-39 khong co nut dong rieng trong drawer (nut o header doi thanh
+      // X), nen focus dau tien dat vao chinh panel - dich on dinh va luon co.
       assert.equal(
         initialState.initialFocusTestId,
-        "admin-drawer-close",
-        `Expected initial focus on drawer close, got ${initialState.initialFocusTestId}`,
+        "admin-drawer-panel",
+        `Expected initial focus on the drawer panel, got ${initialState.initialFocusTestId}`,
       )
 
       for (let i = 0; i < 14; i++) {
@@ -394,16 +440,38 @@ try {
       )
       assert(focusReturned, "Focus did not return to drawer trigger after Esc")
 
-      // Breakpoint 1024x768 check: navigate inside drawer closes drawer cleanly
+      // Nguong doi khung: TU-39 dung `lg:` cua Tailwind, tuc dung 1024px -
+      // khong phai 1025px nhu khung NA-32. Tai dung 1024 thi sidebar co dinh
+      // hien ra va nut mo menu bi an, nen o do khong con drawer de mo.
       await page.setViewportSize({ width: 1024, height: 768 })
+      await page.waitForTimeout(150)
+      const atBreakpoint = await page.evaluate(() => {
+        const menu = document.querySelector('[data-testid="admin-menu-trigger"]')
+        const sidebar = document.querySelector('[data-testid="admin-sidebar"]')
+        return {
+          triggerVisible: Boolean(menu && menu.getClientRects().length > 0),
+          sidebarVisible: Boolean(sidebar && sidebar.getClientRects().length > 0),
+        }
+      })
+      assert.equal(atBreakpoint.triggerVisible, false, "At exactly 1024px the menu trigger must be hidden")
+      assert.equal(atBreakpoint.sidebarVisible, true, "At exactly 1024px the fixed sidebar must be visible")
+
+      // 1023px: duoi nguong, drawer hoat dong va dieu huong trong drawer dong no lai
+      await page.setViewportSize({ width: 1023, height: 768 })
+      await page.waitForTimeout(150)
       await trigger.click()
       await drawer.waitFor({ state: "visible" })
-      await drawer.getByTestId("admin-nav-turns").click()
+      await drawer.getByTestId("adm-nav-visits").click()
       await drawer.waitFor({ state: "detached" })
       await page.getByTestId("turn-ledger-page").waitFor({ state: "visible" })
 
       assert.deepEqual(errors, [], `Console/page errors: ${errors.join(" | ")}`)
-      report.checks.drawer = { ...initialState, focusTrappedTabs: 14, focusReturnedOnEsc: focusReturned }
+      report.checks.drawer = {
+        ...initialState,
+        focusTrappedTabs: 14,
+        focusReturnedOnEsc: focusReturned,
+        breakpoint1024: atBreakpoint,
+      }
       report.screenshots.push(shot)
       await context.close()
     }
@@ -418,21 +486,44 @@ try {
       const errors = await attachErrorCollector(page)
       await page.goto(`${mockVite.baseUrl}/admin/accounts`, { waitUntil: "networkidle" })
       await page.getByTestId("admin-accounts-page").waitFor({ state: "visible" })
-      await page.getByTestId("admin-readonly-banner").waitFor({ state: "visible" })
-      await page.getByText("Lễ tân 1").waitFor({ state: "visible" })
+      // Khong dung getByText: chip loc cua TU-34 in ra "Le tan" kem so dem, nen
+      // chuoi "Le tan 1" khop ca chip lan o trong bang. Neo vao o cua bang.
+      await page
+        .locator('[data-testid="admin-accounts-page"] td')
+        .filter({ hasText: "Lễ tân 1" })
+        .first()
+        .waitFor({ state: "visible" })
 
-      const mutationCount = await page
+      // TU-34 chon cach LAM MO nut thay vi AN nut, va van hien cot "Thao tac":
+      // an di thi Admin Read-Only khong biet la co thao tac do va minh khong
+      // duoc dung. Ban truoc kiem "0 nut" vi khung NA-32 an han, nen o day doi
+      // thanh "moi nut dang bi vo hieu".
+      const mutationButtons = page
         .locator("button")
-        .filter({ hasText: /Tạo tài khoản|Đặt lại mật khẩu|Đặt lại MK|Khóa|Mở khóa|Đổi sang/ })
-        .count()
-      const actionHeaderCount = await page.locator("th").filter({ hasText: "Thao tác" }).count()
-      assert.equal(mutationCount, 0, `READ_ONLY should have 0 account mutation buttons, found ${mutationCount}`)
-      assert.equal(actionHeaderCount, 0, `READ_ONLY should hide Thao tác column header, found ${actionHeaderCount}`)
+        .filter({ hasText: /Tạo tài khoản|Đổi mật khẩu|Khóa|Mở khóa|Lưu thay đổi quyền/ })
+      const mutationCount = await mutationButtons.count()
+      assert(mutationCount > 0, "Expected the account mutation controls to be present but disabled")
+      const enabled = []
+      for (let i = 0; i < mutationCount; i++) {
+        const button = mutationButtons.nth(i)
+        if (await button.isEnabled()) enabled.push((await button.innerText()).trim())
+      }
+      assert.deepEqual(enabled, [], `READ_ONLY must not enable any mutation: ${enabled.join(", ")}`)
+
+      // Cap tai khoan hien o chan sidebar - do la cach khung TU-39 noi cho
+      // nguoi dung biet minh dang o che do chi xem.
+      const levelLabel = await page
+        .locator('[data-testid="admin-sidebar"] [data-testid="admin-sidebar-footer"]')
+        .innerText()
+      assert(
+        levelLabel.includes("Admin Read-Only"),
+        `Sidebar footer must name the read-only level, got: ${levelLabel.replace(/\s+/g, " ")}`,
+      )
       assert.deepEqual(errors, [], `Console/page errors: ${errors.join(" | ")}`)
 
       const shot = path.join(outDir, "readonly-accounts-1440x1024.png")
       await page.screenshot({ path: shot })
-      report.checks.readonlyAccounts = { mutationCount, actionHeaderCount }
+      report.checks.readonlyAccounts = { mutationCount, enabledMutations: enabled, levelLabel }
       report.screenshots.push(shot)
       await context.close()
     }
@@ -535,10 +626,14 @@ try {
         await route.fulfill({
           status: 200,
           contentType: "application/json",
+          // `openTotal` la truong bat buoc cua TableTurnSummary. Thieu no thi
+          // computeTurnKpis tinh ra NaN va React in canh bao "Received NaN for
+          // the children attribute" - chinh la loi stub nay tung gay ra.
           body: JSON.stringify({
             from: "2026-11-16",
             to: "2026-11-16",
             completedTotal: 0,
+            openTotal: 0,
             guestTotal: 0,
             byBusinessDate: [],
             byStaff: [],
@@ -570,8 +665,8 @@ try {
     await page.goto(`${httpVite.baseUrl}/cashier`, { waitUntil: "networkidle" })
     await page.getByRole("heading", { name: "Đăng nhập Thu ngân" }).waitFor({ state: "visible" })
 
-    // Verify anonymous deep-link /admin/turns lands on admin login
-    await page.goto(`${httpVite.baseUrl}/admin/turns`, { waitUntil: "networkidle" })
+    // Verify anonymous deep-link /admin/visits lands on admin login
+    await page.goto(`${httpVite.baseUrl}/admin/visits`, { waitUntil: "networkidle" })
     const loginHeading = page.getByRole("heading", { name: "Đăng nhập Quản trị" })
     await loginHeading.waitFor({ state: "visible" })
     assert.equal(await page.getByRole("heading", { name: "Đăng nhập Lễ tân" }).count(), 0)
@@ -579,14 +674,14 @@ try {
     const shot = path.join(outDir, "anon-turns-login-1440x1024.png")
     await page.screenshot({ path: shot })
 
-    // Log in and assert post-login destination returns to /admin/turns
+    // Log in and assert post-login destination returns to /admin/visits
     await page.getByLabel("Tên đăng nhập", { exact: true }).fill("owner")
     await page.getByLabel("Mật khẩu", { exact: true }).fill("StrongPassword123!")
     await page.getByRole("button", { name: "Đăng nhập", exact: true }).click()
 
     await page.getByTestId("turn-ledger-page").waitFor({ state: "visible" })
     const finalPath = new URL(page.url()).pathname
-    assert.equal(finalPath, "/admin/turns", `Expected return path /admin/turns after login, got ${finalPath}`)
+    assert.equal(finalPath, "/admin/visits", `Expected return path /admin/visits after login, got ${finalPath}`)
     assert.deepEqual(errors, [], `Console/page errors: ${errors.join(" | ")}`)
 
     report.checks.anonDeepLink = {
@@ -619,7 +714,7 @@ try {
       await page.getByRole("heading", { name: "Đăng nhập Quản trị" }).waitFor()
       assert.equal(await page.getByTestId("admin-shell").count(), 0)
       report.checks.adminSessionEnded.push(code)
-      await page.goto(`${httpVite.baseUrl}/admin/turns`, { waitUntil: "networkidle" })
+      await page.goto(`${httpVite.baseUrl}/admin/visits`, { waitUntil: "networkidle" })
       await page.getByLabel("Tên đăng nhập", { exact: true }).fill("owner")
       await page.getByLabel("Mật khẩu", { exact: true }).fill("StrongPassword123!")
       await page.getByRole("button", { name: "Đăng nhập", exact: true }).click()
