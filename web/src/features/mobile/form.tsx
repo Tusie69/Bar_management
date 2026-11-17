@@ -1,5 +1,5 @@
 import { guestCount, guestValueFrom, type GuestValue } from "@/domain/booking-rules"
-import { ChevronLeft } from "lucide-react"
+import { AlertTriangle, ChevronLeft } from "lucide-react"
 import { useMemo, useState } from "react"
 import {
   bookingCalendarDate,
@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { bookingTableCanSelect } from "./booking-table-selection"
 import { FloorCanvas } from "../floor/floor-canvas"
+import { capacityWarningText, selectedTablesCapacity } from "../floor/reception-rules"
 import { useM, type FormRequest } from "./context"
 import { useKeyboardSafeHeight } from "./mobile-app"
 import { codesOf } from "./model"
@@ -228,6 +229,9 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const walkInCapacity = selectedCapacity(selectedWalkInIds, m.model.byId)
   const walkInIssues = walkInSelectionIssues(selectedWalkInIds, m.model.byId, m.model.states, bookableZoneIds)
   const walkInReady = !!guests && selectedWalkInIds.length > 0 && walkInIssues.length === 0
+  const activeIds = isBooking ? bookingIds : selectedWalkInIds
+  const activeCapacity = selectedTablesCapacity(activeIds, m.model.byId)
+  const activeCapacityWarning = capacityWarningText(activeIds.length, activeCapacity, guests)
 
   const reset = () => {
     // Revalidate the existing map selection when date/time/party changes.
@@ -366,7 +370,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
       role="dialog"
       aria-label="Tạo đơn đặt bàn"
       style={{ height: keyboardSafeHeight ? `${keyboardSafeHeight}px` : "100dvh" }}
-      className="fixed inset-0 z-[40] flex flex-col overflow-hidden bg-background"
+      className="absolute inset-0 z-[40] flex flex-col overflow-hidden bg-background"
     >
       <div className="shrink-0 border-b border-border bg-background px-4 pt-[var(--top-safe)] pb-3">
         <div className="-ml-2.5 flex h-11 items-center gap-1">
@@ -826,6 +830,16 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
           <span role="alert" className="text-[13px] text-st-noshow-ink">
             {selectionMessage}
           </span>
+        ) : null}
+        {activeCapacityWarning ? (
+          <p
+            role="status"
+            data-testid="capacity-warning"
+            className="tnum m-0 flex items-start gap-2 rounded-lg border border-st-late/30 bg-st-late-tint px-2.5 py-1.5 text-[13px] font-medium text-st-late-ink"
+          >
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <span>{activeCapacityWarning}</span>
+          </p>
         ) : null}
         <button
           type="button"

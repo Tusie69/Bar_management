@@ -263,6 +263,12 @@ export function seedDb(now: Date): MockDb {
       notes: i % 7 === 0 ? "Thích ngồi gần quầy Bar." : i % 9 === 0 ? "Hay đi nhóm đông, báo trước để ghép bàn." : null,
     })
   }
+  // Three synthetic same-name profiles without phones for the ledger review panel.
+  for (const targetId of customerIds.slice(0, 3)) {
+    const target = db.customers.get(targetId)!
+    const id = allocId(db, "customers")
+    db.customers.set(id, { ...target, id, phoneE164: null, phoneLast3: null, notes: null })
+  }
   // A handful of regulars get most of the visits.
   const regularWeight = customerIds.map((_, i) => (i < 10 ? 6 : i < 25 ? 2 : 1))
   const totalWeight = regularWeight.reduce((a, b) => a + b, 0)

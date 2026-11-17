@@ -11,6 +11,7 @@ import {
   findGroupRepresentativeId,
   formatCellGuestName,
   formatGroupCode,
+  formatTableCellLabel,
   groupCode,
   groupDisplayName,
   resolveCellCornerIcons,
@@ -1196,19 +1197,119 @@ describe("Group border redesign - status-colored thick borders and neutral selec
         selectedIds: [],
       })
 
-      expect(html).toContain(">B21 - Chị Lan<")
+      expect(html).toContain(">B21 - Chị…<")
       expect(html).toContain(">22:30<")
-      expect(html).toContain(">B3 - Anh Nam<")
+      expect(html).toContain(">B3 - Anh…<")
       // Walk-in without a real name shows "Khách lẻ", never fake name or "N khách"
       expect(html).toContain(">A3 - Khách lẻ<")
       expect(html).not.toContain("4 khách<")
       expect(html).not.toContain("2 khách<")
+      expect(html).not.toContain('font-size="7.3"')
 
-      // Long name truncation helper check
-      expect(formatCellGuestName("Nguyễn Hoàng Bảo Trâm", 10)).toBe("Trâm")
-      expect(formatCellGuestName("  Nguyễn   Văn   Tùng  ", 8)).toBe("Tùng")
+      // Long name truncation helper check: preserves honorific / start and truncates at the end with "…"
+      expect(formatCellGuestName("Nguyễn Hoàng Bảo Trâm", 10)).toBe("Nguyễn Ho…")
+      expect(formatCellGuestName("  Chị   Nguyễn   Lan   Anh  ", 11)).toBe("Chị Nguyễn…")
+      expect(formatCellGuestName("  Nguyễn   Văn   Tùng  ", 8)).toBe("Nguyễn…")
+      expect(formatCellGuestName("Anh Tùng", 11)).toBe("Anh Tùng")
       expect(formatCellGuestName("Tùng", 8)).toBe("Tùng")
       expect(formatCellGuestName("Minh Anh", 8)).toBe("Minh Anh")
+      expect(formatCellGuestName("Nguyễn Hoàng Bảo Trâm", 4, true)).toBe("Trâm")
+    })
+
+    it("applies separate MR/MS honorific metadata before end-ellipsis truncation at fixed 8.2 font size and keeps full name in aria-label", () => {
+      const tA7 = realTables.find((t) => t.code === "A7")!
+      const tB7 = realTables.find((t) => t.code === "B7")!
+      const tB5 = realTables.find((t) => t.code === "B5")!
+      const tB6 = realTables.find((t) => t.code === "B6")!
+
+      // Direct formatter unit coverage for MR, MS, null, short & long names
+      expect(formatTableCellLabel("A7", "Tùng", "MR", tA7.w)).toBe("A7 - Mr Tùng")
+      expect(formatTableCellLabel("B7", "Lan", "MS", tB7.w)).toBe("B7 - Ms Lan")
+      expect(formatTableCellLabel("B5", "Khoa", null, tB5.w)).toBe("B5 - Khoa")
+      expect(formatTableCellLabel("B7", "Tùng Nguyễn Hoàng Bảo Trâm", "MR", tB7.w)).toBe("B7 - Mr T…")
+      expect(formatTableCellLabel("A7", "Tùng Nguyễn Hoàng Bảo Trâm", "MS", tA7.w)).toBe("A7 - Ms Tùn…")
+      expect(formatTableCellLabel("A7", "Phạm Quốc Khoa", null, tA7.w)).toBe("A7 - Phạm Q…")
+
+      const states = new Map<number, FloorTableState>([
+        [
+          tA7.id,
+          {
+            tableId: tA7.id,
+            state: "upcoming",
+            claim: {
+              reservationId: 301,
+              displayName: "Tùng Nguyễn Hoàng Bảo Trâm",
+              honorific: "MS",
+              partySize: 4,
+              startsAt: new Date("2026-11-09T15:00:00Z"),
+              tableIds: [tA7.id],
+            },
+          } as any,
+        ],
+        [
+          tB7.id,
+          {
+            tableId: tB7.id,
+            state: "upcoming",
+            claim: {
+              reservationId: 302,
+              displayName: "Tùng Nguyễn Hoàng Bảo Trâm",
+              honorific: "MR",
+              partySize: 4,
+              startsAt: new Date("2026-11-09T15:00:00Z"),
+              tableIds: [tB7.id],
+            },
+          } as any,
+        ],
+        [
+          tB5.id,
+          {
+            tableId: tB5.id,
+            state: "seated",
+            claim: {
+              visitId: 303,
+              displayName: "Lan",
+              honorific: "MS",
+              partySize: 2,
+              startsAt: new Date("2026-11-09T14:00:00Z"),
+              tableIds: [tB5.id],
+            },
+          } as any,
+        ],
+        [
+          tB6.id,
+          {
+            tableId: tB6.id,
+            state: "seated",
+            claim: {
+              visitId: 304,
+              displayName: "Khoa",
+              honorific: null,
+              partySize: 2,
+              startsAt: new Date("2026-11-09T14:00:00Z"),
+              tableIds: [tB6.id],
+            },
+          } as any,
+        ],
+      ])
+
+      const html = renderCanvas({
+        tables: [tA7, tB7, tB5, tB6],
+        mode: "live",
+        states,
+        selectedIds: [],
+      })
+
+      expect(html).toContain(">A7 - Ms Tùn…<")
+      expect(html).toContain(">B7 - Mr T…<")
+      expect(html).toContain(">B5 - Ms Lan<")
+      expect(html).toContain(">B6 - Khoa<")
+      expect(html).toContain("Bàn A7, Sắp tới, Ms Tùng Nguyễn Hoàng Bảo Trâm, 4 khách")
+      expect(html).toContain("Bàn B7, Sắp tới, Mr Tùng Nguyễn Hoàng Bảo Trâm, 4 khách")
+      expect(html).toContain("Bàn B5, Đã tới, Ms Lan, 2 khách")
+      expect(html).toContain("Bàn B6, Đã tới, Khoa, 2 khách")
+      expect(html).toContain('font-size="8.2"')
+      expect(html).not.toContain('font-size="7.3"')
     })
 
     it("BR-03: shows seat number plus booked time in cell for booked Bar seat (e.g. Bar16 at 22:15)", () => {

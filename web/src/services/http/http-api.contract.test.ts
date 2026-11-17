@@ -194,7 +194,13 @@ beforeEach(() => {
         return json({ callId: 71, bookingId: 11, initiatedAt: at.toISOString(), telUri: "tel:+84901234123" }, 201)
       if (path === "/waitlist/4/call")
         return json(
-          { callId: 81, targetKind: "WAITLIST_ENTRY", targetId: 4, initiatedAt: at.toISOString(), telUri: "tel:+84901234123" },
+          {
+            callId: 81,
+            targetKind: "WAITLIST_ENTRY",
+            targetId: 4,
+            initiatedAt: at.toISOString(),
+            telUri: "tel:+84901234123",
+          },
           201,
         )
       if (path === "/bookings/11/calls")
@@ -271,9 +277,15 @@ beforeEach(() => {
       if (/^\/accounts\/\d+\/(access-level|password-reset)$/.test(path))
         return json({
           account: {
-            id: 5, username: "le_tan", displayName: "Lễ tân", status: "ACTIVE",
-            membershipStatus: "ACTIVE", roles: ["ADMIN"], accessLevel: "READ_ONLY",
-            lastLoginAt: null, version: 4,
+            id: 5,
+            username: "le_tan",
+            displayName: "Lễ tân",
+            status: "ACTIVE",
+            membershipStatus: "ACTIVE",
+            roles: ["ADMIN"],
+            accessLevel: "READ_ONLY",
+            lastLoginAt: null,
+            version: 4,
           },
           revokedSessions: 1,
         })
@@ -989,7 +1001,11 @@ describe("BA-022 account management HTTP contract", () => {
       { method: "POST", path: "/accounts/5/status", body: { version: 3, status: "DISABLED" } },
       { method: "POST", path: "/accounts/5/access-level", body: { version: 3, accessLevel: "READ_ONLY" } },
       { method: "POST", path: "/accounts/5/password-reset", body: { version: 3, newPassword: "replacement-password" } },
-      { method: "POST", path: "/accounts/me/password", body: { currentPassword: "current-password", newPassword: "next-password" } },
+      {
+        method: "POST",
+        path: "/accounts/me/password",
+        body: { currentPassword: "current-password", newPassword: "next-password" },
+      },
     ])
   })
 })

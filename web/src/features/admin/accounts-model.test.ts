@@ -155,19 +155,23 @@ describe("bảy checkbox của prototype", () => {
   })
 
   it("checkbox phản ánh quyền hiệu dụng chứ không phải quyền vai trò", () => {
-    const states = groupStates(views([
-      ["report.read", { role: true, on: false }],
-      ["audit.read", { role: true, on: true }],
-    ]))
+    const states = groupStates(
+      views([
+        ["report.read", { role: true, on: false }],
+        ["audit.read", { role: true, on: true }],
+      ]),
+    )
     expect(states.find((state) => state.group.key === "report")!.checked).toBe(false)
     expect(states.find((state) => state.group.key === "audit")!.checked).toBe(true)
   })
 
   it("nhóm nhiều quyền chỉ tick khi mọi quyền trong nhóm đều bật", () => {
-    const half = groupStates(views([
-      ["reservation.update", { role: true, on: true }],
-      ["reservation.cancel", { role: true, on: false }],
-    ]))
+    const half = groupStates(
+      views([
+        ["reservation.update", { role: true, on: true }],
+        ["reservation.cancel", { role: true, on: false }],
+      ]),
+    )
     expect(half.find((state) => state.group.key === "booking")!.checked).toBe(false)
   })
 
@@ -197,11 +201,18 @@ describe("bảy checkbox của prototype", () => {
   })
 
   it("payload chỉ gửi những mã sửa được", () => {
-    const states = groupStates(views([
-      ["customer.phone.reveal", { role: true, on: true }],
-      ["booking.phone.reveal", { role: false, on: false, ceiling: false }],
-    ]))
-    expect(groupPayload(states.find((state) => state.group.key === "phone")!, false)).toEqual({
+    const states = groupStates(
+      views([
+        ["customer.phone.reveal", { role: true, on: true }],
+        ["booking.phone.reveal", { role: false, on: false, ceiling: false }],
+      ]),
+    )
+    expect(
+      groupPayload(
+        states.find((state) => state.group.key === "phone")!,
+        false,
+      ),
+    ).toEqual({
       "customer.phone.reveal": false,
     })
   })

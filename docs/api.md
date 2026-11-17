@@ -698,6 +698,7 @@ BA-023 records the approved PO decision: Receptionist calling uses the dedicated
 | POST   | `/visits/:id/move`        | `visit.move`    | Body `{version,tableIds,note?}`; `{visit:MovedVisitView}`                        |
 | POST   | `/visits/:id/merge`       | `visit.combine` | Body `{version,tableIds}`; `{visit:MovedVisitView,group:{id,symbolNo,tableIds}}` |
 | GET    | `/visits/turns?from=&to=` | `report.read`   | Table-turn ledger over a range of operating days; see **Table turns** below      |
+| GET    | `/visits/turns/summary?from=&to=` | `report.read` | Totals and aggregates by business date, check-in user and logical table/group scope |
 
 Manual close reasons are `GUEST_LEFT` or `ENTRY_ERROR`; note is optional, at most 500 characters. Closing releases the visit allocations and dissolves unused groups. `ClosedVisitView` is `{id,businessDate,status:"CLOSED",endedAt,endReason,version,releasedTables:[{id,code}],turn}`, where `turn` is the table turn this close recorded (see **Table turns** below) or null when the visit already had one. Closing releases the operational state only: it never dissolves a LAYOUT cluster. `MovedVisitView` is `{id,businessDate,version,previousTables:[{id,code}],tables:[{id,code}]}`. Move validates capacity and same-kind targets, allows multiple tables across bookable zones without adjacency configuration, and creates or retains their shared group. It rejects every unreleased USAGE allocation on target tables regardless of business date, plus holds on the visit's business date. Merge follows the group rules above.
 
@@ -709,9 +710,10 @@ Carry-over occupancy remains visible and `staleFromPreviousDay` remains true on 
 
 ## Table turns — lượt khách (C2)
 
-A table or a cluster earns **+1 turn** when both are true: it was `IN_USE`, and the receptionist completed Trả bàn.
-Check-in records when the party sat down (`visits.started_at`); closing the visit is what closes the turn. Each turn is
-its own row, so later statistics read history instead of recomputing it from live state.
+A table or a cluster earns **+1 turn** when reception checks in a party: booking check-in, walk-in seating or arrived
+waitlist seating opens a visit. OPEN visits count immediately from `visits.started_at`. Closing the visit records its
+immutable `table_turns` snapshot; normal release preserves the count, while entry correction or business-day auto-close
+removes that turn from counted totals. Reports combine open visits and closed snapshots once per visit.
 
 The operating day is the venue's own, which turns over at the 05:00 cutoff: 00:30 on 12/11 belongs to the operating day
 of **11/11**, and the badge resets when that day rolls over without deleting anything.
@@ -772,7 +774,7 @@ is the same cell the client already draws a cluster's badge on, so the number ap
 
 ### What counts
 
-`completed_at` is the gate, not the row's existence:
+An OPEN visit counts from check-in. Once closed, `completed_at` determines whether the historical row counts:
 
 | Close                                                 | Row written   | Counted              |
 | ----------------------------------------------------- | ------------- | -------------------- |
@@ -797,11 +799,13 @@ still the same transaction, so a rolled-back close leaves no turn.
 
 ### Badge on the floor
 
-`GET /tables?date=` now returns `seatedTurnCount` on every table and on every group: completed turns for that operating
-day. The client shows it from 1 and draws it once per cluster, on the cluster's anchor cell, so the number is never
+`GET /tables?date=` returns `seatedTurnCount` on every table and group: counted CLOSED turns plus OPEN check-ins for
+that operating day, from the same visit projection as list/summary. The client draws the badge from turn 2, once per
+cluster on its anchor cell, so the number is never
 multiplied by the member count. A member of a `LAYOUT` cluster reports the cluster's count, so the cell and the cluster
-tile cannot disagree. Close Visit bumps `venues.change_seq`, which the SSE stream publishes, so every open device
-refetches and the badge moves in well under two seconds — the count travels in the projection, never in the event.
+tile cannot disagree. Check-in and Close Visit bump `venues.change_seq`, which the SSE stream publishes, so open
+devices refetch the count from the projection. Normal release preserves the count; ENTRY_ERROR and BUSINESS_DAY_END
+remove the closed turn from it.
 
 A cluster that is split keeps its history: the old turns still name the original `group_id` and `group_code_snapshot`,
 and they deliberately do **not** migrate to the now-single tables, whose badge is therefore 0.
@@ -810,15 +814,33 @@ and they deliberately do **not** migrate to the now-single tables, whose badge i
 
 | Method | Path                                                        | Permission    | Request    | Response                                                                   | Error codes                                                                                                                                                 |
 | ------ | ----------------------------------------------------------- | ------------- | ---------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/visits/turns?from=&to=&page=&pageSize=&includeUncounted=` | `report.read` | query only | `{from,to,page,pageSize,total,completedTotal,guestTotal,turns:TurnView[]}` | `INVALID_BUSINESS_DATE`, `INVALID_DATE_RANGE`, `DATE_RANGE_TOO_WIDE`, `INVALID_PAGE`, `INVALID_PAGE_SIZE`, `INVALID_INCLUDE_UNCOUNTED`, `PERMISSION_DENIED` |
+| GET    | `/visits/turns?from=&to=&page=&pageSize=&includeUncounted=&checkedInByUserId=&closedByUserId=` | `report.read` | query only | `{from,to,page,pageSize,total,completedTotal,guestTotal,turns:TurnView[]}` | `INVALID_BUSINESS_DATE`, `INVALID_DATE_RANGE`, `DATE_RANGE_TOO_WIDE`, `INVALID_PAGE`, `INVALID_PAGE_SIZE`, `INVALID_INCLUDE_UNCOUNTED`, `INVALID_CHECKED_IN_BY_USER_ID`, `INVALID_CLOSED_BY_USER_ID`, `PERMISSION_DENIED` |
 
 `from` and `to` are operating days, `YYYY-MM-DD`, inclusive, at most 366 days apart. `page` starts at 1, `pageSize` is
 1–200 and defaults to 50. `includeUncounted=true` also returns the rows that do not count; the default returns only
-served turns. `completedTotal` and `guestTotal` are totals for the whole range, not for the page.
+counted check-ins, including guests still seated. The legacy `completedTotal` name is retained, but now counts
+OPEN and counted CLOSED turns; `guestTotal` includes guests in those turns. Both totals cover the whole filter,
+not the page. `checkedInByUserId` is an optional positive safe integer that filters list, totals and summary by
+**người check-in**, derived from `visits.created_by_user_id` for booking, walk-in and waitlist seating.
+`checkedInByUserId` and `checkedInByDisplayName` are nullable on each turn; `byStaff` uses those fields.
+The optional legacy `closedByUserId` filter still selects the releasing user and excludes OPEN turns.
+Both filters can be combined. `closedByUserId` and `closedByDisplayName`
+are null on system closes. Display names come from current users with an organization and venue membership
+(an organization-wide role also qualifies); they are not historical name snapshots. Revoked roles still
+provide historical venue association. A user ID without a matching association has a null display name.
 
 It is gated on `report.read`, which **RECEPTIONIST does not hold**: a receptionist reads the badge from the floor
-projection, not the statistics ledger. This endpoint exists for the statistics screen of a later sprint; no report
-screen is built here.
+projection, not the statistics ledger.
+
+Each row has `status: "OPEN" | "CLOSED"`. An OPEN row has `turnId=null`, `releasedAt=null`, `endReason=null`,
+`closedByUserId=null`, `closedByDisplayName=null` and `counted=true`. Use `visitId` as its stable identity across
+release. Open visits and closed ledger snapshots are mutually exclusive per visit. ENTRY_ERROR, MERGED and
+BUSINESS_DAY_END closes remain in history with `counted=false`, visible only with `includeUncounted=true`.
+List ordering is business date descending, seated time descending, then visit ID descending, so releasing a
+party does not move its position. The 17:00-05:00 business-day rules are unchanged.
+The listed `turnNo` follows check-in order within the scope/day and skips uncounted turns, matching the floor
+badge. Uncounted history can share this display number with a replacement check-in; identity is always `visitId`.
+The immutable ledger's stored ordinal and the close mutation's ledger metadata remain unchanged.
 
 ```http
 GET /api/v1/visits/turns?from=2026-11-11&to=2026-11-11
@@ -836,6 +858,7 @@ GET /api/v1/visits/turns?from=2026-11-11&to=2026-11-11
   "turns": [
     {
       "turnId": 31,
+      "status": "CLOSED",
       "turnNo": 1,
       "businessDate": "2026-11-11",
       "scope": "GROUP",
@@ -853,7 +876,11 @@ GET /api/v1/visits/turns?from=2026-11-11&to=2026-11-11
       "endReason": "GUEST_LEFT",
       "counted": true,
       "visitId": 77,
-      "reservationId": 54
+      "reservationId": 54,
+      "checkedInByUserId": 2,
+      "checkedInByDisplayName": "Lễ tân",
+      "closedByUserId": 3,
+      "closedByDisplayName": "Chủ quán"
     }
   ]
 }
@@ -873,6 +900,42 @@ already had one:
 }
 ```
 
+### `GET /api/v1/visits/turns/summary`
+
+Requires authentication and `report.read`, with the same date, staff and `includeUncounted` validation and
+venue/organization scope as the list. Pagination does not truncate aggregates. No write or CSRF token is required.
+Dates are existing `business_date` values; the client supplies Monday-Sunday ranges for a business week.
+
+```http
+GET /api/v1/visits/turns/summary?from=2026-11-09&to=2026-11-15&checkedInByUserId=2
+```
+
+```json
+{
+  "from": "2026-11-09", "to": "2026-11-15", "completedTotal": 1, "openTotal": 0, "guestTotal": 12,
+  "byBusinessDate": [{"businessDate": "2026-11-11", "turns": 1, "guests": 12}],
+  "byStaff": [{"checkedInByUserId": 2, "checkedInByDisplayName": "Lễ tân", "turns": 1, "guests": 12}],
+  "byScope": [{"scope": "GROUP", "tableId": null, "groupId": 101, "label": "◆A", "turns": 1, "guests": 12}]
+}
+```
+
+Every aggregate counts visit rows, never sums `turnNo` or expands group members. `byScope` groups by
+`(scope, groupId|tableId)` and labels from the live OPEN turn if present, otherwise the latest matching ledger row (highest turn ID): group code,
+or table snapshot codes joined with ` + `. It sorts by turns descending, then label. Dates sort ascending;
+staff sorts by turns descending, then current display name and user ID. Days without turns have no bucket.
+
+By default all returned rows and buckets are counted. With `includeUncounted=true`, buckets include corrections
+and system closes; these stay attributed to their check-in user even when the closer is the system.
+`completedTotal` and `guestTotal` still count only counted OPEN/CLOSED
+turns, matching the existing list totals, so bucket sums can exceed these two totals when this flag is enabled.
+`openTotal` counts OPEN turns under the same date, counting and staff filters, before pagination.
+OPEN turns are always counted, so `0 <= openTotal <= completedTotal`; counted CLOSED turns equal
+`completedTotal - openTotal`. Uncounted CLOSED turns never contribute to either total, even with
+`includeUncounted=true`. Filtering by `closedByUserId` yields `openTotal: 0`, because OPEN turns have no closer.
+An empty range returns zero totals and empty arrays. Payment verification is unchanged.
+The summary uses four aggregate SQL queries regardless of row count; staff associations use `EXISTS` so multiple
+roles cannot multiply counts. This addition requires no schema migration.
+
 ### Migration
 
 `0018_table_turn_ledger.sql` creates `table_turns` and nothing else: no column is dropped, no row is updated or
@@ -884,14 +947,12 @@ the first close after the migration, and that is deliberate rather than an omiss
 Test and E2E databases must delete `table_turns` before `visits`, `reservations`, `dining_tables` and `table_groups`;
 the shared fixtures and the per-file cleanups already do.
 
-### Unconfirmed decisions
+### Counting decisions
 
-- `[?]` Whether Trả bàn counts as payment completed in the MVP. Applied as C7 of 01/11 describes, so a `GUEST_LEFT`
-  close counts the turn; there is no payment verification behind it.
-- `[?]` Whether the badge should reset at 17:00 rather than on the operating day. It currently follows the operating
-  day, which turns over at the 05:00 cutoff that the rest of the system already uses.
-- `[?]` Whether the end-of-shift auto-close should count as a served turn. It is recorded with `completed_at` null, so
-  it is in the ledger but not in the badge; turning it on is a one-line change and needs no backfill.
+- A check-in counts immediately and a normal `GUEST_LEFT` release preserves it. This does not verify payment.
+- The existing operating day and its 05:00 cutoff remain unchanged for the 17:00-05:00 service shift.
+- BUSINESS_DAY_END and ENTRY_ERROR close rows have `completed_at` null, remain visible with `includeUncounted=true`
+  and do not contribute to counted totals or the badge after closing.
 
 ### Testing
 
@@ -1046,3 +1107,21 @@ covers, so a one-month window stays an index range scan.
 `audit_export_levels`), defaulting to 90 days and `["OWNER","ADMIN_WRITE"]` — the values pending anh Luân's answer to
 C3. Reads never return rows older than the retention window. Physical deletion of expired rows is deliberately not
 implemented: purging an audit trail is a decision, not a default, and C3 is still open.
+
+
+## NA-34 - Anonymous visit assignment and duplicate customer review
+
+Requires migration `0029_customer_history.sql`. Admin portal only. Reads use `report.read`; writes use `customer.history.manage`, granted to OWNER/ADMIN WRITE. Anonymous visit reads, assignment and undo are restricted to the server-selected actor venue. Duplicate suggestions are org-wide for OWNER/org-wide ADMIN, while venue-scoped ADMIN sees only pairs with either profile active in visits/reservations/waitlist at the actor venue and counts restricted to that venue. Only OWNER/org-wide ADMIN WRITE may merge or dismiss; venue ADMIN WRITE receives `403 CUSTOMER_ORG_WRITE_REQUIRED`; READ_ONLY writes receive `403 PERMISSION_DENIED`.
+
+| Method | Path | Contract |
+| --- | --- | --- |
+| GET | `/visits/anonymous?from=YYYY-MM-DD&to=YYYY-MM-DD&page=1&pageSize=20` | Counted anonymous visits, newest first, `{visits,page,pageSize,hasMore}`; each row includes visitId, displayCode `L-<visitId>`, tableLabel, guestCount, seatedAt, businessDate, version. Inclusive range, max 366-day span; pageSize 1-50. |
+| POST | `/visits/:id/customer-assignment` | `{version,phone,displayName?}` finds ACTIVE customer by org + protected phone HMAC, or creates with required displayName (422 CUSTOMER_NAME_REQUIRED if missing), then assigns atomically. Returns `{visitId,version,customer,customerCreated,undo:{operationId,visitId,version,previousCustomerId:null}}`. |
+| POST | `/visits/:id/customer-assignment/undo` | `{version,operationId}` checks persisted assignment and unchanged visit, restores null customer, returns `{visitId,customerId:null,version,operationId}`. Newly created profile remains to avoid deleting identity used elsewhere. Dedicated undo, no redo. |
+| GET | `/customers/duplicates?page=1&pageSize=20` | `{pairs:[{source,target}],page,pageSize,total,canMerge,canDismiss}`. Each profile has id/displayName/maskedPhone/version/visitCount/bookingCount. Source ACTIVE without phone, target ACTIVE with phone, identical nonempty normalized name_search and org; excludes MERGED/ANONYMIZED and permanently dismissed pairs. |
+| POST | `/customers/duplicates/merge` | `{sourceCustomerId,targetCustomerId,sourceVersion,targetVersion}` locks and rechecks pair, repoints visits/reservations/waitlist_entries and existing merged customer links across the org, increments changed-row versions, marks source MERGED and preserves target identity. Returns IDs/new versions/moved counts/operationId. No undo; UI confirmation required. |
+| POST | `/customers/duplicates/dismiss` | Same versioned pair body; permanently persists the decision and audit, returns sourceCustomerId/targetCustomerId/operationId. |
+
+All writes use Origin/CSRF protection, optional `Idempotency-Key`, transactional audits with actor/time/before-after customer IDs, and optimistic versions. Full phone only enters requests; responses use `••• <last3>` or null and never return HMAC/ciphertext. Call logs and waitlist contacts retain parent IDs; immutable dismissal/audit history is not rewritten by merge. Typical errors: 403 permission/scope, 404 entity outside scope or missing, 409 version/undo/pair conflict, 422 validation/name/phone, 503 missing phone keys. Idempotency errors are 400 `INVALID_IDEMPOTENCY_KEY` for malformed keys, 409 `IDEMPOTENCY_IN_PROGRESS` while processing, and 422 `IDEMPOTENCY_KEY_REUSED` for a key bound to another user, venue, path or body; an exact successful retry replays the original response. The complete request/response and UI integration contract is `D:\GAM-APP\docs\contracts\na34-anonymous-visits-and-duplicates.md`.
+
+Assignment, undo, merge and dismissal advance the existing realtime cursors for every venue in the organization in the domain/audit transaction, covering org-wide readers connected through any venue and cross-venue customer references. Rollback and idempotent replay produce no extra cursor advance; other organizations are unaffected.

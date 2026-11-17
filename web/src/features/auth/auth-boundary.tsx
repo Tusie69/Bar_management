@@ -43,16 +43,21 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
     const unavailablePortal = unavailablePortalFromPath(pathname)
     if (unavailablePortal) return <PortalUnderConstruction label={unavailablePortal} />
     const routePortal = portalFromPath(pathname)
-    // TU-32: URL công bố là tiếng Việt (/letan, /thungan, /phucvu). URL cũ vẫn
-    // mở được vì đang nằm trong bookmark nhân viên, nhưng đưa về URL chuẩn để
-    // thanh địa chỉ không dạy hai cách gọi cùng một cổng. Dùng replace chứ
-    // không push: alias không nên để lại một bước trong lịch sử back.
+    // Canonicalize portal aliases without discarding admin deep links.
     const canonical = routePortal ? canonicalPortalPath(pathname) : null
     if (canonical && typeof window !== "undefined") {
-      window.location.replace(canonical)
+      window.location.replace(canonical + window.location.search + window.location.hash)
       return null
     }
-    return <LoginPage portal={routePortal ?? sessionPortal ?? DEFAULT_AUTH_PORTAL} />
+    const resolvedPortal = routePortal ?? sessionPortal ?? DEFAULT_AUTH_PORTAL
+    if (resolvedPortal === "admin") {
+      return (
+        <div className="admin-root">
+          <LoginPage portal="admin" />
+        </div>
+      )
+    }
+    return <LoginPage portal={resolvedPortal} />
   }
   if (status === "error") {
     return (

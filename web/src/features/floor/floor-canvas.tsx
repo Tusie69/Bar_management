@@ -35,6 +35,7 @@ import {
   ZONES,
   type ZoneCode,
 } from "@/domain/venue-layout"
+import { formatHonorificName } from "@/domain/booking-identity"
 import { fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { STATE_META } from "@/components/status-meta"
@@ -44,6 +45,7 @@ import {
   findGroupRepresentativeId,
   formatCellGuestName,
   formatGroupCode,
+  formatTableCellLabel,
   GUEST_FLAG_META,
   resolveCellCornerIcons,
   supportedFlags,
@@ -75,6 +77,8 @@ interface Props {
   onBlockedTableClick?: (tableId: number) => void
   onBackgroundClick?: () => void
   compact?: boolean
+  /** Reception/mobile shell: always lock and uniformly fit the whole floor regardless of viewport width. */
+  mobileShell?: boolean
   /** Keep the whole-floor width scale when a bottom sheet shortens the canvas. */
   preserveWidthFit?: boolean
   className?: string
@@ -254,6 +258,7 @@ export function FloorCanvas(props: Props) {
     onBlockedTableClick,
     onBackgroundClick,
     compact,
+    mobileShell,
     preserveWidthFit,
     className,
     ariaLabel,
@@ -352,7 +357,10 @@ export function FloorCanvas(props: Props) {
   // has to drag the map, and the plan never jumps back to the top after an
   // action. Zone focus still allows the old free camera.
   const phoneViewport =
-    !compact && (size.w <= 480 || (typeof window !== "undefined" && window.innerWidth < 640 && size.w < 640))
+    !compact &&
+    (Boolean(mobileShell) ||
+      size.w <= 480 ||
+      (typeof window !== "undefined" && window.innerWidth < 640 && size.w < 640))
   const planLocked = phoneViewport && zoneFocus === "ALL"
 
   // Camera fit bounds computed from the REAL tables and bar seats coordinates
@@ -1178,7 +1186,8 @@ function describe(t: TableView, state: TableLiveState, fs?: FloorTableState) {
   const flags = supportedFlags(c.flags ?? [])
   const flagLabels = flags.map((flag: GuestFlag) => GUEST_FLAG_META[flag]?.label ?? flag)
   const code = formatGroupCode(c.groupDisplayCode ?? c.symbolNo)
-  return `${base}${spare}, ${c.displayName}, ${c.partySize} khách${flagLabels.length ? `, ${flagLabels.join(", ")}` : ""}${code ? `, nhóm ${code}, ${c.tableIds.length} bàn` : ""}`
+  const guestName = formatHonorificName(c.displayName, c.honorific)
+  return `${base}${spare}, ${guestName}, ${c.partySize} khách${flagLabels.length ? `, ${flagLabels.join(", ")}` : ""}${code ? `, nhóm ${code}, ${c.tableIds.length} bàn` : ""}`
 }
 
 /**
@@ -1285,9 +1294,8 @@ const LiveGlyph = memo(function LiveGlyph({
     state === "hold" ||
     state === "hold_overdue"
 
-  const maxNameChars = Math.max(6, Math.floor((t.w - 6) / 4.2))
-  const shortGuestName = claim ? formatCellGuestName(claim.displayName, maxNameChars, false) : ""
-  const tableTitle = claim && t.kind !== "BAR_SEAT" ? `${t.code} - ${shortGuestName}` : t.code
+  const tableTitle =
+    claim && t.kind !== "BAR_SEAT" ? formatTableCellLabel(t.code, claim.displayName, claim.honorific, t.w) : t.code
   let cellSubText = ""
   let showTimeIcon = false
 

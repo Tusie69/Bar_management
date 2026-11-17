@@ -11,6 +11,7 @@ import { adminRoute } from "@/features/admin/admin-routes"
 import { useRealtimeSync } from "@/hooks/use-data"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { AppShell } from "./shell"
+import { shouldUseMobileShell } from "./shell-mode"
 import { useSession } from "@/state/session"
 
 const OverviewPage = lazy(() => import("@/features/overview/overview-page"))
@@ -43,7 +44,7 @@ function Root() {
   const location = useLocation()
   const role = useSession((state) => state.user.role)
   if (role === "RECEPTIONIST" && location.pathname !== "/floor") return <Navigate to="/floor" replace />
-  return mobile ? page(<MobileApp />) : <AppShell />
+  return shouldUseMobileShell(role, mobile) ? page(<MobileApp />) : <AppShell />
 }
 
 // Phone opens the role home (Tiếp đón / Tổng quan). Deep links keep their route.

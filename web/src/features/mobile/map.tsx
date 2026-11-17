@@ -1,4 +1,4 @@
-import { ListOrdered, Menu, MessageSquareText, X } from "lucide-react"
+import { AlertTriangle, ListOrdered, Menu, MessageSquareText, X } from "lucide-react"
 import { useMemo, type ReactNode } from "react"
 import type { TableLiveState, TableView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
@@ -21,7 +21,7 @@ import { groupCode, groupDisplayName } from "../floor/floor-visual-rules"
 import { ReceptionDatePicker, ReceptionSearchField, ReceptionSearchResults } from "../floor/reception-controls"
 import { ZaloBookingExport } from "../reservations/zalo-booking-export"
 import { QuickForm } from "../floor/quick-form"
-import { isWaitingForTable } from "../floor/reception-rules"
+import { capacityWarningText, isWaitingForTable, selectedTablesCapacity } from "../floor/reception-rules"
 import { useBookingDraft } from "../floor/use-booking-draft"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
@@ -229,6 +229,7 @@ export function MapScreen({
         {m.model.catalog ? (
           <FloorCanvas
             className="absolute inset-0"
+            mobileShell={receptionist}
             tables={m.model.tables}
             zones={m.model.catalog.zones}
             mode={isAssignPick || d.bookingDraft ? "availability" : "live"}
@@ -253,15 +254,19 @@ export function MapScreen({
                       <GuestCountCard
                         businessDate={m.businessDate}
                         onOpen={m.openCount}
-                        initialOpen
-                        tiny={planWidth <= 359}
-                        className="pointer-events-auto absolute top-2 left-2"
+                        onEdit={m.openCountEdit}
+                        className="pointer-events-auto absolute top-1.5 left-1.5 z-10"
                       />
-                      <div className="pointer-events-auto absolute top-2 right-2 flex flex-col items-end gap-1.5">
-                        <StatusLegend variant="badge" tables={m.model.tables} states={m.model.states} />
+                      <div className="pointer-events-auto absolute top-2 right-2 flex flex-col items-end gap-1">
+                        <StatusLegend
+                          variant="badge"
+                          tables={m.model.tables}
+                          states={m.model.states}
+                          className="size-11"
+                        />
                         <ReceptionDatePicker
                           onDateChange={() => onSelect(null)}
-                          className="[&>button]:h-9 [&>button]:min-h-[36px] [&>button]:px-1.5 [&>button]:shadow-lg"
+                          className="[&>button]:h-11 [&>button]:min-h-[44px] [&>button]:px-2 [&>button]:shadow-lg"
                         />
                         {/* The mockup puts Bàn chờ here, right under the date. Drawn in
                             floor space it scaled with the plan while the date chip kept
@@ -270,10 +275,10 @@ export function MapScreen({
                           type="button"
                           onClick={() => m.go("wait")}
                           aria-label={`Bàn chờ, ${waitingCount} nhóm đang đợi`}
-                          className="inline-flex h-9 items-center gap-2 rounded-xl border border-border/80 bg-background/95 px-2.5 text-[13px] font-semibold text-tx-strong shadow-lg backdrop-blur active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
+                          className="inline-flex h-11 min-h-[44px] min-w-[44px] items-center gap-2 rounded-xl border border-border/80 bg-background/95 px-2.5 text-[13px] font-semibold text-tx-strong shadow-lg backdrop-blur active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
                         >
                           <ListOrdered className="size-4 shrink-0" aria-hidden />
-                          {planWidth > 480 ? <span>Bàn chờ</span> : planWidth >= 375 ? <span>Chờ</span> : null}
+                          {planWidth >= 375 ? <span>Chờ</span> : null}
                           {waitingCount > 0 ? `+${waitingCount}` : ""}
                         </button>
                       </div>
@@ -299,7 +304,9 @@ export function MapScreen({
                 ? `Sơ đồ khả dụng lúc ${d.bookingDraft.time} để chọn bàn`
                 : isAssignPick
                   ? `Sơ đồ khả dụng lúc ${pick.targetTime} ngày ${fmtBusinessDate(pick.targetDate!, "short")}`
-                  : "Sơ đồ bàn. Kéo để di chuyển, chụm hai ngón để phóng to"
+                  : receptionist
+                    ? "Sơ đồ bàn, trạng thái hiện tại"
+                    : "Sơ đồ bàn. Kéo để di chuyển, chụm hai ngón để phóng to"
             }
           />
         ) : null}
@@ -324,31 +331,48 @@ export function MapScreen({
           <BellButton square />
         </div>
       ) : null}
-      {pick ? (
-        <div className="z-[12] flex shrink-0 flex-col gap-2.5 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-4 shadow-[var(--shadow-float)]">
-          {pick.question && pickSel.length ? (
-            <span className="text-[15px] font-medium text-tx-strong">{pick.question(codesOf(pickSel, m.model))}</span>
-          ) : null}
-          <span className="text-[13px] text-[var(--text-muted)]">
-            {pickSel.length ? (
-              <>
-                Đã chọn {codesOf(pickSel, m.model)} ·{" "}
-                {pickSel.reduce((sum, id) => sum + (m.model.byId.get(id)?.capacity ?? 0), 0)} chỗ
-              </>
-            ) : (
-              "Chưa chọn bàn"
-            )}
-          </span>
-          <button
-            type="button"
-            disabled={!pickSel.length || pickBusy}
-            onClick={onPickConfirm}
-            className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground disabled:opacity-50"
-          >
-            {pickBusy ? "Đang gửi..." : pick.confirmLabel}
-          </button>
-        </div>
-      ) : null}
+      {pick
+        ? (() => {
+            const pickCap = selectedTablesCapacity(pickSel, m.model.byId)
+            const pickCapWarn = capacityWarningText(pickSel.length, pickCap, pick.targetParty)
+            return (
+              <div className="z-[12] flex shrink-0 flex-col gap-2.5 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-4 shadow-[var(--shadow-float)]">
+                {pick.question && pickSel.length ? (
+                  <span className="text-[15px] font-medium text-tx-strong">
+                    {pick.question(codesOf(pickSel, m.model))}
+                  </span>
+                ) : null}
+                <span className="tnum text-[13px] text-[var(--text-muted)]">
+                  {pickSel.length ? (
+                    <>
+                      Đã chọn {codesOf(pickSel, m.model)} · {pickCap} chỗ
+                    </>
+                  ) : (
+                    "Chưa chọn bàn"
+                  )}
+                </span>
+                {pickCapWarn ? (
+                  <p
+                    role="status"
+                    data-testid="capacity-warning"
+                    className="tnum m-0 flex items-start gap-2 rounded-lg border border-st-late/30 bg-st-late-tint px-2.5 py-1.5 text-[13px] font-medium text-st-late-ink"
+                  >
+                    <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                    <span>{pickCapWarn}</span>
+                  </p>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={!pickSel.length || pickBusy}
+                  onClick={onPickConfirm}
+                  className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground disabled:opacity-50"
+                >
+                  {pickBusy ? "Đang gửi..." : pick.confirmLabel}
+                </button>
+              </div>
+            )
+          })()
+        : null}
       {draft && draftZone ? (
         <p className="z-[11] shrink-0 bg-background px-4 pb-1 text-center text-[11px] font-medium tracking-wide text-[var(--text-muted)]">
           KHU {draftZone} · chạm để chọn thêm

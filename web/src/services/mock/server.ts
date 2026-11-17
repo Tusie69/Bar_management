@@ -8,6 +8,7 @@
  *   the 30-second system job that raises late / no-show / hold warnings.
  */
 import { foldVietnamese, NOTE_PHONE_ERROR, noteHasPhoneNumber, normalizePhone } from "@/lib/text"
+import { MockCustomerHistory } from "./customer-history"
 import { addDays, businessDateOf, fmtTime, fromVenueLocal, MS, type BusinessDate } from "@/lib/time"
 import { roleCan, PERMISSION_LABEL, type Permission } from "@/domain/access"
 import { BOOKING_MINUTE_STEP, isWithinBookingReceptionWindow } from "@/domain/booking-rules"
@@ -32,6 +33,8 @@ import type {
   ReportQuery,
   ReservationView,
   SessionUser,
+  TableTurnQuery,
+  TableTurnsParams,
 } from "@/domain/models"
 import type { ReservationRow, TableHoldRow, VisitRow, WaitlistEntryRow } from "@/domain/schema"
 import { symbolByNo } from "@/domain/symbols"
@@ -80,6 +83,7 @@ import {
   floorState,
   holdTableIds,
   operationView,
+  projectTableTurns,
   report,
   reservationView,
   reservationWarning,
@@ -93,6 +97,7 @@ import {
   waitlistView,
 } from "./derive"
 import { DEMO_USERS, REMOTE_USER_ID, seedDb } from "./seed"
+import { mockTableTurns, mockTableTurnSummary } from "./table-turns"
 import { Tx } from "./tx"
 import { formatDailyBookingText } from "./booking-export"
 import { apiErrorMessage } from "../error-messages"
@@ -125,6 +130,32 @@ export interface DemoControls {
 
 export class MockGamApi implements GamApi, DemoControls {
   readonly mode = "mock" as const
+  private history = this.createCustomerHistory()
+  private createCustomerHistory() {
+    return new MockCustomerHistory(
+      () => this.db,
+      () => this.session,
+      () => this.now,
+      (action, entity, id, before, after) => {
+        this.systemLog(action, entity, id, action, this.session.id)
+        const op = this.db.ops[this.db.ops.length - 1]
+        op.actorKind = "USER"
+        op.actorUserId = this.session.id
+        op.actorMembershipId = this.session.id
+        op.changes = [{ type: entity, id, before, after }]
+        op.entityVersionBefore = typeof before.version === "number" ? before.version : null
+        op.entityVersionAfter = typeof after.version === "number" ? after.version : null
+        return op.id
+      },
+    )
+  }
+  getAnonymousVisits: GamApi["getAnonymousVisits"] = (query) => this.history.getAnonymousVisits(query)
+  assignAnonymousVisit: GamApi["assignAnonymousVisit"] = (input) => this.history.assignAnonymousVisit(input)
+  undoAnonymousAssignment: GamApi["undoAnonymousAssignment"] = (input) => this.history.undoAnonymousAssignment(input)
+  getDuplicateCustomers: GamApi["getDuplicateCustomers"] = (query) => this.history.getDuplicateCustomers(query)
+  mergeDuplicateCustomers: GamApi["mergeDuplicateCustomers"] = (input) => this.history.mergeDuplicateCustomers(input)
+  dismissDuplicateCustomers: GamApi["dismissDuplicateCustomers"] = (input) =>
+    this.history.dismissDuplicateCustomers(input)
   private db: MockDb
   private session: SessionUser
   private seq: number
@@ -159,6 +190,18 @@ export class MockGamApi implements GamApi, DemoControls {
 
   private get now() {
     return clock.now()
+  }
+
+  async getTableTurns(params: TableTurnsParams) {
+    await this.latency("q")
+    this.require("report.read")
+    return mockTableTurns(projectTableTurns(this.db), params)
+  }
+
+  async getTableTurnSummary(params: TableTurnQuery) {
+    await this.latency("q")
+    this.require("report.read")
+    return mockTableTurnSummary(projectTableTurns(this.db), params)
   }
 
   private get venue() {
@@ -326,7 +369,13 @@ export class MockGamApi implements GamApi, DemoControls {
     }
   }
 
-  private systemLog(action: string, entityType: string, entityId: number, summary: string) {
+  private systemLog(
+    action: string,
+    entityType: string,
+    entityId: number,
+    summary: string,
+    actorUserId: number | null = null,
+  ) {
     this.seq += 1
     this.venue.changeSeq = this.seq
     this.db.ops.push({
@@ -335,8 +384,8 @@ export class MockGamApi implements GamApi, DemoControls {
       venueId: VENUE_ID,
       changeSeq: this.seq,
       occurredAt: this.now,
-      actorKind: "SYSTEM",
-      actorUserId: null,
+      actorKind: actorUserId === null ? "SYSTEM" : "USER",
+      actorUserId,
       actorMembershipId: null,
       authSessionId: null,
       requestId: null,
@@ -356,7 +405,14 @@ export class MockGamApi implements GamApi, DemoControls {
       undo: [],
       compensatedBy: null,
     })
-    this.emit({ latestSeq: this.seq, action, entityType, actorKind: "SYSTEM", actorUserId: null, summary })
+    this.emit({
+      latestSeq: this.seq,
+      action,
+      entityType,
+      actorKind: actorUserId === null ? "SYSTEM" : "USER",
+      actorUserId,
+      summary,
+    })
   }
 
   /* ================= claim helpers ================= */
@@ -759,7 +815,7 @@ export class MockGamApi implements GamApi, DemoControls {
         status: "ACTIVE" as const,
         membershipStatus: "ACTIVE",
         roles: [u.role],
-        accessLevel: u.role === "ADMIN" ? "WRITE" as const : null,
+        accessLevel: u.role === "ADMIN" ? ("WRITE" as const) : null,
         lastLoginAt: null,
         version: 1,
       })),
@@ -1435,7 +1491,7 @@ export class MockGamApi implements GamApi, DemoControls {
    */
   private callPhone(target: CallTarget): string | null {
     const ofCustomer = (customerId: number | null | undefined) =>
-      customerId ? this.db.customers.get(customerId)?.phoneE164 ?? null : null
+      customerId ? (this.db.customers.get(customerId)?.phoneE164 ?? null) : null
     if (target.kind === "booking") return ofCustomer(this.res(target.id).customerId)
     if (target.kind === "waitlist") {
       const entry = this.entry(target.id)
@@ -1486,12 +1542,7 @@ export class MockGamApi implements GamApi, DemoControls {
       }))
   }
 
-  async recordCallOutcome(
-    target: CallTarget,
-    _callId: number,
-    outcome: CallOutcome,
-    bookingVersion?: number,
-  ) {
+  async recordCallOutcome(target: CallTarget, _callId: number, outcome: CallOutcome, bookingVersion?: number) {
     if (outcome === "LATE_CONFIRMED") {
       if (target.kind !== "booking") this.fail("Kết quả cuộc gọi không hợp lệ.", "VALIDATION_FAILED")
       const reservation = this.res(target.id)
@@ -2814,6 +2865,7 @@ export class MockGamApi implements GamApi, DemoControls {
 
   reset() {
     this.db = seedDb(clock.now())
+    this.history = this.createCustomerHistory()
     this.guestCounts.clear()
     this.quickTimes = ["21:00", "21:30", "22:00", "22:30"]
     this.seq = venueOf(this.db).changeSeq

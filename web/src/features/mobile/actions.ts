@@ -231,6 +231,7 @@ export function useMobileActions() {
       hint: `Chạm một hoặc nhiều bàn trống cho đoàn ${claim.partySize} khách. Lịch sử bàn cũ được giữ nguyên.`,
       multi: true,
       exclude: claim.tableIds,
+      targetParty: claim.partySize,
       confirmLabel: "Đổi bàn",
       onConfirm: async (toIds) => {
         return !!(await run((o) =>

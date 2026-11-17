@@ -181,12 +181,12 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
       title: `Chuyển ${e.displayName} vào bàn`,
       hint: `Chạm bàn trống cho ${party} khách. Chạm lại để bỏ chọn.`,
       multi: true,
+      targetParty: party,
       ...(expected
         ? {
             targetDate: e.businessDate,
             targetTime: fmtTime(expected),
             targetExpectedAt: expected,
-            targetParty: party,
           }
         : {}),
       confirmLabel: arrived ? "Xác nhận mở bàn" : "Xác nhận chuyển bàn",
@@ -209,8 +209,7 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
   const canArrival = hold.canArrival
   const canReassign = hold.canReassign
   const canChangeStatus = linkedRes
-    ? hold.canBookingStatus &&
-      (m.can("reservation.cancel") || m.can("reservation.update"))
+    ? hold.canBookingStatus && (m.can("reservation.cancel") || m.can("reservation.update"))
     : canCancel
   const arrival = () => a.arrival({ entry: e, reservation: linkedRes, partySize: party, tableCodes })
   const reassign = () => a.reassignHold(e, linkedRes)
@@ -414,7 +413,7 @@ export function EntryDetailScreen({
 
   if (!e) {
     return (
-      <div role="dialog" aria-label="Chi tiết mục chờ" className="fixed inset-0 z-[40] flex flex-col bg-background">
+      <div role="dialog" aria-label="Chi tiết mục chờ" className="absolute inset-0 z-[40] flex flex-col bg-background">
         {header}
         <p className="px-4 text-[14px] text-[var(--text-muted)]">
           {waitlist ? "Không tìm thấy mục chờ." : "Đang tải..."}
@@ -427,8 +426,7 @@ export function EntryDetailScreen({
   const canArrival = hold.canArrival
   const canReassign = hold.canReassign
   const canChangeStatus = linkedRes
-    ? hold.canBookingStatus &&
-      (m.can("reservation.cancel") || m.can("reservation.update"))
+    ? hold.canBookingStatus && (m.can("reservation.cancel") || m.can("reservation.update"))
     : canCancel
   const arrival = () => a.arrival({ entry: e, reservation: linkedRes, partySize: party, tableCodes })
   const reassign = () => a.reassignHold(e, linkedRes)
@@ -448,7 +446,7 @@ export function EntryDetailScreen({
       : null
 
   return (
-    <div role="dialog" aria-label="Chi tiết mục chờ" className="fixed inset-0 z-[40] flex flex-col bg-background">
+    <div role="dialog" aria-label="Chi tiết mục chờ" className="absolute inset-0 z-[40] flex flex-col bg-background">
       {header}
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-1 pb-6">
         <div className="flex flex-col gap-2 rounded-[20px] border border-border bg-surface-1 p-[18px] shadow-[var(--shadow-soft)]">

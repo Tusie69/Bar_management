@@ -29,8 +29,8 @@ const AdminShell = lazy(() => import("./admin-shell").then((module) => ({ defaul
  *   overview: lazy(() => import("./pages/overview-page")),
  */
 const ADMIN_PAGE_COMPONENTS: Partial<Record<string, ComponentType>> = {
-  // NA-33 — 01 Tổng quan ca
-  // NA-34 — 08 Sổ lượt tới quán
+  overview: lazy(() => import("@/features/shift-overview")), // NA-33 — 01 Tổng quan ca
+  visits: lazy(() => import("@/features/turns")), // NA-34 — 08 Sổ lượt tới quán
   accounts: lazy(() => import("./pages/accounts-page")), // TU-34
   audit: lazy(() => import("./pages/audit-page")), // TU-35
 }

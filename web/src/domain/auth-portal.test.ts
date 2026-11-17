@@ -5,6 +5,7 @@ import {
   canonicalPortalPath,
   portalFromPath,
   portalLoginPath,
+  resolvePortalLoginDestination,
   unavailablePortalFromPath,
 } from "./auth-portal"
 
@@ -61,6 +62,20 @@ describe("portal-bound login routes", () => {
     expect(canonicalPortalPath("/letan/login")).toBeNull()
     expect(canonicalPortalPath("/admin/login")).toBeNull()
     expect(canonicalPortalPath("/floor")).toBeNull()
+    expect(canonicalPortalPath("/admin/turns")).toBeNull()
+    expect(canonicalPortalPath("/admin/accounts")).toBeNull()
+    expect(canonicalPortalPath("/waiter/login")).toBe("/phucvu/login")
+  })
+  it("returns only to the admin subtree after an admin login", () => {
+    expect(resolvePortalLoginDestination("admin", "/admin/turns?date=2026-11-16#ledger")).toBe(
+      "/admin/turns?date=2026-11-16#ledger",
+    )
+    for (const target of ["/administrator", "/admin-other/turns", "//evil.example/admin/turns", "/admin/login"]) {
+      expect(resolvePortalLoginDestination("admin", undefined, target)).toBe("/admin/overview")
+    }
+    for (const portal of ["receptionist", "cashier", "waiter"] as const) {
+      expect(resolvePortalLoginDestination(portal, undefined, "/admin/turns")).toBe("/floor")
+    }
   })
 
   it("gives every portal exactly one role set and a home route", () => {

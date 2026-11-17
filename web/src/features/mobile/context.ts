@@ -58,6 +58,7 @@ export interface MobileCtx {
   openAlerts: () => void
   openAccount: () => void
   openCount: () => void
+  openCountEdit: () => void
   openDetail: (id: number, bd: BusinessDate) => void
   openEntryDetail: (id: number, bd: BusinessDate) => void
   openStatus: (r: ReservationView) => void

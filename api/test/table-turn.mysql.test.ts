@@ -26,8 +26,9 @@ import {
   dissolveLayoutGroup,
 } from '../src/modules/tables/table-layout-group.repository.js'
 import { closeVisit } from '../src/modules/visits/visit.repository.js'
-import { listTableTurns } from '../src/modules/visits/table-turn.repository.js'
+import { listTableTurns, summarizeTableTurns } from '../src/modules/visits/table-turn.repository.js'
 import { runBusinessDayEndSweep } from '../src/modules/visits/business-day.worker.js'
+import { createWaitlistEntry, seatWaitlistEntry } from '../src/modules/waitlist/waitlist.repository.js'
 import {
   actor,
   businessDate,
@@ -36,6 +37,8 @@ import {
   login,
   resetFixture,
   tableId,
+  otherVenueId,
+  foreignTableId,
 } from './support/integration-fixture.js'
 
 const mysqlDescribe = process.env.RUN_MYSQL_INTEGRATION === '1' && /_test$/.test(process.env.DB_NAME ?? '')
@@ -111,7 +114,7 @@ function bookingInput(name: string, partySize = 4) {
 }
 
 /** Books, checks in, and returns the visit the party is sitting on. */
-async function seatBooking(name: string, tableIds: number[], partySize = 4): Promise<{
+async function seatBooking(name: string, tableIds: number[], partySize = 4, checkedInActor = actor): Promise<{
   reservationId: number
   visitId: number
   version: number
@@ -121,7 +124,7 @@ async function seatBooking(name: string, tableIds: number[], partySize = 4): Pro
     tableIds,
     capacityOverrideConfirmed: true,
   })
-  await checkInBooking(actor, booking.id, booking.version, checkInNow)
+  await checkInBooking(checkedInActor, booking.id, booking.version, checkInNow)
   const [rows] = await databasePool.execute<(RowDataPacket & { visit_id: number })[]>(
     'SELECT visit_id FROM reservations WHERE id = ?', [booking.id],
   )
@@ -144,6 +147,120 @@ mysqlDescribe('C2 table turn ledger', () => {
     await addTables()
   })
   afterAll(clearFixture)
+
+  it('splits OPEN turns from counted and uncounted CLOSED turns under the same staff filters', async () => {
+    const otherStaff = { ...actor, userId: 9802, membershipId: 9802 }
+    await seatBooking('Still seated', [b3], 2)
+    const completed = await seatBooking('Released', [b4], 3)
+    const correction = await seatBooking('Correction', [b5], 4)
+    await closeVisit(otherStaff, {
+      visitId: completed.visitId, expectedVersion: completed.version, mode: 'MANUAL', reason: 'GUEST_LEFT',
+    })
+    await closeVisit(otherStaff, {
+      visitId: correction.visitId, expectedVersion: correction.version, mode: 'MANUAL', reason: 'ENTRY_ERROR',
+    })
+    await seatBooking('Other staff seated', [b5], 5, otherStaff)
+    for (const countedOnly of [true, false]) {
+      const query = { from: businessDate, to: businessDate, countedOnly }
+      for (const [filters, expected] of [
+        [{}, { completedTotal: 3, openTotal: 2, guestTotal: 10 }],
+        [{ checkedInByUserId: actor.userId }, { completedTotal: 2, openTotal: 1, guestTotal: 5 }],
+        [{ checkedInByUserId: otherStaff.userId }, { completedTotal: 1, openTotal: 1, guestTotal: 5 }],
+        [{ closedByUserId: otherStaff.userId }, { completedTotal: 1, openTotal: 0, guestTotal: 3 }],
+        [{ checkedInByUserId: 999999 }, { completedTotal: 0, openTotal: 0, guestTotal: 0 }],
+      ] as const) {
+        const summary = await summarizeTableTurns(actor, { ...query, ...filters })
+        expect(summary).toMatchObject(expected)
+        expect(summary.openTotal).toBeGreaterThanOrEqual(0)
+        expect(summary.openTotal).toBeLessThanOrEqual(summary.completedTotal)
+      }
+    }
+  })
+
+  it('NA-34 counts an open check-in immediately and keeps one visit after release', async () => {
+    const seated = await seatBooking('Open booking', [b3], 3)
+    const query = { from: businessDate, to: businessDate, countedOnly: true, page: 1, pageSize: 50 }
+    const open = await listTableTurns(actor, query)
+    expect(open).toMatchObject({ total: 1, completedTotal: 1, guestTotal: 3 })
+    expect(open.turns[0]).toMatchObject({ visitId: seated.visitId, status: 'OPEN', releasedAt: null,
+      counted: true, turnNo: 1, checkedInByUserId: actor.userId, checkedInByDisplayName: 'integration_reception' })
+    expect(await summarizeTableTurns(actor, query)).toMatchObject({ completedTotal: 1, openTotal: 1, guestTotal: 3 })
+    await closeVisit({ ...actor, userId: 9802, membershipId: 9802 }, {
+      visitId: seated.visitId, expectedVersion: seated.version, mode: 'MANUAL', reason: 'GUEST_LEFT',
+    })
+    const closed = await listTableTurns(actor, query)
+    expect(closed).toMatchObject({ total: 1, completedTotal: 1, guestTotal: 3 })
+    expect(closed.turns[0]).toMatchObject({ visitId: seated.visitId, status: 'CLOSED',
+      checkedInByUserId: actor.userId, closedByUserId: 9802 })
+    expect(await summarizeTableTurns(actor, query)).toMatchObject({ openTotal: 0, byStaff: [{
+      checkedInByUserId: actor.userId, checkedInByDisplayName: 'integration_reception', turns: 1, guests: 3,
+    }] })
+  })
+
+  it('NA-34 attributes booking, walk-in and waitlist seating to the check-in user with shared filters', async () => {
+    const otherStaff = { ...actor, userId: 9802, membershipId: 9802 }
+    const booking = await seatBooking('Owner check-in', [b3], 2, otherStaff)
+    const walkIn = await createWalkIn(actor, { guestName: 'Walk-in', partySize: 3, businessDate, tableIds: [b4] })
+    const entry = await createWaitlistEntry(actor, {
+      guestName: 'Waitlist', partySize: 4, businessDate, contactChannel: 'IN_PERSON',
+    }, checkInNow)
+    const waitlist = await seatWaitlistEntry(otherStaff, {
+      entryId: entry.id, expectedVersion: entry.version, tableIds: [b5], arrived: true,
+    }, checkInNow)
+    const query = { from: businessDate, to: businessDate, countedOnly: true, page: 1, pageSize: 1 }
+    const all = await listTableTurns(actor, { ...query, pageSize: 50 })
+    expect(all).toMatchObject({ total: 3, completedTotal: 3, guestTotal: 9 })
+    expect(new Set(all.turns.map((row) => row.visitId)).size).toBe(3)
+    expect(all.turns.find((row) => row.visitId === booking.visitId)).toMatchObject({
+      status: 'OPEN', origin: 'RESERVATION', checkedInByUserId: otherStaff.userId,
+      checkedInByDisplayName: 'integration_owner', reservationId: booking.reservationId,
+    })
+    expect(all.turns.find((row) => row.visitId === walkIn.visitId)).toMatchObject({
+      status: 'OPEN', origin: 'WALK_IN', checkedInByUserId: actor.userId,
+    })
+    expect(all.turns.find((row) => row.visitId === waitlist.entry.visitId)).toMatchObject({
+      status: 'OPEN', origin: 'WAITLIST', checkedInByUserId: otherStaff.userId, reservationId: null,
+    })
+    for (const checkedInByUserId of [actor.userId, otherStaff.userId, 999999]) {
+      const filters = { ...query, checkedInByUserId }
+      const list = await listTableTurns(actor, filters)
+      const summary = await summarizeTableTurns(actor, filters)
+      const expected = checkedInByUserId === actor.userId ? { total: 1, completedTotal: 1, guestTotal: 3 }
+        : checkedInByUserId === otherStaff.userId ? { total: 2, completedTotal: 2, guestTotal: 6 }
+          : { total: 0, completedTotal: 0, guestTotal: 0 }
+      expect(list).toMatchObject(expected)
+      expect(summary).toMatchObject({ completedTotal: expected.completedTotal, guestTotal: expected.guestTotal })
+      expect(summary.byStaff.every((row) => row.checkedInByUserId === checkedInByUserId)).toBe(true)
+    }
+    const owner = await login('integration_owner')
+    const route = await owner.agent.get(`/api/v1/visits/turns?from=${businessDate}&to=${businessDate}&checkedInByUserId=${otherStaff.userId}`)
+    expect(route.status).toBe(200)
+    expect(route.body).toMatchObject({ total: 2, completedTotal: 2, guestTotal: 6 })
+    const routeSummary = await owner.agent.get(`/api/v1/visits/turns/summary?from=${businessDate}&to=${businessDate}&checkedInByUserId=${otherStaff.userId}`)
+    expect(routeSummary.status).toBe(200)
+    expect(routeSummary.body).toMatchObject({ openTotal: 2, byStaff: [{
+      checkedInByUserId: otherStaff.userId, checkedInByDisplayName: 'integration_owner', turns: 2, guests: 6,
+    }] })
+    await closeVisit(actor, { visitId: booking.visitId, expectedVersion: booking.version, mode: 'MANUAL', reason: 'ENTRY_ERROR' })
+    const filters = { ...query, checkedInByUserId: otherStaff.userId }
+    expect(await listTableTurns(actor, filters)).toMatchObject({ total: 1, completedTotal: 1, guestTotal: 4 })
+    const corrected = await listTableTurns(actor, { ...filters, countedOnly: false, pageSize: 50 })
+    expect(corrected).toMatchObject({ total: 2, completedTotal: 1, guestTotal: 4 })
+    expect(corrected.turns.find((row) => row.visitId === booking.visitId)).toMatchObject({
+      status: 'CLOSED', counted: false, endReason: 'ENTRY_ERROR', checkedInByUserId: otherStaff.userId,
+    })
+    expect(await summarizeTableTurns(actor, filters)).toMatchObject({ completedTotal: 1, guestTotal: 4 })
+    expect(await badgeFor('B3')).toBe(0)
+    expect(await badgeFor('B4')).toBe(1)
+    const replacement = await seatBooking('Replacement after correction', [b3], 2)
+    const replacementFilters = { ...query, checkedInByUserId: actor.userId, pageSize: 50 }
+    expect((await listTableTurns(actor, replacementFilters)).turns.find((row) => row.visitId === replacement.visitId))
+      .toMatchObject({ status: 'OPEN', turnNo: 1 })
+    await closeVisit(otherStaff, { visitId: replacement.visitId, expectedVersion: replacement.version, mode: 'MANUAL', reason: 'GUEST_LEFT' })
+    expect((await listTableTurns(actor, replacementFilters)).turns.find((row) => row.visitId === replacement.visitId))
+      .toMatchObject({ status: 'CLOSED', turnNo: 1, checkedInByUserId: actor.userId })
+    expect(await badgeFor('B3')).toBe(1)
+  })
 
   /* ---------------- AC01 ---------------- */
 
@@ -204,13 +321,12 @@ mysqlDescribe('C2 table turn ledger', () => {
 
   /* ---------------- AC03 ---------------- */
 
-  it('AC03 the badge goes up by one per completed turn and the table returns to empty', async () => {
+  it('AC03 the badge counts check-ins immediately and stays unchanged on release', async () => {
     expect(await badgeFor('B3')).toBe(0)
 
     for (const [index, name] of ['Lượt 1', 'Lượt 2', 'Lượt 3'].entries()) {
       const seated = await seatBooking(name, [b3])
-      // While the party is seated the badge still shows only completed turns.
-      expect(await badgeFor('B3')).toBe(index)
+      expect(await badgeFor('B3')).toBe(index + 1)
       await closeVisit(actor, {
         visitId: seated.visitId, expectedVersion: seated.version, mode: 'MANUAL', reason: 'GUEST_LEFT',
       })
@@ -349,6 +465,121 @@ mysqlDescribe('C2 table turn ledger', () => {
 
   /* ---------------- AC06, AC08, AC09 ---------------- */
 
+  it('NA-34 shares staff/count filters between list totals and summary, counting groups once', async () => {
+    const cluster = await createLayoutGroup(deviceActor, { tableCodes: ['B3', 'B4'] })
+    for (const guests of [7, 8]) {
+      const seated = await seatBooking('Group', [b3], guests)
+      await closeVisit(actor, { visitId: seated.visitId, expectedVersion: seated.version, mode: 'MANUAL', reason: 'GUEST_LEFT' })
+    }
+    const otherStaff = { ...actor, userId: 9802, membershipId: 9802 }
+    const single = await seatBooking('Other staff', [b5], 2)
+    await closeVisit(otherStaff, { visitId: single.visitId, expectedVersion: single.version, mode: 'MANUAL', reason: 'GUEST_LEFT' })
+    const correction = await seatBooking('Correction', [b5], 3)
+    await closeVisit(actor, { visitId: correction.visitId, expectedVersion: correction.version, mode: 'MANUAL', reason: 'ENTRY_ERROR' })
+    await seatBooking('Auto close', [b5], 4)
+    await runBusinessDayEndSweep({ ...actor, now: new Date('2030-10-26T00:00:00.000Z') })
+    await databasePool.execute(
+      `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
+       SELECT ?, ?, id, ? FROM roles WHERE code = 'OWNER'`,
+      [actor.organizationId, actor.membershipId, actor.venueId],
+    )
+    const originalGroupTurn = (await turns()).find((row) => row.scope === 'GROUP')!
+    await databasePool.execute('UPDATE table_turns SET group_code_snapshot = ? WHERE id = ?', ['ZZZ_OLD', originalGroupTurn.id])
+    const query = { from: businessDate, to: businessDate, countedOnly: true, page: 1, pageSize: 1 }
+    const list = await listTableTurns(actor, query)
+    const summary = await summarizeTableTurns(actor, query)
+    expect(list).toMatchObject({ total: 3, completedTotal: 3, guestTotal: 17 })
+    expect(list.turns).toHaveLength(1)
+    expect(summary).toMatchObject({ completedTotal: 3, guestTotal: 17 })
+    expect(summary.byBusinessDate).toEqual([{ businessDate, turns: 3, guests: 17 }])
+    expect(summary.byScope[0]).toEqual({ scope: 'GROUP', groupId: cluster.group.groupId, tableId: null,
+      label: cluster.group.displayCode, turns: 2, guests: 15 })
+    expect(summary.byScope.reduce((sum, row) => sum + row.turns, 0)).toBe(3)
+    expect(summary.byStaff).toEqual([
+      { checkedInByUserId: actor.userId, checkedInByDisplayName: 'integration_reception', turns: 3, guests: 17 },
+    ])
+    for (const countedOnly of [true, false]) {
+      const filters = { ...query, countedOnly, closedByUserId: actor.userId }
+      const staffList = await listTableTurns(actor, filters)
+      const staffSummary = await summarizeTableTurns(actor, filters)
+      expect(staffList).toMatchObject({ total: countedOnly ? 2 : 3, completedTotal: 2, guestTotal: 15 })
+      expect(staffList.turns[0]).toMatchObject({ closedByUserId: actor.userId, closedByDisplayName: 'integration_reception' })
+      expect(staffSummary).toMatchObject({ completedTotal: 2, guestTotal: 15 })
+      expect(staffSummary.byStaff).toEqual([{ checkedInByUserId: actor.userId, checkedInByDisplayName: 'integration_reception',
+        turns: countedOnly ? 2 : 3, guests: countedOnly ? 15 : 18 }])
+    }
+    const included = await listTableTurns(actor, { ...query, countedOnly: false, pageSize: 50 })
+    expect(included).toMatchObject({ total: 5, completedTotal: 3, guestTotal: 17 })
+    expect(included.turns.find((row) => row.endReason === 'BUSINESS_DAY_END')).toMatchObject({
+      closedByUserId: null, closedByDisplayName: null, counted: false,
+    })
+    const allSummary = await summarizeTableTurns(actor, { ...query, countedOnly: false })
+    expect(allSummary.byStaff).toEqual([{
+      checkedInByUserId: actor.userId, checkedInByDisplayName: 'integration_reception', turns: 5, guests: 24,
+    }])
+    expect(allSummary.byBusinessDate).toEqual([{ businessDate, turns: 5, guests: 24 }])
+    const owner = await login('integration_owner')
+    const route = await owner.agent.get(`/api/v1/visits/turns/summary?from=${businessDate}&to=${businessDate}&closedByUserId=${actor.userId}`)
+    expect(route.status).toBe(200)
+    expect(route.body).toMatchObject({ completedTotal: 2, guestTotal: 15, byStaff: [{
+      checkedInByUserId: actor.userId, checkedInByDisplayName: 'integration_reception', turns: 2, guests: 15,
+    }] })
+  })
+  it('NA-34 keeps separate group identities when snapshot codes are reused', async () => {
+    for (let index = 0; index < 2; index++) {
+      const group = await createLayoutGroup(deviceActor, { tableCodes: ['B3', 'B4'] })
+      const seated = await seatBooking('Group history', [b3], 6)
+      await closeVisit(actor, { visitId: seated.visitId, expectedVersion: seated.version, mode: 'MANUAL', reason: 'GUEST_LEFT' })
+      await dissolveLayoutGroup(deviceActor, { groupId: group.group.groupId })
+    }
+    await databasePool.execute("UPDATE table_turns SET group_code_snapshot = 'C1' WHERE venue_id = ?", [actor.venueId])
+    const summary = await summarizeTableTurns(actor, { from: businessDate, to: businessDate, countedOnly: true })
+    expect(summary).toMatchObject({ completedTotal: 2, guestTotal: 12 })
+    expect(summary.byScope).toHaveLength(2)
+    expect(summary.byScope.every((row) => row.scope === 'GROUP' && row.label === 'C1' && row.turns === 1 && row.guests === 6)).toBe(true)
+    expect(new Set(summary.byScope.map((row) => row.groupId)).size).toBe(2)
+  })
+  it('NA-34 isolates other venue rows in list, totals and every summary bucket', async () => {
+    const home = await seatBooking('Home', [b3], 2)
+    await closeVisit(actor, { visitId: home.visitId, expectedVersion: home.version, mode: 'MANUAL', reason: 'GUEST_LEFT' })
+    const foreignActor = { ...actor, venueId: otherVenueId }
+    await databasePool.execute(
+      `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
+       SELECT ?, ?, id, ? FROM roles WHERE code = 'RECEPTIONIST'`,
+      [actor.organizationId, actor.membershipId, otherVenueId],
+    )
+    const away = await createWalkIn(foreignActor, { guestName: 'Foreign', partySize: 4, businessDate, tableIds: [foreignTableId] })
+    const openQuery = { from: businessDate, to: businessDate, countedOnly: true, page: 1, pageSize: 50, checkedInByUserId: actor.userId }
+    expect(await listTableTurns(actor, openQuery)).toMatchObject({ total: 1, completedTotal: 1, guestTotal: 2 })
+    expect(await summarizeTableTurns(actor, openQuery)).toMatchObject({ completedTotal: 1, guestTotal: 2 })
+    expect(await listTableTurns(foreignActor, openQuery)).toMatchObject({ total: 1, completedTotal: 1, guestTotal: 4,
+      turns: [{ status: 'OPEN', visitId: away.visitId, checkedInByUserId: actor.userId }] })
+    expect(await summarizeTableTurns(foreignActor, openQuery)).toMatchObject({ completedTotal: 1, guestTotal: 4 })
+    await closeVisit(foreignActor, { visitId: away.visitId, expectedVersion: 1, mode: 'MANUAL', reason: 'GUEST_LEFT' })
+    const query = { from: businessDate, to: businessDate, countedOnly: false, page: 1, pageSize: 50 }
+    for (const closedByUserId of [undefined, actor.userId]) {
+      const filters = { ...query, ...(closedByUserId === undefined ? {} : { closedByUserId }) }
+      const list = await listTableTurns(actor, filters)
+      const summary = await summarizeTableTurns(actor, filters)
+      expect(list).toMatchObject({ total: 1, completedTotal: 1, guestTotal: 2 })
+      expect(list.turns.map((row) => row.guestName)).toEqual(['Home'])
+      expect(summary).toMatchObject({ completedTotal: 1, guestTotal: 2 })
+      expect(summary.byScope).toEqual([{ scope: 'TABLE', tableId: b3, groupId: null, label: 'B3', turns: 1, guests: 2 }])
+      expect(summary.byBusinessDate).toEqual([{ businessDate, turns: 1, guests: 2 }])
+      expect(summary.byStaff).toHaveLength(1)
+      expect(summary.byStaff[0]!.guests).toBe(2)
+    }
+    const awayList = await listTableTurns(foreignActor, query)
+    expect(awayList.turns).toHaveLength(1)
+    expect(awayList.turns[0]).toMatchObject({ closedByUserId: actor.userId, closedByDisplayName: 'integration_reception' })
+    await databasePool.execute('UPDATE table_turns SET closed_by_user_id = 9803 WHERE venue_id = ?', [otherVenueId])
+    expect((await listTableTurns(foreignActor, query)).turns[0]).toMatchObject({
+      closedByUserId: 9803, closedByDisplayName: null,
+    })
+    expect(await summarizeTableTurns(actor, { ...query, closedByUserId: 99999 })).toMatchObject({
+      completedTotal: 0, guestTotal: 0, byBusinessDate: [], byStaff: [], byScope: [],
+    })
+  })
   it('AC06 a cluster of B3+B4+B5 earns one turn, not three', async () => {
     const cluster = await createLayoutGroup(deviceActor, { tableCodes: ['B3', 'B4', 'B5'] })
     const seated = await seatBooking('Đoàn 12 khách', [b3], 12)
@@ -384,6 +615,12 @@ mysqlDescribe('C2 table turn ledger', () => {
     expect(afterClose[0]!.dissolved_at).toBeNull()
 
     const second = await seatBooking('Đoàn 2', [b4], 8)
+    const open = await listTableTurns(actor, { from: businessDate, to: businessDate, countedOnly: true, page: 1, pageSize: 50 })
+    expect(open).toMatchObject({ total: 2, completedTotal: 2, guestTotal: 16 })
+    expect(open.turns.find((row) => row.visitId === second.visitId)).toMatchObject({
+      status: 'OPEN', scope: 'GROUP', groupId: cluster.group.groupId, groupCode: cluster.group.displayCode, turnNo: 2,
+    })
+    expect(await badgeFor('B3')).toBe(2)
     await closeVisit(actor, {
       visitId: second.visitId, expectedVersion: second.version, mode: 'MANUAL', reason: 'GUEST_LEFT',
     })
@@ -430,6 +667,19 @@ mysqlDescribe('C2 table turn ledger', () => {
     })).rejects.toMatchObject({ code: 'VISIT_ALREADY_CLOSED' })
     expect(await turns()).toHaveLength(1)
     expect(await badgeFor('B3')).toBe(1)
+  })
+
+  it('closes a claim group when the database clock moves behind its formation timestamp', async () => {
+    const seated = await seatBooking('Clock rollback', [b3, b4], 4)
+    await databasePool.execute(
+      `UPDATE table_groups g JOIN table_allocations a ON a.group_id = g.id AND a.venue_id = g.venue_id
+       SET g.formed_at = UTC_TIMESTAMP(3) + INTERVAL 1 SECOND WHERE a.visit_id = ? AND g.origin = 'CLAIM'`,
+      [seated.visitId],
+    )
+    await closeVisit(actor, { visitId: seated.visitId, expectedVersion: seated.version, mode: 'MANUAL', reason: 'GUEST_LEFT' })
+    const query = { from: businessDate, to: businessDate, countedOnly: true, page: 1, pageSize: 50 }
+    expect(await listTableTurns(actor, query)).toMatchObject({ total: 1, completedTotal: 1,
+      turns: [{ status: 'CLOSED', visitId: seated.visitId }] })
   })
 
   it('AC07 two devices closing the same visit at once write one turn', async () => {
@@ -545,6 +795,6 @@ mysqlDescribe('C2 table turn ledger', () => {
       visitId: seated.visitId, expectedVersion: seated.version + 99, mode: 'MANUAL', reason: 'GUEST_LEFT',
     })).rejects.toMatchObject({ code: 'VERSION_CONFLICT' })
     expect(await turns()).toHaveLength(0)
-    expect(await badgeFor('B3')).toBe(0)
+    expect(await badgeFor('B3')).toBe(1)
   })
 })

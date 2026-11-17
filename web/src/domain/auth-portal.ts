@@ -50,10 +50,7 @@ const UNAVAILABLE_PORTALS: Readonly<Record<string, string>> = {
   warehouse: "Kho",
 }
 
-export const PORTAL_CONFIG: Record<
-  AuthPortal,
-  { label: string; roles: readonly PortalRole[]; home: string }
-> = {
+export const PORTAL_CONFIG: Record<AuthPortal, { label: string; roles: readonly PortalRole[]; home: string }> = {
   // Một cổng /admin dùng chung cho ba cấp quản trị. Biên bản mô tả ba cấp
   // khác nhau về QUYỀN, không về cổng vào: SuperAdmin, Admin Edit và Admin
   // Read-Only cùng đăng nhập ở đây rồi backend phân quyền theo role và
@@ -93,6 +90,27 @@ export function portalFromPath(pathname: string): AuthPortal | null {
   return slug ? (PORTAL_ALIASES[slug] ?? null) : null
 }
 
+export function resolvePortalLoginDestination(
+  portal: AuthPortal,
+  currentPath?: string,
+  explicitRedirect?: string | null,
+): string {
+  const defaultHome = PORTAL_CONFIG[portal].home
+  if (portal !== "admin") return defaultHome
+  const candidate = explicitRedirect ?? currentPath ?? ""
+  if (!candidate.startsWith("/admin/")) return defaultHome
+  const [pathnameOnly] = candidate.split(/[?#]/)
+  if (
+    pathnameOnly === "/admin" ||
+    pathnameOnly === "/admin/" ||
+    pathnameOnly === "/admin/login" ||
+    pathnameOnly === "/admin/login/"
+  ) {
+    return defaultHome
+  }
+  return candidate
+}
+
 /**
  * Cổng đã có URL nhưng chưa có vai trò trong hệ thống. Trả về nhãn để hiện
  * trang "đang xây dựng" thay vì ném người dùng về cổng lễ tân, vì gõ /warehouse
@@ -110,5 +128,10 @@ export function canonicalPortalPath(pathname: string): string | null {
   const portal = portalFromPath(pathname)
   if (!portal) return null
   const canonical = portalLoginPath(portal)
-  return pathname === canonical ? null : canonical
+  if (pathname === canonical) return null
+  // NA-32: URL đã dùng đúng slug công bố của cổng (ví dụ `/admin/turns`) thì không
+  // phải alias, và đẩy nó về `/admin/login` sẽ làm mất deep link mà
+  // `resolvePortalLoginDestination` cần để quay lại sau khi đăng nhập.
+  if (pathname.startsWith(`/${PORTAL_SLUGS[portal]}/`)) return null
+  return canonical
 }

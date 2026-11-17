@@ -42,6 +42,37 @@
   background: var(--adm-canvas);
 }
 
+/*
+ * Cầu nối token cho hai màn NA-33 / NA-34: CSS của chúng đọc `--admin-*`
+ * (tên token theo Figma của Nam) và đã có fallback hex giống hệt bảng màu
+ * này. Alias ở đây để khi bảng màu Admin đổi thì hai màn đó đổi theo,
+ * thay vì giữ hex đóng cứng. `.admin-root` là lớp Nam đặt trên nội dung
+ * rải qua portal (dialog), nên không nạp được token từ `.admin-portal`.
+ */
+.admin-portal,
+.admin-root {
+  --admin-brand-navy: var(--adm-brand-navy);
+  --admin-text-primary: var(--adm-text);
+  --admin-text-muted: var(--adm-text-muted);
+  --admin-text-invert: var(--adm-text-invert);
+  --admin-action-blue: var(--adm-action);
+  --admin-tint-blue: var(--adm-tint-blue);
+  --admin-tint-amber: var(--adm-tint-amber);
+  --admin-tint-red: var(--adm-tint-red);
+  --admin-surface: var(--adm-surface);
+  --admin-surface-sunken: var(--adm-surface-sunken);
+  --admin-canvas: var(--adm-canvas);
+  --admin-border: var(--adm-border);
+  --admin-state-inuse: var(--adm-state-inuse);
+  --admin-state-soon: var(--adm-state-soon);
+  --admin-state-booked: var(--adm-state-booked);
+  --admin-state-late: var(--adm-state-late);
+  --admin-state-empty: var(--adm-state-empty);
+  --admin-state-soon-ink: #854d0e;
+  --admin-state-late-ink: #991b1b;
+  --admin-state-inuse-ink: #1e3a0f;
+}
+
 /* Bậc chữ của Figma. Dùng class thay vì rải số đo vào từng component. */
 .admin-portal .adm-h1 {
   font-size: 26px;

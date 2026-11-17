@@ -71,7 +71,7 @@ export function DetailScreen({
 
   if (!r) {
     return (
-      <div role="dialog" aria-label="Chi tiết booking" className="fixed inset-0 z-[40] flex flex-col bg-background">
+      <div role="dialog" aria-label="Chi tiết booking" className="absolute inset-0 z-[40] flex flex-col bg-background">
         {header}
         <p className="px-4 text-[14px] text-[var(--text-muted)]">{res ? "Không tìm thấy booking." : "Đang tải..."}</p>
       </div>
@@ -194,11 +194,15 @@ export function DetailScreen({
                   tableCodes: codesOf(r.tableIds, m.model),
                 }),
             }
-          : { label: "Xếp bàn", go: () => heldEntry ? a.reassignHold(heldEntry, r) : a.assign(r), disabled: a.pending || !hold.canReassign }
+          : {
+              label: "Xếp bàn",
+              go: () => (heldEntry ? a.reassignHold(heldEntry, r) : a.assign(r)),
+              disabled: a.pending || !hold.canReassign,
+            }
         : null
 
   return (
-    <div role="dialog" aria-label="Chi tiết booking" className="fixed inset-0 z-[40] flex flex-col bg-background">
+    <div role="dialog" aria-label="Chi tiết booking" className="absolute inset-0 z-[40] flex flex-col bg-background">
       {header}
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-1 pb-6">
         <div
@@ -209,7 +213,9 @@ export function DetailScreen({
         >
           <div className="flex items-start gap-2.5">
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="text-[22px] font-semibold tracking-[-0.01em] text-tx-strong">{formatHonorificName(r.displayName, r.honorific)}</span>
+              <span className="text-[22px] font-semibold tracking-[-0.01em] text-tx-strong">
+                {formatHonorificName(r.displayName, r.honorific)}
+              </span>
               <span className="text-[14px] text-tx-2">
                 {fmtTime12(r.expectedAt)}, {r.partySize} khách,{" "}
                 {r.tableIds.length ? `Bàn ${codesOf(r.tableIds, m.model)}` : "Chưa có bàn"}
@@ -275,7 +281,11 @@ export function DetailScreen({
           <CallHistory target={{ kind: "booking", id: r.id }} className="w-full" />
         </section>
       </div>
-      {hold.reason ? <p role="alert" className="px-4 py-2 text-sm text-destructive">{hold.reason}</p> : null}
+      {hold.reason ? (
+        <p role="alert" className="px-4 py-2 text-sm text-destructive">
+          {hold.reason}
+        </p>
+      ) : null}
       {primary ? (
         <footer className="flex shrink-0 flex-col gap-2 border-t border-border bg-surface-1 px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
           <button
@@ -314,9 +324,7 @@ export function DetailScreen({
                 onClick={() => m.openStatus(r)}
                 title={hold.reason ?? (heldEntry && !hold.canBookingStatus ? "Chưa hỗ trợ" : undefined)}
                 disabled={
-                  a.pending ||
-                  !hold.canBookingStatus ||
-                  (!m.can("reservation.cancel") && !m.can("reservation.update"))
+                  a.pending || !hold.canBookingStatus || (!m.can("reservation.cancel") && !m.can("reservation.update"))
                 }
                 className="h-11 rounded-[12px] border border-strong px-2 text-center text-[13px] font-medium text-tx-1 active:bg-surface-2 disabled:opacity-50"
               >
@@ -329,9 +337,7 @@ export function DetailScreen({
               onClick={() => m.openStatus(r)}
               title={hold.reason ?? (heldEntry && !hold.canBookingStatus ? "Chưa hỗ trợ" : undefined)}
               disabled={
-                a.pending ||
-                !hold.canBookingStatus ||
-                (!m.can("reservation.cancel") && !m.can("reservation.update"))
+                a.pending || !hold.canBookingStatus || (!m.can("reservation.cancel") && !m.can("reservation.update"))
               }
               className="h-11 w-full rounded-[12px] border border-strong px-3 text-center text-[13px] font-medium text-tx-1 active:bg-surface-2 disabled:opacity-50"
             >

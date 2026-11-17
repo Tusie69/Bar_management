@@ -49,10 +49,26 @@ import type {
   VenueConfig,
   VenueSettingsView,
   VisitView,
+  TableTurnQuery,
+  TableTurnsParams,
+  TableTurnsResult,
+  TableTurnSummary,
   WaitlistEntryView,
 } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import type { SessionEndCode } from "@/domain/session-end"
+import type {
+  AnonymousVisitQuery,
+  AnonymousVisitsResult,
+  AssignAnonymousVisitInput,
+  AnonymousAssignmentResult,
+  AssignmentUndo,
+  UndoAnonymousAssignmentResult,
+  DuplicateCustomersResult,
+  DuplicateDecisionInput,
+  CustomerMergeResult,
+  DuplicateDismissalResult,
+} from "@/domain/models"
 
 export type KnownApiErrorCode =
   | "VALIDATION_FAILED"
@@ -379,6 +395,12 @@ export interface UndoState {
 
 export interface GamApi {
   readonly mode: "mock" | "http"
+  getAnonymousVisits(query: AnonymousVisitQuery): Promise<AnonymousVisitsResult>
+  assignAnonymousVisit(input: AssignAnonymousVisitInput): Promise<AnonymousAssignmentResult>
+  undoAnonymousAssignment(input: AssignmentUndo): Promise<UndoAnonymousAssignmentResult>
+  getDuplicateCustomers(query?: { page?: number; pageSize?: number }): Promise<DuplicateCustomersResult>
+  mergeDuplicateCustomers(input: DuplicateDecisionInput): Promise<CustomerMergeResult>
+  dismissDuplicateCustomers(input: DuplicateDecisionInput): Promise<DuplicateDismissalResult>
 
   setSession(user: SessionUser): void
   listDemoUsers(): SessionUser[]
@@ -398,6 +420,8 @@ export interface GamApi {
   searchReception(businessDate: BusinessDate, query: { last3?: string; name?: string }): Promise<ReceptionSearchResult>
   exportDailyBookingText(businessDate: BusinessDate): Promise<string>
   listVisits(businessDate: BusinessDate): Promise<VisitView[]>
+  getTableTurns(params: TableTurnsParams): Promise<TableTurnsResult>
+  getTableTurnSummary(params: TableTurnQuery): Promise<TableTurnSummary>
   listWaitlist(businessDate: BusinessDate): Promise<WaitlistEntryView[]>
   searchCustomers(query: string): Promise<CustomerSummary[]>
   getCustomer(id: number): Promise<CustomerProfile>
@@ -502,6 +526,12 @@ export interface GamApi {
 
 /** Implemented backend paths, relative to /api/v1. */
 export const REST_ENDPOINTS = {
+  anonymousVisits: "GET /visits/anonymous?from=YYYY-MM-DD&to=YYYY-MM-DD",
+  assignAnonymousVisit: "POST /visits/:id/customer-assignment",
+  undoAnonymousAssignment: "POST /visits/:id/customer-assignment/undo",
+  duplicateCustomers: "GET /customers/duplicates",
+  mergeDuplicateCustomers: "POST /customers/duplicates/merge",
+  dismissDuplicateCustomers: "POST /customers/duplicates/dismiss",
   settings: "GET, PUT /settings",
   accounts: "GET /accounts",
   createAccount: "POST /accounts",

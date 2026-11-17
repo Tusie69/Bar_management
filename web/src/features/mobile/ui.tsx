@@ -37,11 +37,9 @@ export function UndoRedoButtons({ glass, square }: { glass?: boolean; square?: b
   if (!controller.enabled) return null
   const base = cn(
     "grid shrink-0 place-items-center text-tx-1 disabled:text-[var(--text-muted)] disabled:active:bg-transparent",
-    // `square` is the mockup's bottom bar: a 36x36 rounded square with a hairline
-    // border. The touch target stays 44 through the row's own padding.
-    square
-      ? "size-9 rounded-[10px] border border-border bg-surface-1 active:bg-surface-2"
-      : "size-11 rounded-full",
+    // `square` is the mockup's bottom bar: a 44x44 rounded square with a hairline
+    // border so each button independently satisfies the 44x44pt Apple HIG touch target.
+    square ? "size-11 rounded-xl border border-border bg-surface-1 active:bg-surface-2" : "size-11 rounded-full",
     !square && (glass ? "bg-[var(--glass)] shadow-[var(--shadow-xs)]" : "active:bg-surface-2"),
   )
   return (
@@ -77,11 +75,8 @@ export function BellButton({ glass, square }: { glass?: boolean; square?: boolea
       aria-label={`Thông báo, ${m.unread} chưa xem`}
       className={cn(
         "relative grid shrink-0 place-items-center text-tx-1",
-        // `square` khớp cặp hoàn tác ở dải dưới cùng của màn sơ đồ: 36x36,
-        // bo 10, viền mảnh. Vùng chạm vẫn đủ 44 nhờ padding của chính dải đó.
-        square
-          ? "size-9 rounded-[10px] border border-border bg-surface-1 active:bg-surface-2"
-          : "size-11 rounded-full",
+        // Match the undo controls and keep the button's own touch target at 44px.
+        square ? "size-11 rounded-xl border border-border bg-surface-1 active:bg-surface-2" : "size-11 rounded-full",
         !square && (glass ? "bg-[var(--glass)] shadow-[var(--shadow-xs)]" : "-mr-1.5 active:bg-surface-2"),
       )}
     >

@@ -7,7 +7,7 @@ import { guestCount, guestError, guestValueFrom, type GuestValue } from "@/domai
  * waitlist entry; walk-in with tables -> seatWalkIn; walk-in without tables -> WALK_IN waitlist.
  * The backend stays the final check against double booking (one active allocation per table per business date).
  */
-import { AlertCircle, Check, ChevronDown, LoaderCircle, MousePointerClick, X } from "lucide-react"
+import { AlertCircle, AlertTriangle, Check, ChevronDown, LoaderCircle, MousePointerClick, X } from "lucide-react"
 import { useState, type KeyboardEvent } from "react"
 import {
   BookingTimePicker,
@@ -37,6 +37,7 @@ import { api } from "@/services"
 import { useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
 import type { TableView } from "@/domain/models"
+import { capacityWarningText, selectedTablesCapacity } from "./reception-rules"
 import type { FloorModel } from "./use-floor-model"
 
 const PICKABLE = new Set(["available", "too_small"])
@@ -227,7 +228,11 @@ export function QuickForm({
   // A passed time is the time's problem, not the table's: fix the time first.
   const blocked =
     checking || timeError ? [] : tables.filter((id) => !draftPickable(draft.kind, id, model, availability, tables))
-  const cap = tables.reduce((s, id) => s + (model.byId.get(id)?.capacity ?? 0), 0)
+  const cap = selectedTablesCapacity(tables, model.byId)
+  const capWarn =
+    !blocked.length && !timeError && !compatError && !checking && availabilityStatus !== "error"
+      ? capacityWarningText(tables.length, cap, party)
+      : null
   // Receptionist flow A is table-first: no table never silently becomes an unassigned booking.
   const needsTable = receptionist && isB && !toWaitlist && tables.length === 0
   const choosing = !!draft.replacing || addingFrom === draft.tableIds.join()
@@ -717,18 +722,30 @@ export function QuickForm({
             Đang kiểm tra {codes} ngày {fmtDayMonth(draft.date)}…
           </p>
         ) : tables.length ? (
-          <p role="status" className="tnum m-0 flex items-start gap-2 text-sm text-st-seated-ink">
-            <Check className="mt-0.5 size-4 shrink-0" aria-hidden />
-            {party === null
-              ? `${codes} còn trống · ${cap} chỗ`
-              : cap >= party
-                ? isB
-                  ? `${codes} còn trống ngày ${fmtDayMonth(draft.date)} · ${cap} chỗ, đủ ${party} khách`
-                  : `${codes} đang trống · ${cap} chỗ, đủ ${party} khách`
-                : isB
-                  ? `${codes} còn trống ngày ${fmtDayMonth(draft.date)} · ${cap} chỗ`
-                  : `${codes} đang trống · ${cap} chỗ`}
-          </p>
+          <>
+            <p role="status" className="tnum m-0 flex items-start gap-2 text-sm text-st-seated-ink">
+              <Check className="mt-0.5 size-4 shrink-0" aria-hidden />
+              {party === null
+                ? `${codes} còn trống · ${cap} chỗ`
+                : cap >= party
+                  ? isB
+                    ? `${codes} còn trống ngày ${fmtDayMonth(draft.date)} · ${cap} chỗ, đủ ${party} khách`
+                    : `${codes} đang trống · ${cap} chỗ, đủ ${party} khách`
+                  : isB
+                    ? `${codes} còn trống ngày ${fmtDayMonth(draft.date)} · ${cap} chỗ`
+                    : `${codes} đang trống · ${cap} chỗ`}
+            </p>
+            {capWarn ? (
+              <p
+                role="status"
+                data-testid="capacity-warning"
+                className="tnum m-0 flex items-start gap-2 rounded-lg border border-st-late/30 bg-st-late-tint px-2.5 py-1.5 text-sm font-medium text-st-late-ink"
+              >
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+                <span>{capWarn}</span>
+              </p>
+            ) : null}
+          </>
         ) : toWaitlist ? (
           <p role="status" className="m-0 text-sm text-tx-2">
             Lưu vào Bàn chờ ngày {fmtDayMonth(draft.date)}. Chưa giữ bàn cho đến khi chuyển bàn.

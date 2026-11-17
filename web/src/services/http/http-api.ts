@@ -1,5 +1,22 @@
 /** Canonical GamApi backed exclusively by the frozen /api/v1 contract. */
-import type { Catalog, ClaimView, FloorState, MutationResult, ReceptionGuestCount, SessionUser, VenueSettingsView } from "@/domain/models"
+import type {
+  Catalog,
+  ClaimView,
+  FloorState,
+  MutationResult,
+  ReceptionGuestCount,
+  SessionUser,
+  VenueSettingsView,
+  TableTurnsParams,
+  TableTurnsResult,
+  TableTurnSummary,
+  AnonymousVisitsResult,
+  AnonymousAssignmentResult,
+  UndoAnonymousAssignmentResult,
+  DuplicateCustomersResult,
+  CustomerMergeResult,
+  DuplicateDismissalResult,
+} from "@/domain/models"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { clock } from "../clock"
 import {
@@ -33,6 +50,13 @@ import {
 } from "./floor-adapter"
 import { HttpVisitApi } from "./visit-api"
 import type { HttpClient } from "./http-client"
+function tableTurnSearch(params: TableTurnsParams): string {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) query.set(key, String(value))
+  }
+  return query.toString()
+}
 
 const revive = (key: string, value: unknown) =>
   key.endsWith("At") && typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value) ? new Date(value) : value
@@ -500,6 +524,28 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
       }
     },
     listVisits: rejectUnsupported("danh sách lượt khách"),
+    getAnonymousVisits: (params) => client.get<AnonymousVisitsResult>(`/visits/anonymous?${tableTurnSearch(params)}`),
+    assignAnonymousVisit: ({ visitId, idempotencyKey, ...input }) =>
+      client.post<AnonymousAssignmentResult>(`/visits/${visitId}/customer-assignment`, input, { idempotencyKey }),
+    undoAnonymousAssignment: ({ visitId, operationId, version }) =>
+      client.post<UndoAnonymousAssignmentResult>(`/visits/${visitId}/customer-assignment/undo`, {
+        operationId,
+        version,
+      }),
+    getDuplicateCustomers: (params = {}) =>
+      client.get<DuplicateCustomersResult>(
+        `/customers/duplicates?${new URLSearchParams(
+          Object.entries(params)
+            .filter(([, value]) => value !== undefined)
+            .map(([key, value]) => [key, String(value)]),
+        )}`,
+      ),
+    mergeDuplicateCustomers: ({ idempotencyKey, ...input }) =>
+      client.post<CustomerMergeResult>("/customers/duplicates/merge", input, { idempotencyKey }),
+    dismissDuplicateCustomers: ({ idempotencyKey, ...input }) =>
+      client.post<DuplicateDismissalResult>("/customers/duplicates/dismiss", input, { idempotencyKey }),
+    getTableTurns: (params) => client.get<TableTurnsResult>(`/visits/turns?${tableTurnSearch(params)}`),
+    getTableTurnSummary: (params) => client.get<TableTurnSummary>(`/visits/turns/summary?${tableTurnSearch(params)}`),
     searchCustomers: rejectUnsupported("tìm khách hàng"),
     getCustomer: rejectUnsupported("hồ sơ khách hàng"),
     listOperations: rejectUnsupported("nhật ký thao tác"),
@@ -526,8 +572,10 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     setAdminAccessLevel: async (userId, version, accessLevel) =>
       (await post<{ account: AccountSummary }>(`/accounts/${userId}/access-level`, { version, accessLevel })).account,
     resetAccountPassword: (userId, version, newPassword) =>
-      post<AccountCredentialResult>(`/accounts/${userId}/password-reset`,
-        { version, ...(newPassword === undefined ? {} : { newPassword }) }),
+      post<AccountCredentialResult>(`/accounts/${userId}/password-reset`, {
+        version,
+        ...(newPassword === undefined ? {} : { newPassword }),
+      }),
     getAuditFilters: () => get<AuditFiltersView>("/operations/audit/filters"),
     listAuditEntries: (query) => get<AuditPageView>(`/operations/audit${auditQueryString(query)}`),
     // CSV về dạng text; HttpClient trả nguyên chuỗi khi content-type không phải JSON.

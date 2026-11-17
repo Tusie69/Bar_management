@@ -51,7 +51,7 @@ export const ADMIN_PAGES: readonly AdminPage[] = [
     // Chưa có permission đọc riêng cho bảng điều hành ca: `report.read` là báo
     // cáo kinh doanh, không phải tình trạng bàn. Trang này do đó chỉ chặn ở
     // cửa `/admin`. Xem mục "Điểm còn thiếu" trong docs/frontend.md.
-    status: "pending",
+    status: "integrated",
     owner: "NA-33",
     note: "Chỉ số ca, sơ đồ bàn chỉ xem, cảnh báo điều hành và tỷ lệ lấp bàn theo khu.",
   },
@@ -84,7 +84,7 @@ export const ADMIN_PAGES: readonly AdminPage[] = [
     label: "Sổ lượt",
     title: "Sổ lượt tới quán",
     permission: "customer.view_masked",
-    status: "pending",
+    status: "integrated",
     owner: "NA-34",
     note: "Mọi lượt khách ngồi bàn, gán lượt khuyết danh và gợi ý gộp hồ sơ trùng.",
   },

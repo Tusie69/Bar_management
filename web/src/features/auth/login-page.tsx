@@ -3,7 +3,7 @@ import { type FormEvent, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { PORTAL_CONFIG, type AuthPortal } from "@/domain/auth-portal"
+import { PORTAL_CONFIG, resolvePortalLoginDestination, type AuthPortal } from "@/domain/auth-portal"
 import { sessionEndUnsavedWarning } from "@/domain/session-end"
 import { isApiError } from "@/services"
 import { useSession } from "@/state/session"
@@ -21,7 +21,7 @@ const PORTAL_NOTE: Record<AuthPortal, string> = {
   "customer-care": "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản của vai khác không đăng nhập được tại cổng này.",
 }
 
-export function LoginPage({ portal }: { portal: AuthPortal }) {
+export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirectTo?: string | null }) {
   const login = useSession((state) => state.login)
   const sessionMessage = useSession((state) => state.authError)
   const sessionEndCode = useSession((state) => state.authEndCode)
@@ -42,7 +42,16 @@ export function LoginPage({ portal }: { portal: AuthPortal }) {
     try {
       await login(username.trim(), password, portal)
       setPassword("")
-      window.location.replace(PORTAL_CONFIG[portal].home)
+      const currentUrl =
+        typeof window === "undefined"
+          ? undefined
+          : `${window.location.pathname}${window.location.search}${window.location.hash}`
+      const queryRedirect =
+        typeof window === "undefined"
+          ? null
+          : (new URLSearchParams(window.location.search).get("redirect") ??
+            new URLSearchParams(window.location.search).get("next"))
+      window.location.replace(resolvePortalLoginDestination(portal, currentUrl, redirectTo ?? queryRedirect))
     } catch (cause) {
       setPassword("")
       setError(isApiError(cause) ? cause.message : "Không thể đăng nhập. Vui lòng thử lại.")
