@@ -15,7 +15,7 @@
  * Cả hai đều thu hồi mọi phiên đang đăng nhập của tài khoản đó.
  */
 import { Copy, Eye, EyeOff, KeyRound, LoaderCircle, ShieldAlert } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -41,24 +41,44 @@ export function PasswordResetDialog({ open, account, onClose, onDone, onCloseAut
   const [pending, setPending] = useState<"manual" | "random" | null>(null)
   const [issued, setIssued] = useState<string | null>(null)
   const [touched, setTouched] = useState(false)
-  const [prevSessionKey, setPrevSessionKey] = useState<string>("")
+
+  // Mỗi lần mở, đóng, chuyển tài khoản hoặc mở lại đều cấp một generation mới để
+  // kết quả bất đồng bộ cũ không bao giờ ghi đè phiên hộp thoại hiện tại.
+  const sessionKey = open && account ? `open:${account.id}` : "closed"
+  const [prevSessionKey, setPrevSessionKey] = useState<string>(sessionKey)
+  const [sessionGeneration, setSessionGeneration] = useState<number>(() => (open && account ? 1 : 0))
+  const activeSessionRef = useRef<number | null>(open && account ? sessionGeneration : null)
+  const mountedRef = useRef(true)
 
   if (account && account !== snapshot) {
     setSnapshot(account)
   }
 
   // Đặt lại form mỗi lần mở cho một tài khoản (giữ nguyên trạng thái khi đang chạy exit).
-  const sessionKey = open && account ? `open:${account.id}` : "closed"
-  if (open && account && sessionKey !== prevSessionKey) {
+  if (sessionKey !== prevSessionKey) {
     setPrevSessionKey(sessionKey)
+    setSessionGeneration((current) => current + 1)
     setPassword("")
     setVisible(false)
     setPending(null)
     setIssued(null)
     setTouched(false)
-  } else if (!open && prevSessionKey !== "closed") {
-    setPrevSessionKey("closed")
   }
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  const accountId = account?.id ?? null
+  useEffect(() => {
+    activeSessionRef.current = open && accountId !== null ? sessionGeneration : null
+    return () => {
+      activeSessionRef.current = null
+    }
+  }, [open, accountId, sessionGeneration])
 
   const displayAccount = account ?? snapshot
   if (!displayAccount) return null
@@ -66,31 +86,46 @@ export function PasswordResetDialog({ open, account, onClose, onDone, onCloseAut
   const issue = newPasswordIssue(password)
   const canSubmit = issue === null && pending === null
 
+  const handleClose = () => {
+    activeSessionRef.current = null
+    onClose()
+  }
+
   const reset = (newPassword?: string) => {
-    if (pending !== null) return
+    if (!open || !account || pending !== null) return
+    const targetAccount = account
+    const requestSession = sessionGeneration
+    activeSessionRef.current = requestSession
     setPending(newPassword === undefined ? "random" : "manual")
     void api
-      .resetAccountPassword(displayAccount.id, displayAccount.version, newPassword)
+      .resetAccountPassword(targetAccount.id, targetAccount.version, newPassword)
       .then((result) => {
-        onDone()
+        if (mountedRef.current) {
+          onDone()
+        }
+        if (activeSessionRef.current !== requestSession) return
+        setPending(null)
         if (newPassword === undefined) {
           // Chuỗi này không đọc lại được ở bất kỳ đâu, nên giữ hộp thoại mở
           // cho tới khi người dùng tự bấm đóng.
           setIssued(result.temporaryPassword)
           return
         }
-        toast.success(`Đã đổi mật khẩu của ${displayAccount.displayName} và thu hồi phiên cũ.`)
-        onClose()
+        toast.success(`Đã đổi mật khẩu của ${targetAccount.displayName} và thu hồi phiên cũ.`)
+        handleClose()
       })
-      .catch(reportError)
-      .finally(() => setPending(null))
+      .catch((error) => {
+        if (activeSessionRef.current !== requestSession) return
+        setPending(null)
+        reportError(error)
+      })
   }
 
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (!next) onClose()
+        if (!next) handleClose()
       }}
     >
       <DialogContent
@@ -107,7 +142,7 @@ export function PasswordResetDialog({ open, account, onClose, onDone, onCloseAut
           </DialogHeader>
 
           {issued !== null ? (
-            <IssuedPassword password={issued} onClose={onClose} />
+            <IssuedPassword password={issued} onClose={handleClose} />
           ) : (
             <>
               <div className="grid gap-2">

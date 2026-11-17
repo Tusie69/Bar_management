@@ -70,7 +70,7 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
       <main className="flex min-h-dvh flex-col overflow-y-auto bg-background px-4 py-6">
         <section className="mx-auto my-auto grid w-full max-w-md gap-4 rounded-2xl border border-border bg-surface-1 p-6 text-center shadow-md sm:p-8">
           <span className="mx-auto grid size-12 place-items-center rounded-2xl border border-amber-500/25 bg-amber-500/10">
-            <AlertTriangle className="size-6 text-amber-600" aria-hidden="true" />
+            <AlertTriangle className="size-6 text-amber-500" aria-hidden="true" />
           </span>
           <div className="grid gap-1.5">
             <h1 className="text-xl font-semibold tracking-[-0.015em]">Không thể khôi phục phiên</h1>

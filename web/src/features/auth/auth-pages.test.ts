@@ -72,9 +72,10 @@ describe("Auth screens presentation", () => {
   })
 
   it("renders PortalUnderConstruction, PasswordChangeGate, ServerSessionPage, and SessionEndedNotice", () => {
-    expect(renderHtml(createElement(PortalUnderConstruction, { label: "Kho" }) as ReactElement)).toContain(
-      "Cổng Kho đang xây dựng",
-    )
+    const constructionHtml = renderHtml(createElement(PortalUnderConstruction, { label: "Kho" }) as ReactElement)
+    expect(constructionHtml).toContain("Cổng Kho đang xây dựng")
+    expect(constructionHtml).toContain("text-amber-500")
+    expect(constructionHtml).not.toContain("text-amber-600")
 
     const pwdHtml = renderHtml(createElement(PasswordChangeGate) as ReactElement)
     expect(pwdHtml).toContain("Đổi mật khẩu trước khi tiếp tục")
@@ -92,6 +93,8 @@ describe("Auth screens presentation", () => {
     expect(endedHtml).toContain('data-testid="session-ended-login"')
     expect(endedHtml).toContain('data-testid="session-ended-countdown"')
     expect(endedHtml).toContain("Đăng nhập lại")
+    expect(endedHtml).toContain("text-amber-500")
+    expect(endedHtml).not.toContain("text-amber-600")
   })
 
   it("renders AuthBoundary loading and error states cleanly", () => {
@@ -105,5 +108,7 @@ describe("Auth screens presentation", () => {
     const errHtml = renderHtml(createElement(AuthBoundary, null, createElement("div", null, "App")) as ReactElement)
     expect(errHtml).toContain("Không thể khôi phục phiên")
     expect(errHtml).toContain("Thử lại")
+    expect(errHtml).toContain("text-amber-500")
+    expect(errHtml).not.toContain("text-amber-600")
   })
 })
