@@ -1988,8 +1988,11 @@ export class MockGamApi implements GamApi, DemoControls {
             holdStart: at,
           }),
         )
-        if (this.db.groups.get(groupId)?.layoutTableIds)
-          tx.edit("groups", groupId).layoutTableIds = [...allocs.map((a) => a.tableId), ...input.addTableIds]
+        // KHÔNG cập nhật `layoutTableIds`: máy chủ thật cũng không chèn vào
+        // `table_group_members` ở đường này. Ghép thêm bàn cho khách là thao
+        // tác thuộc vòng đời USAGE, không được âm thầm sửa cụm LAYOUT mà lễ
+        // tân đã dựng. Bản mock từng tự đồng bộ nên lỗi hai khung viền lồng
+        // nhau không bao giờ lộ ra ở chế độ demo.
         tx.edit(entity.col, entity.id)
         const sym = symbolByNo(this.db.groups.get(groupId)?.symbolNo)
         const all = [...allocs.map((a) => a.tableId), ...input.addTableIds]

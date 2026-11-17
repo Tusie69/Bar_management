@@ -45,11 +45,13 @@ import {
   findGroupRepresentativeId,
   formatCellGuestName,
   formatGroupCode,
+  oneOutlinePerCluster,
   formatTableCellLabel,
   GUEST_FLAG_META,
   resolveCellCornerIcons,
   supportedFlags,
   tableCanActivate,
+  type ClusterOutlineCandidate,
   type GuestFlag,
 } from "./floor-visual-rules"
 import { TableIcons } from "./table-icons"
@@ -715,15 +717,26 @@ export function FloorCanvas(props: Props) {
       out.push({ key, x: left, y: top, w: right - left, h: bottom - top, code, isBar, orientation })
     }
 
-    for (const g of groups) add(g.tableIds, formatGroupCode(g.displayCode ?? g.symbolNo))
+    // Gom ứng viên từ cả hai nguồn rồi mới chọn, vì cùng một cụm có thể xuất
+    // hiện ở cả hai với danh sách bàn lệch nhau. Xem `oneOutlinePerCluster`.
+    const candidates: ClusterOutlineCandidate[] = groups.map((g) => ({
+      groupId: g.id ?? null,
+      tableIds: g.tableIds,
+      code: formatGroupCode(g.displayCode ?? g.symbolNo),
+    }))
     if (states) {
       for (const fs of states.values()) {
         const claim = fs?.claim
         if (claim?.tableIds && claim.tableIds.length > 1) {
-          add(claim.tableIds, formatGroupCode(claim.groupDisplayCode ?? claim.symbolNo))
+          candidates.push({
+            groupId: claim.groupId ?? null,
+            tableIds: claim.tableIds,
+            code: formatGroupCode(claim.groupDisplayCode ?? claim.symbolNo),
+          })
         }
       }
     }
+    for (const candidate of oneOutlinePerCluster(candidates)) add(candidate.tableIds, candidate.code)
     return out
   }, [groups, states, tableById])
 

@@ -212,6 +212,56 @@ export function calculateStatusCounts(
 export const groupCode = groupCodeFromSymbol
 export const formatGroupCode = normalizeGroupCode
 
+export interface ClusterOutlineCandidate {
+  /** Hàng `table_groups` mà khung này thuộc về; null khi không suy ra được. */
+  groupId: number | null
+  tableIds: number[]
+  code: string | null
+}
+
+/**
+ * Mỗi cụm đúng một khung viền trên sơ đồ.
+ *
+ * Sơ đồ nhận hai nguồn cho cùng một cụm: `groups[]` (thành viên cụm, đọc từ
+ * `table_group_members`) và `claim.tableIds` (bàn khách đang chiếm, đọc từ
+ * `table_allocations`). Hai danh sách này LỆCH NHAU được: ghép thêm một bàn
+ * cho khách đang ngồi trên cụm dùng lại `group_id` nhưng không thêm thành
+ * viên vào cụm. Khử trùng theo danh sách bàn vì thế để lọt hai khung lồng
+ * nhau, và vì chúng cùng toạ độ gốc nên hai chữ mã cụm bị vẽ đè khít lên
+ * nhau — nhìn chỉ như một chữ hơi dày.
+ *
+ * Khử trùng theo `groupId` và giữ khung ôm nhiều bàn hơn: lúc khách ngồi thì
+ * khung bao trọn tốp khách, lúc khách về thì chỉ còn khung của cụm. Dữ liệu
+ * không bị đụng tới — cụm không tự lớn lên sau lưng lễ tân.
+ */
+export function oneOutlinePerCluster(candidates: readonly ClusterOutlineCandidate[]): ClusterOutlineCandidate[] {
+  const byGroup = new Map<number, ClusterOutlineCandidate>()
+  const ungrouped: ClusterOutlineCandidate[] = []
+
+  for (const candidate of candidates) {
+    if (candidate.groupId === null) {
+      ungrouped.push(candidate)
+      continue
+    }
+    const kept = byGroup.get(candidate.groupId)
+    // Bằng nhau thì giữ cái tới trước: `groups[]` đi trước nên mã cụm vẫn lấy
+    // từ cụm, không phải từ claim.
+    if (!kept || candidate.tableIds.length > kept.tableIds.length) {
+      byGroup.set(candidate.groupId, candidate)
+    }
+  }
+
+  const seen = new Set<string>()
+  const out: ClusterOutlineCandidate[] = []
+  for (const candidate of [...byGroup.values(), ...ungrouped]) {
+    const key = [...candidate.tableIds].sort((a, b) => a - b).join(",")
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(candidate)
+  }
+  return out
+}
+
 export function supportedFlags(flags: string[]): GuestFlag[] {
   return flags.filter(
     (flag, index): flag is GuestFlag =>

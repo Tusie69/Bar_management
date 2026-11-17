@@ -11,6 +11,7 @@ import {
   findGroupRepresentativeId,
   formatCellGuestName,
   formatGroupCode,
+  oneOutlinePerCluster,
   formatTableCellLabel,
   groupCode,
   groupDisplayName,
@@ -1492,5 +1493,53 @@ describe("Group border redesign - status-colored thick borders and neutral selec
       // Corner flags still present
       expect(htmlFar).toContain("🆕")
     })
+  })
+})
+
+describe("mỗi cụm đúng một khung viền trên sơ đồ", () => {
+  // Sơ đồ nhận hai nguồn cho cùng một cụm: `groups[]` đọc từ bảng thành viên
+  // cụm, còn `claim.tableIds` đọc từ bàn khách đang chiếm.
+  const cum = (groupId: number, tableIds: number[], code: string) => ({ groupId, tableIds, code })
+
+  it("ghép thêm bàn cho khách đang ngồi trên cụm chỉ còn một khung", () => {
+    // Cụm LAYOUT B8+B6, khách được ghép thêm B5. `POST /visits/:id/merge`
+    // dùng lại `group_id` nhưng không thêm thành viên vào cụm, nên hai danh
+    // sách bàn lệch nhau mà vẫn là một cụm.
+    const out = oneOutlinePerCluster([cum(393, [11, 12], "G04"), cum(393, [11, 12, 13], "G04")])
+    expect(out).toHaveLength(1)
+    expect(out[0].tableIds).toEqual([11, 12, 13])
+    expect(out[0].code).toBe("G04")
+  })
+
+  it("khách về thì khung thu lại đúng cụm, không giữ bàn ghép tạm", () => {
+    const out = oneOutlinePerCluster([cum(393, [11, 12], "G04")])
+    expect(out).toHaveLength(1)
+    expect(out[0].tableIds).toEqual([11, 12])
+  })
+
+  it("hai danh sách trùng nhau vẫn chỉ một khung", () => {
+    const out = oneOutlinePerCluster([cum(393, [11, 12], "G04"), cum(393, [11, 12], "G04")])
+    expect(out).toHaveLength(1)
+  })
+
+  it("hai cụm khác nhau vẫn ra hai khung", () => {
+    const out = oneOutlinePerCluster([cum(393, [11, 12], "G04"), cum(394, [20, 21], "G06")])
+    expect(out.map((o) => o.code)).toEqual(["G04", "G06"])
+  })
+
+  it("bằng số bàn thì giữ mã của cụm, không phải của claim", () => {
+    // `groups[]` được đẩy vào trước, nên khi hai bên bằng nhau thì mã hiển
+    // thị vẫn lấy từ cụm — giữ nguyên hành vi cũ.
+    const out = oneOutlinePerCluster([cum(393, [11, 12], "G04"), cum(393, [11, 12], "KHONG-DUNG")])
+    expect(out[0].code).toBe("G04")
+  })
+
+  it("cụm không suy ra được groupId thì vẫn khử trùng theo danh sách bàn", () => {
+    const out = oneOutlinePerCluster([
+      { groupId: null, tableIds: [11, 12], code: "G04" },
+      { groupId: null, tableIds: [12, 11], code: "G04" },
+      { groupId: null, tableIds: [20, 21], code: "G06" },
+    ])
+    expect(out).toHaveLength(2)
   })
 })
