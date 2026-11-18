@@ -4,22 +4,18 @@
 @import "@fontsource/be-vietnam-pro/700.css";
 
 /*
- * Mobile V1 tokens (< 768px), copied from "GAM Mobile Screen" round 2.
- * Scoped to [data-gm] so Desktop/Tablet keep index.css. Light by default, html.dark = Service.
- * Derived tokens (--card, --muted-foreground, --st-*-ink...) are re-declared here because
- * custom properties resolve where they are declared.
+ * Reception Mobile & Phone Shell (< 768px + RECEPTIONIST tablet/desktop frame).
+ * Built on P1 Design System tokens (tokens.css + index.css), preserving all
+ * Daylight (light) and Service (.dark) brand/state hues while unifying radius,
+ * elevation, typography, press feedback, safe areas, and motion.
  */
 [data-gm] {
   overscroll-behavior: none;
-  --radius: 12px;
-  --radius-xs: 6px;
-  --radius-sm: 8px;
-  --radius-md: 10px;
-  --radius-lg: 12px;
-  --radius-xl: 14px;
-  --radius-2xl: 18px;
-  --radius-3xl: 24px;
-  --radius-4xl: 28px;
+
+  /* Inherit P1 concentric radius scale from tokens.css */
+  --radius: var(--radius-md);
+
+  /* Light ("Daylight") palette — preserved verbatim */
   --background: oklch(0.975 0.006 95);
   --surface-1: oklch(1 0 0);
   --surface-2: oklch(0.965 0.006 95);
@@ -27,28 +23,42 @@
   --foreground: oklch(0.22 0.01 80);
   --text-muted: oklch(0.45 0.01 80);
   --text-subtle: oklch(0.53 0.01 80);
-  --border: oklch(0.915 0.007 95);
-  --border-strong: oklch(0.85 0.009 95);
+  --border: oklch(0.905 0.007 95);
+  --border-strong: oklch(0.835 0.009 95);
+  --border-subtle: color-mix(in oklab, var(--border) 65%, transparent);
+
   --primary: oklch(0.52 0.15 255);
   --primary-foreground: oklch(0.99 0 0);
   --primary-ink: oklch(0.48 0.15 255);
-  --primary-tint: oklch(0.52 0.15 255 / 0.09);
-  /* Status tokens inherit from index.css for parity with desktop. */
+  --primary-tint: oklch(0.52 0.15 255 / 0.1);
+  --primary-hover: color-mix(in oklab, var(--primary) 90%, #000);
+  --primary-active: color-mix(in oklab, var(--primary) 82%, #000);
+
+  --destructive-foreground: #ffffff;
+  --destructive-badge-bg: var(--destructive);
+  --destructive-tint: color-mix(in oklab, var(--destructive) 11%, transparent);
+
+  /* Floor & hero tokens */
   --floor: oklch(0.97 0.006 95);
   --floor-zone: oklch(0.94 0.008 95);
   --floor-wall: oklch(0.45 0.01 80);
   --floor-fixture: oklch(0.91 0.008 95);
   --table-line: oklch(0.55 0.01 80);
-  --shadow-xs: 0 1px 2px oklch(0.3 0.02 80 / 0.06);
-  --shadow-soft: 0 6px 16px -8px oklch(0.3 0.02 80 / 0.22);
-  --shadow-float: 0 1px 3px oklch(0.3 0.02 80 / 0.08), 0 18px 40px -16px oklch(0.3 0.02 80 / 0.28);
-  --scrim: oklch(0.25 0.01 80 / 0.38);
+
+  --shadow-xs: 0 1px 2px oklch(0.26 0.015 80 / 0.06);
+  --shadow-sm: 0 1px 2px oklch(0.26 0.015 80 / 0.05), 0 4px 12px -4px oklch(0.26 0.015 80 / 0.09);
+  --shadow-soft: 0 2px 6px oklch(0.26 0.015 80 / 0.06), 0 10px 26px -10px oklch(0.26 0.015 80 / 0.16);
+  --shadow-float: 0 1px 3px oklch(0.26 0.015 80 / 0.08), 0 18px 42px -14px oklch(0.26 0.015 80 / 0.24);
+  --scrim: color-mix(in oklab, oklch(0.2 0.01 80) 38%, transparent);
+  --glass: color-mix(in oklab, var(--surface-1) 82%, transparent);
+  --glass-chrome: color-mix(in oklab, var(--background) 88%, transparent);
+
   --hero-sky: oklch(0.955 0.022 205);
   --hero-sun: oklch(0.975 0.035 90);
   --hill-far: oklch(0.925 0.035 168);
   --hill-mid: oklch(0.895 0.05 158);
   --tree: oklch(0.83 0.065 156);
-  --glass: oklch(1 0 0 / 0.75);
+
   --tx-1: #1f2937;
   --tx-strong: #111827;
   --tx-2: #4b5563;
@@ -65,10 +75,19 @@
   --text-subtle: oklch(0.7 0.009 85);
   --border: oklch(0.34 0.008 80);
   --border-strong: oklch(0.43 0.009 80);
+  --border-subtle: color-mix(in oklab, var(--border) 68%, transparent);
+
   --primary: oklch(0.52 0.13 252);
   --primary-foreground: oklch(0.99 0 0);
   --primary-ink: oklch(0.8 0.09 250);
   --primary-tint: oklch(0.62 0.13 252 / 0.2);
+  --primary-hover: color-mix(in oklab, var(--primary) 92%, #fff);
+  --primary-active: color-mix(in oklab, var(--primary) 84%, #fff);
+
+  --destructive-foreground: oklch(0.16 0.01 25);
+  --destructive-badge-bg: color-mix(in oklab, var(--destructive) 80%, transparent);
+  --destructive-tint: color-mix(in oklab, var(--destructive) 18%, transparent);
+
   --st-reserved: oklch(0.74 0.1 245);
   --st-upcoming: oklch(0.82 0.13 88);
   --st-late: oklch(0.72 0.17 27);
@@ -83,25 +102,63 @@
   --st-seated-tint: oklch(0.75 0.11 158 / 0.18);
   --st-seated-fill: oklch(0.66 0.1 158);
   --on-seated: oklch(0.18 0.02 158);
+
   --floor: oklch(0.215 0.005 80);
   --floor-zone: oklch(0.25 0.006 80);
   --floor-wall: oklch(0.62 0.01 85);
   --floor-fixture: oklch(0.285 0.007 80);
   --table-line: oklch(0.62 0.008 85);
-  --shadow-xs: 0 1px 2px oklch(0 0 0 / 0.25);
-  --shadow-soft: 0 4px 14px -6px oklch(0 0 0 / 0.5);
-  --shadow-float: 0 1px 0 oklch(1 0 0 / 0.05) inset, 0 18px 40px -16px oklch(0 0 0 / 0.65);
-  --scrim: oklch(0.1 0.005 80 / 0.55);
+
+  --shadow-xs: 0 1px 2px oklch(0 0 0 / 0.28);
+  --shadow-sm: 0 1px 0 oklch(1 0 0 / 0.05) inset, 0 4px 14px -4px oklch(0 0 0 / 0.44);
+  --shadow-soft: 0 1px 0 oklch(1 0 0 / 0.05) inset, 0 8px 22px -8px oklch(0 0 0 / 0.56);
+  --shadow-float: 0 1px 0 oklch(1 0 0 / 0.06) inset, 0 20px 44px -14px oklch(0 0 0 / 0.68);
+  --scrim: color-mix(in oklab, oklch(0.08 0.005 80) 58%, transparent);
+  --glass: color-mix(in oklab, var(--surface-1) 76%, transparent);
+  --glass-chrome: color-mix(in oklab, var(--background) 86%, transparent);
+
   --hero-sky: oklch(0.265 0.014 230);
   --hero-sun: oklch(0.36 0.03 90);
   --hill-far: oklch(0.28 0.018 175);
   --hill-mid: oklch(0.3 0.024 162);
   --tree: oklch(0.35 0.034 158);
-  --glass: oklch(0.275 0.007 80 / 0.72);
+
   --tx-1: #eef0f2;
   --tx-strong: #f7f8f9;
   --tx-2: #cdd1d6;
   --tx-3: #a1a7af;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  [data-gm] {
+    --scrim: oklch(0.18 0.008 80 / 0.65);
+    --glass: var(--surface-1);
+    --glass-chrome: var(--background);
+  }
+
+  .dark [data-gm] {
+    --scrim: oklch(0.08 0.005 80 / 0.8);
+    --glass: var(--surface-1);
+    --glass-chrome: var(--background);
+  }
+
+  [data-gm] .gm-glass-chrome {
+    backdrop-filter: none !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  [data-gm] {
+    --border: oklch(0.62 0.01 80);
+    --border-strong: oklch(0.45 0.01 80);
+    --input: oklch(0.48 0.01 80);
+  }
+
+  .dark [data-gm] {
+    --border: oklch(0.55 0.01 80);
+    --border-strong: oklch(0.72 0.01 80);
+    --input: oklch(0.65 0.01 80);
+  }
 }
 
 [data-gm] {
@@ -112,66 +169,92 @@
   --muted: var(--surface-2);
   --muted-foreground: var(--text-muted);
   --secondary: var(--surface-2);
+  --secondary-foreground: var(--foreground);
   --accent: var(--surface-3);
+  --accent-foreground: var(--foreground);
   --input: var(--border-strong);
   --ring: var(--primary);
   --destructive: var(--st-noshow);
+
+  /* Mobile chrome uses Be Vietnam Pro for clean Vietnamese diacritic legibility;
+     SVG floor tile labels override back to Roboto below so tile truncation never worsens. */
   --font-sans: "Be Vietnam Pro", "Roboto", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-ui: var(--font-sans);
+
   --gm-max-w: 628px;
   --top-safe: max(6px, env(safe-area-inset-top));
-  /* Dải dưới cùng (hoàn tác, bảng ghép bàn) nằm ngay trên vạch Home của iPhone X
-     trở lên. Thiếu biến này thì `pb-[var(--bottom-safe)]` là giá trị rỗng, trình
-     duyệt bỏ luôn padding và hai nút bị vạch Home che mất. */
   --bottom-safe: env(safe-area-inset-bottom, 0px);
-  --nav-h: calc(56px + env(safe-area-inset-bottom));
+  --nav-h: calc(60px + env(safe-area-inset-bottom, 0px));
 
   background: var(--background);
   color: var(--tx-1);
   font-family: var(--font-ui);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Keep FloorCanvas SVG tile labels and BarGuestList in Roboto so +7.6% wider
+   Be Vietnam Pro glyphs never truncate fixed-width table labels. */
+[data-gm] svg[role="group"] {
+  --font-sans: "Roboto", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: var(--font-sans);
+}
+
+/* Stable viewport sizing across Safari dynamic address bar transitions */
+.gm-shell-viewport {
+  height: 100svh;
+  height: 100dvh;
 }
 
 [data-gm],
 [data-gm] * {
   scrollbar-width: none;
 }
+
 [data-gm] *::-webkit-scrollbar {
   display: none;
 }
+
 [data-gm] button:focus-visible,
-[data-gm] [role="button"]:focus-visible {
+[data-gm] [role="button"]:focus-visible,
+[data-gm] [role="tab"]:focus-visible,
+[data-gm] [role="radio"]:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
+
 [data-gm] input::placeholder,
 [data-gm] textarea::placeholder {
   color: var(--tx-3);
 }
 
-[data-gm] .rounded-xs {
-  border-radius: 6px;
+/* Tactile pointer-down press feedback (Apple HIG §1) */
+[data-gm] .gm-press {
+  transition:
+    transform var(--duration-press) var(--ease-press),
+    background-color var(--duration-hover) var(--ease-spring-default),
+    border-color var(--duration-hover) var(--ease-spring-default),
+    box-shadow var(--duration-hover) var(--ease-spring-default),
+    opacity var(--duration-hover) var(--ease-spring-default);
 }
-[data-gm] .rounded-sm {
-  border-radius: 8px;
+
+[data-gm] .gm-press:active:not(:disabled):not([aria-disabled="true"]) {
+  transform: scale(0.968);
 }
-[data-gm] .rounded-md {
-  border-radius: 10px;
+
+[data-gm] .gm-press-card {
+  transition:
+    transform var(--duration-press) var(--ease-press),
+    background-color var(--duration-hover) var(--ease-spring-default),
+    border-color var(--duration-hover) var(--ease-spring-default),
+    box-shadow var(--duration-hover) var(--ease-spring-default);
 }
-[data-gm] .rounded-lg {
-  border-radius: 12px;
-}
-[data-gm] .rounded-xl {
-  border-radius: 14px;
-}
-[data-gm] .rounded-2xl {
-  border-radius: 18px;
-}
-[data-gm] .rounded-3xl {
-  border-radius: 24px;
+
+[data-gm] .gm-press-card:active:not(:disabled):not([aria-disabled="true"]) {
+  transform: scale(0.988);
+  background-color: var(--surface-2);
 }
 
 /* StatusLegend responsive fit at 360px */
@@ -179,36 +262,13 @@
   max-width: 100%;
 }
 
-/* G4: Map shell padding reduction - reclaim vertical & horizontal space for the canvas */
+/* Reception controls always float at the canvas edges, keeping toolbar height minimal. */
 [data-gm] header {
-  padding-left: 10px;
-  padding-right: 10px;
-  padding-bottom: 2px;
+  padding-left: 12px;
+  padding-right: 12px;
 }
 
-[data-gm] header > div.flex {
-  gap: 8px;
-}
-
-/* Reception controls always float at the canvas edges. Keeping them out of
-   document flow gives their former toolbar height back to the floor plan. */
-
-/* Reclaim space from intermediate controls above the map */
-[data-gm] .z-\[4\].flex.shrink-0 {
-  padding-left: 10px;
-  padding-right: 10px;
-  padding-top: 0;
-  padding-bottom: 2px;
-  gap: 4px;
-}
-
-[data-gm] .shrink-0.px-3.pb-1 {
-  padding-left: 10px;
-  padding-right: 10px;
-  padding-bottom: 2px;
-}
-
-/* G4: Touch targets on controls are at least 44px on mobile */
+/* Guarantee >= 44px touch targets on mobile controls */
 [data-gm] header button,
 [data-gm] header [role="button"],
 [data-gm] [role="tablist"] button,
@@ -221,8 +281,7 @@
   min-width: 44px;
 }
 
-/* Only the Bàn chờ marker may escape its SVG touch box. A global override
-   breaks WebKit clipping for the bar guest list on iPhone X/15. */
+/* Only the Bàn chờ marker may escape its SVG touch box; keep WebKit Bar list clipping intact. */
 foreignObject[data-mobile-waitlist-marker] {
   overflow: visible !important;
 }
@@ -239,21 +298,77 @@ button[aria-label*="Bàn chờ"],
   justify-content: center !important;
 }
 
-/* Constrain portalled Radix bottom sheets to the same reception frame */
+/* Constrain portaled Radix bottom sheets to the same reception frame and keep
+   them clear of the virtual keyboard via --kb-inset when an input is focused. */
 [data-gm][data-receptionist-frame][data-slot="sheet-content"] {
-  max-width: var(--gm-max-w, 540px);
+  max-width: var(--gm-max-w, 628px);
   margin-left: auto;
   margin-right: auto;
 }
 
-/* Respect prefers-reduced-motion per Apple HIG Accessibility -> Motion */
+[data-gm][data-slot="sheet-content"][data-side="bottom"] {
+  bottom: var(--kb-inset, 0px);
+  max-height: min(86dvh, calc(100dvh - var(--kb-inset, 0px) - 16px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Toast15 entrance / exit motion */
+@keyframes gm-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes gm-toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.97);
+  }
+}
+
+.gm-toast-banner[data-state="open"] {
+  animation: gm-toast-in var(--duration-dialog) var(--ease-spring-default) both;
+}
+
+.gm-toast-banner[data-state="closed"] {
+  animation: gm-toast-out var(--duration-exit) var(--ease-exit) both;
+  pointer-events: none;
+}
+
+/* Respect prefers-reduced-motion per Apple HIG §14 */
 @media (prefers-reduced-motion: reduce) {
-  [data-gm] *,
-  [data-gm] *::before,
-  [data-gm] *::after {
+  [data-gm]
+    *:not(.gm-toast-banner):not([data-slot="sheet-content"]):not([data-slot="dialog-content"]):not(
+      [data-slot="alert-dialog-content"]
+    ),
+  [data-gm] *:not(.gm-toast-banner)::before,
+  [data-gm] *:not(.gm-toast-banner)::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  [data-gm] .gm-press:active:not(:disabled),
+  [data-gm] .gm-press-card:active:not(:disabled) {
+    transform: none;
+  }
+
+  .gm-toast-banner[data-state="open"] {
+    animation: gam-fade-in var(--duration-reduced) ease-out both;
+  }
+
+  .gm-toast-banner[data-state="closed"] {
+    animation: gam-fade-out var(--duration-reduced) ease-in both;
   }
 }

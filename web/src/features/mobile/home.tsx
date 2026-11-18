@@ -59,18 +59,18 @@ function Hero({ title }: { title: string }) {
         <path d="M0 184 C 90 156, 170 164, 240 178 S 350 160, 390 170 V236 H0 Z" fill="var(--hill-mid)" />
         <path d="M0 214 C 100 196, 210 204, 280 210 S 360 200, 390 204 V236 H0 Z" fill="var(--background)" />
       </svg>
-      <div className="relative flex h-[52px] items-center gap-3">
+      <div className="relative flex h-[54px] items-center gap-2.5">
         <button
           type="button"
           onClick={m.openAccount}
           aria-label="Tài khoản và giao diện"
-          className="grid size-10 shrink-0 place-items-center rounded-full bg-[var(--glass)] text-[15px] font-semibold text-tx-strong shadow-[var(--shadow-xs)]"
+          className="gm-press grid size-11 shrink-0 place-items-center rounded-full border border-[var(--border-subtle)] bg-[var(--glass)] text-[15px] font-bold text-tx-strong shadow-[var(--shadow-xs)] backdrop-blur-md"
         >
           {initials(user.displayName).slice(0, 1)}
         </button>
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="truncate text-base leading-tight font-semibold text-tx-strong">{user.displayName}</span>
-          <span className="self-start rounded-full bg-[var(--glass)] px-2 text-xs leading-5 font-medium text-tx-2">
+          <span className="truncate text-[15px] leading-tight font-semibold text-tx-strong">{user.displayName}</span>
+          <span className="self-start rounded-full border border-[var(--border-subtle)] bg-[var(--glass)] px-2 text-[11.5px] leading-5 font-medium text-tx-2 backdrop-blur-sm">
             {ROLE_LABEL[user.role]}
           </span>
         </div>
@@ -78,8 +78,8 @@ function Hero({ title }: { title: string }) {
         <BellButton glass />
       </div>
       <div className="relative flex items-baseline justify-between gap-3 px-0.5 pt-4">
-        <h1 className="m-0 text-[26px] leading-[1.15] font-semibold tracking-[-0.015em] text-tx-strong">{title}</h1>
-        <span className="text-[13px] whitespace-nowrap text-tx-2">{fmtBusinessDate(m.today)}</span>
+        <h1 className="m-0 text-[26px] leading-[1.15] font-bold tracking-[-0.022em] text-tx-strong">{title}</h1>
+        <span className="tnum text-[13px] font-medium whitespace-nowrap text-tx-2">{fmtBusinessDate(m.today)}</span>
       </div>
       <div className="h-6" />
     </div>
@@ -105,20 +105,28 @@ function ReceptionBody() {
   ]
   return (
     <div className="relative z-10 flex flex-col pb-8">
-      <div className={cn(card, "mx-4 -mt-3.5 grid grid-cols-4 px-1 py-3.5 shadow-[var(--shadow-soft)]")}>
+      <div className={cn(card, "mx-4 -mt-3.5 grid grid-cols-4 px-1 py-2.5 shadow-[var(--shadow-soft)]")}>
         {summary.map((s, i) => (
           <button
             key={s.label}
             type="button"
             onClick={s.go}
-            className={cn("flex flex-col items-center gap-0.5 px-1 py-0.5 text-tx-1", i && "border-l border-border")}
+            className={cn(
+              "gm-press flex min-h-14 flex-col items-center justify-center gap-0.5 rounded-xl px-1 py-1.5 text-tx-1 hover:bg-surface-2",
+              i && "rounded-l-none border-l border-border/80",
+            )}
           >
             <span
-              className={cn("text-[22px] leading-[1.15] font-medium", s.alert ? "text-st-late-ink" : "text-tx-strong")}
+              className={cn(
+                "tnum text-[22px] leading-[1.12] font-bold tracking-[-0.02em]",
+                s.alert ? "text-st-late-ink" : "text-tx-strong",
+              )}
             >
               {s.value}
             </span>
-            <span className="text-center text-xs leading-[1.3] text-[var(--text-muted)]">{s.label}</span>
+            <span className="text-center text-[11.5px] leading-[1.25] font-medium text-[var(--text-muted)]">
+              {s.label}
+            </span>
           </button>
         ))}
       </div>
@@ -155,18 +163,22 @@ function ReceptionBody() {
           type="button"
           aria-expanded={showSeated}
           onClick={() => setShowSeated((v) => !v)}
-          className="mt-1.5 flex min-h-[52px] items-center gap-2.5 rounded-2xl border border-border bg-surface-1 px-3.5 text-left text-[15px] font-medium text-tx-1"
+          className={cn(
+            card,
+            "gm-press-card mt-1.5 flex min-h-[54px] items-center gap-3 px-4 text-left text-[15px] font-semibold text-tx-1",
+          )}
         >
           <span className="grid size-7 shrink-0 place-items-center rounded-full bg-st-seated-tint text-st-seated-ink">
-            <Check className="size-[15px]" strokeWidth={2.2} />
+            <Check className="size-[15px]" strokeWidth={2.3} aria-hidden />
           </span>
           <span className="flex-1">Đã nhận bàn</span>
-          <span className="text-[13px] font-normal text-[var(--text-muted)]">{g.seated.length} booking</span>
+          <span className="tnum text-[13px] font-medium text-[var(--text-muted)]">{g.seated.length} booking</span>
           <ChevronDown
             className={cn(
-              "size-[18px] shrink-0 text-subtle transition-transform duration-150",
+              "size-[18px] shrink-0 text-subtle transition-transform duration-200",
               showSeated && "rotate-180",
             )}
+            aria-hidden
           />
         </button>
         {showSeated ? g.seated.map((r) => <BookingCard key={r.id} r={r} />) : null}
@@ -256,7 +268,7 @@ function OwnerBody() {
   ]
 
   return (
-    <div className="relative z-10 -mt-3.5 flex flex-col gap-[22px] px-4 pb-6">
+    <div className="relative z-10 -mt-3.5 flex flex-col gap-5 px-4 pb-8">
       <div role="group" aria-label="Chỉ số chính" className="grid grid-cols-2 gap-2.5">
         {kpis.map((k) => (
           <button
@@ -266,38 +278,39 @@ function OwnerBody() {
             disabled={!k.go}
             className={cn(
               card,
-              "flex min-h-28 flex-col items-start gap-1 p-3.5 text-left text-tx-1 shadow-[var(--shadow-soft)] disabled:opacity-100",
+              "flex min-h-[116px] flex-col items-start gap-1.5 p-4 text-left text-tx-1 shadow-[var(--shadow-soft)] disabled:opacity-100",
+              k.go && "gm-press-card hover:border-border-strong",
             )}
           >
-            <span className="text-[13px] text-[var(--text-muted)]">{k.label}</span>
+            <span className="text-[12.5px] font-medium text-[var(--text-muted)]">{k.label}</span>
             {k.value === null ? (
-              <span className="mt-1 rounded-full border border-dashed border-strong px-2.5 py-0.5 text-xs font-medium text-tx-2">
+              <span className="mt-1 rounded-full border border-dashed border-border-strong px-2.5 py-0.5 text-xs font-medium text-tx-2">
                 Đang chuẩn hóa
               </span>
             ) : (
-              <span className="flex items-baseline gap-0.5 text-[30px] leading-[1.1] font-medium tracking-[-0.02em] text-tx-strong">
+              <span className="tnum flex items-baseline gap-0.5 text-[28px] leading-[1.12] font-bold tracking-[-0.025em] text-tx-strong">
                 {k.value}
-                {k.of ? <span className="text-base font-normal text-subtle">{k.of}</span> : null}
+                {k.of ? <span className="text-base font-medium text-subtle">{k.of}</span> : null}
               </span>
             )}
-            <span className="mt-auto text-xs leading-[1.35] text-pretty text-subtle">{k.hint}</span>
+            <span className="tnum mt-auto text-xs leading-[1.35] text-pretty text-subtle">{k.hint}</span>
           </button>
         ))}
       </div>
 
-      <section className="flex flex-col gap-2.5">
-        <div className="flex items-baseline justify-between">
-          <h2 className="m-0 text-base font-semibold text-tx-strong">Theo khu</h2>
+      <section className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <h2 className="m-0 text-[16px] font-semibold tracking-[-0.01em] text-tx-strong">Theo khu</h2>
           <LinkButton onClick={() => m.go("map")}>Mở sơ đồ</LinkButton>
         </div>
         <div className={cn(card, "flex flex-col gap-3.5 p-4")}>
           {o.byZone.map((z) => (
             <div key={z.zone} className="flex flex-col gap-1.5">
-              <div className="flex justify-between text-[14px]">
-                <span>
-                  {z.name} <span className="text-subtle">{zoneTag(z.zone)}</span>
+              <div className="flex justify-between text-[13.5px]">
+                <span className="font-medium text-tx-strong">
+                  {z.name} <span className="font-normal text-subtle">{zoneTag(z.zone)}</span>
                 </span>
-                <span className="text-tx-2">
+                <span className="tnum font-medium text-tx-2">
                   {z.inUse}/{z.total} {z.zone === "BAR" ? "ghế" : "bàn"}
                 </span>
               </div>
@@ -310,7 +323,7 @@ function OwnerBody() {
                 className="h-2 overflow-hidden rounded-full bg-surface-3"
               >
                 <div
-                  className="h-full rounded-full bg-[var(--st-seated-fill)]"
+                  className="h-full rounded-full bg-[var(--st-seated-fill)] transition-[width] duration-300"
                   style={{ width: `${z.total ? Math.round((z.inUse / z.total) * 100) : 0}%` }}
                 />
               </div>
@@ -319,13 +332,13 @@ function OwnerBody() {
         </div>
       </section>
 
-      <section className="flex flex-col gap-2.5">
-        <h2 className="m-0 text-base font-semibold text-tx-strong">
-          Cần xử lý <span className="font-normal text-[var(--text-muted)]">{g.attention.length}</span>
+      <section className="flex flex-col gap-2">
+        <h2 className="m-0 text-[16px] font-semibold tracking-[-0.01em] text-tx-strong">
+          Cần xử lý <span className="tnum font-medium text-[var(--text-muted)]">{g.attention.length}</span>
         </h2>
         {g.attention.length ? (
-          <div className={cn(card, "flex flex-col overflow-hidden")}>
-            {g.attention.map((r, i) => {
+          <div className={cn(card, "flex flex-col divide-y divide-border overflow-hidden")}>
+            {g.attention.map((r) => {
               const late = r.warning ? r.minutesLate : 0
               const tone = r.warning === "noshow" ? "noshow" : "late"
               return (
@@ -333,27 +346,24 @@ function OwnerBody() {
                   key={r.id}
                   type="button"
                   onClick={() => m.openDetail(r.id, r.businessDate)}
-                  className={cn(
-                    "flex min-h-[62px] items-center gap-3 px-3.5 py-2 text-left text-tx-1 active:bg-surface-2",
-                    i && "border-t border-border",
-                  )}
+                  className="gm-press-card flex min-h-[64px] items-center gap-3 px-4 py-2.5 text-left text-tx-1"
                 >
                   <span
-                    className="grid size-8 shrink-0 place-items-center rounded-full"
+                    className="grid size-9 shrink-0 place-items-center rounded-xl"
                     style={{ background: `var(--st-${tone}-tint)`, color: `var(--st-${tone}-ink)` }}
                   >
-                    <Clock className="size-4" />
+                    <Clock className="size-4" aria-hidden />
                   </span>
-                  <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="text-[15px] font-medium">
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="truncate text-[14.5px] font-semibold text-tx-strong">
                       {late ? `${r.displayName}, trễ ${late} phút` : `${r.displayName}, chưa có bàn`}
                     </span>
-                    <span className="text-[13px] text-[var(--text-muted)]">
+                    <span className="tnum text-[13px] text-[var(--text-muted)]">
                       {fmtTime12(r.expectedAt)}, {r.partySize} khách
                       {r.tableIds.length ? `, ${tableText(r.tableIds, m.model)}` : ""}
                     </span>
                   </span>
-                  <ChevronRight className="size-4 shrink-0 text-subtle" />
+                  <ChevronRight className="size-4 shrink-0 text-subtle" aria-hidden />
                 </button>
               )
             })}
@@ -364,45 +374,55 @@ function OwnerBody() {
       </section>
 
       <section className="flex flex-col gap-2.5">
-        <h2 className="m-0 text-base font-semibold text-tx-strong">Booking ca tối</h2>
+        <h2 className="m-0 text-[16px] font-semibold tracking-[-0.01em] text-tx-strong">Booking ca tối</h2>
         <div className={cn(card, "grid grid-cols-4 px-1 py-3.5")}>
           {bookingSum.map((s, i) => (
-            <div key={s.label} className={cn("flex flex-col items-center gap-0.5", i && "border-l border-border")}>
-              <span className={cn("text-xl font-medium", s.alert ? "text-st-late-ink" : "text-tx-strong")}>
+            <div key={s.label} className={cn("flex flex-col items-center gap-0.5", i && "border-l border-border/80")}>
+              <span
+                className={cn(
+                  "tnum text-[20px] font-bold tracking-[-0.02em]",
+                  s.alert ? "text-st-late-ink" : "text-tx-strong",
+                )}
+              >
                 {s.value}
               </span>
-              <span className="text-center text-xs leading-[1.3] text-[var(--text-muted)]">{s.label}</span>
+              <span className="text-center text-[11.5px] leading-[1.3] font-medium text-[var(--text-muted)]">
+                {s.label}
+              </span>
             </div>
           ))}
         </div>
         <button
           type="button"
           onClick={() => m.go("wait")}
-          className={cn(card, "flex min-h-14 items-center gap-3 px-3.5 py-2 text-left text-tx-1")}
+          className={cn(card, "gm-press-card flex min-h-14 items-center gap-3 px-4 py-2.5 text-left text-tx-1")}
         >
-          <span className="flex flex-1 flex-col">
-            <span className="text-[15px] font-medium">
-              Danh sách chờ <span className="font-normal text-[var(--text-muted)]">{openWait.length}</span>
+          <span className="flex flex-1 flex-col gap-0.5">
+            <span className="text-[15px] font-semibold text-tx-strong">
+              Danh sách chờ <span className="tnum font-medium text-[var(--text-muted)]">{openWait.length}</span>
             </span>
-            <span className="text-[13px] text-[var(--text-muted)]">
+            <span className="tnum text-[13px] text-[var(--text-muted)]">
               {o.waitlistAdvance} đặt trước chưa có bàn, {o.waitlistWalkIn} walk-in chưa có bàn
             </span>
           </span>
-          <ChevronRight className="size-4 text-subtle" />
+          <ChevronRight className="size-4 text-subtle" aria-hidden />
         </button>
       </section>
 
       <section className="flex flex-col gap-2.5">
-        <h2 className="m-0 text-base font-semibold text-tx-strong">Truy cập nhanh</h2>
+        <h2 className="m-0 text-[16px] font-semibold tracking-[-0.01em] text-tx-strong">Truy cập nhanh</h2>
         <div className="grid grid-cols-4 gap-2">
           {quick.map((q) => (
             <button
               key={q.label}
               type="button"
               onClick={q.go}
-              className="flex flex-col items-center gap-1.5 rounded-2xl border border-border bg-surface-1 px-1 py-3 text-xs text-tx-1"
+              className={cn(
+                card,
+                "gm-press flex min-h-[68px] flex-col items-center justify-center gap-1.5 px-1 py-2.5 text-xs font-medium text-tx-1 hover:border-border-strong hover:bg-surface-2",
+              )}
             >
-              <q.icon className="size-[22px] text-primary-ink" strokeWidth={1.8} />
+              <q.icon className="size-[21px] text-primary-ink" strokeWidth={1.85} aria-hidden />
               {q.label}
             </button>
           ))}
