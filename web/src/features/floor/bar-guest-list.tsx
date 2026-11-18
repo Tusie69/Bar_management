@@ -21,7 +21,6 @@ import { cn } from "@/lib/utils"
 import {
   buildBarGuestRows,
   DEFAULT_BAR_GUEST_LIST_BOUNDS,
-  formatBarGuestName,
   isPhoneLikeGuestName,
   type BarGuestRow,
 } from "./bar-guest-rows"
@@ -86,13 +85,11 @@ export function BarGuestList({
     if (directRows) {
       if (hideGuestNames) return directRows.map((row) => ({ ...row, guestName: "" }))
       if (readOnly) {
-        return directRows.map((row) =>
-          isPhoneLikeGuestName(row.guestName) ? { ...row, guestName: formatBarGuestName(row.guestName) } : row,
-        )
+        return directRows.map((row) => (isPhoneLikeGuestName(row.guestName) ? { ...row, guestName: "" } : row))
       }
       return directRows
     }
-    if (tables) return buildBarGuestRows({ tables, states, groups, hideGuestNames })
+    if (tables) return buildBarGuestRows({ tables, states, groups, hideGuestNames, maskPhoneNames: readOnly })
     return []
   }, [directRows, tables, states, groups, hideGuestNames, readOnly])
 
@@ -210,7 +207,8 @@ export function BarGuestList({
               const overflowLabels = overflowIcons.map((i) => i.label).join(", ")
               const allIconLabels = activeIcons.map((i) => i.label).join(", ")
 
-              const displayGuestName = hideGuestNames ? "" : row.guestName
+              const displayGuestName =
+                hideGuestNames || (readOnly && isPhoneLikeGuestName(row.guestName)) ? "" : row.guestName
               const rowAriaLabel = [
                 row.seatsLabel,
                 row.time ? `lúc ${row.time}` : row.seatedTime ? `vào lúc ${row.seatedTime}` : "",

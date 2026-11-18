@@ -383,7 +383,7 @@ export function getTableCornerGeometry(w: number, h: number, clusterPad?: number
   if (typeof clusterPad === "number" && Number.isFinite(clusterPad)) {
     insetX = CLUSTER_CORNER_INSET_X
     const inner = clusterPad - CLUSTER_OUTLINE_HALF_STROKE
-    const maxProtrude = Math.max(0.2, inner - CLUSTER_DECORATION_CLEARANCE)
+    const maxProtrude = inner - CLUSTER_DECORATION_CLEARANCE
     const maxHalfStroke = Math.max(GUEST_BADGE_STROKE, TURN_BADGE_STROKE, TABLE_ICON_STROKE) / 2
     const maxR = Math.floor(((hh - 7.35 + maxProtrude) / 2 - maxHalfStroke) * 10) / 10
     cornerRadius = Math.min(TURN_BADGE_RADIUS, Math.max(3.8, maxR))
@@ -810,7 +810,9 @@ const CLUSTER_CODE_HALF_STROKE = CLUSTER_CODE_STROKE / 2
 const BAR_CLUSTER_PAD = 2
 const TABLE_CLUSTER_MAX_PAD = 3.6
 const TABLE_CLUSTER_MIN_PAD = 1.8
+const TIGHT_CLUSTER_MIN_PAD = 1.05
 const CLUSTER_MIN_STROKE_GAP = 1.2
+const CLUSTER_NON_MEMBER_OBSTACLE_CLEARANCE = 0.4
 
 interface RectBox {
   left: number
@@ -855,29 +857,52 @@ function rectOverlapArea(a: RectBox, b: RectBox): number {
   return ox * oy
 }
 
-function deriveTableClusterPad(raw: RectBox, memberIds: Set<number>, tables: TableView[]): number {
-  let minNeighborGap = Infinity
+function boxGap(a: RectBox, b: RectBox): number {
+  const dx = Math.max(0, a.left - b.right, b.left - a.right)
+  const dy = Math.max(0, a.top - b.bottom, b.top - a.bottom)
+  if (dx === 0 && dy === 0) return 0
+  if (dx === 0) return dy
+  if (dy === 0) return dx
+  if (Math.max(dx, dy) < 10) return Math.hypot(dx, dy)
+  return Infinity
+}
+
+function deriveTableClusterPad(
+  raw: RectBox,
+  memberIds: Set<number>,
+  tables: TableView[],
+  clusteredTableIds: Set<number>,
+  nonMemberObstacleBoxes: Map<number, RectBox[]>,
+): number {
+  let pad = TABLE_CLUSTER_MAX_PAD
   for (const other of tables) {
     if (memberIds.has(other.id)) continue
-    const oLeft = other.x - other.w / 2
-    const oRight = other.x + other.w / 2
-    const oTop = other.y - other.h / 2
-    const oBottom = other.y + other.h / 2
-    const dx = Math.max(0, raw.left - oRight, oLeft - raw.right)
-    const dy = Math.max(0, raw.top - oBottom, oTop - raw.bottom)
-    if (dx === 0 && dy > 0) {
-      minNeighborGap = Math.min(minNeighborGap, dy)
-    } else if (dy === 0 && dx > 0) {
-      minNeighborGap = Math.min(minNeighborGap, dx)
-    } else if (dx > 0 && dy > 0 && Math.max(dx, dy) < 10) {
-      minNeighborGap = Math.min(minNeighborGap, Math.hypot(dx, dy))
+    const otherRect: RectBox = {
+      left: other.x - other.w / 2,
+      right: other.x + other.w / 2,
+      top: other.y - other.h / 2,
+      bottom: other.y + other.h / 2,
+    }
+    const cellGap = boxGap(raw, otherRect)
+    if (Number.isFinite(cellGap)) {
+      // Reserve half the cell gap when another cluster can expand across it;
+      // allow tight 4-unit gaps (e.g. Khu C) to tighten below 1.8 when needed.
+      const cellAvailable = cellGap / 2 - CLUSTER_OUTLINE_HALF_STROKE - CLUSTER_MIN_STROKE_GAP / 2
+      const floor = clusteredTableIds.has(other.id) ? TIGHT_CLUSTER_MIN_PAD : TABLE_CLUSTER_MIN_PAD
+      pad = Math.min(pad, Math.max(floor, cellAvailable))
+    }
+
+    if (!clusteredTableIds.has(other.id)) {
+      for (const obs of nonMemberObstacleBoxes.get(other.id) ?? []) {
+        const obsGap = boxGap(raw, obs)
+        if (Number.isFinite(obsGap)) {
+          const obsAvailable = obsGap - CLUSTER_OUTLINE_HALF_STROKE - CLUSTER_NON_MEMBER_OBSTACLE_CLEARANCE
+          pad = Math.min(pad, Math.max(TIGHT_CLUSTER_MIN_PAD, obsAvailable))
+        }
+      }
     }
   }
-  if (!Number.isFinite(minNeighborGap)) return TABLE_CLUSTER_MAX_PAD
-  // Reserve half the gap per cluster so two adjacent outlines (including their
-  // 1.6-unit strokes) stay separated by at least CLUSTER_MIN_STROKE_GAP.
-  const available = minNeighborGap / 2 - CLUSTER_OUTLINE_HALF_STROKE - CLUSTER_MIN_STROKE_GAP / 2
-  return Math.min(TABLE_CLUSTER_MAX_PAD, Math.max(TABLE_CLUSTER_MIN_PAD, available))
+  return pad
 }
 
 /**
@@ -902,14 +927,10 @@ export function computeClusterDecorations({
   includeWaitlistMarker?: boolean
 }): ClusterDecoration[] {
   const seen = new Set<string>()
-  const rawClusters: {
+  const clusterSpecs: {
     key: string
-    x: number
-    y: number
-    w: number
-    h: number
-    rx: number
-    pad: number
+    raw: RectBox
+    memberIdSet: Set<number>
     memberIds: number[]
     code: string | null
     isBar: boolean
@@ -933,20 +954,12 @@ export function computeClusterDecorations({
       top: Math.min(...members.map((t) => t.y - t.h / 2)),
       bottom: Math.max(...members.map((t) => t.y + t.h / 2)),
     }
-    const memberIds = new Set(members.map((m) => m.id))
-    const pad = isBar ? BAR_CLUSTER_PAD : deriveTableClusterPad(raw, memberIds, tables)
-    const w = raw.right - raw.left + pad * 2
-    const h = raw.bottom - raw.top + pad * 2
-    const rx = isBar ? Math.min(w, h) / 2 : Number((4.5 + pad).toFixed(2))
-    rawClusters.push({
+    const memberIds = members.map((m) => m.id)
+    clusterSpecs.push({
       key,
-      x: raw.left - pad,
-      y: raw.top - pad,
-      w,
-      h,
-      rx,
-      pad,
-      memberIds: members.map((m) => m.id),
+      raw,
+      memberIdSet: new Set(memberIds),
+      memberIds,
       code,
       isBar,
       orientation,
@@ -964,8 +977,6 @@ export function computeClusterDecorations({
     }
   }
 
-  rawClusters.sort((a, b) => a.y - b.y || a.x - b.x || (a.code ?? a.key).localeCompare(b.code ?? b.key))
-
   const groupTurnMap = new Map<number, number>()
   for (const g of groups) {
     if (typeof g.seatedTurnCount === "number") {
@@ -974,6 +985,70 @@ export function computeClusterDecorations({
       }
     }
   }
+
+  const clusteredTableIds = new Set<number>()
+  for (const spec of clusterSpecs) {
+    if (spec.isBar) continue
+    for (const id of spec.memberIds) clusteredTableIds.add(id)
+  }
+
+  const nonMemberObstacleBoxes = new Map<number, RectBox[]>()
+  if (mode === "live") {
+    for (const t of tables) {
+      if (t.kind === "BAR_SEAT" || clusteredTableIds.has(t.id)) continue
+      const fs = states?.get(t.id)
+      const rawState: TableLiveState = fs?.state ?? "free"
+      const state = rawState === "late_confirmed" ? "late" : rawState
+      const claim = fs?.claim
+      const isAnchor = groupRepresentativeMap.get(t.id) ?? true
+      const hasActiveClaim = !!claim && state !== "free" && state !== "spare" && state !== "oos"
+      const boxes = getTableCornerObstacleBoxes(
+        t,
+        {
+          claim,
+          turnCount: fs?.seatedTurnCount ?? groupTurnMap.get(t.id),
+          isAnchor,
+          hasActiveClaim,
+          staleFromPreviousDay: fs?.staleFromPreviousDay,
+        },
+        0,
+      )
+      const list = [
+        boxes.guestBadge,
+        boxes.turnBadge,
+        boxes.bottomLeftIcons,
+        boxes.bottomRightIcons,
+        boxes.paidDot,
+        boxes.staleMark,
+      ].filter((box): box is RectBox => box !== null)
+      if (list.length > 0) nonMemberObstacleBoxes.set(t.id, list)
+    }
+  }
+
+  const rawClusters = clusterSpecs.map((spec) => {
+    const pad = spec.isBar
+      ? BAR_CLUSTER_PAD
+      : deriveTableClusterPad(spec.raw, spec.memberIdSet, tables, clusteredTableIds, nonMemberObstacleBoxes)
+    const w = spec.raw.right - spec.raw.left + pad * 2
+    const h = spec.raw.bottom - spec.raw.top + pad * 2
+    const rx = spec.isBar ? Math.min(w, h) / 2 : Number((4.5 + pad).toFixed(2))
+    return {
+      key: spec.key,
+      x: spec.raw.left - pad,
+      y: spec.raw.top - pad,
+      w,
+      h,
+      rx,
+      pad,
+      memberIds: spec.memberIds,
+      code: spec.code,
+      isBar: spec.isBar,
+      orientation: spec.orientation,
+      members: spec.members,
+    }
+  })
+
+  rawClusters.sort((a, b) => a.y - b.y || a.x - b.x || (a.code ?? a.key).localeCompare(b.code ?? b.key))
 
   const tableClusterPadMap = new Map<number, number>()
   for (const c of rawClusters) {

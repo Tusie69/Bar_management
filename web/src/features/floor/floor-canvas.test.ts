@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest"
 import type { FloorTableState, TableView, ZoneView } from "@/domain/models"
 import { BAR_SEATS, FIXTURES, FLOOR_H, FLOOR_W, TABLES, WALL_BOUNDS, ZONES } from "@/domain/venue-layout"
 import { STATE_META } from "@/components/status-meta"
+import { BarGuestList } from "./bar-guest-list"
 import { FloorCanvas, ReadOnlyFloorMap } from "./floor-canvas"
 import {
   calculateStatusCounts,
@@ -2090,8 +2091,9 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
     expect(states.get(bar5.id)?.claim?.displayName).toBe("Dương Quốc Long")
   })
 
-  it("keeps corner badges/icons strictly inside grouped outline inner strokes (including rx corners) for G01-G04 and worst-case 2-digit stress", () => {
+  it("keeps corner badges/icons strictly inside grouped outline inner strokes (including rx corners) for G01-G04, G08 (C4+C5), and occupied C1 stress", () => {
     const byCode = (code: string) => realTables.find((t) => t.code === code)!
+    const tA3 = byCode("A3")
     const tA6 = byCode("A6")
     const tA7 = byCode("A7")
     const tB6 = byCode("B6")
@@ -2100,26 +2102,47 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
     const tB12 = byCode("B12")
     const tB21 = byCode("B21")
     const tB22 = byCode("B22")
+    const tC4 = byCode("C4")
+    const tC5 = byCode("C5")
+    const tC1 = byCode("C1")
 
     const groups = [
       { id: 1, symbolNo: 1, displayCode: "G01", tableIds: [tA6.id, tA7.id] },
       { id: 2, symbolNo: 2, displayCode: "G02", tableIds: [tB11.id, tB12.id] },
       { id: 3, symbolNo: 3, displayCode: "G03", tableIds: [tB21.id, tB22.id] },
       { id: 4, symbolNo: 4, displayCode: "G04", tableIds: [tB6.id, tB8.id] },
+      { id: 8, symbolNo: 8, displayCode: "G08", tableIds: [tC4.id, tC5.id] },
     ]
 
-    const makeStressClaim = (tableIds: number[], symbolNo: number) => ({
+    const makeStressClaim = (tableIds: number[], symbolNo: number | null) => ({
       displayName: "Khách Stress",
       partySize: 14,
       tableIds,
       groupId: symbolNo,
       symbolNo,
-      groupDisplayCode: `G0${symbolNo}`,
+      groupDisplayCode: symbolNo ? `G0${symbolNo}` : null,
       flags: ["RETURNING", "VIP", "DESIGNATED", "BIRTHDAY"],
       startsAt: new Date("2026-11-18T14:00:00Z"),
     })
 
     const states = new Map<number, FloorTableState>([
+      [
+        tA3.id,
+        {
+          tableId: tA3.id,
+          state: "seated",
+          seatedTurnCount: 2,
+          claim: {
+            displayName: "Hưng",
+            partySize: 4,
+            tableIds: [tA3.id],
+            groupId: null,
+            symbolNo: null,
+            flags: ["RETURNING"],
+            startsAt: new Date("2026-11-18T14:00:00Z"),
+          },
+        } as any,
+      ],
       [
         tA6.id,
         { tableId: tA6.id, state: "seated", seatedTurnCount: 12, claim: makeStressClaim([tA6.id, tA7.id], 1) } as any,
@@ -2172,10 +2195,25 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
         tB8.id,
         { tableId: tB8.id, state: "seated", seatedTurnCount: 12, claim: makeStressClaim([tB6.id, tB8.id], 4) } as any,
       ],
+      [
+        tC4.id,
+        { tableId: tC4.id, state: "seated", seatedTurnCount: 12, claim: makeStressClaim([tC4.id, tC5.id], 8) } as any,
+      ],
+      [
+        tC5.id,
+        { tableId: tC5.id, state: "seated", seatedTurnCount: 12, claim: makeStressClaim([tC4.id, tC5.id], 8) } as any,
+      ],
+      [
+        tC1.id,
+        { tableId: tC1.id, state: "seated", seatedTurnCount: 12, claim: makeStressClaim([tC1.id], null) } as any,
+      ],
     ])
 
     const tableById = new Map(realTables.map((t) => [t.id, t]))
-    const repMap = new Map<number, boolean>()
+    const repMap = new Map<number, boolean>([
+      [tA3.id, true],
+      [tC1.id, true],
+    ])
     for (const g of groups) {
       const members = g.tableIds.map((id) => tableById.get(id)!)
       const repId = findGroupRepresentativeId(members)
@@ -2191,48 +2229,50 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
       tableById,
     })
 
-    // Exact signed distance from actual painted pill/circle perimeter to cluster outline inner stroke
-    const minClearanceInsideRoundedRect = (
-      box: { left: number; top: number; right: number; bottom: number },
-      c: (typeof decorations)[number],
-    ) => {
-      const innerLeft = c.x + 0.8
-      const innerTop = c.y + 0.8
-      const innerRight = c.x + c.w - 0.8
-      const innerBottom = c.y + c.h - 0.8
-      const innerRx = Math.max(0, c.rx - 0.8)
-      const cx = (innerLeft + innerRight) / 2
-      const cy = (innerTop + innerBottom) / 2
-      const halfW = (innerRight - innerLeft) / 2 - innerRx
-      const halfH = (innerBottom - innerTop) / 2 - innerRx
-
+    const sampleBoxPerimeter = (box: { left: number; top: number; right: number; bottom: number }) => {
       const r = (box.bottom - box.top) / 2
       const leftCapX = box.left + r
       const rightCapX = box.right - r
       const capY = (box.top + box.bottom) / 2
       const pts: [number, number][] = []
-      // Left and right semicircular caps
       for (let i = 0; i <= 16; i++) {
         const aLeft = Math.PI / 2 + (i / 16) * Math.PI
         pts.push([leftCapX + Math.cos(aLeft) * r, capY + Math.sin(aLeft) * r])
         const aRight = -Math.PI / 2 + (i / 16) * Math.PI
         pts.push([rightCapX + Math.cos(aRight) * r, capY + Math.sin(aRight) * r])
       }
-      // Top and bottom straight segments
       for (let i = 0; i <= 8; i++) {
         const x = leftCapX + ((rightCapX - leftCapX) * i) / 8
         pts.push([x, box.top], [x, box.bottom])
       }
-
-      let minClear = Infinity
-      for (const [px, py] of pts) {
-        const dx = Math.abs(px - cx) - halfW
-        const dy = Math.abs(py - cy) - halfH
-        const signedDist = Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) + Math.min(Math.max(dx, dy), 0) - innerRx
-        minClear = Math.min(minClear, -signedDist)
-      }
-      return minClear
+      return pts
     }
+
+    const signedDistRoundedRect = (px: number, py: number, c: (typeof decorations)[number], strokeOffset: number) => {
+      const left = c.x - strokeOffset
+      const top = c.y - strokeOffset
+      const right = c.x + c.w + strokeOffset
+      const bottom = c.y + c.h + strokeOffset
+      const rx = Math.max(0, c.rx + strokeOffset)
+      const cx = (left + right) / 2
+      const cy = (top + bottom) / 2
+      const halfW = (right - left) / 2 - rx
+      const halfH = (bottom - top) / 2 - rx
+      const dx = Math.abs(px - cx) - halfW
+      const dy = Math.abs(py - cy) - halfH
+      return Math.hypot(Math.max(dx, 0), Math.max(dy, 0)) + Math.min(Math.max(dx, dy), 0) - rx
+    }
+
+    // Exact signed distance from actual painted pill/circle perimeter to cluster outline inner stroke
+    const minClearanceInsideRoundedRect = (
+      box: { left: number; top: number; right: number; bottom: number },
+      c: (typeof decorations)[number],
+    ) => Math.min(...sampleBoxPerimeter(box).map(([px, py]) => -signedDistRoundedRect(px, py, c, -0.8)))
+
+    const minClearanceOutsideRoundedRect = (
+      box: { left: number; top: number; right: number; bottom: number },
+      c: (typeof decorations)[number],
+    ) => Math.min(...sampleBoxPerimeter(box).map(([px, py]) => signedDistRoundedRect(px, py, c, 0.8)))
 
     for (const c of decorations) {
       for (const id of c.memberIds) {
@@ -2250,15 +2290,53 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
         }
       }
     }
+
+    // BDG-02: adjacent non-member C1 badges/icons remain strictly outside G08 (C4+C5) outer stroke
+    const g08 = decorations.find((d) => d.code === "G08")!
+    const g02 = decorations.find((d) => d.code === "G02")!
+    const g03 = decorations.find((d) => d.code === "G03")!
+    expect(g02.y - 0.8 - (g03.y + g03.h + 0.8)).toBeGreaterThanOrEqual(1.0)
+
+    const c1Boxes = getTableCornerObstacleBoxes(
+      tC1,
+      { claim: states.get(tC1.id)!.claim, turnCount: 12, isAnchor: true, hasActiveClaim: true },
+      0,
+    )
+    for (const box of [c1Boxes.guestBadge, c1Boxes.turnBadge, c1Boxes.bottomLeftIcons, c1Boxes.bottomRightIcons]) {
+      expect(box).not.toBeNull()
+      expect(minClearanceOutsideRoundedRect(box!, g08)).toBeGreaterThanOrEqual(0.25)
+    }
+
+    // G08 pill label also clears C1's guest-count badge and corner icons
+    const g08Pill = {
+      left: g08.label!.x - 0.7,
+      top: g08.label!.y - 0.7,
+      right: g08.label!.x + g08.label!.width + 0.7,
+      bottom: g08.label!.y + g08.label!.height + 0.7,
+    }
+    const overlaps = (
+      a: { left: number; top: number; right: number; bottom: number },
+      b: { left: number; top: number; right: number; bottom: number },
+    ) => !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top)
+    expect(overlaps(g08Pill, c1Boxes.guestBadge!)).toBe(false)
+    expect(overlaps(g08Pill, c1Boxes.bottomLeftIcons!)).toBe(false)
+
+    // Ungrouped A3 turn-2 geometry remains unchanged
+    const a3Geo = getTableCornerGeometry(tA3.w, tA3.h)
+    expect(a3Geo.turnBadge.r).toBe(5.5)
+    expect(a3Geo.turnBadge.y).toBe(-tA3.h / 2 + 3.1)
   })
 
-  it("suppresses phone-shaped guest names in Admin ReadOnlyFloorMap (text, <title>, aria-label, BarGuestList) even when customer.view_masked is granted", () => {
+  it("suppresses phone-shaped guest names (ASCII, full-width, non-ASCII Unicode, mixed, spaced) across every Admin ReadOnlyFloorMap surface", () => {
+    const tA1 = realTables.find((t) => t.code === "A1")!
     const tA3 = realTables.find((t) => t.code === "A3")!
     const tA4 = realTables.find((t) => t.code === "A4")!
     const tA5 = realTables.find((t) => t.code === "A5")!
     const tA6 = realTables.find((t) => t.code === "A6")!
     const bar1 = realTables.find((t) => t.code === "BAR01")!
     const bar2 = realTables.find((t) => t.code === "BAR02")!
+    const bar3 = realTables.find((t) => t.code === "BAR03")!
+    const bar4 = realTables.find((t) => t.code === "BAR04")!
 
     const mkClaim = (tableIds: number[], displayName: string, kind: "visit" | "reservation" = "visit") => ({
       kind,
@@ -2286,8 +2364,17 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
 
     const states = new Map<number, FloorTableState>([
       [
+        tA1.id,
+        { tableId: tA1.id, state: "seated", staleFromPreviousDay: false, claim: mkClaim([tA1.id], "٠٩٠١٢٣٤٥٦٧") },
+      ],
+      [
         tA3.id,
-        { tableId: tA3.id, state: "seated", staleFromPreviousDay: false, claim: mkClaim([tA3.id], "0901234567") },
+        {
+          tableId: tA3.id,
+          state: "seated",
+          staleFromPreviousDay: false,
+          claim: mkClaim([tA3.id], "０９０１２３４５６７"),
+        },
       ],
       [
         tA4.id,
@@ -2295,12 +2382,12 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
           tableId: tA4.id,
           state: "reserved",
           staleFromPreviousDay: false,
-          claim: mkClaim([tA4.id], "090 123 4567", "reservation"),
+          claim: mkClaim([tA4.id], "Khách ０９０ １２３ ４５６７", "reservation"),
         },
       ],
       [
         tA5.id,
-        { tableId: tA5.id, state: "seated", staleFromPreviousDay: false, claim: mkClaim([tA5.id], "+84 901 234 567") },
+        { tableId: tA5.id, state: "seated", staleFromPreviousDay: false, claim: mkClaim([tA5.id], "090 １２３ 4567") },
       ],
       [
         tA6.id,
@@ -2312,7 +2399,7 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
           tableId: bar1.id,
           state: "seated",
           staleFromPreviousDay: false,
-          claim: mkClaim([bar1.id], "(+84) 912-345-678"),
+          claim: mkClaim([bar1.id], "０９１２３４５６７８"),
         },
       ],
       [
@@ -2321,7 +2408,25 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
           tableId: bar2.id,
           state: "seated",
           staleFromPreviousDay: false,
-          claim: mkClaim([bar2.id], "Dương Quốc Long"),
+          claim: mkClaim([bar2.id], "（＋８４）９１２－３４５－６７８"),
+        },
+      ],
+      [
+        bar3.id,
+        {
+          tableId: bar3.id,
+          state: "seated",
+          staleFromPreviousDay: false,
+          claim: mkClaim([bar3.id], "Nguyễn 090 １２３ 4567"),
+        },
+      ],
+      [
+        bar4.id,
+        {
+          tableId: bar4.id,
+          state: "seated",
+          staleFromPreviousDay: false,
+          claim: mkClaim([bar4.id], "Dương Quốc Long"),
         },
       ],
     ])
@@ -2338,10 +2443,17 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
     )
     expect(htmlMasked).toContain("Phạm Quốc Khoa")
     expect(htmlMasked).toContain("Dương Quốc Long")
-    expect(htmlMasked).not.toContain("0901234567")
-    expect(htmlMasked).not.toContain("090 123 4567")
-    expect(htmlMasked).not.toContain("+84 901 234 567")
-    expect(htmlMasked).not.toContain("912-345-678")
+    for (const leaked of [
+      "٠٩٠١٢٣٤٥٦٧",
+      "０９０１２３４５６７",
+      "０９０ １２３ ４５６７",
+      "090 １２３ 4567",
+      "０９１２３４５６７８",
+      "９１２－３４５－６７８",
+      "Nguyễn 090",
+    ]) {
+      expect(htmlMasked).not.toContain(leaked)
+    }
     expect(htmlMasked).not.toContain('href="tel:')
 
     const htmlNoName = renderToString(
@@ -2356,7 +2468,68 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
     )
     expect(htmlNoName).not.toContain("Phạm Quốc Khoa")
     expect(htmlNoName).not.toContain("Dương Quốc Long")
-    expect(htmlNoName).not.toContain("0901234567")
+    expect(htmlNoName).not.toContain("０９０１２３４５６７")
+    expect(htmlNoName).not.toContain("０９１２３４５６７８")
     expect(htmlNoName).not.toContain("Khách Walk-in")
+  })
+
+  it("ADM-05: BarGuestList preserves real Reception names while Admin readOnly suppresses Unicode phone variants on direct and table-derived rows", () => {
+    const directRows = [
+      {
+        bookingKey: "r1",
+        seatNumbers: [1],
+        seatsLabel: "Bar1",
+        time: "20:00",
+        seatedTime: null,
+        partySize: 2,
+        guestName: "Nguyễn (090 123 4567)",
+        state: "reserved" as const,
+        icons: {},
+      },
+      {
+        bookingKey: "r2",
+        seatNumbers: [2],
+        seatsLabel: "Bar2",
+        time: "20:30",
+        seatedTime: null,
+        partySize: 2,
+        guestName: "Nguyễn 18-11-2026",
+        state: "reserved" as const,
+        icons: {},
+      },
+      {
+        bookingKey: "r3",
+        seatNumbers: [3],
+        seatsLabel: "Bar3",
+        time: "21:00",
+        seatedTime: null,
+        partySize: 2,
+        guestName: "０９１２３４５６７８",
+        state: "seated" as const,
+        icons: {},
+      },
+      {
+        bookingKey: "r4",
+        seatNumbers: [4],
+        seatsLabel: "Bar4",
+        time: "21:15",
+        seatedTime: null,
+        partySize: 2,
+        guestName: "Dương Quốc Long",
+        state: "seated" as const,
+        icons: {},
+      },
+    ]
+
+    const receptionHtml = renderToString(createElement(BarGuestList, { rows: directRows, as: "html", readOnly: false }))
+    expect(receptionHtml).toContain("Nguyễn (090 123 4567)")
+    expect(receptionHtml).toContain("Nguyễn 18-11-2026")
+    expect(receptionHtml).toContain("Dương Quốc Long")
+
+    const adminHtml = renderToString(createElement(BarGuestList, { rows: directRows, as: "html", readOnly: true }))
+    expect(adminHtml).toContain("Dương Quốc Long")
+    expect(adminHtml).not.toContain("Nguyễn (090 123 4567)")
+    expect(adminHtml).not.toContain("Nguyễn 18-11-2026")
+    expect(adminHtml).not.toContain("０９１２３４５６７８")
   })
 })

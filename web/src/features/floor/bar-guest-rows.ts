@@ -32,6 +32,8 @@ export interface BuildBarGuestRowsOptions {
   groups?: FloorGroup[] | null
   /** Omit customer names in read-only admin projections without mutating source objects. */
   hideGuestNames?: boolean
+  /** Suppress phone-shaped guest names in read-only admin projections without altering Reception rows. */
+  maskPhoneNames?: boolean
 }
 
 /**
@@ -105,12 +107,26 @@ export function formatBarSeatLabel(seatNumbers: number[]): string {
     .join(", ")
 }
 
+function normalizeForPhoneDetection(displayName: string): string {
+  return displayName
+    .normalize("NFKC")
+    .replace(/\p{Cf}/gu, "")
+    .replace(/\p{Pd}/gu, "-")
+    .replace(/\s+/gu, " ")
+    .replace(/\p{Nd}/gu, "0")
+    .trim()
+}
+
+/**
+ * Detects phone-shaped guest names (including full-width and non-ASCII Unicode
+ * digits, spaced/dashed numbers, and mixed name+phone strings) for Admin masking.
+ */
 export function isPhoneLikeGuestName(displayName?: string | null): boolean {
-  const raw = (displayName ?? "").trim()
-  if (!raw) return false
-  const digitsOnly = raw.replace(/\D/g, "")
-  if (!/\p{L}/u.test(raw) && digitsOnly.length >= 4) return true
-  if (/(?:\+?\d[\d\s.\-()]{5,}\d)/.test(raw) && digitsOnly.length >= 7) return true
+  const normalized = normalizeForPhoneDetection(displayName ?? "")
+  if (!normalized) return false
+  const digitsOnly = normalized.replace(/\D/g, "")
+  if (!/\p{L}/u.test(normalized) && digitsOnly.length >= 4) return true
+  if (/(?:\+?\d[\d\s.\-()]{5,}\d)/.test(normalized) && digitsOnly.length >= 7) return true
   return false
 }
 
@@ -124,8 +140,9 @@ export function formatBarGuestName(displayName?: string | null): string {
   const raw = (displayName ?? "").trim()
   if (!raw) return "Khách Walk-in"
 
-  // Check if string contains phone number digits / separators (e.g. 0901234567, +84 901 234 567, 090-123)
-  if (isPhoneLikeGuestName(raw)) {
+  // Check if string contains only phone number digits / separators (e.g. 0901234567, +84..., 090-123)
+  const isPhoneOnly = (!/[a-zA-ZÀ-ỹ]/.test(raw) && /\d{4,}/.test(raw)) || /^\+?[\d\s.\-()]{6,}$/.test(raw)
+  if (isPhoneOnly) {
     return "Khách Walk-in"
   }
 
@@ -252,6 +269,7 @@ export function buildBarGuestRows(
   let statesInput: Map<number, FloorTableState> | FloorTableState[] | null | undefined
   let groups: FloorGroup[] = []
   let hideGuestNames = false
+  let maskPhoneNames = false
 
   if (Array.isArray(tablesOrOptions)) {
     tables = tablesOrOptions
@@ -262,6 +280,7 @@ export function buildBarGuestRows(
     statesInput = tablesOrOptions.states
     groups = tablesOrOptions.groups ?? []
     hideGuestNames = Boolean(tablesOrOptions.hideGuestNames)
+    maskPhoneNames = Boolean(tablesOrOptions.maskPhoneNames)
   } else {
     return []
   }
@@ -362,7 +381,11 @@ export function buildBarGuestRows(
     const time = formatBarBookedTime(item.claim, item.state)
     const seatedTime = time ? null : formatBarSeatedTime(item.claim, item.state)
     const partySize = item.claim.partySize ?? 1
-    const guestName = hideGuestNames ? "" : formatBarGuestName(item.claim.displayName)
+    const guestName = hideGuestNames
+      ? ""
+      : maskPhoneNames && isPhoneLikeGuestName(item.claim.displayName)
+        ? ""
+        : formatBarGuestName(item.claim.displayName)
     const icons = extractBarGuestIcons(item.claim)
 
     rows.push({

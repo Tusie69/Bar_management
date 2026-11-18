@@ -7,6 +7,7 @@ import {
   formatBarSeatedTime,
   formatBarGuestName,
   formatBarSeatLabel,
+  isPhoneLikeGuestName,
 } from "./bar-guest-rows"
 
 function makeTable(
@@ -117,6 +118,31 @@ describe("bar-guest-rows formatting helpers", () => {
     // Walk-in synonyms
     expect(formatBarGuestName("Walk-in")).toBe("Khách Walk-in")
     expect(formatBarGuestName("khách lẻ")).toBe("Khách Walk-in")
+
+    // ADM-05: Reception Bar formatter preserves real names with trailing numbers/dates/phones
+    expect(formatBarGuestName("Nguyễn (090 123 4567)")).toBe("Nguyễn (090 123 4567)")
+    expect(formatBarGuestName("Nguyễn 18-11-2026")).toBe("Nguyễn 18-11-2026")
+    expect(formatBarGuestName("Nguyễn")).toBe("Nguyễn")
+  })
+
+  it("detects full-width, non-ASCII Unicode, mixed, and spaced phone-shaped guest names for Admin masking", () => {
+    expect(isPhoneLikeGuestName("0901234567")).toBe(true)
+    expect(isPhoneLikeGuestName("０９０１２３４５６７")).toBe(true)
+    expect(isPhoneLikeGuestName("０９０ １２３ ４５６７")).toBe(true)
+    expect(isPhoneLikeGuestName("（＋８４）９１２－３４５－６７８")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách ０９０１２３４５６７")).toBe(true)
+    expect(isPhoneLikeGuestName("Nguyễn 090 １２３ 4567")).toBe(true)
+    expect(isPhoneLikeGuestName("０9０-123-４567")).toBe(true)
+    expect(isPhoneLikeGuestName("٠٩٠١٢٣٤٥٦٧")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách ٠٩٠ ١٢٣ ٤٥٦٧")).toBe(true)
+    expect(isPhoneLikeGuestName("๐๙๐-๑๒๓-๔๕๖๗")).toBe(true)
+    expect(isPhoneLikeGuestName("090\u200B123\u00A04567")).toBe(true)
+
+    expect(isPhoneLikeGuestName("Phạm Quốc Khoa")).toBe(false)
+    expect(isPhoneLikeGuestName("Dương Quốc Long")).toBe(false)
+    expect(isPhoneLikeGuestName("Anh Minh 2")).toBe(false)
+    expect(isPhoneLikeGuestName("Khách VIP 88")).toBe(false)
+    expect(isPhoneLikeGuestName("")).toBe(false)
   })
 
   it("formats booked time accurately before and after check-in", () => {
@@ -519,5 +545,28 @@ describe("buildBarGuestRows", () => {
       returning: true,
       pin: true,
     })
+  })
+
+  it("ADM-05: pins Reception Bar row names while Admin maskPhoneNames suppresses Unicode phone variants", () => {
+    const tables = [makeTable(1, 1), makeTable(2, 2), makeTable(3, 3), makeTable(4, 4)]
+    const states = new Map([
+      [1, makeState(1, "seated", makeClaim({ reservationId: 1, displayName: "Nguyễn (090 123 4567)", tableIds: [1] }))],
+      [2, makeState(2, "seated", makeClaim({ reservationId: 2, displayName: "Nguyễn 18-11-2026", tableIds: [2] }))],
+      [3, makeState(3, "seated", makeClaim({ reservationId: 3, displayName: "Nguyễn", tableIds: [3] }))],
+      [4, makeState(4, "seated", makeClaim({ reservationId: 4, displayName: "０９１２３４５６７８", tableIds: [4] }))],
+    ])
+
+    // Reception path preserves real names including parenthesized phone/date suffixes
+    const receptionRows = buildBarGuestRows(tables, states)
+    expect(receptionRows.map((r) => r.guestName)).toEqual([
+      "Nguyễn (090 123 4567)",
+      "Nguyễn 18-11-2026",
+      "Nguyễn",
+      "０９１２３４５６７８",
+    ])
+
+    // Admin read-only path with maskPhoneNames suppresses phone-shaped values while keeping normal names
+    const adminRows = buildBarGuestRows({ tables, states, maskPhoneNames: true })
+    expect(adminRows.map((r) => r.guestName)).toEqual(["", "", "Nguyễn", ""])
   })
 })

@@ -19,7 +19,7 @@ import { createServer } from "vite"
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
 const evidenceRoot =
-  process.env.ADMIN_FLOOR_EVIDENCE_DIR || "D:\\GAM-APP\\docs\\Sprint4\\evidence\\admin-floor-map-2026-11-18\\fix1"
+  process.env.ADMIN_FLOOR_EVIDENCE_DIR || "D:\\GAM-APP\\docs\\Sprint4\\evidence\\admin-floor-map-2026-11-18\\fix2"
 fs.mkdirSync(evidenceRoot, { recursive: true })
 
 function findFreePort() {
@@ -979,11 +979,11 @@ try {
         // 24:BAR01, 25:BAR02
         const special = new Map([
           [2, { displayState: "IN_USE", claim: makeClaim(2, "Phạm Quốc Khoa") }],
-          [3, { displayState: "IN_USE", claim: makeClaim(3, "+84 901 234 567") }],
+          [3, { displayState: "IN_USE", claim: makeClaim(3, "Khách ０９０ １２３ 4567") }],
           [4, { displayState: "BOOKED", claim: makeClaim(4, "090 123 4567", "RESERVATION") }],
-          [5, { displayState: "IN_USE", claim: makeClaim(5, "0901234567") }],
+          [5, { displayState: "IN_USE", claim: makeClaim(5, "０９０１２３４５６７") }],
           [6, { displayState: "OUT_OF_SERVICE", isOutOfService: true, claim: null }],
-          [24, { displayState: "IN_USE", claim: makeClaim(24, "(+84) 912-345-678") }],
+          [24, { displayState: "IN_USE", claim: makeClaim(24, "０９１２３４５６７８") }],
           [25, { displayState: "IN_USE", claim: makeClaim(25, "Dương Quốc Long") }],
         ])
         const codes = [
@@ -1087,30 +1087,48 @@ try {
     const httpSurface = await page.evaluate(() => {
       const stage = document.querySelector('[data-testid="shift-overview-floor-stage"]')
       const stageText = stage ? (stage.textContent ?? "") : ""
-      const stageTitles = Array.from(stage?.querySelectorAll("title") ?? [])
+      const stageSvgTitles = Array.from(stage?.querySelectorAll("title") ?? [])
         .map((t) => t.textContent ?? "")
+        .join(" | ")
+      const stageHtmlTitles = Array.from(stage?.querySelectorAll("[title]") ?? [])
+        .map((el) => el.getAttribute("title") ?? "")
         .join(" | ")
       const stageAria = Array.from(stage?.querySelectorAll("[aria-label]") ?? [])
         .map((el) => el.getAttribute("aria-label") ?? "")
         .join(" | ")
+      const a3 = stage?.querySelector('g[aria-label^="Bàn A3"]')
+      const a3Surface = a3
+        ? `${a3.textContent ?? ""} | ${a3.querySelector("title")?.textContent ?? ""} | ${a3.getAttribute("aria-label") ?? ""}`
+        : ""
+      const barPanel = stage?.querySelector('[data-testid="bar-guest-list"]')
+      const barSurface = barPanel
+        ? `${barPanel.textContent ?? ""} | ${Array.from(barPanel.querySelectorAll("[title]"))
+            .map((el) => el.getAttribute("title") ?? "")
+            .join(" | ")} | ${Array.from(barPanel.querySelectorAll("[aria-label]"))
+            .map((el) => el.getAttribute("aria-label") ?? "")
+            .join(" | ")}`
+        : ""
       const telLinks = stage?.querySelectorAll('a[href^="tel:"]').length ?? 0
-      const combined = `${stageText} | ${stageTitles} | ${stageAria}`
+      const combined = `${stageText} | ${stageSvgTitles} | ${stageHtmlTitles} | ${stageAria}`
+      const phoneLeakRe = /090\s*123\s*4567|901\s*234\s*567|090\s*123|[０-９]{4,}|[０-９]{3}\s*[０-９]{3}/
       return {
         combined,
         stageText,
+        a3Surface,
+        barSurface,
         telLinks,
         hasKhoa: combined.includes("Phạm Quốc Khoa"),
         hasLong: combined.includes("Dương Quốc Long"),
-        leaksPhone090: /0901234567|090\s+123\s+4567|901\s*234\s*567|912[-.\s]*345[-.\s]*678|\+84\s*901/.test(combined),
+        leaksPhone: phoneLeakRe.test(combined) || phoneLeakRe.test(a3Surface) || phoneLeakRe.test(barSurface),
         fakesWalkIn: stageText.includes("Khách Walk-in") || stageAria.includes("Khách Walk-in"),
       }
     })
 
     assert.equal(httpSurface.telLinks, 0, `HTTP ${scenario.name}: tel: links found`)
     assert.equal(
-      httpSurface.leaksPhone090,
+      httpSurface.leaksPhone,
       false,
-      `HTTP ${scenario.name}: leaked phone-shaped name: ${httpSurface.combined}`,
+      `HTTP ${scenario.name}: leaked phone-shaped name (a3=${httpSurface.a3Surface}, bar=${httpSurface.barSurface})`,
     )
     if (scenario.expectNames) {
       assert(httpSurface.hasKhoa && httpSurface.hasLong, `HTTP ${scenario.name}: expected real guest names`)
