@@ -46,6 +46,10 @@ export interface BarGuestListProps {
   ariaLabel?: string
   /** Click handler for selecting a row */
   onRowClick?: (row: BarGuestRow) => void
+  /** Read-only mode: render static non-interactive rows (never <button>) and ignore clicks. */
+  readOnly?: boolean
+  /** Redact guest names from text, title, and accessible labels. */
+  hideGuestNames?: boolean
   /** Additional CSS class names */
   className?: string
   /** Optional test identifier */
@@ -67,14 +71,18 @@ export function BarGuestList({
   title = "Khách quầy bar",
   ariaLabel = title,
   onRowClick,
+  readOnly = false,
+  hideGuestNames = false,
   className,
   "data-testid": testId = "bar-guest-list",
 }: BarGuestListProps): ReactElement | null {
   const rows = useMemo(() => {
-    if (directRows) return directRows
-    if (tables) return buildBarGuestRows(tables, states, groups)
+    if (directRows) {
+      return hideGuestNames ? directRows.map((row) => ({ ...row, guestName: "" })) : directRows
+    }
+    if (tables) return buildBarGuestRows({ tables, states, groups, hideGuestNames })
     return []
-  }, [directRows, tables, states, groups])
+  }, [directRows, tables, states, groups, hideGuestNames])
 
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -190,16 +198,77 @@ export function BarGuestList({
               const overflowLabels = overflowIcons.map((i) => i.label).join(", ")
               const allIconLabels = activeIcons.map((i) => i.label).join(", ")
 
+              const displayGuestName = hideGuestNames ? "" : row.guestName
               const rowAriaLabel = [
                 row.seatsLabel,
                 row.time ? `lúc ${row.time}` : row.seatedTime ? `vào lúc ${row.seatedTime}` : "",
                 `${row.partySize} khách`,
-                row.guestName,
+                displayGuestName,
                 allIconLabels,
                 `Trạng thái: ${statusLabel}`,
               ]
                 .filter(Boolean)
                 .join(", ")
+
+              const rowBody = (
+                <>
+                  <div className="flex w-full min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5">
+                    <span className="inline-flex min-w-0 shrink items-center gap-1">
+                      <span
+                        className="inline-block size-1.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: statusColor }}
+                        aria-hidden="true"
+                      />
+                      <span className="max-w-14 truncate text-[10px] font-semibold tracking-tight text-foreground">
+                        {row.seatsLabel}
+                      </span>
+                    </span>
+                    <span className="tnum shrink-0 text-[9.5px] text-muted-foreground">
+                      {row.time ?? (row.seatedTime ? `vào ${row.seatedTime}` : "")}
+                    </span>
+                    <span className="tnum inline-flex shrink-0 items-center gap-0.5 text-[9.5px] text-muted-foreground">
+                      <Users className="size-2 opacity-70" aria-hidden="true" />
+                      {row.partySize}
+                    </span>
+                    {activeIcons.length > 0 ? (
+                      <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-[9px]">
+                        {visibleIcons.map((icon) => (
+                          <span key={icon.key} title={icon.label} aria-label={icon.label}>
+                            {icon.emoji}
+                          </span>
+                        ))}
+                        {overflowCount > 0 ? (
+                          <span
+                            title={overflowLabels}
+                            aria-label={`và ${overflowCount} mục khác: ${overflowLabels}`}
+                            className="text-[9px] font-semibold text-muted-foreground/80 select-none"
+                          >
+                            {`+${overflowCount}`}
+                          </span>
+                        ) : null}
+                        {overflowIcons.length > 0 ? (
+                          <span className="sr-only">
+                            {overflowIcons.map((icon) => (
+                              <span key={icon.key} title={icon.label} aria-label={icon.label}>
+                                {icon.emoji}
+                              </span>
+                            ))}
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : null}
+                  </div>
+                  {displayGuestName ? (
+                    <span
+                      className="line-clamp-2 w-full min-w-0 font-medium break-words text-foreground"
+                      title={displayGuestName}
+                    >
+                      {displayGuestName}
+                    </span>
+                  ) : null}
+                  <span className="sr-only">{` (${statusShort})`}</span>
+                </>
+              )
 
               return (
                 <li
@@ -207,69 +276,26 @@ export function BarGuestList({
                   role="listitem"
                   className="min-w-0 overflow-hidden rounded-none text-[10.5px] leading-[1.25]"
                 >
-                  <button
-                    type="button"
-                    onClick={() => onRowClick?.(row)}
-                    aria-label={rowAriaLabel}
-                    className={cn(
-                      "flex min-h-6 w-full min-w-0 flex-col items-stretch gap-0.5 overflow-hidden rounded-none px-1.5 py-1.5 text-left transition-colors focus-visible:bg-surface-2 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none focus-visible:ring-inset",
-                      onRowClick ? "cursor-pointer hover:bg-surface-2/80" : "cursor-default hover:bg-surface-2/40",
-                    )}
-                  >
-                    <div className="flex w-full min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5">
-                      <span className="inline-flex min-w-0 shrink items-center gap-1">
-                        <span
-                          className="inline-block size-1.5 shrink-0 rounded-full"
-                          style={{ backgroundColor: statusColor }}
-                          aria-hidden="true"
-                        />
-                        <span className="max-w-14 truncate text-[10px] font-semibold tracking-tight text-foreground">
-                          {row.seatsLabel}
-                        </span>
-                      </span>
-                      <span className="tnum shrink-0 text-[9.5px] text-muted-foreground">
-                        {row.time ?? (row.seatedTime ? `vào ${row.seatedTime}` : "")}
-                      </span>
-                      <span className="tnum inline-flex shrink-0 items-center gap-0.5 text-[9.5px] text-muted-foreground">
-                        <Users className="size-2 opacity-70" aria-hidden="true" />
-                        {row.partySize}
-                      </span>
-                      {activeIcons.length > 0 ? (
-                        <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-[9px]">
-                          {visibleIcons.map((icon) => (
-                            <span key={icon.key} title={icon.label} aria-label={icon.label}>
-                              {icon.emoji}
-                            </span>
-                          ))}
-                          {overflowCount > 0 ? (
-                            <span
-                              title={overflowLabels}
-                              aria-label={`và ${overflowCount} mục khác: ${overflowLabels}`}
-                              className="text-[9px] font-semibold text-muted-foreground/80 select-none"
-                            >
-                              {`+${overflowCount}`}
-                            </span>
-                          ) : null}
-                          {overflowIcons.length > 0 ? (
-                            <span className="sr-only">
-                              {overflowIcons.map((icon) => (
-                                <span key={icon.key} title={icon.label} aria-label={icon.label}>
-                                  {icon.emoji}
-                                </span>
-                              ))}
-                            </span>
-                          ) : null}
-                        </span>
-                      ) : null}
-                    </div>
-                    <span
-                      className="line-clamp-2 w-full min-w-0 font-medium break-words text-foreground"
-                      title={row.guestName}
+                  {readOnly ? (
+                    <div
+                      aria-label={rowAriaLabel}
+                      className="flex min-h-6 w-full min-w-0 cursor-default flex-col items-stretch gap-0.5 overflow-hidden rounded-none px-1.5 py-1.5 text-left"
                     >
-                      {row.guestName}
-                    </span>
-                    <span className="sr-only">{` (${statusShort})`}</span>
-                  </button>
+                      {rowBody}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onRowClick?.(row)}
+                      aria-label={rowAriaLabel}
+                      className={cn(
+                        "flex min-h-6 w-full min-w-0 flex-col items-stretch gap-0.5 overflow-hidden rounded-none px-1.5 py-1.5 text-left transition-colors focus-visible:bg-surface-2 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none focus-visible:ring-inset",
+                        onRowClick ? "cursor-pointer hover:bg-surface-2/80" : "cursor-default hover:bg-surface-2/40",
+                      )}
+                    >
+                      {rowBody}
+                    </button>
+                  )}
                 </li>
               )
             })}

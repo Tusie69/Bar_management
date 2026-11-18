@@ -1,32 +1,20 @@
 import { Eye } from "lucide-react"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { FLOOR_LEGEND_ITEMS, type FloorChipItem, type FloorZoneRow } from "./shift-overview-selectors"
+import type { FloorGroup, FloorTableState, TableView, ZoneView } from "@/domain/models"
+import { ReadOnlyFloorMap } from "@/features/floor/floor-canvas"
+import { StatusLegend } from "@/features/floor/status-legend"
+import { useCanViewMaskedCustomer } from "./shift-overview-hooks"
 
-function ReadOnlyTableChip({ chip }: { chip: FloorChipItem }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          aria-label={chip.ariaLabel}
-          title={chip.tooltipText}
-          className={["so-chip", `so-chip--${chip.status}`, chip.isGrouped ? "so-chip--grouped" : ""]
-            .filter(Boolean)
-            .join(" ")}
-          data-testid={`floor-chip-${chip.code}`}
-          data-status={chip.status}
-        >
-          <span>{chip.code}</span>
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="top" className="so-tooltip-content">
-        {chip.tooltipText}
-      </TooltipContent>
-    </Tooltip>
-  )
+export interface ShiftOverviewFloorProps {
+  tables: TableView[]
+  states: Map<number, FloorTableState>
+  zones?: ZoneView[]
+  groups?: FloorGroup[]
+  now: Date
 }
 
-export function ShiftOverviewFloor({ zones }: { zones: FloorZoneRow[] }) {
+export function ShiftOverviewFloor({ tables, states, zones = [], groups = [], now }: ShiftOverviewFloorProps) {
+  const canViewGuestNames = useCanViewMaskedCustomer()
+
   return (
     <section
       className="so-panel so-panel--stretch"
@@ -41,39 +29,25 @@ export function ShiftOverviewFloor({ zones }: { zones: FloorZoneRow[] }) {
           </h2>
           <p className="so-panel-subtitle">Chủ quán không thao tác lên bàn của Lễ tân</p>
         </div>
-        <span className="so-readonly-pill" aria-hidden="true">
-          <Eye className="size-3.5" />
-          <span>Chỉ xem</span>
-        </span>
+        <div className="so-panel-header-actions">
+          <span className="so-readonly-pill" aria-hidden="true">
+            <Eye className="size-3.5" />
+            <span>Chỉ xem</span>
+          </span>
+          <StatusLegend variant="admin" tables={tables} states={states} />
+        </div>
       </div>
 
-      <div className="so-legend" role="list" aria-label="Chú giải trạng thái bàn">
-        {FLOOR_LEGEND_ITEMS.map((item) => (
-          <div key={item.status} className="so-legend-item" role="listitem">
-            <span className="so-status-dot" style={{ backgroundColor: item.colorToken }} aria-hidden="true" />
-            <span>{item.label}</span>
-          </div>
-        ))}
-      </div>
-
-      <div className="so-zones-list">
-        {zones.map((zone) => (
-          <div key={zone.zone} className="so-zone-block" data-testid={`floor-zone-${zone.zone}`}>
-            <div className="so-zone-header">
-              <h3 className="so-zone-heading">{zone.heading}</h3>
-              <span className="so-zone-count" aria-hidden="true">
-                {zone.chips.length}
-              </span>
-            </div>
-            <div className="so-chip-grid" role="list" aria-label={`Bàn tại ${zone.heading}`}>
-              {zone.chips.map((chip) => (
-                <div key={chip.id} role="listitem">
-                  <ReadOnlyTableChip chip={chip} />
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
+      <div className="so-floor-stage" data-testid="shift-overview-floor-stage">
+        <ReadOnlyFloorMap
+          tables={tables}
+          zones={zones}
+          states={states}
+          groups={groups}
+          now={now}
+          canViewGuestNames={canViewGuestNames}
+          ariaLabel="Sơ đồ bàn — chỉ xem"
+        />
       </div>
     </section>
   )

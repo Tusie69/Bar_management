@@ -36,13 +36,6 @@
   --so-empty-ink: #4d4942;
   --so-tint-empty: color-mix(in oklab, var(--so-sunken) 70%, var(--so-surface));
 
-  /* Solid floor chip fills with >= 4.5:1 WCAG AA contrast for #ffffff text */
-  --so-chip-booked: #1d6fc2;
-  --so-chip-soon: #a16700;
-  --so-chip-late: #d13b3b;
-  --so-chip-inuse: #268549;
-  --so-chip-empty: #77736c;
-
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -321,12 +314,6 @@
   border-radius: var(--radius-sm, 8px);
 }
 
-.so-chip:focus-visible {
-  outline: 2px solid var(--so-navy);
-  outline-offset: 2px;
-  border-radius: var(--radius-sm, 8px);
-}
-
 /* Main Split Grid: Floor Left (~64%) + Alerts & Occupancy Right (~36%) */
 .so-main-grid {
   display: grid;
@@ -409,6 +396,13 @@
   color: var(--so-muted);
 }
 
+.so-panel-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .so-readonly-pill {
   display: inline-flex;
   align-items: center;
@@ -423,140 +417,57 @@
   white-space: nowrap;
 }
 
-/* Floor Legend */
-.so-legend {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  padding: 9px 12px;
-  border-radius: var(--radius-md, 10px);
-  background: var(--so-canvas);
-  border: 1px solid var(--so-border-subtle);
-}
+/* Spatial read-only floor stage: preserves Daylight floor/state hues and Roboto SVG labels */
+.so-floor-stage {
+  --floor: oklch(0.975 0.005 100);
+  --floor-grid: oklch(0.87 0.008 100);
+  --floor-zone: oklch(0.945 0.007 100);
+  --floor-wall: oklch(0.42 0.01 80);
+  --floor-fixture: oklch(0.92 0.008 100);
+  --table-line: oklch(0.5 0.01 80);
 
-.so-legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  line-height: 16px;
-  font-weight: 500;
-  color: var(--so-text);
-}
+  --st-reserved: #378add;
+  --st-upcoming: #d9a406;
+  --st-late: #dc2626;
+  --st-noshow: #dc2626;
+  --st-seated: #559624;
+  --st-oos: oklch(0.58 0.005 80);
+  --st-free: #b4b2a9;
+  --st-free-tint: #e8e6df;
+  --st-reserved-tint: #d8ecfc;
+  --st-upcoming-tint: #fbeec2;
+  --st-late-tint: #fee2e2;
+  --st-noshow-tint: #fee2e2;
+  --st-seated-tint: #d6f0c2;
+  --st-seated-fill: #d6f0c2;
+  --on-seated: #1b3a0e;
+  --st-reserved-ink: #1e40af;
+  --st-upcoming-ink: #854d0e;
+  --st-late-ink: #991b1b;
+  --st-noshow-ink: #991b1b;
+  --st-seated-ink: #1e3a0f;
 
-.so-status-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 9999px;
-  flex-shrink: 0;
-}
-
-/* Floor Zones: sunken #f0eee9 frame + solid state-colored chips (zero geometry/order changes) */
-.so-zones-list {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 16px;
-  background: var(--so-sunken);
-  border: 1px solid var(--so-border-subtle);
-  border-radius: var(--radius-lg, 12px);
-}
-
-.so-zone-block {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-
-.so-zone-block + .so-zone-block {
-  padding-top: 12px;
-  border-top: 1px solid color-mix(in oklab, var(--so-border) 68%, transparent);
-}
-
-.so-zone-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.so-zone-heading {
-  margin: 0;
-  font-size: 11.5px;
-  line-height: 16px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--so-muted-strong);
-}
-
-.so-zone-count {
-  font-size: 11px;
-  line-height: 16px;
-  font-weight: 600;
-  color: var(--so-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.so-chip-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.so-chip {
   position: relative;
-  display: inline-flex;
+  width: 100%;
+  height: clamp(540px, 74dvh, 700px);
+  min-height: 540px;
+  border-radius: var(--radius-lg, 12px);
+  border: 1px solid var(--so-border-subtle);
+  background: var(--floor);
+  overflow: hidden;
+}
+
+.so-floor-stage--skeleton {
+  display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 62px;
-  height: 40px;
-  padding: 0 11px;
-  border-radius: var(--radius-sm, 8px);
-  font-size: 13px;
-  line-height: 18px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: #ffffff;
-  cursor: default;
-  user-select: none;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
-  transition:
-    box-shadow var(--duration-hover, 160ms) var(--ease-spring-default, ease),
-    filter var(--duration-hover, 160ms) var(--ease-spring-default, ease);
+  padding: 16px;
 }
 
-.so-chip--grouped {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    inset 0 -2px 0 rgba(255, 255, 255, 0.35);
-}
-
-.so-chip:hover {
-  box-shadow: var(--shadow-sm);
-  filter: brightness(1.04);
-}
-
-.so-chip--booked {
-  background: var(--so-chip-booked);
-}
-
-.so-chip--soon {
-  background: var(--so-chip-soon);
-}
-
-.so-chip--late {
-  background: var(--so-chip-late);
-}
-
-.so-chip--inuse {
-  background: var(--so-chip-inuse);
-}
-
-.so-chip--empty {
-  background: var(--so-chip-empty);
+/* Keep FloorCanvas SVG tile labels and BarGuestList in Roboto so wider Be Vietnam Pro never truncates table codes. */
+.so-floor-stage svg[role="group"] {
+  --font-sans: "Roboto", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-family: var(--font-sans);
 }
 
 /* Operational Alerts */
@@ -869,16 +780,14 @@
     padding: 15px 15px;
   }
 
-  .so-zones-list {
-    padding: 12px;
+  .so-floor-stage {
+    height: auto;
+    aspect-ratio: 374 / 732;
+    min-height: 540px;
   }
 }
 
 @media (max-width: 1024px), (pointer: coarse) {
-  .so-chip {
-    min-height: 44px;
-  }
-
   .so-info-trigger {
     min-width: 44px;
     min-height: 44px;
@@ -894,7 +803,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .so-kpi-card,
-  .so-chip,
   .so-occupancy-fill,
   .so-warning-trigger,
   .so-info-trigger {
