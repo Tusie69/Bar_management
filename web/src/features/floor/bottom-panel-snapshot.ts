@@ -49,7 +49,7 @@ export function nextBottomPanelState(prev: BottomPanelState, input: BottomPanelI
   if (open) {
     if (draft) {
       const prevDraft = prev.snapshot?.kind === "draft" ? prev.snapshot : null
-      const freshOpen = !prev.wasOpen || !prevDraft || prevDraft.draft.kind !== draft.kind
+      const freshOpen = !prev.wasOpen || !prevDraft
       const sessionId = freshOpen ? prev.nextSessionId + 1 : prevDraft.sessionId
       if (
         prev.wasOpen &&

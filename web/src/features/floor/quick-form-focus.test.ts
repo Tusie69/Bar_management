@@ -13,6 +13,7 @@ vi.hoisted(() => {
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }))
 
 import type { QuickDraft } from "@/state/ui"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import type { FloorModel } from "./use-floor-model"
 import { QuickForm } from "./quick-form"
 import { resolveLeaveConfirmFocusTarget } from "./quick-form-focus"
@@ -98,15 +99,19 @@ describe("QuickForm leave confirmation focus restoration (P4-03)", () => {
 
     const html = renderToString(
       createElement(
-        QueryClientProvider,
-        { client },
-        createElement(QuickForm, {
-          model: emptyModel,
-          availability: undefined,
-          availabilityStatus: "ready",
-          compact: true,
-          draft: retainedDraft,
-        }),
+        TooltipProvider,
+        null,
+        createElement(
+          QueryClientProvider,
+          { client },
+          createElement(QuickForm, {
+            model: emptyModel,
+            availability: undefined,
+            availabilityStatus: "ready",
+            compact: true,
+            draft: retainedDraft,
+          }),
+        ),
       ),
     )
 

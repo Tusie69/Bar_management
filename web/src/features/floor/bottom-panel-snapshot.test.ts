@@ -155,6 +155,94 @@ describe("nextBottomPanelState (P4-02)", () => {
     })
   })
 
+  it("keeps the same sessionId when switching draft kind while open in both directions (P4-05)", () => {
+    const bookingOpened = nextBottomPanelState(INITIAL_BOTTOM_PANEL_STATE, {
+      open: true,
+      present: true,
+      live: true,
+      draft: bookingDraft,
+      draftAvailability: availabilityResult,
+      draftAvailabilityStatus: "ready",
+      selectedTableId: null,
+      availSelection: [],
+    })
+
+    const switchedToWalkIn = nextBottomPanelState(bookingOpened, {
+      open: true,
+      present: true,
+      live: true,
+      draft: walkInDraft,
+      draftAvailability: undefined,
+      draftAvailabilityStatus: "ready",
+      selectedTableId: null,
+      availSelection: [],
+    })
+
+    expect(switchedToWalkIn.snapshot).toMatchObject({
+      kind: "draft",
+      sessionId: 1,
+      draft: walkInDraft,
+    })
+
+    const switchedBackToBooking = nextBottomPanelState(switchedToWalkIn, {
+      open: true,
+      present: true,
+      live: true,
+      draft: bookingDraft,
+      draftAvailability: availabilityResult,
+      draftAvailabilityStatus: "ready",
+      selectedTableId: null,
+      availSelection: [],
+    })
+
+    expect(switchedBackToBooking.snapshot).toMatchObject({
+      kind: "draft",
+      sessionId: 1,
+      draft: bookingDraft,
+    })
+  })
+
+  it("increments sessionId on rapid reopen mid-exit even with the same draft kind", () => {
+    const opened = nextBottomPanelState(INITIAL_BOTTOM_PANEL_STATE, {
+      open: true,
+      present: true,
+      live: true,
+      draft: bookingDraft,
+      draftAvailability: availabilityResult,
+      draftAvailabilityStatus: "ready",
+      selectedTableId: null,
+      availSelection: [],
+    })
+
+    const exiting = nextBottomPanelState(opened, {
+      open: false,
+      present: true,
+      live: true,
+      draft: null,
+      draftAvailability: undefined,
+      draftAvailabilityStatus: "ready",
+      selectedTableId: null,
+      availSelection: [],
+    })
+
+    const reopenedSameKind = nextBottomPanelState(exiting, {
+      open: true,
+      present: true,
+      live: true,
+      draft: bookingDraft,
+      draftAvailability: availabilityResult,
+      draftAvailabilityStatus: "ready",
+      selectedTableId: null,
+      availSelection: [],
+    })
+
+    expect(reopenedSameKind.snapshot).toMatchObject({
+      kind: "draft",
+      sessionId: 2,
+      draft: bookingDraft,
+    })
+  })
+
   it("retains quick-form instead of falling back to an earlier selected table on close", () => {
     const tableOpened = nextBottomPanelState(INITIAL_BOTTOM_PANEL_STATE, {
       open: true,
