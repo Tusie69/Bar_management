@@ -46,7 +46,7 @@ import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
 import { codesOf, duration, type Tone, toneStyle } from "./model"
 import { useRestoreTriggerFocus } from "./overlay-focus"
-import { useQuickFormPresence } from "./quick-form-presence"
+import { useQuickFormEscape, useQuickFormPresence } from "./quick-form-presence"
 import { PlainHeader, UndoRedoButtons } from "./ui"
 
 const ZONE_TABS: [ZoneCode | "ALL", string][] = [
@@ -56,9 +56,6 @@ const ZONE_TABS: [ZoneCode | "ALL", string][] = [
   ["C", "Khu C"],
   ["BAR", "Bar"],
 ]
-
-const OPEN_MODAL_SELECTOR =
-  "[data-slot='sheet-content'][data-motion-state='open'], [data-slot='dialog-content'][data-motion-state='open'], [data-slot='alert-dialog-content'][data-motion-state='open']"
 
 function isQuickFormDirty(container: HTMLElement | null): boolean {
   if (!container) return false
@@ -204,18 +201,12 @@ export function MapScreen({
     }
   }, [leaveFocus.overlayId, quickForm.present, quickFormFocus])
 
-  // Fallback Escape handler when QuickForm is open and focus moved onto the floor canvas.
-  useEffect(() => {
-    if (!quickForm.isOpen || confirmLeave) return
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented) return
-      if (document.querySelector(OPEN_MODAL_SELECTOR)) return
-      e.preventDefault()
-      requestQuickFormClose()
-    }
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
-  }, [confirmLeave, quickForm.isOpen, requestQuickFormClose])
+  // Handle Escape before any outgoing tooltip's document-capture DismissableLayer while keeping live modals in control.
+  useQuickFormEscape({
+    open: quickForm.isOpen,
+    suppressed: confirmLeave,
+    onClose: requestQuickFormClose,
+  })
 
   return (
     <main className="contents">

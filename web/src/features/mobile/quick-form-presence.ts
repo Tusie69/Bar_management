@@ -14,6 +14,37 @@ import { useUi, type QuickDraft } from "@/state/ui"
 
 const useSafeLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect
 
+const LIVE_MODAL_SELECTOR =
+  "[data-slot='sheet-content'][data-motion-state='open'], [data-slot='dialog-content'][data-motion-state='open'], [data-slot='alert-dialog-content'][data-motion-state='open'], [role='alertdialog']:not([data-motion-state='closing']), [aria-modal='true']:not([data-motion-state='closing']), [data-slot='popover-content'][data-state='open'], [data-slot='select-content'][data-state='open'], [data-slot='dropdown-menu-content'][data-state='open']"
+
+/**
+ * Handles Escape on `window` in the capture phase while QuickForm is open and
+ * no live modal is above it, taking precedence over any outgoing tooltip's
+ * `document`-capture `DismissableLayer` during exit animations.
+ */
+export function useQuickFormEscape({
+  open,
+  suppressed,
+  onClose,
+}: {
+  open: boolean
+  suppressed: boolean
+  onClose: () => void
+}): void {
+  useSafeLayoutEffect(() => {
+    if (!open || suppressed || typeof window === "undefined") return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return
+      if (typeof document !== "undefined" && document.querySelector(LIVE_MODAL_SELECTOR)) return
+      event.preventDefault()
+      event.stopPropagation()
+      onClose()
+    }
+    window.addEventListener("keydown", onKeyDown, true)
+    return () => window.removeEventListener("keydown", onKeyDown, true)
+  }, [onClose, open, suppressed])
+}
+
 type ClosingKind = "booking" | "walkin" | null
 
 interface OriginalUiActions {

@@ -20,7 +20,10 @@ const runtime = vi.hoisted(() => {
   const instances = new Map<string, HookInstance>()
   let activeKey = "default"
   let idSeq = 0
-  const docListeners = new Map<string, Set<(event: unknown) => void>>()
+  const docListeners = new Map<string, Set<{ fn: (event: unknown) => void; capture: boolean }>>()
+  const winListeners = new Map<string, Set<{ fn: (event: unknown) => void; capture: boolean }>>()
+  const toCapture = (options?: boolean | { capture?: boolean }) =>
+    typeof options === "boolean" ? options : Boolean(options?.capture)
   let activeEl: unknown = null
   let openOverlays: Array<{ attrs: Record<string, string>; dataset: Record<string, string>; focusables: unknown[] }> =
     []
@@ -106,23 +109,43 @@ const runtime = vi.hoisted(() => {
     set activeElement(v: unknown) {
       activeEl = v
     },
-    addEventListener(type: string, fn: (event: unknown) => void) {
+    addEventListener(type: string, fn: (event: unknown) => void, options?: boolean | { capture?: boolean }) {
       let set = docListeners.get(type)
       if (!set) {
         set = new Set()
         docListeners.set(type, set)
       }
-      set.add(fn)
+      const capture = toCapture(options)
+      for (const entry of set) {
+        if (entry.fn === fn && entry.capture === capture) return
+      }
+      set.add({ fn, capture })
     },
-    removeEventListener(type: string, fn: (event: unknown) => void) {
-      docListeners.get(type)?.delete(fn)
+    removeEventListener(type: string, fn: (event: unknown) => void, options?: boolean | { capture?: boolean }) {
+      const capture = toCapture(options)
+      const set = docListeners.get(type)
+      if (!set) return
+      for (const entry of set) {
+        if (entry.fn === fn && entry.capture === capture) {
+          set.delete(entry)
+          break
+        }
+      }
     },
     dispatchEvent(type: string, target: unknown) {
-      for (const fn of docListeners.get(type) ?? []) {
-        fn({ target })
+      for (const entry of docListeners.get(type) ?? []) {
+        entry.fn({ target })
       }
     },
     querySelector(selector: string) {
+      if (selector.includes("alert-dialog-content")) {
+        const modal = openOverlays.find(
+          (o) =>
+            (o.attrs["data-slot"] === "alert-dialog-content" || o.attrs["data-slot"] === "dialog-content") &&
+            o.dataset.motionState === "open",
+        )
+        if (modal) return modal
+      }
       if (selector.includes("Đặt bàn trên sơ đồ")) {
         return (
           openOverlays.find(
@@ -144,15 +167,80 @@ const runtime = vi.hoisted(() => {
     },
   }
 
+  const mockWindow = {
+    localStorage: { getItem: () => null, setItem: () => undefined },
+    addEventListener(type: string, fn: (event: unknown) => void, options?: boolean | { capture?: boolean }) {
+      let set = winListeners.get(type)
+      if (!set) {
+        set = new Set()
+        winListeners.set(type, set)
+      }
+      const capture = toCapture(options)
+      for (const entry of set) {
+        if (entry.fn === fn && entry.capture === capture) return
+      }
+      set.add({ fn, capture })
+    },
+    removeEventListener(type: string, fn: (event: unknown) => void, options?: boolean | { capture?: boolean }) {
+      const capture = toCapture(options)
+      const set = winListeners.get(type)
+      if (!set) return
+      for (const entry of set) {
+        if (entry.fn === fn && entry.capture === capture) {
+          set.delete(entry)
+          break
+        }
+      }
+    },
+  }
+
+  function dispatchKeyDown(key: string, target: unknown = mockDocument.body) {
+    let propagationStopped = false
+    const event = {
+      key,
+      target,
+      defaultPrevented: false,
+      preventDefault() {
+        this.defaultPrevented = true
+      },
+      stopPropagation() {
+        propagationStopped = true
+      },
+    }
+    const winAll = [...(winListeners.get("keydown") ?? [])]
+    const docAll = [...(docListeners.get("keydown") ?? [])]
+    for (const entry of winAll) {
+      if (entry.capture) entry.fn(event)
+    }
+    if (!propagationStopped) {
+      for (const entry of docAll) {
+        if (entry.capture) entry.fn(event)
+      }
+    }
+    if (!propagationStopped) {
+      for (const entry of docAll) {
+        if (!entry.capture) entry.fn(event)
+      }
+    }
+    if (!propagationStopped) {
+      for (const entry of winAll) {
+        if (!entry.capture) entry.fn(event)
+      }
+    }
+    return event
+  }
+
   vi.stubGlobal("HTMLElement", MockHTMLElement)
   vi.stubGlobal("SVGElement", MockSVGElement)
   vi.stubGlobal("document", mockDocument)
-  vi.stubGlobal("window", { localStorage: { getItem: () => null, setItem: () => undefined } })
+  vi.stubGlobal("window", mockWindow)
 
   return {
     MockHTMLElement,
     MockSVGElement,
     mockDocument,
+    mockWindow,
+    dispatchKeyDown,
     setOpenOverlays(list: typeof openOverlays) {
       openOverlays = list
     },
@@ -167,6 +255,7 @@ const runtime = vi.hoisted(() => {
       }
       instances.clear()
       docListeners.clear()
+      winListeners.clear()
       openOverlays = []
       svgButtons = []
       idSeq = 0
@@ -292,7 +381,7 @@ vi.mock("react", async (importOriginal) => {
 
 import { useUi } from "@/state/ui"
 import { clearOverlayFocusRegistryForTest, useRestoreTriggerFocus } from "./overlay-focus"
-import { useQuickFormPresence } from "./quick-form-presence"
+import { useQuickFormEscape, useQuickFormPresence } from "./quick-form-presence"
 
 describe("P3-01 useQuickFormPresence", () => {
   beforeEach(() => {
@@ -637,5 +726,119 @@ describe("P3-02 overlay focus handoff", () => {
     qfFocus.restoreNonModal()
     expect(c4New.focusedCount).toBe(1)
     expect(mockDocument.activeElement).toBe(c4New)
+  })
+})
+
+describe("P3-03 useQuickFormEscape", () => {
+  beforeEach(() => {
+    runtime.reset()
+    clearOverlayFocusRegistryForTest()
+    useUi.setState({ bookingOpen: false, walkInOpen: false, draft: null, selectedTableId: null })
+  })
+
+  it("closes QuickForm on the first Escape even while an outgoing tooltip DismissableLayer is still mounted", () => {
+    const { MockHTMLElement, mockDocument, dispatchKeyDown } = runtime
+    const qfSection = new MockHTMLElement({ "aria-label": "Đặt bàn trên sơ đồ" }, { motionState: "open" })
+
+    // Simulate Radix Tooltip DismissableLayer registered on document in capture phase
+    let tooltipDismissCount = 0
+    const outgoingTooltipLayer = (event: unknown) => {
+      const e = event as { key: string; defaultPrevented: boolean; preventDefault: () => void }
+      if (e.key === "Escape" && !e.defaultPrevented) {
+        e.preventDefault()
+        tooltipDismissCount++
+      }
+    }
+    mockDocument.addEventListener("keydown", outgoingTooltipLayer, { capture: true })
+
+    for (let iter = 0; iter < 20; iter++) {
+      let presence = runtime.render("map", () => useQuickFormPresence())
+      runtime.flushEffects("map")
+
+      useUi.getState().openBooking({ tableIds: [4] })
+      presence = runtime.render("map", () => useQuickFormPresence())
+      let closeCalls = 0
+      runtime.render("escape", () =>
+        useQuickFormEscape({
+          open: presence.isOpen,
+          suppressed: false,
+          onClose: () => {
+            closeCalls++
+            useUi.getState().closeBooking()
+          },
+        }),
+      )
+      runtime.flushEffects("map")
+      runtime.flushEffects("escape")
+
+      expect(presence.isOpen).toBe(true)
+      const escapeEvent = dispatchKeyDown("Escape", qfSection)
+      expect(escapeEvent.defaultPrevented).toBe(true)
+      expect(closeCalls).toBe(1)
+      expect(tooltipDismissCount).toBe(0)
+
+      presence = runtime.render("map", () => useQuickFormPresence())
+      expect(presence.isOpen).toBe(false)
+      presence.onExitComplete()
+      runtime.render("escape", () =>
+        useQuickFormEscape({
+          open: false,
+          suppressed: false,
+          onClose: () => undefined,
+        }),
+      )
+      runtime.flushEffects("escape")
+    }
+
+    mockDocument.removeEventListener("keydown", outgoingTooltipLayer, { capture: true })
+  })
+
+  it("leaves live AlertDialog in control of Escape when open on top of QuickForm", () => {
+    const { MockHTMLElement, mockDocument, dispatchKeyDown, setOpenOverlays } = runtime
+    const alertContent = new MockHTMLElement({ "data-slot": "alert-dialog-content" }, { motionState: "open" })
+
+    let alertEscapeCount = 0
+    const alertDialogLayer = (event: unknown) => {
+      const e = event as { key: string; defaultPrevented: boolean; preventDefault: () => void }
+      if (e.key === "Escape" && !e.defaultPrevented) {
+        e.preventDefault()
+        alertEscapeCount++
+      }
+    }
+    mockDocument.addEventListener("keydown", alertDialogLayer, { capture: true })
+
+    // 1. Suppressed via confirmLeave=true
+    let formCloseCount = 0
+    runtime.render("escape", () =>
+      useQuickFormEscape({
+        open: true,
+        suppressed: true,
+        onClose: () => {
+          formCloseCount++
+        },
+      }),
+    )
+    runtime.flushEffects("escape")
+    dispatchKeyDown("Escape", alertContent)
+    expect(alertEscapeCount).toBe(1)
+    expect(formCloseCount).toBe(0)
+
+    // 2. Even if suppressed prop is false, a live AlertDialog in DOM still takes Escape first
+    setOpenOverlays([alertContent as unknown as never])
+    runtime.render("escape", () =>
+      useQuickFormEscape({
+        open: true,
+        suppressed: false,
+        onClose: () => {
+          formCloseCount++
+        },
+      }),
+    )
+    runtime.flushEffects("escape")
+    dispatchKeyDown("Escape", alertContent)
+    expect(alertEscapeCount).toBe(2)
+    expect(formCloseCount).toBe(0)
+
+    mockDocument.removeEventListener("keydown", alertDialogLayer, { capture: true })
   })
 })
