@@ -270,12 +270,6 @@ describe("shift-overview selectors", () => {
 
     const occA = summary.occupancyByZone.find((z) => z.zone === "A")
     expect(occA).toMatchObject({ inUse: 1, available: 2, percent: 50 })
-
-    // Floor chip tooltips contain status only and never phone numbers
-    const zoneA = summary.zones.find((z) => z.zone === "A")
-    expect(zoneA?.chips[0]?.tooltipText).toContain("Đang sử dụng")
-    expect(zoneA?.chips[0]?.tooltipText).not.toContain("090")
-    expect(zoneA?.chips[0]?.tooltipText).not.toContain("1234")
   })
 
   it("excludes Bar seats from Đang ngồi / Bàn trống and reports Bar occupancy by seats", () => {
@@ -338,7 +332,6 @@ describe("shift-overview selectors", () => {
     ])
 
     const summary = selectFloorMetrics(tables, states, groups)
-    const barZone = summary.zones.find((z) => z.zone === "BAR")
     const barOcc = summary.occupancyByZone.find((z) => z.zone === "BAR")
     const occA = summary.occupancyByZone.find((z) => z.zone === "A")
 
@@ -346,15 +339,9 @@ describe("shift-overview selectors", () => {
     expect(summary.seatedNow).toBe(1)
     expect(summary.freeTables).toBe(2)
 
-    expect(barZone?.chips.map((c) => [c.code, c.status])).toEqual([
-      ["1-2", "inuse"],
-      ["3-4", "booked"],
-      ["5", "empty"],
-    ])
     expect(occA).toMatchObject({ inUse: 1, available: 2, percent: 50, unitLabel: "bàn" })
     // Bar occupancy counts individual seats (2 seated out of 6 bar seat positions here, x/21 on full venue)
     expect(barOcc).toMatchObject({ inUse: 2, available: 6, percent: 33, unitLabel: "ghế" })
-    expect(barZone?.chips[0]?.tooltipText).not.toContain("098")
   })
 
   it("counts active waitlist entries and builds waitlist backlog alert", () => {

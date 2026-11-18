@@ -72,23 +72,8 @@ function ShiftOverviewSkeleton() {
             </div>
           </div>
 
-          <div className="so-legend" aria-hidden="true">
-            {Array.from({ length: 5 }, (_, i) => (
-              <Skeleton key={i} className="h-[16px] w-16" />
-            ))}
-          </div>
-
-          <div className="so-zones-list">
-            {[8, 10, 4, 15].map((chipCount, z) => (
-              <div key={z} className="so-zone-block">
-                <Skeleton className="h-[16px] w-20" />
-                <div className="so-chip-grid">
-                  {Array.from({ length: chipCount }, (_, c) => (
-                    <Skeleton key={c} className="h-[40px] w-[62px] rounded-lg" />
-                  ))}
-                </div>
-              </div>
-            ))}
+          <div className="so-floor-stage so-floor-stage--skeleton" aria-hidden="true">
+            <Skeleton className="h-full w-full max-w-[360px] rounded-[10px]" />
           </div>
         </div>
 
@@ -221,7 +206,13 @@ export function ShiftOverviewPage() {
       <div ref={rootRef} className="so-root" data-testid="shift-overview-page" data-business-date={businessDate}>
         <ShiftOverviewKpis row1={kpiRows.row1} row2={kpiRows.row2} />
         <div className="so-main-grid">
-          <ShiftOverviewFloor zones={floorMetrics.zones} />
+          <ShiftOverviewFloor
+            tables={model.tables}
+            states={model.states}
+            zones={model.catalog?.zones}
+            groups={model.floor?.groups}
+            now={now}
+          />
           <div className="so-right-stack">
             <ShiftOverviewAlerts alerts={alerts} />
             <ShiftOverviewOccupancy items={floorMetrics.occupancyByZone} />

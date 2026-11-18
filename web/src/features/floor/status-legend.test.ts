@@ -89,12 +89,120 @@ describe("G3 - status metadata and language (HU-32 section 4)", () => {
 
   it("StatusLegend renders polished box with heading, chips, and tabular counts", () => {
     const mockTables = [
-      { id: 1, code: "A1", x: 0, y: 0, w: 30, h: 30, kind: "TABLE", zoneCode: "A", state: "free", version: 1, displayName: "A1", zoneId: 1, capacity: 4, minCapacity: 2, shape: "RECT", isSpare: false, isActive: true },
-      { id: 2, code: "A2", x: 0, y: 0, w: 30, h: 30, kind: "TABLE", zoneCode: "A", state: "reserved", version: 1, displayName: "A2", zoneId: 1, capacity: 4, minCapacity: 2, shape: "RECT", isSpare: false, isActive: true },
-      { id: 3, code: "A3", x: 0, y: 0, w: 30, h: 30, kind: "TABLE", zoneCode: "A", state: "upcoming", version: 1, displayName: "A3", zoneId: 1, capacity: 4, minCapacity: 2, shape: "RECT", isSpare: false, isActive: true },
-      { id: 4, code: "A4", x: 0, y: 0, w: 30, h: 30, kind: "TABLE", zoneCode: "A", state: "noshow", version: 1, displayName: "A4", zoneId: 1, capacity: 4, minCapacity: 2, shape: "RECT", isSpare: false, isActive: true },
-      { id: 5, code: "A5", x: 0, y: 0, w: 30, h: 30, kind: "TABLE", zoneCode: "A", state: "seated", version: 1, displayName: "A5", zoneId: 1, capacity: 4, minCapacity: 2, shape: "RECT", isSpare: false, isActive: true },
-      { id: 6, code: "A0", x: 0, y: 0, w: 30, h: 30, kind: "TABLE", zoneCode: "A", state: "free", isSpare: true, version: 1, displayName: "A0", zoneId: 1, capacity: 4, minCapacity: 2, shape: "RECT", isActive: true },
+      {
+        id: 1,
+        code: "A1",
+        x: 0,
+        y: 0,
+        w: 30,
+        h: 30,
+        kind: "TABLE",
+        zoneCode: "A",
+        state: "free",
+        version: 1,
+        displayName: "A1",
+        zoneId: 1,
+        capacity: 4,
+        minCapacity: 2,
+        shape: "RECT",
+        isSpare: false,
+        isActive: true,
+      },
+      {
+        id: 2,
+        code: "A2",
+        x: 0,
+        y: 0,
+        w: 30,
+        h: 30,
+        kind: "TABLE",
+        zoneCode: "A",
+        state: "reserved",
+        version: 1,
+        displayName: "A2",
+        zoneId: 1,
+        capacity: 4,
+        minCapacity: 2,
+        shape: "RECT",
+        isSpare: false,
+        isActive: true,
+      },
+      {
+        id: 3,
+        code: "A3",
+        x: 0,
+        y: 0,
+        w: 30,
+        h: 30,
+        kind: "TABLE",
+        zoneCode: "A",
+        state: "upcoming",
+        version: 1,
+        displayName: "A3",
+        zoneId: 1,
+        capacity: 4,
+        minCapacity: 2,
+        shape: "RECT",
+        isSpare: false,
+        isActive: true,
+      },
+      {
+        id: 4,
+        code: "A4",
+        x: 0,
+        y: 0,
+        w: 30,
+        h: 30,
+        kind: "TABLE",
+        zoneCode: "A",
+        state: "noshow",
+        version: 1,
+        displayName: "A4",
+        zoneId: 1,
+        capacity: 4,
+        minCapacity: 2,
+        shape: "RECT",
+        isSpare: false,
+        isActive: true,
+      },
+      {
+        id: 5,
+        code: "A5",
+        x: 0,
+        y: 0,
+        w: 30,
+        h: 30,
+        kind: "TABLE",
+        zoneCode: "A",
+        state: "seated",
+        version: 1,
+        displayName: "A5",
+        zoneId: 1,
+        capacity: 4,
+        minCapacity: 2,
+        shape: "RECT",
+        isSpare: false,
+        isActive: true,
+      },
+      {
+        id: 6,
+        code: "A0",
+        x: 0,
+        y: 0,
+        w: 30,
+        h: 30,
+        kind: "TABLE",
+        zoneCode: "A",
+        state: "free",
+        isSpare: true,
+        version: 1,
+        displayName: "A0",
+        zoneId: 1,
+        capacity: 4,
+        minCapacity: 2,
+        shape: "RECT",
+        isActive: true,
+      },
     ] as any
 
     const html = renderToString(
@@ -142,5 +250,20 @@ describe("G3 - status metadata and language (HU-32 section 4)", () => {
     expect(html).toContain("Trống")
     expect(html).toContain("Đã tới")
     expect(html).toContain("Sơ cua")
+  })
+
+  it("admin variant renders only the round '!' button without a permanent legend row", () => {
+    const html = renderToString(
+      React.createElement(StatusLegend, {
+        variant: "admin",
+        tables: [],
+      }),
+    )
+
+    expect(html).toContain('data-testid="so-legend-trigger"')
+    expect(html).toContain('aria-label="Chú giải ký hiệu"')
+    expect(html).toContain(">!<")
+    expect(html).not.toContain("Trạng thái · Số bàn / ghế")
+    expect(html).not.toContain("so-legend-item")
   })
 })

@@ -15,6 +15,20 @@ export function useCanReadShiftOverview(): boolean {
   return canFromRole
 }
 
+/**
+ * Checks `customer.view_masked` (which gates guest names and masked phones for Admin).
+ * Fail-closed when revoked on an authenticated principal or in HTTP mode.
+ */
+export function useCanViewMaskedCustomer(): boolean {
+  const canFromRole = useCan("customer.view_masked")
+  const hasPrincipal = useSession((state) => state.principal !== null)
+  const hasServerPermission = useSession((state) => state.permissions.includes("customer.view_masked"))
+  if (api.mode === "http" || hasPrincipal) {
+    return hasServerPermission
+  }
+  return canFromRole
+}
+
 export function isForbiddenError(error: unknown): boolean {
   return isApiError(error) && (error.status === 403 || error.code === "PERMISSION_DENIED" || error.code === "FORBIDDEN")
 }

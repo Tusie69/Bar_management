@@ -61,24 +61,24 @@ import { BarGuestList } from "./bar-guest-list"
 
 export type CanvasMode = "live" | "availability"
 
-interface Props {
+const EMPTY_IDS: number[] = []
+
+interface BaseProps {
   tables: TableView[]
   zones: ZoneView[]
-  mode: CanvasMode
+  mode?: CanvasMode
   states?: Map<number, FloorTableState>
   availability?: Map<number, TableAvailability>
   groups?: FloorGroup[]
-  selectedIds: number[]
+  selectedIds?: number[]
   /** Visual-only reception search overlay; never participates in selection or group derivation. */
   searchHighlightedIds?: number[]
   /** When set, only these tables accept taps (pick mode). */
   pickable?: Set<number> | null
   zoneFocus?: ZoneCode | "ALL"
   now: Date
-  onTableClick: (tableId: number) => void
-  /** Reports a tap on a dimmed table without activating it. */
-  onBlockedTableClick?: (tableId: number) => void
-  onBackgroundClick?: () => void
+  /** Omit customer names in read-only admin views while keeping operational status and counts. */
+  hideGuestNames?: boolean
   compact?: boolean
   /** Reception/mobile shell: always lock and uniformly fit the whole floor regardless of viewport width. */
   mobileShell?: boolean
@@ -86,7 +86,16 @@ interface Props {
   preserveWidthFit?: boolean
   className?: string
   ariaLabel?: string
+}
 
+type InteractiveProps = BaseProps & {
+  readOnly?: false
+  mode: CanvasMode
+  selectedIds: number[]
+  onTableClick: (tableId: number) => void
+  /** Reports a tap on a dimmed table without activating it. */
+  onBlockedTableClick?: (tableId: number) => void
+  onBackgroundClick?: () => void
   // New optional props for P2 contract
   waitingCount?: number
   onOpenWaitlist?: () => void
@@ -98,6 +107,18 @@ interface Props {
    */
   planOverlay?: (rect: { left: number; top: number; width: number; height: number }) => ReactNode
 }
+
+type ReadOnlyProps = BaseProps & {
+  readOnly: true
+  onTableClick?: never
+  onBlockedTableClick?: never
+  onBackgroundClick?: never
+  waitingCount?: never
+  onOpenWaitlist?: never
+  planOverlay?: never
+}
+
+export type FloorCanvasProps = InteractiveProps | ReadOnlyProps
 
 interface View {
   k: number
@@ -239,31 +260,35 @@ function isSuppressed(ref: { current: number }) {
   return performance.now() - ref.current < 250
 }
 
-export function FloorCanvas(props: Props) {
+export function FloorCanvas(props: FloorCanvasProps) {
+  const isReadOnly = props.readOnly === true
+  const hideGuestNames = Boolean(props.hideGuestNames)
   const {
     tables: rawTables,
     zones,
-    mode,
     states,
-    availability,
     groups = [],
-    selectedIds,
-    searchHighlightedIds = [],
-    pickable,
-    zoneFocus = "ALL",
     now,
-    onTableClick,
-    onBlockedTableClick,
-    onBackgroundClick,
     compact,
     mobileShell,
     preserveWidthFit,
     className,
     ariaLabel,
-    waitingCount,
-    onOpenWaitlist,
-    planOverlay,
   } = props
+  const mode: CanvasMode = isReadOnly ? "live" : (props.mode ?? "live")
+  const availability = isReadOnly ? undefined : props.availability
+  const selectedIds = isReadOnly ? EMPTY_IDS : (props.selectedIds ?? EMPTY_IDS)
+  const searchHighlightedIds = isReadOnly ? EMPTY_IDS : (props.searchHighlightedIds ?? EMPTY_IDS)
+  const pickable = isReadOnly ? null : props.pickable
+  const zoneFocus: ZoneCode | "ALL" = isReadOnly ? "ALL" : (props.zoneFocus ?? "ALL")
+  const onTableClick = isReadOnly ? undefined : props.onTableClick
+  const onBlockedTableClick = isReadOnly ? undefined : props.onBlockedTableClick
+  const onBackgroundClick = isReadOnly ? undefined : props.onBackgroundClick
+  const waitingCount = isReadOnly ? undefined : props.waitingCount
+  const onOpenWaitlist = isReadOnly ? undefined : props.onOpenWaitlist
+  const planOverlay = isReadOnly ? undefined : props.planOverlay
+  const allowWaitlist = !isReadOnly && Boolean(onOpenWaitlist)
+  const allowPlanOverlay = !isReadOnly && Boolean(planOverlay)
 
   const tables = useMemo(() => rawTables.map(normalizeTableGeometry), [rawTables])
   const selectedTableId = selectedIds[0]
@@ -290,8 +315,8 @@ export function FloorCanvas(props: Props) {
   } | null>(null)
   const suppressClick = useRef(0)
 
-  // Listen to zoneRefitTick from useUi to support re-clicking active zone tab
-  const zoneRefitTick = useUi((s) => s.zoneRefitTick)
+  // Listen to zoneRefitTick from useUi to support re-clicking active zone tab (disabled in readOnly mode)
+  const zoneRefitTick = useUi((s) => (isReadOnly ? 0 : s.zoneRefitTick))
   const prevZoneRefitTick = useRef(zoneRefitTick)
 
   useEffect(() => {
@@ -359,7 +384,7 @@ export function FloorCanvas(props: Props) {
     (Boolean(mobileShell) ||
       size.w <= 480 ||
       (typeof window !== "undefined" && window.innerWidth < 640 && size.w < 640))
-  const planLocked = phoneViewport && zoneFocus === "ALL"
+  const planLocked = isReadOnly || (phoneViewport && zoneFocus === "ALL")
 
   // Camera fit bounds computed from the REAL tables and bar seats coordinates
   const fitView = useMemo<View>(() => {
@@ -504,7 +529,7 @@ export function FloorCanvas(props: Props) {
   // Wheel zoom: Ctrl+wheel / trackpad pinch zooms; regular wheel allows natural vertical scrolling of the map
   useEffect(() => {
     const el = wrapRef.current
-    if (!el || compact || planLocked) return
+    if (!el || compact || planLocked || isReadOnly) return
     const onWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault()
@@ -514,7 +539,7 @@ export function FloorCanvas(props: Props) {
     }
     el.addEventListener("wheel", onWheel, { passive: false })
     return () => el.removeEventListener("wheel", onWheel)
-  }, [zoomBy, compact, planLocked])
+  }, [zoomBy, compact, planLocked, isReadOnly])
 
   const local = (e: React.PointerEvent) => {
     const rect = wrapRef.current!.getBoundingClientRect()
@@ -522,7 +547,7 @@ export function FloorCanvas(props: Props) {
   }
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (compact || planLocked) return
+    if (isReadOnly || compact || planLocked) return
     pointers.current.set(e.pointerId, local(e))
     const pts = [...pointers.current.values()]
     if (pts.length === 1) {
@@ -610,6 +635,7 @@ export function FloorCanvas(props: Props) {
   const tableById = useMemo(() => new Map(tables.map((t) => [t.id, t])), [tables])
 
   const handleTable = (id: number) => {
+    if (isReadOnly || !onTableClick) return
     if (isSuppressed(suppressClick)) return
     if (!tableCanActivate(id, pickable, selected)) {
       onBlockedTableClick?.(id)
@@ -689,9 +715,9 @@ export function FloorCanvas(props: Props) {
         mode,
         groupRepresentativeMap,
         tableById,
-        includeWaitlistMarker: Boolean(onOpenWaitlist && isAllZone),
+        includeWaitlistMarker: Boolean(allowWaitlist && isAllZone),
       }),
-    [groups, groupRepresentativeMap, isAllZone, mode, onOpenWaitlist, states, tableById, tables],
+    [allowWaitlist, groups, groupRepresentativeMap, isAllZone, mode, states, tableById, tables],
   )
 
   // Zone tracking chip state (Item 2b)
@@ -699,7 +725,7 @@ export function FloorCanvas(props: Props) {
   const isZoneActive = zoneFocus !== "ALL"
   // While picking a table for a booking the zone is focused on purpose, so the
   // "Đang theo dõi" chip would only cover the tables being aimed at.
-  const showTrackingChip = (isZoneActive || isZoomed) && mode !== "availability"
+  const showTrackingChip = !isReadOnly && (isZoneActive || isZoomed) && mode !== "availability"
 
   const zoneLabel =
     zoneFocus === "A"
@@ -714,7 +740,9 @@ export function FloorCanvas(props: Props) {
 
   const handleResetToAll = () => {
     setUserView(null)
-    useUi.getState().setZone("ALL")
+    if (!isReadOnly) {
+      useUi.getState().setZone("ALL")
+    }
   }
 
   const isPhone = phoneViewport
@@ -726,20 +754,27 @@ export function FloorCanvas(props: Props) {
   return (
     <div
       ref={wrapRef}
+      data-readonly={isReadOnly ? "true" : undefined}
       className={cn(
-        "touch-none-pan relative h-full w-full overflow-x-hidden bg-floor select-none",
-        planLocked ? "overflow-y-hidden" : "overflow-y-auto",
+        "relative h-full w-full overflow-x-hidden bg-floor select-none",
+        isReadOnly
+          ? "touch-pan-y overflow-y-hidden"
+          : cn("touch-none-pan", planLocked ? "overflow-y-hidden" : "overflow-y-auto"),
         className,
       )}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={endPointer}
-      onPointerCancel={endPointer}
-      onClick={(e) => {
-        if (e.target === e.currentTarget || (e.target as Element).getAttribute?.("data-bg") === "1") {
-          if (!isSuppressed(suppressClick)) onBackgroundClick?.()
-        }
-      }}
+      onPointerDown={isReadOnly ? undefined : onPointerDown}
+      onPointerMove={isReadOnly ? undefined : onPointerMove}
+      onPointerUp={isReadOnly ? undefined : endPointer}
+      onPointerCancel={isReadOnly ? undefined : endPointer}
+      onClick={
+        isReadOnly
+          ? undefined
+          : (e) => {
+              if (e.target === e.currentTarget || (e.target as Element).getAttribute?.("data-bg") === "1") {
+                if (!isSuppressed(suppressClick)) onBackgroundClick?.()
+              }
+            }
+      }
     >
       <svg width={size.w} height={svgHeight} className="block" role="group" aria-label={ariaLabel ?? "Sơ đồ bàn 21GAM"}>
         <defs>
@@ -812,16 +847,22 @@ export function FloorCanvas(props: Props) {
             states={states}
             groups={groups}
             mapScale={view.k}
-            onRowClick={(row) => {
-              const table = tables.find(
-                (t) => (t.kind === "BAR_SEAT" || t.zoneCode === "BAR") && row.seatNumbers.includes(t.seqNo ?? -1),
-              )
-              if (table) handleTable(table.id)
-            }}
+            readOnly={isReadOnly}
+            hideGuestNames={hideGuestNames}
+            onRowClick={
+              isReadOnly
+                ? undefined
+                : (row) => {
+                    const table = tables.find(
+                      (t) => (t.kind === "BAR_SEAT" || t.zoneCode === "BAR") && row.seatNumbers.includes(t.seqNo ?? -1),
+                    )
+                    if (table) handleTable(table.id)
+                  }
+            }
           />
 
           {/* Waitlist marker button anchored to floor space for Zone Tất cả */}
-          {onOpenWaitlist && isAllZone ? (
+          {allowWaitlist && onOpenWaitlist && isAllZone ? (
             <foreignObject
               data-mobile-waitlist-marker="true"
               x={waitlistPos.x - waitlistPos.width / 2}
@@ -900,7 +941,16 @@ export function FloorCanvas(props: Props) {
             if (mode === "availability") {
               return <AvailabilityGlyph key={t.id} {...common} avail={availability?.get(t.id)} />
             }
-            return <LiveGlyph key={t.id} {...common} state={states?.get(t.id)} now={now} />
+            return (
+              <LiveGlyph
+                key={t.id}
+                {...common}
+                state={states?.get(t.id)}
+                now={now}
+                readOnly={isReadOnly}
+                hideGuestNames={hideGuestNames}
+              />
+            )
           })}
 
           {/* Keep the outline below the cells, but render its code after every
@@ -943,7 +993,7 @@ export function FloorCanvas(props: Props) {
         </g>
       </svg>
 
-      {planOverlay
+      {allowPlanOverlay && planOverlay
         ? planOverlay({
             left: view.x + WALL_BOUNDS.x * view.k,
             top: view.y + WALL_BOUNDS.y * view.k,
@@ -967,7 +1017,7 @@ export function FloorCanvas(props: Props) {
       ) : null}
 
       {/* Floating HTML overlay waitlist marker for Zone Khu A/B/C/Bar (outside camera transform) */}
-      {onOpenWaitlist && !isAllZone ? (
+      {allowWaitlist && onOpenWaitlist && !isAllZone ? (
         <div className="pointer-events-auto absolute right-3 bottom-3 z-10">
           <button
             type="button"
@@ -1141,7 +1191,7 @@ function Chairs({ t, color }: { t: TableView; color: string }) {
   )
 }
 
-function describe(t: TableView, state: TableLiveState, fs?: FloorTableState) {
+function describe(t: TableView, state: TableLiveState, fs?: FloorTableState, options?: { hideGuestNames?: boolean }) {
   const lateConfirmed = state === "late_confirmed" || !!fs?.claim?.lateConfirmedAt
   const statusLabel = `${STATE_META[state].label}${lateConfirmed ? " (đã báo tới muộn)" : ""}`
   const base = `${t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`}, ${statusLabel}`
@@ -1151,6 +1201,9 @@ function describe(t: TableView, state: TableLiveState, fs?: FloorTableState) {
   const flags = supportedFlags(c.flags ?? [])
   const flagLabels = flags.map((flag: GuestFlag) => GUEST_FLAG_META[flag]?.label ?? flag)
   const code = formatGroupCode(c.groupDisplayCode ?? c.symbolNo)
+  if (options?.hideGuestNames) {
+    return `${base}${spare}, ${c.partySize} khách${flagLabels.length ? `, ${flagLabels.join(", ")}` : ""}${code ? `, nhóm ${code}, ${c.tableIds.length} bàn` : ""}`
+  }
   const guestName = formatHonorificName(c.displayName, c.honorific)
   return `${base}${spare}, ${guestName}, ${c.partySize} khách${flagLabels.length ? `, ${flagLabels.join(", ")}` : ""}${code ? `, nhóm ${code}, ${c.tableIds.length} bàn` : ""}`
 }
@@ -1203,9 +1256,13 @@ const LiveGlyph = memo(function LiveGlyph({
   disabled,
   onActivate,
   state: fs,
+  readOnly = false,
+  hideGuestNames = false,
 }: GlyphBase & {
   state?: FloorTableState
   now: Date
+  readOnly?: boolean
+  hideGuestNames?: boolean
 }) {
   const rawState: TableLiveState = fs?.state ?? "free"
   const state = rawState === "late_confirmed" ? "late" : rawState
@@ -1260,13 +1317,19 @@ const LiveGlyph = memo(function LiveGlyph({
     state === "hold_overdue"
 
   const tableTitle =
-    claim && t.kind !== "BAR_SEAT" ? formatTableCellLabel(t.code, claim.displayName, claim.honorific, t.w) : t.code
+    !hideGuestNames && claim && t.kind !== "BAR_SEAT"
+      ? formatTableCellLabel(t.code, claim.displayName, claim.honorific, t.w)
+      : t.code
   let cellSubText = ""
   let showTimeIcon = false
 
   if (seated) {
-    // The primary label already contains "mã bàn - tên ngắn".
-    cellSubText = ""
+    if (hideGuestNames) {
+      cellSubText = claim?.startsAt ? fmtTime(claim.startsAt) : STATE_META.seated.short
+    } else {
+      // The primary label already contains "mã bàn - tên ngắn".
+      cellSubText = ""
+    }
   } else if (isBookedState) {
     // J1 Section 2: Booked, not checked in shows code plus booked time (e.g. 22:30)
     if (state === "hold" && !claim?.reservationId && !claim?.reservedExpectedAt) {
@@ -1304,12 +1367,18 @@ const LiveGlyph = memo(function LiveGlyph({
         : undefined
     : undefined
 
+  const ariaText = describe(t, rawState, fs, { hideGuestNames })
+
   if (t.kind === "BAR_SEAT") {
     const r = Math.max(9, (t.w || 20) / 2)
     const hasRoom = r >= 10
     const barSubText = hasRoom
       ? seated
-        ? formatCellGuestName(claim?.displayName, 4, true)
+        ? hideGuestNames
+          ? claim?.startsAt
+            ? fmtTime(claim.startsAt)
+            : ""
+          : formatCellGuestName(claim?.displayName, 4, true)
         : isBookedState
           ? (bookedTime ?? cellSubText)
           : ""
@@ -1317,22 +1386,23 @@ const LiveGlyph = memo(function LiveGlyph({
     return (
       <g
         transform={`translate(${t.x} ${t.y})`}
-        role="button"
+        role={readOnly ? "img" : "button"}
         tabIndex={dim ? -1 : 0}
-        aria-label={describe(t, rawState, fs)}
-        aria-pressed={selected}
-        aria-disabled={disabled}
+        aria-label={ariaText}
+        aria-pressed={readOnly ? undefined : selected}
+        aria-disabled={readOnly ? undefined : disabled}
         data-group-id={groupId ?? undefined}
         data-group-highlighted={groupHighlighted || undefined}
         data-combined-codes={combinedCodes || undefined}
         data-is-group={isGroup ? "true" : undefined}
         data-is-anchor={isGroup ? (isAnchor ? "true" : "false") : undefined}
         data-search-highlighted={searchHighlighted || undefined}
-        className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
+        className={`${readOnly ? "cursor-default" : disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
         opacity={dim ? 0.3 : 1}
-        onClick={() => onActivate(t.id)}
-        onKeyDown={(e) => onKey(e, t.id, onActivate)}
+        onClick={readOnly ? undefined : () => onActivate(t.id)}
+        onKeyDown={readOnly ? undefined : (e) => onKey(e, t.id, onActivate)}
       >
+        {readOnly ? <title>{ariaText}</title> : null}
         <circle r={r + 5} fill="transparent" />
         <circle
           className="focus-ring opacity-0"
@@ -1400,22 +1470,23 @@ const LiveGlyph = memo(function LiveGlyph({
   return (
     <g
       transform={`translate(${t.x} ${t.y})`}
-      role="button"
+      role={readOnly ? "img" : "button"}
       tabIndex={dim ? -1 : 0}
-      aria-label={describe(t, rawState, fs)}
-      aria-pressed={selected}
-      aria-disabled={disabled}
+      aria-label={ariaText}
+      aria-pressed={readOnly ? undefined : selected}
+      aria-disabled={readOnly ? undefined : disabled}
       data-group-id={groupId ?? undefined}
       data-group-highlighted={groupHighlighted || undefined}
       data-combined-codes={combinedCodes || undefined}
       data-is-group={isGroup ? "true" : undefined}
       data-is-anchor={isGroup ? (isAnchor ? "true" : "false") : undefined}
       data-search-highlighted={searchHighlighted || undefined}
-      className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
+      className={`${readOnly ? "cursor-default" : disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
       opacity={dim ? 0.3 : 1}
-      onClick={() => onActivate(t.id)}
-      onKeyDown={(e) => onKey(e, t.id, onActivate)}
+      onClick={readOnly ? undefined : () => onActivate(t.id)}
+      onKeyDown={readOnly ? undefined : (e) => onKey(e, t.id, onActivate)}
     >
+      {readOnly ? <title>{ariaText}</title> : null}
       <rect x={-hw - 8} y={-hh - 8} width={t.w + 16} height={t.h + 16} fill="transparent" />
       <rect
         className="focus-ring opacity-0"
@@ -1801,3 +1872,48 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
     </g>
   )
 })
+
+export interface ReadOnlyFloorMapProps {
+  tables: TableView[]
+  zones?: ZoneView[]
+  states?: Map<number, FloorTableState>
+  groups?: FloorGroup[]
+  now: Date
+  /**
+   * Role/permission gate for guest names (e.g. `customer.view_masked`).
+   * Fail-closed (`false`) by default: omits guest names from tiles, BarGuestList, and ARIA when false.
+   */
+  canViewGuestNames?: boolean
+  className?: string
+  ariaLabel?: string
+}
+
+/**
+ * Thin read-only adapter over FloorCanvas for non-interactive observation views (e.g. Admin Shift Overview).
+ * Disables every selection, booking, move, merge, split, waitlist, overlay, and UI-store mutation path,
+ * and enforces the single-place guest-name visibility gate (`canViewGuestNames`).
+ */
+export function ReadOnlyFloorMap({
+  tables,
+  zones = [],
+  states,
+  groups,
+  now,
+  canViewGuestNames = false,
+  className,
+  ariaLabel = "Sơ đồ bàn chỉ xem",
+}: ReadOnlyFloorMapProps) {
+  return (
+    <FloorCanvas
+      readOnly
+      hideGuestNames={!canViewGuestNames}
+      tables={tables}
+      zones={zones}
+      states={states}
+      groups={groups}
+      now={now}
+      className={className}
+      ariaLabel={ariaLabel}
+    />
+  )
+}

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest"
 import type { FloorTableState, TableView, ZoneView } from "@/domain/models"
 import { BAR_SEATS, FIXTURES, FLOOR_H, FLOOR_W, TABLES, WALL_BOUNDS, ZONES } from "@/domain/venue-layout"
 import { STATE_META } from "@/components/status-meta"
-import { FloorCanvas } from "./floor-canvas"
+import { FloorCanvas, ReadOnlyFloorMap } from "./floor-canvas"
 import {
   calculateStatusCounts,
   computeClusterDecorations,
@@ -1537,10 +1537,35 @@ describe("cluster outline & label collision clearance (F-02)", () => {
     const states = new Map<number, FloorTableState>([
       [tA6.id, { tableId: tA6.id, state: "reserved", claim: makeClaim([tA6.id, tA7.id], 6, 1) } as any],
       [tA7.id, { tableId: tA7.id, state: "reserved", claim: makeClaim([tA6.id, tA7.id], 6, 1) } as any],
-      [tB11.id, { tableId: tB11.id, state: "seated", seatedTurnCount: 2, claim: makeClaim([tB11.id, tB12.id], 7, 2, ["RETURNING"]) } as any],
-      [tB12.id, { tableId: tB12.id, state: "seated", claim: makeClaim([tB11.id, tB12.id], 7, 2, ["RETURNING"]) } as any],
-      [tB21.id, { tableId: tB21.id, state: "reserved", claim: makeClaim([tB21.id, tB22.id], 8, 3, ["NEW", "VIP", "BIRTHDAY"]) } as any],
-      [tB22.id, { tableId: tB22.id, state: "reserved", claim: makeClaim([tB21.id, tB22.id], 8, 3, ["NEW", "VIP", "BIRTHDAY"]) } as any],
+      [
+        tB11.id,
+        {
+          tableId: tB11.id,
+          state: "seated",
+          seatedTurnCount: 2,
+          claim: makeClaim([tB11.id, tB12.id], 7, 2, ["RETURNING"]),
+        } as any,
+      ],
+      [
+        tB12.id,
+        { tableId: tB12.id, state: "seated", claim: makeClaim([tB11.id, tB12.id], 7, 2, ["RETURNING"]) } as any,
+      ],
+      [
+        tB21.id,
+        {
+          tableId: tB21.id,
+          state: "reserved",
+          claim: makeClaim([tB21.id, tB22.id], 8, 3, ["NEW", "VIP", "BIRTHDAY"]),
+        } as any,
+      ],
+      [
+        tB22.id,
+        {
+          tableId: tB22.id,
+          state: "reserved",
+          claim: makeClaim([tB21.id, tB22.id], 8, 3, ["NEW", "VIP", "BIRTHDAY"]),
+        } as any,
+      ],
       [tB6.id, { tableId: tB6.id, state: "seated", claim: makeClaim([tB6.id, tB8.id], 7, 4) } as any],
       [tB8.id, { tableId: tB8.id, state: "seated", claim: makeClaim([tB6.id, tB8.id], 7, 4) } as any],
     ])
@@ -1623,5 +1648,202 @@ describe("cluster outline & label collision clearance (F-02)", () => {
         expect(overlaps(pill, otherOutline)).toBe(false)
       }
     }
+  })
+})
+
+describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
+  it("renders full spatial layout (C/B/A, 21 bar seats, A10 spare, groups, Lối vào) without any interactive button roles or write handlers", () => {
+    const tA6 = realTables.find((t) => t.code === "A6")!
+    const tA7 = realTables.find((t) => t.code === "A7")!
+    const bar5 = realTables.find((t) => t.code === "BAR05")!
+    const bar6 = realTables.find((t) => t.code === "BAR06")!
+
+    const states = new Map<number, FloorTableState>([
+      [
+        tA6.id,
+        {
+          tableId: tA6.id,
+          state: "seated",
+          seatedTurnCount: 2,
+          staleFromPreviousDay: false,
+          claim: {
+            kind: "visit",
+            visitId: 101,
+            reservationId: null,
+            waitlistEntryId: null,
+            holdId: null,
+            displayName: "Phạm Quốc Khoa",
+            honorific: "MR",
+            phoneLast3: "888",
+            partySize: 6,
+            startsAt: new Date("2026-11-18T20:55:00+07:00"),
+            deadlineAt: null,
+            paid: false,
+            origin: "RESERVATION",
+            tableIds: [tA6.id, tA7.id],
+            groupId: 1,
+            symbolNo: 1,
+            groupDisplayCode: "G01",
+            flags: ["RETURNING", "VIP"],
+            warning: null,
+            minutesLate: 0,
+            sourceCode: null,
+            note: null,
+            version: 1,
+          },
+        },
+      ],
+      [
+        tA7.id,
+        {
+          tableId: tA7.id,
+          state: "seated",
+          seatedTurnCount: 2,
+          staleFromPreviousDay: false,
+          claim: {
+            kind: "visit",
+            visitId: 101,
+            reservationId: null,
+            waitlistEntryId: null,
+            holdId: null,
+            displayName: "Phạm Quốc Khoa",
+            honorific: "MR",
+            phoneLast3: "888",
+            partySize: 6,
+            startsAt: new Date("2026-11-18T20:55:00+07:00"),
+            deadlineAt: null,
+            paid: false,
+            origin: "RESERVATION",
+            tableIds: [tA6.id, tA7.id],
+            groupId: 1,
+            symbolNo: 1,
+            groupDisplayCode: "G01",
+            flags: ["RETURNING", "VIP"],
+            warning: null,
+            minutesLate: 0,
+            sourceCode: null,
+            note: null,
+            version: 1,
+          },
+        },
+      ],
+      [
+        bar5.id,
+        {
+          tableId: bar5.id,
+          state: "seated",
+          staleFromPreviousDay: false,
+          claim: {
+            kind: "visit",
+            visitId: 202,
+            reservationId: 303,
+            waitlistEntryId: null,
+            holdId: null,
+            displayName: "Dương Quốc Long",
+            phoneLast3: "777",
+            partySize: 2,
+            startsAt: new Date("2026-11-18T20:00:00+07:00"),
+            reservedExpectedAt: new Date("2026-11-18T20:00:00+07:00"),
+            deadlineAt: null,
+            paid: false,
+            origin: "RESERVATION",
+            tableIds: [bar5.id, bar6.id],
+            groupId: 2,
+            symbolNo: 2,
+            groupDisplayCode: "G02",
+            flags: ["VIP"],
+            warning: null,
+            minutesLate: 0,
+            sourceCode: null,
+            note: null,
+            version: 1,
+          },
+        },
+      ],
+      [
+        bar6.id,
+        {
+          tableId: bar6.id,
+          state: "seated",
+          staleFromPreviousDay: false,
+          claim: {
+            kind: "visit",
+            visitId: 202,
+            reservationId: 303,
+            waitlistEntryId: null,
+            holdId: null,
+            displayName: "Dương Quốc Long",
+            phoneLast3: "777",
+            partySize: 2,
+            startsAt: new Date("2026-11-18T20:00:00+07:00"),
+            reservedExpectedAt: new Date("2026-11-18T20:00:00+07:00"),
+            deadlineAt: null,
+            paid: false,
+            origin: "RESERVATION",
+            tableIds: [bar5.id, bar6.id],
+            groupId: 2,
+            symbolNo: 2,
+            groupDisplayCode: "G02",
+            flags: ["VIP"],
+            warning: null,
+            minutesLate: 0,
+            sourceCode: null,
+            note: null,
+            version: 1,
+          },
+        },
+      ],
+    ])
+
+    const renderReadOnly = (canViewGuestNames: boolean) =>
+      renderToString(
+        createElement(ReadOnlyFloorMap, {
+          tables: realTables,
+          zones: dummyZones,
+          states,
+          groups: [
+            { id: 1, displayCode: "G01", symbolNo: 1, tableIds: [tA6.id, tA7.id] },
+            { id: 2, displayCode: "G02", symbolNo: 2, tableIds: [bar5.id, bar6.id] },
+          ],
+          now: new Date("2026-11-18T21:15:00+07:00"),
+          canViewGuestNames,
+        }),
+      )
+
+    // 1. Permitted (customer.view_masked): shows guest names on tiles, BarGuestList & ARIA, zero buttons/phones
+    const htmlWithNames = renderReadOnly(true)
+    expect(htmlWithNames).toContain('data-readonly="true"')
+    expect(htmlWithNames).toContain("Khu C")
+    expect(htmlWithNames).toContain("Khu B")
+    expect(htmlWithNames).toContain("Khu A")
+    expect(htmlWithNames).toContain("QUẦY BAR")
+    expect(htmlWithNames).toContain("LỐI VÀO")
+    expect(htmlWithNames).toContain("A10")
+    expect(htmlWithNames).toContain("sơ cua")
+    expect(htmlWithNames).toContain("G01")
+    expect(htmlWithNames).toContain("G02")
+    expect(htmlWithNames).toContain("Khách quầy bar")
+    expect(htmlWithNames).toContain("Phạm Quốc Khoa")
+    expect(htmlWithNames).toContain("Dương Quốc Long")
+    expect(htmlWithNames).not.toContain('role="button"')
+    expect(htmlWithNames).not.toContain("<button")
+    expect(htmlWithNames).not.toContain("aria-pressed")
+    expect(htmlWithNames).not.toContain("data-mobile-waitlist-marker")
+    expect(htmlWithNames).not.toContain("888")
+    expect(htmlWithNames).not.toContain("777")
+
+    // 2. Revoked/absent (canViewGuestNames=false): omits guest names everywhere without mutating cache or faking Walk-in
+    const htmlRedacted = renderReadOnly(false)
+    expect(htmlRedacted).toContain('data-readonly="true"')
+    expect(htmlRedacted).toContain("G01")
+    expect(htmlRedacted).toContain("G02")
+    expect(htmlRedacted).not.toContain('role="button"')
+    expect(htmlRedacted).not.toContain("<button")
+    expect(htmlRedacted).not.toContain("Phạm Quốc Khoa")
+    expect(htmlRedacted).not.toContain("Dương Quốc Long")
+    expect(htmlRedacted).not.toContain("Khách Walk-in")
+    // Source claim objects were never mutated
+    expect(states.get(tA6.id)?.claim?.displayName).toBe("Phạm Quốc Khoa")
+    expect(states.get(bar5.id)?.claim?.displayName).toBe("Dương Quốc Long")
   })
 })
