@@ -67,11 +67,28 @@ const CANCEL_REASONS = (Object.keys(CLOSE_REASON_LABEL) as ReservationCloseReaso
   .filter((r) => r !== "NO_SHOW_CONFIRMED")
   .map((value) => ({ value, label: CLOSE_REASON_LABEL[value] }))
 
+function useOpenSession(open: boolean) {
+  const [sessionId, setSessionId] = useState(0)
+  const [wasOpen, setWasOpen] = useState(false)
+  if (open && !wasOpen) {
+    setWasOpen(true)
+    setSessionId((n) => n + 1)
+  } else if (!open && wasOpen) {
+    setWasOpen(false)
+  }
+  return sessionId
+}
+
 export function ReservationDetailSheet() {
   const detail = useUi((s) => s.reservationDetail)
+  const [lastDetail, setLastDetail] = useState(detail)
+  if (detail && (detail.id !== lastDetail?.id || detail.bd !== lastDetail?.bd)) {
+    setLastDetail(detail)
+  }
+  const activeDetail = detail ?? lastDetail
   const openReservation = useUi((s) => s.openReservation)
-  const list = useReservations(detail?.bd ?? "", "")
-  const r = list.data?.find((x) => x.id === detail?.id)
+  const list = useReservations(activeDetail?.bd ?? "", "")
+  const r = list.data?.find((x) => x.id === activeDetail?.id)
   return (
     <Sheet open={!!detail} onOpenChange={(o) => !o && openReservation(null)}>
       <SheetContent className="w-full gap-0 p-0 sm:max-w-[480px]">
@@ -425,8 +442,9 @@ function Detail({ r }: { r: ReservationView }) {
         title="Hủy booking?"
         description={
           <>
-            Booking {fmtTime(r.expectedAt)} của <b className="text-foreground">{formatHonorificName(r.displayName, r.honorific)}</b>. Bàn đang giữ (nếu
-            có) sẽ được nhả.
+            Booking {fmtTime(r.expectedAt)} của{" "}
+            <b className="text-foreground">{formatHonorificName(r.displayName, r.honorific)}</b>. Bàn đang giữ (nếu có)
+            sẽ được nhả.
           </>
         }
         confirmLabel="Hủy booking"
@@ -465,10 +483,11 @@ export function EditReservationDialog({
   onOpenChange: (o: boolean) => void
   r: ReservationView
 }) {
+  const sessionId = useOpenSession(open)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-h-[min(90dvh,46rem)] sm:max-w-lg">
-        {open ? <EditReservationBody r={r} close={() => onOpenChange(false)} /> : null}
+        {sessionId > 0 ? <EditReservationBody key={sessionId} r={r} close={() => onOpenChange(false)} /> : null}
       </DialogContent>
     </Dialog>
   )
@@ -514,11 +533,7 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
                 placeholder={r.hasGuestName ? undefined : "Khách chưa cho tên"}
                 onChange={(e) => setName(e.target.value)}
               />
-              <HonorificPicker
-                value={honorific}
-                onChange={setHonorific}
-                disabled={pending}
-              />
+              <HonorificPicker value={honorific} onChange={setHonorific} disabled={pending} />
             </div>
           </div>
           <div className="flex flex-wrap items-end gap-4">
@@ -610,13 +625,13 @@ function EditReservationBody({ r, close }: { r: ReservationView; close: () => vo
                 partySize: party,
                 expectedAt: atBusinessTime(r.businessDate, time),
                 sourceCode: source,
-                socialPlatform: socialPlatformSupported && source === "SOCIAL" ? (platform || null) : null,
+                socialPlatform: socialPlatformSupported && source === "SOCIAL" ? platform || null : null,
                 note,
                 classification,
                 guestType: classification === "RETURNING" ? "REGULAR" : classification === "NEW" ? "NEW" : null,
                 isBirthday,
                 iconKeys: iconKeysSupported ? iconKeys : undefined,
-                honorific: honorificSupported ? (honorific || null) : undefined,
+                honorific: honorificSupported ? honorific || null : undefined,
               }),
             )
             if (res) close()
@@ -638,9 +653,12 @@ export function AdvanceWaitlistDialog({
   onOpenChange: (o: boolean) => void
   r: ReservationView
 }) {
+  const sessionId = useOpenSession(open)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>{open ? <AdvanceWaitlistBody r={r} close={() => onOpenChange(false)} /> : null}</DialogContent>
+      <DialogContent>
+        {sessionId > 0 ? <AdvanceWaitlistBody key={sessionId} r={r} close={() => onOpenChange(false)} /> : null}
+      </DialogContent>
     </Dialog>
   )
 }

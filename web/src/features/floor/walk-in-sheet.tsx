@@ -20,9 +20,19 @@ import { useFloorModel } from "./use-floor-model"
 export function WalkInSheet() {
   const open = useUi((s) => s.walkInOpen)
   const close = useUi((s) => s.closeWalkIn)
+  const [sessionId, setSessionId] = useState(0)
+  const [wasOpen, setWasOpen] = useState(false)
+  if (open && !wasOpen) {
+    setWasOpen(true)
+    setSessionId((n) => n + 1)
+  } else if (!open && wasOpen) {
+    setWasOpen(false)
+  }
   return (
     <Sheet open={open} onOpenChange={(o) => !o && close()}>
-      <SheetContent className="w-full gap-0 p-0 sm:max-w-[440px]">{open ? <WalkInBody /> : null}</SheetContent>
+      <SheetContent className="w-full gap-0 p-0 sm:max-w-[440px]">
+        {sessionId > 0 ? <WalkInBody key={sessionId} /> : null}
+      </SheetContent>
     </Sheet>
   )
 }
@@ -251,13 +261,17 @@ function TableChip({
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        "flex h-14 flex-col items-center justify-center rounded-lg border transition-colors",
-        active ? "border-foreground bg-foreground text-background" : "bg-surface-1 hover:bg-surface-2",
+        "flex h-14 flex-col items-center justify-center rounded-xl border transition-[background-color,border-color,color,transform] duration-150 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.97]",
+        active
+          ? "border-primary bg-primary text-primary-foreground shadow-xs"
+          : "border-border bg-surface-1 hover:bg-surface-2",
       )}
     >
-      <span className="text-base leading-none font-semibold">{label}</span>
+      <span className="tnum text-base leading-none font-semibold">{label}</span>
       {sub ? (
-        <span className={cn("mt-1 text-[10px]", active ? "text-background/70" : "text-muted-foreground")}>{sub}</span>
+        <span className={cn("mt-1 text-[11px]", active ? "text-primary-foreground/80" : "text-muted-foreground")}>
+          {sub}
+        </span>
       ) : null}
     </button>
   )

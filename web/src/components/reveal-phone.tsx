@@ -72,12 +72,12 @@ export function RevealPhone({
               Thao tác được ghi nhật ký (CUSTOMER_PHONE_REVEALED). Số chỉ hiện trong phiên này, không lưu trên máy.
             </DialogDescription>
           </DialogHeader>
-          <RadioGroup value={reason} onValueChange={setReason} className="grid gap-1" aria-label="Lý do">
+          <RadioGroup value={reason} onValueChange={setReason} className="grid gap-1.5" aria-label="Lý do">
             {REASONS.map((r) => (
               <Label
                 key={r.value}
                 htmlFor={`rv-${r.value}`}
-                className="flex h-11 cursor-pointer items-center gap-3 rounded-lg border px-3 font-normal has-[[data-state=checked]]:border-foreground has-[[data-state=checked]]:bg-surface-2"
+                className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-border bg-surface-1 px-3.5 py-2 font-normal transition-[background-color,border-color] duration-[var(--duration-hover)] hover:bg-surface-2/60 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary-tint"
               >
                 <RadioGroupItem id={`rv-${r.value}`} value={r.value} />
                 {r.label}

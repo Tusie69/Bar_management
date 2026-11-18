@@ -105,7 +105,7 @@ export function LayoutMergeControls({ model, overlay = false }: { model: FloorMo
             // shrank it until the tables were hard to hit. Below the plan it
             // covers no table at all and costs the camera about 8% of its scale.
             "gap-1.5 rounded-[18px] border border-border bg-surface-1 px-3 pt-2 pb-2.5 shadow-[var(--shadow-float)]"
-          : "gap-2 rounded-lg border bg-surface-1 p-2",
+          : "gap-2 rounded-xl border border-border bg-surface-1 p-3 shadow-xs",
       )}
       aria-label="Chế độ ghép bàn"
     >
