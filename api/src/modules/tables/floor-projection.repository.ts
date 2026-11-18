@@ -243,16 +243,24 @@ function isoDateTime(value: Date | string): string {
   return (value instanceof Date ? value : new Date(`${value}Z`)).toISOString()
 }
 
+/**
+ * Mã hiển thị của một cụm bàn: G01, G02, … G50.
+ *
+ * Trước đây hàm này trả về chữ cái kiểu Excel kèm tiền tố ◆ ('◆A'). Ký hiệu
+ * đó không đến từ yêu cầu nào; trong khi đó web lại tự quy đổi nó thành "G01"
+ * để vẽ pill trên sơ đồ, nên cùng một cụm mang hai tên tùy chỗ người dùng
+ * nhìn. Mã này được nhân viên đọc to qua bộ đàm, nên chốt một dạng duy
+ * nhất, và là dạng đọc được thành lời.
+ *
+ * Bộ hình (Nơ, Sao, Thoi…) ở web là một cách đọc KHÁC của cùng `symbol_no`
+ * và không liên quan tới hàm này.
+ *
+ * `symbol_no` bị chặn trong khoảng 1..50 (`ck_table_groups_symbol`), nên hai
+ * chữ số là đủ; `padStart` không cắt bớt nếu sau này nới rộng.
+ */
 export function groupDisplayCode(symbolNo: number): string {
   if (!Number.isSafeInteger(symbolNo) || symbolNo < 1) throw new Error('GROUP_SYMBOL_INVALID')
-  let value = symbolNo
-  let letters = ''
-  while (value > 0) {
-    value -= 1
-    letters = String.fromCharCode(65 + (value % 26)) + letters
-    value = Math.floor(value / 26)
-  }
-  return `◆${letters}`
+  return `G${String(symbolNo).padStart(2, '0')}`
 }
 
 function customerFlags(

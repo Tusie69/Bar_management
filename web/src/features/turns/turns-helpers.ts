@@ -1,4 +1,5 @@
 import { ORIGIN_LABEL, SOURCE_LABEL, type BookingSourceCode, type RoleCode, type VisitOrigin } from "@/domain/enums"
+import { normalizeGroupCode } from "@/domain/group-code"
 import type {
   DuplicateCustomer,
   TableTurnQuery,
@@ -250,7 +251,10 @@ export function formatTurnSource(sourceCode: string | null, origin: string): str
  * Formats a turn's logical scope label (`groupCode` for GROUP, joined `tableCodes` for TABLE).
  */
 export function formatScopeLabel(row: Pick<TableTurnView, "scope" | "groupCode" | "tableCodes">): string {
-  if (row.scope === "GROUP" && row.groupCode) return row.groupCode
+  // `group_code_snapshot` chụp lại chuỗi hiển thị lúc trả bàn, nên những lượt
+  // đóng trước khi đổi sang Gnn đang giữ "◆A" trong database. Đọc lại cho
+  // đúng thay vì viết lại lịch sử.
+  if (row.scope === "GROUP" && row.groupCode) return normalizeGroupCode(row.groupCode) ?? row.groupCode
   if (row.tableCodes.length > 0) return row.tableCodes.join(" + ")
   return "—"
 }

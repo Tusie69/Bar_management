@@ -55,8 +55,11 @@ vi.mock("@/hooks/use-data", () => ({
 }))
 
 vi.mock("../reservations/zalo-booking-export", () => ({
-  ZaloBookingExport: ({ children }: { children: (arg: { copy: () => Promise<void>; loading: boolean }) => ReactNode }) =>
-    children({ copy: async () => undefined, loading: false }),
+  ZaloBookingExport: ({
+    children,
+  }: {
+    children: (arg: { copy: () => Promise<void>; loading: boolean }) => ReactNode
+  }) => children({ copy: async () => undefined, loading: false }),
 }))
 
 import { MapScreen } from "./map"
@@ -144,7 +147,7 @@ function renderWithCtx(role: RoleCode, node: ReactNode): string {
 }
 
 describe("Notification bell removal for RECEPTIONIST", () => {
-  it("renders no bell button, bell icon, or red badge on MapScreen for RECEPTIONIST while keeping Undo/Redo", () => {
+  it("shows the unread dot on Menu without a bell and keeps Undo/Redo for RECEPTIONIST", () => {
     const html = renderWithCtx(
       "RECEPTIONIST",
       createElement(MapScreen, {
@@ -159,9 +162,9 @@ describe("Notification bell removal for RECEPTIONIST", () => {
       }),
     )
 
-    expect(html).not.toContain("Thông báo")
+    expect(html).not.toContain('aria-label="Thông báo')
     expect(html).not.toContain("lucide-bell")
-    expect(html).not.toContain("bg-st-noshow")
+    expect(html).toMatch(/<button[^>]*aria-label="Menu, 5 thông báo chưa xem"[^>]*>(?:(?!<\/button>).)*data-testid="reception-menu-unread"/s)
     expect(html).not.toContain('<span class="flex-1"></span>')
     expect(html).toContain('aria-label="Hoàn tác"')
     expect(html).toContain('aria-label="Làm lại"')

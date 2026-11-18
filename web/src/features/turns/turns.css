@@ -31,7 +31,7 @@
   display: grid;
   gap: 18px;
   width: 100%;
-  max-width: 1184px;
+  max-width: 1600px;
   min-width: 0;
   font-family:
     "Be Vietnam Pro",
@@ -258,10 +258,21 @@
   margin: 0;
 }
 
-@media (max-width: 900px) {
+/*
+ * Breakpoint đo KHUNG CHỨA chứ không đo cửa sổ. Xem ghi chú ở
+ * `admin-theme.css` về lý do: vùng nội dung hẹp hơn cửa sổ 280px khi còn
+ * sidebar và 32px khi sidebar thu thành drawer.
+ */
+@container adm-content (max-width: 700px) {
   .turns-metrics-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
+  }
+}
+
+@container adm-content (max-width: 480px) {
+  .turns-metrics-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -366,7 +377,7 @@
   align-items: start;
 }
 
-@media (min-width: 1280px) {
+@container adm-content (min-width: 1000px) {
   .turns-main-grid {
     grid-template-columns: minmax(0, 1fr) 360px;
   }
@@ -385,13 +396,49 @@
   align-items: start;
 }
 
-@media (min-width: 1280px) {
+@container adm-content (min-width: 1000px) {
   .turns-bottom-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-/* Card header */
+/*
+ * Khung hẹp: `.turns-wide-grid` chỉ là một cột, hai lưới bên trong xếp dọc
+ * như cũ. Khung rộng: mở ra ba cột.
+ *
+ * Ở 1920 (khung 1552px), bố cục hai cột cho trang cao 1420px trong khi vùng
+ * nhìn chỉ 875px — phải cuộn 545px, và dưới thẻ "Theo nhân viên" (cao
+ * 157px) là một mảng trống 372px cạnh thẻ "Bàn được ngồi nhiều nhất" (529px).
+ * Xếp hai thẻ đó thành cột thứ ba thì cả ba cột cao xấp xỉ nhau và trang
+ * gọn lại còn một màn hình.
+ *
+ * 1500px là mức mà cột bảng vẫn còn ít nhất 780px cho tám cột dữ liệu sau khi
+ * trừ hai cột phụ 340px. Dưới mức đó giữ hai cột như cũ.
+ */
+.turns-wide-grid {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+@container adm-content (min-width: 1500px) {
+  .turns-wide-grid {
+    grid-template-columns: minmax(0, 1fr) 340px 340px;
+    align-items: start;
+  }
+
+  /* Bảng và cột phụ trở thành ô của chính lưới ba cột ở trên. */
+  .turns-main-grid {
+    display: contents;
+  }
+
+  /* Hai thẻ thống kê xếp dọc trong cột thứ ba. */
+  .turns-bottom-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Card header (Figma style: clean title + grey subtitle above table header) */
 .turns-card-header {
   display: flex;
   flex-wrap: wrap;

@@ -163,6 +163,7 @@ export function AdminShell() {
           <div
             className={`fixed inset-0 z-[var(--z-drawer)] lg:hidden ${drawerOpen ? "" : "pointer-events-none"}`}
             aria-hidden={!drawerOpen}
+            inert={!drawerOpen}
           >
             <button
               ref={drawerOverlayCallbackRef}
@@ -210,7 +211,7 @@ export function AdminShell() {
             id="admin-main-content"
             tabIndex={-1}
             data-testid="admin-main-content"
-            className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-[var(--adm-canvas)] p-[var(--gutter-page)] outline-none"
+            className="adm-content min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-[var(--adm-canvas)] p-[var(--gutter-page)] outline-none"
           >
             <Outlet />
           </main>

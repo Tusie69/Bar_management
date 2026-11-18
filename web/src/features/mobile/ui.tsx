@@ -70,6 +70,17 @@ export function UndoRedoButtons({ glass, square }: { glass?: boolean; square?: b
   )
 }
 
+export function MenuUnreadDot({ unread }: { unread: number }) {
+  if (unread <= 0) return null
+  return (
+    <span
+      aria-hidden
+      data-testid="reception-menu-unread"
+      className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-st-noshow ring-2 ring-background"
+    />
+  )
+}
+
 export function BellButton({ glass, square }: { glass?: boolean; square?: boolean }) {
   const m = useM()
   if (m.role === "RECEPTIONIST") return null

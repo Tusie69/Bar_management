@@ -1,4 +1,5 @@
 import { formatHonorificName } from "@/domain/booking-identity"
+import { groupCodeFromSymbol, normalizeGroupCode } from "@/domain/group-code"
 import type { FloorGroup, FloorTableState, TableLiveState, TableView } from "@/domain/models"
 import { FIXTURES, FLOOR_H, FLOOR_W, WAITLIST_MARKER, WALL_BOUNDS, ZONES, type ZoneCode } from "@/domain/venue-layout"
 import { DEFAULT_BAR_GUEST_LIST_BOUNDS } from "./bar-guest-rows"
@@ -204,38 +205,62 @@ export function calculateStatusCounts(
   return counts
 }
 
-export function groupCode(symbolNo: number | null | undefined): string | null {
-  if (!symbolNo || symbolNo < 1) return null
-  return `G${String(symbolNo).padStart(2, "0")}`
+/**
+ * Giữ tên cũ cho ba chỗ gọi trong sơ đồ sàn. Luật đặt mã cụm giờ nằm ở
+ * `@/domain/group-code`, để sổ lượt và các màn khác dùng chung một nguồn —
+ * trước đây mỗi nơi tự quy đổi một kiểu nên cùng một cụm mang hai tên.
+ */
+export const groupCode = groupCodeFromSymbol
+export const formatGroupCode = normalizeGroupCode
+
+export interface ClusterOutlineCandidate {
+  /** Hàng `table_groups` mà khung này thuộc về; null khi không suy ra được. */
+  groupId: number | null
+  tableIds: number[]
+  code: string | null
 }
 
-export function formatGroupCode(groupRef: number | string | null | undefined): string | null {
-  if (groupRef === null || groupRef === undefined || groupRef === "" || groupRef === 0) return null
-  if (typeof groupRef === "number") {
-    if (groupRef < 1) return null
-    return `G${String(groupRef).padStart(2, "0")}`
-  }
-  const str = String(groupRef).trim()
-  if (!str) return null
-  if (/^G\d+$/i.test(str)) {
-    const numPart = parseInt(str.slice(1), 10)
-    return `G${String(numPart).padStart(2, "0")}`
-  }
-  const matchLetter = str.match(/^[◆#]?([A-Za-z]+)$/)
-  if (matchLetter) {
-    const letters = matchLetter[1].toUpperCase()
-    let n = 0
-    for (let i = 0; i < letters.length; i++) {
-      n = n * 26 + (letters.charCodeAt(i) - 64)
+/**
+ * Mỗi cụm đúng một khung viền trên sơ đồ.
+ *
+ * Sơ đồ nhận hai nguồn cho cùng một cụm: `groups[]` (thành viên cụm, đọc từ
+ * `table_group_members`) và `claim.tableIds` (bàn khách đang chiếm, đọc từ
+ * `table_allocations`). Hai danh sách này LỆCH NHAU được: ghép thêm một bàn
+ * cho khách đang ngồi trên cụm dùng lại `group_id` nhưng không thêm thành
+ * viên vào cụm. Khử trùng theo danh sách bàn vì thế để lọt hai khung lồng
+ * nhau, và vì chúng cùng toạ độ gốc nên hai chữ mã cụm bị vẽ đè khít lên
+ * nhau — nhìn chỉ như một chữ hơi dày.
+ *
+ * Khử trùng theo `groupId` và giữ khung ôm nhiều bàn hơn: lúc khách ngồi thì
+ * khung bao trọn tốp khách, lúc khách về thì chỉ còn khung của cụm. Dữ liệu
+ * không bị đụng tới — cụm không tự lớn lên sau lưng lễ tân.
+ */
+export function oneOutlinePerCluster(candidates: readonly ClusterOutlineCandidate[]): ClusterOutlineCandidate[] {
+  const byGroup = new Map<number, ClusterOutlineCandidate>()
+  const ungrouped: ClusterOutlineCandidate[] = []
+
+  for (const candidate of candidates) {
+    if (candidate.groupId === null) {
+      ungrouped.push(candidate)
+      continue
     }
-    return `G${String(n).padStart(2, "0")}`
+    const kept = byGroup.get(candidate.groupId)
+    // Bằng nhau thì giữ cái tới trước: `groups[]` đi trước nên mã cụm vẫn lấy
+    // từ cụm, không phải từ claim.
+    if (!kept || candidate.tableIds.length > kept.tableIds.length) {
+      byGroup.set(candidate.groupId, candidate)
+    }
   }
-  const matchNum = str.match(/\d+/)
-  if (matchNum) {
-    const n = parseInt(matchNum[0], 10)
-    if (n > 0) return `G${String(n).padStart(2, "0")}`
+
+  const seen = new Set<string>()
+  const out: ClusterOutlineCandidate[] = []
+  for (const candidate of [...byGroup.values(), ...ungrouped]) {
+    const key = [...candidate.tableIds].sort((a, b) => a - b).join(",")
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(candidate)
   }
-  return str
+  return out
 }
 
 export function supportedFlags(flags: string[]): GuestFlag[] {
@@ -867,15 +892,29 @@ export function computeClusterDecorations({
     })
   }
 
-  for (const g of groups) add(g.tableIds, formatGroupCode(g.displayCode ?? g.symbolNo))
+  // Gom ứng viên từ cả hai nguồn rồi mới chọn. `add` khử trùng theo DANH SÁCH
+  // BÀN, mà cùng một cụm có thể xuất hiện ở hai nguồn với hai danh sách lệch
+  // nhau: ghép thêm bàn cho khách đang ngồi trên cụm dùng lại `group_id` nhưng
+  // không thêm thành viên vào cụm. Khi đó sơ đồ vẽ hai khung lồng nhau và hai
+  // chữ mã cụm đè khít lên nhau. Xem `oneOutlinePerCluster`.
+  const candidates: ClusterOutlineCandidate[] = groups.map((g) => ({
+    groupId: g.id ?? null,
+    tableIds: g.tableIds,
+    code: formatGroupCode(g.displayCode ?? g.symbolNo),
+  }))
   if (states) {
     for (const fs of states.values()) {
       const claim = fs?.claim
       if (claim?.tableIds && claim.tableIds.length > 1) {
-        add(claim.tableIds, formatGroupCode(claim.groupDisplayCode ?? claim.symbolNo))
+        candidates.push({
+          groupId: claim.groupId ?? null,
+          tableIds: claim.tableIds,
+          code: formatGroupCode(claim.groupDisplayCode ?? claim.symbolNo),
+        })
       }
     }
   }
+  for (const candidate of oneOutlinePerCluster(candidates)) add(candidate.tableIds, candidate.code)
 
   rawClusters.sort((a, b) => a.y - b.y || a.x - b.x || (a.code ?? a.key).localeCompare(b.code ?? b.key))
 

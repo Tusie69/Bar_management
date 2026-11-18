@@ -456,41 +456,43 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
             </section>
           ) : (
             <>
-              <div className="turns-main-grid" data-testid="turns-main-grid">
-                <div className="min-w-0" data-turns-reveal>
-                  <TurnsHistoryTable
-                    result={turnsData}
-                    rangeCaption={rangeCaption}
-                    isMultiDay={isMultiDay}
-                    isFetching={turnsQuery.isFetching}
-                    includeUncounted={includeUncounted}
+              <div className="turns-wide-grid">
+                <div className="turns-main-grid" data-testid="turns-main-grid">
+                  <div className="min-w-0" data-turns-reveal>
+                    <TurnsHistoryTable
+                      result={turnsData}
+                      rangeCaption={rangeCaption}
+                      isMultiDay={isMultiDay}
+                      isFetching={turnsQuery.isFetching}
+                      includeUncounted={includeUncounted}
+                      selectedStaffId={selectedStaffId}
+                      selectedStaffLabel={selectedStaffLabel}
+                      onClearStaff={() => handleSelectStaff(undefined)}
+                      onPageChange={setPage}
+                    />
+                  </div>
+
+                  <div className="turns-side-stack" data-testid="turns-side-stack" data-turns-reveal>
+                    <AnonymousVisitsCard
+                      key={`${from}:${to}`}
+                      from={from}
+                      to={to}
+                      currentBusinessDate={currentBusinessDate}
+                      turns={turnsData?.turns}
+                      isReadOnly={isReadOnly}
+                    />
+                    <DuplicateCustomersCard isReadOnly={isReadOnly} />
+                  </div>
+                </div>
+
+                <div className="turns-bottom-grid" data-testid="turns-bottom-grid" data-turns-reveal>
+                  <StaffBreakdownCard
+                    byStaff={summary.byStaff}
                     selectedStaffId={selectedStaffId}
-                    selectedStaffLabel={selectedStaffLabel}
-                    onClearStaff={() => handleSelectStaff(undefined)}
-                    onPageChange={setPage}
+                    onSelectStaff={handleSelectStaff}
                   />
+                  <TopScopesCard byScope={summary.byScope} />
                 </div>
-
-                <div className="turns-side-stack" data-testid="turns-side-stack" data-turns-reveal>
-                  <AnonymousVisitsCard
-                    key={`${from}:${to}`}
-                    from={from}
-                    to={to}
-                    currentBusinessDate={currentBusinessDate}
-                    turns={turnsData?.turns}
-                    isReadOnly={isReadOnly}
-                  />
-                  <DuplicateCustomersCard isReadOnly={isReadOnly} />
-                </div>
-              </div>
-
-              <div className="turns-bottom-grid" data-testid="turns-bottom-grid" data-turns-reveal>
-                <StaffBreakdownCard
-                  byStaff={summary.byStaff}
-                  selectedStaffId={selectedStaffId}
-                  onSelectStaff={handleSelectStaff}
-                />
-                <TopScopesCard byScope={summary.byScope} />
               </div>
             </>
           )}

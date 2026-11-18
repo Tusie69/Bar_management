@@ -59,8 +59,8 @@ describe("AlertsBell role visibility in AppShell", () => {
     expect(html).not.toContain("Cần xử lý")
   })
 
-  it("renders alert bell and badge for OWNER", () => {
-    state.role = "OWNER"
+  it.each(["OWNER", "ADMIN"] as const)("renders alert bell and badge for %s", (role) => {
+    state.role = role
     const html = renderToString(createElement(AlertsBell))
     expect(html).toContain('aria-label="Cần xử lý: 1"')
     expect(html).toContain("lucide-bell")

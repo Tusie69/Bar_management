@@ -310,6 +310,11 @@
   outline-offset: 2px;
 }
 
+.admin-portal .adm-content {
+  container-type: inline-size;
+  container-name: adm-content;
+}
+
 /* ---- Dialog & Card Surfaces ---- */
 .admin-portal.adm-dialog {
   background: var(--adm-surface);

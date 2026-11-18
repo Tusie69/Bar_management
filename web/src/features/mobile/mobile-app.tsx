@@ -19,7 +19,7 @@ import { useUi } from "@/state/ui"
 import { toast } from "sonner"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { NAV } from "@/app/nav"
-import { useShiftAlerts } from "../floor/alerts"
+import { useShiftAlerts, type Alert } from "../floor/alerts"
 import { GuestCountSheet } from "../floor/guest-count-card"
 import { useFloorModel } from "../floor/use-floor-model"
 import { isWaitingForTable } from "../floor/reception-rules"
@@ -197,6 +197,12 @@ export default function MobileApp() {
     setOverlay(null)
     if (t !== "map") setTableSel(null)
     if (PATH[t] !== loc.pathname) navigate(PATH[t])
+  }
+
+  const openAlertDetail = (alert: Alert) => {
+    setOverlay(null)
+    if (alert.reservationId) ctx.openDetail(alert.reservationId, selectedDate)
+    else if (alert.tableId) ctx.openTable(alert.tableId)
   }
 
   const ctx: MobileCtx = {
@@ -416,7 +422,13 @@ export default function MobileApp() {
         />
 
         <CreateSheet open={overlay === "create"} onClose={() => setOverlay(null)} />
-        <AccountSheet open={overlay === "account"} onClose={() => setOverlay(null)} />
+        <AccountSheet
+          open={overlay === "account"}
+          onClose={() => setOverlay(null)}
+          alerts={alerts}
+          onOpenNotifications={() => markSeen(alerts.map((a) => a.key))}
+          onOpenAlert={openAlertDetail}
+        />
         <GuestCountSheet
           businessDate={selectedDate}
           open={overlay === "count" || overlay === "count-edit"}
@@ -455,11 +467,7 @@ export default function MobileApp() {
             open={overlay === "alerts"}
             alerts={alerts}
             onClose={() => setOverlay(null)}
-            onOpen={(a) => {
-              setOverlay(null)
-              if (a.reservationId) setDetail({ id: a.reservationId, bd: selectedDate })
-              else if (a.tableId) ctx.openTable(a.tableId)
-            }}
+            onOpen={openAlertDetail}
           />
         ) : null}
         <StatusDialog r={statusFor} onClose={() => setStatusFor(null)} />

@@ -26,7 +26,7 @@ function input(now: string, overrides: Partial<TableDisplayStateInput> = {}): Ta
 }
 
 describe('table display state engine', () => {
-  it.each([[1, '◆A'], [2, '◆B'], [26, '◆Z'], [27, '◆AA'], [52, '◆AZ']] as const)(
+  it.each([[1, 'G01'], [2, 'G02'], [26, 'G26'], [27, 'G27'], [50, 'G50']] as const)(
     'maps persisted group symbol %i to %s',
     (symbolNo, displayCode) => expect(groupDisplayCode(symbolNo)).toBe(displayCode),
   )

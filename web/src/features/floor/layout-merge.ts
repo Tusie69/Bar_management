@@ -12,6 +12,34 @@ export function layoutMembers(model: FloorModel, id: number) {
   return model.floor?.groups.find((g) => g.tableIds.includes(id))?.tableIds ?? [id]
 }
 
+/**
+ * Những bàn mà màn chi tiết coi là MỘT cụm.
+ *
+ * `layoutMembers` chỉ đọc thành viên cụm (`table_group_members`). Khi lễ tân
+ * ghép thêm một bàn cho khách đang ngồi trên cụm, máy chủ dùng lại `group_id`
+ * nhưng không thêm thành viên, nên sheet hiện "8 chỗ" cho một tốp đang chiếm
+ * ba bàn — con số lễ tân nhìn để quyết có nhận thêm khách được không.
+ *
+ * Hợp hai danh sách, không bao giờ cắt bớt: có khách thì cụm to ra theo đúng
+ * số bàn khách chiếm; khách trả bàn thì claim biến mất và cụm tự về nguyên
+ * vẹn như lễ tân đã dựng. Dữ liệu không bị đụng tới, nên không cần cơ chế nào
+ * kéo cụm co lại — nó chưa từng to ra trong database.
+ *
+ * CHỈ dùng cho hiển thị. Chọn bàn để ghép cụm, đặt bàn hay mở Walk-in vẫn
+ * phải đi qua `layoutMembers`: đó là thao tác trên layout, không phải trên
+ * tốp khách đang ngồi.
+ */
+export function clusterMembersForDisplay(
+  model: FloorModel,
+  id: number,
+  claimTableIds?: readonly number[] | null,
+): number[] {
+  const members = layoutMembers(model, id)
+  if (!claimTableIds || claimTableIds.length === 0) return members
+  const extra = claimTableIds.filter((tableId) => !members.includes(tableId))
+  return extra.length === 0 ? members : [...members, ...extra]
+}
+
 export function startLayoutMerge(model: FloorModel, tableId?: number) {
   useUi.setState({ draft: null, bookingOpen: false, walkInOpen: false, selectedTableId: null })
   useUi.getState().startPick({

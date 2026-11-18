@@ -9,7 +9,7 @@ import { createServer } from "vite"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
-const outDir = path.join(webRoot, "e2e", ".artifacts", "reception-ui-refinement")
+const outDir = process.env.RECEPTION_EVIDENCE_DIR || path.join(webRoot, "e2e", ".artifacts", "reception-ui-refinement")
 fs.mkdirSync(outDir, { recursive: true })
 
 const VIEWPORTS = [
@@ -294,7 +294,7 @@ try {
       const shellRect = shell?.getBoundingClientRect() ?? null
       const header = shell?.querySelector("header")
       const headerRect = header?.getBoundingClientRect() ?? null
-      const menuBtn = shell?.querySelector('button[aria-label="Menu"]')
+      const menuBtn = shell?.querySelector('button:is([aria-label="Menu"], [aria-label^="Menu, "])')
       const searchInput = shell?.querySelector('input[placeholder*="3 số cuối"]')
       const exportBtn = shell?.querySelector('button[aria-label="Xuất text Zalo"]')
       const undoBtn = shell?.querySelector('button[aria-label="Hoàn tác"]')
@@ -303,9 +303,9 @@ try {
       const bellIcons = document.querySelectorAll("svg.lucide-bell").length
       const bellButtons = Array.from(document.querySelectorAll("button, [role='button']")).filter((el) => {
         const aria = el.getAttribute("aria-label") ?? ""
-        return aria !== "Đóng thông báo" && /thông báo/i.test(aria)
+        return /^(thông báo|cần xử lý)/i.test(aria)
       }).length
-      const redNotificationBadges = Array.from(document.querySelectorAll(".bg-st-noshow")).length
+      const menuUnreadDot = Boolean(menuBtn?.querySelector('[data-testid="reception-menu-unread"]'))
 
       const svg = shell?.querySelector('svg[role="group"]')
       const canvasWrap = svg?.parentElement
@@ -435,7 +435,7 @@ try {
         canvasScrollOverflowY,
         bellIcons,
         bellButtons,
-        redNotificationBadges,
+        menuUnreadDot,
         shell: toBox(shellRect),
         header: toBox(headerRect),
         menuBtn: toBox(menuBtn?.getBoundingClientRect() ?? null),
@@ -474,7 +474,7 @@ try {
     )
     assert.equal(metrics.bellIcons, 0, `${vp.label}: bell SVG icon still rendered`)
     assert.equal(metrics.bellButtons, 0, `${vp.label}: notification button still rendered`)
-    assert.equal(metrics.redNotificationBadges, 0, `${vp.label}: red badge still rendered`)
+    assert(metrics.menuUnreadDot, `${vp.label}: the unread fixture should show a dot on Menu`)
 
     assert(metrics.shell, `${vp.label}: [data-gm] missing`)
     assert(
@@ -710,7 +710,7 @@ try {
       canvasScrollOverflowY: metrics.canvasScrollOverflowY,
       bellIcons: metrics.bellIcons,
       bellButtons: metrics.bellButtons,
-      redBadges: metrics.redNotificationBadges,
+      menuUnreadDot: metrics.menuUnreadDot,
       shellWidth: Math.round(metrics.shell.width),
       wallSize: `${Math.round(metrics.wall.width)}x${Math.round(metrics.wall.height)}`,
       a7Text: metrics.a7Text,
@@ -725,7 +725,7 @@ try {
 
   // 2. Verify R1-R5 workflows + sheets on 390x844 (phone) and 1366x768 (laptop)
   {
-    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true })
     await context.addInitScript(() => {
       localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme: "light" }))
       window.__copiedText = null
@@ -749,6 +749,43 @@ try {
       await toastClose.click()
       await page.waitForTimeout(150)
     }
+
+    const menuTrigger = page.getByRole("button", { name: /^Menu, \d+ thông báo chưa xem$/ })
+    const dot = page.getByTestId("reception-menu-unread")
+    const accountSheet = page.getByRole("dialog", { name: "Tài khoản" })
+    const notifications = accountSheet.locator("summary").filter({ hasText: /^Thông báo · \d+/ })
+    const readSeen = () => page.evaluate(() => localStorage.getItem("21gam.mobile.alerts.seen.v1"))
+    const previousSeen = await readSeen()
+    await menuTrigger.focus()
+    await menuTrigger.press("Enter")
+    await notifications.waitFor({ state: "visible" })
+    await accountSheet.locator('[data-motion-state="open"]').count()
+    assert.equal(await notifications.evaluate((el) => el.parentElement.open), false)
+    assert.equal(await readSeen(), previousSeen, "Opening Menu alone marked reception notifications as seen")
+    assert.equal(await dot.count(), 1, "Menu alone cleared the unread dot")
+    await page.screenshot({ path: path.join(outDir, "reception-390x844-menu-unread.png") })
+    await page.keyboard.press("Escape")
+    await accountSheet.waitFor({ state: "detached" })
+    assert(await menuTrigger.evaluate((el) => document.activeElement === el), "Closing Menu did not restore focus")
+    await menuTrigger.tap()
+    await notifications.waitFor({ state: "visible" })
+    const disclosureBox = await notifications.boundingBox()
+    assert(disclosureBox && disclosureBox.height >= 44, "Thông báo disclosure target is smaller than 44px")
+    await notifications.press("Space")
+    const firstAlert = accountSheet.locator("details button").first()
+    await firstAlert.waitFor({ state: "visible" })
+    await dot.waitFor({ state: "detached" })
+    assert.notEqual(await readSeen(), previousSeen, "Opening Thông báo did not persist the seen notifications")
+    assert(await notifications.evaluate((el) => document.activeElement === el), "Disclosure lost keyboard focus")
+    await page.screenshot({ path: path.join(outDir, "reception-390x844-menu-notifications.png") })
+    await firstAlert.press("Enter")
+    await accountSheet.waitFor({ state: "detached" })
+    const alertDetail = page.getByRole("dialog").first()
+    await alertDetail.waitFor({ state: "visible" })
+    assert(await alertDetail.evaluate((el) => el.contains(document.activeElement)), "Alert detail did not receive focus")
+    await page.keyboard.press("Escape")
+    await alertDetail.waitFor({ state: "detached" })
+    await page.getByRole("button", { name: "Menu", exact: true }).waitFor({ state: "visible" })
 
     // R1: Open guest count edit, set Tổng đã tới = 42, save and confirm persisted on card
     await page.getByRole("button", { name: "Sửa bộ đếm khách" }).click()

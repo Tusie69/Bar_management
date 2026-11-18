@@ -76,7 +76,7 @@ import { api } from "@/services"
 import { useCan, useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
 import { LayoutActions } from "./layout-merge-controls"
-import { layoutMembers } from "./layout-merge"
+import { clusterMembersForDisplay, layoutMembers } from "./layout-merge"
 import { SpareButton } from "./spare-button"
 import { GuestCountDialog } from "./floor-dialogs"
 import { claimCallTarget } from "@/domain/call-target"
@@ -130,7 +130,7 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
       (e.id === claim?.waitlistEntryId || (!!claim?.reservationId && e.reservationId === claim.reservationId)),
   )
   const zone = model.catalog?.zones.find((z) => z.id === t.zoneId)
-  const memberIds = layoutMembers(model, tableId)
+  const memberIds = clusterMembersForDisplay(model, tableId, claim?.tableIds)
   const isGroup = memberIds.length > 1
   const memberTables = memberIds.map((id) => model.byId.get(id)).filter((x): x is TableView => !!x)
   const group = model.floor?.groups.find((g) => g.tableIds.includes(tableId))

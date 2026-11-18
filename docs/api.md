@@ -276,7 +276,7 @@ with a different payload is refused `IDEMPOTENCY_KEY_REUSED`. A split is not und
 
 `claim` is null or a whitelisted `{kind,reservationId,visitId,waitlistEntryId,holdId,guestName,phoneLast3,partySize,turnNo,flags,groupId,groupDisplayCode,groupMemberTableIds,startsAt,deadlineAt,holdOverdue,paid,origin,sourceCode,version}`. `kind` is `RESERVATION`, `VISIT` or `WAITLIST_HOLD`. `turnNo` is currently null. `flags` only contains the structured values `BIRTHDAY`, `NEW` or `RETURNING`; notes are never parsed. A `VISIT` claim that was checked in from a booking keeps that booking's `reservationId`, `flags`, `sourceCode` and masked `phoneLast3`, resolved through `reservations.visit_id`; an independent Walk-in or Waitlist visit reports `reservationId` null, no flags and no source. `canCall` is true for any claim that has somewhere to log a call - a `reservationId`, a `waitlistEntryId` or a `visitId` - together with a `phoneLast3`. It no longer depends on the claim kind or the derived display state. The response never includes raw notes, full phone numbers, ciphertext or HMAC fields.
 
-The endpoint performs two fixed-count reads inside one read-only `REPEATABLE READ` transaction. `serverNow` is the application clock instant used for every derived state and `changeSeq` is returned as a decimal string. Groups use persisted IDs and symbol numbers; display codes use Excel-style letters (`1 => ◆A`, `26 => ◆Z`, `27 => ◆AA`). The legacy `state` and `activeVisit` fields remain during rollout, but `activeVisit.note` is always null. GET has no lifecycle write side effects.
+The endpoint performs two fixed-count reads inside one read-only `REPEATABLE READ` transaction. `serverNow` is the application clock instant used for every derived state and `changeSeq` is returned as a decimal string. Groups use persisted IDs and symbol numbers; display codes are zero-padded group numbers (`1 => G01`, `26 => G26`, `50 => G50`). The legacy `state` and `activeVisit` fields remain during rollout, but `activeVisit.note` is always null. GET has no lifecycle write side effects.
 
 Catalog venue fields include `id,version,name,timezone,businessDayStartLocal,businessDayCutoffLocal,upcomingWarningMinutes,lateWarningMinutes,noShowWarningMinutes,waitlistHoldDefaultMinutes,waitlistClaimLeaseSeconds,reservationHoldPolicy,reservationWindowMinutes,groupSymbolCount,changeSeq`. The centralized arrival defaults are 10/15/30 minutes. Zones contain `id,version,code,name,isBookable,isWaitingArea`. Catalog tables contain `id,version,code,displayName,zoneId,zoneCode,kind,capacity,seqNo,isSpare,status,x,y,width,height`. Combinations contain `id,code,displayName,memberIds,capacity`.
 
@@ -308,7 +308,7 @@ implementation, so the two paths cannot drift apart. A body with neither `mode` 
 
 `LayoutGroupView` is `{groupId,groupCode,symbolNo,displayCode,name,status,version,zoneId,tableIds,tableCodes,
 tables:[{id,code,capacity}],totalCapacity,formedAt,dissolvedAt,inUseBy}`. `groupCode` is `TG-<groupId>`; `displayCode`
-is the Excel-style floor mark (`1 => ◆A`). `status` is `ACTIVE` or `DISSOLVED`. `totalCapacity` is summed from the
+is the floor mark (`1 => G01`); turns closed before this change kept the older `◆A` form in `group_code_snapshot` and the clients normalise it on read. `status` is `ACTIVE` or `DISSOLVED`. `totalCapacity` is summed from the
 member tables' own `dining_tables.capacity` — never a constant and never a configured default. `inUseBy` is null, or
 `{kind:"HOLD"|"USAGE",holdId,visitId}` for the one booking or visit currently using the cluster. `version` is the
 **cluster's layout version**, not a guest's: merge and split commands carry this one, commands on a guest carry
@@ -330,14 +330,14 @@ Idempotency-Key: 8e0f1b2c-3d4e-5f60-7182-93a4b5c6d7e8
 {
   "operationId": 412,
   "changeSeq": 1884,
-  "summary": "Đã ghép B3 + B4 + B5 thành cụm ◆A (12 chỗ).",
+  "summary": "Đã ghép B3 + B4 + B5 thành cụm G01 (12 chỗ).",
   "undoable": false,
   "group": {
     "groupId": 101,
     "groupCode": "TG-101",
     "symbolNo": 1,
-    "displayCode": "◆A",
-    "name": "◆A",
+    "displayCode": "G01",
+    "name": "G01",
     "status": "ACTIVE",
     "version": 1,
     "zoneId": 2,
@@ -366,7 +366,7 @@ POST /api/v1/tables/groups/101/dissolve
   "operationId": 418,
   "changeSeq": 1891,
   "undoable": false,
-  "summary": "Đã tách cụm ◆A, trả lại B3, B4, B5.",
+  "summary": "Đã tách cụm G01, trả lại B3, B4, B5.",
   "groupId": 101,
   "groupCode": "TG-101",
   "status": "DISSOLVED",
@@ -862,7 +862,7 @@ GET /api/v1/visits/turns?from=2026-11-11&to=2026-11-11
       "turnNo": 1,
       "businessDate": "2026-11-11",
       "scope": "GROUP",
-      "groupCode": "◆A",
+      "groupCode": "G01",
       "groupId": 101,
       "tableId": null,
       "tableCodes": ["B3", "B4", "B5"],
@@ -915,7 +915,7 @@ GET /api/v1/visits/turns/summary?from=2026-11-09&to=2026-11-15&checkedInByUserId
   "from": "2026-11-09", "to": "2026-11-15", "completedTotal": 1, "openTotal": 0, "guestTotal": 12,
   "byBusinessDate": [{"businessDate": "2026-11-11", "turns": 1, "guests": 12}],
   "byStaff": [{"checkedInByUserId": 2, "checkedInByDisplayName": "Lễ tân", "turns": 1, "guests": 12}],
-  "byScope": [{"scope": "GROUP", "tableId": null, "groupId": 101, "label": "◆A", "turns": 1, "guests": 12}]
+  "byScope": [{"scope": "GROUP", "tableId": null, "groupId": 101, "label": "G01", "turns": 1, "guests": 12}]
 }
 ```
 

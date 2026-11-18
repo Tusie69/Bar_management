@@ -30,7 +30,7 @@ import { usePlanWidth } from "@/hooks/use-plan-width"
 import { FloorCanvas } from "../floor/floor-canvas"
 import { SpareButton } from "../floor/spare-button"
 import { LayoutActions, LayoutMergeControls } from "../floor/layout-merge-controls"
-import { independentLayoutEnabled, layoutMembers, toggleLayoutTable } from "../floor/layout-merge"
+import { clusterMembersForDisplay, independentLayoutEnabled, toggleLayoutTable } from "../floor/layout-merge"
 import { GuestCountCard } from "../floor/guest-count-card"
 import { StatusLegend } from "../floor/status-legend"
 import { claimCallTarget } from "@/domain/call-target"
@@ -44,10 +44,11 @@ import { capacityWarningText, isWaitingForTable, selectedTablesCapacity } from "
 import { useBookingDraft } from "../floor/use-booking-draft"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
+import { menuButtonLabel } from "./menu-alerts"
 import { codesOf, duration, type Tone, toneStyle } from "./model"
 import { useRestoreTriggerFocus } from "./overlay-focus"
 import { useQuickFormEscape, useQuickFormPresence } from "./quick-form-presence"
-import { PlainHeader, UndoRedoButtons } from "./ui"
+import { MenuUnreadDot, PlainHeader, UndoRedoButtons } from "./ui"
 
 const ZONE_TABS: [ZoneCode | "ALL", string][] = [
   ["ALL", "Tất cả"],
@@ -220,10 +221,11 @@ export function MapScreen({
               onClick={m.openAccount}
               onPointerEnter={() => void prewarmMotionController()}
               onPointerDown={() => void prewarmMotionController()}
-              aria-label="Menu"
-              className="gm-press grid size-11 shrink-0 place-items-center rounded-xl border border-border bg-surface-1 text-tx-strong shadow-[var(--shadow-xs)] hover:border-border-strong hover:bg-surface-2"
+              aria-label={menuButtonLabel("Menu", m.unread)}
+              className="gm-press relative grid size-11 shrink-0 place-items-center rounded-xl border border-border bg-surface-1 text-tx-strong shadow-[var(--shadow-xs)] hover:border-border-strong hover:bg-surface-2"
             >
               <Menu className="size-5" aria-hidden />
+              <MenuUnreadDot unread={m.unread} />
             </button>
             {planChrome ? (
               <ReceptionSearchField
@@ -707,7 +709,7 @@ export function TableSheet({
   const st = fs?.state ?? "free"
   const c = fs?.claim ?? null
   const callTarget = c ? claimCallTarget(c) : null
-  const members = layoutMembers(m.model, activeId)
+  const members = clusterMembersForDisplay(m.model, activeId, c?.tableIds)
   const isGroup = members.length > 1
   const memberTables = members.map((mid) => m.model.byId.get(mid)).filter((x): x is TableView => !!x)
   const group = m.model.floor?.groups.find((g) => g.tableIds.includes(activeId))

@@ -6,6 +6,7 @@
 import { foldVietnamese } from "@/lib/text"
 import { addDays, atBusinessTime, businessDateOf, fmtTime, MS, type BusinessDate } from "@/lib/time"
 import type { BookingSourceCode } from "@/domain/enums"
+import { groupCodeFromSymbol } from "@/domain/group-code"
 import type {
   AllocationView,
   AvailabilityResult,
@@ -157,16 +158,9 @@ export function groupSymbolNo(db: MockDb, groupId: number | null): number | null
 }
 
 function groupDisplayCode(db: MockDb, groupId: number | null): string | null {
-  const symbolNo = groupSymbolNo(db, groupId)
-  if (!symbolNo) return null
-  let n = symbolNo
-  let letters = ""
-  while (n > 0) {
-    n -= 1
-    letters = String.fromCharCode(65 + (n % 26)) + letters
-    n = Math.floor(n / 26)
-  }
-  return `◆${letters}`
+  // Phải khớp `groupDisplayCode` của máy chủ thật, nếu không bản demo và bản
+  // chạy thật gọi cùng một cụm bằng hai tên khác nhau.
+  return groupCodeFromSymbol(groupSymbolNo(db, groupId))
 }
 
 const classificationFlags = (classification: string | null | undefined): Array<"NEW" | "RETURNING"> =>

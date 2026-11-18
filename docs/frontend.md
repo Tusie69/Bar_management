@@ -243,3 +243,17 @@ cd web && pnpm typecheck && pnpm lint && pnpm test
 3. **Sổ lượt** đang mượn `customer.view_masked` vì chưa có permission đọc lượt.
 4. **Báo cáo và Đối soát** dùng chung `report.read`; riêng Đối soát còn thiếu
    toàn bộ dữ liệu tiền (chưa có bảng order/bill/payment trong database).
+
+---
+
+## 9. Chuyển động trong khung Admin
+
+Drawer Admin opens and closes from the left through `SheetPresenceController`
+with `MOTION.duration.drawer` from `web/src/lib/motion.ts`. It stays mounted
+through exit, releases focus and input on close, and can reverse mid-exit.
+The shared controller handles reduced-motion preferences.
+
+CSS hover, focus and press states use the shared motion tokens in
+`web/src/styles/tokens.css`. List transition properties explicitly so the
+focus outline appears immediately. The sidebar gap and panel use the same
+easing so their edges stay aligned. Realtime updates keep floor tiles static.

@@ -38,6 +38,7 @@ import { NAV } from "@/app/nav"
 import type { Alert } from "../floor/alerts"
 import { useMobileActions } from "./actions"
 import { useM, type Confirm } from "./context"
+import { alertSectionTitle } from "./menu-alerts"
 import { tableText } from "./model"
 import { useRestoreTriggerFocus } from "./overlay-focus"
 import { EmptyBox, Seg } from "./ui"
@@ -153,6 +154,36 @@ export function CreateSheet({ open, onClose }: { open: boolean; onClose: () => v
   )
 }
 
+function AlertRow({ alert, onOpen }: { alert: Alert; onOpen: (a: Alert) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(alert)}
+      className="gm-press-card flex min-h-14 w-full items-start gap-3 rounded-2xl border border-border bg-background px-3.5 py-3 text-left text-tx-1 hover:border-border-strong"
+    >
+      <span
+        className="grid size-9 shrink-0 place-items-center rounded-xl"
+        style={{ background: `var(--st-${alert.tone}-tint)`, color: `var(--st-${alert.tone}-ink)` }}
+      >
+        <Clock className="size-4" aria-hidden />
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-[14px] font-semibold text-tx-strong">{alert.title}</span>
+        <span className="text-[13px] leading-snug text-[var(--text-muted)]">{alert.detail}</span>
+      </span>
+      <ChevronRight className="mt-1 size-4 shrink-0 text-subtle" aria-hidden />
+    </button>
+  )
+}
+
+function AlertList({ alerts, onOpen }: { alerts: Alert[]; onOpen: (alert: Alert) => void }) {
+  return alerts.length ? (
+    alerts.map((alert) => <AlertRow key={alert.key} alert={alert} onOpen={onOpen} />)
+  ) : (
+    <EmptyBox title="Chưa có cảnh báo" body="Chưa có cảnh báo trong ca." />
+  )
+}
+
 export function AlertsSheet({
   open,
   alerts,
@@ -182,30 +213,7 @@ export function AlertsSheet({
           <SheetDescription className="sr-only">Cảnh báo booking và trạng thái bàn trong ca</SheetDescription>
         </SheetHeader>
         <SheetBody className="pb-3">
-          {alerts.length ? (
-            alerts.map((a) => (
-              <button
-                key={a.key}
-                type="button"
-                onClick={() => onOpen(a)}
-                className="gm-press-card flex min-h-14 items-start gap-3 rounded-2xl border border-border bg-background px-3.5 py-3 text-left text-tx-1 hover:border-border-strong"
-              >
-                <span
-                  className="grid size-9 shrink-0 place-items-center rounded-xl"
-                  style={{ background: `var(--st-${a.tone}-tint)`, color: `var(--st-${a.tone}-ink)` }}
-                >
-                  <Clock className="size-4" aria-hidden />
-                </span>
-                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="text-[14px] font-semibold text-tx-strong">{a.title}</span>
-                  <span className="text-[13px] leading-snug text-[var(--text-muted)]">{a.detail}</span>
-                </span>
-                <ChevronRight className="mt-1 size-4 shrink-0 text-subtle" aria-hidden />
-              </button>
-            ))
-          ) : (
-            <EmptyBox title="Chưa có cảnh báo" body="Chưa có cảnh báo trong ca." />
-          )}
+          <AlertList alerts={alerts} onOpen={onOpen} />
         </SheetBody>
         <SheetCloseFooter onClose={onClose} />
       </SheetContent>
@@ -214,7 +222,19 @@ export function AlertsSheet({
 }
 
 /** Demo user, theme and the pages that are not in the tab bar (Khách, Báo cáo, Cài đặt). */
-export function AccountSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function AccountSheet({
+  open,
+  onClose,
+  alerts,
+  onOpenNotifications,
+  onOpenAlert,
+}: {
+  open: boolean
+  onClose: () => void
+  alerts: Alert[]
+  onOpenNotifications: () => void
+  onOpenAlert: (alert: Alert) => void
+}) {
   const { user, users, theme, setUser, setTheme, principal, permissions, logout } = useSession()
   const navigate = useNavigate()
   const [loggingOut, setLoggingOut] = useState(false)
@@ -239,6 +259,22 @@ export function AccountSheet({ open, onClose }: { open: boolean; onClose: () => 
           <SheetDescription className="sr-only">Chọn giao diện sáng tối, tài khoản và trang mở rộng</SheetDescription>
         </SheetHeader>
         <SheetBody className="gap-3 pb-3">
+          {isReceptionist ? (
+            <details
+              className="group rounded-2xl border border-border bg-background"
+              onToggle={(event) => {
+                if (open && event.currentTarget.open) onOpenNotifications()
+              }}
+            >
+              <summary className="gm-press-card flex min-h-11 cursor-pointer list-none items-center justify-between rounded-2xl px-4 text-[15px] font-semibold text-tx-strong hover:bg-surface-2 [&::-webkit-details-marker]:hidden">
+                {alertSectionTitle(alerts.length)}
+                <ChevronRight className="size-4 shrink-0 text-subtle group-open:rotate-90" aria-hidden />
+              </summary>
+              <div className="grid gap-2 px-2 pb-2">
+                <AlertList alerts={alerts} onOpen={onOpenAlert} />
+              </div>
+            </details>
+          ) : null}
           <Seg
             label="Giao diện"
             value={theme}
