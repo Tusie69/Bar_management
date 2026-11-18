@@ -54,6 +54,7 @@ import {
   GUEST_BADGE_STROKE,
   GUEST_FLAG_META,
   guestBadgeWidth,
+  isPhoneLikeGuestName,
   resolveCellCornerIcons,
   supportedFlags,
   tableCanActivate,
@@ -723,6 +724,17 @@ export function FloorCanvas(props: FloorCanvasProps) {
       }),
     [allowWaitlist, groups, groupRepresentativeMap, isAllZone, mode, states, tableById, tables],
   )
+  const tableClusterPadMap = useMemo(() => {
+    const map = new Map<number, number>()
+    for (const c of clusterOutlines) {
+      if (c.isBar) continue
+      for (const id of c.memberIds) {
+        const prev = map.get(id)
+        map.set(id, prev === undefined ? c.pad : Math.min(prev, c.pad))
+      }
+    }
+    return map
+  }, [clusterOutlines])
 
   // Zone tracking chip state (Item 2b)
   const isZoomed = userView !== null && Math.abs(userView.view.k - baseK) > 0.05
@@ -914,7 +926,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
                 y={c.y}
                 width={c.w}
                 height={c.h}
-                rx={c.isBar ? Math.min(c.w, c.h) / 2 : 10}
+                rx={c.rx}
                 fill="var(--primary)"
                 fillOpacity={0.07}
                 stroke="var(--primary)"
@@ -951,6 +963,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
                 {...common}
                 state={states?.get(t.id)}
                 now={now}
+                clusterPad={tableClusterPadMap.get(t.id)}
                 readOnly={isReadOnly}
                 hideGuestNames={hideGuestNames}
               />
@@ -1195,7 +1208,12 @@ function Chairs({ t, color }: { t: TableView; color: string }) {
   )
 }
 
-function describe(t: TableView, state: TableLiveState, fs?: FloorTableState, options?: { hideGuestNames?: boolean }) {
+function describe(
+  t: TableView,
+  state: TableLiveState,
+  fs?: FloorTableState,
+  options?: { hideGuestNames?: boolean; maskPhoneNames?: boolean },
+) {
   const lateConfirmed = state === "late_confirmed" || !!fs?.claim?.lateConfirmedAt
   const statusLabel = `${STATE_META[state].label}${lateConfirmed ? " (đã báo tới muộn)" : ""}`
   const base = `${t.kind === "BAR_SEAT" ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`}, ${statusLabel}`
@@ -1205,7 +1223,8 @@ function describe(t: TableView, state: TableLiveState, fs?: FloorTableState, opt
   const flags = supportedFlags(c.flags ?? [])
   const flagLabels = flags.map((flag: GuestFlag) => GUEST_FLAG_META[flag]?.label ?? flag)
   const code = formatGroupCode(c.groupDisplayCode ?? c.symbolNo)
-  if (options?.hideGuestNames) {
+  const suppressName = options?.hideGuestNames || (options?.maskPhoneNames && isPhoneLikeGuestName(c.displayName))
+  if (suppressName) {
     return `${base}${spare}, ${c.partySize} khách${flagLabels.length ? `, ${flagLabels.join(", ")}` : ""}${code ? `, nhóm ${code}, ${c.tableIds.length} bàn` : ""}`
   }
   const guestName = formatHonorificName(c.displayName, c.honorific)
@@ -1217,10 +1236,25 @@ function describe(t: TableView, state: TableLiveState, fs?: FloorTableState, opt
  * - Number only (e.g. `7`), centered inside status-colored pill, thin white border
  * - No people icon, no "7 khach", never multiplied by tables
  */
-function GuestCountBadge({ count, x, y, color }: { count?: number | null; x: number; y: number; color: string }) {
+function GuestCountBadge({
+  count,
+  x,
+  y,
+  color,
+  width,
+  height = GUEST_BADGE_HEIGHT,
+}: {
+  count?: number | null
+  x: number
+  y: number
+  color: string
+  width?: number
+  height?: number
+}) {
   if (!count || count <= 0) return null
-  const w = guestBadgeWidth(count)
-  const h = GUEST_BADGE_HEIGHT
+  const h = height
+  const w = width ?? guestBadgeWidth(count, h / 2)
+  const scale = h / GUEST_BADGE_HEIGHT
   return (
     <g
       transform={`translate(${x} ${y})`}
@@ -1241,9 +1275,9 @@ function GuestCountBadge({ count, x, y, color }: { count?: number | null; x: num
       />
       <text
         x={0}
-        y={2.8}
+        y={Number((2.8 * scale).toFixed(2))}
         textAnchor="middle"
-        fontSize={7.6}
+        fontSize={Number((7.6 * scale).toFixed(2))}
         fontWeight={800}
         fill="#ffffff"
         fontFamily="var(--font-sans)"
@@ -1269,11 +1303,13 @@ const LiveGlyph = memo(function LiveGlyph({
   disabled,
   onActivate,
   state: fs,
+  clusterPad,
   readOnly = false,
   hideGuestNames = false,
 }: GlyphBase & {
   state?: FloorTableState
   now: Date
+  clusterPad?: number
   readOnly?: boolean
   hideGuestNames?: boolean
 }) {
@@ -1329,15 +1365,18 @@ const LiveGlyph = memo(function LiveGlyph({
     state === "hold" ||
     state === "hold_overdue"
 
+  const maskPhoneNames = readOnly
+  const suppressGuestName = hideGuestNames || (maskPhoneNames && isPhoneLikeGuestName(claim?.displayName))
+
   const tableTitle =
-    !hideGuestNames && claim && t.kind !== "BAR_SEAT"
+    !suppressGuestName && claim && t.kind !== "BAR_SEAT"
       ? formatTableCellLabel(t.code, claim.displayName, claim.honorific, t.w)
       : t.code
   let cellSubText = ""
   let showTimeIcon = false
 
   if (seated) {
-    if (hideGuestNames) {
+    if (suppressGuestName) {
       cellSubText = claim?.startsAt ? fmtTime(claim.startsAt) : STATE_META.seated.short
     } else {
       // The primary label already contains "mã bàn - tên ngắn".
@@ -1380,14 +1419,14 @@ const LiveGlyph = memo(function LiveGlyph({
         : undefined
     : undefined
 
-  const ariaText = describe(t, rawState, fs, { hideGuestNames })
+  const ariaText = describe(t, rawState, fs, { hideGuestNames, maskPhoneNames })
 
   if (t.kind === "BAR_SEAT") {
     const r = Math.max(9, (t.w || 20) / 2)
     const hasRoom = r >= 10
     const barSubText = hasRoom
       ? seated
-        ? hideGuestNames
+        ? suppressGuestName
           ? claim?.startsAt
             ? fmtTime(claim.startsAt)
             : ""
@@ -1480,7 +1519,7 @@ const LiveGlyph = memo(function LiveGlyph({
 
   const hw = t.w / 2
   const hh = t.h / 2
-  const cornerGeo = getTableCornerGeometry(t.w, t.h)
+  const cornerGeo = getTableCornerGeometry(t.w, t.h, clusterPad)
   return (
     <g
       transform={`translate(${t.x} ${t.y})`}
@@ -1608,6 +1647,8 @@ const LiveGlyph = memo(function LiveGlyph({
           x={cornerGeo.guestBadge.centerXFor(claim.partySize)}
           y={cornerGeo.guestBadge.y}
           color={meta.color}
+          width={cornerGeo.guestBadge.widthFor(claim.partySize)}
+          height={cornerGeo.guestBadge.height}
         />
       ) : null}
 
@@ -1656,6 +1697,7 @@ const LiveGlyph = memo(function LiveGlyph({
         <StaleMark
           x={cornerGeo.staleMark.xFor(showCountBadgeOnCell ? claim?.partySize : null)}
           y={cornerGeo.staleMark.y}
+          r={cornerGeo.staleMark.r}
         />
       ) : null}
     </g>
@@ -1678,11 +1720,18 @@ function PaidDot({ x, y, radius = 5.2 }: { x: number; y: number; radius?: number
   )
 }
 
-function StaleMark({ x, y }: { x: number; y: number }) {
+function StaleMark({ x, y, r = 5 }: { x: number; y: number; r?: number }) {
+  const scale = r / 5
   return (
     <g transform={`translate(${x} ${y})`} aria-hidden pointerEvents="none">
-      <circle r={5} fill="var(--st-late)" />
-      <text y={2.4} textAnchor="middle" fontSize={7} fontWeight={700} fill="var(--background)">
+      <circle r={r} fill="var(--st-late)" />
+      <text
+        y={Number((2.4 * scale).toFixed(2))}
+        textAnchor="middle"
+        fontSize={Number((7 * scale).toFixed(2))}
+        fontWeight={700}
+        fill="var(--background)"
+      >
         !
       </text>
     </g>

@@ -109,6 +109,9 @@ describe("bar-guest-rows formatting helpers", () => {
     // Phone number without name shows Khách Walk-in (never reveals phone)
     expect(formatBarGuestName("0901234567")).toBe("Khách Walk-in")
     expect(formatBarGuestName("+84901234567")).toBe("Khách Walk-in")
+    expect(formatBarGuestName("+84 901 234 567")).toBe("Khách Walk-in")
+    expect(formatBarGuestName("(+84) 90 123 4567")).toBe("Khách Walk-in")
+    expect(formatBarGuestName("090 123 4567")).toBe("Khách Walk-in")
     expect(formatBarGuestName("090-123-4567")).toBe("Khách Walk-in")
 
     // Walk-in synonyms

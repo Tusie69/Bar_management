@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest"
 import { renderToString } from "react-dom/server"
 import { STATE_META } from "@/components/status-meta"
 import { StateSwatch, WarningChip } from "@/components/status"
-import { StatusLegend } from "./status-legend"
+import { buildLegendChips, calculateStatusCounts } from "./floor-visual-rules"
+import { LegendChipsGrid, StatusLegend } from "./status-legend"
 
 describe("G3 - status metadata and language (HU-32 section 4)", () => {
   it("defines the 5 core status names and tokens matching HU-32 + late red", () => {
@@ -265,5 +266,41 @@ describe("G3 - status metadata and language (HU-32 section 4)", () => {
     expect(html).toContain(">!<")
     expect(html).not.toContain("Trạng thái · Số bàn / ghế")
     expect(html).not.toContain("so-legend-item")
+  })
+
+  it("admin legend separates free, OOS (Ngưng phục vụ), and A10 spare with hatched --st-oos swatch while preserving Reception counts", () => {
+    const tables = [
+      { id: 1, code: "A1", kind: "TABLE", isSpare: false, isActive: true },
+      { id: 2, code: "A2", kind: "TABLE", isSpare: false, isActive: true },
+      { id: 3, code: "A10", kind: "TABLE", isSpare: true, isActive: true },
+      { id: 4, code: "A3", kind: "TABLE", isSpare: false, isActive: true },
+    ] as any
+    const states = new Map<number, any>([
+      [1, { tableId: 1, state: "free", claim: null }],
+      [2, { tableId: 2, state: "oos", claim: null }],
+      [3, { tableId: 3, state: "free", claim: null }],
+      [4, { tableId: 4, state: "seated", claim: { partySize: 4, tableIds: [4] } }],
+    ])
+
+    // Reception default keeps existing 6-bucket counting
+    const receptionCounts = calculateStatusCounts(tables, states)
+    expect(receptionCounts.free).toBe(2)
+    expect(receptionCounts.spare).toBe(1)
+    expect(receptionCounts.seated).toBe(1)
+    expect(receptionCounts.oos).toBe(0)
+
+    // Admin legend counts OOS separately and renders hatched --st-oos swatch
+    const adminCounts = calculateStatusCounts(tables, states, { includeOos: true })
+    expect(adminCounts.free).toBe(1)
+    expect(adminCounts.oos).toBe(1)
+    expect(adminCounts.spare).toBe(1)
+    expect(adminCounts.seated).toBe(1)
+
+    const adminChips = buildLegendChips(adminCounts, true)
+    expect(adminChips.map((c) => c.key)).toContain("oos")
+    const adminChipsHtml = renderToString(React.createElement(LegendChipsGrid, { chips: adminChips }))
+    expect(adminChipsHtml).toContain("Ngưng phục vụ")
+    expect(adminChipsHtml).toContain("var(--st-oos)")
+    expect(adminChipsHtml).toContain("repeating-linear-gradient")
   })
 })

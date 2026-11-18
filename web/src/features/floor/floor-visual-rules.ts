@@ -1,7 +1,9 @@
+import { STATE_META } from "@/components/status-meta"
 import { formatHonorificName } from "@/domain/booking-identity"
 import type { FloorGroup, FloorTableState, TableLiveState, TableView } from "@/domain/models"
 import { FIXTURES, FLOOR_H, FLOOR_W, WAITLIST_MARKER, WALL_BOUNDS, ZONES, type ZoneCode } from "@/domain/venue-layout"
-import { DEFAULT_BAR_GUEST_LIST_BOUNDS } from "./bar-guest-rows"
+import { DEFAULT_BAR_GUEST_LIST_BOUNDS, isPhoneLikeGuestName } from "./bar-guest-rows"
+export { isPhoneLikeGuestName }
 
 /**
  * Approved icon priority (Nam 2026-11-04):
@@ -149,11 +151,12 @@ export function resolveCellCornerIcons(
   return result
 }
 
-export type LegendStatusKey = "free" | "reserved" | "upcoming" | "noshow" | "seated" | "spare"
+export type LegendStatusKey = "free" | "reserved" | "upcoming" | "noshow" | "seated" | "spare" | "oos"
 
 export function calculateStatusCounts(
   tables: (TableView & { state?: TableLiveState; liveState?: TableLiveState; claim?: FloorTableState["claim"] })[],
   states?: Map<number, FloorTableState>,
+  options?: { includeOos?: boolean },
 ): Record<LegendStatusKey, number> {
   const counts: Record<LegendStatusKey, number> = {
     free: 0,
@@ -162,9 +165,11 @@ export function calculateStatusCounts(
     noshow: 0,
     seated: 0,
     spare: 0,
+    oos: 0,
   }
 
   const countedGroups = new Set<string>()
+  const includeOos = options?.includeOos ?? false
 
   for (const t of tables) {
     const fs = states?.get(t.id)
@@ -180,6 +185,8 @@ export function calculateStatusCounts(
       key = "upcoming"
     } else if (rawState === "seated") {
       key = "seated"
+    } else if (includeOos && rawState === "oos") {
+      key = "oos"
     } else if (rawState === "spare" || (t.isSpare && rawState === "free")) {
       key = "spare"
     } else {
@@ -202,6 +209,42 @@ export function calculateStatusCounts(
   }
 
   return counts
+}
+
+export interface LegendChipItem {
+  key: LegendStatusKey
+  label: string
+  count: number
+  colorVar: string
+  tintVar?: string
+  isDashed?: boolean
+}
+
+export function buildLegendChips(counts: Record<LegendStatusKey, number>, includeOos = false): LegendChipItem[] {
+  const chips: LegendChipItem[] = [
+    { key: "free", label: "Trống", count: counts.free, colorVar: "var(--st-free)", tintVar: "var(--st-free-tint)" },
+    { key: "reserved", label: "Đã đặt", count: counts.reserved, colorVar: "var(--st-reserved)" },
+    { key: "upcoming", label: "Sắp tới", count: counts.upcoming, colorVar: "var(--st-upcoming)" },
+    { key: "noshow", label: "Tới muộn", count: counts.noshow, colorVar: "var(--st-noshow)" },
+    { key: "seated", label: "Đã tới", count: counts.seated, colorVar: "var(--st-seated)" },
+    {
+      key: "spare",
+      label: "Sơ cua",
+      count: counts.spare,
+      colorVar: "var(--table-line)",
+      tintVar: "var(--st-free-tint)",
+      isDashed: true,
+    },
+  ]
+  if (includeOos) {
+    chips.push({
+      key: "oos",
+      label: STATE_META.oos.label,
+      count: counts.oos,
+      colorVar: STATE_META.oos.color,
+    })
+  }
+  return chips
 }
 
 export function groupCode(symbolNo: number | null | undefined): string | null {
@@ -258,6 +301,8 @@ export interface Bounds {
 
 export const CELL_CORNER_INSET_X = 4.2
 export const CELL_CORNER_INSET_Y = 3.1
+export const CLUSTER_CORNER_INSET_X = 4.5
+export const CLUSTER_DECORATION_CLEARANCE = 0.35
 export const GUEST_BADGE_HEIGHT = 11.0
 export const GUEST_BADGE_STROKE = 0.9
 export const TURN_BADGE_RADIUS = 5.5
@@ -266,10 +311,10 @@ export const TABLE_ICON_RADIUS = 5.5
 export const TABLE_ICON_STROKE = 0.8
 export const TABLE_ICON_MAX_STEP = 12.0
 
-export function guestBadgeWidth(count: number): number {
-  if (count >= 100) return 18.2
-  if (count >= 10) return 15.0
-  return 12.0
+export function guestBadgeWidth(count: number, radius = TURN_BADGE_RADIUS): number {
+  const base = count >= 100 ? 18.2 : count >= 10 ? 15.0 : 12.0
+  if (radius === TURN_BADGE_RADIUS) return base
+  return Number((base * (radius / TURN_BADGE_RADIUS)).toFixed(2))
 }
 
 export function turnBadgeWidth(count: number, radius = TURN_BADGE_RADIUS): number {
@@ -322,16 +367,40 @@ export interface TableCornerGeometry {
  * Shared corner geometry for a regular table cell (local coordinates around
  * cell center 0,0). Used by both FloorCanvas and computeClusterDecorations so
  * rendered corner badges/icons and collision-avoidance boxes stay identical.
+ *
+ * When `clusterPad` is supplied for a grouped table, corner decorations reserve
+ * measured clearance from the cluster outline's inner stroke and concentric
+ * rounded corners without moving any table or changing ungrouped cells.
  */
-export function getTableCornerGeometry(w: number, h: number): TableCornerGeometry {
+export function getTableCornerGeometry(w: number, h: number, clusterPad?: number): TableCornerGeometry {
   const hw = w / 2
   const hh = h / 2
-  const topY = -hh + CELL_CORNER_INSET_Y
-  const bottomY = hh - CELL_CORNER_INSET_Y
+
+  let insetX = CELL_CORNER_INSET_X
+  let insetY = CELL_CORNER_INSET_Y
+  let cornerRadius = TURN_BADGE_RADIUS
+
+  if (typeof clusterPad === "number" && Number.isFinite(clusterPad)) {
+    insetX = CLUSTER_CORNER_INSET_X
+    const inner = clusterPad - CLUSTER_OUTLINE_HALF_STROKE
+    const maxProtrude = Math.max(0.2, inner - CLUSTER_DECORATION_CLEARANCE)
+    const maxHalfStroke = Math.max(GUEST_BADGE_STROKE, TURN_BADGE_STROKE, TABLE_ICON_STROKE) / 2
+    const maxR = Math.floor(((hh - 7.35 + maxProtrude) / 2 - maxHalfStroke) * 10) / 10
+    cornerRadius = Math.min(TURN_BADGE_RADIUS, Math.max(3.8, maxR))
+    const outerRadius = cornerRadius + maxHalfStroke
+    const minInsetY = outerRadius - maxProtrude
+    const maxInsetY = hh - 7.35 - outerRadius
+    insetY = Number(((minInsetY + Math.max(minInsetY, maxInsetY)) / 2).toFixed(2))
+  }
+
+  const topY = -hh + insetY
+  const bottomY = hh - insetY
+  const guestBadgeHeight =
+    cornerRadius === TURN_BADGE_RADIUS ? GUEST_BADGE_HEIGHT : Number((cornerRadius * 2).toFixed(2))
   // Outer left edge of guest badge stays aligned with icon circle outer left edge
-  const guestLeftInner = -hw + CELL_CORNER_INSET_X - TURN_BADGE_RADIUS
+  const guestLeftInner = -hw + insetX - cornerRadius
   // Outer right edge of turn badge stays aligned with icon circle outer right edge
-  const turnRightInner = hw - CELL_CORNER_INSET_X + TURN_BADGE_RADIUS
+  const turnRightInner = hw - insetX + cornerRadius
 
   const totalIntervalsFor = (count: number, oppositeCount = 0): number => {
     const total = count + oppositeCount
@@ -340,58 +409,63 @@ export function getTableCornerGeometry(w: number, h: number): TableCornerGeometr
 
   const iconStepFor = (count: number, oppositeCount = 0): number => {
     if (count <= 1) return TABLE_ICON_MAX_STEP
-    const fullSpan = w - 2 * CELL_CORNER_INSET_X
+    const fullSpan = w - 2 * insetX
     const candidate = fullSpan / totalIntervalsFor(count, oppositeCount)
     return Math.min(TABLE_ICON_MAX_STEP, Number(candidate.toFixed(2)))
   }
 
   const iconRadiusFor = (count: number, oppositeCount = 0): number => {
+    const baseRadius = Math.min(TABLE_ICON_RADIUS, cornerRadius)
     const total = count + oppositeCount
-    if (total <= 1) return TABLE_ICON_RADIUS
-    const fullSpan = w - 2 * CELL_CORNER_INSET_X
+    if (total <= 1) return baseRadius
+    const fullSpan = w - 2 * insetX
     const minCenterStep = fullSpan / (total - 1)
     const maxRadiusForGap = (minCenterStep - TABLE_ICON_STROKE - 0.12) / 2
-    return Math.min(TABLE_ICON_RADIUS, Number(maxRadiusForGap.toFixed(2)))
+    return Math.min(baseRadius, Number(maxRadiusForGap.toFixed(2)))
   }
+
+  const staleRadius = Math.min(5, cornerRadius)
 
   return {
     hw,
     hh,
     guestBadge: {
       y: topY,
-      height: GUEST_BADGE_HEIGHT,
+      height: guestBadgeHeight,
       strokeWidth: GUEST_BADGE_STROKE,
-      widthFor: guestBadgeWidth,
-      centerXFor: (count: number) => guestLeftInner + guestBadgeWidth(count) / 2,
+      widthFor: (count: number) => guestBadgeWidth(count, cornerRadius),
+      centerXFor: (count: number) => guestLeftInner + guestBadgeWidth(count, cornerRadius) / 2,
     },
     turnBadge: {
       y: topY,
-      r: TURN_BADGE_RADIUS,
+      r: cornerRadius,
       strokeWidth: TURN_BADGE_STROKE,
-      widthFor: (count: number) => turnBadgeWidth(count, TURN_BADGE_RADIUS),
-      centerXFor: (count: number) => turnRightInner - turnBadgeWidth(count, TURN_BADGE_RADIUS) / 2,
+      widthFor: (count: number) => turnBadgeWidth(count, cornerRadius),
+      centerXFor: (count: number) => turnRightInner - turnBadgeWidth(count, cornerRadius) / 2,
     },
     bottomLeftIcons: {
-      x: -hw + CELL_CORNER_INSET_X,
+      x: -hw + insetX,
       y: bottomY,
-      radius: TABLE_ICON_RADIUS,
+      radius: Math.min(TABLE_ICON_RADIUS, cornerRadius),
       strokeWidth: TABLE_ICON_STROKE,
       radiusFor: iconRadiusFor,
       stepFor: iconStepFor,
     },
     bottomRightIcons: {
-      x: hw - CELL_CORNER_INSET_X,
+      x: hw - insetX,
       y: bottomY,
-      radius: TABLE_ICON_RADIUS,
+      radius: Math.min(TABLE_ICON_RADIUS, cornerRadius),
       strokeWidth: TABLE_ICON_STROKE,
       radiusFor: iconRadiusFor,
       stepFor: iconStepFor,
     },
     staleMark: {
       xFor: (guestCount?: number | null) =>
-        guestCount && guestCount > 0 ? guestLeftInner + guestBadgeWidth(guestCount) + 6 : -hw + CELL_CORNER_INSET_X,
+        guestCount && guestCount > 0
+          ? guestLeftInner + guestBadgeWidth(guestCount, cornerRadius) + staleRadius + 1
+          : -hw + insetX,
       y: topY,
-      r: 5,
+      r: staleRadius,
     },
   }
 }
@@ -417,6 +491,7 @@ export function getTableCornerObstacleBoxes(
     isAnchor?: boolean
     hasActiveClaim?: boolean
     staleFromPreviousDay?: boolean
+    clusterPad?: number
   },
   margin = 0.5,
 ): TableCornerObstacleBoxes {
@@ -430,7 +505,7 @@ export function getTableCornerObstacleBoxes(
   }
   if (table.kind === "BAR_SEAT") return empty
 
-  const geo = getTableCornerGeometry(table.w, table.h)
+  const geo = getTableCornerGeometry(table.w, table.h, opts.clusterPad)
   const isAnchor = opts.isAnchor ?? true
   const hasActiveClaim = opts.hasActiveClaim ?? Boolean(opts.claim)
   const claim = opts.claim ?? null
@@ -486,7 +561,7 @@ export function getTableCornerObstacleBoxes(
     } else if (claim.paid) {
       const cx = table.x + geo.bottomRightIcons.x
       const cy = table.y + geo.bottomRightIcons.y
-      const iconPad = TABLE_ICON_RADIUS + TABLE_ICON_STROKE / 2 + margin
+      const iconPad = geo.bottomRightIcons.radius + TABLE_ICON_STROKE / 2 + margin
       paidDot = {
         left: cx - iconPad,
         top: cy - iconPad,
@@ -733,7 +808,7 @@ const CLUSTER_OUTLINE_HALF_STROKE = CLUSTER_OUTLINE_STROKE / 2
 const CLUSTER_CODE_HEIGHT = 14
 const CLUSTER_CODE_HALF_STROKE = CLUSTER_CODE_STROKE / 2
 const BAR_CLUSTER_PAD = 2
-const TABLE_CLUSTER_MAX_PAD = 3.0
+const TABLE_CLUSTER_MAX_PAD = 3.6
 const TABLE_CLUSTER_MIN_PAD = 1.8
 const CLUSTER_MIN_STROKE_GAP = 1.2
 
@@ -750,6 +825,9 @@ export interface ClusterDecoration {
   y: number
   w: number
   h: number
+  rx: number
+  pad: number
+  memberIds: number[]
   code: string | null
   isBar: boolean
   orientation: "horizontal" | "vertical" | null
@@ -830,6 +908,9 @@ export function computeClusterDecorations({
     y: number
     w: number
     h: number
+    rx: number
+    pad: number
+    memberIds: number[]
     code: string | null
     isBar: boolean
     orientation: "horizontal" | "vertical" | null
@@ -854,12 +935,18 @@ export function computeClusterDecorations({
     }
     const memberIds = new Set(members.map((m) => m.id))
     const pad = isBar ? BAR_CLUSTER_PAD : deriveTableClusterPad(raw, memberIds, tables)
+    const w = raw.right - raw.left + pad * 2
+    const h = raw.bottom - raw.top + pad * 2
+    const rx = isBar ? Math.min(w, h) / 2 : Number((4.5 + pad).toFixed(2))
     rawClusters.push({
       key,
       x: raw.left - pad,
       y: raw.top - pad,
-      w: raw.right - raw.left + pad * 2,
-      h: raw.bottom - raw.top + pad * 2,
+      w,
+      h,
+      rx,
+      pad,
+      memberIds: members.map((m) => m.id),
       code,
       isBar,
       orientation,
@@ -885,6 +972,15 @@ export function computeClusterDecorations({
       for (const id of g.tableIds) {
         if (!groupTurnMap.has(id)) groupTurnMap.set(id, g.seatedTurnCount)
       }
+    }
+  }
+
+  const tableClusterPadMap = new Map<number, number>()
+  for (const c of rawClusters) {
+    if (c.isBar) continue
+    for (const id of c.memberIds) {
+      const prev = tableClusterPadMap.get(id)
+      tableClusterPadMap.set(id, prev === undefined ? c.pad : Math.min(prev, c.pad))
     }
   }
 
@@ -920,6 +1016,7 @@ export function computeClusterDecorations({
         isAnchor,
         hasActiveClaim,
         staleFromPreviousDay: fs?.staleFromPreviousDay,
+        clusterPad: tableClusterPadMap.get(t.id),
       })
       for (const box of [
         boxes.guestBadge,
@@ -975,6 +1072,9 @@ export function computeClusterDecorations({
         y: c.y,
         w: c.w,
         h: c.h,
+        rx: c.rx,
+        pad: c.pad,
+        memberIds: c.memberIds,
         code: null,
         isBar: c.isBar,
         orientation: c.orientation,
@@ -1079,6 +1179,9 @@ export function computeClusterDecorations({
       y: c.y,
       w: c.w,
       h: c.h,
+      rx: c.rx,
+      pad: c.pad,
+      memberIds: c.memberIds,
       code: c.code,
       isBar: c.isBar,
       orientation: c.orientation,

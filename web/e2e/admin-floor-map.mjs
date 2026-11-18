@@ -10,6 +10,7 @@
  */
 import assert from "node:assert/strict"
 import fs from "node:fs"
+import net from "node:net"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromium } from "@playwright/test"
@@ -18,8 +19,21 @@ import { createServer } from "vite"
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
 const evidenceRoot =
-  process.env.ADMIN_FLOOR_EVIDENCE_DIR || "D:\\GAM-APP\\docs\\Sprint4\\evidence\\admin-floor-map-2026-11-18\\after"
+  process.env.ADMIN_FLOOR_EVIDENCE_DIR || "D:\\GAM-APP\\docs\\Sprint4\\evidence\\admin-floor-map-2026-11-18\\fix1"
 fs.mkdirSync(evidenceRoot, { recursive: true })
+
+function findFreePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer()
+    srv.unref()
+    srv.on("error", reject)
+    srv.listen(0, "127.0.0.1", () => {
+      const addr = srv.address()
+      const port = typeof addr === "object" && addr ? addr.port : 5215
+      srv.close(() => resolve(port))
+    })
+  })
+}
 
 const VIEWPORTS = [
   { width: 375, height: 812, label: "375x812", touch: true },
@@ -43,27 +57,39 @@ function launchBrowser() {
   )
 }
 
-async function startMockViteServer() {
+async function startViteServer({ port, apiMode = "mock", apiBaseUrl = "" }) {
   const prevMode = process.env.VITE_API_MODE
   const prevBase = process.env.VITE_API_BASE_URL
-  process.env.VITE_API_MODE = "mock"
-  process.env.VITE_API_BASE_URL = ""
-  const port = Number(process.env.PW_PORT || 5207)
-  try {
-    const server = await createServer({
-      root: webRoot,
-      configFile: path.join(webRoot, "vite.config.ts"),
-      server: { port, host: "127.0.0.1", strictPort: true, open: false },
-    })
-    await server.listen()
-    const addr = server.httpServer?.address()
-    assert(addr && typeof addr === "object", "Vite server failed to bind a TCP port")
-    return { server, baseUrl: `http://127.0.0.1:${addr.port}` }
-  } finally {
+  const prevVenue = process.env.VITE_VENUE_ID
+  process.env.VITE_API_MODE = apiMode
+  process.env.VITE_API_BASE_URL = apiBaseUrl
+  process.env.VITE_VENUE_ID = "1"
+  const server = await createServer({
+    root: webRoot,
+    configFile: path.join(webRoot, "vite.config.ts"),
+    server: { port, host: "127.0.0.1", strictPort: true, open: false },
+  })
+  await server.listen()
+  const addr = server.httpServer?.address()
+  assert(addr && typeof addr === "object", "Vite server failed to bind a TCP port")
+  const restoreEnv = () => {
     if (prevMode === undefined) delete process.env.VITE_API_MODE
     else process.env.VITE_API_MODE = prevMode
     if (prevBase === undefined) delete process.env.VITE_API_BASE_URL
     else process.env.VITE_API_BASE_URL = prevBase
+    if (prevVenue === undefined) delete process.env.VITE_VENUE_ID
+    else process.env.VITE_VENUE_ID = prevVenue
+  }
+  return {
+    server,
+    baseUrl: `http://127.0.0.1:${addr.port}`,
+    close: async () => {
+      try {
+        await server.close()
+      } finally {
+        restoreEnv()
+      }
+    },
   }
 }
 
@@ -84,41 +110,152 @@ async function attachCollectors(page, baseUrl) {
   return { errors, mutationRequests }
 }
 
+const WRITE_METHODS = [
+  "updateReceptionGuestCount",
+  "createReservation",
+  "updateReservation",
+  "assignTables",
+  "cancelReservation",
+  "markNoShow",
+  "confirmLate",
+  "startCall",
+  "recordCallOutcome",
+  "checkIn",
+  "seatWalkIn",
+  "moveClaim",
+  "combineTables",
+  "createTableGroup",
+  "addTableGroupMembers",
+  "splitGroup",
+  "dissolveTableGroup",
+  "endVisit",
+  "markPaid",
+  "setTableStatus",
+  "addWaitlist",
+  "claimWaitlist",
+  "releaseClaim",
+  "recordContact",
+  "seatWaitlist",
+  "cancelWaitlist",
+  "setHoldDeadline",
+  "releaseHold",
+  "revealPhone",
+  "updateCustomerNotes",
+  "undo",
+  "redo",
+  "updateVenueConfig",
+  "updateVenueSettings",
+  "setZoneFlags",
+]
+
 async function installApiMutationSpy(page) {
-  await page.evaluate(async () => {
+  const installed = await page.evaluate(async (methods) => {
     const { api } = await import("/src/services/index.ts")
-    const writeMethods = [
-      "createReservation",
-      "updateReservation",
-      "cancelReservation",
-      "markNoShow",
-      "assignTables",
-      "seatWalkIn",
-      "checkInReservation",
-      "moveVisit",
-      "combineTables",
-      "splitTable",
-      "endVisit",
-      "markPaid",
-      "createTableGroup",
-      "splitTableGroup",
-      "undo",
-      "redo",
-      "addWaitlist",
-      "updateReceptionGuestCount",
-      "setTableSpare",
-    ]
+    const missing = methods.filter((m) => typeof api[m] !== "function")
+    if (missing.length > 0) {
+      return { ok: false, missing }
+    }
     window.__adminFloorMutations = []
-    for (const method of writeMethods) {
-      if (typeof api[method] === "function") {
-        const orig = api[method].bind(api)
-        api[method] = async (...args) => {
-          window.__adminFloorMutations.push(method)
-          return orig(...args)
-        }
+    for (const method of methods) {
+      api[method] = async () => {
+        window.__adminFloorMutations.push(method)
+        throw new Error(`Read-only admin floor test blocked write method: ${method}`)
       }
     }
+    return { ok: true, count: methods.length }
+  }, WRITE_METHODS)
+  assert(installed.ok, `Missing GamApi write methods in spy: ${JSON.stringify(installed.missing)}`)
+}
+
+async function verifyMutationSpyTrap(page) {
+  const probe = await page.evaluate(async () => {
+    const { api } = await import("/src/services/index.ts")
+    const probed = [
+      "checkIn",
+      "moveClaim",
+      "splitGroup",
+      "setTableStatus",
+      "revealPhone",
+      "addTableGroupMembers",
+      "dissolveTableGroup",
+    ]
+    const caught = []
+    for (const m of probed) {
+      try {
+        await api[m]({})
+      } catch (err) {
+        caught.push({ method: m, msg: String(err?.message ?? err) })
+      }
+    }
+    const recorded = [...window.__adminFloorMutations]
+    window.__adminFloorMutations = []
+    return { probed, caught, recorded }
   })
+  assert.equal(
+    probe.caught.length,
+    probe.probed.length,
+    `Spy trap did not throw for all probed methods: ${JSON.stringify(probe)}`,
+  )
+  assert.deepEqual(probe.recorded, probe.probed, `Spy trap did not record all probed methods`)
+}
+
+async function snapshotUiStore(page) {
+  return page.evaluate(async () => {
+    const { useUi } = await import("/src/state/ui.ts")
+    const s = useUi.getState()
+    return {
+      zone: s.zone,
+      zoneRefitTick: s.zoneRefitTick,
+      selectedTableId: s.selectedTableId,
+      pick: s.pick ? { partySize: s.pick.partySize } : null,
+      pickSelection: [...(s.pickSelection ?? [])],
+      confirmRequest: Boolean(s.confirmRequest),
+      conflictRequest: Boolean(s.conflictRequest),
+    }
+  })
+}
+
+/**
+ * Polls until the legend dialog/sheet is mounted, visible, done animating
+ * (transform settled, willChange reset to auto, Web Animations finished),
+ * and reports the same in-viewport bounding box across two consecutive samples.
+ */
+async function waitForSettledDialog(page, testId, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs
+  let prev = null
+  while (Date.now() < deadline) {
+    const sample = await page.evaluate((id) => {
+      const el = document.querySelector(`[data-testid="${id}"]`)
+      if (!el) return null
+      if (el.getAttribute("data-motion-state") === "closing") return null
+      const cs = getComputedStyle(el)
+      if (Number(cs.opacity) < 0.99 || cs.visibility !== "visible") return null
+      if (cs.transform !== "none" && cs.transform !== "matrix(1, 0, 0, 1, 0, 0)") return null
+      if (cs.willChange && cs.willChange !== "auto") return null
+      const runningAnims = el.getAnimations({ subtree: true }).some((a) => a.playState === "running")
+      if (runningAnims) return null
+      const r = el.getBoundingClientRect()
+      if (r.width <= 0 || r.height <= 0) return null
+      const inside =
+        r.left >= -1 && r.top >= -1 && r.right <= window.innerWidth + 1 && r.bottom <= window.innerHeight + 1
+      if (!inside) return null
+      return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
+    }, testId)
+
+    if (
+      sample &&
+      prev &&
+      Math.abs(sample.left - prev.left) < 0.15 &&
+      Math.abs(sample.top - prev.top) < 0.15 &&
+      Math.abs(sample.right - prev.right) < 0.15 &&
+      Math.abs(sample.bottom - prev.bottom) < 0.15
+    ) {
+      return sample
+    }
+    prev = sample
+    await page.waitForTimeout(40)
+  }
+  throw new Error(`Timed out waiting for settled dialog [data-testid="${testId}"] within ${timeoutMs}ms`)
 }
 
 async function dismissReceptionAlerts(page) {
@@ -135,9 +272,11 @@ function rectsOverlap(a, b) {
 }
 
 const browser = await launchBrowser()
-const { server, baseUrl } = await startMockViteServer()
+const mockVite = await startViteServer({ port: Number(process.env.PW_PORT || 5207), apiMode: "mock", apiBaseUrl: "" })
+let httpVite = null
 
 try {
+  const baseUrl = mockVite.baseUrl
   // 1. 8-viewport responsive & spatial rendering verification on /admin/overview
   for (const vp of VIEWPORTS) {
     const context = await browser.newContext({
@@ -313,11 +452,12 @@ try {
     await page.goto(`${baseUrl}/admin/overview`, { waitUntil: "networkidle" })
     await page.getByTestId("shift-overview-page").waitFor({ state: "visible" })
     await installApiMutationSpy(page)
+    const uiBefore = await snapshotUiStore(page)
 
     const stage = page.getByTestId("shift-overview-floor-stage")
     await stage.scrollIntoViewIfNeeded()
 
-    // Click/tap/keyboard on tables, bar seats, group area, bar guest list, and empty canvas
+    // Click/tap/dblclick/contextmenu/long-press/drag/keyboard on tables, bar seats, group area, bar guest list, and empty canvas
     const targets = [
       stage.locator('g[aria-label^="Bàn A6"]').first(),
       stage.locator('g[aria-label^="Bàn B3"]').first(),
@@ -333,15 +473,32 @@ try {
         await target.tap({ force: true })
       } else {
         await target.click({ force: true })
+        await target.dblclick({ force: true })
+        await target.click({ button: "right", force: true })
       }
-      await page.waitForTimeout(40)
+      await page.waitForTimeout(30)
     }
 
-    // Keyboard Enter & Space on focused table and bar seat
+    // Long press & drag gesture across table A6 and BarGuestList
+    const a6Box = await stage.locator('g[aria-label^="Bàn A6"]').first().boundingBox()
+    if (a6Box) {
+      const cx = a6Box.x + a6Box.width / 2
+      const cy = a6Box.y + a6Box.height / 2
+      await page.mouse.move(cx, cy)
+      await page.mouse.down()
+      await page.waitForTimeout(520)
+      await page.mouse.move(cx + 24, cy + 16, { steps: 4 })
+      await page.mouse.up()
+    }
+
+    // Keyboard Enter, Space, and Undo/Redo shortcuts on focused table and bar seat
     const tableA6 = stage.locator('g[aria-label^="Bàn A6"]').first()
     await tableA6.focus()
     await page.keyboard.press("Enter")
     await page.keyboard.press("Space")
+    await page.keyboard.press("Control+z")
+    await page.keyboard.press("Control+Shift+z")
+    await page.keyboard.press("Control+y")
     const seat1 = stage.locator('g[aria-label^="Ghế Bar 1,"]').first()
     await seat1.focus()
     await page.keyboard.press("Enter")
@@ -351,6 +508,9 @@ try {
     const apiMutations = await page.evaluate(() => window.__adminFloorMutations)
     assert.deepEqual(apiMutations, [], `${mode.label}: read-only floor triggered API mutations: ${apiMutations}`)
     assert.deepEqual(mutationRequests, [], `${mode.label}: unexpected HTTP mutation requests`)
+    const uiAfter = await snapshotUiStore(page)
+    assert.deepEqual(uiAfter, uiBefore, `${mode.label}: read-only interactions mutated useUi store`)
+    await verifyMutationSpyTrap(page)
 
     // Open "!" legend popup via mouse/touch
     const trigger = page.getByTestId("so-legend-trigger")
@@ -362,13 +522,25 @@ try {
     }
     const dialog = page.getByTestId("so-legend-dialog")
     await dialog.waitFor({ state: "visible" })
-    await page.waitForTimeout(380)
+    const settledDebug = await waitForSettledDialog(page, "so-legend-dialog")
 
     const popupChecks = await page.evaluate(() => {
       const dlg = document.querySelector('[data-testid="so-legend-dialog"]')
       const r = dlg?.getBoundingClientRect()
       const text = dlg ? (dlg.textContent ?? "") : ""
       return {
+        rect: r
+          ? {
+              left: r.left,
+              top: r.top,
+              right: r.right,
+              bottom: r.bottom,
+              vw: window.innerWidth,
+              vh: window.innerHeight,
+              transform: getComputedStyle(dlg).transform,
+              opacity: getComputedStyle(dlg).opacity,
+            }
+          : null,
         insideViewport: Boolean(
           r && r.left >= -1 && r.top >= -1 && r.right <= window.innerWidth + 1 && r.bottom <= window.innerHeight + 1,
         ),
@@ -381,7 +553,8 @@ try {
           text.includes("Sắp tới") &&
           text.includes("Tới muộn") &&
           text.includes("Đã tới") &&
-          text.includes("Sơ cua"),
+          text.includes("Sơ cua") &&
+          text.includes("Ngưng phục vụ"),
         hasTileAnatomy:
           text.includes("Thông tin trong 1 ô bàn") && text.includes("Số khách") && text.includes("Số lượt khách"),
         hasGuestIcons: text.includes("Đã từng đặt bàn") && text.includes("Chưa từng đặt bàn"),
@@ -391,7 +564,10 @@ try {
         hasSpareSection: text.includes("Bàn sơ cua") && text.includes("A10"),
       }
     })
-    assert(popupChecks.insideViewport, `${mode.label}: legend popup exceeded viewport`)
+    assert(
+      popupChecks.insideViewport,
+      `${mode.label}: legend popup exceeded viewport: ${JSON.stringify(popupChecks.rect)} (settled=${JSON.stringify(settledDebug)})`,
+    )
     assert.equal(popupChecks.overflowX, 0, `${mode.label}: legend popup horizontal overflow`)
     assert(
       popupChecks.hasTitle &&
@@ -418,7 +594,7 @@ try {
     // Reopen via keyboard Enter, then close via Close button and verify focus return
     await page.keyboard.press("Enter")
     await dialog.waitFor({ state: "visible" })
-    await page.waitForTimeout(350)
+    await waitForSettledDialog(page, "so-legend-dialog")
     await dialog.getByRole("button", { name: "Đóng bảng chú giải" }).click()
     await dialog.waitFor({ state: "detached" })
     const focusAfterCloseBtn = await page.evaluate(
@@ -429,7 +605,7 @@ try {
     // Reopen via Space, then close via outside click
     await page.keyboard.press("Space")
     await dialog.waitFor({ state: "visible" })
-    await page.waitForTimeout(350)
+    await waitForSettledDialog(page, "so-legend-dialog")
     await page.mouse.click(8, 8)
     await dialog.waitFor({ state: "detached" })
 
@@ -505,6 +681,25 @@ try {
     await page.getByTestId("so-legend-trigger").tap()
     const dialog = page.getByTestId("so-legend-dialog")
     await dialog.waitFor({ state: "visible" })
+    const reducedMotionImmediate = await page.evaluate(() => {
+      const dlg = document.querySelector('[data-testid="so-legend-dialog"]')
+      if (!dlg) return null
+      const cs = getComputedStyle(dlg)
+      const r = dlg.getBoundingClientRect()
+      return {
+        transform: cs.transform,
+        insideViewport:
+          r.left >= -1 && r.top >= -1 && r.right <= window.innerWidth + 1 && r.bottom <= window.innerHeight + 1,
+      }
+    })
+    assert(
+      reducedMotionImmediate &&
+        (reducedMotionImmediate.transform === "none" ||
+          reducedMotionImmediate.transform === "matrix(1, 0, 0, 1, 0, 0)"),
+      `Reduced motion sheet should have no slide transform: ${JSON.stringify(reducedMotionImmediate)}`,
+    )
+    assert(reducedMotionImmediate.insideViewport, "Reduced motion sheet exceeded viewport")
+    await waitForSettledDialog(page, "so-legend-dialog")
     await dialog.getByRole("button", { name: "Đã hiểu" }).click()
     await dialog.waitFor({ state: "detached" })
     assert.deepEqual(errors, [], `reduced-motion errors: ${errors.join(" | ")}`)
@@ -541,8 +736,435 @@ try {
     await context.close()
   }
 
+  // 5. Real HTTP-adapter network interception suite (ADM-01 OOS counts, ADM-02 phone-shaped names, ADM-04 zero HTTP writes)
+  await mockVite.close()
+  const httpPort = await findFreePort()
+  httpVite = await startViteServer({ port: httpPort, apiMode: "http", apiBaseUrl: "/api/v1" })
+  const httpBaseUrl = httpVite.baseUrl
+
+  for (const scenario of [
+    { name: "masked-only", permissions: ["report.read", "customer.view_masked"], expectNames: true },
+    { name: "no-customer-mask", permissions: ["report.read"], expectNames: false },
+  ]) {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+    await context.addInitScript(() => {
+      window.EventSource = class extends EventTarget {
+        closed = false
+        constructor() {
+          super()
+        }
+        close() {
+          this.closed = true
+        }
+      }
+    })
+    const httpMutationRequests = []
+    const unexpectedGets = []
+    const todayIso = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Ho_Chi_Minh" })
+
+    await context.route("**/api/v1/**", async (route) => {
+      const req = route.request()
+      const method = req.method().toUpperCase()
+      const url = new URL(req.url())
+      const apiPath = url.pathname.replace(/^\/api\/v1/, "")
+
+      if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+        httpMutationRequests.push(`${method} ${apiPath}`)
+        await route.abort()
+        return
+      }
+
+      if (/\/phone:reveal|\/call|\/availability|\/undo-state|\/search|\/bookings\/\d+/.test(apiPath)) {
+        unexpectedGets.push(`${method} ${apiPath}`)
+      }
+
+      const json = (payload) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(payload) })
+
+      if (apiPath === "/auth/me") {
+        await json({
+          user: {
+            id: 42,
+            username: "admin_ro_http",
+            displayName: "Admin Chỉ Xem",
+            organizationId: 1,
+            venueId: 1,
+            roles: ["ADMIN"],
+            accessLevel: "READ_ONLY",
+          },
+          permissions: scenario.permissions,
+          csrfToken: "csrf-e2e-readonly",
+          portal: "admin",
+        })
+        return
+      }
+      if (apiPath === "/settings") {
+        await json({
+          venueId: 1,
+          venueName: "21GAM",
+          timezone: "Asia/Ho_Chi_Minh",
+          businessDayCutoffHour: 5,
+          lateThresholdMinutes: 15,
+          noShowThresholdMinutes: 30,
+          waitlistHoldMinutes: 15,
+        })
+        return
+      }
+      if (apiPath === "/bookings/sources") {
+        await json({ sources: [{ code: "HOTLINE", name: "Hotline" }] })
+        return
+      }
+      if (apiPath === "/tables/catalog") {
+        // Canonical coordinates matching venue-layout.ts (all 23 tables + 21 bar seats)
+        const A = (code, y, isSpare = false) => ({
+          code,
+          zoneCode: "A",
+          x: 44,
+          y,
+          width: 56,
+          height: 34,
+          isSpare,
+          kind: "TABLE",
+          seqNo: null,
+        })
+        const B = (code, x, y, isSpare = false) => ({
+          code,
+          zoneCode: "B",
+          x,
+          y,
+          width: 46,
+          height: 34,
+          isSpare,
+          kind: "TABLE",
+          seqNo: null,
+        })
+        const C = (code, x, y) => ({
+          code,
+          zoneCode: "C",
+          x,
+          y,
+          width: 40,
+          height: 32,
+          isSpare: false,
+          kind: "TABLE",
+          seqNo: null,
+        })
+        const rawTables = [
+          A("A7", 319),
+          A("A6", 363),
+          A("A5", 407),
+          A("A4", 451),
+          A("A3", 495),
+          A("A2", 539),
+          A("A1", 583),
+          A("A0", 627, true),
+          {
+            code: "A10",
+            zoneCode: "A",
+            x: 111,
+            y: 627,
+            width: 54,
+            height: 34,
+            isSpare: true,
+            kind: "TABLE",
+            seqNo: null,
+          },
+          B("B7", 63, 147),
+          B("B8", 39, 187, true),
+          B("B6", 89, 187),
+          B("B5", 63, 227),
+          B("B3", 163, 147),
+          B("B4", 163, 203),
+          B("B21", 257, 147),
+          B("B22", 257, 189),
+          B("B11", 257, 231),
+          B("B12", 257, 273),
+          C("C4", 176, 26),
+          C("C5", 176, 64),
+          C("C1", 220, 26),
+          C("C2", 264, 26),
+        ]
+        const barYs = [662, 638, 614, 590, 566, 542, 518, 494, 470, 446, 422, 398, 374, 350]
+        barYs.forEach((y, idx) =>
+          rawTables.push({
+            code: `BAR${String(idx + 1).padStart(2, "0")}`,
+            zoneCode: "BAR",
+            x: 156,
+            y,
+            width: 20,
+            height: 20,
+            isSpare: false,
+            kind: "BAR_SEAT",
+            seqNo: idx + 1,
+          }),
+        )
+        const barXs = [180, 209, 239, 268, 297, 327, 356]
+        barXs.forEach((x, idx) =>
+          rawTables.push({
+            code: `BAR${String(idx + 15).padStart(2, "0")}`,
+            zoneCode: "BAR",
+            x,
+            y: 326,
+            width: 20,
+            height: 20,
+            isSpare: false,
+            kind: "BAR_SEAT",
+            seqNo: idx + 15,
+          }),
+        )
+        const zoneIds = { A: 1, B: 2, C: 3, BAR: 4 }
+        await json({
+          venue: { id: 1, name: "21GAM", timezone: "Asia/Ho_Chi_Minh", changeSeq: 10 },
+          zones: [
+            { id: 3, version: 1, code: "C", name: "Khu C", isBookable: true, isWaitingArea: false, displayOrder: 1 },
+            { id: 2, version: 1, code: "B", name: "Khu B", isBookable: true, isWaitingArea: false, displayOrder: 2 },
+            { id: 1, version: 1, code: "A", name: "Khu A", isBookable: true, isWaitingArea: false, displayOrder: 3 },
+            {
+              id: 4,
+              version: 1,
+              code: "BAR",
+              name: "Quầy Bar",
+              isBookable: true,
+              isWaitingArea: false,
+              displayOrder: 4,
+            },
+          ],
+          tables: rawTables.map((t, i) => ({
+            id: i + 1,
+            version: 1,
+            code: t.code,
+            displayName: t.kind === "BAR_SEAT" ? `Ghế ${t.seqNo}` : `Bàn ${t.code}`,
+            zoneId: zoneIds[t.zoneCode],
+            zoneCode: t.zoneCode,
+            kind: t.kind,
+            capacity: t.kind === "BAR_SEAT" ? 1 : 4,
+            seqNo: t.seqNo,
+            isSpare: t.isSpare,
+            status: t.code === "A2" ? "OUT_OF_SERVICE" : "ACTIVE",
+            x: t.x,
+            y: t.y,
+            width: t.width,
+            height: t.height,
+          })),
+          combinations: [],
+        })
+        return
+      }
+      if (apiPath === "/tables") {
+        const startsAt = `${todayIso}T13:15:00.000Z`
+        const makeClaim = (tableId, guestName, kind = "VISIT") => ({
+          kind,
+          reservationId: kind === "RESERVATION" ? 900 + tableId : null,
+          visitId: kind === "VISIT" ? 800 + tableId : null,
+          waitlistEntryId: null,
+          holdId: null,
+          guestName,
+          phoneLast3: "567",
+          partySize: 2,
+          turnNo: tableId === 5 ? 2 : 1,
+          flags: [],
+          groupId: null,
+          groupDisplayCode: null,
+          groupMemberTableIds: [tableId],
+          startsAt,
+          deadlineAt: null,
+          holdOverdue: false,
+          paid: false,
+          origin: "RESERVATION",
+          sourceCode: "HOTLINE",
+          version: 1,
+        })
+        // Table IDs from rawTables order above:
+        // 1:A7, 2:A6, 3:A5, 4:A4, 5:A3, 6:A2(OOS), 7:A1(EMPTY), 8:A0(spare), 9:A10(spare)
+        // 24:BAR01, 25:BAR02
+        const special = new Map([
+          [2, { displayState: "IN_USE", claim: makeClaim(2, "Phạm Quốc Khoa") }],
+          [3, { displayState: "IN_USE", claim: makeClaim(3, "+84 901 234 567") }],
+          [4, { displayState: "BOOKED", claim: makeClaim(4, "090 123 4567", "RESERVATION") }],
+          [5, { displayState: "IN_USE", claim: makeClaim(5, "0901234567") }],
+          [6, { displayState: "OUT_OF_SERVICE", isOutOfService: true, claim: null }],
+          [24, { displayState: "IN_USE", claim: makeClaim(24, "(+84) 912-345-678") }],
+          [25, { displayState: "IN_USE", claim: makeClaim(25, "Dương Quốc Long") }],
+        ])
+        const codes = [
+          "A7",
+          "A6",
+          "A5",
+          "A4",
+          "A3",
+          "A2",
+          "A1",
+          "A0",
+          "A10",
+          "B7",
+          "B8",
+          "B6",
+          "B5",
+          "B3",
+          "B4",
+          "B21",
+          "B22",
+          "B11",
+          "B12",
+          "C4",
+          "C5",
+          "C1",
+          "C2",
+          ...Array.from({ length: 21 }, (_, idx) => `BAR${String(idx + 1).padStart(2, "0")}`),
+        ]
+        await json({
+          businessDate: url.searchParams.get("date") || todayIso,
+          serverNow: new Date().toISOString(),
+          changeSeq: "10",
+          groups: [],
+          tables: codes.map((code, idx) => {
+            const id = idx + 1
+            const sp = special.get(id)
+            const isSpare = code === "A0" || code === "A10" || code === "B8"
+            return {
+              tableId: id,
+              seatedTurnCount: id === 5 ? 2 : 0,
+              isOutOfService: sp?.isOutOfService ?? false,
+              tableCode: code,
+              catalogStatus: sp?.isOutOfService ? "OUT_OF_SERVICE" : "ACTIVE",
+              isSpare,
+              displayState: sp?.displayState ?? "EMPTY",
+              arrivalPhase: null,
+              arrivalTime: null,
+              minutesLate: 0,
+              claim: sp?.claim ?? null,
+              groupId: null,
+              groupDisplayCode: null,
+              groupMemberTableIds: [],
+              staleFromPreviousDay: false,
+            }
+          }),
+        })
+        return
+      }
+      if (apiPath === "/reception/guest-counts") {
+        await json({
+          guestCount: {
+            businessDate: url.searchParams.get("date") || todayIso,
+            totalArrived: 10,
+            barGuests: 2,
+            walkInGuests: 0,
+            vipGuests: 0,
+            regularGuests: 0,
+            newGuests: 0,
+            updatedAt: new Date().toISOString(),
+            version: 1,
+          },
+        })
+        return
+      }
+      if (apiPath === "/bookings") {
+        await json({ businessDate: url.searchParams.get("date") || todayIso, bookings: [] })
+        return
+      }
+      if (apiPath === "/waitlist") {
+        await json({ businessDate: url.searchParams.get("date") || todayIso, entries: [] })
+        return
+      }
+      if (apiPath === "/tables/stream") {
+        await route.fulfill({
+          status: 200,
+          contentType: "text/event-stream",
+          body: "event: ping\ndata: {}\n\n",
+        })
+        return
+      }
+      unexpectedGets.push(`${method} ${apiPath}`)
+      await route.abort()
+    })
+
+    const page = await context.newPage()
+    const { errors } = await attachCollectors(page, httpBaseUrl)
+    await page.goto(`${httpBaseUrl}/admin/overview`, { waitUntil: "networkidle" })
+    await page.getByTestId("shift-overview-page").waitFor({ state: "visible" })
+    await page.waitForTimeout(250)
+
+    const httpSurface = await page.evaluate(() => {
+      const stage = document.querySelector('[data-testid="shift-overview-floor-stage"]')
+      const stageText = stage ? (stage.textContent ?? "") : ""
+      const stageTitles = Array.from(stage?.querySelectorAll("title") ?? [])
+        .map((t) => t.textContent ?? "")
+        .join(" | ")
+      const stageAria = Array.from(stage?.querySelectorAll("[aria-label]") ?? [])
+        .map((el) => el.getAttribute("aria-label") ?? "")
+        .join(" | ")
+      const telLinks = stage?.querySelectorAll('a[href^="tel:"]').length ?? 0
+      const combined = `${stageText} | ${stageTitles} | ${stageAria}`
+      return {
+        combined,
+        stageText,
+        telLinks,
+        hasKhoa: combined.includes("Phạm Quốc Khoa"),
+        hasLong: combined.includes("Dương Quốc Long"),
+        leaksPhone090: /0901234567|090\s+123\s+4567|901\s*234\s*567|912[-.\s]*345[-.\s]*678|\+84\s*901/.test(combined),
+        fakesWalkIn: stageText.includes("Khách Walk-in") || stageAria.includes("Khách Walk-in"),
+      }
+    })
+
+    assert.equal(httpSurface.telLinks, 0, `HTTP ${scenario.name}: tel: links found`)
+    assert.equal(
+      httpSurface.leaksPhone090,
+      false,
+      `HTTP ${scenario.name}: leaked phone-shaped name: ${httpSurface.combined}`,
+    )
+    if (scenario.expectNames) {
+      assert(httpSurface.hasKhoa && httpSurface.hasLong, `HTTP ${scenario.name}: expected real guest names`)
+    } else {
+      assert.equal(httpSurface.hasKhoa, false, `HTTP ${scenario.name}: leaked guest name without customer.view_masked`)
+      assert.equal(
+        httpSurface.hasLong,
+        false,
+        `HTTP ${scenario.name}: leaked Bar guest name without customer.view_masked`,
+      )
+      assert.equal(httpSurface.fakesWalkIn, false, `HTTP ${scenario.name}: faked Walk-in label when redacted`)
+    }
+
+    // ADM-01 in HTTP mode: open "!" legend and verify OOS count = 1, spare = 3, seated = 5, reserved = 1, free = 34
+    const httpTrigger = page.getByTestId("so-legend-trigger")
+    await httpTrigger.click()
+    const httpDialog = page.getByTestId("so-legend-dialog")
+    await httpDialog.waitFor({ state: "visible" })
+    await waitForSettledDialog(page, "so-legend-dialog")
+    const legendText = await httpDialog.evaluate((el) => el.textContent ?? "")
+    assert(
+      legendText.includes("Ngưng phục vụ1"),
+      `HTTP ${scenario.name}: expected Ngưng phục vụ count 1, got: ${legendText}`,
+    )
+    assert(legendText.includes("Sơ cua3"), `HTTP ${scenario.name}: expected Sơ cua count 3, got: ${legendText}`)
+    assert(legendText.includes("Đã tới5"), `HTTP ${scenario.name}: expected Đã tới count 5, got: ${legendText}`)
+    assert(legendText.includes("Đã đặt1"), `HTTP ${scenario.name}: expected Đã đặt count 1, got: ${legendText}`)
+    assert(legendText.includes("Trống34"), `HTTP ${scenario.name}: expected Trống count 34, got: ${legendText}`)
+    await page.keyboard.press("Escape")
+    await httpDialog.waitFor({ state: "detached" })
+
+    // ADM-04 HTTP gestures: click, dblclick, right-click, drag, keyboard -> zero mutations & zero unexpected GETs
+    const httpStage = page.getByTestId("shift-overview-floor-stage")
+    const a3 = httpStage.locator('g[aria-label^="Bàn A3"]').first()
+    await a3.click({ force: true })
+    await a3.dblclick({ force: true })
+    await a3.click({ button: "right", force: true })
+    await a3.focus()
+    await page.keyboard.press("Enter")
+    await page.keyboard.press("Space")
+    await page.keyboard.press("Control+z")
+    assert.deepEqual(
+      httpMutationRequests,
+      [],
+      `HTTP ${scenario.name}: mutation requests fired: ${httpMutationRequests}`,
+    )
+    assert.deepEqual(unexpectedGets, [], `HTTP ${scenario.name}: unexpected GET requests fired: ${unexpectedGets}`)
+    assert.deepEqual(errors, [], `HTTP ${scenario.name}: console/page errors: ${errors.join(" | ")}`)
+    await context.close()
+  }
+
   console.log("admin-floor-map E2E verification PASSED")
 } finally {
   await browser.close()
-  await server.close()
+  await mockVite.close().catch(() => {})
+  if (httpVite) await httpVite.close().catch(() => {})
 }

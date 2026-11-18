@@ -203,6 +203,83 @@ function rectsOverlap(a, b, tol = 0.5) {
   return !(a.right <= b.left + tol || b.right <= a.left + tol || a.bottom <= b.top + tol || b.bottom <= a.top + tol)
 }
 
+/** Browser-evaluated check: maps every painted badge/icon perimeter point into each cluster outline's SVG frame. */
+function measureOutlineStrokeIntersections(svgRoot) {
+  const outlines = Array.from(svgRoot?.querySelectorAll('[data-cluster-outline="1"] rect') ?? [])
+  const decorationShapes = Array.from(
+    svgRoot?.querySelectorAll(
+      '[data-testid="guest-count-badge"] rect, [data-testid="turn-badge"] rect, [data-testid="turn-badge"] circle, [data-testid="table-icons-bottom-left"] circle, [data-testid="table-icons-bottom-right"] circle',
+    ) ?? [],
+  )
+  const hits = []
+  if (!svgRoot || outlines.length === 0 || decorationShapes.length === 0) return hits
+  const pt = svgRoot.createSVGPoint()
+  for (const decShape of decorationShapes) {
+    const decCtm = decShape.getScreenCTM()
+    if (!decCtm) continue
+    const decGroup = decShape.closest("[data-testid]")
+    const tableGroup = decShape.closest('[role="button"][aria-label], [role="img"][aria-label]')
+    const decLabel = `${tableGroup?.getAttribute("aria-label")?.split(",")[0] ?? "?"} ${decGroup?.getAttribute("data-testid") ?? ""}`
+    const sw = Number(decShape.getAttribute("stroke-width") || 0) / 2
+    const samplePoints = []
+    if (decShape.tagName.toLowerCase() === "circle") {
+      const cx = Number(decShape.getAttribute("cx") || 0)
+      const cy = Number(decShape.getAttribute("cy") || 0)
+      const r = Number(decShape.getAttribute("r") || 0) + sw
+      for (let i = 0; i < 24; i++) {
+        const a = (i / 24) * Math.PI * 2
+        samplePoints.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r])
+      }
+    } else {
+      const x = Number(decShape.getAttribute("x") || 0) - sw
+      const y = Number(decShape.getAttribute("y") || 0) - sw
+      const w = Number(decShape.getAttribute("width") || 0) + sw * 2
+      const h = Number(decShape.getAttribute("height") || 0) + sw * 2
+      const rxRaw = Number(decShape.getAttribute("rx") || 0)
+      const rr = rxRaw > 0 ? Math.min(w / 2, h / 2, rxRaw + sw) : 0
+      if (rr > 0) {
+        for (let i = 0; i <= 8; i++) {
+          const tx = x + rr + ((w - 2 * rr) * i) / 8
+          samplePoints.push([tx, y], [tx, y + h])
+        }
+        for (let i = 0; i <= 8; i++) {
+          const aTopLeft = Math.PI + (i / 8) * (Math.PI / 2)
+          const aTopRight = -Math.PI / 2 + (i / 8) * (Math.PI / 2)
+          const aBotRight = (i / 8) * (Math.PI / 2)
+          const aBotLeft = Math.PI / 2 + (i / 8) * (Math.PI / 2)
+          samplePoints.push(
+            [x + rr + Math.cos(aTopLeft) * rr, y + rr + Math.sin(aTopLeft) * rr],
+            [x + w - rr + Math.cos(aTopRight) * rr, y + rr + Math.sin(aTopRight) * rr],
+            [x + w - rr + Math.cos(aBotRight) * rr, y + h - rr + Math.sin(aBotRight) * rr],
+            [x + rr + Math.cos(aBotLeft) * rr, y + h - rr + Math.sin(aBotLeft) * rr],
+          )
+        }
+      } else {
+        for (let i = 0; i <= 10; i++) {
+          const t = i / 10
+          samplePoints.push([x + w * t, y], [x + w * t, y + h], [x, y + h * t], [x + w, y + h * t])
+        }
+      }
+    }
+    for (const outlineRect of outlines) {
+      const outCtm = outlineRect.getScreenCTM()
+      if (!outCtm) continue
+      const outInv = outCtm.inverse()
+      const outlineCode = outlineRect.closest("[data-cluster-outline]")?.getAttribute("data-cluster-code-value") ?? "?"
+      for (const [sx, sy] of samplePoints) {
+        pt.x = sx
+        pt.y = sy
+        const mapped = pt.matrixTransform(decCtm).matrixTransform(outInv)
+        if (outlineRect.isPointInStroke(mapped)) {
+          hits.push(`${decLabel} intersects ${outlineCode} stroke`)
+          break
+        }
+      }
+    }
+  }
+  return hits
+}
+
 const { server, baseUrl } = await startMockViteServer()
 const browser = await launchBrowser()
 const summary = { mode: "mock", viewports: {}, flows: {}, ownerCheck: {} }
@@ -284,7 +361,8 @@ try {
       `${vp.label}: found focusable notification control(s): ${focusAudit.notificationMatches.join("; ")}`,
     )
 
-    const metrics = await page.evaluate(() => {
+    const metrics = await page.evaluate((fnSrc) => {
+      const measureFn = new Function(`return (${fnSrc})`)()
       const vw = window.innerWidth
       const vh = window.innerHeight
       const docOverflowX = Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth)
@@ -427,6 +505,8 @@ try {
         }
       })
 
+      const strokeIntersections = measureFn(svg)
+
       return {
         vw,
         vh,
@@ -461,9 +541,16 @@ try {
         turnBadges,
         cornerIcons,
         tableShapes,
+        strokeIntersections,
         fontFamily: shell ? getComputedStyle(shell).fontFamily : "",
       }
-    })
+    }, measureOutlineStrokeIntersections.toString())
+
+    assert.deepEqual(
+      metrics.strokeIntersections,
+      [],
+      `${vp.label} (light): decoration intersected cluster outline stroke: ${metrics.strokeIntersections.join("; ")}`,
+    )
 
     assert.equal(metrics.docOverflowX, 0, `${vp.label}: horizontal overflow ${metrics.docOverflowX}`)
     assert.equal(metrics.docOverflowY, 0, `${vp.label}: document vertical overflow ${metrics.docOverflowY}`)
@@ -815,6 +902,49 @@ try {
 
     assert.deepEqual(errors, [], `OWNER check errors: ${errors.join(" | ")}`)
     summary.ownerCheck = { hasAlertsBell: true, bellIcons }
+    await context.close()
+  }
+
+  // 4. Dark-theme 8-viewport BDG-01 stroke-intersection & A3 stress matrix check
+  for (const vp of VIEWPORTS) {
+    const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height } })
+    await context.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme: "dark" }))
+    })
+    const page = await context.newPage()
+    const errors = attachErrorCollector(page)
+
+    await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
+    await page.getByRole("button", { name: /^Bàn A7/ }).waitFor({ state: "visible" })
+    await page.waitForTimeout(250)
+
+    const darkAudit = await page.evaluate((fnSrc) => {
+      const measureFn = new Function(`return (${fnSrc})`)()
+      const svg = document.querySelector('[data-gm] svg[role="group"]')
+      if (!svg) return { ok: false, reason: "missing svg" }
+      const outlines = Array.from(svg.querySelectorAll('[data-cluster-outline="1"] rect'))
+      const hits = measureFn(svg)
+      const turnBadges = Array.from(svg.querySelectorAll('[data-testid="turn-badge"]'))
+      const a3Turn = svg.querySelector('[role="button"][aria-label^="Bàn A3"] [data-testid="turn-badge"]')
+      return {
+        ok: true,
+        hits,
+        turnCount: turnBadges.length,
+        hasA3Turn2: a3Turn?.getAttribute("aria-label") === "Lượt 2",
+        outlineCount: outlines.length,
+      }
+    }, measureOutlineStrokeIntersections.toString())
+
+    assert(darkAudit.ok, `${vp.label} (dark): ${darkAudit.reason}`)
+    assert.deepEqual(
+      darkAudit.hits,
+      [],
+      `${vp.label} (dark): decoration intersected cluster outline stroke: ${darkAudit.hits.join("; ")}`,
+    )
+    assert(darkAudit.turnCount >= 3, `${vp.label} (dark): missing turn badges`)
+    assert(darkAudit.hasA3Turn2, `${vp.label} (dark): missing A3 Lượt 2 fixture`)
+    assert(darkAudit.outlineCount >= 4, `${vp.label} (dark): missing cluster outlines`)
+    assert.deepEqual(errors, [], `${vp.label} (dark): errors: ${errors.join(" | ")}`)
     await context.close()
   }
 } finally {

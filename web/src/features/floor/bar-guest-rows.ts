@@ -105,6 +105,15 @@ export function formatBarSeatLabel(seatNumbers: number[]): string {
     .join(", ")
 }
 
+export function isPhoneLikeGuestName(displayName?: string | null): boolean {
+  const raw = (displayName ?? "").trim()
+  if (!raw) return false
+  const digitsOnly = raw.replace(/\D/g, "")
+  if (!/\p{L}/u.test(raw) && digitsOnly.length >= 4) return true
+  if (/(?:\+?\d[\d\s.\-()]{5,}\d)/.test(raw) && digitsOnly.length >= 7) return true
+  return false
+}
+
 /**
  * Formats the customer name according to the business rules:
  * - Real name is preserved without alteration.
@@ -115,9 +124,8 @@ export function formatBarGuestName(displayName?: string | null): string {
   const raw = (displayName ?? "").trim()
   if (!raw) return "Khách Walk-in"
 
-  // Check if string contains only phone number digits / separators (e.g. 0901234567, +84..., 090-123)
-  const isPhoneOnly = (!/[a-zA-ZÀ-ỹ]/.test(raw) && /\d{4,}/.test(raw)) || /^\+?[\d\s.\-()]{6,}$/.test(raw)
-  if (isPhoneOnly) {
+  // Check if string contains phone number digits / separators (e.g. 0901234567, +84 901 234 567, 090-123)
+  if (isPhoneLikeGuestName(raw)) {
     return "Khách Walk-in"
   }
 
