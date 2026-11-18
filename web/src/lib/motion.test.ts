@@ -104,7 +104,7 @@ function createFakeElement() {
 function installMatchMediaMock(initialReduced: boolean) {
   let reduced = initialReduced
   let activeListeners = 0
-  const mqlMap = new Map<string, Set<MediaListener>>()
+  const mqlEntries: Array<{ query: string; listeners: Set<MediaListener> }> = []
 
   const getMatches = (query: string) => {
     if (query === "all") return true
@@ -113,29 +113,30 @@ function installMatchMediaMock(initialReduced: boolean) {
   }
 
   const matchMedia = vi.fn((query: string) => {
-    let listeners = mqlMap.get(query)
-    if (!listeners) {
-      listeners = new Set()
-      mqlMap.set(query, listeners)
-    }
+    const listeners = new Set<MediaListener>()
+    mqlEntries.push({ query, listeners })
     return {
       media: query,
       get matches() {
         return getMatches(query)
       },
       addListener(fn: MediaListener) {
-        listeners!.add(fn)
-        activeListeners++
+        if (!listeners.has(fn)) {
+          listeners.add(fn)
+          activeListeners++
+        }
       },
       removeListener(fn: MediaListener) {
-        if (listeners!.delete(fn)) activeListeners--
+        if (listeners.delete(fn)) activeListeners--
       },
       addEventListener(_type: string, fn: MediaListener) {
-        listeners!.add(fn)
-        activeListeners++
+        if (!listeners.has(fn)) {
+          listeners.add(fn)
+          activeListeners++
+        }
       },
       removeEventListener(_type: string, fn: MediaListener) {
-        if (listeners!.delete(fn)) activeListeners--
+        if (listeners.delete(fn)) activeListeners--
       },
       dispatchEvent: () => true,
     }
@@ -143,18 +144,26 @@ function installMatchMediaMock(initialReduced: boolean) {
 
   mockHost.handler = matchMedia as unknown as (query: string) => MediaQueryList
 
+  const dispatchChange = () => {
+    for (const { query, listeners } of mqlEntries) {
+      const matches = getMatches(query)
+      for (const fn of [...listeners]) {
+        fn({ matches, media: query })
+      }
+    }
+  }
+
   return {
     get activeListeners() {
       return activeListeners
     },
+    setReducedStateOnly(next: boolean) {
+      reduced = next
+    },
+    dispatchChange,
     setReduced(next: boolean) {
       reduced = next
-      for (const [query, listeners] of mqlMap.entries()) {
-        const matches = getMatches(query)
-        for (const fn of [...listeners]) {
-          fn({ matches, media: query })
-        }
-      }
+      dispatchChange()
     },
     restore() {
       mockHost.handler = null
@@ -201,7 +210,7 @@ describe("21GAM motion system", () => {
     expect(MOTION.duration.sheet).toBeLessThanOrEqual(0.34)
     expect(MOTION.damping.default).toBe(1.0)
     expect(MOTION.damping.sheet).toBe(0.8)
-    expect(MOTION_MEDIA_QUERIES.all).toBe("all")
+    expect(MOTION_MEDIA_QUERIES.always).toBe("all")
   })
 
   it("produces a critically damped spring with boundary clamping and zero overshoot", () => {
@@ -382,6 +391,59 @@ describe("21GAM motion system", () => {
     expect(mock.activeListeners).toBe(0)
     mock.setReduced(false)
     expect(modes).toEqual([false, true])
+  })
+
+  it("does not falsely revert/snap a reduced-motion overlay when an earlier matchMedia listener delivers an async change event", () => {
+    const mock = installMatchMediaMock(false)
+    cleanupMock = () => mock.restore()
+
+    const fromToSpy = vi.spyOn(gsap, "fromTo").mockImplementation(() => ({}) as unknown as gsap.core.Tween)
+    const revealEl = createFakeElement()
+    const revealMm = setupRevealMatchMedia([revealEl])
+    fromToSpy.mockRestore()
+
+    // Simulate OS/CDP switching prefers-reduced-motion before the async MediaQueryList change event fires.
+    mock.setReducedStateOnly(true)
+
+    const overlay = createFakeElement()
+    const content = createFakeElement()
+    const animState = { opacity: 0 }
+    const openRef = { current: true }
+    const onExit = vi.fn()
+    const tlRef: { current: gsap.core.Timeline | null } = { current: null }
+    const modes: boolean[] = []
+
+    const overlayMm = setupOverlayMatchMedia({
+      overlay,
+      content,
+      openRef,
+      onExitRef: { current: onExit },
+      tlRef,
+      buildTimeline: ({ tl, reduceMotion }) => {
+        modes.push(reduceMotion)
+        tl.fromTo(animState, { opacity: 0 }, { opacity: 1, duration: 0.14 }, 0)
+      },
+    })
+
+    expect(modes).toEqual([true])
+    const initialTl = tlRef.current
+    expect(initialTl).not.toBeNull()
+    expect(initialTl!.progress()).toBe(0)
+
+    // Deliver the pending MediaQueryList change event from revealMm.
+    const setSpy = vi.spyOn(gsap, "set").mockImplementation(() => ({}) as unknown as gsap.core.Tween)
+    mock.dispatchChange()
+    setSpy.mockRestore()
+
+    // Overlay timeline must remain intact and in-flight (not reverted or snapped to progress(1)).
+    expect(modes).toEqual([true])
+    expect(tlRef.current).toBe(initialTl)
+    expect(tlRef.current!.progress()).toBe(0)
+    expect(onExit).not.toHaveBeenCalled()
+
+    overlayMm.revert()
+    revealMm.revert()
+    expect(mock.activeListeners).toBe(0)
   })
 
   it("P1-11: settles immediately at open endpoint without replaying when skipInitialEnterRef is true", () => {

@@ -30,11 +30,14 @@ export const MOTION = {
 } as const
 
 /**
- * Always-matching `all` condition paired with `prefers-reduced-motion: reduce`
+ * Always-matching `"all"` media query paired with `prefers-reduced-motion: reduce`
  * so `gsap.matchMedia()` initializes both normal and reduced motion paths.
+ * Uses key `always` instead of `"all"` because GSAP's `MatchMedia.add()` skips
+ * populating `conditions["all"]`, which causes `_onMediaChange()` to falsely
+ * treat unrelated media events as a toggle (`true !== undefined`).
  */
 export const MOTION_MEDIA_QUERIES = {
-  all: "all",
+  always: "all",
   reduceMotion: "(prefers-reduced-motion: reduce)",
 } as const
 
