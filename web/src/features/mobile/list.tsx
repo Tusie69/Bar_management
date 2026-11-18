@@ -65,7 +65,7 @@ export function ListScreen() {
   return (
     <>
       <PlainHeader title="Danh sách">
-        <div className="flex flex-col gap-2.5 pt-1 pb-3">
+        <div className="flex flex-col gap-2 pt-2 pb-2.5">
           <div className="flex items-center gap-2">
             <div className="min-w-0 flex-1">
               <Seg
@@ -86,11 +86,11 @@ export function ListScreen() {
                   disabled={!canExport || loading}
                   onClick={() => void copy()}
                   className={cn(
-                    "inline-flex h-11 shrink-0 items-center gap-1.5 rounded-xl border border-border bg-surface-1 px-3 text-[14px] font-medium text-tx-1 transition-colors",
+                    "gm-press inline-flex h-11 shrink-0 items-center gap-1.5 rounded-xl border border-border bg-surface-1 px-3 text-[13.5px] font-semibold text-tx-1 shadow-[var(--shadow-xs)] hover:border-border-strong hover:bg-surface-2",
                     (!canExport || loading) && "cursor-not-allowed opacity-50",
                   )}
                 >
-                  <MessageSquareText className="size-4 shrink-0" aria-hidden />
+                  <MessageSquareText className="size-4 shrink-0 text-primary-ink" aria-hidden />
                   <span>Xuất text Zalo</span>
                 </button>
               )}
@@ -99,7 +99,7 @@ export function ListScreen() {
           {mode === "list" ? (
             <>
               <div className="flex gap-2">
-                <label className="flex h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-border bg-surface-1 px-3">
+                <label className="flex h-11 min-w-0 flex-1 items-center gap-2 rounded-xl border border-input bg-surface-1 px-3 shadow-[var(--shadow-xs)] transition-[border-color,box-shadow] focus-within:border-primary focus-within:ring-[3px] focus-within:ring-primary/20">
                   <Search className="size-[18px] shrink-0 text-subtle" aria-hidden />
                   <input
                     type="search"
@@ -116,11 +116,13 @@ export function ListScreen() {
                   aria-expanded={filterOpen}
                   aria-label="Lọc theo nguồn"
                   className={cn(
-                    "grid size-11 shrink-0 place-items-center rounded-xl border bg-surface-1 text-tx-1",
-                    src ? "border-primary" : "border-border",
+                    "gm-press grid size-11 shrink-0 place-items-center rounded-xl border bg-surface-1 text-tx-1 shadow-[var(--shadow-xs)]",
+                    src
+                      ? "border-primary bg-primary-tint text-primary-ink"
+                      : "border-border hover:border-border-strong",
                   )}
                 >
-                  <Funnel className="size-[18px]" />
+                  <Funnel className="size-[18px]" aria-hidden />
                 </button>
               </div>
               {filterOpen ? (
@@ -135,13 +137,13 @@ export function ListScreen() {
               <div className="-mx-4 flex gap-2 overflow-x-auto px-4">
                 {STATUS_CHIPS.map(([k, label]) => (
                   <Chip key={k} on={status === k} onClick={() => setStatus(k)}>
-                    {label} <span className="opacity-70">{base.filter(GROUPS[k]).length}</span>
+                    {label} <span className="tnum opacity-75">{base.filter(GROUPS[k]).length}</span>
                   </Chip>
                 ))}
               </div>
             </>
           ) : null}
-          <div className="-mx-4 flex gap-2 overflow-x-auto px-4">
+          <div className="-mx-4 flex gap-1.5 overflow-x-auto px-4">
             {Array.from({ length: 7 }, (_, i) => {
               const on = dateIdx === i
               return (
@@ -151,8 +153,10 @@ export function ListScreen() {
                   aria-pressed={on}
                   onClick={() => setDateIdx(i)}
                   className={cn(
-                    "h-[34px] shrink-0 rounded-full px-3 text-[13px]",
-                    on ? "bg-primary-tint font-semibold text-primary-ink" : "bg-transparent text-tx-2",
+                    "gm-press tnum inline-flex h-11 shrink-0 items-center rounded-full px-3.5 text-[13px] whitespace-nowrap",
+                    on
+                      ? "bg-primary-tint font-semibold text-primary-ink"
+                      : "bg-transparent font-medium text-tx-2 hover:bg-surface-2",
                   )}
                 >
                   {i === 0 ? "Hôm nay" : fmtBusinessDate(addDays(m.today, i), "short").replace(",", "")}
@@ -166,7 +170,7 @@ export function ListScreen() {
       {mode === "timeline" ? (
         <Timeline bd={bd} reservations={res ?? []} />
       ) : (
-        <div ref={ref} className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-1 pb-20">
+        <div ref={ref} className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-3 pb-20">
           {resQuery.isError ? (
             <EmptyBox
               title="Lỗi tải danh sách"
@@ -182,9 +186,9 @@ export function ListScreen() {
             <CardSkeleton />
           ) : shown.length ? (
             <>
-              <div className="flex items-center justify-between gap-3 rounded-[14px] bg-surface-3 px-3.5 py-3">
-                <span className="text-[14px] font-semibold text-tx-strong">{shift}</span>
-                <span className="text-[13px] text-tx-2">
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-surface-2 px-3.5 py-2.5">
+                <span className="text-[13.5px] font-semibold text-tx-strong">{shift}</span>
+                <span className="tnum text-[13px] font-medium text-tx-2">
                   {shown.length} booking, {guests} khách
                 </span>
               </div>
@@ -307,8 +311,8 @@ function Timeline({ bd, reservations }: { bd: BusinessDate; reservations: Reserv
   return (
     <div ref={box} className="relative min-h-0 flex-1 overflow-auto border-t border-border bg-surface-1 pb-20">
       <div className="relative" style={{ width: LW + trackW }}>
-        <div className="sticky top-0 z-[4] flex h-9 border-b border-border bg-surface-1">
-          <div className="sticky left-0 z-[5] flex w-[84px] shrink-0 items-center border-r border-border bg-surface-1 pl-3 text-xs font-medium text-[var(--text-muted)]">
+        <div className="sticky top-0 z-[4] flex h-10 border-b border-border bg-surface-1/95 backdrop-blur-sm">
+          <div className="sticky left-0 z-[5] flex w-[84px] shrink-0 items-center border-r border-border bg-surface-1 pl-3 text-xs font-semibold text-[var(--text-muted)]">
             Bàn
           </div>
           <div className="relative shrink-0" style={{ width: trackW }}>
@@ -320,7 +324,7 @@ function Timeline({ bd, reservations }: { bd: BusinessDate; reservations: Reserv
               return (
                 <span
                   key={i}
-                  className="absolute inset-y-0 flex items-center border-l border-border pl-1.5 text-xs whitespace-nowrap text-[var(--text-muted)]"
+                  className="tnum absolute inset-y-0 flex items-center border-l border-border pl-1.5 text-xs font-medium whitespace-nowrap text-[var(--text-muted)]"
                   style={{ left: tickX }}
                 >
                   {!collidesWithNow && `${h % 12 || 12} ${h < 12 ? "AM" : "PM"}`}
@@ -329,7 +333,7 @@ function Timeline({ bd, reservations }: { bd: BusinessDate; reservations: Reserv
             })}
             {nowMin >= 0 ? (
               <span
-                className="absolute top-1.5 z-[6] flex h-[22px] -translate-x-1/2 items-center rounded-full bg-primary px-2 text-[11px] font-semibold whitespace-nowrap text-primary-foreground shadow-sm"
+                className="tnum absolute top-2 z-[6] flex h-6 -translate-x-1/2 items-center rounded-full bg-primary px-2.5 text-[11px] font-semibold whitespace-nowrap text-primary-foreground shadow-[var(--shadow-xs)]"
                 style={{ left: nowMin * PX }}
               >
                 {fmtTime12(m.now)}
@@ -338,14 +342,14 @@ function Timeline({ bd, reservations }: { bd: BusinessDate; reservations: Reserv
           </div>
         </div>
         {rows.map((r) => (
-          <div key={r.key} className="flex h-12 border-b border-border">
+          <div key={r.key} className="flex h-12 border-b border-border/80">
             <button
               type="button"
               disabled={!r.tableId}
               onClick={() => r.tableId && m.openTable(r.tableId)}
               className={cn(
                 "sticky left-0 z-[3] flex w-[84px] shrink-0 flex-col justify-center border-r border-border bg-surface-1 pr-1 pl-3 text-left text-tx-1",
-                !r.tableId && "cursor-default",
+                r.tableId ? "gm-press-card" : "cursor-default",
               )}
             >
               {r.label ? <span className="truncate text-[13px] font-semibold">{r.label}</span> : null}
@@ -380,7 +384,7 @@ function Timeline({ bd, reservations }: { bd: BusinessDate; reservations: Reserv
                       onClick={() => open(it, r.tableId)}
                       aria-label={it.aria}
                       className={cn(
-                        "absolute top-[7px] flex h-[34px] min-w-7 items-center gap-1 overflow-hidden rounded-[10px] border px-2.5 text-xs font-medium whitespace-nowrap shadow-sm focus:z-10 active:z-10",
+                        "gm-press absolute top-[7px] flex h-[34px] min-w-7 items-center gap-1 overflow-hidden rounded-[10px] border px-2.5 text-xs font-semibold whitespace-nowrap shadow-[var(--shadow-xs)] focus:z-10 active:z-10",
                         !bar && "max-w-[130px]",
                       )}
                       style={{
@@ -415,7 +419,7 @@ function Timeline({ bd, reservations }: { bd: BusinessDate; reservations: Reserv
         {nowMin >= 0 ? (
           <span
             aria-hidden
-            className="pointer-events-none absolute top-9 bottom-0 z-[2] -ml-px w-0.5 bg-primary"
+            className="pointer-events-none absolute top-10 bottom-0 z-[2] -ml-px w-0.5 bg-primary"
             style={{ left: LW + nowMin * PX }}
           />
         ) : null}

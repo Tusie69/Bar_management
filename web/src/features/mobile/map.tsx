@@ -1,8 +1,27 @@
 import { AlertTriangle, ListOrdered, Menu, MessageSquareText, X } from "lucide-react"
-import { useMemo, type ReactNode } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
 import type { TableLiveState, TableView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAvailability } from "@/hooks/use-data"
+import {
+  OverlayMotionMount,
+  prewarmMotionController,
+  useAwaitingMotionController,
+  usePresenceController,
+  useStableNodeRef,
+} from "@/lib/motion"
 import { fmtBusinessDate, fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useUi } from "@/state/ui"
@@ -26,6 +45,8 @@ import { useBookingDraft } from "../floor/use-booking-draft"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
 import { codesOf, duration, type Tone, toneStyle } from "./model"
+import { useRestoreTriggerFocus } from "./overlay-focus"
+import { useQuickFormEscape, useQuickFormPresence } from "./quick-form-presence"
 import { PlainHeader, UndoRedoButtons } from "./ui"
 
 const ZONE_TABS: [ZoneCode | "ALL", string][] = [
@@ -36,6 +57,17 @@ const ZONE_TABS: [ZoneCode | "ALL", string][] = [
   ["BAR", "Bar"],
 ]
 
+function isQuickFormDirty(container: HTMLElement | null): boolean {
+  if (!container) return false
+  const name = container.querySelector<HTMLInputElement>("#qf-name")?.value.trim() ?? ""
+  const phone = container.querySelector<HTMLInputElement>("#qf-phone")?.value.trim() ?? ""
+  const note = container.querySelector<HTMLTextAreaElement>("#qf-note")?.value.trim() ?? ""
+  const honorific = container.querySelector(
+    '[role="group"][aria-label="Danh xưng"] [role="radio"][aria-checked="true"]',
+  )
+  return Boolean(name || phone || note || honorific)
+}
+
 export function MapScreen({
   selected,
   onSelect,
@@ -45,6 +77,7 @@ export function MapScreen({
   onPickCancel,
   onPickConfirm,
   pickBusy,
+  keyboardSafeHeight = null,
 }: {
   selected: number | null
   onSelect: (id: number | null) => void
@@ -54,6 +87,7 @@ export function MapScreen({
   onPickCancel: () => void
   onPickConfirm: () => void
   pickBusy: boolean
+  keyboardSafeHeight?: number | null
 }) {
   const m = useM()
   const receptionist = m.role === "RECEPTIONIST"
@@ -61,7 +95,8 @@ export function MapScreen({
   const zone = useUi((s) => (receptionist ? "ALL" : s.zone))
   const setZone = useUi((s) => s.setZone)
   const d = useBookingDraft(m.model)
-  const draft = d.draft
+  const quickForm = useQuickFormPresence()
+  const draft = quickForm.activeDraft
   const layoutPick = useUi((s) => s.pick?.intent === "layout")
   const layoutIds = useUi((s) => s.pickSelection)
   const waitingCount = (m.waitlist ?? []).filter(isWaitingForTable).length
@@ -106,28 +141,99 @@ export function MapScreen({
     return ids
   }, [pick, isAssignPick, pickSnapshot, m.model.freeIds])
 
+  const [draftOverlayEl, draftOverlayRef] = useStableNodeRef<HTMLDivElement>()
+  const [draftContentEl, draftContentRef] = useStableNodeRef<HTMLElement>()
+  const { awaitingMotion: draftAwaiting, fallbackShown: draftFallback } = useAwaitingMotionController(
+    quickForm.present,
+    quickForm.isOpen,
+  )
+  const [confirmLeave, setConfirmLeave] = useState(false)
+  const [lastSessionKey, setLastSessionKey] = useState(quickForm.sessionKey)
+  if (quickForm.sessionKey !== lastSessionKey) {
+    setLastSessionKey(quickForm.sessionKey)
+    if (confirmLeave) setConfirmLeave(false)
+  }
+  if (!quickForm.isOpen && confirmLeave) {
+    setConfirmLeave(false)
+  }
+
+  const quickFormFocus = useRestoreTriggerFocus(quickForm.isOpen, { modal: false })
+  const leaveFocus = useRestoreTriggerFocus(confirmLeave, { suppressRestore: !quickForm.isOpen })
+  const floorPointerRef = useRef<{ id: number; x: number; y: number; dragged: boolean } | null>(null)
+  const wasQuickFormPresentRef = useRef(false)
+  const quickFormPresentRef = useRef(quickForm.present)
+  useLayoutEffect(() => {
+    quickFormPresentRef.current = quickForm.present
+  }, [quickForm.present])
+
+  const closeQuickFormNow = useCallback(() => {
+    const kind = useUi.getState().draft?.kind
+    if (kind === "walkin") useUi.getState().closeWalkIn()
+    else if (kind === "booking") useUi.getState().closeBooking()
+  }, [])
+
+  const requestQuickFormClose = useCallback(() => {
+    if (!quickForm.isOpen || confirmLeave) return
+    if (isQuickFormDirty(draftContentEl)) {
+      setConfirmLeave(true)
+    } else {
+      closeQuickFormNow()
+    }
+  }, [closeQuickFormNow, confirmLeave, draftContentEl, quickForm.isOpen])
+
+  // Move keyboard focus into the quick-form container on entry without opening the virtual keyboard.
+  useEffect(() => {
+    if (!quickForm.isOpen || !draftContentEl || confirmLeave) return
+    const active = document.activeElement
+    if (active && draftContentEl.contains(active)) return
+    draftContentEl.focus({ preventScroll: true })
+  }, [confirmLeave, draftContentEl, quickForm.isOpen, quickForm.sessionKey])
+
+  // Restore focus to the surviving opener once QuickForm finishes its exit (and any leave alert is gone).
+  useEffect(() => {
+    const wasPresent = wasQuickFormPresentRef.current
+    wasQuickFormPresentRef.current = quickForm.present
+    if (wasPresent && !quickForm.present) {
+      const alertStillOpen = Boolean(document.querySelector(`[data-gm-overlay-id="${leaveFocus.overlayId}"]`))
+      if (!alertStillOpen) {
+        quickFormFocus.restoreNonModal()
+      }
+    }
+  }, [leaveFocus.overlayId, quickForm.present, quickFormFocus])
+
+  // Handle Escape before any outgoing tooltip's document-capture DismissableLayer while keeping live modals in control.
+  useQuickFormEscape({
+    open: quickForm.isOpen,
+    suppressed: confirmLeave,
+    onClose: requestQuickFormClose,
+  })
+
   return (
     <main className="contents">
       {receptionist ? (
-        <header className="z-[5] shrink-0 border-b border-border/60 bg-background px-3 pt-[var(--top-safe)]">
+        <header className="gm-glass-chrome z-[5] shrink-0 border-b border-border/70 bg-[var(--glass-chrome)] px-3 pt-[var(--top-safe)] backdrop-blur-md">
           {/* A single 48px row is the whole fixed chrome: menu, search, export.
               Undo/redo, date, Đếm khách and ⓘ float on the plan itself. */}
           <div className="flex h-[48px] items-center gap-2">
             <button
               type="button"
               onClick={m.openAccount}
+              onPointerEnter={() => void prewarmMotionController()}
+              onPointerDown={() => void prewarmMotionController()}
               aria-label="Menu"
-              className="grid size-10 shrink-0 place-items-center rounded-xl border border-border bg-surface-1 text-tx-strong shadow-[var(--shadow-xs)] transition-[transform,background-color] duration-100 hover:bg-surface-2 active:scale-[0.96] active:bg-surface-2"
+              className="gm-press grid size-11 shrink-0 place-items-center rounded-xl border border-border bg-surface-1 text-tx-strong shadow-[var(--shadow-xs)] hover:border-border-strong hover:bg-surface-2"
             >
-              <Menu className="size-5" />
+              <Menu className="size-5" aria-hidden />
             </button>
             {planChrome ? (
               <ReceptionSearchField
                 search={search}
-                className="[&_input]:rounded-xl [&_input]:border-border [&_input]:pl-11 [&_input]:shadow-[var(--shadow-xs)]"
+                className="[&_button]:min-h-[44px] [&_button]:min-w-[44px] [&_input]:h-11 [&_input]:min-h-[44px] [&_input]:rounded-xl [&_input]:border-border [&_input]:bg-surface-1 [&_input]:pl-11 [&_input]:shadow-[var(--shadow-xs)]"
               />
             ) : (
-              <h1 className="m-0 min-w-0 flex-1 truncate text-[18px] font-semibold text-tx-strong">Sơ đồ bàn</h1>
+              <h1 className="m-0 min-w-0 flex-1 truncate text-[18px] font-bold tracking-[-0.015em] text-tx-strong">
+                Sơ đồ bàn
+              </h1>
             )}
             <ZaloBookingExport businessDate={m.businessDate} enabled={canExport}>
               {({ copy, loading }) => (
@@ -138,7 +244,7 @@ export function MapScreen({
                   aria-label="Xuất text Zalo"
                   title="Xuất text booking để gửi nhóm Zalo"
                   className={cn(
-                    "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-3 text-[14px] font-semibold text-primary-foreground shadow-[var(--shadow-xs)] transition-[transform,filter] duration-100 active:scale-[0.97]",
+                    "gm-press inline-flex h-11 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-3.5 text-[14px] font-semibold text-primary-foreground shadow-[var(--shadow-xs)] hover:bg-[var(--primary-hover)]",
                     (!canExport || loading) && "cursor-not-allowed opacity-50",
                   )}
                 >
@@ -157,50 +263,50 @@ export function MapScreen({
       {/* The receptionist works on the whole floor and reads the counts inside the ⓘ popup,
           so neither the zone tabs nor the legend card take screen height from the plan. */}
       {!receptionist && !pick ? (
-        <div className="z-[4] flex shrink-0 flex-col gap-1.5 bg-background px-4 pt-0 pb-1.5">
-          {
-            <div
-              role="tablist"
-              aria-label="Lọc khu"
-              className="flex w-full max-w-full gap-0.5 overflow-x-auto rounded-[14px] border border-border bg-surface-1 p-[3px] shadow-[var(--shadow-xs)]"
-            >
-              {ZONE_TABS.map(([k, label]) => {
-                const on = zone === k
-                return (
-                  <button
-                    key={k}
-                    type="button"
-                    role="tab"
-                    aria-selected={on}
-                    onClick={() => setZone(k)}
-                    className={cn(
-                      "flex h-[38px] min-w-0 flex-1 shrink-0 items-center justify-center rounded-[11px] px-1 text-[13px] whitespace-nowrap",
-                      on ? "bg-tx-strong font-semibold text-background" : "font-medium text-tx-2",
-                    )}
-                  >
-                    {label}
-                  </button>
-                )
-              })}
-            </div>
-          }
+        <div className="z-[4] flex shrink-0 flex-col gap-1.5 bg-background px-4 pt-1 pb-1.5">
+          <div
+            role="tablist"
+            aria-label="Lọc khu"
+            className="flex w-full max-w-full gap-1 overflow-x-auto rounded-xl border border-border/60 bg-surface-3/85 p-1 shadow-[var(--shadow-xs)]"
+          >
+            {ZONE_TABS.map(([k, label]) => {
+              const on = zone === k
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  role="tab"
+                  aria-selected={on}
+                  onClick={() => setZone(k)}
+                  className={cn(
+                    "gm-press flex min-h-11 min-w-0 flex-1 shrink-0 items-center justify-center rounded-[10px] px-1.5 text-[13px] whitespace-nowrap",
+                    on
+                      ? "bg-surface-1 font-semibold text-tx-strong shadow-[var(--shadow-xs)]"
+                      : "font-medium text-tx-2 hover:text-tx-1",
+                  )}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
           {draft ? null : <StatusLegend tables={m.model.tables} states={m.model.states} />}
         </div>
       ) : null}
       {/* Idle "Ghép bàn" button is off the receptionist's screen: merging starts from the
           table sheet. The active merge panel still shows so nobody gets stuck in pick mode. */}
       {!pick && !layoutPick && !receptionist ? (
-        <div className="shrink-0 px-3 pb-1">
+        <div className="shrink-0 px-4 pb-1.5">
           <LayoutMergeControls model={m.model} />
         </div>
       ) : null}
       {pick ? (
-        <div className="z-[6] mx-3 mt-1 mb-2 flex shrink-0 items-start gap-2 rounded-[14px] border border-primary bg-surface-1 py-2.5 pr-1.5 pl-3.5 shadow-[var(--shadow-soft)]">
-          <span className="flex min-w-0 flex-1 flex-col">
+        <div className="z-[6] mx-3 mt-1.5 mb-2 flex shrink-0 items-start gap-2 rounded-2xl border border-primary/50 bg-surface-1 py-2.5 pr-1.5 pl-3.5 shadow-[var(--shadow-soft)]">
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="text-[14px] font-semibold text-tx-strong">{pick.title}</span>
             <span className="text-[13px] text-pretty text-[var(--text-muted)]">{pick.hint}</span>
             {pick.targetDate ? (
-              <span className="mt-0.5 text-[12px] font-medium text-primary">
+              <span className="tnum mt-0.5 text-[12px] font-semibold text-primary-ink">
                 Lịch đặt: {pick.targetTime} · {fmtBusinessDate(pick.targetDate, "short")} ({pick.targetParty} khách)
               </span>
             ) : null}
@@ -209,22 +315,45 @@ export function MapScreen({
             type="button"
             onClick={onPickCancel}
             aria-label="Hủy chọn bàn"
-            className="grid size-11 shrink-0 place-items-center rounded-full text-[var(--text-muted)]"
+            className="gm-press grid size-11 shrink-0 place-items-center rounded-xl text-[var(--text-muted)] hover:bg-surface-2 hover:text-tx-1"
           >
-            <X className="size-5" />
+            <X className="size-5" aria-hidden />
           </button>
         </div>
       ) : null}
 
-      <div className="relative min-h-0 flex-1 bg-[var(--floor)]">
-        {/* Mockup 03: the merge panel floats OVER the plan. In the document flow
-            it shortened the canvas, the camera re-fitted, and the plan jumped. */}
+      <div
+        className="relative min-h-0 flex-1 bg-[var(--floor)]"
+        onPointerDown={(e) => {
+          void prewarmMotionController()
+          if (!e.isPrimary) {
+            if (floorPointerRef.current) floorPointerRef.current.dragged = true
+            return
+          }
+          floorPointerRef.current = { id: e.pointerId, x: e.clientX, y: e.clientY, dragged: false }
+        }}
+        onPointerMove={(e) => {
+          const p = floorPointerRef.current
+          if (!p || p.id !== e.pointerId) return
+          if (!p.dragged && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 6) {
+            p.dragged = true
+          }
+        }}
+        onClick={(e) => {
+          const dragged = floorPointerRef.current?.dragged
+          floorPointerRef.current = null
+          if (!quickForm.isOpen || pick || layoutPick || confirmLeave || dragged) return
+          const target = e.target
+          if (target instanceof Element && target.closest("[role='button'], button, a, input, select, textarea")) {
+            return
+          }
+          requestQuickFormClose()
+        }}
+      >
+        {/* Search results float OVER the plan so document flow doesn't jump the camera. */}
         {planChrome && search.active ? (
-          // Kết quả tìm kiếm nổi trên sơ đồ thay vì nằm trong luồng: trong luồng
-          // nó lấy mất 74px chiều cao của sơ đồ. Nó chỉ cao hai dòng và biến mất
-          // ngay khi xoá ô tìm kiếm, nên che tạm góc trên là chấp nhận được.
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-[11] px-2">
-            <div className="pointer-events-auto rounded-[14px] border border-border/80 bg-background/95 px-3 py-2 shadow-lg backdrop-blur dark:border-slate-700/80 dark:bg-[#1e232d]/95">
+          <div className="pointer-events-none absolute inset-x-0 top-1.5 z-[11] px-2.5">
+            <div className="gm-glass-chrome pointer-events-auto rounded-2xl border border-border bg-popover/95 px-3 py-2.5 shadow-[var(--shadow-float)] backdrop-blur-md">
               <ReceptionSearchResults search={search} onOpenBooking={m.openDetail} />
             </div>
           </div>
@@ -248,11 +377,6 @@ export function MapScreen({
             planOverlay={
               planChrome
                 ? () => (
-                    // Anchor to the canvas, not the wall. On a short phone the
-                    // whole-floor fit leaves useful side gutters; pinning the
-                    // controls to the wall put them directly over C4/C5 and
-                    // B21/B22. The canvas edges use those gutters and return
-                    // the toolbar's full height to the plan.
                     <div className="reception-plan-overlay pointer-events-none absolute inset-0">
                       <GuestCountCard
                         businessDate={m.businessDate}
@@ -269,20 +393,19 @@ export function MapScreen({
                         />
                         <ReceptionDatePicker
                           onDateChange={() => onSelect(null)}
-                          className="[&>button]:h-11 [&>button]:min-h-[44px] [&>button]:gap-1.5 [&>button]:rounded-xl [&>button]:border-border/80 [&>button]:bg-surface-1/92 [&>button]:px-2 [&>button]:text-[13px] [&>button]:shadow-[var(--shadow-soft)] [&>button]:backdrop-blur-md dark:[&>button]:border-slate-700/80 dark:[&>button]:bg-[#1e232d]/92"
+                          className="[&>button]:h-11 [&>button]:min-h-[44px] [&>button]:gap-1.5 [&>button]:rounded-xl [&>button]:border-border/80 [&>button]:bg-surface-1/92 [&>button]:px-2 [&>button]:text-[13px] [&>button]:font-semibold [&>button]:shadow-[var(--shadow-soft)] [&>button]:backdrop-blur-md dark:[&>button]:border-slate-700/80 dark:[&>button]:bg-[#1e232d]/92"
                         />
-                        {/* The mockup puts Bàn chờ here, right under the date. Drawn in
-                            floor space it scaled with the plan while the date chip kept
-                            real pixels, and the two overlapped by 8px on a 375 screen. */}
                         <button
                           type="button"
                           onClick={() => m.go("wait")}
+                          onPointerEnter={() => void prewarmMotionController()}
+                          onPointerDown={() => void prewarmMotionController()}
                           aria-label={`Bàn chờ, ${waitingCount} nhóm đang đợi`}
-                          className="inline-flex h-11 min-h-[44px] min-w-[44px] items-center gap-1 rounded-xl border border-border/80 bg-surface-1/92 px-2 text-[12.5px] font-semibold text-tx-strong shadow-[var(--shadow-soft)] backdrop-blur-md transition-transform duration-100 active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/92"
+                          className="gm-press inline-flex h-11 min-h-[44px] min-w-[44px] items-center gap-1 rounded-xl border border-border/80 bg-surface-1/92 px-1.5 text-[12px] font-semibold text-tx-strong shadow-[var(--shadow-soft)] backdrop-blur-md dark:border-slate-700/80 dark:bg-[#1e232d]/92"
                         >
                           <ListOrdered className="size-3.5 shrink-0" aria-hidden />
                           {planWidth >= 375 ? <span>Chờ</span> : null}
-                          {waitingCount > 0 ? `+${waitingCount}` : ""}
+                          {waitingCount > 0 ? <span className="tnum">+{waitingCount}</span> : ""}
                         </button>
                       </div>
                     </div>
@@ -314,18 +437,14 @@ export function MapScreen({
           />
         ) : null}
       </div>
-      {/* Dải dưới cùng: đang ghép bàn thì nó là bảng ghép, còn lại là cặp
-          hoàn tác. Ghép bàn không che ô bàn nào, và hoàn tác cũng không cần
-          tới giữa chừng một thao tác ghép. */}
+      {/* Bottom strip: merge controls when active, or Undo/Redo for receptionist.
+          Notification bell is intentionally omitted for RECEPTIONIST. */}
       {!pick && layoutPick ? (
-        <div className="z-[11] shrink-0 px-2 pb-[var(--bottom-safe)]">
+        <div className="z-[11] shrink-0 px-2.5 pb-[max(6px,var(--bottom-safe))]">
           <LayoutMergeControls model={m.model} overlay />
         </div>
       ) : planChrome ? (
-        // Mockup 01 ends the screen with a 52px row. Trái: cặp hoàn tác/làm lại;
-        // nút chuông thông báo đã bỏ hoàn toàn cho role Lễ tân để không gây nhiễu
-        // và giữ nguyên chiều cao sơ đồ (52px).
-        <div className="z-[5] flex h-[52px] shrink-0 items-center gap-1.5 border-t border-border/60 bg-background px-2.5 pb-[var(--bottom-safe)]">
+        <div className="gm-glass-chrome z-[5] flex h-[52px] shrink-0 items-center gap-2 border-t border-border/70 bg-[var(--glass-chrome)] px-2.5 pb-[var(--bottom-safe)] backdrop-blur-md">
           <UndoRedoButtons square />
         </div>
       ) : null}
@@ -334,13 +453,13 @@ export function MapScreen({
             const pickCap = selectedTablesCapacity(pickSel, m.model.byId)
             const pickCapWarn = capacityWarningText(pickSel.length, pickCap, pick.targetParty)
             return (
-              <div className="z-[12] flex shrink-0 flex-col gap-2.5 rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-4 shadow-[var(--shadow-float)]">
+              <div className="z-[12] flex shrink-0 flex-col gap-2.5 rounded-t-[20px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-[calc(14px+var(--bottom-safe))] shadow-[var(--shadow-float)]">
                 {pick.question && pickSel.length ? (
-                  <span className="text-[15px] font-medium text-tx-strong">
+                  <span className="text-[15px] font-semibold text-tx-strong">
                     {pick.question(codesOf(pickSel, m.model))}
                   </span>
                 ) : null}
-                <span className="tnum text-[13px] text-[var(--text-muted)]">
+                <span className="tnum text-[13px] font-medium text-[var(--text-muted)]">
                   {pickSel.length ? (
                     <>
                       Đã chọn {codesOf(pickSel, m.model)} · {pickCap} chỗ
@@ -353,49 +472,158 @@ export function MapScreen({
                   <p
                     role="status"
                     data-testid="capacity-warning"
-                    className="tnum m-0 flex items-start gap-2 rounded-lg border border-st-late/30 bg-st-late-tint px-2.5 py-1.5 text-[13px] font-medium text-st-late-ink"
+                    className="tnum m-0 flex items-start gap-2 rounded-xl border border-st-late/30 bg-st-late-tint px-3 py-2 text-[13px] font-medium text-st-late-ink"
                   >
                     <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
                     <span>{pickCapWarn}</span>
                   </p>
                 ) : null}
-                <button
+                <Button
                   type="button"
+                  size="lg"
                   disabled={!pickSel.length || pickBusy}
                   onClick={onPickConfirm}
-                  className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground disabled:opacity-50"
+                  className="h-12 w-full rounded-xl text-[15px] font-semibold"
                 >
                   {pickBusy ? "Đang gửi..." : pick.confirmLabel}
-                </button>
+                </Button>
               </div>
             )
           })()
         : null}
       {draft && draftZone ? (
-        <p className="z-[11] shrink-0 bg-background px-4 pb-1 text-center text-[11px] font-medium tracking-wide text-[var(--text-muted)]">
+        <p
+          onClick={() => {
+            if (quickForm.isOpen && !confirmLeave) requestQuickFormClose()
+          }}
+          className="z-[11] m-0 shrink-0 bg-background px-4 pb-1 text-center text-[11px] font-medium tracking-wide text-[var(--text-muted)]"
+        >
           KHU {draftZone} · chạm để chọn thêm
         </p>
       ) : null}
-      {draft ? (
-        <section
-          role="dialog"
-          aria-label="Đặt bàn trên sơ đồ"
-          className="z-[12] flex max-h-[62dvh] shrink-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)]"
-        >
-          <div className="flex shrink-0 justify-center pt-2" aria-hidden>
-            <span className="h-[5px] w-9 rounded-full bg-strong" />
-          </div>
-          <div className="flex min-h-0 flex-1 flex-col">
-            <QuickForm
-              compact
-              model={m.model}
-              availability={d.status === "ready" ? d.availability.data : undefined}
-              availabilityStatus={d.status}
-              onRetryAvailability={() => void d.availability.refetch()}
+      {quickForm.present && quickForm.storeDraft ? (
+        <>
+          <div ref={draftOverlayRef} aria-hidden className="pointer-events-none fixed inset-0 z-[-1] opacity-0" />
+          <section
+            ref={draftContentRef}
+            tabIndex={-1}
+            data-gm-overlay-id={quickFormFocus.overlayId}
+            role={quickForm.isOpen ? "dialog" : undefined}
+            aria-label="Đặt bàn trên sơ đồ"
+            aria-hidden={!quickForm.isOpen || undefined}
+            inert={!quickForm.isOpen || undefined}
+            data-motion-state={quickForm.isOpen ? "open" : "closing"}
+            onKeyDownCapture={(e) => {
+              if (e.key !== "Escape" || e.defaultPrevented) return
+              e.preventDefault()
+              e.stopPropagation()
+              requestQuickFormClose()
+            }}
+            style={{
+              ...(draftAwaiting ? { opacity: 0 } : {}),
+              ...(keyboardSafeHeight
+                ? { maxHeight: Math.max(200, keyboardSafeHeight - (draft && draftZone ? 76 : 56)) }
+                : {}),
+            }}
+            className={cn(
+              "z-[12] flex max-h-[62dvh] min-h-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)] outline-none",
+              !keyboardSafeHeight && "pb-[var(--bottom-safe)]",
+              !quickForm.isOpen && "pointer-events-none",
+            )}
+          >
+            <div
+              className="flex min-h-0 flex-1 flex-col pt-1"
+              onClickCapture={(e) => {
+                const target = e.target
+                if (!(target instanceof Element)) return
+                if (target.closest('button[aria-label="Đóng form"]') && isQuickFormDirty(draftContentEl)) {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setConfirmLeave(true)
+                }
+              }}
+            >
+              <QuickForm
+                key={quickForm.sessionKey}
+                compact
+                model={m.model}
+                availability={d.status === "ready" ? d.availability.data : undefined}
+                availabilityStatus={d.status}
+                onRetryAvailability={() => void d.availability.refetch()}
+              />
+            </div>
+          </section>
+          {draftOverlayEl && draftContentEl ? (
+            <OverlayMotionMount
+              kind="sheet"
+              side="bottom"
+              open={quickForm.isOpen}
+              skipInitialEnter={draftFallback}
+              overlay={draftOverlayEl}
+              content={draftContentEl}
+              onExitComplete={quickForm.onExitComplete}
             />
-          </div>
-        </section>
+          ) : null}
+        </>
       ) : null}
+      <AlertDialog
+        open={confirmLeave}
+        onOpenChange={(next) => {
+          if (!next) setConfirmLeave(false)
+        }}
+      >
+        <AlertDialogContent
+          data-gm
+          data-gm-overlay-id={leaveFocus.overlayId}
+          data-receptionist-frame={receptionist ? "true" : undefined}
+          size="sm"
+          onCloseAutoFocus={(event) => {
+            if (!quickForm.isOpen) {
+              event.preventDefault()
+              leaveFocus.onCloseAutoFocus(event)
+              if (!quickFormPresentRef.current) {
+                quickFormFocus.restoreNonModal()
+              }
+              return
+            }
+            leaveFocus.onCloseAutoFocus(event)
+            if (draftContentEl && (!document.activeElement || !draftContentEl.contains(document.activeElement))) {
+              event.preventDefault()
+              const closeBtn = draftContentEl.querySelector<HTMLElement>('button[aria-label="Đóng form"]')
+              ;(closeBtn ?? draftContentEl).focus({ preventScroll: true })
+            }
+          }}
+          aria-label="Bỏ đơn đang nhập"
+          className="max-w-[min(calc(100%-2rem),380px)] gap-4 rounded-2xl border-border bg-surface-1 p-5 shadow-[var(--shadow-float)]"
+        >
+          <AlertDialogHeader>
+            <AlertDialogMedia className="size-11 rounded-xl bg-st-late-tint text-st-late-ink">
+              <AlertTriangle className="size-5" aria-hidden />
+            </AlertDialogMedia>
+            <AlertDialogTitle className="text-[17px] font-semibold tracking-[-0.015em] text-tx-strong">
+              Bỏ đơn đang nhập?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-[14px] leading-relaxed text-[var(--text-muted)]">
+              Thông tin vừa nhập sẽ không được lưu.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="grid grid-cols-2 gap-2.5 pt-1">
+            <AlertDialogCancel className="h-12 rounded-xl border-border-strong text-[15px] font-medium">
+              Tiếp tục nhập
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                setConfirmLeave(false)
+                closeQuickFormNow()
+              }}
+              className="h-12 rounded-xl text-[15px] font-semibold"
+            >
+              Bỏ đơn
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </main>
   )
 }
@@ -415,16 +643,6 @@ const STATE_TEXT = (st: TableLiveState, late: number, noshow: number): [string, 
     spare: ["Sơ cua", null],
   })[st] as [string, Tone]
 
-/**
- * Chia các nút nửa dòng thành từng hàng: hai nút một hàng, hàng cuối ba nút
- * khi tổng số lẻ.
- *
- * Trước đây nút Gọi khách chiếm nguyên một dòng còn Sơ cua thì nằm trong một
- * lưới con, nên "Xem booking" hay rơi lại một mình nửa dòng và cả khối trông
- * lệch hẳn. Quy tắc của quán: một dòng hai nút, nhiều nhất ba; chỉ nút chốt
- * và nút huỷ mới được chiếm cả dòng. Một nút lẻ duy nhất thì cho chiếm cả
- * dòng, vì một nút nửa dòng đứng trơ bên trái còn xấu hơn.
- */
 function actionRows(cells: ReactNode[]): ReactNode[][] {
   if (cells.length <= 1) return cells.length ? [cells] : []
   const paired = cells.length % 2 === 0 ? cells : cells.slice(0, cells.length - 3)
@@ -444,21 +662,55 @@ interface Action {
   title?: string
 }
 
-/** Bottom sheet over the lower half; the map stays visible and other tables stay tappable. */
-export function TableSheet({ id, onClose }: { id: number; onClose: () => void }) {
+/** Non-modal bottom sheet over the lower half; the map stays visible and other tables stay tappable. */
+export function TableSheet({
+  id,
+  superseded = false,
+  onClose,
+}: {
+  id: number | null
+  superseded?: boolean
+  onClose: () => void
+}) {
   const m = useM()
   const a = useMobileActions()
   const pending = a.pending
-  const t = m.model.byId.get(id)
-  if (!t) return null
-  const fs = m.model.states.get(id)
+
+  const isOpen = Boolean(id && !superseded && m.model.byId.has(id))
+  const { present, markExited } = usePresenceController({ open: isOpen })
+  const [cachedId, setCachedId] = useState<number | null>(id)
+  if (id && m.model.byId.has(id) && id !== cachedId) {
+    setCachedId(id)
+  }
+
+  const [overlayEl, overlayCallbackRef] = useStableNodeRef<HTMLDivElement>()
+  const [contentEl, contentCallbackRef] = useStableNodeRef<HTMLDivElement>()
+  const { awaitingMotion, fallbackShown } = useAwaitingMotionController(present, isOpen)
+  const tableFocus = useRestoreTriggerFocus(isOpen, { modal: false, sourceKey: isOpen ? (id ?? cachedId) : null })
+  const wasPresentRef = useRef(false)
+
+  useEffect(() => {
+    const wasPresent = wasPresentRef.current
+    wasPresentRef.current = present
+    if (wasPresent && !present) {
+      tableFocus.restoreNonModal()
+    }
+  }, [present, tableFocus])
+
+  if (!present) return null
+
+  const activeId = id ?? cachedId
+  const t = activeId ? m.model.byId.get(activeId) : undefined
+  if (!t || activeId === null) return null
+
+  const fs = m.model.states.get(activeId)
   const st = fs?.state ?? "free"
   const c = fs?.claim ?? null
   const callTarget = c ? claimCallTarget(c) : null
-  const members = layoutMembers(m.model, id)
+  const members = layoutMembers(m.model, activeId)
   const isGroup = members.length > 1
   const memberTables = members.map((mid) => m.model.byId.get(mid)).filter((x): x is TableView => !!x)
-  const group = m.model.floor?.groups.find((g) => g.tableIds.includes(id))
+  const group = m.model.floor?.groups.find((g) => g.tableIds.includes(activeId))
   const groupName = isGroup ? groupDisplayName(memberTables, group) : ""
   const isBar = t.kind === "BAR_SEAT"
   const groupTitle = isGroup ? `Bàn ${groupName}` : isBar ? `Ghế Bar ${t.seqNo}` : `Bàn ${t.code}`
@@ -475,13 +727,12 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
   let who = ""
   let when = ""
   let info = ""
-  /** Nút thường; các nút huỷ tách ra `tailActions` để luôn nằm dưới cùng. */
   let actions: Action[] = []
   if (c?.kind === "visit") {
     who = `${c.displayName}, ${c.partySize} khách`
     when = `Đang ngồi từ ${fmtTime(c.startsAt)}, ${duration(m.now.getTime() - c.startsAt.getTime())}`
     actions = [
-      { label: "Đổi bàn", go: () => a.moveVisit(c, id) },
+      { label: "Đổi bàn", go: () => a.moveVisit(c, activeId) },
       ...(c.reservationId ? [{ label: "Xem booking", go: () => m.openDetail(c.reservationId!, m.today) }] : []),
       { label: "Nhả bàn", danger: true, wide: true, go: () => a.endVisit(c) },
     ]
@@ -518,8 +769,6 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
         disabled: !entry,
         go: () => entry && m.openEntryDetail(entry.id, entry.businessDate),
       },
-      // Huỷ cũng xuống cuối. Với đơn chờ không gắn booking thì đây là lối huỷ
-      // duy nhất từ sheet này, nên nó ở lại, dưới đúng tên của nó.
       ...(r
         ? [
             {
@@ -554,8 +803,6 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
             : []),
           { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
           { label: "Đổi bàn", go: () => a.assign(r) },
-          // Hủy booking đứng cuối và chiếm cả dòng: thao tác không lùi lại
-          // được thì không nên nằm lẫn giữa những nút bấm hằng ngày.
           {
             label: "Hủy booking",
             danger: true,
@@ -585,8 +832,6 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
     ]
   }
 
-  // Chốt (Khách đã đến) đứng riêng một dòng ở trên, huỷ đứng riêng một dòng ở
-  // dưới cùng. Chỉ hai loại đó mới được chiếm cả dòng.
   const leadActions = actions.filter((x) => x.wide && !x.danger)
   const tailActions = actions.filter((x) => x.wide && x.danger)
   const pairActions = actions.filter((x) => !x.wide)
@@ -599,17 +844,18 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
       disabled={x.disabled || a.pending || pending}
       title={x.title}
       className={cn(
-        "min-h-12 rounded-xl border px-2 text-[15px] leading-tight font-medium disabled:opacity-45",
+        "gm-press min-h-12 rounded-xl border px-2.5 text-[14.5px] leading-tight font-semibold disabled:pointer-events-none disabled:opacity-45",
         x.primary
-          ? "border-primary bg-primary text-primary-foreground"
-          : cn("border-strong bg-transparent", x.danger ? "text-st-noshow-ink" : "text-tx-1"),
+          ? "border-primary bg-primary text-primary-foreground shadow-[var(--shadow-xs)] hover:bg-[var(--primary-hover)]"
+          : x.danger
+            ? "border-destructive/40 bg-[var(--destructive-tint)] text-destructive hover:border-destructive/60"
+            : "border-border-strong bg-surface-1 text-tx-1 shadow-[var(--shadow-xs)] hover:bg-surface-2",
       )}
     >
       {x.label}
     </button>
   )
 
-  /** Nút nửa dòng, theo đúng thứ tự xuất hiện. */
   const cells: ReactNode[] = []
   if (callTarget) {
     cells.push(
@@ -622,89 +868,119 @@ export function TableSheet({ id, onClose }: { id: number; onClose: () => void })
   }
 
   return (
-    <div
-      role="dialog"
-      aria-label={`Chi tiết ${isGroup ? groupTitle : t.code}`}
-      className="absolute inset-x-0 bottom-[var(--nav-h)] z-[12] flex max-h-[82dvh] flex-col gap-3 overflow-y-auto rounded-t-[24px] border-t border-border bg-surface-1 px-4 pt-2 pb-4 shadow-[var(--shadow-float)]"
-    >
-      <div className="mx-auto mb-0.5 h-[5px] w-9 rounded-[3px] bg-strong" />
-      <div className="flex items-center gap-2.5">
-        <span className="text-2xl font-semibold tracking-[-0.01em] text-tx-strong">{groupTitle}</span>
-        <span className="rounded-full px-2.5 text-xs leading-6 font-medium" style={toneStyle(tone)}>
-          {isGroup ? `${chip} - ghép ${members.length} bàn` : chip}
-        </span>
-        <span className="flex-1" />
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Đóng"
-          className="-mr-2 grid size-11 place-items-center rounded-full text-[var(--text-muted)]"
-        >
-          <X className="size-5" />
-        </button>
-      </div>
-      {/* Trạng thái chỉ hiển thị một lần ở chip cạnh tên bàn. */}
-      <span className="-mt-2 text-[13px] text-[var(--text-muted)]">
-        {zone?.name}, {isBar && !isGroup ? "1 ghế" : `${totalCapacity} chỗ`}
-        {t.isSpare ? ", bàn sơ cua" : ""}
-      </span>
-      {who ? (
-        <div className="flex flex-col gap-0.5 rounded-[14px] bg-surface-2 px-3.5 py-3">
-          <span className="text-base font-medium text-tx-strong">{who}</span>
-          <span className="text-[13px] text-tx-2">{when}</span>
-          {c?.phoneLast3 ? <span className="text-[13px] text-[var(--text-muted)]">SĐT: ••• {c.phoneLast3}</span> : null}
-          {c?.flags?.length ? (
-            <span className="text-[13px] text-[var(--text-muted)]">
-              {c.flags.includes("RETURNING") ? "🔥 Đã từng đặt bàn" : ""}
-              {c.flags.includes("RETURNING") && c.flags.includes("NEW") ? " · " : ""}
-              {c.flags.includes("NEW") ? "🆕 Chưa từng đặt bàn" : ""}
-            </span>
-          ) : null}
-          {c && c.tableIds.length > 1 ? (
-            <span className="text-[13px] text-[var(--text-muted)]">
-              Nhóm {c.groupDisplayCode ?? groupCode(c.symbolNo) ?? "ghép"}: {codesOf(c.tableIds, m.model)}
-            </span>
-          ) : null}
-          {st === "noshow" ? (
-            <span className="text-[13px] font-medium text-st-noshow-ink">Chờ lễ tân xử lý; bàn vẫn được giữ.</span>
-          ) : null}
-        </div>
-      ) : null}
-      {info ? <span className="text-[13px] text-pretty text-[var(--text-muted)]">{info}</span> : null}
-      <LayoutActions model={m.model} tableId={id} />
-      {actions.length || t ? (
-        <div className="flex flex-col gap-2">
-          {leadActions.map((x) => actionButton(x))}
-          {actionRows(cells).map((row, index) => (
-            <div
-              key={index}
-              className={cn(
-                "grid items-stretch gap-2",
-                // Ba cột thì mỗi ô chỉ còn ~110px: hạ cỡ chữ để nhãn dài như
-                // "Đổi / Ghép bàn" nằm gọn một dòng, hàng không cao vống lên.
-                row.length === 3 ? "grid-cols-3 [&_button]:text-[13px]" : "grid-cols-2",
-              )}
-            >
-              {row}
+    <>
+      <div ref={overlayCallbackRef} aria-hidden className="pointer-events-none fixed inset-0 z-[-1] opacity-0" />
+      <div
+        ref={contentCallbackRef}
+        data-gm-overlay-id={tableFocus.overlayId}
+        data-mobile-table-sheet="true"
+        role={superseded ? undefined : "dialog"}
+        aria-label={`Chi tiết ${isGroup ? groupTitle : t.code}`}
+        aria-hidden={superseded || !isOpen || undefined}
+        inert={superseded || !isOpen}
+        data-motion-state={isOpen ? "open" : "closing"}
+        style={awaitingMotion ? { opacity: 0 } : undefined}
+        className={cn(
+          "absolute inset-x-0 bottom-[var(--nav-h)] z-[12] flex max-h-[82dvh] flex-col gap-3 overflow-y-auto rounded-t-[20px] border-t border-border bg-surface-1 px-4 pt-4 pb-[calc(16px+var(--bottom-safe))] shadow-[var(--shadow-float)]",
+          !isOpen && "pointer-events-none",
+        )}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="m-0 text-[22px] leading-tight font-bold tracking-[-0.02em] text-tx-strong">
+                {groupTitle}
+              </h2>
+              <span className="rounded-full px-2.5 py-0.5 text-xs leading-5 font-semibold" style={toneStyle(tone)}>
+                {isGroup ? `${chip} - ghép ${members.length} bàn` : chip}
+              </span>
             </div>
-          ))}
-          {tailActions.map((x) => (
-            <button
-              key={x.label}
-              type="button"
-              onClick={x.go}
-              disabled={x.disabled || a.pending || pending}
-              title={x.title}
-              className="h-12 rounded-xl border border-strong bg-transparent text-[15px] font-medium text-st-noshow-ink disabled:opacity-45"
-            >
-              {x.label}
-            </button>
-          ))}
+            <span className="text-[13px] font-medium text-[var(--text-muted)]">
+              {zone?.name}, {isBar && !isGroup ? "1 ghế" : `${totalCapacity} chỗ`}
+              {t.isSpare ? ", bàn sơ cua" : ""}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Đóng"
+            className="gm-press -mt-1 -mr-1.5 grid size-11 shrink-0 place-items-center rounded-xl text-[var(--text-muted)] hover:bg-surface-2 hover:text-tx-1"
+          >
+            <X className="size-5" aria-hidden />
+          </button>
         </div>
+
+        {who ? (
+          <div className="flex flex-col gap-1 rounded-2xl border border-border/75 bg-surface-2/80 px-3.5 py-3">
+            <span className="text-[15px] font-semibold text-tx-strong">{who}</span>
+            <span className="text-[13px] font-medium text-tx-2">{when}</span>
+            {c?.phoneLast3 ? (
+              <span className="tnum text-[13px] text-[var(--text-muted)]">SĐT: ••• {c.phoneLast3}</span>
+            ) : null}
+            {c?.flags?.length ? (
+              <span className="text-[13px] text-[var(--text-muted)]">
+                {c.flags.includes("RETURNING") ? "🔥 Đã từng đặt bàn" : ""}
+                {c.flags.includes("RETURNING") && c.flags.includes("NEW") ? " · " : ""}
+                {c.flags.includes("NEW") ? "🆕 Chưa từng đặt bàn" : ""}
+              </span>
+            ) : null}
+            {c && c.tableIds.length > 1 ? (
+              <span className="text-[13px] text-[var(--text-muted)]">
+                Nhóm {c.groupDisplayCode ?? groupCode(c.symbolNo) ?? "ghép"}: {codesOf(c.tableIds, m.model)}
+              </span>
+            ) : null}
+            {st === "noshow" ? (
+              <span className="mt-0.5 text-[13px] font-semibold text-st-noshow-ink">
+                Chờ lễ tân xử lý; bàn vẫn được giữ.
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+        {info ? <span className="text-[13px] leading-relaxed text-pretty text-[var(--text-muted)]">{info}</span> : null}
+        <LayoutActions model={m.model} tableId={activeId} />
+        {actions.length || t ? (
+          <div className="flex flex-col gap-2">
+            {leadActions.map((x) => actionButton(x))}
+            {actionRows(cells).map((row, index) => (
+              <div
+                key={index}
+                className={cn(
+                  "grid items-stretch gap-2",
+                  row.length === 3
+                    ? "grid-cols-3 [&_button]:px-1.5 [&_button]:text-[12.5px] [&_button]:leading-[1.2]"
+                    : "grid-cols-2",
+                )}
+              >
+                {row}
+              </div>
+            ))}
+            {tailActions.map((x) => (
+              <button
+                key={x.label}
+                type="button"
+                onClick={x.go}
+                disabled={x.disabled || a.pending || pending}
+                title={x.title}
+                className="gm-press h-12 rounded-xl border border-destructive/40 bg-[var(--destructive-tint)] text-[14.5px] font-semibold text-destructive hover:border-destructive/60 disabled:pointer-events-none disabled:opacity-45"
+              >
+                {x.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {callTarget ? <CallHistory target={callTarget} /> : null}
+      </div>
+      {present && overlayEl && contentEl ? (
+        <OverlayMotionMount
+          kind="sheet"
+          side="bottom"
+          open={isOpen}
+          skipInitialEnter={fallbackShown}
+          overlay={overlayEl}
+          content={contentEl}
+          onExitComplete={markExited}
+        />
       ) : null}
-      {/* Lịch sử gọi là một dòng chữ gập lại, không phải nút, nên nó đứng
-          ngoài lưới và không tính vào số nút chẵn/lẻ. */}
-      {callTarget ? <CallHistory target={callTarget} /> : null}
-    </div>
+    </>
   )
 }

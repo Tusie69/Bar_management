@@ -1,6 +1,7 @@
 import { ChevronLeft } from "lucide-react"
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
+import { Button } from "@/components/ui/button"
 import { PREFERENCE_MODE_LABEL, WAITLIST_STATUS_LABEL } from "@/domain/enums"
 import type { TableView, WaitlistEntryView } from "@/domain/models"
 import { useAction } from "@/hooks/use-action"
@@ -52,7 +53,7 @@ export function WaitScreen({ embedded = false }: { embedded?: boolean }) {
         <div className="px-4 pb-3">{kindFilter}</div>
       ) : (
         <PlainHeader title="Đơn chờ">
-          <div className="pt-1 pb-3">{kindFilter}</div>
+          <div className="pt-2 pb-3">{kindFilter}</div>
         </PlainHeader>
       )}
       <div ref={ref} className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-1 pb-6">
@@ -79,21 +80,24 @@ export function WaitScreen({ embedded = false }: { embedded?: boolean }) {
         )}
       </div>
       {embedded ? (
-        <div className="grid shrink-0 grid-cols-[2fr_1fr] gap-2 border-t border-border px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
-          <button
+        <div className="gm-glass-chrome grid shrink-0 grid-cols-[2fr_1fr] gap-2 border-t border-border/70 bg-surface-1/95 px-4 pt-3 pb-[calc(12px+var(--bottom-safe))] backdrop-blur-md">
+          <Button
             type="button"
+            size="lg"
             onClick={() => m.openForm({ mode: "booking", tableIds: [], toWaitlist: true })}
-            className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground active:brightness-90"
+            className="h-12 rounded-xl text-[15px] font-semibold"
           >
             Nhận booking
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="outline"
+            size="lg"
             onClick={() => m.openForm({ mode: "walkin", tableIds: [] })}
-            className="h-[52px] rounded-[14px] border border-strong text-[15px] font-medium text-tx-1"
+            className="h-12 rounded-xl border-border-strong text-[15px] font-semibold"
           >
             Walk-in
-          </button>
+          </Button>
         </div>
       ) : null}
     </>
@@ -240,35 +244,40 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
   }
 
   return (
-    <div className={cn(card, "flex flex-col gap-2 px-4 py-3.5", closed && "opacity-65")}>
+    <div className={cn(card, "flex flex-col gap-2.5 p-4", closed && "opacity-65")}>
       <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-base font-medium text-tx-strong">{e.displayName}</span>
-        <span className="shrink-0 rounded-full px-2.5 text-xs leading-6 font-medium" style={toneStyle(tone)}>
+        <span className="min-w-0 flex-1 truncate text-[16px] font-semibold tracking-[-0.01em] text-tx-strong">
+          {e.displayName}
+        </span>
+        <span className="shrink-0 rounded-full px-2.5 py-0.5 text-xs leading-5 font-semibold" style={toneStyle(tone)}>
           {WAITLIST_STATUS_LABEL[e.status]}
         </span>
       </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-tx-2">
-        <span className="rounded-full border border-strong px-2 text-xs leading-5 text-tx-2">
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px] text-tx-2">
+        <span className="rounded-full border border-border-strong bg-surface-2 px-2.5 py-0.5 text-xs font-medium text-tx-2">
           {e.kind === "WALK_IN" ? "Walk-in" : "Đặt trước"}
         </span>
-        <span>{party} khách</span>
-        {time ? <span>{time}</span> : null}
+        <span className="tnum font-medium">{party} khách</span>
+        {time ? <span className="tnum text-[var(--text-muted)]">{time}</span> : null}
         {pref ? <span className="text-subtle">{pref}</span> : null}
       </div>
-      <span className="text-[13px]" style={{ color: fit ? "var(--st-seated-ink)" : "var(--text-muted)" }}>
+      <span
+        className={cn("text-[13px] font-medium", fit && "rounded-lg bg-st-seated-tint px-2.5 py-1.5")}
+        style={{ color: fit ? "var(--st-seated-ink)" : "var(--text-muted)" }}
+      >
         {fitText}
       </span>
       {isHoldActive ? (
-        <div className="flex flex-col gap-2 pt-1">
-          <button
+        <div className="flex flex-col gap-2 pt-0.5">
+          <Button
             type="button"
             onClick={arrival}
             disabled={pending || !canArrival}
             title={!canArrival && !hold.supported ? "Chưa hỗ trợ" : undefined}
-            className="h-11 w-full rounded-xl bg-primary text-[14px] font-semibold text-primary-foreground shadow-[var(--shadow-soft)] disabled:opacity-50"
+            className="h-11 w-full rounded-xl text-[14px] font-semibold"
           >
             Khách đã đến
-          </button>
+          </Button>
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
@@ -276,7 +285,7 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
                 linkedRes ? m.openDetail(linkedRes.id, e.businessDate) : m.openEntryDetail(e.id, e.businessDate)
               }
               disabled={pending}
-              className="h-11 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1"
+              className="gm-press h-11 rounded-xl border border-border-strong bg-surface-2 px-2.5 text-center text-[13px] font-semibold text-tx-1 hover:bg-surface-3 disabled:opacity-45"
             >
               Quản lý đơn
             </button>
@@ -285,7 +294,7 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
               onClick={reassign}
               disabled={pending || !canReassign}
               title={!canReassign && !hold.supported ? "Chưa hỗ trợ" : undefined}
-              className="h-11 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1 disabled:opacity-45"
+              className="gm-press h-11 rounded-xl border border-border-strong bg-surface-2 px-2.5 text-center text-[13px] font-semibold text-tx-1 hover:bg-surface-3 disabled:pointer-events-none disabled:opacity-45"
             >
               Đổi / Ghép bàn
             </button>
@@ -293,7 +302,7 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
               type="button"
               onClick={changeStatus}
               disabled={pending || !canChangeStatus}
-              className="h-11 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1 disabled:opacity-45"
+              className="gm-press h-11 rounded-xl border border-border-strong bg-surface-2 px-2.5 text-center text-[13px] font-semibold text-tx-1 hover:bg-surface-3 disabled:pointer-events-none disabled:opacity-45"
             >
               Đổi trạng thái
             </button>
@@ -302,7 +311,7 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
                 type="button"
                 onClick={() => m.openDetail(linkedRes.id, e.businessDate)}
                 disabled={pending}
-                className="h-11 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1"
+                className="gm-press h-11 rounded-xl border border-border-strong bg-surface-2 px-2.5 text-center text-[13px] font-semibold text-tx-1 hover:bg-surface-3 disabled:opacity-45"
               >
                 Xem booking
               </button>
@@ -311,7 +320,7 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
                 type="button"
                 onClick={() => m.openEntryDetail(e.id, e.businessDate)}
                 disabled={pending}
-                className="h-11 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1"
+                className="gm-press h-11 rounded-xl border border-border-strong bg-surface-2 px-2.5 text-center text-[13px] font-semibold text-tx-1 hover:bg-surface-3 disabled:opacity-45"
               >
                 Xem đơn chờ
               </button>
@@ -321,7 +330,7 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
                 type="button"
                 onClick={() => m.openEntryDetail(e.id, e.businessDate)}
                 disabled={pending}
-                className="col-span-2 h-11 rounded-xl border border-strong bg-surface-2 px-2.5 text-center text-[13px] font-medium text-tx-1"
+                className="gm-press col-span-2 h-11 rounded-xl border border-border-strong bg-surface-2 px-2.5 text-center text-[13px] font-semibold text-tx-1 hover:bg-surface-3 disabled:opacity-45"
               >
                 Xem đơn chờ
               </button>
@@ -329,33 +338,33 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
           </div>
         </div>
       ) : primary ? (
-        <div className="flex gap-2">
-          <button
+        <div className="flex gap-2 pt-0.5">
+          <Button
             type="button"
+            variant={primary.go ? "default" : "outline"}
             onClick={primary.go}
             disabled={!primary.go || pending}
             className={cn(
-              "h-11 flex-1 rounded-xl border border-primary text-[14px] font-medium",
-              primary.go ? "bg-primary text-primary-foreground" : "bg-transparent text-[var(--text-muted)] opacity-60",
+              "h-11 flex-1 rounded-xl text-[14px] font-semibold",
+              !primary.go && "border-border text-[var(--text-muted)] opacity-60",
             )}
           >
             {primary.label}
-          </button>
+          </Button>
           {secondary ? (
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={secondary.go}
               disabled={pending}
-              className="h-11 shrink-0 rounded-xl border border-strong px-3.5 text-[14px] text-tx-1"
+              className="h-11 shrink-0 rounded-xl border-border-strong px-4 text-[14px] font-medium"
             >
               {secondary.label}
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : null}
-      {/* Khách chờ gắn với một booking thì gọi được ngay từ đây, lễ tân không
-          phải nhờ chủ quán mở số. Đơn chờ không có booking thì chưa gọi được:
-          booking_call_logs.reservation_id là NOT NULL. */}
+      {/* Khách chờ gắn booking gọi trực tiếp; đơn chờ thuần chưa hỗ trợ log cuộc gọi. */}
       {closed ? null : (
         <CallCustomerControl
           target={e.reservationId ? { kind: "booking", id: e.reservationId } : { kind: "waitlist", id: e.id }}
@@ -396,28 +405,32 @@ export function EntryDetailScreen({
   const party = e?.partySize ?? 1
 
   const header = (
-    <header className="shrink-0 bg-background px-4 pt-[var(--top-safe)] pb-2">
-      <div className="-ml-2.5 flex h-11 items-center gap-1">
+    <header className="gm-glass-chrome shrink-0 border-b border-border/70 bg-[var(--glass-chrome)] px-4 pt-[var(--top-safe)] pb-2 backdrop-blur-md">
+      <div className="-ml-2 flex h-12 items-center gap-1.5">
         <button
           type="button"
           onClick={onClose}
           aria-label="Quay lại"
-          className="grid size-11 place-items-center rounded-xl text-tx-1 active:bg-surface-2"
+          className="gm-press grid size-11 shrink-0 place-items-center rounded-xl text-tx-1 hover:bg-surface-2"
         >
-          <ChevronLeft className="size-[22px]" />
+          <ChevronLeft className="size-[22px]" aria-hidden />
         </button>
-        <span className="text-base font-medium text-tx-2">{backLabel}</span>
+        <span className="min-w-0 truncate text-[15px] font-semibold text-tx-2">{backLabel}</span>
       </div>
     </header>
   )
 
   if (!e) {
     return (
-      <div role="dialog" aria-label="Chi tiết mục chờ" className="absolute inset-0 z-[40] flex flex-col bg-background">
+      <div className="flex h-full w-full flex-col bg-background">
         {header}
-        <p className="px-4 text-[14px] text-[var(--text-muted)]">
-          {waitlist ? "Không tìm thấy mục chờ." : "Đang tải..."}
-        </p>
+        <div className="p-4">
+          {waitlist ? (
+            <EmptyBox title="Không tìm thấy mục chờ" body="Mục chờ có thể đã được chuyển hoặc hủy." />
+          ) : (
+            <p className="text-[14px] text-[var(--text-muted)]">Đang tải...</p>
+          )}
+        </div>
       </div>
     )
   }
@@ -446,20 +459,22 @@ export function EntryDetailScreen({
       : null
 
   return (
-    <div role="dialog" aria-label="Chi tiết mục chờ" className="absolute inset-0 z-[40] flex flex-col bg-background">
+    <div className="flex h-full w-full flex-col bg-background">
       {header}
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-1 pb-6">
-        <div className="flex flex-col gap-2 rounded-[20px] border border-border bg-surface-1 p-[18px] shadow-[var(--shadow-soft)]">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-3.5 pb-6">
+        <div className="flex flex-col gap-2 rounded-2xl border border-border bg-surface-1 p-4 shadow-[var(--shadow-soft)]">
           <div className="flex items-start gap-2.5">
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="text-[22px] font-semibold tracking-[-0.01em] text-tx-strong">{e.displayName}</span>
-              <span className="text-[14px] text-tx-2">
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <span className="text-[21px] leading-tight font-bold tracking-[-0.02em] text-tx-strong">
+                {e.displayName}
+              </span>
+              <span className="tnum text-[14px] font-medium text-tx-2">
                 {e.kind === "WALK_IN" ? "Walk-in" : "Đặt trước"}, {party} khách
                 {tableCodes ? `, Đang giữ ${tableCodes}` : ""}
               </span>
             </div>
             <span
-              className="shrink-0 rounded-full px-2.5 text-xs leading-6 font-medium"
+              className="shrink-0 rounded-full px-2.5 py-0.5 text-xs leading-5 font-semibold"
               style={toneStyle(TONE[e.status] ?? null)}
             >
               {WAITLIST_STATUS_LABEL[e.status]}
@@ -467,48 +482,54 @@ export function EntryDetailScreen({
           </div>
         </div>
 
-        <section className="flex flex-col gap-2">
-          <h2 className="m-0 pl-0.5 text-[15px] font-semibold text-tx-strong">Thông tin mục chờ</h2>
-          <div className={cn(card, "flex flex-col overflow-hidden")}>
-            <div className="flex min-h-12 items-center gap-3 px-4 py-2">
-              <span className="w-[118px] shrink-0 text-[13px] text-[var(--text-muted)]">Hình thức</span>
+        <section className="flex flex-col gap-1.5">
+          <h2 className="eyebrow m-0 px-1">Thông tin mục chờ</h2>
+          <div className={cn(card, "flex flex-col divide-y divide-border overflow-hidden")}>
+            <div className="flex min-h-12 items-center gap-3 px-4 py-2.5">
+              <span className="w-[118px] shrink-0 text-[13px] font-medium text-[var(--text-muted)]">Hình thức</span>
               <span className="min-w-0 flex-1 text-[14px] text-tx-1">
                 {e.kind === "WALK_IN" ? "Walk-in" : "Đặt trước"}
               </span>
             </div>
-            <div className="flex min-h-12 items-center gap-3 border-t border-border px-4 py-2">
-              <span className="w-[118px] shrink-0 text-[13px] text-[var(--text-muted)]">Số khách</span>
-              <span className="min-w-0 flex-1 text-[14px] text-tx-1">{party} khách</span>
+            <div className="flex min-h-12 items-center gap-3 px-4 py-2.5">
+              <span className="w-[118px] shrink-0 text-[13px] font-medium text-[var(--text-muted)]">Số khách</span>
+              <span className="tnum min-w-0 flex-1 text-[14px] text-tx-1">{party} khách</span>
             </div>
             {tableCodes ? (
-              <div className="flex min-h-12 items-center gap-3 border-t border-border px-4 py-2">
-                <span className="w-[118px] shrink-0 text-[13px] text-[var(--text-muted)]">Bàn đang giữ</span>
-                <span className="min-w-0 flex-1 text-[14px] text-tx-1">{tableCodes}</span>
+              <div className="flex min-h-12 items-center gap-3 px-4 py-2.5">
+                <span className="w-[118px] shrink-0 text-[13px] font-medium text-[var(--text-muted)]">
+                  Bàn đang giữ
+                </span>
+                <span className="min-w-0 flex-1 text-[14px] font-medium text-tx-strong">{tableCodes}</span>
               </div>
             ) : null}
             {pref ? (
-              <div className="flex min-h-12 items-center gap-3 border-t border-border px-4 py-2">
-                <span className="w-[118px] shrink-0 text-[13px] text-[var(--text-muted)]">Khu vực ưu tiên</span>
+              <div className="flex min-h-12 items-center gap-3 px-4 py-2.5">
+                <span className="w-[118px] shrink-0 text-[13px] font-medium text-[var(--text-muted)]">
+                  Khu vực ưu tiên
+                </span>
                 <span className="min-w-0 flex-1 text-[14px] text-tx-1">{pref}</span>
               </div>
             ) : null}
             {e.note ? (
-              <div className="flex min-h-12 items-center gap-3 border-t border-border px-4 py-2">
-                <span className="w-[118px] shrink-0 text-[13px] text-[var(--text-muted)]">Ghi chú</span>
-                <span className="min-w-0 flex-1 text-[14px] text-tx-1">{e.note}</span>
+              <div className="flex min-h-12 items-center gap-3 px-4 py-2.5">
+                <span className="w-[118px] shrink-0 text-[13px] font-medium text-[var(--text-muted)]">Ghi chú</span>
+                <span className="min-w-0 flex-1 text-[14px] text-pretty text-tx-1">{e.note}</span>
               </div>
             ) : null}
             {linkedRes ? (
-              <div className="flex min-h-12 items-center gap-3 border-t border-border px-4 py-2">
-                <span className="w-[118px] shrink-0 text-[13px] text-[var(--text-muted)]">Booking liên kết</span>
-                <span className="min-w-0 flex-1 text-[14px] text-tx-1">#{linkedRes.id}</span>
+              <div className="flex min-h-12 items-center gap-3 px-4 py-2.5">
+                <span className="w-[118px] shrink-0 text-[13px] font-medium text-[var(--text-muted)]">
+                  Booking liên kết
+                </span>
+                <span className="tnum min-w-0 flex-1 text-[14px] text-tx-1">#{linkedRes.id}</span>
                 <button
                   type="button"
                   onClick={() => {
                     onClose()
                     m.openDetail(linkedRes.id, bd)
                   }}
-                  className="h-9 shrink-0 rounded-[10px] border border-strong px-3 text-[13px] font-medium text-primary-ink"
+                  className="gm-press inline-flex h-11 shrink-0 items-center rounded-xl border border-border-strong bg-surface-1 px-3.5 text-[13px] font-semibold text-primary-ink hover:bg-primary-tint"
                 >
                   Xem booking
                 </button>
@@ -519,23 +540,24 @@ export function EntryDetailScreen({
       </div>
 
       {e.status === "HOLD_ACTIVE" ? (
-        <footer className="flex shrink-0 flex-col gap-2 border-t border-border bg-surface-1 px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
-          <button
+        <footer className="gm-glass-chrome flex shrink-0 flex-col gap-2 border-t border-border/70 bg-surface-1/95 px-4 pt-3 pb-[calc(12px+var(--bottom-safe))] backdrop-blur-md">
+          <Button
             type="button"
+            size="lg"
             onClick={arrival}
             disabled={pending || !canArrival}
             title={!canArrival && !hold.supported ? "Chưa hỗ trợ" : undefined}
-            className="h-[52px] w-full rounded-[14px] bg-primary text-base font-semibold text-primary-foreground disabled:opacity-50"
+            className="h-12 w-full rounded-xl text-[15px] font-semibold"
           >
             Khách đã đến
-          </button>
+          </Button>
           <div className="flex gap-2">
             <button
               type="button"
               onClick={reassign}
               disabled={pending || !canReassign}
               title={!canReassign && !hold.supported ? "Chưa hỗ trợ" : undefined}
-              className="h-[46px] flex-1 rounded-[12px] border border-strong text-[14px] font-medium text-tx-1 disabled:opacity-45"
+              className="gm-press h-11 flex-1 rounded-xl border border-border-strong bg-surface-1 text-[14px] font-semibold text-tx-1 hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-45"
             >
               Đổi / Ghép bàn
             </button>
@@ -543,7 +565,7 @@ export function EntryDetailScreen({
               type="button"
               onClick={changeStatus}
               disabled={pending || !canChangeStatus}
-              className="h-[46px] flex-1 rounded-[12px] border border-strong text-[14px] font-medium text-tx-1 disabled:opacity-45"
+              className="gm-press h-11 flex-1 rounded-xl border border-border-strong bg-surface-1 text-[14px] font-semibold text-tx-1 hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-45"
             >
               Đổi trạng thái
             </button>
