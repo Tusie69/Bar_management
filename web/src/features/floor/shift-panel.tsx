@@ -37,16 +37,23 @@ export function ShiftPanel({ model }: { model: FloorModel }) {
   return (
     <div className="flex h-full min-h-0 scrollbar-thin flex-col gap-6 overflow-y-auto bg-surface-1 p-5">
       <div className="flex shrink-0 flex-col gap-0.5">
-        <h2 className="text-[15px] leading-tight font-semibold">Ca tối · {bd ? fmtBusinessDate(bd) : "..."}</h2>
+        <h2 className="text-[17px] leading-tight font-semibold tracking-[-0.015em] text-foreground">
+          Ca tối · {bd ? fmtBusinessDate(bd) : "..."}
+        </h2>
         <p className="tnum text-xs text-tx-2">Cập nhật {fmtTime(now)} · 17:00 → 05:00</p>
       </div>
       {kpis ? (
-        <div className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-sm border bg-border">
+        <div className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border shadow-xs">
           {kpis.map((k) => (
             <div key={k.label} className="flex flex-col gap-1.5 bg-surface-1 p-4">
-              <span className="text-xs text-tx-2">{k.label}</span>
+              <span className="text-xs font-medium text-tx-2">{k.label}</span>
               <span className="flex items-baseline gap-1.5">
-                <span className={cn("tnum text-xl leading-7 font-semibold", k.accent && "text-primary-ink")}>
+                <span
+                  className={cn(
+                    "tnum text-[22px] leading-7 font-bold tracking-[-0.02em]",
+                    k.accent ? "text-primary-ink" : "text-foreground",
+                  )}
+                >
                   {k.value}
                 </span>
                 <span className="text-xs text-tx-3">{k.suffix}</span>
@@ -55,17 +62,19 @@ export function ShiftPanel({ model }: { model: FloorModel }) {
           ))}
         </div>
       ) : (
-        <Skeleton className="h-[196px] shrink-0" />
+        <Skeleton className="h-[196px] shrink-0 rounded-xl" />
       )}
       <section className="flex shrink-0 flex-col">
-        <div className="flex items-center gap-2 pb-2">
-          <h3 className="text-sm font-semibold">Danh sách chờ</h3>
-          <span className="tnum text-xs text-tx-3">{waiting.length}</span>
+        <div className="flex items-center gap-2 pb-2.5">
+          <h3 className="text-sm font-semibold text-foreground">Danh sách chờ</h3>
+          <span className="tnum rounded-full bg-surface-2 px-2 py-0.5 text-xs font-medium text-tx-2">
+            {waiting.length}
+          </span>
           <GuardedButton
             permission="waitlist.create"
             variant="outline"
             size="sm"
-            className="ml-auto border-strong bg-transparent font-semibold"
+            className="ml-auto rounded-lg border-border bg-transparent font-semibold"
             onClick={() => navigate("/waitlist?add=1")}
           >
             Thêm
@@ -106,7 +115,7 @@ export function ShiftPanel({ model }: { model: FloorModel }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="min-w-[84px] border-strong bg-transparent font-semibold"
+                  className="min-w-[84px] rounded-lg border-border bg-transparent font-semibold"
                   onClick={() =>
                     hold?.tableIds[0] ? ui.selectTable(hold.tableIds[0]) : navigate(`/waitlist?entry=${e.id}`)
                   }

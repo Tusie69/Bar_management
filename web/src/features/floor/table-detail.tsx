@@ -173,7 +173,7 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
       <div className="min-h-0 flex-1 scrollbar-thin overflow-y-auto">
         <header className="flex items-start justify-between gap-3 px-4 pt-4 pb-4">
           <div className="min-w-0">
-            <h2 className="text-[28px] leading-none font-extrabold tracking-tight">
+            <h2 className="text-[26px] leading-none font-bold tracking-[-0.022em] text-foreground">
               {isGroup ? `Bàn ${groupName}` : t.kind === "BAR_SEAT" ? `Bar ${t.seqNo}` : t.code}
             </h2>
             {isGroup ? (
@@ -191,9 +191,11 @@ export function TableDetail({ tableId, model, onBack }: { tableId: number; model
                 <Users className="size-3.5 text-subtle" aria-hidden />
                 {totalCapacity} chỗ
               </span>
-              {t.isSpare ? <span className="rounded-md border border-dashed px-1.5 text-xs">sơ cua</span> : null}
+              {t.isSpare ? (
+                <span className="rounded-full border border-dashed border-border px-2 py-0.5 text-xs">sơ cua</span>
+              ) : null}
               {zone?.isWaitingArea ? (
-                <span className="rounded-md border border-dashed px-1.5 text-xs">khu chờ</span>
+                <span className="rounded-full border border-dashed border-border px-2 py-0.5 text-xs">khu chờ</span>
               ) : null}
             </p>
           </div>
@@ -397,7 +399,7 @@ function ClaimCard({ claim, children, model }: { claim: ClaimView; children?: Re
   const flags = claim.flags ?? []
   const displayCode = claim.groupDisplayCode ?? groupCode(claim.symbolNo)
   return (
-    <div className="grid gap-4 rounded-2xl border bg-surface-1 p-4">
+    <div className="grid gap-4 rounded-xl border border-border bg-surface-1 p-4 shadow-xs">
       <div className="flex items-center gap-3">
         <GuestAvatar name={claim.displayName} size={40} />
         <div className="min-w-0 flex-1">
@@ -414,7 +416,9 @@ function ClaimCard({ claim, children, model }: { claim: ClaimView; children?: Re
       </div>
       {flags.length || displayCode ? (
         <div className="flex flex-wrap gap-1.5 text-xs">
-          {flags.includes("RETURNING") ? <span className="rounded-full border px-2 py-1">🔥 Đã từng đặt bàn</span> : null}
+          {flags.includes("RETURNING") ? (
+            <span className="rounded-full border px-2 py-1">🔥 Đã từng đặt bàn</span>
+          ) : null}
           {flags.includes("NEW") ? <span className="rounded-full border px-2 py-1">🆕 Chưa từng đặt bàn</span> : null}
           {displayCode ? (
             <span className="rounded-full border px-2 py-1 font-semibold">
@@ -785,9 +789,7 @@ function HoldSection({
           <>
             <CallCustomerControl
               target={
-                callTarget.kind === "booking"
-                  ? { ...callTarget, version: linkedRes?.version ?? null }
-                  : callTarget
+                callTarget.kind === "booking" ? { ...callTarget, version: linkedRes?.version ?? null } : callTarget
               }
               canCall={claim.canCall === true || claim.phoneLast3 !== null}
               className="col-span-2"
@@ -1034,6 +1036,11 @@ function FreeSection({
     [waitlist.data, tableId, zoneCode, t.capacity],
   )
   const [seatEntry, setSeatEntry] = useState<WaitlistEntryView | null>(null)
+  const [lastSeatEntry, setLastSeatEntry] = useState<WaitlistEntryView | null>(null)
+  if (seatEntry && seatEntry !== lastSeatEntry) {
+    setLastSeatEntry(seatEntry)
+  }
+  const shownSeatEntry = seatEntry ?? lastSeatEntry
 
   // FX-04: 1 mã chống trùng cho lần mở form; đổi mã sau mỗi lần tạo thành công.
   const [idempotencyKey, renewIdempotencyKey] = useIdempotencyKey()
@@ -1044,7 +1051,10 @@ function FreeSection({
   return (
     <>
       {spare ? <Note icon={Info}>Bàn sơ cua: mở bàn cần Chủ quán duyệt.</Note> : null}
-      <section className="grid gap-3.5 rounded-2xl border bg-surface-1 p-4" aria-labelledby="walkin-title">
+      <section
+        className="grid gap-3.5 rounded-xl border border-border bg-surface-1 p-4 shadow-xs"
+        aria-labelledby="walkin-title"
+      >
         <h3 id="walkin-title" className="flex items-center gap-2 text-[15px] font-semibold">
           <UserPlus className="size-4 text-muted-foreground" aria-hidden /> Walk-in
         </h3>
@@ -1128,7 +1138,10 @@ function FreeSection({
             {suggestions.map(({ entry }) => {
               const KindIcon = entry.kind === "ADVANCE_RESERVATION" ? CalendarClock : Footprints
               return (
-                <li key={entry.id} className="flex items-center gap-3 rounded-xl border px-3 py-2.5">
+                <li
+                  key={entry.id}
+                  className="flex items-center gap-3 rounded-xl border border-border bg-surface-1 px-3 py-2.5 shadow-2xs"
+                >
                   <span
                     className="tone grid size-8 shrink-0 place-items-center rounded-full"
                     style={{ ["--h" as string]: entry.kind === "ADVANCE_RESERVATION" ? 265 : 200 }}
@@ -1183,9 +1196,9 @@ function FreeSection({
       <GuestCountDialog
         open={!!seatEntry}
         onOpenChange={(o) => !o && setSeatEntry(null)}
-        title={`Xếp ${seatEntry?.displayName ?? ""} vào ${title}`}
+        title={`Xếp ${shownSeatEntry?.displayName ?? ""} vào ${title}`}
         description="Chỉ xác nhận khi khách đang có mặt và đồng ý nhận bàn này."
-        initial={seatEntry?.partySize ?? 1}
+        initial={shownSeatEntry?.partySize ?? 1}
         confirmLabel="Khách đã nhận bàn"
         onConfirm={async (count) => {
           if (!seatEntry) return

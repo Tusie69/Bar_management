@@ -37,7 +37,7 @@ export function StateChip({
   return (
     <span
       className={cn(
-        "inline-flex h-6 items-center gap-1 rounded-full border px-2 text-xs font-medium whitespace-nowrap",
+        "tnum inline-flex h-6 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium whitespace-nowrap",
         className,
       )}
       style={{
@@ -46,7 +46,7 @@ export function StateChip({
         background: meta.tint,
       }}
     >
-      <Icon className="size-3.5" aria-hidden />
+      <Icon className="size-3.5 shrink-0" aria-hidden />
       {children ?? meta.label}
     </span>
   )
@@ -54,9 +54,5 @@ export function StateChip({
 
 export function WarningChip({ warning, minutes }: { warning: "late" | "noshow" | null; minutes: number }) {
   if (!warning) return null
-  return (
-    <StateChip state={warning === "late" ? "late" : "noshow"}>
-      Tới muộn +{minutes}'
-    </StateChip>
-  )
+  return <StateChip state={warning === "late" ? "late" : "noshow"}>Tới muộn +{minutes}'</StateChip>
 }

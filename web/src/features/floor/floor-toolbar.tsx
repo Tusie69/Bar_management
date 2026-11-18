@@ -10,7 +10,7 @@ import {
   Plus,
   type LucideIcon,
 } from "lucide-react"
-import { Fragment, useState } from "react"
+import { useState } from "react"
 import { GuardedButton } from "@/components/common"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
@@ -108,7 +108,7 @@ const VIEWS: { id: FloorView; label: string; icon: LucideIcon }[] = [
   { id: "map", label: "Sơ đồ", icon: MapIcon },
 ]
 
-const Sep = () => <span aria-hidden className="h-5 w-px shrink-0 bg-strong" />
+const Sep = () => <span aria-hidden className="h-5 w-px shrink-0 bg-border" />
 
 /** ‹ day › — today is Live; any other day previews availability at that date. */
 function DayNav({ today }: { today: BusinessDate }) {
@@ -122,11 +122,11 @@ function DayNav({ today }: { today: BusinessDate }) {
   }
   const [weekday, dayMonth] = fmtBusinessDate(date).split(", ")
   return (
-    <div className="mx-auto flex items-center gap-2">
+    <div className="mx-auto flex items-center gap-1.5">
       <Button
         variant="outline"
         size="icon"
-        className="h-11 min-h-[44px] w-11 min-w-[44px] bg-surface-1"
+        className="h-11 min-h-[44px] w-11 min-w-[44px] rounded-lg bg-surface-1 shadow-xs"
         disabled={date <= today}
         onClick={() => go(addDays(date, -1))}
         aria-label="Ngày trước"
@@ -137,17 +137,17 @@ function DayNav({ today }: { today: BusinessDate }) {
         <PopoverTrigger asChild>
           <button
             type="button"
-            className="flex h-11 min-h-[44px] min-w-[200px] items-center gap-2.5 rounded-sm border border-strong bg-surface-1 px-3.5 text-sm hover:bg-surface-2"
+            className="flex h-11 min-h-[44px] min-w-[200px] items-center justify-center gap-2 rounded-lg border border-border bg-surface-1 px-3.5 text-sm shadow-xs transition-[background-color,border-color,transform] duration-150 hover:bg-surface-2 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.99]"
             aria-label="Chọn ngày trên lịch"
           >
             <CalendarDays className="size-4 text-muted-foreground" />
             <span className="whitespace-nowrap text-tx-2">{weekday}</span>
-            <span className="tnum font-semibold whitespace-nowrap">
+            <span className="tnum font-semibold whitespace-nowrap text-foreground">
               {dayMonth}/{date.slice(0, 4)}
             </span>
           </button>
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="center">
+        <PopoverContent className="w-auto rounded-xl p-0 shadow-float" align="center">
           <Calendar
             mode="single"
             locale={vi}
@@ -165,14 +165,18 @@ function DayNav({ today }: { today: BusinessDate }) {
       <Button
         variant="outline"
         size="icon"
-        className="h-11 min-h-[44px] w-11 min-w-[44px] bg-surface-1"
+        className="h-11 min-h-[44px] w-11 min-w-[44px] rounded-lg bg-surface-1 shadow-xs"
         onClick={() => go(addDays(date, 1))}
         aria-label="Ngày sau"
       >
         <ChevronRight />
       </Button>
       {date !== today ? (
-        <Button variant="outline" className="h-11 min-h-[44px] min-w-[44px] bg-transparent" onClick={() => go(today)}>
+        <Button
+          variant="outline"
+          className="h-11 min-h-[44px] min-w-[44px] rounded-lg bg-surface-1"
+          onClick={() => go(today)}
+        >
           Hôm nay
         </Button>
       ) : null}
@@ -185,30 +189,32 @@ export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
   const now = useNow(15_000)
   const today = businessDateOf(now)
   return (
-    <div className="flex h-14 shrink-0 items-center gap-2.5 overflow-x-auto border-b px-3 sm:px-4">
-      <div role="tablist" aria-label="Chế độ xem" className="flex shrink-0 items-center gap-2 sm:gap-3">
-        {VIEWS.map((v, i) => {
+    <div className="flex h-14 shrink-0 items-center gap-2.5 overflow-x-auto border-b border-border-subtle bg-background px-3 sm:px-4">
+      <div
+        role="tablist"
+        aria-label="Chế độ xem"
+        className="flex shrink-0 items-center gap-0.5 rounded-lg border border-border-subtle bg-surface-2 p-1"
+      >
+        {VIEWS.map((v) => {
           const on = ui.view === v.id
           return (
-            <Fragment key={v.id}>
-              {i > 0 ? <Sep /> : null}
-              <button
-                type="button"
-                role="tab"
-                aria-selected={on}
-                aria-label={v.label}
-                onClick={() => ui.setView(v.id)}
-                className={cn(
-                  "flex h-11 min-h-[44px] items-center gap-2 rounded-sm border px-3 text-sm whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:px-4",
-                  on
-                    ? "border-primary bg-primary font-medium text-primary-foreground"
-                    : "border-transparent text-tx-1 hover:text-primary-ink",
-                )}
-              >
-                <v.icon className="size-4" />
-                <span className="hidden xl:inline">{v.label}</span>
-              </button>
-            </Fragment>
+            <button
+              key={v.id}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              aria-label={v.label}
+              onClick={() => ui.setView(v.id)}
+              className={cn(
+                "flex h-9 min-h-[36px] min-w-[44px] items-center justify-center gap-2 rounded-md px-3 text-sm whitespace-nowrap transition-[background-color,color,box-shadow,transform] duration-150 outline-none focus-visible:ring-[3px] focus-visible:ring-primary/25 active:scale-[0.98] sm:px-3.5",
+                on
+                  ? "bg-surface-1 font-semibold text-foreground shadow-xs"
+                  : "font-medium text-tx-2 hover:text-foreground",
+              )}
+            >
+              <v.icon className="size-4" />
+              <span className="hidden xl:inline">{v.label}</span>
+            </button>
           )
         })}
       </div>
@@ -222,7 +228,7 @@ export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
             size="icon"
             onClick={onOpenList}
             aria-label="Danh sách booking"
-            className="h-11 min-h-[44px] w-11 min-w-[44px] bg-transparent"
+            className="h-11 min-h-[44px] w-11 min-w-[44px] rounded-lg bg-surface-1 shadow-xs"
           >
             <ListTodo />
           </Button>
@@ -231,7 +237,7 @@ export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
           <GuardedButton
             permission="visit.walkin"
             variant="outline"
-            className="h-11 min-h-[44px] border-strong bg-transparent px-4"
+            className="h-11 min-h-[44px] rounded-lg bg-surface-1 px-4 shadow-xs"
             onClick={() => ui.openWalkIn()}
           >
             Walk-in
@@ -239,7 +245,7 @@ export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
         ) : null}
         <GuardedButton
           permission="reservation.create"
-          className="h-11 min-h-[44px] px-4"
+          className="h-11 min-h-[44px] rounded-lg px-4 font-semibold shadow-xs"
           onClick={() =>
             ui.openBooking(
               ui.floorMode === "availability" ? { date: ui.availDate, time: ui.availTime, party: ui.availParty } : {},

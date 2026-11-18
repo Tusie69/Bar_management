@@ -183,18 +183,18 @@ export function BarChart({
         ) : null}
         {hover !== null && data[hover] ? (
           <div
-            className="pointer-events-none absolute z-10 rounded-lg border bg-popover px-2.5 py-1.5 text-xs shadow-float"
+            className="pointer-events-none absolute z-10 rounded-xl border border-border bg-popover px-3 py-2 text-xs shadow-float"
             style={{
               left: Math.min(Math.max(0, padL + band * hover + band / 2 - 70), Math.max(0, width - 140)),
               top: 0,
               width: 140,
             }}
           >
-            <p className="font-medium">{data[hover].label}</p>
+            <p className="font-semibold text-foreground">{data[hover].label}</p>
             {data[hover].values.map((v, si) => (
               <p key={si} className="flex justify-between gap-2 text-muted-foreground">
                 <span>{series[si]}</span>
-                <span className="tnum text-foreground">
+                <span className="tnum font-medium text-foreground">
                   {v}
                   {unit}
                 </span>
@@ -204,14 +204,16 @@ export function BarChart({
         ) : null}
       </div>
       <details className="text-xs text-muted-foreground">
-        <summary className="w-fit cursor-pointer py-1 select-none hover:text-foreground">Xem dạng bảng</summary>
-        <div className="mt-2 max-h-48 scrollbar-thin overflow-auto rounded-lg border">
+        <summary className="inline-flex min-h-[44px] w-fit cursor-pointer items-center py-1 font-medium select-none hover:text-foreground">
+          Xem dạng bảng
+        </summary>
+        <div className="mt-2 max-h-48 scrollbar-thin overflow-auto rounded-xl border border-border bg-surface-1">
           <table className="w-full text-left">
             <thead className="sticky top-0 bg-surface-2">
               <tr>
-                <th className="px-2 py-1 font-medium">Mốc</th>
+                <th className="px-3 py-2 text-[11px] font-semibold tracking-[0.03em] uppercase">Mốc</th>
                 {series.map((s) => (
-                  <th key={s} className="px-2 py-1 text-right font-medium">
+                  <th key={s} className="px-3 py-2 text-right text-[11px] font-semibold tracking-[0.03em] uppercase">
                     {s}
                   </th>
                 ))}
@@ -219,10 +221,10 @@ export function BarChart({
             </thead>
             <tbody>
               {data.map((d) => (
-                <tr key={d.key} className="border-t">
-                  <td className="px-2 py-1">{d.label}</td>
+                <tr key={d.key} className="border-t border-border-subtle">
+                  <td className="px-3 py-1.5">{d.label}</td>
                   {d.values.map((v, i) => (
-                    <td key={i} className="tnum px-2 py-1 text-right text-foreground">
+                    <td key={i} className="tnum px-3 py-1.5 text-right font-medium text-foreground">
                       {v}
                     </td>
                   ))}

@@ -28,25 +28,25 @@ export default function SettingsPage() {
   const canConfigure = useCan("venue.configure")
   return (
     <div className="h-full scrollbar-thin overflow-y-auto">
-      <div className="mx-auto grid max-w-5xl gap-5 p-4 md:p-6">
+      <div className="mx-auto grid max-w-5xl grid-cols-[minmax(0,1fr)] gap-5 p-4 md:p-6">
         {!canConfigure ? (
           <p className="flex items-center gap-2 rounded-xl border border-dashed px-4 py-3 text-sm text-muted-foreground">
             <Lock className="size-4" /> Chế độ chỉ xem. Chỉ Chủ quán / Admin thay đổi được cấu hình (quyền
             venue.configure).
           </p>
         ) : null}
-        <Tabs defaultValue="venue" className="gap-5">
+        <Tabs defaultValue="venue" className="min-w-0 gap-5">
           <TabsList className="no-scrollbar w-full touch-pan-x justify-start overflow-x-auto overscroll-x-contain sm:w-fit">
-            <TabsTrigger value="venue" className="px-4">
+            <TabsTrigger value="venue" className="px-3 sm:px-4">
               Vận hành
             </TabsTrigger>
-            <TabsTrigger value="floor" className="px-4">
+            <TabsTrigger value="floor" className="px-3 sm:px-4">
               Khu & bàn
             </TabsTrigger>
-            <TabsTrigger value="access" className="px-4">
+            <TabsTrigger value="access" className="px-3 sm:px-4">
               Phân quyền
             </TabsTrigger>
-            <TabsTrigger value="integration" className="px-4">
+            <TabsTrigger value="integration" className="px-3 sm:px-4">
               Tích hợp
             </TabsTrigger>
           </TabsList>
@@ -114,7 +114,10 @@ function DynamicVenueSettingsForm({
   }
 
   return (
-    <section className="mb-6 rounded-2xl border px-4 md:px-5" aria-label="Cấu hình động theo quán">
+    <section
+      className="mb-6 rounded-xl border border-border bg-surface-1 px-4 shadow-xs md:px-5"
+      aria-label="Cấu hình động theo quán"
+    >
       <Row
         label="Giờ nhanh đặt bàn"
         hint="Nhập 1–24 giờ HH:mm, cách nhau bằng dấu phẩy. Biểu mẫu đặt bàn dùng mốc 15 phút. Giờ nhanh lệch mốc được giữ trong cấu hình."
@@ -124,7 +127,7 @@ function DynamicVenueSettingsForm({
           value={quickTimes}
           disabled={readOnly || pending}
           onChange={(event) => setQuickTimes(event.target.value)}
-          className="h-11 w-full min-w-64 sm:w-96"
+          className="h-11 w-full min-w-0 sm:w-96"
           placeholder="21:00, 21:30, 22:00, 22:30"
         />
       </Row>
@@ -261,7 +264,7 @@ function VenueForm({ v, readOnly }: { v: VenueConfig; readOnly: boolean }) {
     form.symbols !== v.groupSymbolCount
   return (
     <div className="grid gap-6">
-      <section className="rounded-2xl border px-4 md:px-5">
+      <section className="rounded-xl border border-border bg-surface-1 px-4 shadow-xs md:px-5">
         <Row
           label="Ngày kinh doanh"
           hint="business_date = DATE(giờ địa phương - 05:00). Ví dụ 01:30 ngày 21/10 thuộc ca 20/10."
@@ -501,7 +504,7 @@ function FloorSettings({ readOnly }: { readOnly: boolean }) {
         >
           Danh mục bàn
         </SectionTitle>
-        <div className="scrollbar-thin overflow-x-auto rounded-2xl border">
+        <div className="scrollbar-thin overflow-x-auto rounded-xl border border-border bg-surface-1 shadow-xs">
           <Table>
             <TableHeader>
               <TableRow>
@@ -587,7 +590,7 @@ function AccessSettings() {
       </section>
       <section className="grid gap-2">
         <SectionTitle aside={<PendingTag>Vai trò TECH_PROPOSED</PendingTag>}>Ma trận quyền</SectionTitle>
-        <div className="scrollbar-thin overflow-x-auto rounded-2xl border">
+        <div className="scrollbar-thin overflow-x-auto rounded-xl border border-border bg-surface-1 shadow-xs">
           <Table>
             <TableHeader>
               <TableRow>

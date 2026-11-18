@@ -977,7 +977,7 @@ export function FloorCanvas(props: Props) {
             }}
             onPointerDown={(e) => e.stopPropagation()}
             aria-label={waitingCount !== undefined ? `Bàn chờ, ${waitingCount} khách đang chờ` : "Bàn chờ"}
-            className="group flex h-10 items-center justify-center gap-2 rounded-full border border-border/80 bg-background/95 px-3 py-1.5 text-foreground shadow-lg backdrop-blur transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none active:scale-95 dark:border-slate-700/80 dark:bg-[#1e232d]/95"
+            className="group flex h-11 min-h-[44px] items-center justify-center gap-2 rounded-full border border-border bg-surface-1/95 px-3.5 py-1.5 text-foreground shadow-sm backdrop-blur-md transition-transform duration-[var(--duration-press)] hover:bg-surface-2 focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-95"
           >
             <List className="size-4 shrink-0 text-foreground" />
             <span className="text-xs font-bold whitespace-nowrap">
@@ -1342,9 +1342,7 @@ const LiveGlyph = memo(function LiveGlyph({
           strokeWidth={1.5}
           strokeDasharray="2 2"
         />
-        {searchHighlighted ? (
-          <circle className="animate-pulse" r={r + 5} fill="none" stroke="var(--primary)" strokeWidth={3} />
-        ) : null}
+        {searchHighlighted ? <circle r={r + 5} fill="none" stroke="var(--primary)" strokeWidth={3} /> : null}
         {selected ? (
           <PickedCircleRing r={r} />
         ) : groupHighlighted ? (
@@ -1360,13 +1358,11 @@ const LiveGlyph = memo(function LiveGlyph({
           />
         ) : null}
         <circle
-          key={state}
           r={r}
           fill={fill}
           stroke={stroke}
           strokeWidth={strokeWidth}
           strokeDasharray={dashed ? "2.5 2" : undefined}
-          className="animate-[glyph-in_420ms_var(--ease-out-quart)]"
         />
         <text
           y={barSubText ? -1.2 : 3.4}
@@ -1435,7 +1431,6 @@ const LiveGlyph = memo(function LiveGlyph({
       />
       {searchHighlighted ? (
         <rect
-          className="animate-pulse"
           x={-hw - 9}
           y={-hh - 9}
           width={t.w + 18}
@@ -1466,7 +1461,6 @@ const LiveGlyph = memo(function LiveGlyph({
       ) : null}
       <Chairs t={t} color={state === "free" || state === "spare" ? "var(--table-line)" : meta.color} />
       <rect
-        key={state}
         x={-hw}
         y={-hh}
         width={t.w}
@@ -1476,7 +1470,6 @@ const LiveGlyph = memo(function LiveGlyph({
         stroke={stroke}
         strokeWidth={strokeWidth}
         strokeDasharray={dashed ? "3.5 2.5" : undefined}
-        className="animate-[glyph-in_420ms_var(--ease-out-quart)]"
       />
       <text
         y={cellSubText ? -1.5 : 4}

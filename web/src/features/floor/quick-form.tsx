@@ -22,7 +22,19 @@ import {
   type SocialPlatform,
 } from "@/components/booking-pickers"
 import { GuardedButton } from "@/components/common"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import type { Permission } from "@/domain/access"
 import { bookingInstant, validateBookingTime } from "@/domain/booking-rules"
 import { type BookingClassification, type BookingSourceCode, type WaitlistChannel } from "@/domain/enums"
@@ -124,18 +136,17 @@ const CHANNEL_OF_SOURCE: Partial<Record<BookingSourceCode, WaitlistChannel>> = {
   ZALO: "ZALO_THREAD",
 }
 
-const label12 = "text-xs text-tx-2"
+const label12 = "text-xs font-medium text-tx-2"
 const chip = (on: boolean) =>
   cn(
-    "tnum h-11 min-w-0 rounded-sm border px-2.5 text-sm font-medium whitespace-nowrap transition-colors",
+    "tnum h-11 min-w-0 rounded-md border px-2.5 text-sm font-medium whitespace-nowrap shadow-2xs transition-[background-color,border-color,color,transform] duration-150 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.97]",
     on
       ? "border-primary bg-primary-tint font-semibold text-primary-ink"
-      : "border-strong bg-background text-tx-1 hover:border-foreground",
-    "disabled:cursor-not-allowed disabled:border-dashed disabled:border-border disabled:bg-transparent disabled:font-normal disabled:text-tx-3",
+      : "border-border bg-surface-1 text-tx-1 hover:border-border-strong hover:bg-surface-2",
+    "disabled:cursor-not-allowed disabled:border-dashed disabled:border-border disabled:bg-transparent disabled:font-normal disabled:text-tx-3 disabled:shadow-none disabled:active:scale-100",
   )
 // 16px on phones stops iOS focus zoom.
-const inputCls =
-  "h-11 w-full rounded-sm border border-strong bg-background px-3 text-base sm:text-sm outline-none placeholder:text-tx-3 focus:border-foreground aria-[invalid=true]:border-st-noshow"
+const inputCls = "h-11 text-base md:text-sm"
 
 function FieldError({ children }: { children?: string }) {
   return children ? (
@@ -446,7 +457,7 @@ export function QuickForm({
               {isB ? "Tên khách" : "Tên hoặc đặc điểm (tùy chọn)"}
             </label>
             <div className="flex items-center gap-1.5">
-              <input
+              <Input
                 id="qf-name"
                 className={cn(inputCls, "min-w-0 flex-1")}
                 autoComplete="off"
@@ -463,7 +474,7 @@ export function QuickForm({
             <label htmlFor="qf-phone" className={label12}>
               Số điện thoại (không bắt buộc)
             </label>
-            <input
+            <Input
               id="qf-phone"
               className={cn(inputCls, "tnum")}
               inputMode="tel"
@@ -602,7 +613,7 @@ export function QuickForm({
                       aria-label={`Bỏ ${model.label(id)}`}
                       onClick={() => ui.toggleDraftTable(id)}
                       className={cn(
-                        "tnum flex h-11 items-center gap-1.5 rounded-sm border pr-2 pl-3 text-sm font-medium",
+                        "tnum flex h-11 items-center gap-1.5 rounded-md border pr-2 pl-3 text-sm font-medium shadow-2xs transition-[transform,colors] active:scale-[0.97]",
                         bad
                           ? "border-st-noshow bg-st-noshow-tint text-st-noshow-ink"
                           : "border-primary bg-primary-tint text-primary-ink",
@@ -615,7 +626,7 @@ export function QuickForm({
                 })}
               </div>
             ) : (
-              <div className="flex min-h-11 items-center rounded-sm border border-dashed border-strong px-3 text-xs text-tx-2">
+              <div className="flex min-h-11 items-center rounded-lg border border-dashed border-border-strong bg-surface-2/40 px-3 text-xs text-tx-2">
                 {!isB
                   ? "Chưa chọn bàn · nếu hết chỗ, đưa vào Bàn chờ"
                   : receptionist
@@ -632,7 +643,7 @@ export function QuickForm({
                     type="button"
                     aria-label={`Gợi ý ${t.code}`}
                     onClick={() => ui.toggleDraftTable(t.id)}
-                    className="tnum flex h-11 items-center gap-1 rounded-sm border border-strong px-2.5 text-sm hover:bg-surface-2"
+                    className="tnum flex h-11 items-center gap-1 rounded-md border border-border bg-surface-1 px-2.5 text-sm shadow-2xs transition-[background-color,transform] hover:bg-surface-2 active:scale-[0.97]"
                   >
                     {t.code} <span className="text-xs text-tx-2">{t.capacity}</span>
                   </button>
@@ -648,11 +659,11 @@ export function QuickForm({
               <label htmlFor="qf-note" className={label12}>
                 Yêu cầu của khách
               </label>
-              <textarea
+              <Textarea
                 id="qf-note"
                 aria-label="Ghi chú"
                 rows={2}
-                className={cn(inputCls, "h-auto resize-none py-2.5")}
+                className="min-h-[68px] resize-none text-base md:text-sm"
                 placeholder="Yêu cầu của khách (ghi chú)..."
                 value={note}
                 aria-invalid={!!shown.note}
@@ -778,32 +789,22 @@ export function QuickForm({
         </div>
       </div>
 
-      {confirmLeave ? (
-        <div className="absolute inset-0 z-[3] grid place-items-center bg-[var(--scrim)] p-5">
-          <div
-            role="alertdialog"
-            aria-label="Bỏ đơn đang nhập"
-            aria-modal="true"
-            className="flex w-full max-w-sm flex-col gap-3 rounded-lg bg-surface-1 p-5 shadow-float"
-          >
-            <span className="text-[17px] font-semibold text-tx-strong">Bỏ đơn đang nhập?</span>
-            <span className="text-sm text-tx-2">Thông tin vừa nhập sẽ không được lưu.</span>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                className="h-11 flex-1 border-strong"
-                autoFocus
-                onClick={() => setConfirmLeave(false)}
-              >
-                Tiếp tục nhập
-              </Button>
-              <Button variant="destructive" className="h-11 flex-1" onClick={close}>
-                Bỏ đơn
-              </Button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <AlertDialog open={confirmLeave} onOpenChange={setConfirmLeave}>
+        <AlertDialogContent aria-label="Bỏ đơn đang nhập" size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Bỏ đơn đang nhập?</AlertDialogTitle>
+            <AlertDialogDescription>Thông tin vừa nhập sẽ không được lưu.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel autoFocus onClick={() => setConfirmLeave(false)}>
+              Tiếp tục nhập
+            </AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={close}>
+              Bỏ đơn
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
