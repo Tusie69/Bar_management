@@ -10,7 +10,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react"
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { useNavigate } from "react-router"
 import {
   AlertDialog,
@@ -39,52 +39,8 @@ import type { Alert } from "../floor/alerts"
 import { useMobileActions } from "./actions"
 import { useM, type Confirm } from "./context"
 import { tableText } from "./model"
+import { useRestoreTriggerFocus } from "./overlay-focus"
 import { EmptyBox, Seg } from "./ui"
-
-function useRestoreTriggerFocus(open: boolean) {
-  const triggerRef = useRef<HTMLElement | null>(null)
-
-  useEffect(() => {
-    if (open) return
-    const capture = (target: EventTarget | null) => {
-      if (!(target instanceof HTMLElement)) return
-      if (
-        target.closest("[data-slot='sheet-content'], [data-slot='dialog-content'], [data-slot='alert-dialog-content']")
-      ) {
-        return
-      }
-      const focusable = target.closest<HTMLElement>(
-        "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
-      )
-      triggerRef.current = focusable ?? target
-    }
-    const onFocusIn = (e: FocusEvent) => capture(e.target)
-    const onPointerDown = (e: PointerEvent) => capture(e.target)
-    document.addEventListener("focusin", onFocusIn, true)
-    document.addEventListener("pointerdown", onPointerDown, true)
-    return () => {
-      document.removeEventListener("focusin", onFocusIn, true)
-      document.removeEventListener("pointerdown", onPointerDown, true)
-      const active = document.activeElement
-      if (
-        active instanceof HTMLElement &&
-        active !== document.body &&
-        !active.closest("[data-slot='sheet-content'], [data-slot='dialog-content'], [data-slot='alert-dialog-content']")
-      ) {
-        triggerRef.current = active
-      }
-    }
-  }, [open])
-
-  return (event: Event) => {
-    const target = triggerRef.current
-    triggerRef.current = null
-    if (target && target.isConnected) {
-      event.preventDefault()
-      target.focus({ preventScroll: true })
-    }
-  }
-}
 
 function sheetContentClass(isReceptionist: boolean, className?: string) {
   return cn(
@@ -146,7 +102,7 @@ function SheetItem({
 export function CreateSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const m = useM()
   const isReceptionist = m.role === "RECEPTIONIST"
-  const onCloseAutoFocus = useRestoreTriggerFocus(open)
+  const focus = useRestoreTriggerFocus(open)
   const items: { icon: LucideIcon; label: string; sub: string; permission: Permission; go: () => void }[] = [
     {
       icon: CalendarPlus,
@@ -174,9 +130,10 @@ export function CreateSheet({ open, onClose }: { open: boolean; onClose: () => v
     <Sheet open={open} onOpenChange={(next) => !next && onClose()}>
       <SheetContent
         data-gm
+        data-gm-overlay-id={focus.overlayId}
         data-receptionist-frame={isReceptionist ? "true" : undefined}
         side="bottom"
-        onCloseAutoFocus={onCloseAutoFocus}
+        onCloseAutoFocus={focus.onCloseAutoFocus}
         className={sheetContentClass(isReceptionist)}
       >
         <SheetHeader className="px-4 pt-5 pb-2 text-left">
@@ -209,14 +166,15 @@ export function AlertsSheet({
 }) {
   const m = useM()
   const isReceptionist = m.role === "RECEPTIONIST"
-  const onCloseAutoFocus = useRestoreTriggerFocus(open)
+  const focus = useRestoreTriggerFocus(open)
   return (
     <Sheet open={open} onOpenChange={(next) => !next && onClose()}>
       <SheetContent
         data-gm
+        data-gm-overlay-id={focus.overlayId}
         data-receptionist-frame={isReceptionist ? "true" : undefined}
         side="bottom"
-        onCloseAutoFocus={onCloseAutoFocus}
+        onCloseAutoFocus={focus.onCloseAutoFocus}
         className={sheetContentClass(isReceptionist)}
       >
         <SheetHeader className="px-4 pt-5 pb-2 text-left">
@@ -261,7 +219,7 @@ export function AccountSheet({ open, onClose }: { open: boolean; onClose: () => 
   const navigate = useNavigate()
   const [loggingOut, setLoggingOut] = useState(false)
   const isReceptionist = user.role === "RECEPTIONIST"
-  const onCloseAutoFocus = useRestoreTriggerFocus(open)
+  const focus = useRestoreTriggerFocus(open)
   const more = NAV.filter((n) => ["/guests", "/reports", "/settings"].includes(n.to)).filter(
     (n) =>
       !n.permission || (api.mode === "http" ? permissions.includes(n.permission) : roleCan(user.role, n.permission)),
@@ -270,9 +228,10 @@ export function AccountSheet({ open, onClose }: { open: boolean; onClose: () => 
     <Sheet open={open} onOpenChange={(next) => !next && onClose()}>
       <SheetContent
         data-gm
+        data-gm-overlay-id={focus.overlayId}
         data-receptionist-frame={isReceptionist ? "true" : undefined}
         side="bottom"
-        onCloseAutoFocus={onCloseAutoFocus}
+        onCloseAutoFocus={focus.onCloseAutoFocus}
         className={sheetContentClass(isReceptionist)}
       >
         <SheetHeader className="px-4 pt-5 pb-2 text-left">
@@ -390,7 +349,7 @@ export function StatusDialog({ r, onClose }: { r: ReservationView | null; onClos
   const m = useM()
   const a = useMobileActions()
   const isReceptionist = m.role === "RECEPTIONIST"
-  const onCloseAutoFocus = useRestoreTriggerFocus(Boolean(r))
+  const focus = useRestoreTriggerFocus(Boolean(r))
   const [cachedR, setCachedR] = useState<ReservationView | null>(r)
   if (r && r !== cachedR) {
     setCachedR(r)
@@ -429,9 +388,10 @@ export function StatusDialog({ r, onClose }: { r: ReservationView | null; onClos
     <Dialog open={Boolean(r)} onOpenChange={(next) => !next && onClose()}>
       <DialogContent
         data-gm
+        data-gm-overlay-id={focus.overlayId}
         data-receptionist-frame={isReceptionist ? "true" : undefined}
         showCloseButton={false}
-        onCloseAutoFocus={onCloseAutoFocus}
+        onCloseAutoFocus={focus.onCloseAutoFocus}
         aria-label="Đổi trạng thái booking"
         className="max-w-[min(calc(100%-2rem),400px)] gap-0 overflow-hidden rounded-2xl border-border bg-surface-1 p-0 shadow-[var(--shadow-float)]"
       >
@@ -484,7 +444,7 @@ export function StatusDialog({ r, onClose }: { r: ReservationView | null; onClos
 export function ConfirmDialog({ c, onClose }: { c: Confirm | null; onClose: () => void }) {
   const m = useM()
   const isReceptionist = m.role === "RECEPTIONIST"
-  const onCloseAutoFocus = useRestoreTriggerFocus(Boolean(c))
+  const focus = useRestoreTriggerFocus(Boolean(c))
   const [cachedC, setCachedC] = useState<Confirm | null>(c)
   const [inProgress, setInProgress] = useState(false)
 
@@ -504,9 +464,10 @@ export function ConfirmDialog({ c, onClose }: { c: Confirm | null; onClose: () =
     >
       <AlertDialogContent
         data-gm
+        data-gm-overlay-id={focus.overlayId}
         data-receptionist-frame={isReceptionist ? "true" : undefined}
         size="sm"
-        onCloseAutoFocus={onCloseAutoFocus}
+        onCloseAutoFocus={focus.onCloseAutoFocus}
         aria-label={active?.title ?? "Xác nhận"}
         className="max-w-[min(calc(100%-2rem),380px)] gap-4 rounded-2xl border-border bg-surface-1 p-5 shadow-[var(--shadow-float)]"
       >

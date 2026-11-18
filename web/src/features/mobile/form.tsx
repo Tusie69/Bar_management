@@ -1,6 +1,6 @@
 import { guestCount, guestValueFrom, type GuestValue } from "@/domain/booking-rules"
 import { AlertTriangle, ChevronLeft } from "lucide-react"
-import { useMemo, useState, type FocusEvent } from "react"
+import { useEffect, useMemo, useState, type FocusEvent, type MutableRefObject } from "react"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,6 +46,7 @@ import { FloorCanvas } from "../floor/floor-canvas"
 import { capacityWarningText, selectedTablesCapacity } from "../floor/reception-rules"
 import { useM, type FormRequest } from "./context"
 import { codesOf } from "./model"
+import { useRestoreTriggerFocus } from "./overlay-focus"
 import { selectedCapacity, walkInBlockReason, walkInPickableIds, walkInSelectionIssues } from "./walk-in-selection"
 import { bookingSelectionIssues, bookingTableBadge, isTableAvailableForBooking } from "./booking-table-selection"
 
@@ -69,7 +70,17 @@ function scrollFocusedIntoView(event: FocusEvent<HTMLInputElement | HTMLTextArea
 }
 
 /** Full-screen "Tạo đơn đặt bàn": Đặt trước / Walk-in. Rules come from domain/booking-rules.ts (same as Desktop). */
-export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => void }) {
+export function FormScreen({
+  req,
+  onClose,
+  parentOpen = true,
+  requestCloseRef,
+}: {
+  req: FormRequest
+  onClose: () => void
+  parentOpen?: boolean
+  requestCloseRef?: MutableRefObject<(() => void) | null>
+}) {
   const m = useM()
   const isReceptionist = m.role === "RECEPTIONIST"
   const { run, pending } = useAction()
@@ -102,6 +113,18 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const [dirty, setDirty] = useState(false)
   const [confirmLeave, setConfirmLeave] = useState(false)
   const [selectionMessage, setSelectionMessage] = useState<string | null>(null)
+  const leaveFocus = useRestoreTriggerFocus(confirmLeave, { suppressRestore: !parentOpen })
+
+  useEffect(() => {
+    if (!requestCloseRef) return
+    requestCloseRef.current = () => {
+      if (dirty) setConfirmLeave(true)
+      else onClose()
+    }
+    return () => {
+      requestCloseRef.current = null
+    }
+  }, [dirty, onClose, requestCloseRef])
 
   const isBooking = mode === "booking"
   const bd = addDays(m.today, dateIdx)
@@ -890,8 +913,10 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
       <AlertDialog open={confirmLeave} onOpenChange={setConfirmLeave}>
         <AlertDialogContent
           data-gm
+          data-gm-overlay-id={leaveFocus.overlayId}
           data-receptionist-frame={isReceptionist ? "true" : undefined}
           size="sm"
+          onCloseAutoFocus={leaveFocus.onCloseAutoFocus}
           aria-label="Bỏ đơn đang nhập"
           className="max-w-[min(calc(100%-2rem),380px)] gap-4 rounded-2xl border-border bg-surface-1 p-5 shadow-[var(--shadow-float)]"
         >
@@ -912,7 +937,10 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             </AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              onClick={onClose}
+              onClick={() => {
+                setConfirmLeave(false)
+                onClose()
+              }}
               className="h-12 rounded-xl text-[15px] font-semibold"
             >
               Bỏ đơn

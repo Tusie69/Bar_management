@@ -34,6 +34,8 @@ import { useBookingDraft } from "../floor/use-booking-draft"
 import { useMobileActions } from "./actions"
 import { useM, type TablePick } from "./context"
 import { codesOf, duration, type Tone, toneStyle } from "./model"
+import { useRestoreTriggerFocus } from "./overlay-focus"
+import { useQuickFormPresence } from "./quick-form-presence"
 import { PlainHeader, UndoRedoButtons } from "./ui"
 
 const ZONE_TABS: [ZoneCode | "ALL", string][] = [
@@ -53,6 +55,7 @@ export function MapScreen({
   onPickCancel,
   onPickConfirm,
   pickBusy,
+  keyboardSafeHeight = null,
 }: {
   selected: number | null
   onSelect: (id: number | null) => void
@@ -62,6 +65,7 @@ export function MapScreen({
   onPickCancel: () => void
   onPickConfirm: () => void
   pickBusy: boolean
+  keyboardSafeHeight?: number | null
 }) {
   const m = useM()
   const receptionist = m.role === "RECEPTIONIST"
@@ -69,7 +73,8 @@ export function MapScreen({
   const zone = useUi((s) => (receptionist ? "ALL" : s.zone))
   const setZone = useUi((s) => s.setZone)
   const d = useBookingDraft(m.model)
-  const draft = d.draft
+  const quickForm = useQuickFormPresence()
+  const draft = quickForm.activeDraft
   const layoutPick = useUi((s) => s.pick?.intent === "layout")
   const layoutIds = useUi((s) => s.pickSelection)
   const waitingCount = (m.waitlist ?? []).filter(isWaitingForTable).length
@@ -114,12 +119,11 @@ export function MapScreen({
     return ids
   }, [pick, isAssignPick, pickSnapshot, m.model.freeIds])
 
-  const draftPresence = usePresenceController({ open: Boolean(draft) })
   const [draftOverlayEl, draftOverlayRef] = useStableNodeRef<HTMLDivElement>()
   const [draftContentEl, draftContentRef] = useStableNodeRef<HTMLElement>()
   const { awaitingMotion: draftAwaiting, fallbackShown: draftFallback } = useAwaitingMotionController(
-    draftPresence.present,
-    draftPresence.isOpen,
+    quickForm.present,
+    quickForm.isOpen,
   )
 
   return (
@@ -276,7 +280,7 @@ export function MapScreen({
                         onEdit={m.openCountEdit}
                         className="pointer-events-auto absolute top-1.5 left-1.5 z-10"
                       />
-                      <div className="pointer-events-auto absolute top-1.5 right-1.5 flex flex-col items-end gap-1.5">
+                      <div className="pointer-events-auto absolute top-1.5 right-1.5 flex flex-col items-end gap-1">
                         <StatusLegend
                           variant="badge"
                           tables={m.model.tables}
@@ -285,7 +289,7 @@ export function MapScreen({
                         />
                         <ReceptionDatePicker
                           onDateChange={() => onSelect(null)}
-                          className="[&>button]:h-11 [&>button]:min-h-[44px] [&>button]:gap-1.5 [&>button]:rounded-xl [&>button]:border-border/80 [&>button]:bg-surface-1/92 [&>button]:px-2.5 [&>button]:text-[13px] [&>button]:font-semibold [&>button]:shadow-[var(--shadow-soft)] [&>button]:backdrop-blur-md dark:[&>button]:border-slate-700/80 dark:[&>button]:bg-[#1e232d]/92"
+                          className="[&>button]:h-11 [&>button]:min-h-[44px] [&>button]:gap-1.5 [&>button]:rounded-xl [&>button]:border-border/80 [&>button]:bg-surface-1/92 [&>button]:px-2 [&>button]:text-[13px] [&>button]:font-semibold [&>button]:shadow-[var(--shadow-soft)] [&>button]:backdrop-blur-md dark:[&>button]:border-slate-700/80 dark:[&>button]:bg-[#1e232d]/92"
                         />
                         <button
                           type="button"
@@ -293,7 +297,7 @@ export function MapScreen({
                           onPointerEnter={() => void prewarmMotionController()}
                           onPointerDown={() => void prewarmMotionController()}
                           aria-label={`Bàn chờ, ${waitingCount} nhóm đang đợi`}
-                          className="gm-press inline-flex h-11 min-h-[44px] min-w-[44px] items-center gap-1.5 rounded-xl border border-border/80 bg-surface-1/92 px-2.5 text-[12.5px] font-semibold text-tx-strong shadow-[var(--shadow-soft)] backdrop-blur-md dark:border-slate-700/80 dark:bg-[#1e232d]/92"
+                          className="gm-press inline-flex h-11 min-h-[44px] min-w-[44px] items-center gap-1 rounded-xl border border-border/80 bg-surface-1/92 px-1.5 text-[12px] font-semibold text-tx-strong shadow-[var(--shadow-soft)] backdrop-blur-md dark:border-slate-700/80 dark:bg-[#1e232d]/92"
                         >
                           <ListOrdered className="size-3.5 shrink-0" aria-hidden />
                           {planWidth >= 375 ? <span>Chờ</span> : null}
@@ -388,23 +392,31 @@ export function MapScreen({
           KHU {draftZone} · chạm để chọn thêm
         </p>
       ) : null}
-      {draftPresence.present ? (
+      {quickForm.present && quickForm.storeDraft ? (
         <>
           <div ref={draftOverlayRef} aria-hidden className="pointer-events-none fixed inset-0 z-[-1] opacity-0" />
           <section
             ref={draftContentRef}
-            role={draftPresence.isOpen ? "dialog" : undefined}
+            role={quickForm.isOpen ? "dialog" : undefined}
             aria-label="Đặt bàn trên sơ đồ"
-            aria-hidden={!draftPresence.isOpen || undefined}
-            data-motion-state={draftPresence.isOpen ? "open" : "closing"}
-            style={draftAwaiting ? { opacity: 0 } : undefined}
+            aria-hidden={!quickForm.isOpen || undefined}
+            inert={!quickForm.isOpen || undefined}
+            data-motion-state={quickForm.isOpen ? "open" : "closing"}
+            style={{
+              ...(draftAwaiting ? { opacity: 0 } : {}),
+              ...(keyboardSafeHeight
+                ? { maxHeight: Math.max(200, keyboardSafeHeight - (draft && draftZone ? 76 : 56)) }
+                : {}),
+            }}
             className={cn(
-              "z-[12] flex max-h-[62dvh] shrink-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover pb-[var(--bottom-safe)] shadow-[var(--shadow-float)]",
-              !draftPresence.isOpen && "pointer-events-none",
+              "z-[12] flex max-h-[62dvh] min-h-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)]",
+              !keyboardSafeHeight && "pb-[var(--bottom-safe)]",
+              !quickForm.isOpen && "pointer-events-none",
             )}
           >
             <div className="flex min-h-0 flex-1 flex-col pt-1">
               <QuickForm
+                key={quickForm.sessionKey}
                 compact
                 model={m.model}
                 availability={d.status === "ready" ? d.availability.data : undefined}
@@ -417,11 +429,11 @@ export function MapScreen({
             <OverlayMotionMount
               kind="sheet"
               side="bottom"
-              open={draftPresence.isOpen}
+              open={quickForm.isOpen}
               skipInitialEnter={draftFallback}
               overlay={draftOverlayEl}
               content={draftContentEl}
-              onExitComplete={draftPresence.markExited}
+              onExitComplete={quickForm.onExitComplete}
             />
           ) : null}
         </>
@@ -488,21 +500,16 @@ export function TableSheet({
   const [overlayEl, overlayCallbackRef] = useStableNodeRef<HTMLDivElement>()
   const [contentEl, contentCallbackRef] = useStableNodeRef<HTMLDivElement>()
   const { awaitingMotion, fallbackShown } = useAwaitingMotionController(present, isOpen)
-  const triggerFocusRef = useRef<HTMLElement | null>(null)
+  const tableFocus = useRestoreTriggerFocus(isOpen, { modal: false })
+  const wasPresentRef = useRef(false)
 
   useEffect(() => {
-    if (isOpen) {
-      if (document.activeElement instanceof HTMLElement && !contentEl?.contains(document.activeElement)) {
-        triggerFocusRef.current = document.activeElement
-      }
-    } else if (!present && triggerFocusRef.current) {
-      const target = triggerFocusRef.current
-      triggerFocusRef.current = null
-      if (target.isConnected && !contentEl?.contains(target)) {
-        target.focus({ preventScroll: true })
-      }
+    const wasPresent = wasPresentRef.current
+    wasPresentRef.current = present
+    if (wasPresent && !present) {
+      tableFocus.restoreNonModal()
     }
-  }, [isOpen, present, contentEl])
+  }, [present, tableFocus])
 
   if (!present) return null
 
@@ -679,6 +686,8 @@ export function TableSheet({
       <div ref={overlayCallbackRef} aria-hidden className="pointer-events-none fixed inset-0 z-[-1] opacity-0" />
       <div
         ref={contentCallbackRef}
+        data-gm-overlay-id={tableFocus.overlayId}
+        data-mobile-table-sheet="true"
         role={superseded ? undefined : "dialog"}
         aria-label={`Chi tiết ${isGroup ? groupTitle : t.code}`}
         aria-hidden={superseded || !isOpen || undefined}

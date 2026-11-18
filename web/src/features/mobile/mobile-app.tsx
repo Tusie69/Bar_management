@@ -9,13 +9,7 @@ import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, typ
 import { Outlet, useLocation, useNavigate } from "react-router"
 import type { ReservationView } from "@/domain/models"
 import { useNow, useReservations, useWaitlist } from "@/hooks/use-data"
-import {
-  OverlayMotionMount,
-  prewarmMotionController,
-  useAwaitingMotionController,
-  usePresenceController,
-  useStableNodeRef,
-} from "@/lib/motion"
+import { prewarmMotionController } from "@/lib/motion"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useSession } from "@/state/session"
@@ -36,6 +30,7 @@ import { HomeScreen } from "./home"
 import { ListScreen } from "./list"
 import { MapScreen, TableSheet } from "./map"
 import { isOpenEntry } from "./model"
+import { useRestoreTriggerFocus } from "./overlay-focus"
 import { AccountSheet, AlertsSheet, ConfirmDialog, CreateSheet, StatusDialog, Toast15 } from "./overlays"
 import { useSeenKeys } from "./seen-keys"
 import { PlainHeader } from "./ui"
@@ -52,72 +47,47 @@ const TAB_OF: Record<string, Tab> = { "/home": "home", "/reservations": "list", 
 function FullScreenPresence({
   open,
   label,
-  zClass = "z-[40]",
+  isReceptionist,
+  onClose,
+  onRequestClose,
   children,
 }: {
   open: boolean
   label: string
-  zClass?: string
+  isReceptionist: boolean
+  onClose: () => void
+  onRequestClose?: () => void
   children: ReactNode
 }) {
-  const { isOpen, present, markExited } = usePresenceController({ open })
-  const [overlayEl, overlayCallbackRef] = useStableNodeRef<HTMLDivElement>()
-  const [contentEl, contentCallbackRef] = useStableNodeRef<HTMLDivElement>()
-  const { awaitingMotion, fallbackShown } = useAwaitingMotionController(present, isOpen)
-  const triggerRef = useRef<HTMLElement | null>(null)
-
-  useEffect(() => {
-    if (isOpen) {
-      if (document.activeElement instanceof HTMLElement && !contentEl?.contains(document.activeElement)) {
-        triggerRef.current = document.activeElement
-      }
-      if (contentEl && !contentEl.contains(document.activeElement)) {
-        contentEl.focus({ preventScroll: true })
-      }
-    } else if (!present && triggerRef.current) {
-      const target = triggerRef.current
-      triggerRef.current = null
-      if (target.isConnected) {
-        target.focus({ preventScroll: true })
-      }
-    }
-  }, [isOpen, present, contentEl])
-
-  if (!present) return null
+  const focus = useRestoreTriggerFocus(open)
 
   return (
-    <>
-      <div ref={overlayCallbackRef} aria-hidden className="pointer-events-none fixed inset-0 z-[-1] opacity-0" />
-      <div
-        ref={contentCallbackRef}
-        role={isOpen ? "dialog" : undefined}
-        aria-modal={isOpen ? "true" : undefined}
+    <Sheet
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) (onRequestClose ?? onClose)()
+      }}
+    >
+      <SheetContent
+        data-gm
+        data-gm-overlay-id={focus.overlayId}
+        data-receptionist-frame={isReceptionist ? "true" : undefined}
+        side="right"
+        showCloseButton={false}
         aria-label={label}
-        aria-hidden={!isOpen || undefined}
-        inert={!isOpen}
-        tabIndex={-1}
-        data-motion-state={isOpen ? "open" : "closing"}
-        style={awaitingMotion ? { opacity: 0 } : undefined}
+        inert={!open || undefined}
+        onCloseAutoFocus={focus.onCloseAutoFocus}
         className={cn(
-          "absolute inset-0 flex flex-col overflow-hidden bg-background outline-none",
-          zClass,
-          !isOpen && "pointer-events-none",
+          "inset-x-0 top-0 bottom-[var(--kb-inset,0px)] h-auto w-full max-w-none gap-0 overflow-hidden rounded-none border-0 bg-background p-0 shadow-none sm:max-w-none",
+          isReceptionist &&
+            "mx-auto max-w-[var(--gm-max-w)] md:border-x md:border-border/70 md:shadow-[var(--shadow-float)]",
         )}
       >
+        <SheetTitle className="sr-only">{label}</SheetTitle>
+        <SheetDescription className="sr-only">{label}</SheetDescription>
         {children}
-      </div>
-      {overlayEl && contentEl ? (
-        <OverlayMotionMount
-          kind="sheet"
-          side="right"
-          open={isOpen}
-          skipInitialEnter={fallbackShown}
-          overlay={overlayEl}
-          content={contentEl}
-          onExitComplete={markExited}
-        />
-      ) : null}
-    </>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -171,6 +141,8 @@ export default function MobileApp() {
 
   const shellContentRef = useRef<HTMLDivElement>(null)
   const bottomNavRef = useRef<HTMLElement>(null)
+  const formRequestCloseRef = useRef<(() => void) | null>(null)
+  const waitFocus = useRestoreTriggerFocus(overlay === "wait")
   const hasFullScreenModal = Boolean(detail || entryDetail || form)
 
   useEffect(() => {
@@ -194,14 +166,12 @@ export default function MobileApp() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return
-      if (statusFor || confirm || overlay) return
-      if (detail) setDetail(null)
-      else if (entryDetail) setEntryDetail(null)
-      else if (tableSel) setTableSel(null)
+      if (statusFor || confirm || overlay || detail || entryDetail || form) return
+      if (tableSel) setTableSel(null)
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [statusFor, overlay, confirm, detail, entryDetail, tableSel])
+  }, [statusFor, overlay, confirm, detail, entryDetail, form, tableSel])
 
   // Ensure any focused input inside a mobile sheet or modal stays scrolled above virtual keyboard
   useEffect(() => {
@@ -352,6 +322,7 @@ export default function MobileApp() {
                 if (ok) setPick(null)
               }}
               pickBusy={pickBusy}
+              keyboardSafeHeight={keyboardSafeHeight}
             />
           ) : tab === "wait" ? (
             <WaitScreen />
@@ -383,7 +354,12 @@ export default function MobileApp() {
           <TableSheet id={tableSel} superseded={tableSheetSuperseded} onClose={() => setTableSel(null)} />
         ) : null}
 
-        <FullScreenPresence open={Boolean(detail)} label="Chi tiết booking">
+        <FullScreenPresence
+          open={Boolean(detail)}
+          label="Chi tiết booking"
+          isReceptionist={isReceptionist}
+          onClose={() => setDetail(null)}
+        >
           {cachedDetail ? (
             <DetailScreen
               id={cachedDetail.id}
@@ -394,7 +370,12 @@ export default function MobileApp() {
           ) : null}
         </FullScreenPresence>
 
-        <FullScreenPresence open={Boolean(entryDetail)} label="Chi tiết mục chờ">
+        <FullScreenPresence
+          open={Boolean(entryDetail)}
+          label="Chi tiết mục chờ"
+          isReceptionist={isReceptionist}
+          onClose={() => setEntryDetail(null)}
+        >
           {cachedEntryDetail ? (
             <EntryDetailScreen
               id={cachedEntryDetail.id}
@@ -405,8 +386,21 @@ export default function MobileApp() {
           ) : null}
         </FullScreenPresence>
 
-        <FullScreenPresence open={Boolean(form)} label="Tạo đơn đặt bàn">
-          {cachedForm ? <FormScreen req={cachedForm} onClose={() => setForm(null)} /> : null}
+        <FullScreenPresence
+          open={Boolean(form)}
+          label={cachedForm?.mode === "walkin" ? "Mở bàn Walk-in" : "Tạo đơn đặt bàn"}
+          isReceptionist={isReceptionist}
+          onClose={() => setForm(null)}
+          onRequestClose={() => (formRequestCloseRef.current ? formRequestCloseRef.current() : setForm(null))}
+        >
+          {cachedForm ? (
+            <FormScreen
+              req={cachedForm}
+              parentOpen={Boolean(form)}
+              requestCloseRef={formRequestCloseRef}
+              onClose={() => setForm(null)}
+            />
+          ) : null}
         </FullScreenPresence>
 
         <Toast15
@@ -433,8 +427,10 @@ export default function MobileApp() {
         <Sheet open={overlay === "wait"} onOpenChange={(open) => !open && setOverlay(null)}>
           <SheetContent
             data-gm
+            data-gm-overlay-id={waitFocus.overlayId}
             data-receptionist-frame={isReceptionist ? "true" : undefined}
             side="bottom"
+            onCloseAutoFocus={waitFocus.onCloseAutoFocus}
             className={cn(
               "h-[85dvh] w-full gap-0 overflow-hidden rounded-t-[20px] border-t border-border bg-surface-1 p-0 shadow-[var(--shadow-float)]",
               isReceptionist && "mx-auto max-w-[var(--gm-max-w)]",
@@ -484,6 +480,14 @@ export function useKeyboardSafeHeight() {
       setHeight(shrunk ? viewport.height : null)
       const inset = shrunk ? Math.max(0, Math.round(window.innerHeight - viewport.height - viewport.offsetTop)) : 0
       document.documentElement.style.setProperty("--kb-inset", `${inset}px`)
+      if (shrunk) {
+        const active = document.activeElement
+        if (active instanceof HTMLElement && active.matches("input, textarea, select") && active.closest("[data-gm]")) {
+          window.requestAnimationFrame(() => {
+            active.scrollIntoView({ block: "nearest", behavior: "auto" })
+          })
+        }
+      }
     }
     viewport.addEventListener("resize", update)
     viewport.addEventListener("scroll", update)

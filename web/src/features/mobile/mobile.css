@@ -30,7 +30,7 @@
   --primary: oklch(0.52 0.15 255);
   --primary-foreground: oklch(0.99 0 0);
   --primary-ink: oklch(0.48 0.15 255);
-  --primary-tint: oklch(0.52 0.15 255 / 0.1);
+  --primary-tint: oklch(0.52 0.15 255 / 0.09);
   --primary-hover: color-mix(in oklab, var(--primary) 90%, #000);
   --primary-active: color-mix(in oklab, var(--primary) 82%, #000);
 
@@ -311,6 +311,11 @@ button[aria-label*="Bàn chờ"],
   max-height: min(86dvh, calc(100dvh - var(--kb-inset, 0px) - 16px));
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+[data-gm][data-slot="sheet-content"][data-side="right"] {
+  bottom: var(--kb-inset, 0px);
+  height: auto;
 }
 
 /* Toast15 entrance / exit motion */
