@@ -87,6 +87,35 @@ mysqlDescribe('TU-34 · quyền riêng từng tài khoản', () => {
     owner = await login('integration_owner')
   })
 
+  it('NA-34 exposes the history permission with role defaults, overrides and the read-only ceiling', async () => {
+    for (const accessLevel of ['WRITE', 'READ_ONLY'] as const) {
+      const created = await post(owner, '/api/v1/accounts', {
+        username: `na34_${accessLevel.toLowerCase()}`, displayName: 'NA-34 Admin', roleCode: 'ADMIN', accessLevel,
+      })
+      expect(created.status).toBe(201)
+      const account = (created.body as { account: Account }).account
+      expect(view(await permissionsOf(owner, account.id), 'customer.history.manage')).toMatchObject({
+        grantedByRole: accessLevel === 'WRITE', enabled: accessLevel === 'WRITE',
+        editable: accessLevel === 'WRITE', grantable: accessLevel === 'WRITE', overridden: false,
+      })
+      const saved = await post(owner, `/api/v1/accounts/${account.id}/permissions`, {
+        version: account.version, permissions: { 'customer.history.manage': accessLevel !== 'WRITE' },
+      })
+      expect(saved.status).toBe(accessLevel === 'WRITE' ? 200 : 400)
+      if (accessLevel === 'WRITE') {
+        expect(view(await permissionsOf(owner, account.id), 'customer.history.manage')).toMatchObject({
+          grantedByRole: true, enabled: false, overridden: true,
+        })
+      } else {
+        expect(saved.body).toMatchObject({ error: { code: 'PERMISSION_NOT_GRANTABLE' } })
+      }
+    }
+    const staff = await createStaff(owner, 'na34_staff')
+    expect(view(await permissionsOf(owner, staff.account.id), 'customer.history.manage')).toMatchObject({
+      grantedByRole: false, enabled: false, grantable: true,
+    })
+  })
+
   it('tài khoản mới dùng mật khẩu tạm và bị buộc đổi trước khi dùng API nghiệp vụ', async () => {
     const created = await createStaff(owner, 'tu34_letan')
     expect(created.temporaryPassword).toMatch(/^[A-Za-z2-9]{16}$/)

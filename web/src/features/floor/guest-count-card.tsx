@@ -46,17 +46,21 @@ const FIELDS: FieldMeta[] = [
 
 function StatCell({ field, value }: { field: FieldMeta; value: number }): ReactElement {
   return (
-    <div className="flex min-w-0 items-center justify-between gap-1">
+    <div className="flex min-w-0 flex-col md:flex-row md:items-center md:justify-between md:gap-1">
       <span
+        data-testid={`guest-count-label-${field.key}`}
         className={cn(
-          "text-[8.5px] leading-[1.2] whitespace-nowrap md:text-[9.5px]",
+          "text-[8px] leading-[1.15] whitespace-nowrap md:text-[9.5px] md:leading-[1.2]",
           field.highlighted ? "font-semibold text-tx-strong" : "text-tx-2",
         )}
       >
         <span className="md:hidden">{field.shortLabel}</span>
         <span className="hidden md:inline">{field.label}</span>
       </span>
-      <span className="tnum shrink-0 text-right text-[9px] leading-[1.2] font-bold text-tx-strong md:text-[10px]">
+      <span
+        data-testid={`guest-count-value-${field.key}`}
+        className="tnum shrink-0 text-[9.5px] leading-[1.15] font-bold text-tx-strong md:text-right md:text-[10px] md:leading-[1.2]"
+      >
         {value}
       </span>
     </div>
@@ -78,14 +82,14 @@ export function GuestCountCard({
   const canEdit = useCan("reservation.update")
   const count = query.data ?? emptyCount(businessDate)
   const shell =
-    "rounded-lg border border-border/80 bg-background/95 shadow-lg backdrop-blur dark:border-slate-700/80 dark:bg-[#1e232d]/95"
+    "rounded-xl border border-border/80 bg-surface-1/92 shadow-[var(--shadow-soft)] backdrop-blur-md dark:border-slate-700/80 dark:bg-[#1e232d]/92"
 
   return (
     <div
       data-testid="guest-count-card"
       className={cn(
         shell,
-        "flex w-[140px] flex-col gap-1 px-1.5 py-1 text-left md:w-[228px] md:px-2 md:py-1.5",
+        "flex w-[144px] flex-col gap-0.5 px-1.5 py-1 text-left md:w-[244px] md:gap-1 md:px-2.5 md:py-1.5",
         className,
       )}
     >
@@ -102,7 +106,7 @@ export function GuestCountCard({
             onClick={onEdit ?? onOpen}
             aria-label="Sửa bộ đếm khách"
             title="Sửa"
-            className="inline-flex h-5 shrink-0 items-center gap-0.5 rounded px-1 text-[9px] font-semibold text-tx-2 hover:text-tx-strong active:scale-95"
+            className="inline-flex h-4 shrink-0 items-center gap-0.5 rounded px-1 text-[9px] font-semibold text-tx-2 transition-colors hover:bg-surface-2 hover:text-tx-strong active:scale-95 md:h-5"
           >
             <Pencil className="size-2.5" aria-hidden />
             Sửa
@@ -112,7 +116,7 @@ export function GuestCountCard({
       <button
         type="button"
         onClick={onOpen}
-        className="grid grid-cols-2 gap-x-1.5 gap-y-0.5 text-left active:scale-[0.98] md:gap-x-3 md:gap-y-1"
+        className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-left active:scale-[0.98] md:gap-x-3 md:gap-y-1"
         aria-label={`Đếm khách. Trước 21:30 ${count.arrivedBefore}, sau 21:30 ${count.arrivedAfter}, tổng đã tới ${count.arrivedTotal}, tổng bàn đặt ${count.bookedTables}, tổng khách đặt ${count.bookedGuests}, đã từng đặt bàn ${count.returningGuests}.`}
       >
         {FIELDS.map((field) => (

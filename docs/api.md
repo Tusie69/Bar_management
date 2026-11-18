@@ -1111,7 +1111,9 @@ implemented: purging an audit trail is a decision, not a default, and C3 is stil
 
 ## NA-34 - Anonymous visit assignment and duplicate customer review
 
-Requires migration `0029_customer_history.sql`. Admin portal only. Reads use `report.read`; writes use `customer.history.manage`, granted to OWNER/ADMIN WRITE. Anonymous visit reads, assignment and undo are restricted to the server-selected actor venue. Duplicate suggestions are org-wide for OWNER/org-wide ADMIN, while venue-scoped ADMIN sees only pairs with either profile active in visits/reservations/waitlist at the actor venue and counts restricted to that venue. Only OWNER/org-wide ADMIN WRITE may merge or dismiss; venue ADMIN WRITE receives `403 CUSTOMER_ORG_WRITE_REQUIRED`; READ_ONLY writes receive `403 PERMISSION_DENIED`.
+Requires migration `0030_customer_history.sql`. Admin portal only. Reads use `report.read`; writes use `customer.history.manage`, granted to OWNER/ADMIN WRITE. Anonymous visit reads, assignment and undo are restricted to the server-selected actor venue. Duplicate suggestions are org-wide for OWNER/org-wide ADMIN, while venue-scoped ADMIN sees only pairs with either profile active in visits/reservations/waitlist at the actor venue and counts restricted to that venue. Only OWNER/org-wide ADMIN WRITE may merge or dismiss; venue ADMIN WRITE receives `403 CUSTOMER_ORG_WRITE_REQUIRED`; READ_ONLY writes receive `403 PERMISSION_DENIED`.
+
+Migration 0030 replaces the former `0029_customer_history.sql` filename to keep `0029_user_permission_overrides.sql` unchanged and first in sequence. Its table and permission inserts are idempotent, so databases that already applied the old migration can run 0030 safely. Keep the old `schema_migrations` row and checksum: that leftover row is harmless because the migrator checks current filenames only. Existing dismissal decisions and account permission overrides are preserved. The accounts permission screen lists this permission separately as "Gán lượt khuyết danh / xử lý hồ sơ trùng"; the existing role ceilings and READ_ONLY filter still apply.
 
 | Method | Path | Contract |
 | --- | --- | --- |

@@ -1,4 +1,5 @@
-CREATE TABLE customer_duplicate_dismissals (
+-- Renamed from 0029_customer_history.sql; existing tables, grants and history survive replay.
+CREATE TABLE IF NOT EXISTS customer_duplicate_dismissals (
   organization_id BIGINT UNSIGNED NOT NULL,
   source_customer_id BIGINT UNSIGNED NOT NULL,
   target_customer_id BIGINT UNSIGNED NOT NULL,
@@ -13,9 +14,9 @@ CREATE TABLE customer_duplicate_dismissals (
   CONSTRAINT ck_duplicate_distinct CHECK (source_customer_id <> target_customer_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-INSERT INTO permissions (code, description, is_sensitive)
+INSERT IGNORE INTO permissions (code, description, is_sensitive)
 VALUES ('customer.history.manage', 'Gán lượt khuyết danh và xử lý hồ sơ trùng', 1);
-INSERT INTO role_permissions (role_id, permission_id)
+INSERT IGNORE INTO role_permissions (role_id, permission_id)
 SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
 WHERE r.code IN ('OWNER', 'ADMIN') AND p.code = 'customer.history.manage';
 

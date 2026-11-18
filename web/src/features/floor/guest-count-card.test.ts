@@ -11,6 +11,7 @@ vi.hoisted(() => {
   })
 })
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+import { qk } from "@/hooks/use-data"
 import { GuestCountCard, GuestCountSheetPanel } from "./guest-count-card"
 import { guestCountDraft, parseGuestCountDraft } from "./guest-count-values"
 
@@ -122,5 +123,30 @@ describe("GuestCountCard", () => {
     expect(parseGuestCountDraft({ ...draft, bookedTables: "" })).toBeNull()
     expect(parseGuestCountDraft({ ...draft, bookedTables: "-1" })).toBeNull()
     expect(parseGuestCountDraft({ ...draft, bookedTables: "1.5" })).toBeNull()
+  })
+
+  it("renders full 3-digit and 4-digit populated metrics in two non-truncated columns", () => {
+    const client = new QueryClient()
+    client.setQueryData(qk.guestCount("2026-11-15"), {
+      businessDate: "2026-11-15",
+      arrivedBefore: 123,
+      arrivedAfter: 345,
+      arrivedTotal: 468,
+      bookedTables: 42,
+      bookedGuests: 129,
+      returningGuests: 1299,
+      version: 2,
+      updatedAt: null,
+    })
+    const html = renderToString(
+      createElement(QueryClientProvider, { client }, createElement(GuestCountCard, { businessDate: "2026-11-15" })),
+    )
+    for (const num of ["123", "345", "468", "42", "129", "1299"]) {
+      expect(html).toContain(`>${num}<`)
+    }
+    expect(html).toContain('data-testid="guest-count-label-arrivedTotal"')
+    expect(html).toContain('data-testid="guest-count-value-arrivedTotal"')
+    expect(html).toContain('data-testid="guest-count-label-returningGuests"')
+    expect(html).toContain('data-testid="guest-count-value-returningGuests"')
   })
 })

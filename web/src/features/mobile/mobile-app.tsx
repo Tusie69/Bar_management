@@ -134,6 +134,7 @@ export default function MobileApp() {
     unread,
     go,
     openAlerts: () => {
+      if (isReceptionist) return
       markSeen(alerts.map((a) => a.key))
       setOverlay("alerts")
     },
@@ -350,7 +351,7 @@ export default function MobileApp() {
             <WaitScreen embedded />
           </SheetContent>
         </Sheet>
-        {overlay === "alerts" ? (
+        {overlay === "alerts" && !isReceptionist ? (
           <AlertsSheet
             alerts={alerts}
             onClose={() => setOverlay(null)}

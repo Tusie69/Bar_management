@@ -41,17 +41,18 @@ import { cn } from "@/lib/utils"
 import { STATE_META } from "@/components/status-meta"
 import { useUi } from "@/state/ui"
 import {
+  CLUSTER_CODE_STROKE,
+  CLUSTER_OUTLINE_STROKE,
+  computeClusterDecorations,
   computeZoneBounds,
   findGroupRepresentativeId,
   formatCellGuestName,
   formatGroupCode,
-  oneOutlinePerCluster,
   formatTableCellLabel,
   GUEST_FLAG_META,
   resolveCellCornerIcons,
   supportedFlags,
   tableCanActivate,
-  type ClusterOutlineCandidate,
   type GuestFlag,
 } from "./floor-visual-rules"
 import { TableIcons } from "./table-icons"
@@ -196,11 +197,6 @@ function ClusterCircleRing({ r }: { r: number }) {
   return (
     <circle r={r + 2.8} fill="none" stroke="#64748B" strokeWidth={1.6} strokeDasharray="5 3" data-selection-ring="1" />
   )
-}
-
-/** Pill width for a cluster code such as "G01", or a name the user typed. */
-function formatGroupCodeWidth(code: string): number {
-  return Math.max(18, code.length * 5.6 + 8)
 }
 
 const PAD = 18
@@ -684,61 +680,19 @@ export function FloorCanvas(props: Props) {
    * Clusters are adjacent by construction, so the box does not swallow
    * unrelated tables.
    */
-  const clusterOutlines = useMemo(() => {
-    const seen = new Set<string>()
-    const out: {
-      key: string
-      x: number
-      y: number
-      w: number
-      h: number
-      code: string | null
-      isBar: boolean
-      orientation: "horizontal" | "vertical" | null
-    }[] = []
-
-    const add = (ids: number[], code: string | null) => {
-      const members = ids.map((id) => tableById.get(id)).filter((t): t is TableView => !!t)
-      if (members.length < 2) return
-      const key = [...ids].sort((a, b) => a - b).join(",")
-      if (seen.has(key)) return
-      seen.add(key)
-      const isBar = members.every((t) => t.kind === "BAR_SEAT")
-      const spreadX = Math.max(...members.map((t) => t.x)) - Math.min(...members.map((t) => t.x))
-      const spreadY = Math.max(...members.map((t) => t.y)) - Math.min(...members.map((t) => t.y))
-      const orientation = isBar ? (spreadY > spreadX ? "vertical" : "horizontal") : null
-      // Bar seats leave only about 3-4px between circles. The regular 7px
-      // table padding crosses that gap and visually absorbs an unrelated seat.
-      const pad = isBar ? 2 : 7
-      const left = Math.min(...members.map((t) => t.x - t.w / 2)) - pad
-      const right = Math.max(...members.map((t) => t.x + t.w / 2)) + pad
-      const top = Math.min(...members.map((t) => t.y - t.h / 2)) - pad
-      const bottom = Math.max(...members.map((t) => t.y + t.h / 2)) + pad
-      out.push({ key, x: left, y: top, w: right - left, h: bottom - top, code, isBar, orientation })
-    }
-
-    // Gom ứng viên từ cả hai nguồn rồi mới chọn, vì cùng một cụm có thể xuất
-    // hiện ở cả hai với danh sách bàn lệch nhau. Xem `oneOutlinePerCluster`.
-    const candidates: ClusterOutlineCandidate[] = groups.map((g) => ({
-      groupId: g.id ?? null,
-      tableIds: g.tableIds,
-      code: formatGroupCode(g.displayCode ?? g.symbolNo),
-    }))
-    if (states) {
-      for (const fs of states.values()) {
-        const claim = fs?.claim
-        if (claim?.tableIds && claim.tableIds.length > 1) {
-          candidates.push({
-            groupId: claim.groupId ?? null,
-            tableIds: claim.tableIds,
-            code: formatGroupCode(claim.groupDisplayCode ?? claim.symbolNo),
-          })
-        }
-      }
-    }
-    for (const candidate of oneOutlinePerCluster(candidates)) add(candidate.tableIds, candidate.code)
-    return out
-  }, [groups, states, tableById])
+  const clusterOutlines = useMemo(
+    () =>
+      computeClusterDecorations({
+        tables,
+        groups,
+        states,
+        mode,
+        groupRepresentativeMap,
+        tableById,
+        includeWaitlistMarker: Boolean(onOpenWaitlist && isAllZone),
+      }),
+    [groups, groupRepresentativeMap, isAllZone, mode, onOpenWaitlist, states, tableById, tables],
+  )
 
   // Zone tracking chip state (Item 2b)
   const isZoomed = userView !== null && Math.abs(userView.view.k - baseK) > 0.05
@@ -858,11 +812,6 @@ export function FloorCanvas(props: Props) {
             states={states}
             groups={groups}
             mapScale={view.k}
-            // Điện thoại: khung mặc định che 44% x 46% bản vẽ. Chưa có khách
-            // thì không vẽ gì, có khách thì cao vừa số dòng. Màn to vẫn giữ
-            // nguyên khung trong khu pha chế như mockup đã duyệt.
-            emptyState={isPhone ? "hidden" : "title-only"}
-            fitToRows={isPhone}
             onRowClick={(row) => {
               const table = tables.find(
                 (t) => (t.kind === "BAR_SEAT" || t.zoneCode === "BAR") && row.seatNumbers.includes(t.seqNo ?? -1),
@@ -910,6 +859,7 @@ export function FloorCanvas(props: Props) {
             <g
               key={`cluster-${c.key}`}
               data-cluster-outline="1"
+              data-cluster-code-value={c.code ?? undefined}
               data-cluster-kind={c.isBar ? "bar" : "table"}
               data-cluster-orientation={c.orientation ?? undefined}
               pointerEvents="none"
@@ -924,7 +874,7 @@ export function FloorCanvas(props: Props) {
                 fillOpacity={0.07}
                 stroke="var(--primary)"
                 strokeOpacity={0.55}
-                strokeWidth={1.6}
+                strokeWidth={CLUSTER_OUTLINE_STROKE}
               />
             </g>
           ))}
@@ -954,34 +904,31 @@ export function FloorCanvas(props: Props) {
           })}
 
           {/* Keep the outline below the cells, but render its code after every
-              table/seat so the first Bar seat cannot cover the text. Vertical
-              Bar groups put the pill to the left, outside the tight seat gap. */}
+              table/seat in collision-free space so it never hides a guest-count
+              badge, table text, or neighbouring cluster frame. */}
           {clusterOutlines.map((c) => {
-            if (!c.code) return null
-            const codeWidth = formatGroupCodeWidth(c.code)
-            const labelOnLeft = c.isBar && c.orientation === "vertical"
-            const labelX = labelOnLeft ? c.x - codeWidth - 4 : c.x + 3
-            const labelY = labelOnLeft ? c.y + 2 : c.y - 7.5
+            if (!c.code || !c.label) return null
             return (
               <g
                 key={`cluster-code-${c.key}`}
                 data-cluster-code="1"
-                data-cluster-label-side={labelOnLeft ? "left" : "top"}
+                data-cluster-label-side={c.label.side}
+                data-cluster-code-value={c.code}
                 pointerEvents="none"
               >
                 <rect
-                  x={labelX}
-                  y={labelY}
-                  width={codeWidth}
-                  height={14}
-                  rx={7}
+                  x={c.label.x}
+                  y={c.label.y}
+                  width={c.label.width}
+                  height={c.label.height}
+                  rx={c.label.height / 2}
                   fill="var(--primary)"
                   stroke="var(--floor)"
-                  strokeWidth={1.4}
+                  strokeWidth={CLUSTER_CODE_STROKE}
                 />
                 <text
-                  x={labelX + codeWidth / 2}
-                  y={labelY + 9.9}
+                  x={c.label.x + c.label.width / 2}
+                  y={c.label.y + 9.9}
                   textAnchor="middle"
                   className="tnum"
                   fontSize={8.5}
@@ -1447,7 +1394,7 @@ const LiveGlyph = memo(function LiveGlyph({
         {/* No count / turn badge and no corner icons on a bar seat. A seat is a 20-unit
             circle, so a badge hung on its rim lands on the neighbouring seat; the guest
             details for the bar live in the "Khách quầy bar" panel beside the counter. */}
-        {claim?.paid ? <PaidDot x={r - 5.4} y={r - 5.4} /> : null}
+        {claim?.paid ? <PaidDot x={r * 0.72} y={r * 0.72} radius={4.3} /> : null}
       </g>
     )
   }
@@ -1616,12 +1563,12 @@ const LiveGlyph = memo(function LiveGlyph({
   )
 })
 
-function PaidDot({ x, y }: { x: number; y: number }) {
+function PaidDot({ x, y, radius = 5.2 }: { x: number; y: number; radius?: number }) {
   return (
     <g transform={`translate(${x} ${y})`} aria-hidden pointerEvents="none">
-      <circle r={5.2} fill="var(--background)" stroke="var(--st-seated)" strokeWidth={0.9} />
+      <circle r={radius} fill="var(--background)" stroke="var(--st-seated)" strokeWidth={0.9} />
       <path
-        d="M-2.2 0.1 L-0.5 1.7 L2.3 -1.4"
+        d={radius < 5 ? "M-1.9 0.1 L-0.4 1.5 L2.0 -1.2" : "M-2.2 0.1 L-0.5 1.7 L2.3 -1.4"}
         fill="none"
         stroke="var(--st-seated)"
         strokeWidth={1.2}
