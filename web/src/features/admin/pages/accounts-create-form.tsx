@@ -6,9 +6,12 @@
  * đổi ở lần đăng nhập đầu. Mật khẩu tạm hiện đúng một lần trong panel này;
  * tải lại trang là mất, phải reset để lấy chuỗi mới.
  */
-import { Copy, LoaderCircle } from "lucide-react"
+import { Copy, LoaderCircle, UserPlus } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { reportError } from "@/hooks/use-action"
 import { api } from "@/services"
 import { ADMIN_ROLE_LABEL } from "../accounts-model"
@@ -55,45 +58,51 @@ export function CreateAccountForm({ roles, onClose, onCreated }: Props) {
 
   if (issued) {
     return (
-      <section className="adm-card grid gap-3 p-5">
-        <h2 className="adm-h2">Mật khẩu tạm của {issued.username}</h2>
-        <p className="adm-body text-[var(--adm-text-muted)]">
-          Chuỗi này chỉ hiện một lần. Gửi cho nhân viên; hệ thống sẽ bắt họ đổi mật khẩu ngay lần đăng nhập đầu.
-        </p>
-        <code className="adm-h2 rounded-lg bg-[var(--adm-surface-sunken)] px-4 py-3 tracking-widest">
+      <section className="adm-card grid gap-4 p-5">
+        <div className="grid gap-1">
+          <h2 className="adm-h2">Mật khẩu tạm của {issued.username}</h2>
+          <p className="adm-supporting text-[var(--adm-text-muted)]">
+            Chuỗi này chỉ hiện một lần. Gửi cho nhân viên; hệ thống sẽ bắt họ đổi mật khẩu ngay lần đăng nhập đầu.
+          </p>
+        </div>
+        <code className="adm-h2 rounded-xl border border-[var(--adm-action)]/25 bg-[var(--adm-tint-blue)]/45 px-4 py-3 text-center tracking-widest break-all select-all">
           {issued.password}
         </code>
-        <div className="flex gap-2">
-          <button
+        <div className="flex flex-wrap gap-2">
+          <Button
             type="button"
+            variant="outline"
             onClick={() => {
               void navigator.clipboard
                 ?.writeText(issued.password)
                 .then(() => toast.success("Đã chép mật khẩu tạm."))
                 .catch(() => toast.error("Trình duyệt không cho chép tự động. Hãy chọn và chép tay."))
             }}
-            className="adm-body inline-flex h-10 items-center gap-2 rounded-lg border border-[var(--adm-border)] px-4"
           >
-            <Copy className="size-4" /> Chép
-          </button>
-          <button
+            <Copy className="size-4" aria-hidden /> Chép
+          </Button>
+          <Button
             type="button"
             onClick={() => {
               setIssued(null)
               onClose()
             }}
-            className="adm-body h-10 rounded-lg bg-[var(--adm-action)] px-4 font-medium text-[var(--adm-text-invert)]"
           >
             Đã ghi lại, đóng
-          </button>
+          </Button>
         </div>
       </section>
     )
   }
 
   return (
-    <section className="adm-card grid gap-3 p-5">
-      <h2 className="adm-h2">Tạo tài khoản</h2>
+    <section className="adm-card grid gap-4 p-5">
+      <div className="grid gap-1">
+        <h2 className="adm-h2">Tạo tài khoản</h2>
+        <p className="adm-supporting text-[var(--adm-text-muted)]">
+          Hệ thống tự sinh mật khẩu tạm một lần; nhân viên sẽ đổi mật khẩu khi đăng nhập lần đầu.
+        </p>
+      </div>
       {roles.length === 0 ? (
         <p className="adm-body text-[var(--adm-text-muted)]">
           Tài khoản của bạn không được phép tạo vai trò nào trong phạm vi này.
@@ -104,66 +113,68 @@ export function CreateAccountForm({ roles, onClose, onCreated }: Props) {
             <Field id="acc-username" label="Tên đăng nhập" value={username} onChange={setUsername} />
             <Field id="acc-display" label="Tên hiển thị" value={displayName} onChange={setDisplayName} />
           </div>
-          <div className="grid gap-1.5">
+          <div className="grid gap-2">
             <span className="adm-label">Vai trò</span>
             <div className="flex flex-wrap gap-2">
-              {roles.map((item) => (
-                <button
-                  key={item.code}
-                  type="button"
-                  onClick={() => setRoleCode(item.code)}
-                  aria-pressed={role === item.code}
-                  className="adm-body h-10 rounded-lg border px-3"
-                  style={{
-                    borderColor: role === item.code ? "var(--adm-action)" : "var(--adm-border)",
-                    background: role === item.code ? "var(--adm-tint-blue)" : "var(--adm-surface)",
-                    color: role === item.code ? "var(--adm-action)" : "var(--adm-text)",
-                  }}
-                >
-                  {ADMIN_ROLE_LABEL[item.code] ?? item.name}
-                </button>
-              ))}
+              {roles.map((item) => {
+                const selected = role === item.code
+                return (
+                  <Button
+                    key={item.code}
+                    type="button"
+                    variant="outline"
+                    onClick={() => setRoleCode(item.code)}
+                    aria-pressed={selected}
+                    className={
+                      selected
+                        ? "border-[var(--adm-action)] bg-[var(--adm-tint-blue)] text-[var(--adm-action)] hover:bg-[var(--adm-tint-blue-hover)]"
+                        : "bg-[var(--adm-surface)]"
+                    }
+                  >
+                    {ADMIN_ROLE_LABEL[item.code] ?? item.name}
+                  </Button>
+                )
+              })}
             </div>
           </div>
           {role === "ADMIN" ? (
-            <div className="grid gap-1.5">
+            <div className="grid gap-2">
               <span className="adm-label">Cấp truy cập Admin</span>
-              <div className="flex gap-2">
-                {(["WRITE", "READ_ONLY"] as const).map((level) => (
-                  <button
-                    key={level}
-                    type="button"
-                    onClick={() => setAccessLevel(level)}
-                    aria-pressed={accessLevel === level}
-                    className="adm-body h-10 rounded-lg border px-3"
-                    style={{
-                      borderColor: accessLevel === level ? "var(--adm-action)" : "var(--adm-border)",
-                      background: accessLevel === level ? "var(--adm-tint-blue)" : "var(--adm-surface)",
-                      color: accessLevel === level ? "var(--adm-action)" : "var(--adm-text)",
-                    }}
-                  >
-                    {level === "WRITE" ? "Admin Edit" : "Admin Read-Only"}
-                  </button>
-                ))}
+              <div className="flex flex-wrap gap-2">
+                {(["WRITE", "READ_ONLY"] as const).map((level) => {
+                  const selected = accessLevel === level
+                  return (
+                    <Button
+                      key={level}
+                      type="button"
+                      variant="outline"
+                      onClick={() => setAccessLevel(level)}
+                      aria-pressed={selected}
+                      className={
+                        selected
+                          ? "border-[var(--adm-action)] bg-[var(--adm-tint-blue)] text-[var(--adm-action)] hover:bg-[var(--adm-tint-blue-hover)]"
+                          : "bg-[var(--adm-surface)]"
+                      }
+                    >
+                      {level === "WRITE" ? "Admin Edit" : "Admin Read-Only"}
+                    </Button>
+                  )
+                })}
               </div>
             </div>
           ) : null}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={!ready || pending}
-              onClick={submit}
-              className="adm-body inline-flex h-11 items-center gap-2 rounded-lg bg-[var(--adm-action)] px-4 font-medium text-[var(--adm-text-invert)] disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              {pending ? <LoaderCircle className="size-4 animate-spin" /> : null} Tạo tài khoản
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="adm-body h-11 rounded-lg border border-[var(--adm-border)] px-4"
-            >
+          <div className="flex flex-wrap gap-2 pt-1">
+            <Button type="button" disabled={!ready || pending} onClick={submit}>
+              {pending ? (
+                <LoaderCircle className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <UserPlus className="size-4" aria-hidden />
+              )}
+              Tạo tài khoản
+            </Button>
+            <Button type="button" variant="outline" onClick={onClose}>
               Hủy
-            </button>
+            </Button>
           </div>
         </>
       )}
@@ -184,15 +195,15 @@ function Field({
 }) {
   return (
     <div className="grid gap-1.5">
-      <label htmlFor={id} className="adm-label">
+      <Label htmlFor={id} className="adm-label">
         {label}
-      </label>
-      <input
+      </Label>
+      <Input
         id={id}
         value={value}
         autoComplete="off"
         onChange={(event) => onChange(event.target.value)}
-        className="adm-body h-11 rounded-lg border border-[var(--adm-border)] bg-[var(--adm-surface)] px-3"
+        className="h-11 bg-[var(--adm-surface)]"
       />
     </div>
   )

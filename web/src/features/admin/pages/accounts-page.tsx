@@ -10,9 +10,26 @@
  * `canActOn` chỉ tránh cho người dùng bấm vào thứ chắc chắn sẽ bị từ chối.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { AlertTriangle, Check, LoaderCircle, Lock, LockOpen, ShieldCheck } from "lucide-react"
-import { useState } from "react"
+import {
+  AlertTriangle,
+  Check,
+  Eye,
+  KeyRound,
+  LoaderCircle,
+  Lock,
+  LockOpen,
+  Search,
+  ShieldCheck,
+  UserPlus,
+} from "lucide-react"
+import { useRef, useState } from "react"
 import { toast } from "sonner"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { reportError } from "@/hooks/use-action"
 import { api } from "@/services"
 import type { AccountSummary } from "@/services/contracts"
@@ -38,6 +55,12 @@ const TONE_DOT: Record<string, string> = {
   locked: "var(--adm-state-late)",
 }
 
+const TONE_BADGE_CLASS: Record<string, string> = {
+  active: "border-transparent bg-[var(--adm-tint-green)] text-[var(--admin-state-inuse-ink)]",
+  readonly: "border-transparent bg-[var(--adm-tint-amber)] text-[var(--admin-state-soon-ink)]",
+  locked: "border-transparent bg-[var(--adm-tint-red)] text-[var(--admin-state-late-ink)]",
+}
+
 const accountsKey = ["admin", "accounts"] as const
 const permissionsKey = (userId: number) => ["admin", "account-permissions", userId] as const
 
@@ -55,6 +78,18 @@ export default function AdminAccountsPage() {
   // `version` tăng, bản sao cũ sẽ gửi lên version hết hạn ở lần bấm sau.
   const [passwordTargetId, setPasswordTargetId] = useState<number | null>(null)
   const [detailTargetId, setDetailTargetId] = useState<number | null>(null)
+  const dialogReturnFocusRef = useRef<HTMLElement | null>(null)
+  const switchingToPasswordRef = useRef(false)
+
+  const openDetailDialog = (accountId: number, trigger: HTMLElement) => {
+    dialogReturnFocusRef.current = trigger
+    setDetailTargetId(accountId)
+  }
+
+  const openPasswordDialog = (accountId: number, trigger: HTMLElement) => {
+    dialogReturnFocusRef.current = trigger
+    setPasswordTargetId(accountId)
+  }
 
   const accounts = useQuery({ queryKey: accountsKey, queryFn: () => api.listAccounts(), retry: false })
   const rows = filterAccounts(accounts.data?.accounts ?? [], filterKey, search)
@@ -88,47 +123,63 @@ export default function AdminAccountsPage() {
   }
 
   return (
-    <div className="grid gap-4" data-testid="admin-accounts-page">
-      <div className="flex flex-wrap items-center gap-2">
-        <input
-          type="search"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Tìm theo tên hoặc tài khoản"
-          aria-label="Tìm theo tên hoặc tài khoản"
-          className="adm-body h-11 min-w-0 flex-1 rounded-lg border border-[var(--adm-border)] bg-[var(--adm-surface)] px-4 md:max-w-80"
-        />
+    <div className="grid min-w-0 gap-4" data-testid="admin-accounts-page">
+      <div data-adm-reveal className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-0 flex-1 basis-full md:max-w-80 md:basis-72">
+          <Search
+            className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-[var(--adm-text-muted)]"
+            aria-hidden
+          />
+          <Input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Tìm theo tên hoặc tài khoản"
+            aria-label="Tìm theo tên hoặc tài khoản"
+            className="h-11 bg-[var(--adm-surface)] pl-10"
+          />
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           {ACCOUNT_FILTERS.map((filter) => {
             const active = filter.key === filterKey
             return (
-              <button
+              <Button
                 key={filter.key}
                 type="button"
+                variant="outline"
                 disabled={filter.unsupported}
                 title={filter.unsupported ? "Vai trò Kho chưa có trong hệ thống phân quyền." : undefined}
                 aria-pressed={active}
                 onClick={() => setFilterKey(filter.key)}
-                className="adm-body h-11 rounded-lg border px-4 disabled:cursor-not-allowed disabled:opacity-45"
-                style={{
-                  borderColor: active ? "var(--adm-action)" : "var(--adm-border)",
-                  background: active ? "var(--adm-tint-blue)" : "var(--adm-surface)",
-                  color: active ? "var(--adm-action)" : "var(--adm-text)",
-                }}
+                className={
+                  active
+                    ? "border-[var(--adm-action)] bg-[var(--adm-tint-blue)] text-[var(--adm-action)] hover:bg-[var(--adm-tint-blue-hover)] hover:text-[var(--adm-action)]"
+                    : "bg-[var(--adm-surface)] text-[var(--adm-text)]"
+                }
               >
-                {filter.label} {counts[filter.key] ?? 0}
-              </button>
+                <span>{filter.label}</span>
+                <span
+                  className={
+                    active
+                      ? "rounded-full bg-[var(--adm-action)]/12 px-1.5 py-0.5 text-xs font-semibold tabular-nums"
+                      : "rounded-full bg-[var(--adm-surface-sunken)] px-1.5 py-0.5 text-xs font-medium text-[var(--adm-text-muted)] tabular-nums"
+                  }
+                >
+                  {counts[filter.key] ?? 0}
+                </span>
+              </Button>
             )
           })}
         </div>
-        <button
+        <Button
           type="button"
           disabled={!can("user.manage") || readOnly}
           onClick={() => setCreating((open) => !open)}
-          className="adm-body h-11 rounded-lg bg-[var(--adm-action)] px-4 font-medium text-[var(--adm-text-invert)] disabled:cursor-not-allowed disabled:opacity-45 md:ml-auto"
+          className="w-full sm:w-auto md:ml-auto"
         >
+          <UserPlus className="size-4" aria-hidden />
           Tạo tài khoản
-        </button>
+        </Button>
       </div>
 
       {creating ? (
@@ -139,129 +190,268 @@ export default function AdminAccountsPage() {
         />
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
-        <section className="adm-card min-w-0 p-5">
-          <h2 className="adm-h2">Danh sách tài khoản</h2>
-          <p className="adm-body text-[var(--adm-text-muted)]">SuperAdmin tạo Admin · Admin tạo tài khoản nhân viên</p>
+      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_360px] 2xl:grid-cols-[minmax(0,1fr)_390px]">
+        <section data-adm-reveal className="adm-card min-w-0 p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h2 className="adm-h2">Danh sách tài khoản</h2>
+              <p className="adm-supporting mt-0.5 text-[var(--adm-text-muted)]">
+                SuperAdmin tạo Admin · Admin tạo tài khoản nhân viên
+              </p>
+            </div>
+            {!accounts.isPending && !accounts.isError ? (
+              <Badge variant="secondary" className="shrink-0 tabular-nums">
+                {rows.length} tài khoản
+              </Badge>
+            ) : null}
+          </div>
 
           {accounts.isPending ? (
-            <p className="adm-body mt-6 flex items-center gap-2 text-[var(--adm-text-muted)]">
-              <LoaderCircle className="size-4 animate-spin" /> Đang tải danh sách tài khoản…
-            </p>
+            <div className="mt-5 grid gap-3" aria-busy="true">
+              <p className="sr-only">Đang tải danh sách tài khoản…</p>
+              {[1, 2, 3, 4].map((item) => (
+                <Skeleton key={item} className="h-14 w-full rounded-xl" />
+              ))}
+            </div>
           ) : accounts.isError ? (
-            <div className="mt-6 grid gap-2 rounded-lg bg-[var(--adm-tint-red)] p-4">
-              <p className="adm-h3 flex items-center gap-2">
-                <AlertTriangle className="size-4" /> Không tải được danh sách tài khoản
+            <div className="mt-5 grid gap-2.5 rounded-xl border border-[var(--adm-state-late)]/25 bg-[var(--adm-tint-red)] p-4">
+              <p className="adm-h3 flex items-center gap-2 text-[var(--admin-state-late-ink)]">
+                <AlertTriangle className="size-4 shrink-0" aria-hidden /> Không tải được danh sách tài khoản
               </p>
               <p className="adm-body text-[var(--adm-text-muted)]">
                 {accounts.error instanceof Error ? accounts.error.message : "Lỗi không xác định."}
               </p>
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => void accounts.refetch()}
-                className="adm-body h-10 justify-self-start rounded-lg border border-[var(--adm-border)] bg-[var(--adm-surface)] px-4"
+                className="justify-self-start bg-[var(--adm-surface)]"
               >
                 Thử lại
-              </button>
+              </Button>
             </div>
           ) : rows.length === 0 ? (
-            <p className="adm-body mt-6 text-[var(--adm-text-muted)]">
+            <p className="adm-body mt-5 rounded-xl border border-dashed border-[var(--adm-border)] bg-[var(--adm-canvas)]/60 p-6 text-center text-[var(--adm-text-muted)]">
               {search || filterKey !== "all"
                 ? "Không có tài khoản nào khớp bộ lọc."
                 : "Chưa có tài khoản nào trong phạm vi quản lý."}
             </p>
           ) : (
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[620px] border-collapse text-left">
-                <thead>
-                  <tr className="border-b border-[var(--adm-border)]">
-                    {["Tài khoản", "Vai trò", "Cổng đăng nhập", "Trạng thái", "Thao tác"].map((head) => (
-                      <th
-                        key={head}
-                        scope="col"
-                        className="adm-label pb-2 tracking-wide text-[var(--adm-text-muted)] uppercase"
-                      >
-                        {head}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((account) => {
-                    const state = accountState(account)
-                    const allowed = canActOn(actor, account) && can("user.manage")
-                    const busy = busyId === account.id
-                    const locked = account.status === "DISABLED"
-                    return (
-                      <tr
-                        key={account.id}
-                        className="border-b border-[var(--adm-border)] last:border-0"
-                        style={selected?.id === account.id ? { background: "var(--adm-tint-blue)" } : undefined}
-                      >
-                        <td className="adm-body py-3 font-medium">
-                          {account.displayName}
-                          <span className="adm-label block text-[var(--adm-text-muted)]">@{account.username}</span>
-                        </td>
-                        <td className="adm-body py-3">{roleLabel(account)}</td>
-                        <td className="adm-body py-3 text-[var(--adm-text-muted)]">{portalPath(account)}</td>
-                        <td className="adm-body py-3">
-                          <span className="inline-flex items-center gap-2">
-                            <span
-                              aria-hidden
-                              className="size-2 rounded-full"
-                              style={{ background: TONE_DOT[state.tone] }}
-                            />
-                            {state.label}
-                          </span>
-                        </td>
-                        <td className="py-3">
-                          <div className="flex flex-wrap gap-1.5">
-                            <RowButton
-                              disabled={busy}
-                              onClick={() => setSelectedId(account.id)}
-                              active={selected?.id === account.id}
-                            >
-                              Đổi quyền
-                            </RowButton>
-                            <RowButton disabled={busy} onClick={() => setDetailTargetId(account.id)}>
-                              Xem
-                            </RowButton>
-                            <RowButton disabled={!allowed || busy} onClick={() => setPasswordTargetId(account.id)}>
-                              Đổi mật khẩu
-                            </RowButton>
-                            <RowButton
-                              disabled={!allowed || busy}
-                              onClick={() =>
-                                void run(account, async () => {
-                                  await api.setAccountStatus(
-                                    account.id,
-                                    account.version,
-                                    locked ? "ACTIVE" : "DISABLED",
-                                  )
-                                  return locked
-                                    ? "Đã mở khóa tài khoản."
-                                    : "Đã khóa tài khoản và thu hồi phiên đang đăng nhập."
-                                })
-                              }
-                            >
-                              {locked ? (
-                                <>
-                                  <LockOpen className="size-3.5" /> Mở khóa
-                                </>
-                              ) : (
-                                <>
-                                  <Lock className="size-3.5" /> Khóa
-                                </>
-                              )}
-                            </RowButton>
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <>
+              {/* Mobile (< 768px): thẻ xếp chồng hiển thị trọn vẹn mọi trường và thao tác >= 44px */}
+              <ul className="mt-4 grid gap-3 md:hidden">
+                {rows.map((account) => {
+                  const state = accountState(account)
+                  const allowed = canActOn(actor, account) && can("user.manage")
+                  const busy = busyId === account.id
+                  const locked = account.status === "DISABLED"
+                  const isSelected = selected?.id === account.id
+                  return (
+                    <li
+                      key={account.id}
+                      className={
+                        isSelected
+                          ? "grid gap-3 rounded-xl border border-[var(--adm-action)] bg-[var(--adm-tint-blue)]/45 p-3.5 shadow-xs"
+                          : "grid gap-3 rounded-xl border border-[var(--adm-border)] bg-[var(--adm-surface)] p-3.5"
+                      }
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="adm-h3 truncate text-[var(--adm-text)]">{account.displayName}</p>
+                          <p className="adm-caption truncate text-[var(--adm-text-muted)]">@{account.username}</p>
+                        </div>
+                        <Badge className={`shrink-0 ${TONE_BADGE_CLASS[state.tone]}`}>
+                          <span
+                            aria-hidden
+                            className="size-1.5 rounded-full"
+                            style={{ background: TONE_DOT[state.tone] }}
+                          />
+                          {state.label}
+                        </Badge>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-y border-[var(--adm-border-subtle)] py-2 text-xs text-[var(--adm-text-muted)]">
+                        <span>
+                          Vai trò: <strong className="font-medium text-[var(--adm-text)]">{roleLabel(account)}</strong>
+                        </span>
+                        <span>
+                          Cổng: <code className="font-mono text-[var(--adm-text)]">{portalPath(account)}</code>
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          type="button"
+                          variant={isSelected ? "default" : "outline"}
+                          disabled={busy}
+                          onClick={() => setSelectedId(account.id)}
+                          className={
+                            isSelected
+                              ? "w-full"
+                              : "w-full bg-[var(--adm-surface-sunken)]/70 hover:bg-[var(--adm-surface-sunken)]"
+                          }
+                        >
+                          <ShieldCheck className="size-4" aria-hidden /> Đổi quyền
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={busy}
+                          onClick={(event) => openDetailDialog(account.id, event.currentTarget)}
+                          className="w-full bg-[var(--adm-surface)]"
+                        >
+                          <Eye className="size-4" aria-hidden /> Xem
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={!allowed || busy}
+                          onClick={(event) => openPasswordDialog(account.id, event.currentTarget)}
+                          className="w-full bg-[var(--adm-surface)]"
+                        >
+                          <KeyRound className="size-4" aria-hidden /> Đổi mật khẩu
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={!allowed || busy}
+                          onClick={() =>
+                            void run(account, async () => {
+                              await api.setAccountStatus(account.id, account.version, locked ? "ACTIVE" : "DISABLED")
+                              return locked
+                                ? "Đã mở khóa tài khoản."
+                                : "Đã khóa tài khoản và thu hồi phiên đang đăng nhập."
+                            })
+                          }
+                          className="w-full bg-[var(--adm-surface)]"
+                        >
+                          {locked ? (
+                            <>
+                              <LockOpen className="size-4" aria-hidden /> Mở khóa
+                            </>
+                          ) : (
+                            <>
+                              <Lock className="size-4" aria-hidden /> Khóa
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+
+              {/* Tablet & Desktop (>= 768px): Table primitive với cuộn ngang an toàn */}
+              <div className="mt-4 hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="px-2.5">Tài khoản</TableHead>
+                      <TableHead className="px-2.5">Vai trò</TableHead>
+                      <TableHead className="px-2.5">Cổng đăng nhập</TableHead>
+                      <TableHead className="px-2.5">Trạng thái</TableHead>
+                      <TableHead className="px-2.5 text-right">Thao tác</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.map((account) => {
+                      const state = accountState(account)
+                      const allowed = canActOn(actor, account) && can("user.manage")
+                      const busy = busyId === account.id
+                      const locked = account.status === "DISABLED"
+                      const isSelected = selected?.id === account.id
+                      return (
+                        <TableRow key={account.id} data-state={isSelected ? "selected" : undefined}>
+                          <TableCell className="px-2.5 whitespace-normal">
+                            <span className="block font-medium text-[var(--adm-text)]">{account.displayName}</span>
+                            <span className="adm-caption block text-[var(--adm-text-muted)]">@{account.username}</span>
+                          </TableCell>
+                          <TableCell className="px-2.5">
+                            <Badge variant="secondary">{roleLabel(account)}</Badge>
+                          </TableCell>
+                          <TableCell className="px-2.5 font-mono text-xs text-[var(--adm-text-muted)]">
+                            {portalPath(account)}
+                          </TableCell>
+                          <TableCell className="px-2.5">
+                            <Badge className={TONE_BADGE_CLASS[state.tone]}>
+                              <span
+                                aria-hidden
+                                className="size-1.5 rounded-full"
+                                style={{ background: TONE_DOT[state.tone] }}
+                              />
+                              {state.label}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="px-2.5 text-right">
+                            <div className="inline-grid grid-cols-2 gap-1.5 2xl:inline-flex 2xl:flex-nowrap">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant={isSelected ? "default" : "secondary"}
+                                disabled={busy}
+                                onClick={() => setSelectedId(account.id)}
+                                className="h-11 px-2.5 xl:h-9"
+                              >
+                                Đổi quyền
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={busy}
+                                onClick={(event) => openDetailDialog(account.id, event.currentTarget)}
+                                className="h-11 px-2.5 xl:h-9"
+                              >
+                                Xem
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={!allowed || busy}
+                                onClick={(event) => openPasswordDialog(account.id, event.currentTarget)}
+                                className="h-11 px-2.5 xl:h-9"
+                              >
+                                Đổi mật khẩu
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={!allowed || busy}
+                                onClick={() =>
+                                  void run(account, async () => {
+                                    await api.setAccountStatus(
+                                      account.id,
+                                      account.version,
+                                      locked ? "ACTIVE" : "DISABLED",
+                                    )
+                                    return locked
+                                      ? "Đã mở khóa tài khoản."
+                                      : "Đã khóa tài khoản và thu hồi phiên đang đăng nhập."
+                                  })
+                                }
+                                className="h-11 px-2.5 xl:h-9"
+                              >
+                                {locked ? (
+                                  <>
+                                    <LockOpen className="size-3.5" aria-hidden /> Mở khóa
+                                  </>
+                                ) : (
+                                  <>
+                                    <Lock className="size-3.5" aria-hidden /> Khóa
+                                  </>
+                                )}
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </>
           )}
         </section>
 
@@ -277,56 +467,49 @@ export default function AdminAccountsPage() {
         />
       </div>
 
-      {passwordTarget ? (
-        <PasswordResetDialog
-          account={passwordTarget}
-          onDone={() => void refresh()}
-          onClose={() => setPasswordTargetId(null)}
-        />
-      ) : null}
-
-      {detailTarget ? (
-        <AccountDetailDialog
-          account={detailTarget}
-          onChangePassword={
-            canActOn(actor, detailTarget) && can("user.manage")
-              ? () => {
-                  setDetailTargetId(null)
-                  setPasswordTargetId(detailTarget.id)
-                }
-              : null
+      <AccountDetailDialog
+        open={detailTarget !== null}
+        account={detailTarget}
+        onChangePassword={
+          detailTarget && canActOn(actor, detailTarget) && can("user.manage")
+            ? () => {
+                switchingToPasswordRef.current = true
+                setDetailTargetId(null)
+                setPasswordTargetId(detailTarget.id)
+              }
+            : null
+        }
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          // Chuyển thẳng sang hộp thoại đổi mật khẩu: giữ focus trong hộp thoại mới,
+          // không trả về nút "Xem" phía sau.
+          if (switchingToPasswordRef.current) {
+            switchingToPasswordRef.current = false
+            return
           }
-          onClose={() => setDetailTargetId(null)}
-        />
-      ) : null}
-    </div>
-  )
-}
+          const target = dialogReturnFocusRef.current
+          dialogReturnFocusRef.current = null
+          if (target?.isConnected) target.focus()
+        }}
+        onClose={() => {
+          switchingToPasswordRef.current = false
+          setDetailTargetId(null)
+        }}
+      />
 
-function RowButton({
-  children,
-  disabled,
-  active,
-  onClick,
-}: {
-  children: React.ReactNode
-  disabled?: boolean
-  active?: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className="adm-label inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 disabled:cursor-not-allowed disabled:opacity-40"
-      style={{
-        background: active ? "var(--adm-tint-blue)" : "var(--adm-surface-sunken)",
-        color: active ? "var(--adm-action)" : "var(--adm-text)",
-      }}
-    >
-      {children}
-    </button>
+      <PasswordResetDialog
+        open={passwordTarget !== null}
+        account={passwordTarget}
+        onDone={() => void refresh()}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          const target = dialogReturnFocusRef.current
+          dialogReturnFocusRef.current = null
+          if (target?.isConnected) target.focus()
+        }}
+        onClose={() => setPasswordTargetId(null)}
+      />
+    </div>
   )
 }
 
@@ -369,9 +552,9 @@ function PermissionPanel({
 
   if (!superAdmin) {
     return (
-      <section className="adm-card grid gap-2 p-5">
+      <section data-adm-reveal className="adm-card grid content-start gap-2 p-5">
         <h2 className="adm-h2">Quyền của tài khoản</h2>
-        <p className="adm-body text-[var(--adm-text-muted)]">
+        <p className="adm-supporting text-[var(--adm-text-muted)]">
           Chỉ SuperAdmin xem và đổi được bảng phân quyền. Tài khoản Admin dùng được mọi tính năng vận hành, nhưng không
           phân quyền cho người khác.
         </p>
@@ -381,9 +564,11 @@ function PermissionPanel({
 
   if (!account) {
     return (
-      <section className="adm-card grid gap-2 p-5">
+      <section data-adm-reveal className="adm-card grid content-start gap-2 p-5">
         <h2 className="adm-h2">Quyền của tài khoản</h2>
-        <p className="adm-body text-[var(--adm-text-muted)]">Chọn một tài khoản trong danh sách để xem và sửa quyền.</p>
+        <p className="adm-supporting text-[var(--adm-text-muted)]">
+          Chọn một tài khoản trong danh sách để xem và sửa quyền.
+        </p>
       </section>
     )
   }
@@ -393,51 +578,76 @@ function PermissionPanel({
   const dirty = Object.keys(draft).length > 0
 
   return (
-    <section className="adm-card grid content-start gap-3 p-5">
-      <div>
-        <h2 className="adm-h2">
-          Quyền của: {account.displayName} ({roleLabel(account)})
-        </h2>
-        <p className="adm-body text-[var(--adm-text-muted)]">Chỉ SuperAdmin được đổi quyền của Admin khác</p>
+    <section data-adm-reveal className="adm-card grid content-start gap-3.5 p-4 sm:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h2 className="adm-h2 break-words">
+            Quyền của: {account.displayName} ({roleLabel(account)})
+          </h2>
+          <p className="adm-supporting mt-0.5 text-[var(--adm-text-muted)]">
+            Chỉ SuperAdmin được đổi quyền của Admin khác
+          </p>
+        </div>
+        {dirty ? (
+          <Badge className="shrink-0 border-transparent bg-[var(--adm-tint-amber)] text-[var(--admin-state-soon-ink)]">
+            Chưa lưu
+          </Badge>
+        ) : null}
       </div>
 
       {query.isPending ? (
-        <p className="adm-body flex items-center gap-2 text-[var(--adm-text-muted)]">
-          <LoaderCircle className="size-4 animate-spin" /> Đang tải quyền…
-        </p>
+        <div className="grid gap-2.5" aria-busy="true">
+          <p className="sr-only">Đang tải quyền…</p>
+          {[1, 2, 3, 4].map((item) => (
+            <Skeleton key={item} className="h-14 w-full rounded-xl" />
+          ))}
+        </div>
       ) : query.isError ? (
-        <p className="adm-body rounded-lg bg-[var(--adm-tint-red)] p-3">
+        <p className="adm-body rounded-xl border border-[var(--adm-state-late)]/25 bg-[var(--adm-tint-red)] p-3">
           {query.error instanceof Error ? query.error.message : "Không tải được quyền của tài khoản."}
         </p>
       ) : (
-        <ul className="grid gap-2.5">
+        <ul className="grid gap-2">
           {states.map((state) => {
             const checked = state.group.codes.some((code) => code in draft)
               ? state.group.codes.every((code) => draft[code] ?? state.checked)
               : state.checked
             const disabled = !editable || state.unsupported || !state.editable || save.isPending
+            const checkboxId = `perm-${account.id}-${state.group.key}`
+            const rowClass = disabled
+              ? "border-[var(--adm-border-subtle)] bg-[var(--adm-surface-sunken)]/55"
+              : checked
+                ? "border-[var(--adm-action)]/35 bg-[var(--adm-tint-blue)]/40"
+                : "border-[var(--adm-border)] bg-[var(--adm-surface)] hover:border-[var(--adm-border-strong)]"
             return (
               <li key={state.group.key}>
-                <label className="adm-body flex items-start gap-3">
-                  <input
-                    type="checkbox"
+                <label
+                  htmlFor={checkboxId}
+                  className={`flex items-start gap-3 rounded-xl border px-3.5 py-3 transition-colors ${disabled ? "cursor-not-allowed" : "cursor-pointer"} ${rowClass}`}
+                >
+                  <Checkbox
+                    id={checkboxId}
                     checked={checked}
                     disabled={disabled}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, ...groupPayload(state, event.target.checked) }))
+                    onCheckedChange={(next) =>
+                      setDraft((current) => ({ ...current, ...groupPayload(state, next === true) }))
                     }
-                    className="mt-1 size-4 accent-[var(--adm-action)] disabled:opacity-40"
+                    className="mt-0.5"
                   />
-                  <span className={disabled ? "text-[var(--adm-text-muted)]" : undefined}>
-                    {state.group.label}
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={`adm-body block font-medium ${disabled ? "text-[var(--adm-text-muted)]" : "text-[var(--adm-text)]"}`}
+                    >
+                      {state.group.label}
+                    </span>
                     {state.unsupported ? (
-                      <span className="adm-label block">Chưa hỗ trợ — {state.group.unsupportedNote}</span>
+                      <span className="adm-caption mt-0.5 block">Chưa hỗ trợ — {state.group.unsupportedNote}</span>
                     ) : state.outOfCeiling ? (
-                      <span className="adm-label block">Không cấp được cho loại tài khoản này.</span>
+                      <span className="adm-caption mt-0.5 block">Không cấp được cho loại tài khoản này.</span>
                     ) : !state.editable ? (
-                      <span className="adm-label block">Quyền này không tắt được.</span>
+                      <span className="adm-caption mt-0.5 block">Quyền này không tắt được.</span>
                     ) : !state.checked ? (
-                      <span className="adm-label block">Vai trò chưa có — tick để cấp thêm.</span>
+                      <span className="adm-caption mt-0.5 block">Vai trò chưa có — tick để cấp thêm.</span>
                     ) : null}
                   </span>
                 </label>
@@ -447,24 +657,28 @@ function PermissionPanel({
         </ul>
       )}
 
-      <p className="adm-body rounded-lg bg-[var(--adm-surface-sunken)] p-3 text-[var(--adm-text-muted)]">
+      <p className="adm-supporting rounded-xl border border-[var(--adm-border-subtle)] bg-[var(--adm-surface-sunken)]/70 p-3 text-[var(--adm-text-muted)]">
         Dùng checkbox thay cho droplist theo yêu cầu 08/11 của anh Luân. SuperAdmin cấp thêm được quyền ngoài vai trò
         của tài khoản; riêng cấu hình quán và ẩn danh khách thì không cấp lẻ cho ai, và Admin Read-Only chỉ nhận thêm
         quyền xem.
       </p>
 
-      <button
+      <Button
         type="button"
         disabled={!editable || !dirty || save.isPending}
         onClick={() => save.mutate()}
-        className="adm-body inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--adm-action)] px-4 font-medium text-[var(--adm-text-invert)] disabled:cursor-not-allowed disabled:opacity-45"
+        className="w-full"
       >
-        {save.isPending ? <LoaderCircle className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
+        {save.isPending ? (
+          <LoaderCircle className="size-4 animate-spin" aria-hidden />
+        ) : (
+          <ShieldCheck className="size-4" aria-hidden />
+        )}
         {save.isPending ? "Đang lưu…" : "Lưu thay đổi quyền"}
-      </button>
+      </Button>
       {!editable ? (
-        <p className="adm-label text-[var(--adm-text-muted)]">
-          <Check className="mr-1 inline size-3" />
+        <p className="adm-caption flex items-center gap-1.5 text-[var(--adm-text-muted)]">
+          <Check className="size-3.5 shrink-0" aria-hidden />
           Tài khoản của bạn chỉ được xem bảng quyền này.
         </p>
       ) : null}
