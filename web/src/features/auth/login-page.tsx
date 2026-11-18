@@ -1,5 +1,5 @@
-import { Construction, Eye, EyeOff, LogIn, ShieldCheck } from "lucide-react"
-import { type FormEvent, useState } from "react"
+import { Construction, Eye, EyeOff, Info, LogIn, ShieldCheck } from "lucide-react"
+import { type FocusEvent, type FormEvent, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -19,6 +19,10 @@ const PORTAL_NOTE: Record<AuthPortal, string> = {
   cashier: "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản Quản trị, Lễ tân, Phục vụ không đăng nhập được tại cổng này.",
   waiter: "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản Quản trị, Lễ tân, Thu ngân không đăng nhập được tại cổng này.",
   "customer-care": "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản của vai khác không đăng nhập được tại cổng này.",
+}
+
+function keepFocusedFieldVisible(event: FocusEvent<HTMLInputElement>) {
+  event.currentTarget.scrollIntoView({ block: "nearest" })
 }
 
 export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirectTo?: string | null }) {
@@ -61,13 +65,19 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
   }
 
   return (
-    <main className="grid min-h-dvh place-items-center bg-background p-4">
-      <div className="grid w-full max-w-md gap-6 rounded-3xl border bg-surface-1 p-6 shadow-xl sm:p-8">
-        <header className="grid gap-3 text-center">
-          <img src="/21gam-logo.png" alt="21GAM" className="mx-auto size-14 rounded-xl object-cover" />
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Đăng nhập {PORTAL_CONFIG[portal].label}</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+    <main className="flex min-h-dvh flex-col overflow-y-auto bg-background px-4 py-4 sm:py-8">
+      <div className="mx-auto my-auto grid w-full max-w-md gap-4 rounded-2xl border border-border bg-surface-1 p-5 shadow-md sm:gap-5 sm:p-8">
+        <header className="grid gap-2.5 text-center">
+          <img
+            src="/21gam-logo.png"
+            alt="21GAM"
+            className="mx-auto size-12 rounded-xl border border-border-subtle object-cover shadow-xs sm:size-14"
+          />
+          <div className="grid gap-1">
+            <h1 className="text-[1.375rem] leading-tight font-bold tracking-[-0.022em] text-foreground sm:text-2xl">
+              Đăng nhập {PORTAL_CONFIG[portal].label}
+            </h1>
+            <p className="text-[0.8125rem] leading-relaxed text-muted-foreground sm:text-sm">
               Chỉ tài khoản được cấp quyền cho cổng {PORTAL_CONFIG[portal].label.toLocaleLowerCase("vi-VN")} mới có thể
               đăng nhập.
             </p>
@@ -79,10 +89,13 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
           có cổng riêng. Nhân viên gõ nhầm cổng là chuyện xảy ra hằng tuần, và
           "sai tên đăng nhập hoặc mật khẩu" là câu trả lời sai cho việc đó.
         */}
-        <p className="rounded-xl bg-surface-2 px-3 py-2 text-xs text-tx-2">{PORTAL_NOTE[portal]}</p>
+        <div className="flex items-start gap-2.5 rounded-xl border border-border-subtle bg-surface-2/80 px-3.5 py-2.5 text-xs leading-relaxed text-tx-2">
+          <Info className="mt-0.5 size-3.5 shrink-0 text-primary-ink" aria-hidden="true" />
+          <p>{PORTAL_NOTE[portal]}</p>
+        </div>
 
-        <form className="grid gap-4" onSubmit={submit}>
-          <div className="grid gap-2">
+        <form className="grid gap-3.5 sm:gap-4" onSubmit={submit}>
+          <div className="grid gap-1.5">
             <Label htmlFor="username">Tên đăng nhập</Label>
             <Input
               id="username"
@@ -91,11 +104,13 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
               autoCapitalize="none"
               value={username}
               onChange={(event) => setUsername(event.target.value)}
+              onFocus={keepFocusedFieldVisible}
               disabled={pending}
               required
+              className="h-11 scroll-my-4"
             />
           </div>
-          <div className="grid gap-2">
+          <div className="grid gap-1.5">
             <Label htmlFor="password">Mật khẩu</Label>
             {/* Lễ tân gõ mật khẩu trên bàn phím điện thoại giữa ca đông, gõ sai
                 mà không thấy gì thì chỉ còn cách xoá hết gõ lại. */}
@@ -107,38 +122,47 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
                 autoComplete="current-password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
+                onFocus={keepFocusedFieldVisible}
                 disabled={pending}
                 required
-                className="pr-11"
+                className="h-11 scroll-my-4 pr-12"
               />
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon"
                 onClick={() => setShowPassword((v) => !v)}
                 aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
                 aria-pressed={showPassword}
                 title={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
-                className="absolute inset-y-0 right-0 grid w-11 place-items-center rounded-r-xl text-muted-foreground hover:text-foreground"
+                className="absolute top-0 right-0 size-11 rounded-l-none rounded-r-md text-muted-foreground hover:bg-transparent hover:text-foreground"
               >
-                {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-              </button>
+                {showPassword ? (
+                  <EyeOff className="size-4" aria-hidden="true" />
+                ) : (
+                  <Eye className="size-4" aria-hidden="true" />
+                )}
+              </Button>
             </div>
           </div>
           {error || sessionMessage ? (
             <div
               role="alert"
-              className="grid gap-1 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm"
+              className="grid gap-1 rounded-xl border border-destructive/35 bg-destructive/10 px-3.5 py-2.5 text-sm leading-snug text-foreground"
             >
-              <p>{error ?? sessionMessage}</p>
+              <p className="font-medium">{error ?? sessionMessage}</p>
               {!error && unsavedWarning ? <p className="text-xs text-muted-foreground">{unsavedWarning}</p> : null}
             </div>
           ) : null}
-          <Button type="submit" size="lg" disabled={pending || !username.trim() || !password}>
-            <LogIn /> {pending ? "Đang đăng nhập…" : "Đăng nhập"}
+          <Button type="submit" size="default" disabled={pending || !username.trim() || !password} className="w-full">
+            <LogIn className="size-4" aria-hidden="true" />
+            {pending ? "Đang đăng nhập…" : "Đăng nhập"}
           </Button>
         </form>
 
-        <p className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
-          <ShieldCheck className="size-4" /> Phiên đăng nhập dùng cookie HttpOnly và CSRF protection.
+        <p className="flex items-center justify-center gap-2 border-t border-border-subtle pt-3 text-xs text-muted-foreground">
+          <ShieldCheck className="size-4 shrink-0" aria-hidden="true" />
+          <span>Phiên đăng nhập dùng cookie HttpOnly và CSRF protection.</span>
         </p>
       </div>
     </main>
@@ -147,12 +171,14 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
 
 export function PortalUnderConstruction({ label }: { label: string }) {
   return (
-    <main className="grid min-h-dvh place-items-center bg-background p-4">
-      <section className="grid w-full max-w-md gap-4 rounded-3xl border bg-surface-1 p-8 text-center shadow-xl">
-        <Construction className="mx-auto size-12 text-amber-500" aria-hidden="true" />
+    <main className="flex min-h-dvh flex-col overflow-y-auto bg-background px-4 py-6">
+      <section className="mx-auto my-auto grid w-full max-w-md gap-4 rounded-2xl border border-border bg-surface-1 p-6 text-center shadow-md sm:p-8">
+        <span className="mx-auto grid size-14 place-items-center rounded-2xl border border-amber-500/25 bg-amber-500/10">
+          <Construction className="size-7 text-amber-500" aria-hidden="true" />
+        </span>
         <div>
-          <h1 className="text-2xl font-semibold">Cổng {label} đang xây dựng</h1>
-          <p className="mt-2 text-sm text-muted-foreground">
+          <h1 className="text-xl font-semibold tracking-[-0.015em] sm:text-2xl">Cổng {label} đang xây dựng</h1>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
             Vai trò và quyền truy cập của cổng này đang chờ phê duyệt. Hệ thống chưa cho phép đăng nhập tại đây.
           </p>
         </div>

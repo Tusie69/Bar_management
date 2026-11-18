@@ -70,7 +70,7 @@ const mockHost = vi.hoisted(() => {
 import gsap from "gsap"
 import { setupRevealMatchMedia } from "@/features/admin/admin-motion"
 import { createSpringEase, EASE, MOTION, MOTION_MEDIA_QUERIES } from "./motion"
-import { registerMotion, setupOverlayMatchMedia } from "./motion-matchmedia"
+import { registerMotion, buildDialogTimeline, buildSheetTimeline, setupOverlayMatchMedia } from "./motion-matchmedia"
 import motionSource from "./motion.ts?raw"
 
 function createFakeElement() {
@@ -424,6 +424,46 @@ describe("21GAM motion system", () => {
 
     mm.revert()
     expect(mock.activeListeners).toBe(0)
+  })
+
+  it("P1-13: keeps overlay content focusable (no visibility: hidden) during dialog and sheet timelines", () => {
+    for (const reduceMotion of [false, true]) {
+      const overlay = createFakeElement()
+      const content = createFakeElement()
+      const calls: Array<{ target: unknown; from: Record<string, unknown>; to: Record<string, unknown> }> = []
+      const fakeTl = {
+        fromTo(target: unknown, from: Record<string, unknown>, to: Record<string, unknown>) {
+          calls.push({ target, from, to })
+          return fakeTl
+        },
+      } as unknown as gsap.core.Timeline
+      buildDialogTimeline({ tl: fakeTl, overlay, content, reduceMotion })
+      const contentCall = calls.find((c) => c.target === content)
+      expect(contentCall).toBeDefined()
+      expect(contentCall!.from).not.toHaveProperty("autoAlpha")
+      expect(contentCall!.to).not.toHaveProperty("autoAlpha")
+      expect(contentCall!.from.opacity).toBe(0)
+      expect(contentCall!.to.opacity).toBe(1)
+    }
+
+    for (const reduceMotion of [false, true]) {
+      const overlay = createFakeElement()
+      const content = createFakeElement()
+      const calls: Array<{ target: unknown; from: Record<string, unknown>; to: Record<string, unknown> }> = []
+      const fakeTl = {
+        fromTo(target: unknown, from: Record<string, unknown>, to: Record<string, unknown>) {
+          calls.push({ target, from, to })
+          return fakeTl
+        },
+      } as unknown as gsap.core.Timeline
+      buildSheetTimeline({ tl: fakeTl, overlay, content, reduceMotion, side: "right", duration: MOTION.duration.sheet })
+      const contentCall = calls.find((c) => c.target === content)
+      expect(contentCall).toBeDefined()
+      expect(contentCall!.from).not.toHaveProperty("autoAlpha")
+      expect(contentCall!.to).not.toHaveProperty("autoAlpha")
+      expect(contentCall!.from.opacity).toBe(reduceMotion ? 0 : 1)
+      expect(contentCall!.to.opacity).toBe(1)
+    }
   })
 
   it("P1-07: keeps GSAP and @gsap/react out of static imports in motion.ts", () => {
