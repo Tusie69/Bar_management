@@ -354,21 +354,103 @@ async function runP110Tests(browser, baseUrl) {
 
   // Interruptible mid-exit reversal.
   await page.getByTestId("admin-menu-trigger").click()
-  await page.waitForTimeout(140)
   const reversal = await page.evaluate(async () => {
-    const el = document.querySelector('[data-testid="admin-drawer-panel"]')
+    const nextFrame = () => new Promise((r) => requestAnimationFrame(r))
+    const panelSelector = '[data-testid="admin-drawer-panel"]'
+    const trigger = document.querySelector('[data-testid="admin-menu-trigger"]')
+    const el = document.querySelector(panelSelector)
+    if (!el || !trigger) {
+      throw new Error("Admin drawer panel or menu trigger missing before reversal")
+    }
     const readX = () => el.getBoundingClientRect().x
+
+    // Wait until the drawer finishes opening and settles near x = 0 before triggering Escape.
+    const openStart = performance.now()
+    let settledFrames = 0
+    while (performance.now() - openStart < 750) {
+      await nextFrame()
+      const elapsed = performance.now() - openStart
+      const x = readX()
+      if (elapsed >= 280 && Math.abs(x) < 0.5) {
+        settledFrames++
+        if (settledFrames >= 2) break
+      } else {
+        settledFrames = 0
+      }
+    }
+    const settledOpenX = readX()
+
+    // Trigger exit via Escape and sample frames until the closing drawer moves past -40 px while still mounted.
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))
-    await new Promise((r) => setTimeout(r, 45))
+    const exitSamples = []
+    const exitStart = performance.now()
+    while (performance.now() - exitStart < 600) {
+      await nextFrame()
+      const current = document.querySelector(panelSelector)
+      const x = current ? current.getBoundingClientRect().x : null
+      exitSamples.push({
+        t: Math.round(performance.now() - exitStart),
+        x,
+        connected: Boolean(current === el && el.isConnected),
+      })
+      if (current === el && el.isConnected && x !== null && x <= -40) {
+        break
+      }
+    }
     const before = readX()
-    document.querySelector('[data-testid="admin-menu-trigger"]').click()
+
+    // Re-open mid-exit and sample frames through spring overshoot until settled back at x = 0.
+    trigger.click()
     const after = readX()
-    await new Promise((r) => setTimeout(r, 60))
-    return { before, after, later: readX() }
+    const sameNodeOnClick = document.querySelector(panelSelector) === el && el.isConnected
+    const reopenSamples = []
+    const reopenStart = performance.now()
+    while (performance.now() - reopenStart < 500) {
+      await nextFrame()
+      const current = document.querySelector(panelSelector)
+      reopenSamples.push({
+        t: Math.round(performance.now() - reopenStart),
+        x: current ? current.getBoundingClientRect().x : null,
+        connected: el.isConnected,
+        sameNode: current === el,
+        expanded: trigger.getAttribute("aria-expanded"),
+      })
+    }
+
+    return { settledOpenX, exitSamples, before, after, sameNodeOnClick, reopenSamples }
   })
-  assert.ok(Math.abs(reversal.after - reversal.before) < 25, `Drawer snapped on reversal: ${JSON.stringify(reversal)}`)
-  assert.ok(reversal.later > reversal.before, `Drawer did not reverse toward open: ${JSON.stringify(reversal)}`)
-  await page.waitForTimeout(300)
+  assert.ok(
+    Math.abs(reversal.settledOpenX) < 0.5,
+    `Admin drawer did not settle open before reversal: settledOpenX=${reversal.settledOpenX}`,
+  )
+  assert.ok(
+    reversal.before <= -40 && reversal.before > -210,
+    `Admin drawer was not sampled mid-exit past -40px: before=${reversal.before}, exitSamples=${JSON.stringify(reversal.exitSamples)}`,
+  )
+  assert.ok(reversal.sameNodeOnClick, "Admin drawer unmounted/remounted immediately on mid-exit reopen")
+  assert.ok(
+    Math.abs(reversal.after - reversal.before) < 25,
+    `Drawer snapped on reversal: ${JSON.stringify({ before: reversal.before, after: reversal.after })}`,
+  )
+  assert.ok(reversal.reopenSamples.length >= 2, "Insufficient rAF samples during drawer reversal")
+  assert.ok(
+    reversal.reopenSamples.every((s) => s.connected && s.sameNode),
+    `Admin drawer unmounted or remounted during reversal: ${JSON.stringify(reversal.reopenSamples)}`,
+  )
+  const reopenXs = reversal.reopenSamples.map((s) => s.x)
+  assert.ok(
+    Math.min(...reopenXs) >= reversal.before - 10,
+    `Drawer continued closing instead of reversing: before=${reversal.before}, minX=${Math.min(...reopenXs)}`,
+  )
+  assert.ok(
+    Math.max(...reopenXs) > reversal.before + 25 && reopenXs.some((x) => x > reversal.before + 2 && x < -5),
+    `Drawer did not reverse smoothly toward open: before=${reversal.before}, xs=${JSON.stringify(reopenXs.slice(0, 15))}`,
+  )
+  const settledReopen = reversal.reopenSamples[reversal.reopenSamples.length - 1]
+  assert.ok(
+    Math.abs(settledReopen.x) < 1 && settledReopen.expanded === "true",
+    `Drawer did not settle at open state after reversal: ${JSON.stringify(settledReopen)}`,
+  )
   await page.keyboard.press("Escape")
   await page.waitForTimeout(300)
 
