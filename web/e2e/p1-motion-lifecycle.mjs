@@ -181,11 +181,12 @@ async function installOverlayHarness(page) {
   })
 }
 
-async function sampleFrames(page, selector, durationMs) {
+async function sampleFrames(page, selector, durationMs, openPrimitive = false) {
   return page.evaluate(
-    async ({ selector, durationMs }) => {
+    async ({ selector, durationMs, openPrimitive }) => {
       const samples = []
       const start = performance.now()
+      if (openPrimitive) window.__harness.flushSync(() => window.__setOpen(true))
       while (performance.now() - start < durationMs) {
         const el = document.querySelector(selector)
         if (el) {
@@ -205,7 +206,7 @@ async function sampleFrames(page, selector, durationMs) {
       }
       return samples
     },
-    { selector, durationMs },
+    { selector, durationMs, openPrimitive },
   )
 }
 
@@ -219,26 +220,21 @@ async function runP110Tests(browser, baseUrl) {
   const errors = []
   page.on("pageerror", (e) => errors.push(e.message))
 
-  await page.goto(`${baseUrl}/admin/overview`, { waitUntil: "networkidle" })
-  await installOverlayHarness(page)
-
-  // Warm lazy controller once before measuring per-primitive lifecycle deltas.
-  await page.evaluate(async () => {
-    const motion = await import("/src/lib/motion.ts")
-    await motion.prewarmMotionController()
-  })
-
   for (const motion of ["no-preference", "reduce"]) {
     await page.emulateMedia({ reducedMotion: motion })
+    await page.goto(`${baseUrl}/admin/overview`, { waitUntil: "networkidle" })
+    await installOverlayHarness(page)
+    await page.evaluate(async () => {
+      const motion = await import("/src/lib/motion.ts")
+      await motion.prewarmMotionController()
+    })
     for (const kind of ["dialog", "sheet", "alert"]) {
       const baselineListeners = await mqActiveDelta(page)
       await page.evaluate((k) => window.__harness.mountPrimitive({ kind: k, initialOpen: false }), kind)
       assert.equal(await page.locator('[data-p1="content"]').count(), 0, `${kind} (${motion}) must start closed`)
 
       // Trigger open via React state while sampling rAF frames.
-      const openSamplesPromise = sampleFrames(page, '[data-p1="content"]', 380)
-      await page.evaluate(() => window.__setOpen(true))
-      const openSamples = await openSamplesPromise
+      const openSamples = await sampleFrames(page, '[data-p1="content"]', 380, true)
 
       const presentOpen = openSamples.filter((s) => !s.absent)
       assert.ok(presentOpen.length > 0, `${kind} (${motion}) did not mount portal content`)
@@ -260,7 +256,10 @@ async function runP110Tests(browser, baseUrl) {
         }
       } else {
         const midOpacity = presentOpen.filter((s) => s.opacity > 0.02 && s.opacity < 0.98)
-        assert.ok(midOpacity.length >= 1, `${kind} reduced-motion expected intermediate opacity frame`)
+        assert.ok(
+          midOpacity.length >= 1,
+          `${kind} reduced-motion expected intermediate opacity frame, got ${JSON.stringify(presentOpen.map((s) => s.opacity))}`,
+        )
         assert.ok(
           presentOpen.every((s) => s.transform === "none"),
           `${kind} reduced-motion must keep transform fixed`,
@@ -336,6 +335,8 @@ async function runP110Tests(browser, baseUrl) {
 
   // AdminShell mobile drawer lifecycle: open, exit, interruptible reversal, and repeated cycle cleanup.
   await page.emulateMedia({ reducedMotion: "no-preference" })
+  await page.goto(`${baseUrl}/admin/overview`, { waitUntil: "networkidle" })
+  await page.evaluate(async () => (await import("/src/lib/motion.ts")).prewarmMotionController())
   const drawerBaseline = await mqActiveDelta(page)
 
   const drawerEnterPromise = sampleFrames(page, '[data-testid="admin-drawer-panel"]', 380)
