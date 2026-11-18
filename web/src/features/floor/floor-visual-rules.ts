@@ -797,12 +797,6 @@ function rectsOverlapWithGap(a: RectBox, b: RectBox, gap = 0): boolean {
   return !(a.right + gap <= b.left || b.right + gap <= a.left || a.bottom + gap <= b.top || b.bottom + gap <= a.top)
 }
 
-function rectOverlapArea(a: RectBox, b: RectBox): number {
-  const ox = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left))
-  const oy = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top))
-  return ox * oy
-}
-
 function deriveTableClusterPad(raw: RectBox, memberIds: Set<number>, tables: TableView[]): number {
   let minNeighborGap = Infinity
   for (const other of tables) {
@@ -1097,26 +1091,40 @@ export function computeClusterDecorations({
       box.top >= wallInner.top &&
       box.bottom <= wallInner.bottom
 
-    let chosen = candidates[0]
-    let bestScore = Infinity
-    for (const cand of candidates) {
-      const box = toBox(cand)
-      if (!fitsInWall(box)) continue
-      const clear = obstacles.every((obs) => !rectsOverlapWithGap(box, obs, 0.4))
-      if (clear) {
-        chosen = cand
-        bestScore = 0
-        break
-      }
-      let score = 0
-      for (const obs of obstacles) score += rectOverlapArea(box, obs)
-      if (score < bestScore) {
-        bestScore = score
-        chosen = cand
+    const gap = 0.4
+    const canPlace = (point: { x: number; y: number }) => {
+      const box = toBox(point)
+      return fitsInWall(box) && obstacles.every((obs) => !rectsOverlapWithGap(box, obs, gap))
+    }
+    let chosen = candidates.find(canPlace)
+    if (!chosen) {
+      obstacles.push(frameBounds)
+      const nearby = candidates[0]
+      const margin = CLUSTER_CODE_HALF_STROKE + gap + 0.01
+      // Axis-aligned clearance changes only at obstacle edges, so test the clear sides of each edge.
+      const xs = new Set([
+        nearby.x,
+        wallInner.left + CLUSTER_CODE_HALF_STROKE,
+        ...obstacles.flatMap((box) => [box.left - pw - margin, box.right + margin]),
+      ])
+      const ys = new Set([
+        nearby.y,
+        wallInner.top + CLUSTER_CODE_HALF_STROKE,
+        ...obstacles.flatMap((box) => [box.top - ph - margin, box.bottom + margin]),
+      ])
+      let bestDistance = Infinity
+      for (const x of xs) {
+        for (const y of ys) {
+          const distance = (x - nearby.x) ** 2 + (y - nearby.y) ** 2
+          if (distance >= bestDistance || !canPlace({ x, y })) continue
+          bestDistance = distance
+          const side = y + ph <= c.y ? "top" : y >= c.y + c.h ? "bottom" : x + pw <= c.x ? "left" : "right"
+          chosen = { x, y, side }
+        }
       }
     }
 
-    placedLabels.push(toBox(chosen))
+    if (chosen) placedLabels.push(toBox(chosen))
     return {
       key: c.key,
       x: c.x,
@@ -1127,13 +1135,7 @@ export function computeClusterDecorations({
       isBar: c.isBar,
       orientation: c.orientation,
       cornerCuts,
-      label: {
-        x: chosen.x,
-        y: chosen.y,
-        width: pw,
-        height: ph,
-        side: chosen.side,
-      },
+      label: chosen ? { ...chosen, width: pw, height: ph } : null,
     }
   })
 }

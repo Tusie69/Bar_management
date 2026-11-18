@@ -1646,6 +1646,50 @@ describe("mỗi cụm đúng một khung viền trên sơ đồ", () => {
 })
 
 describe("cluster outline & label collision clearance (F-02)", () => {
+  it("finds a clear group label outside the usual slots when nearby tiles block them", () => {
+    const points = [
+      [74, 60, 46, 32],
+      [123, 60, 46, 32],
+      [27, 60, 22, 24],
+      [168, 60, 22, 24],
+      [59, 27, 42, 20],
+      [100, 27, 42, 20],
+      [141, 27, 42, 20],
+      [59, 95, 42, 20],
+      [100, 95, 42, 20],
+      [141, 95, 42, 20],
+    ]
+    const tables = points.map(([x, y, w, h], i) => ({
+      ...realTables[0],
+      id: i + 1,
+      x,
+      y,
+      w,
+      h,
+      kind: "TABLE" as const,
+      seating: "none" as const,
+    }))
+    const [group] = computeClusterDecorations({
+      tables,
+      groups: [{ id: 7, symbolNo: 7, tableIds: [1, 2] }],
+      mode: "live",
+      groupRepresentativeMap: new Map(),
+      tableById: new Map(tables.map((table) => [table.id, table])),
+    })
+    expect(group.code).toBe("G07")
+    expect(group.label).not.toBeNull()
+    const { x, y, width, height } = group.label!
+    expect(
+      tables.every(
+        (tile) =>
+          x + width + 0.7 <= tile.x - tile.w / 2 - 1.5 ||
+          x - 0.7 >= tile.x + tile.w / 2 + 1.5 ||
+          y + height + 0.7 <= tile.y - tile.h / 2 - 1.5 ||
+          y - 0.7 >= tile.y + tile.h / 2 + 1.5,
+      ),
+    ).toBe(true)
+  })
+
   it("keeps stacked G02/G03 frames separated including 1.6-unit strokes and keeps code pills clear of guest-count badges and neighbouring cells", () => {
     const byCode = (code: string) => realTables.find((t) => t.code === code)!
     const tA6 = byCode("A6")
