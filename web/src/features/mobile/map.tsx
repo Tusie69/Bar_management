@@ -1,5 +1,16 @@
 import { AlertTriangle, ListOrdered, Menu, MessageSquareText, X } from "lucide-react"
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import type { TableLiveState, TableView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
@@ -45,6 +56,20 @@ const ZONE_TABS: [ZoneCode | "ALL", string][] = [
   ["C", "Khu C"],
   ["BAR", "Bar"],
 ]
+
+const OPEN_MODAL_SELECTOR =
+  "[data-slot='sheet-content'][data-motion-state='open'], [data-slot='dialog-content'][data-motion-state='open'], [data-slot='alert-dialog-content'][data-motion-state='open']"
+
+function isQuickFormDirty(container: HTMLElement | null): boolean {
+  if (!container) return false
+  const name = container.querySelector<HTMLInputElement>("#qf-name")?.value.trim() ?? ""
+  const phone = container.querySelector<HTMLInputElement>("#qf-phone")?.value.trim() ?? ""
+  const note = container.querySelector<HTMLTextAreaElement>("#qf-note")?.value.trim() ?? ""
+  const honorific = container.querySelector(
+    '[role="group"][aria-label="Danh xưng"] [role="radio"][aria-checked="true"]',
+  )
+  return Boolean(name || phone || note || honorific)
+}
 
 export function MapScreen({
   selected,
@@ -125,6 +150,72 @@ export function MapScreen({
     quickForm.present,
     quickForm.isOpen,
   )
+  const [confirmLeave, setConfirmLeave] = useState(false)
+  const [lastSessionKey, setLastSessionKey] = useState(quickForm.sessionKey)
+  if (quickForm.sessionKey !== lastSessionKey) {
+    setLastSessionKey(quickForm.sessionKey)
+    if (confirmLeave) setConfirmLeave(false)
+  }
+  if (!quickForm.isOpen && confirmLeave) {
+    setConfirmLeave(false)
+  }
+
+  const quickFormFocus = useRestoreTriggerFocus(quickForm.isOpen, { modal: false })
+  const leaveFocus = useRestoreTriggerFocus(confirmLeave, { suppressRestore: !quickForm.isOpen })
+  const floorPointerRef = useRef<{ id: number; x: number; y: number; dragged: boolean } | null>(null)
+  const wasQuickFormPresentRef = useRef(false)
+  const quickFormPresentRef = useRef(quickForm.present)
+  useLayoutEffect(() => {
+    quickFormPresentRef.current = quickForm.present
+  }, [quickForm.present])
+
+  const closeQuickFormNow = useCallback(() => {
+    const kind = useUi.getState().draft?.kind
+    if (kind === "walkin") useUi.getState().closeWalkIn()
+    else if (kind === "booking") useUi.getState().closeBooking()
+  }, [])
+
+  const requestQuickFormClose = useCallback(() => {
+    if (!quickForm.isOpen || confirmLeave) return
+    if (isQuickFormDirty(draftContentEl)) {
+      setConfirmLeave(true)
+    } else {
+      closeQuickFormNow()
+    }
+  }, [closeQuickFormNow, confirmLeave, draftContentEl, quickForm.isOpen])
+
+  // Move keyboard focus into the quick-form container on entry without opening the virtual keyboard.
+  useEffect(() => {
+    if (!quickForm.isOpen || !draftContentEl || confirmLeave) return
+    const active = document.activeElement
+    if (active && draftContentEl.contains(active)) return
+    draftContentEl.focus({ preventScroll: true })
+  }, [confirmLeave, draftContentEl, quickForm.isOpen, quickForm.sessionKey])
+
+  // Restore focus to the surviving opener once QuickForm finishes its exit (and any leave alert is gone).
+  useEffect(() => {
+    const wasPresent = wasQuickFormPresentRef.current
+    wasQuickFormPresentRef.current = quickForm.present
+    if (wasPresent && !quickForm.present) {
+      const alertStillOpen = Boolean(document.querySelector(`[data-gm-overlay-id="${leaveFocus.overlayId}"]`))
+      if (!alertStillOpen) {
+        quickFormFocus.restoreNonModal()
+      }
+    }
+  }, [leaveFocus.overlayId, quickForm.present, quickFormFocus])
+
+  // Fallback Escape handler when QuickForm is open and focus moved onto the floor canvas.
+  useEffect(() => {
+    if (!quickForm.isOpen || confirmLeave) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return
+      if (document.querySelector(OPEN_MODAL_SELECTOR)) return
+      e.preventDefault()
+      requestQuickFormClose()
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [confirmLeave, quickForm.isOpen, requestQuickFormClose])
 
   return (
     <main className="contents">
@@ -242,8 +333,30 @@ export function MapScreen({
 
       <div
         className="relative min-h-0 flex-1 bg-[var(--floor)]"
-        onPointerDown={() => {
+        onPointerDown={(e) => {
           void prewarmMotionController()
+          if (!e.isPrimary) {
+            if (floorPointerRef.current) floorPointerRef.current.dragged = true
+            return
+          }
+          floorPointerRef.current = { id: e.pointerId, x: e.clientX, y: e.clientY, dragged: false }
+        }}
+        onPointerMove={(e) => {
+          const p = floorPointerRef.current
+          if (!p || p.id !== e.pointerId) return
+          if (!p.dragged && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 6) {
+            p.dragged = true
+          }
+        }}
+        onClick={(e) => {
+          const dragged = floorPointerRef.current?.dragged
+          floorPointerRef.current = null
+          if (!quickForm.isOpen || pick || layoutPick || confirmLeave || dragged) return
+          const target = e.target
+          if (target instanceof Element && target.closest("[role='button'], button, a, input, select, textarea")) {
+            return
+          }
+          requestQuickFormClose()
         }}
       >
         {/* Search results float OVER the plan so document flow doesn't jump the camera. */}
@@ -388,7 +501,12 @@ export function MapScreen({
           })()
         : null}
       {draft && draftZone ? (
-        <p className="z-[11] m-0 shrink-0 bg-background px-4 pb-1 text-center text-[11px] font-medium tracking-wide text-[var(--text-muted)]">
+        <p
+          onClick={() => {
+            if (quickForm.isOpen && !confirmLeave) requestQuickFormClose()
+          }}
+          className="z-[11] m-0 shrink-0 bg-background px-4 pb-1 text-center text-[11px] font-medium tracking-wide text-[var(--text-muted)]"
+        >
           KHU {draftZone} · chạm để chọn thêm
         </p>
       ) : null}
@@ -397,11 +515,19 @@ export function MapScreen({
           <div ref={draftOverlayRef} aria-hidden className="pointer-events-none fixed inset-0 z-[-1] opacity-0" />
           <section
             ref={draftContentRef}
+            tabIndex={-1}
+            data-gm-overlay-id={quickFormFocus.overlayId}
             role={quickForm.isOpen ? "dialog" : undefined}
             aria-label="Đặt bàn trên sơ đồ"
             aria-hidden={!quickForm.isOpen || undefined}
             inert={!quickForm.isOpen || undefined}
             data-motion-state={quickForm.isOpen ? "open" : "closing"}
+            onKeyDownCapture={(e) => {
+              if (e.key !== "Escape" || e.defaultPrevented) return
+              e.preventDefault()
+              e.stopPropagation()
+              requestQuickFormClose()
+            }}
             style={{
               ...(draftAwaiting ? { opacity: 0 } : {}),
               ...(keyboardSafeHeight
@@ -409,12 +535,23 @@ export function MapScreen({
                 : {}),
             }}
             className={cn(
-              "z-[12] flex max-h-[62dvh] min-h-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)]",
+              "z-[12] flex max-h-[62dvh] min-h-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)] outline-none",
               !keyboardSafeHeight && "pb-[var(--bottom-safe)]",
               !quickForm.isOpen && "pointer-events-none",
             )}
           >
-            <div className="flex min-h-0 flex-1 flex-col pt-1">
+            <div
+              className="flex min-h-0 flex-1 flex-col pt-1"
+              onClickCapture={(e) => {
+                const target = e.target
+                if (!(target instanceof Element)) return
+                if (target.closest('button[aria-label="Đóng form"]') && isQuickFormDirty(draftContentEl)) {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setConfirmLeave(true)
+                }
+              }}
+            >
               <QuickForm
                 key={quickForm.sessionKey}
                 compact
@@ -438,6 +575,64 @@ export function MapScreen({
           ) : null}
         </>
       ) : null}
+      <AlertDialog
+        open={confirmLeave}
+        onOpenChange={(next) => {
+          if (!next) setConfirmLeave(false)
+        }}
+      >
+        <AlertDialogContent
+          data-gm
+          data-gm-overlay-id={leaveFocus.overlayId}
+          data-receptionist-frame={receptionist ? "true" : undefined}
+          size="sm"
+          onCloseAutoFocus={(event) => {
+            if (!quickForm.isOpen) {
+              event.preventDefault()
+              leaveFocus.onCloseAutoFocus(event)
+              if (!quickFormPresentRef.current) {
+                quickFormFocus.restoreNonModal()
+              }
+              return
+            }
+            leaveFocus.onCloseAutoFocus(event)
+            if (draftContentEl && (!document.activeElement || !draftContentEl.contains(document.activeElement))) {
+              event.preventDefault()
+              const closeBtn = draftContentEl.querySelector<HTMLElement>('button[aria-label="Đóng form"]')
+              ;(closeBtn ?? draftContentEl).focus({ preventScroll: true })
+            }
+          }}
+          aria-label="Bỏ đơn đang nhập"
+          className="max-w-[min(calc(100%-2rem),380px)] gap-4 rounded-2xl border-border bg-surface-1 p-5 shadow-[var(--shadow-float)]"
+        >
+          <AlertDialogHeader>
+            <AlertDialogMedia className="size-11 rounded-xl bg-st-late-tint text-st-late-ink">
+              <AlertTriangle className="size-5" aria-hidden />
+            </AlertDialogMedia>
+            <AlertDialogTitle className="text-[17px] font-semibold tracking-[-0.015em] text-tx-strong">
+              Bỏ đơn đang nhập?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-[14px] leading-relaxed text-[var(--text-muted)]">
+              Thông tin vừa nhập sẽ không được lưu.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="grid grid-cols-2 gap-2.5 pt-1">
+            <AlertDialogCancel className="h-12 rounded-xl border-border-strong text-[15px] font-medium">
+              Tiếp tục nhập
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                setConfirmLeave(false)
+                closeQuickFormNow()
+              }}
+              className="h-12 rounded-xl text-[15px] font-semibold"
+            >
+              Bỏ đơn
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </main>
   )
 }
@@ -500,7 +695,7 @@ export function TableSheet({
   const [overlayEl, overlayCallbackRef] = useStableNodeRef<HTMLDivElement>()
   const [contentEl, contentCallbackRef] = useStableNodeRef<HTMLDivElement>()
   const { awaitingMotion, fallbackShown } = useAwaitingMotionController(present, isOpen)
-  const tableFocus = useRestoreTriggerFocus(isOpen, { modal: false })
+  const tableFocus = useRestoreTriggerFocus(isOpen, { modal: false, sourceKey: isOpen ? (id ?? cachedId) : null })
   const wasPresentRef = useRef(false)
 
   useEffect(() => {

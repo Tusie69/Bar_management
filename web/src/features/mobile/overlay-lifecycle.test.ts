@@ -24,6 +24,7 @@ const runtime = vi.hoisted(() => {
   let activeEl: unknown = null
   let openOverlays: Array<{ attrs: Record<string, string>; dataset: Record<string, string>; focusables: unknown[] }> =
     []
+  let svgButtons: MockElement[] = []
 
   const getInst = (key = activeKey): HookInstance => {
     let inst = instances.get(key)
@@ -39,9 +40,9 @@ const runtime = vi.hoisted(() => {
     return next.some((v, i) => !Object.is(v, prev[i]))
   }
 
-  function findClosest(start: MockHTMLElement, selector: string): MockHTMLElement | null {
+  function findClosest(start: MockElement, selector: string): MockElement | null {
     const parts = selector.split(",").map((s) => s.trim())
-    let cur: MockHTMLElement | null = start
+    let cur: MockElement | null = start
     while (cur) {
       for (const p of parts) {
         if (p === "[inert]" && "inert" in cur.attrs) return cur
@@ -58,11 +59,11 @@ const runtime = vi.hoisted(() => {
     return null
   }
 
-  class MockHTMLElement {
+  class MockElement {
     isConnected = true
     dataset: Record<string, string> = {}
     attrs: Record<string, string> = {}
-    parent: MockHTMLElement | null = null
+    parent: MockElement | null = null
     focusedCount = 0
     disabled = false
 
@@ -80,7 +81,7 @@ const runtime = vi.hoisted(() => {
       return this.attrs[name] ?? null
     }
 
-    closest(selector: string): MockHTMLElement | null {
+    closest(selector: string): MockElement | null {
       return findClosest(this, selector)
     }
 
@@ -93,6 +94,9 @@ const runtime = vi.hoisted(() => {
       activeEl = findClosest(this, "button, [role='button']") ?? activeEl
     }
   }
+
+  class MockHTMLElement extends MockElement {}
+  class MockSVGElement extends MockElement {}
 
   const mockDocument = {
     body: new MockHTMLElement({ tag: "body" }),
@@ -132,17 +136,28 @@ const runtime = vi.hoisted(() => {
       }
       return null
     },
+    querySelectorAll(selector: string) {
+      if (selector.includes('svg[role="group"] [role="button"]')) {
+        return svgButtons
+      }
+      return []
+    },
   }
 
   vi.stubGlobal("HTMLElement", MockHTMLElement)
+  vi.stubGlobal("SVGElement", MockSVGElement)
   vi.stubGlobal("document", mockDocument)
   vi.stubGlobal("window", { localStorage: { getItem: () => null, setItem: () => undefined } })
 
   return {
     MockHTMLElement,
+    MockSVGElement,
     mockDocument,
     setOpenOverlays(list: typeof openOverlays) {
       openOverlays = list
+    },
+    setSvgButtons(list: MockElement[]) {
+      svgButtons = list
     },
     reset() {
       for (const inst of instances.values()) {
@@ -153,6 +168,7 @@ const runtime = vi.hoisted(() => {
       instances.clear()
       docListeners.clear()
       openOverlays = []
+      svgButtons = []
       idSeq = 0
       activeKey = "default"
       activeEl = mockDocument.body
@@ -527,5 +543,99 @@ describe("P3-02 overlay focus handoff", () => {
 
     tableFocus.restoreNonModal()
     expect(tableBtn.focusedCount).toBe(0)
+  })
+
+  it("carries SVG table opener B4 through TableSheet -> DetailScreen and restores B4 on close", () => {
+    const { MockHTMLElement, MockSVGElement, mockDocument } = runtime
+    const b4Group = new MockSVGElement({ role: "button", "aria-label": "Bàn B4, Đã đặt, Anh A, 4 khách" })
+
+    let tableFocus = runtime.render("table", () => useRestoreTriggerFocus(false, { modal: false, sourceKey: null }))
+    runtime.flushEffects("table")
+    let detailFocus = runtime.render("detail", () => useRestoreTriggerFocus(false))
+    runtime.flushEffects("detail")
+
+    const tableSheetEl = new MockHTMLElement(
+      { "data-mobile-table-sheet": "true", "data-gm-overlay-id": tableFocus.overlayId },
+      { motionState: "open" },
+    )
+    const viewBookingBtn = new MockHTMLElement({ tag: "button" })
+    viewBookingBtn.parent = tableSheetEl
+
+    // Focus B4, press Enter -> TableSheet opens
+    mockDocument.dispatchEvent("focusin", b4Group)
+    mockDocument.activeElement = b4Group
+    tableFocus = runtime.render("table", () => useRestoreTriggerFocus(true, { modal: false, sourceKey: 4 }))
+    runtime.flushEffects("table")
+
+    // Click Xem booking inside TableSheet -> TableSheet closes, DetailScreen opens
+    mockDocument.dispatchEvent("pointerdown", viewBookingBtn)
+    mockDocument.activeElement = viewBookingBtn
+    tableSheetEl.dataset.motionState = "closing"
+
+    detailFocus = runtime.render("detail", () => useRestoreTriggerFocus(true))
+    tableFocus = runtime.render("table", () => useRestoreTriggerFocus(false, { modal: false, sourceKey: null }))
+    runtime.flushEffects("detail")
+    runtime.flushEffects("table")
+
+    // TableSheet exit must not steal focus while DetailScreen is open
+    tableFocus.restoreNonModal()
+    expect(b4Group.focusedCount).toBe(0)
+
+    // DetailScreen closes -> focus returns directly to SVG table B4
+    detailFocus = runtime.render("detail", () => useRestoreTriggerFocus(false))
+    runtime.flushEffects("detail")
+    let defaultPrevented = false
+    detailFocus.onCloseAutoFocus({
+      preventDefault: () => {
+        defaultPrevented = true
+      },
+    } as unknown as Event)
+    expect(defaultPrevented).toBe(true)
+    expect(b4Group.focusedCount).toBe(1)
+    expect(mockDocument.activeElement).toBe(b4Group)
+  })
+
+  it("restores surviving SVG table C4 when QuickForm closes even if FloorCanvas remounted LiveGlyph", () => {
+    const { MockHTMLElement, MockSVGElement, mockDocument } = runtime
+    const c4Old = new MockSVGElement({ role: "button", "aria-label": "Bàn C4, Trống" })
+    const c4InnerRect = new MockSVGElement({})
+    c4InnerRect.parent = c4Old
+
+    let tableFocus = runtime.render("table", () => useRestoreTriggerFocus(false, { modal: false, sourceKey: null }))
+    runtime.flushEffects("table")
+    let qfFocus = runtime.render("qf", () => useRestoreTriggerFocus(false, { modal: false }))
+    runtime.flushEffects("qf")
+
+    const tableSheetEl = new MockHTMLElement(
+      { "data-mobile-table-sheet": "true", "data-gm-overlay-id": tableFocus.overlayId },
+      { motionState: "open" },
+    )
+    const bookBtn = new MockHTMLElement({ tag: "button" })
+    bookBtn.parent = tableSheetEl
+
+    // Click C4 inner rect -> TableSheet opens
+    mockDocument.dispatchEvent("pointerdown", c4InnerRect)
+    tableFocus = runtime.render("table", () => useRestoreTriggerFocus(true, { modal: false, sourceKey: 14 }))
+    runtime.flushEffects("table")
+
+    // Click Đặt bàn -> TableSheet closes, QuickForm opens
+    mockDocument.dispatchEvent("pointerdown", bookBtn)
+    mockDocument.activeElement = bookBtn
+    tableSheetEl.dataset.motionState = "closing"
+    qfFocus = runtime.render("qf", () => useRestoreTriggerFocus(true, { modal: false }))
+    tableFocus = runtime.render("table", () => useRestoreTriggerFocus(false, { modal: false, sourceKey: null }))
+    runtime.flushEffects("qf")
+    runtime.flushEffects("table")
+
+    // FloorCanvas toggled mode="availability" -> mode="live", replacing c4Old with c4New
+    c4Old.isConnected = false
+    const c4New = new MockSVGElement({ role: "button", "aria-label": "Bàn C4, Trống" })
+    runtime.setSvgButtons([c4New])
+
+    qfFocus = runtime.render("qf", () => useRestoreTriggerFocus(false, { modal: false }))
+    runtime.flushEffects("qf")
+    qfFocus.restoreNonModal()
+    expect(c4New.focusedCount).toBe(1)
+    expect(mockDocument.activeElement).toBe(c4New)
   })
 })
