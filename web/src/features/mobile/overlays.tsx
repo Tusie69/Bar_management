@@ -256,7 +256,11 @@ export function AccountSheet({
       >
         <SheetHeader className="px-4 pt-5 pb-2 text-left">
           <SheetTitle className="text-[19px] font-bold tracking-[-0.015em] text-tx-strong">Tài khoản</SheetTitle>
-          <SheetDescription className="sr-only">Chọn giao diện sáng tối, tài khoản và trang mở rộng</SheetDescription>
+          <SheetDescription className="sr-only">
+            {isReceptionist
+              ? "Xem thông báo trong ca và quản lý tài khoản, giao diện"
+              : "Chọn giao diện sáng tối, tài khoản và trang mở rộng"}
+          </SheetDescription>
         </SheetHeader>
         <SheetBody className="gap-3 pb-3">
           {isReceptionist ? (

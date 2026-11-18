@@ -135,7 +135,9 @@ function rectsOverlap(a, b) {
 }
 
 const browser = await launchBrowser()
-const { server, baseUrl } = await startMockViteServer()
+const { server, baseUrl } = process.env.E2E_BASE_URL
+  ? { baseUrl: process.env.E2E_BASE_URL }
+  : await startMockViteServer()
 
 try {
   // 1. 8-viewport responsive & spatial rendering verification on /admin/overview
@@ -544,5 +546,5 @@ try {
   console.log("admin-floor-map E2E verification PASSED")
 } finally {
   await browser.close()
-  await server.close()
+  await server?.close()
 }

@@ -8,6 +8,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -723,6 +724,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
       }),
     [allowWaitlist, groups, groupRepresentativeMap, isAllZone, mode, states, tableById, tables],
   )
+  const clusterMaskId = useId()
 
   // Zone tracking chip state (Item 2b)
   const isZoomed = userView !== null && Math.abs(userView.view.k - baseK) > 0.05
@@ -900,7 +902,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
             </foreignObject>
           ) : null}
 
-          {clusterOutlines.map((c) => (
+          {clusterOutlines.map((c, index) => (
             <g
               key={`cluster-${c.key}`}
               data-cluster-outline="1"
@@ -920,7 +922,29 @@ export function FloorCanvas(props: FloorCanvasProps) {
                 stroke="var(--primary)"
                 strokeOpacity={0.55}
                 strokeWidth={CLUSTER_OUTLINE_STROKE}
+                mask={c.cornerCuts.length ? `url(#${clusterMaskId}-${index})` : undefined}
               />
+              {c.cornerCuts.length ? (
+                <mask id={`${clusterMaskId}-${index}`} maskContentUnits="userSpaceOnUse">
+                  <rect
+                    x={c.x - CLUSTER_OUTLINE_STROKE}
+                    y={c.y - CLUSTER_OUTLINE_STROKE}
+                    width={c.w + CLUSTER_OUTLINE_STROKE * 2}
+                    height={c.h + CLUSTER_OUTLINE_STROKE * 2}
+                    fill="white"
+                  />
+                  {c.cornerCuts.map((box, cutIndex) => (
+                    <rect
+                      key={cutIndex}
+                      x={box.left}
+                      y={box.top}
+                      width={box.right - box.left}
+                      height={box.bottom - box.top}
+                      fill="black"
+                    />
+                  ))}
+                </mask>
+              ) : null}
             </g>
           ))}
 

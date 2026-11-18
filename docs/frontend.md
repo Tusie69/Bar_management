@@ -248,12 +248,12 @@ cd web && pnpm typecheck && pnpm lint && pnpm test
 
 ## 9. Chuyển động trong khung Admin
 
-Drawer Admin opens and closes from the left through `SheetPresenceController`
-with `MOTION.duration.drawer` from `web/src/lib/motion.ts`. It stays mounted
-through exit, releases focus and input on close, and can reverse mid-exit.
-The shared controller handles reduced-motion preferences.
+Drawer Admin mở và đóng từ bên trái qua `SheetPresenceController` với
+`MOTION.duration.drawer` từ `web/src/lib/motion.ts`. Panel còn trong DOM
+khi đóng để hoàn thành chuyển động, ngừng nhận thao tác và có thể đổi
+hướng nếu mở lại giữa chừng. Controller xử lý cả chế độ giảm chuyển động.
 
-CSS hover, focus and press states use the shared motion tokens in
-`web/src/styles/tokens.css`. List transition properties explicitly so the
-focus outline appears immediately. The sidebar gap and panel use the same
-easing so their edges stay aligned. Realtime updates keep floor tiles static.
+Các trạng thái hover, focus và press lấy thời lượng và easing từ
+`web/src/styles/tokens.css`. Khai rõ thuộc tính trong `transition` để
+viền focus xuất hiện ngay. Khe và panel của sidebar dùng cùng easing để
+chuyển động đồng bộ. Các ô trên sơ đồ giữ nguyên khi dữ liệu cập nhật.

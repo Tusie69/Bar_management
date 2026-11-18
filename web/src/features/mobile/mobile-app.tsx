@@ -201,7 +201,7 @@ export default function MobileApp() {
 
   const openAlertDetail = (alert: Alert) => {
     setOverlay(null)
-    if (alert.reservationId) ctx.openDetail(alert.reservationId, selectedDate)
+    if (alert.reservationId) setDetail({ id: alert.reservationId, bd: selectedDate })
     else if (alert.tableId) ctx.openTable(alert.tableId)
   }
 
@@ -426,7 +426,9 @@ export default function MobileApp() {
           open={overlay === "account"}
           onClose={() => setOverlay(null)}
           alerts={alerts}
-          onOpenNotifications={() => markSeen(alerts.map((a) => a.key))}
+          onOpenNotifications={() => {
+            if (unread) markSeen(alerts.map((a) => a.key))
+          }}
           onOpenAlert={openAlertDetail}
         />
         <GuestCountSheet

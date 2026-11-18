@@ -464,6 +464,7 @@ export function getTableCornerObstacleBoxes(
   let bottomLeftIcons: RectBox | null = null
   let bottomRightIcons: RectBox | null = null
   let paidDot: RectBox | null = null
+  const icons = resolveCellCornerIcons(claim)
 
   if (hasActiveClaim && isAnchor && claim) {
     if (claim.partySize && claim.partySize > 0) {
@@ -479,8 +480,6 @@ export function getTableCornerObstacleBoxes(
         bottom: cy + bh / 2 + halfStroke + margin,
       }
     }
-
-    const icons = resolveCellCornerIcons(claim)
 
     if (icons.bottomLeft.length > 0) {
       const cx = table.x + geo.bottomLeftIcons.x
@@ -508,16 +507,17 @@ export function getTableCornerObstacleBoxes(
         right: cx + iconPad,
         bottom: cy + iconPad,
       }
-    } else if (claim.paid) {
-      const cx = table.x + geo.bottomRightIcons.x
-      const cy = table.y + geo.bottomRightIcons.y
-      const iconPad = TABLE_ICON_RADIUS + TABLE_ICON_STROKE / 2 + margin
-      paidDot = {
-        left: cx - iconPad,
-        top: cy - iconPad,
-        right: cx + iconPad,
-        bottom: cy + iconPad,
-      }
+    }
+  }
+  if (claim?.paid && icons.bottomRight.length === 0) {
+    const cx = table.x + geo.bottomRightIcons.x
+    const cy = table.y + geo.bottomRightIcons.y
+    const iconPad = TABLE_ICON_RADIUS + TABLE_ICON_STROKE / 2 + margin
+    paidDot = {
+      left: cx - iconPad,
+      top: cy - iconPad,
+      right: cx + iconPad,
+      bottom: cy + iconPad,
     }
   }
 
@@ -778,6 +778,7 @@ export interface ClusterDecoration {
   code: string | null
   isBar: boolean
   orientation: "horizontal" | "vertical" | null
+  cornerCuts: RectBox[]
   label: {
     x: number
     y: number
@@ -918,16 +919,15 @@ export function computeClusterDecorations({
 
   rawClusters.sort((a, b) => a.y - b.y || a.x - b.x || (a.code ?? a.key).localeCompare(b.code ?? b.key))
 
-  const groupTurnMap = new Map<number, number>()
+  const groupTurnMap = new Map<number, FloorGroup["seatedTurnCount"]>()
   for (const g of groups) {
-    if (typeof g.seatedTurnCount === "number") {
-      for (const id of g.tableIds) {
-        if (!groupTurnMap.has(id)) groupTurnMap.set(id, g.seatedTurnCount)
-      }
+    for (const id of g.tableIds) {
+      groupTurnMap.set(id, g.seatedTurnCount)
     }
   }
 
   const baseObstacles: RectBox[] = []
+  const cornerObstacles: RectBox[] = []
   for (const t of tables) {
     if (t.kind === "BAR_SEAT") {
       const r = Math.max(9, (t.w || 20) / 2)
@@ -968,7 +968,7 @@ export function computeClusterDecorations({
         boxes.paidDot,
         boxes.staleMark,
       ]) {
-        if (box) baseObstacles.push(box)
+        if (box) cornerObstacles.push(box)
       }
     }
   }
@@ -1007,6 +1007,10 @@ export function computeClusterDecorations({
   const placedLabels: RectBox[] = []
 
   return rawClusters.map((c) => {
+    const frameBounds = { left: c.x, top: c.y, right: c.x + c.w, bottom: c.y + c.h }
+    const cornerCuts = cornerObstacles.filter((box) =>
+      rectsOverlapWithGap(frameBounds, box, CLUSTER_OUTLINE_HALF_STROKE),
+    )
     if (!c.code) {
       return {
         key: c.key,
@@ -1017,6 +1021,7 @@ export function computeClusterDecorations({
         code: null,
         isBar: c.isBar,
         orientation: c.orientation,
+        cornerCuts,
         label: null,
       }
     }
@@ -1031,7 +1036,7 @@ export function computeClusterDecorations({
         right: o.x + o.w + CLUSTER_OUTLINE_HALF_STROKE,
         bottom: o.y + o.h + CLUSTER_OUTLINE_HALF_STROKE,
       }))
-    const obstacles = [...baseObstacles, ...otherOutlines, ...placedLabels]
+    const obstacles = [...baseObstacles, ...cornerObstacles, ...otherOutlines, ...placedLabels]
 
     const candidates: { x: number; y: number; side: "left" | "right" | "top" | "bottom" }[] = []
     if (c.isBar && c.orientation === "vertical") {
@@ -1121,6 +1126,7 @@ export function computeClusterDecorations({
       code: c.code,
       isBar: c.isBar,
       orientation: c.orientation,
+      cornerCuts,
       label: {
         x: chosen.x,
         y: chosen.y,

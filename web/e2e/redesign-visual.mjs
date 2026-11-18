@@ -119,7 +119,7 @@ export async function prepare(page, job, base) {
     await page.getByRole("button", { name: "Sửa bộ đếm khách", exact: true }).click()
     await expect(page.getByRole("dialog")).toBeVisible()
   } else if (job.state === "account-sheet") {
-    await page.getByRole("button", { name: "Menu", exact: true }).click()
+    await page.getByRole("button", { name: /^Menu(?:,|$)/ }).click()
     await expect(page.getByRole("dialog", { name: "Tài khoản", exact: true })).toBeVisible()
   } else if (job.state === "create") await openCreateAccount(page)
   else if (job.state === "password") {

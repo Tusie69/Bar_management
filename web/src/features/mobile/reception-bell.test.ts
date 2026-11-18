@@ -164,7 +164,9 @@ describe("Notification bell removal for RECEPTIONIST", () => {
 
     expect(html).not.toContain('aria-label="Thông báo')
     expect(html).not.toContain("lucide-bell")
-    expect(html).toMatch(/<button[^>]*aria-label="Menu, 5 thông báo chưa xem"[^>]*>(?:(?!<\/button>).)*data-testid="reception-menu-unread"/s)
+    expect(html).toMatch(
+      /<button[^>]*aria-label="Menu, 5 thông báo chưa xem"[^>]*>(?:(?!<\/button>).)*data-testid="reception-menu-unread"/s,
+    )
     expect(html).not.toContain('<span class="flex-1"></span>')
     expect(html).toContain('aria-label="Hoàn tác"')
     expect(html).toContain('aria-label="Làm lại"')

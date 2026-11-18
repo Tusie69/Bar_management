@@ -402,19 +402,7 @@
   }
 }
 
-/*
- * Khung hẹp: `.turns-wide-grid` chỉ là một cột, hai lưới bên trong xếp dọc
- * như cũ. Khung rộng: mở ra ba cột.
- *
- * Ở 1920 (khung 1552px), bố cục hai cột cho trang cao 1420px trong khi vùng
- * nhìn chỉ 875px — phải cuộn 545px, và dưới thẻ "Theo nhân viên" (cao
- * 157px) là một mảng trống 372px cạnh thẻ "Bàn được ngồi nhiều nhất" (529px).
- * Xếp hai thẻ đó thành cột thứ ba thì cả ba cột cao xấp xỉ nhau và trang
- * gọn lại còn một màn hình.
- *
- * 1500px là mức mà cột bảng vẫn còn ít nhất 780px cho tám cột dữ liệu sau khi
- * trừ hai cột phụ 340px. Dưới mức đó giữ hai cột như cũ.
- */
+/* Ở ngưỡng 1500px, hai cột phụ và hai khoảng cách vẫn chừa 784px cho bảng lịch sử. */
 .turns-wide-grid {
   display: grid;
   gap: 18px;

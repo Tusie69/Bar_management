@@ -203,7 +203,9 @@ function rectsOverlap(a, b, tol = 0.5) {
   return !(a.right <= b.left + tol || b.right <= a.left + tol || a.bottom <= b.top + tol || b.bottom <= a.top + tol)
 }
 
-const { server, baseUrl } = await startMockViteServer()
+const { server, baseUrl } = process.env.E2E_BASE_URL
+  ? { baseUrl: process.env.E2E_BASE_URL }
+  : await startMockViteServer()
 const browser = await launchBrowser()
 const summary = { mode: "mock", viewports: {}, flows: {}, ownerCheck: {} }
 
@@ -384,6 +386,33 @@ try {
         })),
       }))
 
+      const frameCornerCollisions = []
+      for (const frame of svg?.querySelectorAll('[data-cluster-outline="1"] > rect') ?? []) {
+        const { left, top, right, bottom } = frame.getBoundingClientRect()
+        const inverse = frame.getScreenCTM().inverse()
+        const mask = frame.getAttribute("mask")
+        const cuts = mask
+          ? Array.from(document.getElementById(mask.slice(5, -1))?.querySelectorAll('rect[fill="black"]') ?? [])
+          : []
+        for (const { box, label } of [...countBadges, ...turnBadges, ...cornerIcons]) {
+          const minY = Math.max(box.top, top - outlineHalfStroke)
+          const maxY = Math.min(box.bottom, bottom + outlineHalfStroke)
+          const minX = Math.max(box.left, left - outlineHalfStroke)
+          const maxX = Math.min(box.right, right + outlineHalfStroke)
+          let clear = true
+          for (let y = minY; y <= maxY && clear; y += 0.25) {
+            for (let x = minX; x <= maxX; x += 0.25) {
+              const point = new DOMPoint(x, y).matrixTransform(inverse)
+              if (frame.isPointInStroke(point) && !cuts.some((cut) => cut.isPointInFill(point))) {
+                clear = false
+                break
+              }
+            }
+          }
+          if (!clear) frameCornerCollisions.push({ code: frame.parentElement.dataset.clusterCodeValue, label })
+        }
+      }
+
       const svgRect = toBox(svg?.getBoundingClientRect() ?? null)
 
       const tableShapes = Array.from(svg?.querySelectorAll('[role="button"][aria-label]') ?? []).map((g) => {
@@ -460,6 +489,7 @@ try {
         countBadges,
         turnBadges,
         cornerIcons,
+        frameCornerCollisions,
         tableShapes,
         fontFamily: shell ? getComputedStyle(shell).fontFamily : "",
       }
@@ -534,6 +564,7 @@ try {
       metrics.countBadges.length >= 4,
       `${vp.label}: expected >= 4 guest count badges, got ${metrics.countBadges.length}`,
     )
+    assert.deepEqual(metrics.frameCornerCollisions, [], `${vp.label}: a cluster frame crosses a corner badge/icon`)
 
     for (const pill of metrics.clusterPills) {
       assert(pill.box, `${vp.label}: missing box for pill ${pill.code}`)
@@ -759,10 +790,13 @@ try {
     await menuTrigger.focus()
     await menuTrigger.press("Enter")
     await notifications.waitFor({ state: "visible" })
-    await accountSheet.locator('[data-motion-state="open"]').count()
     assert.equal(await notifications.evaluate((el) => el.parentElement.open), false)
     assert.equal(await readSeen(), previousSeen, "Opening Menu alone marked reception notifications as seen")
     assert.equal(await dot.count(), 1, "Menu alone cleared the unread dot")
+    await page.waitForFunction(() => {
+      const sheet = document.querySelector('[data-slot="sheet-content"][data-motion-state="open"]')
+      return sheet && Math.abs(window.innerHeight - sheet.getBoundingClientRect().bottom) < 1
+    })
     await page.screenshot({ path: path.join(outDir, "reception-390x844-menu-unread.png") })
     await page.keyboard.press("Escape")
     await accountSheet.waitFor({ state: "detached" })
@@ -782,10 +816,14 @@ try {
     await accountSheet.waitFor({ state: "detached" })
     const alertDetail = page.getByRole("dialog").first()
     await alertDetail.waitFor({ state: "visible" })
-    assert(await alertDetail.evaluate((el) => el.contains(document.activeElement)), "Alert detail did not receive focus")
+    assert(
+      await alertDetail.evaluate((el) => el.contains(document.activeElement)),
+      "Alert detail did not receive focus",
+    )
     await page.keyboard.press("Escape")
     await alertDetail.waitFor({ state: "detached" })
     await page.getByRole("button", { name: "Menu", exact: true }).waitFor({ state: "visible" })
+    summary.flows.receptionNotifications = { menuPreservedUnread: true, sectionMarkedSeen: true, detailFocus: true }
 
     // R1: Open guest count edit, set Tổng đã tới = 42, save and confirm persisted on card
     await page.getByRole("button", { name: "Sửa bộ đếm khách" }).click()
@@ -856,7 +894,7 @@ try {
   }
 } finally {
   await browser.close()
-  await server.close()
+  await server?.close()
 }
 
 console.log(JSON.stringify(summary, null, 2))
