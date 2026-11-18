@@ -430,10 +430,15 @@ describe("21GAM motion system", () => {
     expect(initialTl).not.toBeNull()
     expect(initialTl!.progress()).toBe(0)
 
-    // Deliver the pending MediaQueryList change event from revealMm.
+    // Deliver the pending MediaQueryList change event from revealMm past GSAP's 2 ms _onMediaChange debounce.
     const setSpy = vi.spyOn(gsap, "set").mockImplementation(() => ({}) as unknown as gsap.core.Tween)
-    mock.dispatchChange()
-    setSpy.mockRestore()
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 10)
+    try {
+      mock.dispatchChange()
+    } finally {
+      nowSpy.mockRestore()
+      setSpy.mockRestore()
+    }
 
     // Overlay timeline must remain intact and in-flight (not reverted or snapped to progress(1)).
     expect(modes).toEqual([true])
