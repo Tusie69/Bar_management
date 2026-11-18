@@ -212,12 +212,12 @@ export function BarGuestList({
                     onClick={() => onRowClick?.(row)}
                     aria-label={rowAriaLabel}
                     className={cn(
-                      "flex min-h-6 w-full min-w-0 flex-col items-stretch gap-0.5 overflow-hidden rounded-none px-2 py-1.5 text-left transition-colors focus-visible:bg-surface-2 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none focus-visible:ring-inset",
+                      "flex min-h-6 w-full min-w-0 flex-col items-stretch gap-0.5 overflow-hidden rounded-none px-1.5 py-1.5 text-left transition-colors focus-visible:bg-surface-2 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none focus-visible:ring-inset",
                       onRowClick ? "cursor-pointer hover:bg-surface-2/80" : "cursor-default hover:bg-surface-2/40",
                     )}
                   >
-                    <div className="flex w-full min-w-0 items-center gap-1">
-                      <span className="inline-flex min-w-0 shrink-0 items-center gap-1">
+                    <div className="flex w-full min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5">
+                      <span className="inline-flex min-w-0 shrink items-center gap-1">
                         <span
                           className="inline-block size-1.5 shrink-0 rounded-full"
                           style={{ backgroundColor: statusColor }}

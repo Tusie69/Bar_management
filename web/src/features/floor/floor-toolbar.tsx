@@ -193,7 +193,7 @@ export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
       <div
         role="tablist"
         aria-label="Chế độ xem"
-        className="flex shrink-0 items-center gap-0.5 rounded-lg border border-border-subtle bg-surface-2 p-1"
+        className="flex shrink-0 items-center gap-0.5 rounded-lg border border-border-subtle bg-surface-2 p-0.5"
       >
         {VIEWS.map((v) => {
           const on = ui.view === v.id
@@ -206,7 +206,7 @@ export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
               aria-label={v.label}
               onClick={() => ui.setView(v.id)}
               className={cn(
-                "flex h-9 min-h-[36px] min-w-[44px] items-center justify-center gap-2 rounded-md px-3 text-sm whitespace-nowrap transition-[background-color,color,box-shadow,transform] duration-150 outline-none focus-visible:ring-[3px] focus-visible:ring-primary/25 active:scale-[0.98] sm:px-3.5",
+                "flex h-11 min-h-[44px] min-w-[44px] items-center justify-center gap-2 rounded-md px-3 text-sm whitespace-nowrap transition-[background-color,color,box-shadow,transform] duration-150 outline-none focus-visible:ring-[3px] focus-visible:ring-primary/25 active:scale-[0.98] sm:px-3.5",
                 on
                   ? "bg-surface-1 font-semibold text-foreground shadow-xs"
                   : "font-medium text-tx-2 hover:text-foreground",

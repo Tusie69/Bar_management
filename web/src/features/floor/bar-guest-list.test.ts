@@ -307,5 +307,6 @@ describe("BarGuestList presentational component", () => {
     expect(rowButton).toContain("rounded-none")
     expect(rowLi).not.toMatch(/rounded-(sm|md|lg|xl|2xl|full)/)
     expect(rowButton).not.toMatch(/rounded-(sm|md|lg|xl|2xl|full)/)
+    expect(listHtml).toContain("flex-wrap")
   })
 })

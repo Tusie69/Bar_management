@@ -19,6 +19,7 @@ import { ZaloBookingExport } from "../reservations/zalo-booking-export"
 import WaitlistPage from "../waitlist/waitlist-page"
 import { AvailabilityPanel } from "./availability-panel"
 import { BookingList, BookingTable, LIST_TABS, useBookingItems, type ListTab } from "./booking-list"
+import { INITIAL_BOTTOM_PANEL_STATE, nextBottomPanelState } from "./bottom-panel-snapshot"
 import { FloorCanvas } from "./floor-canvas"
 import { LayoutMergeControls } from "./layout-merge-controls"
 import { independentLayoutEnabled, toggleLayoutTable } from "./layout-merge"
@@ -229,13 +230,43 @@ export function FloorPage() {
   )
   const [bottomPanelEl, setBottomPanelRef] = useStableNodeRef<HTMLElement>()
   const [bottomOverlayEl, setBottomOverlayRef] = useStableNodeRef<HTMLSpanElement>()
-  const [lastTableId, setLastTableId] = useState<number | null>(ui.selectedTableId)
-  if (ui.selectedTableId && ui.selectedTableId !== lastTableId) {
-    setLastTableId(ui.selectedTableId)
+  const [bottomState, setBottomState] = useState(INITIAL_BOTTOM_PANEL_STATE)
+  const nextBottom = nextBottomPanelState(bottomState, {
+    open: bottomOpen,
+    present: bottomPresence.present,
+    live,
+    draft,
+    draftAvailability: draftAvailStatus === "ready" ? draftAvail.data : undefined,
+    draftAvailabilityStatus: draftAvailStatus,
+    selectedTableId: ui.selectedTableId,
+    availSelection: availSel,
+  })
+  if (nextBottom !== bottomState) {
+    setBottomState(nextBottom)
   }
+  const bottomSnapshot = nextBottom.snapshot
+  const bottomIsDraft = bottomPresence.present && bottomSnapshot?.kind === "draft"
   const bottomPanel =
-    !bottomOpen && live && !draft && lastTableId !== null ? (
-      <TableDetail tableId={lastTableId} model={model} onBack={() => ui.selectTable(null)} />
+    bottomSnapshot?.kind === "draft" ? (
+      <QuickForm
+        key={bottomSnapshot.sessionId}
+        draft={bottomSnapshot.draft}
+        model={model}
+        availability={bottomSnapshot.availability}
+        availabilityStatus={bottomSnapshot.availabilityStatus}
+        onRetryAvailability={() => void draftAvail.refetch()}
+        compact={!wide}
+      />
+    ) : bottomSnapshot?.kind === "availability" ? (
+      <AvailabilityPanel
+        model={model}
+        result={availability.data}
+        loading={availability.isFetching}
+        selection={bottomSnapshot.selection}
+        setSelection={setAvailSel}
+      />
+    ) : bottomSnapshot?.kind === "table" ? (
+      <TableDetail tableId={bottomSnapshot.tableId} model={model} onBack={() => ui.selectTable(null)} />
     ) : (
       panel
     )
@@ -296,7 +327,7 @@ export function FloorPage() {
         </div>
       ) : null}
 
-      <div className={cn("relative flex min-h-0 flex-1", !wide && draft && "flex-col")}>
+      <div className={cn("relative flex min-h-0 flex-1", !wide && bottomIsDraft && "flex-col")}>
         {/* NA-11: the receptionist works from the floor alone, without the Cần xử lý / Sắp đến lists. */}
         {xl && view !== "list" && !receptionist ? (
           <aside
@@ -437,9 +468,10 @@ export function FloorPage() {
               ref={setBottomPanelRef}
               className={cn(
                 "z-20 flex flex-col overflow-hidden border-t border-border bg-popover shadow-float",
-                draft
+                bottomIsDraft
                   ? "relative max-h-[60%] shrink-0 rounded-t-2xl"
                   : "absolute inset-x-0 bottom-0 max-h-[62%] rounded-t-2xl",
+                !bottomOpen && "pointer-events-none",
                 bottomAwaitingMotion && "opacity-0",
               )}
               aria-label="Chi tiết"
@@ -447,7 +479,7 @@ export function FloorPage() {
               <div className="flex justify-center pt-2" aria-hidden>
                 <span className="h-1 w-10 rounded-full bg-border-strong" />
               </div>
-              {!live && !draft ? (
+              {!live && !bottomIsDraft ? (
                 <Button
                   variant="ghost"
                   size="icon-sm"

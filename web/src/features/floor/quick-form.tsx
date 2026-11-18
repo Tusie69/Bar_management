@@ -8,7 +8,7 @@ import { guestCount, guestError, guestValueFrom, type GuestValue } from "@/domai
  * The backend stays the final check against double booking (one active allocation per table per business date).
  */
 import { AlertCircle, AlertTriangle, Check, ChevronDown, LoaderCircle, MousePointerClick, X } from "lucide-react"
-import { useState, type KeyboardEvent } from "react"
+import { useRef, useState, type KeyboardEvent } from "react"
 import {
   BookingTimePicker,
   GuestPicker,
@@ -47,9 +47,10 @@ import { addDays, businessDateOf, fmtBusinessDate, fmtDayMonth, fmtTime, MS } fr
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useSession } from "@/state/session"
-import { useUi } from "@/state/ui"
+import { useUi, type QuickDraft } from "@/state/ui"
 import type { TableView } from "@/domain/models"
 import { capacityWarningText, selectedTablesCapacity } from "./reception-rules"
+import { findVisibleFloorCreateControl, resolveLeaveConfirmFocusTarget } from "./quick-form-focus"
 import type { FloorModel } from "./use-floor-model"
 
 const PICKABLE = new Set(["available", "too_small"])
@@ -162,6 +163,7 @@ export function QuickForm({
   availabilityStatus = "ready",
   onRetryAvailability,
   compact = false,
+  draft: draftProp,
 }: {
   model: FloorModel
   availability: AvailabilityResult | undefined
@@ -169,9 +171,11 @@ export function QuickForm({
   onRetryAvailability?: () => void
   /** Bottom sheet under the map: shrinks so the whole floor stays tappable. */
   compact?: boolean
+  /** Retained draft snapshot when animating out after `ui.draft` clears. */
+  draft?: QuickDraft
 }) {
   const ui = useUi()
-  const draft = ui.draft!
+  const draft = draftProp ?? ui.draft!
   const now = useNow(30_000)
   const quickTimes = useVenueSettings().data?.quickTimes ?? []
   const today = businessDateOf(now)
@@ -193,12 +197,29 @@ export function QuickForm({
   // Selection when "Chọn thêm bàn" was pressed; any change to it reopens the form.
   const [addingFrom, setAddingFrom] = useState<string | null>(null)
   const [confirmLeave, setConfirmLeave] = useState(false)
+  const returnFocusRef = useRef<HTMLElement | null>(null)
+  const discardedRef = useRef(false)
 
   const isB = draft.kind === "booking"
   const toWaitlist = isB && !!draft.toWaitlist
   const close = isB ? ui.closeBooking : ui.closeWalkIn
   const dirty = !!(name.trim() || phone.trim() || note.trim() || honorific)
-  const requestClose = () => (dirty ? setConfirmLeave(true) : close())
+  const requestClose = (invoker?: HTMLElement | null) => {
+    if (!dirty) {
+      close()
+      return
+    }
+    const active =
+      typeof document !== "undefined" && document.activeElement instanceof HTMLElement ? document.activeElement : null
+    returnFocusRef.current = invoker ?? active
+    discardedRef.current = false
+    setConfirmLeave(true)
+  }
+  const discard = () => {
+    discardedRef.current = true
+    setConfirmLeave(false)
+    close()
+  }
   // Re-derived every render: changing the date re-checks the time without silently replacing it.
   const timeError = isB ? validateBookingTime(draft.date, draft.time, now) : null
   const at = isB && !timeError ? bookingInstant(draft.date, draft.time) : null
@@ -390,7 +411,15 @@ export function QuickForm({
         : "Walk-in vào Bàn chờ"
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape" && !event.defaultPrevented) requestClose()
+    if (confirmLeave) return
+    if (event.key === "Escape" && !event.defaultPrevented) {
+      event.preventDefault()
+      requestClose(
+        typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null,
+      )
+    }
   }
 
   return (
@@ -411,7 +440,13 @@ export function QuickForm({
             Đổi bàn
           </button>
         ) : null}
-        <Button variant="ghost" size="icon" className="size-11" aria-label="Đóng form" onClick={requestClose}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-11"
+          aria-label="Đóng form"
+          onClick={(e) => requestClose(e.currentTarget)}
+        >
           <X />
         </Button>
       </div>
@@ -773,7 +808,11 @@ export function QuickForm({
         ) : null}
         <div className={cn("grid gap-2", !compact && "grid-cols-[1fr_2fr]")}>
           {compact ? null : (
-            <Button variant="outline" className="h-11 border-strong bg-transparent" onClick={requestClose}>
+            <Button
+              variant="outline"
+              className="h-11 border-strong bg-transparent"
+              onClick={(e) => requestClose(e.currentTarget)}
+            >
               Hủy
             </Button>
           )}
@@ -790,7 +829,23 @@ export function QuickForm({
       </div>
 
       <AlertDialog open={confirmLeave} onOpenChange={setConfirmLeave}>
-        <AlertDialogContent aria-label="Bỏ đơn đang nhập" size="sm">
+        <AlertDialogContent
+          aria-label="Bỏ đơn đang nhập"
+          size="sm"
+          onCloseAutoFocus={(event) => {
+            const target = resolveLeaveConfirmFocusTarget({
+              discarded: discardedRef.current,
+              invoker: returnFocusRef.current,
+              findFallback: () => findVisibleFloorCreateControl(isB),
+            })
+            returnFocusRef.current = null
+            discardedRef.current = false
+            if (target) {
+              event.preventDefault()
+              target.focus()
+            }
+          }}
+        >
           <AlertDialogHeader>
             <AlertDialogTitle>Bỏ đơn đang nhập?</AlertDialogTitle>
             <AlertDialogDescription>Thông tin vừa nhập sẽ không được lưu.</AlertDialogDescription>
@@ -799,7 +854,7 @@ export function QuickForm({
             <AlertDialogCancel autoFocus onClick={() => setConfirmLeave(false)}>
               Tiếp tục nhập
             </AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={close}>
+            <AlertDialogAction variant="destructive" onClick={discard}>
               Bỏ đơn
             </AlertDialogAction>
           </AlertDialogFooter>
