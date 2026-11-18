@@ -19,6 +19,15 @@ import { visibleAdminPages } from "./admin-access"
 import { adminBusinessDateLabel, ADMIN_SHIFT_LABEL } from "./admin-date"
 import { ADMIN_DESKTOP_MEDIA_QUERY, resolveDrawerCloseFocusTarget, resolveTrapTarget } from "./admin-focus"
 import { adminPageForPath, adminPagePath } from "./admin-pages"
+import {
+  drawerDataState,
+  drawerExitDelay,
+  drawerIsInteractive,
+  drawerIsMounted,
+  nextDrawerPhase,
+  prefersReducedMotion,
+  type DrawerPhase,
+} from "./admin-motion"
 import "./admin-theme.css"
 
 /**
@@ -38,7 +47,12 @@ export function useAdminPageTitle(title: string | null) {
 
 export function AdminShell() {
   const location = useLocation()
-  const [drawerOpen, setDrawerOpen] = useState(false)
+  /**
+   * Ba pha thay cho một boolean: panel phải còn trong DOM lúc đang đóng, nếu
+   * không thì không có gì để chạy animation ra. Xem `admin-motion.ts`.
+   */
+  const [drawerPhase, setDrawerPhase] = useState<DrawerPhase>("closed")
+  const drawerOpen = drawerPhase === "open"
   const [override, setOverride] = useState<string | null>(null)
   const menuTriggerRef = useRef<HTMLButtonElement>(null)
   const drawerRef = useRef<HTMLDivElement>(null)
@@ -59,7 +73,7 @@ export function AdminShell() {
    * những phần tử đang bị che.
    */
   const closeDrawer = useCallback(() => {
-    setDrawerOpen(false)
+    setDrawerPhase((phase) => nextDrawerPhase(phase, "close"))
     const isDesktop =
       typeof window !== "undefined" && typeof window.matchMedia === "function"
         ? window.matchMedia(ADMIN_DESKTOP_MEDIA_QUERY).matches
@@ -101,6 +115,23 @@ export function AdminShell() {
     return () => window.removeEventListener("keydown", onKey)
   }, [closeDrawer, drawerOpen])
 
+  /**
+   * Gỡ panel khỏi DOM sau khi animation ra chạy xong. Dùng timer chứ không
+   * dùng `transitionend`/`animationend`: nếu người dùng xin giảm chuyển
+   * động, hoặc tab bị ẩn giữa lúc đóng, event đó có thể không bao giờ tới và
+   * drawer sẽ nằm lại trong DOM vĩnh viễn.
+   */
+  useEffect(() => {
+    if (drawerPhase !== "closing") return
+    const delay = drawerExitDelay(drawerPhase, prefersReducedMotion())
+    if (delay === 0) {
+      setDrawerPhase("closed")
+      return
+    }
+    const timer = window.setTimeout(() => setDrawerPhase("closed"), delay)
+    return () => window.clearTimeout(timer)
+  }, [drawerPhase])
+
   return (
     <AdminTitleContext.Provider value={titleApi}>
       <div className="admin-portal flex h-dvh min-h-0 w-full overflow-hidden" data-testid="admin-shell">
@@ -119,12 +150,19 @@ export function AdminShell() {
         >
           <AdminSidebar />
         </div>
-        {drawerOpen ? (
-          <div className="fixed inset-0 z-50 lg:hidden">
+        {drawerIsMounted(drawerPhase) ? (
+          <div
+            className="fixed inset-0 z-50 lg:hidden"
+            data-state={drawerDataState(drawerPhase)}
+            // Pha `closing`: panel còn trên màn hình nhưng không được ăn
+            // click, nếu không người dùng bấm tiếp sẽ trúng một cái menu
+            // đang biến đi.
+            style={drawerIsInteractive(drawerPhase) ? undefined : { pointerEvents: "none" }}
+          >
             <button
               type="button"
               aria-label="Đóng menu"
-              className="absolute inset-0 bg-black/40"
+              className="adm-drawer-overlay absolute inset-0 bg-black/40"
               onClick={closeDrawer}
             />
             <div
@@ -134,7 +172,7 @@ export function AdminShell() {
               role="dialog"
               aria-modal="true"
               aria-label="Điều hướng quản trị"
-              className="absolute inset-y-0 left-0 w-[var(--adm-sidebar-w)] shadow-xl outline-none"
+              className="adm-drawer-panel absolute inset-y-0 left-0 w-[var(--adm-sidebar-w)] shadow-xl outline-none"
               data-testid="admin-drawer-panel"
             >
               <AdminSidebar onNavigate={closeDrawer} />
@@ -146,7 +184,7 @@ export function AdminShell() {
           <AdminHeader
             title={title}
             drawerOpen={drawerOpen}
-            onToggleDrawer={() => (drawerOpen ? closeDrawer() : setDrawerOpen(true))}
+            onToggleDrawer={() => (drawerOpen ? closeDrawer() : setDrawerPhase((phase) => nextDrawerPhase(phase, "open")))}
             triggerRef={menuTriggerRef}
           />
           {/* Đích của skip link, nên phải nhận được focus bằng chương trình. */}
