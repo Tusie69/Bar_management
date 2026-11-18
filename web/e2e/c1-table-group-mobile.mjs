@@ -108,11 +108,11 @@ const mergeRegion = (page) => page.getByRole("region", { name: "Chế độ ghé
 const layoutActions = (page) => page.locator('[aria-label="Thao tác mặt bằng"]')
 
 async function login(page) {
-  await page.goto(webUrl, { waitUntil: "networkidle" })
+  await page.goto(webUrl, { waitUntil: "domcontentloaded" })
   const form = page.getByRole("form", { name: /Đăng nhập/ }).first()
   const target = (await form.isVisible().catch(() => false)) ? form : page
   await target.getByLabel(/Tên đăng nhập|Tài khoản/).fill(username)
-  await target.getByLabel(/Mật khẩu/).fill(password)
+  await target.getByLabel("Mật khẩu", { exact: true }).fill(password)
   await target.getByRole("button", { name: /Đăng nhập/ }).click()
   await expect(page.getByRole("button", { name: /Đăng nhập/ })).toHaveCount(0, { timeout: 20_000 })
   // The login form disappearing is not proof of a session: assert the API agrees,
@@ -257,8 +257,10 @@ async function mergeThreeTables(page, width, label) {
   await expect(region).toBeVisible()
   // AC01/AC08: the chosen tables and the real total capacity are both on screen,
   // and nothing asks for a guest name, a phone or a party size.
-  await expect(region).toContainText("B3 - B4 - B5")
-  await expect(region).toContainText("tổng 12 chỗ")
+  for (const code of ["B3", "B4", "B5"]) {
+    await expect(region.getByText(code, { exact: true })).toBeVisible()
+  }
+  await expect(region.getByText("12 chỗ", { exact: true })).toBeVisible()
   await expect(page.getByRole("form")).toHaveCount(0)
   await assertTouchTargets(region.getByRole("button"), `${label} merge panel`)
 
