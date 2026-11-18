@@ -99,34 +99,44 @@ async function setAndVerifyGuestCounts(page, fields) {
 }
 
 async function assertGuestCounterLayout(page, vpLabel, fields) {
-  const layout = await page.evaluate((keys) => {
-    const card = document.querySelector('[data-testid="guest-count-card"]')
-    if (!card) return null
-    const cardRect = card.getBoundingClientRect()
-    const toBox = (r) => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height })
-    const items = keys.map((key) => {
-      const labelEl = card.querySelector(`[data-testid="guest-count-label-${key}"]`)
-      const valueEl = card.querySelector(`[data-testid="guest-count-value-${key}"]`)
-      const lr = labelEl?.getBoundingClientRect() ?? null
-      const vr = valueEl?.getBoundingClientRect() ?? null
+  const layout = await page.evaluate(
+    (keys) => {
+      const card = document.querySelector('[data-testid="guest-count-card"]')
+      if (!card) return null
+      const cardRect = card.getBoundingClientRect()
+      const toBox = (r) => ({
+        left: r.left,
+        top: r.top,
+        right: r.right,
+        bottom: r.bottom,
+        width: r.width,
+        height: r.height,
+      })
+      const items = keys.map((key) => {
+        const labelEl = card.querySelector(`[data-testid="guest-count-label-${key}"]`)
+        const valueEl = card.querySelector(`[data-testid="guest-count-value-${key}"]`)
+        const lr = labelEl?.getBoundingClientRect() ?? null
+        const vr = valueEl?.getBoundingClientRect() ?? null
+        return {
+          key,
+          text: valueEl?.textContent ?? "",
+          labelClipped: labelEl ? labelEl.scrollWidth > labelEl.clientWidth + 0.5 : true,
+          valueClipped: valueEl ? valueEl.scrollWidth > valueEl.clientWidth + 0.5 : true,
+          labelRect: lr ? toBox(lr) : null,
+          valueRect: vr ? toBox(vr) : null,
+        }
+      })
+      const c4 = document.querySelector('[role="button"][aria-label^="Bàn C4"]')?.getBoundingClientRect() ?? null
+      const b7 = document.querySelector('[role="button"][aria-label^="Bàn B7"]')?.getBoundingClientRect() ?? null
       return {
-        key,
-        text: valueEl?.textContent ?? "",
-        labelClipped: labelEl ? labelEl.scrollWidth > labelEl.clientWidth + 0.5 : true,
-        valueClipped: valueEl ? valueEl.scrollWidth > valueEl.clientWidth + 0.5 : true,
-        labelRect: lr ? toBox(lr) : null,
-        valueRect: vr ? toBox(vr) : null,
+        cardRect: toBox(cardRect),
+        items,
+        c4: c4 ? toBox(c4) : null,
+        b7: b7 ? toBox(b7) : null,
       }
-    })
-    const c4 = document.querySelector('[role="button"][aria-label^="Bàn C4"]')?.getBoundingClientRect() ?? null
-    const b7 = document.querySelector('[role="button"][aria-label^="Bàn B7"]')?.getBoundingClientRect() ?? null
-    return {
-      cardRect: toBox(cardRect),
-      items,
-      c4: c4 ? toBox(c4) : null,
-      b7: b7 ? toBox(b7) : null,
-    }
-  }, fields.map((f) => f.key))
+    },
+    fields.map((f) => f.key),
+  )
 
   assert(layout, `${vpLabel}: guest-count-card missing`)
   const overlaps = (a, b, tol = 0.2) =>
@@ -135,7 +145,11 @@ async function assertGuestCounterLayout(page, vpLabel, fields) {
   for (let i = 0; i < layout.items.length; i++) {
     const item = layout.items[i]
     const expected = fields[i]
-    assert.equal(item.text, expected.value, `${vpLabel}: counter ${item.key} expected ${expected.value}, got ${item.text}`)
+    assert.equal(
+      item.text,
+      expected.value,
+      `${vpLabel}: counter ${item.key} expected ${expected.value}, got ${item.text}`,
+    )
     assert(!item.labelClipped, `${vpLabel}: label ${item.key} clipped`)
     assert(!item.valueClipped, `${vpLabel}: value ${item.key} (${item.text}) clipped`)
     assert(item.labelRect && item.valueRect, `${vpLabel}: missing rect for ${item.key}`)
@@ -186,12 +200,7 @@ function attachErrorCollector(page) {
 }
 
 function rectsOverlap(a, b, tol = 0.5) {
-  return !(
-    a.right <= b.left + tol ||
-    b.right <= a.left + tol ||
-    a.bottom <= b.top + tol ||
-    b.bottom <= a.top + tol
-  )
+  return !(a.right <= b.left + tol || b.right <= a.left + tol || a.bottom <= b.top + tol || b.bottom <= a.top + tol)
 }
 
 const { server, baseUrl } = await startMockViteServer()
@@ -240,13 +249,18 @@ try {
       if (focused) {
         assert(!focused.hasBell, `${vp.label}: Tab traversal focused a bell icon`)
         if (focused.aria !== "Đóng thông báo") {
-          assert(!/^(thông báo|cần xử lý)/i.test(focused.aria), `${vp.label}: Tab focused notification control: ${focused.aria}`)
+          assert(
+            !/^(thông báo|cần xử lý)/i.test(focused.aria),
+            `${vp.label}: Tab focused notification control: ${focused.aria}`,
+          )
         }
         if (focused.aria && !visitedLabels.includes(focused.aria)) visitedLabels.push(focused.aria)
       }
     }
     assert(visitedLabels.length >= 10, `${vp.label}: Tab traversal visited too few controls (${visitedLabels.length})`)
-    await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined))
+    await page.evaluate(() =>
+      document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined,
+    )
 
     // Keyboard focus audit across all focusable controls (exclude Toast15's "Đóng thông báo" dismiss button)
     const focusAudit = await page.evaluate(() => {
@@ -352,16 +366,64 @@ try {
         box: toBox(g.getBoundingClientRect()),
       }))
 
+      const turnBadges = Array.from(svg?.querySelectorAll('[data-testid="turn-badge"]') ?? []).map((g) => ({
+        label: g.getAttribute("aria-label") ?? "",
+        box: toBox(g.getBoundingClientRect()),
+      }))
+
+      const cornerIcons = Array.from(
+        svg?.querySelectorAll('[data-testid="table-icons-bottom-left"], [data-testid="table-icons-bottom-right"]') ??
+          [],
+      ).map((g) => ({
+        side: g.getAttribute("data-testid"),
+        label: g.getAttribute("aria-label") ?? "",
+        box: toBox(g.getBoundingClientRect()),
+        items: Array.from(g.querySelectorAll("[data-icon]")).map((item) => ({
+          icon: item.getAttribute("data-icon") ?? "",
+          box: toBox(item.getBoundingClientRect()),
+        })),
+      }))
+
+      const svgRect = toBox(svg?.getBoundingClientRect() ?? null)
+
       const tableShapes = Array.from(svg?.querySelectorAll('[role="button"][aria-label]') ?? []).map((g) => {
         const shape = g.querySelector('rect[rx="4.5"], circle:not([fill="transparent"]):not(.focus-ring)')
-        const texts = Array.from(g.querySelectorAll("text")).map((t) => ({
-          text: t.textContent ?? "",
-          box: toBox(t.getBoundingClientRect()),
+        const texts = Array.from(g.querySelectorAll("text"))
+          .filter(
+            (t) =>
+              !t.closest(
+                '[data-testid="guest-count-badge"], [data-testid="turn-badge"], [data-testid="table-icons-bottom-left"], [data-testid="table-icons-bottom-right"]',
+              ),
+          )
+          .map((t) => ({
+            text: t.textContent ?? "",
+            box: toBox(t.getBoundingClientRect()),
+          }))
+        const guestBadge = g.querySelector('[data-testid="guest-count-badge"]')
+        const turnBadge = g.querySelector('[data-testid="turn-badge"]')
+        const leftIcons = g.querySelector('[data-testid="table-icons-bottom-left"]')
+        const rightIcons = g.querySelector('[data-testid="table-icons-bottom-right"]')
+        const iconItems = Array.from(g.querySelectorAll("[data-icon]")).map((item) => ({
+          icon: item.getAttribute("data-icon") ?? "",
+          box: toBox(item.getBoundingClientRect()),
         }))
         return {
           aria: g.getAttribute("aria-label") ?? "",
           box: shape ? toBox(shape.getBoundingClientRect()) : null,
           texts,
+          guestBadge: guestBadge
+            ? { label: guestBadge.getAttribute("aria-label") ?? "", box: toBox(guestBadge.getBoundingClientRect()) }
+            : null,
+          turnBadge: turnBadge
+            ? { label: turnBadge.getAttribute("aria-label") ?? "", box: toBox(turnBadge.getBoundingClientRect()) }
+            : null,
+          leftIcons: leftIcons
+            ? { label: leftIcons.getAttribute("aria-label") ?? "", box: toBox(leftIcons.getBoundingClientRect()) }
+            : null,
+          rightIcons: rightIcons
+            ? { label: rightIcons.getAttribute("aria-label") ?? "", box: toBox(rightIcons.getBoundingClientRect()) }
+            : null,
+          iconItems,
         }
       })
 
@@ -382,6 +444,7 @@ try {
         undoBtn: toBox(undoBtn?.getBoundingClientRect() ?? null),
         redoBtn: toBox(redoBtn?.getBoundingClientRect() ?? null),
         canvas: toBox(canvasRect),
+        svgRect,
         wall: toBox(wallRect),
         wallScale,
         guestCard: toBox(guestCard),
@@ -395,6 +458,8 @@ try {
         clusterOutlines,
         clusterPills,
         countBadges,
+        turnBadges,
+        cornerIcons,
         tableShapes,
         fontFamily: shell ? getComputedStyle(shell).fontFamily : "",
       }
@@ -412,7 +477,10 @@ try {
     assert.equal(metrics.redNotificationBadges, 0, `${vp.label}: red badge still rendered`)
 
     assert(metrics.shell, `${vp.label}: [data-gm] missing`)
-    assert(metrics.header && metrics.menuBtn && metrics.searchInput && metrics.exportBtn, `${vp.label}: header controls missing`)
+    assert(
+      metrics.header && metrics.menuBtn && metrics.searchInput && metrics.exportBtn,
+      `${vp.label}: header controls missing`,
+    )
     assert(metrics.exportBtn.right <= metrics.shell.right + 1, `${vp.label}: export button clipped`)
     assert(metrics.menuBtn.height >= 44 && metrics.menuBtn.width >= 44, `${vp.label}: menu button < 44px`)
     assert(metrics.undoBtn && metrics.redoBtn, `${vp.label}: undo/redo buttons missing`)
@@ -428,16 +496,25 @@ try {
       assert(metrics.shell.width <= 629, `${vp.label}: reception shell exceeded 628px (${metrics.shell.width})`)
       const leftMargin = metrics.shell.left
       const rightMargin = metrics.vw - metrics.shell.right
-      assert(Math.abs(leftMargin - rightMargin) <= 2, `${vp.label}: reception shell not centered (${leftMargin} vs ${rightMargin})`)
+      assert(
+        Math.abs(leftMargin - rightMargin) <= 2,
+        `${vp.label}: reception shell not centered (${leftMargin} vs ${rightMargin})`,
+      )
     }
 
-    assert(metrics.guestCard && metrics.c4 && metrics.b7 && metrics.b21 && metrics.waitBtn, `${vp.label}: missing clearance targets`)
+    assert(
+      metrics.guestCard && metrics.c4 && metrics.b7 && metrics.b21 && metrics.waitBtn,
+      `${vp.label}: missing clearance targets`,
+    )
     assert(!rectsOverlap(metrics.guestCard, metrics.c4), `${vp.label}: GuestCountCard overlaps C4`)
     assert(!rectsOverlap(metrics.guestCard, metrics.b7), `${vp.label}: GuestCountCard overlaps B7`)
     assert(!rectsOverlap(metrics.waitBtn, metrics.b21), `${vp.label}: Chờ button overlaps B21`)
     assert(metrics.a7Text.startsWith("A7 - "), `${vp.label}: R2 label unexpected: "${metrics.a7Text}"`)
     assert(metrics.barGuestPanel && metrics.barGuestPanel.width > 0, `${vp.label}: BarGuestList missing`)
-    assert(metrics.fontFamily.includes("Be Vietnam Pro"), `${vp.label}: Be Vietnam Pro font not applied (${metrics.fontFamily})`)
+    assert(
+      metrics.fontFamily.includes("Be Vietnam Pro"),
+      `${vp.label}: Be Vietnam Pro font not applied (${metrics.fontFamily})`,
+    )
 
     // F-02: Verify G02/G03 cluster outline clearance (stroke-inclusive) & zero pill collisions with badges/tables/outlines
     const g03Outline = metrics.clusterOutlines.find((o) => o.code === "G03")
@@ -449,8 +526,14 @@ try {
       `${vp.label}: G03/G02 outlines overlap or touch (stroke-inclusive gap ${g02G03GapPx.toFixed(3)}px)`,
     )
 
-    assert(metrics.clusterPills.length >= 7, `${vp.label}: expected >= 7 cluster pills, got ${metrics.clusterPills.length}`)
-    assert(metrics.countBadges.length >= 4, `${vp.label}: expected >= 4 guest count badges, got ${metrics.countBadges.length}`)
+    assert(
+      metrics.clusterPills.length >= 7,
+      `${vp.label}: expected >= 7 cluster pills, got ${metrics.clusterPills.length}`,
+    )
+    assert(
+      metrics.countBadges.length >= 4,
+      `${vp.label}: expected >= 4 guest count badges, got ${metrics.countBadges.length}`,
+    )
 
     for (const pill of metrics.clusterPills) {
       assert(pill.box, `${vp.label}: missing box for pill ${pill.code}`)
@@ -459,6 +542,15 @@ try {
           !rectsOverlap(pill.box, badge.box, 0),
           `${vp.label}: pill ${pill.code} overlaps guest-count badge (${badge.label})`,
         )
+      }
+      for (const tbadge of metrics.turnBadges) {
+        assert(
+          !rectsOverlap(pill.box, tbadge.box, 0),
+          `${vp.label}: pill ${pill.code} overlaps turn badge (${tbadge.label})`,
+        )
+      }
+      for (const ci of metrics.cornerIcons) {
+        assert(!rectsOverlap(pill.box, ci.box, 0), `${vp.label}: pill ${pill.code} overlaps corner icon (${ci.label})`)
       }
       for (const outline of metrics.clusterOutlines) {
         if (outline.code === pill.code) continue
@@ -469,22 +561,134 @@ try {
       }
       for (const otherPill of metrics.clusterPills) {
         if (otherPill.code === pill.code) continue
-        assert(!rectsOverlap(pill.box, otherPill.box, 0), `${vp.label}: pill ${pill.code} overlaps pill ${otherPill.code}`)
+        assert(
+          !rectsOverlap(pill.box, otherPill.box, 0),
+          `${vp.label}: pill ${pill.code} overlaps pill ${otherPill.code}`,
+        )
       }
       for (const ts of metrics.tableShapes) {
         if (ts.box) {
           assert(!rectsOverlap(pill.box, ts.box, 0), `${vp.label}: pill ${pill.code} overlaps table cell ${ts.aria}`)
         }
         for (const txt of ts.texts) {
-          assert(!rectsOverlap(pill.box, txt.box, 0), `${vp.label}: pill ${pill.code} overlaps text "${txt.text}" in ${ts.aria}`)
+          assert(
+            !rectsOverlap(pill.box, txt.box, 0),
+            `${vp.label}: pill ${pill.code} overlaps text "${txt.text}" in ${ts.aria}`,
+          )
         }
+      }
+    }
+
+    // Verify TurnBadge corner placement (top-right), icon sizes, and zero badge/icon overlaps across all tables
+    assert(
+      metrics.turnBadges.length >= 3,
+      `${vp.label}: expected >= 3 turn badges in mock mode, got ${metrics.turnBadges.length}`,
+    )
+    const allDecorations = []
+    for (const ts of metrics.tableShapes) {
+      if (!ts.box) continue
+      const tableDecorations = [
+        ts.guestBadge ? { kind: "guestBadge", ...ts.guestBadge } : null,
+        ts.turnBadge ? { kind: "turnBadge", ...ts.turnBadge } : null,
+        ts.leftIcons ? { kind: "leftIcons", ...ts.leftIcons } : null,
+        ts.rightIcons ? { kind: "rightIcons", ...ts.rightIcons } : null,
+      ].filter(Boolean)
+
+      if (ts.turnBadge) {
+        const cx = (ts.turnBadge.box.left + ts.turnBadge.box.right) / 2
+        const cy = (ts.turnBadge.box.top + ts.turnBadge.box.bottom) / 2
+        assert(
+          cx > ts.box.left + ts.box.width * 0.5,
+          `${vp.label}: TurnBadge on ${ts.aria} is not on right half (cx=${cx}, tableRight=${ts.box.right})`,
+        )
+        assert(
+          cy < ts.box.top + ts.box.height * 0.45,
+          `${vp.label}: TurnBadge on ${ts.aria} is not at top-right corner (cy=${cy}, tableTop=${ts.box.top})`,
+        )
+      }
+
+      if (ts.guestBadge) {
+        const cx = (ts.guestBadge.box.left + ts.guestBadge.box.right) / 2
+        const cy = (ts.guestBadge.box.top + ts.guestBadge.box.bottom) / 2
+        assert(cx < ts.box.left + ts.box.width * 0.5, `${vp.label}: GuestBadge not on left half on ${ts.aria}`)
+        assert(cy < ts.box.top + ts.box.height * 0.45, `${vp.label}: GuestBadge not at top-left on ${ts.aria}`)
+      }
+
+      // Within the same table: no badge/icon overlaps own text, or each other
+      for (const dec of tableDecorations) {
+        for (const txt of ts.texts) {
+          // SVG <text> getBoundingClientRect() includes ~18% transparent ascent/descent leading;
+          // tighten vertically by 18% to approximate painted glyph bounds while still catching real text collisions.
+          const th = txt.box.bottom - txt.box.top
+          const glyphBox = {
+            left: txt.box.left,
+            right: txt.box.right,
+            top: txt.box.top + th * 0.16,
+            bottom: txt.box.bottom - th * 0.16,
+          }
+          assert(
+            !rectsOverlap(dec.box, glyphBox, 0.2),
+            `${vp.label}: ${dec.kind} (${dec.label}) overlaps text "${txt.text}" inside ${ts.aria} (dec=${JSON.stringify(dec.box)}, glyph=${JSON.stringify(glyphBox)})`,
+          )
+        }
+        // Inside SVG bounds
+        if (metrics.svgRect) {
+          assert(
+            dec.box.left >= metrics.svgRect.left - 0.5 &&
+              dec.box.right <= metrics.svgRect.right + 0.5 &&
+              dec.box.top >= metrics.svgRect.top - 0.5 &&
+              dec.box.bottom <= metrics.svgRect.bottom + 0.5,
+            `${vp.label}: ${dec.kind} clipped outside SVG on ${ts.aria}`,
+          )
+        }
+      }
+      for (let i = 0; i < tableDecorations.length; i++) {
+        for (let j = i + 1; j < tableDecorations.length; j++) {
+          assert(
+            !rectsOverlap(tableDecorations[i].box, tableDecorations[j].box, 0),
+            `${vp.label}: ${tableDecorations[i].kind} overlaps ${tableDecorations[j].kind} on ${ts.aria}`,
+          )
+        }
+      }
+      for (let i = 0; i < ts.iconItems.length; i++) {
+        for (let j = i + 1; j < ts.iconItems.length; j++) {
+          assert(
+            !rectsOverlap(ts.iconItems[i].box, ts.iconItems[j].box, 0.2),
+            `${vp.label}: icon ${ts.iconItems[i].icon} overlaps ${ts.iconItems[j].icon} on ${ts.aria}`,
+          )
+        }
+      }
+
+      // Against every other table cell
+      for (const otherTs of metrics.tableShapes) {
+        if (otherTs === ts || !otherTs.box) continue
+        for (const dec of tableDecorations) {
+          assert(
+            !rectsOverlap(dec.box, otherTs.box, 0.2),
+            `${vp.label}: ${dec.kind} (${dec.label}) on ${ts.aria} overlaps neighbour ${otherTs.aria}`,
+          )
+        }
+      }
+
+      for (const dec of tableDecorations) {
+        allDecorations.push({ aria: ts.aria, ...dec })
+      }
+    }
+
+    for (let i = 0; i < allDecorations.length; i++) {
+      for (let j = i + 1; j < allDecorations.length; j++) {
+        if (allDecorations[i].aria === allDecorations[j].aria) continue
+        assert(
+          !rectsOverlap(allDecorations[i].box, allDecorations[j].box, 0.2),
+          `${vp.label}: ${allDecorations[i].kind} on ${allDecorations[i].aria} overlaps ${allDecorations[j].kind} on ${allDecorations[j].aria}`,
+        )
       }
     }
 
     assert.deepEqual(errors, [], `${vp.label}: console/page errors: ${errors.join(" | ")}`)
 
     // Dismiss the "Đã lưu bộ đếm khách" Sonner toast so the header and Đếm khách card are unobstructed in screenshots
-    const sonnerClose = page.locator('[data-sonner-toast] button')
+    const sonnerClose = page.locator("[data-sonner-toast] button")
     if ((await sonnerClose.count()) > 0) {
       await sonnerClose.first().click()
       await page.waitForTimeout(300)

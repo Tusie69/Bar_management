@@ -100,6 +100,24 @@ describe("TableIcons", () => {
     expect(html).toContain("Bàn sếp, Đã từng đặt bàn, Chỉ định, Sinh nhật")
   })
 
+  it("supports custom step and increased default icon radius", () => {
+    const htmlDefault = renderToString(createElement(TableIcons, { iconKeys: ["pin"] }))
+    expect(htmlDefault).toContain('r="5.5"')
+
+    const htmlCustomStep = renderToString(
+      createElement(TableIcons, {
+        iconKeys: ["star", "pin", "cake"],
+        x: 15.8,
+        y: 12.9,
+        step: 10.5,
+        radius: 5.5,
+      }),
+    )
+    expect(htmlCustomStep).toContain('transform="translate(0 0)"')
+    expect(htmlCustomStep).toContain('transform="translate(-10.5 0)"')
+    expect(htmlCustomStep).toContain('transform="translate(-21 0)"')
+  })
+
   it("supports HTML rendering mode", () => {
     const html = renderToString(
       createElement(TableIcons, {

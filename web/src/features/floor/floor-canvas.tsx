@@ -49,7 +49,11 @@ import {
   formatCellGuestName,
   formatGroupCode,
   formatTableCellLabel,
+  getTableCornerGeometry,
+  GUEST_BADGE_HEIGHT,
+  GUEST_BADGE_STROKE,
   GUEST_FLAG_META,
+  guestBadgeWidth,
   resolveCellCornerIcons,
   supportedFlags,
   tableCanActivate,
@@ -1162,8 +1166,8 @@ function describe(t: TableView, state: TableLiveState, fs?: FloorTableState) {
  */
 function GuestCountBadge({ count, x, y, color }: { count?: number | null; x: number; y: number; color: string }) {
   if (!count || count <= 0) return null
-  const w = count >= 100 ? 18 : count >= 10 ? 15 : 12
-  const h = 11
+  const w = guestBadgeWidth(count)
+  const h = GUEST_BADGE_HEIGHT
   return (
     <g
       transform={`translate(${x} ${y})`}
@@ -1172,12 +1176,21 @@ function GuestCountBadge({ count, x, y, color }: { count?: number | null; x: num
       aria-label={`${count} khách`}
       pointerEvents="none"
     >
-      <rect x={-w / 2} y={-h / 2} width={w} height={h} rx={h / 2} fill={color} stroke="#ffffff" strokeWidth={0.9} />
+      <rect
+        x={-w / 2}
+        y={-h / 2}
+        width={w}
+        height={h}
+        rx={h / 2}
+        fill={color}
+        stroke="#ffffff"
+        strokeWidth={GUEST_BADGE_STROKE}
+      />
       <text
         x={0}
         y={2.8}
         textAnchor="middle"
-        fontSize={7.5}
+        fontSize={7.6}
         fontWeight={800}
         fill="#ffffff"
         fontFamily="var(--font-sans)"
@@ -1397,6 +1410,7 @@ const LiveGlyph = memo(function LiveGlyph({
 
   const hw = t.w / 2
   const hh = t.h / 2
+  const cornerGeo = getTableCornerGeometry(t.w, t.h)
   return (
     <g
       transform={`translate(${t.x} ${t.y})`}
@@ -1472,7 +1486,7 @@ const LiveGlyph = memo(function LiveGlyph({
         strokeDasharray={dashed ? "3.5 2.5" : undefined}
       />
       <text
-        y={cellSubText ? -1.5 : 4}
+        y={cellSubText ? -0.9 : 4}
         textAnchor="middle"
         fontSize={claim ? 8.2 : 11}
         fontWeight={700}
@@ -1485,26 +1499,26 @@ const LiveGlyph = memo(function LiveGlyph({
       {cellSubText ? (
         <g>
           {showTimeIcon ? (
-            <g transform="translate(-12.5 6.4)" aria-hidden pointerEvents="none">
+            <g transform="translate(-11.5 3.9)" aria-hidden pointerEvents="none">
               <rect
-                x={-2.6}
-                y={-2.4}
-                width={5.2}
-                height={4.8}
+                x={-2.4}
+                y={-2.2}
+                width={4.8}
+                height={4.4}
                 rx={0.9}
                 fill="none"
                 stroke={textColor}
                 strokeWidth={0.75}
                 opacity={0.85}
               />
-              <line x1={-2.6} y1={-0.8} x2={2.6} y2={-0.8} stroke={textColor} strokeWidth={0.7} opacity={0.85} />
+              <line x1={-2.4} y1={-0.7} x2={2.4} y2={-0.7} stroke={textColor} strokeWidth={0.7} opacity={0.85} />
             </g>
           ) : null}
           <text
-            x={showTimeIcon ? 3 : 0}
-            y={9.4}
+            x={showTimeIcon ? 2.5 : 0}
+            y={6.3}
             textAnchor="middle"
-            fontSize={8.2}
+            fontSize={7.1}
             fontWeight={600}
             fontFamily="var(--font-sans)"
             letterSpacing={-0.3}
@@ -1517,41 +1531,62 @@ const LiveGlyph = memo(function LiveGlyph({
       ) : null}
 
       {/* Top-left: guest count badge (number only, once per booking on first member) */}
-      {showCountBadgeOnCell ? (
-        <GuestCountBadge count={claim?.partySize} x={-hw + 3} y={-hh - 0.5} color={meta.color} />
+      {showCountBadgeOnCell && claim?.partySize ? (
+        <GuestCountBadge
+          count={claim.partySize}
+          x={cornerGeo.guestBadge.centerXFor(claim.partySize)}
+          y={cornerGeo.guestBadge.y}
+          color={meta.color}
+        />
       ) : null}
 
-      {/* Top-right belongs to the turn badge alone, as the mockup draws it. */}
+      {/* Top-right: TurnBadge showing checked-in turn count from 2 upwards */}
+      <TurnBadge
+        count={isTurnAnchor ? turnCount : null}
+        x={cornerGeo.turnBadge.centerXFor(turnCount ?? 2)}
+        y={cornerGeo.turnBadge.y}
+        size={cornerGeo.turnBadge.r}
+      />
 
       {/* Bottom-left: new/regular guest icon */}
       {hasActiveClaim && isAnchor && cornerIcons.bottomLeft.length > 0 ? (
         <TableIcons
           iconKeys={cornerIcons.bottomLeft}
-          x={-hw + 2.5}
-          y={hh - 0.5}
+          x={cornerGeo.bottomLeftIcons.x}
+          y={cornerGeo.bottomLeftIcons.y}
           direction="right"
-          radius={5}
+          radius={cornerGeo.bottomLeftIcons.radiusFor(cornerIcons.bottomLeft.length, cornerIcons.bottomRight.length)}
+          step={cornerGeo.bottomLeftIcons.stepFor(cornerIcons.bottomLeft.length, cornerIcons.bottomRight.length)}
           data-testid="table-icons-bottom-left"
         />
       ) : null}
 
-      {/* Bottom-right: Bàn sếp (star) or Chỉ định (pin) when present */}
+      {/* Bottom-right: Bàn sếp (star), Chỉ định (pin), Sinh nhật (cake) */}
       {hasActiveClaim && isAnchor && cornerIcons.bottomRight.length > 0 ? (
         <TableIcons
           iconKeys={cornerIcons.bottomRight}
-          x={hw - 2}
-          y={hh - 0.5}
+          x={cornerGeo.bottomRightIcons.x}
+          y={cornerGeo.bottomRightIcons.y}
           direction="left"
-          radius={5}
+          radius={cornerGeo.bottomRightIcons.radiusFor(cornerIcons.bottomRight.length, cornerIcons.bottomLeft.length)}
+          step={cornerGeo.bottomRightIcons.stepFor(cornerIcons.bottomRight.length, cornerIcons.bottomLeft.length)}
           data-testid="table-icons-bottom-right"
         />
       ) : null}
 
-      {/* Middle of right edge: TurnBadge showing checked-in turn count from 1 */}
-      <TurnBadge count={isTurnAnchor ? turnCount : null} x={hw} y={0} size={4.8} />
-
-      {claim?.paid && cornerIcons.bottomRight.length === 0 ? <PaidDot x={hw - 2} y={hh - 0.5} /> : null}
-      {fs?.staleFromPreviousDay ? <StaleMark x={-hw} y={-hh} /> : null}
+      {claim?.paid && cornerIcons.bottomRight.length === 0 ? (
+        <PaidDot
+          x={cornerGeo.bottomRightIcons.x}
+          y={cornerGeo.bottomRightIcons.y}
+          radius={cornerGeo.bottomRightIcons.radius}
+        />
+      ) : null}
+      {fs?.staleFromPreviousDay ? (
+        <StaleMark
+          x={cornerGeo.staleMark.xFor(showCountBadgeOnCell ? claim?.partySize : null)}
+          y={cornerGeo.staleMark.y}
+        />
+      ) : null}
     </g>
   )
 })
