@@ -248,7 +248,9 @@ export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
           className="h-11 min-h-[44px] rounded-lg px-4 font-semibold shadow-xs"
           onClick={() =>
             ui.openBooking(
-              ui.floorMode === "availability" ? { date: ui.availDate, time: ui.availTime, party: ui.availParty } : {},
+              !(ui.bookingOpen || ui.walkInOpen) && ui.floorMode === "availability"
+                ? { date: ui.availDate, time: ui.availTime, party: ui.availParty }
+                : {},
             )
           }
         >

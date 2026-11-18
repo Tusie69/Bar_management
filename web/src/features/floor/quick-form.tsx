@@ -194,6 +194,13 @@ export function QuickForm({
   const [honorific, setHonorific] = useState<Honorific | null>(null)
   const [tried, setTried] = useState(false)
   const [guest, setGuest] = useState<GuestValue>(() => guestValueFrom(draft.party))
+  const [syncedDraftParty, setSyncedDraftParty] = useState(draft.party)
+  if (draft.party !== syncedDraftParty) {
+    setSyncedDraftParty(draft.party)
+    if (guestCount(guest) !== draft.party) {
+      setGuest(guestValueFrom(draft.party))
+    }
+  }
   // Selection when "Chọn thêm bàn" was pressed; any change to it reopens the form.
   const [addingFrom, setAddingFrom] = useState<string | null>(null)
   const [confirmLeave, setConfirmLeave] = useState(false)
