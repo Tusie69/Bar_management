@@ -256,6 +256,278 @@ export interface Bounds {
   h: number
 }
 
+export const CELL_CORNER_INSET_X = 4.2
+export const CELL_CORNER_INSET_Y = 3.1
+export const GUEST_BADGE_HEIGHT = 11.0
+export const GUEST_BADGE_STROKE = 0.9
+export const TURN_BADGE_RADIUS = 5.5
+export const TURN_BADGE_STROKE = 0.85
+export const TABLE_ICON_RADIUS = 5.5
+export const TABLE_ICON_STROKE = 0.8
+export const TABLE_ICON_MAX_STEP = 12.0
+
+export function guestBadgeWidth(count: number): number {
+  if (count >= 100) return 18.2
+  if (count >= 10) return 15.0
+  return 12.0
+}
+
+export function turnBadgeWidth(count: number, radius = TURN_BADGE_RADIUS): number {
+  if (count >= 100) return Number((radius * 3.12).toFixed(2))
+  if (count >= 10) return Number((radius * 2.58).toFixed(2))
+  return radius * 2
+}
+
+export interface TableCornerGeometry {
+  hw: number
+  hh: number
+  guestBadge: {
+    y: number
+    height: number
+    strokeWidth: number
+    widthFor: (count: number) => number
+    centerXFor: (count: number) => number
+  }
+  turnBadge: {
+    y: number
+    r: number
+    strokeWidth: number
+    widthFor: (count: number) => number
+    centerXFor: (count: number) => number
+  }
+  bottomLeftIcons: {
+    x: number
+    y: number
+    radius: number
+    strokeWidth: number
+    radiusFor: (count: number, oppositeCount?: number) => number
+    stepFor: (count: number, oppositeCount?: number) => number
+  }
+  bottomRightIcons: {
+    x: number
+    y: number
+    radius: number
+    strokeWidth: number
+    radiusFor: (count: number, oppositeCount?: number) => number
+    stepFor: (count: number, oppositeCount?: number) => number
+  }
+  staleMark: {
+    xFor: (guestCount?: number | null) => number
+    y: number
+    r: number
+  }
+}
+
+/**
+ * Shared corner geometry for a regular table cell (local coordinates around
+ * cell center 0,0). Used by both FloorCanvas and computeClusterDecorations so
+ * rendered corner badges/icons and collision-avoidance boxes stay identical.
+ */
+export function getTableCornerGeometry(w: number, h: number): TableCornerGeometry {
+  const hw = w / 2
+  const hh = h / 2
+  const topY = -hh + CELL_CORNER_INSET_Y
+  const bottomY = hh - CELL_CORNER_INSET_Y
+  // Outer left edge of guest badge stays aligned with icon circle outer left edge
+  const guestLeftInner = -hw + CELL_CORNER_INSET_X - TURN_BADGE_RADIUS
+  // Outer right edge of turn badge stays aligned with icon circle outer right edge
+  const turnRightInner = hw - CELL_CORNER_INSET_X + TURN_BADGE_RADIUS
+
+  const totalIntervalsFor = (count: number, oppositeCount = 0): number => {
+    const total = count + oppositeCount
+    return Math.max(1, total - 1)
+  }
+
+  const iconStepFor = (count: number, oppositeCount = 0): number => {
+    if (count <= 1) return TABLE_ICON_MAX_STEP
+    const fullSpan = w - 2 * CELL_CORNER_INSET_X
+    const candidate = fullSpan / totalIntervalsFor(count, oppositeCount)
+    return Math.min(TABLE_ICON_MAX_STEP, Number(candidate.toFixed(2)))
+  }
+
+  const iconRadiusFor = (count: number, oppositeCount = 0): number => {
+    const total = count + oppositeCount
+    if (total <= 1) return TABLE_ICON_RADIUS
+    const fullSpan = w - 2 * CELL_CORNER_INSET_X
+    const minCenterStep = fullSpan / (total - 1)
+    const maxRadiusForGap = (minCenterStep - TABLE_ICON_STROKE - 0.12) / 2
+    return Math.min(TABLE_ICON_RADIUS, Number(maxRadiusForGap.toFixed(2)))
+  }
+
+  return {
+    hw,
+    hh,
+    guestBadge: {
+      y: topY,
+      height: GUEST_BADGE_HEIGHT,
+      strokeWidth: GUEST_BADGE_STROKE,
+      widthFor: guestBadgeWidth,
+      centerXFor: (count: number) => guestLeftInner + guestBadgeWidth(count) / 2,
+    },
+    turnBadge: {
+      y: topY,
+      r: TURN_BADGE_RADIUS,
+      strokeWidth: TURN_BADGE_STROKE,
+      widthFor: (count: number) => turnBadgeWidth(count, TURN_BADGE_RADIUS),
+      centerXFor: (count: number) => turnRightInner - turnBadgeWidth(count, TURN_BADGE_RADIUS) / 2,
+    },
+    bottomLeftIcons: {
+      x: -hw + CELL_CORNER_INSET_X,
+      y: bottomY,
+      radius: TABLE_ICON_RADIUS,
+      strokeWidth: TABLE_ICON_STROKE,
+      radiusFor: iconRadiusFor,
+      stepFor: iconStepFor,
+    },
+    bottomRightIcons: {
+      x: hw - CELL_CORNER_INSET_X,
+      y: bottomY,
+      radius: TABLE_ICON_RADIUS,
+      strokeWidth: TABLE_ICON_STROKE,
+      radiusFor: iconRadiusFor,
+      stepFor: iconStepFor,
+    },
+    staleMark: {
+      xFor: (guestCount?: number | null) =>
+        guestCount && guestCount > 0 ? guestLeftInner + guestBadgeWidth(guestCount) + 6 : -hw + CELL_CORNER_INSET_X,
+      y: topY,
+      r: 5,
+    },
+  }
+}
+
+export interface TableCornerObstacleBoxes {
+  guestBadge: RectBox | null
+  turnBadge: RectBox | null
+  bottomLeftIcons: RectBox | null
+  bottomRightIcons: RectBox | null
+  paidDot: RectBox | null
+  staleMark: RectBox | null
+}
+
+/**
+ * Computes stroke-inclusive bounding boxes (in floor SVG space) for every
+ * corner badge/icon on a regular table cell using `getTableCornerGeometry`.
+ */
+export function getTableCornerObstacleBoxes(
+  table: Pick<TableView, "x" | "y" | "w" | "h" | "kind">,
+  opts: {
+    claim?: FloorTableState["claim"] | null
+    turnCount?: number | null
+    isAnchor?: boolean
+    hasActiveClaim?: boolean
+    staleFromPreviousDay?: boolean
+  },
+  margin = 0.5,
+): TableCornerObstacleBoxes {
+  const empty: TableCornerObstacleBoxes = {
+    guestBadge: null,
+    turnBadge: null,
+    bottomLeftIcons: null,
+    bottomRightIcons: null,
+    paidDot: null,
+    staleMark: null,
+  }
+  if (table.kind === "BAR_SEAT") return empty
+
+  const geo = getTableCornerGeometry(table.w, table.h)
+  const isAnchor = opts.isAnchor ?? true
+  const hasActiveClaim = opts.hasActiveClaim ?? Boolean(opts.claim)
+  const claim = opts.claim ?? null
+
+  let guestBadge: RectBox | null = null
+  let bottomLeftIcons: RectBox | null = null
+  let bottomRightIcons: RectBox | null = null
+  let paidDot: RectBox | null = null
+
+  if (hasActiveClaim && isAnchor && claim) {
+    if (claim.partySize && claim.partySize > 0) {
+      const bw = geo.guestBadge.widthFor(claim.partySize)
+      const bh = geo.guestBadge.height
+      const halfStroke = geo.guestBadge.strokeWidth / 2
+      const cx = table.x + geo.guestBadge.centerXFor(claim.partySize)
+      const cy = table.y + geo.guestBadge.y
+      guestBadge = {
+        left: cx - bw / 2 - halfStroke - margin,
+        top: cy - bh / 2 - halfStroke - margin,
+        right: cx + bw / 2 + halfStroke + margin,
+        bottom: cy + bh / 2 + halfStroke + margin,
+      }
+    }
+
+    const icons = resolveCellCornerIcons(claim)
+
+    if (icons.bottomLeft.length > 0) {
+      const cx = table.x + geo.bottomLeftIcons.x
+      const cy = table.y + geo.bottomLeftIcons.y
+      const r = geo.bottomLeftIcons.radiusFor(icons.bottomLeft.length, icons.bottomRight.length)
+      const iconPad = r + TABLE_ICON_STROKE / 2 + margin
+      const step = geo.bottomLeftIcons.stepFor(icons.bottomLeft.length, icons.bottomRight.length)
+      bottomLeftIcons = {
+        left: cx - iconPad,
+        top: cy - iconPad,
+        right: cx + iconPad + (icons.bottomLeft.length - 1) * step,
+        bottom: cy + iconPad,
+      }
+    }
+
+    if (icons.bottomRight.length > 0) {
+      const cx = table.x + geo.bottomRightIcons.x
+      const cy = table.y + geo.bottomRightIcons.y
+      const r = geo.bottomRightIcons.radiusFor(icons.bottomRight.length, icons.bottomLeft.length)
+      const iconPad = r + TABLE_ICON_STROKE / 2 + margin
+      const step = geo.bottomRightIcons.stepFor(icons.bottomRight.length, icons.bottomLeft.length)
+      bottomRightIcons = {
+        left: cx - iconPad - (icons.bottomRight.length - 1) * step,
+        top: cy - iconPad,
+        right: cx + iconPad,
+        bottom: cy + iconPad,
+      }
+    } else if (claim.paid) {
+      const cx = table.x + geo.bottomRightIcons.x
+      const cy = table.y + geo.bottomRightIcons.y
+      const iconPad = TABLE_ICON_RADIUS + TABLE_ICON_STROKE / 2 + margin
+      paidDot = {
+        left: cx - iconPad,
+        top: cy - iconPad,
+        right: cx + iconPad,
+        bottom: cy + iconPad,
+      }
+    }
+  }
+
+  let turnBadge: RectBox | null = null
+  if (isAnchor && typeof opts.turnCount === "number" && opts.turnCount >= 2) {
+    const tw = geo.turnBadge.widthFor(opts.turnCount)
+    const th = geo.turnBadge.r * 2
+    const halfStroke = geo.turnBadge.strokeWidth / 2
+    const cx = table.x + geo.turnBadge.centerXFor(opts.turnCount)
+    const cy = table.y + geo.turnBadge.y
+    turnBadge = {
+      left: cx - tw / 2 - halfStroke - margin,
+      top: cy - th / 2 - halfStroke - margin,
+      right: cx + tw / 2 + halfStroke + margin,
+      bottom: cy + th / 2 + halfStroke + margin,
+    }
+  }
+
+  let staleMark: RectBox | null = null
+  if (opts.staleFromPreviousDay) {
+    const activeGuestCount = hasActiveClaim && isAnchor ? claim?.partySize : null
+    const cx = table.x + geo.staleMark.xFor(activeGuestCount)
+    const cy = table.y + geo.staleMark.y
+    const rPad = geo.staleMark.r + margin
+    staleMark = {
+      left: cx - rPad,
+      top: cy - rPad,
+      right: cx + rPad,
+      bottom: cy + rPad,
+    }
+  }
+
+  return { guestBadge, turnBadge, bottomLeftIcons, bottomRightIcons, paidDot, staleMark }
+}
+
 export function normalizeIconKey(raw: string): "star" | "fire" | "pin" | "cake" | "new" | null {
   const k = raw.trim().toLowerCase()
   if (k === "star" || k === "vip" || k === "boss" || k === "bàn sếp" || k === "ban sep") return "star"
@@ -607,6 +879,15 @@ export function computeClusterDecorations({
 
   rawClusters.sort((a, b) => a.y - b.y || a.x - b.x || (a.code ?? a.key).localeCompare(b.code ?? b.key))
 
+  const groupTurnMap = new Map<number, number>()
+  for (const g of groups) {
+    if (typeof g.seatedTurnCount === "number") {
+      for (const id of g.tableIds) {
+        if (!groupTurnMap.has(id)) groupTurnMap.set(id, g.seatedTurnCount)
+      }
+    }
+  }
+
   const baseObstacles: RectBox[] = []
   for (const t of tables) {
     if (t.kind === "BAR_SEAT") {
@@ -633,60 +914,22 @@ export function computeClusterDecorations({
     const hasActiveClaim = !!claim && state !== "free" && state !== "spare" && state !== "oos"
 
     if (t.kind !== "BAR_SEAT") {
-      const hw = t.w / 2
-      const hh = t.h / 2
-      if (hasActiveClaim && isAnchor) {
-        if (claim.partySize && claim.partySize > 0) {
-          const bw = claim.partySize >= 100 ? 18 : claim.partySize >= 10 ? 15 : 12
-          const bh = 11
-          const cx = t.x - hw + 3
-          const cy = t.y - hh - 0.5
-          baseObstacles.push({
-            left: cx - bw / 2 - 0.5,
-            top: cy - bh / 2 - 0.5,
-            right: cx + bw / 2 + 0.5,
-            bottom: cy + bh / 2 + 0.5,
-          })
-        }
-        const icons = resolveCellCornerIcons(claim)
-        if (icons.bottomLeft.length > 0) {
-          const cx = t.x - hw + 2.5
-          const cy = t.y + hh - 0.5
-          baseObstacles.push({
-            left: cx - 5.5,
-            top: cy - 5.5,
-            right: cx + 5.5 + (icons.bottomLeft.length - 1) * 10,
-            bottom: cy + 5.5,
-          })
-        }
-        if (icons.bottomRight.length > 0) {
-          const cx = t.x + hw - 2
-          const cy = t.y + hh - 0.5
-          baseObstacles.push({
-            left: cx - 5.5 - (icons.bottomRight.length - 1) * 10,
-            top: cy - 5.5,
-            right: cx + 5.5,
-            bottom: cy + 5.5,
-          })
-        } else if (claim.paid) {
-          const cx = t.x + hw - 2
-          const cy = t.y + hh - 0.5
-          baseObstacles.push({ left: cx - 5.5, top: cy - 5.5, right: cx + 5.5, bottom: cy + 5.5 })
-        }
-      }
-      const turnCount = fs?.seatedTurnCount
-      if (isAnchor && turnCount && turnCount > 0) {
-        const cx = t.x + hw
-        const cy = t.y
-        baseObstacles.push({ left: cx - 5.3, top: cy - 5.3, right: cx + 5.3, bottom: cy + 5.3 })
-      }
-      if (fs?.staleFromPreviousDay) {
-        baseObstacles.push({
-          left: t.x - hw - 5.5,
-          top: t.y - hh - 5.5,
-          right: t.x - hw + 5.5,
-          bottom: t.y - hh + 5.5,
-        })
+      const boxes = getTableCornerObstacleBoxes(t, {
+        claim,
+        turnCount: fs?.seatedTurnCount ?? groupTurnMap.get(t.id),
+        isAnchor,
+        hasActiveClaim,
+        staleFromPreviousDay: fs?.staleFromPreviousDay,
+      })
+      for (const box of [
+        boxes.guestBadge,
+        boxes.turnBadge,
+        boxes.bottomLeftIcons,
+        boxes.bottomRightIcons,
+        boxes.paidDot,
+        boxes.staleMark,
+      ]) {
+        if (box) baseObstacles.push(box)
       }
     }
   }

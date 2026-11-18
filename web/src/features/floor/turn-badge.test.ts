@@ -55,15 +55,30 @@ describe("TurnBadge", () => {
     expect(html).toContain('stroke="#ffffff"')
   })
 
-  it("positions correctly in SVG coordinate space (bottom-left of cell)", () => {
+  it("positions correctly in SVG coordinate space (top-right of cell)", () => {
     const html = renderToString(
       createElement(TurnBadge, {
         count: 2,
-        x: -20,
-        y: 15,
+        x: 23.8,
+        y: -13.9,
       }),
     )
-    expect(html).toContain('transform="translate(-20 15)"')
+    expect(html).toContain('transform="translate(23.8 -13.9)"')
+    expect(html).toContain('r="5.5"')
+  })
+
+  it("renders readable capsule pill for 2-digit and 3-digit turn counts", () => {
+    const html10 = renderToString(createElement(TurnBadge, { count: 10 }))
+    expect(html10).toContain('aria-label="Lượt 10"')
+    expect(html10).toContain(">10<")
+    expect(html10).toContain("<rect")
+    expect(html10).toContain('fill="#000000"')
+    expect(html10).toContain('fill="#ffffff"')
+
+    const html12 = renderToString(createElement(TurnBadge, { count: 12, as: "html" }))
+    expect(html12).toContain('aria-label="Lượt 12"')
+    expect(html12).toContain("12")
+    expect(html12).toContain("px-1")
   })
 
   it("supports HTML rendering mode", () => {

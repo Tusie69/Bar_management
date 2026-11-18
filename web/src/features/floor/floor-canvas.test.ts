@@ -13,12 +13,16 @@ import {
   formatCellGuestName,
   formatGroupCode,
   formatTableCellLabel,
+  getTableCornerGeometry,
+  getTableCornerObstacleBoxes,
   groupCode,
   groupDisplayName,
   resolveCellCornerIcons,
   supportedFlags,
   tableCanActivate,
   GUEST_ICON_PRIORITY,
+  TABLE_ICON_RADIUS,
+  TURN_BADGE_RADIUS,
   fixturePathPoints,
 } from "./floor-visual-rules"
 
@@ -1095,7 +1099,7 @@ describe("Group border redesign - status-colored thick borders and neutral selec
     expect(groupDisplayName(bTables)).toBe("B5-B6-B7")
   })
 
-  describe("J1 - Redesigned table cells, corner badges, TurnBadge on right edge, and group brackets/arcs", () => {
+  describe("J1 - Redesigned table cells, corner badges, TurnBadge at top-right, and group brackets/arcs", () => {
     it("removes outside TableInfoCard and Khách quầy bar block completely", () => {
       const tA2 = realTables.find((t) => t.code === "A2")!
       const barSeat = realTables.find((t) => t.kind === "BAR_SEAT")!
@@ -1364,10 +1368,11 @@ describe("Group border redesign - status-colored thick borders and neutral selec
       expect(html).not.toContain("chỗ")
     })
 
-    it("places cake at top-right, regular/new at bottom-left (never both), VIP/pin at bottom-right, and TurnBadge at middle of right edge", () => {
+    it("places TurnBadge at top-right, guest count at top-left, regular/new at bottom-left (never both), and VIP/pin/cake at bottom-right", () => {
       const tA3 = realTables.find((t) => t.code === "A3")!
       const hw = tA3.w / 2
       const hh = tA3.h / 2
+      const geo = getTableCornerGeometry(tA3.w, tA3.h)
       const states = new Map<number, FloorTableState>([
         [
           tA3.id,
@@ -1401,22 +1406,117 @@ describe("Group border redesign - status-colored thick borders and neutral selec
 
       // Top-left count badge: number only (4)
       expect(html).toContain('data-testid="guest-count-badge"')
+      expect(html).toContain(`transform="translate(${geo.guestBadge.centerXFor(4)} ${geo.guestBadge.y})"`)
       expect(html).toContain(">4<")
 
-      // Top-right cake icon
-      expect(html).toContain("🎂")
-      // Bottom-left fire icon (and not 🆕)
+      // Bottom-left fire icon (and not 🆕), using enlarged radius
       expect(html).toContain("🔥")
       expect(html).not.toContain("🆕")
-      // Bottom-right star and pin icons
+      expect(html).toContain(`transform="translate(${geo.bottomLeftIcons.x} ${geo.bottomLeftIcons.y})"`)
+      // Bottom-right star, pin, cake icons
       expect(html).toContain("⭐")
       expect(html).toContain("📌")
+      expect(html).toContain("🎂")
+      expect(html).toContain(`transform="translate(${geo.bottomRightIcons.x} ${geo.bottomRightIcons.y})"`)
+      expect(html).toContain(`r="${TABLE_ICON_RADIUS}"`)
 
-      // TurnBadge at middle of right edge (x = hw, y = 0)
+      // TurnBadge at top-right corner with enlarged radius (never mid-right edge or bottom-left)
       expect(html).toContain('data-testid="turn-badge"')
-      expect(html).toContain(`transform="translate(${hw} 0)"`)
+      expect(html).toContain(`transform="translate(${geo.turnBadge.centerXFor(2)} ${geo.turnBadge.y})"`)
+      expect(html).toContain(`r="${TURN_BADGE_RADIUS}"`)
+      expect(html).not.toContain(`transform="translate(${hw} 0)"`)
       expect(html).not.toContain(`transform="translate(${-hw} ${hh})"`)
       expect(html).toContain(">2<")
+    })
+
+    it("keeps 2-digit guest count and 2-digit turn badge readable and inward-aligned without clipping or group duplication", () => {
+      const tC4 = realTables.find((t) => t.code === "C4")!
+      const tB5 = realTables.find((t) => t.code === "B5")!
+      const tB6 = realTables.find((t) => t.code === "B6")!
+      const bar1 = realTables.find((t) => t.kind === "BAR_SEAT" && t.seqNo === 1)!
+      const geoC4 = getTableCornerGeometry(tC4.w, tC4.h)
+
+      const group = { id: 109, symbolNo: 1, tableIds: [tB5.id, tB6.id] }
+      const states = new Map<number, FloorTableState>([
+        [
+          tC4.id,
+          {
+            tableId: tC4.id,
+            state: "seated",
+            seatedTurnCount: 12,
+            claim: {
+              visitId: 401,
+              displayName: "Anh Minh",
+              partySize: 14,
+              flags: ["NEW", "VIP", "DESIGNATED", "BIRTHDAY"],
+              tableIds: [tC4.id],
+            },
+          } as any,
+        ],
+        [
+          tB5.id,
+          {
+            tableId: tB5.id,
+            state: "seated",
+            seatedTurnCount: 3,
+            claim: {
+              visitId: 402,
+              displayName: "Chị Hà",
+              partySize: 10,
+              tableIds: [tB5.id, tB6.id],
+              groupId: 109,
+              symbolNo: 1,
+            },
+          } as any,
+        ],
+        [
+          tB6.id,
+          {
+            tableId: tB6.id,
+            state: "seated",
+            seatedTurnCount: 3,
+            claim: {
+              visitId: 402,
+              displayName: "Chị Hà",
+              partySize: 10,
+              tableIds: [tB5.id, tB6.id],
+              groupId: 109,
+              symbolNo: 1,
+            },
+          } as any,
+        ],
+        [
+          bar1.id,
+          {
+            tableId: bar1.id,
+            state: "seated",
+            seatedTurnCount: 4,
+            claim: {
+              visitId: 403,
+              displayName: "Khách Bar",
+              partySize: 2,
+              flags: ["VIP"],
+              tableIds: [bar1.id],
+            },
+          } as any,
+        ],
+      ])
+
+      const html = renderCanvas({
+        tables: [tC4, tB5, tB6, bar1],
+        mode: "live",
+        groups: [group],
+        states,
+        selectedIds: [],
+      })
+
+      expect(html).toContain(`transform="translate(${geoC4.guestBadge.centerXFor(14)} ${geoC4.guestBadge.y})"`)
+      expect(html).toContain(`transform="translate(${geoC4.turnBadge.centerXFor(12)} ${geoC4.turnBadge.y})"`)
+      expect(html).toContain(">14<")
+      expect(html).toContain(">12<")
+      // Group B5+B6 renders exactly one guest badge and one turn badge; Bar seat renders neither
+      expect((html.match(/data-testid="guest-count-badge"/g) || []).length).toBe(2)
+      expect((html.match(/data-testid="turn-badge"/g) || []).length).toBe(2)
     })
 
     it("removes all connectors, brackets, arcs, and link icons (K1 Section 2), showing relation via 3px border, single guest count badge and dashed rings", () => {
@@ -1603,18 +1703,16 @@ describe("cluster outline & label collision clearance (F-02)", () => {
       b: { left: number; top: number; right: number; bottom: number },
     ) => !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top)
 
-    const b21Badge = {
-      left: tB21.x - tB21.w / 2 + 3 - 6,
-      top: tB21.y - tB21.h / 2 - 0.5 - 5.5,
-      right: tB21.x - tB21.w / 2 + 3 + 6,
-      bottom: tB21.y - tB21.h / 2 - 0.5 + 5.5,
-    }
-    const b11Badge = {
-      left: tB11.x - tB11.w / 2 + 3 - 6,
-      top: tB11.y - tB11.h / 2 - 0.5 - 5.5,
-      right: tB11.x - tB11.w / 2 + 3 + 6,
-      bottom: tB11.y - tB11.h / 2 - 0.5 + 5.5,
-    }
+    const b21Boxes = getTableCornerObstacleBoxes(
+      tB21,
+      { claim: states.get(tB21.id)!.claim, isAnchor: true, hasActiveClaim: true },
+      0,
+    )
+    const b11Boxes = getTableCornerObstacleBoxes(
+      tB11,
+      { claim: states.get(tB11.id)!.claim, turnCount: 2, isAnchor: true, hasActiveClaim: true },
+      0,
+    )
 
     for (const d of decorations) {
       expect(d.label).not.toBeNull()
@@ -1629,8 +1727,10 @@ describe("cluster outline & label collision clearance (F-02)", () => {
       expect(pill.top).toBeGreaterThanOrEqual(WALL_BOUNDS.y)
       expect(pill.bottom).toBeLessThanOrEqual(WALL_BOUNDS.y + WALL_BOUNDS.h)
 
-      expect(overlaps(pill, b21Badge)).toBe(false)
-      expect(overlaps(pill, b11Badge)).toBe(false)
+      expect(overlaps(pill, b21Boxes.guestBadge!)).toBe(false)
+      expect(overlaps(pill, b11Boxes.guestBadge!)).toBe(false)
+      expect(overlaps(pill, b11Boxes.turnBadge!)).toBe(false)
+      expect(overlaps(pill, b11Boxes.bottomLeftIcons!)).toBe(false)
 
       for (const t of realTables) {
         const cell = { left: t.x - t.w / 2, top: t.y - t.h / 2, right: t.x + t.w / 2, bottom: t.y + t.h / 2 }
@@ -1648,6 +1748,150 @@ describe("cluster outline & label collision clearance (F-02)", () => {
         expect(overlaps(pill, otherOutline)).toBe(false)
       }
     }
+  })
+
+  it("keeps worst-case 2-digit badges and all 4 corner icons clear of neighbours, each other, and venue walls on every table", () => {
+    const overlaps = (
+      a: { left: number; top: number; right: number; bottom: number },
+      b: { left: number; top: number; right: number; bottom: number },
+    ) => !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top)
+
+    const regularTables = realTables.filter((t) => t.kind !== "BAR_SEAT")
+    const fullClaim = {
+      partySize: 14,
+      flags: ["RETURNING", "VIP", "DESIGNATED", "BIRTHDAY"],
+    } as any
+
+    const boxesByTable = regularTables.map((t) => {
+      const boxes = getTableCornerObstacleBoxes(
+        t,
+        { claim: fullClaim, turnCount: 12, isAnchor: true, hasActiveClaim: true },
+        0,
+      )
+      return {
+        table: t,
+        list: [boxes.guestBadge!, boxes.turnBadge!, boxes.bottomLeftIcons!, boxes.bottomRightIcons!],
+        boxes,
+      }
+    })
+
+    for (const entry of boxesByTable) {
+      const { boxes, list } = entry
+      // Within same table: no corner badge/icon overlaps another, and multi-icon step clears circle diameter + stroke
+      const geo = getTableCornerGeometry(entry.table.w, entry.table.h)
+      const rightR = geo.bottomRightIcons.radiusFor(3, 1)
+      const rightStep = geo.bottomRightIcons.stepFor(3, 1)
+      expect(rightStep).toBeGreaterThanOrEqual(rightR * 2 + geo.bottomRightIcons.strokeWidth)
+      expect(overlaps(boxes.guestBadge!, boxes.turnBadge!)).toBe(false)
+      expect(overlaps(boxes.bottomLeftIcons!, boxes.bottomRightIcons!)).toBe(false)
+      expect(overlaps(boxes.guestBadge!, boxes.bottomLeftIcons!)).toBe(false)
+      expect(overlaps(boxes.turnBadge!, boxes.bottomRightIcons!)).toBe(false)
+
+      // Inside WALL_BOUNDS
+      for (const b of list) {
+        expect(b.left).toBeGreaterThanOrEqual(WALL_BOUNDS.x)
+        expect(b.right).toBeLessThanOrEqual(WALL_BOUNDS.x + WALL_BOUNDS.w)
+        expect(b.top).toBeGreaterThanOrEqual(WALL_BOUNDS.y)
+        expect(b.bottom).toBeLessThanOrEqual(WALL_BOUNDS.y + WALL_BOUNDS.h)
+      }
+
+      // Against every other table cell and its corner badges/icons
+      for (const other of realTables) {
+        if (other.id === entry.table.id) continue
+        const otherCell = {
+          left: other.x - other.w / 2,
+          top: other.y - other.h / 2,
+          right: other.x + other.w / 2,
+          bottom: other.y + other.h / 2,
+        }
+        for (const b of list) {
+          expect(overlaps(b, otherCell)).toBe(false)
+        }
+      }
+
+      for (const otherEntry of boxesByTable) {
+        if (otherEntry.table.id === entry.table.id) continue
+        for (const b1 of list) {
+          for (const b2 of otherEntry.list) {
+            expect(overlaps(b1, b2)).toBe(false)
+          }
+        }
+      }
+    }
+  })
+
+  it("avoids top-right TurnBadge when placing G03 and G04 cluster labels above representative tables", () => {
+    const byCode = (code: string) => realTables.find((t) => t.code === code)!
+    const tB21 = byCode("B21")
+    const tB22 = byCode("B22")
+    const tB6 = byCode("B6")
+    const tB8 = byCode("B8")
+    const groups = [
+      { id: 3, symbolNo: 3, displayCode: "G03", tableIds: [tB21.id, tB22.id] },
+      { id: 4, symbolNo: 4, displayCode: "G04", tableIds: [tB6.id, tB8.id] },
+    ]
+    const states = new Map<number, FloorTableState>([
+      [
+        tB21.id,
+        {
+          tableId: tB21.id,
+          state: "seated",
+          seatedTurnCount: 11,
+          claim: { displayName: "A", partySize: 8, tableIds: [tB21.id, tB22.id], groupId: 3, symbolNo: 3 },
+        } as any,
+      ],
+      [
+        tB6.id,
+        {
+          tableId: tB6.id,
+          state: "seated",
+          seatedTurnCount: 2,
+          claim: { displayName: "B", partySize: 7, tableIds: [tB6.id, tB8.id], groupId: 4, symbolNo: 4 },
+        } as any,
+      ],
+    ])
+    const tableById = new Map(realTables.map((t) => [t.id, t]))
+    const repMap = new Map<number, boolean>([
+      [tB21.id, true],
+      [tB22.id, false],
+      [tB6.id, true],
+      [tB8.id, false],
+    ])
+    const decorations = computeClusterDecorations({
+      tables: realTables,
+      groups,
+      states,
+      mode: "live",
+      groupRepresentativeMap: repMap,
+      tableById,
+    })
+
+    const overlaps = (
+      a: { left: number; top: number; right: number; bottom: number },
+      b: { left: number; top: number; right: number; bottom: number },
+    ) => !(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top)
+
+    const b21Turn = getTableCornerObstacleBoxes(
+      tB21,
+      { turnCount: 11, isAnchor: true, hasActiveClaim: true },
+      0,
+    ).turnBadge!
+    const b6Turn = getTableCornerObstacleBoxes(
+      tB6,
+      { turnCount: 2, isAnchor: true, hasActiveClaim: true },
+      0,
+    ).turnBadge!
+
+    const g03 = decorations.find((d) => d.code === "G03")!
+    const g04 = decorations.find((d) => d.code === "G04")!
+    const toPill = (d: typeof g03) => ({
+      left: d.label!.x - 0.7,
+      top: d.label!.y - 0.7,
+      right: d.label!.x + d.label!.width + 0.7,
+      bottom: d.label!.y + d.label!.height + 0.7,
+    })
+    expect(overlaps(toPill(g03), b21Turn)).toBe(false)
+    expect(overlaps(toPill(g04), b6Turn)).toBe(false)
   })
 })
 

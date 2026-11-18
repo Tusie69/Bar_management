@@ -118,7 +118,7 @@ function StatusLegendContent({
             <span className="absolute -top-1.5 -left-1.5 grid size-4 place-items-center rounded-full bg-[var(--st-reserved)] text-[8px] font-bold text-white">
               2
             </span>
-            <span className="absolute -top-1.5 -right-1.5 grid size-4 place-items-center rounded-full bg-foreground text-[8px] font-bold text-background">
+            <span className="absolute -top-1.5 -right-1.5 grid size-4 place-items-center rounded-full border border-white/90 bg-black text-[8px] font-bold text-white">
               2
             </span>
             <span className="absolute -bottom-2 -left-2 text-[11px]">🔥</span>

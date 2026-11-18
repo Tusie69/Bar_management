@@ -21,20 +21,10 @@
 
 import type { ReactNode } from "react"
 import { cn } from "@/lib/utils"
-import { normalizeIconKey } from "./floor-visual-rules"
+import { normalizeIconKey, TABLE_ICON_MAX_STEP, TABLE_ICON_RADIUS, TABLE_ICON_STROKE } from "./floor-visual-rules"
 
 export type TableIconKey =
-  | "star"
-  | "fire"
-  | "pin"
-  | "cake"
-  | "new"
-  | "VIP"
-  | "RETURNING"
-  | "DESIGNATED"
-  | "BIRTHDAY"
-  | "NEW"
-  | string
+  "star" | "fire" | "pin" | "cake" | "new" | "VIP" | "RETURNING" | "DESIGNATED" | "BIRTHDAY" | "NEW" | string
 
 export interface TableIconMeta {
   key: "star" | "fire" | "pin" | "cake" | "new"
@@ -60,8 +50,10 @@ export interface TableIconsProps {
   y?: number
   /** Expansion direction when multiple icons are present ("left" default, or "right"). */
   direction?: "left" | "right"
-  /** Optional circle radius in SVG mode (default 5.2). */
+  /** Optional circle radius in SVG mode (default TABLE_ICON_RADIUS = 5.5). */
   radius?: number
+  /** Center-to-center spacing when multiple icons are shown (default 12). */
+  step?: number
   /** Render mode: "svg" (default SVG <g>) or "html" (HTML <div>). */
   as?: "svg" | "html"
   /** Additional CSS classes. */
@@ -76,7 +68,8 @@ export function TableIcons({
   x = 0,
   y = 0,
   direction = "left",
-  radius = 5.2,
+  radius = TABLE_ICON_RADIUS,
+  step = TABLE_ICON_MAX_STEP,
   as = "svg",
   className,
   "data-testid": testId = "table-icons",
@@ -118,7 +111,7 @@ export function TableIcons({
     return (
       <div
         className={cn(
-          "table-icons-container inline-flex items-center gap-0.5 pointer-events-none select-none",
+          "table-icons-container pointer-events-none inline-flex items-center gap-0.5 select-none",
           className,
         )}
         role="group"
@@ -128,7 +121,7 @@ export function TableIcons({
         {activeItems.map((item) => (
           <span
             key={item.key}
-            className="inline-flex size-3.5 items-center justify-center rounded-full bg-background border border-border shadow-2xs text-[8.5px] leading-none"
+            className="inline-flex size-4 items-center justify-center rounded-full border border-border bg-background text-[9.5px] leading-none shadow-2xs"
             title={item.label}
             aria-label={item.label}
             data-icon={item.key}
@@ -140,7 +133,6 @@ export function TableIcons({
     )
   }
 
-  const step = 12
   const sign = direction === "right" ? 1 : -1
   return (
     <g
@@ -165,12 +157,12 @@ export function TableIcons({
               r={radius}
               fill="var(--background, #ffffff)"
               stroke="var(--border-strong, #b4b2a9)"
-              strokeWidth={0.8}
+              strokeWidth={TABLE_ICON_STROKE}
             />
             <text
-              y={radius * 0.5}
+              y={radius * 0.48}
               textAnchor="middle"
-              fontSize={radius * 1.35}
+              fontSize={radius * 1.36}
               fontFamily="Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji, sans-serif"
             >
               {item.glyph}
