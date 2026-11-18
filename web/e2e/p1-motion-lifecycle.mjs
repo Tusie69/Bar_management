@@ -461,6 +461,19 @@ async function runP110Tests(browser, baseUrl) {
     await page.waitForTimeout(260)
   }
 
+  await page.setViewportSize({ width: 1023, height: 768 })
+  await page.getByTestId("admin-menu-trigger").click()
+  await page.getByTestId("admin-drawer-panel").waitFor({ state: "visible" })
+  await page.setViewportSize({ width: 1024, height: 768 })
+  await page.getByTestId("admin-drawer-panel").waitFor({ state: "detached" })
+  await page.waitForFunction(() => {
+    const sidebar = document.querySelector('[data-testid="admin-sidebar"]')
+    return sidebar?.querySelector('[aria-current="page"]') === document.activeElement
+  })
+  await page.setViewportSize({ width: 1023, height: 768 })
+  assert.equal(await page.getByTestId("admin-menu-trigger").getAttribute("aria-expanded"), "false")
+  await page.setViewportSize({ width: 390, height: 844 })
+
   assert.equal(await mqActiveDelta(page), drawerBaseline, "Admin drawer leaked matchMedia listeners")
   assert.equal(await countDetachedTargets(page), 0, "Admin drawer left detached GSAP targets")
   assert.equal(

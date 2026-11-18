@@ -114,6 +114,10 @@ export function AdminShell() {
     document.body.style.overflow = "hidden"
     drawerRef.current?.focus()
 
+    const desktopMedia = window.matchMedia(ADMIN_DESKTOP_MEDIA_QUERY)
+    const onDesktopChange = (event: MediaQueryListEvent) => {
+      if (event.matches) closeDrawer()
+    }
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         closeDrawer()
@@ -137,8 +141,10 @@ export function AdminShell() {
       target.focus()
     }
 
+    desktopMedia.addEventListener("change", onDesktopChange)
     window.addEventListener("keydown", onKey)
     return () => {
+      desktopMedia.removeEventListener("change", onDesktopChange)
       window.removeEventListener("keydown", onKey)
       document.body.style.overflow = prevOverflow
       setBackgroundInert(false)
