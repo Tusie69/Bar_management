@@ -50,16 +50,41 @@ describe("mobile cancel-booking validation and payload args", () => {
     })
   })
 
-  it.each(["0901234567", "0901 234 567", "+84 901 234 567", "0084.901.234.567", "Khách gọi từ 0912-345-678"])(
-    "rejects phone numbers in note: %s",
-    (note) => {
-      const result = validateCancelBookingInput("CUSTOMER_REQUEST", note)
-      expect(result.hasPhone).toBe(true)
-      expect(result.error).toBe(NOTE_PHONE_ERROR)
-      expect(result.canSubmit).toBe(false)
-      expect(() => buildCancelBookingArgs("CUSTOMER_REQUEST", note)).toThrow(NOTE_PHONE_ERROR)
-    },
-  )
+  it.each([
+    "0901234567",
+    "0901 234 567",
+    "+84 901 234 567",
+    "0084.901.234.567",
+    "Khách gọi từ 0912-345-678",
+    // API note-privacy.test.ts canonical examples
+    "0987654321",
+    "0987 654 321",
+    "0987.654.321",
+    "0987-654-321",
+    "(0987) 654-321",
+    "+84 987 654 321",
+    "0084 987 654 321",
+    "Gọi khách theo số 0987 654 321 giúp em",
+  ])("rejects phone numbers in note: %s", (note) => {
+    const result = validateCancelBookingInput("CUSTOMER_REQUEST", note)
+    expect(result.hasPhone).toBe(true)
+    expect(result.error).toBe(NOTE_PHONE_ERROR)
+    expect(result.canSubmit).toBe(false)
+    expect(() => buildCancelBookingArgs("CUSTOMER_REQUEST", note)).toThrow(NOTE_PHONE_ERROR)
+  })
+
+  it.each([
+    ["leading Arabic-Indic digit adjacent to local phone", "\u0661090-123-4567"],
+    ["trailing fullwidth digit adjacent to local phone", "090-123-4567\uFF11"],
+    ["leading fullwidth plus adjacent to +84 phone", "\uFF0B+84 901 234 567"],
+  ])("rejects raw API-blocked phone even when adjacent to Unicode lookalikes (%s)", (_label, note) => {
+    expect(noteHasNormalizedPhoneNumber(note)).toBe(true)
+    const result = validateCancelBookingInput("CUSTOMER_REQUEST", note)
+    expect(result.hasPhone).toBe(true)
+    expect(result.error).toBe(NOTE_PHONE_ERROR)
+    expect(result.canSubmit).toBe(false)
+    expect(() => buildCancelBookingArgs("CUSTOMER_REQUEST", note)).toThrow(NOTE_PHONE_ERROR)
+  })
 
   it.each([
     ["full-width digits + space", "０９０ １２３ ４５６７"],
@@ -110,6 +135,23 @@ describe("mobile cancel-booking validation and payload args", () => {
       "Bàn 102, 4 khách, sinh nhật",
       "Đặt nhầm ngày 20-11-2026",
       "Mã đơn #123456",
+      // API note-privacy.test.ts accepted examples
+      "Ngày 20261029",
+      "Mã đơn 12345678",
+      "Bàn A12 lúc 21:30",
+      "Khách đi 4 người, cọc 500000",
+      "Mã 1234567890",
+      // Review NA-03 examples & realistic Vietnamese notes
+      "Khách hủy khung 00.30\u201301.15 12 khách, bàn A5.",
+      "Khách hủy khung 00:30\u201301:15 12 khách, bàn A5.",
+      "Khách hủy khung 00.30\u201301.15, 12 khách, bàn A5.",
+      "Đổi từ 09:00 sang 10h15, ghép A2 + A4 cho 12 người.",
+      "22.30-01.00 6 khách",
+      "22.30\u201301.00 6 khách",
+      "Bàn 01 \u2013 00.30\u201301.15 12 khách",
+      "Đổi khung 00.30\u201301.15 (12 khách) sang bàn A2 + A4",
+      "Ngày 20\u201311\u20132026 00.30\u201301.15 8 người, phòng VIP 01",
+      "G01 \u2013 00.30\u201301.15 12 khách",
     ]) {
       const result = validateCancelBookingInput("OTHER", validNote)
       expect(result.hasPhone).toBe(false)
@@ -121,6 +163,36 @@ describe("mobile cancel-booking validation and payload args", () => {
       reason: "OTHER",
       note: "Khách ở tầng ２ — hẹn 19:30",
     })
+    expect(
+      buildCancelBookingArgs("CUSTOMER_REQUEST", "  Khách hủy khung 00.30\u201301.15 12 khách, bàn A5.  "),
+    ).toEqual({
+      reason: "CUSTOMER_REQUEST",
+      note: "Khách hủy khung 00.30\u201301.15 12 khách, bàn A5.",
+    })
+  })
+
+  it.each([
+    ["raw ASCII-dash overnight note rejected by API", "Khách hủy khung 00.30-01.15 12 khách, bàn A5."],
+    [
+      "overnight note with Unicode-formatted local phone appended",
+      "Khách hủy khung 00.30\u201301.15 12 khách, bàn A5. Gọi lại ０９０\u2011١٢٣\u202F4567",
+    ],
+    [
+      "overnight note with Unicode +84 phone appended",
+      "Khách hủy khung 00.30\u201301.15 12 khách, bàn A5. ＋８４ ９０１ ２３４ ５６７",
+    ],
+    ["disguised Unicode phone followed by khách", "Khách hủy ０９０ １２３ ４５ ６７ khách"],
+    ["grouped Unicode phone followed by khách", "Khách hủy ０９０１ ２３４ ５６７ khách"],
+    ["Unicode phone split across time-like dot", "Khách hủy ０９０ １２.３４ ５６７ khách"],
+    ["Unicode phone after table label", "Bàn ０９０ １２３ ４５６７"],
+    ["unlabelled dotted digits", "Khách hủy ０９.０１\u2013２３.４５ ６７"],
+  ])("still rejects %s", (_label, note) => {
+    expect(noteHasNormalizedPhoneNumber(note)).toBe(true)
+    const result = validateCancelBookingInput("CUSTOMER_REQUEST", note)
+    expect(result.hasPhone).toBe(true)
+    expect(result.error).toBe(NOTE_PHONE_ERROR)
+    expect(result.canSubmit).toBe(false)
+    expect(() => buildCancelBookingArgs("CUSTOMER_REQUEST", note)).toThrow(NOTE_PHONE_ERROR)
   })
 
   it("enforces the 300-character trimmed maximum", () => {
