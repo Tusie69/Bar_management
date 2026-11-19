@@ -228,12 +228,14 @@ export function AccountSheet({
   alerts,
   onOpenNotifications,
   onOpenAlert,
+  focusAfterClose,
 }: {
   open: boolean
   onClose: () => void
   alerts: Alert[]
   onOpenNotifications: () => void
   onOpenAlert: (alert: Alert) => void
+  focusAfterClose: () => boolean
 }) {
   const { user, users, theme, setUser, setTheme, principal, permissions, logout } = useSession()
   const navigate = useNavigate()
@@ -251,7 +253,10 @@ export function AccountSheet({
         data-gm-overlay-id={focus.overlayId}
         data-receptionist-frame={isReceptionist ? "true" : undefined}
         side="bottom"
-        onCloseAutoFocus={focus.onCloseAutoFocus}
+        onCloseAutoFocus={(event) => {
+          focus.onCloseAutoFocus(event)
+          if (focusAfterClose()) event.preventDefault()
+        }}
         className={sheetContentClass(isReceptionist)}
       >
         <SheetHeader className="px-4 pt-5 pb-2 text-left">

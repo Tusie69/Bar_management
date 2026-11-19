@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { chromium } from "@playwright/test"
+import { chromium, expect } from "@playwright/test"
 import { createServer } from "vite"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -895,7 +895,7 @@ try {
     await page.keyboard.press("Escape")
     await accountSheet.waitFor({ state: "detached" })
     assert(await menuTrigger.evaluate((el) => document.activeElement === el), "Closing Menu did not restore focus")
-    await menuTrigger.tap()
+    await menuTrigger.press("Enter")
     await notifications.waitFor({ state: "visible" })
     const disclosureHeight = await notifications.evaluate((el) => el.offsetHeight)
     assert(disclosureHeight >= 44, "Thông báo disclosure target is smaller than 44px")
@@ -908,8 +908,9 @@ try {
     await page.screenshot({ path: path.join(outDir, "reception-390x844-menu-notifications.png") })
     await firstAlert.press("Enter")
     await accountSheet.waitFor({ state: "detached" })
-    const alertDetail = page.getByRole("dialog").first()
+    const alertDetail = page.getByRole("dialog", { name: "Chi tiết Bàn G01", exact: true })
     await alertDetail.waitFor({ state: "visible" })
+    await expect(alertDetail.getByRole("button", { name: "Đóng", exact: true })).toBeFocused()
     assert(
       await alertDetail.evaluate((el) => el.contains(document.activeElement)),
       "Alert detail did not receive focus",

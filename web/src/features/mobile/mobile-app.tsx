@@ -172,6 +172,7 @@ export default function MobileApp() {
   const bottomNavRef = useRef<HTMLElement>(null)
   const formRequestCloseRef = useRef<(() => void) | null>(null)
   const bookingEditRequestCloseRef = useRef<(() => void) | null>(null)
+  const focusTableAfterAccountClose = useRef(false)
   const waitFocus = useRestoreTriggerFocus(overlay === "wait")
   const hasFullScreenModal = Boolean(detail || bookingEdit || entryDetail || form)
 
@@ -234,8 +235,10 @@ export default function MobileApp() {
   const openAlertDetail = (alert: Alert) => {
     setOverlay(null)
     const target = notificationTarget(alert.tableId, alert.reservationId, selectedDate)
-    if (target?.kind === "table") ctx.openTable(target.tableId)
-    else if (target?.kind === "reservation") setDetail({ id: target.reservationId, bd: target.businessDate })
+    if (target?.kind === "table") {
+      focusTableAfterAccountClose.current = overlay === "account"
+      ctx.openTable(target.tableId)
+    } else if (target?.kind === "reservation") setDetail({ id: target.reservationId, bd: target.businessDate })
   }
 
   const ctx: MobileCtx = {
@@ -499,6 +502,15 @@ export default function MobileApp() {
             if (unread) markSeen(alerts.map((a) => a.key))
           }}
           onOpenAlert={openAlertDetail}
+          focusAfterClose={() => {
+            if (!focusTableAfterAccountClose.current) return false
+            focusTableAfterAccountClose.current = false
+            const closeButton = document.querySelector<HTMLButtonElement>(
+              '[data-mobile-table-sheet][data-motion-state="open"]:not([inert]) button[aria-label="Đóng"]',
+            )
+            closeButton?.focus({ preventScroll: true })
+            return closeButton != null && document.activeElement === closeButton
+          }}
         />
         <GuestCountSheet
           businessDate={selectedDate}
