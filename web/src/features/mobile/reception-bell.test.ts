@@ -126,6 +126,7 @@ function makeCtx(role: RoleCode): MobileCtx {
     openCount: vi.fn(),
     openCountEdit: vi.fn(),
     openDetail: vi.fn(),
+    openBookingEdit: vi.fn(),
     openEntryDetail: vi.fn(),
     openStatus: vi.fn(),
     openForm: vi.fn(),

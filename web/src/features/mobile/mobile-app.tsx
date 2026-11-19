@@ -32,6 +32,7 @@ import {
   type TablePick,
   type Tab,
 } from "./context"
+import { BookingEditScreen } from "./booking-edit"
 import { CancelBookingDialog } from "./cancel-booking-dialog"
 import { DetailScreen } from "./detail"
 import { FormScreen } from "./form"
@@ -124,6 +125,7 @@ export default function MobileApp() {
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [cancelReq, setCancelReq] = useState<CancelBookingRequest | null>(null)
   const [detail, setDetail] = useState<{ id: number; bd: BusinessDate } | null>(null)
+  const [bookingEdit, setBookingEdit] = useState<{ id: number; bd: BusinessDate } | null>(null)
   const [entryDetail, setEntryDetail] = useState<{ id: number; bd: BusinessDate } | null>(null)
   const [form, setForm] = useState<FormRequest | null>(null)
   const [tableSel, setTableSel] = useState<number | null>(null)
@@ -136,6 +138,8 @@ export default function MobileApp() {
   // Retain last payload during right-edge slide-out exit
   const [cachedDetail, setCachedDetail] = useState(detail)
   if (detail && detail !== cachedDetail) setCachedDetail(detail)
+  const [cachedBookingEdit, setCachedBookingEdit] = useState(bookingEdit)
+  if (bookingEdit && bookingEdit !== cachedBookingEdit) setCachedBookingEdit(bookingEdit)
   const [cachedEntryDetail, setCachedEntryDetail] = useState(entryDetail)
   if (entryDetail && entryDetail !== cachedEntryDetail) setCachedEntryDetail(entryDetail)
   const [cachedForm, setCachedForm] = useState(form)
@@ -146,14 +150,26 @@ export default function MobileApp() {
   const unread = alerts.filter((a) => !seen.has(a.key)).length
   const handle = (key: string) => markHandled([key])
   const toast15 = booked.find((r) => r.warning === "late" && !handled.has(`l${r.id}`)) ?? null
-  const busy = !!(overlay || statusFor || confirm || cancelReq || detail || entryDetail || form || pick || ui.draft)
+  const busy = !!(
+    overlay ||
+    statusFor ||
+    confirm ||
+    cancelReq ||
+    detail ||
+    bookingEdit ||
+    entryDetail ||
+    form ||
+    pick ||
+    ui.draft
+  )
   const keyboardSafeHeight = useKeyboardSafeHeight()
 
   const shellContentRef = useRef<HTMLDivElement>(null)
   const bottomNavRef = useRef<HTMLElement>(null)
   const formRequestCloseRef = useRef<(() => void) | null>(null)
+  const bookingEditRequestCloseRef = useRef<(() => void) | null>(null)
   const waitFocus = useRestoreTriggerFocus(overlay === "wait")
-  const hasFullScreenModal = Boolean(detail || entryDetail || form)
+  const hasFullScreenModal = Boolean(detail || bookingEdit || entryDetail || form)
 
   useEffect(() => {
     if (shellContentRef.current) shellContentRef.current.inert = hasFullScreenModal
@@ -164,6 +180,7 @@ export default function MobileApp() {
   useEffect(() => {
     setOverlay(null)
     setDetail(null)
+    setBookingEdit(null)
     setEntryDetail(null)
     setForm(null)
     setPick(null)
@@ -176,12 +193,12 @@ export default function MobileApp() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return
-      if (statusFor || confirm || cancelReq || overlay || detail || entryDetail || form) return
+      if (statusFor || confirm || cancelReq || overlay || detail || bookingEdit || entryDetail || form) return
       if (tableSel) setTableSel(null)
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [statusFor, overlay, confirm, cancelReq, detail, entryDetail, form, tableSel])
+  }, [statusFor, overlay, confirm, cancelReq, detail, bookingEdit, entryDetail, form, tableSel])
 
   // Ensure any focused input inside a mobile sheet or modal stays scrolled above virtual keyboard
   useEffect(() => {
@@ -240,12 +257,18 @@ export default function MobileApp() {
     openDetail: (id, bd) => {
       setOverlay(null)
       setTableSel(null)
+      setBookingEdit(null)
       setEntryDetail(null)
       setDetail({ id, bd })
+    },
+    openBookingEdit: (id, bd) => {
+      setTableSel(null)
+      setBookingEdit({ id, bd })
     },
     openEntryDetail: (id, bd) => {
       setOverlay(null)
       setTableSel(null)
+      setBookingEdit(null)
       setDetail(null)
       setEntryDetail({ id, bd })
     },
@@ -257,6 +280,7 @@ export default function MobileApp() {
       }
       setOverlay(null)
       setTableSel(null)
+      setBookingEdit(null)
       if (isReceptionist) {
         if (f.mode === "walkin") ui.openWalkIn(f.tableIds)
         else ui.openBooking({ tableIds: f.tableIds, date: f.date ?? selectedDate, toWaitlist: f.toWaitlist })
@@ -266,6 +290,7 @@ export default function MobileApp() {
     },
     openTable: (id) => {
       setDetail(null)
+      setBookingEdit(null)
       setEntryDetail(null)
       setTableSel(id)
       go("map")
@@ -281,6 +306,7 @@ export default function MobileApp() {
     },
     startPick: (p) => {
       setDetail(null)
+      setBookingEdit(null)
       setEntryDetail(null)
       setStatusFor(null)
       setTableSel(null)
@@ -294,7 +320,9 @@ export default function MobileApp() {
     ? { home: isOwner ? "Tổng quan" : "Tiếp đón", list: "Danh sách", map: "Sơ đồ bàn", wait: "Đơn chờ" }[tab]
     : ""
   const other = NAV.find((n) => loc.pathname.startsWith(n.to))
-  const tableSheetSuperseded = Boolean(detail || entryDetail || form || ui.draft || ui.pick?.intent === "layout")
+  const tableSheetSuperseded = Boolean(
+    detail || bookingEdit || entryDetail || form || ui.draft || ui.pick?.intent === "layout",
+  )
 
   return (
     <MobileContext.Provider value={ctx}>
@@ -487,6 +515,25 @@ export default function MobileApp() {
             onOpen={openAlertDetail}
           />
         ) : null}
+        <FullScreenPresence
+          open={Boolean(bookingEdit)}
+          label="Sửa booking"
+          isReceptionist={isReceptionist}
+          onClose={() => setBookingEdit(null)}
+          onRequestClose={() =>
+            bookingEditRequestCloseRef.current ? bookingEditRequestCloseRef.current() : setBookingEdit(null)
+          }
+        >
+          {cachedBookingEdit ? (
+            <BookingEditScreen
+              id={cachedBookingEdit.id}
+              bd={cachedBookingEdit.bd}
+              parentOpen={Boolean(bookingEdit)}
+              requestCloseRef={bookingEditRequestCloseRef}
+              onClose={() => setBookingEdit(null)}
+            />
+          ) : null}
+        </FullScreenPresence>
         <StatusDialog r={statusFor} onClose={() => setStatusFor(null)} />
         <ConfirmDialog c={confirm} onClose={() => setConfirm(null)} />
         {isReceptionist ? <CancelBookingDialog req={cancelReq} onClose={() => setCancelReq(null)} /> : null}

@@ -12,7 +12,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import type { TableLiveState, TableView } from "@/domain/models"
+import type { ReservationView, TableLiveState, TableView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAvailability } from "@/hooks/use-data"
 import {
@@ -22,7 +22,7 @@ import {
   usePresenceController,
   useStableNodeRef,
 } from "@/lib/motion"
-import { fmtBusinessDate, fmtTime } from "@/lib/time"
+import { fmtBusinessDate, fmtTime, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useUi } from "@/state/ui"
 import { useReceptionSearch } from "@/hooks/use-reception-search"
@@ -729,13 +729,21 @@ export function TableSheet({
   let who = ""
   let when = ""
   let info = ""
+  const bookingDetailAction = (resId: number, resBd: BusinessDate, target?: ReservationView): Action => {
+    const canEdit = m.can("reservation.update") && target?.status === "BOOKED"
+    return {
+      label: canEdit ? "Sửa booking" : "Xem booking",
+      go: () => (canEdit ? m.openBookingEdit(resId, resBd) : m.openDetail(resId, resBd)),
+    }
+  }
+
   let actions: Action[] = []
   if (c?.kind === "visit") {
     who = `${c.displayName}, ${c.partySize} khách`
     when = `Đang ngồi từ ${fmtTime(c.startsAt)}, ${duration(m.now.getTime() - c.startsAt.getTime())}`
     actions = [
       { label: "Đổi bàn", go: () => a.moveVisit(c, activeId) },
-      ...(c.reservationId ? [{ label: "Xem booking", go: () => m.openDetail(c.reservationId!, m.today) }] : []),
+      ...(c.reservationId ? [bookingDetailAction(c.reservationId, r?.businessDate ?? m.today, r)] : []),
       { label: "Nhả bàn", danger: true, wide: true, go: () => a.endVisit(c) },
     ]
   } else if (c?.kind === "waitlist_hold" || (c?.kind === "reservation" && linkedEntry)) {
@@ -765,7 +773,7 @@ export function TableSheet({
         title: !hold.supported ? "Chưa hỗ trợ" : undefined,
         go: () => a.reassignHold(entry, r),
       },
-      ...(r ? [{ label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) }] : []),
+      ...(r ? [bookingDetailAction(r.id, r.businessDate, r)] : []),
       {
         label: "Xem đơn chờ",
         disabled: !entry,
@@ -803,7 +811,7 @@ export function TableSheet({
           r.minutesLate < m.th.noshow
             ? [{ label: "Tới muộn", go: () => a.confirmLate(r) }]
             : []),
-          { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
+          bookingDetailAction(r.id, r.businessDate, r),
           { label: "Đổi bàn", go: () => a.assign(r) },
           {
             label: "Hủy booking",
