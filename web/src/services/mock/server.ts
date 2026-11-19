@@ -201,7 +201,28 @@ export class MockGamApi implements GamApi, DemoControls {
   async getTableTurnSummary(params: TableTurnQuery) {
     await this.latency("q")
     this.require("report.read")
-    return mockTableTurnSummary(projectTableTurns(this.db), params)
+    return mockTableTurnSummary(projectTableTurns(this.db), params, this.scopeInventory())
+  }
+
+  /**
+   * TU-38 — the countable scopes the averages divide by. The mock floor has no fixed
+   * cluster, so a scope is an ACTIVE non-spare table, exactly as the API computes it from
+   * `dining_tables` minus the tables a LAYOUT cluster owns.
+   */
+  private scopeInventory() {
+    const venueId = this.venue.id
+    const tables = [...this.db.tables.values()].filter(
+      (table) => table.venueId === venueId && table.status === "ACTIVE" && !table.isSpare,
+    )
+    return {
+      scopes: tables.map((table) => ({
+        scope: "TABLE" as const,
+        tableId: table.id,
+        groupId: null,
+        label: table.code,
+      })),
+      physicalTableTotal: tables.length,
+    }
   }
 
   private get venue() {

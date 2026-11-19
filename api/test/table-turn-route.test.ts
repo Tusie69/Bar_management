@@ -37,6 +37,8 @@ describe.each(['/visits/turns', '/visits/turns/summary'])('%s validation and acc
     ...['0', '-1', '1.5', 'abc', '9007199254740992', '', '1&closedByUserId=2'].map((value) => `${range}&closedByUserId=${value}`),
     ...['0', '-1', '1.5', 'abc', '9007199254740992', '', '1&checkedInByUserId=2'].map((value) => `${range}&checkedInByUserId=${value}`),
     `${range}&includeUncounted=1`, `${range}&page=0`, `${range}&pageSize=201`,
+    // TU-38: includeZeroScopes is a strict boolean, like includeUncounted beside it.
+    `${range}&includeZeroScopes=1`, `${range}&includeZeroScopes=yes`,
   ])('rejects invalid filter %s before reading ledger', async (query) => {
     expect((await request(app).get(`${path}?${query}`)).status).toBe(400)
     expect(listTableTurns).not.toHaveBeenCalled()
@@ -62,7 +64,9 @@ it('passes identical range/staff/counting filters and returns each response unch
   const list = { from: '2030-10-21', to: '2030-10-27', page: 2, pageSize: 1,
     total: 2, completedTotal: 2, guestTotal: 16, turns: [turn] }
   const summary = { from: list.from, to: list.to, completedTotal: 2, openTotal: 0, guestTotal: 16,
+    scopeTotal: 4, physicalTableTotal: 6, averagePerScope: 0.5, averagePerPhysicalTable: 0.33,
     byBusinessDate: [{ businessDate: '2030-10-21', turns: 2, guests: 16 }],
+    byMonth: [{ month: '2030-10', turns: 2, guests: 16 }],
     byStaff: [{ checkedInByUserId: 5, checkedInByDisplayName: 'Reception', turns: 2, guests: 16 }],
     byScope: [{ scope: 'GROUP' as const, groupId: 7, tableId: null, label: 'C1', turns: 2, guests: 16 }] }
   vi.mocked(listTableTurns).mockResolvedValue(list)
@@ -73,4 +77,20 @@ it('passes identical range/staff/counting filters and returns each response unch
   const filters = { from: list.from, to: list.to, page: 2, pageSize: 1, closedByUserId: 3, checkedInByUserId: 5, countedOnly: false }
   expect(listTableTurns).toHaveBeenCalledWith(actor, filters)
   expect(summarizeTableTurns).toHaveBeenCalledWith(actor, filters)
+})
+
+it('TU-38 forwards includeZeroScopes only when it is explicitly true', async () => {
+  vi.mocked(summarizeTableTurns).mockResolvedValue({
+    from: '2030-10-21', to: '2030-10-21', completedTotal: 0, openTotal: 0, guestTotal: 0,
+    scopeTotal: 0, physicalTableTotal: 0, averagePerScope: 0, averagePerPhysicalTable: 0,
+    byBusinessDate: [], byMonth: [], byStaff: [], byScope: [],
+  })
+  const base = 'from=2030-10-21&to=2030-10-21'
+  await request(app).get(`/visits/turns/summary?${base}&includeZeroScopes=true`)
+  const lastFilters = () => vi.mocked(summarizeTableTurns).mock.lastCall?.[1]
+  expect(lastFilters()).toMatchObject({ includeZeroScopes: true })
+  await request(app).get(`/visits/turns/summary?${base}&includeZeroScopes=false`)
+  expect(lastFilters()).not.toHaveProperty('includeZeroScopes')
+  await request(app).get(`/visits/turns/summary?${base}`)
+  expect(lastFilters()).not.toHaveProperty('includeZeroScopes')
 })

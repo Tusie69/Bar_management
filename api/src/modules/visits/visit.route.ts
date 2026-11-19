@@ -59,6 +59,11 @@ function turnQuery(query: Record<string, unknown>): TurnQuery {
     throw new AppError(400, 'INVALID_INCLUDE_UNCOUNTED', 'includeUncounted phải là true hoặc false.')
   }
 
+  const includeZeroScopes = query.includeZeroScopes
+  if (includeZeroScopes !== undefined && includeZeroScopes !== 'true' && includeZeroScopes !== 'false') {
+    throw new AppError(400, 'INVALID_INCLUDE_ZERO_SCOPES', 'includeZeroScopes phải là true hoặc false.')
+  }
+
   const closedByUserId = query.closedByUserId
   if (closedByUserId !== undefined && (typeof closedByUserId !== 'string' || !/^[1-9]\d*$/.test(closedByUserId))) {
     throw new AppError(400, 'INVALID_CLOSED_BY_USER_ID', 'closedByUserId phải là số nguyên dương.')
@@ -73,6 +78,7 @@ function turnQuery(query: Record<string, unknown>): TurnQuery {
     page,
     pageSize,
     countedOnly: includeUncounted !== 'true',
+    ...(includeZeroScopes === 'true' ? { includeZeroScopes: true } : {}),
     ...(checkedInByUserId === undefined ? {} : {
       checkedInByUserId: positiveInteger(checkedInByUserId, 'INVALID_CHECKED_IN_BY_USER_ID', 'checkedInByUserId phải là số nguyên dương.'),
     }),

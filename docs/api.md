@@ -698,7 +698,7 @@ BA-023 records the approved PO decision: Receptionist calling uses the dedicated
 | POST   | `/visits/:id/move`        | `visit.move`    | Body `{version,tableIds,note?}`; `{visit:MovedVisitView}`                        |
 | POST   | `/visits/:id/merge`       | `visit.combine` | Body `{version,tableIds}`; `{visit:MovedVisitView,group:{id,symbolNo,tableIds}}` |
 | GET    | `/visits/turns?from=&to=` | `report.read`   | Table-turn ledger over a range of operating days; see **Table turns** below      |
-| GET    | `/visits/turns/summary?from=&to=` | `report.read` | Totals and aggregates by business date, check-in user and logical table/group scope |
+| GET    | `/visits/turns/summary?from=&to=` | `report.read` | Totals, averages and aggregates by business date, month, check-in user and logical table/group scope |
 
 Manual close reasons are `GUEST_LEFT` or `ENTRY_ERROR`; note is optional, at most 500 characters. Closing releases the visit allocations and dissolves unused groups. `ClosedVisitView` is `{id,businessDate,status:"CLOSED",endedAt,endReason,version,releasedTables:[{id,code}],turn}`, where `turn` is the table turn this close recorded (see **Table turns** below) or null when the visit already had one. Closing releases the operational state only: it never dissolves a LAYOUT cluster. `MovedVisitView` is `{id,businessDate,version,previousTables:[{id,code}],tables:[{id,code}]}`. Move validates capacity and same-kind targets, allows multiple tables across bookable zones without adjacency configuration, and creates or retains their shared group. It rejects every unreleased USAGE allocation on target tables regardless of business date, plus holds on the visit's business date. Merge follows the group rules above.
 
@@ -913,11 +913,74 @@ GET /api/v1/visits/turns/summary?from=2026-11-09&to=2026-11-15&checkedInByUserId
 ```json
 {
   "from": "2026-11-09", "to": "2026-11-15", "completedTotal": 1, "openTotal": 0, "guestTotal": 12,
+  "scopeTotal": 18, "physicalTableTotal": 24,
+  "averagePerScope": 0.06, "averagePerPhysicalTable": 0.04,
   "byBusinessDate": [{"businessDate": "2026-11-11", "turns": 1, "guests": 12}],
+  "byMonth": [{"month": "2026-11", "turns": 1, "guests": 12}],
   "byStaff": [{"checkedInByUserId": 2, "checkedInByDisplayName": "Lễ tân", "turns": 1, "guests": 12}],
   "byScope": [{"scope": "GROUP", "tableId": null, "groupId": 101, "label": "G01", "turns": 1, "guests": 12}]
 }
 ```
+
+### Turn statistics (TU-38)
+
+The same endpoint carries the statistics the Sổ lượt tới quán screen reads; there is no second
+report endpoint, and the screen never counts raw ledger rows.
+
+| Query parameter      | Values              | Effect                                                                 |
+| -------------------- | ------------------- | ---------------------------------------------------------------------- |
+| `from`, `to`         | `YYYY-MM-DD`        | Operating days, inclusive. `from > to` is 400 `INVALID_DATE_RANGE`; a span over 366 days is 400 `DATE_RANGE_TOO_WIDE` |
+| `includeUncounted`   | `true` \| `false`   | Buckets also include corrections and system closes. Anything else is 400 `INVALID_INCLUDE_UNCOUNTED` |
+| `includeZeroScopes`  | `true` \| `false`   | Adds a `turns: 0, guests: 0` row to `byScope` for every countable scope with no turn in range. Anything else is 400 `INVALID_INCLUDE_ZERO_SCOPES` |
+| `checkedInByUserId`  | positive integer    | Filter by check-in user. Otherwise 400 `INVALID_CHECKED_IN_BY_USER_ID` |
+| `closedByUserId`     | positive integer    | Filter by closing user. Otherwise 400 `INVALID_CLOSED_BY_USER_ID`      |
+
+Errors: 401 without a session, 403 `PERMISSION_DENIED` without `report.read`, 400 for the
+validation above. No write or CSRF token is required and nothing is mutated.
+
+**Per table or cluster (AC01).** `byScope` is one row per unit that earned a turn, grouped by
+`(scope, groupId|tableId)`. A fixed (LAYOUT) cluster is one row with one turn per party, never
+one row per member table. By default a scope with no turn in the range is absent, exactly as
+before; with `includeZeroScopes=true` it appears once with zeroes, labelled from live inventory
+(the table's `code`, or the cluster's `name`/symbol code). A measured row always wins over its
+inventory twin, so a scope is never listed twice and the totals do not move.
+
+**Venue total (AC02).** `completedTotal` is the number of counted turns in range, and
+`byScope`, `byBusinessDate` and `byMonth` each sum to it when `includeUncounted` is off.
+Nothing sums `turnNo` or expands cluster members.
+
+**Averages and their denominators (AC03).** `scopeTotal` counts the units that can earn a turn:
+ACTIVE non-spare tables that no active LAYOUT cluster owns, plus the active LAYOUT clusters.
+`physicalTableTotal` counts ACTIVE non-spare tables. `averagePerScope` is
+`completedTotal / scopeTotal` and `averagePerPhysicalTable` is
+`completedTotal / physicalTableTotal`, both rounded to two decimals and 0 when the denominator
+is 0. Both denominators are live venue inventory at query time, not a snapshot of the range, so
+they stay populated for an empty range. The venue's own figure is `averagePerScope`: that is the
+unit the ledger counts against. `averagePerPhysicalTable` is there because "trung bình mỗi bàn"
+reads as a per-table number to a reader who does not know a cluster counts once.
+
+**Monthly totals (AC04).** `byMonth` groups by `DATE_FORMAT(business_date, '%Y-%m')` in SQL,
+ascending, as `YYYY-MM`. Months with no turn have no bucket. A cluster is counted once per party
+here too, and a party seated after midnight falls in the month of its operating day.
+
+**What is not counted (AC05).** A booking that was never checked in has no visit and so no turn.
+A `CANCELLED` or `NO_SHOW` booking likewise. `BUSINESS_DAY_END` and `ENTRY_ERROR` closes stay
+visible with `includeUncounted=true` but never reach `completedTotal`, `guestTotal` or the
+averages.
+
+**The operating day (AC06).** Every figure is grouped by the stored `business_date`, which the
+check-in path derives from the venue's own `business_day_start_local` and
+`business_day_cutoff_local`. Nothing in the statistics path assumes 17:00-05:00: a venue
+configured for another shift groups by its own cutoff, and the web client reads the same two
+columns from the catalog for its business date and shift label.
+
+**Performance (AC07, AC08).** The summary runs six aggregate queries whatever the row count:
+four over the shared turn projection, one scope inventory and one table count. Migration 0031
+adds `ix_visits_org_venue_date (organization_id, venue_id, business_date)` to `visits`, which is
+the predicate the projection opens with. Measured on a three-month sample (5 400 turns), a
+one-month summary answers in a median of 109ms and a slowest of 119ms against a 2000ms budget;
+`test/tu38-turn-statistics-benchmark.mysql.test.ts` prints both the timings and the
+`EXPLAIN FORMAT=TREE` plans. No schema or behaviour change touches TU-25, Booking/Visit or NA-34.
 
 Every aggregate counts visit rows, never sums `turnNo` or expands group members. `byScope` groups by
 `(scope, groupId|tableId)` and labels from the live OPEN turn if present, otherwise the latest matching ledger row (highest turn ID): group code,
@@ -969,6 +1032,18 @@ per turn and resetting with the operating day, the 00:30 boundary, the date-rang
 one turn for a cluster, a repeated and a concurrent close, distinct ordinals across two devices, history surviving a
 split, Close Visit leaving a cluster standing, an entry correction and the end-of-shift close staying uncounted, and a
 rolled-back close leaving nothing behind.
+
+TU-38 adds two files beside it, run the same way:
+
+- `test/tu38-turn-statistics.mysql.test.ts` — per-scope rows for one day with and without
+  `includeZeroScopes`, the venue total, both denominators and averages, the empty range,
+  monthly totals across two months with a cluster counted once, a booking never checked in
+  plus a cancelled and a no-show one, the operating day of a party seated after midnight, and
+  the route contract including `report.read` and parameter validation.
+- `test/tu38-turn-statistics-benchmark.mysql.test.ts` — seeds three months (5 400 turns),
+  measures five one-month summaries against the 2000ms budget and prints the
+  `EXPLAIN FORMAT=TREE` plan of each aggregate plus both plans for the `target_visits`
+  predicate. Add `--disableConsoleIntercept` to see the printed evidence.
 
 ## Waitlist
 

@@ -58,7 +58,34 @@ export function addDays(date: BusinessDate, n: number): BusinessDate {
   return venueDateString(new Date(t.getTime() + n * DAY))
 }
 
-export function businessDateOf(t: Date, cutoffHour = 5): BusinessDate {
+/**
+ * The operating shift, as the `venues` row stores it ("17:00:00" / "05:00:00").
+ * Never assume the pair: read it from the venue catalog and pass it in.
+ */
+export interface BusinessShift {
+  startLocal: string
+  cutoffLocal: string
+}
+
+/**
+ * TU-38 — used only while the venue catalog is still loading, so that a first render has a
+ * business date at all. The real shift always comes from `venues.business_day_start_local`
+ * and `business_day_cutoff_local`; this is the value those columns are seeded with.
+ */
+export const FALLBACK_BUSINESS_SHIFT: BusinessShift = { startLocal: "17:00:00", cutoffLocal: "05:00:00" }
+
+/** The whole hour a "HH:mm[:ss]" shift boundary falls in. */
+export function shiftHour(local: string): number {
+  const hour = Number(local.split(":")[0])
+  return Number.isFinite(hour) ? hour : 0
+}
+
+/** "17:00 → 05:00", for the clock popover and anywhere else the shift is shown. */
+export function fmtBusinessShift(shift: BusinessShift): string {
+  return `${shift.startLocal.slice(0, 5)} → ${shift.cutoffLocal.slice(0, 5)}`
+}
+
+export function businessDateOf(t: Date, cutoffHour = shiftHour(FALLBACK_BUSINESS_SHIFT.cutoffLocal)): BusinessDate {
   return venueDateString(new Date(t.getTime() - cutoffHour * HOUR))
 }
 

@@ -10,6 +10,8 @@ const DAILY_VIEW_OPTIONS: readonly TurnsRadioOption<"chart" | "table">[] = [
 
 interface TurnsDailyChartProps {
   days: readonly DailyTurnPoint[]
+  /** TU-38: the venue's own shift ("17:00 → 05:00"), read from configuration by the page. */
+  shiftLabel: string
 }
 
 function findPeakDay(days: readonly DailyTurnPoint[]): DailyTurnPoint | null {
@@ -26,7 +28,7 @@ function findPeakDay(days: readonly DailyTurnPoint[]): DailyTurnPoint | null {
  * Daily business-date bar chart and compact table for multi-day ranges.
  * Every day in the selected range is rendered (0 when no turns exist).
  */
-export function TurnsDailyChart({ days }: TurnsDailyChartProps) {
+export function TurnsDailyChart({ days, shiftLabel }: TurnsDailyChartProps) {
   const [viewMode, setViewMode] = useState<"chart" | "table">("chart")
   if (days.length === 0) return null
 
@@ -179,7 +181,7 @@ export function TurnsDailyChart({ days }: TurnsDailyChartProps) {
             </div>
           </div>
           <p className="mt-2.5 text-xs" style={{ color: "var(--turns-muted)" }}>
-            Đọc nhanh: <strong>số lượt</strong> và <strong>số khách</strong> theo từng ngày kinh doanh 17:00 → 05:00.
+            Đọc nhanh: <strong>số lượt</strong> và <strong>số khách</strong> theo từng ngày kinh doanh {shiftLabel}.
           </p>
         </div>
       ) : (

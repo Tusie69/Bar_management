@@ -5,8 +5,8 @@ import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { TableTurnQuery, TableTurnsParams } from "@/domain/models"
-import { useBusinessDate, useTableTurnSummary, useTableTurns } from "@/hooks/use-data"
-import { fmtBusinessDate, fromLocalDate, toLocalDate, type BusinessDate } from "@/lib/time"
+import { useBusinessDate, useBusinessShift, useTableTurnSummary, useTableTurns } from "@/hooks/use-data"
+import { fmtBusinessDate, fmtBusinessShift, fromLocalDate, toLocalDate, type BusinessDate } from "@/lib/time"
 import { api, isApiError } from "@/services"
 import { useCan, useSession } from "@/state/session"
 import { AnonymousVisitsCard, DuplicateCustomersCard } from "./turns-customer-history-cards"
@@ -150,6 +150,8 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
   const canRead = useCanReadTurnLedger()
   const isReadOnly = useTurnHistoryReadOnly()
   const currentBusinessDate = useBusinessDate()
+  // TU-38: the operating shift the figures are grouped by, read from the venue configuration.
+  const shiftLabel = fmtBusinessShift(useBusinessShift())
 
   const [preset, setPreset] = useState<TurnRangePreset>(initialPreset)
   const [pickedDate, setPickedDate] = useState<BusinessDate>(currentBusinessDate)
@@ -421,7 +423,7 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
           </dl>
 
           {/* Daily Breakdown (only for multi-day ranges) */}
-          {isMultiDay ? <TurnsDailyChart days={dailySeries} /> : null}
+          {isMultiDay ? <TurnsDailyChart days={dailySeries} shiftLabel={shiftLabel} /> : null}
 
           {/* Empty state vs Two-column detail */}
           {isRangeEmpty ? (

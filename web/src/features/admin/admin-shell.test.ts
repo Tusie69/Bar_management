@@ -19,7 +19,7 @@ import {
   visibleAdminPages,
   type AdminAccessLevel,
 } from "./admin-access"
-import { adminBusinessDateLabel, fmtAdminBusinessDate } from "./admin-date"
+import { adminBusinessDateLabel, adminShiftLabel, fmtAdminBusinessDate } from "./admin-date"
 import { ADMIN_DESKTOP_MEDIA_QUERY, resolveDrawerCloseFocusTarget, resolveTrapTarget } from "./admin-focus"
 import { ADMIN_HOME_PATH, ADMIN_PAGES, adminPageForPath, adminPagePath } from "./admin-pages"
 
@@ -178,6 +178,17 @@ describe("ngày kinh doanh trên header", () => {
 
   it("sau mốc cắt 05:00 mới sang ngày kinh doanh mới", () => {
     expect(adminBusinessDateLabel(at("2026-11-12T22:30:00Z"))).toBe("T6 · 13/11/2026")
+  })
+
+  it("TU-38 đọc mốc cắt ca và nhãn ca từ cấu hình địa điểm, không hardcode 17:00-05:00", () => {
+    const shift = { startLocal: "18:00:00", cutoffLocal: "03:00:00" }
+    expect(adminShiftLabel(shift)).toBe("Ca 18:00 → 03:00")
+    // 02:00 giờ Việt Nam ngày 13/11, mốc cắt 03:00 nên vẫn thuộc ngày kinh doanh 12/11.
+    expect(adminBusinessDateLabel(at("2026-11-12T19:00:00Z"), shift)).toBe("T5 · 12/11/2026")
+    // 03:30 cùng đêm đã qua mốc cắt mới, nên sang ngày kinh doanh 13/11.
+    expect(adminBusinessDateLabel(at("2026-11-12T20:30:00Z"), shift)).toBe("T6 · 13/11/2026")
+    // Mốc cắt mặc định 05:00 vẫn coi 03:30 là đêm hôm trước.
+    expect(adminBusinessDateLabel(at("2026-11-12T20:30:00Z"))).toBe("T5 · 12/11/2026")
   })
 
   it("định dạng đúng kiểu Figma, có năm", () => {

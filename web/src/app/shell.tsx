@@ -53,8 +53,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { roleCan } from "@/domain/access"
 import { ROLE_LABEL } from "@/domain/enums"
 import { reportError, undoOperation, MOCK_NOTE } from "@/hooks/use-action"
-import { useNow, useOverview, useReservations } from "@/hooks/use-data"
-import { businessDateOf, fmtBusinessDate, fmtTime } from "@/lib/time"
+import { useBusinessShift, useNow, useOverview, useReservations } from "@/hooks/use-data"
+import { businessDateOf, fmtBusinessDate, fmtBusinessShift, fmtTime, shiftHour } from "@/lib/time"
 import { initials } from "@/lib/text"
 import { cn } from "@/lib/utils"
 import { api, clock, demo } from "@/services"
@@ -234,7 +234,10 @@ function ClockMenu() {
   const now = useNow(1000)
   const [armed, setArmed] = useState(demo?.conflictArmed ?? false)
   const [busy, setBusy] = useState(false)
-  const bd = businessDateOf(now)
+  // TU-38: the shift comes from the venue row, so a venue that opens at another hour is
+  // labelled with its own hours instead of the 17:00-05:00 this used to hardcode.
+  const shift = useBusinessShift()
+  const bd = businessDateOf(now, shiftHour(shift.cutoffLocal))
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -252,7 +255,9 @@ function ClockMenu() {
         <div className="grid gap-4">
           <div>
             <p className="eyebrow">Ngày kinh doanh</p>
-            <p className="mt-1 font-medium">{fmtBusinessDate(bd)} · 17:00 → 05:00</p>
+            <p className="mt-1 font-medium">
+              {fmtBusinessDate(bd)} · {fmtBusinessShift(shift)}
+            </p>
             <p className="mt-1 text-xs text-muted-foreground">
               {clock.isSimulated
                 ? "Đồng hồ mô phỏng bắt đầu lúc 21:30 để thấy cảnh báo 15'/30'."

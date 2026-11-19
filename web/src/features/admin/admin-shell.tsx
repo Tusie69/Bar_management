@@ -12,11 +12,11 @@
 import { Menu, X } from "lucide-react"
 import { createContext, type RefObject, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { NavLink, Outlet, useLocation } from "react-router"
-import { useNow } from "@/hooks/use-data"
+import { useBusinessShift, useNow } from "@/hooks/use-data"
 import { initials } from "@/lib/text"
 import { useAdminSession } from "./use-admin-session"
 import { visibleAdminPages } from "./admin-access"
-import { adminBusinessDateLabel, ADMIN_SHIFT_LABEL } from "./admin-date"
+import { adminBusinessDateLabel, adminShiftLabel } from "./admin-date"
 import { ADMIN_DESKTOP_MEDIA_QUERY, resolveDrawerCloseFocusTarget, resolveTrapTarget } from "./admin-focus"
 import { adminPageForPath, adminPagePath } from "./admin-pages"
 import {
@@ -255,8 +255,9 @@ function AdminHeader({
   onToggleDrawer: () => void
   triggerRef: RefObject<HTMLButtonElement | null>
 }) {
-  // Ngày kinh doanh đổi lúc 05:00, không phải 00:00: nhịp 60s là đủ.
+  // Ngày kinh doanh đổi ở mốc cắt ca (đọc từ cấu hình địa điểm), không phải 00:00: nhịp 60s là đủ.
   const now = useNow(60_000)
+  const shift = useBusinessShift()
   return (
     <header className="flex h-[var(--adm-header-h)] shrink-0 items-center gap-3 border-b border-[var(--adm-border)] bg-[var(--adm-surface)] px-4 md:px-6">
       <button
@@ -275,9 +276,9 @@ function AdminHeader({
         {title}
       </h1>
       <span className="adm-body hidden whitespace-nowrap text-[var(--adm-text-muted)] sm:inline">
-        {ADMIN_SHIFT_LABEL}
+        {adminShiftLabel(shift)}
       </span>
-      <span className="adm-body hidden font-medium whitespace-nowrap md:inline">{adminBusinessDateLabel(now)}</span>
+      <span className="adm-body hidden font-medium whitespace-nowrap md:inline">{adminBusinessDateLabel(now, shift)}</span>
     </header>
   )
 }

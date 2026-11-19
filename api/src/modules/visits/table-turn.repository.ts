@@ -288,15 +288,39 @@ export interface TurnQuery {
   countedOnly: boolean
   closedByUserId?: number
   checkedInByUserId?: number
+  /**
+   * TU-38: adds a zero row to `byScope` for every countable scope that earned no turn in
+   * the range, so a caller can render "every table, including the empty ones" without
+   * fetching the floor plan separately. Off by default: the existing NA-34 cards rank
+   * the busiest scopes and would only have to filter the zeroes back out.
+   */
+  includeZeroScopes?: boolean
 }
-type TurnFilters = Pick<TurnQuery, 'from' | 'to' | 'countedOnly' | 'closedByUserId' | 'checkedInByUserId'>
+type TurnFilters = Pick<
+  TurnQuery, 'from' | 'to' | 'countedOnly' | 'closedByUserId' | 'checkedInByUserId' | 'includeZeroScopes'
+>
 export interface TurnSummary {
   from: string
   to: string
   completedTotal: number
   openTotal: number
   guestTotal: number
+  /**
+   * TU-38 AC03 — the two denominators, named rather than implied, because "lượt trung bình
+   * mỗi bàn" is ambiguous in a venue where a fixed cluster earns one turn for several tables.
+   * `scopeTotal` counts the units that can earn a turn (standalone ACTIVE non-spare tables
+   * plus active LAYOUT clusters); `physicalTableTotal` counts ACTIVE non-spare tables.
+   * Both are live inventory at query time, not a snapshot of the range.
+   */
+  scopeTotal: number
+  physicalTableTotal: number
+  /** `completedTotal / scopeTotal`, two decimals, 0 when the venue has no countable scope. */
+  averagePerScope: number
+  /** `completedTotal / physicalTableTotal`, two decimals, 0 when the venue has no table. */
+  averagePerPhysicalTable: number
   byBusinessDate: { businessDate: string; turns: number; guests: number }[]
+  /** Calendar months of the operating days in range, ascending, as `YYYY-MM`. */
+  byMonth: { month: string; turns: number; guests: number }[]
   byStaff: { checkedInByUserId: number | null; checkedInByDisplayName: string | null; turns: number; guests: number }[]
   byScope: { scope: TurnScope; tableId: number | null; groupId: number | null; label: string; turns: number; guests: number }[]
 }
@@ -434,6 +458,54 @@ function turnUserJoin(column: 'closed_by_user_id' | 'checked_in_by_user_id', ali
 )`
 }
 
+/**
+ * TU-38 — the countable scopes of the venue, as live inventory.
+ *
+ * One row per unit that can earn a turn, which is what `recordTableTurn` writes against:
+ * an active LAYOUT cluster, or an ACTIVE non-spare table that no active LAYOUT cluster
+ * owns. A member table of a cluster is deliberately absent, because the cluster earns the
+ * turn and counting the member too would double it.
+ *
+ * `active_table_key` is the generated column behind `uq_group_member_active`, so the
+ * membership test is a unique-index lookup rather than a scan of the member history.
+ */
+const scopeInventorySql = `SELECT 'GROUP' AS scope, NULL AS table_id, g.id AS group_id,
+    g.name AS group_name, g.symbol_no AS group_symbol_no, NULL AS table_code
+  FROM table_groups g
+  WHERE g.organization_id = ? AND g.venue_id = ? AND g.origin = 'LAYOUT' AND g.dissolved_at IS NULL
+  UNION ALL
+  SELECT 'TABLE' AS scope, d.id AS table_id, NULL AS group_id,
+    NULL AS group_name, NULL AS group_symbol_no, d.code AS table_code
+  FROM dining_tables d
+  WHERE d.organization_id = ? AND d.venue_id = ? AND d.status = 'ACTIVE' AND d.is_spare = 0
+    AND NOT EXISTS (
+      SELECT 1 FROM table_group_members m
+      JOIN table_groups g2 ON g2.venue_id = m.venue_id AND g2.id = m.group_id
+      WHERE m.venue_id = d.venue_id AND m.active_table_key = d.id
+        AND g2.origin = 'LAYOUT' AND g2.dissolved_at IS NULL)`
+
+interface ScopeInventoryRow extends RowDataPacket {
+  scope: TurnScope
+  table_id: number | null
+  group_id: number | null
+  group_name: string | null
+  group_symbol_no: number | null
+  table_code: string | null
+}
+
+interface ScopeInventoryEntry {
+  scope: TurnScope
+  tableId: number | null
+  groupId: number | null
+  label: string
+}
+
+/** Rounds to two decimals, and never divides by zero. */
+function ratio(total: number, denominator: number): number {
+  if (denominator <= 0) return 0
+  return Math.round((total / denominator) * 100) / 100
+}
+
 /** Turns over a range of operating days. Built for statistics in a later sprint. */
 export async function listTableTurns(
   actor: { organizationId: number; venueId: number },
@@ -519,6 +591,13 @@ export async function summarizeTableTurns(
       `${turnProjection} SELECT t.business_date, COUNT(*) AS turns, SUM(t.guest_count) AS guests
        FROM turns t WHERE ${filter.sql} GROUP BY t.business_date ORDER BY t.business_date`, filter.values,
     )
+    // TU-38 AC04 — grouped in SQL over the operating day, so a cluster stays one turn here
+    // too and a visit spanning midnight lands in the month of its operating day.
+    const [months] = await connection.execute<(AggregateRow & { month: string })[]>(
+      `${turnProjection} SELECT DATE_FORMAT(t.business_date, '%Y-%m') AS month,
+         COUNT(*) AS turns, SUM(t.guest_count) AS guests
+       FROM turns t WHERE ${filter.sql} GROUP BY month ORDER BY month`, filter.values,
+    )
     const [staff] = await connection.execute<(AggregateRow & {
       checked_in_by_user_id: number | null; display_name: string | null
     })[]>(
@@ -543,27 +622,66 @@ export async function summarizeTableTurns(
        FROM ranked_turns GROUP BY scope, table_id, group_id`,
       filter.values,
     )
+    const [inventory] = await connection.execute<ScopeInventoryRow[]>(
+      scopeInventorySql,
+      [actor.organizationId, actor.venueId, actor.organizationId, actor.venueId],
+    )
+    const [physical] = await connection.execute<(RowDataPacket & { total: number })[]>(
+      `SELECT COUNT(*) AS total FROM dining_tables
+       WHERE organization_id = ? AND venue_id = ? AND status = 'ACTIVE' AND is_spare = 0`,
+      [actor.organizationId, actor.venueId],
+    )
+
+    const scopeInventory: ScopeInventoryEntry[] = inventory.map((row) => ({
+      scope: row.scope,
+      tableId: row.table_id === null ? null : Number(row.table_id),
+      groupId: row.group_id === null ? null : Number(row.group_id),
+      label: row.scope === 'GROUP'
+        ? row.group_name ?? groupDisplayCode(Number(row.group_symbol_no ?? 0))
+        : row.table_code ?? '',
+    }))
+    const completedTotal = Number(totals[0]?.turns ?? 0)
+    const scopeTotal = scopeInventory.length
+    const physicalTableTotal = Number(physical[0]?.total ?? 0)
+
+    const measured = scopes.map((row) => ({
+      scope: row.scope,
+      tableId: row.table_id === null ? null : Number(row.table_id),
+      groupId: row.group_id === null ? null : Number(row.group_id),
+      label: (row.scope === 'GROUP' ? row.group_code_snapshot
+        ?? (row.group_symbol_no === null ? null : groupDisplayCode(Number(row.group_symbol_no))) : null)
+        ?? parseJsonStrings(row.table_codes_snapshot).join(' + '),
+      turns: Number(row.turns), guests: Number(row.guests),
+    }))
+    // A measured row wins over its inventory twin: its label is the snapshot of what the
+    // guest actually sat on, which is what the ledger is for.
+    const measuredKeys = new Set(measured.map((row) => `${row.scope}:${row.groupId ?? row.tableId ?? row.label}`))
+    const zeroRows = query.includeZeroScopes
+      ? scopeInventory
+          .filter((entry) => !measuredKeys.has(`${entry.scope}:${entry.groupId ?? entry.tableId ?? entry.label}`))
+          .map((entry) => ({ ...entry, turns: 0, guests: 0 }))
+      : []
+
     return {
       from: query.from, to: query.to,
-      completedTotal: Number(totals[0]?.turns ?? 0),
+      completedTotal,
       openTotal: Number(totals[0]?.open_total ?? 0),
       guestTotal: Number(totals[0]?.guests ?? 0),
+      scopeTotal,
+      physicalTableTotal,
+      averagePerScope: ratio(completedTotal, scopeTotal),
+      averagePerPhysicalTable: ratio(completedTotal, physicalTableTotal),
       byBusinessDate: dates.map((row) => ({
         businessDate: dateOnly(row.business_date), turns: Number(row.turns), guests: Number(row.guests),
+      })),
+      byMonth: months.map((row) => ({
+        month: String(row.month), turns: Number(row.turns), guests: Number(row.guests),
       })),
       byStaff: staff.map((row) => ({
         checkedInByUserId: row.checked_in_by_user_id === null ? null : Number(row.checked_in_by_user_id),
         checkedInByDisplayName: row.display_name, turns: Number(row.turns), guests: Number(row.guests),
       })),
-      byScope: scopes.map((row) => ({
-        scope: row.scope,
-        tableId: row.table_id === null ? null : Number(row.table_id),
-        groupId: row.group_id === null ? null : Number(row.group_id),
-        label: (row.scope === 'GROUP' ? row.group_code_snapshot
-          ?? (row.group_symbol_no === null ? null : groupDisplayCode(Number(row.group_symbol_no))) : null)
-          ?? parseJsonStrings(row.table_codes_snapshot).join(' + '),
-        turns: Number(row.turns), guests: Number(row.guests),
-      })).sort((a, b) => b.turns - a.turns || a.label.localeCompare(b.label)),
+      byScope: [...measured, ...zeroRows].sort((a, b) => b.turns - a.turns || a.label.localeCompare(b.label)),
     }
   } finally {
     connection.release()

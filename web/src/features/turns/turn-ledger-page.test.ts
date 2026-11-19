@@ -31,6 +31,7 @@ const mockState = vi.hoisted(() => ({
   } | null,
   permissions: ["report.read", "customer.history.manage"] as string[],
   businessDate: "2026-11-15",
+  businessShift: { startLocal: "17:00:00", cutoffLocal: "05:00:00" },
   summaryCalls: [] as TableTurnQuery[],
   turnsCalls: [] as TableTurnsParams[],
   anonymousCalls: [] as AnonymousVisitQuery[],
@@ -95,6 +96,8 @@ vi.hoisted(() => {
 
 vi.mock("@/hooks/use-data", () => ({
   useBusinessDate: () => mockState.businessDate,
+  // TU-38: the screen reads the shift from the venue configuration, not a fixed 17:00-05:00.
+  useBusinessShift: () => mockState.businessShift,
   useTableTurnSummary: (params: TableTurnQuery, enabled = true) => {
     if (enabled) mockState.summaryCalls.push(params)
     return mockState.summaryResult
@@ -156,10 +159,15 @@ function makeSummaryFixture(): TableTurnSummary {
     completedTotal: 21,
     openTotal: 4,
     guestTotal: 91,
+    scopeTotal: 24,
+    physicalTableTotal: 30,
+    averagePerScope: 0.88,
+    averagePerPhysicalTable: 0.7,
     byBusinessDate: [
       { businessDate: "2026-11-10", turns: 3, guests: 13 },
       { businessDate: "2026-11-14", turns: 5, guests: 24 },
     ],
+    byMonth: [{ month: "2026-11", turns: 8, guests: 37 }],
     byStaff: [
       { checkedInByUserId: 1, checkedInByDisplayName: "Lễ tân 1", turns: 14, guests: 50 },
       { checkedInByUserId: 2, checkedInByDisplayName: "Lễ tân 2", turns: 7, guests: 41 },
@@ -494,6 +502,20 @@ describe("TurnLedgerPage & subcomponents (NA-34 UI)", () => {
     expect(html30).toContain("Sổ lượt - 30 ngày (17/10 - 15/11)")
   })
 
+  it("TU-38 labels the daily chart with the venue's configured shift, not a fixed 17:00-05:00", () => {
+    const withDefault = renderToString(createElement(TurnLedgerPage, { initialPreset: "30days" }))
+    expect(withDefault).toContain("17:00 → 05:00")
+
+    mockState.businessShift = { startLocal: "18:30:00", cutoffLocal: "03:00:00" }
+    try {
+      const html = renderToString(createElement(TurnLedgerPage, { initialPreset: "30days" }))
+      expect(html).toContain("18:30 → 03:00")
+      expect(html).not.toContain("17:00 → 05:00")
+    } finally {
+      mockState.businessShift = { startLocal: "17:00:00", cutoffLocal: "05:00:00" }
+    }
+  })
+
   it("renders TopScopesCard using summary.byScope as-is (top 10, GROUP not unnested)", () => {
     const summary = makeSummaryFixture()
     const html = renderToString(createElement(TopScopesCard, { byScope: summary.byScope }))
@@ -606,7 +628,12 @@ describe("TurnLedgerPage & subcomponents (NA-34 UI)", () => {
         completedTotal: 0,
         openTotal: 0,
         guestTotal: 0,
+        scopeTotal: 24,
+        physicalTableTotal: 30,
+        averagePerScope: 0,
+        averagePerPhysicalTable: 0,
         byBusinessDate: [],
+        byMonth: [],
         byStaff: [],
         byScope: [],
       },
@@ -660,7 +687,7 @@ describe("TurnLedgerPage & subcomponents (NA-34 UI)", () => {
       { businessDate: "2026-11-14", turns: 31, guests: 95 },
       { businessDate: "2026-11-15", turns: 0, guests: 0 },
     ]
-    const chartHtml = renderToString(createElement(TurnsDailyChart, { days }))
+    const chartHtml = renderToString(createElement(TurnsDailyChart, { days, shiftLabel: "17:00 → 05:00" }))
     expect(chartHtml).toContain("31 lượt")
     expect(chartHtml).toContain("95 khách")
     expect(chartHtml).not.toContain("95k")

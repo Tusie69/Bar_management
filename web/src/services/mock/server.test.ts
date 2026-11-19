@@ -118,6 +118,35 @@ describe("MockGamApi", () => {
     }
   })
 
+  it("TU-38 serves monthly totals, both denominators and the zero-turn scopes", async () => {
+    api.setSession(owner)
+    const catalog = await api.getCatalog()
+    const countable = catalog.tables.filter((row) => row.status === "ACTIVE" && !row.isSpare)
+    const summary = await api.getTableTurnSummary({ from: bd, to: bd })
+
+    // AC03: the denominators describe the venue, and the averages divide by them.
+    expect(summary.scopeTotal).toBe(countable.length)
+    expect(summary.physicalTableTotal).toBe(countable.length)
+    expect(summary.averagePerScope).toBeCloseTo(Math.round((summary.completedTotal / countable.length) * 100) / 100, 5)
+    expect(summary.averagePerPhysicalTable).toBe(summary.averagePerScope)
+
+    // AC04: one bucket per calendar month of the operating days, and they add up.
+    expect(summary.byMonth.map((row) => row.month)).toEqual([bd.slice(0, 7)])
+    expect(summary.byMonth.reduce((sum, row) => sum + row.turns, 0)).toBe(
+      summary.byBusinessDate.reduce((sum, row) => sum + row.turns, 0),
+    )
+
+    // AC01: zero-turn scopes only on request, and never a duplicate of a measured one.
+    const withZeroes = await api.getTableTurnSummary({ from: bd, to: bd, includeZeroScopes: true })
+    expect(withZeroes.byScope.length).toBeGreaterThan(summary.byScope.length)
+    expect(withZeroes.byScope.filter((row) => row.turns === 0).length).toBeGreaterThan(0)
+    expect(new Set(withZeroes.byScope.map((row) => `${row.scope}:${row.groupId ?? row.tableId}`)).size).toBe(
+      withZeroes.byScope.length,
+    )
+    expect(withZeroes.completedTotal).toBe(summary.completedTotal)
+    expect(withZeroes.byScope.filter((row) => row.turns > 0)).toEqual(summary.byScope)
+  })
+
   it("keeps layout badges and ledger in sync through close and entry correction", async () => {
     const catalog = await api.getCatalog()
     const tableIds = ["C4", "C5"].map((code) => catalog.tables.find((row) => row.code === code)!.id)
