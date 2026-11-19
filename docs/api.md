@@ -282,6 +282,26 @@ so the reason sits beside the field rather than arriving in a toast, and sends t
 when it moved — an unchanged shift is the server's to keep, and always sending it would trip
 the open-visits guard for no reason.
 
+#### Driving it in a browser
+
+`api/scripts/seed-e2e-owner.ts` seeds an OWNER plus the minimum venue the Cấu hình screen
+needs. It refuses any database but `gam21_platform_it_test` — checked against
+`SELECT DATABASE()`, not just the variable — refuses `NODE_ENV=production`, takes the
+credentials from the environment and never prints the password, and is idempotent through
+upserts on fixed ids. The account it creates is wiped by the integration fixture like
+everything else in that database, so re-run it after a test run.
+
+```powershell
+cd Bar_management/api
+# .env.e2e.local holds DB_NAME, E2E_OWNER_USERNAME and E2E_OWNER_PASSWORD; `.env.*` is ignored by Git.
+node --env-file=.env --env-file=.env.e2e.local --import tsx scripts/seed-e2e-owner.ts
+node --env-file=.env --env-file=.env.e2e.local --import tsx src/server.ts
+```
+
+The seeded tables carry `pos_x`, `pos_y`, `width` and `height`: the web catalog adapter
+refuses a table with partial geometry (`CATALOG_GEOMETRY_MISSING`) rather than guessing where
+to draw it, so a seed without them loads the API fine and then breaks every floor screen.
+
 Floor Projection and booking views continue to read thresholds directly from `venues`. Changing `upcomingMinutes` therefore changes the server-side `UPCOMING` boundary; it no longer moves any calling boundary, because `canCall` depends only on whether a phone is stored. Changing `noShowMinutes` changes the visual no-show warning and the TU-12 cutoff. It never automatically changes the persisted booking to `NO_SHOW`, cancels a hold or releases a table; manual no-show behavior remains authoritative.
 
 ## Tables and catalog
