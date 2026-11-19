@@ -502,8 +502,14 @@ try {
   // Cancellation keeps the reason workflow and releases the Floor Projection.
   await detailSheet.getByRole("button", { name: "Hủy booking" }).click()
   const cancelDialog = page.getByRole("alertdialog", { name: /^Hủy booking/ })
+  const reasons = cancelDialog.getByRole("radiogroup", { name: "Lý do hủy" })
+  await expect(reasons.getByRole("radio")).toHaveCount(5)
+  await reasons.getByRole("radio", { name: "Lý do khác", exact: true }).click()
+  await expect(reasons.getByRole("radio", { name: "Lý do khác", exact: true })).toBeChecked()
+  const cancelButton = cancelDialog.getByRole("button", { name: "Hủy booking", exact: true })
+  await expect(cancelButton).toBeDisabled()
   const cancelNote = "Kiểm thử Phase 2B"
-  const noteField = cancelDialog.getByRole("textbox", { name: /Ghi chú/ })
+  const noteField = cancelDialog.getByRole("textbox", { name: "Ghi chú (bắt buộc)" })
   await expect(noteField).toBeVisible()
   await noteField.fill(cancelNote)
   const [cancelResponse] = await Promise.all([
@@ -512,7 +518,7 @@ try {
         response.request().method() === "POST" &&
         new URL(response.url()).pathname === `/api/v1/bookings/${booking.id}/cancel`,
     ),
-    cancelDialog.getByRole("button", { name: "Hủy booking" }).click(),
+    cancelButton.click(),
   ])
   expect(cancelResponse.status()).toBe(200)
   expect(cancelResponse.request().postDataJSON()).toMatchObject({ reasonNote: cancelNote })

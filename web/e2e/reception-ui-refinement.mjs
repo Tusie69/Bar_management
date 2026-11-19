@@ -205,7 +205,7 @@ function rectsOverlap(a, b, tol = 0.5) {
 
 /** Browser-evaluated check: maps every painted badge/icon perimeter point into each cluster outline's SVG frame. */
 function measureOutlineStrokeIntersections(svgRoot) {
-  const outlines = Array.from(svgRoot?.querySelectorAll('[data-cluster-outline="1"] rect') ?? [])
+  const outlines = Array.from(svgRoot?.querySelectorAll('[data-cluster-outline="1"] > rect') ?? [])
   const decorationShapes = Array.from(
     svgRoot?.querySelectorAll(
       '[data-testid="guest-count-badge"] rect, [data-testid="turn-badge"] rect, [data-testid="turn-badge"] circle, [data-testid="table-icons-bottom-left"] circle, [data-testid="table-icons-bottom-right"] circle',
@@ -265,12 +265,17 @@ function measureOutlineStrokeIntersections(svgRoot) {
       const outCtm = outlineRect.getScreenCTM()
       if (!outCtm) continue
       const outInv = outCtm.inverse()
+      const mask = outlineRect.getAttribute("mask")
+      // Stroke geometry still includes parts hidden by the SVG mask.
+      const cuts = mask
+        ? Array.from(document.getElementById(mask.slice(5, -1))?.querySelectorAll('rect[fill="black"]') ?? [])
+        : []
       const outlineCode = outlineRect.closest("[data-cluster-outline]")?.getAttribute("data-cluster-code-value") ?? "?"
       for (const [sx, sy] of samplePoints) {
         pt.x = sx
         pt.y = sy
         const mapped = pt.matrixTransform(decCtm).matrixTransform(outInv)
-        if (outlineRect.isPointInStroke(mapped)) {
+        if (outlineRect.isPointInStroke(mapped) && !cuts.some((cut) => cut.isPointInFill(mapped))) {
           hits.push(`${decLabel} intersects ${outlineCode} stroke`)
           break
         }
@@ -997,7 +1002,7 @@ try {
       const measureFn = new Function(`return (${fnSrc})`)()
       const svg = document.querySelector('[data-gm] svg[role="group"]')
       if (!svg) return { ok: false, reason: "missing svg" }
-      const outlines = Array.from(svg.querySelectorAll('[data-cluster-outline="1"] rect'))
+      const outlines = Array.from(svg.querySelectorAll('[data-cluster-outline="1"] > rect'))
       const hits = measureFn(svg)
       const turnBadges = Array.from(svg.querySelectorAll('[data-testid="turn-badge"]'))
       const a3Turn = svg.querySelector('[role="button"][aria-label^="Bàn A3"] [data-testid="turn-badge"]')
@@ -1193,7 +1198,7 @@ try {
       const pillHalfStroke = 0.7 * wallScale
 
       const g08Outline = expandBox(
-        svg.querySelector('[data-cluster-outline="1"][data-cluster-code-value="G08"] rect')?.getBoundingClientRect(),
+        svg.querySelector('[data-cluster-outline="1"][data-cluster-code-value="G08"] > rect')?.getBoundingClientRect(),
         outlineHalfStroke,
       )
       const g08Pill = expandBox(
@@ -1201,11 +1206,11 @@ try {
         pillHalfStroke,
       )
       const g03Outline = expandBox(
-        svg.querySelector('[data-cluster-outline="1"][data-cluster-code-value="G03"] rect')?.getBoundingClientRect(),
+        svg.querySelector('[data-cluster-outline="1"][data-cluster-code-value="G03"] > rect')?.getBoundingClientRect(),
         outlineHalfStroke,
       )
       const g02Outline = expandBox(
-        svg.querySelector('[data-cluster-outline="1"][data-cluster-code-value="G02"] rect')?.getBoundingClientRect(),
+        svg.querySelector('[data-cluster-outline="1"][data-cluster-code-value="G02"] > rect')?.getBoundingClientRect(),
         outlineHalfStroke,
       )
       const c1 = svg.querySelector('[role="button"][aria-label^="Bàn C1"]')

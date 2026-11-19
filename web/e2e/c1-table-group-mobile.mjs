@@ -45,6 +45,7 @@ const MIN_TOUCH_PX = 44
 const REALTIME_BUDGET_MS = 2000
 
 const username = `c1_${Date.now()}`
+const secondUsername = `${username}_peer`
 const password = randomBytes(24).toString("base64url")
 const common = {
   ...process.env,
@@ -60,7 +61,7 @@ const common = {
   BUSINESS_DAY_WORKER_ENABLED: "false",
   E2E_FIXED_NOW: fixedNow,
 }
-const credentialEnv = { ...common, E2E_USERNAME: username, E2E_PASSWORD: password }
+const credentialEnv = { ...common, E2E_USERNAME: username, E2E_SECOND_USERNAME: secondUsername, E2E_PASSWORD: password }
 const children = []
 const results = []
 let browser
@@ -107,11 +108,11 @@ const tableGlyph = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], 
 const mergeRegion = (page) => page.getByRole("region", { name: "Chế độ ghép bàn" })
 const layoutActions = (page) => page.locator('[aria-label="Thao tác mặt bằng"]')
 
-async function login(page) {
+async function login(page, loginUsername = username) {
   await page.goto(webUrl, { waitUntil: "domcontentloaded" })
   const form = page.getByRole("form", { name: /Đăng nhập/ }).first()
   const target = (await form.isVisible().catch(() => false)) ? form : page
-  await target.getByLabel(/Tên đăng nhập|Tài khoản/).fill(username)
+  await target.getByLabel(/Tên đăng nhập|Tài khoản/).fill(loginUsername)
   await target.getByLabel("Mật khẩu", { exact: true }).fill(password)
   await target.getByRole("button", { name: /Đăng nhập/ }).click()
   await expect(page.getByRole("button", { name: /Đăng nhập/ })).toHaveCount(0, { timeout: 20_000 })
@@ -128,7 +129,7 @@ async function login(page) {
         }, apiUrl),
       { timeout: 15_000 },
     )
-    .toBe(username)
+    .toBe(loginUsername)
 }
 
 /** Closes whatever banner or toast is covering the floor, without asserting any. */
@@ -402,7 +403,11 @@ try {
         await openTableDetail(page, "B5")
         await layoutActions(page).getByRole("button", { name: "Ghép bàn", exact: true }).click()
         const region = mergeRegion(page)
-        await expect(region).toContainText("B3 - B4 - B5")
+        await expect(region).toContainText("Đang chọn 3 vị trí")
+        for (const code of ["B3", "B4", "B5"]) {
+          await expect(region.getByText(code, { exact: true })).toBeVisible()
+        }
+        await expect(region.getByText("12 chỗ", { exact: true })).toBeVisible()
         await page.getByRole("button", { name: "Hủy", exact: true }).first().click()
         await closeDetail(page, width)
         return { members: 3 }
@@ -412,7 +417,7 @@ try {
         const watcher = await browser.newContext({ viewport: { width, height }, hasTouch: true })
         const deviceB = await watcher.newPage()
         try {
-          await login(deviceB)
+          await login(deviceB, secondUsername)
           await clearOverlays(deviceB)
           await expect(deviceB.locator('[data-combined-codes="B3 B4 B5"]')).toHaveCount(3)
 
