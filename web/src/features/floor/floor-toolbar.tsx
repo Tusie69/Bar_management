@@ -245,7 +245,7 @@ export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
         ) : null}
         <GuardedButton
           permission="reservation.create"
-          className="h-11 min-h-[44px] rounded-lg px-4 font-semibold shadow-xs"
+          className="h-11 min-h-[44px] rounded-lg px-4 font-semibold shadow-xs dark:bg-[color-mix(in_oklab,var(--primary)_88%,var(--background))] dark:hover:bg-[color-mix(in_oklab,var(--primary)_78%,var(--background))] dark:active:bg-[color-mix(in_oklab,var(--primary)_70%,var(--background))]"
           onClick={() =>
             ui.openBooking(
               !(ui.bookingOpen || ui.walkInOpen) && ui.floorMode === "availability"

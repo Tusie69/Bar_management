@@ -228,10 +228,13 @@ export function MapScreen({
               <MenuUnreadDot unread={m.unread} />
             </button>
             {planChrome ? (
-              <ReceptionSearchField
-                search={search}
-                className="[&_button]:min-h-[44px] [&_button]:min-w-[44px] [&_input]:h-11 [&_input]:min-h-[44px] [&_input]:rounded-xl [&_input]:border-border [&_input]:bg-surface-1 [&_input]:pl-11 [&_input]:shadow-[var(--shadow-xs)]"
-              />
+              <>
+                <h1 className="sr-only">Sơ đồ bàn</h1>
+                <ReceptionSearchField
+                  search={search}
+                  className="[&_button]:min-h-[44px] [&_button]:min-w-[44px] [&_input]:h-11 [&_input]:min-h-[44px] [&_input]:rounded-xl [&_input]:border-border [&_input]:bg-surface-1 [&_input]:pl-11 [&_input]:shadow-[var(--shadow-xs)]"
+                />
+              </>
             ) : (
               <h1 className="m-0 min-w-0 flex-1 truncate text-[18px] font-bold tracking-[-0.015em] text-tx-strong">
                 Sơ đồ bàn

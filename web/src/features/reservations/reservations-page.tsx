@@ -187,7 +187,7 @@ export default function ReservationsPage() {
                 )}
               >
                 {f.label}
-                <span className="tnum text-xs opacity-75">{counts[f.value] ?? 0}</span>
+                <span className="tnum text-xs">{counts[f.value] ?? 0}</span>
               </button>
             ))}
           </div>
