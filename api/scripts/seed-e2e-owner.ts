@@ -98,19 +98,26 @@ try {
   )
   for (let index = 0; index < 4; index++) {
     const code = `A${index + 1}`
-    // pos/width/height are all four required: the web catalog adapter refuses a table with
-    // partial geometry (CATALOG_GEOMETRY_MISSING) rather than guessing where to draw it.
+    // Geometry is in the venue plan's own coordinate space (FLOOR_W 374 x FLOOR_H 732 in
+    // web/src/domain/venue-layout.ts), not in pixels. All four of pos/width/height are
+    // required — the web catalog adapter refuses a table with partial geometry
+    // (CATALOG_GEOMETRY_MISSING) rather than guessing where to draw it.
+    //
+    // The values mirror migration 0021 for Khu A: a left-hand column of 56x34 tables at
+    // x=44, stepping 44 apart. An earlier version of this seed used 80x80 at x up to 400,
+    // which is wider than the room itself, so the tables drew outside the wall and the plan
+    // looked broken even though the rendering was correct.
     await connection.execute<ResultSetHeader>(
       `INSERT INTO dining_tables
          (id, organization_id, venue_id, zone_id, code, display_name, kind, capacity,
           seq_no, pos_x, pos_y, width, height)
-       VALUES (?, ?, ?, ?, ?, ?, 'TABLE', 4, ?, ?, 40, 80, 80)
+       VALUES (?, ?, ?, ?, ?, ?, 'TABLE', 4, ?, 44, ?, 56, 34)
        ON DUPLICATE KEY UPDATE
          display_name = VALUES(display_name), seq_no = VALUES(seq_no),
          pos_x = VALUES(pos_x), pos_y = VALUES(pos_y),
          width = VALUES(width), height = VALUES(height)`,
       [firstTableId + index, organizationId, venueId, zoneId, code, code,
-        index + 1, 40 + index * 120],
+        index + 1, 583 - index * 44],
     )
   }
   await connection.execute<ResultSetHeader>(
