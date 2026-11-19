@@ -102,7 +102,8 @@ function Detail({ r }: { r: ReservationView }) {
   const navigate = useNavigate()
   const now = useNow(15_000)
   // TU-38: mốc cắt ca lấy từ cấu hình địa điểm, không mặc định 05:00.
-  const shiftCutoff = shiftHour(useBusinessShift().cutoffLocal)
+  const shift = useBusinessShift()
+  const shiftCutoff = shiftHour(shift.cutoffLocal)
   const { run, pending } = useAction()
   const ops = useOperations(300)
   const waitlist = useWaitlist(r.businessDate)
@@ -119,7 +120,7 @@ function Detail({ r }: { r: ReservationView }) {
       const t = catalog.data?.tables.find((x) => x.id === id)
       return t ? (t.kind === "BAR_SEAT" ? `Bar ${t.seqNo}` : t.code) : `#${id}`
     })
-  const checkInError = validateBookingCheckInDate(r.businessDate, now)
+  const checkInError = validateBookingCheckInDate(r.businessDate, now, shift)
   const booked = r.status === "BOOKED"
   const history = (ops.data ?? []).filter((o) => o.entityType === "reservation" && o.entityId === r.id)
 

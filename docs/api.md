@@ -978,13 +978,39 @@ On the web side, `useBusinessShift()` reads those two columns from the catalog a
 timeline axes and the arrival-time list all derive their hours from. `FALLBACK_BUSINESS_SHIFT`
 in `web/src/lib/time.ts` covers only the first render before the catalog resolves.
 
-One place still holds the pair as a constant on purpose: `web/src/domain/booking-rules.ts`,
-whose arrival slots and check-in window mirror the API's own booking validation in
-`api/src/modules/bookings/business-date.ts` (`bookingDayStartHour`, `bookingDayCutoffHour`).
-Reading the venue row on the web side alone would let the booking form accept an arrival the
-API then refuses, so both sides keep the pair centralised on one constant each, and making the
-API configurable is the single change the web file would then need. That is open work, not
-part of TU-38.
+### The shift on the API side
+
+`api/src/modules/venues/venue-shift.ts` resolves a venue's shift from its own row and is the
+only place the hours come from. `getVenueShift(actor, connection?)` returns
+`{startLocal, cutoffLocal, startHour, cutoffHour, timeZone}`, caching one row per venue for 60
+seconds; passing the caller's connection keeps a read inside a transaction on that
+transaction's snapshot instead of opening a second one. `invalidateVenueShift(actor?)` drops
+the entry, and `updateVenueSettings` calls it, so a shift change takes effect without waiting
+out the TTL. A shift column that is not a `HH:MM[:SS]` time raises 500 `VENUE_SHIFT_INVALID`
+rather than defaulting to midnight and filing a whole night against the wrong operating day.
+
+Every rule in `business-date.ts` now takes that shift: `businessDateAt`, `currentBusinessDate`,
+`assertBusinessDateNotPast`, `assertCurrentBusinessDate`, `validateBookingSchedule` and
+`assertCheckInBusinessDate`. The constants `bookingDayStartHour` and `bookingDayCutoffHour` are
+gone. `DEFAULT_VENUE_SHIFT` is the parameter default, which keeps those helpers callable in a
+unit test without a venue row; every request path passes the venue's own shift. The error
+messages name the venue's hours, so `WALK_IN_OUTSIDE_BUSINESS_HOURS`,
+`CHECK_IN_OUTSIDE_BUSINESS_HOURS` and `BUSINESS_DATE_MISMATCH` quote the configured shift
+rather than a fixed `17:00–05:00`.
+
+Two hot paths read the cutoff from a venue row they already select — the floor projection and
+implicit cluster creation — through `shiftFromCutoff`, so neither gains a round trip.
+
+`web/src/domain/booking-rules.ts` follows: `validateBookingCheckInDate` takes the shift and is
+given `useBusinessShift()` by the two screens that call it, so the form refuses exactly what
+the server would, naming the same hours. Its `DAY_START` stays a constant deliberately —
+`businessMinute` only uses it to move the origin of the slot ordering, so every slot shifts by
+the same amount and 00:30 sorts after 23:30 whatever the opening hour. The 19:00–01:00 arrival
+window is a separate business rule, not the shift, and both sides still hold it as their own
+constants.
+
+The shift columns are not editable over the API: they are set by migration or by a DBA. What
+changed is that the code now respects them.
 
 **Performance (AC07, AC08).** The summary runs six aggregate queries whatever the row count:
 four over the shared turn projection, one scope inventory and one table count. Migration 0031
@@ -1052,6 +1078,13 @@ TU-38 adds two files beside it, run the same way:
   monthly totals across two months with a cluster counted once, a booking never checked in
   plus a cancelled and a no-show one, the operating day of a party seated after midnight, and
   the route contract including `report.read` and parameter validation.
+- `test/tu38-venue-shift.mysql.test.ts` — reconfigures the fixture venue to 18:00–03:00 and
+  checks the request paths change behaviour: the cache is read and invalidated, a walk-in in the
+  gap between cutoff and opening is refused over HTTP with the venue's hours in the message, a
+  check-in before the opening hour is refused, a waitlist entry for a rolled-over operating day
+  is refused, and a booking date mismatch quotes the configured shift.
+- `test/business-date.test.ts` — the pure rules against an explicit shift, plus the shift
+  helpers and the malformed-column failure.
 - `test/tu38-turn-statistics-benchmark.mysql.test.ts` — seeds three months (5 400 turns),
   measures five one-month summaries against the 2000ms budget and prints the
   `EXPLAIN FORMAT=TREE` plan of each aggregate plus both plans for the `target_visits`

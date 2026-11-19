@@ -87,6 +87,29 @@ describe("booking check-in business date", () => {
   ])("applies the official boundary %s %s", (calendarDate, time, businessDate, accepted) => {
     expect(validateBookingCheckInDate(businessDate, fromVenueLocal(calendarDate, time)) === null).toBe(accepted)
   })
+
+  it("TU-38 follows the venue's configured shift instead of a fixed 17:00-05:00", () => {
+    const late = { startLocal: "18:00:00", cutoffLocal: "03:00:00" }
+
+    // 17:30: the seeded venue is open, a venue starting at 18:00 is not.
+    const beforeOpening = fromVenueLocal("2026-10-30", "17:30")
+    expect(validateBookingCheckInDate("2026-10-30", beforeOpening)).toBeNull()
+    expect(validateBookingCheckInDate("2026-10-30", beforeOpening, late)).toContain("03:00–18:00")
+
+    // 04:00: still last night by default, already dead time past a 03:00 cutoff.
+    const fourAm = fromVenueLocal("2026-10-30", "04:00")
+    expect(validateBookingCheckInDate("2026-10-29", fourAm)).toBeNull()
+    expect(validateBookingCheckInDate("2026-10-29", fourAm, late)).toContain("03:00–18:00")
+
+    // 01:00: inside both shifts, and the night of the 29th for both.
+    const onePastMidnight = fromVenueLocal("2026-10-30", "01:00")
+    expect(validateBookingCheckInDate("2026-10-29", onePastMidnight, late)).toBeNull()
+    expect(validateBookingCheckInDate("2026-10-30", onePastMidnight, late)).not.toBeNull()
+
+    // 02:30 against a 03:00 cutoff is still the 29th, and the default shift agrees: only the
+    // gap hours tell the two shifts apart.
+    expect(validateBookingCheckInDate("2026-10-29", fromVenueLocal("2026-10-30", "02:30"), late)).toBeNull()
+  })
 })
 
 describe("booking slots", () => {

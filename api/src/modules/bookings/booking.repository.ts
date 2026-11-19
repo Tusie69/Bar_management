@@ -8,6 +8,7 @@ import { assertNoteHasNoPhoneNumber, redactPhoneNumbersInNote } from '../../secu
 import { applicationNow } from '../../time/application-clock.js'
 import { normalizeSearchText } from '../../lib/search-text.js'
 import { assertCheckInBusinessDate, currentBusinessDate, validateBookingSchedule } from './business-date.js'
+import { getVenueShift } from '../venues/venue-shift.js'
 import { deriveBookingTiming, type BookingDisplayStatus } from './booking-timing.js'
 import { canCallBooking } from './booking-call.js'
 import {
@@ -367,7 +368,8 @@ export async function createBooking(
 ): Promise<BookingView> {
   assertNoteHasNoPhoneNumber(input.note)
   const metadata = resolveBookingMetadata(input)
-  const schedule = validateBookingSchedule(input.expectedAt, input.businessDate, now)
+  // TU-38: giờ ca đọc từ venue, không phải hằng số 17/5.
+  const schedule = validateBookingSchedule(input.expectedAt, input.businessDate, now, await getVenueShift(actor))
   const phone = typeof input.phoneNumber === 'string' ? protectPhoneNumber(input.phoneNumber, phoneKeyRing()) : null
   const connection = transaction ?? await databasePool.getConnection()
   const ownsTransaction = transaction === undefined
@@ -431,7 +433,8 @@ export async function createAndAssignBooking(
 ): Promise<BookingView> {
   assertNoteHasNoPhoneNumber(input.note)
   const metadata = resolveBookingMetadata(input)
-  const schedule = validateBookingSchedule(input.expectedAt, input.businessDate, now)
+  // TU-38: giờ ca đọc từ venue, không phải hằng số 17/5.
+  const schedule = validateBookingSchedule(input.expectedAt, input.businessDate, now, await getVenueShift(actor))
   const phone = typeof input.phoneNumber === 'string' ? protectPhoneNumber(input.phoneNumber, phoneKeyRing()) : null
   const requestedTableIds = [...new Set(input.tableIds)].sort((left, right) => left - right)
   const connection = transaction ?? await databasePool.getConnection()
@@ -669,7 +672,7 @@ export async function updateBooking(
           mysqlExpectedAt: currentExpectedAt.toISOString().slice(0, 23).replace('T', ' '),
           businessDate: currentBusinessDate,
         }
-      : validateBookingSchedule(input.expectedAt, input.businessDate, now)
+      : validateBookingSchedule(input.expectedAt, input.businessDate, now, await getVenueShift(actor, connection))
     if (input.note !== undefined) assertNoteHasNoPhoneNumber(input.note)
     const resolvedNote = input.note === undefined ? reservation.note : input.note
 
@@ -1558,7 +1561,7 @@ export async function checkInBooking(
     const reservation = await lockReservation(connection, actor, id, expectedVersion)
     if (reservation.status !== 'BOOKED')
       throw new AppError(409, 'BOOKING_NOT_CHECKIN', 'Chỉ đặt bàn đang chờ mới được check-in.')
-    assertCheckInBusinessDate(dateOnly(reservation.business_date), now)
+    assertCheckInBusinessDate(dateOnly(reservation.business_date), now, await getVenueShift(actor, connection))
     const [allocationRows] = await connection.execute<(RowDataPacket & { table_id: number; hold_id: number; group_id: number | null })[]>(
       `SELECT a.table_id, a.hold_id, a.group_id FROM table_allocations AS a
        JOIN table_holds AS h ON h.venue_id = a.venue_id AND h.id = a.hold_id
@@ -1713,7 +1716,7 @@ async function confirmBookingLateInTransaction(
 
   let activeBusinessDate: string
   try {
-    activeBusinessDate = currentBusinessDate(now)
+    activeBusinessDate = currentBusinessDate(now, await getVenueShift(actor))
   } catch {
     throw new AppError(409, 'LATE_CONFIRM_OUTSIDE_BUSINESS_HOURS', 'Không có ca đang hoạt động để xác nhận tới muộn.')
   }

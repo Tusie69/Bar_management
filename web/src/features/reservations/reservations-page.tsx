@@ -268,7 +268,8 @@ function ReservationList({
   const codes = useCodes(tables)
   const now = useNow(30_000)
   // TU-38: mốc cắt ca lấy từ cấu hình địa điểm, không mặc định 05:00.
-  const shiftCutoff = shiftHour(useBusinessShift().cutoffLocal)
+  const shift = useBusinessShift()
+  const shiftCutoff = shiftHour(shift.cutoffLocal)
   const today = businessDateOf(now, shiftCutoff)
   const { run } = useAction()
   const [checkIn, setCheckIn] = useState<ReservationView | null>(null)
@@ -292,7 +293,7 @@ function ReservationList({
   const action = (r: ReservationView) => {
     if (r.status !== "BOOKED") return null
     if (r.tableIds.length) {
-      const checkInError = validateBookingCheckInDate(r.businessDate, now)
+      const checkInError = validateBookingCheckInDate(r.businessDate, now, shift)
       if (checkInError) return null
       return (
         <GuardedButton

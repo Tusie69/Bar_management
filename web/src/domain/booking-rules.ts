@@ -8,12 +8,15 @@
  *   00:00–01:00 slots use the next calendar date but keep the selected business date; the API
  *   derives business_date from expectedAt.
  *
- * TU-38: the shift hours here come from `FALLBACK_BUSINESS_SHIFT` rather than from the venue row,
- * and that is deliberate, not an oversight. These rules mirror the API's own booking validation
- * (`api/src/modules/bookings/business-date.ts`), which still holds the pair as constants. Reading
- * the venue row on this side alone would let the form accept an arrival the API then refuses.
- * They are centralised on one constant so the pair lives in a single place on each side, and so
- * making the API configurable is the only change this file then needs.
+ * TU-38: `validateBookingCheckInDate` takes the venue's shift, matching the API, which now
+ * derives the operating day from `venues.business_day_start_local` / `business_day_cutoff_local`
+ * rather than from constants. Callers inside React pass `useBusinessShift()`; the default keeps
+ * the function usable without a venue in hand.
+ *
+ * `DAY_START` stays a constant on purpose: `businessMinute` only uses it to move the origin of
+ * the ordering, so every slot shifts by the same amount and the relative order of 00:30 after
+ * 23:30 cannot change with the opening hour. The 19:00–01:00 arrival window is a separate
+ * business rule, not the shift, and the API holds it as its own pair of constants too.
  */
 import {
   addDays,
@@ -25,12 +28,8 @@ import {
   venueDateString,
   venueParts,
   type BusinessDate,
+  type BusinessShift,
 } from "@/lib/time"
-
-const SHIFT_START_HOUR = shiftHour(FALLBACK_BUSINESS_SHIFT.startLocal)
-const SHIFT_CUTOFF_HOUR = shiftHour(FALLBACK_BUSINESS_SHIFT.cutoffLocal)
-const SHIFT_START_LABEL = FALLBACK_BUSINESS_SHIFT.startLocal.slice(0, 5)
-const SHIFT_CUTOFF_LABEL = FALLBACK_BUSINESS_SHIFT.cutoffLocal.slice(0, 5)
 
 export const GUEST_QUICK = [1, 2, 3, 4, 5, 6] as const
 export const BOOKING_MINUTE_STEP = 5
@@ -52,7 +51,7 @@ export function toggleClassification(
   return current === selected ? "UNCLASSIFIED" : selected
 }
 
-const DAY_START = SHIFT_START_HOUR * 60
+const DAY_START = shiftHour(FALLBACK_BUSINESS_SHIFT.startLocal) * 60
 const pad = (n: number) => String(n).padStart(2, "0")
 const toMin = (hhmm: string) => {
   const [h, m] = hhmm.split(":").map(Number)
@@ -175,14 +174,25 @@ export function validateBookingTime(
 export const defaultBookingSlot = (bd: BusinessDate, now: Date): string | null =>
   bookingSlots(bd, now).find((s) => !s.disabled)?.time ?? null
 
-/** Null only when the booking belongs to the active shift. */
-export function validateBookingCheckInDate(bd: BusinessDate, now: Date): string | null {
+/**
+ * Null only when the booking belongs to the venue's active shift.
+ *
+ * Mirrors `assertCheckInBusinessDate` on the API, including the hours it names, so the form
+ * refuses exactly what the server would and for the same stated reason.
+ */
+export function validateBookingCheckInDate(
+  bd: BusinessDate,
+  now: Date,
+  shift: BusinessShift = FALLBACK_BUSINESS_SHIFT,
+): string | null {
+  const startHour = shiftHour(shift.startLocal)
+  const cutoffHour = shiftHour(shift.cutoffLocal)
   const parts = venueParts(now)
-  if (parts.hour >= SHIFT_CUTOFF_HOUR && parts.hour < SHIFT_START_HOUR) {
-    return `Không có ca check-in đang hoạt động trong khoảng ${SHIFT_CUTOFF_LABEL}–${SHIFT_START_LABEL}.`
+  if (parts.hour >= cutoffHour && parts.hour < startHour) {
+    return `Không có ca check-in đang hoạt động trong khoảng ${shift.cutoffLocal.slice(0, 5)}–${shift.startLocal.slice(0, 5)}.`
   }
   const calendarDate = venueDateString(now)
-  const currentBusinessDate = parts.hour < SHIFT_CUTOFF_HOUR ? addDays(calendarDate, -1) : calendarDate
+  const currentBusinessDate = parts.hour < cutoffHour ? addDays(calendarDate, -1) : calendarDate
   return bd === currentBusinessDate ? null : "Chỉ được check-in booking thuộc ngày nghiệp vụ hiện tại."
 }
 

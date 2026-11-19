@@ -3,6 +3,7 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise'
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
+import { invalidateVenueShift } from './venue-shift.js'
 
 export interface VenueSettings {
   quick_times: string[]
@@ -148,6 +149,11 @@ export async function updateVenueSettings(
       ],
     )
     await connection.commit()
+    // TU-38: this is the one place venue configuration is written through, so the cached shift
+    // is dropped here rather than waiting out its TTL. The shift columns themselves are not
+    // editable over the API yet — they are set by migration — but a cache that only refreshes
+    // on a timer would make adding that editor a bug waiting to happen.
+    invalidateVenueShift(actor)
     return {
       quick_times: [...input.quickTimes],
       upcoming_minutes: input.upcomingMinutes,
