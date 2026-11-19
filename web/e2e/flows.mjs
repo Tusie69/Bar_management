@@ -493,9 +493,9 @@ await flow("waitlist: claim, accept offer -> hold, then seat when guest arrives"
   await dlg.getByRole("button", { name: "Ghi kết quả" }).click()
   await card.getByText("Đang giữ bàn").waitFor()
 
-  // Acceptance 4: pure waitlist entry without reservation hides "Xem booking" and opens entry detail
-  const xemBookingBtn = card.getByRole("button", { name: "Xem booking" })
-  assert.equal(await xemBookingBtn.count(), 0, "Pure waitlist hold must hide 'Xem booking'")
+  // Acceptance 4: a pure waitlist entry only opens entry detail.
+  const bookingActions = card.getByRole("button", { name: /^(Xem|Sửa) booking$/ })
+  assert.equal(await bookingActions.count(), 0, "Pure waitlist hold must hide booking actions")
   await card.getByRole("button", { name: "Xem đơn chờ" }).click()
   const entryDlg = page.getByRole("dialog").filter({ hasText: "Chi tiết mục chờ" })
   await entryDlg.waitFor()
@@ -682,12 +682,11 @@ await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (phone
     await card.getByText("Đang giữ bàn").waitFor()
     await card.getByText("Đang giữ B5 + B7").waitFor()
 
-    // Acceptance 3: "Xem booking" opens linked reservation detail, showing guest name
-    await card.getByRole("button", { name: "Xem booking" }).click()
-    const backBtn = page.locator('button[aria-label="Quay lại"]').first()
-    await backBtn.waitFor()
-    assert(await page.getByText(tc.name).first().isVisible(), `Detail must show booking for ${tc.name}`)
-    await backBtn.click()
+    // Acceptance 3: "Sửa booking" opens the linked booking, showing the correct guest.
+    await card.getByRole("button", { name: "Sửa booking", exact: true }).click()
+    const editor = page.getByRole("dialog", { name: "Sửa booking", exact: true })
+    await expect(editor.getByRole("button", { name: /^Tên khách/ })).toContainText(tc.name)
+    await editor.getByRole("button", { name: "Quay lại", exact: true }).click()
     await card.getByText("Đang giữ bàn").waitFor()
 
     // Acceptance 5: "Đổi / Ghép bàn" opens table picker, cancel returns without mutating
@@ -1052,9 +1051,20 @@ await flow("booking pickers: keyboard navigation across expired selected time (M
   const closeToast = page.getByRole("button", { name: "Đóng thông báo" })
   if (await closeToast.isVisible()) await closeToast.click()
 
-  // Open the first booking's edit dialog
-  await page.locator("article").first().click()
-  await page.getByRole("button", { name: "Sửa booking" }).click()
+  const guestName = "MD-04 Đặt bàn"
+  await page.evaluate(async (contactName) => {
+    const { api, clock } = await import("/src/services/index.ts")
+    const { atBusinessTime, businessDateOf } = await import("/src/lib/time.ts")
+    await api.createReservation({
+      contactName,
+      partySize: 2,
+      expectedAt: atBusinessTime(businessDateOf(clock.now()), "23:00"),
+      sourceCode: "HOTLINE",
+    })
+  }, guestName)
+  await page.getByText(guestName, { exact: true }).click()
+  const detail = page.getByRole("dialog", { name: "Chi tiết booking", exact: true })
+  await detail.getByRole("button", { name: "Sửa booking", exact: true }).click()
   const editDialog = page.getByRole("dialog", { name: /Sửa booking/ })
   await editDialog.waitFor()
 
@@ -1065,6 +1075,7 @@ await flow("booking pickers: keyboard navigation across expired selected time (M
   })
 
   // The wheel is reachable by keyboard, skips expired values and keeps the selection in step.
+  await editDialog.getByRole("button", { name: /^Giờ hẹn/ }).click()
   const wheelButton = editDialog.getByRole("button", { name: /Chọn giờ bằng con lăn/ })
   await wheelButton.click()
   const hours = editDialog.getByRole("spinbutton", { name: "Giờ", exact: true })

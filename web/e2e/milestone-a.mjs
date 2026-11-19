@@ -240,26 +240,31 @@ try {
         return measurement
       })
       await run(`chips-${width}-${theme}`, width, theme, async (page) => {
+        const floorTable = () =>
+          page.evaluate(async () => {
+            const { api, clock } = await import("/src/services/index.ts")
+            const id = (await api.getCatalog()).tables.find((item) => item.code === "B3").id
+            return (await api.getFloorState(clock.now())).tables.find((item) => item.tableId === id)
+          })
+        const { claim: booking } = await floorTable()
+        assert(booking.phoneLast3, "B3 fixture must have a searchable phone suffix")
         await table(page, "B3").click()
         const sheet = page.getByRole("dialog", { name: "Chi tiết B3", exact: true })
         const chip = sheet.locator("span.rounded-full").first()
         const states = []
         for (const state of ["late", "late_confirmed", "noshow"]) {
-          await expect
-            .poll(() =>
-              page.evaluate(async () => {
-                const { api, clock } = await import("/src/services/index.ts")
-                const id = (await api.getCatalog()).tables.find((item) => item.code === "B3").id
-                return (await api.getFloorState(clock.now())).tables.find((item) => item.tableId === id).state
-              }),
-            )
-            .toBe(state)
+          await expect.poll(async () => (await floorTable()).state).toBe(state)
           const sheetText =
             state === "late_confirmed"
               ? "Tới muộn · đã báo muộn · 15 phút"
               : `Tới muộn · ${state === "noshow" ? 30 : 15} phút`
           await expect(chip).toHaveText(sheetText)
-          await sheet.getByRole("button", { name: "Xem booking", exact: true }).click()
+          await sheet.getByRole("button", { name: "Đóng", exact: true }).click()
+          const search = page.getByRole("textbox", { name: "Tìm 3 số cuối SĐT" })
+          await search.fill(booking.phoneLast3)
+          await page
+            .getByRole("button", { name: `${booking.displayName} · ***${booking.phoneLast3} · 1 bàn`, exact: true })
+            .click()
           const detail = page.getByRole("dialog", { name: "Chi tiết booking", exact: true })
           const detailChip = detail.getByRole("button", {
             name: /^Trạng thái Tới muộn · (?:đã báo muộn · )?\d+ phút\. Đổi trạng thái$/,
@@ -267,6 +272,7 @@ try {
           await expect(detailChip).toBeVisible()
           const detailText = await detailChip.innerText()
           await detail.getByRole("button", { name: "Quay lại", exact: true }).click()
+          await search.clear()
           if (!(await sheet.isVisible())) await table(page, "B3").click()
           states.push({ state, sheet: sheetText, detail: detailText })
           if (state === "late") {

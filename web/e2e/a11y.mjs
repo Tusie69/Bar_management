@@ -171,6 +171,8 @@ for (const width of [360, 390, 430])
           const button = page.getByRole("button", { name, exact: true })
           if (await button.isVisible()) await button.click()
         }
+        const visibleBarRegions = page.getByRole("region", { name: /Khách quầy bar/ })
+        await expect(visibleBarRegions).toHaveCount(1)
         await page.locator('[aria-label^="Bàn B5,"]').first().click()
         await page.getByRole("button", { name: action, exact: true }).click()
         const form = page.getByRole("dialog", { name: isBooking ? "Tạo đơn đặt bàn" : "Mở bàn Walk-in", exact: true })
@@ -178,13 +180,17 @@ for (const width of [360, 390, 430])
         const regions = await page
           .getByRole("region", { name: /Khách quầy bar/, includeHidden: true })
           .evaluateAll((elements) => elements.map((el) => el.getAttribute("aria-label")))
-        assert.equal(regions.length, 2)
-        assert.equal(new Set(regions).size, 2, `Duplicate Bar landmarks: ${regions.join(", ")}`)
-        await expect(page.getByRole("region", { name: /Khách quầy bar/ })).toHaveCount(1)
-        const scroll = form.getByRole("region", { name: /Khách quầy bar/ })
-        await scroll.scrollIntoViewIfNeeded()
-        await scroll.focus()
-        await expect(scroll).toBeFocused()
+        // The booking availability map has no live bar guests. The walk-in map shows them.
+        const formBarRegions = isBooking ? 0 : 1
+        assert.equal(regions.length, 1 + formBarRegions)
+        assert.equal(new Set(regions).size, regions.length, `Duplicate Bar landmarks: ${regions.join(", ")}`)
+        await expect(visibleBarRegions).toHaveCount(formBarRegions)
+        if (!isBooking) {
+          const scroll = form.getByRole("region", { name: /Khách quầy bar/ })
+          await scroll.scrollIntoViewIfNeeded()
+          await scroll.focus()
+          await expect(scroll).toBeFocused()
+        }
         fs.mkdirSync("e2e/.artifacts/rereview4-fixes", { recursive: true })
         const theme = await page.locator("html").getAttribute("class")
         await page.screenshot({
