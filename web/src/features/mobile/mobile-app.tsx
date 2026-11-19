@@ -39,6 +39,7 @@ import { HomeScreen } from "./home"
 import { ListScreen } from "./list"
 import { MapScreen, TableSheet } from "./map"
 import { isOpenEntry } from "./model"
+import { notificationTarget } from "./notification-target"
 import { useRestoreTriggerFocus } from "./overlay-focus"
 import { AccountSheet, AlertsSheet, ConfirmDialog, CreateSheet, StatusDialog, Toast15 } from "./overlays"
 import { useSeenKeys } from "./seen-keys"
@@ -213,8 +214,9 @@ export default function MobileApp() {
 
   const openAlertDetail = (alert: Alert) => {
     setOverlay(null)
-    if (alert.reservationId) setDetail({ id: alert.reservationId, bd: selectedDate })
-    else if (alert.tableId) ctx.openTable(alert.tableId)
+    const target = notificationTarget(alert.tableId, alert.reservationId, selectedDate)
+    if (target?.kind === "table") ctx.openTable(target.tableId)
+    else if (target?.kind === "reservation") setDetail({ id: target.reservationId, bd: target.businessDate })
   }
 
   const ctx: MobileCtx = {
@@ -431,7 +433,9 @@ export default function MobileApp() {
           onView={() => {
             if (!toast15) return
             handle(`l${toast15.id}`)
-            setDetail({ id: toast15.id, bd: toast15.businessDate })
+            const target = notificationTarget(toast15.tableIds[0], toast15.id, toast15.businessDate)
+            if (target?.kind === "table") ctx.openTable(target.tableId)
+            else if (target?.kind === "reservation") setDetail({ id: target.reservationId, bd: target.businessDate })
           }}
           onClose={() => {
             if (toast15) handle(`l${toast15.id}`)
