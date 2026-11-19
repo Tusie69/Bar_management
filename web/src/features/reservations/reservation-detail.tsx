@@ -36,6 +36,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
+  CANCEL_REASONS,
   CLOSE_REASON_LABEL,
   PREFERENCE_MODE_LABEL,
   RESERVATION_STATUS_LABEL,
@@ -62,10 +63,6 @@ import { CallHistory } from "../bookings/call-history"
 import { ReservationStatusChip } from "./reservation-status"
 import { useFloorModel } from "../floor/use-floor-model"
 import { bookingOrderPolicy, useHeldOrderActions } from "../mobile/actions"
-
-const CANCEL_REASONS = (Object.keys(CLOSE_REASON_LABEL) as ReservationCloseReason[])
-  .filter((r) => r !== "NO_SHOW_CONFIRMED")
-  .map((value) => ({ value, label: CLOSE_REASON_LABEL[value] }))
 
 function useOpenSession(open: boolean) {
   const [sessionId, setSessionId] = useState(0)

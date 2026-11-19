@@ -23,7 +23,16 @@ import { useShiftAlerts, type Alert } from "../floor/alerts"
 import { GuestCountSheet } from "../floor/guest-count-card"
 import { useFloorModel } from "../floor/use-floor-model"
 import { isWaitingForTable } from "../floor/reception-rules"
-import { MobileContext, type Confirm, type FormRequest, type MobileCtx, type TablePick, type Tab } from "./context"
+import {
+  MobileContext,
+  type CancelBookingRequest,
+  type Confirm,
+  type FormRequest,
+  type MobileCtx,
+  type TablePick,
+  type Tab,
+} from "./context"
+import { CancelBookingDialog } from "./cancel-booking-dialog"
 import { DetailScreen } from "./detail"
 import { FormScreen } from "./form"
 import { HomeScreen } from "./home"
@@ -113,6 +122,7 @@ export default function MobileApp() {
   const [overlay, setOverlay] = useState<null | "create" | "alerts" | "account" | "wait" | "count" | "count-edit">(null)
   const [statusFor, setStatusFor] = useState<ReservationView | null>(null)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
+  const [cancelReq, setCancelReq] = useState<CancelBookingRequest | null>(null)
   const [detail, setDetail] = useState<{ id: number; bd: BusinessDate } | null>(null)
   const [entryDetail, setEntryDetail] = useState<{ id: number; bd: BusinessDate } | null>(null)
   const [form, setForm] = useState<FormRequest | null>(null)
@@ -136,7 +146,7 @@ export default function MobileApp() {
   const unread = alerts.filter((a) => !seen.has(a.key)).length
   const handle = (key: string) => markHandled([key])
   const toast15 = booked.find((r) => r.warning === "late" && !handled.has(`l${r.id}`)) ?? null
-  const busy = !!(overlay || statusFor || confirm || detail || entryDetail || form || pick || ui.draft)
+  const busy = !!(overlay || statusFor || confirm || cancelReq || detail || entryDetail || form || pick || ui.draft)
   const keyboardSafeHeight = useKeyboardSafeHeight()
 
   const shellContentRef = useRef<HTMLDivElement>(null)
@@ -166,12 +176,12 @@ export default function MobileApp() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return
-      if (statusFor || confirm || overlay || detail || entryDetail || form) return
+      if (statusFor || confirm || cancelReq || overlay || detail || entryDetail || form) return
       if (tableSel) setTableSel(null)
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [statusFor, overlay, confirm, detail, entryDetail, form, tableSel])
+  }, [statusFor, overlay, confirm, cancelReq, detail, entryDetail, form, tableSel])
 
   // Ensure any focused input inside a mobile sheet or modal stays scrolled above virtual keyboard
   useEffect(() => {
@@ -263,6 +273,11 @@ export default function MobileApp() {
     ask: (c) => {
       setStatusFor(null)
       setConfirm(c)
+    },
+    askCancel: (req) => {
+      if (!isReceptionist) return
+      setStatusFor(null)
+      setCancelReq(req)
     },
     startPick: (p) => {
       setDetail(null)
@@ -474,6 +489,7 @@ export default function MobileApp() {
         ) : null}
         <StatusDialog r={statusFor} onClose={() => setStatusFor(null)} />
         <ConfirmDialog c={confirm} onClose={() => setConfirm(null)} />
+        {isReceptionist ? <CancelBookingDialog req={cancelReq} onClose={() => setCancelReq(null)} /> : null}
       </div>
     </MobileContext.Provider>
   )

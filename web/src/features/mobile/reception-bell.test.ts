@@ -131,6 +131,7 @@ function makeCtx(role: RoleCode): MobileCtx {
     openForm: vi.fn(),
     openTable: vi.fn(),
     ask: vi.fn(),
+    askCancel: vi.fn(),
     startPick: vi.fn(),
   }
 }
