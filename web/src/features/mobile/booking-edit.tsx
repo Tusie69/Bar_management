@@ -62,6 +62,7 @@ import {
   type BookingEditDraft,
   type BookingEditSessionState,
   type EditableFieldKey,
+  type TablePickerLoadStage,
 } from "./booking-edit-model"
 import { useM } from "./context"
 import { codesOf } from "./model"
@@ -86,6 +87,7 @@ function EmptyPlaceholder() {
 function EditableRow({
   label,
   editing,
+  disabled,
   changed,
   error,
   display,
@@ -95,6 +97,7 @@ function EditableRow({
 }: {
   label: string
   editing: boolean
+  disabled?: boolean
   changed?: boolean
   error?: string | null
   display: ReactNode
@@ -149,7 +152,9 @@ function EditableRow({
           </button>
         </div>
         <div ref={contentRef} className="flex flex-col">
-          {children}
+          <fieldset disabled={disabled} className="m-0 flex min-w-0 flex-col border-0 p-0 disabled:opacity-60">
+            {children}
+          </fieldset>
         </div>
         {error ? (
           <p role="alert" className="m-0 text-xs font-medium text-st-noshow-ink">
@@ -165,9 +170,10 @@ function EditableRow({
       <button
         ref={triggerRef}
         type="button"
+        disabled={disabled}
         onClick={onOpen}
         aria-expanded={false}
-        className="gm-press-card flex min-h-12 w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-surface-2/55"
+        className="gm-press-card flex min-h-12 w-full items-center gap-3 px-4 py-3 text-left transition-colors enabled:hover:bg-surface-2/55 disabled:cursor-not-allowed disabled:opacity-60"
       >
         <span className="w-[108px] shrink-0 text-[13px] font-medium text-[var(--text-muted)]">{label}</span>
         <span className="min-w-0 flex-1 text-[14px] text-pretty break-words text-tx-1">{display}</span>
@@ -271,8 +277,10 @@ function BookingEditBody({
   const [session, setSession] = useState<BookingEditSessionState>(() => ({
     source: initial,
     draft: initialBookingEditDraft(initial),
+    versionConfirmed: true,
   }))
   const { source, draft } = session
+  const versionConfirmed = session.versionConfirmed !== false
   const targetResQuery = useReservations(source.businessDate)
   const waitlistQuery = useWaitlist(source.businessDate)
   const liveRecord = source.businessDate === bd ? r : targetResQuery.data?.find((x) => x.id === source.id)
@@ -280,7 +288,11 @@ function BookingEditBody({
   const [confirmLeave, setConfirmLeave] = useState(false)
   const [confirmTableChange, setConfirmTableChange] = useState(false)
   const [pickerLoading, setPickerLoading] = useState(false)
-  const [pickerError, setPickerError] = useState<{ savedBeforePick: boolean; message: string } | null>(null)
+  const [pickerError, setPickerError] = useState<{
+    savedBeforePick: boolean
+    stage: TablePickerLoadStage
+    message: string
+  } | null>(null)
   const leaveFocus = useRestoreTriggerFocus(confirmLeave, { suppressRestore: !parentOpen })
   const tableChangeFocus = useRestoreTriggerFocus(confirmTableChange, { suppressRestore: !parentOpen })
 
@@ -292,7 +304,11 @@ function BookingEditBody({
     setSession(synced)
   }
 
+  const isBusy = pending || pickerLoading
+  const fieldsDisabled = isBusy || !versionConfirmed
+
   const updateDraft = (patch: Partial<BookingEditDraft>) => {
+    if (fieldsDisabled) return
     setSession((prev) => ({ ...prev, draft: { ...prev.draft, ...patch } }))
   }
 
@@ -328,6 +344,8 @@ function BookingEditBody({
   const pendingRef = useRef(pending)
   const savingRef = useRef(false)
   const pickerLoadingRef = useRef(false)
+  const versionConfirmedRef = useRef(versionConfirmed)
+  versionConfirmedRef.current = versionConfirmed
   const mountedRef = useRef(true)
   useEffect(() => {
     mountedRef.current = true
@@ -418,14 +436,13 @@ function BookingEditBody({
     }
   }, [historyToken, isPendingNow, onClose, parentOpen])
 
-  const isBusy = pending || pickerLoading
   const hold = a.bookingPolicy(source)
   const hasTableLoadError =
     m.can("table.assign") && source.status === "BOOKED" && (Boolean(pickerError) || waitlistQuery.isError)
   const canAccessTablePicker =
     m.can("table.assign") &&
     source.status === "BOOKED" &&
-    (hold.canReassign || Boolean(pickerError) || waitlistQuery.isError || pickerLoading)
+    (hold.canReassign || Boolean(pickerError) || waitlistQuery.isError || pickerLoading || !versionConfirmed)
 
   const dayOptions = useMemo(() => {
     const offsets = Array.from({ length: 7 }, (_, i) => i)
@@ -442,7 +459,7 @@ function BookingEditBody({
   }, [m.today, draft.businessDate])
 
   const saveFields = async (): Promise<ReservationView | null> => {
-    if (!validation.canSave || isPendingNow() || pickerLoadingRef.current) return null
+    if (!validation.canSave || !versionConfirmedRef.current || isPendingNow() || pickerLoadingRef.current) return null
     savingRef.current = true
     try {
       const result = await run(async () => api.updateReservation(buildUpdateReservationInput(source, draft)), {
@@ -451,7 +468,7 @@ function BookingEditBody({
       if (!result) return null
       const saved = applySavedBookingEdit(source, draft)
       if (mountedRef.current) {
-        setSession({ source: saved, draft: initialBookingEditDraft(saved) })
+        setSession({ source: saved, draft: initialBookingEditDraft(saved), versionConfirmed: false })
         setPickerError(null)
       }
       toast.success("Đã lưu thay đổi", {
@@ -490,15 +507,18 @@ function BookingEditBody({
       const result = await prepareTablePickerTarget(target, fromSave, {
         isMounted: () => mountedRef.current,
         loadBooking: async (targetId, targetBd) => {
-          const resState = qc.getQueryState<ReservationView[]>(qk.reservations(targetBd, ""))
-          const cached =
-            resState?.status === "success" && !resState.isInvalidated
-              ? resState.data?.find((item) => item.id === targetId)
-              : undefined
-          if (cached) return cached
+          if (!fromSave && versionConfirmedRef.current) {
+            const resState = qc.getQueryState<ReservationView[]>(qk.reservations(targetBd, ""))
+            const cached =
+              resState?.status === "success" && !resState.isInvalidated && !resState.error
+                ? resState.data?.find((item) => item.id === targetId)
+                : undefined
+            if (cached) return cached
+          }
           const list = await qc.fetchQuery({
             queryKey: qk.reservations(targetBd, ""),
             queryFn: () => api.listReservations({ businessDate: targetBd, search: "" }),
+            staleTime: 0,
             retry: false,
           })
           return list.find((item) => item.id === targetId)
@@ -520,12 +540,13 @@ function BookingEditBody({
           }
         },
         checkPolicy: (latest) => a.bookingPolicy(latest),
-        onSessionSync: (latest) => setSession({ source: latest, draft: initialBookingEditDraft(latest) }),
+        onSessionSync: (latest) =>
+          setSession({ source: latest, draft: initialBookingEditDraft(latest), versionConfirmed: true }),
         onMissingOrClosed: leaveImmediately,
         openPicker: openTablePicker,
       })
       if (result.status === "error" && mountedRef.current) {
-        setPickerError({ savedBeforePick: result.savedBeforePick, message: result.message })
+        setPickerError({ savedBeforePick: result.savedBeforePick, stage: result.stage, message: result.message })
       }
     } finally {
       pickerLoadingRef.current = false
@@ -534,7 +555,7 @@ function BookingEditBody({
   }
 
   const requestTableChange = () => {
-    if (isPendingNow() || pickerLoadingRef.current || !canAccessTablePicker) return
+    if (isPendingNow() || pickerLoadingRef.current || !canAccessTablePicker || !versionConfirmed) return
     if (diff.isDirty) {
       setConfirmTableChange(true)
       return
@@ -542,17 +563,22 @@ function BookingEditBody({
     void runTablePickerPreparation(source, Boolean(pickerError?.savedBeforePick))
   }
 
+  const retryConfirmedRead = () => {
+    if (isPendingNow() || pickerLoadingRef.current || versionConfirmed) return
+    void runTablePickerPreparation(source, true)
+  }
+
   const discardAndPickTables = () => {
-    if (isPendingNow() || pickerLoadingRef.current) return
+    if (isPendingNow() || pickerLoadingRef.current || !versionConfirmed) return
     setConfirmTableChange(false)
     const cleanTarget = liveRecord && liveRecord.version !== source.version ? liveRecord : source
-    setSession({ source: cleanTarget, draft: initialBookingEditDraft(cleanTarget) })
+    setSession({ source: cleanTarget, draft: initialBookingEditDraft(cleanTarget), versionConfirmed: true })
     setPickerError(null)
     void runTablePickerPreparation(cleanTarget, false)
   }
 
   const saveAndPickTables = async () => {
-    if (!validation.canSave || isPendingNow() || pickerLoadingRef.current) return
+    if (!validation.canSave || !versionConfirmedRef.current || isPendingNow() || pickerLoadingRef.current) return
     setConfirmTableChange(false)
     const saved = await saveFields()
     if (!saved || !mountedRef.current) return
@@ -629,16 +655,33 @@ function BookingEditBody({
           </p>
         ) : null}
 
+        {isBusy ? (
+          <p
+            role="status"
+            className="m-0 flex items-center gap-2 rounded-2xl border border-border bg-surface-2 px-4 py-3 text-[13px] font-medium text-[var(--text-muted)]"
+          >
+            <LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden />
+            <span>
+              {pending
+                ? "Đang lưu thay đổi..."
+                : !versionConfirmed
+                  ? "Đã lưu thay đổi · Đang đồng bộ dữ liệu đặt bàn..."
+                  : "Đang tải dữ liệu đổi bàn..."}
+            </span>
+          </p>
+        ) : null}
+
         <section className="flex flex-col gap-1.5">
           <h2 className="eyebrow m-0 px-1">Khách hàng</h2>
           <div className={cn(card, "flex flex-col divide-y divide-border overflow-hidden")}>
             <EditableRow
               label="Tên khách"
               editing={isBooked && editingField === "name"}
+              disabled={fieldsDisabled}
               changed={diff.changed.name}
               error={validation.errors.name}
               display={draft.name.trim() ? draft.name : <EmptyPlaceholder />}
-              onOpen={() => isBooked && setEditingField("name")}
+              onOpen={() => isBooked && !fieldsDisabled && setEditingField("name")}
               onDone={() => setEditingField(null)}
             >
               <div className="flex flex-col gap-1.5">
@@ -656,7 +699,7 @@ function BookingEditBody({
                   autoComplete="name"
                   value={draft.name}
                   placeholder="(Trống)"
-                  disabled={pending}
+                  disabled={fieldsDisabled}
                   aria-invalid={Boolean(validation.errors.name) || undefined}
                   onFocus={scrollFocusedIntoView}
                   onChange={(e) => updateDraft({ name: e.target.value })}
@@ -668,15 +711,16 @@ function BookingEditBody({
             <EditableRow
               label="Danh xưng"
               editing={isBooked && editingField === "honorific"}
+              disabled={fieldsDisabled}
               changed={diff.changed.honorific}
               display={draft.honorific === "MR" ? "Mr" : draft.honorific === "MS" ? "Ms" : <EmptyPlaceholder />}
-              onOpen={() => isBooked && setEditingField("honorific")}
+              onOpen={() => isBooked && !fieldsDisabled && setEditingField("honorific")}
               onDone={() => setEditingField(null)}
             >
               <HonorificPicker
                 value={draft.honorific}
                 onChange={(honorific) => updateDraft({ honorific })}
-                disabled={pending}
+                disabled={fieldsDisabled}
                 size="lg"
               />
             </EditableRow>
@@ -703,9 +747,10 @@ function BookingEditBody({
             <EditableRow
               label="Loại khách"
               editing={isBooked && editingField === "classification"}
+              disabled={fieldsDisabled}
               changed={diff.changed.classification}
               display={classificationDisplay}
-              onOpen={() => isBooked && setEditingField("classification")}
+              onOpen={() => isBooked && !fieldsDisabled && setEditingField("classification")}
               onDone={() => setEditingField(null)}
             >
               <div role="radiogroup" aria-label="Loại khách" className="grid grid-cols-3 gap-2">
@@ -723,7 +768,7 @@ function BookingEditBody({
                       type="button"
                       role="radio"
                       aria-checked={selected}
-                      disabled={pending}
+                      disabled={fieldsDisabled}
                       onClick={() =>
                         updateDraft({
                           classification:
@@ -757,6 +802,7 @@ function BookingEditBody({
             <EditableRow
               label="Số khách"
               editing={isBooked && editingField === "partySize"}
+              disabled={fieldsDisabled}
               changed={diff.changed.partySize}
               error={validation.errors.partySize}
               display={
@@ -764,7 +810,7 @@ function BookingEditBody({
                   {parsedParty.ok ? `${parsedParty.value} khách` : draft.partySizeText || <EmptyPlaceholder />}
                 </span>
               }
-              onOpen={() => isBooked && setEditingField("partySize")}
+              onOpen={() => isBooked && !fieldsDisabled && setEditingField("partySize")}
               onDone={() => setEditingField(null)}
             >
               <div className="flex flex-col gap-2.5">
@@ -788,7 +834,7 @@ function BookingEditBody({
                       pattern="[0-9]*"
                       value={draft.partySizeText}
                       placeholder="(Trống)"
-                      disabled={pending}
+                      disabled={fieldsDisabled}
                       aria-invalid={Boolean(validation.errors.partySize) || undefined}
                       onFocus={scrollFocusedIntoView}
                       onChange={(e) => updateDraft({ partySizeText: e.target.value })}
@@ -810,9 +856,10 @@ function BookingEditBody({
             <EditableRow
               label="Ngày đặt"
               editing={isBooked && editingField === "businessDate"}
+              disabled={fieldsDisabled}
               changed={diff.changed.businessDate}
               display={<span className="tnum">{fmtBusinessDate(draft.businessDate)}</span>}
-              onOpen={() => isBooked && setEditingField("businessDate")}
+              onOpen={() => isBooked && !fieldsDisabled && setEditingField("businessDate")}
               onDone={() => setEditingField(null)}
             >
               <div className="flex flex-col gap-2">
@@ -824,7 +871,7 @@ function BookingEditBody({
                         key={d.date}
                         type="button"
                         aria-pressed={on}
-                        disabled={pending}
+                        disabled={fieldsDisabled}
                         onClick={() => updateDraft({ businessDate: d.date })}
                         className={cn(
                           "gm-press flex h-14 min-w-[72px] shrink-0 flex-col items-center justify-center gap-px rounded-xl border px-2.5",
@@ -850,10 +897,11 @@ function BookingEditBody({
             <EditableRow
               label="Giờ hẹn"
               editing={isBooked && editingField === "time"}
+              disabled={fieldsDisabled}
               changed={diff.changed.time}
               error={validation.errors.time}
               display={<span className="tnum">{timeDisplay}</span>}
-              onOpen={() => isBooked && setEditingField("time")}
+              onOpen={() => isBooked && !fieldsDisabled && setEditingField("time")}
               onDone={() => setEditingField(null)}
             >
               <BookingTimePicker
@@ -878,11 +926,11 @@ function BookingEditBody({
                     </span>
                     <span className="block text-xs text-[var(--text-muted)]">Lưu ngay khi chọn bàn</span>
                   </div>
-                  {!hasTableLoadError ? (
+                  {!hasTableLoadError || !versionConfirmed ? (
                     <button
                       type="button"
                       onClick={requestTableChange}
-                      disabled={isBusy}
+                      disabled={isBusy || !versionConfirmed}
                       className="gm-press inline-flex h-11 shrink-0 items-center rounded-xl border border-border-strong bg-surface-1 px-3.5 text-[13px] font-semibold text-primary-ink hover:bg-primary-tint disabled:pointer-events-none disabled:opacity-45"
                     >
                       {pickerLoading ? "Đang tải..." : "Đổi bàn"}
@@ -899,10 +947,10 @@ function BookingEditBody({
                         type="button"
                         variant="outline"
                         disabled={isBusy}
-                        onClick={requestTableChange}
+                        onClick={!versionConfirmed ? retryConfirmedRead : requestTableChange}
                         className="h-11 rounded-xl border-border-strong bg-surface-1 px-3.5 text-[13px] font-semibold text-primary-ink hover:bg-primary-tint"
                       >
-                        {pickerLoading ? "Đang tải..." : "Thử lại đổi bàn"}
+                        {pickerLoading ? "Đang tải..." : !versionConfirmed ? "Thử lại đọc booking" : "Thử lại đổi bàn"}
                       </Button>
                     </div>
                   </div>
@@ -931,10 +979,11 @@ function BookingEditBody({
             <EditableRow
               label="Nguồn đặt"
               editing={isBooked && editingField === "source"}
+              disabled={fieldsDisabled}
               changed={diff.changed.source || diff.changed.platform}
               error={validation.errors.platform}
               display={sourceDisplay}
-              onOpen={() => isBooked && setEditingField("source")}
+              onOpen={() => isBooked && !fieldsDisabled && setEditingField("source")}
               onDone={() => setEditingField(null)}
             >
               <SourcePicker
@@ -949,9 +998,10 @@ function BookingEditBody({
             <EditableRow
               label="Đặc điểm"
               editing={isBooked && editingField === "icons"}
+              disabled={fieldsDisabled}
               changed={diff.changed.icons}
               display={iconsDisplay}
-              onOpen={() => isBooked && setEditingField("icons")}
+              onOpen={() => isBooked && !fieldsDisabled && setEditingField("icons")}
               onDone={() => setEditingField(null)}
             >
               <IconPicker
@@ -965,10 +1015,11 @@ function BookingEditBody({
             <EditableRow
               label="Ghi chú"
               editing={isBooked && editingField === "note"}
+              disabled={fieldsDisabled}
               changed={diff.changed.note}
               error={validation.errors.note}
               display={draft.note.trim() ? draft.note : <EmptyPlaceholder />}
-              onOpen={() => isBooked && setEditingField("note")}
+              onOpen={() => isBooked && !fieldsDisabled && setEditingField("note")}
               onDone={() => setEditingField(null)}
             >
               <div className="flex flex-col gap-1.5">
@@ -992,7 +1043,7 @@ function BookingEditBody({
                   rows={3}
                   value={draft.note}
                   placeholder="(Trống)"
-                  disabled={pending}
+                  disabled={fieldsDisabled}
                   aria-invalid={Boolean(validation.errors.note) || undefined}
                   onFocus={scrollFocusedIntoView}
                   onChange={(e) => updateDraft({ note: e.target.value })}
@@ -1021,12 +1072,12 @@ function BookingEditBody({
           <Button
             type="button"
             size="lg"
-            disabled={!validation.canSave || pending}
+            disabled={!validation.canSave || !versionConfirmed || isBusy}
             aria-busy={pending}
             onClick={() => void save()}
             className={cn(
               "h-12 rounded-xl text-[15px] font-semibold",
-              (!validation.canSave || pending) &&
+              (!validation.canSave || !versionConfirmed || isBusy) &&
                 "border border-border bg-surface-3 text-[var(--text-muted)] opacity-75 shadow-none",
             )}
           >
@@ -1084,7 +1135,7 @@ function BookingEditBody({
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={confirmTableChange && !pending} onOpenChange={setConfirmTableChange}>
+      <AlertDialog open={confirmTableChange && !pending && versionConfirmed} onOpenChange={setConfirmTableChange}>
         <AlertDialogContent
           data-gm
           data-gm-overlay-id={tableChangeFocus.overlayId}
@@ -1108,7 +1159,7 @@ function BookingEditBody({
           <AlertDialogFooter className="flex flex-col gap-2 pt-1 group-data-[size=sm]/alert-dialog-content:flex sm:flex-col">
             <AlertDialogAction
               variant="default"
-              disabled={!validation.canSave || pending}
+              disabled={!validation.canSave || !versionConfirmed || isBusy}
               onClick={() => void saveAndPickTables()}
               className="h-12 w-full rounded-xl text-[15px] font-semibold"
             >

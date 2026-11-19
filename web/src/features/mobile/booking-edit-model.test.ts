@@ -413,8 +413,8 @@ describe("booking-edit-model session pinning (B01) and pending guard (B03)", () 
   })
 })
 
-describe("booking-edit-model save-and-pick re-pin and error recovery (PR17-01)", () => {
-  it("re-pins saved booking with incremented version, new date, and clean draft before picker loads", () => {
+describe("booking-edit-model save-and-pick re-pin and error recovery (PR17-01, PR17-02)", () => {
+  it("keeps saved display fields clean without incrementing version until server read confirms it", async () => {
     const original = makeReservation({ version: 3, businessDate: BD, note: null })
     const editedDraft = {
       ...initialBookingEditDraft(original),
@@ -424,7 +424,7 @@ describe("booking-edit-model save-and-pick re-pin and error recovery (PR17-01)",
     }
 
     const saved = applySavedBookingEdit(original, editedDraft)
-    expect(saved.version).toBe(4)
+    expect(saved.version).toBe(original.version)
     expect(saved.businessDate).toBe("2026-11-20")
     expect(saved.note).toBe("Đổi ngày rồi đổi bàn")
 
@@ -432,6 +432,41 @@ describe("booking-edit-model save-and-pick re-pin and error recovery (PR17-01)",
     const cleanDiff = diffBookingEditDraft(saved, cleanDraft)
     expect(cleanDiff.isDirty).toBe(false)
     expect(validateBookingEditDraft(saved, cleanDraft, cleanDiff, makeValidationCtx()).canSave).toBe(false)
+
+    // Unconfirmed post-save session ignores background refreshes until the confirmed read runs.
+    const unconfirmedSession = {
+      source: saved,
+      draft: cleanDraft,
+      versionConfirmed: false,
+    }
+    const staleFromCache = makeReservation({ version: 3, businessDate: "2026-11-20", note: "Old" })
+    expect(syncBookingEditSession(unconfirmedSession, staleFromCache)).toBe(unconfirmedSession)
+
+    // Confirmed read supplies the authoritative version from the server (e.g. 7, never source.version + 1).
+    const fetchedFromServer = makeReservation({
+      version: 7,
+      businessDate: "2026-11-20",
+      note: "Đổi ngày rồi đổi bàn",
+    })
+    let synced: ReservationView | null = null
+    let opened: ReservationView | null = null
+    const res = await prepareTablePickerTarget(saved, true, {
+      loadBooking: async () => fetchedFromServer,
+      ensureWaitlist: async () => {},
+      checkPolicy: () => ({ canReassign: true }),
+      onSessionSync: (r) => {
+        synced = r
+      },
+      onMissingOrClosed: () => {},
+      openPicker: (r) => {
+        opened = r
+      },
+    })
+    expect(res).toEqual({ status: "opened" })
+    expect(synced).toEqual(fetchedFromServer)
+    expect(synced!.version).toBe(7)
+    expect(opened).toEqual(fetchedFromServer)
+    expect(opened!.version).toBe(7)
   })
 
   it("handles booking and waitlist load errors cleanly, keeps waitlist guard, and allows picker retry", async () => {
@@ -440,9 +475,10 @@ describe("booking-edit-model save-and-pick re-pin and error recovery (PR17-01)",
       businessDate: "2026-11-20",
       note: "Đã lưu",
     })
-    const latestFromServer: ReservationView = { ...saved, tableIds: [], holdId: null }
+    const latestFromServer: ReservationView = { ...saved, version: 9, tableIds: [], holdId: null }
 
-    // 1. Target-date booking query fails with 503
+    // 1. Target-date booking query fails with 503 -> onSessionSync is not called, stage is "booking"
+    let synced: ReservationView | null = null
     let opened: ReservationView | null = null
     const bookingFail = await prepareTablePickerTarget(saved, true, {
       loadBooking: async () => {
@@ -450,21 +486,24 @@ describe("booking-edit-model save-and-pick re-pin and error recovery (PR17-01)",
       },
       ensureWaitlist: async () => {},
       checkPolicy: () => ({ canReassign: true }),
-      onSessionSync: () => {},
+      onSessionSync: (r) => {
+        synced = r
+      },
       onMissingOrClosed: () => {},
       openPicker: (r) => {
         opened = r
       },
     })
+    expect(synced).toBeNull()
     expect(bookingFail.status).toBe("error")
     if (bookingFail.status === "error") {
       expect(bookingFail.savedBeforePick).toBe(true)
+      expect(bookingFail.stage).toBe("booking")
       expect(bookingFail.message).toContain("Đã lưu thay đổi")
     }
     expect(opened).toBeNull()
 
-    // 2. Booking query succeeds and syncs latest, then target-date waitlist fails with 503
-    let synced: ReservationView | null = null
+    // 2. Booking query recovers and syncs server version (9), then target-date waitlist fails with 503
     const waitlistFail = await prepareTablePickerTarget(saved, true, {
       loadBooking: async () => latestFromServer,
       ensureWaitlist: async () => {
@@ -480,9 +519,11 @@ describe("booking-edit-model save-and-pick re-pin and error recovery (PR17-01)",
       },
     })
     expect(synced).toEqual(latestFromServer)
+    expect(synced!.version).toBe(9)
     expect(waitlistFail.status).toBe("error")
     if (waitlistFail.status === "error") {
       expect(waitlistFail.savedBeforePick).toBe(true)
+      expect(waitlistFail.stage).toBe("waitlist")
       expect(waitlistFail.message).toContain("Đã lưu thay đổi")
     }
     expect(opened).toBeNull()
@@ -501,6 +542,7 @@ describe("booking-edit-model save-and-pick re-pin and error recovery (PR17-01)",
     expect(policyBlocked).toEqual({
       status: "error",
       savedBeforePick: false,
+      stage: "policy",
       message: "Không tải được đơn chờ",
     })
     expect(opened).toBeNull()

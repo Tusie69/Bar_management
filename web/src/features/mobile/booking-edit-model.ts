@@ -171,6 +171,8 @@ export function diffBookingEditDraft(r: ReservationView, draft: BookingEditDraft
 export interface BookingEditSessionState {
   source: ReservationView
   draft: BookingEditDraft
+  /** False after a PUT succeeds until a fresh server read confirms the new source & version. */
+  versionConfirmed?: boolean
 }
 
 /**
@@ -187,14 +189,18 @@ export function pinLoadedBooking(
 }
 
 /**
- * Pins the edit session's source record and version while local edits exist
- * or when the booking disappears from the refreshed list, and replaces both
- * together when a clean draft receives a refreshed booking.
+ * Pins the edit session's source record and version while local edits exist,
+ * while waiting for a confirmed post-save read, or when the booking disappears
+ * from the refreshed list; replaces both together when a clean confirmed draft
+ * receives a refreshed booking.
  */
 export function syncBookingEditSession(
   session: BookingEditSessionState,
   refreshed: ReservationView | undefined,
 ): BookingEditSessionState {
+  if (session.versionConfirmed === false) {
+    return session
+  }
   if (!refreshed) {
     return session
   }
@@ -392,8 +398,9 @@ export function buildUpdateReservationInput(r: ReservationView, draft: BookingEd
 }
 
 /**
- * Re-pins the booking snapshot immediately after `updateReservation` succeeds
- * (incremented version, updated fields, new businessDate) before table-picker queries run.
+ * Updates the displayed booking snapshot and clean baseline immediately after
+ * `updateReservation` succeeds while keeping `source.version` untouched until
+ * a fresh server booking query confirms the new version.
  */
 export function applySavedBookingEdit(source: ReservationView, draft: BookingEditDraft): ReservationView {
   const parsedParty = parsePartySize(draft.partySizeText)
@@ -408,7 +415,6 @@ export function applySavedBookingEdit(source: ReservationView, draft: BookingEdi
 
   return {
     ...source,
-    version: source.version + 1,
     displayName,
     hasGuestName,
     partySize,
@@ -435,8 +441,11 @@ export interface TablePickerLoadDeps {
   isMounted?: () => boolean
 }
 
+export type TablePickerLoadStage = "booking" | "waitlist" | "policy"
+
 export type TablePickerLoadResult =
-  { status: "opened" | "closed" | "unmounted" } | { status: "error"; savedBeforePick: boolean; message: string }
+  | { status: "opened" | "closed" | "unmounted" }
+  | { status: "error"; savedBeforePick: boolean; stage: TablePickerLoadStage; message: string }
 
 /**
  * Loads target-date booking/waitlist state and validates waitlist policy before
@@ -448,6 +457,7 @@ export async function prepareTablePickerTarget(
   deps: TablePickerLoadDeps,
 ): Promise<TablePickerLoadResult> {
   const stillMounted = () => deps.isMounted?.() ?? true
+  let stage: TablePickerLoadStage = "booking"
   try {
     const latest = await deps.loadBooking(target.id, target.businessDate)
     if (!stillMounted()) return { status: "unmounted" }
@@ -457,6 +467,7 @@ export async function prepareTablePickerTarget(
     }
     deps.onSessionSync(latest)
 
+    stage = "waitlist"
     await deps.ensureWaitlist(latest.businessDate)
     if (!stillMounted()) return { status: "unmounted" }
 
@@ -465,6 +476,7 @@ export async function prepareTablePickerTarget(
       return {
         status: "error",
         savedBeforePick: fromSave,
+        stage: "policy",
         message: fromSave
           ? `Đã lưu thay đổi, nhưng chưa thể đổi bàn: ${policy.reason ?? "Không hỗ trợ đổi bàn."}`
           : (policy.reason ?? "Chưa hỗ trợ đổi bàn cho đơn giữ chỗ."),
@@ -478,9 +490,13 @@ export async function prepareTablePickerTarget(
     return {
       status: "error",
       savedBeforePick: fromSave,
-      message: fromSave
-        ? "Đã lưu thay đổi, nhưng không tải được dữ liệu để đổi bàn. Vui lòng thử lại Đổi bàn."
-        : "Không tải được dữ liệu để đổi bàn. Vui lòng thử lại.",
+      stage,
+      message:
+        fromSave && stage === "booking"
+          ? "Đã lưu thay đổi, nhưng chưa đồng bộ được bản ghi booking mới. Vui lòng thử lại."
+          : fromSave
+            ? "Đã lưu thay đổi, nhưng không tải được dữ liệu để đổi bàn. Vui lòng thử lại Đổi bàn."
+            : "Không tải được dữ liệu để đổi bàn. Vui lòng thử lại.",
     }
   }
 }

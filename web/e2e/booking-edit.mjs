@@ -564,6 +564,156 @@ try {
   await editPage.getByRole("button", { name: "Quay lại", exact: true }).click()
   await expect(page.getByRole("alertdialog")).toHaveCount(0)
   await expect(editPage).toBeHidden()
+
+  // PR17-01 (booking read 503 -> retry read -> server version) & PR17-02 (slow booking read disables fields until synced)
+  await resetMockDemo(page)
+  await page.reload({ waitUntil: "networkidle" })
+  await (await openTableSheet(page, "B4")).getByRole("button", { name: "Sửa booking", exact: true }).click()
+  await expect(editPage).toBeVisible()
+  const pr17Round2Id = Number(
+    ((await editPage.locator("header span", { hasText: /^#\d+$/ }).textContent()) || "").slice(1),
+  )
+  assert(Number.isInteger(pr17Round2Id) && pr17Round2Id > 0, "Expected valid booking id for PR17 round 2 checks")
+
+  const pr17Round2 = await page.evaluate(async () => {
+    const { api, ApiError, clock } = await import("/src/services/index.ts")
+    const { addDays, businessDateOf, fmtDayMonth } = await import("/src/lib/time.ts")
+    const today = businessDateOf(clock.now())
+    const tomorrow = addDays(today, 1)
+    const origUpdate = api.updateReservation.bind(api)
+    const origAssign = api.assignTables.bind(api)
+    const origList = api.listReservations.bind(api)
+    const origWaitlist = api.listWaitlist.bind(api)
+
+    let releaseRead = null
+    window.__gmPr17Round2 = {
+      updateCalls: 0,
+      assignCalls: [],
+      mode: "fail-booking",
+      enteredRead: false,
+      releaseRead: () => releaseRead?.(),
+      origUpdate,
+      origAssign,
+      origList,
+      origWaitlist,
+    }
+    api.updateReservation = (input) => {
+      window.__gmPr17Round2.updateCalls += 1
+      return origUpdate(input)
+    }
+    api.assignTables = (id, version, tableIds, overrideReason) => {
+      window.__gmPr17Round2.assignCalls.push({ id, version, tableIds })
+      return origAssign(id, version, tableIds, overrideReason)
+    }
+    api.listReservations = async (params) => {
+      if (params?.businessDate === tomorrow) {
+        if (window.__gmPr17Round2.mode === "fail-booking") {
+          throw new ApiError(503, "SERVICE_UNAVAILABLE", "Simulated 503 target booking read")
+        }
+        if (window.__gmPr17Round2.mode === "slow-booking") {
+          window.__gmPr17Round2.enteredRead = true
+          await new Promise((resolve) => {
+            releaseRead = resolve
+          })
+        }
+      }
+      return origList(params)
+    }
+    api.listWaitlist = async (date) => {
+      if (window.__gmPr17Round2.mode !== "ok" && date === tomorrow) {
+        throw new ApiError(503, "SERVICE_UNAVAILABLE", "Simulated 503 waitlist before/during slow booking read")
+      }
+      return origWaitlist(date)
+    }
+    return { today, tomorrow, dayLabel: fmtDayMonth(tomorrow) }
+  })
+
+  await editPage.getByRole("button", { name: /^Ngày đặt/ }).click()
+  await editPage
+    .getByRole("button", { name: new RegExp(pr17Round2.dayLabel.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&") + "$") })
+    .click()
+  await editPage.getByRole("button", { name: /^Ghi chú/ }).click()
+  await editPage.getByLabel("Ghi chú", { exact: true }).fill("PR17-01: booking read recovery")
+  await editPage.getByRole("button", { name: "Xong", exact: true }).click()
+  await editPage.getByRole("button", { name: "Đổi bàn", exact: true }).click()
+  await page.getByRole("alertdialog").getByRole("button", { name: "Lưu & đổi bàn", exact: true }).click()
+
+  // Booking query failed after PUT: saved state shown, save & Đổi bàn & edit fields disabled, read retry offered
+  const retryReadBtn = editPage.getByRole("button", { name: "Thử lại đọc booking", exact: true })
+  await expect(retryReadBtn).toBeVisible()
+  await expect(editPage.getByRole("alert")).toContainText("Đã lưu thay đổi")
+  await expect(saveBtn).toBeDisabled()
+  await expect(editPage.getByRole("button", { name: "Đổi bàn", exact: true })).toBeDisabled()
+  await expect(editPage.getByRole("button", { name: /^Ghi chú/ })).toBeDisabled()
+  await expect(editPage.getByRole("button", { name: /^Tên khách/ })).toBeDisabled()
+
+  // Recover booking read -> switch to slow-read mode (with waitlist 503) to also exercise PR17-02 in-flight lock
+  await page.evaluate(() => {
+    window.__gmPr17Round2.mode = "slow-booking"
+  })
+  await retryReadBtn.click()
+  await expect.poll(() => page.evaluate(() => window.__gmPr17Round2.enteredRead)).toBe(true)
+
+  // While slow booking read is syncing: busy hint visible, all edit fields and writes remain disabled
+  await expect(editPage.getByText(/Đang đồng bộ dữ liệu đặt bàn/)).toBeVisible()
+  await expect(saveBtn).toBeDisabled()
+  await expect(editPage.getByRole("button", { name: /^Ghi chú/ })).toBeDisabled()
+  await expect(editPage.getByRole("button", { name: /^Tên khách/ })).toBeDisabled()
+
+  // Release slow booking read -> waitlist 503 keeps editor open, version is now synced, fields re-enabled
+  await page.evaluate(() => window.__gmPr17Round2.releaseRead())
+  const retryPickAfterSlowBtn = editPage.getByRole("button", { name: "Thử lại đổi bàn", exact: true })
+  await expect(retryPickAfterSlowBtn).toBeVisible()
+  await expect(editPage.getByRole("button", { name: /^Tên khách/ })).toBeEnabled()
+  await expect(editPage.getByRole("button", { name: /^Ghi chú/ })).toBeEnabled()
+
+  // Typing after sync is preserved (not overwritten)
+  await editPage.getByRole("button", { name: /^Ghi chú/ }).click()
+  const noteAfterSync = editPage.getByLabel("Ghi chú", { exact: true })
+  await noteAfterSync.fill("PR17-02: typed after sync")
+  await expect(noteAfterSync).toHaveValue("PR17-02: typed after sync")
+  await expect(saveBtn).toBeEnabled()
+
+  // Discard post-sync local note edit via "Đổi bàn" -> "Bỏ thay đổi" (or revert and retry) to verify 1 PUT + 1 assign with server version
+  await noteAfterSync.fill("PR17-01: booking read recovery")
+  await editPage.getByRole("button", { name: "Xong", exact: true }).click()
+  await expect(saveBtn).toBeDisabled()
+  await page.evaluate(() => {
+    window.__gmPr17Round2.mode = "ok"
+  })
+  await retryPickAfterSlowBtn.click()
+  await expect(page.getByText(/Xếp bàn cho|Đổi bàn cho/)).toBeVisible()
+  await page.locator('[role="button"][aria-label^="Bàn B4,"], [role="button"][aria-label^="Bàn B4:"]').first().click()
+  await page.getByRole("button", { name: /^(Xếp bàn|Đổi bàn)$/ }).click()
+  await expect(editPage).toBeVisible()
+  await expect(editPage.getByText("B4", { exact: true })).toBeVisible()
+
+  const pr17Round2Result = await page.evaluate(
+    async ({ id, tomorrow }) => {
+      const { api } = await import("/src/services/index.ts")
+      const rows = await api.listReservations({ businessDate: tomorrow })
+      const serverAfterAssign = rows.find((item) => item.id === id) ?? null
+      const summary = {
+        updateCalls: window.__gmPr17Round2.updateCalls,
+        assignCalls: window.__gmPr17Round2.assignCalls,
+        serverVersionAfterAssign: serverAfterAssign?.version ?? null,
+      }
+      api.updateReservation = window.__gmPr17Round2.origUpdate
+      api.assignTables = window.__gmPr17Round2.origAssign
+      api.listReservations = window.__gmPr17Round2.origList
+      api.listWaitlist = window.__gmPr17Round2.origWaitlist
+      delete window.__gmPr17Round2
+      return summary
+    },
+    { id: pr17Round2Id, tomorrow: pr17Round2.tomorrow },
+  )
+  assert.equal(pr17Round2Result.updateCalls, 1)
+  assert.equal(pr17Round2Result.assignCalls.length, 1)
+  assert.equal(pr17Round2Result.assignCalls[0].version, pr17Round2Result.serverVersionAfterAssign - 1)
+
+  await editPage.getByRole("button", { name: "Quay lại", exact: true }).click()
+  await expect(page.getByRole("alertdialog")).toHaveCount(0)
+  await expect(editPage).toBeHidden()
   await resetMockDemo(page)
   await page.reload({ waitUntil: "networkidle" })
 
