@@ -178,11 +178,24 @@ try {
   await expect(editPage.getByText("Không ghi số điện thoại vào ghi chú", { exact: true })).toBeVisible()
   await expect(saveBtn).toBeDisabled()
 
-  // Edit multiple fields (note + honorific)
+  // Edit multiple fields (note + honorific via keyboard — B04)
   await noteInput.fill("Sinh nhật nhẹ")
   await expect(saveBtn).toBeEnabled()
-  await editPage.getByRole("button", { name: /Danh xưng/ }).click()
-  await editPage.getByRole("radio", { name: "Mr", exact: true }).click()
+  await editPage.getByRole("button", { name: "Xong", exact: true }).click()
+  const honorificRowBtn = editPage.getByRole("button", { name: /Danh xưng/ })
+  await honorificRowBtn.focus()
+  await expect(honorificRowBtn).toBeFocused()
+  await page.keyboard.press("Enter")
+  const mrRadio = editPage.getByRole("radio", { name: "Mr", exact: true })
+  await expect(mrRadio).toBeFocused()
+  await page.keyboard.press("Space")
+  await expect(mrRadio).toHaveAttribute("aria-checked", "true")
+  const doneBtn = editPage.getByRole("button", { name: "Xong", exact: true })
+  await doneBtn.focus()
+  await page.keyboard.press("Enter")
+  await expect(honorificRowBtn).toBeFocused()
+  await page.keyboard.press("Tab")
+  await expect(editPage.getByRole("button", { name: "Quay lại", exact: true })).not.toBeFocused()
 
   // Top-left back with edits opens confirm dialog
   await editPage.getByRole("button", { name: "Quay lại", exact: true }).click()
@@ -239,7 +252,102 @@ try {
   await expect(editPage).toBeVisible()
   await expect(editPage.getByRole("button", { name: /Danh xưng/ })).toContainText("Ms")
   await expect(editPage.getByRole("button", { name: /Ghi chú/ })).toContainText("Khách VIP tầng 1")
-  await editPage.getByRole("button", { name: "Quay lại", exact: true }).click()
+
+  // B02: Separate "Đổi bàn" flow + dirty guard before table change
+  await expect(editPage.getByText("Lưu ngay khi chọn bàn", { exact: true })).toBeVisible()
+  await editPage.getByRole("button", { name: /Ghi chú/ }).click()
+  await editPage.getByLabel("Ghi chú", { exact: true }).fill("Sửa trước khi đổi bàn")
+  await editPage.getByRole("button", { name: "Đổi bàn", exact: true }).click()
+  const tableGuardDlg = page.getByRole("alertdialog", { name: "Lưu hoặc bỏ thay đổi trước khi đổi bàn?" })
+  await expect(tableGuardDlg).toBeVisible()
+  await tableGuardDlg.getByRole("button", { name: "Ở lại", exact: true }).click()
+  await expect(tableGuardDlg).toBeHidden()
+  await expect(editPage.getByLabel("Ghi chú", { exact: true })).toHaveValue("Sửa trước khi đổi bàn")
+
+  await editPage.getByRole("button", { name: "Đổi bàn", exact: true }).click()
+  await expect(tableGuardDlg).toBeVisible()
+  await tableGuardDlg.getByRole("button", { name: "Bỏ thay đổi", exact: true }).click()
+  await expect(editPage).toBeHidden()
+  // Map table picker opens with B4 preselected; pick B5 instead and confirm
+  await expect(page.getByText("Đổi bàn cho", { exact: false })).toBeVisible()
+  await page.locator('[role="button"][aria-label^="Bàn B4,"], [role="button"][aria-label^="Bàn B4:"]').first().click()
+  await page.locator('[role="button"][aria-label^="Bàn B5,"], [role="button"][aria-label^="Bàn B5:"]').first().click()
+  await page.getByRole("button", { name: "Đổi bàn", exact: true }).click()
+  await expect(page.getByText(/Phân bàn B5/)).toBeVisible()
+  // Returns to Sửa booking with updated table and clean save button
+  await expect(editPage).toBeVisible()
+  await expect(editPage.getByText("B5", { exact: true })).toBeVisible()
+  await expect(saveBtn).toBeDisabled()
+
+  // B03: Back/Escape while save is pending does not open discard dialog or leave (delayed success + delayed 409)
+  await page.evaluate(async () => {
+    const { api, ApiError } = await import("/src/services/index.ts")
+    const origUpdate = api.updateReservation.bind(api)
+    window.__gmBookingEditOrigUpdate = origUpdate
+    window.__gmDelayControl = { mode: "resolve", calls: 0, release: null }
+    api.updateReservation = (input) => {
+      window.__gmDelayControl.calls += 1
+      return new Promise((resolve, reject) => {
+        window.__gmDelayControl.release = () => {
+          if (window.__gmDelayControl.mode === "conflict") {
+            reject(new ApiError(409, "VERSION_CONFLICT", "Booking đã được người khác cập nhật.", { by: "Quản lý" }))
+            return
+          }
+          origUpdate(input).then(resolve, reject)
+        }
+      })
+    }
+  })
+
+  await editPage.getByRole("button", { name: /Ghi chú/ }).click()
+  await editPage.getByLabel("Ghi chú", { exact: true }).fill("Lưu chờ mạng")
+  await expect(saveBtn).toBeEnabled()
+  await saveBtn.click()
+  await expect(editPage.getByRole("button", { name: /Đang lưu/ })).toBeDisabled()
+  await expect(editPage.getByRole("button", { name: "Quay lại", exact: true })).toBeDisabled()
+
+  await page.goBack()
+  await page.keyboard.press("Escape")
+  await expect(page.getByRole("alertdialog")).toHaveCount(0)
+  await expect(editPage).toBeVisible()
+
+  await page.evaluate(() => window.__gmDelayControl.release())
+  await expect(page.getByText("Đã lưu thay đổi", { exact: true })).toBeVisible()
+  await expect(editPage).toBeHidden()
+  const callCount = await page.evaluate(() => window.__gmDelayControl.calls)
+  assert.equal(callCount, 1, "Expected exactly one updateReservation call")
+
+  // B03 delayed 409 -> Back blocked while pending, works again once 409 acknowledged
+  await (await openTableSheet(page, "B5")).getByRole("button", { name: "Sửa booking", exact: true }).click()
+  await expect(editPage).toBeVisible()
+  await editPage.getByRole("button", { name: /Ghi chú/ }).click()
+  await editPage.getByLabel("Ghi chú", { exact: true }).fill("Ghi chú gặp xung đột")
+  await page.evaluate(() => {
+    window.__gmDelayControl.mode = "conflict"
+  })
+  await saveBtn.click()
+  await expect(editPage.getByRole("button", { name: /Đang lưu/ })).toBeDisabled()
+  await page.goBack()
+  await expect(page.getByRole("alertdialog")).toHaveCount(0)
+  await expect(editPage).toBeVisible()
+
+  await page.evaluate(() => window.__gmDelayControl.release())
+  const conflictDlg = page.getByRole("alertdialog", { name: "Dữ liệu vừa thay đổi" })
+  await expect(conflictDlg).toBeVisible()
+  await conflictDlg.getByRole("button", { name: "Đã hiểu, xem dữ liệu mới", exact: true }).click()
+  await expect(conflictDlg).toBeHidden()
+  await expect(editPage.getByLabel("Ghi chú", { exact: true })).toHaveValue("Ghi chú gặp xung đột")
+
+  // Restore mock API and verify Back works again after 409 acknowledgement
+  await page.evaluate(async () => {
+    const { api } = await import("/src/services/index.ts")
+    if (window.__gmBookingEditOrigUpdate) {
+      api.updateReservation = window.__gmBookingEditOrigUpdate
+    }
+  })
+  await page.goBack()
+  await expect(confirmDlg).toBeVisible()
+  await agreeBtn.click()
   await expect(editPage).toBeHidden()
 
   // 2. Phone 390x844 (dark) screenshot & layout check
@@ -247,7 +355,7 @@ try {
   await page.reload({ waitUntil: "networkidle" })
   await (await openTableSheet(page, "B4")).getByRole("button", { name: "Sửa booking", exact: true }).click()
   await expect(editPage).toBeVisible()
-  await expect(editPage.getByRole("button", { name: /Bàn/ })).toBeVisible()
+  await expect(editPage.getByRole("button", { name: "Đổi bàn", exact: true })).toBeVisible()
   await assertLayoutAndTargets(page, '[role="dialog"][aria-label="Sửa booking"]', "390-dark")
   await settle(page)
   await page.screenshot({ path: path.join(evidenceDir, "phone-390-dark-edit.png") })
@@ -261,7 +369,10 @@ try {
   await firstTransferBtn.click()
   await page.locator('[role="button"][aria-label^="Bàn C5,"], [role="button"][aria-label^="Bàn C5:"]').first().click()
   await page.getByRole("button", { name: "Xác nhận chuyển bàn", exact: true }).click()
-  await page.locator('[role="button"][aria-label^="Bàn C5, Đang giữ cho khách chờ"]').first().waitFor({ state: "visible" })
+  await page
+    .locator('[role="button"][aria-label^="Bàn C5, Đang giữ cho khách chờ"]')
+    .first()
+    .waitFor({ state: "visible" })
 
   // Table sheet for waitlist_hold + linked reservation shows "Sửa booking" (map.tsx ~768)
   const c5Sheet = await openTableSheet(page, "C5")

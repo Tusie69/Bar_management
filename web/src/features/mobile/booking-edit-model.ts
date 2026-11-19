@@ -168,6 +168,49 @@ export function diffBookingEditDraft(r: ReservationView, draft: BookingEditDraft
   }
 }
 
+export interface BookingEditSessionState {
+  source: ReservationView
+  draft: BookingEditDraft
+}
+
+/**
+ * Pins the edit session's source record and version while local edits exist,
+ * and replaces both together when a clean draft receives a refreshed booking.
+ */
+export function syncBookingEditSession(
+  session: BookingEditSessionState,
+  refreshed: ReservationView,
+): BookingEditSessionState {
+  if (diffBookingEditDraft(session.source, session.draft).isDirty) {
+    return session
+  }
+  if (refreshed === session.source) {
+    return session
+  }
+  if (
+    refreshed.version === session.source.version &&
+    sameSortedArray(sortedUniqueNumbers(refreshed.tableIds), sortedUniqueNumbers(session.source.tableIds))
+  ) {
+    return session
+  }
+  return {
+    source: refreshed,
+    draft: initialBookingEditDraft(refreshed),
+  }
+}
+
+export type BookingEditBackAction = "block_pending" | "confirm_discard" | "leave"
+
+/**
+ * Routes all close/back entry points (top-left Back, Escape, browser Back)
+ * through a single pending and dirty-state guard.
+ */
+export function resolveBookingEditBackAction(state: { pending: boolean; isDirty: boolean }): BookingEditBackAction {
+  if (state.pending) return "block_pending"
+  if (state.isDirty) return "confirm_discard"
+  return "leave"
+}
+
 const OWN_RESERVATION_LIVE_STATES = new Set<FloorTableState["state"]>([
   "reserved",
   "upcoming",

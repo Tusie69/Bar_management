@@ -132,6 +132,7 @@ export default function MobileApp() {
   const [pick, setPick] = useState<TablePick | null>(null)
   const [pickSel, setPickSel] = useState<number[]>([])
   const [pickBusy, setPickBusy] = useState(false)
+  const [pickReturnEdit, setPickReturnEdit] = useState<{ id: number; bd: BusinessDate } | null>(null)
   const [seen, markSeen] = useSeenKeys(SEEN_STORAGE_KEY, selectedDate)
   const [handled, markHandled] = useSeenKeys(HANDLED_STORAGE_KEY, selectedDate)
 
@@ -184,6 +185,7 @@ export default function MobileApp() {
     setEntryDetail(null)
     setForm(null)
     setPick(null)
+    setPickReturnEdit(null)
     setTableSel(null)
     const { draft, closeBooking, closeWalkIn } = useUi.getState()
     if (draft) (draft.kind === "booking" ? closeBooking : closeWalkIn)()
@@ -258,17 +260,20 @@ export default function MobileApp() {
       setOverlay(null)
       setTableSel(null)
       setBookingEdit(null)
+      setPickReturnEdit(null)
       setEntryDetail(null)
       setDetail({ id, bd })
     },
     openBookingEdit: (id, bd) => {
       setTableSel(null)
+      setPickReturnEdit(null)
       setBookingEdit({ id, bd })
     },
     openEntryDetail: (id, bd) => {
       setOverlay(null)
       setTableSel(null)
       setBookingEdit(null)
+      setPickReturnEdit(null)
       setDetail(null)
       setEntryDetail({ id, bd })
     },
@@ -281,6 +286,7 @@ export default function MobileApp() {
       setOverlay(null)
       setTableSel(null)
       setBookingEdit(null)
+      setPickReturnEdit(null)
       if (isReceptionist) {
         if (f.mode === "walkin") ui.openWalkIn(f.tableIds)
         else ui.openBooking({ tableIds: f.tableIds, date: f.date ?? selectedDate, toWaitlist: f.toWaitlist })
@@ -291,6 +297,7 @@ export default function MobileApp() {
     openTable: (id) => {
       setDetail(null)
       setBookingEdit(null)
+      setPickReturnEdit(null)
       setEntryDetail(null)
       setTableSel(id)
       go("map")
@@ -305,6 +312,7 @@ export default function MobileApp() {
       setCancelReq(req)
     },
     startPick: (p) => {
+      setPickReturnEdit(bookingEdit ? { id: bookingEdit.id, bd: p.targetDate ?? bookingEdit.bd } : null)
       setDetail(null)
       setBookingEdit(null)
       setEntryDetail(null)
@@ -362,13 +370,25 @@ export default function MobileApp() {
                   pick?.multi ? (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]) : s[0] === id ? [] : [id],
                 )
               }
-              onPickCancel={() => setPick(null)}
+              onPickCancel={() => {
+                setPick(null)
+                if (pickReturnEdit) {
+                  setBookingEdit(pickReturnEdit)
+                  setPickReturnEdit(null)
+                }
+              }}
               onPickConfirm={async () => {
                 if (!pick) return
                 setPickBusy(true)
                 const ok = await pick.onConfirm(pickSel)
                 setPickBusy(false)
-                if (ok) setPick(null)
+                if (ok) {
+                  setPick(null)
+                  if (pickReturnEdit) {
+                    setBookingEdit(pickReturnEdit)
+                    setPickReturnEdit(null)
+                  }
+                }
               }}
               pickBusy={pickBusy}
               keyboardSafeHeight={keyboardSafeHeight}

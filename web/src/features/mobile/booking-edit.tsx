@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle, ChevronLeft, LoaderCircle, Lock, Pencil } from "lucide-react"
 import {
   useCallback,
@@ -36,21 +37,15 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import {
-  bookingCalendarDate,
-  bookingInstant,
-  isAfterMidnight,
-  slotLabel,
-  toggleClassification,
-} from "@/domain/booking-rules"
+import { bookingCalendarDate, isAfterMidnight, slotLabel, toggleClassification } from "@/domain/booking-rules"
 import { formatBookingSource, type BookingClassification } from "@/domain/enums"
-import type { ReservationView } from "@/domain/models"
+import type { ReservationView, TableAvailability } from "@/domain/models"
 import { MOCK_NOTE, useAction } from "@/hooks/use-action"
-import { useAvailability, useReservations, useVenueSettings, useWaitlist } from "@/hooks/use-data"
+import { qk, useReservations, useVenueSettings, useWaitlist } from "@/hooks/use-data"
 import { addDays, fmtBusinessDate, fmtDayMonth, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
-import { useHeldOrderActions, useMobileActions } from "./actions"
+import { useMobileActions } from "./actions"
 import {
   BOOKING_NOTE_MAX_LENGTH,
   GUEST_NAME_MAX_LENGTH,
@@ -58,16 +53,19 @@ import {
   diffBookingEditDraft,
   initialBookingEditDraft,
   parsePartySize,
-  tableContextForEditedBooking,
+  resolveBookingEditBackAction,
+  syncBookingEditSession,
   validateBookingEditDraft,
   type BookingEditDraft,
+  type BookingEditSessionState,
   type EditableFieldKey,
 } from "./booking-edit-model"
-import { bookingTableCanSelect } from "./booking-table-selection"
 import { useM } from "./context"
 import { codesOf } from "./model"
 import { useRestoreTriggerFocus } from "./overlay-focus"
 import { EmptyBox, card } from "./ui"
+
+const EMPTY_AVAIL_MAP: ReadonlyMap<number, TableAvailability> = new Map()
 
 function scrollFocusedIntoView(event: FocusEvent<HTMLInputElement | HTMLTextAreaElement>) {
   const el = event.currentTarget
@@ -101,6 +99,39 @@ function EditableRow({
   onDone: () => void
   children: ReactNode
 }) {
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const wasEditingRef = useRef(editing)
+  const restoreOnCloseRef = useRef(false)
+
+  useEffect(() => {
+    const wasEditing = wasEditingRef.current
+    wasEditingRef.current = editing
+    if (editing && !wasEditing) {
+      const container = contentRef.current
+      if (!container) return
+      const target =
+        container.querySelector<HTMLElement>("[data-autofocus]:not([disabled])") ??
+        container.querySelector<HTMLElement>(
+          '[aria-checked="true"]:not([disabled]), [aria-pressed="true"]:not([disabled]), [aria-selected="true"]:not([disabled])',
+        ) ??
+        container.querySelector<HTMLElement>(
+          'input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        )
+      target?.focus({ preventScroll: true })
+    } else if (!editing && wasEditing && restoreOnCloseRef.current) {
+      restoreOnCloseRef.current = false
+      triggerRef.current?.focus({ preventScroll: true })
+    } else if (!editing) {
+      restoreOnCloseRef.current = false
+    }
+  }, [editing])
+
+  const handleDone = () => {
+    restoreOnCloseRef.current = true
+    onDone()
+  }
+
   if (editing) {
     return (
       <div className="flex flex-col gap-2.5 bg-surface-2/45 px-4 py-3">
@@ -108,13 +139,15 @@ function EditableRow({
           <span className="text-[13px] font-semibold text-tx-strong">{label}</span>
           <button
             type="button"
-            onClick={onDone}
+            onClick={handleDone}
             className="gm-press -my-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg px-2.5 text-[13px] font-semibold text-primary-ink hover:bg-primary-tint"
           >
             Xong
           </button>
         </div>
-        {children}
+        <div ref={contentRef} className="flex flex-col">
+          {children}
+        </div>
         {error ? (
           <p role="alert" className="m-0 text-xs font-medium text-st-noshow-ink">
             {error}
@@ -127,6 +160,7 @@ function EditableRow({
   return (
     <div className="flex flex-col">
       <button
+        ref={triggerRef}
         type="button"
         onClick={onOpen}
         aria-expanded={false}
@@ -216,38 +250,38 @@ function BookingEditBody({
 }) {
   const m = useM()
   const a = useMobileActions()
-  const held = useHeldOrderActions(m.model)
+  const qc = useQueryClient()
   const isReceptionist = m.role === "RECEPTIONIST"
   const { run, pending } = useAction()
-  const quickTimes = useVenueSettings().data?.quickTimes ?? []
+  const settingsQuery = useVenueSettings()
+  const quickTimes = useMemo(() => settingsQuery.data?.quickTimes ?? [], [settingsQuery.data?.quickTimes])
   useWaitlist(bd)
 
-  const [draft, setDraft] = useState<BookingEditDraft>(() => initialBookingEditDraft(r))
+  const [session, setSession] = useState<BookingEditSessionState>(() => ({
+    source: r,
+    draft: initialBookingEditDraft(r),
+  }))
+  const { source, draft } = session
   const [editingField, setEditingField] = useState<EditableFieldKey | null>(null)
   const [confirmLeave, setConfirmLeave] = useState(false)
-  const [syncedVersion, setSyncedVersion] = useState(r.version)
+  const [confirmTableChange, setConfirmTableChange] = useState(false)
   const leaveFocus = useRestoreTriggerFocus(confirmLeave, { suppressRestore: !parentOpen })
+  const tableChangeFocus = useRestoreTriggerFocus(confirmTableChange, { suppressRestore: !parentOpen })
 
-  const nameInputRef = useRef<HTMLInputElement>(null)
-  const partyInputRef = useRef<HTMLInputElement>(null)
-  const noteInputRef = useRef<HTMLTextAreaElement>(null)
+  const diff = useMemo(() => diffBookingEditDraft(source, draft), [source, draft])
 
-  const diff = useMemo(() => diffBookingEditDraft(r, draft), [r, draft])
-
-  // Sync draft when server version refreshes and user has not made local edits
-  if (r.version !== syncedVersion) {
-    setSyncedVersion(r.version)
-    if (!diff.isDirty) {
-      setDraft(initialBookingEditDraft(r))
-    }
+  // Sync source+draft together only while clean; dirty sessions keep their pinned source and version.
+  const synced = syncBookingEditSession(session, r)
+  if (synced !== session) {
+    setSession(synced)
   }
 
   const updateDraft = (patch: Partial<BookingEditDraft>) => {
-    setDraft((prev) => ({ ...prev, ...patch }))
+    setSession((prev) => ({ ...prev, draft: { ...prev.draft, ...patch } }))
   }
 
   const parsedParty = parsePartySize(draft.partySizeText)
-  const validParty = parsedParty.ok ? parsedParty.value : r.partySize
+  const validParty = parsedParty.ok ? parsedParty.value : source.partySize
   const isSameBusinessDate = m.model.floor?.businessDate
     ? draft.businessDate === m.model.floor.businessDate
     : draft.businessDate === m.today
@@ -255,47 +289,20 @@ function BookingEditBody({
     () => new Set(m.model.catalog?.zones.filter((zone) => zone.isBookable).map((zone) => zone.id) ?? []),
     [m.model.catalog],
   )
-  const atForAvailability = useMemo(() => {
-    if (!draft.time) return null
-    try {
-      return bookingInstant(draft.businessDate, draft.time)
-    } catch {
-      return null
-    }
-  }, [draft.businessDate, draft.time])
-
-  const availability = useAvailability(
-    editingField === "tables" || diff.tablesDirty ? atForAvailability : null,
-    validParty,
-  )
-  const avail = availability.isPlaceholderData || availability.isError ? undefined : availability.data
-  const availMap = useMemo(() => new Map((avail?.tables ?? []).map((t) => [t.tableId, t])), [avail?.tables])
 
   const validation = useMemo(
     () =>
-      validateBookingEditDraft(r, draft, diff, {
+      validateBookingEditDraft(source, draft, diff, {
         now: m.now,
         quickTimes,
         byId: m.model.byId,
         states: m.model.states,
-        availMap,
+        availMap: EMPTY_AVAIL_MAP,
         bookableZoneIds,
-        availReady: !!avail,
+        availReady: false,
         isSameBusinessDate,
       }),
-    [
-      r,
-      draft,
-      diff,
-      m.now,
-      quickTimes,
-      m.model.byId,
-      m.model.states,
-      availMap,
-      bookableZoneIds,
-      avail,
-      isSameBusinessDate,
-    ],
+    [source, draft, diff, m.now, quickTimes, m.model.byId, m.model.states, bookableZoneIds, isSameBusinessDate],
   )
 
   const historyToken = useId()
@@ -303,27 +310,41 @@ function BookingEditBody({
   const ignoreNextPopRef = useRef(false)
   const isDirtyRef = useRef(diff.isDirty)
   const pendingRef = useRef(pending)
-  isDirtyRef.current = diff.isDirty
-  pendingRef.current = pending
+  const savingRef = useRef(false)
+  useEffect(() => {
+    isDirtyRef.current = diff.isDirty
+    pendingRef.current = pending
+  }, [diff.isDirty, pending])
 
-  const leaveImmediately = useCallback(() => {
-    setConfirmLeave(false)
+  const isPendingNow = useCallback(() => pendingRef.current || savingRef.current, [])
+
+  const releaseHistorySentinel = useCallback(() => {
     if (hasSentinelRef.current && typeof window !== "undefined") {
       hasSentinelRef.current = false
       ignoreNextPopRef.current = true
       window.history.back()
     }
+  }, [])
+
+  const leaveImmediately = useCallback(() => {
+    setConfirmLeave(false)
+    setConfirmTableChange(false)
+    releaseHistorySentinel()
     onClose()
-  }, [onClose])
+  }, [onClose, releaseHistorySentinel])
 
   const requestLeave = useCallback(() => {
-    if (pendingRef.current) return
-    if (isDirtyRef.current) {
+    const action = resolveBookingEditBackAction({
+      pending: isPendingNow(),
+      isDirty: isDirtyRef.current,
+    })
+    if (action === "block_pending") return
+    if (action === "confirm_discard") {
       setConfirmLeave(true)
       return
     }
     leaveImmediately()
-  }, [leaveImmediately])
+  }, [isPendingNow, leaveImmediately])
 
   useEffect(() => {
     if (!requestCloseRef) return
@@ -348,8 +369,18 @@ function BookingEditBody({
         return
       }
       if (!hasSentinelRef.current) return
-      if (pendingRef.current || isDirtyRef.current) {
-        window.history.pushState({ __gmBookingEdit: historyToken }, "")
+      const action = resolveBookingEditBackAction({
+        pending: isPendingNow(),
+        isDirty: isDirtyRef.current,
+      })
+      if (action === "block_pending") {
+        const state = window.history.state as Record<string, unknown> | null
+        window.history.pushState({ ...state, __gmBookingEdit: historyToken }, "")
+        return
+      }
+      if (action === "confirm_discard") {
+        const state = window.history.state as Record<string, unknown> | null
+        window.history.pushState({ ...state, __gmBookingEdit: historyToken }, "")
         setConfirmLeave(true)
         return
       }
@@ -361,21 +392,10 @@ function BookingEditBody({
     return () => {
       window.removeEventListener("popstate", onPopState)
     }
-  }, [historyToken, onClose, parentOpen])
+  }, [historyToken, isPendingNow, onClose, parentOpen])
 
-  useEffect(() => {
-    if (editingField === "name") {
-      nameInputRef.current?.focus({ preventScroll: true })
-    } else if (editingField === "partySize") {
-      partyInputRef.current?.focus({ preventScroll: true })
-    } else if (editingField === "note") {
-      noteInputRef.current?.focus({ preventScroll: true })
-    }
-  }, [editingField])
-
-  const hold = a.bookingPolicy(r)
-  const heldEntry = hold.entry
-  const canEditTables = m.can("table.assign") && hold.canReassign && r.status === "BOOKED"
+  const hold = a.bookingPolicy(source)
+  const canEditTables = m.can("table.assign") && hold.canReassign && source.status === "BOOKED"
 
   const dayOptions = useMemo(() => {
     const offsets = Array.from({ length: 7 }, (_, i) => i)
@@ -391,89 +411,93 @@ function BookingEditBody({
     return dates
   }, [m.today, draft.businessDate])
 
-  const effectiveTableCtx = useMemo(
-    () => tableContextForEditedBooking(r, draft.businessDate, availMap, m.model.states),
-    [r, draft.businessDate, availMap, m.model.states],
-  )
-
-  const tableOptions = useMemo(() => {
-    const anchor = m.model.byId.get(draft.tableIds[0])
-    return m.model.tables
-      .filter((t) => bookableZoneIds.has(t.zoneId) || draft.tableIds.includes(t.id))
-      .filter((t) => (t.status === "ACTIVE" && !t.isSpare) || draft.tableIds.includes(t.id))
-      .map((t) => {
-        const selected = draft.tableIds.includes(t.id)
-        const availRow = effectiveTableCtx.availMap.get(t.id)
-        const stRow = effectiveTableCtx.states.get(t.id)
-        const liveBlocked = isSameBusinessDate && stRow && stRow.state !== "free"
-        const canPick =
-          selected ||
-          (!!avail &&
-            !liveBlocked &&
-            bookingTableCanSelect(t, availRow, anchor) &&
-            !(availRow?.bookingConflicts && availRow.bookingConflicts.length > 0))
-        const reason = !avail
-          ? "Đang kiểm tra bàn trống"
-          : liveBlocked
-            ? "Bàn đang có khách hoặc được giữ"
-            : availRow?.reason ||
-              (anchor && (anchor.zoneId !== t.zoneId || anchor.kind !== t.kind)
-                ? "Khác khu hoặc khác loại bàn"
-                : undefined)
-        return { table: t, selected, canPick, reason }
+  const saveFields = async (): Promise<boolean> => {
+    if (!validation.canSave || isPendingNow()) return false
+    savingRef.current = true
+    try {
+      const result = await run(async () => api.updateReservation(buildUpdateReservationInput(source, draft)), {
+        silent: true,
       })
-  }, [m.model.tables, m.model.byId, bookableZoneIds, draft.tableIds, effectiveTableCtx, isSameBusinessDate, avail])
-
-  const toggleTable = (tableId: number) => {
-    updateDraft({
-      tableIds: draft.tableIds.includes(tableId)
-        ? draft.tableIds.filter((idItem) => idItem !== tableId)
-        : [...draft.tableIds, tableId],
-    })
-  }
-
-  const save = async () => {
-    if (!validation.canSave || pending) return
-    const result = await run(
-      async (overrideReason) => {
-        let latestVersion = r.version
-        let lastResult = null
-        if (diff.fieldsDirty) {
-          lastResult = await api.updateReservation(buildUpdateReservationInput(r, draft))
-          if (diff.tablesDirty) {
-            const list = await api.listReservations({ businessDate: draft.businessDate })
-            const updated = list.find((item) => item.id === r.id)
-            latestVersion = updated?.version ?? r.version + 1
-          }
-        }
-        if (diff.tablesDirty) {
-          if (heldEntry && api.mode === "mock" && held.policy(heldEntry, r).kind === "offer") {
-            lastResult = await api.moveClaim({
-              claim: { waitlistEntryId: heldEntry.id, version: heldEntry.hold!.version },
-              tableIds: draft.tableIds,
-              overrideReason,
-            })
-          } else {
-            lastResult = await api.assignTables(r.id, latestVersion, draft.tableIds, overrideReason)
-          }
-        }
-        return lastResult!
-      },
-      { silent: true },
-    )
-    if (result) {
+      if (!result) return false
       toast.success("Đã lưu thay đổi", {
         description: api.mode === "mock" ? MOCK_NOTE : undefined,
       })
-      leaveImmediately()
+      return true
+    } finally {
+      savingRef.current = false
     }
+  }
+
+  const save = async () => {
+    const ok = await saveFields()
+    if (ok) leaveImmediately()
+  }
+
+  const openTablePicker = useCallback(
+    (target: ReservationView) => {
+      releaseHistorySentinel()
+      const targetPolicy = a.bookingPolicy(target)
+      if (targetPolicy.entry) {
+        a.reassignHold(targetPolicy.entry, target)
+      } else {
+        a.assign(target)
+      }
+    },
+    [a, releaseHistorySentinel],
+  )
+
+  const requestTableChange = () => {
+    if (isPendingNow() || !canEditTables) return
+    if (diff.isDirty) {
+      setConfirmTableChange(true)
+      return
+    }
+    openTablePicker(source)
+  }
+
+  const discardAndPickTables = () => {
+    if (isPendingNow()) return
+    setConfirmTableChange(false)
+    const cleanTarget = r.version !== source.version ? r : source
+    setSession({ source: cleanTarget, draft: initialBookingEditDraft(cleanTarget) })
+    openTablePicker(cleanTarget)
+  }
+
+  const saveAndPickTables = async () => {
+    if (!validation.canSave || isPendingNow()) return
+    setConfirmTableChange(false)
+    const ok = await saveFields()
+    if (!ok) return
+    const targetBd = draft.businessDate
+    let latest = qc
+      .getQueryData<ReservationView[]>(qk.reservations(targetBd, ""))
+      ?.find((item) => item.id === source.id)
+    if (!latest) {
+      const list = await qc.fetchQuery({
+        queryKey: qk.reservations(targetBd, ""),
+        queryFn: () => api.listReservations({ businessDate: targetBd, search: "" }),
+      })
+      latest = list.find((item) => item.id === source.id)
+    }
+    if (!latest || latest.status !== "BOOKED") {
+      leaveImmediately()
+      return
+    }
+    if (targetBd !== bd) {
+      await qc.ensureQueryData({
+        queryKey: qk.waitlist(targetBd),
+        queryFn: () => api.listWaitlist(targetBd),
+      })
+    }
+    setSession({ source: latest, draft: initialBookingEditDraft(latest) })
+    openTablePicker(latest)
   }
 
   const nameId = useId()
   const partyId = useId()
   const noteId = useId()
 
-  const isBooked = r.status === "BOOKED"
+  const isBooked = source.status === "BOOKED"
   const platformLabel = SOCIAL_PLATFORMS.find((p) => p.value === draft.platform)?.label ?? draft.platform
   const sourceDisplay =
     draft.source === "SOCIAL" ? (
@@ -524,7 +548,7 @@ function BookingEditBody({
             Sửa booking
           </h1>
           <span className="tnum shrink-0 rounded-full border border-border bg-surface-2 px-2.5 py-0.5 text-xs font-semibold text-[var(--text-muted)]">
-            #{r.id}
+            #{source.id}
           </span>
         </div>
       </header>
@@ -561,7 +585,6 @@ function BookingEditBody({
                   </span>
                 </div>
                 <Input
-                  ref={nameInputRef}
                   id={nameId}
                   type="text"
                   autoComplete="name"
@@ -595,12 +618,12 @@ function BookingEditBody({
             <div className="flex min-h-12 items-center gap-3 px-4 py-3">
               <span className="w-[108px] shrink-0 text-[13px] font-medium text-[var(--text-muted)]">Số điện thoại</span>
               <div className="min-w-0 flex-1">
-                {r.phoneLast3 ? (
+                {source.phoneLast3 ? (
                   <RevealPhone
-                    key={r.customerId ?? r.id}
-                    customerId={r.customerId}
-                    last3={r.phoneLast3}
-                    context={{ reservationId: r.id }}
+                    key={source.customerId ?? source.id}
+                    customerId={source.customerId}
+                    last3={source.phoneLast3}
+                    context={{ reservationId: source.id }}
                   />
                 ) : (
                   <span className="text-[14px]">
@@ -681,7 +704,7 @@ function BookingEditBody({
               <div className="flex flex-col gap-2.5">
                 <div className="flex flex-wrap items-center gap-3">
                   <Stepper
-                    value={parsedParty.ok ? parsedParty.value : r.partySize}
+                    value={parsedParty.ok ? parsedParty.value : validParty}
                     onChange={(n) => updateDraft({ partySizeText: String(n) })}
                     min={1}
                     max={500}
@@ -692,8 +715,8 @@ function BookingEditBody({
                       Nhập số khách
                     </label>
                     <Input
-                      ref={partyInputRef}
                       id={partyId}
+                      data-autofocus=""
                       type="text"
                       inputMode="numeric"
                       pattern="[0-9]*"
@@ -750,7 +773,7 @@ function BookingEditBody({
                     )
                   })}
                 </div>
-                {draft.businessDate !== r.businessDate && r.tableIds.length > 0 ? (
+                {draft.businessDate !== source.businessDate && source.tableIds.length > 0 ? (
                   <p role="status" className="m-0 text-xs text-st-late-ink">
                     Đổi sang ngày khác sẽ kiểm tra lại hoặc nhả bàn đang giữ.
                   </p>
@@ -780,83 +803,28 @@ function BookingEditBody({
             </EditableRow>
 
             {canEditTables ? (
-              <EditableRow
-                label="Bàn"
-                editing={editingField === "tables"}
-                changed={diff.changed.tables}
-                error={validation.errors.tables}
-                display={draft.tableIds.length > 0 ? codesOf(draft.tableIds, m.model) : <EmptyPlaceholder />}
-                onOpen={() => setEditingField("tables")}
-                onDone={() => setEditingField(null)}
-              >
-                <div className="flex flex-col gap-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs text-[var(--text-muted)]">
-                      {draft.tableIds.length > 0
-                        ? `Đang chọn: ${codesOf(draft.tableIds, m.model)}`
-                        : "Chưa chọn bàn (chạm để chọn)"}
-                    </span>
-                    {r.tableIds.length === 0 && draft.tableIds.length > 0 ? (
-                      <button
-                        type="button"
-                        onClick={() => updateDraft({ tableIds: [] })}
-                        className="text-xs font-semibold text-primary-ink underline"
-                      >
-                        Bỏ chọn hết
-                      </button>
-                    ) : null}
-                  </div>
-                  {availability.isError ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void availability.refetch()}
-                      className="min-h-11 rounded-xl"
-                    >
-                      Tải lại bàn khả dụng
-                    </Button>
-                  ) : (
-                    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Chọn bàn">
-                      {tableOptions.map(({ table: t, selected, canPick, reason }) => (
-                        <button
-                          key={t.id}
-                          type="button"
-                          aria-pressed={selected}
-                          disabled={pending || !canPick}
-                          title={!canPick ? reason : undefined}
-                          onClick={() => toggleTable(t.id)}
-                          className={cn(
-                            "gm-press tnum flex min-h-11 flex-col items-start justify-center rounded-xl border px-3 py-1.5 text-left",
-                            selected
-                              ? "border-primary bg-primary-tint text-primary-ink shadow-[var(--shadow-xs)]"
-                              : "border-border bg-surface-1 text-tx-1 hover:border-border-strong",
-                            (!canPick || pending) && "cursor-not-allowed opacity-45",
-                          )}
-                        >
-                          <span className="text-[13.5px] font-semibold">
-                            {t.kind === "BAR_SEAT" ? `Bar ${t.seqNo}` : t.code}
-                          </span>
-                          <span className="text-[11px] text-[var(--text-muted)]">{t.capacity} chỗ</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {validation.capacityWarning ? (
-                    <p
-                      role="status"
-                      className="m-0 rounded-xl border border-st-late/30 bg-st-late-tint px-3 py-2 text-xs font-medium text-st-late-ink"
-                    >
-                      {validation.capacityWarning}
-                    </p>
-                  ) : null}
+              <div className="flex min-h-12 items-center gap-3 px-4 py-2.5">
+                <span className="w-[108px] shrink-0 text-[13px] font-medium text-[var(--text-muted)]">Bàn</span>
+                <div className="min-w-0 flex-1 text-[14px]">
+                  <span className="tnum text-tx-1">
+                    {source.tableIds.length > 0 ? codesOf(source.tableIds, m.model) : <EmptyPlaceholder />}
+                  </span>
+                  <span className="block text-xs text-[var(--text-muted)]">Lưu ngay khi chọn bàn</span>
                 </div>
-              </EditableRow>
+                <button
+                  type="button"
+                  onClick={requestTableChange}
+                  disabled={pending}
+                  className="gm-press inline-flex h-11 shrink-0 items-center rounded-xl border border-border-strong bg-surface-1 px-3.5 text-[13px] font-semibold text-primary-ink hover:bg-primary-tint disabled:pointer-events-none disabled:opacity-45"
+                >
+                  Đổi bàn
+                </button>
+              </div>
             ) : (
               <div className="flex min-h-12 items-center gap-3 px-4 py-3">
                 <span className="w-[108px] shrink-0 text-[13px] font-medium text-[var(--text-muted)]">Bàn</span>
                 <div className="min-w-0 flex-1 text-[14px]">
-                  {draft.tableIds.length > 0 ? codesOf(draft.tableIds, m.model) : <EmptyPlaceholder />}
+                  {source.tableIds.length > 0 ? codesOf(source.tableIds, m.model) : <EmptyPlaceholder />}
                   {hold.reason || !hold.canReassign ? (
                     <span className="block text-xs text-[var(--text-muted)]">
                       {hold.reason ?? "Chưa hỗ trợ đổi bàn cho đơn giữ chỗ"}
@@ -932,7 +900,6 @@ function BookingEditBody({
                   </span>
                 </div>
                 <Textarea
-                  ref={noteInputRef}
                   id={noteId}
                   rows={3}
                   value={draft.note}
@@ -956,7 +923,9 @@ function BookingEditBody({
             variant="outline"
             size="lg"
             disabled={pending}
-            onClick={leaveImmediately}
+            onClick={() => {
+              if (!isPendingNow()) leaveImmediately()
+            }}
             className="h-12 rounded-xl border-border-strong text-[15px] font-semibold"
           >
             Hủy
@@ -985,7 +954,7 @@ function BookingEditBody({
         </div>
       </footer>
 
-      <AlertDialog open={confirmLeave} onOpenChange={setConfirmLeave}>
+      <AlertDialog open={confirmLeave && !pending} onOpenChange={setConfirmLeave}>
         <AlertDialogContent
           data-gm
           data-gm-overlay-id={leaveFocus.overlayId}
@@ -1016,11 +985,63 @@ function BookingEditBody({
             </AlertDialogCancel>
             <AlertDialogAction
               variant="default"
-              onClick={leaveImmediately}
+              onClick={() => {
+                if (!isPendingNow()) leaveImmediately()
+              }}
               className="h-12 rounded-xl text-[15px] font-semibold"
             >
               Đồng ý
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmTableChange && !pending} onOpenChange={setConfirmTableChange}>
+        <AlertDialogContent
+          data-gm
+          data-gm-overlay-id={tableChangeFocus.overlayId}
+          data-receptionist-frame={isReceptionist ? "true" : undefined}
+          size="sm"
+          onCloseAutoFocus={tableChangeFocus.onCloseAutoFocus}
+          aria-label="Xác nhận trước khi đổi bàn"
+          className="max-w-[min(calc(100%-2rem),380px)] gap-4 rounded-2xl border-border bg-surface-1 p-5 shadow-[var(--shadow-float)]"
+        >
+          <AlertDialogHeader>
+            <AlertDialogMedia className="size-11 rounded-xl bg-st-late-tint text-st-late-ink">
+              <AlertTriangle className="size-5" aria-hidden />
+            </AlertDialogMedia>
+            <AlertDialogTitle className="text-[17px] font-semibold tracking-[-0.015em] text-tx-strong">
+              Lưu hoặc bỏ thay đổi trước khi đổi bàn?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-[14px] leading-relaxed text-pretty text-[var(--text-muted)]">
+              Đổi bàn lưu riêng ngay trên sơ đồ. Hãy lưu hoặc bỏ các thay đổi đang sửa trước khi tiếp tục.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex flex-col gap-2 pt-1 group-data-[size=sm]/alert-dialog-content:flex sm:flex-col">
+            <AlertDialogAction
+              variant="default"
+              disabled={!validation.canSave || pending}
+              onClick={() => void saveAndPickTables()}
+              className="h-12 w-full rounded-xl text-[15px] font-semibold"
+            >
+              Lưu &amp; đổi bàn
+            </AlertDialogAction>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={pending}
+              onClick={discardAndPickTables}
+              className="h-12 w-full rounded-xl border-border-strong text-[15px] font-medium"
+            >
+              Bỏ thay đổi
+            </Button>
+            <AlertDialogCancel
+              variant="outline"
+              onClick={() => setConfirmTableChange(false)}
+              className="h-12 w-full rounded-xl border-border-strong text-[15px] font-medium"
+            >
+              Ở lại
+            </AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

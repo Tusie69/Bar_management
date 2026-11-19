@@ -9,6 +9,8 @@ import {
   diffBookingEditDraft,
   initialBookingEditDraft,
   parsePartySize,
+  resolveBookingEditBackAction,
+  syncBookingEditSession,
   validateBookingEditDraft,
 } from "./booking-edit-model"
 
@@ -304,5 +306,67 @@ describe("booking-edit-model validation", () => {
     const res = validateBookingEditDraft(r, socialNoPlat, diffBookingEditDraft(r, socialNoPlat), ctx)
     expect(res.errors.platform).toBe("Vui lòng chọn nền tảng mạng xã hội.")
     expect(res.canSave).toBe(false)
+  })
+})
+
+describe("booking-edit-model session pinning (B01) and pending guard (B03)", () => {
+  it("replaces source, version, and draft together on refresh while clean", () => {
+    const initialRecord = makeReservation({ version: 3, partySize: 2, note: null })
+    const session = {
+      source: initialRecord,
+      draft: initialBookingEditDraft(initialRecord),
+    }
+
+    const refreshed = makeReservation({ version: 4, partySize: 3, note: "Bàn gần cửa" })
+    const next = syncBookingEditSession(session, refreshed)
+
+    expect(next).not.toBe(session)
+    expect(next.source.version).toBe(4)
+    expect(next.source.partySize).toBe(3)
+    expect(next.draft.partySizeText).toBe("3")
+    expect(next.draft.note).toBe("Bàn gần cửa")
+    expect(diffBookingEditDraft(next.source, next.draft).isDirty).toBe(false)
+  })
+
+  it("pins source and version while dirty so concurrent refresh neither overwrites nor leaks remote changes", () => {
+    const initialRecord = makeReservation({ version: 3, partySize: 2, note: null })
+    const dirtySession = {
+      source: initialRecord,
+      draft: { ...initialBookingEditDraft(initialRecord), note: "Ghi chú mới" },
+    }
+
+    const refreshed = makeReservation({ version: 4, partySize: 3, note: null })
+    const next = syncBookingEditSession(dirtySession, refreshed)
+
+    expect(next).toBe(dirtySession)
+    expect(next.source.version).toBe(3)
+    expect(next.source.partySize).toBe(2)
+
+    const diff = diffBookingEditDraft(next.source, next.draft)
+    expect(diff.isDirty).toBe(true)
+    expect(diff.changed.note).toBe(true)
+    expect(diff.changed.partySize).toBe(false)
+
+    const payload = buildUpdateReservationInput(next.source, next.draft)
+    expect(payload.version).toBe(3)
+    expect(payload.partySize).toBe(2)
+    expect(payload.note).toBe("Ghi chú mới")
+
+    // Reverting the local edit back to source makes the draft clean so a refresh can sync again.
+    const revertedSession = {
+      ...next,
+      draft: { ...next.draft, note: "" },
+    }
+    const syncedAfterRevert = syncBookingEditSession(revertedSession, refreshed)
+    expect(syncedAfterRevert.source.version).toBe(4)
+    expect(syncedAfterRevert.draft.partySizeText).toBe("3")
+    expect(diffBookingEditDraft(syncedAfterRevert.source, syncedAfterRevert.draft).isDirty).toBe(false)
+  })
+
+  it("blocks back/close while save is pending regardless of dirty state", () => {
+    expect(resolveBookingEditBackAction({ pending: true, isDirty: false })).toBe("block_pending")
+    expect(resolveBookingEditBackAction({ pending: true, isDirty: true })).toBe("block_pending")
+    expect(resolveBookingEditBackAction({ pending: false, isDirty: true })).toBe("confirm_discard")
+    expect(resolveBookingEditBackAction({ pending: false, isDirty: false })).toBe("leave")
   })
 })
