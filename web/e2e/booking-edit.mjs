@@ -1,6 +1,7 @@
 // Playwright E2E verification & screenshots for Reception "Sửa booking" inline edit page (mock mode).
 // Usage (from web/): VITE_API_MODE=mock node e2e/booking-edit.mjs
 import assert from "node:assert/strict"
+import { randomUUID } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -10,7 +11,7 @@ import { createServer } from "vite"
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
 const evidenceDir =
-  process.env.BOOKING_EDIT_EVIDENCE_DIR || "D:\\GAM-APP\\docs\\Sprint4\\evidence\\hung-booking-edit-2026-11-19"
+  process.env.BOOKING_EDIT_EVIDENCE_DIR || path.join(__dirname, ".artifacts", `booking-edit-${randomUUID()}`)
 fs.mkdirSync(evidenceDir, { recursive: true })
 
 function launchBrowser() {

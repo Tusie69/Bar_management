@@ -904,6 +904,8 @@ try {
           venueName: "21GAM",
           timezone: "Asia/Ho_Chi_Minh",
           businessDayCutoffHour: 5,
+          businessDayStartLocal: "17:00:00",
+          businessDayCutoffLocal: "05:00:00",
           lateThresholdMinutes: 15,
           noShowThresholdMinutes: 30,
           waitlistHoldMinutes: 15,
@@ -1014,7 +1016,14 @@ try {
         )
         const zoneIds = { A: 1, B: 2, C: 3, BAR: 4 }
         await json({
-          venue: { id: 1, name: "21GAM", timezone: "Asia/Ho_Chi_Minh", changeSeq: 10 },
+          venue: {
+            id: 1,
+            name: "21GAM",
+            timezone: "Asia/Ho_Chi_Minh",
+            changeSeq: 10,
+            businessDayStartLocal: "17:00:00",
+            businessDayCutoffLocal: "05:00:00",
+          },
           zones: [
             { id: 3, version: 1, code: "C", name: "Khu C", isBookable: true, isWaitingArea: false, displayOrder: 1 },
             { id: 2, version: 1, code: "B", name: "Khu B", isBookable: true, isWaitingArea: false, displayOrder: 2 },

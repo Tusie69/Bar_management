@@ -27,6 +27,18 @@ for (const item of cases) {
   const defer = page.getByRole("button", { name: "Đã xem, xử lý sau" })
   if (await defer.isVisible()) await defer.click()
 
+  if (item.name === "mobile-dark") {
+    const lateToast = page.getByRole("status").filter({ hasText: /đã trễ 15 phút/ })
+    await lateToast.getByRole("button", { name: "Xem", exact: true }).click()
+    const tableSheet = page.getByRole("dialog", { name: "Chi tiết B3", exact: true })
+    await expect(tableSheet.getByRole("button", { name: "Đổi bàn", exact: true })).toBeVisible()
+    await tableSheet.getByRole("button", { name: "Sửa booking", exact: true }).click()
+    const editor = page.getByRole("dialog", { name: "Sửa booking", exact: true })
+    await expect(editor.getByRole("button", { name: "Lưu thay đổi", exact: true })).toBeVisible()
+    await editor.getByRole("button", { name: "Quay lại", exact: true }).click()
+    await expect(editor).toBeHidden()
+  }
+
   const table = page.locator('[aria-label^="Bàn B3,"], [aria-label^="Bàn B3:"]').first()
   if (!(await table.count())) {
     const labels = await page
@@ -77,6 +89,12 @@ for (const item of cases) {
       await confirmation.getByRole("button", { name: /Khách đã đến|Xác nhận/ }).click()
     await expect(table).toHaveAttribute("aria-label", /Bàn B3, Đã tới/)
     assert.equal(await state(), "seated", "arrival still checks the booking in")
+    const tableSheet = page.getByRole("dialog", { name: "Chi tiết B3", exact: true })
+    if (!(await tableSheet.isVisible())) await table.click()
+    await tableSheet.getByRole("button", { name: "Sửa booking", exact: true }).click()
+    const editor = page.getByRole("dialog", { name: "Sửa booking", exact: true })
+    await expect(editor.getByText("Booking không còn ở trạng thái Đã đặt nên không thể chỉnh sửa.")).toBeVisible()
+    await expect(editor.getByRole("button", { name: "Lưu thay đổi", exact: true })).toBeDisabled()
   }
   await page.close()
   console.log(`PASS ${item.name}`)
