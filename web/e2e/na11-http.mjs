@@ -10,17 +10,15 @@ const apiUrl = process.env.API_BASE_URL ?? "http://127.0.0.1:3117"
 const webUrl = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5192"
 const database = process.env.DB_NAME ?? "gam21_platform_e2e_test"
 if (!/_test$/.test(database)) throw new Error("NA-11 HTTP E2E requires an isolated *_test database")
-if (
-  !["gam21_platform_e2e_test", "gam21_platform_it_test"].includes(database) ||
-  (process.env.DB_PORT ?? "33306") !== "33306"
-)
-  throw new Error("HTTP E2E requires the approved test databases on port 33306")
+if (!["gam21_platform_e2e_test", "gam21_platform_it_test"].includes(database))
+  throw new Error("HTTP E2E requires an approved local test database")
 const pnpm = process.env.npm_execpath
 if (!pnpm) throw new Error("Run through pnpm exec node")
 const fixedNow = "2026-11-03T12:00:00.000Z"
 const today = "2026-11-03"
 const tomorrow = "2026-11-04"
 const username = `na11_${Date.now()}`
+const secondUsername = `${username}_peer`
 const password = randomBytes(24).toString("base64url")
 const common = {
   ...process.env,
@@ -36,6 +34,7 @@ const common = {
   BUSINESS_DAY_WORKER_ENABLED: "false",
   E2E_FIXED_NOW: fixedNow,
   E2E_USERNAME: username,
+  E2E_SECOND_USERNAME: secondUsername,
   E2E_PASSWORD: password,
 }
 const output = new URL(".artifacts/na11/http/", import.meta.url)
@@ -81,22 +80,20 @@ async function ready(url) {
   }
   throw new Error(`Server not ready: ${url}`)
 }
-const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"], [data-combined-codes~="${code}"]`).first()
+const table = (page, code) =>
+  page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"], [data-combined-codes~="${code}"]`).first()
 const bookingForm = (page) =>
   page
     .getByRole("dialog", { name: /Tạo đặt bàn|Tạo đơn đặt bàn/ })
     .or(page.getByRole("form", { name: /Tạo đặt bàn|Tạo đơn đặt bàn/ }))
     .last()
-async function login(page) {
-  await page.goto(webUrl, { waitUntil: "networkidle" })
-  if (
-    await page
-      .getByLabel("Tên đăng nhập")
-      .isVisible()
-      .catch(() => false)
-  ) {
-    await page.getByLabel("Tên đăng nhập").fill(username)
-    await page.getByLabel("Mật khẩu").fill(password)
+async function login(page, loginUsername = username) {
+  await page.goto(webUrl, { waitUntil: "domcontentloaded" })
+  const usernameInput = page.getByLabel("Tên đăng nhập")
+  await usernameInput.or(table(page, "A1")).first().waitFor()
+  if (await usernameInput.isVisible()) {
+    await usernameInput.fill(loginUsername)
+    await page.getByLabel("Mật khẩu", { exact: true }).fill(password)
     await page.getByRole("button", { name: "Đăng nhập", exact: true }).click()
   }
   await table(page, "A1").waitFor()
@@ -121,6 +118,13 @@ async function closeDialog(page) {
   if (await close.isVisible().catch(() => false)) await close.click()
   else await page.keyboard.press("Escape")
 }
+async function copyBookingExport(page) {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: webUrl })
+  await page.getByRole("button", { name: "Xuất text Zalo", exact: true }).click()
+  await page.getByText("Đã sao chép danh sách bàn đặt", { exact: true }).waitFor()
+  return page.evaluate(() => navigator.clipboard.readText())
+}
+
 async function jsonRequest(context, method, path, body) {
   const me = await context.request.get(`${apiUrl}/api/v1/auth/me`)
   const { csrfToken } = await me.json()
@@ -177,35 +181,46 @@ try {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, locale: "en-US" })
   const page = await context.newPage()
   activePage = page
-  page.on("request", (request ) => {
+  page.on("request", (request) => {
     if (new URL(request.url()).pathname.endsWith("/check-in"))
       checkInNetwork.push({ event: "request", method: request.method(), at: Date.now() })
   })
-  page.on("response", (response ) => {
+  page.on("response", (response) => {
     if (new URL(response.url()).pathname.endsWith("/check-in"))
       checkInNetwork.push({ event: "response", status: response.status(), at: Date.now() })
   })
   const errors = []
   page.on("pageerror", (error) => errors.push(error.message))
   await login(page)
+  page.on("response", (response) => {
+    if (response.url().startsWith(apiUrl) && response.status() === 401) {
+      console.error(`Unexpected HTTP 401 after login on ${new URL(response.url()).pathname}`)
+    }
+  })
   for (const width of [390, 1366]) {
     await page.setViewportSize({ width, height: 1000 })
-    await page.getByRole("button", { name: "Ghép bàn", exact: true }).click()
     const writes = []
     const observe = (req) => {
       if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method())) writes.push(req.url())
     }
     page.on("request", observe)
     await table(page, "A1").click()
+    await page
+      .getByRole("dialog", { name: "Chi tiết A1", exact: true })
+      .getByRole("button", { name: "Ghép bàn", exact: true })
+      .click()
     await table(page, "A2").click()
     await expect(page.getByRole("form")).toHaveCount(0)
-    await expect(page.getByRole("button", { name: "Ghép 2 bàn", exact: true })).toBeDisabled()
-    await expect(page.getByRole("region", { name: "Chế độ ghép bàn" })).toContainText("Chưa thể ghép bàn trống")
-    await expect(page.locator("[data-combined-group]")).toHaveCount(0)
+    const mergePanel = page.getByRole("region", { name: "Chế độ ghép bàn" })
+    await expect(mergePanel.getByText("A1", { exact: true })).toBeVisible()
+    await expect(mergePanel.getByText("A2", { exact: true })).toBeVisible()
+    await expect(mergePanel.getByRole("button", { name: "Ghép 2 bàn", exact: true })).toBeEnabled()
+    await mergePanel.getByRole("button", { name: "Hủy", exact: true }).click()
+    await expect(mergePanel).toBeHidden()
     assert.deepEqual(writes, [])
     page.off("request", observe)
-    await page.getByRole("region", { name: "Chế độ ghép bàn" }).getByRole("button", { name: "Hủy", exact: true }).click()
-    results.push({ check: `P1 HTTP idle merge disabled without writes ${width}`, result: "PASS" })
+    expect((await jsonRequest(context, "GET", `/tables?date=${today}`)).groups).toEqual([])
+    results.push({ check: `P1 HTTP idle merge selection and cancel without writes ${width}`, result: "PASS" })
   }
   await jsonRequest(context, "POST", "/waitlist", {
     kind: "WALK_IN",
@@ -223,48 +238,50 @@ try {
     [1280, 800],
   ]) {
     await page.setViewportSize({ width, height })
-    await page.goto(`${webUrl}/floor`, { waitUntil: "networkidle" })
+    await page.goto(`${webUrl}/floor`, { waitUntil: "domcontentloaded" })
     await table(page, "A1").waitFor()
-    await expect(page.getByRole("region", { name: "Chú giải trạng thái bàn", exact: true })).toBeVisible()
+    const legend = page.getByRole("button", { name: /^Ký hiệu: mở bảng chú giải trạng thái/ })
+    await expect(legend).toHaveCount(1)
     await expect(page.getByRole("tablist", { name: "Lọc khu" })).toHaveCount(0)
     await expect(page.getByRole("button", { name: "Tạo mới", exact: true })).toHaveCount(0)
     await expect(page.getByRole("navigation", { name: /Điều hướng.*(mobile|di động)/i })).toHaveCount(0)
     await expect(page.getByRole("link", { name: "Đặt bàn", exact: true })).toHaveCount(0)
     const dateBox = await calendar(page).boundingBox()
     const searchBox = await page.getByRole("textbox", { name: "Tìm 3 số cuối SĐT" }).boundingBox()
-    const countBox = await page.getByRole("button", { name: "Đếm khách", exact: true }).boundingBox()
-    const bellBox = await page
-      .getByRole("button", { name: /Thông báo/ })
-      .first()
-      .boundingBox()
+    const countBox = await page.getByTestId("guest-count-card").boundingBox()
+    const exportBox = await page.getByRole("button", { name: "Xuất text Zalo", exact: true }).boundingBox()
+    const legendBox = await legend.boundingBox()
+    const waitingButton = page.getByRole("button", { name: /^Bàn chờ,/ })
+    const waitingBox = await waitingButton.boundingBox()
     if (
       !dateBox ||
       !searchBox ||
       !countBox ||
-      !bellBox ||
-      Math.abs(dateBox.y + dateBox.height / 2 - searchBox.y - searchBox.height / 2) > 1 ||
-      Math.abs(dateBox.y + dateBox.height / 2 - countBox.y - countBox.height / 2) > 1 ||
-      dateBox.x < searchBox.x + searchBox.width ||
-      countBox.x < dateBox.x + dateBox.width ||
-      dateBox.x - searchBox.x - searchBox.width > 16 ||
-      countBox.x - dateBox.x - dateBox.width > 16 ||
-      bellBox.y + bellBox.height > dateBox.y
+      !exportBox ||
+      !legendBox ||
+      !waitingBox ||
+      Math.abs(searchBox.y + searchBox.height / 2 - exportBox.y - exportBox.height / 2) > 1 ||
+      searchBox.x + searchBox.width > exportBox.x ||
+      searchBox.y + searchBox.height > countBox.y ||
+      countBox.x + countBox.width > dateBox.x ||
+      legendBox.y + legendBox.height > dateBox.y ||
+      dateBox.y + dateBox.height > waitingBox.y
     )
-      throw new Error(`Search, calendar and guest count must share the toolbar below alerts at ${width}`)
+      throw new Error(
+        `Search and export must share the header, with count and navigation controls clear on the map at ${width}`,
+      )
     await expect(page.getByRole("group", { name: "Điều khiển thu phóng" })).toHaveCount(0)
     await expect(page.getByRole("button", { name: /Phóng to|Thu nhỏ/ })).toHaveCount(0)
-    await expect(page.getByRole("region", { name: "Chú giải trạng thái bàn", exact: true })).toHaveCount(1)
-    await expect(calendar(page).locator("../..").getByRole("button", { name: /Bàn chờ/ }),
-    ).toHaveCount(0)
+    await legend.click()
+    await expect(page.getByRole("dialog", { name: "Chú giải ký hiệu", exact: true })).toBeVisible()
+    await closeDialog(page)
     if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1))
       throw new Error(`Overflow at ${width}`)
-    await expect(page.getByRole("button", { name: /Bàn chờ/ })).toHaveCount(1)
-    await page.getByRole("button", { name: /Bàn chờ/ }).click()
+    await expect(waitingButton).toHaveCount(1)
+    await waitingButton.click()
     await expect(page.getByText("NA11 waiting guest", { exact: true }).first()).toBeVisible()
     await closeDialog(page)
-    await page.getByRole("button", { name: "Đếm khách", exact: true }).click()
-    await expect(page.getByLabel("Nội dung text booking")).toHaveValue(/THỐNG KÊ/)
-    await closeDialog(page)
+    expect(await copyBookingExport(page)).toMatch(/^Tổng bàn đặt\/ Tổng khách đặt: \d+\/\d+\s*$/m)
     await table(page, "A1").tap()
     await page.getByRole("button", { name: /^(Đặt bàn|Tạo đặt trước)$/, exact: true }).click()
     const form = bookingForm(page)
@@ -274,7 +291,7 @@ try {
       path: fileURLToPath(new URL(`${width}x${height}-form.png`, output)),
       animations: "disabled",
     })
-    await page.goto(`${webUrl}/floor`, { waitUntil: "networkidle" })
+    await page.goto(`${webUrl}/floor`, { waitUntil: "domcontentloaded" })
     await table(page, "A10").focus()
     await table(page, "A10").press("Enter")
     await expect(bookingForm(page)).toHaveCount(0)
@@ -290,7 +307,8 @@ try {
   }
 
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto(`${webUrl}/floor`, { waitUntil: "networkidle" })
+  await page.goto(`${webUrl}/floor`, { waitUntil: "domcontentloaded" })
+  await table(page, "A1").waitFor()
   const dateRead = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === "/api/v1/tables" &&
@@ -303,21 +321,17 @@ try {
   const form = bookingForm(page)
   const name = "NA11 Nguyễn Văn An"
   await form.getByLabel("Tên khách", { exact: true }).fill(name)
-  await form.getByLabel("Số điện thoại", { exact: true }).fill("0987654789")
+  await form.getByLabel("Số điện thoại (không bắt buộc)", { exact: true }).fill("0987654789")
   await form.getByRole("group", { name: "Giờ nhanh" }).getByRole("button", { name: "21:00" }).click()
-  const birthday = form.getByRole("checkbox", { name: "Sinh nhật", exact: true }).or(form.getByRole("button", { name: "Sinh nhật", exact: true }))
+  const birthday = form
+    .getByRole("checkbox", { name: "Sinh nhật", exact: true })
+    .or(form.getByRole("button", { name: "Sinh nhật", exact: true }))
   const metadataEnabled = (await birthday.count()) > 0
   if (process.env.NA11_REQUIRE_NA14 === "1" && !metadataEnabled)
     throw new Error("NA-14 metadata controls missing in combined build")
   if (metadataEnabled) {
     await birthday.first().click()
-    const regBtn = page.getByRole("button", { name: "Khách quen (O)" }).or(page.getByRole("radio", { name: "Khách quen (O)" }))
-    if (await regBtn.isVisible()) {
-      await regBtn.click()
-    } else {
-      await form.getByLabel("Loại khách").click()
-      await page.getByRole("option", { name: "Khách quen (O)" }).click()
-    }
+    await form.getByRole("radio", { name: "Đã từng đặt bàn", exact: true }).click()
   }
   const creation = page.waitForResponse(
     (response) =>
@@ -388,7 +402,7 @@ try {
   // A second browser must observe an external reservation edit through the existing poll.
   const secondContext = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" })
   const second = await secondContext.newPage()
-  await login(second)
+  await login(second, secondUsername)
   const secondRead = second.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === "/api/v1/tables" &&
@@ -439,6 +453,7 @@ try {
       .getByRole("button", { name: /^(Quay lại|Hủy|Đóng form)$/ })
       .first()
       .click()
+    await expect(page.locator('[aria-label="Đặt bàn trên sơ đồ"]')).toHaveCount(0)
     await expect(calendar(page)).toContainText("15/11")
   }
   results.push({
@@ -447,9 +462,14 @@ try {
   })
 
   await page.setViewportSize({ width: 1280, height: 800 })
-  await table(page, "B3").focus()
-  await table(page, "B3").press("Enter")
-  await page.getByRole("button", { name: "Đặt bàn", exact: true }).click()
+  const b3 = table(page, "B3")
+  await b3.focus()
+  await expect(b3).toBeFocused()
+  await b3.press("Enter")
+  await page
+    .getByRole("dialog", { name: "Chi tiết B3", exact: true })
+    .getByRole("button", { name: "Đặt bàn", exact: true })
+    .click()
   const desktopDraft = bookingForm(page)
   await desktopDraft.getByLabel("Tên khách", { exact: true }).fill("NA11 preserved draft")
   await expect(table(page, "B4")).toHaveAttribute("aria-disabled", "false")
@@ -458,13 +478,17 @@ try {
   await expect(desktopDraft.getByRole("button", { name: "Bỏ B3", exact: true })).toBeVisible()
   await expect(desktopDraft.getByRole("button", { name: "Bỏ B4", exact: true })).toBeVisible()
   await page.keyboard.press("Escape")
+  const discard = page.getByRole("alertdialog", { name: "Bỏ đơn đang nhập" })
+  await expect(discard).toBeVisible()
+  await discard.getByRole("button", { name: "Tiếp tục nhập", exact: true }).click()
+  await expect(discard).toBeHidden()
   await expect(desktopDraft).toBeVisible()
   await expect(desktopDraft.getByLabel("Tên khách", { exact: true })).toHaveValue("NA11 preserved draft")
-  await desktopDraft.getByRole("button", { name: "Hủy", exact: true }).click()
-  const discard = page.getByRole("alertdialog", { name: "Bỏ đơn đang nhập" })
+  await desktopDraft.getByRole("button", { name: "Đóng form", exact: true }).click()
   await expect(discard).toBeVisible()
   await discard.getByRole("button", { name: "Bỏ đơn", exact: true }).click()
   await expect(desktopDraft).toBeHidden()
+  await expect(page.locator('section[aria-label="Đặt bàn trên sơ đồ"]')).toHaveCount(0)
   results.push({
     check: "desktop map multi-selection and Escape retain draft fields until explicit cancel",
     result: "PASS",
@@ -483,15 +507,15 @@ try {
   await expect(table(page, "A4")).toHaveAttribute("aria-label", /Đã đặt|Đang đặt/, { timeout: 20_000 })
   await table(page, "A4").tap()
   const checkInStarted = Date.now()
-  const checkInResponse = page.waitForResponse((response ) =>
-    response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/check-in"),
+  const checkInResponse = page.waitForResponse(
+    (response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/check-in"),
   )
   await page.getByRole("button", { name: "Khách đã đến", exact: true }).click()
   const checkedIn = await checkInResponse
   expect(checkedIn.status()).toBe(200)
   expect((await checkedIn.json()).booking.status).toBe("CHECKED_IN")
-  await expect(table(page, "A4")).toHaveAttribute("aria-label", /(?:Đã tới|Có khách),.*\b2 khách(?:,|$)/)
-  await expect(table(page, "A4").locator("text")).toContainText([/^A4$/, /^NA11 arrival$/])
+  await expect(table(page, "A4")).toHaveAttribute("aria-label", /(?:Đã tới|Có khách), NA11 arrival, 2 khách(?:,|$)/)
+  await expect(table(page, "A4").locator("text").first()).toHaveText(/^A4 - NA11/)
   await expect(table(page, "A4").locator('[data-testid="guest-count-badge"]')).toHaveText("2")
   await expect(table(page, "A4")).not.toContainText(/\d+\s*(?:phút|giờ|['’′])/)
   checkInNetwork.push({ event: "A4 visible seated", elapsedMs: Date.now() - checkInStarted })
@@ -502,8 +526,8 @@ try {
   await walkInSheet.getByLabel(/Tên hoặc đặc điểm/).fill("NA11 walk-in")
   await walkInSheet.getByRole("radio", { name: "4 khách", exact: true }).click()
   await walkInSheet.getByRole("button", { name: "Mở bàn ngay", exact: true }).click()
-  await expect(table(page, "B3")).toHaveAttribute("aria-label", /(?:Đã tới|Có khách),.*\b4 khách(?:,|$)/)
-  await expect(table(page, "B3").locator("text")).toContainText([/^B3$/, /^NA11 walk-in$/])
+  await expect(table(page, "B3")).toHaveAttribute("aria-label", /(?:Đã tới|Có khách), NA11 walk-in, 4 khách(?:,|$)/)
+  await expect(table(page, "B3").locator("text").first()).toHaveText(/^B3 - NA11/)
   await expect(table(page, "B3").locator('[data-testid="guest-count-badge"]')).toHaveText("4")
   await expect(table(page, "B3")).not.toContainText(/\d+\s*(?:phút|giờ|['’′])/)
   await table(page, "B3").tap()
@@ -520,7 +544,10 @@ try {
   const combined = page.locator('[data-combined-codes="B3 B4"]')
   await expect(combined).toHaveCount(2)
   await expect(combined.first()).toHaveAttribute("aria-label", /Đã tới|Có khách/)
-  await page.getByRole("dialog", { name: /^Chi tiết/ }).getByRole("button", { name: "Đóng", exact: true }).click()
+  await page
+    .getByRole("dialog", { name: /^Chi tiết/ })
+    .getByRole("button", { name: "Đóng", exact: true })
+    .click()
   await combined.first().click()
   await page.getByRole("button", { name: "Tách bàn", exact: true }).click()
   const split = page.getByRole("dialog", { name: "Tách bàn", exact: true })
@@ -532,12 +559,10 @@ try {
   await expect(table(page, "B4")).toHaveAttribute("aria-label", /Đã tới|Có khách/)
   results.push({ check: "P1 HTTP BA-021 split from one combined cell", result: "PASS" })
   await page.keyboard.press("Escape")
-  await page.getByRole("button", { name: "Đếm khách", exact: true }).click()
-  const guestCountText = page.getByLabel("Nội dung text booking")
-  await expect(guestCountText).toHaveValue(/Tổng khách đặt: 2(?:\r?\n|$)/)
-  await expect(guestCountText).toHaveValue(/Tổng khách đã đến: 2(?:\r?\n|$)/)
-  await expect(guestCountText).not.toHaveValue(/NA11 walk-in/)
-  await closeDialog(page)
+  const guestCountText = await copyBookingExport(page)
+  expect(guestCountText).toMatch(/^Tổng bàn đặt\/ Tổng khách đặt: \d+\/2\s*$/m)
+  expect(guestCountText).toMatch(/^Tổng khách đã đến: 2\s*$/m)
+  expect(guestCountText).not.toMatch(/NA11 walk-in/)
   results.push({
     check: "real receptionist check-in / walk-in / move / merge through existing map actions",
     result: "PASS",
@@ -567,14 +592,24 @@ try {
     data: {},
   })
   expect(reveal.status()).toBe(403)
-  const capacity = await context.request.post(`${apiUrl}/api/v1/bookings/direct`, {
+  const occupied = await context.request.post(`${apiUrl}/api/v1/bookings/direct`, {
     headers,
     data: { ...raceBody, partySize: 5, tableIds: [9505] },
   })
-  expect(capacity.status()).toBe(409)
-  expect((await capacity.json()).error.code).toBe("INSUFFICIENT_TABLE_CAPACITY")
+  expect(occupied.status()).toBe(409)
+  expect((await occupied.json()).error.code).toBe("TABLE_ALREADY_OCCUPIED")
+  // Direct booking allows parties above the suggested capacity on a free table.
+  const overCapacity = await context.request.post(`${apiUrl}/api/v1/bookings/direct`, {
+    headers,
+    data: { ...raceBody, guestName: "NA11 capacity guidance", partySize: 5, tableIds: [9514] },
+  })
+  expect(overCapacity.status()).toBe(201)
+  const { booking: overCapacityBooking } = await overCapacity.json()
+  const { booking: persistedOverCapacity } = await jsonRequest(context, "GET", `/bookings/${overCapacityBooking.id}`)
+  expect(persistedOverCapacity).toMatchObject({ guestName: "NA11 capacity guidance", partySize: 5, tableCodes: ["A6"] })
   for (const path of ["/reservations", "/waitlist", "/reports"]) {
-    await page.goto(`${webUrl}${path}`, { waitUntil: "networkidle" })
+    await page.goto(`${webUrl}${path}`, { waitUntil: "domcontentloaded" })
+    await page.waitForURL(`${webUrl}/floor`)
     expect(new URL(page.url()).pathname).toBe("/floor")
   }
   results.push({
