@@ -55,8 +55,11 @@ vi.mock("@/hooks/use-data", () => ({
 }))
 
 vi.mock("../reservations/zalo-booking-export", () => ({
-  ZaloBookingExport: ({ children }: { children: (arg: { copy: () => Promise<void>; loading: boolean }) => ReactNode }) =>
-    children({ copy: async () => undefined, loading: false }),
+  ZaloBookingExport: ({
+    children,
+  }: {
+    children: (arg: { copy: () => Promise<void>; loading: boolean }) => ReactNode
+  }) => children({ copy: async () => undefined, loading: false }),
 }))
 
 import { MapScreen } from "./map"
@@ -128,6 +131,7 @@ function makeCtx(role: RoleCode): MobileCtx {
     openForm: vi.fn(),
     openTable: vi.fn(),
     ask: vi.fn(),
+    askCancel: vi.fn(),
     startPick: vi.fn(),
   }
 }

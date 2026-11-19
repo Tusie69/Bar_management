@@ -53,7 +53,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
-  CLOSE_REASON_LABEL,
+  CANCEL_REASONS,
   HOLD_RELEASE_LABEL,
   ORIGIN_LABEL,
   RELEASE_REASON_LABEL,
@@ -84,10 +84,6 @@ import { CallCustomerControl } from "../bookings/call-customer"
 import { CallHistory } from "../bookings/call-history"
 import type { FloorModel } from "./use-floor-model"
 import { useHeldOrderActions } from "../mobile/actions"
-
-const CANCEL_REASONS = (Object.keys(CLOSE_REASON_LABEL) as ReservationCloseReason[])
-  .filter((r) => r !== "NO_SHOW_CONFIRMED")
-  .map((value) => ({ value, label: CLOSE_REASON_LABEL[value] }))
 
 const HOLD_REASONS = (
   ["CUSTOMER_NO_SHOW", "CUSTOMER_CANCELLED", "STAFF_REASSIGNED", "ENTRY_ERROR", "OTHER"] as HoldReleaseReason[]

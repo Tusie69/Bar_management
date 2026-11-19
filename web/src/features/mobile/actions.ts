@@ -4,6 +4,7 @@ import { useAction } from "@/hooks/use-action"
 import { fmtTime } from "@/lib/time"
 import { api, clock } from "@/services"
 import { toast } from "sonner"
+import { buildCancelBookingArgs } from "./cancel-booking"
 import { useM, type TablePick } from "./context"
 import { roleCan, type Permission } from "@/domain/access"
 import { useSession } from "@/state/session"
@@ -358,15 +359,14 @@ export function useMobileActions() {
       }),
     cancel: (r: ReservationView) =>
       canNow("reservation.cancel") &&
-      m.ask({
-        title: `Hủy booking của ${r.displayName}?`,
-        body: "Booking bị hủy và bàn được nhả. Thao tác được ghi vào nhật ký.",
-        label: "Hủy booking",
-        run: () =>
+      m.askCancel({
+        reservation: r,
+        run: (reason, note) =>
           run(async () => {
             if (!canNow("reservation.cancel") || !(await held.verifyBooking(r)).canBookingStatus)
               throw new Error("Chưa hỗ trợ hoặc thiếu quyền hủy booking.")
-            return api.cancelReservation(r.id, r.version, "CUSTOMER_REQUEST")
+            const args = buildCancelBookingArgs(reason, note)
+            return api.cancelReservation(r.id, r.version, args.reason, args.note)
           }),
       }),
   }
