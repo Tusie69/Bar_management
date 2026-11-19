@@ -174,13 +174,30 @@ export interface BookingEditSessionState {
 }
 
 /**
- * Pins the edit session's source record and version while local edits exist,
- * and replaces both together when a clean draft receives a refreshed booking.
+ * Keeps a booking editor mounted once its initial record has loaded for `(id, bd)`,
+ * even if a subsequent date-scoped list refresh no longer contains the booking.
+ */
+export function pinLoadedBooking(
+  pinned: { key: string; record: ReservationView } | null,
+  key: string,
+  current: ReservationView | undefined,
+): { key: string; record: ReservationView } | null {
+  if (pinned && pinned.key === key) return pinned
+  return current ? { key, record: current } : null
+}
+
+/**
+ * Pins the edit session's source record and version while local edits exist
+ * or when the booking disappears from the refreshed list, and replaces both
+ * together when a clean draft receives a refreshed booking.
  */
 export function syncBookingEditSession(
   session: BookingEditSessionState,
-  refreshed: ReservationView,
+  refreshed: ReservationView | undefined,
 ): BookingEditSessionState {
+  if (!refreshed) {
+    return session
+  }
   if (diffBookingEditDraft(session.source, session.draft).isDirty) {
     return session
   }

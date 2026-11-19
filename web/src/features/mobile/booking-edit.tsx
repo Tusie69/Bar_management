@@ -53,6 +53,7 @@ import {
   diffBookingEditDraft,
   initialBookingEditDraft,
   parsePartySize,
+  pinLoadedBooking,
   resolveBookingEditBackAction,
   syncBookingEditSession,
   validateBookingEditDraft,
@@ -195,8 +196,15 @@ export function BookingEditScreen({
 }) {
   const resQuery = useReservations(bd)
   const r = resQuery.data?.find((x) => x.id === id)
+  const sessionKey = `${id}:${bd}`
+  const [pinned, setPinned] = useState(() => pinLoadedBooking(null, sessionKey, r))
+  const nextPinned = pinLoadedBooking(pinned, sessionKey, r)
+  if (nextPinned !== pinned) {
+    setPinned(nextPinned)
+  }
+  const initial = nextPinned?.record
 
-  if (!r) {
+  if (!initial) {
     return (
       <div className="flex h-full w-full flex-col bg-background">
         <header className="gm-glass-chrome shrink-0 border-b border-border/70 bg-[var(--glass-chrome)] px-4 pt-[var(--top-safe)] pb-2 backdrop-blur-md">
@@ -225,7 +233,8 @@ export function BookingEditScreen({
 
   return (
     <BookingEditBody
-      key={r.id}
+      key={sessionKey}
+      initial={initial}
       r={r}
       bd={bd}
       onClose={onClose}
@@ -236,13 +245,15 @@ export function BookingEditScreen({
 }
 
 function BookingEditBody({
+  initial,
   r,
   bd,
   onClose,
   parentOpen,
   requestCloseRef,
 }: {
-  r: ReservationView
+  initial: ReservationView
+  r: ReservationView | undefined
   bd: BusinessDate
   onClose: () => void
   parentOpen: boolean
@@ -258,8 +269,8 @@ function BookingEditBody({
   useWaitlist(bd)
 
   const [session, setSession] = useState<BookingEditSessionState>(() => ({
-    source: r,
-    draft: initialBookingEditDraft(r),
+    source: initial,
+    draft: initialBookingEditDraft(initial),
   }))
   const { source, draft } = session
   const [editingField, setEditingField] = useState<EditableFieldKey | null>(null)
@@ -458,7 +469,7 @@ function BookingEditBody({
   const discardAndPickTables = () => {
     if (isPendingNow()) return
     setConfirmTableChange(false)
-    const cleanTarget = r.version !== source.version ? r : source
+    const cleanTarget = r && r.version !== source.version ? r : source
     setSession({ source: cleanTarget, draft: initialBookingEditDraft(cleanTarget) })
     openTablePicker(cleanTarget)
   }

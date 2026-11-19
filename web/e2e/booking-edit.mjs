@@ -350,6 +350,107 @@ try {
   await agreeBtn.click()
   await expect(editPage).toBeHidden()
 
+  // B01-R1: Two-session remote date change keeps both clean and dirty editors mounted
+  const runRemoteDateChange = async ({ tableCode, dirtyNote }) => {
+    await (await openTableSheet(page, tableCode)).getByRole("button", { name: "Sửa booking", exact: true }).click()
+    await expect(editPage).toBeVisible()
+    const idBadge = await editPage.locator("header span", { hasText: /^#\d+$/ }).textContent()
+    const targetId = Number((idBadge || "").replace("#", ""))
+    assert(Number.isInteger(targetId) && targetId > 0, `Expected booking id badge on ${tableCode}, got ${idBadge}`)
+
+    if (dirtyNote) {
+      await editPage.getByRole("button", { name: /Ghi chú/ }).click()
+      await editPage.getByLabel("Ghi chú", { exact: true }).fill(dirtyNote)
+      await expect(saveBtn).toBeEnabled()
+    } else {
+      await expect(saveBtn).toBeDisabled()
+    }
+
+    const remoteMove = await page.evaluate(async (id) => {
+      const { api, clock } = await import("/src/services/index.ts")
+      const { addDays, atBusinessTime, businessDateOf, fmtTime } = await import("/src/lib/time.ts")
+      const currentBd = businessDateOf(clock.now())
+      const rows = await api.listReservations({ businessDate: currentBd })
+      const booking = rows.find((item) => item.id === id)
+      if (!booking) throw new Error(`Booking #${id} not found on ${currentBd}`)
+      const nextBd = addDays(currentBd, 1)
+      await api.updateReservation({
+        id: booking.id,
+        version: booking.version,
+        expectedAt: atBusinessTime(nextBd, fmtTime(booking.expectedAt)),
+      })
+      const remoteRows = await api.listReservations({ businessDate: nextBd })
+      const remoteBooking = remoteRows.find((item) => item.id === id)
+      if (!remoteBooking) throw new Error(`Remote move failed for #${id}`)
+
+      const origList = api.listReservations.bind(api)
+      window.__gmOrigListReservations = origList
+      window.__gmMissingRowRefreshCount = 0
+      api.listReservations = async (params) => {
+        const res = await origList(params)
+        if (params?.businessDate === currentBd && !res.some((item) => item.id === id)) {
+          window.__gmMissingRowRefreshCount += 1
+        }
+        return res
+      }
+      return { currentBd, nextBd, remoteVersion: remoteBooking.version }
+    }, targetId)
+
+    await page.waitForFunction(() => (window.__gmMissingRowRefreshCount || 0) >= 1, null, { timeout: 20_000 })
+    assert.equal(await editPage.getByText("Không tìm thấy booking", { exact: true }).count(), 0)
+    await expect(editPage).toBeVisible()
+
+    if (dirtyNote) {
+      await expect(editPage.getByLabel("Ghi chú", { exact: true })).toHaveValue(dirtyNote)
+      await page.goBack()
+      await expect(confirmDlg).toBeVisible()
+      await stayBtn.click()
+      await expect(confirmDlg).toBeHidden()
+      await expect(editPage.getByLabel("Ghi chú", { exact: true })).toHaveValue(dirtyNote)
+
+      await saveBtn.click()
+      const conflictDlg2 = page.getByRole("alertdialog", { name: "Dữ liệu vừa thay đổi" })
+      await expect(conflictDlg2).toBeVisible()
+      await conflictDlg2.getByRole("button", { name: "Đã hiểu, xem dữ liệu mới", exact: true }).click()
+      await expect(conflictDlg2).toBeHidden()
+      await expect(editPage.getByLabel("Ghi chú", { exact: true })).toHaveValue(dirtyNote)
+
+      const persisted = await page.evaluate(
+        async ({ id, nextBd }) => {
+          const { api } = await import("/src/services/index.ts")
+          const rows = await api.listReservations({ businessDate: nextBd })
+          return rows.find((item) => item.id === id) ?? null
+        },
+        { id: targetId, nextBd: remoteMove.nextBd },
+      )
+      assert(persisted, `Booking #${targetId} missing on remote date ${remoteMove.nextBd}`)
+      assert.equal(persisted.version, remoteMove.remoteVersion)
+      assert.equal(persisted.businessDate, remoteMove.nextBd)
+
+      await editPage.getByRole("button", { name: "Quay lại", exact: true }).click()
+      await expect(confirmDlg).toBeVisible()
+      await agreeBtn.click()
+      await expect(editPage).toBeHidden()
+    } else {
+      await expect(saveBtn).toBeDisabled()
+      await editPage.getByRole("button", { name: "Quay lại", exact: true }).click()
+      await expect(page.getByRole("alertdialog")).toHaveCount(0)
+      await expect(editPage).toBeHidden()
+    }
+
+    await page.evaluate(async () => {
+      const { api } = await import("/src/services/index.ts")
+      if (window.__gmOrigListReservations) {
+        api.listReservations = window.__gmOrigListReservations
+        delete window.__gmOrigListReservations
+      }
+      delete window.__gmMissingRowRefreshCount
+    })
+  }
+
+  await runRemoteDateChange({ tableCode: "A5", dirtyNote: null })
+  await runRemoteDateChange({ tableCode: "B5", dirtyNote: "Ghi chú giữ lại khi đổi ngày" })
+
   // 2. Phone 390x844 (dark) screenshot & layout check
   await setSession(page, 1, "dark")
   await page.reload({ waitUntil: "networkidle" })

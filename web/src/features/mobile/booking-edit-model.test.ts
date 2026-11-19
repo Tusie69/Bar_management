@@ -9,6 +9,7 @@ import {
   diffBookingEditDraft,
   initialBookingEditDraft,
   parsePartySize,
+  pinLoadedBooking,
   resolveBookingEditBackAction,
   syncBookingEditSession,
   validateBookingEditDraft,
@@ -368,5 +369,44 @@ describe("booking-edit-model session pinning (B01) and pending guard (B03)", () 
     expect(resolveBookingEditBackAction({ pending: true, isDirty: true })).toBe("block_pending")
     expect(resolveBookingEditBackAction({ pending: false, isDirty: true })).toBe("confirm_discard")
     expect(resolveBookingEditBackAction({ pending: false, isDirty: false })).toBe("leave")
+  })
+
+  it("keeps loaded booking pinned when missing from refreshed list (B01-R1)", () => {
+    const initialRecord = makeReservation({ version: 2, note: null })
+    const key = "42:2026-11-19"
+
+    // Never loaded -> stays null ("Không tìm thấy booking")
+    expect(pinLoadedBooking(null, key, undefined)).toBeNull()
+
+    // Loaded -> stays pinned even after booking disappears from refreshed list
+    const loaded = pinLoadedBooking(null, key, initialRecord)
+    expect(loaded).toEqual({ key, record: initialRecord })
+    expect(pinLoadedBooking(loaded, key, undefined)).toBe(loaded)
+    expect(pinLoadedBooking(loaded, "42:2026-11-20", undefined)).toBeNull()
+
+    // Dirty session keeps local edits, pinned version, and discard guard when refreshed row is missing
+    const dirtySession = {
+      source: initialRecord,
+      draft: { ...initialBookingEditDraft(initialRecord), note: "Ghi chú trước khi đổi ngày" },
+    }
+    const dirtyAfterMissing = syncBookingEditSession(dirtySession, undefined)
+    expect(dirtyAfterMissing).toBe(dirtySession)
+    expect(diffBookingEditDraft(dirtyAfterMissing.source, dirtyAfterMissing.draft).isDirty).toBe(true)
+    expect(buildUpdateReservationInput(dirtyAfterMissing.source, dirtyAfterMissing.draft).version).toBe(2)
+    expect(resolveBookingEditBackAction({ pending: false, isDirty: true })).toBe("confirm_discard")
+
+    // Clean session stays mounted with pinned data and disabled save when refreshed row is missing
+    const cleanSession = {
+      source: initialRecord,
+      draft: initialBookingEditDraft(initialRecord),
+    }
+    const cleanAfterMissing = syncBookingEditSession(cleanSession, undefined)
+    expect(cleanAfterMissing).toBe(cleanSession)
+    const cleanDiff = diffBookingEditDraft(cleanAfterMissing.source, cleanAfterMissing.draft)
+    expect(cleanDiff.isDirty).toBe(false)
+    expect(
+      validateBookingEditDraft(cleanAfterMissing.source, cleanAfterMissing.draft, cleanDiff, makeValidationCtx())
+        .canSave,
+    ).toBe(false)
   })
 })
