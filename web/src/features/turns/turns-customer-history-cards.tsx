@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, ChevronRight, Lock, RotateCcw, Undo2 } from "lucide-react"
+import { AlertTriangle, CheckCircle2, ChevronRight, GitMerge, Lock, RotateCcw, Undo2 } from "lucide-react"
 import { useEffect, useId, useRef, useState, type ComponentProps, type FormEvent } from "react"
 import {
   AlertDialog,
@@ -11,6 +11,8 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { AssignmentUndo, DuplicateCustomerPair, TableTurnView } from "@/domain/models"
 import {
@@ -380,8 +382,10 @@ export function AnonymousVisitsCard({ from, to, currentBusinessDate, turns, isRe
                 {lastAssignment.customerCreated ? " (khách mới)" : ""}
               </span>
             </div>
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={() => void handleUndo()}
               disabled={effectiveReadOnly || undoMutation.isPending}
               className="turns-undo-btn"
@@ -389,7 +393,7 @@ export function AnonymousVisitsCard({ from, to, currentBusinessDate, turns, isRe
             >
               <Undo2 className="size-3.5" aria-hidden="true" />
               {undoMutation.isPending ? "Đang hoàn tác…" : "Hoàn tác"}
-            </button>
+            </Button>
           </div>
         ) : null}
 
@@ -409,10 +413,10 @@ export function AnonymousVisitsCard({ from, to, currentBusinessDate, turns, isRe
           <div className="turns-anon-panel grid gap-2.5" data-testid="turns-anon-loading">
             <Skeleton className="h-5 w-48" />
             <Skeleton className="h-4 w-40" />
-            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-11 w-full" />
             <div className="flex gap-2">
-              <Skeleton className="h-10 w-32" />
-              <Skeleton className="h-10 w-20" />
+              <Skeleton className="h-11 w-32" />
+              <Skeleton className="h-11 w-20" />
             </div>
           </div>
         ) : fatalError ? (
@@ -439,15 +443,17 @@ export function AnonymousVisitsCard({ from, to, currentBusinessDate, turns, isRe
                     : "Không thể tải danh sách lượt khuyết danh."}
                 </span>
               </div>
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
                 onClick={() => void anonymousQuery.refetch()}
-                className="turns-btn-secondary turns-btn-sm"
+                className="turns-touch-btn"
                 data-testid="turns-anon-retry-btn"
               >
                 <RotateCcw className="size-3.5" aria-hidden="true" />
                 Thử lại
-              </button>
+              </Button>
             </div>
           )
         ) : allVisits.length === 0 ? (
@@ -458,14 +464,15 @@ export function AnonymousVisitsCard({ from, to, currentBusinessDate, turns, isRe
           <div className="turns-anon-panel grid gap-2.5" data-testid="turns-anon-all-skipped">
             <p className="turns-panel-meta m-0">Đã bỏ qua {skippedCount} lượt khuyết danh trong danh sách hiện tại.</p>
             <div>
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={handleResetSkips}
-                className="turns-btn-secondary"
+                className="turns-touch-btn"
                 data-testid="turns-anon-reset-skip-btn"
               >
                 Xem lại lượt đã bỏ qua
-              </button>
+              </Button>
             </div>
           </div>
         ) : (
@@ -486,7 +493,7 @@ export function AnonymousVisitsCard({ from, to, currentBusinessDate, turns, isRe
                 <label htmlFor={phoneInputId} className="sr-only">
                   Nhập SĐT để tìm khách
                 </label>
-                <input
+                <Input
                   id={phoneInputId}
                   type="tel"
                   inputMode="numeric"
@@ -496,7 +503,7 @@ export function AnonymousVisitsCard({ from, to, currentBusinessDate, turns, isRe
                   onChange={(e) => handlePhoneChange(e.target.value)}
                   disabled={effectiveReadOnly || isSubmitting}
                   aria-invalid={Boolean(formError && !createNameMode)}
-                  className="turns-panel-input"
+                  className="h-11 bg-[var(--turns-surface)]"
                   data-testid="turns-anon-phone-input"
                 />
               </div>
@@ -506,7 +513,7 @@ export function AnonymousVisitsCard({ from, to, currentBusinessDate, turns, isRe
                   <label htmlFor={nameInputId} className="sr-only">
                     Tên khách
                   </label>
-                  <input
+                  <Input
                     ref={nameInputRef}
                     id={nameInputId}
                     type="text"
@@ -517,7 +524,7 @@ export function AnonymousVisitsCard({ from, to, currentBusinessDate, turns, isRe
                     onChange={(e) => handleNameChange(e.target.value)}
                     disabled={effectiveReadOnly || isSubmitting}
                     aria-invalid={Boolean(formError)}
-                    className="turns-panel-input"
+                    className="h-11 bg-[var(--turns-surface)]"
                     data-testid="turns-anon-name-input"
                   />
                 </div>
@@ -536,23 +543,18 @@ export function AnonymousVisitsCard({ from, to, currentBusinessDate, turns, isRe
               ) : null}
 
               <div className="turns-panel-actions">
-                <button
-                  type="submit"
-                  disabled={effectiveReadOnly || isSubmitting}
-                  className="turns-btn-primary"
-                  data-testid="turns-anon-submit-btn"
-                >
+                <Button type="submit" disabled={effectiveReadOnly || isSubmitting} data-testid="turns-anon-submit-btn">
                   {assignMutation.isPending ? "Đang lưu…" : createNameMode ? "Tạo khách và gán" : "Gán vào khách"}
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={handleSkip}
                   disabled={isSubmitting}
-                  className="turns-btn-secondary"
                   data-testid="turns-anon-skip-btn"
                 >
                   Bỏ qua
-                </button>
+                </Button>
               </div>
             </form>
 
@@ -591,22 +593,41 @@ export function DuplicateMergeSummary({
   return (
     <div
       {...props}
-      className={className ? `grid gap-2 text-sm ${className}` : "grid gap-2 text-sm"}
+      className={className ? `grid gap-3 text-left text-sm ${className}` : "grid gap-3 text-left text-sm"}
       style={{ color: "var(--admin-text-muted)", ...style }}
     >
-      <p className="m-0">
-        Hồ sơ được giữ lại:{" "}
-        <strong style={{ color: "var(--admin-text-primary)" }}>{formatDuplicateCustomerLine(pair.target)}</strong> (
-        {pair.target.visitCount} lượt · {pair.target.bookingCount} đặt bàn).
-      </p>
-      <p className="m-0">
-        Hồ sơ sẽ được gộp vào hồ sơ trên:{" "}
-        <strong style={{ color: "var(--admin-text-primary)" }}>{formatDuplicateCustomerLine(pair.source)}</strong> (
-        {pair.source.visitCount} lượt · {pair.source.bookingCount} đặt bàn).
-      </p>
-      <p className="m-0 font-medium" style={{ color: "var(--admin-state-late-ink)" }}>
-        Toàn bộ lịch sử của hồ sơ chưa có SĐT sẽ được chuyển sang hồ sơ được giữ lại. Thao tác này không thể hoàn tác.
-      </p>
+      <div className="turns-merge-compare">
+        <div className="turns-merge-profile-box turns-merge-profile-box--keep">
+          <p className="turns-merge-role-heading--keep m-0 text-xs font-semibold tracking-[0.02em] uppercase">
+            Hồ sơ được giữ lại:
+          </p>
+          <p className="mt-1 mb-0 font-semibold text-[var(--admin-text-primary)]">
+            {formatDuplicateCustomerLine(pair.target)}
+          </p>
+          <p className="mt-0.5 mb-0 text-xs text-[var(--admin-text-muted)]">
+            {pair.target.visitCount} lượt · {pair.target.bookingCount} đặt bàn
+          </p>
+        </div>
+
+        <div className="turns-merge-profile-box turns-merge-profile-box--source">
+          <p className="turns-merge-role-heading--source m-0 text-xs font-semibold tracking-[0.02em] uppercase">
+            Hồ sơ sẽ được gộp vào hồ sơ trên:
+          </p>
+          <p className="mt-1 mb-0 font-semibold text-[var(--admin-text-primary)]">
+            {formatDuplicateCustomerLine(pair.source)}
+          </p>
+          <p className="mt-0.5 mb-0 text-xs text-[var(--admin-text-muted)]">
+            {pair.source.visitCount} lượt · {pair.source.bookingCount} đặt bàn
+          </p>
+        </div>
+      </div>
+
+      <div className="turns-merge-warning-box" role="note">
+        <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+        <p className="m-0 font-semibold" style={{ color: "var(--admin-state-late-ink)" }}>
+          Toàn bộ lịch sử của hồ sơ chưa có SĐT sẽ được chuyển sang hồ sơ được giữ lại. Thao tác này không thể hoàn tác.
+        </p>
+      </div>
     </div>
   )
 }
@@ -844,8 +865,8 @@ export function DuplicateCustomersCard({ isReadOnly }: DuplicateCustomersCardPro
               <Skeleton className="h-5 w-44" />
               <Skeleton className="h-4 w-52" />
               <div className="flex gap-2">
-                <Skeleton className="h-10 w-20" />
-                <Skeleton className="h-10 w-28" />
+                <Skeleton className="h-11 w-20" />
+                <Skeleton className="h-11 w-28" />
               </div>
             </div>
           ) : fatalError ? (
@@ -872,15 +893,17 @@ export function DuplicateCustomersCard({ isReadOnly }: DuplicateCustomersCardPro
                       : "Không thể tải gợi ý trùng hồ sơ."}
                   </span>
                 </div>
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => void duplicatesQuery.refetch()}
-                  className="turns-btn-secondary turns-btn-sm"
+                  className="turns-touch-btn"
                   data-testid="turns-dup-retry-btn"
                 >
                   <RotateCcw className="size-3.5" aria-hidden="true" />
                   Thử lại
-                </button>
+                </Button>
               </div>
             )
           ) : !currentPair ? (
@@ -890,14 +913,20 @@ export function DuplicateCustomersCard({ isReadOnly }: DuplicateCustomersCardPro
           ) : (
             <div className="turns-dup-panel" data-testid="turns-dup-panel">
               <div className="turns-dup-profiles">
-                <div className="turns-dup-profile" data-testid="turns-dup-target">
+                <div className="turns-dup-profile turns-dup-profile--keep" data-testid="turns-dup-target">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="turns-dup-role-tag turns-dup-role-tag--keep">Giữ lại</span>
+                  </div>
                   <p className="turns-panel-title">{formatDuplicateCustomerLine(currentPair.target)}</p>
                   <p className="turns-dup-counts">
                     {`${currentPair.target.visitCount} lượt · ${currentPair.target.bookingCount} đặt bàn`}
                   </p>
                 </div>
 
-                <div className="turns-dup-profile" data-testid="turns-dup-source">
+                <div className="turns-dup-profile turns-dup-profile--source" data-testid="turns-dup-source">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="turns-dup-role-tag turns-dup-role-tag--source">Gộp vào hồ sơ trên</span>
+                  </div>
                   <p className="turns-panel-title">{formatDuplicateCustomerLine(currentPair.source)}</p>
                   <p className="turns-dup-counts">
                     {`${currentPair.source.visitCount} lượt · ${currentPair.source.bookingCount} đặt bàn`}
@@ -911,25 +940,26 @@ export function DuplicateCustomersCard({ isReadOnly }: DuplicateCustomersCardPro
 
               <div className="turns-panel-actions">
                 <AlertDialogTrigger asChild>
-                  <button
+                  <Button
                     ref={mergeTriggerRef}
                     type="button"
+                    variant="destructive"
                     disabled={!canMerge || isMutating}
-                    className="turns-btn-primary"
                     data-testid="turns-dup-merge-btn"
                   >
+                    <GitMerge className="size-4" aria-hidden="true" />
                     {mergeMutation.isPending ? "Đang gộp…" : "Gộp"}
-                  </button>
+                  </Button>
                 </AlertDialogTrigger>
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   disabled={!canDismiss || isMutating}
                   onClick={() => void handleDismiss()}
-                  className="turns-btn-secondary"
                   data-testid="turns-dup-dismiss-btn"
                 >
                   {dismissMutation.isPending ? "Đang lưu…" : "Khác nhau"}
-                </button>
+                </Button>
               </div>
 
               {permissionNote ? (
@@ -962,6 +992,9 @@ export function DuplicateCustomersCard({ isReadOnly }: DuplicateCustomersCardPro
           data-testid="turns-dup-merge-dialog"
         >
           <AlertDialogHeader>
+            <div className="turns-merge-dialog-badge" aria-hidden="true">
+              <AlertTriangle className="size-5" />
+            </div>
             <AlertDialogTitle>Xác nhận gộp hồ sơ khách?</AlertDialogTitle>
             <AlertDialogDescription asChild>
               {confirmPair ? <DuplicateMergeSummary pair={confirmPair} /> : <div />}
@@ -972,6 +1005,7 @@ export function DuplicateCustomersCard({ isReadOnly }: DuplicateCustomersCardPro
               Hủy
             </AlertDialogCancel>
             <AlertDialogAction
+              variant="destructive"
               disabled={mergeMutation.isPending}
               onClick={(event) => {
                 event.preventDefault()

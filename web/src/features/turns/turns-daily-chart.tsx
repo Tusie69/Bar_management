@@ -42,7 +42,7 @@ export function TurnsDailyChart({ days, shiftLabel }: TurnsDailyChartProps) {
 
   return (
     <section className="turns-card" aria-labelledby="turns-daily-heading" data-testid="turns-daily-section">
-      <div className={`turns-card-header${viewMode === "chart" ? "turns-card-header-bordered" : ""}`}>
+      <div className="turns-card-header turns-card-header-bordered">
         <div>
           <h2 id="turns-daily-heading" className="turns-card-title">
             Theo ngày
@@ -80,17 +80,8 @@ export function TurnsDailyChart({ days, shiftLabel }: TurnsDailyChartProps) {
             options={DAILY_VIEW_OPTIONS}
             value={viewMode}
             onValueChange={setViewMode}
-            className="inline-flex rounded-lg border p-0.5"
-            style={{
-              borderColor: "var(--turns-border)",
-              backgroundColor: "var(--turns-canvas)",
-            }}
-            itemClassName="min-h-[32px] rounded-md px-2.5 text-xs font-medium transition-colors"
-            getItemStyle={(_opt, selected) => ({
-              backgroundColor: selected ? "var(--turns-surface)" : "transparent",
-              color: selected ? "var(--turns-navy)" : "var(--turns-muted)",
-              boxShadow: selected ? "0 1px 2px rgba(16, 42, 67, 0.08)" : "none",
-            })}
+            className="turns-segmented-track turns-segmented-track--compact"
+            itemClassName="turns-segmented-item turns-segmented-item--compact"
           />
         </div>
       </div>
@@ -119,9 +110,10 @@ export function TurnsDailyChart({ days, shiftLabel }: TurnsDailyChartProps) {
                     key={day.businessDate}
                     aria-label={longLabel}
                     data-business-date={day.businessDate}
-                    className="flex flex-col items-center gap-2 rounded-lg px-2 py-2.5"
+                    className="flex flex-col items-center gap-2 rounded-xl border px-2 py-2.5"
                     style={{
                       backgroundColor: isPeak ? "var(--turns-tint-blue)" : "var(--turns-canvas)",
+                      borderColor: isPeak ? "color-mix(in oklab, var(--turns-blue) 28%, transparent)" : "transparent",
                     }}
                   >
                     <div className="text-center text-xs leading-4">

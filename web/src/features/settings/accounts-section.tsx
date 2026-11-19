@@ -89,7 +89,7 @@ export function AccountsSection({ readOnly = false }: { readOnly?: boolean } = {
         {!liveServer ? <p className="text-xs text-muted-foreground">Chế độ demo chỉ xem.</p> : null}
         {accounts.isError ? <p className="text-sm text-destructive">Không tải được danh sách tài khoản.</p> : null}
 
-        <div className="scrollbar-thin overflow-x-auto rounded-2xl border">
+        <div className="scrollbar-thin overflow-x-auto rounded-xl border border-border bg-surface-1 shadow-xs">
           <Table>
             <TableHeader>
               <TableRow>
@@ -235,7 +235,7 @@ export function AccountsSection({ readOnly = false }: { readOnly?: boolean } = {
               Tạo tài khoản
             </GuardedButton>
           ) : (
-            <div className="grid gap-3 rounded-2xl border p-4 sm:grid-cols-2">
+            <div className="grid gap-3 rounded-xl border border-border bg-surface-1 p-4 shadow-xs sm:grid-cols-2">
               <Field
                 id="acc-username"
                 label="Tên đăng nhập"

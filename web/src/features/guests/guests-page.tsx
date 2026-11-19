@@ -109,9 +109,9 @@ function GuestsContent() {
                       onClick={() => setSelected(c.id)}
                       aria-current={selected === c.id}
                       className={cn(
-                        "relative flex min-h-[68px] w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-surface-2",
+                        "relative flex min-h-[68px] w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-surface-2/70",
                         selected === c.id &&
-                          "bg-surface-2 before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-r-full before:bg-foreground",
+                          "bg-primary-tint before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-r-full before:bg-primary",
                       )}
                     >
                       <GuestAvatar name={c.displayName} seed={c.id} size={38} />
@@ -208,7 +208,7 @@ function Profile({ id, onBack }: { id: number; onBack?: () => void }) {
       </dl>
 
       <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
-        <section className="grid content-start gap-3 rounded-2xl border p-4 md:p-5">
+        <section className="grid content-start gap-3 rounded-xl border border-border bg-surface-1 p-4 shadow-xs md:p-5">
           <SectionTitle>Lượt ghé theo tháng</SectionTitle>
           <BarChart
             ariaLabel="Số lượt ghé theo tháng, 6 tháng gần nhất"
@@ -235,7 +235,7 @@ function Profile({ id, onBack }: { id: number; onBack?: () => void }) {
             <History className="size-4" aria-hidden /> Chưa có lượt ghé
           </p>
         ) : (
-          <ul className="divide-y divide-border/70 overflow-hidden rounded-2xl border">
+          <ul className="divide-y divide-border-subtle overflow-hidden rounded-xl border border-border bg-surface-1 shadow-xs">
             {p.visits.map((v) => (
               <li key={v.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
                 <DateBlock bd={v.businessDate} />
@@ -274,7 +274,7 @@ function Profile({ id, onBack }: { id: number; onBack?: () => void }) {
             <CalendarDays className="size-4" aria-hidden /> Chưa có booking
           </p>
         ) : (
-          <ul className="divide-y divide-border/70 overflow-hidden rounded-2xl border">
+          <ul className="divide-y divide-border-subtle overflow-hidden rounded-xl border border-border bg-surface-1 shadow-xs">
             {p.reservations.map((r) => (
               <li key={r.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
                 <DateBlock bd={r.businessDate} />
@@ -330,7 +330,7 @@ function DateBlock({ bd }: { bd: string }) {
 function Stat({ icon: Icon, hue, k, v }: { icon: typeof Users; hue: number; k: string; v: React.ReactNode }) {
   // dt/dd must be direct children of the dl item: the icon lives inside dt, positioned left.
   return (
-    <div className="relative grid min-h-[68px] content-center gap-0.5 rounded-2xl border py-3 pr-3 pl-[66px]">
+    <div className="relative grid min-h-[68px] content-center gap-0.5 rounded-xl border border-border bg-surface-1 py-3 pr-3 pl-[66px] shadow-xs">
       <dt className="truncate text-xs text-muted-foreground">
         <span
           className="tone absolute top-1/2 left-3.5 grid size-10 -translate-y-1/2 place-items-center rounded-xl"
@@ -353,7 +353,7 @@ function NotesEditor({ profile }: { profile: CustomerProfile }) {
   const invalid = noteHasPhoneNumber(notes)
   const dirty = notes !== (profile.notes ?? "")
   return (
-    <section className="grid content-start gap-3 rounded-2xl border p-4 md:p-5">
+    <section className="grid content-start gap-3 rounded-xl border border-border bg-surface-1 p-4 shadow-xs md:p-5">
       <SectionTitle aside={<NotebookPen className="size-4 text-subtle" aria-hidden />}>Ghi chú phục vụ</SectionTitle>
       <Textarea
         rows={5}

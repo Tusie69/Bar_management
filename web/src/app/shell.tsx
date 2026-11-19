@@ -89,9 +89,13 @@ export function AppShell() {
 
 function Wordmark() {
   return (
-    <span className="flex items-center gap-3">
-      <img src="/21gam-logo.png" alt="21GAM" className="size-8 shrink-0 rounded-sm object-cover" />
-      <span className="text-sm font-medium tracking-[0.04em] whitespace-nowrap text-brand group-data-[collapsible=icon]:hidden">
+    <span className="flex items-center gap-2.5">
+      <img
+        src="/21gam-logo.png"
+        alt="21GAM"
+        className="size-8 shrink-0 rounded-lg object-cover ring-1 ring-border-subtle"
+      />
+      <span className="text-sm font-semibold tracking-[0.04em] whitespace-nowrap text-brand group-data-[collapsible=icon]:hidden">
         21GAM
       </span>
     </span>
@@ -109,25 +113,26 @@ function AppSidebar() {
     "/waitlist": overview.data ? overview.data.waitlistAdvance + overview.data.waitlistWalkIn || undefined : undefined,
   }
   return (
-    <Sidebar collapsible="icon" className="border-r">
-      <SidebarHeader className="h-14 justify-center border-b px-4 group-data-[collapsible=icon]:px-4">
+    <Sidebar collapsible="icon" className="border-r border-border-subtle">
+      <SidebarHeader className="h-14 justify-center border-b border-border-subtle px-4 group-data-[collapsible=icon]:px-4">
         <Wordmark />
       </SidebarHeader>
       <SidebarContent>
         <nav aria-label="Điều hướng chính">
-          <SidebarGroup className="p-3">
+          <SidebarGroup className="p-2.5">
             <SidebarMenu className="gap-1">
               {NAV.filter(
                 (n) =>
                   (user.role !== "RECEPTIONIST" || n.to === "/floor") &&
-                  (!n.permission || (api.mode === "http" ? permissions.includes(n.permission) : roleCan(user.role, n.permission))),
+                  (!n.permission ||
+                    (api.mode === "http" ? permissions.includes(n.permission) : roleCan(user.role, n.permission))),
               ).map((item) => (
                 <SidebarMenuItem key={item.to}>
                   <SidebarMenuButton
                     asChild
                     isActive={location.pathname.startsWith(item.to)}
                     tooltip={item.label}
-                    className="h-10 gap-3 px-2.5 text-tx-2 hover:bg-surface-2 hover:text-tx-1 data-[active=true]:bg-surface-2 data-[active=true]:font-medium data-[active=true]:text-tx-1 data-[active=true]:shadow-[inset_2px_0_0_var(--primary)] [&>svg]:size-5 data-[active=true]:[&>svg]:text-primary-ink"
+                    className="relative h-11 gap-3 rounded-lg border border-transparent px-3 text-tx-2 transition-[background-color,color,border-color,box-shadow,transform] duration-[var(--duration-hover)] ease-[var(--ease-spring-default)] before:absolute before:inset-y-2.5 before:left-1 before:hidden before:w-[3px] before:rounded-full before:bg-primary group-data-[collapsible=icon]:before:hidden hover:bg-surface-2 hover:text-tx-1 active:scale-[0.985] data-[active=true]:border-border-subtle data-[active=true]:bg-surface-1 data-[active=true]:font-semibold data-[active=true]:text-tx-strong data-[active=true]:shadow-xs data-[active=true]:before:block dark:data-[active=true]:bg-surface-2 [&>svg]:size-[18px] data-[active=true]:[&>svg]:text-primary-ink"
                   >
                     <NavLink to={item.to} onClick={() => setOpenMobile(false)}>
                       <item.icon />
@@ -135,7 +140,7 @@ function AppSidebar() {
                     </NavLink>
                   </SidebarMenuButton>
                   {badges[item.to] ? (
-                    <SidebarMenuBadge className="tnum group-data-[collapsible=icon]:top-0.5 group-data-[collapsible=icon]:right-0.5 group-data-[collapsible=icon]:flex! group-data-[collapsible=icon]:h-4 group-data-[collapsible=icon]:min-w-4 group-data-[collapsible=icon]:rounded-full group-data-[collapsible=icon]:bg-st-noshow group-data-[collapsible=icon]:px-1 group-data-[collapsible=icon]:text-[11px] group-data-[collapsible=icon]:text-white">
+                    <SidebarMenuBadge className="tnum rounded-full bg-surface-3 px-1.5 text-[11px] font-semibold text-tx-1 group-data-[collapsible=icon]:top-0.5 group-data-[collapsible=icon]:right-0.5 group-data-[collapsible=icon]:flex! group-data-[collapsible=icon]:h-4 group-data-[collapsible=icon]:min-w-4 group-data-[collapsible=icon]:bg-st-noshow group-data-[collapsible=icon]:px-1 group-data-[collapsible=icon]:text-white">
                       {badges[item.to]}
                     </SidebarMenuBadge>
                   ) : null}
@@ -145,7 +150,7 @@ function AppSidebar() {
           </SidebarGroup>
         </nav>
       </SidebarContent>
-      <SidebarFooter className="border-t p-3">
+      <SidebarFooter className="border-t border-border-subtle p-2.5">
         <SidebarCollapseButton />
       </SidebarFooter>
       <SidebarRail />
@@ -161,7 +166,7 @@ function SidebarCollapseButton() {
         <SidebarMenuButton
           onClick={toggleSidebar}
           tooltip={open ? "Thu gọn thanh bên" : "Mở rộng thanh bên"}
-          className="h-10 gap-3 px-2.5 text-tx-2 [&>svg]:size-5"
+          className="h-11 gap-3 rounded-lg px-3 text-tx-2 transition-[background-color,color,transform] duration-[var(--duration-hover)] hover:bg-surface-2 hover:text-tx-1 active:scale-[0.985] [&>svg]:size-[18px]"
         >
           <ChevronsUpDown className="rotate-90" />
           <span>Thu gọn</span>
@@ -180,18 +185,29 @@ function TopBar() {
     NAV.find((n) => location.pathname.startsWith(n.to))?.label ??
     (location.pathname === "/overview" ? "Tổng quan" : "21GAM")
   return (
-    <header className="flex h-14 shrink-0 items-center gap-2 sm:gap-3 border-b bg-background px-2.5 sm:px-3 md:px-4">
+    <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border-subtle bg-background/90 px-3 backdrop-blur-md supports-[not(backdrop-filter)]:bg-background sm:gap-3 md:px-4">
       <h1 className="sr-only">{pageTitle}</h1>
-      <Button variant="ghost" size="icon" className="md:hidden" aria-label="Mở menu" onClick={toggleSidebar}>
+      <Button
+        variant="outline"
+        size="icon"
+        className="size-11 rounded-lg bg-surface-1 shadow-xs md:hidden"
+        aria-label="Mở menu"
+        onClick={toggleSidebar}
+      >
         <Menu />
       </Button>
       <div className="mr-auto flex min-w-0 items-center gap-2">
         <AccountMenu />
-        {!receptionist ? <Button className="hidden h-9 px-3 sm:inline-flex" onClick={() => navigate("/reservations")}>
-          Theo dõi đơn đặt bàn
-        </Button> : null}
+        {!receptionist ? (
+          <Button
+            className="hidden h-10 rounded-lg px-3.5 shadow-xs sm:inline-flex"
+            onClick={() => navigate("/reservations")}
+          >
+            Theo dõi đơn đặt bàn
+          </Button>
+        ) : null}
       </div>
-      <div className="flex items-center gap-1 md:gap-2">
+      <div className="flex shrink-0 items-center gap-1.5 md:gap-2">
         {!receptionist ? <SyncPill /> : null}
         <ClockMenu />
         <UndoRedo />
@@ -206,8 +222,11 @@ function TopBar() {
 function SyncPill() {
   if (api.mode === "http") {
     return (
-      <Badge variant="outline" className="hidden h-7 gap-1.5 px-2.5 sm:inline-flex">
-        <Zap className="size-3.5" /> Đã kết nối API
+      <Badge
+        variant="outline"
+        className="hidden h-8 shrink-0 gap-1.5 rounded-full border-border bg-surface-1 px-3 text-xs font-medium shadow-2xs lg:inline-flex"
+      >
+        <Zap className="size-3.5 text-st-seated-ink" /> Đã kết nối API
       </Badge>
     )
   }
@@ -216,7 +235,7 @@ function SyncPill() {
       <TooltipTrigger asChild>
         <Badge
           variant="outline"
-          className="hidden h-7 gap-1.5 border-dashed border-strong px-2.5 text-xs font-normal text-tx-2 sm:inline-flex"
+          className="hidden h-8 shrink-0 gap-1.5 rounded-full border-dashed border-strong bg-surface-1/80 px-3 text-xs font-medium text-tx-2 lg:inline-flex"
           tabIndex={0}
         >
           <Unplug className="size-3.5" /> Dữ liệu mô phỏng
@@ -243,15 +262,19 @@ function ClockMenu() {
       <PopoverTrigger asChild>
         <Button
           variant="ghost"
-          className="tnum h-11 min-h-[44px] gap-2 px-2 text-sm font-medium"
+          className="tnum h-11 min-h-[44px] gap-2 rounded-lg px-2.5 text-sm font-medium"
           aria-label={`Giờ ${clock.isSimulated ? "mô phỏng" : "thực"} ${fmtTime(now)}. Mở điều khiển thời gian`}
         >
           <Clock4 className="text-muted-foreground" />
           {fmtTime(now)}
-          {clock.isSimulated ? <span className="hidden text-xs font-normal text-tx-3 lg:inline">mô phỏng</span> : null}
+          {clock.isSimulated ? (
+            <span className="hidden rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-tx-3 lg:inline">
+              mô phỏng
+            </span>
+          ) : null}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80">
+      <PopoverContent align="end" className="w-80 rounded-xl p-4 shadow-float">
         <div className="grid gap-4">
           <div>
             <p className="eyebrow">Ngày kinh doanh</p>
@@ -371,15 +394,35 @@ function HttpUndoRedo() {
     <div className="flex items-center">
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label="Hoàn tác" disabled={!undo || pending} onClick={() => void apply("undo")}>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Hoàn tác"
+            disabled={!undo || pending}
+            onClick={() => void apply("undo")}
+          >
             <Undo2 />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>{undo ? <>Hoàn tác: {undo.summary} <Kbd>Ctrl Z</Kbd></> : "Chưa có thao tác để hoàn tác"}</TooltipContent>
+        <TooltipContent>
+          {undo ? (
+            <>
+              Hoàn tác: {undo.summary} <Kbd>Ctrl Z</Kbd>
+            </>
+          ) : (
+            "Chưa có thao tác để hoàn tác"
+          )}
+        </TooltipContent>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label="Làm lại" disabled={!redo || pending} onClick={() => void apply("redo")}>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Làm lại"
+            disabled={!redo || pending}
+            onClick={() => void apply("redo")}
+          >
             <Redo2 />
           </Button>
         </TooltipTrigger>
@@ -475,7 +518,7 @@ function ThemeToggle() {
           size="icon"
           aria-label="Đổi giao diện sáng / tối"
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          className="hidden size-11 min-h-[44px] min-w-[44px] bg-transparent sm:inline-flex"
+          className="hidden size-11 min-h-[44px] min-w-[44px] rounded-lg bg-surface-1 shadow-xs sm:inline-flex"
         >
           {theme === "dark" ? <Moon /> : <Sun />}
         </Button>
@@ -511,31 +554,33 @@ function AlertsBellContent({ className }: { className?: string }) {
         <Button
           variant="outline"
           size="icon"
-          className={cn("relative size-11 min-h-[44px] min-w-[44px] bg-transparent", className)}
+          className={cn("relative size-11 min-h-[44px] min-w-[44px] rounded-lg bg-surface-1 shadow-xs", className)}
           aria-label={`Cần xử lý: ${alerts.length}`}
         >
           <Bell />
           {alerts.length ? (
-            <span className="tnum absolute -top-1.5 -right-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-st-noshow px-1.5 text-xs font-semibold text-white">
+            <span className="tnum absolute -top-1.5 -right-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-st-noshow px-1.5 text-xs font-semibold text-white shadow-xs">
               {alerts.length}
             </span>
           ) : null}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-96 max-w-[calc(100vw-16px)] p-0">
-        <div className="flex items-center gap-2 py-2.5 pr-2 pl-4">
-          <span className="text-sm font-semibold">Cần xử lý</span>
-          <span className="tnum text-xs text-tx-3">{alerts.length}</span>
+      <PopoverContent align="end" className="w-96 max-w-[calc(100vw-16px)] overflow-hidden rounded-xl p-0 shadow-float">
+        <div className="flex items-center gap-2 border-b border-border-subtle bg-surface-2/60 py-2.5 pr-2 pl-4">
+          <span className="text-sm font-semibold tracking-[-0.01em] text-tx-strong">Cần xử lý</span>
+          <span className="tnum rounded-full bg-surface-3 px-2 py-0.5 text-xs font-semibold text-tx-2">
+            {alerts.length}
+          </span>
           <Button variant="ghost" size="icon-sm" className="ml-auto" aria-label="Đóng" onClick={() => setOpen(false)}>
             <X />
           </Button>
         </div>
         {alerts.length === 0 ? (
-          <p className="border-t px-4 py-3 text-xs text-tx-2">Ca đang ổn.</p>
+          <p className="px-4 py-4 text-sm text-tx-2">Ca đang ổn.</p>
         ) : (
-          <ul className="max-h-[60vh] overflow-y-auto">
+          <ul className="max-h-[60vh] divide-y divide-border-subtle overflow-y-auto">
             {alerts.map((a) => (
-              <li key={a.key} className="border-t">
+              <li key={a.key}>
                 <button
                   type="button"
                   onClick={() => {
@@ -545,10 +590,10 @@ function AlertsBellContent({ className }: { className?: string }) {
                       navigate("/floor")
                     } else if (a.reservationId) ui.openReservation(a.reservationId, bd)
                   }}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-2"
+                  className="flex min-h-[56px] w-full items-center gap-3 px-4 py-3 text-left transition-colors duration-[var(--duration-hover)] hover:bg-surface-2/80"
                 >
                   <span
-                    className="grid size-8 shrink-0 place-items-center rounded-sm"
+                    className="grid size-9 shrink-0 place-items-center rounded-lg"
                     style={{ color: `var(--st-${a.tone}-ink)`, background: `var(--st-${a.tone}-tint)` }}
                   >
                     {a.icon}
@@ -562,7 +607,7 @@ function AlertsBellContent({ className }: { className?: string }) {
             ))}
           </ul>
         )}
-        <p className="border-t px-4 py-3 text-xs text-tx-3">
+        <p className="border-t border-border-subtle bg-surface-2/40 px-4 py-2.5 text-xs text-tx-3">
           Hệ thống không tự hủy booking hay nhả bàn. Lễ tân xử lý thủ công.
         </p>
       </PopoverContent>
@@ -577,13 +622,13 @@ function Identity() {
   const subtitle = api.mode === "http" ? ROLE_LABEL[user.role] : `${ROLE_LABEL[user.role]} · ${user.deviceLabel}`
 
   return (
-    <div className="hidden items-center gap-2.5 pl-1 xl:flex">
-      <span className="grid size-8 place-items-center rounded-full bg-surface-3 text-xs font-semibold">
+    <div className="hidden items-center gap-2.5 rounded-xl border border-border-subtle bg-surface-1/80 py-1 pr-3 pl-1.5 xl:flex">
+      <span className="grid size-8 place-items-center rounded-full bg-surface-3 text-xs font-semibold text-tx-strong">
         {initials(displayName)}
       </span>
       <span className="leading-tight">
-        <span className="block text-sm font-semibold text-tx-strong">{displayName}</span>
-        <span className="block text-xs text-tx-3">{subtitle}</span>
+        <span className="block text-[13px] font-semibold text-tx-strong">{displayName}</span>
+        <span className="block text-[11px] text-tx-3">{subtitle}</span>
       </span>
     </div>
   )
@@ -600,7 +645,7 @@ function AccountMenu() {
       <DropdownMenuTrigger asChild>
         <Button
           variant="outline"
-          className="h-11 min-h-[44px] max-w-[220px] gap-2 bg-surface-1 pr-2 pl-2.5 text-sm font-medium"
+          className="h-11 min-h-[44px] max-w-[220px] gap-2 rounded-lg bg-surface-1 pr-2.5 pl-2.5 text-sm font-medium shadow-xs"
           aria-label={`Tài khoản: ${displayName}`}
         >
           <UserRound className="text-muted-foreground" />

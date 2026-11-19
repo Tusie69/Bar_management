@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle, Lock, RotateCcw } from "lucide-react"
-import { useMemo } from "react"
+import { useMemo, useRef } from "react"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { useShiftAlerts } from "@/features/floor/alerts"
@@ -12,6 +13,7 @@ import { ShiftOverviewFloor } from "./shift-overview-floor"
 import { isForbiddenError, useCanReadShiftOverview } from "./shift-overview-hooks"
 import { ShiftOverviewKpis } from "./shift-overview-kpis"
 import { ShiftOverviewOccupancy } from "./shift-overview-occupancy"
+import { useShiftOverviewFirstReveal } from "./shift-overview-reveal"
 import {
   buildOperationalAlerts,
   selectActiveWaitlistCount,
@@ -26,9 +28,9 @@ function describeLoadError(error: unknown): string {
   return "Không thể tải dữ liệu tổng quan ca. Vui lòng thử lại."
 }
 
-function KpiSkeletonCard({ hasSubcaption = false }: { hasSubcaption?: boolean }) {
+function KpiSkeletonCard({ tier, hasSubcaption = false }: { tier: "primary" | "secondary"; hasSubcaption?: boolean }) {
   return (
-    <div className="so-kpi-card" data-testid="so-kpi-skeleton-card">
+    <div className={`so-kpi-card so-kpi-card--${tier}`} data-testid="so-kpi-skeleton-card">
       <div className="so-kpi-top">
         <div className="so-kpi-title-row">
           <Skeleton className="h-[18px] w-24" />
@@ -37,10 +39,10 @@ function KpiSkeletonCard({ hasSubcaption = false }: { hasSubcaption?: boolean })
         {hasSubcaption ? <Skeleton className="h-[14px] w-28" /> : null}
       </div>
       <div className="so-kpi-middle">
-        <Skeleton className="h-[36px] w-14" />
+        <Skeleton className="h-[32px] w-14" />
       </div>
       <div className="so-kpi-footer">
-        <Skeleton className="h-[15px] w-20" />
+        <Skeleton className="h-[18px] w-24 rounded-full" />
       </div>
     </div>
   )
@@ -51,48 +53,33 @@ function ShiftOverviewSkeleton() {
     <div className="so-root" aria-busy="true" aria-label="Đang tải tổng quan ca" data-testid="shift-overview-loading">
       <div className="so-kpi-row-1">
         {Array.from({ length: 6 }, (_, i) => (
-          <KpiSkeletonCard key={i} hasSubcaption={i === 3 || i === 4} />
+          <KpiSkeletonCard key={i} tier="primary" hasSubcaption={i === 3 || i === 4} />
         ))}
       </div>
 
       <div className="so-kpi-row-2">
         {Array.from({ length: 4 }, (_, i) => (
-          <KpiSkeletonCard key={i} />
+          <KpiSkeletonCard key={i} tier="secondary" />
         ))}
       </div>
 
       <div className="so-main-grid">
         <div className="so-panel so-panel--stretch">
-          <div className="so-panel-header">
+          <div className="so-panel-header so-panel-header--bordered">
             <div className="so-panel-heading-group">
               <Skeleton className="h-[22px] w-44" />
               <Skeleton className="h-[18px] w-56" />
             </div>
           </div>
 
-          <div className="so-legend" aria-hidden="true">
-            {Array.from({ length: 5 }, (_, i) => (
-              <Skeleton key={i} className="h-[16px] w-16" />
-            ))}
-          </div>
-
-          <div className="so-zones-list">
-            {[8, 10, 4, 15].map((chipCount, z) => (
-              <div key={z} className="so-zone-block">
-                <Skeleton className="h-[16px] w-20" />
-                <div className="so-chip-grid">
-                  {Array.from({ length: chipCount }, (_, c) => (
-                    <Skeleton key={c} className="h-[40px] w-[62px] rounded-lg" />
-                  ))}
-                </div>
-              </div>
-            ))}
+          <div className="so-floor-stage so-floor-stage--skeleton" aria-hidden="true">
+            <Skeleton className="h-full w-full max-w-[360px] rounded-[10px]" />
           </div>
         </div>
 
         <div className="so-right-stack">
-          <div className="so-panel">
-            <div className="so-panel-header">
+          <div className="so-panel so-panel--alerts">
+            <div className="so-panel-header so-panel-header--bordered">
               <div className="so-panel-heading-group">
                 <Skeleton className="h-[22px] w-40" />
                 <Skeleton className="h-[18px] w-44" />
@@ -100,13 +87,13 @@ function ShiftOverviewSkeleton() {
             </div>
             <div className="so-alert-list">
               {Array.from({ length: 3 }, (_, i) => (
-                <Skeleton key={i} className="h-[60px] w-full rounded-[10px]" />
+                <Skeleton key={i} className="h-[60px] w-full rounded-[12px]" />
               ))}
             </div>
           </div>
 
           <div className="so-panel">
-            <div className="so-panel-header">
+            <div className="so-panel-header so-panel-header--bordered">
               <div className="so-panel-heading-group">
                 <Skeleton className="h-[22px] w-44" />
                 <Skeleton className="h-[18px] w-36" />
@@ -116,7 +103,7 @@ function ShiftOverviewSkeleton() {
               {Array.from({ length: 4 }, (_, i) => (
                 <div key={i} className="so-occupancy-row">
                   <Skeleton className="h-[18px] w-full" />
-                  <Skeleton className="h-[8px] w-full rounded-full" />
+                  <Skeleton className="h-[10px] w-full rounded-full" />
                 </div>
               ))}
             </div>
@@ -132,6 +119,7 @@ export function ShiftOverviewPage() {
   const queryClient = useQueryClient()
   const businessDate = useBusinessDate()
   const now = useNow(30_000)
+  const rootRef = useRef<HTMLDivElement>(null)
 
   const model = useFloorModel(businessDate)
   const guestCount = useReceptionGuestCount(businessDate)
@@ -162,15 +150,20 @@ export function ShiftOverviewPage() {
   )
 
   const firstError = model.error ?? guestCount.error ?? reservations.error ?? waitlist.error
+  const isInitialLoading = model.loading || guestCount.isLoading || reservations.isLoading || waitlist.isLoading
+  const isForbidden = !canRead || isForbiddenError(firstError)
+  const isContentReady = !isForbidden && !isInitialLoading && !firstError
 
-  if (!canRead || isForbiddenError(firstError)) {
+  useShiftOverviewFirstReveal(rootRef, isContentReady)
+
+  if (isForbidden) {
     return (
       <div className="so-root" data-testid="shift-overview-forbidden">
         <section className="so-state-card" role="alert">
-          <div className="flex items-center gap-2 text-[#102a43]">
-            <Lock className="size-5" aria-hidden="true" />
-            <h2 className="so-state-title">Không có quyền xem Tổng quan ca</h2>
+          <div className="so-state-icon so-state-icon--muted" aria-hidden="true">
+            <Lock className="size-5" />
           </div>
+          <h2 className="so-state-title">Không có quyền xem Tổng quan ca</h2>
           <p className="so-state-desc">
             Tài khoản hiện tại không có quyền <code>report.read</code> để truy cập báo cáo tổng quan ca.
           </p>
@@ -178,8 +171,6 @@ export function ShiftOverviewPage() {
       </div>
     )
   }
-
-  const isInitialLoading = model.loading || guestCount.isLoading || reservations.isLoading || waitlist.isLoading
 
   if (isInitialLoading && !firstError) {
     return <ShiftOverviewSkeleton />
@@ -189,14 +180,14 @@ export function ShiftOverviewPage() {
     return (
       <div className="so-root" data-testid="shift-overview-error">
         <section className="so-state-card" role="alert">
-          <div className="flex items-center gap-2 text-[#a82424]">
-            <AlertTriangle className="size-5" aria-hidden="true" />
-            <h2 className="so-state-title">Không tải được dữ liệu tổng quan ca</h2>
+          <div className="so-state-icon so-state-icon--danger" aria-hidden="true">
+            <AlertTriangle className="size-5" />
           </div>
+          <h2 className="so-state-title">Không tải được dữ liệu tổng quan ca</h2>
           <p className="so-state-desc">{describeLoadError(firstError)}</p>
-          <button
+          <Button
             type="button"
-            className="so-retry-btn"
+            variant="default"
             onClick={() => {
               void queryClient.refetchQueries({ type: "active" })
             }}
@@ -204,7 +195,7 @@ export function ShiftOverviewPage() {
           >
             <RotateCcw className="size-4" aria-hidden="true" />
             <span>Thử lại</span>
-          </button>
+          </Button>
         </section>
       </div>
     )
@@ -212,10 +203,16 @@ export function ShiftOverviewPage() {
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="so-root" data-testid="shift-overview-page" data-business-date={businessDate}>
+      <div ref={rootRef} className="so-root" data-testid="shift-overview-page" data-business-date={businessDate}>
         <ShiftOverviewKpis row1={kpiRows.row1} row2={kpiRows.row2} />
         <div className="so-main-grid">
-          <ShiftOverviewFloor zones={floorMetrics.zones} />
+          <ShiftOverviewFloor
+            tables={model.tables}
+            states={model.states}
+            zones={model.catalog?.zones}
+            groups={model.floor?.groups}
+            now={now}
+          />
           <div className="so-right-stack">
             <ShiftOverviewAlerts alerts={alerts} />
             <ShiftOverviewOccupancy items={floorMetrics.occupancyByZone} />

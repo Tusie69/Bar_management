@@ -153,6 +153,9 @@ interface UiState {
   clearHistory: () => void
 }
 
+const activeQuickDraft = (s: Pick<UiState, "bookingOpen" | "walkInOpen" | "draft">): QuickDraft | null =>
+  s.bookingOpen || s.walkInOpen ? s.draft : null
+
 export const useUi = create<UiState>((set, get) => ({
   floorMode: "live",
   view: "map",
@@ -226,44 +229,52 @@ export const useUi = create<UiState>((set, get) => ({
   },
 
   openBooking: (bookingPrefill = {}) =>
-    set({
-      bookingOpen: true,
-      walkInOpen: false,
-      bookingPrefill,
-      selectedTableId: null,
-      pick: null,
-      pickSelection: [],
-      draft: {
-        kind: "booking",
-        date: bookingPrefill.date ?? businessDateOf(clock.now()),
-        // Booking arrival must be a quarter-hour slot (19:00 → 01:00). Availability mode keeps defaultTime().
-        time: isBookingSlot(bookingPrefill.time)
-          ? bookingPrefill.time
-          : (defaultBookingSlot(bookingPrefill.date ?? businessDateOf(clock.now()), clock.now()) ?? "19:00"),
-        party:
-          bookingPrefill.party ??
-          (bookingPrefill.tableIds?.length ? Math.min(8, bookingPrefill.tableIds.length * 4) : 4),
-        tableIds: bookingPrefill.tableIds ?? [],
-        toWaitlist: bookingPrefill.toWaitlist,
-      },
+    set((s) => {
+      const activeDraft = activeQuickDraft(s)
+      const date = bookingPrefill.date ?? businessDateOf(clock.now())
+      return {
+        bookingOpen: true,
+        walkInOpen: false,
+        bookingPrefill,
+        selectedTableId: null,
+        pick: null,
+        pickSelection: [],
+        draft: {
+          kind: "booking",
+          date,
+          // Booking arrival must be a quarter-hour slot (19:00 → 01:00). Availability mode keeps defaultTime().
+          time: isBookingSlot(bookingPrefill.time)
+            ? bookingPrefill.time
+            : (defaultBookingSlot(date, clock.now()) ?? "19:00"),
+          party:
+            bookingPrefill.party ??
+            activeDraft?.party ??
+            (bookingPrefill.tableIds?.length ? Math.min(8, bookingPrefill.tableIds.length * 4) : 4),
+          tableIds: bookingPrefill.tableIds ?? [],
+          toWaitlist: bookingPrefill.toWaitlist,
+        },
+      }
     }),
   closeBooking: () => set({ bookingOpen: false, draft: null }),
   openWalkIn: (walkInPrefill = []) =>
-    set({
-      walkInOpen: true,
-      bookingOpen: false,
-      walkInPrefill,
-      floorMode: "live",
-      selectedTableId: null,
-      pick: null,
-      pickSelection: [],
-      draft: {
-        kind: "walkin",
-        date: businessDateOf(clock.now()),
-        time: defaultTime(),
-        party: 2,
-        tableIds: walkInPrefill,
-      },
+    set((s) => {
+      const activeDraft = activeQuickDraft(s)
+      return {
+        walkInOpen: true,
+        bookingOpen: false,
+        walkInPrefill,
+        floorMode: "live",
+        selectedTableId: null,
+        pick: null,
+        pickSelection: [],
+        draft: {
+          kind: "walkin",
+          date: businessDateOf(clock.now()),
+          time: defaultTime(),
+          party: activeDraft?.party ?? 2,
+          tableIds: walkInPrefill,
+        },
+      }
     }),
   closeWalkIn: () => set({ walkInOpen: false, draft: null }),
   setDraft: (patch) => set((s) => (s.draft ? { draft: { ...s.draft, ...patch } } : {})),

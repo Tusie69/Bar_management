@@ -11,7 +11,8 @@ fs.mkdirSync(output, { recursive: true })
 const browser = await chromium.launch(
   process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {},
 )
-const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"], [data-combined-codes~="${code}"]`).first()
+const table = (page, code) =>
+  page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"], [data-combined-codes~="${code}"]`).first()
 const bookingForm = (page) => page.getByRole("form", { name: /^Tạo đặt bàn/ })
 const blockedReason = (form) => form.getByRole("alert").filter({ hasText: /B5/ })
 
@@ -110,7 +111,9 @@ async function observeCreates(page) {
 
 async function assertBlocked(form, page) {
   await expect(blockedReason(form)).toContainText(/B5.*(?:đã có khách đặt|đang có khách)/s)
-  await expect(form.getByRole("button", { name: /^Đặt bàn/ }), "a blocked table leaves nothing to submit").toHaveCount(0)
+  await expect(form.getByRole("button", { name: /^Đặt bàn/ }), "a blocked table leaves nothing to submit").toHaveCount(
+    0,
+  )
   await expect(form.getByRole("button", { name: "Chọn bàn khác", exact: true })).toBeEnabled()
   assert.deepEqual(
     await page.evaluate(() => window.bookingCreates),
@@ -144,7 +147,13 @@ async function tomorrow(form, page) {
     await combo.click()
     await page.getByRole("option", { name: /05\/11/ }).click()
   } else {
-    await form.getByRole("button", { name: /05\/11/ }).or(form.getByRole("radio", { name: /05\/11/ })).first().click()
+    const collapsed = form.getByRole("button", { name: /Hôm nay.*04\/11/ })
+    if (await collapsed.isVisible()) await collapsed.click()
+    await form
+      .getByRole("button", { name: /05\/11/ })
+      .or(form.getByRole("radio", { name: /05\/11/ }))
+      .first()
+      .click()
   }
 }
 
@@ -190,7 +199,9 @@ try {
         await page.screenshot({ path: `${output}/race-${width}-${theme}.png`, fullPage: true })
         await form.getByRole("button", { name: "Chọn bàn khác", exact: true }).click()
         await table(page, "B7").click()
-        await expect(form.getByLabel("Tên khách"), "form data survives the table change").toHaveValue("Milestone A browser")
+        await expect(form.getByLabel("Tên khách"), "form data survives the table change").toHaveValue(
+          "Milestone A browser",
+        )
         const id = await page.evaluate(async () => {
           const { api } = await import("/src/services/index.ts")
           return (await api.getCatalog()).tables.find((item) => item.code === "B7").id
@@ -277,11 +288,26 @@ try {
     await tomorrow(form, page)
     await form.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).click()
     await form.locator('[data-wheel="Giờ"] [data-value="19"]').click()
-    await expect(form.locator('[data-wheel="Phút"] [data-value]')).toHaveText(["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"])
+    await expect(form.locator('[data-wheel="Phút"] [data-value]')).toHaveText([
+      "00",
+      "05",
+      "10",
+      "15",
+      "20",
+      "25",
+      "30",
+      "35",
+      "40",
+      "45",
+      "50",
+      "55",
+    ])
     await expect(form.locator('[data-wheel="Phút"] [data-value="35"]')).toHaveCount(1)
     await form.locator('[data-wheel="Phút"] [data-value="15"]').click()
     await expect(form.getByRole("button", { name: "Đặt bàn B5", exact: true })).toBeEnabled()
     // Back to today: 19:15 has passed at 21:30. The time is flagged, never silently replaced, and B5 stays.
+    const collapsedTomorrow = form.getByRole("button", { name: /Ngày mai.*05\/11/ })
+    if (await collapsedTomorrow.isVisible()) await collapsedTomorrow.click()
     await form.getByRole("radio", { name: /04\/11/ }).click()
     await expect(form.getByRole("alert")).toContainText("19:15 đã qua")
     await expect(form.getByRole("button", { name: "Chọn lại giờ", exact: true })).toBeDisabled()
@@ -300,7 +326,7 @@ try {
     })
     return assertCreated(page, id, "2026-11-04")
   })
-  await run("pinch-and-tap-with-open-sheet", 390, "light", async (page) => {
+  await run("pinch-lock-and-keep-booking-draft", 390, "light", async (page) => {
     const camera = () => page.locator('svg[role="group"] > g').first().getAttribute("transform")
     const cdp = await page.context().newCDPSession(page)
     const pinch = async () => {
@@ -318,19 +344,23 @@ try {
     }
     const fitted = await camera()
     await pinch()
-    const scale = (t) => Number(t.match(/scale\(([\d.]+)\)/)[1])
-    await expect.poll(async () => scale(await camera()), "two-finger pinch must zoom").toBeGreaterThan(scale(fitted))
+    assert.equal(await camera(), fitted, "reception floor stays fitted after pinch")
     await page.reload({ waitUntil: "networkidle" })
     await dismiss(page)
     const form = await openBooking(page)
     await form.getByRole("button", { name: "Đổi bàn", exact: true }).click()
     const beforeSheetPinch = await camera()
     await pinch()
-    await expect.poll(camera, "pinch still works while the sheet is collapsed").not.toBe(beforeSheetPinch)
+    await expect.poll(camera, "zone focus enables pinch while the sheet is collapsed").not.toBe(beforeSheetPinch)
     await expect(page.getByRole("button", { name: /^[+−-]$|phóng to|thu nhỏ/i }), "no zoom rail").toHaveCount(0)
     await expect(form).toHaveAccessibleName("Tạo đặt bàn B5")
   })
-  for (const [width, theme] of [[360, "dark"], [390, "light"], [768, "light"], [1280, "dark"]]) {
+  for (const [width, theme] of [
+    [360, "dark"],
+    [390, "light"],
+    [768, "light"],
+    [1280, "dark"],
+  ]) {
     await run(`whole-floor-${width}-${theme}`, width, theme, async (page) => {
       await expect(page.getByRole("tablist", { name: "Lọc khu" })).toHaveCount(0)
       await expect(page.getByRole("tab", { name: /^(Tất cả|Khu [ABC]|Bar)$/ })).toHaveCount(0)
@@ -339,16 +369,20 @@ try {
           const box = svg.getBoundingClientRect()
           const inside = (el) => {
             const r = el.getBoundingClientRect()
-            return r.left >= box.left - 1 && r.right <= box.right + 1 && r.top >= box.top - 1 && r.bottom <= box.bottom + 1
+            return (
+              r.left >= box.left - 1 && r.right <= box.right + 1 && r.top >= box.top - 1 && r.bottom <= box.bottom + 1
+            )
           }
-          const seats = [...svg.querySelectorAll('[aria-label^="Bàn "], [aria-label^="Ghế Bar "], [data-combined-group]')]
+          const seats = [
+            ...svg.querySelectorAll('[aria-label^="Bàn "], [aria-label^="Ghế Bar "], [data-combined-group]'),
+          ]
           const texts = [...svg.querySelectorAll("text")]
           const label = (t) => texts.find((el) => el.textContent.trim() === t)
           return {
             total: seats.length,
             bar: seats.filter((el) => el.getAttribute("aria-label")?.startsWith("Ghế Bar ")).length,
             clipped: seats.filter((el) => !inside(el)).map((el) => el.getAttribute("aria-label").split(",")[0]),
-            landmarks: ["QUẦY BAR", "KHU PHA CHẾ", "LỐI VÀO"].filter((t) => !label(t) || !inside(label(t))),
+            landmarks: ["QUẦY BAR", "LỐI VÀO"].filter((t) => !label(t) || !inside(label(t))),
             transform: svg.querySelector(":scope > g").getAttribute("transform"),
           }
         })
@@ -366,62 +400,42 @@ try {
       return { positions: first.total }
     })
   }
-  await run("pan-and-tap-after-zoom", 390, "light", async (page) => {
+  await run("pan-lock-and-tap", 390, "light", async (page) => {
     const svg = page.locator('svg[role="group"]')
     const camera = () => svg.locator("> g").first().getAttribute("transform")
     const cdp = await page.context().newCDPSession(page)
     const box = await svg.boundingBox()
-    const cx = box.x + box.width / 2
-    const cy = box.y + box.height / 2
-    const two = (gap) => [{ x: cx - gap, y: cy, id: 1 }, { x: cx + gap, y: cy, id: 2 }]
+    const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
     const fitted = await camera()
-    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [two(30)[0]] })
-    await page.waitForTimeout(40)
-    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: two(30) })
-    for (const gap of [50, 70, 90, 110]) {
-      await page.waitForTimeout(40)
-      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: two(gap) })
-    }
-    await page.waitForTimeout(200)
-    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [two(110)[0]] })
-    await page.waitForTimeout(60)
-    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
-    await page.waitForTimeout(300)
-    const scale = (t) => Number(t.match(/scale\(([\d.]+)\)/)[1])
-    assert(scale(await camera()) > scale(fitted), "pinch from mid-floor must zoom, also with a finger on the Bàn chờ marker")
-    const zoomed = await camera()
-    // Drag B5 to the middle of the canvas with one finger, then tap it where it now sits.
-    const b5 = await table(page, "B5").boundingBox()
-    const dx = cx - (b5.x + b5.width / 2)
-    const dy = cy - (b5.y + b5.height / 2)
-    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: cy }] })
-    for (const part of [0.25, 0.5, 0.75, 1]) {
-      await page.waitForTimeout(40)
-      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx + dx * part, y: cy + dy * part }] })
-    }
-    await page.waitForTimeout(200)
-    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
-    await expect.poll(camera, "one-finger pan must move the camera").not.toBe(zoomed)
-    await page.waitForTimeout(1000)
-    const moved = await table(page, "B5").boundingBox()
-    assert(Math.abs(moved.x + moved.width / 2 - cx) < 4 && Math.abs(moved.y + moved.height / 2 - cy) < 4, "pan follows the finger")
-    await page.touchscreen.tap(cx, cy)
+    await cdp.send("Input.synthesizeScrollGesture", { ...center, xDistance: 70, gestureSourceType: "touch" })
+    assert.equal(await camera(), fitted, "one-finger swipe keeps the whole floor fitted")
+    await table(page, "B5").tap()
     await expect(bookingForm(page)).toHaveCount(0)
-    await page.getByRole("button", { name: "Tạo đặt trước", exact: true }).click()
+    await page.getByRole("button", { name: "Đặt bàn", exact: true }).click()
     await expect(bookingForm(page)).toHaveAccessibleName("Tạo đặt bàn B5")
     return { tapped: "B5" }
   })
   await run("export-label", 390, "light", async (page) => {
-    await page.evaluate(async () => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: base })
+    const exportButton = page.getByRole("button", { name: "Xuất text Zalo", exact: true })
+    const copyExport = async () => {
+      await exportButton.click()
+      await expect(page.getByText("Đã sao chép danh sách bàn đặt", { exact: true }).last()).toBeVisible()
+      return page.evaluate(() => navigator.clipboard.readText())
+    }
+    assert.match(await copyExport(), /Phạm Quốc Khoa/)
+    const status = await page.evaluate(async () => {
       const { api, clock } = await import("/src/services/index.ts")
       const id = (await api.getCatalog()).tables.find((item) => item.code === "A6").id
       const claim = (await api.getFloorState(clock.now())).tables.find((item) => item.tableId === id).claim
       await api.markNoShow(claim.reservationId, claim.version)
+      const bd = (await api.getCatalog()).venue.businessDate ?? "2026-11-04"
+      return (await api.listReservations({ businessDate: bd })).find((row) => row.id === claim.reservationId).status
     })
+    assert.equal(status, "NO_SHOW")
     await dismiss(page)
-    await page.getByRole("button", { name: "Đếm khách", exact: true }).click()
-    const text = await page.getByRole("textbox", { name: "Nội dung text booking", exact: true }).inputValue()
-    assert(text.includes("\nKHÔNG TỚI\n"), "export must contain KHÔNG TỚI heading")
+    const text = await copyExport()
+    assert(!text.includes("Phạm Quốc Khoa"), "export excludes the no-show from active bookings")
     assert(!text.includes("KHÔNG ĐẾN"), "export must not contain old heading")
   })
   assert(results.length > 0, "MILESTONE_A_CASE must select an existing case")

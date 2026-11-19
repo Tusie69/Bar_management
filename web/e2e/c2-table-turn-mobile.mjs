@@ -57,7 +57,8 @@ const common = {
   BUSINESS_DAY_WORKER_ENABLED: "false",
   E2E_FIXED_NOW: fixedNow,
 }
-const credentialEnv = { ...common, E2E_USERNAME: username, E2E_PASSWORD: password }
+const secondUsername = `${username}_peer`
+const credentialEnv = { ...common, E2E_USERNAME: username, E2E_SECOND_USERNAME: secondUsername, E2E_PASSWORD: password }
 const children = []
 const results = []
 let browser
@@ -101,12 +102,12 @@ async function waitFor(url, timeoutMs = 60_000) {
 const tableGlyph = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"]`).first()
 const turnBadges = (page) => page.locator('[data-testid="turn-badge"]')
 
-async function login(page) {
-  await page.goto(webUrl, { waitUntil: "networkidle" })
+async function login(page, loginUsername = username) {
+  await page.goto(webUrl, { waitUntil: "domcontentloaded" })
   const form = page.getByRole("form", { name: /Đăng nhập/ }).first()
   const target = (await form.isVisible().catch(() => false)) ? form : page
-  await target.getByLabel(/Tên đăng nhập|Tài khoản/).fill(username)
-  await target.getByLabel(/Mật khẩu/).fill(password)
+  await target.getByLabel(/Tên đăng nhập|Tài khoản/).fill(loginUsername)
+  await target.getByLabel("Mật khẩu", { exact: true }).fill(password)
   await target.getByRole("button", { name: /Đăng nhập/ }).click()
   await expect(page.getByRole("button", { name: /Đăng nhập/ })).toHaveCount(0, { timeout: 20_000 })
   await expect
@@ -119,7 +120,7 @@ async function login(page) {
         }, apiUrl),
       { timeout: 15_000 },
     )
-    .toBe(username)
+    .toBe(loginUsername)
 }
 
 async function clearOverlays(page) {
@@ -281,30 +282,58 @@ try {
         return { badges: 0 }
       })
 
-      await step(`${label} · AC11 the badge shows 1 and does not cover the table's own label`, async () => {
+      await step(`${label} · AC11 the badge shows from turn 2 at the upper right`, async () => {
         const seated = await seatParty(page, "B3", 4, "Khách lượt 1")
         const closed = await closeVisit(page, seated)
         assert.equal(closed.status, 200)
         assert.deepEqual(closed.turn, { turnId: closed.turn.turnId, scope: "TABLE", turnNo: 1, counted: true })
 
-        const badge = turnBadges(page).first()
-        await expect(badge).toBeVisible({ timeout: REALTIME_BUDGET_MS })
-        await expect(badge).toHaveAttribute("aria-label", "Lượt 1")
-        // Exactly one badge on the floor: one table served one party.
+        const response = await page.context().request.get(`${apiUrl}/api/v1/tables?date=${businessDate}`)
+        assert.equal(response.status(), 200)
+        const floor = await response.json()
+        assert.equal(floor.tables.find((row) => row.tableCode === "B3").seatedTurnCount, 1)
+        await page.reload({ waitUntil: "domcontentloaded" })
+        await expect(tableGlyph(page, "B3")).toBeVisible()
+        await expect(turnBadges(page)).toHaveCount(0)
+
+        const secondVisit = await seatParty(page, "B3", 4, "Khách lượt 2")
+        const secondClose = await closeVisit(page, secondVisit)
+        assert.equal(secondClose.status, 200)
+        assert.deepEqual(secondClose.turn, {
+          turnId: secondClose.turn.turnId,
+          scope: "TABLE",
+          turnNo: 2,
+          counted: true,
+        })
+
+        await page.reload({ waitUntil: "domcontentloaded" })
+        const glyph = tableGlyph(page, "B3")
+        const badge = glyph.getByTestId("turn-badge")
+        await expect(badge).toBeVisible()
+        await expect(badge).toHaveAttribute("aria-label", "Lượt 2")
         await expect(turnBadges(page)).toHaveCount(1)
 
-        // The badge sits beside the cell, so B3's own code and state stay readable.
-        const glyph = tableGlyph(page, "B3")
-        await expect(glyph).toContainText("B3")
+        const code = glyph.getByText("B3", { exact: true })
+        await expect(code).toBeVisible()
         await expect(glyph).toHaveAttribute("aria-label", /Trống|Chưa đặt/)
         const badgeBox = await badge.boundingBox()
+        const codeBox = await code.boundingBox()
         assert.ok(badgeBox && badgeBox.width > 0 && badgeBox.height > 0, "badge must be rendered with a real box")
-        // And it is inside the viewport, not pushed off the edge of a phone.
+        assert.ok(codeBox, "B3 code must have a rendered box")
+        assert.ok(
+          badgeBox.x + badgeBox.width / 2 > codeBox.x + codeBox.width / 2 &&
+            badgeBox.y + badgeBox.height / 2 < codeBox.y + codeBox.height / 2,
+          "badge must be at the upper right of the table code",
+        )
+        assert.ok(
+          badgeBox.x >= codeBox.x + codeBox.width || badgeBox.y + badgeBox.height <= codeBox.y,
+          "badge must leave the table code unobscured",
+        )
         assert.ok(
           badgeBox.x >= 0 && badgeBox.x + badgeBox.width <= width + 1,
           `badge off-screen: ${JSON.stringify(badgeBox)}`,
         )
-        await page.screenshot({ path: `${output}/${label}-badge-1.png` })
+        await page.screenshot({ path: `${output}/${label}-badge-2.png` })
         return { label: await badge.getAttribute("aria-label"), viewport: `${width}x${height}` }
       })
 
@@ -328,12 +357,21 @@ try {
         assert.equal(closed.turn.scope, "GROUP")
         assert.equal(closed.turn.turnNo, 1)
 
-        // B3 already had one badge; the cluster adds exactly one more, not two.
-        await expect(turnBadges(page)).toHaveCount(2, { timeout: REALTIME_BUDGET_MS })
+        await page.reload({ waitUntil: "domcontentloaded" })
+        await expect(turnBadges(page)).toHaveCount(1)
+        const secondVisit = await seatParty(page, "B4", 8, "Đoàn 8 khách lượt 2")
+        const secondClose = await closeVisit(page, secondVisit)
+        assert.equal(secondClose.status, 200)
+        assert.equal(secondClose.turn.scope, "GROUP")
+        assert.equal(secondClose.turn.turnNo, 2)
+
+        // B3 already had one badge. The cluster adds one badge for both members.
+        await page.reload({ waitUntil: "domcontentloaded" })
+        await expect(turnBadges(page)).toHaveCount(2)
         const labels = await turnBadges(page).evaluateAll((nodes) =>
           nodes.map((node) => node.getAttribute("aria-label")),
         )
-        assert.deepEqual(labels.sort(), ["Lượt 1", "Lượt 1"])
+        assert.deepEqual(labels, ["Lượt 2", "Lượt 2"])
         await page.screenshot({ path: `${output}/${label}-cluster-badge.png` })
         return { badges: 2, scope: closed.turn.scope }
       })
@@ -348,27 +386,27 @@ try {
         const watcher = await browser.newContext({ viewport: { width, height }, hasTouch: true })
         const deviceB = await watcher.newPage()
         try {
-          await login(deviceB)
+          await login(deviceB, secondUsername)
           await clearOverlays(deviceB)
           // Device B starts from what device A already did: two badges.
           await expect(turnBadges(deviceB)).toHaveCount(2)
 
           // Device A serves another party on B3 and closes it.
-          const seated = await seatParty(page, "B3", 4, "Khách lượt 2")
+          const seated = await seatParty(page, "B3", 4, "Khách lượt 3")
           await expect(turnBadges(deviceB)).toHaveCount(2)
 
           const started = Date.now()
           const closed = await closeVisit(page, seated)
           assert.equal(closed.status, 200)
-          assert.equal(closed.turn.turnNo, 2)
+          assert.equal(closed.turn.turnNo, 3)
 
           // No reload on device B: the badge must move from the stream.
-          await expect(deviceB.locator('[data-testid="turn-badge"][aria-label="Lượt 2"]')).toHaveCount(1, {
+          await expect(tableGlyph(deviceB, "B3").getByTestId("turn-badge")).toHaveAttribute("aria-label", "Lượt 3", {
             timeout: REALTIME_BUDGET_MS,
           })
           const latencyMs = Date.now() - started
           assert.ok(latencyMs < REALTIME_BUDGET_MS, `device B took ${latencyMs}ms`)
-          await deviceB.screenshot({ path: `${output}/${label}-device-b-badge-2.png` })
+          await deviceB.screenshot({ path: `${output}/${label}-device-b-badge-3.png` })
           return { latencyMs, turnNo: closed.turn.turnNo }
         } finally {
           await watcher.close()
@@ -386,7 +424,7 @@ try {
           },
           { base: apiUrl, today: businessDate },
         )
-        assert.equal(counts.today, 2)
+        assert.equal(counts.today, 3)
         // A new operating day starts the badge over; the old turns are still stored.
         assert.equal(counts.tomorrow, 0)
         return counts

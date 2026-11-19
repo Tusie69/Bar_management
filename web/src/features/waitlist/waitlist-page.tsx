@@ -157,8 +157,8 @@ export default function WaitlistPage({
     <div className="h-full scrollbar-thin overflow-y-auto">
       <div className="mx-auto grid max-w-[1400px] grid-cols-[minmax(0,1fr)] gap-5 p-4 md:p-6">
         <header className="flex flex-wrap items-end justify-between gap-4">
-          <div className="grid gap-2">
-            <h2 className="text-2xl leading-tight font-extrabold tracking-tight">Danh sách chờ</h2>
+          <div className="grid gap-1.5">
+            <h2 className="text-[26px] leading-tight font-bold tracking-[-0.022em] text-foreground">Danh sách chờ</h2>
             <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
               Chỉ gợi ý, không tự xếp chỗ · khách đặt trước được ưu tiên hơn Walk-in
             </p>
@@ -211,19 +211,21 @@ export default function WaitlistPage({
                   aria-pressed={tableFocus === t.id}
                   onClick={() => setTableFocus(tableFocus === t.id ? null : t.id)}
                   className={cn(
-                    "flex h-12 shrink-0 items-center gap-2.5 rounded-xl border px-3 text-left transition-colors",
-                    tableFocus === t.id ? "border-foreground bg-foreground text-background" : "hover:bg-surface-2",
+                    "flex h-12 shrink-0 items-center gap-2.5 rounded-xl border px-3.5 text-left shadow-2xs transition-[background-color,border-color,color,transform] duration-150 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.98]",
+                    tableFocus === t.id
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-surface-1 hover:bg-surface-2",
                   )}
                 >
-                  <Armchair className="size-4 opacity-60" aria-hidden />
+                  <Armchair className="size-4 opacity-70" aria-hidden />
                   <span className="grid leading-tight">
                     <span className="text-sm font-semibold">
-                      {t.code} <span className="text-xs font-normal opacity-70">· {t.capacity} chỗ</span>
+                      {t.code} <span className="text-xs font-normal opacity-75">· {t.capacity} chỗ</span>
                     </span>
                     <span
                       className={cn(
                         "text-xs",
-                        tableFocus === t.id ? "text-background/75" : n ? "text-st-seated-ink" : "text-subtle",
+                        tableFocus === t.id ? "text-primary-foreground/80" : n ? "text-st-seated-ink" : "text-subtle",
                       )}
                     >
                       {n ? `${n} khách hợp` : "chưa ai hợp"}
@@ -395,8 +397,8 @@ function EntryCard({
     <li
       id={`entry-${e.id}`}
       className={cn(
-        "grid grid-cols-[minmax(0,1fr)] gap-3 rounded-2xl border bg-surface-1 p-4 transition-opacity",
-        highlighted && "border-foreground",
+        "grid grid-cols-[minmax(0,1fr)] gap-3 rounded-xl border border-border bg-surface-1 p-4 shadow-xs transition-[opacity,border-color,box-shadow]",
+        highlighted && "border-primary ring-1 ring-primary/25",
         dimmed && "opacity-45",
       )}
     >
@@ -910,11 +912,11 @@ function EntryCard({
 
 function SummaryPill({ icon: Icon, hue, n, label }: { icon: typeof Users; hue: number; n: number; label: string }) {
   return (
-    <span className="inline-flex h-10 items-center gap-2 rounded-full border px-3 text-sm">
+    <span className="inline-flex h-10 items-center gap-2 rounded-full border border-border bg-surface-1 px-3 text-sm shadow-2xs">
       <span className="tone grid size-6 place-items-center rounded-full" style={{ ["--h" as string]: hue }}>
         <Icon className="size-3.5" aria-hidden />
       </span>
-      <span className="tnum font-semibold">{n}</span>
+      <span className="tnum font-semibold text-foreground">{n}</span>
       <span className="text-muted-foreground">{label}</span>
     </span>
   )
@@ -979,12 +981,12 @@ function TablePicker({
             aria-pressed={on}
             onClick={() => onChange(on ? value.filter((x) => x !== t.id) : [...value, t.id])}
             className={cn(
-              "flex h-12 flex-col items-center justify-center rounded-lg border text-sm font-semibold",
+              "flex h-12 flex-col items-center justify-center rounded-xl border text-sm font-semibold transition-[background-color,border-color,color,transform] duration-150 active:scale-[0.97]",
               on
-                ? "border-foreground bg-foreground text-background"
+                ? "border-primary bg-primary text-primary-foreground shadow-xs"
                 : t.capacity < party && t.kind === "TABLE"
-                  ? "text-subtle hover:bg-surface-2"
-                  : "hover:bg-surface-2",
+                  ? "border-border bg-surface-1 text-subtle hover:bg-surface-2"
+                  : "border-border bg-surface-1 hover:bg-surface-2",
             )}
           >
             {t.kind === "BAR_SEAT" ? `Bar ${t.seqNo}` : t.code}
@@ -1014,15 +1016,28 @@ interface EntryDialogProps {
   presetTable: number | null
 }
 
+function useOpenSession(open: boolean) {
+  const [sessionId, setSessionId] = useState(0)
+  const [wasOpen, setWasOpen] = useState(false)
+  if (open && !wasOpen) {
+    setWasOpen(true)
+    setSessionId((n) => n + 1)
+  } else if (!open && wasOpen) {
+    setWasOpen(false)
+  }
+  return sessionId
+}
+
 function ContactDialog({
   open,
   onOpenChange,
   ...props
 }: EntryDialogProps & { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const sessionId = useOpenSession(open)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
-        {open ? <ContactBody {...props} close={() => onOpenChange(false)} /> : null}
+        {sessionId > 0 ? <ContactBody key={sessionId} {...props} close={() => onOpenChange(false)} /> : null}
       </DialogContent>
     </Dialog>
   )
@@ -1166,6 +1181,7 @@ function SeatDialog({
   const { data: reservations } = useReservations(e.businessDate)
   const held = useHeldOrderActions(model)
   const isArrival = e.status === "HOLD_ACTIVE" || Boolean(e.hold)
+  const seatSessionId = useOpenSession(open && !isArrival)
 
   if (isArrival) {
     const res = reservations?.find((r) => (e.reservationId ? r.id === e.reservationId : r.waitlistEntryId === e.id))
@@ -1203,7 +1219,7 @@ function SeatDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
-        {open ? <SeatBody {...props} close={() => onOpenChange(false)} /> : null}
+        {seatSessionId > 0 ? <SeatBody key={seatSessionId} {...props} close={() => onOpenChange(false)} /> : null}
       </DialogContent>
     </Dialog>
   )
@@ -1273,10 +1289,11 @@ function AddWaitlistDialog({
   onOpenChange: (o: boolean) => void
   model: FloorModel
 }) {
+  const sessionId = useOpenSession(open)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
-        {open ? <AddWaitlistBody model={model} close={() => onOpenChange(false)} /> : null}
+        {sessionId > 0 ? <AddWaitlistBody key={sessionId} model={model} close={() => onOpenChange(false)} /> : null}
       </DialogContent>
     </Dialog>
   )

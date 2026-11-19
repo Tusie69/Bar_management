@@ -6,6 +6,7 @@ import { ApiError } from "@/services/contracts"
 
 const mockState = vi.hoisted(() => ({
   canRead: true,
+  canViewMaskedCustomer: true,
   businessDate: "2026-11-15",
   now: new Date("2026-11-15T22:00:00+07:00"),
   floorModel: {
@@ -58,6 +59,7 @@ vi.mock("@/hooks/use-data", () => ({
 
 vi.mock("./shift-overview-hooks", () => ({
   useCanReadShiftOverview: () => mockState.canRead,
+  useCanViewMaskedCustomer: () => mockState.canViewMaskedCustomer,
   isForbiddenError: (err: unknown) =>
     err instanceof ApiError && (err.status === 403 || err.code === "PERMISSION_DENIED"),
 }))
@@ -191,6 +193,7 @@ function seedPopulatedState() {
 describe("ShiftOverviewPage", () => {
   beforeEach(() => {
     mockState.canRead = true
+    mockState.canViewMaskedCustomer = true
     seedPopulatedState()
   })
 
@@ -212,10 +215,17 @@ describe("ShiftOverviewPage", () => {
     expect(html).toContain("Tự động")
 
     expect(html).toContain("Sơ đồ bàn — chỉ xem")
-    expect(html).toContain("KHU A")
-    expect(html).toContain("KHU B")
-    expect(html).toContain("KHU C")
+    expect(html).toContain('data-testid="shift-overview-floor-stage"')
+    expect(html).toContain('data-testid="so-legend-trigger"')
+    expect(html).toContain('aria-label="Chú giải ký hiệu"')
+    expect(html).toContain("Khu A")
+    expect(html).toContain("Khu B")
+    expect(html).toContain("Khu C")
     expect(html).toContain("QUẦY BAR")
+    expect(html).toContain("LỐI VÀO")
+    expect(html).not.toContain("so-chip-grid")
+    expect(html).not.toContain("so-zones-list")
+    expect(html).not.toContain('class="so-legend"')
 
     expect(html).toContain("Cảnh báo điều hành")
     expect(html).toContain("Không có cảnh báo")
@@ -286,5 +296,108 @@ describe("ShiftOverviewPage", () => {
     mockState.guestCount.error = new ApiError(403, "PERMISSION_DENIED", "Forbidden")
     const htmlApi403 = renderPage()
     expect(htmlApi403).toContain('data-testid="shift-overview-forbidden"')
+  })
+
+  it("differentiates primary/secondary KPI tiers, stretches desktop alerts shell, and renders spatial cluster metadata", () => {
+    const tables = [
+      ...mockState.floorModel.tables,
+      {
+        ...mockState.floorModel.tables[0]!,
+        id: 4,
+        code: "A2",
+        displayName: "A2",
+        seqNo: 2,
+        x: 44,
+        y: 539,
+      },
+    ]
+    mockState.floorModel.floor = {
+      at: mockState.now,
+      businessDate: "2026-11-15",
+      tables: [],
+      groups: [{ id: 10, displayCode: "G01", symbolNo: 1, tableIds: [1, 4] }],
+      changeSeq: 1,
+    }
+    mockState.floorModel.tables = tables
+    mockState.waitlist = {
+      data: [
+        {
+          id: 1,
+          version: 1,
+          kind: "WALK_IN",
+          displayName: "Khách chờ",
+          phoneLast3: "123",
+          customerId: null,
+          partySize: 2,
+          preferenceMode: null,
+          preferences: [],
+          channel: "IN_PERSON",
+          businessDate: "2026-11-15",
+          queuedAt: new Date(mockState.now.getTime() - 40 * 60_000),
+          status: "WAITING",
+          claimedBy: null,
+          claimExpiresAt: null,
+          offeredAt: null,
+          hold: null,
+          reservationId: null,
+          reservationExpectedAt: null,
+          attempts: null,
+          note: null,
+          callbackRequested: null,
+          closedAt: null,
+        },
+      ],
+      isLoading: false,
+      error: null,
+    }
+
+    const html = renderPage()
+    expect(html.match(/so-kpi-card--primary/g)).toHaveLength(6)
+    expect(html.match(/so-kpi-card--secondary/g)).toHaveLength(4)
+    expect(html).toContain('class="so-panel so-panel--alerts"')
+    expect(html).toContain('class="so-alerts-scroll-shell"')
+    expect(html).toContain('data-cluster-outline="1"')
+    expect(html).toContain('data-cluster-code-value="G01"')
+    expect(html).toContain('data-is-group="true"')
+  })
+
+  it("gates guest names on the Admin floor map by customer.view_masked permission", () => {
+    mockState.floorModel.states.set(1, {
+      tableId: 1,
+      state: "seated",
+      staleFromPreviousDay: false,
+      claim: {
+        kind: "visit",
+        visitId: 77,
+        reservationId: null,
+        waitlistEntryId: null,
+        holdId: null,
+        displayName: "Nguyễn Bảo Minh",
+        phoneLast3: "567",
+        partySize: 4,
+        startsAt: new Date("2026-11-15T20:15:00+07:00"),
+        deadlineAt: null,
+        paid: false,
+        origin: "RESERVATION",
+        tableIds: [1],
+        groupId: null,
+        symbolNo: null,
+        groupDisplayCode: null,
+        warning: null,
+        minutesLate: 0,
+        sourceCode: null,
+        note: null,
+        version: 1,
+      },
+    })
+
+    mockState.canViewMaskedCustomer = true
+    const withPermission = renderPage()
+    expect(withPermission).toContain("Nguyễn Bảo Minh")
+
+    mockState.canViewMaskedCustomer = false
+    const withoutPermission = renderPage()
+    expect(withoutPermission).not.toContain("Nguyễn Bảo Minh")
+    expect(withoutPermission).toContain("A1")
   })
 })

@@ -24,11 +24,14 @@ import { cn } from "@/lib/utils"
 
 const chip = (on: boolean) =>
   cn(
-    "tnum h-11 min-w-0 rounded-sm border px-1 text-sm whitespace-nowrap",
+    "tnum h-11 min-w-0 rounded-md border px-2 text-sm whitespace-nowrap outline-none select-none",
+    "transition-[transform,background-color,border-color,color,box-shadow] duration-[var(--duration-hover)] ease-[var(--ease-spring-default)]",
+    "active:scale-[0.97] active:duration-[var(--duration-press)] active:ease-[var(--ease-press)]",
+    "focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25",
     on
-      ? "border-primary bg-primary-tint font-semibold text-primary-ink"
-      : "border-strong bg-background font-medium hover:border-foreground",
-    "disabled:cursor-not-allowed disabled:border-dashed disabled:border-border disabled:bg-transparent disabled:font-normal disabled:text-tx-3",
+      ? "border-primary bg-primary-tint font-semibold text-primary-ink shadow-xs"
+      : "border-border bg-surface-1 font-medium hover:border-border-strong hover:bg-surface-2",
+    "disabled:cursor-not-allowed disabled:border-dashed disabled:border-border disabled:bg-transparent disabled:font-normal disabled:text-tx-3 disabled:active:scale-100",
   )
 
 export function GuestPicker({
@@ -72,7 +75,7 @@ export function GuestPicker({
       <div className="flex flex-col gap-1.5">
         <input
           id={`${id}-other`}
-          className="tnum h-11 w-full rounded-sm border border-strong bg-background px-3 text-base outline-none placeholder:text-tx-3 focus:border-foreground aria-[invalid=true]:border-st-noshow"
+          className="tnum h-11 w-full rounded-md border border-input bg-surface-1 px-3 text-base shadow-xs transition-[border-color,box-shadow] outline-none placeholder:text-tx-3 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/20 aria-[invalid=true]:border-st-noshow md:text-sm"
           inputMode="numeric"
           pattern="[0-9]*"
           enterKeyHint="done"
@@ -100,7 +103,6 @@ export function GuestPicker({
     </div>
   )
 }
-
 
 const WHEEL_ITEM = 44
 
@@ -165,8 +167,8 @@ function Wheel({
   }
 
   return (
-    <div className="relative min-w-0 flex-1 overflow-hidden rounded-sm border border-strong bg-background">
-      <span className="block pt-1.5 text-center text-xs text-tx-2">{label}</span>
+    <div className="relative min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-surface-1 shadow-xs">
+      <span className="block pt-1.5 text-center text-xs font-medium text-tx-2">{label}</span>
       <div className="relative h-[132px]">
         <span aria-hidden className="pointer-events-none absolute inset-x-0 top-11 h-11 bg-primary-tint" />
         <div
@@ -251,9 +253,7 @@ export function BookingTimePicker({
         <span id={`${id}-label`} className="text-xs text-tx-2">
           Giờ khách dự kiến đến
         </span>
-        <span className="tnum text-xs text-tx-2">
-          {compact ? "19:00 - 01:00" : "19:00 đến 01:00 · phút cách 5"}
-        </span>
+        <span className="tnum text-xs text-tx-2">{compact ? "19:00 - 01:00" : "19:00 đến 01:00 · phút cách 5"}</span>
       </div>
       {legacyValue ? (
         <p className="rounded-sm border border-st-late/40 bg-st-late-tint px-3 py-2 text-xs text-st-late-ink">
@@ -285,10 +285,13 @@ export function BookingTimePicker({
               aria-expanded={open}
               aria-label={`Chọn giờ bằng con lăn, đang chọn ${value || "chưa có"}`}
               onClick={() => setOpen((v) => !v)}
-              className="flex h-11 items-center justify-center gap-1 rounded-sm border border-strong bg-background text-sm font-medium"
+              className="flex h-11 items-center justify-center gap-1 rounded-md border border-border bg-surface-1 text-sm font-medium shadow-xs transition-[transform,background-color,border-color] duration-[var(--duration-hover)] hover:border-border-strong hover:bg-surface-2 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.97]"
             >
               <Clock className="size-4 text-tx-2" aria-hidden />
-              <ChevronDown className={cn("size-3.5 text-tx-2 transition-transform", open && "rotate-180")} aria-hidden />
+              <ChevronDown
+                className={cn("size-3.5 text-tx-2 transition-transform", open && "rotate-180")}
+                aria-hidden
+              />
             </button>
           ) : null}
         </div>
@@ -299,7 +302,7 @@ export function BookingTimePicker({
           aria-expanded={open}
           aria-label={`Chọn giờ bằng con lăn, đang chọn ${value || "chưa có"}`}
           onClick={() => setOpen((v) => !v)}
-          className="flex h-11 items-center justify-between px-3 rounded-sm border border-strong bg-background text-sm font-medium"
+          className="flex h-11 items-center justify-between rounded-md border border-border bg-surface-1 px-3 text-sm font-medium shadow-xs transition-[transform,background-color,border-color] duration-[var(--duration-hover)] hover:border-border-strong hover:bg-surface-2 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.985]"
         >
           <div className="flex items-center gap-2">
             <Clock className="size-4 text-tx-2" aria-hidden />
@@ -461,14 +464,7 @@ export function SourcePicker({
 
         {/* Old bookings with FANPAGE, ZALO or OTHER keep their value: show as an extra selected chip */}
         {!isMainSource && source ? (
-          <button
-            key={source}
-            type="button"
-            role="radio"
-            aria-checked={true}
-            className={chip(true)}
-            onClick={() => {}}
-          >
+          <button key={source} type="button" role="radio" aria-checked={true} className={chip(true)} onClick={() => {}}>
             {SOURCE_LABEL[source] ?? source}
           </button>
         ) : null}
@@ -484,8 +480,8 @@ export function SourcePicker({
             value={platform || ""}
             onChange={(e) => onPlatformChange((e.target.value || "") as SocialPlatform | "")}
             className={cn(
-              "h-10 w-full rounded-sm border border-strong bg-background px-3 text-sm font-medium outline-none",
-              "focus:border-foreground aria-[invalid=true]:border-st-noshow",
+              "h-11 w-full rounded-md border border-input bg-surface-1 px-3 text-base font-medium shadow-xs transition-[border-color,box-shadow] outline-none md:text-sm",
+              "focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/20 aria-[invalid=true]:border-st-noshow",
               !platform && "text-tx-3",
             )}
           >
@@ -554,14 +550,14 @@ export function HonorificPicker({
 
   const btnCls = (on: boolean) =>
     cn(
-      "tnum inline-flex shrink-0 items-center justify-center font-medium transition-colors select-none",
+      "tnum inline-flex shrink-0 items-center justify-center font-medium transition-[transform,background-color,border-color,color,box-shadow] duration-[var(--duration-hover)] ease-[var(--ease-spring-default)] select-none focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.97]",
       size === "lg"
-        ? "h-12 min-w-[44px] px-3 rounded-xl border text-base"
-        : "h-11 min-w-[42px] px-2.5 rounded-sm border text-sm",
+        ? "h-12 min-w-[44px] rounded-xl border px-3 text-base"
+        : "h-11 min-w-[44px] rounded-md border px-2.5 text-sm",
       on
-        ? "border-foreground bg-foreground text-background font-semibold"
-        : "border-strong bg-background text-tx-1 hover:border-foreground",
-      isDisabled && "cursor-not-allowed opacity-50 border-dashed bg-transparent text-tx-3",
+        ? "border-foreground bg-foreground font-semibold text-background shadow-xs"
+        : "border-border bg-surface-1 text-tx-1 hover:border-border-strong hover:bg-surface-2",
+      isDisabled && "cursor-not-allowed border-dashed bg-transparent text-tx-3 opacity-50 active:scale-100",
     )
 
   return (
@@ -641,8 +637,8 @@ export function IconPicker({
         className={cn(
           chip(hasStar),
           "flex h-11 items-center justify-center gap-1.5 px-2 text-sm font-medium",
-          hasStar && "border-amber-500 bg-amber-500/15 text-amber-900 dark:text-amber-200 font-semibold",
-          !supported && "cursor-not-allowed opacity-50 border-dashed",
+          hasStar && "border-amber-500 bg-amber-500/15 font-semibold text-amber-900 dark:text-amber-200",
+          !supported && "cursor-not-allowed border-dashed opacity-50",
         )}
         onClick={toggleStar}
       >
@@ -659,8 +655,8 @@ export function IconPicker({
         className={cn(
           chip(hasPin),
           "flex h-11 items-center justify-center gap-1.5 px-2 text-sm font-medium",
-          hasPin && "border-blue-500 bg-blue-500/15 text-blue-900 dark:text-blue-200 font-semibold",
-          !supported && "cursor-not-allowed opacity-50 border-dashed",
+          hasPin && "border-blue-500 bg-blue-500/15 font-semibold text-blue-900 dark:text-blue-200",
+          !supported && "cursor-not-allowed border-dashed opacity-50",
         )}
         onClick={togglePin}
       >
@@ -676,7 +672,7 @@ export function IconPicker({
         className={cn(
           chip(isBirthday),
           "flex h-11 items-center justify-center gap-1.5 px-2 text-sm font-medium",
-          isBirthday && "border-amber-500 bg-amber-500/15 text-amber-900 dark:text-amber-200 font-semibold",
+          isBirthday && "border-amber-500 bg-amber-500/15 font-semibold text-amber-900 dark:text-amber-200",
         )}
         onClick={() => onBirthdayChange(!isBirthday)}
       >

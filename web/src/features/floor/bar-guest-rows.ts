@@ -30,6 +30,10 @@ export interface BuildBarGuestRowsOptions {
   tables: TableView[]
   states?: Map<number, FloorTableState> | FloorTableState[] | null
   groups?: FloorGroup[] | null
+  /** Omit customer names in read-only admin projections without mutating source objects. */
+  hideGuestNames?: boolean
+  /** Suppress phone-shaped guest names in read-only admin projections without altering Reception rows. */
+  maskPhoneNames?: boolean
 }
 
 /**
@@ -101,6 +105,18 @@ export function formatBarSeatLabel(seatNumbers: number[]): string {
       return idx === 0 ? `Bar${seg}` : seg
     })
     .join(", ")
+}
+
+/**
+ * Detects phone-shaped guest names for Admin masking: normalizes with NFKC,
+ * maps every Unicode decimal digit (`\p{Nd}`) to ASCII `0-9`, and treats any
+ * string containing 9 or more digits anywhere as phone-shaped.
+ */
+export function isPhoneLikeGuestName(displayName?: string | null): boolean {
+  if (!displayName) return false
+  const mapped = displayName.normalize("NFKC").replace(/\p{Nd}/gu, "0")
+  const digits = mapped.match(/[0-9]/g)
+  return (digits?.length ?? 0) >= 9
 }
 
 /**
@@ -241,6 +257,8 @@ export function buildBarGuestRows(
   let tables: TableView[]
   let statesInput: Map<number, FloorTableState> | FloorTableState[] | null | undefined
   let groups: FloorGroup[] = []
+  let hideGuestNames = false
+  let maskPhoneNames = false
 
   if (Array.isArray(tablesOrOptions)) {
     tables = tablesOrOptions
@@ -250,6 +268,8 @@ export function buildBarGuestRows(
     tables = tablesOrOptions.tables
     statesInput = tablesOrOptions.states
     groups = tablesOrOptions.groups ?? []
+    hideGuestNames = Boolean(tablesOrOptions.hideGuestNames)
+    maskPhoneNames = Boolean(tablesOrOptions.maskPhoneNames)
   } else {
     return []
   }
@@ -350,7 +370,11 @@ export function buildBarGuestRows(
     const time = formatBarBookedTime(item.claim, item.state)
     const seatedTime = time ? null : formatBarSeatedTime(item.claim, item.state)
     const partySize = item.claim.partySize ?? 1
-    const guestName = formatBarGuestName(item.claim.displayName)
+    const guestName = hideGuestNames
+      ? ""
+      : maskPhoneNames && isPhoneLikeGuestName(item.claim.displayName)
+        ? ""
+        : formatBarGuestName(item.claim.displayName)
     const icons = extractBarGuestIcons(item.claim)
 
     rows.push({

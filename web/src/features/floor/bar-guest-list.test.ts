@@ -291,6 +291,24 @@ describe("BarGuestList presentational component", () => {
     expect(html).toContain("⭐")
     expect(html).toContain("+2")
   })
+
+  it("renders bar guest rows with square corners (no rounded row cards)", () => {
+    const html = renderToString(
+      createElement(BarGuestList, {
+        rows: [makeSampleRow()],
+        as: "html",
+      }),
+    )
+    const listStart = html.indexOf('role="list"')
+    const listHtml = html.slice(listStart)
+    const rowLi = listHtml.match(/<li[^>]*>/)?.[0] ?? ""
+    const rowButton = listHtml.match(/<button[^>]*>/)?.[0] ?? ""
+    expect(rowLi).toContain("rounded-none")
+    expect(rowButton).toContain("rounded-none")
+    expect(rowLi).not.toMatch(/rounded-(sm|md|lg|xl|2xl|full)/)
+    expect(rowButton).not.toMatch(/rounded-(sm|md|lg|xl|2xl|full)/)
+    expect(listHtml).toContain("flex-wrap")
+  })
 })
 
 describe("khung trên điện thoại (TU-39 follow-up 16/11)", () => {

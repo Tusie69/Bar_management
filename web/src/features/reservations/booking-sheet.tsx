@@ -87,9 +87,19 @@ type GuestForm = z.infer<typeof guestSchema>
 export function BookingSheet() {
   const open = useUi((s) => s.bookingOpen)
   const close = useUi((s) => s.closeBooking)
+  const [sessionId, setSessionId] = useState(0)
+  const [wasOpen, setWasOpen] = useState(false)
+  if (open && !wasOpen) {
+    setWasOpen(true)
+    setSessionId((n) => n + 1)
+  } else if (!open && wasOpen) {
+    setWasOpen(false)
+  }
   return (
     <Sheet open={open} onOpenChange={(o) => !o && close()}>
-      <SheetContent className="w-full gap-0 p-0 sm:max-w-[560px]">{open ? <BookingBody /> : null}</SheetContent>
+      <SheetContent className="w-full gap-0 p-0 sm:max-w-[560px]">
+        {sessionId > 0 ? <BookingBody key={sessionId} /> : null}
+      </SheetContent>
     </Sheet>
   )
 }
@@ -265,8 +275,8 @@ function BookingBody() {
 
   return (
     <>
-      <SheetHeader className="border-b px-5 pt-5 pb-4">
-        <SheetTitle className="text-xl">Đặt bàn mới</SheetTitle>
+      <SheetHeader className="border-b border-border-subtle px-5 pt-5 pb-4">
+        <SheetTitle className="text-[20px] font-semibold tracking-[-0.015em]">Đặt bàn mới</SheetTitle>
         <SheetDescription>
           Đặt trước cần ít nhất tên hoặc số điện thoại. Máy chủ sẽ kiểm tra lại bàn khi xác nhận.
         </SheetDescription>
@@ -279,11 +289,16 @@ function BookingBody() {
                 onClick={() => setStep(i)}
                 aria-current={i === step ? "step" : undefined}
                 className={cn(
-                  "flex w-full flex-col items-start gap-1 rounded-md pt-1.5 text-left text-xs disabled:cursor-default",
-                  i <= step ? "text-foreground" : "text-subtle",
+                  "flex w-full flex-col items-start gap-1.5 rounded-md pt-1.5 text-left text-xs font-medium transition-colors disabled:cursor-default",
+                  i === step ? "font-semibold text-primary-ink" : i < step ? "text-foreground" : "text-subtle",
                 )}
               >
-                <span className={cn("h-1 w-full rounded-full", i <= step ? "bg-foreground" : "bg-surface-3")} />
+                <span
+                  className={cn(
+                    "h-1.5 w-full rounded-full transition-colors",
+                    i <= step ? "bg-primary" : "bg-surface-3",
+                  )}
+                />
                 <span>
                   <span className="tnum">{i + 1}</span> {s}
                 </span>
@@ -344,7 +359,7 @@ function BookingBody() {
               , {fmtBusinessDate(date)} cho <b className="text-foreground">{party} khách</b>. Chính sách giữ bàn:{" "}
               {availability.data?.policy ?? "..."} <PendingTag />
             </p>
-            <div className="h-[340px] overflow-hidden rounded-xl border">
+            <div className="h-[340px] overflow-hidden rounded-xl border border-border bg-surface-1 shadow-xs">
               {model.catalog ? (
                 <FloorCanvas
                   tables={model.tables}
@@ -398,7 +413,7 @@ function BookingBody() {
                 ) : null}
               </div>
             </section>
-            <div className="grid gap-2 rounded-xl border bg-surface-1 p-3">
+            <div className="grid gap-2 rounded-xl border border-border bg-surface-1 p-3.5 shadow-xs">
               <p className="text-sm">
                 {later ? (
                   "Nhận trước, xếp bàn sau (lễ tân phân bàn đầu ca)."
@@ -482,10 +497,7 @@ function BookingBody() {
                   variant={v.classification === "RETURNING" ? "default" : "outline"}
                   className="h-11 justify-center text-sm font-medium"
                   onClick={() =>
-                    form.setValue(
-                      "classification",
-                      v.classification === "RETURNING" ? "UNCLASSIFIED" : "RETURNING",
-                    )
+                    form.setValue("classification", v.classification === "RETURNING" ? "UNCLASSIFIED" : "RETURNING")
                   }
                 >
                   Đã từng đặt bàn
@@ -494,9 +506,7 @@ function BookingBody() {
                   type="button"
                   variant={v.classification === "NEW" ? "default" : "outline"}
                   className="h-11 justify-center text-sm font-medium"
-                  onClick={() =>
-                    form.setValue("classification", v.classification === "NEW" ? "UNCLASSIFIED" : "NEW")
-                  }
+                  onClick={() => form.setValue("classification", v.classification === "NEW" ? "UNCLASSIFIED" : "NEW")}
                 >
                   Chưa từng đặt bàn
                 </Button>

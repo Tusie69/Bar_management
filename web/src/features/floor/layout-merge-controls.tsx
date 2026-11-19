@@ -105,7 +105,7 @@ export function LayoutMergeControls({ model, overlay = false }: { model: FloorMo
             // shrank it until the tables were hard to hit. Below the plan it
             // covers no table at all and costs the camera about 8% of its scale.
             "gap-1.5 rounded-[18px] border border-border bg-surface-1 px-3 pt-2 pb-2.5 shadow-[var(--shadow-float)]"
-          : "gap-2 rounded-lg border bg-surface-1 p-2",
+          : "gap-2 rounded-xl border border-border bg-surface-1 p-3 shadow-xs",
       )}
       aria-label="Chế độ ghép bàn"
     >
@@ -135,14 +135,19 @@ export function LayoutMergeControls({ model, overlay = false }: { model: FloorMo
               </span>
             ) : null}
           </span>
-          <Button variant="ghost" aria-label="Hủy" className="h-8 shrink-0 px-2" onClick={useUi.getState().cancelPick}>
+          <Button
+            variant="ghost"
+            aria-label="Hủy"
+            className="h-11 min-w-11 shrink-0 px-3"
+            onClick={useUi.getState().cancelPick}
+          >
             Hủy
           </Button>
         </div>
       ) : (
         <div className="flex items-center justify-between gap-2">
           <strong>Đang ghép bàn</strong>
-          <Button variant="ghost" aria-label="Hủy" onClick={useUi.getState().cancelPick}>
+          <Button variant="ghost" aria-label="Hủy" className="min-w-11" onClick={useUi.getState().cancelPick}>
             Hủy
           </Button>
         </div>
@@ -168,9 +173,10 @@ export function LayoutMergeControls({ model, overlay = false }: { model: FloorMo
       {api.mode === "mock" && !overlay ? (
         <p className="text-xs text-muted-foreground">Bản mô phỏng: chỉ lưu trên máy này.</p>
       ) : null}
-      <div className={cn("flex gap-2", overlay ? "flex-row-reverse [&>button]:h-10" : "flex-wrap")}>
+      <div className={cn("flex gap-2", overlay ? "flex-row-reverse flex-wrap" : "flex-wrap")}>
         <GuardedButton
           permission={owner ? "visit.combine" : "table.group.manage"}
+          className={overlay ? "min-w-11 px-3" : "min-w-11"}
           disabled={pending || !!reason}
           aria-describedby={reason ? "layout-merge-reason" : undefined}
           onClick={async () => {
@@ -206,7 +212,7 @@ export function LayoutMergeControls({ model, overlay = false }: { model: FloorMo
           <GuardedButton
             permission="reservation.create"
             variant={overlay ? "default" : "outline"}
-            className={overlay ? "flex-1" : undefined}
+            className={overlay ? "min-w-11 flex-1 px-3" : "min-w-11"}
             onClick={() =>
               useUi
                 .getState()

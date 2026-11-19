@@ -131,6 +131,11 @@ function useRowActions(model: FloorModel, live: boolean) {
   const ui = useUi()
   const { run } = useAction()
   const [checkIn, setCheckIn] = useState<ReservationView | null>(null)
+  const [lastCheckIn, setLastCheckIn] = useState<ReservationView | null>(null)
+  if (checkIn && checkIn !== lastCheckIn) {
+    setLastCheckIn(checkIn)
+  }
+  const shownCheckIn = checkIn ?? lastCheckIn
 
   const select = (it: BookingItem) => {
     if (live && it.tableId) ui.selectTable(it.tableId)
@@ -164,13 +169,14 @@ function useRowActions(model: FloorModel, live: boolean) {
     <GuestCountDialog
       open={!!checkIn}
       onOpenChange={(o) => !o && setCheckIn(null)}
-      title={`Check-in ${checkIn?.displayName ?? ""}`}
+      title={`Check-in ${shownCheckIn?.displayName ?? ""}`}
       description={
         <>
-          Booking {fmtTime(checkIn?.expectedAt)} · {checkIn ? model.codes(checkIn.tableIds).join(" + ") : ""}
+          Booking {fmtTime(shownCheckIn?.expectedAt)} ·{" "}
+          {shownCheckIn ? model.codes(shownCheckIn.tableIds).join(" + ") : ""}
         </>
       }
-      initial={checkIn?.partySize ?? 2}
+      initial={shownCheckIn?.partySize ?? 2}
       readOnly
       confirmLabel="Check-in"
       onConfirm={async () => {
@@ -190,7 +196,7 @@ function StatusTag({ it }: { it: BookingItem }) {
   const m = STATE_META[it.tone]
   return (
     <span
-      className="tnum inline-flex h-6 items-center rounded-sm px-2 text-xs font-semibold whitespace-nowrap"
+      className="tnum inline-flex h-6 items-center rounded-full px-2.5 text-xs font-semibold whitespace-nowrap"
       style={{ background: m.tint, color: m.ink }}
     >
       {it.status}
@@ -206,8 +212,8 @@ function ActionButton({ a }: { a: ReturnType<ReturnType<typeof useRowActions>["a
       variant="outline"
       size="sm"
       className={cn(
-        "min-w-[84px] bg-surface-1 font-semibold",
-        primary ? "border-primary text-primary-ink" : "border-strong",
+        "min-w-[84px] rounded-lg bg-surface-1 font-semibold shadow-2xs",
+        primary ? "border-primary text-primary-ink hover:bg-primary-tint" : "border-border",
       )}
       onClick={(e) => {
         e.stopPropagation()
@@ -250,15 +256,15 @@ export function BookingList({
   )
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface-1">
-      <div className="shrink-0 bg-background px-4 py-3">
-        <div className="flex h-10 items-center gap-2.5 rounded-sm bg-surface-2 pr-1 pl-3 focus-within:shadow-[inset_0_-2px_0_var(--primary)]">
+      <div className="shrink-0 bg-background px-3.5 py-3">
+        <div className="flex h-10 items-center gap-2 rounded-lg border border-input bg-surface-1 pr-1 pl-3 shadow-xs transition-[border-color,box-shadow] focus-within:border-primary focus-within:ring-[3px] focus-within:ring-primary/20">
           <Search className="size-4 shrink-0 text-subtle" />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Tên khách, 3 số cuối SĐT, mã bàn"
             aria-label="Tìm booking"
-            className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none"
+            className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           />
           <span className="h-[18px] w-px shrink-0 bg-border" />
           <Popover>
@@ -267,7 +273,7 @@ export function BookingList({
                 type="button"
                 aria-label="Lọc theo nguồn đặt"
                 className={cn(
-                  "relative grid size-8 shrink-0 place-items-center rounded-sm hover:bg-surface-3",
+                  "relative grid size-8 shrink-0 place-items-center rounded-md transition-colors hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none",
                   sources.length ? "bg-primary-tint text-primary-ink" : "text-muted-foreground",
                 )}
               >
@@ -279,13 +285,13 @@ export function BookingList({
                 ) : null}
               </button>
             </PopoverTrigger>
-            <PopoverContent align="end" className="w-64 p-0">
+            <PopoverContent align="end" className="w-64 rounded-xl p-0 shadow-float">
               <div className="flex items-center py-2 pr-2 pl-3.5">
                 <span className="text-sm font-semibold text-primary-ink">Nguồn đặt</span>
                 <button
                   type="button"
                   onClick={() => setSources([])}
-                  className="ml-auto h-8 rounded-sm px-2.5 text-sm font-medium text-tx-2 hover:bg-surface-2"
+                  className="ml-auto h-8 rounded-md px-2.5 text-sm font-medium text-tx-2 hover:bg-surface-2"
                 >
                   Xóa lọc
                 </button>
@@ -310,12 +316,12 @@ export function BookingList({
           </Popover>
         </div>
       </div>
-      <div className="flex min-h-0 flex-1 scrollbar-thin flex-col gap-2 overflow-y-auto bg-background px-2.5 pb-3">
+      <div className="flex min-h-0 flex-1 scrollbar-thin flex-col gap-2 overflow-y-auto bg-background px-3 pb-3">
         {feed.loading ? (
-          [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-[104px] shrink-0" />)
+          [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-[104px] shrink-0 rounded-xl" />)
         ) : rows.length === 0 ? (
           <div className="flex flex-col items-center gap-1.5 px-6 py-10 text-center">
-            <span className="text-sm font-semibold">{q ? "Không tìm thấy" : "Không có mục nào"}</span>
+            <span className="text-sm font-semibold text-foreground">{q ? "Không tìm thấy" : "Không có mục nào"}</span>
             <span className="text-xs text-tx-2">
               {q ? `Không có booking khớp “${q}”.` : "Danh sách này đang trống."}
             </span>
@@ -334,8 +340,9 @@ export function BookingList({
                   select(it)
                 }}
                 className={cn(
-                  "grid shrink-0 cursor-pointer grid-cols-[64px_minmax(0,1fr)_auto] gap-2.5 rounded-sm border bg-surface-1 p-3 outline-none focus-within:ring-2 focus-within:ring-primary hover:border-strong",
-                  sel && "border-primary bg-primary-tint",
+                  "grid shrink-0 cursor-pointer grid-cols-[64px_minmax(0,1fr)_auto] gap-2.5 rounded-xl border border-border bg-surface-1 p-3.5 shadow-xs transition-[border-color,background-color,box-shadow] duration-150 outline-none focus-within:ring-[3px] focus-within:ring-primary/25 hover:border-border-strong hover:bg-surface-2/40",
+                  sel &&
+                    "border-primary bg-primary-tint ring-1 ring-primary/20 hover:border-primary hover:bg-primary-tint",
                 )}
               >
                 <button
@@ -372,7 +379,7 @@ export function BookingList({
           })
         )}
       </div>
-      <div role="tablist" aria-label="Lọc booking" className="flex shrink-0 border-t">
+      <div role="tablist" aria-label="Lọc booking" className="flex shrink-0 border-t border-border-subtle bg-surface-1">
         {LIST_TABS.map((t) => {
           const on = tab === t.id
           const n = feed[t.id].length
@@ -385,16 +392,16 @@ export function BookingList({
               aria-selected={on}
               onClick={() => setTab(t.id)}
               className={cn(
-                "flex h-12 flex-1 items-center justify-center gap-1.5 px-1.5 text-sm whitespace-nowrap",
+                "flex h-12 flex-1 items-center justify-center gap-1.5 px-1.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none focus-visible:ring-inset",
                 on
-                  ? "bg-primary-tint font-medium text-primary-ink shadow-[inset_0_2px_0_var(--primary)]"
-                  : "text-tx-2 hover:bg-surface-2",
+                  ? "bg-primary-tint font-semibold text-primary-ink shadow-[inset_0_2px_0_var(--primary)]"
+                  : "font-medium text-tx-2 hover:bg-surface-2 hover:text-foreground",
               )}
             >
               {t.label}
               <span
                 className={cn(
-                  "tnum grid h-5 min-w-5 place-items-center rounded-sm px-1.5 text-xs font-semibold",
+                  "tnum grid h-5 min-w-5 place-items-center rounded-full px-1.5 text-xs font-semibold",
                   hot ? "bg-st-noshow text-white" : "bg-surface-3 text-tx-2",
                 )}
               >
@@ -426,12 +433,12 @@ export function BookingTable({
   const { select, actionOf, dialog } = useRowActions(model, live)
   const rows = feed[tab]
   return (
-    <div className="min-h-0 flex-1 scrollbar-thin overflow-auto rounded-sm border bg-surface-1">
+    <div className="min-h-0 flex-1 scrollbar-thin overflow-auto rounded-xl border border-border bg-surface-1 shadow-xs">
       <div role="table" aria-label="Danh sách booking" className="min-w-[860px]">
         <div
           role="row"
           className={cn(
-            "sticky top-0 z-[2] grid h-11 items-center gap-3 border-b border-strong bg-surface-1 px-4 text-xs font-semibold text-tx-head",
+            "sticky top-0 z-[2] grid h-11 items-center gap-3 border-b border-border bg-surface-2/85 px-4 text-xs font-semibold tracking-[0.03em] text-muted-foreground uppercase backdrop-blur-sm",
             COLS,
           )}
         >
@@ -452,7 +459,7 @@ export function BookingTable({
             onClick={() => select(it)}
             onKeyDown={onEnter(() => select(it))}
             className={cn(
-              "grid min-h-14 cursor-pointer items-center gap-3 border-b px-4 outline-none hover:bg-surface-2 focus-visible:shadow-[inset_0_0_0_2px_var(--ring)]",
+              "grid min-h-14 cursor-pointer items-center gap-3 border-b border-border-subtle px-4 transition-colors outline-none hover:bg-surface-2/60 focus-visible:shadow-[inset_0_0_0_2px_var(--ring)]",
               COLS,
             )}
           >

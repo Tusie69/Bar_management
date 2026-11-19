@@ -3,8 +3,18 @@
 // Env: E2E_BASE_URL (default http://127.0.0.1:5173), PW_CHROMIUM_PATH (optional custom Chromium binary).
 import { chromium, expect } from "@playwright/test"
 import assert from "node:assert/strict"
-const base = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5173"
 import fs from "node:fs"
+const base = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5173"
+const mobileWaitCard = (page, guestName) => page.getByText(guestName, { exact: true }).locator("xpath=../..")
+async function observeTelNavigations(page) {
+  const navigations = []
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send("Page.enable")
+  cdp.on("Page.frameRequestedNavigation", ({ url }) => {
+    if (url.startsWith("tel:")) navigations.push(url)
+  })
+  return navigations
+}
 const defaultChrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
 const browser = await chromium.launch(
   process.env.PW_CHROMIUM_PATH
@@ -119,7 +129,7 @@ for (const theme of ["dark", "light"]) {
                 const camera = svg.querySelector(":scope > g")
                 const labels = [...camera.querySelectorAll("text")]
                 const parts = [["floor frame", camera.querySelector(":scope > rect")]]
-                for (const name of ["QUẦY BAR", "KHU PHA CHẾ", "LỐI VÀO"]) {
+                for (const name of ["QUẦY BAR", "LỐI VÀO"]) {
                   const label = labels.find((el) => el.textContent.trim() === name)
                   parts.push([name, label], [`${name} fixture`, label?.parentElement.querySelector("path")])
                 }
@@ -231,8 +241,7 @@ await flow(
 await flow("check-in reserved booking A5", 1, async (page) => {
   await page.goto(base + "/floor", { waitUntil: "networkidle" })
   await table(page, "A5").click()
-  await page.getByRole("button", { name: /Check-in A5/ }).click()
-  await page.getByRole("dialog").getByRole("button", { name: "Check-in", exact: true }).click()
+  await page.getByRole("button", { name: "Khách đã đến", exact: true }).click()
   await expectOccupied(table(page, "A5"), 3)
 })
 
@@ -285,13 +294,17 @@ await flow(
   1,
   async (page) => {
     await page.goto(base + "/floor", { waitUntil: "networkidle" })
-    await page.getByRole("button", { name: "Ghép bàn", exact: true }).click()
     await table(page, "B5").click()
+    await page
+      .getByRole("dialog", { name: "Chi tiết B5", exact: true })
+      .getByRole("button", { name: "Ghép bàn", exact: true })
+      .click()
     await barSeat(page, 15).click()
     await page.getByRole("button", { name: "Ghép 2 bàn", exact: true }).click()
     await expect(table(page, "B5")).toHaveAttribute("data-is-group", "true")
-    await table(page, "B5").click()
-    await page.getByRole("button", { name: "Tạo đặt trước", exact: true }).click()
+    const detail = page.getByRole("dialog", { name: /^Chi tiết/ })
+    await expect(detail).toBeVisible()
+    await detail.getByRole("button", { name: "Đặt bàn", exact: true }).click()
     const form = page.getByRole("form")
     await form.getByLabel("Tên khách", { exact: true }).fill("Mixed birthday group")
     await form.getByRole("checkbox", { name: "Sinh nhật", exact: true }).click()
@@ -398,16 +411,7 @@ await flow(
   "call customer: mobile opens tel flow and keeps a manual outcome action",
   3,
   async (page) => {
-    await page.addInitScript(() => {
-      const click = HTMLAnchorElement.prototype.click
-      HTMLAnchorElement.prototype.click = function () {
-        if (this.href.startsWith("tel:")) {
-          window.__lastTelUri = this.href
-          return
-        }
-        return click.call(this)
-      }
-    })
+    const navigations = await observeTelNavigations(page)
     await page.goto(base + "/floor", { waitUntil: "networkidle" })
     await page.evaluate(async () => {
       const { demo } = await import("/src/services/index.ts")
@@ -425,12 +429,13 @@ await flow(
     }
     await page.screenshot({ path: "e2e/.artifacts/call-customer-mobile-390.png" })
     await page.getByRole("button", { name: "Gọi khách", exact: true }).click()
+    await expect.poll(() => navigations.at(-1)).toMatch(/^tel:\+84\d+$/)
     await page.evaluate(async () => {
       const { clock } = await import("/src/services/index.ts")
       clock.advance(60)
     })
     await page.waitForTimeout(16_000)
-    await page.getByRole("button", { name: "Ghi kết quả cuộc gọi", exact: true }).waitFor()
+    await page.getByRole("button", { name: "Ghi kết quả", exact: true }).waitFor()
     await page.getByRole("button", { name: "Gọi khách", exact: true }).waitFor({ state: "detached" })
     for (let index = 0; index < 20; index += 1) {
       const noShowAlert = page.getByRole("alertdialog")
@@ -438,7 +443,7 @@ await flow(
       await noShowAlert.getByRole("button", { name: "Đã xem, xử lý sau", exact: true }).click()
       await page.waitForTimeout(100)
     }
-    await page.getByRole("button", { name: "Ghi kết quả cuộc gọi", exact: true }).click()
+    await page.getByRole("button", { name: "Ghi kết quả", exact: true }).click()
     const outcome = page.getByRole("dialog", { name: "Kết quả cuộc gọi" })
     await outcome.getByRole("button", { name: "Không nghe máy", exact: true }).click()
     await outcome.waitFor({ state: "hidden" })
@@ -457,18 +462,7 @@ await flow(
   "call customer: tablet starts the call instead of refusing the device",
   3,
   async (page) => {
-    // Observe the synthetic tel: anchor click without letting it navigate.
-    await page.addInitScript(() => {
-      window.__telClicks = []
-      const originalClick = HTMLAnchorElement.prototype.click
-      HTMLAnchorElement.prototype.click = function click() {
-        if (this.href.startsWith("tel:")) {
-          window.__telClicks.push(this.href)
-          return
-        }
-        return originalClick.call(this)
-      }
-    })
+    const telClicks = await observeTelNavigations(page)
     await page.goto(base + "/floor", { waitUntil: "networkidle" })
     await page.evaluate(async () => {
       const { demo } = await import("/src/services/index.ts")
@@ -479,10 +473,9 @@ await flow(
     await page.getByRole("button", { name: "Gọi khách", exact: true }).click()
 
     // The call starts: the outcome action replaces the call button.
-    await page.getByRole("button", { name: "Ghi kết quả cuộc gọi", exact: true }).waitFor()
+    await page.getByRole("button", { name: "Ghi kết quả", exact: true }).waitFor()
     await page.getByRole("button", { name: "Gọi khách", exact: true }).waitFor({ state: "detached" })
-    const telClicks = await page.evaluate(() => window.__telClicks)
-    assert.equal(telClicks.length, 1, "tablet did not open a tel: URI")
+    await expect.poll(() => telClicks.length, { message: "tablet did not open exactly one tel: URI" }).toBe(1)
     assert.match(telClicks[0], /^tel:\+?\d+$/)
 
     // The device-gating notice must not reappear, and the full number stays off screen.
@@ -688,7 +681,7 @@ await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (phone
     }
 
     // 2. Pin mobile actions strictly to target entry's card
-    const card = page.locator("div.rounded-\\[18px\\]", { hasText: tc.name })
+    const card = mobileWaitCard(page, tc.name)
     await card.getByText("Đang giữ bàn").waitFor()
     await card.getByText("Đang giữ B5 + B7").waitFor()
 
@@ -1267,10 +1260,7 @@ for (const width of [390, 768])
             .getByRole("button", { name: /^Bàn chờ/ })
             .first()
             .click()
-          const card =
-            width < 768
-              ? page.locator("div.rounded-\\[18px\\]").filter({ hasText: e.displayName })
-              : page.locator(`#entry-${e.id}`)
+          const card = width < 768 ? mobileWaitCard(page, e.displayName) : page.locator(`#entry-${e.id}`)
           openStatus = () => card.getByRole("button", { name: "Đổi trạng thái", exact: true }).click()
           await openStatus()
         } else {
@@ -1294,10 +1284,7 @@ for (const width of [390, 768])
             .click()
         let cancelBtn
         if (surface === "card") {
-          const card =
-            width < 768
-              ? page.locator("div.rounded-\\[18px\\]").filter({ hasText: e.displayName })
-              : page.locator(`#entry-${e.id}`)
+          const card = width < 768 ? mobileWaitCard(page, e.displayName) : page.locator(`#entry-${e.id}`)
           await card.getByRole("button", { name: "Quản lý đơn", exact: true }).click()
           cancelBtn = page.getByRole("dialog").last().getByRole("button", { name: "Hủy booking", exact: true })
         } else if (surface === "detail" && width < 768) {
@@ -1523,10 +1510,7 @@ for (const width of [360, 390, 768])
               .click()
           }
           await dismissHoldAlerts(page)
-          const card =
-            width < 768
-              ? page.locator("div.rounded-\\[18px\\]").filter({ hasText: e.displayName })
-              : page.locator(`#entry-${e.id}`)
+          const card = width < 768 ? mobileWaitCard(page, e.displayName) : page.locator(`#entry-${e.id}`)
           await card.scrollIntoViewIfNeeded()
           await expect(card.getByRole("button", { name: "Quản lý đơn", exact: true })).toBeInViewport()
           assert.equal(await page.getByRole("dialog", { name: /Cảnh báo/ }).count(), 0)

@@ -76,8 +76,10 @@ export function AvailabilityPanel({
                         disabled={!a?.available}
                         onClick={() => setSelection(selected ? [] : c.memberIds)}
                         className={cn(
-                          "flex min-h-12 w-full items-center gap-3 rounded-lg border px-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-                          selected ? "border-foreground bg-surface-2" : "hover:bg-surface-2",
+                          "flex min-h-12 w-full items-center gap-3 rounded-xl border px-3.5 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                          selected
+                            ? "border-primary bg-primary-tint ring-1 ring-primary/20"
+                            : "border-border bg-surface-1 shadow-xs hover:bg-surface-2",
                         )}
                       >
                         <Link2 className="size-4 text-muted-foreground" aria-hidden />
@@ -97,7 +99,7 @@ export function AvailabilityPanel({
                   Có thể chọn nhiều bàn để ghép.
                 </EmptyState>
               ) : (
-                <div className="grid gap-3 rounded-xl border bg-surface-1 p-3">
+                <div className="grid gap-3 rounded-xl border border-border bg-surface-1 p-3.5 shadow-xs">
                   <p className="text-base font-semibold">{selection.map((id) => model.label(id)).join(" + ")}</p>
                   <p className="text-sm text-muted-foreground">
                     {selCapacity} chỗ cho {ui.availParty} khách
@@ -158,9 +160,11 @@ export function AvailabilityPanel({
 
 function Stat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-lg border bg-surface-1 px-2 py-2.5">
-      <dd className="tnum text-2xl font-semibold">{value}</dd>
-      <dt className="text-[11px] leading-tight text-muted-foreground">{label}</dt>
+    <div className="rounded-xl border border-border bg-surface-1 px-2.5 py-3 shadow-xs">
+      <dd className="tnum text-[22px] leading-tight font-bold tracking-[-0.02em] text-foreground">{value}</dd>
+      <dt className="mt-0.5 text-[11px] leading-tight font-semibold tracking-[0.03em] text-muted-foreground uppercase">
+        {label}
+      </dt>
     </div>
   )
 }

@@ -1,10 +1,12 @@
-import type { ClaimView, ReservationView, WaitlistEntryView } from "@/domain/models"
+import type { BookingCancelReason, RoleCode } from "@/domain/enums"
+import type { ClaimView, MutationResult, ReservationView, WaitlistEntryView } from "@/domain/models"
 import { validateBookingCheckInDate } from "@/domain/booking-rules"
 import { useAction } from "@/hooks/use-action"
 import { fmtTime } from "@/lib/time"
 import { api, clock } from "@/services"
 import { toast } from "sonner"
-import { useM, type TablePick } from "./context"
+import { buildCancelBookingArgs } from "./cancel-booking"
+import { useM, type CancelBookingRequest, type Confirm, type TablePick } from "./context"
 import { roleCan, type Permission } from "@/domain/access"
 import { useSession } from "@/state/session"
 import type { FloorModel } from "../floor/use-floor-model"
@@ -174,6 +176,54 @@ export function useHeldOrderActions(model: FloorModel) {
     }
   }
   return { policy, bookingPolicy, verifyBooking, arrive, picker, pending, can: canNow }
+}
+
+export interface MobileCancelActionDeps {
+  role: RoleCode
+  canCancel: () => boolean
+  verifyCanCancel: (r: ReservationView) => Promise<boolean>
+  run: (fn: () => Promise<MutationResult>) => Promise<MutationResult | null>
+  ask: (c: Confirm) => void
+  askCancel: (req: CancelBookingRequest) => void
+  cancelReservation: (
+    id: number,
+    version: number,
+    reason: BookingCancelReason,
+    note?: string,
+  ) => Promise<MutationResult>
+}
+
+/**
+ * Routes booking cancellation by mobile role: only RECEPTIONIST receives the reason/note dialog,
+ * while other authorized mobile roles keep the legacy confirm and fixed CUSTOMER_REQUEST call.
+ */
+export function triggerMobileCancel(r: ReservationView, deps: MobileCancelActionDeps): void {
+  if (!deps.canCancel()) return
+  const submit = (resolveArgs: () => { reason: BookingCancelReason; note?: string }) =>
+    deps.run(async () => {
+      if (!deps.canCancel() || !(await deps.verifyCanCancel(r))) {
+        throw new Error("Chưa hỗ trợ hoặc thiếu quyền hủy booking.")
+      }
+      const { reason, note } = resolveArgs()
+      return note !== undefined
+        ? deps.cancelReservation(r.id, r.version, reason, note)
+        : deps.cancelReservation(r.id, r.version, reason)
+    })
+
+  if (deps.role === "RECEPTIONIST") {
+    deps.askCancel({
+      reservation: r,
+      run: (reason, note) => submit(() => buildCancelBookingArgs(reason, note)),
+    })
+    return
+  }
+
+  deps.ask({
+    title: `Hủy booking của ${r.displayName}?`,
+    body: "Booking bị hủy và bàn được nhả. Thao tác được ghi vào nhật ký.",
+    label: "Hủy booking",
+    run: () => submit(() => ({ reason: "CUSTOMER_REQUEST" })),
+  })
 }
 
 /** Booking and table actions shared by cards, detail, status dialog and the table sheet. */
@@ -357,17 +407,17 @@ export function useMobileActions() {
           }),
       }),
     cancel: (r: ReservationView) =>
-      canNow("reservation.cancel") &&
-      m.ask({
-        title: `Hủy booking của ${r.displayName}?`,
-        body: "Booking bị hủy và bàn được nhả. Thao tác được ghi vào nhật ký.",
-        label: "Hủy booking",
-        run: () =>
-          run(async () => {
-            if (!canNow("reservation.cancel") || !(await held.verifyBooking(r)).canBookingStatus)
-              throw new Error("Chưa hỗ trợ hoặc thiếu quyền hủy booking.")
-            return api.cancelReservation(r.id, r.version, "CUSTOMER_REQUEST")
-          }),
+      triggerMobileCancel(r, {
+        role: m.role,
+        canCancel: () => canNow("reservation.cancel"),
+        verifyCanCancel: async (booking) => (await held.verifyBooking(booking)).canBookingStatus,
+        run: (fn) => run(fn),
+        ask: m.ask,
+        askCancel: m.askCancel,
+        cancelReservation: (id, version, reason, note) =>
+          note !== undefined
+            ? api.cancelReservation(id, version, reason, note)
+            : api.cancelReservation(id, version, reason),
       }),
   }
 }

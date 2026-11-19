@@ -25,6 +25,11 @@ Bộ tài liệu này ghi lại đầy đủ trạng thái local, nội dung com
 3. [03-overlap-and-integration-risk.md](03-overlap-and-integration-risk.md): file chồng lấn, xung đột và thứ tự tích hợp đề xuất.
 4. [04-full-develop-file-inventory.md](04-full-develop-file-inventory.md): đủ 171 file develop, trạng thái, số dòng và mô tả.
 5. [05-local-branch-file-inventory.md](05-local-branch-file-inventory.md): đủ 61 file đã commit của TU-38.
+6. [06-merge-execution-report.md](06-merge-execution-report.md): kết quả merge thực tế, cách xử lý conflict và bằng chứng kiểm thử.
+
+## Trạng thái thực hiện
+
+Ngày 19/11/2026, `origin/develop@1ccf73c` đã được tích hợp vào nhánh feature sau khi tạo checkpoint `cec3c12` và nhánh backup `codex/backup-pre-develop-merge-20261119`. Chi tiết xác minh nằm trong báo cáo số 06.
 
 ## Mốc Git dùng để tái kiểm tra
 

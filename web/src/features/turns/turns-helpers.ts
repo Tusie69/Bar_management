@@ -688,3 +688,8 @@ export function resolveDuplicatePageRecovery(params: {
   }
   return null
 }
+
+/** Toggles row selection on/off for a given visit ID. */
+export function toggleSelectedVisitId(current: number | null, visitId: number): number | null {
+  return current === visitId ? null : visitId
+}

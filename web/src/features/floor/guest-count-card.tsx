@@ -1,6 +1,8 @@
 import { Check, Pencil, Users, X } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type ReactElement } from "react"
 import { toast } from "sonner"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import type { ReceptionGuestCount } from "@/domain/models"
 import { useReceptionGuestCount, useUpdateReceptionGuestCount } from "@/hooks/use-data"
@@ -81,8 +83,7 @@ export function GuestCountCard({
   const query = useReceptionGuestCount(businessDate)
   const canEdit = useCan("reservation.update")
   const count = query.data ?? emptyCount(businessDate)
-  const shell =
-    "rounded-xl border border-border/80 bg-surface-1/92 shadow-[var(--shadow-soft)] backdrop-blur-md dark:border-slate-700/80 dark:bg-[#1e232d]/92"
+  const shell = "rounded-xl border border-border bg-surface-1/92 shadow-sm backdrop-blur-md"
 
   return (
     <div
@@ -106,7 +107,7 @@ export function GuestCountCard({
             onClick={onEdit ?? onOpen}
             aria-label="Sửa bộ đếm khách"
             title="Sửa"
-            className="inline-flex h-4 shrink-0 items-center gap-0.5 rounded px-1 text-[9px] font-semibold text-tx-2 transition-colors hover:bg-surface-2 hover:text-tx-strong active:scale-95 md:h-5"
+            className="relative inline-flex h-4 shrink-0 items-center gap-0.5 rounded-sm px-1 text-[9px] font-semibold text-tx-2 transition-colors hover:bg-surface-2 hover:text-tx-strong focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:outline-none active:scale-95 md:h-5 [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:top-1/2 [@media(pointer:coarse)]:after:left-1/2 [@media(pointer:coarse)]:after:min-h-[44px] [@media(pointer:coarse)]:after:min-w-[44px] [@media(pointer:coarse)]:after:-translate-x-1/2 [@media(pointer:coarse)]:after:-translate-y-1/2"
           >
             <Pencil className="size-2.5" aria-hidden />
             Sửa
@@ -157,24 +158,27 @@ export function GuestCountSheetPanel({
   if (!editing) {
     return (
       <>
-        <div className="grid grid-cols-2 gap-2" data-testid="guest-count-summary">
+        <div className="grid grid-cols-2 gap-2.5" data-testid="guest-count-summary">
           {FIELDS.map((field) => (
-            <div key={field.key} className="rounded-xl border border-border/80 bg-background px-3 py-2.5">
-              <div className="text-[12px] text-tx-2">{field.label}</div>
-              <div className="tnum mt-0.5 text-xl font-bold text-tx-strong">{count[field.key]}</div>
+            <div key={field.key} className="rounded-xl border border-border bg-surface-1 px-3.5 py-3 shadow-xs">
+              <div className="text-xs font-medium text-tx-2">{field.label}</div>
+              <div className="tnum mt-1 text-2xl leading-tight font-bold tracking-[-0.02em] text-tx-strong">
+                {count[field.key]}
+              </div>
             </div>
           ))}
         </div>
         {canEdit ? (
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={onStartEdit}
             aria-label="Sửa bộ đếm khách"
-            className="mt-4 inline-flex h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-border bg-background text-[14px] font-semibold text-tx-strong active:bg-surface-2"
+            className="mt-4 w-full font-semibold"
           >
-            <Pencil className="size-4" aria-hidden />
+            <Pencil aria-hidden />
             Sửa bộ đếm khách
-          </button>
+          </Button>
         ) : null}
       </>
     )
@@ -186,12 +190,12 @@ export function GuestCountSheetPanel({
         {FIELDS.map((field) => (
           <label
             key={field.key}
-            className="flex flex-col gap-1 rounded-xl border border-border/80 bg-background px-3 py-2"
+            className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface-1 px-3 py-2.5 shadow-xs"
           >
-            <span className={cn("text-[12px]", field.highlighted ? "font-semibold text-tx-strong" : "text-tx-2")}>
+            <span className={cn("text-xs", field.highlighted ? "font-semibold text-tx-strong" : "text-tx-2")}>
               {field.label}
             </span>
-            <input
+            <Input
               type="number"
               min={0}
               step={1}
@@ -202,7 +206,7 @@ export function GuestCountSheetPanel({
                 const next = event.target.value
                 if (/^\d*$/.test(next)) onDraftChange(field.key, next)
               }}
-              className="tnum h-11 w-full rounded-lg border border-border bg-surface-1 px-2.5 text-right text-base font-bold text-tx-strong outline-none focus:border-primary"
+              className="tnum h-11 text-right text-base font-bold text-tx-strong"
             />
           </label>
         ))}
@@ -216,28 +220,18 @@ export function GuestCountSheetPanel({
         <button
           type="button"
           onClick={onReload}
-          className="text-warning mt-2.5 text-left text-xs font-medium underline"
+          className="mt-2.5 min-h-11 text-left text-xs font-medium text-st-upcoming-ink underline"
         >
           Có dữ liệu mới · Tải lại
         </button>
       ) : null}
       <div className="mt-4 grid grid-cols-2 gap-2.5">
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={pending}
-          className="inline-flex h-12 items-center justify-center gap-1.5 rounded-xl border border-border text-[15px] font-semibold text-tx-1 active:bg-surface-2 disabled:opacity-50"
-        >
-          <X className="size-4" aria-hidden /> Hủy
-        </button>
-        <button
-          type="button"
-          onClick={onSave}
-          disabled={!valid || remoteChanged || pending}
-          className="inline-flex h-12 items-center justify-center gap-1.5 rounded-xl bg-primary text-[15px] font-semibold text-primary-foreground active:brightness-95 disabled:opacity-50"
-        >
-          <Check className="size-4" aria-hidden /> Lưu
-        </button>
+        <Button type="button" variant="outline" size="lg" onClick={onCancel} disabled={pending}>
+          <X aria-hidden /> Hủy
+        </Button>
+        <Button type="button" size="lg" onClick={onSave} disabled={!valid || remoteChanged || pending}>
+          <Check aria-hidden /> Lưu
+        </Button>
       </div>
     </>
   )
@@ -361,11 +355,21 @@ export function GuestCountSheet({
   isReceptionist: boolean
 }): ReactElement {
   const closeRef = useRef<(() => void) | null>(null)
+  const [sessionId, setSessionId] = useState(0)
+  const [wasOpen, setWasOpen] = useState(false)
+
+  if (open && !wasOpen) {
+    setWasOpen(true)
+    setSessionId((n) => n + 1)
+  } else if (!open && wasOpen) {
+    setWasOpen(false)
+  }
+
   return (
     <Sheet open={open} onOpenChange={(next) => !next && (closeRef.current ?? onClose)()}>
-      {open ? (
+      {sessionId > 0 ? (
         <GuestCountSheetInner
-          key={`${businessDate}-${initialMode}`}
+          key={`${sessionId}-${businessDate}-${initialMode}`}
           businessDate={businessDate}
           initialMode={initialMode}
           onClose={onClose}

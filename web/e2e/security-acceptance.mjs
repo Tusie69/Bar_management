@@ -5,17 +5,21 @@ const base = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5178"
 const apiBase = process.env.E2E_API_URL ?? "http://127.0.0.1:3100/api/v1"
 const password = process.env.E2E_PASSWORD ?? "Browser-E2E-Pass-2026!"
 const chrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-const browser = await chromium.launch(fs.existsSync(chrome) ? { executablePath: chrome, headless: true } : { headless: true })
+const browser = await chromium.launch(
+  fs.existsSync(chrome) ? { executablePath: chrome, headless: true } : { headless: true },
+)
 const results = []
 
 async function login(username, portal = "admin", viewport = { width: 1280, height: 800 }, expectedStatus = 200) {
   const context = await browser.newContext({ viewport })
   const page = await context.newPage()
-  await page.goto(`${base}/${portal}/login`, { waitUntil: "networkidle" })
+  await page.goto(`${base}/${portal}/login`, { waitUntil: "domcontentloaded" })
   await page.getByLabel("Tên đăng nhập").fill(username)
   await page.locator('input[name="password"]').fill(password)
   const [loginResponse] = await Promise.all([
-    page.waitForResponse((response) => response.url() === `${apiBase}/auth/login` && response.request().method() === "POST"),
+    page.waitForResponse(
+      (response) => response.url() === `${apiBase}/auth/login` && response.request().method() === "POST",
+    ),
     page.getByRole("button", { name: "Đăng nhập", exact: true }).click(),
   ])
   if (loginResponse.status() !== expectedStatus) {
@@ -23,7 +27,7 @@ async function login(username, portal = "admin", viewport = { width: 1280, heigh
   }
   if (expectedStatus !== 200) return { context, page }
   await page.waitForURL((url) => !url.pathname.endsWith("/login"))
-  await page.waitForLoadState("networkidle")
+  await expect(page.getByTestId("admin-page-title")).toBeVisible()
   return { context, page }
 }
 
@@ -61,8 +65,14 @@ async function openSseFromBrowserSession(context) {
   let resolveHello
   let resolveFloor
   let rejectStream
-  const hello = new Promise((resolve, reject) => { resolveHello = resolve; rejectStream = reject })
-  const floor = new Promise((resolve, reject) => { resolveFloor = resolve; rejectStream = reject })
+  const hello = new Promise((resolve, reject) => {
+    resolveHello = resolve
+    rejectStream = reject
+  })
+  const floor = new Promise((resolve, reject) => {
+    resolveFloor = resolve
+    rejectStream = reject
+  })
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   void (async () => {
@@ -92,7 +102,7 @@ async function openSseFromBrowserSession(context) {
 
 try {
   const owner = await login("integration_owner")
-  await expect(owner.page.getByLabel(/Tài khoản:/)).toBeVisible()
+  await expect(owner.page.getByRole("navigation", { name: "Điều hướng quản trị" })).toBeVisible()
   const ownerSession = await session(owner.page)
   if (ownerSession.body.user.roles[0] !== "OWNER") throw new Error("OWNER role missing")
   results.push("PASS OWNER /admin login")
@@ -113,40 +123,51 @@ try {
   await denied.context.close()
 
   for (const [path, text] of [
-    ["/reservations", "Đặt bàn"], ["/floor", "Điều phối"], ["/waitlist", "Danh sách chờ"],
+    ["/reservations", "Đặt bàn"],
+    ["/floor", "Điều phối"],
+    ["/waitlist", "Danh sách chờ"],
   ]) {
-    await read.page.goto(`${base}${path}`, { waitUntil: "networkidle" })
+    await read.page.goto(`${base}${path}`, { waitUntil: "domcontentloaded" })
     await expect(read.page.getByRole("heading", { name: text, exact: false }).first()).toBeVisible()
   }
-  await read.page.goto(`${base}/settings`, { waitUntil: "networkidle" })
+  await read.page.goto(`${base}/settings`, { waitUntil: "domcontentloaded" })
   await read.page.getByRole("tab", { name: "Phân quyền" }).click()
   await expect(read.page.getByRole("row").filter({ hasText: "browser_admin_read" })).toBeVisible()
   results.push("PASS READ_ONLY booking/layout/waitlist/account-list screens")
 
-  await read.page.goto(`${base}/reports`, { waitUntil: "networkidle" })
+  await read.page.goto(`${base}/reports`, { waitUntil: "domcontentloaded" })
   await expect(read.page.getByText("Chưa hỗ trợ báo cáo")).toBeVisible()
   results.push("GAP READ_ONLY report screen unavailable in HTTP mode")
 
   const deniedBusiness = await protectedPost(read.page, "/bookings", {})
   const deniedAdmin = await protectedPost(read.page, "/accounts", {
-    username: "forbidden", displayName: "Forbidden", password, roleCode: "RECEPTIONIST",
+    username: "forbidden",
+    displayName: "Forbidden",
+    password,
+    roleCode: "RECEPTIONIST",
   })
   if (deniedBusiness.status !== 403 || deniedAdmin.status !== 403) throw new Error("READ_ONLY mutation was not denied")
   results.push("PASS READ_ONLY business/admin mutations return 403")
 
   const booking = await protectedPost(owner.page, "/bookings", {
-    guestName: "Browser phone guest", phoneNumber: "0900000789", partySize: 2,
-    expectedAt: "2030-10-24T20:00:00+07:00", businessDate: "2030-10-24", sourceCode: "HOTLINE",
+    guestName: "Browser phone guest",
+    phoneNumber: "0900000789",
+    partySize: 2,
+    expectedAt: "2030-10-24T20:00:00+07:00",
+    businessDate: "2030-10-24",
+    sourceCode: "HOTLINE",
   })
   if (booking.status !== 201) throw new Error(`Booking fixture failed ${booking.status}`)
   const bookingId = booking.body.booking.id
   const bookingDetail = await protectedGet(read.page, `/bookings/${bookingId}`)
-  if (bookingDetail.status !== 200 || bookingDetail.body.booking.id !== bookingId) throw new Error("READ_ONLY booking detail failed")
+  if (bookingDetail.status !== 200 || bookingDetail.body.booking.id !== bookingId)
+    throw new Error("READ_ONLY booking detail failed")
   const reveal = await protectedPost(read.page, `/bookings/${bookingId}/phone:reveal`, {})
-  if (reveal.status !== 200 || reveal.body.phoneNumber !== "+84900000789") throw new Error("READ_ONLY full phone reveal failed")
+  if (reveal.status !== 200 || reveal.body.phoneNumber !== "+84900000789")
+    throw new Error("READ_ONLY full phone reveal failed")
   results.push("PASS READ_ONLY booking detail and full-phone reveal")
 
-  await owner.page.goto(`${base}/settings`, { waitUntil: "networkidle" })
+  await owner.page.goto(`${base}/settings`, { waitUntil: "domcontentloaded" })
   await owner.page.getByRole("tab", { name: "Phân quyền" }).click()
   await owner.page.getByRole("button", { name: "Tạo tài khoản" }).click()
   await owner.page.getByLabel("Tên đăng nhập").last().fill("browser_created_staff")
@@ -164,13 +185,18 @@ try {
 
   const adminRow = owner.page.getByRole("row").filter({ hasText: "browser_admin_write" })
   const [accessResponse] = await Promise.all([
-    owner.page.waitForResponse((response) => response.url().endsWith("/accounts/9810/access-level") && response.request().method() === "POST"),
+    owner.page.waitForResponse(
+      (response) => response.url().endsWith("/accounts/9810/access-level") && response.request().method() === "POST",
+    ),
     adminRow.getByRole("button", { name: /Đổi sang Chỉ xem/ }).click(),
   ])
   if (accessResponse.status() !== 200) throw new Error(`Access-level update failed ${accessResponse.status()}`)
   await expect(adminRow.getByText("Chỉ xem")).toBeVisible()
   const oldWrite = await session(write.page)
-  if (oldWrite.status !== 401) throw new Error(`Access-level change did not revoke old ADMIN session: ${oldWrite.status} ${JSON.stringify(oldWrite.body)}`)
+  if (oldWrite.status !== 401)
+    throw new Error(
+      `Access-level change did not revoke old ADMIN session: ${oldWrite.status} ${JSON.stringify(oldWrite.body)}`,
+    )
   results.push("PASS OWNER changes ADMIN access and old session is revoked")
 
   const ownerSecond = await login("integration_owner")
@@ -183,10 +209,12 @@ try {
   const freshWrite = await login("browser_admin_write")
   const freshOwner = ownerSecond
   const [ownerStream, adminStream] = await Promise.all([
-    openSseFromBrowserSession(freshOwner.context), openSseFromBrowserSession(freshWrite.context),
+    openSseFromBrowserSession(freshOwner.context),
+    openSseFromBrowserSession(freshWrite.context),
   ])
   const mutation = await protectedPost(freshOwner.page, "/tables/groups", { tableIds: [9801, 9810] })
-  if (mutation.status !== 201) throw new Error(`SSE mutation failed ${mutation.status}: ${JSON.stringify(mutation.body)}`)
+  if (mutation.status !== 201)
+    throw new Error(`SSE mutation failed ${mutation.status}: ${JSON.stringify(mutation.body)}`)
   await Promise.all([ownerStream.floor, adminStream.floor])
   ownerStream.close()
   adminStream.close()
@@ -195,14 +223,22 @@ try {
   for (const width of [360, 375, 430, 768]) {
     await read.page.setViewportSize({ width, height: width === 768 ? 1024 : 844 })
     for (const path of ["/floor", "/reservations", "/waitlist", "/settings"]) {
-      await read.page.goto(`${base}${path}`, { waitUntil: "networkidle" })
-      const overflow = await read.page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)
+      await read.page.goto(`${base}${path}`, { waitUntil: "domcontentloaded" })
+      const overflow = await read.page.evaluate(
+        () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      )
       if (overflow) throw new Error(`Horizontal overflow at ${width}px on ${path}`)
     }
   }
   results.push("PASS responsive floor/booking/waitlist/settings at 360/375/430/tablet without document overflow")
 
-  await Promise.all([owner.context.close(), write.context.close(), read.context.close(), freshWrite.context.close(), ownerSecond.context.close()])
+  await Promise.all([
+    owner.context.close(),
+    write.context.close(),
+    read.context.close(),
+    freshWrite.context.close(),
+    ownerSecond.context.close(),
+  ])
   console.log(results.join("\n"))
 } finally {
   await browser.close()

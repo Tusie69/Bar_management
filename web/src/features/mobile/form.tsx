@@ -1,6 +1,18 @@
 import { guestCount, guestValueFrom, type GuestValue } from "@/domain/booking-rules"
 import { AlertTriangle, ChevronLeft } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type FocusEvent, type MutableRefObject } from "react"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
 import {
   bookingCalendarDate,
   bookingInstant,
@@ -33,8 +45,8 @@ import { bookingTableCanSelect } from "./booking-table-selection"
 import { FloorCanvas } from "../floor/floor-canvas"
 import { capacityWarningText, selectedTablesCapacity } from "../floor/reception-rules"
 import { useM, type FormRequest } from "./context"
-import { useKeyboardSafeHeight } from "./mobile-app"
 import { codesOf } from "./model"
+import { useRestoreTriggerFocus } from "./overlay-focus"
 import { selectedCapacity, walkInBlockReason, walkInPickableIds, walkInSelectionIssues } from "./walk-in-selection"
 import { bookingSelectionIssues, bookingTableBadge, isTableAvailableForBooking } from "./booking-table-selection"
 
@@ -46,11 +58,31 @@ interface Option {
 }
 
 const field =
-  "h-12 w-full rounded-xl border border-strong bg-background px-3.5 text-base text-tx-1 outline-none focus:border-primary focus:shadow-[0_0_0_3px_var(--primary-tint)]"
+  "h-12 w-full rounded-xl border border-input bg-background px-3.5 text-base text-tx-1 shadow-[var(--shadow-xs)] outline-none transition-[border-color,box-shadow] hover:border-border-strong focus:border-primary focus:ring-[3px] focus:ring-primary/20"
+
+function scrollFocusedIntoView(event: FocusEvent<HTMLInputElement | HTMLTextAreaElement>) {
+  const el = event.currentTarget
+  if (typeof window === "undefined") return
+  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
+  window.requestAnimationFrame(() => {
+    el.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" })
+  })
+}
 
 /** Full-screen "Tạo đơn đặt bàn": Đặt trước / Walk-in. Rules come from domain/booking-rules.ts (same as Desktop). */
-export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => void }) {
+export function FormScreen({
+  req,
+  onClose,
+  parentOpen = true,
+  requestCloseRef,
+}: {
+  req: FormRequest
+  onClose: () => void
+  parentOpen?: boolean
+  requestCloseRef?: MutableRefObject<(() => void) | null>
+}) {
   const m = useM()
+  const isReceptionist = m.role === "RECEPTIONIST"
   const { run, pending } = useAction()
   const quickTimes = useVenueSettings().data?.quickTimes ?? []
   const preset = useMemo(() => req.tableIds ?? [], [req.tableIds])
@@ -81,6 +113,18 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const [dirty, setDirty] = useState(false)
   const [confirmLeave, setConfirmLeave] = useState(false)
   const [selectionMessage, setSelectionMessage] = useState<string | null>(null)
+  const leaveFocus = useRestoreTriggerFocus(confirmLeave, { suppressRestore: !parentOpen })
+
+  useEffect(() => {
+    if (!requestCloseRef) return
+    requestCloseRef.current = () => {
+      if (dirty) setConfirmLeave(true)
+      else onClose()
+    }
+    return () => {
+      requestCloseRef.current = null
+    }
+  }, [dirty, onClose, requestCloseRef])
 
   const isBooking = mode === "booking"
   const bd = addDays(m.today, dateIdx)
@@ -234,8 +278,6 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
   const activeCapacityWarning = capacityWarningText(activeIds.length, activeCapacity, guests)
 
   const reset = () => {
-    // Revalidate the existing map selection when date/time/party changes.
-    // Only an explicit table toggle or cancel should discard the user's choice.
     setChecked(!!choice)
     setSelectionMessage(null)
   }
@@ -288,7 +330,6 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
     )
   }
 
-  // FX-04: 1 mã chống trùng cho lần mở form; đổi mã sau mỗi lần tạo thành công.
   const [idempotencyKey, renewIdempotencyKey] = useIdempotencyKey()
   const submit = async () => {
     if (
@@ -363,35 +404,30 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
     }
   }
 
-  const keyboardSafeHeight = useKeyboardSafeHeight()
-
   return (
-    <div
-      role="dialog"
-      aria-label="Tạo đơn đặt bàn"
-      style={{ height: keyboardSafeHeight ? `${keyboardSafeHeight}px` : "100dvh" }}
-      className="absolute inset-0 z-[40] flex flex-col overflow-hidden bg-background"
-    >
-      <div className="shrink-0 border-b border-border bg-background px-4 pt-[var(--top-safe)] pb-3">
-        <div className="-ml-2.5 flex h-11 items-center gap-1">
+    <div className="flex h-full w-full flex-col overflow-hidden bg-background">
+      <header className="gm-glass-chrome shrink-0 border-b border-border/70 bg-[var(--glass-chrome)] px-4 pt-[var(--top-safe)] pb-2.5 backdrop-blur-md">
+        <div className="-ml-2 flex h-12 items-center gap-1.5">
           <button
             type="button"
             onClick={() => (dirty ? setConfirmLeave(true) : onClose())}
             aria-label="Quay lại"
-            className="grid size-11 place-items-center rounded-xl text-tx-1 active:bg-surface-2"
+            className="gm-press grid size-11 shrink-0 place-items-center rounded-xl text-tx-1 hover:bg-surface-2"
           >
-            <ChevronLeft className="size-[22px]" />
+            <ChevronLeft className="size-[22px]" aria-hidden />
           </button>
-          <h1 className="m-0 text-xl font-semibold tracking-[-0.01em] text-tx-strong">
+          <h1 className="m-0 text-[20px] font-bold tracking-[-0.02em] text-tx-strong">
             {isBooking ? "Tạo đơn đặt bàn" : "Mở bàn Walk-in"}
           </h1>
         </div>
-      </div>
+      </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 pt-4 pb-6">
-        <section className="flex flex-col gap-3">
-          <h2 className="m-0 text-base font-semibold text-tx-strong">{isBooking ? "Số khách" : "Khách vừa đến"}</h2>
-          <div className="flex flex-col gap-3.5 rounded-2xl border border-border bg-surface-1 p-4">
+        <section className="flex flex-col gap-2">
+          <h2 className="m-0 px-0.5 text-[15.5px] font-semibold tracking-[-0.01em] text-tx-strong">
+            {isBooking ? "Số khách" : "Khách vừa đến"}
+          </h2>
+          <div className="flex flex-col gap-3.5 rounded-2xl border border-border bg-surface-1 p-4 shadow-[var(--shadow-xs)]">
             <GuestPicker
               value={guest}
               onChange={(g) => {
@@ -404,26 +440,27 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
           </div>
         </section>
 
-        <section className="flex flex-col gap-3">
-          <div className="flex items-baseline justify-between">
-            <h2 className="m-0 text-base font-semibold text-tx-strong">Thông tin khách</h2>
-            <span className="text-[13px] text-[var(--text-muted)]">
+        <section className="flex flex-col gap-2">
+          <div className="flex items-baseline justify-between px-0.5">
+            <h2 className="m-0 text-[15.5px] font-semibold tracking-[-0.01em] text-tx-strong">Thông tin khách</h2>
+            <span className="text-[12.5px] font-medium text-[var(--text-muted)]">
               {isBooking ? "Cần tên hoặc SĐT" : "Không bắt buộc"}
             </span>
           </div>
           <div
             className={cn(
-              "flex flex-col gap-3 rounded-2xl border bg-surface-1 p-4",
+              "flex flex-col gap-3 rounded-2xl border bg-surface-1 p-4 shadow-[var(--shadow-xs)]",
               errGuest ? "border-st-noshow" : "border-border",
             )}
           >
             <div className="flex flex-col gap-1.5">
               <span className="text-[13px] font-medium text-tx-2">Tên khách</span>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
                 <input
                   type="text"
                   autoComplete="name"
                   value={name}
+                  onFocus={scrollFocusedIntoView}
                   onChange={(e) => {
                     setName(e.target.value)
                     touch()
@@ -450,6 +487,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                 inputMode="tel"
                 autoComplete="tel"
                 value={phone}
+                onFocus={scrollFocusedIntoView}
                 onChange={(e) => {
                   setPhone(e.target.value)
                   touch()
@@ -459,7 +497,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
               />
             </label>
             {errGuest ? (
-              <span role="alert" className="text-[13px] text-st-noshow-ink">
+              <span role="alert" className="text-[13px] font-medium text-st-noshow-ink">
                 {!phoneOk ? "SĐT chưa đúng định dạng (10 số, bắt đầu bằng 0)." : "Nhập ít nhất tên hoặc số điện thoại."}
               </span>
             ) : null}
@@ -476,10 +514,10 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                     role="radio"
                     aria-checked={classification === "RETURNING"}
                     className={cn(
-                      "h-12 rounded-xl border px-1.5 text-[13px] leading-tight font-medium transition-colors",
+                      "gm-press h-12 rounded-xl border px-2 text-[13px] leading-tight font-medium",
                       classification === "RETURNING"
                         ? "border-primary bg-primary-tint font-semibold text-primary-ink"
-                        : "border-strong bg-background text-tx-1",
+                        : "border-border-strong bg-background text-tx-1 hover:bg-surface-2",
                     )}
                     onClick={() => {
                       setClassification((c) => (c === "RETURNING" ? "UNCLASSIFIED" : "RETURNING"))
@@ -493,10 +531,10 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                     role="radio"
                     aria-checked={classification === "NEW"}
                     className={cn(
-                      "h-12 rounded-xl border px-1.5 text-[13px] leading-tight font-medium transition-colors",
+                      "gm-press h-12 rounded-xl border px-2 text-[13px] leading-tight font-medium",
                       classification === "NEW"
                         ? "border-primary bg-primary-tint font-semibold text-primary-ink"
-                        : "border-strong bg-background text-tx-1",
+                        : "border-border-strong bg-background text-tx-1 hover:bg-surface-2",
                     )}
                     onClick={() => {
                       setClassification((c) => (c === "NEW" ? "UNCLASSIFIED" : "NEW"))
@@ -512,11 +550,11 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
         </section>
 
         {isBooking ? (
-          <section className="flex flex-col gap-3">
-            <h2 className="m-0 text-base font-semibold text-tx-strong">Thời gian</h2>
-            <div className="flex flex-col gap-3.5 rounded-2xl border border-border bg-surface-1 p-4">
+          <section className="flex flex-col gap-2">
+            <h2 className="m-0 px-0.5 text-[15.5px] font-semibold tracking-[-0.01em] text-tx-strong">Thời gian</h2>
+            <div className="flex flex-col gap-3.5 rounded-2xl border border-border bg-surface-1 p-4 shadow-[var(--shadow-xs)]">
               <div className="flex flex-col gap-2">
-                <span className="text-[14px] text-tx-2">Ngày</span>
+                <span className="text-[13px] font-medium text-tx-2">Ngày</span>
                 <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-0.5">
                   {days.map((d) => {
                     const on = dateIdx === d.offset
@@ -531,14 +569,14 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                           touch()
                         }}
                         className={cn(
-                          "flex h-14 min-w-16 shrink-0 flex-col items-center justify-center gap-px rounded-[14px] border px-2.5",
+                          "gm-press flex h-14 min-w-[68px] shrink-0 flex-col items-center justify-center gap-px rounded-xl border px-2.5",
                           on
-                            ? "border-tx-strong bg-tx-strong text-background"
-                            : "border-border bg-background text-tx-1",
+                            ? "border-tx-strong bg-tx-strong text-background shadow-[var(--shadow-xs)]"
+                            : "border-border bg-background text-tx-1 hover:border-border-strong",
                         )}
                       >
-                        <span className="text-xs">{d.top}</span>
-                        <span className="text-[15px] font-semibold">{d.day}</span>
+                        <span className="text-[11.5px] opacity-85">{d.top}</span>
+                        <span className="tnum text-[15px] font-semibold">{d.day}</span>
                       </button>
                     )
                   })}
@@ -558,28 +596,30 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                   }}
                 />
               </div>
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="lg"
                 onClick={() => (guests === null || timeErr ? setTried(true) : setChecked(true))}
-                className="h-12 rounded-xl border border-primary bg-primary-tint text-[15px] font-medium text-primary-ink active:brightness-95"
+                className="h-12 w-full rounded-xl border-primary/60 bg-primary-tint text-[15px] font-semibold text-primary-ink hover:bg-primary-tint"
               >
                 Kiểm tra bàn trống
-              </button>
+              </Button>
             </div>
           </section>
         ) : null}
 
         {checked ? (
-          <section className="flex flex-col gap-3">
-            <div className="flex items-baseline justify-between">
-              <h2 className="m-0 text-base font-semibold text-tx-strong">Chọn bàn</h2>
-              <span className="text-[13px] text-[var(--text-muted)]">
+          <section className="flex flex-col gap-2.5">
+            <div className="flex items-baseline justify-between px-0.5">
+              <h2 className="m-0 text-[15.5px] font-semibold tracking-[-0.01em] text-tx-strong">Chọn bàn</h2>
+              <span className="tnum text-[13px] font-medium text-[var(--text-muted)]">
                 {isBooking ? slotText : "Lúc này"}, {guests ?? "?"} khách
               </span>
             </div>
             {isBooking && m.model.catalog ? (
               <>
-                <div className="relative h-[min(50dvh,440px)] min-h-64 overflow-hidden rounded-2xl border bg-floor">
+                <div className="relative h-[min(50dvh,440px)] min-h-64 overflow-hidden rounded-2xl border border-border bg-floor shadow-[var(--shadow-xs)]">
                   <FloorCanvas
                     className="absolute inset-0"
                     tables={m.model.tables}
@@ -597,18 +637,19 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                   />
                 </div>
                 {bookingSelectionError || selectionMessage ? (
-                  <p role="status" className="m-0 text-sm text-st-late-ink">
+                  <p role="status" className="m-0 text-sm font-medium text-st-late-ink">
                     {bookingSelectionError ?? selectionMessage}
                   </p>
                 ) : null}
                 {availability.isError ? (
-                  <button
+                  <Button
                     type="button"
-                    className="min-h-11 rounded-xl border"
+                    variant="outline"
+                    className="min-h-11 rounded-xl"
                     onClick={() => void availability.refetch()}
                   >
                     Tải lại bàn khả dụng
-                  </button>
+                  </Button>
                 ) : null}
               </>
             ) : null}
@@ -618,11 +659,11 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                   <div
                     role="status"
                     aria-label={`Bàn ${codesOf(preset, m.model)} không khả dụng`}
-                    className="flex flex-col gap-1.5 rounded-[14px] border border-st-reserved/30 bg-st-reserved-tint px-4 py-3 text-tx-1"
+                    className="flex flex-col gap-1.5 rounded-2xl border border-st-reserved/30 bg-st-reserved-tint px-4 py-3 text-tx-1"
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <span className="text-[15px] font-semibold text-tx-strong">Bàn {codesOf(preset, m.model)}</span>
-                      <span className="rounded-md bg-st-reserved/20 px-2 py-0.5 text-xs font-medium text-st-reserved-ink">
+                      <span className="rounded-full bg-st-reserved/20 px-2.5 py-0.5 text-xs font-semibold text-st-reserved-ink">
                         {presetBadge}
                       </span>
                     </div>
@@ -637,7 +678,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                           setSelectionMessage(null)
                           touch()
                         }}
-                        className="self-start text-[13px] font-medium text-primary-ink underline active:opacity-70"
+                        className="gm-press inline-flex min-h-11 items-center self-start text-[13px] font-semibold text-primary-ink underline"
                       >
                         Bỏ chọn bàn này
                       </button>
@@ -662,20 +703,22 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                             touch()
                           }}
                           className={cn(
-                            "flex min-h-12 flex-col items-start justify-center rounded-[14px] border px-3.5 py-1 text-tx-1",
-                            on ? "border-primary bg-primary-tint" : "border-border bg-surface-1",
+                            "gm-press flex min-h-12 flex-col items-start justify-center rounded-xl border px-3.5 py-1.5 text-tx-1 shadow-[var(--shadow-xs)]",
+                            on
+                              ? "border-primary bg-primary-tint"
+                              : "border-border bg-surface-1 hover:border-border-strong",
                           )}
                         >
                           <span className={cn("text-[15px] font-semibold", on ? "text-primary-ink" : "text-tx-strong")}>
                             {o.label}
                           </span>
-                          {o.sub ? <span className="text-xs text-[var(--text-muted)]">{o.sub}</span> : null}
+                          {o.sub ? <span className="tnum text-xs text-[var(--text-muted)]">{o.sub}</span> : null}
                         </button>
                       )
                     })}
                   </div>
                 ) : (
-                  <div className="rounded-[14px] bg-st-late-tint px-4 py-3.5 text-[14px] text-pretty text-tx-1">
+                  <div className="rounded-2xl border border-st-late/25 bg-st-late-tint px-4 py-3.5 text-[14px] text-pretty text-tx-1">
                     Không còn bàn trống cho {guests} khách lúc {slotText}. Vẫn có thể lưu booking chưa có bàn.
                   </div>
                 )}
@@ -685,7 +728,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                 <p className="m-0 text-[13px] text-pretty text-tx-2">
                   Chạm trực tiếp lên bàn hoặc ghế trống. Có thể chọn thêm trong cùng khu và cùng loại.
                 </p>
-                <div className="relative h-[min(58dvh,500px)] min-h-[360px] overflow-hidden rounded-2xl border border-border bg-floor">
+                <div className="relative h-[min(58dvh,500px)] min-h-[360px] overflow-hidden rounded-2xl border border-border bg-floor shadow-[var(--shadow-xs)]">
                   {m.model.catalog ? (
                     <FloorCanvas
                       className="absolute inset-0"
@@ -710,7 +753,7 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                 </div>
                 <div
                   className={cn(
-                    "flex flex-col gap-1 rounded-[14px] border px-4 py-3",
+                    "flex flex-col gap-1 rounded-2xl border px-4 py-3",
                     walkInReady ? "border-primary bg-primary-tint" : "border-border bg-surface-1",
                   )}
                   role="status"
@@ -719,22 +762,22 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                   <span className="text-[14px] font-semibold text-tx-strong">
                     {selectedWalkInIds.length ? `Đã chọn: ${codesOf(selectedWalkInIds, m.model)}` : "Chưa chọn bàn"}
                   </span>
-                  <span className={cn("text-[13px]", walkInReady ? "text-primary-ink" : "text-tx-2")}>
+                  <span className={cn("tnum text-[13px]", walkInReady ? "text-primary-ink" : "text-tx-2")}>
                     Sức chứa: {walkInCapacity} chỗ cho {guests ?? "?"} khách
                   </span>
                   {walkInIssues[0] || selectionMessage ? (
-                    <span className="text-[13px] text-st-noshow-ink" role="alert">
+                    <span className="text-[13px] font-medium text-st-noshow-ink" role="alert">
                       {walkInIssues[0] ?? selectionMessage}
                     </span>
                   ) : walkInPickable.size === 0 ? (
-                    <span className="text-[13px] text-st-late-ink">
+                    <span className="text-[13px] font-medium text-st-late-ink">
                       Không có bàn hợp lệ lúc này. Không chọn bàn để thêm khách vào danh sách chờ.
                     </span>
                   ) : null}
                 </div>
               </div>
             )}
-            <span className="text-xs text-pretty text-subtle">
+            <span className="text-xs leading-relaxed text-pretty text-subtle">
               {isBooking
                 ? "Bàn chỉ được giữ khi máy chủ xác nhận lưu. Chọn bàn không có nghĩa là bàn đã bị khóa."
                 : "Chọn bàn để mở ngay. Không chọn bàn thì khách vào danh sách chờ."}
@@ -743,14 +786,17 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
         ) : null}
 
         {isBooking ? (
-          <section className="flex flex-col gap-3">
-            <h2 className="m-0 text-base font-semibold text-tx-strong">Yêu cầu & Nguồn đặt</h2>
-            <div className="flex flex-col gap-3.5 rounded-2xl border border-border bg-surface-1 p-4">
+          <section className="flex flex-col gap-2">
+            <h2 className="m-0 px-0.5 text-[15.5px] font-semibold tracking-[-0.01em] text-tx-strong">
+              Yêu cầu & Nguồn đặt
+            </h2>
+            <div className="flex flex-col gap-3.5 rounded-2xl border border-border bg-surface-1 p-4 shadow-[var(--shadow-xs)]">
               <label className="flex flex-col gap-1.5">
                 <span className="text-[13px] font-medium text-tx-2">Yêu cầu của khách (Ghi chú)</span>
                 <textarea
                   rows={3}
                   value={note}
+                  onFocus={scrollFocusedIntoView}
                   onChange={(e) => {
                     setNote(e.target.value)
                     touch()
@@ -759,7 +805,9 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                   placeholder="Sinh nhật, ghế trẻ em, khu yên tĩnh..."
                   className={cn(field, "h-auto resize-none py-3 leading-[1.45]", noteBad && "border-st-noshow")}
                 />
-                {noteBad ? <span className="text-[13px] text-st-noshow-ink">{NOTE_PHONE_ERROR}</span> : null}
+                {noteBad ? (
+                  <span className="text-[13px] font-medium text-st-noshow-ink">{NOTE_PHONE_ERROR}</span>
+                ) : null}
               </label>
 
               <div className="flex flex-col gap-2">
@@ -797,14 +845,15 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
             </div>
           </section>
         ) : !choice ? (
-          <section className="flex flex-col gap-3">
-            <h2 className="m-0 text-base font-semibold text-tx-strong">Ghi chú</h2>
-            <div className="flex flex-col gap-3 rounded-2xl border border-border bg-surface-1 p-4">
+          <section className="flex flex-col gap-2">
+            <h2 className="m-0 px-0.5 text-[15.5px] font-semibold tracking-[-0.01em] text-tx-strong">Ghi chú</h2>
+            <div className="flex flex-col gap-3 rounded-2xl border border-border bg-surface-1 p-4 shadow-[var(--shadow-xs)]">
               <label className="flex flex-col gap-1.5">
                 <span className="text-[13px] font-medium text-tx-2">Ghi chú</span>
                 <textarea
                   rows={3}
                   value={note}
+                  onFocus={scrollFocusedIntoView}
                   onChange={(e) => {
                     setNote(e.target.value)
                     touch()
@@ -813,21 +862,23 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
                   placeholder="Ghi chú thêm..."
                   className={cn(field, "h-auto resize-none py-3 leading-[1.45]", noteBad && "border-st-noshow")}
                 />
-                {noteBad ? <span className="text-[13px] text-st-noshow-ink">{NOTE_PHONE_ERROR}</span> : null}
+                {noteBad ? (
+                  <span className="text-[13px] font-medium text-st-noshow-ink">{NOTE_PHONE_ERROR}</span>
+                ) : null}
               </label>
             </div>
           </section>
         ) : null}
       </div>
 
-      <footer className="flex shrink-0 flex-col gap-2 border-t border-border bg-surface-1 px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
-        <span className="truncate text-[13px] text-[var(--text-muted)]">
+      <footer className="gm-glass-chrome flex shrink-0 flex-col gap-2 border-t border-border/70 bg-surface-1/95 px-4 pt-3 pb-[calc(12px+var(--bottom-safe))] backdrop-blur-md">
+        <span className="tnum truncate text-[13px] font-medium text-[var(--text-muted)]">
           {isBooking
             ? `${dateIdx === 0 ? "Hôm nay" : fmtBusinessDate(bd, "short")}, ${slotText || "chưa chọn giờ"}, ${guests ?? "?"} khách, ${tableLabel}`
             : `Walk-in, ${guests ?? "?"} khách, ${tableLabel}`}
         </span>
         {isBooking && selectionMessage ? (
-          <span role="alert" className="text-[13px] text-st-noshow-ink">
+          <span role="alert" className="text-[13px] font-medium text-st-noshow-ink">
             {selectionMessage}
           </span>
         ) : null}
@@ -835,18 +886,19 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
           <p
             role="status"
             data-testid="capacity-warning"
-            className="tnum m-0 flex items-start gap-2 rounded-lg border border-st-late/30 bg-st-late-tint px-2.5 py-1.5 text-[13px] font-medium text-st-late-ink"
+            className="tnum m-0 flex items-start gap-2 rounded-xl border border-st-late/30 bg-st-late-tint px-3 py-2 text-[13px] font-medium text-st-late-ink"
           >
             <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
             <span>{activeCapacityWarning}</span>
           </p>
         ) : null}
-        <button
+        <Button
           type="button"
+          size="lg"
           onClick={() => void submit()}
           disabled={pending || (isBooking ? !!bookingSelectionError : selectedWalkInIds.length > 0 && !walkInReady)}
           aria-busy={pending}
-          className="h-[52px] rounded-[14px] bg-primary text-base font-semibold text-primary-foreground active:brightness-90 disabled:opacity-70"
+          className="h-12 w-full rounded-xl text-[15px] font-semibold"
         >
           {pending
             ? "Đang gửi..."
@@ -855,38 +907,47 @@ export function FormScreen({ req, onClose }: { req: FormRequest; onClose: () => 
               : choice
                 ? `Mở bàn ${choice.label}`
                 : "Thêm vào danh sách chờ"}
-        </button>
+        </Button>
       </footer>
 
-      {confirmLeave ? (
-        <>
-          <div className="absolute inset-0 z-[2] bg-[var(--scrim)]" />
-          <div
-            role="alertdialog"
-            aria-label="Bỏ đơn đang nhập"
-            className="absolute inset-x-6 top-1/2 z-[3] flex -translate-y-1/2 flex-col gap-3.5 rounded-[20px] bg-surface-1 p-5 shadow-[var(--shadow-float)]"
-          >
-            <span className="text-[17px] font-semibold text-tx-strong">Bỏ đơn đang nhập?</span>
-            <span className="text-[14px] text-[var(--text-muted)]">Thông tin vừa nhập sẽ không được lưu.</span>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmLeave(false)}
-                className="h-12 flex-1 rounded-xl border border-strong text-[15px] text-tx-1"
-              >
-                Tiếp tục nhập
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="h-12 flex-1 rounded-xl bg-st-noshow text-[15px] font-medium text-white"
-              >
-                Bỏ đơn
-              </button>
-            </div>
-          </div>
-        </>
-      ) : null}
+      <AlertDialog open={confirmLeave} onOpenChange={setConfirmLeave}>
+        <AlertDialogContent
+          data-gm
+          data-gm-overlay-id={leaveFocus.overlayId}
+          data-receptionist-frame={isReceptionist ? "true" : undefined}
+          size="sm"
+          onCloseAutoFocus={leaveFocus.onCloseAutoFocus}
+          aria-label="Bỏ đơn đang nhập"
+          className="max-w-[min(calc(100%-2rem),380px)] gap-4 rounded-2xl border-border bg-surface-1 p-5 shadow-[var(--shadow-float)]"
+        >
+          <AlertDialogHeader>
+            <AlertDialogMedia className="size-11 rounded-xl bg-st-late-tint text-st-late-ink">
+              <AlertTriangle className="size-5" aria-hidden />
+            </AlertDialogMedia>
+            <AlertDialogTitle className="text-[17px] font-semibold tracking-[-0.015em] text-tx-strong">
+              Bỏ đơn đang nhập?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-[14px] leading-relaxed text-[var(--text-muted)]">
+              Thông tin vừa nhập sẽ không được lưu.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="grid grid-cols-2 gap-2.5 pt-1">
+            <AlertDialogCancel className="h-12 rounded-xl border-border-strong text-[15px] font-medium">
+              Tiếp tục nhập
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                setConfirmLeave(false)
+                onClose()
+              }}
+              className="h-12 rounded-xl text-[15px] font-semibold"
+            >
+              Bỏ đơn
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

@@ -95,19 +95,31 @@ export default function ReservationsPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="grid gap-3 border-b px-4 py-3 md:px-6">
+      <div className="grid gap-3 border-b border-border-subtle bg-background px-4 py-3.5 md:px-6">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center">
-            <Button variant="ghost" size="icon" aria-label="Ngày trước" onClick={() => setDate(addDays(date, -1))}>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="icon"
+              className="rounded-lg bg-surface-1 shadow-xs"
+              aria-label="Ngày trước"
+              onClick={() => setDate(addDays(date, -1))}
+            >
               <ChevronLeft />
             </Button>
             <DateField value={date} minDate={addDays(today, -60)} onChange={setDate} />
-            <Button variant="ghost" size="icon" aria-label="Ngày sau" onClick={() => setDate(addDays(date, 1))}>
+            <Button
+              variant="outline"
+              size="icon"
+              className="rounded-lg bg-surface-1 shadow-xs"
+              aria-label="Ngày sau"
+              onClick={() => setDate(addDays(date, 1))}
+            >
               <ChevronRight />
             </Button>
           </div>
           {date !== today ? (
-            <Button variant="ghost" size="sm" onClick={() => setDate(today)}>
+            <Button variant="outline" size="sm" className="rounded-lg bg-surface-1" onClick={() => setDate(today)}>
               Hôm nay
             </Button>
           ) : null}
@@ -151,7 +163,7 @@ export default function ReservationsPage() {
             </ZaloBookingExport>
             <ToggleGroup
               type="single"
-              variant="outline"
+              spacing={0}
               value={view}
               onValueChange={(v) => v && setView(v as "list" | "timeline")}
               aria-label="Kiểu xem"
@@ -187,14 +199,14 @@ export default function ReservationsPage() {
                 aria-selected={filter === f.value}
                 onClick={() => setFilter(f.value)}
                 className={cn(
-                  "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-sm transition-colors",
+                  "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm font-medium transition-[background-color,border-color,color,transform] duration-150 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.97] sm:h-9",
                   filter === f.value
-                    ? "border-foreground bg-foreground text-background"
-                    : "text-muted-foreground hover:bg-surface-2 hover:text-foreground",
+                    ? "border-primary bg-primary-tint font-semibold text-primary-ink"
+                    : "border-border bg-surface-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground",
                 )}
               >
                 {f.label}
-                <span className="tnum text-xs opacity-70">{counts[f.value] ?? 0}</span>
+                <span className="tnum text-xs opacity-75">{counts[f.value] ?? 0}</span>
               </button>
             ))}
           </div>
@@ -273,6 +285,11 @@ function ReservationList({
   const today = businessDateOf(now, shiftCutoff)
   const { run } = useAction()
   const [checkIn, setCheckIn] = useState<ReservationView | null>(null)
+  const [lastCheckIn, setLastCheckIn] = useState<ReservationView | null>(null)
+  if (checkIn && checkIn !== lastCheckIn) {
+    setLastCheckIn(checkIn)
+  }
+  const shownCheckIn = checkIn ?? lastCheckIn
   const navigate = useNavigate()
 
   if (!rows.length)
@@ -450,13 +467,13 @@ function ReservationList({
       <GuestCountDialog
         open={!!checkIn}
         onOpenChange={(o) => !o && setCheckIn(null)}
-        title={`Check-in ${checkIn?.displayName ?? ""}`}
+        title={`Check-in ${shownCheckIn?.displayName ?? ""}`}
         description={
           <>
-            Booking {fmtTime(checkIn?.expectedAt)} · {checkIn ? codes(checkIn.tableIds).join(" + ") : ""}
+            Booking {fmtTime(shownCheckIn?.expectedAt)} · {shownCheckIn ? codes(shownCheckIn.tableIds).join(" + ") : ""}
           </>
         }
-        initial={checkIn?.partySize ?? 2}
+        initial={shownCheckIn?.partySize ?? 2}
         readOnly
         confirmLabel="Check-in"
         onConfirm={async () => {
@@ -553,7 +570,10 @@ function Timeline({
         Mỗi hàng là một bàn/ghế, lấy từ lịch sử table_allocations (đổi bàn hiện thành hai đoạn). Thanh mờ dần nghĩa là
         không có giờ kết thúc: quán không giới hạn thời gian ngồi.
       </p>
-      <div ref={boxRef} className="scrollbar-thin overflow-x-auto rounded-xl border">
+      <div
+        ref={boxRef}
+        className="scrollbar-thin overflow-x-auto rounded-xl border border-border bg-surface-1 shadow-xs"
+      >
         <div style={{ width }} className="relative">
           <div className="sticky top-0 z-20 flex border-b bg-background" style={{ height: 32 }}>
             <div style={{ width: LABEL_W }} className="sticky left-0 z-10 shrink-0 border-r bg-background" />

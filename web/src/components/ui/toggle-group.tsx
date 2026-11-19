@@ -2,10 +2,9 @@
 
 import * as React from "react"
 import { type VariantProps } from "class-variance-authority"
-import { cn } from "@/lib/utils"
 import { ToggleGroup as ToggleGroupPrimitive } from "radix-ui"
-
 import { toggleVariants } from "@/components/ui/toggle"
+import { cn } from "@/lib/utils"
 
 const ToggleGroupContext = React.createContext<
   VariantProps<typeof toggleVariants> & {
@@ -28,6 +27,7 @@ function ToggleGroup({
   VariantProps<typeof toggleVariants> & {
     spacing?: number
   }) {
+  const segmented = spacing === 0 && (variant ?? "default") === "default"
   return (
     <ToggleGroupPrimitive.Root
       data-slot="toggle-group"
@@ -36,7 +36,9 @@ function ToggleGroup({
       data-spacing={spacing}
       style={{ "--gap": spacing } as React.CSSProperties}
       className={cn(
-        "group/toggle-group flex w-fit items-center gap-[--spacing(var(--gap))] rounded-md data-[spacing=default]:data-[variant=outline]:shadow-xs",
+        "group/toggle-group inline-flex w-fit items-center gap-[--spacing(var(--gap))] rounded-lg",
+        segmented && "border border-border-subtle bg-surface-2 p-1",
+        spacing === 0 && variant === "outline" && "shadow-xs",
         className,
       )}
       {...props}
@@ -54,20 +56,24 @@ function ToggleGroupItem({
   ...props
 }: React.ComponentProps<typeof ToggleGroupPrimitive.Item> & VariantProps<typeof toggleVariants>) {
   const context = React.useContext(ToggleGroupContext)
+  const resolvedVariant = context.variant || variant || "default"
+  const segmented = (context.spacing ?? 0) === 0 && resolvedVariant === "default"
 
   return (
     <ToggleGroupPrimitive.Item
       data-slot="toggle-group-item"
-      data-variant={context.variant || variant}
+      data-variant={resolvedVariant}
       data-size={context.size || size}
       data-spacing={context.spacing}
       className={cn(
         toggleVariants({
-          variant: context.variant || variant,
+          variant: resolvedVariant,
           size: context.size || size,
         }),
         "w-auto min-w-0 shrink-0 px-3 focus:z-10 focus-visible:z-10",
-        "data-[spacing=0]:rounded-none data-[spacing=0]:shadow-none data-[spacing=0]:first:rounded-l-lg data-[spacing=0]:last:rounded-r-lg data-[spacing=0]:data-[variant=outline]:border-l-0 data-[spacing=0]:data-[variant=outline]:first:border-l",
+        segmented && "rounded-md hover:bg-transparent hover:text-foreground dark:data-[state=on]:bg-surface-3",
+        !segmented &&
+          "data-[spacing=0]:rounded-none data-[spacing=0]:shadow-none data-[spacing=0]:first:rounded-l-md data-[spacing=0]:last:rounded-r-md data-[spacing=0]:data-[variant=outline]:border-l-0 data-[spacing=0]:data-[variant=outline]:first:border-l",
         className,
       )}
       {...props}

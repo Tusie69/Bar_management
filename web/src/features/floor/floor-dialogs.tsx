@@ -43,14 +43,29 @@ interface GuestCountProps {
   onConfirm: (count: number) => Promise<unknown>
 }
 
+function useOpenSession(open: boolean) {
+  const [sessionId, setSessionId] = useState(0)
+  const [wasOpen, setWasOpen] = useState(false)
+  if (open && !wasOpen) {
+    setWasOpen(true)
+    setSessionId((n) => n + 1)
+  } else if (!open && wasOpen) {
+    setWasOpen(false)
+  }
+  return sessionId
+}
+
 export function GuestCountDialog({
   open,
   onOpenChange,
   ...props
 }: GuestCountProps & { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const sessionId = useOpenSession(open)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>{open ? <GuestCountBody {...props} onCancel={() => onOpenChange(false)} /> : null}</DialogContent>
+      <DialogContent>
+        {sessionId > 0 ? <GuestCountBody key={sessionId} {...props} onCancel={() => onOpenChange(false)} /> : null}
+      </DialogContent>
     </Dialog>
   )
 }
@@ -117,9 +132,12 @@ export function SplitDialog({
   onOpenChange,
   ...props
 }: SplitProps & { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const sessionId = useOpenSession(open)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>{open ? <SplitBody {...props} onCancel={() => onOpenChange(false)} /> : null}</DialogContent>
+      <DialogContent>
+        {sessionId > 0 ? <SplitBody key={sessionId} {...props} onCancel={() => onOpenChange(false)} /> : null}
+      </DialogContent>
     </Dialog>
   )
 }
@@ -144,14 +162,14 @@ function SplitBody({ tables, idle, onConfirm, onCancel }: SplitProps & { onCance
             <Label
               key={t.id}
               htmlFor={`keep-${t.id}`}
-              className="flex h-12 cursor-pointer items-center gap-3 rounded-lg border px-3 font-normal has-[[data-state=checked]]:bg-surface-2"
+              className="flex h-12 cursor-pointer items-center gap-3 rounded-xl border border-border bg-surface-1 px-3.5 font-normal shadow-2xs transition-colors hover:bg-surface-2/60 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary-tint"
             >
               <Checkbox
                 id={`keep-${t.id}`}
                 checked={keep.includes(t.id)}
                 onCheckedChange={(v) => setKeep((k) => (v ? [...k, t.id] : k.filter((x) => x !== t.id)))}
               />
-              <span className="font-semibold">{t.label}</span>
+              <span className="font-semibold text-foreground">{t.label}</span>
               <span className="ml-auto text-sm text-muted-foreground">
                 {keep.includes(t.id) ? "Giữ cho đoàn" : "Nhả bàn"}
               </span>
@@ -196,9 +214,12 @@ export function ExtendHoldDialog({
   onOpenChange,
   ...props
 }: ExtendProps & { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const sessionId = useOpenSession(open)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>{open ? <ExtendBody {...props} onCancel={() => onOpenChange(false)} /> : null}</DialogContent>
+      <DialogContent>
+        {sessionId > 0 ? <ExtendBody key={sessionId} {...props} onCancel={() => onOpenChange(false)} /> : null}
+      </DialogContent>
     </Dialog>
   )
 }

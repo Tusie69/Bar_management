@@ -18,7 +18,12 @@ import { useEffect, useMemo, useRef, type CSSProperties, type ReactElement } fro
 import { STATE_META } from "@/components/status-meta"
 import type { FloorGroup, FloorTableState, TableView } from "@/domain/models"
 import { cn } from "@/lib/utils"
-import { buildBarGuestRows, DEFAULT_BAR_GUEST_LIST_BOUNDS, type BarGuestRow } from "./bar-guest-rows"
+import {
+  buildBarGuestRows,
+  DEFAULT_BAR_GUEST_LIST_BOUNDS,
+  isPhoneLikeGuestName,
+  type BarGuestRow,
+} from "./bar-guest-rows"
 
 /** Chiều cao thật của từng phần, tính bằng pixel màn hình (xem markup bên dưới). */
 const HEADER_PIXEL_HEIGHT = 25
@@ -61,6 +66,10 @@ export interface BarGuestListProps {
   ariaLabel?: string
   /** Click handler for selecting a row */
   onRowClick?: (row: BarGuestRow) => void
+  /** Read-only mode: render static non-interactive rows (never <button>) and ignore clicks. */
+  readOnly?: boolean
+  /** Redact guest names from text, title, and accessible labels. */
+  hideGuestNames?: boolean
   /** Additional CSS class names */
   className?: string
   /** Optional test identifier */
@@ -83,14 +92,22 @@ export function BarGuestList({
   title = "Khách quầy bar",
   ariaLabel = title,
   onRowClick,
+  readOnly = false,
+  hideGuestNames = false,
   className,
   "data-testid": testId = "bar-guest-list",
 }: BarGuestListProps): ReactElement | null {
   const rows = useMemo(() => {
-    if (directRows) return directRows
-    if (tables) return buildBarGuestRows(tables, states, groups)
+    if (directRows) {
+      if (hideGuestNames) return directRows.map((row) => ({ ...row, guestName: "" }))
+      if (readOnly) {
+        return directRows.map((row) => (isPhoneLikeGuestName(row.guestName) ? { ...row, guestName: "" } : row))
+      }
+      return directRows
+    }
+    if (tables) return buildBarGuestRows({ tables, states, groups, hideGuestNames, maskPhoneNames: readOnly })
     return []
-  }, [directRows, tables, states, groups])
+  }, [directRows, tables, states, groups, hideGuestNames, readOnly])
 
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -161,7 +178,7 @@ export function BarGuestList({
       data-testid={testId}
       style={containerStyle}
       className={cn(
-        "pointer-events-auto flex flex-col overflow-hidden rounded-md border border-border/80 bg-card/95 text-card-foreground shadow-xs backdrop-blur-xs select-none",
+        "pointer-events-auto flex flex-col overflow-hidden rounded-lg border border-border bg-surface-1/95 text-card-foreground shadow-xs select-none",
         className,
       )}
       onPointerDown={(e) => e.stopPropagation()}
@@ -174,7 +191,7 @@ export function BarGuestList({
       onWheel={(e) => e.stopPropagation()}
     >
       {/* Title bar: 12-13px, medium bold, line-height 1.3-1.4 */}
-      <div className="shrink-0 border-b border-border/60 bg-muted/30 px-2 py-1">
+      <div className="shrink-0 border-b border-border-subtle bg-surface-2/80 px-2.5 py-1.5">
         <div className="text-[12px] leading-[1.3] font-semibold tracking-tight break-words text-foreground">
           {title}
         </div>
@@ -185,17 +202,17 @@ export function BarGuestList({
         role="region"
         tabIndex={0}
         aria-label={ariaLabel}
-        className="[&::-webkit-scrollbar-thumb]:bg-border-strong flex-1 touch-pan-y [scrollbar-width:thin] space-y-1 overflow-x-hidden overflow-y-auto overscroll-contain p-1 focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:rounded"
+        className="flex-1 touch-pan-y [scrollbar-width:thin] overflow-x-hidden overflow-y-auto overscroll-contain focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:outline-none [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:rounded [&::-webkit-scrollbar-thumb]:bg-border-strong"
       >
         {rows.length === 0 ? (
           <div
             data-testid="bar-guest-list-empty"
-            className="flex h-full items-center justify-center p-2 text-center text-[11px] leading-[1.35] text-muted-foreground/70 italic"
+            className="flex h-full items-center justify-center p-2 text-center text-[11px] leading-[1.35] text-muted-foreground/80 italic"
           >
             Chưa có khách
           </div>
         ) : (
-          <ul role="list" aria-label="Danh sách khách quầy bar" className="space-y-1">
+          <ul role="list" aria-label="Danh sách khách quầy bar" className="divide-y divide-border-subtle/80">
             {rows.map((row) => {
               const meta = STATE_META[row.state] ?? STATE_META.free
               const statusColor = meta.color
@@ -218,86 +235,105 @@ export function BarGuestList({
               const overflowLabels = overflowIcons.map((i) => i.label).join(", ")
               const allIconLabels = activeIcons.map((i) => i.label).join(", ")
 
+              const displayGuestName =
+                hideGuestNames || (readOnly && isPhoneLikeGuestName(row.guestName)) ? "" : row.guestName
               const rowAriaLabel = [
                 row.seatsLabel,
                 row.time ? `lúc ${row.time}` : row.seatedTime ? `vào lúc ${row.seatedTime}` : "",
                 `${row.partySize} khách`,
-                row.guestName,
+                displayGuestName,
                 allIconLabels,
                 `Trạng thái: ${statusLabel}`,
               ]
                 .filter(Boolean)
                 .join(", ")
 
+              const rowBody = (
+                <>
+                  <div className="flex w-full min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5">
+                    <span className="inline-flex min-w-0 shrink items-center gap-1">
+                      <span
+                        className="inline-block size-1.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: statusColor }}
+                        aria-hidden="true"
+                      />
+                      <span className="max-w-14 truncate text-[10px] font-semibold tracking-tight text-foreground">
+                        {row.seatsLabel}
+                      </span>
+                    </span>
+                    <span className="tnum shrink-0 text-[9.5px] text-muted-foreground">
+                      {row.time ?? (row.seatedTime ? `vào ${row.seatedTime}` : "")}
+                    </span>
+                    <span className="tnum inline-flex shrink-0 items-center gap-0.5 text-[9.5px] text-muted-foreground">
+                      <Users className="size-2 opacity-70" aria-hidden="true" />
+                      {row.partySize}
+                    </span>
+                    {activeIcons.length > 0 ? (
+                      <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-[9px]">
+                        {visibleIcons.map((icon) => (
+                          <span key={icon.key} title={icon.label} aria-label={icon.label}>
+                            {icon.emoji}
+                          </span>
+                        ))}
+                        {overflowCount > 0 ? (
+                          <span
+                            title={overflowLabels}
+                            aria-label={`và ${overflowCount} mục khác: ${overflowLabels}`}
+                            className="text-[9px] font-semibold text-muted-foreground/80 select-none"
+                          >
+                            {`+${overflowCount}`}
+                          </span>
+                        ) : null}
+                        {overflowIcons.length > 0 ? (
+                          <span className="sr-only">
+                            {overflowIcons.map((icon) => (
+                              <span key={icon.key} title={icon.label} aria-label={icon.label}>
+                                {icon.emoji}
+                              </span>
+                            ))}
+                          </span>
+                        ) : null}
+                      </span>
+                    ) : null}
+                  </div>
+                  {displayGuestName ? (
+                    <span
+                      className="line-clamp-2 w-full min-w-0 font-medium break-words text-foreground"
+                      title={displayGuestName}
+                    >
+                      {displayGuestName}
+                    </span>
+                  ) : null}
+                  <span className="sr-only">{` (${statusShort})`}</span>
+                </>
+              )
+
               return (
                 <li
                   key={row.bookingKey}
                   role="listitem"
-                  className="min-w-0 overflow-hidden rounded text-[10.5px] leading-[1.25]"
+                  className="min-w-0 overflow-hidden rounded-none text-[10.5px] leading-[1.25]"
                 >
-                  <button
-                    type="button"
-                    onClick={() => onRowClick?.(row)}
-                    aria-label={rowAriaLabel}
-                    className={cn(
-                      "flex min-h-6 w-full min-w-0 flex-col items-stretch gap-0.5 overflow-hidden rounded px-1.5 py-1 text-left transition-colors focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
-                      onRowClick ? "cursor-pointer hover:bg-muted/60" : "cursor-default hover:bg-muted/30",
-                    )}
-                  >
-                    <div className="flex w-full min-w-0 items-center gap-1">
-                      <span className="inline-flex min-w-0 shrink-0 items-center gap-1">
-                        <span
-                          className="inline-block size-1.5 shrink-0 rounded-full"
-                          style={{ backgroundColor: statusColor }}
-                          aria-hidden="true"
-                        />
-                        <span className="max-w-14 truncate text-[10px] font-semibold tracking-tight text-foreground">
-                          {row.seatsLabel}
-                        </span>
-                      </span>
-                      <span className="shrink-0 text-[9.5px] text-muted-foreground">
-                        {row.time ?? (row.seatedTime ? `vào ${row.seatedTime}` : "")}
-                      </span>
-                      <span className="inline-flex shrink-0 items-center gap-0.5 text-[9.5px] text-muted-foreground">
-                        <Users className="size-2 opacity-70" aria-hidden="true" />
-                        {row.partySize}
-                      </span>
-                      {activeIcons.length > 0 ? (
-                        <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-[9px]">
-                          {visibleIcons.map((icon) => (
-                            <span key={icon.key} title={icon.label} aria-label={icon.label}>
-                              {icon.emoji}
-                            </span>
-                          ))}
-                          {overflowCount > 0 ? (
-                            <span
-                              title={overflowLabels}
-                              aria-label={`và ${overflowCount} mục khác: ${overflowLabels}`}
-                              className="text-[9px] font-semibold text-muted-foreground/80 select-none"
-                            >
-                              {`+${overflowCount}`}
-                            </span>
-                          ) : null}
-                          {overflowIcons.length > 0 ? (
-                            <span className="sr-only">
-                              {overflowIcons.map((icon) => (
-                                <span key={icon.key} title={icon.label} aria-label={icon.label}>
-                                  {icon.emoji}
-                                </span>
-                              ))}
-                            </span>
-                          ) : null}
-                        </span>
-                      ) : null}
-                    </div>
-                    <span
-                      className="line-clamp-2 w-full min-w-0 font-medium break-words text-foreground"
-                      title={row.guestName}
+                  {readOnly ? (
+                    <div
+                      aria-label={rowAriaLabel}
+                      className="flex min-h-6 w-full min-w-0 cursor-default flex-col items-stretch gap-0.5 overflow-hidden rounded-none px-1.5 py-1.5 text-left"
                     >
-                      {row.guestName}
-                    </span>
-                    <span className="sr-only">{` (${statusShort})`}</span>
-                  </button>
+                      {rowBody}
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onRowClick?.(row)}
+                      aria-label={rowAriaLabel}
+                      className={cn(
+                        "flex min-h-6 w-full min-w-0 flex-col items-stretch gap-0.5 overflow-hidden rounded-none px-1.5 py-1.5 text-left transition-colors focus-visible:bg-surface-2 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none focus-visible:ring-inset",
+                        onRowClick ? "cursor-pointer hover:bg-surface-2/80" : "cursor-default hover:bg-surface-2/40",
+                      )}
+                    >
+                      {rowBody}
+                    </button>
+                  )}
                 </li>
               )
             })}
