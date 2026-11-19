@@ -85,6 +85,7 @@ try {
     await advance(page, 1)
     assert.equal((await snapshot(page)).find((t) => t.code === "B3").state, "noshow")
     await expect(page.getByText(/trễ 30['’]/)).toBeVisible()
+    // Nam's decision in 2026-11-19-quyet-dinh-bo-nut-khong-toi.md supersedes the 05/11 decision lock, line 27.
     await expect(noShowAction).toHaveCount(0)
     await expect(confirmLate).toBeDisabled()
     await expect(page.getByRole("button", { name: "Check-in B3", exact: true })).toBeEnabled()
