@@ -307,14 +307,23 @@ export function WaitCard({ e }: { e: WaitlistEntryView }) {
               Đổi trạng thái
             </button>
             {linkedRes ? (
-              <button
-                type="button"
-                onClick={() => m.openDetail(linkedRes.id, e.businessDate)}
-                disabled={pending}
-                className="gm-press h-11 rounded-xl border border-border-strong bg-surface-2 px-2.5 text-center text-[13px] font-semibold text-tx-1 hover:bg-surface-3 disabled:opacity-45"
-              >
-                Xem booking
-              </button>
+              (() => {
+                const canEdit = m.can("reservation.update") && linkedRes.status === "BOOKED"
+                return (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      canEdit
+                        ? m.openBookingEdit(linkedRes.id, e.businessDate)
+                        : m.openDetail(linkedRes.id, e.businessDate)
+                    }
+                    disabled={pending}
+                    className="gm-press h-11 rounded-xl border border-border-strong bg-surface-2 px-2.5 text-center text-[13px] font-semibold text-tx-1 hover:bg-surface-3 disabled:opacity-45"
+                  >
+                    {canEdit ? "Sửa booking" : "Xem booking"}
+                  </button>
+                )
+              })()
             ) : (
               <button
                 type="button"
@@ -517,24 +526,33 @@ export function EntryDetailScreen({
                 <span className="min-w-0 flex-1 text-[14px] text-pretty text-tx-1">{e.note}</span>
               </div>
             ) : null}
-            {linkedRes ? (
-              <div className="flex min-h-12 items-center gap-3 px-4 py-2.5">
-                <span className="w-[118px] shrink-0 text-[13px] font-medium text-[var(--text-muted)]">
-                  Booking liên kết
-                </span>
-                <span className="tnum min-w-0 flex-1 text-[14px] text-tx-1">#{linkedRes.id}</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose()
-                    m.openDetail(linkedRes.id, bd)
-                  }}
-                  className="gm-press inline-flex h-11 shrink-0 items-center rounded-xl border border-border-strong bg-surface-1 px-3.5 text-[13px] font-semibold text-primary-ink hover:bg-primary-tint"
-                >
-                  Xem booking
-                </button>
-              </div>
-            ) : null}
+            {linkedRes
+              ? (() => {
+                  const canEdit = m.can("reservation.update") && linkedRes.status === "BOOKED"
+                  return (
+                    <div className="flex min-h-12 items-center gap-3 px-4 py-2.5">
+                      <span className="w-[118px] shrink-0 text-[13px] font-medium text-[var(--text-muted)]">
+                        Booking liên kết
+                      </span>
+                      <span className="tnum min-w-0 flex-1 text-[14px] text-tx-1">#{linkedRes.id}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (canEdit) {
+                            m.openBookingEdit(linkedRes.id, bd)
+                          } else {
+                            onClose()
+                            m.openDetail(linkedRes.id, bd)
+                          }
+                        }}
+                        className="gm-press inline-flex h-11 shrink-0 items-center rounded-xl border border-border-strong bg-surface-1 px-3.5 text-[13px] font-semibold text-primary-ink hover:bg-primary-tint"
+                      >
+                        {canEdit ? "Sửa booking" : "Xem booking"}
+                      </button>
+                    </div>
+                  )
+                })()
+              : null}
           </div>
         </section>
       </div>

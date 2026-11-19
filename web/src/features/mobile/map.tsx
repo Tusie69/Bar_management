@@ -12,7 +12,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import type { TableLiveState, TableView } from "@/domain/models"
+import type { ReservationView, TableLiveState, TableView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAvailability } from "@/hooks/use-data"
 import {
@@ -22,7 +22,7 @@ import {
   usePresenceController,
   useStableNodeRef,
 } from "@/lib/motion"
-import { fmtBusinessDate, fmtTime } from "@/lib/time"
+import { fmtBusinessDate, fmtTime, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useUi } from "@/state/ui"
 import { useReceptionSearch } from "@/hooks/use-reception-search"
@@ -39,7 +39,6 @@ import { CallHistory } from "../bookings/call-history"
 import { groupCode, groupDisplayName } from "../floor/floor-visual-rules"
 import { ReceptionDatePicker, ReceptionSearchField, ReceptionSearchResults } from "../floor/reception-controls"
 import { ZaloBookingExport } from "../reservations/zalo-booking-export"
-import { EditReservationDialog } from "../reservations/reservation-detail"
 import { QuickForm } from "../floor/quick-form"
 import { capacityWarningText, isWaitingForTable, selectedTablesCapacity } from "../floor/reception-rules"
 import { useBookingDraft } from "../floor/use-booking-draft"
@@ -229,10 +228,13 @@ export function MapScreen({
               <MenuUnreadDot unread={m.unread} />
             </button>
             {planChrome ? (
-              <ReceptionSearchField
-                search={search}
-                className="[&_button]:min-h-[44px] [&_button]:min-w-[44px] [&_input]:h-11 [&_input]:min-h-[44px] [&_input]:rounded-xl [&_input]:border-border [&_input]:bg-surface-1 [&_input]:pl-11 [&_input]:shadow-[var(--shadow-xs)]"
-              />
+              <>
+                <h1 className="sr-only">Sơ đồ bàn</h1>
+                <ReceptionSearchField
+                  search={search}
+                  className="[&_button]:min-h-[44px] [&_button]:min-w-[44px] [&_input]:h-11 [&_input]:min-h-[44px] [&_input]:rounded-xl [&_input]:border-border [&_input]:bg-surface-1 [&_input]:pl-11 [&_input]:shadow-[var(--shadow-xs)]"
+                />
+              </>
             ) : (
               <h1 className="m-0 min-w-0 flex-1 truncate text-[18px] font-bold tracking-[-0.015em] text-tx-strong">
                 Sơ đồ bàn
@@ -678,8 +680,6 @@ export function TableSheet({
   const m = useM()
   const a = useMobileActions()
   const pending = a.pending
-  const canEditBooking = m.can("reservation.update")
-  const [editOpen, setEditOpen] = useState(false)
 
   const isOpen = Boolean(id && !superseded && m.model.byId.has(id))
   const { present, markExited } = usePresenceController({ open: isOpen })
@@ -732,22 +732,21 @@ export function TableSheet({
   let who = ""
   let when = ""
   let info = ""
+  const bookingDetailAction = (resId: number, resBd: BusinessDate, target?: ReservationView): Action => {
+    const canEdit = Boolean(target) && m.can("reservation.update")
+    return {
+      label: canEdit ? "Sửa booking" : "Xem booking",
+      go: () => (canEdit ? m.openBookingEdit(resId, resBd) : m.openDetail(resId, resBd)),
+    }
+  }
+
   let actions: Action[] = []
   if (c?.kind === "visit") {
     who = `${c.displayName}, ${c.partySize} khách`
     when = `Đang ngồi từ ${fmtTime(c.startsAt)}, ${duration(m.now.getTime() - c.startsAt.getTime())}`
     actions = [
       { label: "Đổi bàn", go: () => a.moveVisit(c, activeId) },
-      ...(r
-        ? [
-            {
-              label: "Chỉnh sửa",
-              disabled: !canEditBooking,
-              title: !canEditBooking ? "Không có quyền sửa booking" : undefined,
-              go: () => setEditOpen(true),
-            },
-          ]
-        : []),
+      ...(c.reservationId ? [bookingDetailAction(c.reservationId, r?.businessDate ?? m.today, r)] : []),
       { label: "Nhả bàn", danger: true, wide: true, go: () => a.endVisit(c) },
     ]
   } else if (c?.kind === "waitlist_hold" || (c?.kind === "reservation" && linkedEntry)) {
@@ -777,16 +776,7 @@ export function TableSheet({
         title: !hold.supported ? "Chưa hỗ trợ" : undefined,
         go: () => a.reassignHold(entry, r),
       },
-      ...(r
-        ? [
-            {
-              label: "Chỉnh sửa",
-              disabled: !canEditBooking,
-              title: !canEditBooking ? "Không có quyền sửa booking" : undefined,
-              go: () => setEditOpen(true),
-            },
-          ]
-        : []),
+      ...(r ? [bookingDetailAction(r.id, r.businessDate, r)] : []),
       {
         label: "Xem đơn chờ",
         disabled: !entry,
@@ -824,12 +814,7 @@ export function TableSheet({
           r.minutesLate < m.th.noshow
             ? [{ label: "Tới muộn", go: () => a.confirmLate(r) }]
             : []),
-          {
-            label: "Chỉnh sửa",
-            disabled: !canEditBooking,
-            title: !canEditBooking ? "Không có quyền sửa booking" : undefined,
-            go: () => setEditOpen(true),
-          },
+          bookingDetailAction(r.id, r.businessDate, r),
           { label: "Đổi bàn", go: () => a.assign(r) },
           {
             label: "Hủy booking",
@@ -1009,7 +994,6 @@ export function TableSheet({
           onExitComplete={markExited}
         />
       ) : null}
-      {r ? <EditReservationDialog open={editOpen} onOpenChange={setEditOpen} r={r} /> : null}
     </>
   )
 }
