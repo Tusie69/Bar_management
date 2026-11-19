@@ -181,32 +181,120 @@ async function installOverlayHarness(page) {
   })
 }
 
-async function sampleFrames(page, selector, durationMs, openPrimitive = false) {
+async function settleFrames(page, count = 2) {
+  await page.evaluate(
+    (n) =>
+      new Promise((resolve) => {
+        let remaining = n
+        const step = () => {
+          remaining -= 1
+          if (remaining <= 0) resolve()
+          else requestAnimationFrame(step)
+        }
+        requestAnimationFrame(step)
+      }),
+    count,
+  )
+}
+
+/**
+ * Samples rAF frames synchronized with the animation start signal (active GSAP
+ * tween, `will-change` transition marker, or first non-initial frame) instead of
+ * counting a fixed window before React/CDP/motion-controller start.
+ */
+async function sampleFrames(page, selector, durationMs, options = {}) {
+  const { phase = "any", triggerAction = null, waitStartMs = 1500 } = options
   return page.evaluate(
-    async ({ selector, durationMs, openPrimitive }) => {
+    async ({ selector, durationMs, phase, triggerAction, waitStartMs }) => {
+      const nextFrame = () => new Promise((r) => requestAnimationFrame(r))
+      const gsap = (await import("/node_modules/.vite/deps/gsap.js")).default
+
+      // Align with a fresh frame cadence before triggering so GSAP ticker's
+      // delta from any prior Playwright CDP/emulateMedia call is flushed.
+      await nextFrame()
+      await nextFrame()
+      if (typeof gsap.ticker?.tick === "function") {
+        gsap.ticker.tick()
+      }
+
+      const initialEl = document.querySelector(selector)
+      const initialRect = initialEl ? initialEl.getBoundingClientRect() : null
+      const initialOpacity = initialEl ? Number(getComputedStyle(initialEl).opacity) : null
+
+      if (triggerAction === "open") window.__setOpen(true)
+      else if (triggerAction === "close") window.__setOpen(false)
+      else if (triggerAction === "closeCold") window.__closeColdDialog()
+      else if (triggerAction === "reopenCold") window.__reopenColdDialog()
+
+      const hasStarted = (el) => {
+        if (!el) return false
+        if (phase === "any") return true
+        const style = getComputedStyle(el)
+        const wc = el.style.willChange || style.willChange
+        const hasWillChange = wc === "transform, opacity" || wc.includes("opacity") || wc.includes("transform")
+        const hasActiveTween = gsap.globalTimeline
+          .getChildren(true, true, false)
+          .some((t) => t.isActive?.() && t.targets?.().includes(el))
+        if (phase === "enter") {
+          const op = Number(style.opacity)
+          const rect = el.getBoundingClientRect()
+          const moved = initialRect
+            ? Math.abs(rect.x - initialRect.x) > 0.5 || Math.abs(rect.y - initialRect.y) > 0.5
+            : false
+          return hasWillChange || hasActiveTween || (op > 0.01 && op < 0.99) || moved || !initialEl
+        }
+        if (phase === "exit") {
+          const op = Number(style.opacity)
+          const rect = el.getBoundingClientRect()
+          const moved = initialRect
+            ? Math.abs(rect.x - initialRect.x) > 0.5 || Math.abs(rect.y - initialRect.y) > 0.5
+            : false
+          const opChanged = initialOpacity !== null ? op < initialOpacity - 0.01 : op < 0.99
+          return el.dataset.motionState === "closing" || hasWillChange || hasActiveTween || opChanged || moved
+        }
+        return true
+      }
+
       const samples = []
-      const start = performance.now()
-      if (openPrimitive) window.__harness.flushSync(() => window.__setOpen(true))
-      while (performance.now() - start < durationMs) {
+      const waitDeadline = performance.now() + waitStartMs
+      let animStart = null
+
+      while (performance.now() < waitDeadline) {
+        const el = document.querySelector(selector)
+        if (hasStarted(el)) {
+          animStart = performance.now()
+          break
+        }
+        await nextFrame()
+      }
+
+      if (animStart === null) {
+        animStart = performance.now()
+      }
+
+      while (performance.now() - animStart < durationMs) {
         const el = document.querySelector(selector)
         if (el) {
           const style = getComputedStyle(el)
           const rect = el.getBoundingClientRect()
           samples.push({
-            t: performance.now() - start,
+            t: performance.now() - animStart,
             opacity: Number(style.opacity),
             transform: style.transform,
             x: rect.x,
             y: rect.y,
           })
         } else {
-          samples.push({ t: performance.now() - start, absent: true })
+          samples.push({ t: performance.now() - animStart, absent: true })
+          if (phase === "exit" && samples.some((s) => !s.absent)) {
+            break
+          }
         }
-        await new Promise((r) => requestAnimationFrame(r))
+        await nextFrame()
       }
       return samples
     },
-    { selector, durationMs, openPrimitive },
+    { selector, durationMs, phase, triggerAction, waitStartMs },
   )
 }
 
@@ -233,8 +321,11 @@ async function runP110Tests(browser, baseUrl) {
       await page.evaluate((k) => window.__harness.mountPrimitive({ kind: k, initialOpen: false }), kind)
       assert.equal(await page.locator('[data-p1="content"]').count(), 0, `${kind} (${motion}) must start closed`)
 
-      // Trigger open via React state while sampling rAF frames.
-      const openSamples = await sampleFrames(page, '[data-p1="content"]', 380, true)
+      // Trigger open via React state synchronized with frame cadence and motion start.
+      const openSamples = await sampleFrames(page, '[data-p1="content"]', 380, {
+        phase: "enter",
+        triggerAction: "open",
+      })
 
       const presentOpen = openSamples.filter((s) => !s.absent)
       assert.ok(presentOpen.length > 0, `${kind} (${motion}) did not mount portal content`)
@@ -282,9 +373,10 @@ async function runP110Tests(browser, baseUrl) {
       }
 
       // Close via React state and verify mounted exit frames before unmount.
-      const exitSamplesPromise = sampleFrames(page, '[data-p1="content"]', 360)
-      await page.evaluate(() => window.__setOpen(false))
-      const exitSamples = await exitSamplesPromise
+      const exitSamples = await sampleFrames(page, '[data-p1="content"]', 360, {
+        phase: "exit",
+        triggerAction: "close",
+      })
 
       const retainedExit = exitSamples.filter((s) => !s.absent)
       assert.ok(retainedExit.length >= 2, `${kind} (${motion}) exited immediately instead of staying mounted`)
@@ -339,7 +431,8 @@ async function runP110Tests(browser, baseUrl) {
   await page.evaluate(async () => (await import("/src/lib/motion.ts")).prewarmMotionController())
   const drawerBaseline = await mqActiveDelta(page)
 
-  const drawerEnterPromise = sampleFrames(page, '[data-testid="admin-drawer-panel"]', 380)
+  await settleFrames(page, 2)
+  const drawerEnterPromise = sampleFrames(page, '[data-testid="admin-drawer-panel"]', 380, { phase: "enter" })
   await page.getByTestId("admin-menu-trigger").click()
   const drawerEnter = (await drawerEnterPromise).filter((s) => !s.absent)
   assert.ok(
@@ -347,7 +440,8 @@ async function runP110Tests(browser, baseUrl) {
     `Admin drawer expected intermediate x frames, got ${JSON.stringify(drawerEnter.map((s) => s.x))}`,
   )
 
-  const drawerExitPromise = sampleFrames(page, '[data-testid="admin-drawer-panel"]', 360)
+  await settleFrames(page, 2)
+  const drawerExitPromise = sampleFrames(page, '[data-testid="admin-drawer-panel"]', 360, { phase: "exit" })
   await page.keyboard.press("Escape")
   const drawerExit = await drawerExitPromise
   assert.ok(drawerExit.filter((s) => !s.absent).length >= 2, "Admin drawer did not remain mounted during exit")
@@ -593,18 +687,20 @@ async function runP111DelayedChunkTest(browser, baseUrl, viewport, label) {
   )
 
   // Verify exit still animates and close completes cleanly, then second open animates normally.
-  const exitSamplesPromise = sampleFrames(page, '[data-p1-cold="dialog"]', 360)
-  await page.evaluate(() => window.__closeColdDialog())
-  const exitSamples = await exitSamplesPromise
+  const exitSamples = await sampleFrames(page, '[data-p1-cold="dialog"]', 360, {
+    phase: "exit",
+    triggerAction: "closeCold",
+  })
   assert.ok(
     exitSamples.filter((s) => !s.absent && s.opacity > 0.02 && s.opacity < 0.98).length >= 1,
     `${label} Dialog did not animate exit after late controller settled`,
   )
   assert.equal(await page.locator('[data-p1-cold="dialog"]').count(), 0)
 
-  const reopenPromise = sampleFrames(page, '[data-p1-cold="dialog"]', 360)
-  await page.evaluate(() => window.__reopenColdDialog())
-  const reopenSamples = await reopenPromise
+  const reopenSamples = await sampleFrames(page, '[data-p1-cold="dialog"]', 360, {
+    phase: "enter",
+    triggerAction: "reopenCold",
+  })
   assert.ok(
     reopenSamples.filter((s) => !s.absent && s.opacity > 0.02 && s.opacity < 0.98).length >= 2,
     `${label} Dialog second open did not animate entrance normally`,
@@ -694,6 +790,8 @@ async function runP112RefSwapTests(browser, baseUrl) {
       sheet: await import("/src/components/ui/sheet.tsx"),
       alert: await import("/src/components/ui/alert-dialog.tsx"),
     }
+    const gsap = (await import("/node_modules/.vite/deps/gsap.js")).default
+    await (await import("/src/lib/motion.ts")).prewarmMotionController()
     const host = document.createElement("div")
     document.body.appendChild(host)
     const root = createRoot(host)
@@ -735,7 +833,21 @@ async function runP112RefSwapTests(browser, baseUrl) {
       }
 
       ReactDOM.flushSync(() => root.render(React.createElement(Probe, { key: kind })))
-      await new Promise((r) => setTimeout(r, 340))
+      const settleDeadline = performance.now() + 3000
+      while (performance.now() < settleDeadline) {
+        const node = refA.current
+        if (node) {
+          const style = getComputedStyle(node)
+          const wc = node.style.willChange || style.willChange
+          const anyActive = gsap.globalTimeline
+            .getChildren(true, true, false)
+            .some((t) => t.isActive?.() && t.targets?.().includes(node))
+          if (Number(style.opacity) === 1 && wc !== "transform, opacity" && !anyActive) {
+            break
+          }
+        }
+        await new Promise((r) => requestAnimationFrame(r))
+      }
       const initialNode = refA.current
       const beforeObjSwap = {
         aConnected: Boolean(refA.current?.isConnected),
@@ -763,7 +875,11 @@ async function runP112RefSwapTests(browser, baseUrl) {
       }
 
       ReactDOM.flushSync(() => window.__closeRefProbe())
-      await new Promise((r) => setTimeout(r, 320))
+      const closeDeadline = performance.now() + 1500
+      while (performance.now() < closeDeadline) {
+        if (document.querySelectorAll(`[data-ref-kind="${kind}"]`).length === 0) break
+        await new Promise((r) => requestAnimationFrame(r))
+      }
       const afterClose = {
         cbBLog: [...cbBLog],
         remaining: document.querySelectorAll(`[data-ref-kind="${kind}"]`).length,
@@ -883,7 +999,17 @@ async function runP113FocusContinuityTests(browser, baseUrl) {
             await page.evaluate(() => window.__openP113())
           }
 
-          await page.waitForTimeout(450)
+          await page.waitForFunction(
+            () => {
+              const el = document.querySelector("[data-p113-content]")
+              if (!el) return false
+              const style = getComputedStyle(el)
+              const wc = el.style.willChange || style.willChange
+              return Number(style.opacity) >= 0.99 && wc !== "transform, opacity"
+            },
+            null,
+            { timeout: 1500 },
+          )
 
           const initialInside = await page.evaluate(() => {
             const el = document.querySelector("[data-p113-content]")
@@ -916,7 +1042,11 @@ async function runP113FocusContinuityTests(browser, baseUrl) {
           assert.ok(shiftTabInside, `P1-13 ${kind} (${mode}, ${variant}, trial ${trial}) Shift+Tab escaped modal`)
 
           await page.keyboard.press("Escape")
-          await page.waitForTimeout(350)
+          await page
+            .waitForFunction(() => document.querySelectorAll("[data-p113-content]").length === 0, null, {
+              timeout: 1500,
+            })
+            .catch(() => {})
           const closedState = await page.evaluate(() => ({
             remaining: document.querySelectorAll("[data-p113-content]").length,
             activeId: document.activeElement?.id ?? null,

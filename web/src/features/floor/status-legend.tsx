@@ -7,7 +7,12 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { useMediaQuery } from "@/hooks/use-media"
 import { prewarmMotionController } from "@/lib/motion"
 import { cn } from "@/lib/utils"
-import { calculateStatusCounts, type LegendStatusKey } from "./floor-visual-rules"
+import {
+  buildLegendChips,
+  calculateStatusCounts,
+  type LegendChipItem,
+  type LegendStatusKey,
+} from "./floor-visual-rules"
 
 export interface StatusLegendProps {
   tables: (TableView & { state?: TableLiveState; liveState?: TableLiveState; claim?: FloorTableState["claim"] })[]
@@ -24,36 +29,15 @@ export interface StatusLegendProps {
 
 export type { LegendStatusKey }
 
-interface LegendChipItem {
-  key: LegendStatusKey
-  label: string
-  count: number
-  colorVar: string
-  tintVar?: string
-  isDashed?: boolean
-}
-
-function buildLegendChips(counts: Record<LegendStatusKey, number>): LegendChipItem[] {
-  return [
-    { key: "free", label: "Trống", count: counts.free, colorVar: "var(--st-free)", tintVar: "var(--st-free-tint)" },
-    { key: "reserved", label: "Đã đặt", count: counts.reserved, colorVar: "var(--st-reserved)" },
-    { key: "upcoming", label: "Sắp tới", count: counts.upcoming, colorVar: "var(--st-upcoming)" },
-    { key: "noshow", label: "Tới muộn", count: counts.noshow, colorVar: "var(--st-noshow)" },
-    { key: "seated", label: "Đã tới", count: counts.seated, colorVar: "var(--st-seated)" },
-    {
-      key: "spare",
-      label: "Sơ cua",
-      count: counts.spare,
-      colorVar: "var(--table-line)",
-      tintVar: "var(--st-free-tint)",
-      isDashed: true,
-    },
-  ]
-}
-
-function LegendChipsGrid({ chips }: { chips: LegendChipItem[] }) {
+export function LegendChipsGrid({ chips }: { chips: LegendChipItem[] }) {
   return (
-    <div className="grid grid-cols-3 gap-1.5 sm:flex sm:flex-wrap sm:items-center sm:gap-2">
+    <div
+      className={cn(
+        chips.length > 6
+          ? "flex flex-wrap items-center gap-1.5 sm:gap-2"
+          : "grid grid-cols-3 gap-1.5 sm:flex sm:flex-wrap sm:items-center sm:gap-2",
+      )}
+    >
       {chips.map((chip) => (
         <div
           key={chip.key}
@@ -64,6 +48,14 @@ function LegendChipsGrid({ chips }: { chips: LegendChipItem[] }) {
               <span
                 className="size-2.5 shrink-0 rounded-[3px] border border-dashed"
                 style={{ borderColor: chip.colorVar, background: chip.tintVar ?? "transparent" }}
+                aria-hidden
+              />
+            ) : chip.key === "oos" ? (
+              <span
+                className="size-2.5 shrink-0 rounded-[3px] border border-[var(--st-oos)]"
+                style={{
+                  background: "repeating-linear-gradient(135deg, var(--st-oos) 0 1.5px, transparent 1.5px 4px)",
+                }}
                 aria-hidden
               />
             ) : chip.key === "free" ? (
@@ -264,8 +256,9 @@ export function StatusLegend({ tables = [], states, className, variant = "card" 
     }
   }, [])
 
-  const counts = calculateStatusCounts(tables, states)
-  const chips = buildLegendChips(counts)
+  const includeOos = variant === "admin"
+  const counts = calculateStatusCounts(tables, states, { includeOos })
+  const chips = buildLegendChips(counts, includeOos)
 
   const onOpenChange = (open: boolean) => {
     if (open) setInMobileShell(Boolean(triggerRef.current?.closest("[data-gm]")))

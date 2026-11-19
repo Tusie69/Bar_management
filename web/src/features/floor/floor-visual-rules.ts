@@ -1,8 +1,10 @@
+import { STATE_META } from "@/components/status-meta"
 import { formatHonorificName } from "@/domain/booking-identity"
 import { groupCodeFromSymbol, normalizeGroupCode } from "@/domain/group-code"
 import type { FloorGroup, FloorTableState, TableLiveState, TableView } from "@/domain/models"
 import { FIXTURES, FLOOR_H, FLOOR_W, WAITLIST_MARKER, WALL_BOUNDS, ZONES, type ZoneCode } from "@/domain/venue-layout"
-import { DEFAULT_BAR_GUEST_LIST_BOUNDS } from "./bar-guest-rows"
+import { DEFAULT_BAR_GUEST_LIST_BOUNDS, isPhoneLikeGuestName } from "./bar-guest-rows"
+export { isPhoneLikeGuestName }
 
 /**
  * Approved icon priority (Nam 2026-11-04):
@@ -150,11 +152,12 @@ export function resolveCellCornerIcons(
   return result
 }
 
-export type LegendStatusKey = "free" | "reserved" | "upcoming" | "noshow" | "seated" | "spare"
+export type LegendStatusKey = "free" | "reserved" | "upcoming" | "noshow" | "seated" | "spare" | "oos"
 
 export function calculateStatusCounts(
   tables: (TableView & { state?: TableLiveState; liveState?: TableLiveState; claim?: FloorTableState["claim"] })[],
   states?: Map<number, FloorTableState>,
+  options?: { includeOos?: boolean },
 ): Record<LegendStatusKey, number> {
   const counts: Record<LegendStatusKey, number> = {
     free: 0,
@@ -163,9 +166,11 @@ export function calculateStatusCounts(
     noshow: 0,
     seated: 0,
     spare: 0,
+    oos: 0,
   }
 
   const countedGroups = new Set<string>()
+  const includeOos = options?.includeOos ?? false
 
   for (const t of tables) {
     const fs = states?.get(t.id)
@@ -181,6 +186,8 @@ export function calculateStatusCounts(
       key = "upcoming"
     } else if (rawState === "seated") {
       key = "seated"
+    } else if (includeOos && rawState === "oos") {
+      key = "oos"
     } else if (rawState === "spare" || (t.isSpare && rawState === "free")) {
       key = "spare"
     } else {
@@ -203,6 +210,42 @@ export function calculateStatusCounts(
   }
 
   return counts
+}
+
+export interface LegendChipItem {
+  key: LegendStatusKey
+  label: string
+  count: number
+  colorVar: string
+  tintVar?: string
+  isDashed?: boolean
+}
+
+export function buildLegendChips(counts: Record<LegendStatusKey, number>, includeOos = false): LegendChipItem[] {
+  const chips: LegendChipItem[] = [
+    { key: "free", label: "Trống", count: counts.free, colorVar: "var(--st-free)", tintVar: "var(--st-free-tint)" },
+    { key: "reserved", label: "Đã đặt", count: counts.reserved, colorVar: "var(--st-reserved)" },
+    { key: "upcoming", label: "Sắp tới", count: counts.upcoming, colorVar: "var(--st-upcoming)" },
+    { key: "noshow", label: "Tới muộn", count: counts.noshow, colorVar: "var(--st-noshow)" },
+    { key: "seated", label: "Đã tới", count: counts.seated, colorVar: "var(--st-seated)" },
+    {
+      key: "spare",
+      label: "Sơ cua",
+      count: counts.spare,
+      colorVar: "var(--table-line)",
+      tintVar: "var(--st-free-tint)",
+      isDashed: true,
+    },
+  ]
+  if (includeOos) {
+    chips.push({
+      key: "oos",
+      label: STATE_META.oos.label,
+      count: counts.oos,
+      colorVar: STATE_META.oos.color,
+    })
+  }
+  return chips
 }
 
 /**
@@ -283,6 +326,8 @@ export interface Bounds {
 
 export const CELL_CORNER_INSET_X = 4.2
 export const CELL_CORNER_INSET_Y = 3.1
+export const CLUSTER_CORNER_INSET_X = 4.5
+export const CLUSTER_DECORATION_CLEARANCE = 0.35
 export const GUEST_BADGE_HEIGHT = 11.0
 export const GUEST_BADGE_STROKE = 0.9
 export const TURN_BADGE_RADIUS = 5.5
@@ -291,10 +336,10 @@ export const TABLE_ICON_RADIUS = 5.5
 export const TABLE_ICON_STROKE = 0.8
 export const TABLE_ICON_MAX_STEP = 12.0
 
-export function guestBadgeWidth(count: number): number {
-  if (count >= 100) return 18.2
-  if (count >= 10) return 15.0
-  return 12.0
+export function guestBadgeWidth(count: number, radius = TURN_BADGE_RADIUS): number {
+  const base = count >= 100 ? 18.2 : count >= 10 ? 15.0 : 12.0
+  if (radius === TURN_BADGE_RADIUS) return base
+  return Number((base * (radius / TURN_BADGE_RADIUS)).toFixed(2))
 }
 
 export function turnBadgeWidth(count: number, radius = TURN_BADGE_RADIUS): number {
@@ -347,16 +392,40 @@ export interface TableCornerGeometry {
  * Shared corner geometry for a regular table cell (local coordinates around
  * cell center 0,0). Used by both FloorCanvas and computeClusterDecorations so
  * rendered corner badges/icons and collision-avoidance boxes stay identical.
+ *
+ * When `clusterPad` is supplied for a grouped table, corner decorations reserve
+ * measured clearance from the cluster outline's inner stroke and concentric
+ * rounded corners without moving any table or changing ungrouped cells.
  */
-export function getTableCornerGeometry(w: number, h: number): TableCornerGeometry {
+export function getTableCornerGeometry(w: number, h: number, clusterPad?: number): TableCornerGeometry {
   const hw = w / 2
   const hh = h / 2
-  const topY = -hh + CELL_CORNER_INSET_Y
-  const bottomY = hh - CELL_CORNER_INSET_Y
+
+  let insetX = CELL_CORNER_INSET_X
+  let insetY = CELL_CORNER_INSET_Y
+  let cornerRadius = TURN_BADGE_RADIUS
+
+  if (typeof clusterPad === "number" && Number.isFinite(clusterPad)) {
+    insetX = CLUSTER_CORNER_INSET_X
+    const inner = clusterPad - CLUSTER_OUTLINE_HALF_STROKE
+    const maxProtrude = inner - CLUSTER_DECORATION_CLEARANCE
+    const maxHalfStroke = Math.max(GUEST_BADGE_STROKE, TURN_BADGE_STROKE, TABLE_ICON_STROKE) / 2
+    const maxR = Math.floor(((hh - 7.35 + maxProtrude) / 2 - maxHalfStroke) * 10) / 10
+    cornerRadius = Math.min(TURN_BADGE_RADIUS, Math.max(3.8, maxR))
+    const outerRadius = cornerRadius + maxHalfStroke
+    const minInsetY = outerRadius - maxProtrude
+    const maxInsetY = hh - 7.35 - outerRadius
+    insetY = Number(((minInsetY + Math.max(minInsetY, maxInsetY)) / 2).toFixed(2))
+  }
+
+  const topY = -hh + insetY
+  const bottomY = hh - insetY
+  const guestBadgeHeight =
+    cornerRadius === TURN_BADGE_RADIUS ? GUEST_BADGE_HEIGHT : Number((cornerRadius * 2).toFixed(2))
   // Outer left edge of guest badge stays aligned with icon circle outer left edge
-  const guestLeftInner = -hw + CELL_CORNER_INSET_X - TURN_BADGE_RADIUS
+  const guestLeftInner = -hw + insetX - cornerRadius
   // Outer right edge of turn badge stays aligned with icon circle outer right edge
-  const turnRightInner = hw - CELL_CORNER_INSET_X + TURN_BADGE_RADIUS
+  const turnRightInner = hw - insetX + cornerRadius
 
   const totalIntervalsFor = (count: number, oppositeCount = 0): number => {
     const total = count + oppositeCount
@@ -365,58 +434,63 @@ export function getTableCornerGeometry(w: number, h: number): TableCornerGeometr
 
   const iconStepFor = (count: number, oppositeCount = 0): number => {
     if (count <= 1) return TABLE_ICON_MAX_STEP
-    const fullSpan = w - 2 * CELL_CORNER_INSET_X
+    const fullSpan = w - 2 * insetX
     const candidate = fullSpan / totalIntervalsFor(count, oppositeCount)
     return Math.min(TABLE_ICON_MAX_STEP, Number(candidate.toFixed(2)))
   }
 
   const iconRadiusFor = (count: number, oppositeCount = 0): number => {
+    const baseRadius = Math.min(TABLE_ICON_RADIUS, cornerRadius)
     const total = count + oppositeCount
-    if (total <= 1) return TABLE_ICON_RADIUS
-    const fullSpan = w - 2 * CELL_CORNER_INSET_X
+    if (total <= 1) return baseRadius
+    const fullSpan = w - 2 * insetX
     const minCenterStep = fullSpan / (total - 1)
     const maxRadiusForGap = (minCenterStep - TABLE_ICON_STROKE - 0.12) / 2
-    return Math.min(TABLE_ICON_RADIUS, Number(maxRadiusForGap.toFixed(2)))
+    return Math.min(baseRadius, Number(maxRadiusForGap.toFixed(2)))
   }
+
+  const staleRadius = Math.min(5, cornerRadius)
 
   return {
     hw,
     hh,
     guestBadge: {
       y: topY,
-      height: GUEST_BADGE_HEIGHT,
+      height: guestBadgeHeight,
       strokeWidth: GUEST_BADGE_STROKE,
-      widthFor: guestBadgeWidth,
-      centerXFor: (count: number) => guestLeftInner + guestBadgeWidth(count) / 2,
+      widthFor: (count: number) => guestBadgeWidth(count, cornerRadius),
+      centerXFor: (count: number) => guestLeftInner + guestBadgeWidth(count, cornerRadius) / 2,
     },
     turnBadge: {
       y: topY,
-      r: TURN_BADGE_RADIUS,
+      r: cornerRadius,
       strokeWidth: TURN_BADGE_STROKE,
-      widthFor: (count: number) => turnBadgeWidth(count, TURN_BADGE_RADIUS),
-      centerXFor: (count: number) => turnRightInner - turnBadgeWidth(count, TURN_BADGE_RADIUS) / 2,
+      widthFor: (count: number) => turnBadgeWidth(count, cornerRadius),
+      centerXFor: (count: number) => turnRightInner - turnBadgeWidth(count, cornerRadius) / 2,
     },
     bottomLeftIcons: {
-      x: -hw + CELL_CORNER_INSET_X,
+      x: -hw + insetX,
       y: bottomY,
-      radius: TABLE_ICON_RADIUS,
+      radius: Math.min(TABLE_ICON_RADIUS, cornerRadius),
       strokeWidth: TABLE_ICON_STROKE,
       radiusFor: iconRadiusFor,
       stepFor: iconStepFor,
     },
     bottomRightIcons: {
-      x: hw - CELL_CORNER_INSET_X,
+      x: hw - insetX,
       y: bottomY,
-      radius: TABLE_ICON_RADIUS,
+      radius: Math.min(TABLE_ICON_RADIUS, cornerRadius),
       strokeWidth: TABLE_ICON_STROKE,
       radiusFor: iconRadiusFor,
       stepFor: iconStepFor,
     },
     staleMark: {
       xFor: (guestCount?: number | null) =>
-        guestCount && guestCount > 0 ? guestLeftInner + guestBadgeWidth(guestCount) + 6 : -hw + CELL_CORNER_INSET_X,
+        guestCount && guestCount > 0
+          ? guestLeftInner + guestBadgeWidth(guestCount, cornerRadius) + staleRadius + 1
+          : -hw + insetX,
       y: topY,
-      r: 5,
+      r: staleRadius,
     },
   }
 }
@@ -442,6 +516,7 @@ export function getTableCornerObstacleBoxes(
     isAnchor?: boolean
     hasActiveClaim?: boolean
     staleFromPreviousDay?: boolean
+    clusterPad?: number
   },
   margin = 0.5,
 ): TableCornerObstacleBoxes {
@@ -455,7 +530,7 @@ export function getTableCornerObstacleBoxes(
   }
   if (table.kind === "BAR_SEAT") return empty
 
-  const geo = getTableCornerGeometry(table.w, table.h)
+  const geo = getTableCornerGeometry(table.w, table.h, opts.clusterPad)
   const isAnchor = opts.isAnchor ?? true
   const hasActiveClaim = opts.hasActiveClaim ?? Boolean(opts.claim)
   const claim = opts.claim ?? null
@@ -758,9 +833,11 @@ const CLUSTER_OUTLINE_HALF_STROKE = CLUSTER_OUTLINE_STROKE / 2
 const CLUSTER_CODE_HEIGHT = 14
 const CLUSTER_CODE_HALF_STROKE = CLUSTER_CODE_STROKE / 2
 const BAR_CLUSTER_PAD = 2
-const TABLE_CLUSTER_MAX_PAD = 3.0
+const TABLE_CLUSTER_MAX_PAD = 3.6
 const TABLE_CLUSTER_MIN_PAD = 1.8
+const TIGHT_CLUSTER_MIN_PAD = 1.05
 const CLUSTER_MIN_STROKE_GAP = 1.2
+const CLUSTER_NON_MEMBER_OBSTACLE_CLEARANCE = 0.4
 
 interface RectBox {
   left: number
@@ -775,6 +852,9 @@ export interface ClusterDecoration {
   y: number
   w: number
   h: number
+  rx: number
+  pad: number
+  memberIds: number[]
   code: string | null
   isBar: boolean
   orientation: "horizontal" | "vertical" | null
@@ -797,29 +877,52 @@ function rectsOverlapWithGap(a: RectBox, b: RectBox, gap = 0): boolean {
   return !(a.right + gap <= b.left || b.right + gap <= a.left || a.bottom + gap <= b.top || b.bottom + gap <= a.top)
 }
 
-function deriveTableClusterPad(raw: RectBox, memberIds: Set<number>, tables: TableView[]): number {
-  let minNeighborGap = Infinity
+function boxGap(a: RectBox, b: RectBox): number {
+  const dx = Math.max(0, a.left - b.right, b.left - a.right)
+  const dy = Math.max(0, a.top - b.bottom, b.top - a.bottom)
+  if (dx === 0 && dy === 0) return 0
+  if (dx === 0) return dy
+  if (dy === 0) return dx
+  if (Math.max(dx, dy) < 10) return Math.hypot(dx, dy)
+  return Infinity
+}
+
+function deriveTableClusterPad(
+  raw: RectBox,
+  memberIds: Set<number>,
+  tables: TableView[],
+  clusteredTableIds: Set<number>,
+  nonMemberObstacleBoxes: Map<number, RectBox[]>,
+): number {
+  let pad = TABLE_CLUSTER_MAX_PAD
   for (const other of tables) {
     if (memberIds.has(other.id)) continue
-    const oLeft = other.x - other.w / 2
-    const oRight = other.x + other.w / 2
-    const oTop = other.y - other.h / 2
-    const oBottom = other.y + other.h / 2
-    const dx = Math.max(0, raw.left - oRight, oLeft - raw.right)
-    const dy = Math.max(0, raw.top - oBottom, oTop - raw.bottom)
-    if (dx === 0 && dy > 0) {
-      minNeighborGap = Math.min(minNeighborGap, dy)
-    } else if (dy === 0 && dx > 0) {
-      minNeighborGap = Math.min(minNeighborGap, dx)
-    } else if (dx > 0 && dy > 0 && Math.max(dx, dy) < 10) {
-      minNeighborGap = Math.min(minNeighborGap, Math.hypot(dx, dy))
+    const otherRect: RectBox = {
+      left: other.x - other.w / 2,
+      right: other.x + other.w / 2,
+      top: other.y - other.h / 2,
+      bottom: other.y + other.h / 2,
+    }
+    const cellGap = boxGap(raw, otherRect)
+    if (Number.isFinite(cellGap)) {
+      // Reserve half the cell gap when another cluster can expand across it;
+      // allow tight 4-unit gaps (e.g. Khu C) to tighten below 1.8 when needed.
+      const cellAvailable = cellGap / 2 - CLUSTER_OUTLINE_HALF_STROKE - CLUSTER_MIN_STROKE_GAP / 2
+      const floor = clusteredTableIds.has(other.id) ? TIGHT_CLUSTER_MIN_PAD : TABLE_CLUSTER_MIN_PAD
+      pad = Math.min(pad, Math.max(floor, cellAvailable))
+    }
+
+    if (!clusteredTableIds.has(other.id)) {
+      for (const obs of nonMemberObstacleBoxes.get(other.id) ?? []) {
+        const obsGap = boxGap(raw, obs)
+        if (Number.isFinite(obsGap)) {
+          const obsAvailable = obsGap - CLUSTER_OUTLINE_HALF_STROKE - CLUSTER_NON_MEMBER_OBSTACLE_CLEARANCE
+          pad = Math.min(pad, Math.max(TIGHT_CLUSTER_MIN_PAD, obsAvailable))
+        }
+      }
     }
   }
-  if (!Number.isFinite(minNeighborGap)) return TABLE_CLUSTER_MAX_PAD
-  // Reserve half the gap per cluster so two adjacent outlines (including their
-  // 1.6-unit strokes) stay separated by at least CLUSTER_MIN_STROKE_GAP.
-  const available = minNeighborGap / 2 - CLUSTER_OUTLINE_HALF_STROKE - CLUSTER_MIN_STROKE_GAP / 2
-  return Math.min(TABLE_CLUSTER_MAX_PAD, Math.max(TABLE_CLUSTER_MIN_PAD, available))
+  return pad
 }
 
 /**
@@ -844,12 +947,11 @@ export function computeClusterDecorations({
   includeWaitlistMarker?: boolean
 }): ClusterDecoration[] {
   const seen = new Set<string>()
-  const rawClusters: {
+  const clusterSpecs: {
     key: string
-    x: number
-    y: number
-    w: number
-    h: number
+    raw: RectBox
+    memberIdSet: Set<number>
+    memberIds: number[]
     code: string | null
     isBar: boolean
     orientation: "horizontal" | "vertical" | null
@@ -872,14 +974,12 @@ export function computeClusterDecorations({
       top: Math.min(...members.map((t) => t.y - t.h / 2)),
       bottom: Math.max(...members.map((t) => t.y + t.h / 2)),
     }
-    const memberIds = new Set(members.map((m) => m.id))
-    const pad = isBar ? BAR_CLUSTER_PAD : deriveTableClusterPad(raw, memberIds, tables)
-    rawClusters.push({
+    const memberIds = members.map((m) => m.id)
+    clusterSpecs.push({
       key,
-      x: raw.left - pad,
-      y: raw.top - pad,
-      w: raw.right - raw.left + pad * 2,
-      h: raw.bottom - raw.top + pad * 2,
+      raw,
+      memberIdSet: new Set(memberIds),
+      memberIds,
       code,
       isBar,
       orientation,
@@ -911,12 +1011,83 @@ export function computeClusterDecorations({
   }
   for (const candidate of oneOutlinePerCluster(candidates)) add(candidate.tableIds, candidate.code)
 
-  rawClusters.sort((a, b) => a.y - b.y || a.x - b.x || (a.code ?? a.key).localeCompare(b.code ?? b.key))
-
   const groupTurnMap = new Map<number, FloorGroup["seatedTurnCount"]>()
   for (const g of groups) {
     for (const id of g.tableIds) {
       groupTurnMap.set(id, g.seatedTurnCount)
+    }
+  }
+
+  const clusteredTableIds = new Set<number>()
+  for (const spec of clusterSpecs) {
+    if (spec.isBar) continue
+    for (const id of spec.memberIds) clusteredTableIds.add(id)
+  }
+
+  const nonMemberObstacleBoxes = new Map<number, RectBox[]>()
+  if (mode === "live") {
+    for (const t of tables) {
+      if (t.kind === "BAR_SEAT" || clusteredTableIds.has(t.id)) continue
+      const fs = states?.get(t.id)
+      const rawState: TableLiveState = fs?.state ?? "free"
+      const state = rawState === "late_confirmed" ? "late" : rawState
+      const claim = fs?.claim
+      const isAnchor = groupRepresentativeMap.get(t.id) ?? true
+      const hasActiveClaim = !!claim && state !== "free" && state !== "spare" && state !== "oos"
+      const boxes = getTableCornerObstacleBoxes(
+        t,
+        {
+          claim,
+          turnCount: fs?.seatedTurnCount ?? groupTurnMap.get(t.id),
+          isAnchor,
+          hasActiveClaim,
+          staleFromPreviousDay: fs?.staleFromPreviousDay,
+        },
+        0,
+      )
+      const list = [
+        boxes.guestBadge,
+        boxes.turnBadge,
+        boxes.bottomLeftIcons,
+        boxes.bottomRightIcons,
+        boxes.paidDot,
+        boxes.staleMark,
+      ].filter((box): box is RectBox => box !== null)
+      if (list.length > 0) nonMemberObstacleBoxes.set(t.id, list)
+    }
+  }
+
+  const rawClusters = clusterSpecs.map((spec) => {
+    const pad = spec.isBar
+      ? BAR_CLUSTER_PAD
+      : deriveTableClusterPad(spec.raw, spec.memberIdSet, tables, clusteredTableIds, nonMemberObstacleBoxes)
+    const w = spec.raw.right - spec.raw.left + pad * 2
+    const h = spec.raw.bottom - spec.raw.top + pad * 2
+    const rx = spec.isBar ? Math.min(w, h) / 2 : Number((4.5 + pad).toFixed(2))
+    return {
+      key: spec.key,
+      x: spec.raw.left - pad,
+      y: spec.raw.top - pad,
+      w,
+      h,
+      rx,
+      pad,
+      memberIds: spec.memberIds,
+      code: spec.code,
+      isBar: spec.isBar,
+      orientation: spec.orientation,
+      members: spec.members,
+    }
+  })
+
+  rawClusters.sort((a, b) => a.y - b.y || a.x - b.x || (a.code ?? a.key).localeCompare(b.code ?? b.key))
+
+  const tableClusterPadMap = new Map<number, number>()
+  for (const c of rawClusters) {
+    if (c.isBar) continue
+    for (const id of c.memberIds) {
+      const prev = tableClusterPadMap.get(id)
+      tableClusterPadMap.set(id, prev === undefined ? c.pad : Math.min(prev, c.pad))
     }
   }
 
@@ -953,6 +1124,7 @@ export function computeClusterDecorations({
         isAnchor,
         hasActiveClaim,
         staleFromPreviousDay: fs?.staleFromPreviousDay,
+        clusterPad: tableClusterPadMap.get(t.id),
       })
       for (const box of [
         boxes.guestBadge,
@@ -1012,6 +1184,9 @@ export function computeClusterDecorations({
         y: c.y,
         w: c.w,
         h: c.h,
+        rx: c.rx,
+        pad: c.pad,
+        memberIds: c.memberIds,
         code: null,
         isBar: c.isBar,
         orientation: c.orientation,
@@ -1131,6 +1306,9 @@ export function computeClusterDecorations({
       y: c.y,
       w: c.w,
       h: c.h,
+      rx: c.rx,
+      pad: c.pad,
+      memberIds: c.memberIds,
       code: c.code,
       isBar: c.isBar,
       orientation: c.orientation,

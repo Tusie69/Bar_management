@@ -18,7 +18,12 @@ import { useEffect, useMemo, useRef, type CSSProperties, type ReactElement } fro
 import { STATE_META } from "@/components/status-meta"
 import type { FloorGroup, FloorTableState, TableView } from "@/domain/models"
 import { cn } from "@/lib/utils"
-import { buildBarGuestRows, DEFAULT_BAR_GUEST_LIST_BOUNDS, type BarGuestRow } from "./bar-guest-rows"
+import {
+  buildBarGuestRows,
+  DEFAULT_BAR_GUEST_LIST_BOUNDS,
+  isPhoneLikeGuestName,
+  type BarGuestRow,
+} from "./bar-guest-rows"
 
 export interface BarGuestListProps {
   /** Floor tables to derive bar rows from */
@@ -78,11 +83,15 @@ export function BarGuestList({
 }: BarGuestListProps): ReactElement | null {
   const rows = useMemo(() => {
     if (directRows) {
-      return hideGuestNames ? directRows.map((row) => ({ ...row, guestName: "" })) : directRows
+      if (hideGuestNames) return directRows.map((row) => ({ ...row, guestName: "" }))
+      if (readOnly) {
+        return directRows.map((row) => (isPhoneLikeGuestName(row.guestName) ? { ...row, guestName: "" } : row))
+      }
+      return directRows
     }
-    if (tables) return buildBarGuestRows({ tables, states, groups, hideGuestNames })
+    if (tables) return buildBarGuestRows({ tables, states, groups, hideGuestNames, maskPhoneNames: readOnly })
     return []
-  }, [directRows, tables, states, groups, hideGuestNames])
+  }, [directRows, tables, states, groups, hideGuestNames, readOnly])
 
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -198,7 +207,8 @@ export function BarGuestList({
               const overflowLabels = overflowIcons.map((i) => i.label).join(", ")
               const allIconLabels = activeIcons.map((i) => i.label).join(", ")
 
-              const displayGuestName = hideGuestNames ? "" : row.guestName
+              const displayGuestName =
+                hideGuestNames || (readOnly && isPhoneLikeGuestName(row.guestName)) ? "" : row.guestName
               const rowAriaLabel = [
                 row.seatsLabel,
                 row.time ? `lúc ${row.time}` : row.seatedTime ? `vào lúc ${row.seatedTime}` : "",

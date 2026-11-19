@@ -203,11 +203,88 @@ function rectsOverlap(a, b, tol = 0.5) {
   return !(a.right <= b.left + tol || b.right <= a.left + tol || a.bottom <= b.top + tol || b.bottom <= a.top + tol)
 }
 
+/** Browser-evaluated check: maps every painted badge/icon perimeter point into each cluster outline's SVG frame. */
+function measureOutlineStrokeIntersections(svgRoot) {
+  const outlines = Array.from(svgRoot?.querySelectorAll('[data-cluster-outline="1"] rect') ?? [])
+  const decorationShapes = Array.from(
+    svgRoot?.querySelectorAll(
+      '[data-testid="guest-count-badge"] rect, [data-testid="turn-badge"] rect, [data-testid="turn-badge"] circle, [data-testid="table-icons-bottom-left"] circle, [data-testid="table-icons-bottom-right"] circle',
+    ) ?? [],
+  )
+  const hits = []
+  if (!svgRoot || outlines.length === 0 || decorationShapes.length === 0) return hits
+  const pt = svgRoot.createSVGPoint()
+  for (const decShape of decorationShapes) {
+    const decCtm = decShape.getScreenCTM()
+    if (!decCtm) continue
+    const decGroup = decShape.closest("[data-testid]")
+    const tableGroup = decShape.closest('[role="button"][aria-label], [role="img"][aria-label]')
+    const decLabel = `${tableGroup?.getAttribute("aria-label")?.split(",")[0] ?? "?"} ${decGroup?.getAttribute("data-testid") ?? ""}`
+    const sw = Number(decShape.getAttribute("stroke-width") || 0) / 2
+    const samplePoints = []
+    if (decShape.tagName.toLowerCase() === "circle") {
+      const cx = Number(decShape.getAttribute("cx") || 0)
+      const cy = Number(decShape.getAttribute("cy") || 0)
+      const r = Number(decShape.getAttribute("r") || 0) + sw
+      for (let i = 0; i < 24; i++) {
+        const a = (i / 24) * Math.PI * 2
+        samplePoints.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r])
+      }
+    } else {
+      const x = Number(decShape.getAttribute("x") || 0) - sw
+      const y = Number(decShape.getAttribute("y") || 0) - sw
+      const w = Number(decShape.getAttribute("width") || 0) + sw * 2
+      const h = Number(decShape.getAttribute("height") || 0) + sw * 2
+      const rxRaw = Number(decShape.getAttribute("rx") || 0)
+      const rr = rxRaw > 0 ? Math.min(w / 2, h / 2, rxRaw + sw) : 0
+      if (rr > 0) {
+        for (let i = 0; i <= 8; i++) {
+          const tx = x + rr + ((w - 2 * rr) * i) / 8
+          samplePoints.push([tx, y], [tx, y + h])
+        }
+        for (let i = 0; i <= 8; i++) {
+          const aTopLeft = Math.PI + (i / 8) * (Math.PI / 2)
+          const aTopRight = -Math.PI / 2 + (i / 8) * (Math.PI / 2)
+          const aBotRight = (i / 8) * (Math.PI / 2)
+          const aBotLeft = Math.PI / 2 + (i / 8) * (Math.PI / 2)
+          samplePoints.push(
+            [x + rr + Math.cos(aTopLeft) * rr, y + rr + Math.sin(aTopLeft) * rr],
+            [x + w - rr + Math.cos(aTopRight) * rr, y + rr + Math.sin(aTopRight) * rr],
+            [x + w - rr + Math.cos(aBotRight) * rr, y + h - rr + Math.sin(aBotRight) * rr],
+            [x + rr + Math.cos(aBotLeft) * rr, y + h - rr + Math.sin(aBotLeft) * rr],
+          )
+        }
+      } else {
+        for (let i = 0; i <= 10; i++) {
+          const t = i / 10
+          samplePoints.push([x + w * t, y], [x + w * t, y + h], [x, y + h * t], [x + w, y + h * t])
+        }
+      }
+    }
+    for (const outlineRect of outlines) {
+      const outCtm = outlineRect.getScreenCTM()
+      if (!outCtm) continue
+      const outInv = outCtm.inverse()
+      const outlineCode = outlineRect.closest("[data-cluster-outline]")?.getAttribute("data-cluster-code-value") ?? "?"
+      for (const [sx, sy] of samplePoints) {
+        pt.x = sx
+        pt.y = sy
+        const mapped = pt.matrixTransform(decCtm).matrixTransform(outInv)
+        if (outlineRect.isPointInStroke(mapped)) {
+          hits.push(`${decLabel} intersects ${outlineCode} stroke`)
+          break
+        }
+      }
+    }
+  }
+  return hits
+}
+
 const { server, baseUrl } = process.env.E2E_BASE_URL
   ? { baseUrl: process.env.E2E_BASE_URL }
   : await startMockViteServer()
 const browser = await launchBrowser()
-const summary = { mode: "mock", viewports: {}, flows: {}, ownerCheck: {} }
+const summary = { mode: "mock", viewports: {}, flows: {}, ownerCheck: {}, bdg02Matrix: [] }
 
 try {
   // 1. Verify all 8 viewports as RECEPTIONIST (userId: 1, light theme matching reference screenshots)
@@ -286,7 +363,8 @@ try {
       `${vp.label}: found focusable notification control(s): ${focusAudit.notificationMatches.join("; ")}`,
     )
 
-    const metrics = await page.evaluate(() => {
+    const metrics = await page.evaluate((fnSrc) => {
+      const measureFn = new Function(`return (${fnSrc})`)()
       const vw = window.innerWidth
       const vh = window.innerHeight
       const docOverflowX = Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth)
@@ -456,6 +534,8 @@ try {
         }
       })
 
+      const strokeIntersections = measureFn(svg)
+
       return {
         vw,
         vh,
@@ -491,9 +571,16 @@ try {
         cornerIcons,
         frameCornerCollisions,
         tableShapes,
+        strokeIntersections,
         fontFamily: shell ? getComputedStyle(shell).fontFamily : "",
       }
-    })
+    }, measureOutlineStrokeIntersections.toString())
+
+    assert.deepEqual(
+      metrics.strokeIntersections,
+      [],
+      `${vp.label} (light): decoration intersected cluster outline stroke: ${metrics.strokeIntersections.join("; ")}`,
+    )
 
     assert.equal(metrics.docOverflowX, 0, `${vp.label}: horizontal overflow ${metrics.docOverflowX}`)
     assert.equal(metrics.docOverflowY, 0, `${vp.label}: document vertical overflow ${metrics.docOverflowY}`)
@@ -890,6 +977,323 @@ try {
 
     assert.deepEqual(errors, [], `OWNER check errors: ${errors.join(" | ")}`)
     summary.ownerCheck = { hasAlertsBell: true, bellIcons }
+    await context.close()
+  }
+
+  // 4. Dark-theme 8-viewport BDG-01 stroke-intersection & A3 stress matrix check
+  for (const vp of VIEWPORTS) {
+    const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height } })
+    await context.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme: "dark" }))
+    })
+    const page = await context.newPage()
+    const errors = attachErrorCollector(page)
+
+    await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
+    await page.getByRole("button", { name: /^Bàn A7/ }).waitFor({ state: "visible" })
+    await page.waitForTimeout(250)
+
+    const darkAudit = await page.evaluate((fnSrc) => {
+      const measureFn = new Function(`return (${fnSrc})`)()
+      const svg = document.querySelector('[data-gm] svg[role="group"]')
+      if (!svg) return { ok: false, reason: "missing svg" }
+      const outlines = Array.from(svg.querySelectorAll('[data-cluster-outline="1"] rect'))
+      const hits = measureFn(svg)
+      const turnBadges = Array.from(svg.querySelectorAll('[data-testid="turn-badge"]'))
+      const a3Turn = svg.querySelector('[role="button"][aria-label^="Bàn A3"] [data-testid="turn-badge"]')
+      return {
+        ok: true,
+        hits,
+        turnCount: turnBadges.length,
+        hasA3Turn2: a3Turn?.getAttribute("aria-label") === "Lượt 2",
+        outlineCount: outlines.length,
+      }
+    }, measureOutlineStrokeIntersections.toString())
+
+    assert(darkAudit.ok, `${vp.label} (dark): ${darkAudit.reason}`)
+    assert.deepEqual(
+      darkAudit.hits,
+      [],
+      `${vp.label} (dark): decoration intersected cluster outline stroke: ${darkAudit.hits.join("; ")}`,
+    )
+    assert(darkAudit.turnCount >= 3, `${vp.label} (dark): missing turn badges`)
+    assert(darkAudit.hasA3Turn2, `${vp.label} (dark): missing A3 Lượt 2 fixture`)
+    assert(darkAudit.outlineCount >= 4, `${vp.label} (dark): missing cluster outlines`)
+    assert.deepEqual(errors, [], `${vp.label} (dark): errors: ${errors.join(" | ")}`)
+    await context.close()
+  }
+
+  // 5. BDG-02 + ADM-05 matrix: G08 (C4+C5) + occupied C1 (14 guests, turn 12, 4 icons) + Reception Bar names across light/dark phone/iPad/laptop
+  const bdg02Matrix = [
+    { width: 390, height: 844, label: "390x844", theme: "light" },
+    { width: 390, height: 844, label: "390x844", theme: "dark" },
+    { width: 768, height: 1024, label: "768x1024", theme: "light" },
+    { width: 768, height: 1024, label: "768x1024", theme: "dark" },
+    { width: 1440, height: 900, label: "1440x900", theme: "light" },
+    { width: 1440, height: 900, label: "1440x900", theme: "dark" },
+  ]
+  for (const vp of bdg02Matrix) {
+    const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height } })
+    await context.addInitScript((theme) => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme }))
+    }, vp.theme)
+    const page = await context.newPage()
+    const errors = attachErrorCollector(page)
+
+    await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
+    await page.getByRole("button", { name: /^Bàn C4/ }).waitFor({ state: "visible" })
+    const toastClose = page.getByRole("button", { name: "Đóng thông báo", exact: true })
+    if ((await toastClose.count()) > 0) {
+      await toastClose.click()
+      await page.waitForTimeout(150)
+    }
+
+    await page.evaluate(async () => {
+      const { api } = await import("/src/services/index.ts")
+      const origGetFloorState = api.getFloorState.bind(api)
+      const catalog = await api.getCatalog()
+      const c4 = catalog.tables.find((t) => t.code === "C4")
+      const c5 = catalog.tables.find((t) => t.code === "C5")
+      const c1 = catalog.tables.find((t) => t.code === "C1")
+      const bar1 = catalog.tables.find((t) => t.code === "BAR01")
+      const bar2 = catalog.tables.find((t) => t.code === "BAR02")
+      if (!c4 || !c5 || !c1 || !bar1 || !bar2) throw new Error("Missing C4/C5/C1/BAR01/BAR02")
+
+      api.getFloorState = async (at) => {
+        const res = await origGetFloorState(at)
+        const now = new Date()
+        const g08Claim = {
+          kind: "visit",
+          visitId: 9081,
+          reservationId: null,
+          waitlistEntryId: null,
+          holdId: null,
+          displayName: "Nhóm C4-C5",
+          phoneLast3: "456",
+          partySize: 8,
+          startsAt: now,
+          deadlineAt: null,
+          paid: false,
+          origin: "WALK_IN",
+          tableIds: [c4.id, c5.id],
+          groupId: 808,
+          symbolNo: 8,
+          groupDisplayCode: "G08",
+          flags: ["RETURNING", "VIP"],
+          warning: null,
+          minutesLate: 0,
+          sourceCode: null,
+          note: null,
+          version: 1,
+        }
+        const c1Claim = {
+          kind: "visit",
+          visitId: 9082,
+          reservationId: null,
+          waitlistEntryId: null,
+          holdId: null,
+          displayName: "Khách C1",
+          phoneLast3: "123",
+          partySize: 14,
+          startsAt: now,
+          deadlineAt: null,
+          paid: false,
+          origin: "WALK_IN",
+          tableIds: [c1.id],
+          groupId: null,
+          symbolNo: null,
+          groupDisplayCode: null,
+          flags: ["RETURNING", "VIP", "DESIGNATED", "BIRTHDAY"],
+          warning: null,
+          minutesLate: 0,
+          sourceCode: null,
+          note: null,
+          version: 1,
+        }
+        const bar1Claim = {
+          kind: "reservation",
+          visitId: null,
+          reservationId: 9083,
+          waitlistEntryId: null,
+          holdId: null,
+          displayName: "Nguyễn (090 123 4567)",
+          phoneLast3: "567",
+          partySize: 2,
+          startsAt: now,
+          deadlineAt: null,
+          paid: false,
+          origin: "RESERVATION",
+          tableIds: [bar1.id],
+          groupId: null,
+          symbolNo: null,
+          groupDisplayCode: null,
+          flags: [],
+          warning: null,
+          minutesLate: 0,
+          sourceCode: null,
+          note: null,
+          version: 1,
+        }
+        const bar2Claim = {
+          ...bar1Claim,
+          reservationId: 9084,
+          displayName: "Nguyễn 18-11-2026",
+          tableIds: [bar2.id],
+        }
+        const tables = res.tables.map((t) => {
+          if (t.tableId === c4.id || t.tableId === c5.id) {
+            return { ...t, state: "seated", seatedTurnCount: 2, claim: g08Claim }
+          }
+          if (t.tableId === c1.id) {
+            return { ...t, state: "seated", seatedTurnCount: 12, claim: c1Claim }
+          }
+          if (t.tableId === bar1.id) {
+            return { ...t, state: "reserved", claim: bar1Claim }
+          }
+          if (t.tableId === bar2.id) {
+            return { ...t, state: "reserved", claim: bar2Claim }
+          }
+          return t
+        })
+        const groups = [
+          ...res.groups.filter((g) => g.displayCode !== "G08"),
+          { id: 808, symbolNo: 8, displayCode: "G08", tableIds: [c4.id, c5.id], seatedTurnCount: 2 },
+        ]
+        return { ...res, tables, groups }
+      }
+
+      await api.createTableGroup({ tableIds: [c4.id, c5.id] })
+    })
+
+    await page.waitForSelector('[data-cluster-outline="1"][data-cluster-code-value="G08"]', { timeout: 5000 })
+    await page.waitForSelector('[role="button"][aria-label^="Bàn C1"] [data-testid="guest-count-badge"]', {
+      timeout: 5000,
+    })
+    await page.waitForTimeout(200)
+
+    const bdgAudit = await page.evaluate((fnSrc) => {
+      const measureFn = new Function(`return (${fnSrc})`)()
+      const svg = document.querySelector('[data-gm] svg[role="group"]')
+      if (!svg) return { ok: false, reason: "missing svg" }
+      const hits = measureFn(svg)
+      const toBox = (r) =>
+        r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height } : null
+      const expandBox = (r, pad) =>
+        r
+          ? {
+              left: r.left - pad,
+              top: r.top - pad,
+              right: r.right + pad,
+              bottom: r.bottom + pad,
+            }
+          : null
+      const wallRect = svg.querySelector('rect[data-bg="1"]')?.getBoundingClientRect()
+      const wallScale = wallRect ? wallRect.width / 370 : 1
+      const outlineHalfStroke = 0.8 * wallScale
+      const pillHalfStroke = 0.7 * wallScale
+
+      const g08Outline = expandBox(
+        svg.querySelector('[data-cluster-outline="1"][data-cluster-code-value="G08"] rect')?.getBoundingClientRect(),
+        outlineHalfStroke,
+      )
+      const g08Pill = expandBox(
+        svg.querySelector('[data-cluster-code="1"][data-cluster-code-value="G08"] rect')?.getBoundingClientRect(),
+        pillHalfStroke,
+      )
+      const g03Outline = expandBox(
+        svg.querySelector('[data-cluster-outline="1"][data-cluster-code-value="G03"] rect')?.getBoundingClientRect(),
+        outlineHalfStroke,
+      )
+      const g02Outline = expandBox(
+        svg.querySelector('[data-cluster-outline="1"][data-cluster-code-value="G02"] rect')?.getBoundingClientRect(),
+        outlineHalfStroke,
+      )
+      const c1 = svg.querySelector('[role="button"][aria-label^="Bàn C1"]')
+      const c1GuestBadge = toBox(
+        c1?.querySelector('[data-testid="guest-count-badge"]')?.getBoundingClientRect() ?? null,
+      )
+      const c1LeftIcons = toBox(
+        c1?.querySelector('[data-testid="table-icons-bottom-left"]')?.getBoundingClientRect() ?? null,
+      )
+      const a3Turn = svg.querySelector('[role="button"][aria-label^="Bàn A3"] [data-testid="turn-badge"]')
+      const barText = document.querySelector('[data-testid="bar-guest-list"]')?.textContent ?? ""
+
+      const c1Box = toBox(c1?.getBoundingClientRect() ?? null)
+      const cropClip =
+        g08Outline && c1Box
+          ? {
+              x: Math.max(0, Math.floor(Math.min(g08Outline.left, c1Box.left) - 42)),
+              y: Math.max(0, Math.floor(Math.min(g08Outline.top, c1Box.top) - 24)),
+              width:
+                Math.ceil(Math.max(g08Outline.right, c1Box.right) + 28) -
+                Math.max(0, Math.floor(Math.min(g08Outline.left, c1Box.left) - 42)),
+              height:
+                Math.ceil(Math.max(g08Outline.bottom, c1Box.bottom) + 24) -
+                Math.max(0, Math.floor(Math.min(g08Outline.top, c1Box.top) - 24)),
+            }
+          : null
+
+      return {
+        ok: true,
+        hits,
+        g08Outline,
+        g08Pill,
+        g02G03GapPx: g02Outline && g03Outline ? g02Outline.top - g03Outline.bottom : -1,
+        c1GuestBadge,
+        c1LeftIcons,
+        hasA3Turn2: a3Turn?.getAttribute("aria-label") === "Lượt 2",
+        barPreservesPhoneName: barText.includes("Nguyễn (090 123 4567)"),
+        barPreservesDateName: barText.includes("Nguyễn 18-11-2026"),
+        cropClip,
+      }
+    }, measureOutlineStrokeIntersections.toString())
+
+    assert(bdgAudit.ok, `${vp.label} (${vp.theme}) BDG-02: ${bdgAudit.reason}`)
+    assert.deepEqual(
+      bdgAudit.hits,
+      [],
+      `${vp.label} (${vp.theme}) BDG-02: stroke intersections: ${bdgAudit.hits.join("; ")}`,
+    )
+    assert(bdgAudit.g08Outline && bdgAudit.c1GuestBadge && bdgAudit.c1LeftIcons, "Missing G08 or C1 decorations")
+    assert(
+      !rectsOverlap(bdgAudit.c1GuestBadge, bdgAudit.g08Outline, 0.2),
+      `${vp.label} (${vp.theme}) BDG-02: C1 guest badge overlaps G08 outline`,
+    )
+    assert(
+      !rectsOverlap(bdgAudit.c1LeftIcons, bdgAudit.g08Outline, 0.2),
+      `${vp.label} (${vp.theme}) BDG-02: C1 bottom-left icon overlaps G08 outline`,
+    )
+    if (bdgAudit.g08Pill) {
+      assert(
+        !rectsOverlap(bdgAudit.g08Pill, bdgAudit.c1GuestBadge, 0),
+        `${vp.label} (${vp.theme}) BDG-02: G08 pill overlaps C1 guest badge`,
+      )
+    }
+    assert(bdgAudit.g02G03GapPx > 0.2, `${vp.label} (${vp.theme}): G02/G03 gap collapsed (${bdgAudit.g02G03GapPx})`)
+    assert(bdgAudit.hasA3Turn2, `${vp.label} (${vp.theme}): missing A3 Lượt 2`)
+    assert(
+      bdgAudit.barPreservesPhoneName,
+      `${vp.label} (${vp.theme}) ADM-05: Reception Bar lost "Nguyễn (090 123 4567)"`,
+    )
+    assert(bdgAudit.barPreservesDateName, `${vp.label} (${vp.theme}) ADM-05: Reception Bar lost "Nguyễn 18-11-2026"`)
+    assert.deepEqual(errors, [], `${vp.label} (${vp.theme}) BDG-02 errors: ${errors.join(" | ")}`)
+
+    if (vp.label === "1440x900" && vp.theme === "light" && bdgAudit.cropClip) {
+      const fix2Dir =
+        process.env.C1_CROP_DIR || "D:\\GAM-APP\\docs\\Sprint4\\evidence\\admin-floor-map-2026-11-18\\fix2"
+      if (fs.existsSync(fix2Dir)) {
+        await page.screenshot({ path: path.join(fix2Dir, "c1-c4-c5-crop-after.png"), clip: bdgAudit.cropClip })
+      }
+      await page.screenshot({ path: path.join(outDir, "reception-bdg02-1440x900.png") })
+    }
+
+    summary.bdg02Matrix.push({
+      viewport: vp.label,
+      theme: vp.theme,
+      hits: bdgAudit.hits.length,
+      g08ToC1BadgeGapPx: Number((bdgAudit.c1GuestBadge.left - bdgAudit.g08Outline.right).toFixed(2)),
+      g02G03GapPx: Number(bdgAudit.g02G03GapPx.toFixed(2)),
+    })
     await context.close()
   }
 } finally {
