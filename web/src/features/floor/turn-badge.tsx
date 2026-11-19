@@ -61,7 +61,7 @@ export function TurnBadge({
     return (
       <span
         className={cn(
-          "turn-badge-html inline-flex items-center justify-center rounded-full bg-black text-white font-extrabold text-[9px] tabular-nums shadow-xs border border-white/90 select-none pointer-events-none",
+          "turn-badge-html pointer-events-none inline-flex items-center justify-center rounded-full border border-white/90 bg-black text-[9px] font-extrabold text-white tabular-nums shadow-xs select-none",
           className,
         )}
         style={{ width: s, height: s }}
@@ -85,12 +85,7 @@ export function TurnBadge({
       pointerEvents="none"
     >
       {/* Black circle with thin white border for strong separation against dark/light tables */}
-      <circle
-        r={r}
-        fill="#000000"
-        stroke="#ffffff"
-        strokeWidth={0.85}
-      />
+      <circle r={r} fill="#000000" stroke="#ffffff" strokeWidth={0.85} />
       <text
         y={r * 0.44}
         textAnchor="middle"

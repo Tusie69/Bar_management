@@ -24,17 +24,7 @@ import { cn } from "@/lib/utils"
 import { normalizeIconKey } from "./floor-visual-rules"
 
 export type TableIconKey =
-  | "star"
-  | "fire"
-  | "pin"
-  | "cake"
-  | "new"
-  | "VIP"
-  | "RETURNING"
-  | "DESIGNATED"
-  | "BIRTHDAY"
-  | "NEW"
-  | string
+  "star" | "fire" | "pin" | "cake" | "new" | "VIP" | "RETURNING" | "DESIGNATED" | "BIRTHDAY" | "NEW" | string
 
 export interface TableIconMeta {
   key: "star" | "fire" | "pin" | "cake" | "new"
@@ -118,7 +108,7 @@ export function TableIcons({
     return (
       <div
         className={cn(
-          "table-icons-container inline-flex items-center gap-0.5 pointer-events-none select-none",
+          "table-icons-container pointer-events-none inline-flex items-center gap-0.5 select-none",
           className,
         )}
         role="group"
@@ -128,7 +118,7 @@ export function TableIcons({
         {activeItems.map((item) => (
           <span
             key={item.key}
-            className="inline-flex size-3.5 items-center justify-center rounded-full bg-background border border-border shadow-2xs text-[8.5px] leading-none"
+            className="inline-flex size-3.5 items-center justify-center rounded-full border border-border bg-background text-[8.5px] leading-none shadow-2xs"
             title={item.label}
             aria-label={item.label}
             data-icon={item.key}

@@ -53,41 +53,44 @@ export function StatusLegend({ tables = [], states, className, variant = "card" 
     { key: "upcoming", label: "Sắp tới", count: counts.upcoming, colorVar: "var(--st-upcoming)" },
     { key: "noshow", label: "Tới muộn", count: counts.noshow, colorVar: "var(--st-noshow)" },
     { key: "seated", label: "Đã tới", count: counts.seated, colorVar: "var(--st-seated)" },
-    { key: "spare", label: "Sơ cua", count: counts.spare, colorVar: "var(--table-line)", tintVar: "var(--st-free-tint)", isDashed: true },
+    {
+      key: "spare",
+      label: "Sơ cua",
+      count: counts.spare,
+      colorVar: "var(--table-line)",
+      tintVar: "var(--st-free-tint)",
+      isDashed: true,
+    },
   ]
 
   /** Chips: 3-column grid on mobile (exact 2 rows of 3), 1 compact row on desktop if it fits */
   const chipsGrid = (
     <div className="grid grid-cols-3 gap-1.5 sm:flex sm:flex-wrap sm:items-center sm:gap-2">
-          {CHIPS.map((chip) => (
-            <div
-              key={chip.key}
-              className="flex h-[26px] min-w-0 items-center justify-between gap-1 rounded-md border border-border/70 bg-background/80 px-1.5 text-[11px] font-medium text-foreground shadow-2xs sm:inline-flex sm:h-[26px] sm:w-auto sm:justify-start sm:gap-1.5 sm:px-2 sm:text-xs"
-            >
-              <div className="flex min-w-0 items-center gap-1 sm:gap-1.5">
-                {chip.isDashed ? (
-                  <span
-                    className="size-2.5 shrink-0 rounded-[2px] border border-dashed"
-                    style={{ borderColor: chip.colorVar, background: chip.tintVar ?? "transparent" }}
-                    aria-hidden
-                  />
-                ) : chip.key === "free" ? (
-                  <span
-                    className="size-2.5 shrink-0 rounded-[2px] border border-[var(--st-free)] bg-[var(--st-free-tint)]"
-                    aria-hidden
-                  />
-                ) : (
-                  <span
-                    className="size-2.5 shrink-0 rounded-[2px]"
-                    style={{ background: chip.colorVar }}
-                    aria-hidden
-                  />
-                )}
-                <span className="truncate text-muted-foreground">{chip.label}</span>
-              </div>
-              <span className="shrink-0 font-bold tabular-nums text-foreground">{chip.count}</span>
-            </div>
-          ))}
+      {CHIPS.map((chip) => (
+        <div
+          key={chip.key}
+          className="flex h-[26px] min-w-0 items-center justify-between gap-1 rounded-md border border-border/70 bg-background/80 px-1.5 text-[11px] font-medium text-foreground shadow-2xs sm:inline-flex sm:h-[26px] sm:w-auto sm:justify-start sm:gap-1.5 sm:px-2 sm:text-xs"
+        >
+          <div className="flex min-w-0 items-center gap-1 sm:gap-1.5">
+            {chip.isDashed ? (
+              <span
+                className="size-2.5 shrink-0 rounded-[2px] border border-dashed"
+                style={{ borderColor: chip.colorVar, background: chip.tintVar ?? "transparent" }}
+                aria-hidden
+              />
+            ) : chip.key === "free" ? (
+              <span
+                className="size-2.5 shrink-0 rounded-[2px] border border-[var(--st-free)] bg-[var(--st-free-tint)]"
+                aria-hidden
+              />
+            ) : (
+              <span className="size-2.5 shrink-0 rounded-[2px]" style={{ background: chip.colorVar }} aria-hidden />
+            )}
+            <span className="truncate text-muted-foreground">{chip.label}</span>
+          </div>
+          <span className="shrink-0 font-bold text-foreground tabular-nums">{chip.count}</span>
+        </div>
+      ))}
     </div>
   )
 
@@ -124,7 +127,7 @@ export function StatusLegend({ tables = [], states, className, variant = "card" 
               <button
                 ref={triggerRef}
                 type="button"
-                className="inline-flex min-h-[44px] items-center gap-1 -my-2.5 rounded-md px-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className="-my-2.5 inline-flex min-h-[44px] items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
                 aria-label="Ký hiệu: mở bảng chú giải ký hiệu khách và nhóm bàn"
               >
                 <Info className="size-3.5 shrink-0" />
@@ -147,144 +150,156 @@ export function StatusLegend({ tables = [], states, className, variant = "card" 
         style={{ background: "var(--popover)", color: "var(--popover-foreground)" }}
         className="max-h-(--radix-popover-content-available-height) w-[calc(100vw-32px)] max-w-sm overflow-y-auto rounded-2xl border-border p-3.5 shadow-xl"
       >
-          <div className="mb-3 flex items-center justify-between border-b border-border/60 pb-2">
-            <h2 className="text-sm font-bold text-foreground">Chú giải ký hiệu</h2>
-            <button
-              type="button"
-              onClick={() => {
-                setPopoverOpen(false)
-                triggerRef.current?.focus()
-              }}
-              className="rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-              aria-label="Đóng bảng chú giải"
-            >
-              <X className="size-4" />
-            </button>
-          </div>
+        <div className="mb-3 flex items-center justify-between border-b border-border/60 pb-2">
+          <h2 className="text-sm font-bold text-foreground">Chú giải ký hiệu</h2>
+          <button
+            type="button"
+            onClick={() => {
+              setPopoverOpen(false)
+              triggerRef.current?.focus()
+            }}
+            className="rounded-full p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label="Đóng bảng chú giải"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
 
-          <div className="space-y-3 text-xs">
-            {/* Status counts live here in badge mode: off the plan, inside the ⓘ popup */}
-            {variant === "badge" ? (
-              <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
-                <div className="mb-2 font-semibold text-foreground">Màu ô bàn · trạng thái · số bàn</div>
-                {chipsGrid}
-              </div>
-            ) : null}
-
-            {/* What one table cell carries, corner by corner (mockup 06) */}
+        <div className="space-y-3 text-xs">
+          {/* Status counts live here in badge mode: off the plan, inside the ⓘ popup */}
+          {variant === "badge" ? (
             <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
-              <div className="mb-2 font-semibold text-foreground">Thông tin trong 1 ô bàn</div>
-              <div className="flex items-start gap-4">
-                <div className="relative mt-1 ml-1.5 shrink-0" aria-hidden>
-                  <div className="flex h-[34px] w-[56px] flex-col items-center justify-center rounded-md border-2 border-[var(--st-reserved)] bg-[var(--st-reserved-tint)] leading-none">
-                    <span className="text-[10px] font-bold text-foreground">A4</span>
-                    <span className="mt-0.5 text-[8px] text-muted-foreground">21:35</span>
-                  </div>
-                  <span className="absolute -top-1.5 -left-1.5 grid size-4 place-items-center rounded-full bg-[var(--st-reserved)] text-[8px] font-bold text-white">
-                    2
-                  </span>
-                  <span className="absolute -top-1.5 -right-1.5 grid size-4 place-items-center rounded-full bg-foreground text-[8px] font-bold text-background">
-                    2
-                  </span>
-                  <span className="absolute -bottom-2 -left-2 text-[11px]">🔥</span>
-                  <span className="absolute -right-2 -bottom-2 text-[11px]">📌</span>
+              <div className="mb-2 font-semibold text-foreground">Màu ô bàn · trạng thái · số bàn</div>
+              {chipsGrid}
+            </div>
+          ) : null}
+
+          {/* What one table cell carries, corner by corner (mockup 06) */}
+          <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
+            <div className="mb-2 font-semibold text-foreground">Thông tin trong 1 ô bàn</div>
+            <div className="flex items-start gap-4">
+              <div className="relative mt-1 ml-1.5 shrink-0" aria-hidden>
+                <div className="flex h-[34px] w-[56px] flex-col items-center justify-center rounded-md border-2 border-[var(--st-reserved)] bg-[var(--st-reserved-tint)] leading-none">
+                  <span className="text-[10px] font-bold text-foreground">A4</span>
+                  <span className="mt-0.5 text-[8px] text-muted-foreground">21:35</span>
                 </div>
-                <ul className="grid flex-1 gap-1 text-[11px] leading-snug text-muted-foreground">
-                  <li>
-                    <span className="font-semibold text-foreground">Số khách</span> · góc trên trái
-                  </li>
-                  <li>
-                    <span className="font-semibold text-foreground">Số lượt khách</span> · góc trên phải, chỉ hiện
-                    từ lượt thứ 2 trong ca
-                  </li>
-                  <li>
-                    <span className="font-semibold text-foreground">Khách quen / mới</span> · góc dưới trái
-                  </li>
-                  <li>
-                    <span className="font-semibold text-foreground">VIP / Sinh nhật / Chỉ định</span> · góc dưới phải
-                  </li>
-                </ul>
+                <span className="absolute -top-1.5 -left-1.5 grid size-4 place-items-center rounded-full bg-[var(--st-reserved)] text-[8px] font-bold text-white">
+                  2
+                </span>
+                <span className="absolute -top-1.5 -right-1.5 grid size-4 place-items-center rounded-full bg-foreground text-[8px] font-bold text-background">
+                  2
+                </span>
+                <span className="absolute -bottom-2 -left-2 text-[11px]">🔥</span>
+                <span className="absolute -right-2 -bottom-2 text-[11px]">📌</span>
               </div>
-              <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-                Mã bàn và giờ khách đến nằm trong ô bàn.
-              </p>
+              <ul className="grid flex-1 gap-1 text-[11px] leading-snug text-muted-foreground">
+                <li>
+                  <span className="font-semibold text-foreground">Số khách</span> · góc trên trái
+                </li>
+                <li>
+                  <span className="font-semibold text-foreground">Số lượt khách</span> · góc trên phải, chỉ hiện từ lượt
+                  thứ 2 trong ca
+                </li>
+                <li>
+                  <span className="font-semibold text-foreground">Khách quen / mới</span> · góc dưới trái
+                </li>
+                <li>
+                  <span className="font-semibold text-foreground">VIP / Sinh nhật / Chỉ định</span> · góc dưới phải
+                </li>
+              </ul>
             </div>
-
-            {/* Bottom-left corner: who the guest is */}
-            <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
-              <div className="mb-2 font-semibold text-foreground">Icon góc dưới trái · phân loại khách</div>
-              <div className="grid grid-cols-2 gap-2 text-muted-foreground">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-base" aria-hidden>🔥</span>
-                  <span>Đã từng đặt bàn</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-base" aria-hidden>🆕</span>
-                  <span>Chưa từng đặt bàn</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Bottom-right corner: what the table is */}
-            <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
-              <div className="mb-2 font-semibold text-foreground">Icon góc dưới phải · phân loại bàn</div>
-              <div className="grid grid-cols-2 gap-2 text-muted-foreground">
-                <div className="flex items-center gap-1.5">
-                  <span className="text-base" aria-hidden>⭐</span>
-                  <span>Bàn sếp / VIP</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-base" aria-hidden>🎂</span>
-                  <span>Sinh nhật</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-base" aria-hidden>📌</span>
-                  <span>Chỉ định</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Merge group */}
-            <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
-              <div className="mb-1 font-semibold text-foreground">Nhóm bàn ghép</div>
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
-                <span className="font-bold text-foreground">G01 / G02</span>: các bàn ghép thuộc cùng MỘT tốp khách. Khi ghép, mọi bàn trong nhóm có trạng thái giống nhau và tổng số khách chỉ tính 1 lần.
-              </p>
-            </div>
-
-            {/* Bar panel rows */}
-            <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
-              <div className="mb-1.5 font-semibold text-foreground">Khu quầy bar</div>
-              <div className="mb-1.5 rounded border border-border/50 bg-background px-1.5 py-1 leading-tight">
-                <div className="flex items-center gap-1 text-[10px] font-semibold text-foreground">
-                  <span className="inline-block size-1.5 rounded-full bg-[var(--st-seated)]" aria-hidden />
-                  Bar5-6
-                </div>
-                <div className="text-[10px] text-muted-foreground">20:00 · 2</div>
-                <div className="text-[10.5px] font-medium text-foreground">Dương Quốc Long</div>
-              </div>
-              <p className="text-[11px] leading-relaxed text-muted-foreground">
-                Mỗi dòng luôn có đủ: mã ghế (ghép thì nối bằng dấu gạch) · giờ đặt · số khách. Khách vào thẳng chưa
-                đặt trước thì giờ ghi là <span className="font-semibold text-foreground">vào HH:MM</span>. Màu chấm
-                theo trạng thái khách.
-              </p>
-            </div>
-
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              Bàn tới muộn chuyển sang màu đỏ khi quá giờ hẹn. Mặc định ẩn chú giải icon dưới nút ⓘ để không che bàn; chú giải màu bàn vẫn luôn hiển thị.
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+              Mã bàn và giờ khách đến nằm trong ô bàn.
             </p>
-
-            <button
-              type="button"
-              onClick={() => {
-                setPopoverOpen(false)
-                triggerRef.current?.focus()
-              }}
-              className="w-full rounded-lg bg-primary py-2 text-center text-xs font-semibold text-primary-foreground hover:bg-primary/90 active:scale-98"
-            >
-              Đã hiểu
-            </button>
           </div>
+
+          {/* Bottom-left corner: who the guest is */}
+          <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
+            <div className="mb-2 font-semibold text-foreground">Icon góc dưới trái · phân loại khách</div>
+            <div className="grid grid-cols-2 gap-2 text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <span className="text-base" aria-hidden>
+                  🔥
+                </span>
+                <span>Đã từng đặt bàn</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-base" aria-hidden>
+                  🆕
+                </span>
+                <span>Chưa từng đặt bàn</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom-right corner: what the table is */}
+          <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
+            <div className="mb-2 font-semibold text-foreground">Icon góc dưới phải · phân loại bàn</div>
+            <div className="grid grid-cols-2 gap-2 text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <span className="text-base" aria-hidden>
+                  ⭐
+                </span>
+                <span>Bàn sếp / VIP</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-base" aria-hidden>
+                  🎂
+                </span>
+                <span>Sinh nhật</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-base" aria-hidden>
+                  📌
+                </span>
+                <span>Chỉ định</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Merge group */}
+          <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
+            <div className="mb-1 font-semibold text-foreground">Nhóm bàn ghép</div>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              <span className="font-bold text-foreground">G01 / G02</span>: các bàn ghép thuộc cùng MỘT tốp khách. Khi
+              ghép, mọi bàn trong nhóm có trạng thái giống nhau và tổng số khách chỉ tính 1 lần.
+            </p>
+          </div>
+
+          {/* Bar panel rows */}
+          <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
+            <div className="mb-1.5 font-semibold text-foreground">Khu quầy bar</div>
+            <div className="mb-1.5 rounded border border-border/50 bg-background px-1.5 py-1 leading-tight">
+              <div className="flex items-center gap-1 text-[10px] font-semibold text-foreground">
+                <span className="inline-block size-1.5 rounded-full bg-[var(--st-seated)]" aria-hidden />
+                Bar5-6
+              </div>
+              <div className="text-[10px] text-muted-foreground">20:00 · 2</div>
+              <div className="text-[10.5px] font-medium text-foreground">Dương Quốc Long</div>
+            </div>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              Mỗi dòng luôn có đủ: mã ghế (ghép thì nối bằng dấu gạch) · giờ đặt · số khách. Khách vào thẳng chưa đặt
+              trước thì giờ ghi là <span className="font-semibold text-foreground">vào HH:MM</span>. Màu chấm theo trạng
+              thái khách.
+            </p>
+          </div>
+
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            Bàn tới muộn chuyển sang màu đỏ khi quá giờ hẹn. Mặc định ẩn chú giải icon dưới nút ⓘ để không che bàn; chú
+            giải màu bàn vẫn luôn hiển thị.
+          </p>
+
+          <button
+            type="button"
+            onClick={() => {
+              setPopoverOpen(false)
+              triggerRef.current?.focus()
+            }}
+            className="w-full rounded-lg bg-primary py-2 text-center text-xs font-semibold text-primary-foreground hover:bg-primary/90 active:scale-98"
+          >
+            Đã hiểu
+          </button>
+        </div>
       </PopoverContent>
     </Popover>
   )

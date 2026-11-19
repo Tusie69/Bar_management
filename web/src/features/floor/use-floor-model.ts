@@ -43,7 +43,16 @@ export function useFloorModel(businessDate?: BusinessDate) {
       label,
       freeIds,
     }
-  }, [catalog.data, floor.data, catalog.isLoading, floor.isLoading, floor.isPlaceholderData, floor.isError, catalog.error, floor.error])
+  }, [
+    catalog.data,
+    floor.data,
+    catalog.isLoading,
+    floor.isLoading,
+    floor.isPlaceholderData,
+    floor.isError,
+    catalog.error,
+    floor.error,
+  ])
 
   // Lets a server error name the tables it is complaining about.
   useEffect(() => {

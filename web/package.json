@@ -18,7 +18,9 @@
     "e2e:sprint2": "node e2e/sprint2-booking-http.mjs",
     "e2e:c1": "node e2e/c1-table-group-mobile.mjs",
     "e2e:c2": "node e2e/c2-table-turn-mobile.mjs",
+    "e2e:sprint4": "node e2e/sprint4-admin-capture.mjs",
     "a11y": "node e2e/a11y.mjs",
+    "e2e:mobile": "node e2e/mobile-layout.mjs",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
   },
   "dependencies": {

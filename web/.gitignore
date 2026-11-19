@@ -25,6 +25,8 @@ dist-ssr
 
 # Test artifacts
 e2e/.artifacts
+# Ảnh chụp của pnpm e2e:mobile — bằng chứng cho một lần chạy, không phải mã nguồn.
+e2e/__screens__
 
 # design-sync & ds-sync (bỏ qua toàn bộ)
 .ds-sync/
