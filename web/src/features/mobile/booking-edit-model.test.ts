@@ -5,11 +5,13 @@ import { atBusinessTime } from "@/lib/time"
 import {
   BOOKING_NOTE_MAX_LENGTH,
   GUEST_NAME_MAX_LENGTH,
+  applySavedBookingEdit,
   buildUpdateReservationInput,
   diffBookingEditDraft,
   initialBookingEditDraft,
   parsePartySize,
   pinLoadedBooking,
+  prepareTablePickerTarget,
   resolveBookingEditBackAction,
   syncBookingEditSession,
   validateBookingEditDraft,
@@ -408,5 +410,113 @@ describe("booking-edit-model session pinning (B01) and pending guard (B03)", () 
       validateBookingEditDraft(cleanAfterMissing.source, cleanAfterMissing.draft, cleanDiff, makeValidationCtx())
         .canSave,
     ).toBe(false)
+  })
+})
+
+describe("booking-edit-model save-and-pick re-pin and error recovery (PR17-01)", () => {
+  it("re-pins saved booking with incremented version, new date, and clean draft before picker loads", () => {
+    const original = makeReservation({ version: 3, businessDate: BD, note: null })
+    const editedDraft = {
+      ...initialBookingEditDraft(original),
+      businessDate: "2026-11-20",
+      time: "20:00",
+      note: "Đổi ngày rồi đổi bàn",
+    }
+
+    const saved = applySavedBookingEdit(original, editedDraft)
+    expect(saved.version).toBe(4)
+    expect(saved.businessDate).toBe("2026-11-20")
+    expect(saved.note).toBe("Đổi ngày rồi đổi bàn")
+
+    const cleanDraft = initialBookingEditDraft(saved)
+    const cleanDiff = diffBookingEditDraft(saved, cleanDraft)
+    expect(cleanDiff.isDirty).toBe(false)
+    expect(validateBookingEditDraft(saved, cleanDraft, cleanDiff, makeValidationCtx()).canSave).toBe(false)
+  })
+
+  it("handles booking and waitlist load errors cleanly, keeps waitlist guard, and allows picker retry", async () => {
+    const saved = applySavedBookingEdit(makeReservation({ version: 3, businessDate: BD }), {
+      ...initialBookingEditDraft(makeReservation({ version: 3, businessDate: BD })),
+      businessDate: "2026-11-20",
+      note: "Đã lưu",
+    })
+    const latestFromServer: ReservationView = { ...saved, tableIds: [], holdId: null }
+
+    // 1. Target-date booking query fails with 503
+    let opened: ReservationView | null = null
+    const bookingFail = await prepareTablePickerTarget(saved, true, {
+      loadBooking: async () => {
+        throw new Error("503 booking list unavailable")
+      },
+      ensureWaitlist: async () => {},
+      checkPolicy: () => ({ canReassign: true }),
+      onSessionSync: () => {},
+      onMissingOrClosed: () => {},
+      openPicker: (r) => {
+        opened = r
+      },
+    })
+    expect(bookingFail.status).toBe("error")
+    if (bookingFail.status === "error") {
+      expect(bookingFail.savedBeforePick).toBe(true)
+      expect(bookingFail.message).toContain("Đã lưu thay đổi")
+    }
+    expect(opened).toBeNull()
+
+    // 2. Booking query succeeds and syncs latest, then target-date waitlist fails with 503
+    let synced: ReservationView | null = null
+    const waitlistFail = await prepareTablePickerTarget(saved, true, {
+      loadBooking: async () => latestFromServer,
+      ensureWaitlist: async () => {
+        throw new Error("503 waitlist unavailable")
+      },
+      checkPolicy: () => ({ canReassign: true }),
+      onSessionSync: (r) => {
+        synced = r
+      },
+      onMissingOrClosed: () => {},
+      openPicker: (r) => {
+        opened = r
+      },
+    })
+    expect(synced).toEqual(latestFromServer)
+    expect(waitlistFail.status).toBe("error")
+    if (waitlistFail.status === "error") {
+      expect(waitlistFail.savedBeforePick).toBe(true)
+      expect(waitlistFail.message).toContain("Đã lưu thay đổi")
+    }
+    expect(opened).toBeNull()
+
+    // 3. Waitlist policy check blocks opening picker when policy is not reassignable
+    const policyBlocked = await prepareTablePickerTarget(saved, false, {
+      loadBooking: async () => latestFromServer,
+      ensureWaitlist: async () => {},
+      checkPolicy: () => ({ canReassign: false, reason: "Không tải được đơn chờ" }),
+      onSessionSync: () => {},
+      onMissingOrClosed: () => {},
+      openPicker: (r) => {
+        opened = r
+      },
+    })
+    expect(policyBlocked).toEqual({
+      status: "error",
+      savedBeforePick: false,
+      message: "Không tải được đơn chờ",
+    })
+    expect(opened).toBeNull()
+
+    // 4. After recovery, retry opens picker with the synced booking (no second save needed)
+    const recovered = await prepareTablePickerTarget(latestFromServer, true, {
+      loadBooking: async () => latestFromServer,
+      ensureWaitlist: async () => {},
+      checkPolicy: () => ({ canReassign: true }),
+      onSessionSync: () => {},
+      onMissingOrClosed: () => {},
+      openPicker: (r) => {
+        opened = r
+      },
+    })
+    expect(recovered).toEqual({ status: "opened" })
+    expect(opened).toEqual(latestFromServer)
   })
 })

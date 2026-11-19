@@ -390,3 +390,97 @@ export function buildUpdateReservationInput(r: ReservationView, draft: BookingEd
     honorific: honorificSupported ? draft.honorific || null : undefined,
   }
 }
+
+/**
+ * Re-pins the booking snapshot immediately after `updateReservation` succeeds
+ * (incremented version, updated fields, new businessDate) before table-picker queries run.
+ */
+export function applySavedBookingEdit(source: ReservationView, draft: BookingEditDraft): ReservationView {
+  const parsedParty = parsePartySize(draft.partySizeText)
+  const partySize = parsedParty.ok ? parsedParty.value : source.partySize
+  const trimmedName = draft.name.trim()
+  const hasGuestName = Boolean(trimmedName)
+  const displayName = hasGuestName ? trimmedName : source.hasGuestName ? "Khách" : source.displayName
+  const socialPlatform = socialPlatformSupported && draft.source === "SOCIAL" ? draft.platform || null : null
+  const iconKeys = iconKeysSupported ? sortedUniqueStrings(draft.iconKeys) : source.iconKeys
+  const honorific = honorificSupported ? draft.honorific || null : source.honorific
+  const guestType = draft.classification === "RETURNING" ? "REGULAR" : draft.classification === "NEW" ? "NEW" : null
+
+  return {
+    ...source,
+    version: source.version + 1,
+    displayName,
+    hasGuestName,
+    partySize,
+    expectedAt: atBusinessTime(draft.businessDate, draft.time),
+    businessDate: draft.businessDate,
+    classification: draft.classification,
+    guestType,
+    isBirthday: draft.isBirthday,
+    sourceCode: draft.source,
+    socialPlatform,
+    iconKeys,
+    honorific,
+    note: draft.note.trim() || null,
+  }
+}
+
+export interface TablePickerLoadDeps {
+  loadBooking: (id: number, bd: BusinessDate) => Promise<ReservationView | undefined>
+  ensureWaitlist: (bd: BusinessDate) => Promise<void>
+  checkPolicy: (r: ReservationView) => { canReassign: boolean; reason?: string }
+  onSessionSync: (r: ReservationView) => void
+  onMissingOrClosed: () => void
+  openPicker: (r: ReservationView) => void
+  isMounted?: () => boolean
+}
+
+export type TablePickerLoadResult =
+  { status: "opened" | "closed" | "unmounted" } | { status: "error"; savedBeforePick: boolean; message: string }
+
+/**
+ * Loads target-date booking/waitlist state and validates waitlist policy before
+ * opening the table picker, returning a structured error instead of rejecting.
+ */
+export async function prepareTablePickerTarget(
+  target: ReservationView,
+  fromSave: boolean,
+  deps: TablePickerLoadDeps,
+): Promise<TablePickerLoadResult> {
+  const stillMounted = () => deps.isMounted?.() ?? true
+  try {
+    const latest = await deps.loadBooking(target.id, target.businessDate)
+    if (!stillMounted()) return { status: "unmounted" }
+    if (!latest || latest.status !== "BOOKED") {
+      deps.onMissingOrClosed()
+      return { status: "closed" }
+    }
+    deps.onSessionSync(latest)
+
+    await deps.ensureWaitlist(latest.businessDate)
+    if (!stillMounted()) return { status: "unmounted" }
+
+    const policy = deps.checkPolicy(latest)
+    if (!policy.canReassign) {
+      return {
+        status: "error",
+        savedBeforePick: fromSave,
+        message: fromSave
+          ? `Đã lưu thay đổi, nhưng chưa thể đổi bàn: ${policy.reason ?? "Không hỗ trợ đổi bàn."}`
+          : (policy.reason ?? "Chưa hỗ trợ đổi bàn cho đơn giữ chỗ."),
+      }
+    }
+
+    deps.openPicker(latest)
+    return { status: "opened" }
+  } catch {
+    if (!stillMounted()) return { status: "unmounted" }
+    return {
+      status: "error",
+      savedBeforePick: fromSave,
+      message: fromSave
+        ? "Đã lưu thay đổi, nhưng không tải được dữ liệu để đổi bàn. Vui lòng thử lại Đổi bàn."
+        : "Không tải được dữ liệu để đổi bàn. Vui lòng thử lại.",
+    }
+  }
+}

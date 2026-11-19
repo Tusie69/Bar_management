@@ -39,7 +39,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { bookingCalendarDate, isAfterMidnight, slotLabel, toggleClassification } from "@/domain/booking-rules"
 import { formatBookingSource, type BookingClassification } from "@/domain/enums"
-import type { ReservationView, TableAvailability } from "@/domain/models"
+import type { ReservationView, TableAvailability, WaitlistEntryView } from "@/domain/models"
 import { MOCK_NOTE, useAction } from "@/hooks/use-action"
 import { qk, useReservations, useVenueSettings, useWaitlist } from "@/hooks/use-data"
 import { addDays, fmtBusinessDate, fmtDayMonth, type BusinessDate } from "@/lib/time"
@@ -49,11 +49,13 @@ import { useMobileActions } from "./actions"
 import {
   BOOKING_NOTE_MAX_LENGTH,
   GUEST_NAME_MAX_LENGTH,
+  applySavedBookingEdit,
   buildUpdateReservationInput,
   diffBookingEditDraft,
   initialBookingEditDraft,
   parsePartySize,
   pinLoadedBooking,
+  prepareTablePickerTarget,
   resolveBookingEditBackAction,
   syncBookingEditSession,
   validateBookingEditDraft,
@@ -266,23 +268,26 @@ function BookingEditBody({
   const { run, pending } = useAction()
   const settingsQuery = useVenueSettings()
   const quickTimes = useMemo(() => settingsQuery.data?.quickTimes ?? [], [settingsQuery.data?.quickTimes])
-  useWaitlist(bd)
-
   const [session, setSession] = useState<BookingEditSessionState>(() => ({
     source: initial,
     draft: initialBookingEditDraft(initial),
   }))
   const { source, draft } = session
+  const targetResQuery = useReservations(source.businessDate)
+  const waitlistQuery = useWaitlist(source.businessDate)
+  const liveRecord = source.businessDate === bd ? r : targetResQuery.data?.find((x) => x.id === source.id)
   const [editingField, setEditingField] = useState<EditableFieldKey | null>(null)
   const [confirmLeave, setConfirmLeave] = useState(false)
   const [confirmTableChange, setConfirmTableChange] = useState(false)
+  const [pickerLoading, setPickerLoading] = useState(false)
+  const [pickerError, setPickerError] = useState<{ savedBeforePick: boolean; message: string } | null>(null)
   const leaveFocus = useRestoreTriggerFocus(confirmLeave, { suppressRestore: !parentOpen })
   const tableChangeFocus = useRestoreTriggerFocus(confirmTableChange, { suppressRestore: !parentOpen })
 
   const diff = useMemo(() => diffBookingEditDraft(source, draft), [source, draft])
 
   // Sync source+draft together only while clean; dirty sessions keep their pinned source and version.
-  const synced = syncBookingEditSession(session, r)
+  const synced = syncBookingEditSession(session, liveRecord)
   if (synced !== session) {
     setSession(synced)
   }
@@ -322,6 +327,14 @@ function BookingEditBody({
   const isDirtyRef = useRef(diff.isDirty)
   const pendingRef = useRef(pending)
   const savingRef = useRef(false)
+  const pickerLoadingRef = useRef(false)
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
   useEffect(() => {
     isDirtyRef.current = diff.isDirty
     pendingRef.current = pending
@@ -405,8 +418,14 @@ function BookingEditBody({
     }
   }, [historyToken, isPendingNow, onClose, parentOpen])
 
+  const isBusy = pending || pickerLoading
   const hold = a.bookingPolicy(source)
-  const canEditTables = m.can("table.assign") && hold.canReassign && source.status === "BOOKED"
+  const hasTableLoadError =
+    m.can("table.assign") && source.status === "BOOKED" && (Boolean(pickerError) || waitlistQuery.isError)
+  const canAccessTablePicker =
+    m.can("table.assign") &&
+    source.status === "BOOKED" &&
+    (hold.canReassign || Boolean(pickerError) || waitlistQuery.isError || pickerLoading)
 
   const dayOptions = useMemo(() => {
     const offsets = Array.from({ length: 7 }, (_, i) => i)
@@ -422,26 +441,31 @@ function BookingEditBody({
     return dates
   }, [m.today, draft.businessDate])
 
-  const saveFields = async (): Promise<boolean> => {
-    if (!validation.canSave || isPendingNow()) return false
+  const saveFields = async (): Promise<ReservationView | null> => {
+    if (!validation.canSave || isPendingNow() || pickerLoadingRef.current) return null
     savingRef.current = true
     try {
       const result = await run(async () => api.updateReservation(buildUpdateReservationInput(source, draft)), {
         silent: true,
       })
-      if (!result) return false
+      if (!result) return null
+      const saved = applySavedBookingEdit(source, draft)
+      if (mountedRef.current) {
+        setSession({ source: saved, draft: initialBookingEditDraft(saved) })
+        setPickerError(null)
+      }
       toast.success("Đã lưu thay đổi", {
         description: api.mode === "mock" ? MOCK_NOTE : undefined,
       })
-      return true
+      return saved
     } finally {
       savingRef.current = false
     }
   }
 
   const save = async () => {
-    const ok = await saveFields()
-    if (ok) leaveImmediately()
+    const saved = await saveFields()
+    if (saved && mountedRef.current) leaveImmediately()
   }
 
   const openTablePicker = useCallback(
@@ -457,51 +481,82 @@ function BookingEditBody({
     [a, releaseHistorySentinel],
   )
 
+  const runTablePickerPreparation = async (target: ReservationView, fromSave: boolean) => {
+    if (pickerLoadingRef.current || savingRef.current) return
+    pickerLoadingRef.current = true
+    setPickerLoading(true)
+    setPickerError(null)
+    try {
+      const result = await prepareTablePickerTarget(target, fromSave, {
+        isMounted: () => mountedRef.current,
+        loadBooking: async (targetId, targetBd) => {
+          const resState = qc.getQueryState<ReservationView[]>(qk.reservations(targetBd, ""))
+          const cached =
+            resState?.status === "success" && !resState.isInvalidated
+              ? resState.data?.find((item) => item.id === targetId)
+              : undefined
+          if (cached) return cached
+          const list = await qc.fetchQuery({
+            queryKey: qk.reservations(targetBd, ""),
+            queryFn: () => api.listReservations({ businessDate: targetBd, search: "" }),
+            retry: false,
+          })
+          return list.find((item) => item.id === targetId)
+        },
+        ensureWaitlist: async (targetBd) => {
+          const wlState = qc.getQueryState<WaitlistEntryView[]>(qk.waitlist(targetBd))
+          if (
+            !wlState ||
+            wlState.status !== "success" ||
+            wlState.isInvalidated ||
+            wlState.data === undefined ||
+            wlState.fetchStatus === "fetching"
+          ) {
+            await qc.fetchQuery({
+              queryKey: qk.waitlist(targetBd),
+              queryFn: () => api.listWaitlist(targetBd),
+              retry: false,
+            })
+          }
+        },
+        checkPolicy: (latest) => a.bookingPolicy(latest),
+        onSessionSync: (latest) => setSession({ source: latest, draft: initialBookingEditDraft(latest) }),
+        onMissingOrClosed: leaveImmediately,
+        openPicker: openTablePicker,
+      })
+      if (result.status === "error" && mountedRef.current) {
+        setPickerError({ savedBeforePick: result.savedBeforePick, message: result.message })
+      }
+    } finally {
+      pickerLoadingRef.current = false
+      if (mountedRef.current) setPickerLoading(false)
+    }
+  }
+
   const requestTableChange = () => {
-    if (isPendingNow() || !canEditTables) return
+    if (isPendingNow() || pickerLoadingRef.current || !canAccessTablePicker) return
     if (diff.isDirty) {
       setConfirmTableChange(true)
       return
     }
-    openTablePicker(source)
+    void runTablePickerPreparation(source, Boolean(pickerError?.savedBeforePick))
   }
 
   const discardAndPickTables = () => {
-    if (isPendingNow()) return
+    if (isPendingNow() || pickerLoadingRef.current) return
     setConfirmTableChange(false)
-    const cleanTarget = r && r.version !== source.version ? r : source
+    const cleanTarget = liveRecord && liveRecord.version !== source.version ? liveRecord : source
     setSession({ source: cleanTarget, draft: initialBookingEditDraft(cleanTarget) })
-    openTablePicker(cleanTarget)
+    setPickerError(null)
+    void runTablePickerPreparation(cleanTarget, false)
   }
 
   const saveAndPickTables = async () => {
-    if (!validation.canSave || isPendingNow()) return
+    if (!validation.canSave || isPendingNow() || pickerLoadingRef.current) return
     setConfirmTableChange(false)
-    const ok = await saveFields()
-    if (!ok) return
-    const targetBd = draft.businessDate
-    let latest = qc
-      .getQueryData<ReservationView[]>(qk.reservations(targetBd, ""))
-      ?.find((item) => item.id === source.id)
-    if (!latest) {
-      const list = await qc.fetchQuery({
-        queryKey: qk.reservations(targetBd, ""),
-        queryFn: () => api.listReservations({ businessDate: targetBd, search: "" }),
-      })
-      latest = list.find((item) => item.id === source.id)
-    }
-    if (!latest || latest.status !== "BOOKED") {
-      leaveImmediately()
-      return
-    }
-    if (targetBd !== bd) {
-      await qc.ensureQueryData({
-        queryKey: qk.waitlist(targetBd),
-        queryFn: () => api.listWaitlist(targetBd),
-      })
-    }
-    setSession({ source: latest, draft: initialBookingEditDraft(latest) })
-    openTablePicker(latest)
+    const saved = await saveFields()
+    if (!saved || !mountedRef.current) return
+    await runTablePickerPreparation(saved, true)
   }
 
   const nameId = useId()
@@ -813,23 +868,45 @@ function BookingEditBody({
               />
             </EditableRow>
 
-            {canEditTables ? (
-              <div className="flex min-h-12 items-center gap-3 px-4 py-2.5">
-                <span className="w-[108px] shrink-0 text-[13px] font-medium text-[var(--text-muted)]">Bàn</span>
-                <div className="min-w-0 flex-1 text-[14px]">
-                  <span className="tnum text-tx-1">
-                    {source.tableIds.length > 0 ? codesOf(source.tableIds, m.model) : <EmptyPlaceholder />}
-                  </span>
-                  <span className="block text-xs text-[var(--text-muted)]">Lưu ngay khi chọn bàn</span>
+            {canAccessTablePicker ? (
+              <div className="flex flex-col">
+                <div className="flex min-h-12 items-center gap-3 px-4 py-2.5">
+                  <span className="w-[108px] shrink-0 text-[13px] font-medium text-[var(--text-muted)]">Bàn</span>
+                  <div className="min-w-0 flex-1 text-[14px]">
+                    <span className="tnum text-tx-1">
+                      {source.tableIds.length > 0 ? codesOf(source.tableIds, m.model) : <EmptyPlaceholder />}
+                    </span>
+                    <span className="block text-xs text-[var(--text-muted)]">Lưu ngay khi chọn bàn</span>
+                  </div>
+                  {!hasTableLoadError ? (
+                    <button
+                      type="button"
+                      onClick={requestTableChange}
+                      disabled={isBusy}
+                      className="gm-press inline-flex h-11 shrink-0 items-center rounded-xl border border-border-strong bg-surface-1 px-3.5 text-[13px] font-semibold text-primary-ink hover:bg-primary-tint disabled:pointer-events-none disabled:opacity-45"
+                    >
+                      {pickerLoading ? "Đang tải..." : "Đổi bàn"}
+                    </button>
+                  ) : null}
                 </div>
-                <button
-                  type="button"
-                  onClick={requestTableChange}
-                  disabled={pending}
-                  className="gm-press inline-flex h-11 shrink-0 items-center rounded-xl border border-border-strong bg-surface-1 px-3.5 text-[13px] font-semibold text-primary-ink hover:bg-primary-tint disabled:pointer-events-none disabled:opacity-45"
-                >
-                  Đổi bàn
-                </button>
+                {hasTableLoadError ? (
+                  <div role="alert" className="flex flex-col gap-2 border-t border-border bg-st-noshow-tint px-4 py-3">
+                    <p className="m-0 text-xs font-medium text-st-noshow-ink">
+                      {pickerError?.message ?? "Không tải được đơn chờ để đổi bàn. Vui lòng thử lại."}
+                    </p>
+                    <div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={isBusy}
+                        onClick={requestTableChange}
+                        className="h-11 rounded-xl border-border-strong bg-surface-1 px-3.5 text-[13px] font-semibold text-primary-ink hover:bg-primary-tint"
+                      >
+                        {pickerLoading ? "Đang tải..." : "Thử lại đổi bàn"}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div className="flex min-h-12 items-center gap-3 px-4 py-3">

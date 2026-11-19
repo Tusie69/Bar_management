@@ -452,6 +452,121 @@ try {
   await runRemoteDateChange({ tableCode: "A5", dirtyNote: null })
   await runRemoteDateChange({ tableCode: "B5", dirtyNote: "Ghi chú giữ lại khi đổi ngày" })
 
+  // PR17-01: "Lưu & đổi bàn" after date change when target-date waitlist returns 503, then retry "Đổi bàn"
+  await resetMockDemo(page)
+  await page.reload({ waitUntil: "networkidle" })
+  await (await openTableSheet(page, "B4")).getByRole("button", { name: "Sửa booking", exact: true }).click()
+  await expect(editPage).toBeVisible()
+  const pr17Id = Number(((await editPage.locator("header span", { hasText: /^#\d+$/ }).textContent()) || "").slice(1))
+  assert(Number.isInteger(pr17Id) && pr17Id > 0, "Expected valid booking id for PR17-01 check")
+
+  const pr17Dates = await page.evaluate(async () => {
+    const { api, ApiError, clock } = await import("/src/services/index.ts")
+    const { addDays, businessDateOf, fmtDayMonth } = await import("/src/lib/time.ts")
+    const today = businessDateOf(clock.now())
+    const tomorrow = addDays(today, 1)
+    const origUpdate = api.updateReservation.bind(api)
+    const origAssign = api.assignTables.bind(api)
+    const origListWaitlist = api.listWaitlist.bind(api)
+    window.__gmPr17Probe = {
+      updateCalls: 0,
+      assignCalls: 0,
+      failWaitlist: true,
+      origUpdate,
+      origAssign,
+      origListWaitlist,
+    }
+    api.updateReservation = (input) => {
+      window.__gmPr17Probe.updateCalls += 1
+      return origUpdate(input)
+    }
+    api.assignTables = (...args) => {
+      window.__gmPr17Probe.assignCalls += 1
+      return origAssign(...args)
+    }
+    api.listWaitlist = async (date) => {
+      if (window.__gmPr17Probe.failWaitlist && date === tomorrow) {
+        throw new ApiError(503, "SERVICE_UNAVAILABLE", "Simulated 503 waitlist after saving booking")
+      }
+      return origListWaitlist(date)
+    }
+    return { today, tomorrow, dayLabel: fmtDayMonth(tomorrow) }
+  })
+
+  await editPage.getByRole("button", { name: /^Ngày đặt/ }).click()
+  await editPage
+    .getByRole("button", { name: new RegExp(pr17Dates.dayLabel.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&") + "$") })
+    .click()
+  await editPage.getByRole("button", { name: /^Ghi chú/ }).click()
+  await editPage.getByLabel("Ghi chú", { exact: true }).fill("PR17-01: save before pick")
+  await editPage.getByRole("button", { name: "Xong", exact: true }).click()
+  await expect(saveBtn).toBeEnabled()
+  await editPage.getByRole("button", { name: "Đổi bàn", exact: true }).click()
+  await page.getByRole("alertdialog").getByRole("button", { name: "Lưu & đổi bàn", exact: true }).click()
+
+  await expect(page.getByText("Đã lưu thay đổi", { exact: true })).toBeVisible()
+  const retryPickBtn = editPage.getByRole("button", { name: "Thử lại đổi bàn", exact: true })
+  await expect(retryPickBtn).toBeVisible()
+  await expect(editPage.getByRole("alert")).toContainText("Đã lưu thay đổi")
+  await expect(saveBtn).toBeDisabled()
+  await expect(editPage.getByRole("button", { name: /^Ngày đặt/ })).toContainText(pr17Dates.dayLabel)
+  await expect(editPage.getByRole("button", { name: /^Ghi chú/ })).toContainText("PR17-01: save before pick")
+  assert.equal(await page.getByText(/Xếp bàn cho|Đổi bàn cho/).count(), 0)
+  await assertLayoutAndTargets(page, '[role="dialog"][aria-label="Sửa booking"]', "390-pr17-01-picker-503")
+
+  const pr17After503 = await page.evaluate(
+    async ({ id, today, tomorrow }) => {
+      const { api } = await import("/src/services/index.ts")
+      const oldList = await api.listReservations({ businessDate: today })
+      const nextList = await api.listReservations({ businessDate: tomorrow })
+      return {
+        updateCalls: window.__gmPr17Probe.updateCalls,
+        assignCalls: window.__gmPr17Probe.assignCalls,
+        stillOnOldDate: oldList.some((item) => item.id === id),
+        savedOnTarget: nextList.find((item) => item.id === id) ?? null,
+      }
+    },
+    { id: pr17Id, today: pr17Dates.today, tomorrow: pr17Dates.tomorrow },
+  )
+  assert.equal(pr17After503.updateCalls, 1)
+  assert.equal(pr17After503.assignCalls, 0)
+  assert.equal(pr17After503.stillOnOldDate, false)
+  assert.equal(pr17After503.savedOnTarget?.businessDate, pr17Dates.tomorrow)
+  assert.equal(pr17After503.savedOnTarget?.note, "PR17-01: save before pick")
+
+  // Recover waitlist query and retry only the "Đổi bàn" step
+  await page.evaluate(() => {
+    window.__gmPr17Probe.failWaitlist = false
+  })
+  await retryPickBtn.click()
+  await expect(page.getByText(/Xếp bàn cho|Đổi bàn cho/)).toBeVisible()
+  await page.locator('[role="button"][aria-label^="Bàn B4,"], [role="button"][aria-label^="Bàn B4:"]').first().click()
+  await page.getByRole("button", { name: /^(Xếp bàn|Đổi bàn)$/ }).click()
+  await expect(editPage).toBeVisible()
+  await expect(editPage.getByText("B4", { exact: true })).toBeVisible()
+  await expect(saveBtn).toBeDisabled()
+
+  const pr17FinalCounts = await page.evaluate(async () => {
+    const { api } = await import("/src/services/index.ts")
+    const counts = {
+      updateCalls: window.__gmPr17Probe.updateCalls,
+      assignCalls: window.__gmPr17Probe.assignCalls,
+    }
+    api.updateReservation = window.__gmPr17Probe.origUpdate
+    api.assignTables = window.__gmPr17Probe.origAssign
+    api.listWaitlist = window.__gmPr17Probe.origListWaitlist
+    delete window.__gmPr17Probe
+    return counts
+  })
+  assert.equal(pr17FinalCounts.updateCalls, 1)
+  assert.equal(pr17FinalCounts.assignCalls, 1)
+
+  await editPage.getByRole("button", { name: "Quay lại", exact: true }).click()
+  await expect(page.getByRole("alertdialog")).toHaveCount(0)
+  await expect(editPage).toBeHidden()
+  await resetMockDemo(page)
+  await page.reload({ waitUntil: "networkidle" })
+
   // 2. Phone 390x844 (dark) screenshot & layout check
   await setSession(page, 1, "dark")
   await page.reload({ waitUntil: "networkidle" })
