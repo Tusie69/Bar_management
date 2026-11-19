@@ -3,6 +3,7 @@ import { formatBookingSource } from "@/domain/enums"
 import { ChevronLeft } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { RevealPhone } from "@/components/reveal-phone"
+import { Button } from "@/components/ui/button"
 import { useReservations, useWaitlist } from "@/hooks/use-data"
 import { fmtBusinessDate, fmtDayMonth, fmtTime12, MS, venueDateString, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -13,7 +14,7 @@ import { EditReservationDialog } from "../reservations/reservation-detail"
 import { useMobileActions } from "./actions"
 import { useM } from "./context"
 import { codesOf, lateOf, subOf } from "./model"
-import { card, StatusChip } from "./ui"
+import { card, EmptyBox, StatusChip } from "./ui"
 
 interface Row {
   k: string
@@ -43,24 +44,24 @@ export function DetailScreen({
   const linkedEntry = waitlist.data?.find((x) => x.reservationId === r?.id || r?.waitlistEntryId === x.id)
 
   const header = (
-    <header className="shrink-0 bg-background px-4 pt-[var(--top-safe)] pb-2">
-      <div className="-ml-2.5 flex h-11 items-center gap-1">
+    <header className="gm-glass-chrome shrink-0 border-b border-border/70 bg-[var(--glass-chrome)] px-4 pt-[var(--top-safe)] pb-2 backdrop-blur-md">
+      <div className="-ml-2 flex h-12 items-center gap-1.5">
         <button
           type="button"
           onClick={onClose}
           aria-label="Quay lại"
-          className="grid size-11 place-items-center rounded-xl text-tx-1 active:bg-surface-2"
+          className="gm-press grid size-11 shrink-0 place-items-center rounded-xl text-tx-1 hover:bg-surface-2"
         >
-          <ChevronLeft className="size-[22px]" />
+          <ChevronLeft className="size-[22px]" aria-hidden />
         </button>
-        <span className="text-base font-medium text-tx-2">{backLabel}</span>
+        <span className="min-w-0 truncate text-[15px] font-semibold text-tx-2">{backLabel}</span>
         {canUpdate && r ? (
           <button
             type="button"
             onClick={() => setEditOpen(true)}
             aria-label="Sửa booking"
             disabled={waitlist.isPending || waitlist.isError || waitlist.isFetching || waitlist.isPlaceholderData}
-            className="ml-auto rounded-xl border border-strong px-3 py-1.5 text-xs font-medium text-tx-1 active:bg-surface-2 disabled:opacity-50"
+            className="gm-press ml-auto inline-flex h-11 shrink-0 items-center rounded-xl border border-border-strong bg-surface-1 px-4 text-[13.5px] font-semibold text-tx-1 shadow-[var(--shadow-xs)] hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-50"
           >
             Sửa
           </button>
@@ -71,9 +72,15 @@ export function DetailScreen({
 
   if (!r) {
     return (
-      <div role="dialog" aria-label="Chi tiết booking" className="absolute inset-0 z-[40] flex flex-col bg-background">
+      <div className="flex h-full w-full flex-col bg-background">
         {header}
-        <p className="px-4 text-[14px] text-[var(--text-muted)]">{res ? "Không tìm thấy booking." : "Đang tải..."}</p>
+        <div className="p-4">
+          {res ? (
+            <EmptyBox title="Không tìm thấy booking" body="Booking có thể đã được chuyển ngày hoặc xóa." />
+          ) : (
+            <p className="text-[14px] text-[var(--text-muted)]">Đang tải...</p>
+          )}
+        </div>
       </div>
     )
   }
@@ -202,21 +209,24 @@ export function DetailScreen({
         : null
 
   return (
-    <div role="dialog" aria-label="Chi tiết booking" className="absolute inset-0 z-[40] flex flex-col bg-background">
+    <div className="flex h-full w-full flex-col bg-background">
       {header}
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-1 pb-6">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pt-3.5 pb-6">
         <div
-          className="flex flex-col gap-2 rounded-[20px] border bg-surface-1 p-[18px] shadow-[var(--shadow-soft)]"
+          className="flex flex-col gap-2 rounded-2xl border bg-surface-1 p-4 shadow-[var(--shadow-soft)]"
           style={{
-            borderColor: r.status === "BOOKED" && r.warning === "noshow" ? "var(--st-noshow)" : "var(--border)",
+            borderColor:
+              r.status === "BOOKED" && r.warning === "noshow"
+                ? "color-mix(in oklab, var(--st-noshow) 65%, var(--border))"
+                : "var(--border)",
           }}
         >
           <div className="flex items-start gap-2.5">
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="text-[22px] font-semibold tracking-[-0.01em] text-tx-strong">
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <span className="text-[21px] leading-tight font-bold tracking-[-0.02em] text-tx-strong">
                 {formatHonorificName(r.displayName, r.honorific)}
               </span>
-              <span className="text-[14px] text-tx-2">
+              <span className="tnum text-[14px] font-medium text-tx-2">
                 {fmtTime12(r.expectedAt)}, {r.partySize} khách,{" "}
                 {r.tableIds.length ? `Bàn ${codesOf(r.tableIds, m.model)}` : "Chưa có bàn"}
               </span>
@@ -225,7 +235,7 @@ export function DetailScreen({
           </div>
           {sub ? (
             <span
-              className="text-[13px] font-medium"
+              className="rounded-lg px-2.5 py-1.5 text-[13px] font-medium"
               style={{
                 color:
                   r.warning === "noshow"
@@ -233,6 +243,12 @@ export function DetailScreen({
                     : r.warning || (r.status === "BOOKED" && !r.tableIds.length)
                       ? "var(--st-late-ink)"
                       : "var(--text-muted)",
+                background:
+                  r.warning === "noshow"
+                    ? "var(--st-noshow-tint)"
+                    : r.warning || (r.status === "BOOKED" && !r.tableIds.length)
+                      ? "var(--st-late-tint)"
+                      : "var(--surface-2)",
               }}
             >
               {sub}
@@ -241,23 +257,20 @@ export function DetailScreen({
         </div>
 
         {groups.map((g) => (
-          <section key={g.title} className="flex flex-col gap-2">
-            <h2 className="m-0 pl-0.5 text-[15px] font-semibold text-tx-strong">{g.title}</h2>
-            <div className={cn(card, "flex flex-col overflow-hidden")}>
+          <section key={g.title} className="flex flex-col gap-1.5">
+            <h2 className="eyebrow m-0 px-1">{g.title}</h2>
+            <div className={cn(card, "flex flex-col divide-y divide-border overflow-hidden")}>
               {g.rows.map((row, i) => (
-                <div
-                  key={`${row.k}${i}`}
-                  className={cn("flex min-h-12 items-center gap-3 px-4 py-2", i && "border-t border-border")}
-                >
-                  <span className="w-[110px] shrink-0 text-[13px] text-[var(--text-muted)]">{row.k}</span>
-                  <span className="min-w-0 flex-1 text-[14px] text-pretty text-tx-1">{row.v}</span>
+                <div key={`${row.k}${i}`} className="flex min-h-12 items-center gap-3 px-4 py-2.5">
+                  <span className="w-[108px] shrink-0 text-[13px] font-medium text-[var(--text-muted)]">{row.k}</span>
+                  <span className="tnum min-w-0 flex-1 text-[14px] text-pretty text-tx-1">{row.v}</span>
                   {row.btn ? (
                     <button
                       type="button"
                       onClick={row.btn.go}
                       disabled={row.btn.label === "Sửa" && !!hold.reason}
                       title={row.btn.label === "Sửa" ? hold.reason : undefined}
-                      className="h-9 shrink-0 rounded-[10px] border border-strong px-3 text-[13px] font-medium text-primary-ink"
+                      className="gm-press inline-flex h-11 shrink-0 items-center rounded-xl border border-border-strong bg-surface-1 px-3.5 text-[13px] font-semibold text-primary-ink hover:bg-primary-tint disabled:pointer-events-none disabled:opacity-45"
                     >
                       {row.btn.label}
                     </button>
@@ -268,11 +281,9 @@ export function DetailScreen({
           </section>
         ))}
 
-        {/* Màn chi tiết booking trên điện thoại trước đây chỉ có SĐT che và nút
-            "Mở số" - nút này cần quyền customer.phone.reveal mà lễ tân không
-            có, nên từ đây lễ tân không gọi được khách bằng cách nào cả. */}
+        {/* Lễ tân gọi khách trực tiếp từ đây mà không cần quyền mở SĐT đầy đủ. */}
         <section className="flex flex-col gap-2">
-          <h2 className="m-0 pl-0.5 text-[15px] font-semibold text-tx-strong">Gọi khách</h2>
+          <h2 className="eyebrow m-0 px-1">Gọi khách</h2>
           <CallCustomerControl
             target={{ kind: "booking", id: r.id, version: r.version }}
             canCall={r.canCall === true || r.phoneLast3 !== null}
@@ -282,21 +293,25 @@ export function DetailScreen({
         </section>
       </div>
       {hold.reason ? (
-        <p role="alert" className="px-4 py-2 text-sm text-destructive">
+        <p
+          role="alert"
+          className="m-0 border-t border-border/60 bg-[var(--destructive-tint)] px-4 py-2 text-sm font-medium text-destructive"
+        >
           {hold.reason}
         </p>
       ) : null}
       {primary ? (
-        <footer className="flex shrink-0 flex-col gap-2 border-t border-border bg-surface-1 px-4 pt-3 pb-[calc(12px+env(safe-area-inset-bottom))]">
-          <button
+        <footer className="gm-glass-chrome flex shrink-0 flex-col gap-2 border-t border-border/70 bg-surface-1/95 px-4 pt-3 pb-[calc(12px+var(--bottom-safe))] backdrop-blur-md">
+          <Button
             type="button"
+            size="lg"
             onClick={primary.go}
             title={hold.reason ?? (heldEntry && !hold.supported ? "Chưa hỗ trợ" : undefined)}
             disabled={primary.disabled ?? a.pending}
-            className="h-[48px] w-full rounded-[14px] bg-primary text-base font-semibold text-primary-foreground active:brightness-90 disabled:opacity-50"
+            className="h-12 w-full rounded-xl text-[15px] font-semibold"
           >
             {primary.label}
-          </button>
+          </Button>
           {r.status === "BOOKED" ? (
             <div className={cn("grid gap-2", r.tableIds.length ? "grid-cols-3" : "grid-cols-2")}>
               {r.tableIds.length ? (
@@ -305,7 +320,7 @@ export function DetailScreen({
                   onClick={() => (heldEntry ? a.reassignHold(heldEntry, r) : a.assign(r))}
                   title={hold.reason ?? (heldEntry && !hold.supported ? "Chưa hỗ trợ" : undefined)}
                   disabled={a.pending || !hold.canReassign}
-                  className="h-11 rounded-[12px] border border-strong px-2 text-center text-[13px] font-medium text-tx-1 active:bg-surface-2 disabled:opacity-50"
+                  className="gm-press h-11 rounded-xl border border-border-strong bg-surface-1 px-2 text-center text-[13px] font-semibold text-tx-1 hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-45"
                 >
                   Đổi / Ghép bàn
                 </button>
@@ -315,7 +330,7 @@ export function DetailScreen({
                 onClick={() => a.cancel(r)}
                 title={hold.reason ?? (heldEntry && !hold.canBookingStatus ? "Chưa hỗ trợ" : undefined)}
                 disabled={a.pending || !hold.canBookingStatus || !m.can("reservation.cancel")}
-                className="h-11 rounded-[12px] border border-destructive/50 px-2 text-center text-[13px] font-medium text-destructive active:bg-destructive/10 disabled:opacity-50"
+                className="gm-press h-11 rounded-xl border border-destructive/40 bg-[var(--destructive-tint)] px-2 text-center text-[13px] font-semibold text-destructive hover:border-destructive/60 disabled:pointer-events-none disabled:opacity-45"
               >
                 Hủy booking
               </button>
@@ -326,7 +341,7 @@ export function DetailScreen({
                 disabled={
                   a.pending || !hold.canBookingStatus || (!m.can("reservation.cancel") && !m.can("reservation.update"))
                 }
-                className="h-11 rounded-[12px] border border-strong px-2 text-center text-[13px] font-medium text-tx-1 active:bg-surface-2 disabled:opacity-50"
+                className="gm-press h-11 rounded-xl border border-border-strong bg-surface-1 px-2 text-center text-[13px] font-semibold text-tx-1 hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-45"
               >
                 Đổi trạng thái
               </button>
@@ -339,7 +354,7 @@ export function DetailScreen({
               disabled={
                 a.pending || !hold.canBookingStatus || (!m.can("reservation.cancel") && !m.can("reservation.update"))
               }
-              className="h-11 w-full rounded-[12px] border border-strong px-3 text-center text-[13px] font-medium text-tx-1 active:bg-surface-2 disabled:opacity-50"
+              className="gm-press h-11 w-full rounded-xl border border-border-strong bg-surface-1 px-3 text-center text-[13.5px] font-semibold text-tx-1 hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-45"
             >
               Đổi trạng thái
             </button>

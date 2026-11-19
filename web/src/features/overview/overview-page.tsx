@@ -102,7 +102,9 @@ export default function OverviewPage() {
         <header className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="eyebrow">Ca vận hành</p>
-            <h2 className="mt-1 text-2xl font-extrabold tracking-tight md:text-[28px]">{fmtBusinessDate(bd)}</h2>
+            <h2 className="mt-1 text-[26px] leading-tight font-bold tracking-[-0.022em] md:text-[28px]">
+              {fmtBusinessDate(bd)}
+            </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               17:00 → 05:00 · cập nhật lúc <span className="tnum">{fmtTime(now)}</span>
               {o.visitsTonight !== null && o.guestsTonight !== null ? (
@@ -127,7 +129,7 @@ export default function OverviewPage() {
 
         <section
           aria-label="Chỉ số ca"
-          className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border bg-border sm:grid-cols-3 xl:grid-cols-6"
+          className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border shadow-xs sm:grid-cols-3 xl:grid-cols-6"
         >
           {/* Hairlines come from the 1px grid gap over bg-border: no doubled edges at any breakpoint. */}
           {metrics.map((m) => (
@@ -135,16 +137,16 @@ export default function OverviewPage() {
               key={m.label}
               type="button"
               onClick={() => m.to && navigate(m.to)}
-              className="group grid content-start gap-1 bg-background p-4 text-left transition-colors hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none"
+              className="group grid content-start gap-1 bg-surface-1 p-4 text-left transition-colors hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none"
             >
-              <span className="flex items-center justify-between text-xs text-muted-foreground">
+              <span className="flex items-center justify-between text-xs font-medium text-muted-foreground">
                 {m.label}
                 <ArrowUpRight className="size-3.5 opacity-0 transition-opacity group-hover:opacity-100" aria-hidden />
               </span>
               <span
                 className={cn(
-                  "tnum text-[32px] leading-none font-bold tracking-tight",
-                  m.tone === "alert" && "text-st-late",
+                  "tnum text-[30px] leading-none font-bold tracking-[-0.025em]",
+                  m.tone === "alert" ? "text-st-late-ink" : "text-foreground",
                 )}
               >
                 {m.value}
@@ -155,7 +157,7 @@ export default function OverviewPage() {
         </section>
 
         <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
-          <section className="grid min-w-0 content-start gap-3 rounded-2xl border p-4 md:p-5">
+          <section className="grid min-w-0 content-start gap-3 rounded-xl border border-border bg-surface-1 p-4 shadow-xs md:p-5">
             <SectionTitle aside={<span className="text-xs text-subtle">khách theo giờ</span>}>Nhịp ca</SectionTitle>
             {(() => {
               const hasSeated = o.byHour.some((h) => h.seated !== null)
@@ -292,7 +294,7 @@ export default function OverviewPage() {
           </section>
         </div>
 
-        <section className="grid min-w-0 gap-3 rounded-2xl border p-4 md:p-5">
+        <section className="grid min-w-0 gap-3 rounded-xl border border-border bg-surface-1 p-4 shadow-xs md:p-5">
           <SectionTitle
             aside={
               <span className="inline-flex items-center gap-1.5 text-xs text-subtle">

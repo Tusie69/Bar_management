@@ -1,14 +1,18 @@
 import { randomBytes } from "node:crypto"
 import { spawn, spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { chromium } from "@playwright/test"
+import { chromium, expect } from "@playwright/test"
 
 const root = fileURLToPath(new URL("../../", import.meta.url))
 const apiUrl = process.env.API_BASE_URL ?? "http://127.0.0.1:3101"
 const webUrl = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5174"
 const databaseName = process.env.DB_NAME ?? "gam21_platform_e2e_test"
 if (!/_test$/.test(databaseName)) throw new Error("Refusing browser E2E: DB_NAME must end in _test")
-if (!["gam21_platform_e2e_test", "gam21_platform_it_test"].includes(databaseName) || (process.env.DB_PORT ?? "33306") !== "33306") throw new Error("HTTP E2E requires the approved test databases on port 33306")
+if (
+  !["gam21_platform_e2e_test", "gam21_platform_it_test"].includes(databaseName) ||
+  (process.env.DB_PORT ?? "33306") !== "33306"
+)
+  throw new Error("HTTP E2E requires the approved test databases on port 33306")
 const pnpmCli = process.env.npm_execpath
 if (!pnpmCli) throw new Error("pnpm CLI path is unavailable")
 const fixedNow = "2026-11-03T12:00:00.000Z"
@@ -30,14 +34,16 @@ const common = {
   BUSINESS_DAY_WORKER_ENABLED: "false",
   E2E_FIXED_NOW: fixedNow,
 }
-const credentialEnv = { ...common, E2E_USERNAME: username, E2E_PASSWORD: password }
+const secondUsername = `${username}_peer`
+const credentialEnv = { ...common, E2E_USERNAME: username, E2E_SECOND_USERNAME: secondUsername, E2E_PASSWORD: password }
 const children = []
 let browser
 let secondContext
 
 function run(command, args, env = common) {
   const result = spawnSync(command, args, { cwd: root, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
-  if (result.status !== 0) throw new Error(`${command} failed: ${result.error?.message || result.stderr || result.stdout}`)
+  if (result.status !== 0)
+    throw new Error(`${command} failed: ${result.error?.message || result.stderr || result.stdout}`)
   return result.stdout.trim()
 }
 
@@ -78,7 +84,8 @@ function stopChildren() {
   }
 }
 
-const table = (page, code) => page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"], [data-combined-codes~="${code}"]`).first()
+const table = (page, code) =>
+  page.locator(`[aria-label^="Bàn ${code},"], [aria-label^="Bàn ${code}:"], [data-combined-codes~="${code}"]`).first()
 const bookingForm = (page) =>
   page
     .getByRole("dialog", { name: /Tạo đặt bàn|Tạo đơn đặt bàn/ })
@@ -142,11 +149,18 @@ async function activateTable(tableButton) {
   await tableButton.press("Enter")
 }
 
+async function copyBookingExport(page) {
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: webUrl })
+  await page.getByRole("button", { name: "Xuất text Zalo", exact: true }).click()
+  await page.getByText("Đã sao chép danh sách bàn đặt", { exact: true }).waitFor()
+  return page.evaluate(() => navigator.clipboard.readText())
+}
+
 try {
   runPnpm(["--filter", "@21gam/api", "exec", "tsx", "test/support/phase2b-e2e-fixture.ts", "setup"], credentialEnv)
   startPnpm(["--filter", "@21gam/api", "exec", "tsx", "src/server.ts"], {
     ...common,
-    PORT: "3101",
+    PORT: new URL(apiUrl).port,
     WEB_ORIGIN: webUrl,
     SESSION_CSRF_SECRET: randomBytes(32).toString("hex"),
     SESSION_COOKIE_SECURE: "false",
@@ -158,13 +172,28 @@ try {
     PHONE_REVEAL_RATE_LIMIT_MAX: "3",
     PHONE_REVEAL_RATE_LIMIT_WINDOW_MS: "60000",
   })
-  startPnpm(["--filter", "@21gam/web", "exec", "vite", "--mode", "test", "--host", "127.0.0.1", "--port", new URL(webUrl).port, "--strictPort"], {
-    ...process.env,
-    VITE_API_MODE: "http",
-    VITE_API_BASE_URL: apiUrl,
-    VITE_VENUE_ID: "1",
-    VITE_E2E_FIXED_NOW: fixedNow,
-  })
+  startPnpm(
+    [
+      "--filter",
+      "@21gam/web",
+      "exec",
+      "vite",
+      "--mode",
+      "test",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      new URL(webUrl).port,
+      "--strictPort",
+    ],
+    {
+      ...process.env,
+      VITE_API_MODE: "http",
+      VITE_API_BASE_URL: apiUrl,
+      VITE_VENUE_ID: "1",
+      VITE_E2E_FIXED_NOW: fixedNow,
+    },
+  )
   await Promise.all([waitFor(`${apiUrl}/api/v1/health`), waitFor(webUrl)])
 
   browser = await chromium.launch({
@@ -185,11 +214,11 @@ try {
     if (new URL(response.url()).pathname === "/api/v1/tables") floorReads += 1
   })
 
-  await page.goto(webUrl, { waitUntil: "networkidle" })
+  await page.goto(webUrl, { waitUntil: "domcontentloaded" })
   await page.getByLabel("Tên đăng nhập").fill(username)
-  await page.getByLabel("Mật khẩu").fill(password)
+  await page.getByLabel("Mật khẩu", { exact: true }).fill(password)
   await page.getByRole("button", { name: "Đăng nhập", exact: true }).click()
-  await page.getByRole("button", { name: /^Tài khoản: Lễ tân E2E/ }).waitFor()
+  await table(page, "A1").waitFor()
   await waitUntil(() => validWaitlistReads >= 1, "Waitlist did not load after businessDate became available")
   const waitlistReadsBeforePolling = validWaitlistReads
   await waitUntil(
@@ -215,17 +244,23 @@ try {
   await form.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).click()
   const hourWheel = form.getByRole("spinbutton", { name: "Giờ", exact: true })
   const minuteWheel = form.getByRole("spinbutton", { name: "Phút", exact: true })
-  if ((await hourWheel.locator('[data-value]').count()) !== 7) throw new Error("Missing canonical hours")
-  if (JSON.stringify(await minuteWheel.locator('[data-value]').allTextContents()) !== JSON.stringify(["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"]))
+  if ((await hourWheel.locator("[data-value]").count()) !== 7) throw new Error("Missing canonical hours")
+  if (
+    JSON.stringify(await minuteWheel.locator("[data-value]").allTextContents()) !==
+    JSON.stringify(["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"])
+  )
     throw new Error("Minutes must offer exactly the twelve five-minute values")
   if ((await minuteWheel.locator('[data-value="35"]').count()) !== 1) throw new Error("Five-minute slot is missing")
   await hourWheel.press("Home")
   await minuteWheel.press("Home")
   await minuteWheel.press("ArrowDown")
-  if ((await minuteWheel.getAttribute("aria-valuetext")) !== "05") throw new Error("Arrow-key selection did not advance 5 minutes")
+  if ((await minuteWheel.getAttribute("aria-valuetext")) !== "05")
+    throw new Error("Arrow-key selection did not advance 5 minutes")
   await hourWheel.press("End")
-  if ((await minuteWheel.locator('[data-value]:not(:disabled)').count()) !== 1 ||
-      !(await form.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).getAttribute("aria-label")).includes("01:00"))
+  if (
+    (await minuteWheel.locator("[data-value]:not(:disabled)").count()) !== 1 ||
+    !(await form.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).getAttribute("aria-label")).includes("01:00")
+  )
     throw new Error("01:00 boundary must leave exactly one valid minute at the final hour")
   if (await form.evaluate((node) => node.scrollWidth > node.clientWidth + 1)) {
     throw new Error("Time picker caused form overflow")
@@ -264,10 +299,10 @@ try {
 
   // Exact-three-digit search is scoped to the selected business date.
   let detailSheet = await openBookingFromSearch(page, phoneLast3, guestName)
-  const projectedLabel = await page.locator('[data-search-highlighted="true"]').first().getAttribute("aria-label")
-  if (!/khách quen/i.test(projectedLabel ?? "") || !/sinh nhật/i.test(projectedLabel ?? "")) {
-    throw new Error("Booking metadata flags were not projected on the canonical map")
-  }
+  const highlighted = page.locator('[data-search-highlighted="true"]').first()
+  await expect(highlighted).toHaveAttribute("aria-label", /đã từng đặt bàn.*sinh nhật|sinh nhật.*đã từng đặt bàn/i)
+  await expect(highlighted.locator('[data-icon="fire"]')).toBeVisible()
+  await expect(highlighted.locator('[data-icon="cake"]')).toBeVisible()
   if ((await page.locator("body").innerText()).includes(phoneNumber))
     throw new Error("Full phone leaked into receptionist UI")
 
@@ -279,18 +314,13 @@ try {
   await detailSheet.waitFor({ state: "hidden" })
 
   // Guest-total/Zalo overlay preserves classification statistics without phone data.
-  await page.getByRole("button", { name: "Đếm khách", exact: true }).click()
-  let dialog = page.getByRole("dialog").last()
-  const returningExport = dialog.getByLabel("Nội dung text booking")
-  await returningExport.waitFor()
-  if (!(await returningExport.inputValue()).includes("Bàn khách quen O: 1")) {
+  const returningExport = await copyBookingExport(page)
+  if (!returningExport.includes("Bàn khách quen O: 1")) {
     throw new Error("Returning classification was not reflected in Zalo export")
   }
-  if (/0987|ciphertext|hmac/i.test(await returningExport.inputValue())) {
+  if (/0987|ciphertext|hmac/i.test(returningExport)) {
     throw new Error("Sensitive phone data leaked in export")
   }
-  await closeTopDialog(page)
-  await dialog.waitFor({ state: "hidden" })
 
   // The direct hold is projected on the same canonical map used by search.
   await table(page, "A1").waitFor()
@@ -300,7 +330,7 @@ try {
 
   // Search/detail remain reachable from the single-floor controls; metadata writes stay on the authenticated contract.
   detailSheet = await openBookingFromSearch(page, phoneLast3, guestName)
-  await detailSheet.getByText("A1", { exact: true }).first().waitFor()
+  await expect(detailSheet.getByRole("heading", { name: "Bàn A1", exact: true })).toBeVisible()
   await closeTopDialog(page)
   booking = (await jsonRequest(page.context(), "GET", `/bookings/${booking.id}`)).booking
   booking = (
@@ -380,25 +410,32 @@ try {
     userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
   })
   const secondPage = await secondContext.newPage()
-  await secondPage.goto(webUrl, { waitUntil: "networkidle" })
-  await secondPage.getByLabel("Tên đăng nhập").fill(username)
-  await secondPage.getByLabel("Mật khẩu").fill(password)
+  await secondPage.goto(webUrl, { waitUntil: "domcontentloaded" })
+  await secondPage.getByLabel("Tên đăng nhập").fill(secondUsername)
+  await secondPage.getByLabel("Mật khẩu", { exact: true }).fill(password)
   await secondPage.getByRole("button", { name: "Đăng nhập", exact: true }).click()
   await table(secondPage, "A1").waitFor()
   await chooseDate(secondPage, tomorrow)
   await table(secondPage, "A2").tap()
-  await secondPage.getByRole("button", { name: "Tạo đặt trước", exact: true }).click()
+  await secondPage.getByRole("button", { name: "Đặt bàn", exact: true }).click()
   const mobileForm = bookingForm(secondPage)
   await mobileForm.waitFor()
   if (await mobileForm.evaluate((node) => node.scrollWidth > node.clientWidth + 1)) {
     throw new Error("Mobile booking form has horizontal overflow")
   }
   await mobileForm.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).click()
-  if ((await mobileForm.locator('[data-wheel="Giờ"] [data-value]').count()) !== 7 ||
-      JSON.stringify(await mobileForm.locator('[data-wheel="Phút"] [data-value]').allTextContents()) !== JSON.stringify(["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"]))
+  if (
+    (await mobileForm.locator('[data-wheel="Giờ"] [data-value]').count()) !== 7 ||
+    JSON.stringify(await mobileForm.locator('[data-wheel="Phút"] [data-value]').allTextContents()) !==
+      JSON.stringify(["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"])
+  )
     throw new Error("Mobile wheel is missing canonical five-minute choices")
   await mobileForm.locator('[data-wheel="Giờ"] [data-value="01"]').click()
-  if (!(await mobileForm.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).getAttribute("aria-label")).includes("01:00"))
+  if (
+    !(await mobileForm.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).getAttribute("aria-label")).includes(
+      "01:00",
+    )
+  )
     throw new Error("01:00 is not selectable on mobile")
   await mobileForm
     .getByRole("button", { name: /^(Hủy|Quay lại|Đóng form)$/ })
@@ -408,14 +445,11 @@ try {
   if (await mobileLeave.isVisible().catch(() => false))
     await mobileLeave.getByRole("button", { name: "Bỏ đơn" }).click()
   await mobileForm.waitFor({ state: "hidden" })
-  await secondPage.getByRole("button", { name: "Đếm khách", exact: true }).click()
-  const secondExport = secondPage.getByRole("dialog").getByLabel("Nội dung text booking")
-  await secondExport.waitFor()
-  const secondText = await secondExport.inputValue()
+  const secondText = await copyBookingExport(secondPage)
   if (!secondText.includes("Bàn khách quen O: 0") || !secondText.includes("Bàn khách mới N: 1")) {
     throw new Error("Second browser did not observe updated O/N statistics")
   }
-  if (!secondText.includes("Khách vào trước/bằng 21:30: 5")) {
+  if (!/^Lượng khách vào trước\/sau 9h30: 5\/0\s*$/m.test(secondText)) {
     throw new Error("Second browser did not observe expected_at statistics")
   }
   if (/0987|phone|ciphertext|hmac/i.test(secondText)) throw new Error("Sensitive phone data leaked in export")
@@ -427,16 +461,24 @@ try {
   await chooseDate(page, tomorrow)
   detailSheet = await openBookingFromSearch(page, phoneLast3, guestName)
   await detailSheet.getByRole("button", { name: "Đổi bàn", exact: true }).click()
-  const reassignDialog = page.getByRole("dialog", { name: /Đổi .* sang bàn mới|Phân bàn/ })
-  await reassignDialog.waitFor()
+  const availabilityMap = page.getByRole("group", { name: /^Sơ đồ khả dụng/ })
+  await expect(availabilityMap).toBeVisible()
   const a1Btn = table(page, "A1")
   if ((await a1Btn.getAttribute("aria-pressed")) === "true") await activateTable(a1Btn)
   for (const code of ["A2", "A4"]) {
     const button = table(page, code)
     if ((await button.getAttribute("aria-pressed")) !== "true") await activateTable(button)
   }
-  await reassignDialog.getByRole("button", { name: /Phân bàn|Đổi bàn/ }).click()
-  await reassignDialog.waitFor({ state: "hidden" })
+  const [assignment] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === `/api/v1/bookings/${booking.id}/assign`,
+    ),
+    page.getByRole("button", { name: "Đổi bàn", exact: true }).click(),
+  ])
+  expect(assignment.status()).toBe(200)
+  await expect(availabilityMap).toBeHidden()
   await page.waitForFunction(
     (name) =>
       ["A2", "A4"].every((code) => {
@@ -448,21 +490,38 @@ try {
     guestName,
   )
   detailSheet = await openBookingFromSearch(page, phoneLast3, guestName)
-  await detailSheet.getByText("A2 + A4", { exact: true }).waitFor()
+  await expect(detailSheet).toContainText(/Nhóm G\d+: A2 \+ A4/)
   await closeTopDialog(page)
 
   // Reload proves assignment persistence on the selected business date.
   await page.reload({ waitUntil: "networkidle" })
   await chooseDate(page, tomorrow)
   detailSheet = await openBookingFromSearch(page, phoneLast3, guestName)
-  await detailSheet.getByText("A2 + A4", { exact: true }).waitFor()
+  await expect(detailSheet).toContainText(/Nhóm G\d+: A2 \+ A4/)
 
   // Cancellation keeps the reason workflow and releases the Floor Projection.
   await detailSheet.getByRole("button", { name: "Hủy booking" }).click()
-  const cancelDialog = page.getByRole("alertdialog")
-  await cancelDialog.waitFor()
-  await cancelDialog.locator("#confirm-note").fill("Kiểm thử Phase 2B")
-  await cancelDialog.getByRole("button", { name: "Hủy booking" }).click()
+  const cancelDialog = page.getByRole("alertdialog", { name: /^Hủy booking/ })
+  const reasons = cancelDialog.getByRole("radiogroup", { name: "Lý do hủy" })
+  await expect(reasons.getByRole("radio")).toHaveCount(5)
+  await reasons.getByRole("radio", { name: "Lý do khác", exact: true }).click()
+  await expect(reasons.getByRole("radio", { name: "Lý do khác", exact: true })).toBeChecked()
+  const cancelButton = cancelDialog.getByRole("button", { name: "Hủy booking", exact: true })
+  await expect(cancelButton).toBeDisabled()
+  const cancelNote = "Kiểm thử Phase 2B"
+  const noteField = cancelDialog.getByRole("textbox", { name: "Ghi chú (bắt buộc)" })
+  await expect(noteField).toBeVisible()
+  await noteField.fill(cancelNote)
+  const [cancelResponse] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === `/api/v1/bookings/${booking.id}/cancel`,
+    ),
+    cancelButton.click(),
+  ])
+  expect(cancelResponse.status()).toBe(200)
+  expect(cancelResponse.request().postDataJSON()).toMatchObject({ reasonNote: cancelNote })
   await cancelDialog.waitFor({ state: "hidden" })
   await waitUntil(() => floorReads > floorReadsBeforeMutations, "Floor State was not refetched after booking mutations")
 
@@ -483,8 +542,11 @@ try {
   const cookies = await page.context().cookies(`${apiUrl}/api/v1`)
   const session = cookies.find((cookie) => cookie.name === "21gam_session")
   if (!session?.httpOnly) throw new Error("Session cookie is missing or not HttpOnly")
-  await page.getByLabel(/Tài khoản:/).click()
-  await page.getByRole("menuitem", { name: "Đăng xuất" }).click()
+  await page.getByRole("button", { name: /^Menu/ }).click()
+  await page
+    .getByRole("dialog", { name: "Tài khoản", exact: true })
+    .getByRole("button", { name: "Đăng xuất", exact: true })
+    .click()
   await page.getByText("Đăng nhập Lễ tân", { exact: true }).waitFor()
 
   console.log(

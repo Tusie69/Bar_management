@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react"
-import type { RoleCode } from "@/domain/enums"
+import type { BookingCancelReason, RoleCode } from "@/domain/enums"
 import type { Permission } from "@/domain/access"
 import type { ReservationView, WaitlistEntryView } from "@/domain/models"
 import type { BusinessDate } from "@/lib/time"
@@ -13,6 +13,11 @@ export interface Confirm {
   body: string
   label: string
   run: () => Promise<unknown>
+}
+
+export interface CancelBookingRequest {
+  reservation: ReservationView
+  run: (reason: BookingCancelReason, note: string) => Promise<unknown>
 }
 
 /** Choose tables on the map (assign, move, combine, split). */
@@ -65,6 +70,7 @@ export interface MobileCtx {
   openForm: (f: FormRequest) => void
   openTable: (id: number) => void
   ask: (c: Confirm) => void
+  askCancel: (req: CancelBookingRequest) => void
   startPick: (p: TablePick) => void
 }
 

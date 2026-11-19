@@ -9,34 +9,11 @@ import type {
 } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import type { Alert } from "@/features/floor/alerts"
-import { extractBarSeatNumber, isBarSeat } from "@/features/floor/bar-guest-rows"
+import { isBarSeat } from "@/features/floor/bar-guest-rows"
 import { isWaitingForTable } from "@/features/floor/reception-rules"
 import { type BusinessDate, businessDateOf, fmtTime, MS } from "@/lib/time"
 
-export type OverviewFloorStatus = "booked" | "soon" | "late" | "inuse" | "empty"
-
-export interface FloorLegendItem {
-  status: OverviewFloorStatus
-  label: string
-  colorToken: string
-}
-
-export const FLOOR_LEGEND_ITEMS: readonly FloorLegendItem[] = [
-  { status: "booked", label: "Đã đặt", colorToken: "var(--so-chip-booked, #1d6fc2)" },
-  { status: "soon", label: "Sắp tới", colorToken: "var(--so-chip-soon, #a16700)" },
-  { status: "late", label: "Quá giờ", colorToken: "var(--so-chip-late, #d13b3b)" },
-  { status: "inuse", label: "Đang sử dụng", colorToken: "var(--so-chip-inuse, #268549)" },
-  { status: "empty", label: "Trống", colorToken: "var(--so-chip-empty, #77736c)" },
-]
-
 export const OVERVIEW_ZONE_ORDER: readonly ZoneCode[] = ["A", "B", "C", "BAR"]
-
-export const FLOOR_ZONE_HEADINGS: Record<ZoneCode, string> = {
-  A: "KHU A",
-  B: "KHU B",
-  C: "KHU C",
-  BAR: "QUẦY BAR",
-}
 
 export const OCCUPANCY_ZONE_NAMES: Record<ZoneCode, string> = {
   A: "Khu A",
@@ -65,22 +42,6 @@ export interface OverviewKpiCard {
   description?: string
 }
 
-export interface FloorChipItem {
-  id: string
-  code: string
-  status: OverviewFloorStatus
-  statusLabel: string
-  tooltipText: string
-  ariaLabel: string
-  isGrouped: boolean
-}
-
-export interface FloorZoneRow {
-  zone: ZoneCode
-  heading: string
-  chips: FloorChipItem[]
-}
-
 export interface ZoneOccupancyItem {
   zone: ZoneCode
   name: string
@@ -93,7 +54,6 @@ export interface ZoneOccupancyItem {
 export interface FloorMetricsSummary {
   seatedNow: number
   freeTables: number
-  zones: FloorZoneRow[]
   occupancyByZone: ZoneOccupancyItem[]
 }
 
@@ -114,45 +74,6 @@ export function shiftBusinessDateOf(at: Date): BusinessDate {
 /** Resolves effective live state for a physical table/seat from floor state + table fallback. */
 export function resolveTableLiveState(table: TableView, fs?: FloorTableState): TableLiveState {
   return fs?.state ?? (table.isSpare ? "spare" : "free")
-}
-
-/** Maps a floor TableLiveState to one of the 5 read-only legend buckets, or spare/oos when inactive. */
-export function mapLiveStateToOverviewStatus(state: TableLiveState): OverviewFloorStatus | "spare" | "oos" {
-  switch (state) {
-    case "reserved":
-    case "hold":
-      return "booked"
-    case "upcoming":
-      return "soon"
-    case "late":
-    case "late_confirmed":
-    case "noshow":
-    case "hold_overdue":
-      return "late"
-    case "seated":
-      return "inuse"
-    case "free":
-      return "empty"
-    case "spare":
-      return "spare"
-    case "oos":
-      return "oos"
-  }
-}
-
-function statusLabelOf(status: OverviewFloorStatus): string {
-  switch (status) {
-    case "booked":
-      return "Đã đặt"
-    case "soon":
-      return "Sắp tới"
-    case "late":
-      return "Quá giờ"
-    case "inuse":
-      return "Đang sử dụng"
-    case "empty":
-      return "Trống"
-  }
 }
 
 function buildGroupLookup(groups: FloorGroup[] | undefined): Map<number, FloorGroup> {
@@ -197,46 +118,14 @@ function resolveLogicalUnitKey(
   return `tbl:${table.id}`
 }
 
-/** Formats grouped bar seat numbers cleanly without the "Bar" prefix (e.g., [1, 2] -> "1-2", [5] -> "5"). */
-export function formatBarChipNumbers(seatNumbers: number[]): string {
-  if (!seatNumbers.length) return ""
-  const sorted = Array.from(new Set(seatNumbers)).sort((a, b) => a - b)
-  const ranges: string[] = []
-  let start = sorted[0]
-  let prev = sorted[0]
-
-  for (let i = 1; i < sorted.length; i++) {
-    const cur = sorted[i]
-    if (cur === prev + 1) {
-      prev = cur
-    } else {
-      ranges.push(start === prev ? `${start}` : `${start}-${prev}`)
-      start = cur
-      prev = cur
-    }
-  }
-  ranges.push(start === prev ? `${start}` : `${start}-${prev}`)
-  return ranges.join(", ")
-}
-
 function isExcludedAsSpareOrOos(table: TableView, rawState: TableLiveState): boolean {
   return Boolean(table.isSpare) || table.status === "OUT_OF_SERVICE" || rawState === "spare" || rawState === "oos"
-}
-
-/** Picks the higher-priority visual status when grouped bar seats have slightly mixed states. */
-const STATUS_PRIORITY: Record<OverviewFloorStatus, number> = {
-  late: 5,
-  inuse: 4,
-  soon: 3,
-  booked: 2,
-  empty: 1,
 }
 
 /**
  * Derives all floor-backed metrics for the admin shift overview:
  * - Đang ngồi (seated TABLE units only, LAYOUT/claim groups counted once; Bar seats excluded)
  * - Bàn trống (free non-spare/non-OOS TABLE units only, groups counted once; Bar seats excluded)
- * - Read-only zone table chips (with Bar seats grouped identically to the floor model)
  * - Zone occupancy percentages:
  *   - Khu A/B/C: in-use / available tables (spare & OOS excluded, groups counted once)
  *   - Quầy Bar: in-use / total Bar seats (x/21 seats, never mixed into table KPIs)
@@ -274,7 +163,6 @@ export function selectFloorMetrics(
   }
 
   const occupancyByZone: ZoneOccupancyItem[] = []
-  const zones: FloorZoneRow[] = []
 
   for (const zone of OVERVIEW_ZONE_ORDER) {
     const rawList = zoneTables.get(zone) ?? []
@@ -302,9 +190,6 @@ export function selectFloorMetrics(
         percent,
         unitLabel: "ghế",
       })
-
-      const chips = buildBarFloorChips(rawList, states, floorGroupByTable)
-      zones.push({ zone, heading: FLOOR_ZONE_HEADINGS[zone], chips })
     } else {
       const availableUnitIds = new Set<string>()
       const inUseUnitIds = new Set<string>()
@@ -333,130 +218,14 @@ export function selectFloorMetrics(
         percent,
         unitLabel: "bàn",
       })
-
-      const chips = buildRegularFloorChips(rawList, states, floorGroupByTable)
-      zones.push({ zone, heading: FLOOR_ZONE_HEADINGS[zone], chips })
     }
   }
 
   return {
     seatedNow: seatedUnits.size,
     freeTables: freeUnits.size,
-    zones,
     occupancyByZone,
   }
-}
-
-function buildRegularFloorChips(
-  tables: TableView[],
-  states: Map<number, FloorTableState>,
-  floorGroupByTable: Map<number, FloorGroup>,
-): FloorChipItem[] {
-  const sorted = [...tables].sort((a, b) => (a.seqNo ?? 0) - (b.seqNo ?? 0) || a.code.localeCompare(b.code))
-  const chips: FloorChipItem[] = []
-
-  for (const t of sorted) {
-    const fs = states.get(t.id)
-    const rawState = resolveTableLiveState(t, fs)
-    const mapped = mapLiveStateToOverviewStatus(rawState)
-
-    // Hide inactive spare and out-of-service tables from the regular shift chips,
-    // while keeping a spare table visible if reception actively seated/booked it.
-    if (mapped === "oos" || t.status === "OUT_OF_SERVICE") continue
-    if (mapped === "spare" || (t.isSpare && mapped === "empty")) continue
-
-    const label = statusLabelOf(mapped)
-    const fg = floorGroupByTable.get(t.id)
-    const groupLabel = fg?.displayCode ?? fg?.name ?? (fg ? `G${String(fg.symbolNo).padStart(2, "0")}` : null)
-    const groupSuffix = groupLabel ? ` · Ghép ${groupLabel}` : ""
-    const tooltipText = `Bàn ${t.code} · ${label}${groupSuffix}`
-
-    chips.push({
-      id: `table-${t.id}`,
-      code: t.code,
-      status: mapped,
-      statusLabel: label,
-      tooltipText,
-      ariaLabel: tooltipText,
-      isGrouped: Boolean(fg),
-    })
-  }
-
-  return chips
-}
-
-function buildBarFloorChips(
-  tables: TableView[],
-  states: Map<number, FloorTableState>,
-  floorGroupByTable: Map<number, FloorGroup>,
-): FloorChipItem[] {
-  const sorted = [...tables].sort((a, b) => {
-    const na = extractBarSeatNumber(a) ?? a.seqNo ?? 0
-    const nb = extractBarSeatNumber(b) ?? b.seqNo ?? 0
-    return na - nb
-  })
-
-  interface BarAccumulator {
-    key: string
-    seatNumbers: number[]
-    fallbackCodes: string[]
-    status: OverviewFloorStatus
-    isGrouped: boolean
-  }
-
-  const orderedGroups: BarAccumulator[] = []
-  const groupByKey = new Map<string, BarAccumulator>()
-
-  for (const t of sorted) {
-    const fs = states.get(t.id)
-    const rawState = resolveTableLiveState(t, fs)
-    const mapped = mapLiveStateToOverviewStatus(rawState)
-
-    if (mapped === "oos" || t.status === "OUT_OF_SERVICE") continue
-    if (mapped === "spare" || (t.isSpare && mapped === "empty")) continue
-
-    const unitKey = resolveLogicalUnitKey(t, fs, floorGroupByTable)
-    const seatNo = extractBarSeatNumber(t)
-    const existing = groupByKey.get(unitKey)
-
-    if (!existing) {
-      const acc: BarAccumulator = {
-        key: unitKey,
-        seatNumbers: seatNo != null ? [seatNo] : [],
-        fallbackCodes: [t.code],
-        status: mapped,
-        isGrouped: !unitKey.startsWith("tbl:"),
-      }
-      groupByKey.set(unitKey, acc)
-      orderedGroups.push(acc)
-    } else {
-      if (seatNo != null && !existing.seatNumbers.includes(seatNo)) {
-        existing.seatNumbers.push(seatNo)
-      }
-      existing.fallbackCodes.push(t.code)
-      existing.isGrouped = true
-      if (STATUS_PRIORITY[mapped] > STATUS_PRIORITY[existing.status]) {
-        existing.status = mapped
-      }
-    }
-  }
-
-  return orderedGroups.map((item) => {
-    const code = item.seatNumbers.length > 0 ? formatBarChipNumbers(item.seatNumbers) : item.fallbackCodes.join(", ")
-    const label = statusLabelOf(item.status)
-    const seatCountNote = item.seatNumbers.length > 1 ? ` (${item.seatNumbers.length} ghế)` : ""
-    const tooltipText = `Ghế Bar ${code} · ${label}${seatCountNote}`
-
-    return {
-      id: `bar-${item.key}`,
-      code,
-      status: item.status,
-      statusLabel: label,
-      tooltipText,
-      ariaLabel: tooltipText,
-      isGrouped: item.isGrouped && item.seatNumbers.length > 1,
-    }
-  })
 }
 
 export function selectActiveWaitlistCount(waitlist: WaitlistEntryView[]): number {

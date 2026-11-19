@@ -131,6 +131,7 @@ function makeCtx(role: RoleCode): MobileCtx {
     openForm: vi.fn(),
     openTable: vi.fn(),
     ask: vi.fn(),
+    askCancel: vi.fn(),
     startPick: vi.fn(),
   }
 }
@@ -147,7 +148,7 @@ function renderWithCtx(role: RoleCode, node: ReactNode): string {
 }
 
 describe("Notification bell removal for RECEPTIONIST", () => {
-  it("renders no bell button, bell icon, or red badge on MapScreen for RECEPTIONIST while keeping Undo/Redo", () => {
+  it("shows the unread dot on Menu without a bell and keeps Undo/Redo for RECEPTIONIST", () => {
     const html = renderWithCtx(
       "RECEPTIONIST",
       createElement(MapScreen, {
@@ -162,13 +163,11 @@ describe("Notification bell removal for RECEPTIONIST", () => {
       }),
     )
 
-    expect(html).not.toContain("Thông báo")
+    expect(html).not.toContain('aria-label="Thông báo')
     expect(html).not.toContain("lucide-bell")
-    // Chuông đã bỏ hẳn, nhưng tín hiệu "có thông báo" chuyển sang chấm đỏ trên
-    // nút Menu — cùng màu st-noshow. Nên không cấm màu đó nữa, mà chốt rằng nó
-    // chỉ còn xuất hiện kèm nút Menu, và nút Menu nói rõ số chưa xem.
-    expect(html).toContain('aria-label="Menu, 5 thông báo chưa xem"')
-    expect(html.match(/bg-st-noshow/g) ?? []).toHaveLength(1)
+    expect(html).toMatch(
+      /<button[^>]*aria-label="Menu, 5 thông báo chưa xem"[^>]*>(?:(?!<\/button>).)*data-testid="reception-menu-unread"/s,
+    )
     expect(html).not.toContain('<span class="flex-1"></span>')
     expect(html).toContain('aria-label="Hoàn tác"')
     expect(html).toContain('aria-label="Làm lại"')

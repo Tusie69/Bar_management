@@ -1,21 +1,17 @@
 /*
- * TU-39 — Token riêng của Trang Quản trị, lấy từ Figma
- * "21GAM — Prototype Trang Quản trị (Admin) v1.0".
+ * TU-39 + Redesign P1 — Token riêng của Trang Quản trị, giữ nguyên bảng màu
+ * đã chốt từ Figma "21GAM — Prototype Trang Quản trị (Admin) v1.0".
  *
  * File này chỉ được import bởi admin-shell.tsx (đã lazy-load), và mọi biến đều
- * nằm trong `.admin-portal`. Giao diện Lễ tân / Thu ngân / Phục vụ dùng token
- * trong index.css và không nhìn thấy gì ở đây.
- *
- * Admin cố ý chỉ có một tông sáng: prototype không có bản tối, và một bản tối
- * đoán mò sẽ lệch mọi màu trạng thái bàn mà Figma đã chốt. Nút đổi sáng/tối
- * của Lễ tân vì thế không tác động lên khung Admin.
+ * nằm trong `.admin-portal` / `.admin-root`. Admin cố ý chỉ có chế độ sáng.
  */
 @import "@fontsource/be-vietnam-pro/400.css";
 @import "@fontsource/be-vietnam-pro/500.css";
 @import "@fontsource/be-vietnam-pro/600.css";
 @import "@fontsource/be-vietnam-pro/700.css";
 
-.admin-portal {
+.admin-portal,
+.admin-root {
   --adm-canvas: #f7f6f3;
   --adm-surface: #ffffff;
   --adm-surface-sunken: #f0eee9;
@@ -34,38 +30,20 @@
   --adm-state-inuse: #2e9e57;
   --adm-state-empty: #b9b4aa;
 
+  /* Derived helpers from existing admin palette via color-mix() */
+  --adm-border-subtle: color-mix(in oklab, var(--adm-border) 62%, transparent);
+  --adm-border-strong: color-mix(in oklab, var(--adm-border) 82%, var(--adm-text));
+  --adm-action-hover: color-mix(in oklab, var(--adm-action) 90%, #000);
+  --adm-action-active: color-mix(in oklab, var(--adm-action) 82%, #000);
+  --adm-tint-green: color-mix(in oklab, var(--adm-state-inuse) 12%, var(--adm-surface));
+  --adm-tint-blue-hover: color-mix(in oklab, var(--adm-action) 13%, var(--adm-surface));
+  --adm-scrim: color-mix(in oklab, var(--adm-brand-navy) 34%, transparent);
+  --adm-glass: color-mix(in oklab, var(--adm-surface) 90%, transparent);
+
   --adm-sidebar-w: 232px;
   --adm-header-h: 75px;
 
-  /*
-   * Token chuyển động. Lý do chọn từng con số nằm ở `admin-motion.ts`; thời
-   * lượng ở đây phải khớp `ADMIN_MOTION_MS` vì JS dựa vào đó để biết lúc nào
-   * gỡ drawer khỏi DOM.
-   *
-   * Không dùng `linear`: chuyển động tốc độ đều là thứ làm giao diện trông
-   * như máy móc. Vào thì phanh mềm ở cuối (ease-out), ra thì rời đi nhanh
-   * dần (ease-in).
-   */
-  --adm-dur-fast: 120ms;
-  --adm-dur-base: 200ms;
-  --adm-dur-exit: 150ms;
-  --adm-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --adm-ease-in: cubic-bezier(0.4, 0, 1, 1);
-
-  font-family: "Be Vietnam Pro", "Roboto", system-ui, sans-serif;
-  color: var(--adm-text);
-  background: var(--adm-canvas);
-}
-
-/*
- * Cầu nối token cho hai màn NA-33 / NA-34: CSS của chúng đọc `--admin-*`
- * (tên token theo Figma của Nam) và đã có fallback hex giống hệt bảng màu
- * này. Alias ở đây để khi bảng màu Admin đổi thì hai màn đó đổi theo,
- * thay vì giữ hex đóng cứng. `.admin-root` là lớp Nam đặt trên nội dung
- * rải qua portal (dialog), nên không nạp được token từ `.admin-portal`.
- */
-.admin-portal,
-.admin-root {
+  /* Bridge --admin-* tokens for NA-33 / NA-34 */
   --admin-brand-navy: var(--adm-brand-navy);
   --admin-text-primary: var(--adm-text);
   --admin-text-muted: var(--adm-text-muted);
@@ -86,206 +64,294 @@
   --admin-state-soon-ink: #854d0e;
   --admin-state-late-ink: #991b1b;
   --admin-state-inuse-ink: #1e3a0f;
+
+  /* Bridge shared primitive tokens so components/ui/* stay light-only & unified in Admin */
+  --background: var(--adm-canvas);
+  --foreground: var(--adm-text);
+  --surface-1: var(--adm-surface);
+  --surface-2: var(--adm-surface-sunken);
+  --surface-3: color-mix(in oklab, var(--adm-surface-sunken) 85%, var(--adm-border));
+  --text-muted: var(--adm-text-muted);
+  --text-subtle: color-mix(in oklab, var(--adm-text-muted) 84%, var(--adm-surface));
+  --tx-1: var(--adm-text);
+  --tx-strong: #111827;
+  --tx-head: var(--adm-text);
+  --tx-2: #4a4741;
+  --tx-3: var(--adm-text-muted);
+  --card: var(--adm-surface);
+  --card-foreground: var(--adm-text);
+  --popover: var(--adm-surface);
+  --popover-foreground: var(--adm-text);
+  --primary: var(--adm-action);
+  --primary-foreground: var(--adm-text-invert);
+  --primary-ink: var(--adm-action);
+  --primary-tint: var(--adm-tint-blue);
+  --primary-hover: var(--adm-action-hover);
+  --primary-active: var(--adm-action-active);
+  --secondary: var(--adm-surface-sunken);
+  --secondary-foreground: var(--adm-text);
+  --muted: var(--adm-surface-sunken);
+  --muted-foreground: var(--adm-text-muted);
+  --accent: var(--adm-surface-sunken);
+  --accent-foreground: var(--adm-text);
+  --destructive: var(--adm-state-late);
+  --destructive-foreground: #ffffff;
+  --destructive-badge-bg: var(--adm-state-late);
+  --destructive-tint: var(--adm-tint-red);
+  --border: var(--adm-border);
+  --border-strong: var(--adm-border-strong);
+  --border-subtle: var(--adm-border-subtle);
+  --input: var(--adm-border-strong);
+  --ring: var(--adm-action);
+  --scrim: var(--adm-scrim);
+
+  --shadow-xs: 0 1px 2px color-mix(in oklab, var(--adm-brand-navy) 5%, transparent);
+  --shadow-sm:
+    0 1px 2px color-mix(in oklab, var(--adm-brand-navy) 5%, transparent),
+    0 4px 12px -4px color-mix(in oklab, var(--adm-brand-navy) 8%, transparent);
+  --shadow-md:
+    0 2px 6px color-mix(in oklab, var(--adm-brand-navy) 6%, transparent),
+    0 12px 28px -8px color-mix(in oklab, var(--adm-brand-navy) 13%, transparent);
+  --shadow-float:
+    0 1px 2px color-mix(in oklab, var(--adm-brand-navy) 6%, transparent),
+    0 18px 42px -12px color-mix(in oklab, var(--adm-brand-navy) 20%, transparent);
+  --shadow-drawer: 8px 0 32px -8px color-mix(in oklab, var(--adm-brand-navy) 16%, transparent);
+
+  color-scheme: light;
+  font-family: "Be Vietnam Pro", "Roboto", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  color: var(--adm-text);
 }
 
-/* Bậc chữ của Figma. Dùng class thay vì rải số đo vào từng component. */
-.admin-portal .adm-h1 {
-  font-size: 26px;
-  line-height: 34px;
-  font-weight: 700;
-}
-.admin-portal .adm-h2 {
-  font-size: 18px;
-  line-height: 26px;
-  font-weight: 600;
-}
-.admin-portal .adm-h3 {
-  font-size: 15px;
-  line-height: 22px;
-  font-weight: 600;
-}
-.admin-portal .adm-body {
-  font-size: 14px;
-  line-height: 22px;
-}
-.admin-portal .adm-label {
-  font-size: 12px;
-  line-height: 18px;
-  font-weight: 500;
+.admin-portal {
+  background: var(--adm-canvas);
 }
 
-/* Mục sidebar: cao 42px, bo 8px, active là nền xanh nhạt như prototype. */
+/* ---- Admin Typography Scale (rem + size-specific tracking per Apple HIG §15) ---- */
+.admin-portal .adm-h1,
+.admin-root .adm-h1 {
+  font-size: var(--type-page-title-size);
+  line-height: var(--type-page-title-lh);
+  font-weight: var(--type-page-title-weight);
+  letter-spacing: var(--type-page-title-tracking);
+  text-wrap: balance;
+}
+
+.admin-portal .adm-h2,
+.admin-root .adm-h2 {
+  font-size: var(--type-section-title-size);
+  line-height: var(--type-section-title-lh);
+  font-weight: var(--type-section-title-weight);
+  letter-spacing: var(--type-section-title-tracking);
+  text-wrap: balance;
+}
+
+.admin-portal .adm-h3,
+.admin-root .adm-h3 {
+  font-size: var(--type-card-title-size);
+  line-height: var(--type-card-title-lh);
+  font-weight: var(--type-card-title-weight);
+  letter-spacing: var(--type-card-title-tracking);
+}
+
+.admin-portal .adm-kpi-value,
+.admin-root .adm-kpi-value {
+  font-size: var(--type-kpi-value-size);
+  line-height: var(--type-kpi-value-lh);
+  font-weight: var(--type-kpi-value-weight);
+  letter-spacing: var(--type-kpi-value-tracking);
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-portal .adm-kpi-label,
+.admin-root .adm-kpi-label {
+  font-size: var(--type-kpi-label-size);
+  line-height: var(--type-kpi-label-lh);
+  font-weight: var(--type-kpi-label-weight);
+  letter-spacing: var(--type-kpi-label-tracking);
+  color: var(--adm-text-muted);
+}
+
+.admin-portal .adm-body,
+.admin-root .adm-body {
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  font-weight: var(--type-body-weight);
+  letter-spacing: var(--type-body-tracking);
+}
+
+.admin-portal .adm-supporting,
+.admin-root .adm-supporting {
+  font-size: var(--type-supporting-size);
+  line-height: var(--type-supporting-lh);
+  font-weight: var(--type-supporting-weight);
+  letter-spacing: var(--type-supporting-tracking);
+  color: var(--adm-text-muted);
+}
+
+.admin-portal .adm-label,
+.admin-root .adm-label {
+  font-size: var(--type-form-label-size);
+  line-height: var(--type-form-label-lh);
+  font-weight: var(--type-form-label-weight);
+  letter-spacing: var(--type-form-label-tracking);
+}
+
+.admin-portal .adm-caption,
+.admin-root .adm-caption {
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-lh);
+  font-weight: var(--type-caption-weight);
+  letter-spacing: var(--type-caption-tracking);
+  color: var(--adm-text-muted);
+}
+
+.admin-portal .adm-error,
+.admin-root .adm-error {
+  font-size: var(--type-error-size);
+  line-height: var(--type-error-lh);
+  font-weight: var(--type-error-weight);
+  letter-spacing: var(--type-error-tracking);
+  color: var(--adm-state-late);
+}
+
+/* ---- Sidebar Navigation ---- */
 .admin-portal .adm-nav-item {
+  position: relative;
   display: flex;
   align-items: center;
-  height: 42px;
+  min-height: 44px;
   padding: 0 14px;
-  border-radius: 8px;
-  font-size: 14px;
-  line-height: 22px;
+  border-radius: var(--radius-sm);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  font-weight: 500;
+  letter-spacing: -0.004em;
   color: var(--adm-text);
   text-decoration: none;
+  transition:
+    background-color var(--duration-hover) var(--ease-spring-default),
+    color var(--duration-hover) var(--ease-spring-default),
+    transform var(--duration-press) var(--ease-press);
 }
+
 .admin-portal .adm-nav-item:hover {
   background: var(--adm-surface-sunken);
+  color: var(--adm-text);
 }
+
+.admin-portal .adm-nav-item:active {
+  transform: scale(0.985);
+}
+
 .admin-portal .adm-nav-item[aria-current="page"] {
   background: var(--adm-tint-blue);
   color: var(--adm-action);
-  font-weight: 500;
+  font-weight: 600;
 }
+
+.admin-portal .adm-nav-item[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--adm-action);
+}
+
+.admin-portal .adm-nav-item[aria-current="page"]:hover {
+  background: var(--adm-tint-blue-hover);
+  color: var(--adm-action);
+}
+
 .admin-portal .adm-nav-item:focus-visible {
   outline: 2px solid var(--adm-action);
   outline-offset: 2px;
 }
 
-/*
- * Skip link: ẩn cho đến khi được focus bằng bàn phím. Dùng `position: fixed`
- * vì `.admin-portal` không tạo containing block riêng.
- */
+/* ---- Header Chrome ---- */
+.admin-portal .adm-header {
+  min-height: 60px;
+  background: var(--adm-glass);
+  backdrop-filter: blur(12px) saturate(150%);
+}
+
+@media (min-width: 48rem) {
+  .admin-portal .adm-header {
+    min-height: var(--adm-header-h);
+  }
+}
+
+/* ---- Skip Link ---- */
 .admin-portal .adm-skip-link {
   position: fixed;
   top: 8px;
   left: 8px;
-  z-index: 60;
-  transform: translateY(-200%);
+  z-index: var(--z-skip);
+  transform: translateY(-220%);
   padding: 10px 14px;
   border: 1px solid var(--adm-action);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--adm-surface);
   color: var(--adm-action);
-  font-size: 14px;
-  line-height: 22px;
-  font-weight: 500;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  font-weight: 600;
   text-decoration: none;
+  box-shadow: var(--shadow-md);
+  transition: transform var(--duration-hover) var(--ease-spring-default);
 }
+
 .admin-portal .adm-skip-link:focus-visible {
   transform: translateY(0);
   outline: 2px solid var(--adm-action);
   outline-offset: 2px;
 }
 
-/*
- * Vùng nội dung là khung chứa mà các trang con đo theo.
- *
- * Breakpoint của hai trang Tổng quan và Sổ lượt trước đây đo bề ngang CỬA
- * SỔ, trong khi chúng nằm trong vùng nội dung hẹp hơn 280px (sidebar 232 +
- * padding 48). Hậu quả: `min-width: 1280px` kích hoạt khi khung thật chỉ còn
- * 1048px, bố cục hai cột bật ra quá sớm và bảng bị ép.
- *
- * `container-type: inline-size` chỉ chứa trục ngang, không chứa trục dọc, nên
- * `overflow-y: auto` của chính nó vẫn cuộn bình thường.
- */
 .admin-portal .adm-content {
   container-type: inline-size;
   container-name: adm-content;
 }
 
-/*
- * Hộp thoại của Quản trị. Radix đặt nó qua portal ở cấp body, ngoài khung
- * `.admin-portal`, nên chính nó phải mang lớp đó để có token. Khi đó nền
- * của `.admin-portal` là màu nền trang, không phải màu mặt thẻ; chọn lại ở
- * đây với độ ưu tiên cao hơn thay vì rải `style` vào từng hộp thoại.
- */
+/* ---- Dialog & Card Surfaces ---- */
 .admin-portal.adm-dialog {
   background: var(--adm-surface);
   color: var(--adm-text);
+  border-color: var(--adm-border);
+  box-shadow: var(--shadow-float);
 }
 
-.admin-portal .adm-card {
+.admin-portal .adm-card,
+.admin-root .adm-card {
   background: var(--adm-surface);
   border: 1px solid var(--adm-border);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xs);
 }
 
-/*
- * ---------------------------------------------------------------------------
- * Chuyển động
- * ---------------------------------------------------------------------------
- *
- * Drawer điều hướng (dưới 1024px). Trước đây panel được mount/unmount thẳng
- * nên nó hiện ra tức thì: mắt không thấy nó từ đâu tới, và người dùng mất
- * một nhịp để hiểu vừa có cái gì đè lên trang. Giờ nó trượt từ mép trái vào.
- *
- * Dùng `@keyframes` chứ không dùng `transition`: phần tử vừa mount thì
- * trình duyệt vẽ luôn trạng thái cuối, `transition` sẽ không chạy. Animation
- * thì tự chạy ngay khi phần tử xuất hiện.
- *
- * `will-change: transform` để trình duyệt nhấc panel lên layer riêng. Trên
- * tablet cũ của quán, thiếu dòng này thì khung trượt bị giật vì phải vẽ lại
- * cả vùng nội dung bên dưới ở từng frame.
- */
-@keyframes adm-drawer-in {
-  from {
-    transform: translateX(-100%);
+@media (prefers-reduced-transparency: reduce) {
+  .admin-portal .adm-header {
+    background: var(--adm-surface);
+    backdrop-filter: none;
   }
-  to {
-    transform: translateX(0);
-  }
-}
-@keyframes adm-drawer-out {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(-100%);
-  }
-}
-@keyframes adm-overlay-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-@keyframes adm-overlay-out {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
+
+  .admin-portal {
+    --adm-scrim: color-mix(in oklab, var(--adm-brand-navy) 64%, transparent);
   }
 }
 
-.admin-portal .adm-drawer-panel {
-  will-change: transform;
-}
-.admin-portal [data-state="open"] > .adm-drawer-panel {
-  animation: adm-drawer-in var(--adm-dur-base) var(--adm-ease-out) both;
-}
-.admin-portal [data-state="closed"] > .adm-drawer-panel {
-  animation: adm-drawer-out var(--adm-dur-exit) var(--adm-ease-in) both;
-}
-.admin-portal [data-state="open"] > .adm-drawer-overlay {
-  animation: adm-overlay-in var(--adm-dur-base) linear both;
-}
-.admin-portal [data-state="closed"] > .adm-drawer-overlay {
-  animation: adm-overlay-out var(--adm-dur-exit) linear both;
+@media (prefers-contrast: more) {
+  .admin-portal,
+  .admin-root {
+    --adm-border: #b8b3a8;
+    --adm-text-muted: #4b473f;
+  }
 }
 
-/*
- * Nền/màu của mục menu và nút trên header. 120ms vì đây là thứ xảy ra hàng
- * trăm lần mỗi phiên tra cứu — chậm hơn là thành lầy.
- *
- * Chỉ chuyển `background-color` và `color`, không dùng `transition: all`:
- * `all` sẽ bắt luôn cả `outline` của focus-visible, làm viền focus bò ra
- * chậm một nhịp, đúng lúc người dùng bàn phím cần thấy nó ngay.
- */
-.admin-portal .adm-nav-item {
-  transition:
-    background-color var(--adm-dur-fast) var(--adm-ease-out),
-    color var(--adm-dur-fast) var(--adm-ease-out);
+@media (prefers-reduced-motion: reduce) {
+  .admin-portal .adm-nav-item:active {
+    transform: none;
+  }
 }
-
-/* Skip link: bật ra khi nhận focus, trượt xuống thay vì nhảy. */
-.admin-portal .adm-skip-link {
-  transition: transform var(--adm-dur-fast) var(--adm-ease-out);
-}
-
-/*
- * `prefers-reduced-motion` đã được tắt chung ở index.css (animation và
- * transition về 0.01ms). Không khai lại ở đây — nhưng JS vẫn phải tự đọc
- * thiết lập đó để gỡ drawer ngay thay vì chờ 150ms rỗng; xem
- * `drawerExitDelay` trong admin-motion.ts.
- */

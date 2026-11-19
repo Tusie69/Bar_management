@@ -66,7 +66,10 @@ try {
         await glyph(page, "B6").click()
         await glyph(page, "B7").click()
         await expect(page.getByRole("form")).toHaveCount(0)
-        await expect(page.getByRole("region", { name: "Chế độ ghép bàn" })).toContainText("B5 - B6 - B7")
+        const mergePanel = page.getByRole("region", { name: "Chế độ ghép bàn" })
+        for (const code of ["B5", "B6", "B7"]) {
+          await expect(mergePanel.getByText(code, { exact: true })).toBeVisible()
+        }
         await page.getByRole("button", { name: /Ghép \d+ bàn|Xác nhận ghép/ }).click()
         const members = page.locator('[data-combined-codes="B5 B6 B7"]')
         await expect(members).toHaveCount(3)
@@ -75,8 +78,9 @@ try {
         await expect(glyph(page, "B7")).toBeVisible()
         await expect(glyph(page, "B5")).not.toHaveAttribute("data-group-color")
         await expect(glyph(page, "B5").locator('rect[stroke-width="3"]')).toHaveCount(1)
-        if (width < 768) await page.getByRole("button", { name: "Đóng", exact: true }).click()
-        else await page.getByRole("button", { name: /Ca tối nay/ }).click()
+        const detail = page.getByRole("dialog", { name: /^Chi tiết/ })
+        await detail.getByRole("button", { name: "Đóng", exact: true }).click()
+        await expect(detail).toBeHidden()
         for (const button of await page.locator("[data-sonner-toast] [data-close-button]").all()) await button.click()
         if ([360, 390, 768, 1366].includes(width)) {
           await page.screenshot({ path: `${output}/combined-${theme}-${width}.png` })
@@ -88,31 +92,40 @@ try {
           await glyph(page, "B5").click()
           await expect(page.getByRole("form")).toHaveCount(0)
           await page.getByRole("button", { name: "Tách bàn", exact: true }).click()
-          await page.getByRole("button", { name: "Tách thành bàn đơn", exact: true }).click()
+          const split = page.getByRole("dialog", { name: /^Tách bàn/ })
+          await split.getByRole("button", { name: "Tách thành bàn đơn", exact: true }).click()
+          await expect(split).toBeHidden()
           await expect(page.locator('[data-combined-codes="B5 B6 B7"]')).toHaveCount(0)
           await expect(glyph(page, "B5")).toBeVisible()
-          const close = page.getByRole("button", { name: "Đóng", exact: true })
-          if (await close.isVisible()) await close.click()
-          else await page.getByRole("button", { name: /Ca tối nay/ }).click()
-          await page.getByRole("button", { name: "Ghép bàn", exact: true }).click()
+          if (await detail.isVisible()) await detail.getByRole("button", { name: "Đóng", exact: true }).click()
+          await expect(detail).toBeHidden()
           await seat(page, 2).click()
+          await page
+            .locator('[aria-label="Thao tác mặt bằng"]')
+            .getByRole("button", { name: "Ghép bàn", exact: true })
+            .click()
           await seat(page, 3).click()
           await page.getByRole("button", { name: /Ghép \d+ bàn|Xác nhận ghép/ }).click()
           const pair = page.locator('[data-combined-codes="BAR02 BAR03"]')
           await expect(pair).toHaveCount(2)
-          const dashed = page.locator('[data-combined-codes="BAR02 BAR03"] circle[stroke-dasharray="5 3"]')
-          if ((await dashed.count()) === 0) {
-            await seat(page, 2).click()
-          }
-          await expect(dashed).toHaveCount(2)
-          await expect(dashed.first()).toHaveAttribute("stroke", "#64748B")
-          if (width < 768) {
-            const btn = page.getByRole("button", { name: "Tạo đặt trước", exact: true })
-            if (await btn.isVisible()) await btn.click()
-          } else {
-            const btn = page.getByRole("button", { name: "Đặt bàn", exact: true })
-            if (await btn.isVisible()) await btn.click()
-          }
+          const groupCode = await pair.first().getAttribute("data-group-id")
+          assert.ok(groupCode)
+          await expect(pair.last()).toHaveAttribute("data-group-id", groupCode)
+          const outlines = await pair.evaluateAll((seats) => {
+            const centers = seats.map((seat) => {
+              const box = seat.getBoundingClientRect()
+              return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+            })
+            return [...document.querySelectorAll('[data-cluster-outline="1"][data-cluster-kind="bar"]')].filter(
+              (outline) => {
+                const box = outline.getBoundingClientRect()
+                return centers.every(({ x, y }) => x >= box.left && x <= box.right && y >= box.top && y <= box.bottom)
+              },
+            ).length
+          })
+          assert.equal(outlines, 1, "one cluster outline surrounds the two merged seats")
+          const book = page.getByRole("button", { name: "Đặt bàn", exact: true })
+          if (await book.isVisible()) await book.click()
           const form = page.getByRole("form", { name: /Tạo đặt bàn|Đặt bàn/ })
           if (await form.isVisible()) {
             const guestBtn = form.getByRole("button", { name: "2", exact: true })

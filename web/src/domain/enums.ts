@@ -108,6 +108,14 @@ export const CLOSE_REASON_LABEL: Record<ReservationCloseReason, string> = {
   OTHER: "Lý do khác",
 }
 
+export type BookingCancelReason = Exclude<ReservationCloseReason, "NO_SHOW_CONFIRMED">
+
+export const CANCEL_REASONS: { value: BookingCancelReason; label: string }[] = (
+  Object.keys(CLOSE_REASON_LABEL) as ReservationCloseReason[]
+)
+  .filter((r): r is BookingCancelReason => r !== "NO_SHOW_CONFIRMED")
+  .map((value) => ({ value, label: CLOSE_REASON_LABEL[value] }))
+
 export const WAITLIST_KIND_LABEL: Record<WaitlistKind, string> = {
   ADVANCE_RESERVATION: "Đặt trước, chưa có bàn",
   WALK_IN: "Walk-in, chưa có bàn",

@@ -15,7 +15,7 @@ interface StaffBreakdownCardProps {
 export function StaffBreakdownCard({ byStaff, selectedStaffId, onSelectStaff }: StaffBreakdownCardProps) {
   return (
     <section className="turns-card" aria-labelledby="turns-staff-heading" data-testid="turns-staff-card">
-      <div className="turns-card-header">
+      <div className="turns-card-header turns-card-header-bordered">
         <div>
           <h2 id="turns-staff-heading" className="turns-card-title">
             Theo nhân viên
@@ -27,12 +27,7 @@ export function StaffBreakdownCard({ byStaff, selectedStaffId, onSelectStaff }: 
           <button
             type="button"
             onClick={() => onSelectStaff(undefined)}
-            className="inline-flex min-h-[32px] items-center gap-1 rounded-full border px-2.5 text-xs font-medium"
-            style={{
-              borderColor: "var(--turns-blue)",
-              backgroundColor: "var(--turns-tint-blue)",
-              color: "var(--turns-blue-ink)",
-            }}
+            className="turns-filter-chip"
             data-testid="turns-staff-clear"
           >
             <X className="size-3.5" aria-hidden="true" />
@@ -77,9 +72,9 @@ export function StaffBreakdownCard({ byStaff, selectedStaffId, onSelectStaff }: 
                     onClick={isSystem ? undefined : handleToggle}
                     data-staff-id={userId === null ? "null" : String(userId)}
                     data-selected={isSelected ? "true" : "false"}
+                    data-state={isSelected ? "selected" : undefined}
                     style={{
                       cursor: isSystem ? "default" : "pointer",
-                      backgroundColor: isSelected ? "var(--turns-tint-blue)" : undefined,
                     }}
                   >
                     <td>
@@ -90,15 +85,7 @@ export function StaffBreakdownCard({ byStaff, selectedStaffId, onSelectStaff }: 
                         >
                           <Bot className="size-4 shrink-0" aria-hidden="true" />
                           <span>{displayName}</span>
-                          <span
-                            className="rounded px-1.5 py-0.5 text-[11px] leading-4 font-medium"
-                            style={{
-                              backgroundColor: "var(--turns-sunken)",
-                              color: "var(--turns-muted)",
-                            }}
-                          >
-                            Tự động
-                          </span>
+                          <span className="turns-badge turns-badge-uncounted">Tự động</span>
                         </span>
                       ) : (
                         <button
@@ -108,7 +95,7 @@ export function StaffBreakdownCard({ byStaff, selectedStaffId, onSelectStaff }: 
                             event.stopPropagation()
                             handleToggle()
                           }}
-                          className="inline-flex min-h-[32px] w-full items-center gap-1.5 rounded text-left font-medium"
+                          className="turns-staff-filter-btn"
                           style={{
                             color: isSelected ? "var(--turns-blue-ink)" : "var(--turns-text)",
                             fontWeight: isSelected ? 600 : 500,
@@ -148,7 +135,7 @@ export function TopScopesCard({ byScope }: TopScopesCardProps) {
 
   return (
     <section className="turns-card" aria-labelledby="turns-top-scopes-heading" data-testid="turns-top-scopes-card">
-      <div className="turns-card-header">
+      <div className="turns-card-header turns-card-header-bordered">
         <div>
           <h2 id="turns-top-scopes-heading" className="turns-card-title">
             Bàn được ngồi nhiều nhất
@@ -197,11 +184,10 @@ export function TopScopesCard({ byScope }: TopScopesCardProps) {
                     key={`${item.scope}-${item.groupId ?? item.tableId ?? item.label}-${index}`}
                     data-scope-type={item.scope}
                   >
-                    <td
-                      className="w-8 font-semibold"
-                      style={{ color: index < 3 ? "var(--turns-navy)" : "var(--turns-muted)" }}
-                    >
-                      {index + 1}
+                    <td className="w-9">
+                      <span className={index < 3 ? "turns-rank-pill turns-rank-pill--top" : "turns-rank-pill"}>
+                        {index + 1}
+                      </span>
                     </td>
                     <td>
                       <div className="flex flex-wrap items-center gap-2">

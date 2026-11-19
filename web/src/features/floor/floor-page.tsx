@@ -11,6 +11,7 @@ import { useReceptionSearch } from "@/hooks/use-reception-search"
 import { useMediaQuery } from "@/hooks/use-media"
 import { atBusinessTime, businessDateOf, fmtBusinessDate, MS } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { OverlayMotionMount, useAwaitingMotionController, usePresenceController, useStableNodeRef } from "@/lib/motion"
 import { isApiError } from "@/services"
 import { useUi } from "@/state/ui"
 import { useSession } from "@/state/session"
@@ -18,6 +19,7 @@ import { ZaloBookingExport } from "../reservations/zalo-booking-export"
 import WaitlistPage from "../waitlist/waitlist-page"
 import { AvailabilityPanel } from "./availability-panel"
 import { BookingList, BookingTable, LIST_TABS, useBookingItems, type ListTab } from "./booking-list"
+import { INITIAL_BOTTOM_PANEL_STATE, nextBottomPanelState } from "./bottom-panel-snapshot"
 import { FloorCanvas } from "./floor-canvas"
 import { LayoutMergeControls } from "./layout-merge-controls"
 import { independentLayoutEnabled, toggleLayoutTable } from "./layout-merge"
@@ -52,7 +54,11 @@ function Segmented<T extends string>({
   label: string
 }) {
   return (
-    <div role="tablist" aria-label={label} className="flex gap-0.5 rounded-sm border bg-surface-1 p-[2px]">
+    <div
+      role="tablist"
+      aria-label={label}
+      className="flex gap-0.5 rounded-lg border border-border-subtle bg-surface-2 p-0.5"
+    >
       {options.map((o) => {
         const on = o.value === value
         return (
@@ -63,8 +69,10 @@ function Segmented<T extends string>({
             aria-selected={on}
             onClick={() => onChange(o.value)}
             className={cn(
-              "flex h-[30px] items-center gap-1 rounded-sm px-2.5 text-xs whitespace-nowrap sm:text-sm",
-              on ? "bg-primary-tint font-medium text-primary-ink" : "text-tx-2 hover:text-tx-1",
+              "flex h-[32px] items-center gap-1.5 rounded-md px-2.5 text-xs whitespace-nowrap transition-[background-color,color,box-shadow,transform] duration-150 focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.98] sm:text-sm",
+              on
+                ? "bg-surface-1 font-semibold text-foreground shadow-xs"
+                : "font-medium text-tx-2 hover:text-foreground",
             )}
           >
             {o.label}
@@ -215,6 +223,53 @@ export function FloorPage() {
   // v2: the timeline gets the full width until a row is picked.
   const showRight = wide && (!!draft || view !== "timeline" || !live || !!ui.selectedTableId)
   const bottomOpen = !wide && (!!draft || (live && !!ui.selectedTableId && !ui.pick) || (!live && availSel.length > 0))
+  const bottomPresence = usePresenceController({ open: bottomOpen })
+  const { awaitingMotion: bottomAwaitingMotion, fallbackShown: bottomFallback } = useAwaitingMotionController(
+    bottomPresence.present,
+    bottomOpen,
+  )
+  const [bottomPanelEl, setBottomPanelRef] = useStableNodeRef<HTMLElement>()
+  const [bottomOverlayEl, setBottomOverlayRef] = useStableNodeRef<HTMLSpanElement>()
+  const [bottomState, setBottomState] = useState(INITIAL_BOTTOM_PANEL_STATE)
+  const nextBottom = nextBottomPanelState(bottomState, {
+    open: bottomOpen,
+    present: bottomPresence.present,
+    live,
+    draft,
+    draftAvailability: draftAvailStatus === "ready" ? draftAvail.data : undefined,
+    draftAvailabilityStatus: draftAvailStatus,
+    selectedTableId: ui.selectedTableId,
+    availSelection: availSel,
+  })
+  if (nextBottom !== bottomState) {
+    setBottomState(nextBottom)
+  }
+  const bottomSnapshot = nextBottom.snapshot
+  const bottomIsDraft = bottomPresence.present && bottomSnapshot?.kind === "draft"
+  const bottomPanel =
+    bottomSnapshot?.kind === "draft" ? (
+      <QuickForm
+        key={bottomSnapshot.sessionId}
+        draft={bottomSnapshot.draft}
+        model={model}
+        availability={bottomSnapshot.availability}
+        availabilityStatus={bottomSnapshot.availabilityStatus}
+        onRetryAvailability={() => void draftAvail.refetch()}
+        compact={!wide}
+      />
+    ) : bottomSnapshot?.kind === "availability" ? (
+      <AvailabilityPanel
+        model={model}
+        result={availability.data}
+        loading={availability.isFetching}
+        selection={bottomSnapshot.selection}
+        setSelection={setAvailSel}
+      />
+    ) : bottomSnapshot?.kind === "table" ? (
+      <TableDetail tableId={bottomSnapshot.tableId} model={model} onBack={() => ui.selectTable(null)} />
+    ) : (
+      panel
+    )
   const bookingDraft = draft?.kind === "booking" ? draft : null
 
   const counts = model.counts
@@ -235,7 +290,7 @@ export function FloorPage() {
     <div className="flex h-full min-h-0 flex-col">
       {!receptionist ? <FloorToolbar onOpenList={xl ? undefined : () => setListOpen(true)} /> : null}
       {receptionist ? (
-        <div className="shrink-0 border-b px-4 py-2">
+        <div className="shrink-0 border-b border-border-subtle bg-background px-4 py-2">
           <ZaloBookingExport businessDate={date}>
             {({ copy, loading }) => (
               <ReceptionControls
@@ -251,7 +306,7 @@ export function FloorPage() {
       ) : null}
       {!live && !ui.pick ? (
         <div
-          className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-dashed border-strong bg-surface-1 px-4 py-1.5 text-sm"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border-subtle bg-surface-1 px-4 py-2 text-sm"
           role="status"
         >
           <span className="inline-flex items-center gap-1.5 font-medium">
@@ -272,10 +327,13 @@ export function FloorPage() {
         </div>
       ) : null}
 
-      <div className={cn("relative flex min-h-0 flex-1", !wide && draft && "flex-col")}>
+      <div className={cn("relative flex min-h-0 flex-1", !wide && bottomIsDraft && "flex-col")}>
         {/* NA-11: the receptionist works from the floor alone, without the Cần xử lý / Sắp đến lists. */}
         {xl && view !== "list" && !receptionist ? (
-          <aside className="w-1/4 max-w-[336px] min-w-[288px] shrink-0 border-r" aria-label="Danh sách booking">
+          <aside
+            className="w-1/4 max-w-[336px] min-w-[288px] shrink-0 border-r border-border-subtle bg-surface-1"
+            aria-label="Danh sách booking"
+          >
             {list}
           </aside>
         ) : null}
@@ -323,7 +381,7 @@ export function FloorPage() {
           ) : null}
 
           {view === "map" ? (
-            <div className="relative min-h-0 flex-1 overflow-hidden rounded-lg border border-border/60">
+            <div className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-border-subtle bg-surface-1">
               {model.error ? (
                 <div className="grid h-full place-items-center p-6">
                   <EmptyState
@@ -396,39 +454,56 @@ export function FloorPage() {
 
         {showRight ? (
           <aside
-            className="w-[26%] max-w-[372px] min-w-[340px] shrink-0 border-l bg-surface-1"
+            className="w-[26%] max-w-[372px] min-w-[340px] shrink-0 border-l border-border-subtle bg-surface-1"
             aria-label="Bảng điều phối"
           >
             {panel}
           </aside>
         ) : null}
 
-        {bottomOpen ? (
-          <section
-            className={cn(
-              "z-20 flex animate-in flex-col overflow-hidden border-t border-strong bg-popover shadow-float duration-200 slide-in-from-bottom-6",
-              draft
-                ? "relative max-h-[60%] shrink-0 rounded-t-lg"
-                : "absolute inset-x-0 bottom-0 max-h-[62%] rounded-t-sm",
-            )}
-            aria-label="Chi tiết"
-          >
-            <div className="flex justify-center pt-2" aria-hidden>
-              <span className="h-1 w-10 rounded-full bg-strong" />
-            </div>
-            {!live && !draft ? (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="absolute top-1.5 right-2 z-10"
-                aria-label="Đóng chi tiết"
-                onClick={() => setAvailSel([])}
-              >
-                <X />
-              </Button>
+        {bottomPresence.present ? (
+          <>
+            <span ref={setBottomOverlayRef} className="pointer-events-none sr-only" aria-hidden />
+            <section
+              ref={setBottomPanelRef}
+              className={cn(
+                "z-20 flex flex-col overflow-hidden border-t border-border bg-popover shadow-float",
+                bottomIsDraft
+                  ? "relative max-h-[60%] shrink-0 rounded-t-2xl"
+                  : "absolute inset-x-0 bottom-0 max-h-[62%] rounded-t-2xl",
+                !bottomOpen && "pointer-events-none",
+                bottomAwaitingMotion && "opacity-0",
+              )}
+              aria-label="Chi tiết"
+            >
+              <div className="flex justify-center pt-2" aria-hidden>
+                <span className="h-1 w-10 rounded-full bg-border-strong" />
+              </div>
+              {!live && !bottomIsDraft ? (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="absolute top-1.5 right-2 z-10"
+                  aria-label="Đóng chi tiết"
+                  onClick={() => setAvailSel([])}
+                >
+                  <X />
+                </Button>
+              ) : null}
+              <div className="flex min-h-0 flex-1 flex-col">{bottomPanel}</div>
+            </section>
+            {bottomPanelEl && bottomOverlayEl ? (
+              <OverlayMotionMount
+                kind="sheet"
+                side="bottom"
+                open={bottomOpen}
+                skipInitialEnter={bottomFallback}
+                overlay={bottomOverlayEl}
+                content={bottomPanelEl}
+                onExitComplete={bottomPresence.markExited}
+              />
             ) : null}
-            <div className="flex min-h-0 flex-1 flex-col">{panel}</div>
-          </section>
+          </>
         ) : null}
       </div>
 
@@ -483,7 +558,7 @@ function PickBanner({ model }: { model: ReturnType<typeof useFloorModel> }) {
   const isAssign = pick.intent === "assign" && !!pick.targetDate
   return (
     <div
-      className="z-10 w-full shrink-0 rounded-sm border border-strong bg-popover p-3"
+      className="z-10 w-full shrink-0 rounded-xl border border-border bg-popover p-3.5 shadow-sm"
       role="dialog"
       aria-label={pick.title}
     >

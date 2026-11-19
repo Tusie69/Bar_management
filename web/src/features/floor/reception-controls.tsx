@@ -54,7 +54,7 @@ export function ReceptionSearchField({ search, className }: { search: ReceptionS
     <div className={cn("relative min-w-0 flex-1", className)}>
       <button
         type="button"
-        className="absolute inset-y-0 left-0 grid min-h-[40px] w-10 place-items-center rounded-sm text-muted-foreground focus-visible:ring-2"
+        className="absolute inset-y-0 left-0 grid min-h-[40px] w-10 place-items-center rounded-l-md text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
         aria-label={byName ? "Chuyển sang tìm theo SĐT" : "Chuyển sang tìm theo tên"}
         title={byName ? "Tìm theo 3 số cuối" : "Tìm theo tên khách"}
         onClick={search.toggleMode}
@@ -113,11 +113,14 @@ export function ReceptionSearchResults({
             <button
               key={row.id}
               type="button"
-              className="min-h-11 min-h-[44px] shrink-0 rounded-sm border bg-surface-1 px-3 text-left text-xs"
+              className="min-h-[44px] shrink-0 rounded-lg border border-border bg-surface-1 px-3 py-2 text-left text-xs shadow-2xs transition-colors hover:bg-surface-2 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.99]"
               onClick={() => onOpenBooking(row.id, result.businessDate)}
             >
-              {row.displayName} · ***{row.phoneLast3} ·{" "}
-              {row.tableIds.length ? `${row.tableIds.length} bàn` : "Chưa có bàn"}
+              <span className="font-medium text-foreground">{row.displayName}</span>
+              <span className="text-tx-2">
+                {" "}
+                · ***{row.phoneLast3} · {row.tableIds.length ? `${row.tableIds.length} bàn` : "Chưa có bàn"}
+              </span>
             </button>
           ))}
         </div>

@@ -9,7 +9,7 @@ import { createServer } from "vite"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
-const outDir = path.join(webRoot, "e2e", ".artifacts", "reception-ui-refinement")
+const outDir = process.env.RECEPTION_EVIDENCE_DIR || path.join(webRoot, "e2e", ".artifacts", "reception-ui-refinement")
 fs.mkdirSync(outDir, { recursive: true })
 
 const VIEWPORTS = [
@@ -99,34 +99,44 @@ async function setAndVerifyGuestCounts(page, fields) {
 }
 
 async function assertGuestCounterLayout(page, vpLabel, fields) {
-  const layout = await page.evaluate((keys) => {
-    const card = document.querySelector('[data-testid="guest-count-card"]')
-    if (!card) return null
-    const cardRect = card.getBoundingClientRect()
-    const toBox = (r) => ({ left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height })
-    const items = keys.map((key) => {
-      const labelEl = card.querySelector(`[data-testid="guest-count-label-${key}"]`)
-      const valueEl = card.querySelector(`[data-testid="guest-count-value-${key}"]`)
-      const lr = labelEl?.getBoundingClientRect() ?? null
-      const vr = valueEl?.getBoundingClientRect() ?? null
+  const layout = await page.evaluate(
+    (keys) => {
+      const card = document.querySelector('[data-testid="guest-count-card"]')
+      if (!card) return null
+      const cardRect = card.getBoundingClientRect()
+      const toBox = (r) => ({
+        left: r.left,
+        top: r.top,
+        right: r.right,
+        bottom: r.bottom,
+        width: r.width,
+        height: r.height,
+      })
+      const items = keys.map((key) => {
+        const labelEl = card.querySelector(`[data-testid="guest-count-label-${key}"]`)
+        const valueEl = card.querySelector(`[data-testid="guest-count-value-${key}"]`)
+        const lr = labelEl?.getBoundingClientRect() ?? null
+        const vr = valueEl?.getBoundingClientRect() ?? null
+        return {
+          key,
+          text: valueEl?.textContent ?? "",
+          labelClipped: labelEl ? labelEl.scrollWidth > labelEl.clientWidth + 0.5 : true,
+          valueClipped: valueEl ? valueEl.scrollWidth > valueEl.clientWidth + 0.5 : true,
+          labelRect: lr ? toBox(lr) : null,
+          valueRect: vr ? toBox(vr) : null,
+        }
+      })
+      const c4 = document.querySelector('[role="button"][aria-label^="Bàn C4"]')?.getBoundingClientRect() ?? null
+      const b7 = document.querySelector('[role="button"][aria-label^="Bàn B7"]')?.getBoundingClientRect() ?? null
       return {
-        key,
-        text: valueEl?.textContent ?? "",
-        labelClipped: labelEl ? labelEl.scrollWidth > labelEl.clientWidth + 0.5 : true,
-        valueClipped: valueEl ? valueEl.scrollWidth > valueEl.clientWidth + 0.5 : true,
-        labelRect: lr ? toBox(lr) : null,
-        valueRect: vr ? toBox(vr) : null,
+        cardRect: toBox(cardRect),
+        items,
+        c4: c4 ? toBox(c4) : null,
+        b7: b7 ? toBox(b7) : null,
       }
-    })
-    const c4 = document.querySelector('[role="button"][aria-label^="Bàn C4"]')?.getBoundingClientRect() ?? null
-    const b7 = document.querySelector('[role="button"][aria-label^="Bàn B7"]')?.getBoundingClientRect() ?? null
-    return {
-      cardRect: toBox(cardRect),
-      items,
-      c4: c4 ? toBox(c4) : null,
-      b7: b7 ? toBox(b7) : null,
-    }
-  }, fields.map((f) => f.key))
+    },
+    fields.map((f) => f.key),
+  )
 
   assert(layout, `${vpLabel}: guest-count-card missing`)
   const overlaps = (a, b, tol = 0.2) =>
@@ -135,7 +145,11 @@ async function assertGuestCounterLayout(page, vpLabel, fields) {
   for (let i = 0; i < layout.items.length; i++) {
     const item = layout.items[i]
     const expected = fields[i]
-    assert.equal(item.text, expected.value, `${vpLabel}: counter ${item.key} expected ${expected.value}, got ${item.text}`)
+    assert.equal(
+      item.text,
+      expected.value,
+      `${vpLabel}: counter ${item.key} expected ${expected.value}, got ${item.text}`,
+    )
     assert(!item.labelClipped, `${vpLabel}: label ${item.key} clipped`)
     assert(!item.valueClipped, `${vpLabel}: value ${item.key} (${item.text}) clipped`)
     assert(item.labelRect && item.valueRect, `${vpLabel}: missing rect for ${item.key}`)
@@ -186,17 +200,96 @@ function attachErrorCollector(page) {
 }
 
 function rectsOverlap(a, b, tol = 0.5) {
-  return !(
-    a.right <= b.left + tol ||
-    b.right <= a.left + tol ||
-    a.bottom <= b.top + tol ||
-    b.bottom <= a.top + tol
-  )
+  return !(a.right <= b.left + tol || b.right <= a.left + tol || a.bottom <= b.top + tol || b.bottom <= a.top + tol)
 }
 
-const { server, baseUrl } = await startMockViteServer()
+/** Browser-evaluated check: maps every painted badge/icon perimeter point into each cluster outline's SVG frame. */
+function measureOutlineStrokeIntersections(svgRoot) {
+  const outlines = Array.from(svgRoot?.querySelectorAll('[data-cluster-outline="1"] > rect') ?? [])
+  const decorationShapes = Array.from(
+    svgRoot?.querySelectorAll(
+      '[data-testid="guest-count-badge"] rect, [data-testid="turn-badge"] rect, [data-testid="turn-badge"] circle, [data-testid="table-icons-bottom-left"] circle, [data-testid="table-icons-bottom-right"] circle',
+    ) ?? [],
+  )
+  const hits = []
+  if (!svgRoot || outlines.length === 0 || decorationShapes.length === 0) return hits
+  const pt = svgRoot.createSVGPoint()
+  for (const decShape of decorationShapes) {
+    const decCtm = decShape.getScreenCTM()
+    if (!decCtm) continue
+    const decGroup = decShape.closest("[data-testid]")
+    const tableGroup = decShape.closest('[role="button"][aria-label], [role="img"][aria-label]')
+    const decLabel = `${tableGroup?.getAttribute("aria-label")?.split(",")[0] ?? "?"} ${decGroup?.getAttribute("data-testid") ?? ""}`
+    const sw = Number(decShape.getAttribute("stroke-width") || 0) / 2
+    const samplePoints = []
+    if (decShape.tagName.toLowerCase() === "circle") {
+      const cx = Number(decShape.getAttribute("cx") || 0)
+      const cy = Number(decShape.getAttribute("cy") || 0)
+      const r = Number(decShape.getAttribute("r") || 0) + sw
+      for (let i = 0; i < 24; i++) {
+        const a = (i / 24) * Math.PI * 2
+        samplePoints.push([cx + Math.cos(a) * r, cy + Math.sin(a) * r])
+      }
+    } else {
+      const x = Number(decShape.getAttribute("x") || 0) - sw
+      const y = Number(decShape.getAttribute("y") || 0) - sw
+      const w = Number(decShape.getAttribute("width") || 0) + sw * 2
+      const h = Number(decShape.getAttribute("height") || 0) + sw * 2
+      const rxRaw = Number(decShape.getAttribute("rx") || 0)
+      const rr = rxRaw > 0 ? Math.min(w / 2, h / 2, rxRaw + sw) : 0
+      if (rr > 0) {
+        for (let i = 0; i <= 8; i++) {
+          const tx = x + rr + ((w - 2 * rr) * i) / 8
+          samplePoints.push([tx, y], [tx, y + h])
+        }
+        for (let i = 0; i <= 8; i++) {
+          const aTopLeft = Math.PI + (i / 8) * (Math.PI / 2)
+          const aTopRight = -Math.PI / 2 + (i / 8) * (Math.PI / 2)
+          const aBotRight = (i / 8) * (Math.PI / 2)
+          const aBotLeft = Math.PI / 2 + (i / 8) * (Math.PI / 2)
+          samplePoints.push(
+            [x + rr + Math.cos(aTopLeft) * rr, y + rr + Math.sin(aTopLeft) * rr],
+            [x + w - rr + Math.cos(aTopRight) * rr, y + rr + Math.sin(aTopRight) * rr],
+            [x + w - rr + Math.cos(aBotRight) * rr, y + h - rr + Math.sin(aBotRight) * rr],
+            [x + rr + Math.cos(aBotLeft) * rr, y + h - rr + Math.sin(aBotLeft) * rr],
+          )
+        }
+      } else {
+        for (let i = 0; i <= 10; i++) {
+          const t = i / 10
+          samplePoints.push([x + w * t, y], [x + w * t, y + h], [x, y + h * t], [x + w, y + h * t])
+        }
+      }
+    }
+    for (const outlineRect of outlines) {
+      const outCtm = outlineRect.getScreenCTM()
+      if (!outCtm) continue
+      const outInv = outCtm.inverse()
+      const mask = outlineRect.getAttribute("mask")
+      // Stroke geometry still includes parts hidden by the SVG mask.
+      const cuts = mask
+        ? Array.from(document.getElementById(mask.slice(5, -1))?.querySelectorAll('rect[fill="black"]') ?? [])
+        : []
+      const outlineCode = outlineRect.closest("[data-cluster-outline]")?.getAttribute("data-cluster-code-value") ?? "?"
+      for (const [sx, sy] of samplePoints) {
+        pt.x = sx
+        pt.y = sy
+        const mapped = pt.matrixTransform(decCtm).matrixTransform(outInv)
+        if (outlineRect.isPointInStroke(mapped) && !cuts.some((cut) => cut.isPointInFill(mapped))) {
+          hits.push(`${decLabel} intersects ${outlineCode} stroke`)
+          break
+        }
+      }
+    }
+  }
+  return hits
+}
+
+const { server, baseUrl } = process.env.E2E_BASE_URL
+  ? { baseUrl: process.env.E2E_BASE_URL }
+  : await startMockViteServer()
 const browser = await launchBrowser()
-const summary = { mode: "mock", viewports: {}, flows: {}, ownerCheck: {} }
+const summary = { mode: "mock", viewports: {}, flows: {}, ownerCheck: {}, bdg02Matrix: [] }
 
 try {
   // 1. Verify all 8 viewports as RECEPTIONIST (userId: 1, light theme matching reference screenshots)
@@ -240,13 +333,18 @@ try {
       if (focused) {
         assert(!focused.hasBell, `${vp.label}: Tab traversal focused a bell icon`)
         if (focused.aria !== "Đóng thông báo") {
-          assert(!/^(thông báo|cần xử lý)/i.test(focused.aria), `${vp.label}: Tab focused notification control: ${focused.aria}`)
+          assert(
+            !/^(thông báo|cần xử lý)/i.test(focused.aria),
+            `${vp.label}: Tab focused notification control: ${focused.aria}`,
+          )
         }
         if (focused.aria && !visitedLabels.includes(focused.aria)) visitedLabels.push(focused.aria)
       }
     }
     assert(visitedLabels.length >= 10, `${vp.label}: Tab traversal visited too few controls (${visitedLabels.length})`)
-    await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined))
+    await page.evaluate(() =>
+      document.activeElement instanceof HTMLElement ? document.activeElement.blur() : undefined,
+    )
 
     // Keyboard focus audit across all focusable controls (exclude Toast15's "Đóng thông báo" dismiss button)
     const focusAudit = await page.evaluate(() => {
@@ -270,7 +368,8 @@ try {
       `${vp.label}: found focusable notification control(s): ${focusAudit.notificationMatches.join("; ")}`,
     )
 
-    const metrics = await page.evaluate(() => {
+    const metrics = await page.evaluate((fnSrc) => {
+      const measureFn = new Function(`return (${fnSrc})`)()
       const vw = window.innerWidth
       const vh = window.innerHeight
       const docOverflowX = Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth)
@@ -280,7 +379,7 @@ try {
       const shellRect = shell?.getBoundingClientRect() ?? null
       const header = shell?.querySelector("header")
       const headerRect = header?.getBoundingClientRect() ?? null
-      const menuBtn = shell?.querySelector('button[aria-label="Menu"]')
+      const menuBtn = shell?.querySelector('button:is([aria-label="Menu"], [aria-label^="Menu, "])')
       const searchInput = shell?.querySelector('input[placeholder*="3 số cuối"]')
       const exportBtn = shell?.querySelector('button[aria-label="Xuất text Zalo"]')
       const undoBtn = shell?.querySelector('button[aria-label="Hoàn tác"]')
@@ -289,9 +388,9 @@ try {
       const bellIcons = document.querySelectorAll("svg.lucide-bell").length
       const bellButtons = Array.from(document.querySelectorAll("button, [role='button']")).filter((el) => {
         const aria = el.getAttribute("aria-label") ?? ""
-        return aria !== "Đóng thông báo" && /thông báo/i.test(aria)
+        return /^(thông báo|cần xử lý)/i.test(aria)
       }).length
-      const redNotificationBadges = Array.from(document.querySelectorAll(".bg-st-noshow")).length
+      const menuUnreadDot = Boolean(menuBtn?.querySelector('[data-testid="reception-menu-unread"]'))
 
       const svg = shell?.querySelector('svg[role="group"]')
       const canvasWrap = svg?.parentElement
@@ -352,18 +451,95 @@ try {
         box: toBox(g.getBoundingClientRect()),
       }))
 
+      const turnBadges = Array.from(svg?.querySelectorAll('[data-testid="turn-badge"]') ?? []).map((g) => ({
+        label: g.getAttribute("aria-label") ?? "",
+        box: toBox(g.getBoundingClientRect()),
+      }))
+
+      const cornerIcons = Array.from(
+        svg?.querySelectorAll('[data-testid="table-icons-bottom-left"], [data-testid="table-icons-bottom-right"]') ??
+          [],
+      ).map((g) => ({
+        side: g.getAttribute("data-testid"),
+        label: g.getAttribute("aria-label") ?? "",
+        box: toBox(g.getBoundingClientRect()),
+        items: Array.from(g.querySelectorAll("[data-icon]")).map((item) => ({
+          icon: item.getAttribute("data-icon") ?? "",
+          box: toBox(item.getBoundingClientRect()),
+        })),
+      }))
+
+      const frameCornerCollisions = []
+      for (const frame of svg?.querySelectorAll('[data-cluster-outline="1"] > rect') ?? []) {
+        const { left, top, right, bottom } = frame.getBoundingClientRect()
+        const inverse = frame.getScreenCTM().inverse()
+        const mask = frame.getAttribute("mask")
+        const cuts = mask
+          ? Array.from(document.getElementById(mask.slice(5, -1))?.querySelectorAll('rect[fill="black"]') ?? [])
+          : []
+        for (const { box, label } of [...countBadges, ...turnBadges, ...cornerIcons]) {
+          const minY = Math.max(box.top, top - outlineHalfStroke)
+          const maxY = Math.min(box.bottom, bottom + outlineHalfStroke)
+          const minX = Math.max(box.left, left - outlineHalfStroke)
+          const maxX = Math.min(box.right, right + outlineHalfStroke)
+          let clear = true
+          for (let y = minY; y <= maxY && clear; y += 0.25) {
+            for (let x = minX; x <= maxX; x += 0.25) {
+              const point = new DOMPoint(x, y).matrixTransform(inverse)
+              if (frame.isPointInStroke(point) && !cuts.some((cut) => cut.isPointInFill(point))) {
+                clear = false
+                break
+              }
+            }
+          }
+          if (!clear) frameCornerCollisions.push({ code: frame.parentElement.dataset.clusterCodeValue, label })
+        }
+      }
+
+      const svgRect = toBox(svg?.getBoundingClientRect() ?? null)
+
       const tableShapes = Array.from(svg?.querySelectorAll('[role="button"][aria-label]') ?? []).map((g) => {
         const shape = g.querySelector('rect[rx="4.5"], circle:not([fill="transparent"]):not(.focus-ring)')
-        const texts = Array.from(g.querySelectorAll("text")).map((t) => ({
-          text: t.textContent ?? "",
-          box: toBox(t.getBoundingClientRect()),
+        const texts = Array.from(g.querySelectorAll("text"))
+          .filter(
+            (t) =>
+              !t.closest(
+                '[data-testid="guest-count-badge"], [data-testid="turn-badge"], [data-testid="table-icons-bottom-left"], [data-testid="table-icons-bottom-right"]',
+              ),
+          )
+          .map((t) => ({
+            text: t.textContent ?? "",
+            box: toBox(t.getBoundingClientRect()),
+          }))
+        const guestBadge = g.querySelector('[data-testid="guest-count-badge"]')
+        const turnBadge = g.querySelector('[data-testid="turn-badge"]')
+        const leftIcons = g.querySelector('[data-testid="table-icons-bottom-left"]')
+        const rightIcons = g.querySelector('[data-testid="table-icons-bottom-right"]')
+        const iconItems = Array.from(g.querySelectorAll("[data-icon]")).map((item) => ({
+          icon: item.getAttribute("data-icon") ?? "",
+          box: toBox(item.getBoundingClientRect()),
         }))
         return {
           aria: g.getAttribute("aria-label") ?? "",
           box: shape ? toBox(shape.getBoundingClientRect()) : null,
           texts,
+          guestBadge: guestBadge
+            ? { label: guestBadge.getAttribute("aria-label") ?? "", box: toBox(guestBadge.getBoundingClientRect()) }
+            : null,
+          turnBadge: turnBadge
+            ? { label: turnBadge.getAttribute("aria-label") ?? "", box: toBox(turnBadge.getBoundingClientRect()) }
+            : null,
+          leftIcons: leftIcons
+            ? { label: leftIcons.getAttribute("aria-label") ?? "", box: toBox(leftIcons.getBoundingClientRect()) }
+            : null,
+          rightIcons: rightIcons
+            ? { label: rightIcons.getAttribute("aria-label") ?? "", box: toBox(rightIcons.getBoundingClientRect()) }
+            : null,
+          iconItems,
         }
       })
+
+      const strokeIntersections = measureFn(svg)
 
       return {
         vw,
@@ -373,7 +549,7 @@ try {
         canvasScrollOverflowY,
         bellIcons,
         bellButtons,
-        redNotificationBadges,
+        menuUnreadDot,
         shell: toBox(shellRect),
         header: toBox(headerRect),
         menuBtn: toBox(menuBtn?.getBoundingClientRect() ?? null),
@@ -382,6 +558,7 @@ try {
         undoBtn: toBox(undoBtn?.getBoundingClientRect() ?? null),
         redoBtn: toBox(redoBtn?.getBoundingClientRect() ?? null),
         canvas: toBox(canvasRect),
+        svgRect,
         wall: toBox(wallRect),
         wallScale,
         guestCard: toBox(guestCard),
@@ -395,10 +572,20 @@ try {
         clusterOutlines,
         clusterPills,
         countBadges,
+        turnBadges,
+        cornerIcons,
+        frameCornerCollisions,
         tableShapes,
+        strokeIntersections,
         fontFamily: shell ? getComputedStyle(shell).fontFamily : "",
       }
-    })
+    }, measureOutlineStrokeIntersections.toString())
+
+    assert.deepEqual(
+      metrics.strokeIntersections,
+      [],
+      `${vp.label} (light): decoration intersected cluster outline stroke: ${metrics.strokeIntersections.join("; ")}`,
+    )
 
     assert.equal(metrics.docOverflowX, 0, `${vp.label}: horizontal overflow ${metrics.docOverflowX}`)
     assert.equal(metrics.docOverflowY, 0, `${vp.label}: document vertical overflow ${metrics.docOverflowY}`)
@@ -409,10 +596,13 @@ try {
     )
     assert.equal(metrics.bellIcons, 0, `${vp.label}: bell SVG icon still rendered`)
     assert.equal(metrics.bellButtons, 0, `${vp.label}: notification button still rendered`)
-    assert.equal(metrics.redNotificationBadges, 0, `${vp.label}: red badge still rendered`)
+    assert(metrics.menuUnreadDot, `${vp.label}: the unread fixture should show a dot on Menu`)
 
     assert(metrics.shell, `${vp.label}: [data-gm] missing`)
-    assert(metrics.header && metrics.menuBtn && metrics.searchInput && metrics.exportBtn, `${vp.label}: header controls missing`)
+    assert(
+      metrics.header && metrics.menuBtn && metrics.searchInput && metrics.exportBtn,
+      `${vp.label}: header controls missing`,
+    )
     assert(metrics.exportBtn.right <= metrics.shell.right + 1, `${vp.label}: export button clipped`)
     assert(metrics.menuBtn.height >= 44 && metrics.menuBtn.width >= 44, `${vp.label}: menu button < 44px`)
     assert(metrics.undoBtn && metrics.redoBtn, `${vp.label}: undo/redo buttons missing`)
@@ -428,16 +618,25 @@ try {
       assert(metrics.shell.width <= 629, `${vp.label}: reception shell exceeded 628px (${metrics.shell.width})`)
       const leftMargin = metrics.shell.left
       const rightMargin = metrics.vw - metrics.shell.right
-      assert(Math.abs(leftMargin - rightMargin) <= 2, `${vp.label}: reception shell not centered (${leftMargin} vs ${rightMargin})`)
+      assert(
+        Math.abs(leftMargin - rightMargin) <= 2,
+        `${vp.label}: reception shell not centered (${leftMargin} vs ${rightMargin})`,
+      )
     }
 
-    assert(metrics.guestCard && metrics.c4 && metrics.b7 && metrics.b21 && metrics.waitBtn, `${vp.label}: missing clearance targets`)
+    assert(
+      metrics.guestCard && metrics.c4 && metrics.b7 && metrics.b21 && metrics.waitBtn,
+      `${vp.label}: missing clearance targets`,
+    )
     assert(!rectsOverlap(metrics.guestCard, metrics.c4), `${vp.label}: GuestCountCard overlaps C4`)
     assert(!rectsOverlap(metrics.guestCard, metrics.b7), `${vp.label}: GuestCountCard overlaps B7`)
     assert(!rectsOverlap(metrics.waitBtn, metrics.b21), `${vp.label}: Chờ button overlaps B21`)
     assert(metrics.a7Text.startsWith("A7 - "), `${vp.label}: R2 label unexpected: "${metrics.a7Text}"`)
     assert(metrics.barGuestPanel && metrics.barGuestPanel.width > 0, `${vp.label}: BarGuestList missing`)
-    assert(metrics.fontFamily.includes("Be Vietnam Pro"), `${vp.label}: Be Vietnam Pro font not applied (${metrics.fontFamily})`)
+    assert(
+      metrics.fontFamily.includes("Be Vietnam Pro"),
+      `${vp.label}: Be Vietnam Pro font not applied (${metrics.fontFamily})`,
+    )
 
     // F-02: Verify G02/G03 cluster outline clearance (stroke-inclusive) & zero pill collisions with badges/tables/outlines
     const g03Outline = metrics.clusterOutlines.find((o) => o.code === "G03")
@@ -449,8 +648,15 @@ try {
       `${vp.label}: G03/G02 outlines overlap or touch (stroke-inclusive gap ${g02G03GapPx.toFixed(3)}px)`,
     )
 
-    assert(metrics.clusterPills.length >= 7, `${vp.label}: expected >= 7 cluster pills, got ${metrics.clusterPills.length}`)
-    assert(metrics.countBadges.length >= 4, `${vp.label}: expected >= 4 guest count badges, got ${metrics.countBadges.length}`)
+    assert(
+      metrics.clusterPills.length >= 7,
+      `${vp.label}: expected >= 7 cluster pills, got ${metrics.clusterPills.length}`,
+    )
+    assert(
+      metrics.countBadges.length >= 4,
+      `${vp.label}: expected >= 4 guest count badges, got ${metrics.countBadges.length}`,
+    )
+    assert.deepEqual(metrics.frameCornerCollisions, [], `${vp.label}: a cluster frame crosses a corner badge/icon`)
 
     for (const pill of metrics.clusterPills) {
       assert(pill.box, `${vp.label}: missing box for pill ${pill.code}`)
@@ -459,6 +665,15 @@ try {
           !rectsOverlap(pill.box, badge.box, 0),
           `${vp.label}: pill ${pill.code} overlaps guest-count badge (${badge.label})`,
         )
+      }
+      for (const tbadge of metrics.turnBadges) {
+        assert(
+          !rectsOverlap(pill.box, tbadge.box, 0),
+          `${vp.label}: pill ${pill.code} overlaps turn badge (${tbadge.label})`,
+        )
+      }
+      for (const ci of metrics.cornerIcons) {
+        assert(!rectsOverlap(pill.box, ci.box, 0), `${vp.label}: pill ${pill.code} overlaps corner icon (${ci.label})`)
       }
       for (const outline of metrics.clusterOutlines) {
         if (outline.code === pill.code) continue
@@ -469,22 +684,134 @@ try {
       }
       for (const otherPill of metrics.clusterPills) {
         if (otherPill.code === pill.code) continue
-        assert(!rectsOverlap(pill.box, otherPill.box, 0), `${vp.label}: pill ${pill.code} overlaps pill ${otherPill.code}`)
+        assert(
+          !rectsOverlap(pill.box, otherPill.box, 0),
+          `${vp.label}: pill ${pill.code} overlaps pill ${otherPill.code}`,
+        )
       }
       for (const ts of metrics.tableShapes) {
         if (ts.box) {
           assert(!rectsOverlap(pill.box, ts.box, 0), `${vp.label}: pill ${pill.code} overlaps table cell ${ts.aria}`)
         }
         for (const txt of ts.texts) {
-          assert(!rectsOverlap(pill.box, txt.box, 0), `${vp.label}: pill ${pill.code} overlaps text "${txt.text}" in ${ts.aria}`)
+          assert(
+            !rectsOverlap(pill.box, txt.box, 0),
+            `${vp.label}: pill ${pill.code} overlaps text "${txt.text}" in ${ts.aria}`,
+          )
         }
+      }
+    }
+
+    // Verify TurnBadge corner placement (top-right), icon sizes, and zero badge/icon overlaps across all tables
+    assert(
+      metrics.turnBadges.length >= 3,
+      `${vp.label}: expected >= 3 turn badges in mock mode, got ${metrics.turnBadges.length}`,
+    )
+    const allDecorations = []
+    for (const ts of metrics.tableShapes) {
+      if (!ts.box) continue
+      const tableDecorations = [
+        ts.guestBadge ? { kind: "guestBadge", ...ts.guestBadge } : null,
+        ts.turnBadge ? { kind: "turnBadge", ...ts.turnBadge } : null,
+        ts.leftIcons ? { kind: "leftIcons", ...ts.leftIcons } : null,
+        ts.rightIcons ? { kind: "rightIcons", ...ts.rightIcons } : null,
+      ].filter(Boolean)
+
+      if (ts.turnBadge) {
+        const cx = (ts.turnBadge.box.left + ts.turnBadge.box.right) / 2
+        const cy = (ts.turnBadge.box.top + ts.turnBadge.box.bottom) / 2
+        assert(
+          cx > ts.box.left + ts.box.width * 0.5,
+          `${vp.label}: TurnBadge on ${ts.aria} is not on right half (cx=${cx}, tableRight=${ts.box.right})`,
+        )
+        assert(
+          cy < ts.box.top + ts.box.height * 0.45,
+          `${vp.label}: TurnBadge on ${ts.aria} is not at top-right corner (cy=${cy}, tableTop=${ts.box.top})`,
+        )
+      }
+
+      if (ts.guestBadge) {
+        const cx = (ts.guestBadge.box.left + ts.guestBadge.box.right) / 2
+        const cy = (ts.guestBadge.box.top + ts.guestBadge.box.bottom) / 2
+        assert(cx < ts.box.left + ts.box.width * 0.5, `${vp.label}: GuestBadge not on left half on ${ts.aria}`)
+        assert(cy < ts.box.top + ts.box.height * 0.45, `${vp.label}: GuestBadge not at top-left on ${ts.aria}`)
+      }
+
+      // Within the same table: no badge/icon overlaps own text, or each other
+      for (const dec of tableDecorations) {
+        for (const txt of ts.texts) {
+          // SVG <text> getBoundingClientRect() includes ~18% transparent ascent/descent leading;
+          // tighten vertically by 18% to approximate painted glyph bounds while still catching real text collisions.
+          const th = txt.box.bottom - txt.box.top
+          const glyphBox = {
+            left: txt.box.left,
+            right: txt.box.right,
+            top: txt.box.top + th * 0.16,
+            bottom: txt.box.bottom - th * 0.16,
+          }
+          assert(
+            !rectsOverlap(dec.box, glyphBox, 0.2),
+            `${vp.label}: ${dec.kind} (${dec.label}) overlaps text "${txt.text}" inside ${ts.aria} (dec=${JSON.stringify(dec.box)}, glyph=${JSON.stringify(glyphBox)})`,
+          )
+        }
+        // Inside SVG bounds
+        if (metrics.svgRect) {
+          assert(
+            dec.box.left >= metrics.svgRect.left - 0.5 &&
+              dec.box.right <= metrics.svgRect.right + 0.5 &&
+              dec.box.top >= metrics.svgRect.top - 0.5 &&
+              dec.box.bottom <= metrics.svgRect.bottom + 0.5,
+            `${vp.label}: ${dec.kind} clipped outside SVG on ${ts.aria}`,
+          )
+        }
+      }
+      for (let i = 0; i < tableDecorations.length; i++) {
+        for (let j = i + 1; j < tableDecorations.length; j++) {
+          assert(
+            !rectsOverlap(tableDecorations[i].box, tableDecorations[j].box, 0),
+            `${vp.label}: ${tableDecorations[i].kind} overlaps ${tableDecorations[j].kind} on ${ts.aria}`,
+          )
+        }
+      }
+      for (let i = 0; i < ts.iconItems.length; i++) {
+        for (let j = i + 1; j < ts.iconItems.length; j++) {
+          assert(
+            !rectsOverlap(ts.iconItems[i].box, ts.iconItems[j].box, 0.2),
+            `${vp.label}: icon ${ts.iconItems[i].icon} overlaps ${ts.iconItems[j].icon} on ${ts.aria}`,
+          )
+        }
+      }
+
+      // Against every other table cell
+      for (const otherTs of metrics.tableShapes) {
+        if (otherTs === ts || !otherTs.box) continue
+        for (const dec of tableDecorations) {
+          assert(
+            !rectsOverlap(dec.box, otherTs.box, 0.2),
+            `${vp.label}: ${dec.kind} (${dec.label}) on ${ts.aria} overlaps neighbour ${otherTs.aria}`,
+          )
+        }
+      }
+
+      for (const dec of tableDecorations) {
+        allDecorations.push({ aria: ts.aria, ...dec })
+      }
+    }
+
+    for (let i = 0; i < allDecorations.length; i++) {
+      for (let j = i + 1; j < allDecorations.length; j++) {
+        if (allDecorations[i].aria === allDecorations[j].aria) continue
+        assert(
+          !rectsOverlap(allDecorations[i].box, allDecorations[j].box, 0.2),
+          `${vp.label}: ${allDecorations[i].kind} on ${allDecorations[i].aria} overlaps ${allDecorations[j].kind} on ${allDecorations[j].aria}`,
+        )
       }
     }
 
     assert.deepEqual(errors, [], `${vp.label}: console/page errors: ${errors.join(" | ")}`)
 
     // Dismiss the "Đã lưu bộ đếm khách" Sonner toast so the header and Đếm khách card are unobstructed in screenshots
-    const sonnerClose = page.locator('[data-sonner-toast] button')
+    const sonnerClose = page.locator("[data-sonner-toast] button")
     if ((await sonnerClose.count()) > 0) {
       await sonnerClose.first().click()
       await page.waitForTimeout(300)
@@ -506,7 +833,7 @@ try {
       canvasScrollOverflowY: metrics.canvasScrollOverflowY,
       bellIcons: metrics.bellIcons,
       bellButtons: metrics.bellButtons,
-      redBadges: metrics.redNotificationBadges,
+      menuUnreadDot: metrics.menuUnreadDot,
       shellWidth: Math.round(metrics.shell.width),
       wallSize: `${Math.round(metrics.wall.width)}x${Math.round(metrics.wall.height)}`,
       a7Text: metrics.a7Text,
@@ -521,7 +848,7 @@ try {
 
   // 2. Verify R1-R5 workflows + sheets on 390x844 (phone) and 1366x768 (laptop)
   {
-    const context = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true })
     await context.addInitScript(() => {
       localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme: "light" }))
       window.__copiedText = null
@@ -545,6 +872,50 @@ try {
       await toastClose.click()
       await page.waitForTimeout(150)
     }
+
+    const menuTrigger = page.getByRole("button", { name: /^Menu, \d+ thông báo chưa xem$/ })
+    const dot = page.getByTestId("reception-menu-unread")
+    const accountSheet = page.getByRole("dialog", { name: "Tài khoản" })
+    const notifications = accountSheet.locator("summary").filter({ hasText: /^Thông báo · \d+/ })
+    const readSeen = () => page.evaluate(() => localStorage.getItem("21gam.mobile.alerts.seen.v1"))
+    const previousSeen = await readSeen()
+    await menuTrigger.focus()
+    await menuTrigger.press("Enter")
+    await notifications.waitFor({ state: "visible" })
+    assert.equal(await notifications.evaluate((el) => el.parentElement.open), false)
+    assert.equal(await readSeen(), previousSeen, "Opening Menu alone marked reception notifications as seen")
+    assert.equal(await dot.count(), 1, "Menu alone cleared the unread dot")
+    await page.waitForFunction(() => {
+      const sheet = document.querySelector('[data-slot="sheet-content"][data-motion-state="open"]')
+      return sheet && Math.abs(window.innerHeight - sheet.getBoundingClientRect().bottom) < 1
+    })
+    await page.screenshot({ path: path.join(outDir, "reception-390x844-menu-unread.png") })
+    await page.keyboard.press("Escape")
+    await accountSheet.waitFor({ state: "detached" })
+    assert(await menuTrigger.evaluate((el) => document.activeElement === el), "Closing Menu did not restore focus")
+    await menuTrigger.tap()
+    await notifications.waitFor({ state: "visible" })
+    const disclosureHeight = await notifications.evaluate((el) => el.offsetHeight)
+    assert(disclosureHeight >= 44, "Thông báo disclosure target is smaller than 44px")
+    await notifications.press("Space")
+    const firstAlert = accountSheet.locator("details button").first()
+    await firstAlert.waitFor({ state: "visible" })
+    await dot.waitFor({ state: "detached" })
+    assert.notEqual(await readSeen(), previousSeen, "Opening Thông báo did not persist the seen notifications")
+    assert(await notifications.evaluate((el) => document.activeElement === el), "Disclosure lost keyboard focus")
+    await page.screenshot({ path: path.join(outDir, "reception-390x844-menu-notifications.png") })
+    await firstAlert.press("Enter")
+    await accountSheet.waitFor({ state: "detached" })
+    const alertDetail = page.getByRole("dialog").first()
+    await alertDetail.waitFor({ state: "visible" })
+    assert(
+      await alertDetail.evaluate((el) => el.contains(document.activeElement)),
+      "Alert detail did not receive focus",
+    )
+    await page.keyboard.press("Escape")
+    await alertDetail.waitFor({ state: "detached" })
+    await page.getByRole("button", { name: "Menu", exact: true }).waitFor({ state: "visible" })
+    summary.flows.receptionNotifications = { menuPreservedUnread: true, sectionMarkedSeen: true, detailFocus: true }
 
     // R1: Open guest count edit, set Tổng đã tới = 42, save and confirm persisted on card
     await page.getByRole("button", { name: "Sửa bộ đếm khách" }).click()
@@ -613,9 +984,326 @@ try {
     summary.ownerCheck = { hasAlertsBell: true, bellIcons }
     await context.close()
   }
+
+  // 4. Dark-theme 8-viewport BDG-01 stroke-intersection & A3 stress matrix check
+  for (const vp of VIEWPORTS) {
+    const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height } })
+    await context.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme: "dark" }))
+    })
+    const page = await context.newPage()
+    const errors = attachErrorCollector(page)
+
+    await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
+    await page.getByRole("button", { name: /^Bàn A7/ }).waitFor({ state: "visible" })
+    await page.waitForTimeout(250)
+
+    const darkAudit = await page.evaluate((fnSrc) => {
+      const measureFn = new Function(`return (${fnSrc})`)()
+      const svg = document.querySelector('[data-gm] svg[role="group"]')
+      if (!svg) return { ok: false, reason: "missing svg" }
+      const outlines = Array.from(svg.querySelectorAll('[data-cluster-outline="1"] > rect'))
+      const hits = measureFn(svg)
+      const turnBadges = Array.from(svg.querySelectorAll('[data-testid="turn-badge"]'))
+      const a3Turn = svg.querySelector('[role="button"][aria-label^="Bàn A3"] [data-testid="turn-badge"]')
+      return {
+        ok: true,
+        hits,
+        turnCount: turnBadges.length,
+        hasA3Turn2: a3Turn?.getAttribute("aria-label") === "Lượt 2",
+        outlineCount: outlines.length,
+      }
+    }, measureOutlineStrokeIntersections.toString())
+
+    assert(darkAudit.ok, `${vp.label} (dark): ${darkAudit.reason}`)
+    assert.deepEqual(
+      darkAudit.hits,
+      [],
+      `${vp.label} (dark): decoration intersected cluster outline stroke: ${darkAudit.hits.join("; ")}`,
+    )
+    assert(darkAudit.turnCount >= 3, `${vp.label} (dark): missing turn badges`)
+    assert(darkAudit.hasA3Turn2, `${vp.label} (dark): missing A3 Lượt 2 fixture`)
+    assert(darkAudit.outlineCount >= 4, `${vp.label} (dark): missing cluster outlines`)
+    assert.deepEqual(errors, [], `${vp.label} (dark): errors: ${errors.join(" | ")}`)
+    await context.close()
+  }
+
+  // 5. BDG-02 + ADM-05 matrix: G08 (C4+C5) + occupied C1 (14 guests, turn 12, 4 icons) + Reception Bar names across light/dark phone/iPad/laptop
+  const bdg02Matrix = [
+    { width: 390, height: 844, label: "390x844", theme: "light" },
+    { width: 390, height: 844, label: "390x844", theme: "dark" },
+    { width: 768, height: 1024, label: "768x1024", theme: "light" },
+    { width: 768, height: 1024, label: "768x1024", theme: "dark" },
+    { width: 1440, height: 900, label: "1440x900", theme: "light" },
+    { width: 1440, height: 900, label: "1440x900", theme: "dark" },
+  ]
+  for (const vp of bdg02Matrix) {
+    const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height } })
+    await context.addInitScript((theme) => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme }))
+    }, vp.theme)
+    const page = await context.newPage()
+    const errors = attachErrorCollector(page)
+
+    await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
+    await page.getByRole("button", { name: /^Bàn C4/ }).waitFor({ state: "visible" })
+    const toastClose = page.getByRole("button", { name: "Đóng thông báo", exact: true })
+    if ((await toastClose.count()) > 0) {
+      await toastClose.click()
+      await page.waitForTimeout(150)
+    }
+
+    await page.evaluate(async () => {
+      const { api } = await import("/src/services/index.ts")
+      const origGetFloorState = api.getFloorState.bind(api)
+      const catalog = await api.getCatalog()
+      const c4 = catalog.tables.find((t) => t.code === "C4")
+      const c5 = catalog.tables.find((t) => t.code === "C5")
+      const c1 = catalog.tables.find((t) => t.code === "C1")
+      const bar1 = catalog.tables.find((t) => t.code === "BAR01")
+      const bar2 = catalog.tables.find((t) => t.code === "BAR02")
+      if (!c4 || !c5 || !c1 || !bar1 || !bar2) throw new Error("Missing C4/C5/C1/BAR01/BAR02")
+
+      api.getFloorState = async (at) => {
+        const res = await origGetFloorState(at)
+        const now = new Date()
+        const g08Claim = {
+          kind: "visit",
+          visitId: 9081,
+          reservationId: null,
+          waitlistEntryId: null,
+          holdId: null,
+          displayName: "Nhóm C4-C5",
+          phoneLast3: "456",
+          partySize: 8,
+          startsAt: now,
+          deadlineAt: null,
+          paid: false,
+          origin: "WALK_IN",
+          tableIds: [c4.id, c5.id],
+          groupId: 808,
+          symbolNo: 8,
+          groupDisplayCode: "G08",
+          flags: ["RETURNING", "VIP"],
+          warning: null,
+          minutesLate: 0,
+          sourceCode: null,
+          note: null,
+          version: 1,
+        }
+        const c1Claim = {
+          kind: "visit",
+          visitId: 9082,
+          reservationId: null,
+          waitlistEntryId: null,
+          holdId: null,
+          displayName: "Khách C1",
+          phoneLast3: "123",
+          partySize: 14,
+          startsAt: now,
+          deadlineAt: null,
+          paid: false,
+          origin: "WALK_IN",
+          tableIds: [c1.id],
+          groupId: null,
+          symbolNo: null,
+          groupDisplayCode: null,
+          flags: ["RETURNING", "VIP", "DESIGNATED", "BIRTHDAY"],
+          warning: null,
+          minutesLate: 0,
+          sourceCode: null,
+          note: null,
+          version: 1,
+        }
+        const bar1Claim = {
+          kind: "reservation",
+          visitId: null,
+          reservationId: 9083,
+          waitlistEntryId: null,
+          holdId: null,
+          displayName: "Nguyễn (090 123 4567)",
+          phoneLast3: "567",
+          partySize: 2,
+          startsAt: now,
+          deadlineAt: null,
+          paid: false,
+          origin: "RESERVATION",
+          tableIds: [bar1.id],
+          groupId: null,
+          symbolNo: null,
+          groupDisplayCode: null,
+          flags: [],
+          warning: null,
+          minutesLate: 0,
+          sourceCode: null,
+          note: null,
+          version: 1,
+        }
+        const bar2Claim = {
+          ...bar1Claim,
+          reservationId: 9084,
+          displayName: "Nguyễn 18-11-2026",
+          tableIds: [bar2.id],
+        }
+        const tables = res.tables.map((t) => {
+          if (t.tableId === c4.id || t.tableId === c5.id) {
+            return { ...t, state: "seated", seatedTurnCount: 2, claim: g08Claim }
+          }
+          if (t.tableId === c1.id) {
+            return { ...t, state: "seated", seatedTurnCount: 12, claim: c1Claim }
+          }
+          if (t.tableId === bar1.id) {
+            return { ...t, state: "reserved", claim: bar1Claim }
+          }
+          if (t.tableId === bar2.id) {
+            return { ...t, state: "reserved", claim: bar2Claim }
+          }
+          return t
+        })
+        const groups = [
+          ...res.groups.filter((g) => g.displayCode !== "G08"),
+          { id: 808, symbolNo: 8, displayCode: "G08", tableIds: [c4.id, c5.id], seatedTurnCount: 2 },
+        ]
+        return { ...res, tables, groups }
+      }
+
+      await api.createTableGroup({ tableIds: [c4.id, c5.id] })
+    })
+
+    await page.waitForSelector('[data-cluster-outline="1"][data-cluster-code-value="G08"]', { timeout: 5000 })
+    await page.waitForSelector('[role="button"][aria-label^="Bàn C1"] [data-testid="guest-count-badge"]', {
+      timeout: 5000,
+    })
+    await page.waitForTimeout(200)
+
+    const bdgAudit = await page.evaluate((fnSrc) => {
+      const measureFn = new Function(`return (${fnSrc})`)()
+      const svg = document.querySelector('[data-gm] svg[role="group"]')
+      if (!svg) return { ok: false, reason: "missing svg" }
+      const hits = measureFn(svg)
+      const toBox = (r) =>
+        r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height } : null
+      const expandBox = (r, pad) =>
+        r
+          ? {
+              left: r.left - pad,
+              top: r.top - pad,
+              right: r.right + pad,
+              bottom: r.bottom + pad,
+            }
+          : null
+      const wallRect = svg.querySelector('rect[data-bg="1"]')?.getBoundingClientRect()
+      const wallScale = wallRect ? wallRect.width / 370 : 1
+      const outlineHalfStroke = 0.8 * wallScale
+      const pillHalfStroke = 0.7 * wallScale
+
+      const g08Outline = expandBox(
+        svg.querySelector('[data-cluster-outline="1"][data-cluster-code-value="G08"] > rect')?.getBoundingClientRect(),
+        outlineHalfStroke,
+      )
+      const g08Pill = expandBox(
+        svg.querySelector('[data-cluster-code="1"][data-cluster-code-value="G08"] rect')?.getBoundingClientRect(),
+        pillHalfStroke,
+      )
+      const g03Outline = expandBox(
+        svg.querySelector('[data-cluster-outline="1"][data-cluster-code-value="G03"] > rect')?.getBoundingClientRect(),
+        outlineHalfStroke,
+      )
+      const g02Outline = expandBox(
+        svg.querySelector('[data-cluster-outline="1"][data-cluster-code-value="G02"] > rect')?.getBoundingClientRect(),
+        outlineHalfStroke,
+      )
+      const c1 = svg.querySelector('[role="button"][aria-label^="Bàn C1"]')
+      const c1GuestBadge = toBox(
+        c1?.querySelector('[data-testid="guest-count-badge"]')?.getBoundingClientRect() ?? null,
+      )
+      const c1LeftIcons = toBox(
+        c1?.querySelector('[data-testid="table-icons-bottom-left"]')?.getBoundingClientRect() ?? null,
+      )
+      const a3Turn = svg.querySelector('[role="button"][aria-label^="Bàn A3"] [data-testid="turn-badge"]')
+      const barText = document.querySelector('[data-testid="bar-guest-list"]')?.textContent ?? ""
+
+      const c1Box = toBox(c1?.getBoundingClientRect() ?? null)
+      const cropClip =
+        g08Outline && c1Box
+          ? {
+              x: Math.max(0, Math.floor(Math.min(g08Outline.left, c1Box.left) - 42)),
+              y: Math.max(0, Math.floor(Math.min(g08Outline.top, c1Box.top) - 24)),
+              width:
+                Math.ceil(Math.max(g08Outline.right, c1Box.right) + 28) -
+                Math.max(0, Math.floor(Math.min(g08Outline.left, c1Box.left) - 42)),
+              height:
+                Math.ceil(Math.max(g08Outline.bottom, c1Box.bottom) + 24) -
+                Math.max(0, Math.floor(Math.min(g08Outline.top, c1Box.top) - 24)),
+            }
+          : null
+
+      return {
+        ok: true,
+        hits,
+        g08Outline,
+        g08Pill,
+        g02G03GapPx: g02Outline && g03Outline ? g02Outline.top - g03Outline.bottom : -1,
+        c1GuestBadge,
+        c1LeftIcons,
+        hasA3Turn2: a3Turn?.getAttribute("aria-label") === "Lượt 2",
+        barPreservesPhoneName: barText.includes("Nguyễn (090 123 4567)"),
+        barPreservesDateName: barText.includes("Nguyễn 18-11-2026"),
+        cropClip,
+      }
+    }, measureOutlineStrokeIntersections.toString())
+
+    assert(bdgAudit.ok, `${vp.label} (${vp.theme}) BDG-02: ${bdgAudit.reason}`)
+    assert.deepEqual(
+      bdgAudit.hits,
+      [],
+      `${vp.label} (${vp.theme}) BDG-02: stroke intersections: ${bdgAudit.hits.join("; ")}`,
+    )
+    assert(bdgAudit.g08Outline && bdgAudit.c1GuestBadge && bdgAudit.c1LeftIcons, "Missing G08 or C1 decorations")
+    assert(
+      !rectsOverlap(bdgAudit.c1GuestBadge, bdgAudit.g08Outline, 0.2),
+      `${vp.label} (${vp.theme}) BDG-02: C1 guest badge overlaps G08 outline`,
+    )
+    assert(
+      !rectsOverlap(bdgAudit.c1LeftIcons, bdgAudit.g08Outline, 0.2),
+      `${vp.label} (${vp.theme}) BDG-02: C1 bottom-left icon overlaps G08 outline`,
+    )
+    if (bdgAudit.g08Pill) {
+      assert(
+        !rectsOverlap(bdgAudit.g08Pill, bdgAudit.c1GuestBadge, 0),
+        `${vp.label} (${vp.theme}) BDG-02: G08 pill overlaps C1 guest badge`,
+      )
+    }
+    assert(bdgAudit.g02G03GapPx > 0.2, `${vp.label} (${vp.theme}): G02/G03 gap collapsed (${bdgAudit.g02G03GapPx})`)
+    assert(bdgAudit.hasA3Turn2, `${vp.label} (${vp.theme}): missing A3 Lượt 2`)
+    assert(
+      bdgAudit.barPreservesPhoneName,
+      `${vp.label} (${vp.theme}) ADM-05: Reception Bar lost "Nguyễn (090 123 4567)"`,
+    )
+    assert(bdgAudit.barPreservesDateName, `${vp.label} (${vp.theme}) ADM-05: Reception Bar lost "Nguyễn 18-11-2026"`)
+    assert.deepEqual(errors, [], `${vp.label} (${vp.theme}) BDG-02 errors: ${errors.join(" | ")}`)
+
+    if (vp.label === "1440x900" && vp.theme === "light" && bdgAudit.cropClip) {
+      const fix2Dir =
+        process.env.C1_CROP_DIR || "D:\\GAM-APP\\docs\\Sprint4\\evidence\\admin-floor-map-2026-11-18\\fix2"
+      if (fs.existsSync(fix2Dir)) {
+        await page.screenshot({ path: path.join(fix2Dir, "c1-c4-c5-crop-after.png"), clip: bdgAudit.cropClip })
+      }
+      await page.screenshot({ path: path.join(outDir, "reception-bdg02-1440x900.png") })
+    }
+
+    summary.bdg02Matrix.push({
+      viewport: vp.label,
+      theme: vp.theme,
+      hits: bdgAudit.hits.length,
+      g08ToC1BadgeGapPx: Number((bdgAudit.c1GuestBadge.left - bdgAudit.g08Outline.right).toFixed(2)),
+      g02G03GapPx: Number(bdgAudit.g02G03GapPx.toFixed(2)),
+    })
+    await context.close()
+  }
 } finally {
   await browser.close()
-  await server.close()
+  await server?.close()
 }
 
 console.log(JSON.stringify(summary, null, 2))

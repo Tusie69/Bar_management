@@ -5,13 +5,7 @@ import { toast } from "sonner"
 
 import { GuardedButton } from "@/components/common"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import type { CallTarget } from "@/domain/models"
 import { reportError } from "@/hooks/use-action"
 import { cn } from "@/lib/utils"
@@ -71,7 +65,7 @@ export function CallCustomerControl({
   const clearPendingCall = usePendingCalls((s) => s.clear)
   const callId = usePendingCall(target)?.callId ?? null
   const leftPage = useRef(false)
-  const bookingVersion = target.kind === "booking" ? target.version ?? null : null
+  const bookingVersion = target.kind === "booking" ? (target.version ?? null) : null
 
   useEffect(() => {
     if (callId === null) return
@@ -172,7 +166,7 @@ export function CallCustomerControl({
             <a
               href={telUri}
               rel="noreferrer"
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium"
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-border bg-surface-1 px-3 text-sm font-medium shadow-xs transition-colors hover:bg-surface-2 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none"
             >
               <Smartphone className="size-4" /> Máy chưa mở trình gọi? Bấm để gọi lại
             </a>

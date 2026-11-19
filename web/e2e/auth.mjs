@@ -20,9 +20,10 @@ const session = () => ({
     displayName: currentUser === "owner" ? "Chủ quán" : "Lễ tân",
     organizationId: 1,
     venueId: 1,
-    roles: [currentUser === "owner" ? "OWNER_ADMIN" : "RECEPTIONIST"],
+    roles: [currentUser === "owner" ? "OWNER" : "RECEPTIONIST"],
+    accessLevel: null,
   },
-  roles: [currentUser === "owner" ? "OWNER_ADMIN" : "RECEPTIONIST"],
+  roles: [currentUser === "owner" ? "OWNER" : "RECEPTIONIST"],
   permissions:
     currentUser === "owner"
       ? [
@@ -276,60 +277,64 @@ try {
     { width: 768, height: 1024 },
   ]) {
     await page.setViewportSize(viewport)
-    await page.goto(`${base}/receptionist/login`, { waitUntil: "networkidle" })
+    await page.goto(`${base}/receptionist/login`, { waitUntil: "domcontentloaded" })
     await expectText("Đăng nhập Lễ tân")
-    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth)
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    )
     if (overflow) throw new Error(`Portal login overflows at ${viewport.width}px`)
   }
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto(`${base}/warehouse/login`, { waitUntil: "networkidle" })
+  await page.goto(`${base}/warehouse/login`, { waitUntil: "domcontentloaded" })
   await expectText("Cổng Kho đang xây dựng")
   await page.setViewportSize({ width: 1280, height: 800 })
 
-  await page.goto(base, { waitUntil: "networkidle" })
+  await page.goto(base, { waitUntil: "domcontentloaded" })
   await expectText("Đăng nhập Lễ tân")
 
   await page.getByLabel("Tên đăng nhập").fill("operator")
-  await page.getByLabel("Mật khẩu").fill("wrong")
+  await page.getByLabel("Mật khẩu", { exact: true }).fill("wrong")
   await page.getByRole("button", { name: "Đăng nhập", exact: true }).click()
   await expectText("Tên đăng nhập hoặc mật khẩu không hợp lệ")
 
-  await page.getByLabel("Mật khẩu").fill("correct-password")
+  await page.getByLabel("Mật khẩu", { exact: true }).fill("correct-password")
   await page.getByRole("button", { name: "Đăng nhập", exact: true }).click()
-  await page.getByLabel(/Tài khoản: Lễ tân/).waitFor()
   try {
-    await page.getByLabel("Sơ đồ bàn, trạng thái hiện tại").waitFor({ timeout: 10_000 })
+    await page.getByRole("group", { name: "Sơ đồ bàn, trạng thái hiện tại", exact: true }).waitFor({ timeout: 10_000 })
   } catch (error) {
-    console.error(`Auth E2E floor diagnostic url=${page.url()} body=${(await page.locator("body").innerText()).slice(0, 1500)}`)
+    console.error(
+      `Auth E2E floor diagnostic url=${page.url()} body=${(await page.locator("body").innerText()).slice(0, 1500)}`,
+    )
     throw error
   }
   await page.getByRole("button", { name: /Bàn A10, Bàn sơ cua/ }).waitFor()
 
-  await page.reload({ waitUntil: "networkidle" })
-  await page.getByLabel(/Tài khoản: Lễ tân/).waitFor()
-
-  await page.getByLabel(/Tài khoản: Lễ tân/).click()
-  await page.getByRole("menuitem", { name: "Đăng xuất" }).click()
+  await page.reload({ waitUntil: "domcontentloaded" })
+  await page.getByRole("button", { name: /^Menu/ }).click()
+  const account = page.getByRole("dialog", { name: "Tài khoản", exact: true })
+  await account.getByText("Phiên đăng nhập", { exact: true }).waitFor()
+  await account.getByText("Lễ tân", { exact: true }).first().waitFor()
+  await account.getByRole("button", { name: "Đăng xuất", exact: true }).click()
   await expectText("Đăng nhập Lễ tân")
   if (!csrfSeenOnLogout) throw new Error("Logout did not send x-csrf-token")
 
-  await page.goto(`${base}/admin/login`, { waitUntil: "networkidle" })
+  await page.goto(`${base}/admin/login`, { waitUntil: "domcontentloaded" })
   await expectText("Đăng nhập Quản trị")
   await page.getByLabel("Tên đăng nhập").fill("operator")
-  await page.getByLabel("Mật khẩu").fill("correct-password")
+  await page.getByLabel("Mật khẩu", { exact: true }).fill("correct-password")
   await page.getByRole("button", { name: "Đăng nhập", exact: true }).click()
   await expectText("Tài khoản không được phép đăng nhập tại cổng này")
 
   await page.getByLabel("Tên đăng nhập").fill("owner")
-  await page.getByLabel("Mật khẩu").fill("correct-password")
+  await page.getByLabel("Mật khẩu", { exact: true }).fill("correct-password")
   await page.getByRole("button", { name: "Đăng nhập", exact: true }).click()
-  await page.getByLabel(/Tài khoản: Chủ quán/).waitFor()
+  await page.getByTestId("admin-sidebar-footer").getByText("Chủ quán", { exact: true }).waitFor()
   if (await page.getByText("Lễ tân", { exact: true }).count())
     throw new Error("Previous account state leaked after account change")
 
   signedIn = false
-  await page.reload({ waitUntil: "networkidle" })
-  await expectText("Đăng nhập Lễ tân")
+  await page.reload({ waitUntil: "domcontentloaded" })
+  await expectText("Đăng nhập Quản trị")
 
   networkDown = true
   await page.reload({ waitUntil: "domcontentloaded" })

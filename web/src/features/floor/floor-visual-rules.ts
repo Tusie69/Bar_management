@@ -1,8 +1,10 @@
+import { STATE_META } from "@/components/status-meta"
 import { formatHonorificName } from "@/domain/booking-identity"
 import { groupCodeFromSymbol, normalizeGroupCode } from "@/domain/group-code"
 import type { FloorGroup, FloorTableState, TableLiveState, TableView } from "@/domain/models"
 import { FIXTURES, FLOOR_H, FLOOR_W, WAITLIST_MARKER, WALL_BOUNDS, ZONES, type ZoneCode } from "@/domain/venue-layout"
-import { DEFAULT_BAR_GUEST_LIST_BOUNDS } from "./bar-guest-rows"
+import { DEFAULT_BAR_GUEST_LIST_BOUNDS, isPhoneLikeGuestName } from "./bar-guest-rows"
+export { isPhoneLikeGuestName }
 
 /**
  * Approved icon priority (Nam 2026-11-04):
@@ -150,11 +152,12 @@ export function resolveCellCornerIcons(
   return result
 }
 
-export type LegendStatusKey = "free" | "reserved" | "upcoming" | "noshow" | "seated" | "spare"
+export type LegendStatusKey = "free" | "reserved" | "upcoming" | "noshow" | "seated" | "spare" | "oos"
 
 export function calculateStatusCounts(
   tables: (TableView & { state?: TableLiveState; liveState?: TableLiveState; claim?: FloorTableState["claim"] })[],
   states?: Map<number, FloorTableState>,
+  options?: { includeOos?: boolean },
 ): Record<LegendStatusKey, number> {
   const counts: Record<LegendStatusKey, number> = {
     free: 0,
@@ -163,9 +166,11 @@ export function calculateStatusCounts(
     noshow: 0,
     seated: 0,
     spare: 0,
+    oos: 0,
   }
 
   const countedGroups = new Set<string>()
+  const includeOos = options?.includeOos ?? false
 
   for (const t of tables) {
     const fs = states?.get(t.id)
@@ -181,6 +186,8 @@ export function calculateStatusCounts(
       key = "upcoming"
     } else if (rawState === "seated") {
       key = "seated"
+    } else if (includeOos && rawState === "oos") {
+      key = "oos"
     } else if (rawState === "spare" || (t.isSpare && rawState === "free")) {
       key = "spare"
     } else {
@@ -203,6 +210,42 @@ export function calculateStatusCounts(
   }
 
   return counts
+}
+
+export interface LegendChipItem {
+  key: LegendStatusKey
+  label: string
+  count: number
+  colorVar: string
+  tintVar?: string
+  isDashed?: boolean
+}
+
+export function buildLegendChips(counts: Record<LegendStatusKey, number>, includeOos = false): LegendChipItem[] {
+  const chips: LegendChipItem[] = [
+    { key: "free", label: "Trống", count: counts.free, colorVar: "var(--st-free)", tintVar: "var(--st-free-tint)" },
+    { key: "reserved", label: "Đã đặt", count: counts.reserved, colorVar: "var(--st-reserved)" },
+    { key: "upcoming", label: "Sắp tới", count: counts.upcoming, colorVar: "var(--st-upcoming)" },
+    { key: "noshow", label: "Tới muộn", count: counts.noshow, colorVar: "var(--st-noshow)" },
+    { key: "seated", label: "Đã tới", count: counts.seated, colorVar: "var(--st-seated)" },
+    {
+      key: "spare",
+      label: "Sơ cua",
+      count: counts.spare,
+      colorVar: "var(--table-line)",
+      tintVar: "var(--st-free-tint)",
+      isDashed: true,
+    },
+  ]
+  if (includeOos) {
+    chips.push({
+      key: "oos",
+      label: STATE_META.oos.label,
+      count: counts.oos,
+      colorVar: STATE_META.oos.color,
+    })
+  }
+  return chips
 }
 
 /**
@@ -279,6 +322,310 @@ export interface Bounds {
   y: number
   w: number
   h: number
+}
+
+export const CELL_CORNER_INSET_X = 4.2
+export const CELL_CORNER_INSET_Y = 3.1
+export const CLUSTER_CORNER_INSET_X = 4.5
+export const CLUSTER_DECORATION_CLEARANCE = 0.35
+export const GUEST_BADGE_HEIGHT = 11.0
+export const GUEST_BADGE_STROKE = 0.9
+export const TURN_BADGE_RADIUS = 5.5
+export const TURN_BADGE_STROKE = 0.85
+export const TABLE_ICON_RADIUS = 5.5
+export const TABLE_ICON_STROKE = 0.8
+export const TABLE_ICON_MAX_STEP = 12.0
+
+export function guestBadgeWidth(count: number, radius = TURN_BADGE_RADIUS): number {
+  const base = count >= 100 ? 18.2 : count >= 10 ? 15.0 : 12.0
+  if (radius === TURN_BADGE_RADIUS) return base
+  return Number((base * (radius / TURN_BADGE_RADIUS)).toFixed(2))
+}
+
+export function turnBadgeWidth(count: number, radius = TURN_BADGE_RADIUS): number {
+  if (count >= 100) return Number((radius * 3.12).toFixed(2))
+  if (count >= 10) return Number((radius * 2.58).toFixed(2))
+  return radius * 2
+}
+
+export interface TableCornerGeometry {
+  hw: number
+  hh: number
+  guestBadge: {
+    y: number
+    height: number
+    strokeWidth: number
+    widthFor: (count: number) => number
+    centerXFor: (count: number) => number
+  }
+  turnBadge: {
+    y: number
+    r: number
+    strokeWidth: number
+    widthFor: (count: number) => number
+    centerXFor: (count: number) => number
+  }
+  bottomLeftIcons: {
+    x: number
+    y: number
+    radius: number
+    strokeWidth: number
+    radiusFor: (count: number, oppositeCount?: number) => number
+    stepFor: (count: number, oppositeCount?: number) => number
+  }
+  bottomRightIcons: {
+    x: number
+    y: number
+    radius: number
+    strokeWidth: number
+    radiusFor: (count: number, oppositeCount?: number) => number
+    stepFor: (count: number, oppositeCount?: number) => number
+  }
+  staleMark: {
+    xFor: (guestCount?: number | null) => number
+    y: number
+    r: number
+  }
+}
+
+/**
+ * Shared corner geometry for a regular table cell (local coordinates around
+ * cell center 0,0). Used by both FloorCanvas and computeClusterDecorations so
+ * rendered corner badges/icons and collision-avoidance boxes stay identical.
+ *
+ * When `clusterPad` is supplied for a grouped table, corner decorations reserve
+ * measured clearance from the cluster outline's inner stroke and concentric
+ * rounded corners without moving any table or changing ungrouped cells.
+ */
+export function getTableCornerGeometry(w: number, h: number, clusterPad?: number): TableCornerGeometry {
+  const hw = w / 2
+  const hh = h / 2
+
+  let insetX = CELL_CORNER_INSET_X
+  let insetY = CELL_CORNER_INSET_Y
+  let cornerRadius = TURN_BADGE_RADIUS
+
+  if (typeof clusterPad === "number" && Number.isFinite(clusterPad)) {
+    insetX = CLUSTER_CORNER_INSET_X
+    const inner = clusterPad - CLUSTER_OUTLINE_HALF_STROKE
+    const maxProtrude = inner - CLUSTER_DECORATION_CLEARANCE
+    const maxHalfStroke = Math.max(GUEST_BADGE_STROKE, TURN_BADGE_STROKE, TABLE_ICON_STROKE) / 2
+    const maxR = Math.floor(((hh - 7.35 + maxProtrude) / 2 - maxHalfStroke) * 10) / 10
+    cornerRadius = Math.min(TURN_BADGE_RADIUS, Math.max(3.8, maxR))
+    const outerRadius = cornerRadius + maxHalfStroke
+    const minInsetY = outerRadius - maxProtrude
+    const maxInsetY = hh - 7.35 - outerRadius
+    insetY = Number(((minInsetY + Math.max(minInsetY, maxInsetY)) / 2).toFixed(2))
+  }
+
+  const topY = -hh + insetY
+  const bottomY = hh - insetY
+  const guestBadgeHeight =
+    cornerRadius === TURN_BADGE_RADIUS ? GUEST_BADGE_HEIGHT : Number((cornerRadius * 2).toFixed(2))
+  // Outer left edge of guest badge stays aligned with icon circle outer left edge
+  const guestLeftInner = -hw + insetX - cornerRadius
+  // Outer right edge of turn badge stays aligned with icon circle outer right edge
+  const turnRightInner = hw - insetX + cornerRadius
+
+  const totalIntervalsFor = (count: number, oppositeCount = 0): number => {
+    const total = count + oppositeCount
+    return Math.max(1, total - 1)
+  }
+
+  const iconStepFor = (count: number, oppositeCount = 0): number => {
+    if (count <= 1) return TABLE_ICON_MAX_STEP
+    const fullSpan = w - 2 * insetX
+    const candidate = fullSpan / totalIntervalsFor(count, oppositeCount)
+    return Math.min(TABLE_ICON_MAX_STEP, Number(candidate.toFixed(2)))
+  }
+
+  const iconRadiusFor = (count: number, oppositeCount = 0): number => {
+    const baseRadius = Math.min(TABLE_ICON_RADIUS, cornerRadius)
+    const total = count + oppositeCount
+    if (total <= 1) return baseRadius
+    const fullSpan = w - 2 * insetX
+    const minCenterStep = fullSpan / (total - 1)
+    const maxRadiusForGap = (minCenterStep - TABLE_ICON_STROKE - 0.12) / 2
+    return Math.min(baseRadius, Number(maxRadiusForGap.toFixed(2)))
+  }
+
+  const staleRadius = Math.min(5, cornerRadius)
+
+  return {
+    hw,
+    hh,
+    guestBadge: {
+      y: topY,
+      height: guestBadgeHeight,
+      strokeWidth: GUEST_BADGE_STROKE,
+      widthFor: (count: number) => guestBadgeWidth(count, cornerRadius),
+      centerXFor: (count: number) => guestLeftInner + guestBadgeWidth(count, cornerRadius) / 2,
+    },
+    turnBadge: {
+      y: topY,
+      r: cornerRadius,
+      strokeWidth: TURN_BADGE_STROKE,
+      widthFor: (count: number) => turnBadgeWidth(count, cornerRadius),
+      centerXFor: (count: number) => turnRightInner - turnBadgeWidth(count, cornerRadius) / 2,
+    },
+    bottomLeftIcons: {
+      x: -hw + insetX,
+      y: bottomY,
+      radius: Math.min(TABLE_ICON_RADIUS, cornerRadius),
+      strokeWidth: TABLE_ICON_STROKE,
+      radiusFor: iconRadiusFor,
+      stepFor: iconStepFor,
+    },
+    bottomRightIcons: {
+      x: hw - insetX,
+      y: bottomY,
+      radius: Math.min(TABLE_ICON_RADIUS, cornerRadius),
+      strokeWidth: TABLE_ICON_STROKE,
+      radiusFor: iconRadiusFor,
+      stepFor: iconStepFor,
+    },
+    staleMark: {
+      xFor: (guestCount?: number | null) =>
+        guestCount && guestCount > 0
+          ? guestLeftInner + guestBadgeWidth(guestCount, cornerRadius) + staleRadius + 1
+          : -hw + insetX,
+      y: topY,
+      r: staleRadius,
+    },
+  }
+}
+
+export interface TableCornerObstacleBoxes {
+  guestBadge: RectBox | null
+  turnBadge: RectBox | null
+  bottomLeftIcons: RectBox | null
+  bottomRightIcons: RectBox | null
+  paidDot: RectBox | null
+  staleMark: RectBox | null
+}
+
+/**
+ * Computes stroke-inclusive bounding boxes (in floor SVG space) for every
+ * corner badge/icon on a regular table cell using `getTableCornerGeometry`.
+ */
+export function getTableCornerObstacleBoxes(
+  table: Pick<TableView, "x" | "y" | "w" | "h" | "kind">,
+  opts: {
+    claim?: FloorTableState["claim"] | null
+    turnCount?: number | null
+    isAnchor?: boolean
+    hasActiveClaim?: boolean
+    staleFromPreviousDay?: boolean
+    clusterPad?: number
+  },
+  margin = 0.5,
+): TableCornerObstacleBoxes {
+  const empty: TableCornerObstacleBoxes = {
+    guestBadge: null,
+    turnBadge: null,
+    bottomLeftIcons: null,
+    bottomRightIcons: null,
+    paidDot: null,
+    staleMark: null,
+  }
+  if (table.kind === "BAR_SEAT") return empty
+
+  const geo = getTableCornerGeometry(table.w, table.h, opts.clusterPad)
+  const isAnchor = opts.isAnchor ?? true
+  const hasActiveClaim = opts.hasActiveClaim ?? Boolean(opts.claim)
+  const claim = opts.claim ?? null
+
+  let guestBadge: RectBox | null = null
+  let bottomLeftIcons: RectBox | null = null
+  let bottomRightIcons: RectBox | null = null
+  let paidDot: RectBox | null = null
+  const icons = resolveCellCornerIcons(claim)
+
+  if (hasActiveClaim && isAnchor && claim) {
+    if (claim.partySize && claim.partySize > 0) {
+      const bw = geo.guestBadge.widthFor(claim.partySize)
+      const bh = geo.guestBadge.height
+      const halfStroke = geo.guestBadge.strokeWidth / 2
+      const cx = table.x + geo.guestBadge.centerXFor(claim.partySize)
+      const cy = table.y + geo.guestBadge.y
+      guestBadge = {
+        left: cx - bw / 2 - halfStroke - margin,
+        top: cy - bh / 2 - halfStroke - margin,
+        right: cx + bw / 2 + halfStroke + margin,
+        bottom: cy + bh / 2 + halfStroke + margin,
+      }
+    }
+
+    if (icons.bottomLeft.length > 0) {
+      const cx = table.x + geo.bottomLeftIcons.x
+      const cy = table.y + geo.bottomLeftIcons.y
+      const r = geo.bottomLeftIcons.radiusFor(icons.bottomLeft.length, icons.bottomRight.length)
+      const iconPad = r + TABLE_ICON_STROKE / 2 + margin
+      const step = geo.bottomLeftIcons.stepFor(icons.bottomLeft.length, icons.bottomRight.length)
+      bottomLeftIcons = {
+        left: cx - iconPad,
+        top: cy - iconPad,
+        right: cx + iconPad + (icons.bottomLeft.length - 1) * step,
+        bottom: cy + iconPad,
+      }
+    }
+
+    if (icons.bottomRight.length > 0) {
+      const cx = table.x + geo.bottomRightIcons.x
+      const cy = table.y + geo.bottomRightIcons.y
+      const r = geo.bottomRightIcons.radiusFor(icons.bottomRight.length, icons.bottomLeft.length)
+      const iconPad = r + TABLE_ICON_STROKE / 2 + margin
+      const step = geo.bottomRightIcons.stepFor(icons.bottomRight.length, icons.bottomLeft.length)
+      bottomRightIcons = {
+        left: cx - iconPad - (icons.bottomRight.length - 1) * step,
+        top: cy - iconPad,
+        right: cx + iconPad,
+        bottom: cy + iconPad,
+      }
+    }
+  }
+  if (claim?.paid && icons.bottomRight.length === 0) {
+    const cx = table.x + geo.bottomRightIcons.x
+    const cy = table.y + geo.bottomRightIcons.y
+    const iconPad = TABLE_ICON_RADIUS + TABLE_ICON_STROKE / 2 + margin
+    paidDot = {
+      left: cx - iconPad,
+      top: cy - iconPad,
+      right: cx + iconPad,
+      bottom: cy + iconPad,
+    }
+  }
+
+  let turnBadge: RectBox | null = null
+  if (isAnchor && typeof opts.turnCount === "number" && opts.turnCount >= 2) {
+    const tw = geo.turnBadge.widthFor(opts.turnCount)
+    const th = geo.turnBadge.r * 2
+    const halfStroke = geo.turnBadge.strokeWidth / 2
+    const cx = table.x + geo.turnBadge.centerXFor(opts.turnCount)
+    const cy = table.y + geo.turnBadge.y
+    turnBadge = {
+      left: cx - tw / 2 - halfStroke - margin,
+      top: cy - th / 2 - halfStroke - margin,
+      right: cx + tw / 2 + halfStroke + margin,
+      bottom: cy + th / 2 + halfStroke + margin,
+    }
+  }
+
+  let staleMark: RectBox | null = null
+  if (opts.staleFromPreviousDay) {
+    const activeGuestCount = hasActiveClaim && isAnchor ? claim?.partySize : null
+    const cx = table.x + geo.staleMark.xFor(activeGuestCount)
+    const cy = table.y + geo.staleMark.y
+    const rPad = geo.staleMark.r + margin
+    staleMark = {
+      left: cx - rPad,
+      top: cy - rPad,
+      right: cx + rPad,
+      bottom: cy + rPad,
+    }
+  }
+
+  return { guestBadge, turnBadge, bottomLeftIcons, bottomRightIcons, paidDot, staleMark }
 }
 
 export function normalizeIconKey(raw: string): "star" | "fire" | "pin" | "cake" | "new" | null {
@@ -486,9 +833,11 @@ const CLUSTER_OUTLINE_HALF_STROKE = CLUSTER_OUTLINE_STROKE / 2
 const CLUSTER_CODE_HEIGHT = 14
 const CLUSTER_CODE_HALF_STROKE = CLUSTER_CODE_STROKE / 2
 const BAR_CLUSTER_PAD = 2
-const TABLE_CLUSTER_MAX_PAD = 3.0
+const TABLE_CLUSTER_MAX_PAD = 3.6
 const TABLE_CLUSTER_MIN_PAD = 1.8
+const TIGHT_CLUSTER_MIN_PAD = 1.05
 const CLUSTER_MIN_STROKE_GAP = 1.2
+const CLUSTER_NON_MEMBER_OBSTACLE_CLEARANCE = 0.4
 
 interface RectBox {
   left: number
@@ -503,9 +852,13 @@ export interface ClusterDecoration {
   y: number
   w: number
   h: number
+  rx: number
+  pad: number
+  memberIds: number[]
   code: string | null
   isBar: boolean
   orientation: "horizontal" | "vertical" | null
+  cornerCuts: RectBox[]
   label: {
     x: number
     y: number
@@ -524,35 +877,52 @@ function rectsOverlapWithGap(a: RectBox, b: RectBox, gap = 0): boolean {
   return !(a.right + gap <= b.left || b.right + gap <= a.left || a.bottom + gap <= b.top || b.bottom + gap <= a.top)
 }
 
-function rectOverlapArea(a: RectBox, b: RectBox): number {
-  const ox = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left))
-  const oy = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top))
-  return ox * oy
+function boxGap(a: RectBox, b: RectBox): number {
+  const dx = Math.max(0, a.left - b.right, b.left - a.right)
+  const dy = Math.max(0, a.top - b.bottom, b.top - a.bottom)
+  if (dx === 0 && dy === 0) return 0
+  if (dx === 0) return dy
+  if (dy === 0) return dx
+  if (Math.max(dx, dy) < 10) return Math.hypot(dx, dy)
+  return Infinity
 }
 
-function deriveTableClusterPad(raw: RectBox, memberIds: Set<number>, tables: TableView[]): number {
-  let minNeighborGap = Infinity
+function deriveTableClusterPad(
+  raw: RectBox,
+  memberIds: Set<number>,
+  tables: TableView[],
+  clusteredTableIds: Set<number>,
+  nonMemberObstacleBoxes: Map<number, RectBox[]>,
+): number {
+  let pad = TABLE_CLUSTER_MAX_PAD
   for (const other of tables) {
     if (memberIds.has(other.id)) continue
-    const oLeft = other.x - other.w / 2
-    const oRight = other.x + other.w / 2
-    const oTop = other.y - other.h / 2
-    const oBottom = other.y + other.h / 2
-    const dx = Math.max(0, raw.left - oRight, oLeft - raw.right)
-    const dy = Math.max(0, raw.top - oBottom, oTop - raw.bottom)
-    if (dx === 0 && dy > 0) {
-      minNeighborGap = Math.min(minNeighborGap, dy)
-    } else if (dy === 0 && dx > 0) {
-      minNeighborGap = Math.min(minNeighborGap, dx)
-    } else if (dx > 0 && dy > 0 && Math.max(dx, dy) < 10) {
-      minNeighborGap = Math.min(minNeighborGap, Math.hypot(dx, dy))
+    const otherRect: RectBox = {
+      left: other.x - other.w / 2,
+      right: other.x + other.w / 2,
+      top: other.y - other.h / 2,
+      bottom: other.y + other.h / 2,
+    }
+    const cellGap = boxGap(raw, otherRect)
+    if (Number.isFinite(cellGap)) {
+      // Reserve half the cell gap when another cluster can expand across it;
+      // allow tight 4-unit gaps (e.g. Khu C) to tighten below 1.8 when needed.
+      const cellAvailable = cellGap / 2 - CLUSTER_OUTLINE_HALF_STROKE - CLUSTER_MIN_STROKE_GAP / 2
+      const floor = clusteredTableIds.has(other.id) ? TIGHT_CLUSTER_MIN_PAD : TABLE_CLUSTER_MIN_PAD
+      pad = Math.min(pad, Math.max(floor, cellAvailable))
+    }
+
+    if (!clusteredTableIds.has(other.id)) {
+      for (const obs of nonMemberObstacleBoxes.get(other.id) ?? []) {
+        const obsGap = boxGap(raw, obs)
+        if (Number.isFinite(obsGap)) {
+          const obsAvailable = obsGap - CLUSTER_OUTLINE_HALF_STROKE - CLUSTER_NON_MEMBER_OBSTACLE_CLEARANCE
+          pad = Math.min(pad, Math.max(TIGHT_CLUSTER_MIN_PAD, obsAvailable))
+        }
+      }
     }
   }
-  if (!Number.isFinite(minNeighborGap)) return TABLE_CLUSTER_MAX_PAD
-  // Reserve half the gap per cluster so two adjacent outlines (including their
-  // 1.6-unit strokes) stay separated by at least CLUSTER_MIN_STROKE_GAP.
-  const available = minNeighborGap / 2 - CLUSTER_OUTLINE_HALF_STROKE - CLUSTER_MIN_STROKE_GAP / 2
-  return Math.min(TABLE_CLUSTER_MAX_PAD, Math.max(TABLE_CLUSTER_MIN_PAD, available))
+  return pad
 }
 
 /**
@@ -577,12 +947,11 @@ export function computeClusterDecorations({
   includeWaitlistMarker?: boolean
 }): ClusterDecoration[] {
   const seen = new Set<string>()
-  const rawClusters: {
+  const clusterSpecs: {
     key: string
-    x: number
-    y: number
-    w: number
-    h: number
+    raw: RectBox
+    memberIdSet: Set<number>
+    memberIds: number[]
     code: string | null
     isBar: boolean
     orientation: "horizontal" | "vertical" | null
@@ -605,14 +974,12 @@ export function computeClusterDecorations({
       top: Math.min(...members.map((t) => t.y - t.h / 2)),
       bottom: Math.max(...members.map((t) => t.y + t.h / 2)),
     }
-    const memberIds = new Set(members.map((m) => m.id))
-    const pad = isBar ? BAR_CLUSTER_PAD : deriveTableClusterPad(raw, memberIds, tables)
-    rawClusters.push({
+    const memberIds = members.map((m) => m.id)
+    clusterSpecs.push({
       key,
-      x: raw.left - pad,
-      y: raw.top - pad,
-      w: raw.right - raw.left + pad * 2,
-      h: raw.bottom - raw.top + pad * 2,
+      raw,
+      memberIdSet: new Set(memberIds),
+      memberIds,
       code,
       isBar,
       orientation,
@@ -644,9 +1011,88 @@ export function computeClusterDecorations({
   }
   for (const candidate of oneOutlinePerCluster(candidates)) add(candidate.tableIds, candidate.code)
 
+  const groupTurnMap = new Map<number, FloorGroup["seatedTurnCount"]>()
+  for (const g of groups) {
+    for (const id of g.tableIds) {
+      groupTurnMap.set(id, g.seatedTurnCount)
+    }
+  }
+
+  const clusteredTableIds = new Set<number>()
+  for (const spec of clusterSpecs) {
+    if (spec.isBar) continue
+    for (const id of spec.memberIds) clusteredTableIds.add(id)
+  }
+
+  const nonMemberObstacleBoxes = new Map<number, RectBox[]>()
+  if (mode === "live") {
+    for (const t of tables) {
+      if (t.kind === "BAR_SEAT" || clusteredTableIds.has(t.id)) continue
+      const fs = states?.get(t.id)
+      const rawState: TableLiveState = fs?.state ?? "free"
+      const state = rawState === "late_confirmed" ? "late" : rawState
+      const claim = fs?.claim
+      const isAnchor = groupRepresentativeMap.get(t.id) ?? true
+      const hasActiveClaim = !!claim && state !== "free" && state !== "spare" && state !== "oos"
+      const boxes = getTableCornerObstacleBoxes(
+        t,
+        {
+          claim,
+          turnCount: fs?.seatedTurnCount ?? groupTurnMap.get(t.id),
+          isAnchor,
+          hasActiveClaim,
+          staleFromPreviousDay: fs?.staleFromPreviousDay,
+        },
+        0,
+      )
+      const list = [
+        boxes.guestBadge,
+        boxes.turnBadge,
+        boxes.bottomLeftIcons,
+        boxes.bottomRightIcons,
+        boxes.paidDot,
+        boxes.staleMark,
+      ].filter((box): box is RectBox => box !== null)
+      if (list.length > 0) nonMemberObstacleBoxes.set(t.id, list)
+    }
+  }
+
+  const rawClusters = clusterSpecs.map((spec) => {
+    const pad = spec.isBar
+      ? BAR_CLUSTER_PAD
+      : deriveTableClusterPad(spec.raw, spec.memberIdSet, tables, clusteredTableIds, nonMemberObstacleBoxes)
+    const w = spec.raw.right - spec.raw.left + pad * 2
+    const h = spec.raw.bottom - spec.raw.top + pad * 2
+    const rx = spec.isBar ? Math.min(w, h) / 2 : Number((4.5 + pad).toFixed(2))
+    return {
+      key: spec.key,
+      x: spec.raw.left - pad,
+      y: spec.raw.top - pad,
+      w,
+      h,
+      rx,
+      pad,
+      memberIds: spec.memberIds,
+      code: spec.code,
+      isBar: spec.isBar,
+      orientation: spec.orientation,
+      members: spec.members,
+    }
+  })
+
   rawClusters.sort((a, b) => a.y - b.y || a.x - b.x || (a.code ?? a.key).localeCompare(b.code ?? b.key))
 
+  const tableClusterPadMap = new Map<number, number>()
+  for (const c of rawClusters) {
+    if (c.isBar) continue
+    for (const id of c.memberIds) {
+      const prev = tableClusterPadMap.get(id)
+      tableClusterPadMap.set(id, prev === undefined ? c.pad : Math.min(prev, c.pad))
+    }
+  }
+
   const baseObstacles: RectBox[] = []
+  const cornerObstacles: RectBox[] = []
   for (const t of tables) {
     if (t.kind === "BAR_SEAT") {
       const r = Math.max(9, (t.w || 20) / 2)
@@ -672,60 +1118,23 @@ export function computeClusterDecorations({
     const hasActiveClaim = !!claim && state !== "free" && state !== "spare" && state !== "oos"
 
     if (t.kind !== "BAR_SEAT") {
-      const hw = t.w / 2
-      const hh = t.h / 2
-      if (hasActiveClaim && isAnchor) {
-        if (claim.partySize && claim.partySize > 0) {
-          const bw = claim.partySize >= 100 ? 18 : claim.partySize >= 10 ? 15 : 12
-          const bh = 11
-          const cx = t.x - hw + 3
-          const cy = t.y - hh - 0.5
-          baseObstacles.push({
-            left: cx - bw / 2 - 0.5,
-            top: cy - bh / 2 - 0.5,
-            right: cx + bw / 2 + 0.5,
-            bottom: cy + bh / 2 + 0.5,
-          })
-        }
-        const icons = resolveCellCornerIcons(claim)
-        if (icons.bottomLeft.length > 0) {
-          const cx = t.x - hw + 2.5
-          const cy = t.y + hh - 0.5
-          baseObstacles.push({
-            left: cx - 5.5,
-            top: cy - 5.5,
-            right: cx + 5.5 + (icons.bottomLeft.length - 1) * 10,
-            bottom: cy + 5.5,
-          })
-        }
-        if (icons.bottomRight.length > 0) {
-          const cx = t.x + hw - 2
-          const cy = t.y + hh - 0.5
-          baseObstacles.push({
-            left: cx - 5.5 - (icons.bottomRight.length - 1) * 10,
-            top: cy - 5.5,
-            right: cx + 5.5,
-            bottom: cy + 5.5,
-          })
-        } else if (claim.paid) {
-          const cx = t.x + hw - 2
-          const cy = t.y + hh - 0.5
-          baseObstacles.push({ left: cx - 5.5, top: cy - 5.5, right: cx + 5.5, bottom: cy + 5.5 })
-        }
-      }
-      const turnCount = fs?.seatedTurnCount
-      if (isAnchor && turnCount && turnCount > 0) {
-        const cx = t.x + hw
-        const cy = t.y
-        baseObstacles.push({ left: cx - 5.3, top: cy - 5.3, right: cx + 5.3, bottom: cy + 5.3 })
-      }
-      if (fs?.staleFromPreviousDay) {
-        baseObstacles.push({
-          left: t.x - hw - 5.5,
-          top: t.y - hh - 5.5,
-          right: t.x - hw + 5.5,
-          bottom: t.y - hh + 5.5,
-        })
+      const boxes = getTableCornerObstacleBoxes(t, {
+        claim,
+        turnCount: fs?.seatedTurnCount ?? groupTurnMap.get(t.id),
+        isAnchor,
+        hasActiveClaim,
+        staleFromPreviousDay: fs?.staleFromPreviousDay,
+        clusterPad: tableClusterPadMap.get(t.id),
+      })
+      for (const box of [
+        boxes.guestBadge,
+        boxes.turnBadge,
+        boxes.bottomLeftIcons,
+        boxes.bottomRightIcons,
+        boxes.paidDot,
+        boxes.staleMark,
+      ]) {
+        if (box) cornerObstacles.push(box)
       }
     }
   }
@@ -764,6 +1173,10 @@ export function computeClusterDecorations({
   const placedLabels: RectBox[] = []
 
   return rawClusters.map((c) => {
+    const frameBounds = { left: c.x, top: c.y, right: c.x + c.w, bottom: c.y + c.h }
+    const cornerCuts = cornerObstacles.filter((box) =>
+      rectsOverlapWithGap(frameBounds, box, CLUSTER_OUTLINE_HALF_STROKE),
+    )
     if (!c.code) {
       return {
         key: c.key,
@@ -771,9 +1184,13 @@ export function computeClusterDecorations({
         y: c.y,
         w: c.w,
         h: c.h,
+        rx: c.rx,
+        pad: c.pad,
+        memberIds: c.memberIds,
         code: null,
         isBar: c.isBar,
         orientation: c.orientation,
+        cornerCuts,
         label: null,
       }
     }
@@ -788,7 +1205,7 @@ export function computeClusterDecorations({
         right: o.x + o.w + CLUSTER_OUTLINE_HALF_STROKE,
         bottom: o.y + o.h + CLUSTER_OUTLINE_HALF_STROKE,
       }))
-    const obstacles = [...baseObstacles, ...otherOutlines, ...placedLabels]
+    const obstacles = [...baseObstacles, ...cornerObstacles, ...otherOutlines, ...placedLabels]
 
     const candidates: { x: number; y: number; side: "left" | "right" | "top" | "bottom" }[] = []
     if (c.isBar && c.orientation === "vertical") {
@@ -849,42 +1266,54 @@ export function computeClusterDecorations({
       box.top >= wallInner.top &&
       box.bottom <= wallInner.bottom
 
-    let chosen = candidates[0]
-    let bestScore = Infinity
-    for (const cand of candidates) {
-      const box = toBox(cand)
-      if (!fitsInWall(box)) continue
-      const clear = obstacles.every((obs) => !rectsOverlapWithGap(box, obs, 0.4))
-      if (clear) {
-        chosen = cand
-        bestScore = 0
-        break
-      }
-      let score = 0
-      for (const obs of obstacles) score += rectOverlapArea(box, obs)
-      if (score < bestScore) {
-        bestScore = score
-        chosen = cand
+    const gap = 0.4
+    const canPlace = (point: { x: number; y: number }) => {
+      const box = toBox(point)
+      return fitsInWall(box) && obstacles.every((obs) => !rectsOverlapWithGap(box, obs, gap))
+    }
+    let chosen = candidates.find(canPlace)
+    if (!chosen) {
+      obstacles.push(frameBounds)
+      const nearby = candidates[0]
+      const margin = CLUSTER_CODE_HALF_STROKE + gap + 0.01
+      // Axis-aligned clearance changes only at obstacle edges, so test the clear sides of each edge.
+      const xs = new Set([
+        nearby.x,
+        wallInner.left + CLUSTER_CODE_HALF_STROKE,
+        ...obstacles.flatMap((box) => [box.left - pw - margin, box.right + margin]),
+      ])
+      const ys = new Set([
+        nearby.y,
+        wallInner.top + CLUSTER_CODE_HALF_STROKE,
+        ...obstacles.flatMap((box) => [box.top - ph - margin, box.bottom + margin]),
+      ])
+      let bestDistance = Infinity
+      for (const x of xs) {
+        for (const y of ys) {
+          const distance = (x - nearby.x) ** 2 + (y - nearby.y) ** 2
+          if (distance >= bestDistance || !canPlace({ x, y })) continue
+          bestDistance = distance
+          const side = y + ph <= c.y ? "top" : y >= c.y + c.h ? "bottom" : x + pw <= c.x ? "left" : "right"
+          chosen = { x, y, side }
+        }
       }
     }
 
-    placedLabels.push(toBox(chosen))
+    if (chosen) placedLabels.push(toBox(chosen))
     return {
       key: c.key,
       x: c.x,
       y: c.y,
       w: c.w,
       h: c.h,
+      rx: c.rx,
+      pad: c.pad,
+      memberIds: c.memberIds,
       code: c.code,
       isBar: c.isBar,
       orientation: c.orientation,
-      label: {
-        x: chosen.x,
-        y: chosen.y,
-        width: pw,
-        height: ph,
-        side: chosen.side,
-      },
+      cornerCuts,
+      label: chosen ? { ...chosen, width: pw, height: ph } : null,
     }
   })
 }

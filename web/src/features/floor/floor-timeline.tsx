@@ -212,18 +212,18 @@ export function FloorTimeline({
   return (
     <div
       ref={scrollRef}
-      className="relative min-h-0 flex-1 scrollbar-thin overflow-auto rounded-sm border bg-surface-1"
+      className="relative min-h-0 flex-1 scrollbar-thin overflow-auto rounded-xl border border-border bg-surface-1 shadow-xs"
     >
       <div className="relative" style={{ width: LW + HOURS * HW }}>
-        <div className="sticky top-0 z-[5] flex h-11 border-b border-strong bg-surface-1">
-          <div className="sticky left-0 z-[6] flex w-[104px] shrink-0 items-center gap-2 border-r border-strong bg-surface-1 px-3 text-xs font-semibold text-tx-head">
+        <div className="sticky top-0 z-[5] flex h-11 border-b border-border bg-surface-1">
+          <div className="sticky left-0 z-[6] flex w-[104px] shrink-0 items-center gap-2 border-r border-border bg-surface-1 px-3 text-xs font-semibold tracking-[0.03em] text-muted-foreground uppercase">
             Bàn<span className="ml-auto">Chỗ</span>
           </div>
           <div className="relative shrink-0" style={{ width: HOURS * HW }}>
             {Array.from({ length: HOURS }, (_, i) => (
               <span
                 key={i}
-                className="tnum absolute inset-y-0 flex items-center border-l pl-2 text-[13px] font-semibold text-tx-head"
+                className="tnum absolute inset-y-0 flex items-center border-l border-border-subtle pl-2 text-xs font-semibold text-muted-foreground"
                 style={{ left: i * HW }}
               >
                 {pad2((17 + i) % 24)}h
@@ -231,7 +231,7 @@ export function FloorTimeline({
             ))}
             {nowX !== null ? (
               <span
-                className="tnum absolute top-2.5 flex h-6 -translate-x-1/2 items-center rounded-sm bg-foreground px-2 text-xs font-semibold text-background"
+                className="tnum absolute top-2.5 flex h-6 -translate-x-1/2 items-center rounded-full bg-foreground px-2.5 text-xs font-semibold text-background shadow-xs"
                 style={{ left: nowX }}
               >
                 {fmtTime(now)}
@@ -241,7 +241,7 @@ export function FloorTimeline({
         </div>
         {groups.map((g) => (
           <Fragment key={g.z}>
-            <div className="flex h-8 border-b bg-surface-2">
+            <div className="flex h-8 border-b border-border-subtle bg-surface-2">
               <div className="sticky left-0 z-[3] flex items-center gap-2 bg-surface-2 px-3 text-[13px] font-semibold whitespace-nowrap text-tx-strong">
                 {g.name}
                 <span className="text-xs font-normal text-tx-3">{g.count}</span>
@@ -250,14 +250,14 @@ export function FloorTimeline({
             {g.tables.map((t) => {
               const sel = live && ui.selectedTableId === t.id
               return (
-                <div key={t.id} className={cn("flex h-12 border-b", sel && "bg-surface-2")}>
+                <div key={t.id} className={cn("flex h-12 border-b border-border-subtle", sel && "bg-primary-tint/50")}>
                   <button
                     type="button"
                     onClick={() => select(t)}
                     aria-pressed={sel}
                     className={cn(
-                      "sticky left-0 z-[3] flex w-[104px] shrink-0 items-center gap-2 border-r border-strong px-3 text-left",
-                      sel ? "bg-surface-3" : "bg-surface-1",
+                      "sticky left-0 z-[3] flex w-[104px] shrink-0 items-center gap-2 border-r border-border px-3 text-left transition-colors",
+                      sel ? "bg-primary-tint text-primary-ink" : "bg-surface-1 hover:bg-surface-2/60",
                     )}
                   >
                     <span className="text-xs font-semibold text-tx-strong">{model.label(t.id)}</span>

@@ -246,49 +246,14 @@ cd web && pnpm typecheck && pnpm lint && pnpm test
 
 ---
 
-## 9. Chuyển động (animation) trong khung Admin
+## 9. Chuyển động trong khung Admin
 
-Quy ước gọn, để các màn mới không ai tự đặt số đo riêng.
+Drawer Admin mở và đóng từ bên trái qua `SheetPresenceController` với
+`MOTION.duration.drawer` từ `web/src/lib/motion.ts`. Panel còn trong DOM
+khi đóng để hoàn thành chuyển động, ngừng nhận thao tác và có thể đổi
+hướng nếu mở lại giữa chừng. Controller xử lý cả chế độ giảm chuyển động.
 
-**Token** — khai trong `admin-theme.css`, dùng bằng `var()`, không gõ số đo
-vào component:
-
-| Token | Giá trị | Dùng cho |
-| --- | --- | --- |
-| `--adm-dur-fast` | 120ms | hover, đổi nền, đổi màu chữ |
-| `--adm-dur-base` | 200ms | mở drawer, mở hộp thoại, panel vào |
-| `--adm-dur-exit` | 150ms | đóng — luôn nhanh hơn mở |
-| `--adm-ease-out` | `cubic-bezier(0.22, 1, 0.36, 1)` | mọi chuyển động **vào** |
-| `--adm-ease-in` | `cubic-bezier(0.4, 0, 1, 1)` | mọi chuyển động **ra** |
-
-Thời lượng phải khớp `ADMIN_MOTION_MS` trong `admin-motion.ts`, vì JS dựa vào
-con số đó để biết khi nào gỡ drawer khỏi DOM. Sửa một chỗ thì sửa cả hai.
-
-**Ba luật**
-
-1. **Không dùng `linear`.** Chuyển động tốc độ đều là thứ làm giao diện trông
-   như máy móc. Vào thì ease-out, ra thì ease-in. Ngoại lệ duy nhất là mờ
-   dần độ trong suốt (overlay) — mắt không cảm nhận gia tốc của opacity.
-2. **Không dùng `transition: all`.** Nó bắt luôn `outline` của
-   `:focus-visible`, làm viền focus bò ra chậm một nhịp đúng lúc người dùng
-   bàn phím cần thấy ngay. Liệt kê rõ thuộc tính cần chuyển.
-3. **Phần tử mount/unmount theo điều kiện thì không dùng `transition`.** Vừa
-   mount là trình duyệt vẽ luôn trạng thái cuối, transition không chạy; và
-   unmount ngay thì không có gì để chạy animation ra. Dùng `@keyframes` theo
-   `data-state="open|closed"`, giữ phần tử lại trong DOM suốt lúc đóng
-   (pha `closing` trong `admin-motion.ts`), rồi mới gỡ.
-
-**Ngưỡng theo nghiệp vụ** — khác nhau giữa hai cổng:
-
-- **Admin** là việc đọc số và tra cứu, mỗi lần vài giây. 200ms cho panel là
-  thoải mái.
-- **Lễ tân** thao tác liên tục suốt ca, cùng một nút bấm hàng trăm lần mỗi
-  tối. Thứ gì nằm trên đường thao tác lặp lại đó phải ≤ 150ms hoặc bỏ hẳn
-  animation. Sơ đồ bàn (`floor-canvas.tsx`) có cơ chế riêng và đã tự đọc
-  `prefers-reduced-motion` — **không thêm animation vào đó** mà không hỏi
-  trước.
-
-**`prefers-reduced-motion`** đã tắt chung mọi animation/transition ở
-`index.css`, nên CSS mới không cần khai lại. Nhưng chỗ nào dùng timer JS để
-hẹn unmount thì phải tự đọc thiết lập đó (`prefersReducedMotion()`), nếu
-không panel sẽ đứng chết trên màn hình đúng số ms đó rồi mới biến mất.
+Các trạng thái hover, focus và press lấy thời lượng và easing từ
+`web/src/styles/tokens.css`. Khai rõ thuộc tính trong `transition` để
+viền focus xuất hiện ngay. Khe và panel của sidebar dùng cùng easing để
+chuyển động đồng bộ. Các ô trên sơ đồ giữ nguyên khi dữ liệu cập nhật.

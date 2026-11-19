@@ -58,14 +58,14 @@ function ReportsContent() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="eyebrow">Hoạt động & báo cáo</p>
-            <h2 className="mt-1 text-xl font-bold">
+            <h2 className="mt-1 text-[24px] leading-tight font-bold tracking-[-0.02em]">
               {q.from === q.to ? fmtBusinessDate(q.from) : `${fmtDayMonth(q.from)} → ${fmtDayMonth(q.to)}`}
             </h2>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <ToggleGroup
               type="single"
-              variant="outline"
+              spacing={0}
               value={range}
               onValueChange={(v) => v && setRange(v as Range)}
               aria-label="Khoảng thời gian"
@@ -102,7 +102,7 @@ function ReportsContent() {
           </div>
         ) : (
           <>
-            <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border bg-border md:grid-cols-4 xl:grid-cols-7">
+            <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border shadow-xs md:grid-cols-4 xl:grid-cols-7">
               <Metric k="Lượt ghé (visit)" v={r.visits} />
               <Metric k="Tổng khách thực tế" v={r.guests} />
               <Metric k="Lượt sử dụng bàn" v={r.tableTurns} />
@@ -113,7 +113,7 @@ function ReportsContent() {
             </dl>
 
             <div className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
-              <section className="grid min-w-0 content-start gap-3 rounded-2xl border p-4 md:p-5">
+              <section className="grid min-w-0 content-start gap-3 rounded-xl border border-border bg-surface-1 p-4 shadow-xs md:p-5">
                 <SectionTitle aside={<span className="text-xs text-subtle">theo ngày kinh doanh</span>}>
                   Lượt ghé
                 </SectionTitle>
@@ -135,7 +135,7 @@ function ReportsContent() {
                   unit=" khách"
                 />
               </section>
-              <section className="grid content-start gap-3 rounded-2xl border p-4 md:p-5">
+              <section className="grid content-start gap-3 rounded-xl border border-border bg-surface-1 p-4 shadow-xs md:p-5">
                 <SectionTitle>Cách đếm</SectionTitle>
                 <ul className="grid gap-2 text-sm text-muted-foreground">
                   <li>
@@ -154,7 +154,7 @@ function ReportsContent() {
               </section>
             </div>
 
-            <section className="grid gap-3 rounded-2xl border p-4 md:p-5">
+            <section className="grid gap-3 rounded-xl border border-border bg-surface-1 p-4 shadow-xs md:p-5">
               <SectionTitle aside={<span className="text-xs text-subtle">{r.byTable.length} bàn/ghế có sử dụng</span>}>
                 Lượt sử dụng theo bàn
               </SectionTitle>
@@ -188,9 +188,9 @@ function ReportsContent() {
 function Metric({ k, v }: { k: string; v: number }) {
   return (
     // 7 cells: the last one spans the leftover columns (2-col and 4-col layouts) so no empty cell shows.
-    <div className="grid content-start gap-1 bg-background p-4 last:col-span-2 xl:last:col-span-1">
-      <dt className="text-xs text-muted-foreground">{k}</dt>
-      <dd className="tnum text-[26px] leading-none font-bold">{v}</dd>
+    <div className="grid content-start gap-1 bg-surface-1 p-4 last:col-span-2 xl:last:col-span-1">
+      <dt className="text-xs font-medium text-muted-foreground">{k}</dt>
+      <dd className="tnum text-[26px] leading-none font-bold tracking-[-0.02em] text-foreground">{v}</dd>
     </div>
   )
 }

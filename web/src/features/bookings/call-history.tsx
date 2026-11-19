@@ -45,7 +45,7 @@ export function CallHistory({ target, className }: { target: CallTarget; classNa
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1.5 self-start text-xs font-medium text-tx-2"
+        className="relative inline-flex items-center gap-1.5 self-start rounded-md py-1 text-xs font-medium text-tx-2 transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none after:pointer-coarse:absolute after:pointer-coarse:-inset-x-2 after:pointer-coarse:-inset-y-2 after:pointer-coarse:content-['']"
       >
         <History className="size-3.5" aria-hidden />
         Lịch sử gọi
@@ -53,7 +53,7 @@ export function CallHistory({ target, className }: { target: CallTarget; classNa
         <ChevronDown className={cn("size-3.5 transition-transform", open && "rotate-180")} aria-hidden />
       </button>
       {open ? (
-        <div className="rounded-lg bg-surface-2 px-3 py-2 text-xs" aria-live="polite">
+        <div className="rounded-xl border border-border-subtle bg-surface-2 px-3 py-2.5 text-xs" aria-live="polite">
           {calls.isPending ? (
             <span className="text-tx-2">Đang tải...</span>
           ) : calls.isError ? (

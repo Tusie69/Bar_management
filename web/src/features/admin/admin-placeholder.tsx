@@ -1,9 +1,5 @@
 /**
- * TU-39 — Trang "Đang xây dựng" cho mọi mục chưa có nội dung nghiệp vụ.
- *
- * Có quyền xem mà gặp màn trắng thì người dùng sẽ báo là app hỏng. Placeholder
- * nói rõ trang sẽ có gì và ai đang làm, và không giả lập dữ liệu Figma: số
- * liệu mẫu trong prototype là số mẫu, đưa vào đây sẽ bị đọc như số thật.
+ * TU-39 + Redesign P1 — Trang "Đang xây dựng" cho mọi mục chưa có nội dung nghiệp vụ.
  */
 import { Hammer } from "lucide-react"
 import type { AdminPage } from "./admin-pages"
@@ -14,17 +10,34 @@ const STATUS_NOTE: Record<AdminPage["status"], string> = {
   phase2: "Thuộc đợt 2. Một phần dữ liệu (tiền, hóa đơn) chưa có trong hệ thống nên chưa dựng được.",
 }
 
+const STATUS_BADGE: Record<AdminPage["status"], string> = {
+  integrated: "Đang hoàn thiện",
+  pending: "Đang phát triển",
+  phase2: "Đợt 2",
+}
+
 export function AdminPlaceholder({ page }: { page: AdminPage }) {
   return (
-    <section className="adm-card grid gap-3 p-6" aria-labelledby={`adm-placeholder-${page.path}`}>
-      <span className="grid size-10 place-items-center rounded-lg bg-[var(--adm-tint-amber)]">
-        <Hammer className="size-5 text-[var(--adm-state-soon)]" />
-      </span>
-      <h2 id={`adm-placeholder-${page.path}`} className="adm-h2">
-        {page.title} — đang xây dựng
-      </h2>
-      {page.note ? <p className="adm-body max-w-2xl text-[var(--adm-text-muted)]">{page.note}</p> : null}
-      <p className="adm-body text-[var(--adm-text-muted)]">
+    <section
+      data-adm-reveal
+      className="adm-card grid max-w-2xl gap-4 p-6"
+      aria-labelledby={`adm-placeholder-${page.path}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <span className="grid size-11 shrink-0 place-items-center rounded-xl border border-[var(--adm-state-soon)]/25 bg-[var(--adm-tint-amber)]">
+          <Hammer className="size-5 text-[var(--adm-state-soon)]" aria-hidden />
+        </span>
+        <span className="adm-caption rounded-full border border-[var(--adm-border)] bg-[var(--adm-surface-sunken)] px-2.5 py-1 font-medium text-[var(--adm-text)]">
+          {STATUS_BADGE[page.status]}
+        </span>
+      </div>
+      <div className="grid gap-1.5">
+        <h2 id={`adm-placeholder-${page.path}`} className="adm-h2">
+          {page.title} — đang xây dựng
+        </h2>
+        {page.note ? <p className="adm-body text-[var(--adm-text-muted)]">{page.note}</p> : null}
+      </div>
+      <p className="adm-supporting border-t border-[var(--adm-border-subtle)] pt-3">
         {STATUS_NOTE[page.status]}
         {page.owner ? ` Mã task: ${page.owner}.` : ""}
       </p>

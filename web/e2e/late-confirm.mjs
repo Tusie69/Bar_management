@@ -29,8 +29,12 @@ for (const item of cases) {
 
   const table = page.locator('[aria-label^="Bàn B3,"], [aria-label^="Bàn B3:"]').first()
   if (!(await table.count())) {
-    const labels = await page.locator("[aria-label]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label")).filter(Boolean))
-    throw new Error(`${item.name}: B3 not found; body=${(await page.locator("body").innerText()).slice(0, 500)}; labels=${labels.slice(0, 30).join(" | ")}`)
+    const labels = await page
+      .locator("[aria-label]")
+      .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label")).filter(Boolean))
+    throw new Error(
+      `${item.name}: B3 not found; body=${(await page.locator("body").innerText()).slice(0, 500)}; labels=${labels.slice(0, 30).join(" | ")}`,
+    )
   }
   await table.click()
   const action = page.getByRole("button", { name: "Tới muộn", exact: true })
@@ -41,17 +45,18 @@ for (const item of cases) {
   await table.waitFor()
   await page.waitForFunction(() => {
     const node = document.querySelector('[aria-label^="Bàn B3,"], [aria-label^="Bàn B3:"]')
-    return node?.getAttribute("aria-label")?.includes("Không tới (đã báo tới muộn)")
+    return node?.getAttribute("aria-label")?.includes("Tới muộn (đã báo tới muộn)")
   })
   const label = await table.getAttribute("aria-label")
-  if (!label?.includes("Không tới (đã báo tới muộn)")) throw new Error(`${item.name}: state did not update: ${label}`)
-  if (item.width < 768) await expect(page.getByText("Không tới · đã báo muộn · 15 phút", { exact: true })).toBeVisible()
-  const state = () => page.evaluate(async () => {
-    const { api, clock } = await import("/src/services/index.ts")
-    const catalog = await api.getCatalog()
-    const id = catalog.tables.find(t => t.code === "B3").id
-    return (await api.getFloorState(clock.now())).tables.find(t => t.tableId === id).state
-  })
+  if (!label?.includes("Tới muộn (đã báo tới muộn)")) throw new Error(`${item.name}: state did not update: ${label}`)
+  if (item.width < 768) await expect(page.getByText("Tới muộn · đã báo muộn · 15 phút", { exact: true })).toBeVisible()
+  const state = () =>
+    page.evaluate(async () => {
+      const { api, clock } = await import("/src/services/index.ts")
+      const catalog = await api.getCatalog()
+      const id = catalog.tables.find((t) => t.code === "B3").id
+      return (await api.getFloorState(clock.now())).tables.find((t) => t.tableId === id).state
+    })
   assert.equal(await state(), "late_confirmed")
 
   if (item.name === "mobile-dark") {
@@ -59,21 +64,18 @@ for (const item of cases) {
       const { clock } = await import("/src/services/index.ts")
       clock.advance(5)
     })
-    await page.waitForFunction(() => {
-      const node = document.querySelector('[aria-label^="Bàn B3,"], [aria-label^="Bàn B3:"]')
-      return node?.getAttribute("aria-label")?.includes("Không tới")
-    }, undefined, { timeout: 20_000 })
-    const afterThreshold = await table.getAttribute("aria-label")
-    if (!afterThreshold?.includes("Không tới")) throw new Error(`Option A did not switch to NO_SHOW: ${afterThreshold}`)
-    assert.equal(await state(), "noshow", "Option A threshold must still override late confirmation")
+    await expect.poll(state).toBe("noshow")
+    await expect(table).toHaveAttribute("aria-label", /Bàn B3, Tới muộn/)
 
     const deferNoShow = page.getByRole("button", { name: "Đã xem, xử lý sau" })
     if (await deferNoShow.isVisible()) await deferNoShow.click()
+    if (!(await page.getByRole("dialog", { name: "Chi tiết B3" }).isVisible())) await table.click()
     await page.getByRole("button", { name: "Khách đã đến", exact: true }).click()
-    await page.waitForFunction(() => {
-      const node = document.querySelector('[aria-label^="Bàn B3,"], [aria-label^="Bàn B3:"]')
-      return node?.getAttribute("aria-label")?.includes("Có khách")
-    })
+    const confirmation = page.getByRole("alertdialog")
+    await confirmation.or(page.locator('[aria-label^="Bàn B3, Đã tới"]')).first().waitFor()
+    if (await confirmation.isVisible())
+      await confirmation.getByRole("button", { name: /Khách đã đến|Xác nhận/ }).click()
+    await expect(table).toHaveAttribute("aria-label", /Bàn B3, Đã tới/)
     assert.equal(await state(), "seated", "arrival still checks the booking in")
   }
   await page.close()

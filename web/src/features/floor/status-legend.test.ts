@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest"
 import { renderToString } from "react-dom/server"
 import { STATE_META } from "@/components/status-meta"
 import { StateSwatch, WarningChip } from "@/components/status"
-import { StatusLegend } from "./status-legend"
+import { buildLegendChips, calculateStatusCounts } from "./floor-visual-rules"
+import { LegendChipsGrid, StatusLegend } from "./status-legend"
 
 describe("G3 - status metadata and language (HU-32 section 4)", () => {
   it("defines the 5 core status names and tokens matching HU-32 + late red", () => {
@@ -89,12 +90,120 @@ describe("G3 - status metadata and language (HU-32 section 4)", () => {
 
   it("StatusLegend renders polished box with heading, chips, and tabular counts", () => {
     const mockTables = [
-      { id: 1, code: "A1", x: 0, y: 0, w: 30, h: 30, kind: "TABLE", zoneCode: "A", state: "free", version: 1, displayName: "A1", zoneId: 1, capacity: 4, minCapacity: 2, shape: "RECT", isSpare: false, isActive: true },
-      { id: 2, code: "A2", x: 0, y: 0, w: 30, h: 30, kind: "TABLE", zoneCode: "A", state: "reserved", version: 1, displayName: "A2", zoneId: 1, capacity: 4, minCapacity: 2, shape: "RECT", isSpare: false, isActive: true },
-      { id: 3, code: "A3", x: 0, y: 0, w: 30, h: 30, kind: "TABLE", zoneCode: "A", state: "upcoming", version: 1, displayName: "A3", zoneId: 1, capacity: 4, minCapacity: 2, shape: "RECT", isSpare: false, isActive: true },
-      { id: 4, code: "A4", x: 0, y: 0, w: 30, h: 30, kind: "TABLE", zoneCode: "A", state: "noshow", version: 1, displayName: "A4", zoneId: 1, capacity: 4, minCapacity: 2, shape: "RECT", isSpare: false, isActive: true },
-      { id: 5, code: "A5", x: 0, y: 0, w: 30, h: 30, kind: "TABLE", zoneCode: "A", state: "seated", version: 1, displayName: "A5", zoneId: 1, capacity: 4, minCapacity: 2, shape: "RECT", isSpare: false, isActive: true },
-      { id: 6, code: "A0", x: 0, y: 0, w: 30, h: 30, kind: "TABLE", zoneCode: "A", state: "free", isSpare: true, version: 1, displayName: "A0", zoneId: 1, capacity: 4, minCapacity: 2, shape: "RECT", isActive: true },
+      {
+        id: 1,
+        code: "A1",
+        x: 0,
+        y: 0,
+        w: 30,
+        h: 30,
+        kind: "TABLE",
+        zoneCode: "A",
+        state: "free",
+        version: 1,
+        displayName: "A1",
+        zoneId: 1,
+        capacity: 4,
+        minCapacity: 2,
+        shape: "RECT",
+        isSpare: false,
+        isActive: true,
+      },
+      {
+        id: 2,
+        code: "A2",
+        x: 0,
+        y: 0,
+        w: 30,
+        h: 30,
+        kind: "TABLE",
+        zoneCode: "A",
+        state: "reserved",
+        version: 1,
+        displayName: "A2",
+        zoneId: 1,
+        capacity: 4,
+        minCapacity: 2,
+        shape: "RECT",
+        isSpare: false,
+        isActive: true,
+      },
+      {
+        id: 3,
+        code: "A3",
+        x: 0,
+        y: 0,
+        w: 30,
+        h: 30,
+        kind: "TABLE",
+        zoneCode: "A",
+        state: "upcoming",
+        version: 1,
+        displayName: "A3",
+        zoneId: 1,
+        capacity: 4,
+        minCapacity: 2,
+        shape: "RECT",
+        isSpare: false,
+        isActive: true,
+      },
+      {
+        id: 4,
+        code: "A4",
+        x: 0,
+        y: 0,
+        w: 30,
+        h: 30,
+        kind: "TABLE",
+        zoneCode: "A",
+        state: "noshow",
+        version: 1,
+        displayName: "A4",
+        zoneId: 1,
+        capacity: 4,
+        minCapacity: 2,
+        shape: "RECT",
+        isSpare: false,
+        isActive: true,
+      },
+      {
+        id: 5,
+        code: "A5",
+        x: 0,
+        y: 0,
+        w: 30,
+        h: 30,
+        kind: "TABLE",
+        zoneCode: "A",
+        state: "seated",
+        version: 1,
+        displayName: "A5",
+        zoneId: 1,
+        capacity: 4,
+        minCapacity: 2,
+        shape: "RECT",
+        isSpare: false,
+        isActive: true,
+      },
+      {
+        id: 6,
+        code: "A0",
+        x: 0,
+        y: 0,
+        w: 30,
+        h: 30,
+        kind: "TABLE",
+        zoneCode: "A",
+        state: "free",
+        isSpare: true,
+        version: 1,
+        displayName: "A0",
+        zoneId: 1,
+        capacity: 4,
+        minCapacity: 2,
+        shape: "RECT",
+        isActive: true,
+      },
     ] as any
 
     const html = renderToString(
@@ -142,5 +251,56 @@ describe("G3 - status metadata and language (HU-32 section 4)", () => {
     expect(html).toContain("Trống")
     expect(html).toContain("Đã tới")
     expect(html).toContain("Sơ cua")
+  })
+
+  it("admin variant renders only the round '!' button without a permanent legend row", () => {
+    const html = renderToString(
+      React.createElement(StatusLegend, {
+        variant: "admin",
+        tables: [],
+      }),
+    )
+
+    expect(html).toContain('data-testid="so-legend-trigger"')
+    expect(html).toContain('aria-label="Chú giải ký hiệu"')
+    expect(html).toContain(">!<")
+    expect(html).not.toContain("Trạng thái · Số bàn / ghế")
+    expect(html).not.toContain("so-legend-item")
+  })
+
+  it("admin legend separates free, OOS (Ngưng phục vụ), and A10 spare with hatched --st-oos swatch while preserving Reception counts", () => {
+    const tables = [
+      { id: 1, code: "A1", kind: "TABLE", isSpare: false, isActive: true },
+      { id: 2, code: "A2", kind: "TABLE", isSpare: false, isActive: true },
+      { id: 3, code: "A10", kind: "TABLE", isSpare: true, isActive: true },
+      { id: 4, code: "A3", kind: "TABLE", isSpare: false, isActive: true },
+    ] as any
+    const states = new Map<number, any>([
+      [1, { tableId: 1, state: "free", claim: null }],
+      [2, { tableId: 2, state: "oos", claim: null }],
+      [3, { tableId: 3, state: "free", claim: null }],
+      [4, { tableId: 4, state: "seated", claim: { partySize: 4, tableIds: [4] } }],
+    ])
+
+    // Reception default keeps existing 6-bucket counting
+    const receptionCounts = calculateStatusCounts(tables, states)
+    expect(receptionCounts.free).toBe(2)
+    expect(receptionCounts.spare).toBe(1)
+    expect(receptionCounts.seated).toBe(1)
+    expect(receptionCounts.oos).toBe(0)
+
+    // Admin legend counts OOS separately and renders hatched --st-oos swatch
+    const adminCounts = calculateStatusCounts(tables, states, { includeOos: true })
+    expect(adminCounts.free).toBe(1)
+    expect(adminCounts.oos).toBe(1)
+    expect(adminCounts.spare).toBe(1)
+    expect(adminCounts.seated).toBe(1)
+
+    const adminChips = buildLegendChips(adminCounts, true)
+    expect(adminChips.map((c) => c.key)).toContain("oos")
+    const adminChipsHtml = renderToString(React.createElement(LegendChipsGrid, { chips: adminChips }))
+    expect(adminChipsHtml).toContain("Ngưng phục vụ")
+    expect(adminChipsHtml).toContain("var(--st-oos)")
+    expect(adminChipsHtml).toContain("repeating-linear-gradient")
   })
 })
