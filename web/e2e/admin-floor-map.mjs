@@ -742,10 +742,107 @@ try {
   httpVite = await startViteServer({ port: httpPort, apiMode: "http", apiBaseUrl: "/api/v1" })
   const httpBaseUrl = httpVite.baseUrl
 
+  let activePhoneOverrides = null
+  const buildHttpTablesPayload = (dateParam, todayIso, overrides) => {
+    const startsAt = `${todayIso}T13:15:00.000Z`
+    const makeClaim = (tableId, guestName, kind = "VISIT") => ({
+      kind,
+      reservationId: kind === "RESERVATION" ? 900 + tableId : null,
+      visitId: kind === "VISIT" ? 800 + tableId : null,
+      waitlistEntryId: null,
+      holdId: null,
+      guestName,
+      phoneLast3: "567",
+      partySize: 2,
+      turnNo: tableId === 5 ? 2 : 1,
+      flags: [],
+      groupId: null,
+      groupDisplayCode: null,
+      groupMemberTableIds: [tableId],
+      startsAt,
+      deadlineAt: null,
+      holdOverdue: false,
+      paid: false,
+      origin: "RESERVATION",
+      sourceCode: "HOTLINE",
+      version: 1,
+    })
+    // Table IDs from rawTables order above:
+    // 1:A7, 2:A6, 3:A5, 4:A4, 5:A3, 6:A2(OOS), 7:A1(EMPTY), 8:A0(spare), 9:A10(spare)
+    // 24:BAR01, 25:BAR02
+    const special = new Map([
+      [2, { displayState: "IN_USE", claim: makeClaim(2, overrides?.a6 ?? "Phạm Quốc Khoa") }],
+      [3, { displayState: "IN_USE", claim: makeClaim(3, overrides?.a5 ?? "Khách 090/123\\4567") }],
+      [
+        4,
+        { displayState: "BOOKED", claim: makeClaim(4, overrides?.a4 ?? "Vy ๐๙๑\u2212２３４\u2212٥٦٧٨", "RESERVATION") },
+      ],
+      [5, { displayState: "IN_USE", claim: makeClaim(5, overrides?.a3 ?? "Mai ０９０\u2E31١٢٣\u2E314567") }],
+      [6, { displayState: "OUT_OF_SERVICE", isOutOfService: true, claim: null }],
+      [24, { displayState: "IN_USE", claim: makeClaim(24, overrides?.bar1 ?? "0912\u00B7345\u00B7678") }],
+      [25, { displayState: "IN_USE", claim: makeClaim(25, overrides?.bar2 ?? "Dương Quốc Long") }],
+    ])
+    const codes = [
+      "A7",
+      "A6",
+      "A5",
+      "A4",
+      "A3",
+      "A2",
+      "A1",
+      "A0",
+      "A10",
+      "B7",
+      "B8",
+      "B6",
+      "B5",
+      "B3",
+      "B4",
+      "B21",
+      "B22",
+      "B11",
+      "B12",
+      "C4",
+      "C5",
+      "C1",
+      "C2",
+      ...Array.from({ length: 21 }, (_, idx) => `BAR${String(idx + 1).padStart(2, "0")}`),
+    ]
+    return {
+      businessDate: dateParam || todayIso,
+      serverNow: new Date().toISOString(),
+      changeSeq: "10",
+      groups: [],
+      tables: codes.map((code, idx) => {
+        const id = idx + 1
+        const sp = special.get(id)
+        const isSpare = code === "A0" || code === "A10" || code === "B8"
+        return {
+          tableId: id,
+          seatedTurnCount: id === 5 ? 2 : 0,
+          isOutOfService: sp?.isOutOfService ?? false,
+          tableCode: code,
+          catalogStatus: sp?.isOutOfService ? "OUT_OF_SERVICE" : "ACTIVE",
+          isSpare,
+          displayState: sp?.displayState ?? "EMPTY",
+          arrivalPhase: null,
+          arrivalTime: null,
+          minutesLate: 0,
+          claim: sp?.claim ?? null,
+          groupId: null,
+          groupDisplayCode: null,
+          groupMemberTableIds: [],
+          staleFromPreviousDay: false,
+        }
+      }),
+    }
+  }
+
   for (const scenario of [
     { name: "masked-only", permissions: ["report.read", "customer.view_masked"], expectNames: true },
     { name: "no-customer-mask", permissions: ["report.read"], expectNames: false },
   ]) {
+    activePhoneOverrides = null
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } })
     await context.addInitScript(() => {
       window.EventSource = class extends EventTarget {
@@ -951,95 +1048,7 @@ try {
         return
       }
       if (apiPath === "/tables") {
-        const startsAt = `${todayIso}T13:15:00.000Z`
-        const makeClaim = (tableId, guestName, kind = "VISIT") => ({
-          kind,
-          reservationId: kind === "RESERVATION" ? 900 + tableId : null,
-          visitId: kind === "VISIT" ? 800 + tableId : null,
-          waitlistEntryId: null,
-          holdId: null,
-          guestName,
-          phoneLast3: "567",
-          partySize: 2,
-          turnNo: tableId === 5 ? 2 : 1,
-          flags: [],
-          groupId: null,
-          groupDisplayCode: null,
-          groupMemberTableIds: [tableId],
-          startsAt,
-          deadlineAt: null,
-          holdOverdue: false,
-          paid: false,
-          origin: "RESERVATION",
-          sourceCode: "HOTLINE",
-          version: 1,
-        })
-        // Table IDs from rawTables order above:
-        // 1:A7, 2:A6, 3:A5, 4:A4, 5:A3, 6:A2(OOS), 7:A1(EMPTY), 8:A0(spare), 9:A10(spare)
-        // 24:BAR01, 25:BAR02
-        const special = new Map([
-          [2, { displayState: "IN_USE", claim: makeClaim(2, "Phạm Quốc Khoa") }],
-          [3, { displayState: "IN_USE", claim: makeClaim(3, "Khách 090\u2013123\u20434567") }],
-          [4, { displayState: "BOOKED", claim: makeClaim(4, "Vy ๐๙๑\u2212２３４\u2212٥٦٧٨", "RESERVATION") }],
-          [5, { displayState: "IN_USE", claim: makeClaim(5, "Mai ０９０\u2212١٢٣\u22124567") }],
-          [6, { displayState: "OUT_OF_SERVICE", isOutOfService: true, claim: null }],
-          [24, { displayState: "IN_USE", claim: makeClaim(24, "Mai ０９０\u2212١٢٣\u22124567") }],
-          [25, { displayState: "IN_USE", claim: makeClaim(25, "Dương Quốc Long") }],
-        ])
-        const codes = [
-          "A7",
-          "A6",
-          "A5",
-          "A4",
-          "A3",
-          "A2",
-          "A1",
-          "A0",
-          "A10",
-          "B7",
-          "B8",
-          "B6",
-          "B5",
-          "B3",
-          "B4",
-          "B21",
-          "B22",
-          "B11",
-          "B12",
-          "C4",
-          "C5",
-          "C1",
-          "C2",
-          ...Array.from({ length: 21 }, (_, idx) => `BAR${String(idx + 1).padStart(2, "0")}`),
-        ]
-        await json({
-          businessDate: url.searchParams.get("date") || todayIso,
-          serverNow: new Date().toISOString(),
-          changeSeq: "10",
-          groups: [],
-          tables: codes.map((code, idx) => {
-            const id = idx + 1
-            const sp = special.get(id)
-            const isSpare = code === "A0" || code === "A10" || code === "B8"
-            return {
-              tableId: id,
-              seatedTurnCount: id === 5 ? 2 : 0,
-              isOutOfService: sp?.isOutOfService ?? false,
-              tableCode: code,
-              catalogStatus: sp?.isOutOfService ? "OUT_OF_SERVICE" : "ACTIVE",
-              isSpare,
-              displayState: sp?.displayState ?? "EMPTY",
-              arrivalPhase: null,
-              arrivalTime: null,
-              minutesLate: 0,
-              claim: sp?.claim ?? null,
-              groupId: null,
-              groupDisplayCode: null,
-              groupMemberTableIds: [],
-              staleFromPreviousDay: false,
-            }
-          }),
-        })
+        await json(buildHttpTablesPayload(url.searchParams.get("date"), todayIso, activePhoneOverrides))
         return
       }
       if (apiPath === "/reception/guest-counts") {
@@ -1084,86 +1093,140 @@ try {
     await page.getByTestId("shift-overview-page").waitFor({ state: "visible" })
     await page.waitForTimeout(250)
 
-    const httpSurface = await page.evaluate(() => {
-      const stage = document.querySelector('[data-testid="shift-overview-floor-stage"]')
-      const stageText = stage ? (stage.textContent ?? "") : ""
-      const stageSvgTitles = Array.from(stage?.querySelectorAll("title") ?? [])
-        .map((t) => t.textContent ?? "")
-        .join(" | ")
-      const stageHtmlTitles = Array.from(stage?.querySelectorAll("[title]") ?? [])
-        .map((el) => el.getAttribute("title") ?? "")
-        .join(" | ")
-      const stageAria = Array.from(stage?.querySelectorAll("[aria-label]") ?? [])
-        .map((el) => el.getAttribute("aria-label") ?? "")
-        .join(" | ")
-      const a3 = stage?.querySelector('g[aria-label^="Bàn A3"]')
-      const a3Surface = a3
-        ? `${a3.textContent ?? ""} | ${a3.querySelector("title")?.textContent ?? ""} | ${a3.getAttribute("aria-label") ?? ""}`
-        : ""
-      const barPanel = stage?.querySelector('[data-testid="bar-guest-list"]')
-      const barSurface = barPanel
-        ? `${barPanel.textContent ?? ""} | ${Array.from(barPanel.querySelectorAll("[title]"))
-            .map((el) => el.getAttribute("title") ?? "")
-            .join(" | ")} | ${Array.from(barPanel.querySelectorAll("[aria-label]"))
-            .map((el) => el.getAttribute("aria-label") ?? "")
-            .join(" | ")}`
-        : ""
-      const telLinks = stage?.querySelectorAll('a[href^="tel:"]').length ?? 0
-      const combined = `${stageText} | ${stageSvgTitles} | ${stageHtmlTitles} | ${stageAria}`
-      const phoneLeakRe =
-        /090[\s\u00A0\u2009\u2010-\u2015\u2043\u2212\uFE58\uFE63\uFF0D.\u00B7\u2022]*123|901\s*234\s*567|4567|٥٦٧٨|[０-９]{3,}|[٠-٩]{3,}|[๐-๙]{3,}|Mai\s*０９０|Vy\s*๐๙๑/
-      const a3Aria = a3?.getAttribute("aria-label") ?? ""
-      const a3Title = a3?.querySelector("title")?.textContent ?? ""
-      const barFirstRowAria =
-        barPanel?.querySelector('[role="listitem"] [aria-label]')?.getAttribute("aria-label") ?? ""
-      return {
-        combined,
-        stageText,
-        a3Surface,
-        a3Aria,
-        a3Title,
-        barSurface,
-        barFirstRowAria,
-        telLinks,
-        hasKhoa: combined.includes("Phạm Quốc Khoa"),
-        hasLong: combined.includes("Dương Quốc Long"),
-        leaksPhone: phoneLeakRe.test(combined) || phoneLeakRe.test(a3Surface) || phoneLeakRe.test(barSurface),
-        fakesWalkIn: stageText.includes("Khách Walk-in") || stageAria.includes("Khách Walk-in"),
-      }
-    })
+    const assertRedactedAdminDom = async (label, expectedPositives) => {
+      const surface = await page.evaluate(() => {
+        const stage = document.querySelector('[data-testid="shift-overview-floor-stage"]')
+        const stageText = stage ? (stage.textContent ?? "") : ""
+        const stageSvgTitles = Array.from(stage?.querySelectorAll("title") ?? [])
+          .map((t) => t.textContent ?? "")
+          .join(" | ")
+        const stageHtmlTitles = Array.from(stage?.querySelectorAll("[title]") ?? [])
+          .map((el) => el.getAttribute("title") ?? "")
+          .join(" | ")
+        const stageAria = Array.from(stage?.querySelectorAll("[aria-label]") ?? [])
+          .map((el) => el.getAttribute("aria-label") ?? "")
+          .join(" | ")
+        const a3 = stage?.querySelector('g[aria-label^="Bàn A3"]')
+        const a3LabelText = a3?.querySelector("text")?.textContent ?? ""
+        const a3Aria = a3?.getAttribute("aria-label") ?? ""
+        const a3Title = a3?.querySelector("title")?.textContent ?? ""
+        const a3Surface = a3 ? `${a3.textContent ?? ""} | ${a3Title} | ${a3Aria}` : ""
 
-    assert.equal(httpSurface.telLinks, 0, `HTTP ${scenario.name}: tel: links found`)
-    assert.equal(
-      httpSurface.leaksPhone,
-      false,
-      `HTTP ${scenario.name}: leaked phone-shaped name (a3=${httpSurface.a3Surface}, bar=${httpSurface.barSurface})`,
-    )
-    assert.equal(
-      httpSurface.a3Aria,
-      "Bàn A3, Đã tới, 2 khách",
-      `HTTP ${scenario.name}: unexpected A3 aria-label: ${httpSurface.a3Aria}`,
-    )
-    assert.equal(
-      httpSurface.a3Title,
-      "Bàn A3, Đã tới, 2 khách",
-      `HTTP ${scenario.name}: unexpected A3 <title>: ${httpSurface.a3Title}`,
-    )
-    assert.match(
-      httpSurface.barFirstRowAria,
-      /^Bar1, vào lúc \d{2}:\d{2}, 2 khách, Trạng thái: Đã tới$/,
-      `HTTP ${scenario.name}: unexpected Bar1 redacted aria-label: ${httpSurface.barFirstRowAria}`,
-    )
-    if (scenario.expectNames) {
-      assert(httpSurface.hasKhoa && httpSurface.hasLong, `HTTP ${scenario.name}: expected real guest names`)
-    } else {
-      assert.equal(httpSurface.hasKhoa, false, `HTTP ${scenario.name}: leaked guest name without customer.view_masked`)
+        const a6 = stage?.querySelector('g[aria-label^="Bàn A6"]')
+        const a6LabelText = a6?.querySelector("text")?.textContent ?? ""
+        const a6Aria = a6?.getAttribute("aria-label") ?? ""
+        const a6Title = a6?.querySelector("title")?.textContent ?? ""
+
+        const bar1Seat = stage?.querySelector('g[aria-label^="Ghế Bar 1,"]')
+        const bar1SeatNumber = bar1Seat?.querySelector("text")?.textContent ?? ""
+        const bar1SeatSubText = bar1Seat?.querySelectorAll("text")?.[1]?.textContent ?? ""
+        const bar1SeatAria = bar1Seat?.getAttribute("aria-label") ?? ""
+        const bar1SeatTitle = bar1Seat?.querySelector("title")?.textContent ?? ""
+
+        const barPanel = stage?.querySelector('[data-testid="bar-guest-list"]')
+        const barRows = Array.from(barPanel?.querySelectorAll('[role="listitem"]') ?? [])
+        const barFirstRow = barRows[0]
+        const barFirstRowAria = barFirstRow?.querySelector("[aria-label]")?.getAttribute("aria-label") ?? ""
+        const barFirstRowTitle = barFirstRow?.querySelector("span[title]")?.getAttribute("title") ?? null
+        const barFirstRowText = barFirstRow?.textContent ?? ""
+        const barSecondRow = barRows[1]
+        const barSecondRowAria = barSecondRow?.querySelector("[aria-label]")?.getAttribute("aria-label") ?? ""
+        const barSecondRowTitle = barSecondRow?.querySelector("span[title]")?.getAttribute("title") ?? null
+        const barSurface = barPanel
+          ? `${barPanel.textContent ?? ""} | ${Array.from(barPanel.querySelectorAll("[title]"))
+              .map((el) => el.getAttribute("title") ?? "")
+              .join(" | ")} | ${Array.from(barPanel.querySelectorAll("[aria-label]"))
+              .map((el) => el.getAttribute("aria-label") ?? "")
+              .join(" | ")}`
+          : ""
+        const telLinks = stage?.querySelectorAll('a[href^="tel:"]').length ?? 0
+        const combined = `${stageText} | ${stageSvgTitles} | ${stageHtmlTitles} | ${stageAria}`
+        const phoneLeakRe =
+          /090[\s\u00A0\u2009\u2010-\u2015\u2043\u2212\uFE58\uFE63\uFF0D.\u00B7\u2022\u2024\u2027\u30FB\uFF65\u2E31/\\()[\]{}]*123|0912[\u00B7.]*345|901\s*234\s*567|4567|٥٦٧٨|[０-９]{3,}|[٠-٩]{3,}|[๐-๙]{3,}|Mai\s*０９０|Vy\s*๐๙๑|A0B9C0D1E2F3G4H5I6/
+        return {
+          combined,
+          stageText,
+          a3Surface,
+          a3LabelText,
+          a3Aria,
+          a3Title,
+          a6LabelText,
+          a6Aria,
+          a6Title,
+          bar1SeatNumber,
+          bar1SeatSubText,
+          bar1SeatAria,
+          bar1SeatTitle,
+          barSurface,
+          barFirstRowAria,
+          barFirstRowTitle,
+          barFirstRowText,
+          barSecondRowAria,
+          barSecondRowTitle,
+          telLinks,
+          leaksPhone: phoneLeakRe.test(combined) || phoneLeakRe.test(a3Surface) || phoneLeakRe.test(barSurface),
+          fakesWalkIn: stageText.includes("Khách Walk-in") || stageAria.includes("Khách Walk-in"),
+        }
+      })
+
+      assert.equal(surface.telLinks, 0, `${label}: tel: links found`)
       assert.equal(
-        httpSurface.hasLong,
+        surface.leaksPhone,
         false,
-        `HTTP ${scenario.name}: leaked Bar guest name without customer.view_masked`,
+        `${label}: leaked phone-shaped name (a3=${surface.a3Surface}, bar=${surface.barSurface})`,
       )
-      assert.equal(httpSurface.fakesWalkIn, false, `HTTP ${scenario.name}: faked Walk-in label when redacted`)
+      assert.equal(surface.a3LabelText, "A3", `${label}: unexpected A3 tile text: ${surface.a3LabelText}`)
+      assert.equal(surface.a3Aria, "Bàn A3, Đã tới, 2 khách", `${label}: unexpected A3 aria-label: ${surface.a3Aria}`)
+      assert.equal(surface.a3Title, "Bàn A3, Đã tới, 2 khách", `${label}: unexpected A3 <title>: ${surface.a3Title}`)
+      assert.equal(surface.bar1SeatNumber, "1", `${label}: unexpected BAR01 seat number: ${surface.bar1SeatNumber}`)
+      assert.match(
+        surface.bar1SeatSubText,
+        /^\d{2}:\d{2}$/,
+        `${label}: BAR01 seat subtext should show time only, got: ${surface.bar1SeatSubText}`,
+      )
+      assert.equal(
+        surface.bar1SeatAria,
+        "Ghế Bar 1, Đã tới, 2 khách",
+        `${label}: unexpected BAR01 aria-label: ${surface.bar1SeatAria}`,
+      )
+      assert.equal(
+        surface.bar1SeatTitle,
+        "Ghế Bar 1, Đã tới, 2 khách",
+        `${label}: unexpected BAR01 <title>: ${surface.bar1SeatTitle}`,
+      )
+      assert.match(
+        surface.barFirstRowAria,
+        /^Bar1, vào lúc \d{2}:\d{2}, 2 khách, Trạng thái: Đã tới$/,
+        `${label}: unexpected Bar1 redacted aria-label: ${surface.barFirstRowAria}`,
+      )
+      assert.equal(surface.barFirstRowTitle, null, `${label}: Bar1 guest title attribute must be omitted`)
+
+      for (const expectedName of expectedPositives) {
+        if (scenario.expectNames) {
+          assert(surface.combined.includes(expectedName), `${label}: expected permitted name "${expectedName}"`)
+        } else {
+          assert.equal(
+            surface.combined.includes(expectedName),
+            false,
+            `${label}: leaked "${expectedName}" without customer.view_masked`,
+          )
+        }
+      }
+      if (!scenario.expectNames) {
+        assert.equal(surface.a6LabelText, "A6", `${label}: expected A6 tile redacted without customer.view_masked`)
+        assert.equal(surface.a6Aria, "Bàn A6, Đã tới, 2 khách", `${label}: expected A6 ARIA redacted`)
+        assert.equal(surface.a6Title, "Bàn A6, Đã tới, 2 khách", `${label}: expected A6 title redacted`)
+        assert.equal(
+          surface.barSecondRowTitle,
+          null,
+          `${label}: expected Bar2 title omitted without customer.view_masked`,
+        )
+        assert.equal(surface.fakesWalkIn, false, `${label}: faked Walk-in label when redacted`)
+      }
+      return surface
     }
+
+    await assertRedactedAdminDom(`HTTP ${scenario.name}`, ["Phạm Quốc Khoa", "Dương Quốc Long"])
 
     // ADM-01 in HTTP mode: open "!" legend and verify OOS count = 1, spare = 3, seated = 5, reserved = 1, free = 34
     const httpTrigger = page.getByTestId("so-legend-trigger")
@@ -1193,6 +1256,41 @@ try {
     await page.keyboard.press("Enter")
     await page.keyboard.press("Space")
     await page.keyboard.press("Control+z")
+    // ADM-02 round 4 browser matrix: dot look-alikes, dashes, NBSP/thin spaces, slashes, brackets, mixed letters+digits, and 1-8 digit negatives
+    const adm02Matrix = [
+      {
+        label: "dots-bullet-leader-brackets-digits-1-8",
+        overrides: {
+          a3: "Khách 090\u2022123\u20244567",
+          bar1: "Yến 090\u2027123\u30FB4567",
+          a5: "Tuấn (090)[123]{4567}",
+          a4: "Ngọc 090\u00A0123\u20094567",
+          a6: "Bàn 12",
+          bar2: "Nhóm 2024",
+        },
+        positives: ["Bàn 12", "Nhóm 2024"],
+      },
+      {
+        label: "halfwidth-dot-mixed-alphanum-arabic-fw",
+        overrides: {
+          a3: "Linh 090\uFF65123\u00B74567",
+          bar1: "A0B9C0D1E2F3G4H5I6",
+          a5: "Mai ０９０\u2212١٢٣\u22124567",
+          a4: "Bảo （０９０）／１２３／４５６７",
+          a6: "Phạm Quốc Khoa",
+          bar2: "Nguyễn 18-11-2026",
+        },
+        positives: ["Phạm Quốc Khoa", "Nguyễn 18-11-2026"],
+      },
+    ]
+    for (const batch of adm02Matrix) {
+      activePhoneOverrides = batch.overrides
+      await page.reload({ waitUntil: "networkidle" })
+      await page.getByTestId("shift-overview-page").waitFor({ state: "visible" })
+      await page.waitForTimeout(200)
+      await assertRedactedAdminDom(`HTTP ${scenario.name} [${batch.label}]`, batch.positives)
+    }
+
     assert.deepEqual(
       httpMutationRequests,
       [],

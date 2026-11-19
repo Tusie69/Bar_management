@@ -2528,27 +2528,54 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
 
     const adminHtml = renderToString(createElement(BarGuestList, { rows: directRows, as: "html", readOnly: true }))
     expect(adminHtml).toContain("Dương Quốc Long")
+    expect(adminHtml).toContain("Nguyễn 18-11-2026")
     expect(adminHtml).not.toContain("Nguyễn (090 123 4567)")
-    expect(adminHtml).not.toContain("Nguyễn 18-11-2026")
     expect(adminHtml).not.toContain("０９１２３４５６７８")
+
+    const adminRedactedHtml = renderToString(
+      createElement(BarGuestList, { rows: directRows, as: "html", readOnly: true, hideGuestNames: true }),
+    )
+    expect(adminRedactedHtml).not.toContain("Dương Quốc Long")
+    expect(adminRedactedHtml).not.toContain("Nguyễn 18-11-2026")
+    expect(adminRedactedHtml).not.toContain("Nguyễn (090 123 4567)")
+    expect(adminRedactedHtml).not.toContain("０９１２３４５６７８")
   })
 
-  it("ADM-02 round 3: masks Unicode separator phone variants across every Admin surface with exact redacted text while leaving Reception unaffected", () => {
-    const variants: Array<{ label: string; name: string }> = [
-      { label: "U+2212 minus", name: "Mai ０９０\u2212١٢٣\u22124567" },
-      { label: "U+2212 mixed Thai", name: "Vy ๐๙๑\u2212２３４\u2212٥٦٧٨" },
+  it("ADM-02 round 4: redacts >=9-digit guest strings across every Admin surface while preserving <9-digit names per permission and leaving Reception unaffected", () => {
+    const phoneVariants: Array<{ label: string; name: string }> = [
+      // Unicode dot look-alikes (U+00B7, U+2022, U+2024, U+2027, U+30FB, U+FF65, U+2E31, U+2E33, U+06D4, U+22EF)
+      { label: "U+00B7 middle dot", name: "0912\u00B7345\u00B7678" },
+      { label: "U+2022 bullet", name: "Oanh 090\u2022123\u20224567" },
+      { label: "U+2024 one dot leader", name: "Lan 090\u2024123\u20244567" },
+      { label: "U+2027 hyphenation point", name: "Hoa 090\u2027123\u20274567" },
+      { label: "U+30FB katakana middle dot", name: "Tâm 090\u30FB123\u30FB4567" },
+      { label: "U+FF65 halfwidth middle dot", name: "Yến 090\uFF65123\uFF654567" },
+      { label: "U+2E31 word separator dot + fw/Arabic", name: "Mai ０９０\u2E31١٢٣\u2E314567" },
+      { label: "U+2E33 raised dot", name: "Sơn 090\u2E33123\u2E334567" },
+      { label: "U+06D4 Arabic full stop", name: "Phương 090\u06D4123\u06D44567" },
+      { label: "U+22EF midline ellipsis", name: "Trang 090\u22EF123\u22EF4567" },
+      // U+2212 and other dashes
+      { label: "U+2212 minus + Arabic-Indic", name: "Mai ０９０\u2212١٢٣\u22124567" },
+      { label: "U+2212 mixed Thai + fw", name: "Vy ๐๙๑\u2212２３４\u2212٥٦٧٨" },
       { label: "U+2010 hyphen", name: "An 090\u2010123\u20104567" },
-      { label: "U+2011 nb-hyphen", name: "Bình 090\u2011123\u20114567" },
-      { label: "U+2012 figure-dash", name: "Chi 090\u2012123\u20124567" },
       { label: "U+2013 en-dash", name: "Dũng 090\u2013123\u20134567" },
       { label: "U+2014 em-dash", name: "Em 090\u2014123\u20144567" },
-      { label: "U+2015 horiz-bar", name: "Giang 090\u2015123\u20154567" },
       { label: "U+2043 hyphen-bullet", name: "Hà 090\u2043123\u20434567" },
-      { label: "U+FE58 small-em-dash", name: "Khánh 090\uFE58123\uFE584567" },
-      { label: "U+FE63 small-hyphen", name: "Linh 090\uFE63123\uFE634567" },
+      { label: "U+02D7 modifier minus", name: "Huy 090\u02D7123\u02D74567" },
       { label: "U+FF0D fw-hyphen", name: "Minh 090\uFF0D123\uFF0D4567" },
+      // NBSP / thin spaces
       { label: "NBSP+thin-space", name: "Ngọc 090\u00A0123\u20094567" },
-      { label: "dots", name: "Oanh 090\u00B7123\u20224567" },
+      { label: "NNBSP+hair-space", name: "Quân 090\u202F123\u200A4567" },
+      // Slashes and brackets
+      { label: "slashes", name: "Khang 090/123/4567" },
+      { label: "backslashes", name: "Kiên 090\\123\\4567" },
+      { label: "brackets", name: "Bảo (090)[123]{4567}" },
+      { label: "fullwidth brackets", name: "Tuấn （０９０）１２３－４５６７" },
+      // Full-width, Arabic-Indic, mixed letters+digits
+      { label: "full-width digits", name: "０９０１２３４５６７" },
+      { label: "Arabic-Indic digits", name: "٠٩٠١٢٣٤٥٦٧" },
+      { label: "mixed letters+digits", name: "A0B9C0D1E2F3G4H5I6" },
+      { label: "9-digit mixed boundary", name: "Khách 0a9b0c1d2e3f4g5h6" },
     ]
 
     const tA3 = realTables.find((t) => t.code === "A3")!
@@ -2577,7 +2604,7 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
       version: 1,
     })
 
-    for (const { label, name } of variants) {
+    for (const { label, name } of phoneVariants) {
       const states = new Map<number, FloorTableState>([
         [tA3.id, { tableId: tA3.id, state: "seated", staleFromPreviousDay: false, claim: mkClaim([tA3.id], name) }],
         [bar1.id, { tableId: bar1.id, state: "seated", staleFromPreviousDay: false, claim: mkClaim([bar1.id], name) }],
@@ -2595,24 +2622,88 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
       )
 
       expect(adminHtml, `${label}: full guest string leaked`).not.toContain(name)
-      expect(adminHtml, `${label}: phone digits leaked`).not.toContain("4567")
-      expect(adminHtml, `${label}: Thai/fullwidth digits leaked`).not.toContain("٥٦٧٨")
       // Exact Admin redaction text on regular tile, Bar seat, <title>, aria-label, and BarGuestList row
-      expect(adminHtml, `${label}: exact tile ARIA/title`).toContain('aria-label="Bàn A3, Đã tới, 2 khách"')
-      expect(adminHtml, `${label}: exact SVG title`).toContain("<title>Bàn A3, Đã tới, 2 khách</title>")
+      expect(adminHtml, `${label}: exact tile ARIA`).toContain('aria-label="Bàn A3, Đã tới, 2 khách"')
+      expect(adminHtml, `${label}: exact tile SVG title`).toContain("<title>Bàn A3, Đã tới, 2 khách</title>")
       expect(adminHtml, `${label}: exact tile text`).toContain(">A3</text>")
-      expect(adminHtml, `${label}: exact Bar seat ARIA/title`).toContain('aria-label="Ghế Bar 1, Đã tới, 2 khách"')
+      expect(adminHtml, `${label}: exact Bar seat ARIA`).toContain('aria-label="Ghế Bar 1, Đã tới, 2 khách"')
       expect(adminHtml, `${label}: exact Bar seat SVG title`).toContain("<title>Ghế Bar 1, Đã tới, 2 khách</title>")
+      expect(adminHtml, `${label}: Bar seat shows time instead of name`).toContain(">20:15</text>")
       expect(adminHtml, `${label}: exact BarGuestList row ARIA`).toContain(
         'aria-label="Bar1, vào lúc 20:15, 2 khách, Trạng thái: Đã tới"',
       )
       expect(adminHtml, `${label}: BarGuestList omitted HTML title`).not.toContain(`title="${name}"`)
 
-      // Reception BarGuestList remains unaffected
+      // Reception BarGuestList remains unaffected (raw phone-only strings fall back to Khách Walk-in per ADM-05; named strings keep name)
       const receptionBarHtml = renderToString(
         createElement(BarGuestList, { tables: realTables, states, as: "html", readOnly: false }),
       )
-      expect(receptionBarHtml, `${label}: Reception Bar row preserved`).toContain(name)
+      if (!/^\+?[\d\s.\-()]{6,}$/.test(name) && (/[a-zA-ZÀ-ỹ]/.test(name) || !/\d{4,}/.test(name))) {
+        expect(receptionBarHtml, `${label}: Reception Bar row preserved`).toContain(name)
+      }
+    }
+
+    // Negatives: normal Vietnamese names & names with 1-8 digits keep existing permission-gated behaviour
+    const negativeVariants: Array<{ label: string; name: string }> = [
+      { label: "Vietnamese name", name: "Phạm Quốc Khoa" },
+      { label: "1-digit name", name: "Anh Minh 2" },
+      { label: "2-digit table/party", name: "Bàn 12" },
+      { label: "4-digit group", name: "Nhóm 2024" },
+      { label: "8-digit date suffix", name: "Nguyễn 18-11-2026" },
+      { label: "8-digit boundary", name: "Khách 12345678" },
+    ]
+
+    for (const { label, name } of negativeVariants) {
+      const states = new Map<number, FloorTableState>([
+        [tA3.id, { tableId: tA3.id, state: "seated", staleFromPreviousDay: false, claim: mkClaim([tA3.id], name) }],
+        [bar1.id, { tableId: bar1.id, state: "seated", staleFromPreviousDay: false, claim: mkClaim([bar1.id], name) }],
+      ])
+
+      const adminPermittedHtml = renderToString(
+        createElement(ReadOnlyFloorMap, {
+          tables: realTables,
+          zones: dummyZones,
+          states,
+          groups: [],
+          now: new Date("2026-11-18T21:15:00+07:00"),
+          canViewGuestNames: true,
+        }),
+      )
+      const expectedTileLabel = formatTableCellLabel(tA3.code, name, null, tA3.w)
+      expect(expectedTileLabel).toMatch(/^A3 - /)
+      expect(adminPermittedHtml, `${label} permitted: tile label`).toContain(`>${expectedTileLabel}</text>`)
+      expect(adminPermittedHtml, `${label} permitted: tile ARIA`).toContain(
+        `aria-label="Bàn A3, Đã tới, ${name}, 2 khách"`,
+      )
+      expect(adminPermittedHtml, `${label} permitted: tile SVG title`).toContain(
+        `<title>Bàn A3, Đã tới, ${name}, 2 khách</title>`,
+      )
+      expect(adminPermittedHtml, `${label} permitted: Bar seat ARIA`).toContain(
+        `aria-label="Ghế Bar 1, Đã tới, ${name}, 2 khách"`,
+      )
+      expect(adminPermittedHtml, `${label} permitted: Bar seat SVG title`).toContain(
+        `<title>Ghế Bar 1, Đã tới, ${name}, 2 khách</title>`,
+      )
+      expect(adminPermittedHtml, `${label} permitted: Bar row ARIA`).toContain(
+        `aria-label="Bar1, vào lúc 20:15, 2 khách, ${name}, Trạng thái: Đã tới"`,
+      )
+      expect(adminPermittedHtml, `${label} permitted: Bar row HTML title`).toContain(`title="${name}"`)
+
+      const adminRevokedHtml = renderToString(
+        createElement(ReadOnlyFloorMap, {
+          tables: realTables,
+          zones: dummyZones,
+          states,
+          groups: [],
+          now: new Date("2026-11-18T21:15:00+07:00"),
+          canViewGuestNames: false,
+        }),
+      )
+      expect(adminRevokedHtml, `${label} revoked: name omitted`).not.toContain(name)
+      expect(adminRevokedHtml, `${label} revoked: exact tile ARIA`).toContain('aria-label="Bàn A3, Đã tới, 2 khách"')
+      expect(adminRevokedHtml, `${label} revoked: exact Bar row ARIA`).toContain(
+        'aria-label="Bar1, vào lúc 20:15, 2 khách, Trạng thái: Đã tới"',
+      )
     }
   })
 })

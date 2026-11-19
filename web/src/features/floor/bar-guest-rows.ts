@@ -107,32 +107,16 @@ export function formatBarSeatLabel(seatNumbers: number[]): string {
     .join(", ")
 }
 
-const UNICODE_DASH_SEPARATORS = /[\p{Pd}\u2010-\u2015\u2043\u207B\u208B\u2212\u2796\uFE58\uFE63\uFF0D]/gu
-const UNICODE_DOT_SEPARATORS = /[\u002E\u00B7\u2022\u2024\u2027\u2219\u22C5\u3002\u30FB\uFF0E\uFF65]/gu
-const UNICODE_SPACE_SEPARATORS = /[\s\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]+/gu
-
-function normalizeForPhoneDetection(displayName: string): string {
-  return displayName
-    .normalize("NFKC")
-    .replace(/\p{Cf}/gu, "")
-    .replace(UNICODE_DASH_SEPARATORS, "-")
-    .replace(UNICODE_DOT_SEPARATORS, ".")
-    .replace(UNICODE_SPACE_SEPARATORS, " ")
-    .replace(/\p{Nd}/gu, "0")
-    .trim()
-}
-
 /**
- * Detects phone-shaped guest names (including full-width and non-ASCII Unicode
- * digits, spaced/dashed numbers, and mixed name+phone strings) for Admin masking.
+ * Detects phone-shaped guest names for Admin masking: normalizes with NFKC,
+ * maps every Unicode decimal digit (`\p{Nd}`) to ASCII `0-9`, and treats any
+ * string containing 9 or more digits anywhere as phone-shaped.
  */
 export function isPhoneLikeGuestName(displayName?: string | null): boolean {
-  const normalized = normalizeForPhoneDetection(displayName ?? "")
-  if (!normalized) return false
-  const digitsOnly = normalized.replace(/\D/g, "")
-  if (!/\p{L}/u.test(normalized) && digitsOnly.length >= 4) return true
-  if (/(?:\+?\d[\d\s.\-()]{5,}\d)/.test(normalized) && digitsOnly.length >= 7) return true
-  return false
+  if (!displayName) return false
+  const mapped = displayName.normalize("NFKC").replace(/\p{Nd}/gu, "0")
+  const digits = mapped.match(/[0-9]/g)
+  return (digits?.length ?? 0) >= 9
 }
 
 /**
