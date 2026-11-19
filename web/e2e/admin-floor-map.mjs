@@ -9,6 +9,7 @@
  * Usage (from web/): VITE_API_MODE=mock node e2e/admin-floor-map.mjs
  */
 import assert from "node:assert/strict"
+import { randomUUID } from "node:crypto"
 import fs from "node:fs"
 import net from "node:net"
 import path from "node:path"
@@ -19,7 +20,7 @@ import { createServer } from "vite"
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
 const evidenceRoot =
-  process.env.ADMIN_FLOOR_EVIDENCE_DIR || "D:\\GAM-APP\\docs\\Sprint4\\evidence\\admin-floor-map-2026-11-18\\fix2"
+  process.env.ADMIN_FLOOR_EVIDENCE_DIR || path.join(__dirname, ".artifacts", `admin-floor-map-${randomUUID()}`)
 fs.mkdirSync(evidenceRoot, { recursive: true })
 
 function findFreePort() {

@@ -1,6 +1,7 @@
 // Reproducible Playwright verification & screenshot capture for Sprint 4 Reception UI Refinement (mock mode).
 // Usage (from repo root): node web/e2e/reception-ui-refinement.mjs
 import assert from "node:assert/strict"
+import { randomUUID } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -9,7 +10,8 @@ import { createServer } from "vite"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
-const outDir = process.env.RECEPTION_EVIDENCE_DIR || path.join(webRoot, "e2e", ".artifacts", "reception-ui-refinement")
+const outDir =
+  process.env.RECEPTION_EVIDENCE_DIR || path.join(__dirname, ".artifacts", `reception-ui-refinement-${randomUUID()}`)
 fs.mkdirSync(outDir, { recursive: true })
 
 const VIEWPORTS = [
@@ -1284,10 +1286,9 @@ try {
     assert.deepEqual(errors, [], `${vp.label} (${vp.theme}) BDG-02 errors: ${errors.join(" | ")}`)
 
     if (vp.label === "1440x900" && vp.theme === "light" && bdgAudit.cropClip) {
-      const fix2Dir =
-        process.env.C1_CROP_DIR || "D:\\GAM-APP\\docs\\Sprint4\\evidence\\admin-floor-map-2026-11-18\\fix2"
-      if (fs.existsSync(fix2Dir)) {
-        await page.screenshot({ path: path.join(fix2Dir, "c1-c4-c5-crop-after.png"), clip: bdgAudit.cropClip })
+      const cropDir = process.env.C1_CROP_DIR || outDir
+      if (fs.existsSync(cropDir)) {
+        await page.screenshot({ path: path.join(cropDir, "c1-c4-c5-crop-after.png"), clip: bdgAudit.cropClip })
       }
       await page.screenshot({ path: path.join(outDir, "reception-bdg02-1440x900.png") })
     }
