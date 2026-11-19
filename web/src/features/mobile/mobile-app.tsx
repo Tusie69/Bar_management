@@ -8,8 +8,8 @@ import { Clock4, LayoutDashboard, List, ListOrdered, Map as MapIcon, Plus, type 
 import { Suspense, useEffect, useMemo, useState, type CSSProperties } from "react"
 import { Outlet, useLocation, useNavigate } from "react-router"
 import type { ReservationView } from "@/domain/models"
-import { useNow, useReservations, useWaitlist } from "@/hooks/use-data"
-import { businessDateOf, type BusinessDate } from "@/lib/time"
+import { useBusinessShift, useNow, useReservations, useWaitlist } from "@/hooks/use-data"
+import { businessDateOf, shiftHour, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useSession } from "@/state/session"
 import { roleCan } from "@/domain/access"
@@ -52,7 +52,9 @@ export default function MobileApp() {
   const isReceptionist = role === "RECEPTIONIST"
   const ui = useUi()
   const now = useNow(15_000)
-  const today = businessDateOf(now)
+  // TU-38: mốc cắt ca lấy từ cấu hình địa điểm, không mặc định 05:00.
+  const shiftCutoff = shiftHour(useBusinessShift().cutoffLocal)
+  const today = businessDateOf(now, shiftCutoff)
   const selectedDate = isReceptionist && ui.floorMode !== "live" ? ui.availDate : today
   const model = useFloorModel(selectedDate)
   const reservations = useReservations(selectedDate).data

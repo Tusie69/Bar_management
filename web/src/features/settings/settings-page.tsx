@@ -264,7 +264,7 @@ function VenueForm({ v, readOnly }: { v: VenueConfig; readOnly: boolean }) {
       <section className="rounded-2xl border px-4 md:px-5">
         <Row
           label="Ngày kinh doanh"
-          hint="business_date = DATE(giờ địa phương - 05:00). Ví dụ 01:30 ngày 21/10 thuộc ca 20/10."
+          hint={`business_date = DATE(giờ địa phương - ${v.businessDayCutoffLocal.slice(0, 5)}). Mọi giờ trước mốc cắt thuộc ca của đêm hôm trước.`}
         >
           <span className="text-sm">
             {v.businessDayStartLocal.slice(0, 5)} → {v.businessDayCutoffLocal.slice(0, 5)} · {v.timezone}

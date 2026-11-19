@@ -28,10 +28,10 @@ import { bookingInstant, validateBookingTime } from "@/domain/booking-rules"
 import { type BookingClassification, type BookingSourceCode, type WaitlistChannel } from "@/domain/enums"
 import type { AvailabilityResult, FloorGroup } from "@/domain/models"
 import { useAction } from "@/hooks/use-action"
-import { useNow, useVenueSettings } from "@/hooks/use-data"
+import { useBusinessShift, useNow, useVenueSettings } from "@/hooks/use-data"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { NOTE_PHONE_ERROR, isPlausibleVnPhone, noteHasPhoneNumber } from "@/lib/text"
-import { addDays, businessDateOf, fmtBusinessDate, fmtDayMonth, fmtTime, MS } from "@/lib/time"
+import { addDays, businessDateOf, fmtBusinessDate, fmtDayMonth, fmtTime, MS, shiftHour } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useSession } from "@/state/session"
@@ -162,8 +162,10 @@ export function QuickForm({
   const ui = useUi()
   const draft = ui.draft!
   const now = useNow(30_000)
+  // TU-38: mốc cắt ca lấy từ cấu hình địa điểm, không mặc định 05:00.
+  const shiftCutoff = shiftHour(useBusinessShift().cutoffLocal)
   const quickTimes = useVenueSettings().data?.quickTimes ?? []
-  const today = businessDateOf(now)
+  const today = businessDateOf(now, shiftCutoff)
   const receptionist = useSession((s) => s.user.role === "RECEPTIONIST")
   const { run, pending } = useAction()
   const [phone, setPhone] = useState("")

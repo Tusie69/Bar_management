@@ -67,10 +67,17 @@ import {
 import type { ClaimView, TableView, WaitlistEntryView } from "@/domain/models"
 import { symbolByNo } from "@/domain/symbols"
 import { useAction } from "@/hooks/use-action"
-import { useNow, useReservations, useTableHistory, useVenueSettings, useWaitlist } from "@/hooks/use-data"
+import {
+  useBusinessShift,
+  useNow,
+  useReservations,
+  useTableHistory,
+  useVenueSettings,
+  useWaitlist,
+} from "@/hooks/use-data"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { isPlausibleVnPhone } from "@/lib/text"
-import { businessDateOf, fmtCountdown, fmtElapsed, fmtTime } from "@/lib/time"
+import { businessDateOf, fmtCountdown, fmtElapsed, fmtTime, shiftHour } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useCan, useSession } from "@/state/session"
@@ -581,9 +588,11 @@ function ReservationSection({
   const ui = useUi()
   const venue = model.catalog?.venue
   const settings = useVenueSettings()
+  // TU-38: mốc cắt ca lấy từ cấu hình địa điểm, không mặc định 05:00.
+  const shiftCutoff = shiftHour(useBusinessShift().cutoffLocal)
   const noShowMinutes = settings.data?.noShowMinutes ?? venue?.noShowWarningMinutes ?? 30
   const canConfirmLate =
-    model.floor?.businessDate === businessDateOf(now) &&
+    model.floor?.businessDate === businessDateOf(now, shiftCutoff) &&
     now.getTime() >= claim.startsAt.getTime() &&
     claim.minutesLate < noShowMinutes &&
     !claim.lateConfirmedAt
@@ -738,7 +747,9 @@ function HoldSection({
   )
   const policy = held.policy(entry, linkedRes)
   const ui = useUi()
-  const today = model.floor?.businessDate === businessDateOf(now)
+  // TU-38: mốc cắt ca lấy từ cấu hình địa điểm, không mặc định 05:00.
+  const shiftCutoff = shiftHour(useBusinessShift().cutoffLocal)
+  const today = model.floor?.businessDate === businessDateOf(now, shiftCutoff)
   const venue = useVenueSettings().data
   const noShowMinutes = venue?.noShowMinutes ?? 30
   const overdue = !!claim.deadlineAt && now > claim.deadlineAt

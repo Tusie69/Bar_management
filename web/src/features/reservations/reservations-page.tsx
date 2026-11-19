@@ -25,8 +25,27 @@ import { validateBookingCheckInDate } from "@/domain/booking-rules"
 import { useAction } from "@/hooks/use-action"
 import { useDragScroll } from "@/hooks/use-drag-scroll"
 import { useElementWidth } from "@/hooks/use-element-width"
-import { useBusinessDate, useCatalog, useDayAllocations, useNow, useReservations } from "@/hooks/use-data"
-import { addDays, atBusinessTime, businessDateOf, fmtBusinessDate, fmtTime, MS, type BusinessDate } from "@/lib/time"
+import {
+  useBusinessDate,
+  useBusinessShift,
+  useCatalog,
+  useDayAllocations,
+  useNow,
+  useReservations,
+} from "@/hooks/use-data"
+import {
+  addDays,
+  atBusinessTime,
+  businessDateOf,
+  fmtBusinessDate,
+  fmtTime,
+  MS,
+  shiftHour,
+  shiftHourLabels,
+  shiftSpanHours,
+  shiftStartHhmm,
+  type BusinessDate,
+} from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api, isApiError } from "@/services"
 import { useCan } from "@/state/session"
@@ -248,7 +267,9 @@ function ReservationList({
   const ui = useUi()
   const codes = useCodes(tables)
   const now = useNow(30_000)
-  const today = businessDateOf(now)
+  // TU-38: mốc cắt ca lấy từ cấu hình địa điểm, không mặc định 05:00.
+  const shiftCutoff = shiftHour(useBusinessShift().cutoffLocal)
+  const today = businessDateOf(now, shiftCutoff)
   const { run } = useAction()
   const [checkIn, setCheckIn] = useState<ReservationView | null>(null)
   const navigate = useNavigate()
@@ -469,7 +490,6 @@ function GroupRows({ label, count, children }: { label: string; count: number; c
 const HOUR_W = 84
 const ROW_H = 40
 const LABEL_W = 84
-const HOURS = ["17", "18", "19", "20", "21", "22", "23", "00", "01", "02", "03", "04"]
 const CHIP_W = 176
 
 function Timeline({
@@ -484,14 +504,17 @@ function Timeline({
   const allocations = useDayAllocations(date)
   const [boxRef, boxW] = useElementWidth<HTMLDivElement>()
   // Hours stretch to fill wide screens; below the minimum the grid scrolls horizontally.
-  const hourW = Math.max(HOUR_W, (boxW - LABEL_W) / HOURS.length)
+  // TU-38: trục giờ chạy theo ca của địa điểm, không cố định 17h-04h.
+  const shift = useBusinessShift()
+  const hours = shiftHourLabels(shift)
+  const hourW = Math.max(HOUR_W, (boxW - LABEL_W) / hours.length)
   const ui = useUi()
   const navigate = useNavigate()
   const now = useNow(30_000)
-  const start = atBusinessTime(date, "17:00").getTime()
-  const end = start + 12 * MS.HOUR
+  const start = atBusinessTime(date, shiftStartHhmm(shift)).getTime()
+  const end = start + shiftSpanHours(shift) * MS.HOUR
   const x = (t: Date) => LABEL_W + ((Math.min(Math.max(t.getTime(), start), end) - start) / MS.HOUR) * hourW
-  const width = LABEL_W + HOURS.length * hourW
+  const width = LABEL_W + hours.length * hourW
   const zones = ["A", "B", "C", "BAR"] as const
   const rows = zones.flatMap((z) =>
     tables
@@ -533,7 +556,7 @@ function Timeline({
         <div style={{ width }} className="relative">
           <div className="sticky top-0 z-20 flex border-b bg-background" style={{ height: 32 }}>
             <div style={{ width: LABEL_W }} className="sticky left-0 z-10 shrink-0 border-r bg-background" />
-            {HOURS.map((h, i) => {
+            {hours.map((h, i) => {
               // The "now" line + badge (line .. +40px) wins over an hour label it would touch.
               const labelLeft = LABEL_W + i * hourW + 8
               const covered = nowX !== null && nowX > labelLeft - 44 && nowX < labelLeft + 42
@@ -588,11 +611,11 @@ function Timeline({
                   {label(t)}
                 </span>
               </div>
-              {HOURS.map((h) => (
+              {hours.map((h) => (
                 <div
                   key={h}
                   style={{ width: hourW }}
-                  className={cn("shrink-0 border-r border-dashed border-border/60", h === HOURS.at(-1) && "border-r-0")}
+                  className={cn("shrink-0 border-r border-dashed border-border/60", h === hours.at(-1) && "border-r-0")}
                 />
               ))}
               {(byTable.get(t.id) ?? []).map((a) => {

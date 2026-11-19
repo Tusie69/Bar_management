@@ -11,7 +11,15 @@ import type { ZoneCode } from "@/domain/venue-layout"
 import type { Alert } from "@/features/floor/alerts"
 import { extractBarSeatNumber, isBarSeat } from "@/features/floor/bar-guest-rows"
 import { isWaitingForTable } from "@/features/floor/reception-rules"
-import { type BusinessDate, businessDateOf, fmtTime, MS } from "@/lib/time"
+import {
+  type BusinessDate,
+  type BusinessShift,
+  businessDateOf,
+  FALLBACK_BUSINESS_SHIFT,
+  fmtTime,
+  MS,
+  shiftHour,
+} from "@/lib/time"
 
 export type OverviewFloorStatus = "booked" | "soon" | "late" | "inuse" | "empty"
 
@@ -106,9 +114,14 @@ export interface OperationalAlertItem {
   detail: string
 }
 
-/** Shifts run 17:00 -> 05:00; timestamps before 05:00 (e.g. 00:30) map to the previous business date. */
-export function shiftBusinessDateOf(at: Date): BusinessDate {
-  return businessDateOf(at, 5)
+/**
+ * Timestamps before the shift's cutoff (e.g. 00:30) map to the previous business date.
+ *
+ * TU-38: the cutoff is the venue's `business_day_cutoff_local`, which a caller inside React
+ * gets from `useBusinessShift()`. The default only covers callers with no venue in hand.
+ */
+export function shiftBusinessDateOf(at: Date, shift: BusinessShift = FALLBACK_BUSINESS_SHIFT): BusinessDate {
+  return businessDateOf(at, shiftHour(shift.cutoffLocal))
 }
 
 /** Resolves effective live state for a physical table/seat from floor state + table fallback. */

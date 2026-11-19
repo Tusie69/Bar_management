@@ -495,7 +495,9 @@ export function AlertsBell({ className }: { className?: string }) {
 function AlertsBellContent({ className }: { className?: string }) {
   const ui = useUi()
   const now = useNow(15_000)
-  const selectedDate = businessDateOf(now)
+  // TU-38: mốc cắt ca lấy từ cấu hình địa điểm, không mặc định 05:00.
+  const shiftCutoff = shiftHour(useBusinessShift().cutoffLocal)
+  const selectedDate = businessDateOf(now, shiftCutoff)
   const model = useFloorModel(undefined)
   const bd = model.floor?.businessDate ?? selectedDate
   const reservations = useReservations(bd)

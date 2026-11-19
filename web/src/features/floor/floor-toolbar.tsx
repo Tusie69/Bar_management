@@ -16,12 +16,13 @@ import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { useNow } from "@/hooks/use-data"
+import { useBusinessShift, useNow } from "@/hooks/use-data"
 import {
   addDays,
   businessDateOf,
   businessSlots,
   fmtBusinessDate,
+  shiftHour,
   fromLocalDate,
   toLocalDate,
   type BusinessDate,
@@ -86,13 +87,16 @@ export function TimeField({
   onChange: (t: string) => void
   className?: string
 }) {
+  // TU-38: danh sách giờ chạy theo ca của địa điểm, không cố định 17:00-05:00.
+  const shift = useBusinessShift()
+  const slots = businessSlots(15, shiftHour(shift.startLocal), shiftHour(shift.cutoffLocal))
   return (
     <Select value={value} onValueChange={onChange}>
       <SelectTrigger className={cn("h-11 min-h-[44px] w-[104px]", className)} aria-label="Giờ khách muốn đến">
         <SelectValue />
       </SelectTrigger>
       <SelectContent className="max-h-80">
-        {businessSlots().map((s) => (
+        {slots.map((s) => (
           <SelectItem key={s} value={s} className="tnum">
             {s}
           </SelectItem>
@@ -183,7 +187,9 @@ function DayNav({ today }: { today: BusinessDate }) {
 export function FloorToolbar({ onOpenList }: { onOpenList?: () => void }) {
   const ui = useUi()
   const now = useNow(15_000)
-  const today = businessDateOf(now)
+  // TU-38: mốc cắt ca lấy từ cấu hình địa điểm, không mặc định 05:00.
+  const shiftCutoff = shiftHour(useBusinessShift().cutoffLocal)
+  const today = businessDateOf(now, shiftCutoff)
   return (
     <div className="flex h-14 shrink-0 items-center gap-2.5 overflow-x-auto border-b px-3 sm:px-4">
       <div role="tablist" aria-label="Chế độ xem" className="flex shrink-0 items-center gap-2 sm:gap-3">

@@ -971,8 +971,20 @@ averages.
 **The operating day (AC06).** Every figure is grouped by the stored `business_date`, which the
 check-in path derives from the venue's own `business_day_start_local` and
 `business_day_cutoff_local`. Nothing in the statistics path assumes 17:00-05:00: a venue
-configured for another shift groups by its own cutoff, and the web client reads the same two
-columns from the catalog for its business date and shift label.
+configured for another shift groups by its own cutoff.
+
+On the web side, `useBusinessShift()` reads those two columns from the catalog and is what
+`useBusinessDate()`, the Admin header, the reception shift labels, the floor and reservation
+timeline axes and the arrival-time list all derive their hours from. `FALLBACK_BUSINESS_SHIFT`
+in `web/src/lib/time.ts` covers only the first render before the catalog resolves.
+
+One place still holds the pair as a constant on purpose: `web/src/domain/booking-rules.ts`,
+whose arrival slots and check-in window mirror the API's own booking validation in
+`api/src/modules/bookings/business-date.ts` (`bookingDayStartHour`, `bookingDayCutoffHour`).
+Reading the venue row on the web side alone would let the booking form accept an arrival the
+API then refuses, so both sides keep the pair centralised on one constant each, and making the
+API configurable is the single change the web file would then need. That is open work, not
+part of TU-38.
 
 **Performance (AC07, AC08).** The summary runs six aggregate queries whatever the row count:
 four over the shared turn projection, one scope inventory and one table count. Migration 0031

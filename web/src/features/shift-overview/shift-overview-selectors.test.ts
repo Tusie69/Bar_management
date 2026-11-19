@@ -389,7 +389,7 @@ describe("shift-overview selectors", () => {
     })
   })
 
-  it("maps 00:30 timestamps to the previous business date (17:00 -> 05:00 shift boundary)", () => {
+  it("maps 00:30 timestamps to the previous business date (shift cutoff boundary)", () => {
     const afterMidnight = new Date("2026-11-16T00:30:00+07:00")
     const beforeCutoff = new Date("2026-11-16T04:59:00+07:00")
     const nextShiftCutoff = new Date("2026-11-16T05:00:00+07:00")

@@ -3,8 +3,8 @@ import { GuardedButton } from "@/components/common"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { WAITLIST_STATUS_LABEL } from "@/domain/enums"
-import { useNow, useOverview, useWaitlist } from "@/hooks/use-data"
-import { businessDateOf, fmtBusinessDate, fmtTime, minutesBetween } from "@/lib/time"
+import { useBusinessShift, useNow, useOverview, useWaitlist } from "@/hooks/use-data"
+import { businessDateOf, fmtBusinessDate, fmtBusinessShift, fmtTime, minutesBetween, shiftHour } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useUi } from "@/state/ui"
 import type { FloorModel } from "./use-floor-model"
@@ -15,7 +15,9 @@ const ACTIVE = ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"]
 export function ShiftPanel({ model }: { model: FloorModel }) {
   const overview = useOverview()
   const now = useNow(15_000)
-  const bd = model.floor?.businessDate ?? businessDateOf(now)
+  // TU-38: giờ ca lấy từ cấu hình địa điểm, không cố định 17:00-05:00.
+  const shift = useBusinessShift()
+  const bd = model.floor?.businessDate ?? businessDateOf(now, shiftHour(shift.cutoffLocal))
   const waitlist = useWaitlist(bd)
   const ui = useUi()
   const navigate = useNavigate()
@@ -38,7 +40,7 @@ export function ShiftPanel({ model }: { model: FloorModel }) {
     <div className="flex h-full min-h-0 scrollbar-thin flex-col gap-6 overflow-y-auto bg-surface-1 p-5">
       <div className="flex shrink-0 flex-col gap-0.5">
         <h2 className="text-[15px] leading-tight font-semibold">Ca tối · {bd ? fmtBusinessDate(bd) : "..."}</h2>
-        <p className="tnum text-xs text-tx-2">Cập nhật {fmtTime(now)} · 17:00 → 05:00</p>
+        <p className="tnum text-xs text-tx-2">Cập nhật {fmtTime(now)} · {fmtBusinessShift(shift)}</p>
       </div>
       {kpis ? (
         <div className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-sm border bg-border">

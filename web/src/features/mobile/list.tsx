@@ -5,7 +5,15 @@ import { SOURCE_LABEL, type BookingSourceCode } from "@/domain/enums"
 import type { ReservationView } from "@/domain/models"
 import { useDayAllocations, useReservations } from "@/hooks/use-data"
 import { foldVietnamese } from "@/lib/text"
-import { addDays, atBusinessTime, fmtBusinessDate, fmtTime12, MS, type BusinessDate } from "@/lib/time"
+import {
+  addDays,
+  atBusinessTime,
+  FALLBACK_BUSINESS_SHIFT,
+  fmtBusinessDate,
+  fmtTime12,
+  MS,
+  type BusinessDate,
+} from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { isApiError } from "@/services"
 import { useCan } from "@/state/session"
@@ -60,7 +68,9 @@ export function ListScreen() {
   const shown = base.filter(GROUPS[status]).sort(byTime)
   const guests = shown.filter((r) => r.status !== "CANCELLED").reduce((s, r) => s + r.partySize, 0)
   const venue = m.model.catalog?.venue
-  const shift = `Ca tối ${slotLabel(venue?.businessDayStartLocal.slice(0, 5) ?? "17:00")} – ${slotLabel(venue?.businessDayCutoffLocal.slice(0, 5) ?? "05:00")}`
+  const shift = `Ca tối ${slotLabel(
+    (venue?.businessDayStartLocal ?? FALLBACK_BUSINESS_SHIFT.startLocal).slice(0, 5),
+  )} – ${slotLabel((venue?.businessDayCutoffLocal ?? FALLBACK_BUSINESS_SHIFT.cutoffLocal).slice(0, 5))}`
 
   return (
     <>
@@ -229,7 +239,11 @@ function Timeline({ bd, reservations }: { bd: BusinessDate; reservations: Reserv
   const m = useM()
   const alloc = useDayAllocations(bd).data
   const box = useRef<HTMLDivElement>(null)
-  const start = atBusinessTime(bd, "17:00").getTime()
+  // TU-38: trục thời gian bắt đầu ở giờ mở ca của địa điểm, không cố định 17:00.
+  const start = atBusinessTime(
+    bd,
+    (m.model.catalog?.venue.businessDayStartLocal ?? FALLBACK_BUSINESS_SHIFT.startLocal).slice(0, 5),
+  ).getTime()
   const toMin = useCallback((t: Date) => (t.getTime() - start) / MS.MIN, [start])
   const isToday = bd === m.today
   const nowMin = isToday ? toMin(m.now) : -1

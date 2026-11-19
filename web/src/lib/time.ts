@@ -85,6 +85,30 @@ export function fmtBusinessShift(shift: BusinessShift): string {
   return `${shift.startLocal.slice(0, 5)} → ${shift.cutoffLocal.slice(0, 5)}`
 }
 
+/** Whole hours from `startHour` to `cutoffHour`, wrapping past midnight when the shift does. */
+function spanHours(startHour: number, cutoffHour: number): number {
+  return cutoffHour > startHour ? cutoffHour - startHour : 24 - startHour + cutoffHour
+}
+
+/** The shift's opening time as "HH:mm", for `atBusinessTime` and timeline axes. */
+export function shiftStartHhmm(shift: BusinessShift): string {
+  return shift.startLocal.slice(0, 5)
+}
+
+/**
+ * Whole hours from the shift's opening to its cutoff the next morning: 12 for 17:00 → 05:00.
+ * Timeline axes size themselves from this instead of a literal hour count.
+ */
+export function shiftSpanHours(shift: BusinessShift): number {
+  return spanHours(shiftHour(shift.startLocal), shiftHour(shift.cutoffLocal))
+}
+
+/** The hour labels of a timeline axis across the shift: ["17","18",...,"04"]. */
+export function shiftHourLabels(shift: BusinessShift): string[] {
+  const start = shiftHour(shift.startLocal)
+  return Array.from({ length: shiftSpanHours(shift) }, (_, index) => pad((start + index) % 24))
+}
+
 export function businessDateOf(t: Date, cutoffHour = shiftHour(FALLBACK_BUSINESS_SHIFT.cutoffLocal)): BusinessDate {
   return venueDateString(new Date(t.getTime() - cutoffHour * HOUR))
 }
@@ -99,17 +123,28 @@ export function atBusinessTime(bd: BusinessDate, hhmm: string): Date {
   return fromVenueLocal(calendar, hhmm)
 }
 
-export function businessDayBounds(bd: BusinessDate, startHour = 17, cutoffHour = 5) {
+export function businessDayBounds(
+  bd: BusinessDate,
+  startHour = shiftHour(FALLBACK_BUSINESS_SHIFT.startLocal),
+  cutoffHour = shiftHour(FALLBACK_BUSINESS_SHIFT.cutoffLocal),
+) {
+  // A cutoff at or before the opening hour belongs to the next calendar day; one after it
+  // (a venue that opens and closes the same day) stays on this one.
+  const endsNextDay = cutoffHour <= startHour
   return {
     start: fromVenueLocal(bd, `${pad(startHour)}:00`),
-    end: fromVenueLocal(addDays(bd, 1), `${pad(cutoffHour)}:00`),
+    end: fromVenueLocal(endsNextDay ? addDays(bd, 1) : bd, `${pad(cutoffHour)}:00`),
   }
 }
 
-/** 15-minute slots from opening to cutoff, as "HH:mm" in business order. */
-export function businessSlots(stepMin = 15, startHour = 17, cutoffHour = 5): string[] {
+/** `stepMin` slots from opening to cutoff, as "HH:mm" in business order. */
+export function businessSlots(
+  stepMin = 15,
+  startHour = shiftHour(FALLBACK_BUSINESS_SHIFT.startLocal),
+  cutoffHour = shiftHour(FALLBACK_BUSINESS_SHIFT.cutoffLocal),
+): string[] {
   const out: string[] = []
-  const total = (24 - startHour + cutoffHour) * 60
+  const total = spanHours(startHour, cutoffHour) * 60
   for (let m = 0; m < total; m += stepMin) {
     const minutes = (startHour * 60 + m) % (24 * 60)
     out.push(`${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`)

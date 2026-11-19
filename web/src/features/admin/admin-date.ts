@@ -1,8 +1,8 @@
 /**
  * TU-39 — Ngày kinh doanh hiện trên header Admin.
  *
- * Quán chạy ca 17:00 → 05:00, nên 02:00 vẫn thuộc đêm hôm trước. Dùng
- * `businessDateOf` của `lib/time` chứ không lấy ngày lịch của máy: nếu lấy
+ * Quán chạy ca qua nửa đêm, nên 02:00 vẫn thuộc đêm hôm trước. Mốc cắt lấy từ cấu hình
+ * địa điểm (TU-38). Dùng `businessDateOf` của `lib/time` chứ không lấy ngày lịch của máy: nếu lấy
  * ngày lịch, header sẽ nhảy sang ngày mới lúc 00:00 giữa ca và mọi con số
  * trên màn hình đọc sai một đêm.
  */
