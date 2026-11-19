@@ -58,7 +58,8 @@ export function DetailScreen({
             type="button"
             onClick={() => m.openBookingEdit(r.id, r.businessDate)}
             aria-label="Sửa booking"
-            className="gm-press ml-auto inline-flex h-11 shrink-0 items-center rounded-xl border border-border-strong bg-surface-1 px-4 text-[13.5px] font-semibold text-tx-1 shadow-[var(--shadow-xs)] hover:bg-surface-2"
+            disabled={waitlist.isPending || waitlist.isError || waitlist.isFetching || waitlist.isPlaceholderData}
+            className="gm-press ml-auto inline-flex h-11 shrink-0 items-center rounded-xl border border-border-strong bg-surface-1 px-4 text-[13.5px] font-semibold text-tx-1 shadow-[var(--shadow-xs)] hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-50"
           >
             Sửa
           </button>
