@@ -269,6 +269,7 @@ export default function MobileApp() {
       setConfirm(c)
     },
     askCancel: (req) => {
+      if (!isReceptionist) return
       setStatusFor(null)
       setCancelReq(req)
     },
@@ -478,7 +479,7 @@ export default function MobileApp() {
         ) : null}
         <StatusDialog r={statusFor} onClose={() => setStatusFor(null)} />
         <ConfirmDialog c={confirm} onClose={() => setConfirm(null)} />
-        <CancelBookingDialog req={cancelReq} onClose={() => setCancelReq(null)} />
+        {isReceptionist ? <CancelBookingDialog req={cancelReq} onClose={() => setCancelReq(null)} /> : null}
       </div>
     </MobileContext.Provider>
   )

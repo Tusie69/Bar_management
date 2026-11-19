@@ -1,5 +1,6 @@
 import { CANCEL_REASONS, type BookingCancelReason } from "@/domain/enums"
-import { NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
+import { NOTE_PHONE_ERROR } from "@/lib/text"
+import { noteHasNormalizedPhoneNumber } from "./note-phone-privacy"
 
 export const CANCEL_NOTE_MAX_LENGTH = 300
 export const CANCEL_NOTE_TOO_LONG_ERROR = "Lý do hủy không được vượt quá 300 ký tự."
@@ -18,7 +19,7 @@ export interface CancelBookingValidation {
 /** Validates cancel reason and optional note using the same rules as POST /bookings/:id/cancel. */
 export function validateCancelBookingInput(reason: BookingCancelReason, note: string): CancelBookingValidation {
   const trimmedNote = note.trim()
-  const hasPhone = noteHasPhoneNumber(note)
+  const hasPhone = noteHasNormalizedPhoneNumber(note)
   const tooLong = trimmedNote.length > CANCEL_NOTE_MAX_LENGTH
   const missingRequiredNote = reason === "OTHER" && trimmedNote.length === 0
 
