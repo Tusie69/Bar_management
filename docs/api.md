@@ -235,14 +235,52 @@ ADMIN grants are resolved on every request. For `READ_ONLY`, the backend returns
 
 | Method | Path        | Access                             | Request / response                                                  |
 | ------ | ----------- | ---------------------------------- | ------------------------------------------------------------------- |
-| GET    | `/settings` | Authenticated session              | `{quickTimes:string[],upcomingMinutes:number,noShowMinutes:number}` |
+| GET    | `/settings` | Authenticated session              | `{quickTimes:string[],upcomingMinutes:number,noShowMinutes:number,businessDayStartLocal:string,businessDayCutoffLocal:string}` |
 | PUT    | `/settings` | Session + CSRF + `venue.configure` | Full body and response use the same camelCase shape                 |
 
 Both endpoints derive organization and venue exclusively from the authenticated actor. There is no venue selector in the URL or body. `GET` is read-only, sends `Cache-Control: no-store`, never initializes missing rows and uses `['21:00','21:30','22:00','22:30']` only as the fallback when the venue has no valid `quick_times` row. The existing `GET /venues/:id/settings` compatibility endpoint and its snake_case wrapper remain unchanged.
 
-`PUT` requires exactly `quickTimes`, `upcomingMinutes` and `noShowMinutes`; unknown or missing fields return 400. `quickTimes` contains 1–24 unique `HH:mm` values inside 19:00–01:00 inclusive. `upcomingMinutes` is an integer from 1 through 240. `noShowMinutes` is an unsigned-smallint value and must also remain greater than the venue's unchanged `late_warning_minutes`. Invalid settings use `INVALID_SETTINGS_PAYLOAD`, `INVALID_QUICK_TIMES`, `INVALID_UPCOMING_MINUTES` or `INVALID_NO_SHOW_MINUTES`. Only OWNER receives `venue.configure`; ADMIN and staff receive 403.
+`PUT` requires `quickTimes`, `upcomingMinutes` and `noShowMinutes`, and optionally the shift pair `businessDayStartLocal` / `businessDayCutoffLocal`; unknown or missing required fields return 400. `quickTimes` contains 1–24 unique `HH:mm` values inside 19:00–01:00 inclusive. `upcomingMinutes` is an integer from 1 through 240. `noShowMinutes` is an unsigned-smallint value and must also remain greater than the venue's unchanged `late_warning_minutes`. Invalid settings use `INVALID_SETTINGS_PAYLOAD`, `INVALID_QUICK_TIMES`, `INVALID_UPCOMING_MINUTES` or `INVALID_NO_SHOW_MINUTES`. Only OWNER receives `venue.configure`; ADMIN and staff receive 403.
 
-The update locks the venue and writes `venue_settings.quick_times`, `venues.upcoming_warning_minutes`, `venues.no_show_warning_minutes`, the venue version/change sequence and a redacted `VENUE_SETTINGS_UPDATED` audit in one transaction. `late_warning_minutes` is not modified. Failure of any write rolls everything back. Other venues are unaffected. Each committed update bumps `change_seq`; current floor polling and the settings query's 15-second polling refetch server-derived state without introducing another realtime channel. The booking forms show the database quick times as shortcuts and never replace the time already entered by the user. The pickers offer the slots the API accepts, which is the 15-minute step described under Transport while Q03 is open; they do not offer a 30-minute-only list.
+The update locks the venue and writes `venue_settings.quick_times`, `venues.upcoming_warning_minutes`, `venues.no_show_warning_minutes`, `venues.business_day_start_local`, `venues.business_day_cutoff_local`, the venue version/change sequence and a redacted `VENUE_SETTINGS_UPDATED` audit in one transaction. `late_warning_minutes` is not modified. Failure of any write rolls everything back. Other venues are unaffected. Each committed update bumps `change_seq`; current floor polling and the settings query's 15-second polling refetch server-derived state without introducing another realtime channel. The booking forms show the database quick times as shortcuts and never replace the time already entered by the user. The pickers offer the slots the API accepts, which is the 15-minute step described under Transport while Q03 is open; they do not offer a 30-minute-only list.
+
+### The operating shift (TU-38)
+
+`businessDayStartLocal` and `businessDayCutoffLocal` are the venue's own shift, returned as
+`HH:MM:SS` and accepted as `HH:MM` or `HH:MM:SS`. Everything that decides which operating day a
+booking, visit or turn belongs to reads them — see **The shift on the API side** under Table
+turns for how.
+
+They are optional and travel as a pair. A request carrying one without the other is 400
+`INCOMPLETE_BUSINESS_DAY_SHIFT`: a shift is a pair, and validating one half against the stored
+other half would let a two-step edit arrive at a combination neither request asked for. A
+request carrying neither keeps the stored pair, so a client that does not manage the shift
+sends exactly the three fields it always did and cannot blank it by omission.
+
+Two rules beyond the format, which is 400 `INVALID_BUSINESS_DAY_SHIFT`:
+
+- 400 `SHIFT_CANNOT_SERVE_BOOKING_WINDOW` when the shift does not cover the 19:00–01:00 arrival
+  window. A venue opening at 20:00 would accept a booking for 19:00 it could never seat, and
+  one closing at 23:00 would accept 00:30 the same way. Containment is measured in minutes from
+  the opening rather than on the clock, because a shift may wrap past midnight. A zero-length
+  shift is refused for the same reason.
+- 409 `SHIFT_CHANGE_WITH_OPEN_VISITS` when the venue has an unclosed visit. Moving the cutoff
+  moves which operating day "now" belongs to, which would strand a party already at a table:
+  their visit would suddenly belong to another day, and the end-of-shift sweep would close it
+  at a different moment than the staff expect. The shift is movable between services, not
+  during one. Both checks run inside the locking transaction, so a refusal writes nothing at
+  all — the thresholds in the same request are not half-applied.
+
+Only a change is audited: the `VENUE_SETTINGS_UPDATED` entry carries
+`business_day_start_local` and `business_day_cutoff_local` with their before values when the
+shift moved, and omits them otherwise, so an entry on every save cannot bury the one change
+that moves the operating day. A committed change calls `invalidateVenueShift`, so the booking
+rules see the new shift on the next request rather than after the cache TTL.
+
+The settings screen edits the pair as two `HH:mm` fields, validates both rules in the browser
+so the reason sits beside the field rather than arriving in a toast, and sends the pair only
+when it moved — an unchanged shift is the server's to keep, and always sending it would trip
+the open-visits guard for no reason.
 
 Floor Projection and booking views continue to read thresholds directly from `venues`. Changing `upcomingMinutes` therefore changes the server-side `UPCOMING` boundary; it no longer moves any calling boundary, because `canCall` depends only on whether a phone is stored. Changing `noShowMinutes` changes the visual no-show warning and the TU-12 cutoff. It never automatically changes the persisted booking to `NO_SHOW`, cancels a hold or releases a table; manual no-show behavior remains authoritative.
 
@@ -1009,8 +1047,8 @@ the same amount and 00:30 sorts after 23:30 whatever the opening hour. The 19:00
 window is a separate business rule, not the shift, and both sides still hold it as their own
 constants.
 
-The shift columns are not editable over the API: they are set by migration or by a DBA. What
-changed is that the code now respects them.
+The shift columns are editable over `PUT /api/v1/settings` — see **The operating shift
+(TU-38)** under Venue settings for the pair semantics and the two guards.
 
 **Performance (AC07, AC08).** The summary runs six aggregate queries whatever the row count:
 four over the shared turn projection, one scope inventory and one table count. Migration 0031

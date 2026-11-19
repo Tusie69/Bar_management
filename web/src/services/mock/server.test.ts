@@ -147,6 +147,56 @@ describe("MockGamApi", () => {
     expect(withZeroes.byScope.filter((row) => row.turns > 0)).toEqual(summary.byScope)
   })
 
+  it("TU-38 saves the operating shift and refuses one the booking window outgrows", async () => {
+    api.setSession(owner)
+    const before = await api.getVenueSettings()
+    expect(before).toMatchObject({ businessDayStartLocal: "17:00:00", businessDayCutoffLocal: "05:00:00" })
+    const thresholds = {
+      quickTimes: before.quickTimes,
+      upcomingMinutes: before.upcomingMinutes,
+      noShowMinutes: before.noShowMinutes,
+    }
+
+    // A shift that cannot serve 19:00–01:00 is refused, exactly as the API refuses it.
+    for (const shift of [
+      { businessDayStartLocal: "20:00", businessDayCutoffLocal: "02:00" },
+      { businessDayStartLocal: "11:00", businessDayCutoffLocal: "23:00" },
+      { businessDayStartLocal: "17:00", businessDayCutoffLocal: "17:00" },
+    ]) {
+      await expect(api.updateVenueSettings({ ...thresholds, ...shift })).rejects.toThrow()
+    }
+    // Half a shift is refused too.
+    await expect(
+      api.updateVenueSettings({ ...thresholds, businessDayStartLocal: "18:00" }),
+    ).rejects.toThrow()
+    expect(await api.getVenueSettings()).toMatchObject({ businessDayStartLocal: "17:00:00" })
+
+    // The seeded floor has parties sitting, so moving the shift is refused while they do.
+    await expect(
+      api.updateVenueSettings({
+        ...thresholds, businessDayStartLocal: "18:00", businessDayCutoffLocal: "03:00",
+      }),
+    ).rejects.toThrow(/đang ngồi/)
+
+    // Omitting the shift keeps the stored pair, and is accepted while parties are seated.
+    const kept = await api.updateVenueSettings({ ...thresholds, upcomingMinutes: 18 })
+    expect(kept).toMatchObject({
+      upcomingMinutes: 18, businessDayStartLocal: "17:00:00", businessDayCutoffLocal: "05:00:00",
+    })
+
+    // With every visit closed the shift moves, and "HH:mm" in comes back as "HH:mm:ss".
+    const db = (api as unknown as { db: MockDb }).db
+    for (const visit of db.visits.values()) visit.endedAt ??= clock.now()
+    const saved = await api.updateVenueSettings({
+      ...thresholds, businessDayStartLocal: "18:00", businessDayCutoffLocal: "03:00",
+    })
+    expect(saved).toMatchObject({ businessDayStartLocal: "18:00:00", businessDayCutoffLocal: "03:00:00" })
+    // The catalog the whole app reads its shift from follows.
+    expect((await api.getCatalog()).venue).toMatchObject({
+      businessDayStartLocal: "18:00:00", businessDayCutoffLocal: "03:00:00",
+    })
+  })
+
   it("keeps layout badges and ledger in sync through close and entry correction", async () => {
     const catalog = await api.getCatalog()
     const tableIds = ["C4", "C5"].map((code) => catalog.tables.find((row) => row.code === code)!.id)

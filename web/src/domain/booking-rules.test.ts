@@ -4,6 +4,9 @@ import { businessDateOf, fromVenueLocal } from "@/lib/time"
 
 import {
   BOOKING_SLOTS,
+  isShiftBoundary,
+  normalizeShiftBoundary,
+  shiftServesBookingWindow,
   BOOKING_MINUTES,
   GUEST_QUICK,
   bookingCalendarDate,
@@ -284,5 +287,33 @@ describe("Đã từng đặt bàn / Chưa từng đặt bàn exclusivity (Item 3
   it("toggles off back to UNCLASSIFIED when clicking active button again", () => {
     expect(toggleClassification("RETURNING", "RETURNING")).toBe("UNCLASSIFIED")
     expect(toggleClassification("NEW", "NEW")).toBe("UNCLASSIFIED")
+  })
+})
+
+describe("TU-38 shift boundaries and the booking window", () => {
+  it("accepts HH:mm and HH:mm:ss on a real clock", () => {
+    for (const good of ["17:00", "05:00:00", "00:00", "23:59:59"]) expect(isShiftBoundary(good)).toBe(true)
+    for (const bad of ["", "18", "24:00", "18:60", "7:00", "18:00:60", "18:00:00:00"])
+      expect(isShiftBoundary(bad), bad).toBe(false)
+  })
+
+  it("normalises a boundary to the stored HH:mm:ss", () => {
+    expect(normalizeShiftBoundary("17:00")).toBe("17:00:00")
+    expect(normalizeShiftBoundary("17:00:30")).toBe("17:00:30")
+  })
+
+  it("only accepts a shift that can serve the 19:00-01:00 arrival window", () => {
+    // The seeded shift and a later one both cover it.
+    expect(shiftServesBookingWindow("17:00:00", "05:00:00")).toBe(true)
+    expect(shiftServesBookingWindow("18:00:00", "03:00:00")).toBe(true)
+    expect(shiftServesBookingWindow("19:00:00", "01:00:00")).toBe(true)
+
+    // Opens after 19:00: a 19:00 booking could never be seated.
+    expect(shiftServesBookingWindow("20:00:00", "02:00:00")).toBe(false)
+    // Closes before 01:00: a 00:30 booking could never be seated.
+    expect(shiftServesBookingWindow("11:00:00", "23:00:00")).toBe(false)
+    expect(shiftServesBookingWindow("17:00:00", "00:30:00")).toBe(false)
+    // A zero-length shift serves nothing.
+    expect(shiftServesBookingWindow("17:00:00", "17:00:00")).toBe(false)
   })
 })

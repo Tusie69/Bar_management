@@ -146,6 +146,9 @@ export interface VenueSettingsView {
   quickTimes: string[]
   upcomingMinutes: number
   noShowMinutes: number
+  /** TU-38 — the operating shift, "HH:MM:SS", as `venues` stores it. */
+  businessDayStartLocal: string
+  businessDayCutoffLocal: string
 }
 
 export interface ZoneView {

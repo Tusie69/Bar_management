@@ -86,6 +86,36 @@ export function isWithinBookingReceptionWindow(hhmm: string): boolean {
   return minutes >= toMin(BOOKING_FIRST_SLOT) || minutes <= toMin(BOOKING_LAST_SLOT)
 }
 
+const shiftBoundaryPattern = /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/
+
+/** "HH:mm" or "HH:mm:ss" on a real clock. Mirrors the API's `validShiftBoundary`. */
+export function isShiftBoundary(value: string): boolean {
+  return shiftBoundaryPattern.test(value)
+}
+
+/** Normalises a boundary to the "HH:mm:ss" the venue column stores. */
+export function normalizeShiftBoundary(value: string): string {
+  return value.length === 5 ? `${value}:00` : value
+}
+
+/**
+ * Whether a shift can actually serve the arrival window. Mirrors the API's
+ * `shiftServesBookingWindow`, so the settings form refuses exactly what the server refuses.
+ *
+ * A shift may wrap past midnight, so containment is measured in minutes from the opening
+ * rather than on the clock: both ends of the window must fall inside the span, and the
+ * window's own start must come first within it.
+ */
+export function shiftServesBookingWindow(startLocal: string, cutoffLocal: string): boolean {
+  const startMinutes = toMin(startLocal.slice(0, 5))
+  const span = (toMin(cutoffLocal.slice(0, 5)) - startMinutes + 1440) % 1440
+  if (span === 0) return false
+  const offset = (minutes: number) => (minutes - startMinutes + 1440) % 1440
+  const windowStart = offset(toMin(BOOKING_FIRST_SLOT))
+  const windowEnd = offset(toMin(BOOKING_LAST_SLOT))
+  return windowStart <= span && windowEnd <= span && windowStart <= windowEnd
+}
+
 /** Any wheel value: inside 19:00–01:00 and on the 15-minute step. */
 export function isBookingTime(hhmm: string | null | undefined): hhmm is string {
   return !!hhmm && isWithinBookingReceptionWindow(hhmm) && toMin(hhmm) % BOOKING_MINUTE_STEP === 0

@@ -62,6 +62,9 @@ mysqlDescribe('selective NA-14 integration', () => {
         quick_times: ['21:00', '21:30', '22:00', '22:30'],
         upcoming_minutes: 12,
         no_show_minutes: 45,
+        // TU-38: the snake_case compatibility wrapper carries the shift too.
+        business_day_start_local: '17:00:00',
+        business_day_cutoff_local: '05:00:00',
       },
     })
     expect((await agent.get(`/api/v1/venues/${otherVenueId}/settings`)).status).toBe(404)
