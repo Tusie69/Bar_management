@@ -1,3 +1,4 @@
+import { normalizePhoneText } from "@/domain/phone-shape"
 import { noteHasPhoneNumber } from "@/lib/text"
 
 /**
@@ -9,6 +10,6 @@ export function noteHasNormalizedPhoneNumber(note: string): boolean {
   const trimmed = note.trim()
   if (!trimmed) return false
   if (noteHasPhoneNumber(trimmed)) return true
-  const nfkc = trimmed.normalize("NFKC")
+  const nfkc = normalizePhoneText(trimmed)
   return nfkc !== trimmed && noteHasPhoneNumber(nfkc)
 }
