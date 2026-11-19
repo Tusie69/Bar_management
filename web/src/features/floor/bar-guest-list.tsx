@@ -25,6 +25,12 @@ import {
   type BarGuestRow,
 } from "./bar-guest-rows"
 
+/** Chiều cao thật của từng phần, tính bằng pixel màn hình (xem markup bên dưới). */
+const HEADER_PIXEL_HEIGHT = 25
+const LIST_PADDING_PIXELS = 8
+const ROW_PIXEL_HEIGHT = 24
+const ROW_GAP_PIXELS = 4
+
 export interface BarGuestListProps {
   /** Floor tables to derive bar rows from */
   tables?: TableView[]
@@ -45,6 +51,15 @@ export interface BarGuestListProps {
   as?: "svg" | "html"
   /** Empty state behavior when no rows are active: "title-only" (default) or "hidden" */
   emptyState?: "title-only" | "hidden"
+  /**
+   * Co chiều cao về đúng số dòng đang có, thay vì luôn chiếm trọn `height`.
+   *
+   * Dùng cho điện thoại: khung mặc định rộng 166 x 334 trong hệ toạ độ sơ đồ
+   * 374 x 732, tức 44% chiều ngang và 46% chiều cao bản vẽ. Trên màn hình to
+   * đó là khoảng trống của khu pha chế; trên điện thoại nó là một mảng trắng
+   * che gần nửa sơ đồ, và khi chưa có khách thì che chỗ mà không nói gì.
+   */
+  fitToRows?: boolean
   /** Title text (defaults to "Khách quầy bar") */
   title?: string
   /** Contextual accessible name when multiple floor maps are exposed. */
@@ -73,6 +88,7 @@ export function BarGuestList({
   height = DEFAULT_BAR_GUEST_LIST_BOUNDS.height,
   as = "svg",
   emptyState = "title-only",
+  fitToRows = false,
   title = "Khách quầy bar",
   ariaLabel = title,
   onRowClick,
@@ -128,9 +144,21 @@ export function BarGuestList({
   const scale = Math.max(0.1, mapScale || 1)
   const isSvg = as === "svg"
 
+  // Chiều cao vừa đủ số dòng, tính bằng pixel màn hình thật rồi mới đổi về đơn
+  // vị sơ đồ. Các con số dưới đây là chiều cao do chính markup ở dưới quy định:
+  // tiêu đề (12px * 1.3 + padding 8 + viền 1), danh sách đệm 4px trên dưới,
+  // mỗi dòng cao 24px (`h-6`) và cách nhau 4px (`space-y-1`).
+  const contentPixelHeight =
+    HEADER_PIXEL_HEIGHT +
+    LIST_PADDING_PIXELS +
+    rows.length * ROW_PIXEL_HEIGHT +
+    Math.max(0, rows.length - 1) * ROW_GAP_PIXELS
+  const effectiveHeight =
+    fitToRows && rows.length > 0 && isSvg ? Math.min(height, Math.ceil(contentPixelHeight / scale)) : height
+
   // In SVG mode, the inner content dimensions are in real screen pixels:
   const innerPixelWidth = isSvg ? Math.round(width * scale) : width
-  const innerPixelHeight = isSvg ? Math.round(height * scale) : height
+  const innerPixelHeight = isSvg ? Math.round(effectiveHeight * scale) : effectiveHeight
 
   const containerStyle: CSSProperties = isSvg
     ? {
@@ -141,7 +169,7 @@ export function BarGuestList({
       }
     : {
         width: `${width}px`,
-        height: `${height}px`,
+        height: `${effectiveHeight}px`,
       }
 
   const content = (
@@ -321,7 +349,7 @@ export function BarGuestList({
         x={x}
         y={y}
         width={width}
-        height={height}
+        height={effectiveHeight}
         className="pointer-events-auto overflow-hidden"
         data-testid={`${testId}-foreign-object`}
       >

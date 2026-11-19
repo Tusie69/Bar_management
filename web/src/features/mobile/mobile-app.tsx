@@ -8,9 +8,9 @@ import { Clock4, LayoutDashboard, List, ListOrdered, Map as MapIcon, Plus, type 
 import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { Outlet, useLocation, useNavigate } from "react-router"
 import type { ReservationView } from "@/domain/models"
-import { useNow, useReservations, useWaitlist } from "@/hooks/use-data"
+import { useBusinessShift, useNow, useReservations, useWaitlist } from "@/hooks/use-data"
 import { prewarmMotionController } from "@/lib/motion"
-import { businessDateOf, type BusinessDate } from "@/lib/time"
+import { businessDateOf, shiftHour, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useSession } from "@/state/session"
 import { roleCan } from "@/domain/access"
@@ -39,6 +39,7 @@ import { HomeScreen } from "./home"
 import { ListScreen } from "./list"
 import { MapScreen, TableSheet } from "./map"
 import { isOpenEntry } from "./model"
+import { notificationTarget } from "./notification-target"
 import { useRestoreTriggerFocus } from "./overlay-focus"
 import { AccountSheet, AlertsSheet, ConfirmDialog, CreateSheet, StatusDialog, Toast15 } from "./overlays"
 import { useSeenKeys } from "./seen-keys"
@@ -110,7 +111,9 @@ export default function MobileApp() {
   const isReceptionist = role === "RECEPTIONIST"
   const ui = useUi()
   const now = useNow(15_000)
-  const today = businessDateOf(now)
+  // TU-38: mốc cắt ca lấy từ cấu hình địa điểm, không mặc định 05:00.
+  const shiftCutoff = shiftHour(useBusinessShift().cutoffLocal)
+  const today = businessDateOf(now, shiftCutoff)
   const selectedDate = isReceptionist && ui.floorMode !== "live" ? ui.availDate : today
   const model = useFloorModel(selectedDate)
   const reservations = useReservations(selectedDate).data
@@ -211,8 +214,9 @@ export default function MobileApp() {
 
   const openAlertDetail = (alert: Alert) => {
     setOverlay(null)
-    if (alert.reservationId) setDetail({ id: alert.reservationId, bd: selectedDate })
-    else if (alert.tableId) ctx.openTable(alert.tableId)
+    const target = notificationTarget(alert.tableId, alert.reservationId, selectedDate)
+    if (target?.kind === "table") ctx.openTable(target.tableId)
+    else if (target?.kind === "reservation") setDetail({ id: target.reservationId, bd: target.businessDate })
   }
 
   const ctx: MobileCtx = {
@@ -429,7 +433,9 @@ export default function MobileApp() {
           onView={() => {
             if (!toast15) return
             handle(`l${toast15.id}`)
-            setDetail({ id: toast15.id, bd: toast15.businessDate })
+            const target = notificationTarget(toast15.tableIds[0], toast15.id, toast15.businessDate)
+            if (target?.kind === "table") ctx.openTable(target.tableId)
+            else if (target?.kind === "reservation") setDetail({ id: target.reservationId, bd: target.businessDate })
           }}
           onClose={() => {
             if (toast15) handle(`l${toast15.id}`)

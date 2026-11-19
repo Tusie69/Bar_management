@@ -4,10 +4,32 @@
  * - Guests: quick-pick 1-6, with an input for any positive whole number.
  * - Arrival: 19:00 of the selected business date to 01:00 next morning, every 5 minutes, both ends
  *   included (73 slots). Walk-in arrival is "now" and is NOT limited by these slots.
- * - The business day itself stays 17:00 → 05:00 (lib/time.ts). 00:00–01:00 slots use the next calendar
- *   date but keep the selected business date; the API derives business_date from expectedAt.
+ * - The business day runs from the venue's configured start to its cutoff (lib/time.ts).
+ *   00:00–01:00 slots use the next calendar date but keep the selected business date; the API
+ *   derives business_date from expectedAt.
+ *
+ * TU-38: `validateBookingCheckInDate` takes the venue's shift, matching the API, which now
+ * derives the operating day from `venues.business_day_start_local` / `business_day_cutoff_local`
+ * rather than from constants. Callers inside React pass `useBusinessShift()`; the default keeps
+ * the function usable without a venue in hand.
+ *
+ * `DAY_START` stays a constant on purpose: `businessMinute` only uses it to move the origin of
+ * the ordering, so every slot shifts by the same amount and the relative order of 00:30 after
+ * 23:30 cannot change with the opening hour. The 19:00–01:00 arrival window is a separate
+ * business rule, not the shift, and the API holds it as its own pair of constants too.
  */
-import { addDays, atBusinessTime, fmtDayMonth, MS, venueDateString, venueParts, type BusinessDate } from "@/lib/time"
+import {
+  addDays,
+  atBusinessTime,
+  FALLBACK_BUSINESS_SHIFT,
+  fmtDayMonth,
+  MS,
+  shiftHour,
+  venueDateString,
+  venueParts,
+  type BusinessDate,
+  type BusinessShift,
+} from "@/lib/time"
 
 export const GUEST_QUICK = [1, 2, 3, 4, 5, 6] as const
 export const BOOKING_MINUTE_STEP = 5
@@ -29,7 +51,7 @@ export function toggleClassification(
   return current === selected ? "UNCLASSIFIED" : selected
 }
 
-const DAY_START = 17 * 60
+const DAY_START = shiftHour(FALLBACK_BUSINESS_SHIFT.startLocal) * 60
 const pad = (n: number) => String(n).padStart(2, "0")
 const toMin = (hhmm: string) => {
   const [h, m] = hhmm.split(":").map(Number)
@@ -38,7 +60,7 @@ const toMin = (hhmm: string) => {
 
 export const isAfterMidnight = (hhmm: string) => toMin(hhmm) < 12 * 60
 
-/** Minutes after the 17:00 business-day start, so 00:30 sorts after 23:30. Never sort "HH:mm" strings. */
+/** Minutes after the business-day start, so 00:30 sorts after 23:30. Never sort "HH:mm" strings. */
 export const businessMinute = (hhmm: string) => (isAfterMidnight(hhmm) ? toMin(hhmm) + 1440 : toMin(hhmm)) - DAY_START
 
 export const BOOKING_SLOTS: readonly string[] = (() => {
@@ -62,6 +84,36 @@ export function isWithinBookingReceptionWindow(hhmm: string): boolean {
   if (hour > 23 || minute > 59) return false
   const minutes = toMin(hhmm)
   return minutes >= toMin(BOOKING_FIRST_SLOT) || minutes <= toMin(BOOKING_LAST_SLOT)
+}
+
+const shiftBoundaryPattern = /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/
+
+/** "HH:mm" or "HH:mm:ss" on a real clock. Mirrors the API's `validShiftBoundary`. */
+export function isShiftBoundary(value: string): boolean {
+  return shiftBoundaryPattern.test(value)
+}
+
+/** Normalises a boundary to the "HH:mm:ss" the venue column stores. */
+export function normalizeShiftBoundary(value: string): string {
+  return value.length === 5 ? `${value}:00` : value
+}
+
+/**
+ * Whether a shift can actually serve the arrival window. Mirrors the API's
+ * `shiftServesBookingWindow`, so the settings form refuses exactly what the server refuses.
+ *
+ * A shift may wrap past midnight, so containment is measured in minutes from the opening
+ * rather than on the clock: both ends of the window must fall inside the span, and the
+ * window's own start must come first within it.
+ */
+export function shiftServesBookingWindow(startLocal: string, cutoffLocal: string): boolean {
+  const startMinutes = toMin(startLocal.slice(0, 5))
+  const span = (toMin(cutoffLocal.slice(0, 5)) - startMinutes + 1440) % 1440
+  if (span === 0) return false
+  const offset = (minutes: number) => (minutes - startMinutes + 1440) % 1440
+  const windowStart = offset(toMin(BOOKING_FIRST_SLOT))
+  const windowEnd = offset(toMin(BOOKING_LAST_SLOT))
+  return windowStart <= span && windowEnd <= span && windowStart <= windowEnd
 }
 
 /** Any wheel value: inside 19:00–01:00 and on the 15-minute step. */
@@ -152,14 +204,25 @@ export function validateBookingTime(
 export const defaultBookingSlot = (bd: BusinessDate, now: Date): string | null =>
   bookingSlots(bd, now).find((s) => !s.disabled)?.time ?? null
 
-/** Null only when the booking belongs to the active 17:00–05:00 shift. */
-export function validateBookingCheckInDate(bd: BusinessDate, now: Date): string | null {
+/**
+ * Null only when the booking belongs to the venue's active shift.
+ *
+ * Mirrors `assertCheckInBusinessDate` on the API, including the hours it names, so the form
+ * refuses exactly what the server would and for the same stated reason.
+ */
+export function validateBookingCheckInDate(
+  bd: BusinessDate,
+  now: Date,
+  shift: BusinessShift = FALLBACK_BUSINESS_SHIFT,
+): string | null {
+  const startHour = shiftHour(shift.startLocal)
+  const cutoffHour = shiftHour(shift.cutoffLocal)
   const parts = venueParts(now)
-  if (parts.hour >= 5 && parts.hour < 17) {
-    return "Không có ca check-in đang hoạt động trong khoảng 05:00–17:00."
+  if (parts.hour >= cutoffHour && parts.hour < startHour) {
+    return `Không có ca check-in đang hoạt động trong khoảng ${shift.cutoffLocal.slice(0, 5)}–${shift.startLocal.slice(0, 5)}.`
   }
   const calendarDate = venueDateString(now)
-  const currentBusinessDate = parts.hour < 5 ? addDays(calendarDate, -1) : calendarDate
+  const currentBusinessDate = parts.hour < cutoffHour ? addDays(calendarDate, -1) : calendarDate
   return bd === currentBusinessDate ? null : "Chỉ được check-in booking thuộc ngày nghiệp vụ hiện tại."
 }
 

@@ -1,10 +1,17 @@
 import { AppError } from '../../errors/app-error.js'
+import { DEFAULT_VENUE_SHIFT, shiftLabel, type VenueShift } from '../venues/venue-shift.js'
 
 export const bookingTimeZone = 'Asia/Ho_Chi_Minh'
-export const bookingDayStartHour = 17
-export const bookingDayCutoffHour = 5
 export const bookingReceptionStartMinutes = 19 * 60
 export const bookingReceptionEndMinutes = 1 * 60
+
+/**
+ * TU-38: every rule below takes the venue's shift instead of the constants 17 and 5 it used to
+ * hold. The default keeps these helpers callable without a venue row — a unit test, or a path
+ * that has no actor — while every request path passes `getVenueShift(actor)`.
+ */
+type Shift = VenueShift
+const defaultShift = DEFAULT_VENUE_SHIFT
 
 const calendarDatePattern = /^(\d{4})-(\d{2})-(\d{2})$/
 const expectedAtPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|[+-]\d{2}:\d{2})$/
@@ -65,39 +72,44 @@ export function validateCalendarDate(value: unknown): string {
 }
 
 /**
- * Ngày nghiệp vụ tại thời điểm `now`, không ném lỗi ngoài ca: trước 05:00 thuộc ngày hôm trước,
- * từ 05:00 trở đi là ngày lịch hiện tại (kể cả khoảng 05:00–17:00 chờ ca tối).
+ * Ngày nghiệp vụ tại thời điểm `now`, không ném lỗi ngoài ca: trước mốc cắt thuộc ngày hôm
+ * trước, từ mốc cắt trở đi là ngày lịch hiện tại (kể cả khoảng chờ giữa mốc cắt và giờ mở ca).
  */
-export function businessDateAt(now = new Date()): string {
+export function businessDateAt(now = new Date(), shift: Shift = defaultShift): string {
   const local = localPartsAt(now)
-  return local.hour < bookingDayCutoffHour
+  return local.hour < shift.cutoffHour
     ? previousCalendarDate(local.year, local.month, local.day)
     : formatCalendarDate(local.year, local.month, local.day)
 }
 
-export function currentBusinessDate(now = new Date()): string {
+export function currentBusinessDate(now = new Date(), shift: Shift = defaultShift): string {
   const local = localPartsAt(now)
-  if (local.hour >= bookingDayCutoffHour && local.hour < bookingDayStartHour) {
-    throw new AppError(409, 'WALK_IN_OUTSIDE_BUSINESS_HOURS', 'Walk-in chỉ được nhận trong ca 17:00–05:00.')
+  if (local.hour >= shift.cutoffHour && local.hour < shift.startHour) {
+    throw new AppError(
+      409,
+      'WALK_IN_OUTSIDE_BUSINESS_HOURS',
+      `Walk-in chỉ được nhận trong ca ${shiftLabel(shift)}.`,
+    )
   }
-  return businessDateAt(now)
+  return businessDateAt(now, shift)
 }
 
 /**
- * FX-18: chặn thêm/gán Bàn chờ cho ngày nghiệp vụ đã qua (mốc 05:00). Booking đã được chặn chặt hơn
- * bởi EXPECTED_AT_IN_PAST trong validateBookingSchedule; Bàn chờ không có giờ đến nên kiểm theo ngày.
+ * FX-18: chặn thêm/gán Bàn chờ cho ngày nghiệp vụ đã qua (theo mốc cắt ca). Booking đã được chặn
+ * chặt hơn bởi EXPECTED_AT_IN_PAST trong validateBookingSchedule; Bàn chờ không có giờ đến nên
+ * kiểm theo ngày.
  */
-export function assertBusinessDateNotPast(value: string, now = new Date()): string {
+export function assertBusinessDateNotPast(value: string, now = new Date(), shift: Shift = defaultShift): string {
   const supplied = validateCalendarDate(value)
-  if (supplied < businessDateAt(now)) {
+  if (supplied < businessDateAt(now, shift)) {
     throw new AppError(409, 'BUSINESS_DATE_IN_PAST', 'Không thể đặt bàn cho ngày đã qua.')
   }
   return supplied
 }
 
-export function assertCurrentBusinessDate(value: unknown, now = new Date()): string {
+export function assertCurrentBusinessDate(value: unknown, now = new Date(), shift: Shift = defaultShift): string {
   const supplied = validateCalendarDate(value)
-  const current = currentBusinessDate(now)
+  const current = currentBusinessDate(now, shift)
   if (supplied !== current) {
     throw new AppError(409, 'BUSINESS_DATE_NOT_CURRENT', 'Walk-in phải thuộc ngày nghiệp vụ của ca hiện tại.')
   }
@@ -130,6 +142,7 @@ export function validateBookingSchedule(
   expectedAt: unknown,
   suppliedBusinessDate: unknown,
   now = new Date(),
+  shift: Shift = defaultShift,
 ): BookingSchedule {
   const businessDate = validateCalendarDate(suppliedBusinessDate)
   if (typeof expectedAt !== 'string') {
@@ -179,14 +192,14 @@ export function validateBookingSchedule(
   if (local.minute % 15 !== 0 || local.second !== 0 || expectedAtUtc.getUTCMilliseconds() !== 0) {
     throw new AppError(400, 'EXPECTED_AT_OFF_SLOT', 'Giờ đặt bàn phải theo mốc 15 phút.')
   }
-  const derivedBusinessDate = local.hour < bookingDayCutoffHour
+  const derivedBusinessDate = local.hour < shift.cutoffHour
     ? previousCalendarDate(local.year, local.month, local.day)
     : formatCalendarDate(local.year, local.month, local.day)
   if (derivedBusinessDate !== businessDate) {
     throw new AppError(
       400,
       'BUSINESS_DATE_MISMATCH',
-      'Ngày làm việc không khớp với giờ khách đến theo ca 17:00–05:00.',
+      `Ngày làm việc không khớp với giờ khách đến theo ca ${shiftLabel(shift)}.`,
     )
   }
   if (expectedAtUtc.getTime() < now.getTime()) {
@@ -200,17 +213,22 @@ export function validateBookingSchedule(
   }
 }
 
-export function assertCheckInBusinessDate(value: unknown, now = new Date()): CheckInBusinessDate {
+export function assertCheckInBusinessDate(
+  value: unknown,
+  now = new Date(),
+  shift: Shift = defaultShift,
+): CheckInBusinessDate {
   const businessDate = validateCalendarDate(value)
   let current: string
   try {
-    current = currentBusinessDate(now)
+    current = currentBusinessDate(now, shift)
   } catch (error) {
     if (error instanceof AppError && error.code === 'WALK_IN_OUTSIDE_BUSINESS_HOURS') {
       throw new AppError(
         409,
         'CHECK_IN_OUTSIDE_BUSINESS_HOURS',
-        'Không có ca check-in đang hoạt động trong khoảng 05:00–17:00.',
+        `Không có ca check-in đang hoạt động trong khoảng `
+          + `${shift.cutoffLocal.slice(0, 5)}–${shift.startLocal.slice(0, 5)}.`,
       )
     }
     throw error

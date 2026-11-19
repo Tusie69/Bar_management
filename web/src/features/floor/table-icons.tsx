@@ -121,7 +121,7 @@ export function TableIcons({
         {activeItems.map((item) => (
           <span
             key={item.key}
-            className="inline-flex size-4 items-center justify-center rounded-full border border-border bg-background text-[9.5px] leading-none shadow-2xs"
+            className="inline-flex size-3.5 items-center justify-center rounded-full border border-border bg-background text-[8.5px] leading-none shadow-2xs"
             title={item.label}
             aria-label={item.label}
             data-icon={item.key}

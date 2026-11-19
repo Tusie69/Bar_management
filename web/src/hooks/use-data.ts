@@ -6,7 +6,13 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import type { ReceptionGuestCountValues, ReportQuery, TableTurnQuery, TableTurnsParams } from "@/domain/models"
-import { businessDateOf, type BusinessDate } from "@/lib/time"
+import {
+  businessDateOf,
+  FALLBACK_BUSINESS_SHIFT,
+  shiftHour,
+  type BusinessDate,
+  type BusinessShift,
+} from "@/lib/time"
 import { api, clock } from "@/services"
 import { useSession } from "@/state/session"
 import { sessionEndMessage } from "@/domain/session-end"
@@ -49,9 +55,21 @@ export function useNow(intervalMs = 1000): Date {
   return clock.now()
 }
 
+/**
+ * TU-38 — the operating shift of the venue, read from the catalog rather than assumed.
+ * Falls back to the seeded 17:00–05:00 only until the catalog resolves, so a first render
+ * still has a business date; once it has loaded, every consumer follows the venue row.
+ */
+export function useBusinessShift(): BusinessShift {
+  const venue = useCatalog().data?.venue
+  if (!venue) return FALLBACK_BUSINESS_SHIFT
+  return { startLocal: venue.businessDayStartLocal, cutoffLocal: venue.businessDayCutoffLocal }
+}
+
 export function useBusinessDate(): BusinessDate {
   const now = useNow(30_000)
-  return businessDateOf(now)
+  const shift = useBusinessShift()
+  return businessDateOf(now, shiftHour(shift.cutoffLocal))
 }
 
 /* ---------------- queries ---------------- */

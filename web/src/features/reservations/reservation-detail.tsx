@@ -50,11 +50,19 @@ import { isBookingSlot, validateBookingCheckInDate, validateBookingTime } from "
 import { contactNameUpdate, initialContactName } from "@/domain/booking-identity"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAction } from "@/hooks/use-action"
-import { useCatalog, useNow, useOperations, useReservations, useVenueSettings, useWaitlist } from "@/hooks/use-data"
+import {
+  useBusinessShift,
+  useCatalog,
+  useNow,
+  useOperations,
+  useReservations,
+  useVenueSettings,
+  useWaitlist,
+} from "@/hooks/use-data"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { toast } from "sonner"
 import { NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
-import { atBusinessTime, businessDateOf, fmtBusinessDate, fmtTime, venueParts } from "@/lib/time"
+import { atBusinessTime, businessDateOf, fmtBusinessDate, fmtTime, shiftHour, venueParts } from "@/lib/time"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
 import { GuestCountDialog } from "../floor/floor-dialogs"
@@ -107,6 +115,9 @@ function Detail({ r }: { r: ReservationView }) {
   const ui = useUi()
   const navigate = useNavigate()
   const now = useNow(15_000)
+  // TU-38: mốc cắt ca lấy từ cấu hình địa điểm, không mặc định 05:00.
+  const shift = useBusinessShift()
+  const shiftCutoff = shiftHour(shift.cutoffLocal)
   const { run, pending } = useAction()
   const ops = useOperations(300)
   const waitlist = useWaitlist(r.businessDate)
@@ -123,7 +134,7 @@ function Detail({ r }: { r: ReservationView }) {
       const t = catalog.data?.tables.find((x) => x.id === id)
       return t ? (t.kind === "BAR_SEAT" ? `Bar ${t.seqNo}` : t.code) : `#${id}`
     })
-  const checkInError = validateBookingCheckInDate(r.businessDate, now)
+  const checkInError = validateBookingCheckInDate(r.businessDate, now, shift)
   const booked = r.status === "BOOKED"
   const history = (ops.data ?? []).filter((o) => o.entityType === "reservation" && o.entityId === r.id)
 
@@ -147,7 +158,7 @@ function Detail({ r }: { r: ReservationView }) {
         time: fmtTime(r.expectedAt),
         party: r.partySize,
       })
-      ui.setFloorMode(r.businessDate === businessDateOf(now) ? "live" : "availability")
+      ui.setFloorMode(r.businessDate === businessDateOf(now, shiftCutoff) ? "live" : "availability")
     } else {
       ui.setFloorMode("live")
     }
@@ -164,7 +175,7 @@ function Detail({ r }: { r: ReservationView }) {
           : `Check-in ${formatHonorificName(r.displayName, r.honorific)} vào bàn`,
       hint:
         intent === "assign"
-          ? `Booking ${fmtTime(r.expectedAt)}${r.businessDate !== businessDateOf(now) ? ` ngày ${fmtBusinessDate(r.businessDate, "short")}` : ""}. Chạm bàn khả dụng.`
+          ? `Booking ${fmtTime(r.expectedAt)}${r.businessDate !== businessDateOf(now, shiftCutoff) ? ` ngày ${fmtBusinessDate(r.businessDate, "short")}` : ""}. Chạm bàn khả dụng.`
           : `Booking ${fmtTime(r.expectedAt)}. Chạm một hoặc nhiều bàn trống.`,
       multi: true,
       confirmLabel: intent === "assign" ? (r.tableIds.length ? "Đổi bàn" : "Phân bàn") : "Check-in",

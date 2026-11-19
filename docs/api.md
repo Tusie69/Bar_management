@@ -235,14 +235,72 @@ ADMIN grants are resolved on every request. For `READ_ONLY`, the backend returns
 
 | Method | Path        | Access                             | Request / response                                                  |
 | ------ | ----------- | ---------------------------------- | ------------------------------------------------------------------- |
-| GET    | `/settings` | Authenticated session              | `{quickTimes:string[],upcomingMinutes:number,noShowMinutes:number}` |
+| GET    | `/settings` | Authenticated session              | `{quickTimes:string[],upcomingMinutes:number,noShowMinutes:number,businessDayStartLocal:string,businessDayCutoffLocal:string}` |
 | PUT    | `/settings` | Session + CSRF + `venue.configure` | Full body and response use the same camelCase shape                 |
 
 Both endpoints derive organization and venue exclusively from the authenticated actor. There is no venue selector in the URL or body. `GET` is read-only, sends `Cache-Control: no-store`, never initializes missing rows and uses `['21:00','21:30','22:00','22:30']` only as the fallback when the venue has no valid `quick_times` row. The existing `GET /venues/:id/settings` compatibility endpoint and its snake_case wrapper remain unchanged.
 
-`PUT` requires exactly `quickTimes`, `upcomingMinutes` and `noShowMinutes`; unknown or missing fields return 400. `quickTimes` contains 1–24 unique `HH:mm` values inside 19:00–01:00 inclusive. `upcomingMinutes` is an integer from 1 through 240. `noShowMinutes` is an unsigned-smallint value and must also remain greater than the venue's unchanged `late_warning_minutes`. Invalid settings use `INVALID_SETTINGS_PAYLOAD`, `INVALID_QUICK_TIMES`, `INVALID_UPCOMING_MINUTES` or `INVALID_NO_SHOW_MINUTES`. Only OWNER receives `venue.configure`; ADMIN and staff receive 403.
+`PUT` requires `quickTimes`, `upcomingMinutes` and `noShowMinutes`, and optionally the shift pair `businessDayStartLocal` / `businessDayCutoffLocal`; unknown or missing required fields return 400. `quickTimes` contains 1–24 unique `HH:mm` values inside 19:00–01:00 inclusive. `upcomingMinutes` is an integer from 1 through 240. `noShowMinutes` is an unsigned-smallint value and must also remain greater than the venue's unchanged `late_warning_minutes`. Invalid settings use `INVALID_SETTINGS_PAYLOAD`, `INVALID_QUICK_TIMES`, `INVALID_UPCOMING_MINUTES` or `INVALID_NO_SHOW_MINUTES`. Only OWNER receives `venue.configure`; ADMIN and staff receive 403.
 
-The update locks the venue and writes `venue_settings.quick_times`, `venues.upcoming_warning_minutes`, `venues.no_show_warning_minutes`, the venue version/change sequence and a redacted `VENUE_SETTINGS_UPDATED` audit in one transaction. `late_warning_minutes` is not modified. Failure of any write rolls everything back. Other venues are unaffected. Each committed update bumps `change_seq`; current floor polling and the settings query's 15-second polling refetch server-derived state without introducing another realtime channel. The booking forms show the database quick times as shortcuts and never replace the time already entered by the user. The pickers offer the slots the API accepts, which is the 15-minute step described under Transport while Q03 is open; they do not offer a 30-minute-only list.
+The update locks the venue and writes `venue_settings.quick_times`, `venues.upcoming_warning_minutes`, `venues.no_show_warning_minutes`, `venues.business_day_start_local`, `venues.business_day_cutoff_local`, the venue version/change sequence and a redacted `VENUE_SETTINGS_UPDATED` audit in one transaction. `late_warning_minutes` is not modified. Failure of any write rolls everything back. Other venues are unaffected. Each committed update bumps `change_seq`; current floor polling and the settings query's 15-second polling refetch server-derived state without introducing another realtime channel. The booking forms show the database quick times as shortcuts and never replace the time already entered by the user. The pickers offer the slots the API accepts, which is the 15-minute step described under Transport while Q03 is open; they do not offer a 30-minute-only list.
+
+### The operating shift (TU-38)
+
+`businessDayStartLocal` and `businessDayCutoffLocal` are the venue's own shift, returned as
+`HH:MM:SS` and accepted as `HH:MM` or `HH:MM:SS`. Everything that decides which operating day a
+booking, visit or turn belongs to reads them — see **The shift on the API side** under Table
+turns for how.
+
+They are optional and travel as a pair. A request carrying one without the other is 400
+`INCOMPLETE_BUSINESS_DAY_SHIFT`: a shift is a pair, and validating one half against the stored
+other half would let a two-step edit arrive at a combination neither request asked for. A
+request carrying neither keeps the stored pair, so a client that does not manage the shift
+sends exactly the three fields it always did and cannot blank it by omission.
+
+Two rules beyond the format, which is 400 `INVALID_BUSINESS_DAY_SHIFT`:
+
+- 400 `SHIFT_CANNOT_SERVE_BOOKING_WINDOW` when the shift does not cover the 19:00–01:00 arrival
+  window. A venue opening at 20:00 would accept a booking for 19:00 it could never seat, and
+  one closing at 23:00 would accept 00:30 the same way. Containment is measured in minutes from
+  the opening rather than on the clock, because a shift may wrap past midnight. A zero-length
+  shift is refused for the same reason.
+- 409 `SHIFT_CHANGE_WITH_OPEN_VISITS` when the venue has an unclosed visit. Moving the cutoff
+  moves which operating day "now" belongs to, which would strand a party already at a table:
+  their visit would suddenly belong to another day, and the end-of-shift sweep would close it
+  at a different moment than the staff expect. The shift is movable between services, not
+  during one. Both checks run inside the locking transaction, so a refusal writes nothing at
+  all — the thresholds in the same request are not half-applied.
+
+Only a change is audited: the `VENUE_SETTINGS_UPDATED` entry carries
+`business_day_start_local` and `business_day_cutoff_local` with their before values when the
+shift moved, and omits them otherwise, so an entry on every save cannot bury the one change
+that moves the operating day. A committed change calls `invalidateVenueShift`, so the booking
+rules see the new shift on the next request rather than after the cache TTL.
+
+The settings screen edits the pair as two `HH:mm` fields, validates both rules in the browser
+so the reason sits beside the field rather than arriving in a toast, and sends the pair only
+when it moved — an unchanged shift is the server's to keep, and always sending it would trip
+the open-visits guard for no reason.
+
+#### Driving it in a browser
+
+`api/scripts/seed-e2e-owner.ts` seeds an OWNER plus the minimum venue the Cấu hình screen
+needs. It refuses any database but `gam21_platform_it_test` — checked against
+`SELECT DATABASE()`, not just the variable — refuses `NODE_ENV=production`, takes the
+credentials from the environment and never prints the password, and is idempotent through
+upserts on fixed ids. The account it creates is wiped by the integration fixture like
+everything else in that database, so re-run it after a test run.
+
+```powershell
+cd Bar_management/api
+# .env.e2e.local holds DB_NAME, E2E_OWNER_USERNAME and E2E_OWNER_PASSWORD; `.env.*` is ignored by Git.
+node --env-file=.env --env-file=.env.e2e.local --import tsx scripts/seed-e2e-owner.ts
+node --env-file=.env --env-file=.env.e2e.local --import tsx src/server.ts
+```
+
+The seeded tables carry `pos_x`, `pos_y`, `width` and `height`: the web catalog adapter
+refuses a table with partial geometry (`CATALOG_GEOMETRY_MISSING`) rather than guessing where
+to draw it, so a seed without them loads the API fine and then breaks every floor screen.
 
 Floor Projection and booking views continue to read thresholds directly from `venues`. Changing `upcomingMinutes` therefore changes the server-side `UPCOMING` boundary; it no longer moves any calling boundary, because `canCall` depends only on whether a phone is stored. Changing `noShowMinutes` changes the visual no-show warning and the TU-12 cutoff. It never automatically changes the persisted booking to `NO_SHOW`, cancels a hold or releases a table; manual no-show behavior remains authoritative.
 
@@ -698,7 +756,7 @@ BA-023 records the approved PO decision: Receptionist calling uses the dedicated
 | POST   | `/visits/:id/move`        | `visit.move`    | Body `{version,tableIds,note?}`; `{visit:MovedVisitView}`                        |
 | POST   | `/visits/:id/merge`       | `visit.combine` | Body `{version,tableIds}`; `{visit:MovedVisitView,group:{id,symbolNo,tableIds}}` |
 | GET    | `/visits/turns?from=&to=` | `report.read`   | Table-turn ledger over a range of operating days; see **Table turns** below      |
-| GET    | `/visits/turns/summary?from=&to=` | `report.read` | Totals and aggregates by business date, check-in user and logical table/group scope |
+| GET    | `/visits/turns/summary?from=&to=` | `report.read` | Totals, averages and aggregates by business date, month, check-in user and logical table/group scope |
 
 Manual close reasons are `GUEST_LEFT` or `ENTRY_ERROR`; note is optional, at most 500 characters. Closing releases the visit allocations and dissolves unused groups. `ClosedVisitView` is `{id,businessDate,status:"CLOSED",endedAt,endReason,version,releasedTables:[{id,code}],turn}`, where `turn` is the table turn this close recorded (see **Table turns** below) or null when the visit already had one. Closing releases the operational state only: it never dissolves a LAYOUT cluster. `MovedVisitView` is `{id,businessDate,version,previousTables:[{id,code}],tables:[{id,code}]}`. Move validates capacity and same-kind targets, allows multiple tables across bookable zones without adjacency configuration, and creates or retains their shared group. It rejects every unreleased USAGE allocation on target tables regardless of business date, plus holds on the visit's business date. Merge follows the group rules above.
 
@@ -913,11 +971,112 @@ GET /api/v1/visits/turns/summary?from=2026-11-09&to=2026-11-15&checkedInByUserId
 ```json
 {
   "from": "2026-11-09", "to": "2026-11-15", "completedTotal": 1, "openTotal": 0, "guestTotal": 12,
+  "scopeTotal": 18, "physicalTableTotal": 24,
+  "averagePerScope": 0.06, "averagePerPhysicalTable": 0.04,
   "byBusinessDate": [{"businessDate": "2026-11-11", "turns": 1, "guests": 12}],
+  "byMonth": [{"month": "2026-11", "turns": 1, "guests": 12}],
   "byStaff": [{"checkedInByUserId": 2, "checkedInByDisplayName": "Lễ tân", "turns": 1, "guests": 12}],
   "byScope": [{"scope": "GROUP", "tableId": null, "groupId": 101, "label": "G01", "turns": 1, "guests": 12}]
 }
 ```
+
+### Turn statistics (TU-38)
+
+The same endpoint carries the statistics the Sổ lượt tới quán screen reads; there is no second
+report endpoint, and the screen never counts raw ledger rows.
+
+| Query parameter      | Values              | Effect                                                                 |
+| -------------------- | ------------------- | ---------------------------------------------------------------------- |
+| `from`, `to`         | `YYYY-MM-DD`        | Operating days, inclusive. `from > to` is 400 `INVALID_DATE_RANGE`; a span over 366 days is 400 `DATE_RANGE_TOO_WIDE` |
+| `includeUncounted`   | `true` \| `false`   | Buckets also include corrections and system closes. Anything else is 400 `INVALID_INCLUDE_UNCOUNTED` |
+| `includeZeroScopes`  | `true` \| `false`   | Adds a `turns: 0, guests: 0` row to `byScope` for every countable scope with no turn in range. Anything else is 400 `INVALID_INCLUDE_ZERO_SCOPES` |
+| `checkedInByUserId`  | positive integer    | Filter by check-in user. Otherwise 400 `INVALID_CHECKED_IN_BY_USER_ID` |
+| `closedByUserId`     | positive integer    | Filter by closing user. Otherwise 400 `INVALID_CLOSED_BY_USER_ID`      |
+
+Errors: 401 without a session, 403 `PERMISSION_DENIED` without `report.read`, 400 for the
+validation above. No write or CSRF token is required and nothing is mutated.
+
+**Per table or cluster (AC01).** `byScope` is one row per unit that earned a turn, grouped by
+`(scope, groupId|tableId)`. A fixed (LAYOUT) cluster is one row with one turn per party, never
+one row per member table. By default a scope with no turn in the range is absent, exactly as
+before; with `includeZeroScopes=true` it appears once with zeroes, labelled from live inventory
+(the table's `code`, or the cluster's `name`/symbol code). A measured row always wins over its
+inventory twin, so a scope is never listed twice and the totals do not move.
+
+**Venue total (AC02).** `completedTotal` is the number of counted turns in range, and
+`byScope`, `byBusinessDate` and `byMonth` each sum to it when `includeUncounted` is off.
+Nothing sums `turnNo` or expands cluster members.
+
+**Averages and their denominators (AC03).** `scopeTotal` counts the units that can earn a turn:
+ACTIVE non-spare tables that no active LAYOUT cluster owns, plus the active LAYOUT clusters.
+`physicalTableTotal` counts ACTIVE non-spare tables. `averagePerScope` is
+`completedTotal / scopeTotal` and `averagePerPhysicalTable` is
+`completedTotal / physicalTableTotal`, both rounded to two decimals and 0 when the denominator
+is 0. Both denominators are live venue inventory at query time, not a snapshot of the range, so
+they stay populated for an empty range. The venue's own figure is `averagePerScope`: that is the
+unit the ledger counts against. `averagePerPhysicalTable` is there because "trung bình mỗi bàn"
+reads as a per-table number to a reader who does not know a cluster counts once.
+
+**Monthly totals (AC04).** `byMonth` groups by `DATE_FORMAT(business_date, '%Y-%m')` in SQL,
+ascending, as `YYYY-MM`. Months with no turn have no bucket. A cluster is counted once per party
+here too, and a party seated after midnight falls in the month of its operating day.
+
+**What is not counted (AC05).** A booking that was never checked in has no visit and so no turn.
+A `CANCELLED` or `NO_SHOW` booking likewise. `BUSINESS_DAY_END` and `ENTRY_ERROR` closes stay
+visible with `includeUncounted=true` but never reach `completedTotal`, `guestTotal` or the
+averages.
+
+**The operating day (AC06).** Every figure is grouped by the stored `business_date`, which the
+check-in path derives from the venue's own `business_day_start_local` and
+`business_day_cutoff_local`. Nothing in the statistics path assumes 17:00-05:00: a venue
+configured for another shift groups by its own cutoff.
+
+On the web side, `useBusinessShift()` reads those two columns from the catalog and is what
+`useBusinessDate()`, the Admin header, the reception shift labels, the floor and reservation
+timeline axes and the arrival-time list all derive their hours from. `FALLBACK_BUSINESS_SHIFT`
+in `web/src/lib/time.ts` covers only the first render before the catalog resolves.
+
+### The shift on the API side
+
+`api/src/modules/venues/venue-shift.ts` resolves a venue's shift from its own row and is the
+only place the hours come from. `getVenueShift(actor, connection?)` returns
+`{startLocal, cutoffLocal, startHour, cutoffHour, timeZone}`, caching one row per venue for 60
+seconds; passing the caller's connection keeps a read inside a transaction on that
+transaction's snapshot instead of opening a second one. `invalidateVenueShift(actor?)` drops
+the entry, and `updateVenueSettings` calls it, so a shift change takes effect without waiting
+out the TTL. A shift column that is not a `HH:MM[:SS]` time raises 500 `VENUE_SHIFT_INVALID`
+rather than defaulting to midnight and filing a whole night against the wrong operating day.
+
+Every rule in `business-date.ts` now takes that shift: `businessDateAt`, `currentBusinessDate`,
+`assertBusinessDateNotPast`, `assertCurrentBusinessDate`, `validateBookingSchedule` and
+`assertCheckInBusinessDate`. The constants `bookingDayStartHour` and `bookingDayCutoffHour` are
+gone. `DEFAULT_VENUE_SHIFT` is the parameter default, which keeps those helpers callable in a
+unit test without a venue row; every request path passes the venue's own shift. The error
+messages name the venue's hours, so `WALK_IN_OUTSIDE_BUSINESS_HOURS`,
+`CHECK_IN_OUTSIDE_BUSINESS_HOURS` and `BUSINESS_DATE_MISMATCH` quote the configured shift
+rather than a fixed `17:00–05:00`.
+
+Two hot paths read the cutoff from a venue row they already select — the floor projection and
+implicit cluster creation — through `shiftFromCutoff`, so neither gains a round trip.
+
+`web/src/domain/booking-rules.ts` follows: `validateBookingCheckInDate` takes the shift and is
+given `useBusinessShift()` by the two screens that call it, so the form refuses exactly what
+the server would, naming the same hours. Its `DAY_START` stays a constant deliberately —
+`businessMinute` only uses it to move the origin of the slot ordering, so every slot shifts by
+the same amount and 00:30 sorts after 23:30 whatever the opening hour. The 19:00–01:00 arrival
+window is a separate business rule, not the shift, and both sides still hold it as their own
+constants.
+
+The shift columns are editable over `PUT /api/v1/settings` — see **The operating shift
+(TU-38)** under Venue settings for the pair semantics and the two guards.
+
+**Performance (AC07, AC08).** The summary runs six aggregate queries whatever the row count:
+four over the shared turn projection, one scope inventory and one table count. Migration 0031
+adds `ix_visits_org_venue_date (organization_id, venue_id, business_date)` to `visits`, which is
+the predicate the projection opens with. Measured on a three-month sample (5 400 turns), a
+one-month summary answers in a median of 109ms and a slowest of 119ms against a 2000ms budget;
+`test/tu38-turn-statistics-benchmark.mysql.test.ts` prints both the timings and the
+`EXPLAIN FORMAT=TREE` plans. No schema or behaviour change touches TU-25, Booking/Visit or NA-34.
 
 Every aggregate counts visit rows, never sums `turnNo` or expands group members. `byScope` groups by
 `(scope, groupId|tableId)` and labels from the live OPEN turn if present, otherwise the latest matching ledger row (highest turn ID): group code,
@@ -969,6 +1128,25 @@ per turn and resetting with the operating day, the 00:30 boundary, the date-rang
 one turn for a cluster, a repeated and a concurrent close, distinct ordinals across two devices, history surviving a
 split, Close Visit leaving a cluster standing, an entry correction and the end-of-shift close staying uncounted, and a
 rolled-back close leaving nothing behind.
+
+TU-38 adds two files beside it, run the same way:
+
+- `test/tu38-turn-statistics.mysql.test.ts` — per-scope rows for one day with and without
+  `includeZeroScopes`, the venue total, both denominators and averages, the empty range,
+  monthly totals across two months with a cluster counted once, a booking never checked in
+  plus a cancelled and a no-show one, the operating day of a party seated after midnight, and
+  the route contract including `report.read` and parameter validation.
+- `test/tu38-venue-shift.mysql.test.ts` — reconfigures the fixture venue to 18:00–03:00 and
+  checks the request paths change behaviour: the cache is read and invalidated, a walk-in in the
+  gap between cutoff and opening is refused over HTTP with the venue's hours in the message, a
+  check-in before the opening hour is refused, a waitlist entry for a rolled-over operating day
+  is refused, and a booking date mismatch quotes the configured shift.
+- `test/business-date.test.ts` — the pure rules against an explicit shift, plus the shift
+  helpers and the malformed-column failure.
+- `test/tu38-turn-statistics-benchmark.mysql.test.ts` — seeds three months (5 400 turns),
+  measures five one-month summaries against the 2000ms budget and prints the
+  `EXPLAIN FORMAT=TREE` plan of each aggregate plus both plans for the `target_visits`
+  predicate. Add `--disableConsoleIntercept` to see the printed evidence.
 
 ## Waitlist
 

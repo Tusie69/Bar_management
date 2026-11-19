@@ -39,6 +39,7 @@ import { CallHistory } from "../bookings/call-history"
 import { groupCode, groupDisplayName } from "../floor/floor-visual-rules"
 import { ReceptionDatePicker, ReceptionSearchField, ReceptionSearchResults } from "../floor/reception-controls"
 import { ZaloBookingExport } from "../reservations/zalo-booking-export"
+import { EditReservationDialog } from "../reservations/reservation-detail"
 import { QuickForm } from "../floor/quick-form"
 import { capacityWarningText, isWaitingForTable, selectedTablesCapacity } from "../floor/reception-rules"
 import { useBookingDraft } from "../floor/use-booking-draft"
@@ -677,6 +678,8 @@ export function TableSheet({
   const m = useM()
   const a = useMobileActions()
   const pending = a.pending
+  const canEditBooking = m.can("reservation.update")
+  const [editOpen, setEditOpen] = useState(false)
 
   const isOpen = Boolean(id && !superseded && m.model.byId.has(id))
   const { present, markExited } = usePresenceController({ open: isOpen })
@@ -735,7 +738,16 @@ export function TableSheet({
     when = `Đang ngồi từ ${fmtTime(c.startsAt)}, ${duration(m.now.getTime() - c.startsAt.getTime())}`
     actions = [
       { label: "Đổi bàn", go: () => a.moveVisit(c, activeId) },
-      ...(c.reservationId ? [{ label: "Xem booking", go: () => m.openDetail(c.reservationId!, m.today) }] : []),
+      ...(r
+        ? [
+            {
+              label: "Chỉnh sửa",
+              disabled: !canEditBooking,
+              title: !canEditBooking ? "Không có quyền sửa booking" : undefined,
+              go: () => setEditOpen(true),
+            },
+          ]
+        : []),
       { label: "Nhả bàn", danger: true, wide: true, go: () => a.endVisit(c) },
     ]
   } else if (c?.kind === "waitlist_hold" || (c?.kind === "reservation" && linkedEntry)) {
@@ -765,7 +777,16 @@ export function TableSheet({
         title: !hold.supported ? "Chưa hỗ trợ" : undefined,
         go: () => a.reassignHold(entry, r),
       },
-      ...(r ? [{ label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) }] : []),
+      ...(r
+        ? [
+            {
+              label: "Chỉnh sửa",
+              disabled: !canEditBooking,
+              title: !canEditBooking ? "Không có quyền sửa booking" : undefined,
+              go: () => setEditOpen(true),
+            },
+          ]
+        : []),
       {
         label: "Xem đơn chờ",
         disabled: !entry,
@@ -803,7 +824,12 @@ export function TableSheet({
           r.minutesLate < m.th.noshow
             ? [{ label: "Tới muộn", go: () => a.confirmLate(r) }]
             : []),
-          { label: "Xem booking", go: () => m.openDetail(r.id, r.businessDate) },
+          {
+            label: "Chỉnh sửa",
+            disabled: !canEditBooking,
+            title: !canEditBooking ? "Không có quyền sửa booking" : undefined,
+            go: () => setEditOpen(true),
+          },
           { label: "Đổi bàn", go: () => a.assign(r) },
           {
             label: "Hủy booking",
@@ -983,6 +1009,7 @@ export function TableSheet({
           onExitComplete={markExited}
         />
       ) : null}
+      {r ? <EditReservationDialog open={editOpen} onOpenChange={setEditOpen} r={r} /> : null}
     </>
   )
 }

@@ -20,12 +20,12 @@ import {
 } from "lucide-react"
 import { createContext, type RefObject, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { NavLink, Outlet, useLocation } from "react-router"
-import { useNow } from "@/hooks/use-data"
+import { useBusinessShift, useNow } from "@/hooks/use-data"
 import { MOTION, usePresenceController, useStableNodeRef } from "@/lib/motion"
 import { SheetPresenceController } from "@/lib/motion-controller"
 import { initials } from "@/lib/text"
 import { visibleAdminPages } from "./admin-access"
-import { adminBusinessDateLabel, ADMIN_SHIFT_LABEL } from "./admin-date"
+import { adminBusinessDateLabel, adminShiftLabel } from "./admin-date"
 import { ADMIN_DESKTOP_MEDIA_QUERY, resolveDrawerCloseFocusTarget, resolveTrapTarget } from "./admin-focus"
 import { useAdminCardReveal } from "./admin-motion"
 import { adminPageForPath, adminPagePath } from "./admin-pages"
@@ -289,9 +289,11 @@ function AdminHeader({
   onToggleDrawer: () => void
   triggerRef: RefObject<HTMLButtonElement | null>
 }) {
-  // Ngày kinh doanh đổi lúc 05:00, không phải 00:00: nhịp 60s là đủ.
+  // Ngày kinh doanh đổi ở mốc cắt ca (đọc từ cấu hình địa điểm), không phải 00:00: nhịp 60s là đủ.
   const now = useNow(60_000)
-  const dateLabel = adminBusinessDateLabel(now)
+  const shift = useBusinessShift()
+  const dateLabel = adminBusinessDateLabel(now, shift)
+  const shiftLabel = adminShiftLabel(shift)
   return (
     <header
       ref={headerRef}
@@ -314,12 +316,12 @@ function AdminHeader({
           {title}
         </h1>
         <p className="adm-caption truncate md:hidden" data-testid="admin-header-meta-compact">
-          {ADMIN_SHIFT_LABEL} · {dateLabel}
+          {shiftLabel} · {dateLabel}
         </p>
       </div>
       <div className="hidden shrink-0 items-center gap-2 md:flex">
         <span className="adm-supporting rounded-full border border-[var(--adm-border)] bg-[var(--adm-surface)] px-3 py-1 whitespace-nowrap">
-          {ADMIN_SHIFT_LABEL}
+          {shiftLabel}
         </span>
         <span className="adm-supporting rounded-full border border-[var(--adm-border)] bg-[var(--adm-surface-sunken)] px-3 py-1 font-medium whitespace-nowrap text-[var(--adm-text)]">
           {dateLabel}

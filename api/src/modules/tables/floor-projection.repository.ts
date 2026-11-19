@@ -4,6 +4,7 @@ import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
 import { businessDateAt } from '../bookings/business-date.js'
+import { shiftFromCutoff } from '../venues/venue-shift.js'
 import {
   honorificFrom,
   iconKeysFrom,
@@ -140,6 +141,7 @@ interface VenueProjectionRow extends RowDataPacket {
   upcoming_warning_minutes: number
   late_warning_minutes: number
   no_show_warning_minutes: number
+  business_day_cutoff_local: string
 }
 
 interface LayoutMemberRow extends RowDataPacket {
@@ -415,15 +417,18 @@ async function readProjection(
   businessDate: string,
   now: Date,
 ): Promise<FloorProjection> {
-  // Preserve real carry-over on current/past views; future planning sees only exact-date USAGE.
-  const currentBusinessDate = businessDateAt(now)
   const [venueRows] = await connection.execute<VenueProjectionRow[]>(
-    `SELECT change_seq, upcoming_warning_minutes, late_warning_minutes, no_show_warning_minutes
+    `SELECT change_seq, upcoming_warning_minutes, late_warning_minutes, no_show_warning_minutes,
+       TIME_FORMAT(business_day_cutoff_local, '%H:%i:%s') AS business_day_cutoff_local
      FROM venues WHERE organization_id = ? AND id = ? AND status = 'ACTIVE'`,
     [actor.organizationId, actor.venueId],
   )
   const venue = venueRows[0]
   if (!venue) throw new AppError(404, 'VENUE_NOT_FOUND', 'Không tìm thấy địa điểm vận hành.')
+  // TU-38: mốc cắt ca đến từ cùng hàng venue vừa đọc, nên không thêm round trip nào cho
+  // đường đi nóng nhất của Lễ tân. Preserve real carry-over on current/past views; future
+  // planning sees only exact-date USAGE.
+  const currentBusinessDate = businessDateAt(now, shiftFromCutoff(venue.business_day_cutoff_local))
 
   const [rows] = await connection.execute<ProjectionRow[]>(
     `SELECT

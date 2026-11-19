@@ -146,6 +146,9 @@ export interface VenueSettingsView {
   quickTimes: string[]
   upcomingMinutes: number
   noShowMinutes: number
+  /** TU-38 — the operating shift, "HH:MM:SS", as `venues` stores it. */
+  businessDayStartLocal: string
+  businessDayCutoffLocal: string
 }
 
 export interface ZoneView {
@@ -400,6 +403,8 @@ export interface TableTurnQuery {
   closedByUserId?: number
   checkedInByUserId?: number
   includeUncounted?: boolean
+  /** TU-38: also return a zero row for every countable scope that earned no turn in range. */
+  includeZeroScopes?: boolean
 }
 export interface TableTurnsParams extends TableTurnQuery {
   page?: number
@@ -449,7 +454,19 @@ export interface TableTurnSummary {
   completedTotal: number
   openTotal: number
   guestTotal: number
+  /**
+   * TU-38 — the denominators behind the averages, named rather than implied.
+   * `scopeTotal` counts the units that can earn a turn (standalone tables plus fixed
+   * clusters); `physicalTableTotal` counts ACTIVE non-spare tables. Both are live venue
+   * inventory, not a property of the queried range.
+   */
+  scopeTotal: number
+  physicalTableTotal: number
+  averagePerScope: number
+  averagePerPhysicalTable: number
   byBusinessDate: { businessDate: string; turns: number; guests: number }[]
+  /** Calendar months of the operating days in range, ascending, as `YYYY-MM`. */
+  byMonth: { month: string; turns: number; guests: number }[]
   byStaff: { checkedInByUserId: number | null; checkedInByDisplayName: string | null; turns: number; guests: number }[]
   byScope: {
     scope: "TABLE" | "GROUP"

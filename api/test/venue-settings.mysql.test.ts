@@ -4,9 +4,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { app } from '../src/app.js'
 import { databasePool } from '../src/database/pool.js'
-import { confirmBookingLate, createAndAssignBooking } from '../src/modules/bookings/booking.repository.js'
+import { checkInBooking, confirmBookingLate, createAndAssignBooking } from '../src/modules/bookings/booking.repository.js'
 import { getFloorProjection } from '../src/modules/tables/floor-projection.repository.js'
 import { updateVenueSettings } from '../src/modules/venues/venue-settings.repository.js'
+import { getVenueShift } from '../src/modules/venues/venue-shift.js'
 import {
   actor,
   clearFixture,
@@ -23,6 +24,9 @@ const defaults = {
   quickTimes: ['21:00', '21:30', '22:00', '22:30'],
   upcomingMinutes: 10,
   noShowMinutes: 30,
+  // TU-38: the shift travels with the rest of the configuration.
+  businessDayStartLocal: '17:00:00',
+  businessDayCutoffLocal: '05:00:00',
 }
 
 mysqlDescribe('venue settings API and dynamic configuration', () => {
@@ -41,6 +45,12 @@ mysqlDescribe('venue settings API and dynamic configuration', () => {
     )
     await databasePool.execute("DELETE FROM roles WHERE code IN ('TEST_SUPER_ADMIN', 'TEST_READ_ONLY_ADMIN')")
   })
+
+  /** `operation_log.changes` is a JSON column, so mysql2 hands it back already parsed. */
+  function auditedTypes(changes: unknown): string[] {
+    const rows = (typeof changes === 'string' ? JSON.parse(changes) : changes) as { type: string }[]
+    return rows.map((row) => row.type)
+  }
 
   async function putSettings(
     username: string,
@@ -139,6 +149,7 @@ mysqlDescribe('venue settings API and dynamic configuration', () => {
     expect(superAdmin.status).toBe(200)
     expect(superAdmin.body).toEqual({
       quickTimes: ['19:00', '23:45', '01:00'], upcomingMinutes: 20, noShowMinutes: 50,
+      businessDayStartLocal: '17:00:00', businessDayCutoffLocal: '05:00:00',
     })
 
     await resetFixture()
@@ -177,6 +188,8 @@ mysqlDescribe('venue settings API and dynamic configuration', () => {
     const { agent } = await login()
     expect((await agent.get('/api/v1/settings')).body).toEqual({
       quickTimes: ['20:15', '21:45', '00:15'], upcomingMinutes: 18, noShowMinutes: 42,
+      // TU-38: a save that omits the shift keeps the stored pair rather than blanking it.
+      businessDayStartLocal: '17:00:00', businessDayCutoffLocal: '05:00:00',
     })
     const [home] = await databasePool.execute<RowDataPacket[]>(
       `SELECT version, change_seq, upcoming_warning_minutes, late_warning_minutes, no_show_warning_minutes
@@ -257,5 +270,106 @@ mysqlDescribe('venue settings API and dynamic configuration', () => {
     )
     expect(reservations[0]).toMatchObject({ status: 'BOOKED' })
     expect(allocations[0]?.released_at).toBeNull()
+  })
+
+  /* ---------------- TU-38: the operating shift is configuration, not a constant ---------------- */
+
+  it('TU-38 saves the shift, invalidates the cache and audits only a real change', async () => {
+    const shift = { businessDayStartLocal: '18:00', businessDayCutoffLocal: '03:00' }
+    const saved = await putSettings('integration_owner', { ...defaults, ...shift })
+    expect(saved.status).toBe(200)
+    // "HH:mm" in, "HH:mm:ss" out: the column's own shape, so a client round-trips cleanly.
+    expect(saved.body).toMatchObject({
+      businessDayStartLocal: '18:00:00', businessDayCutoffLocal: '03:00:00',
+    })
+
+    // The booking rules see the new shift immediately, without waiting out the cache TTL.
+    expect(await getVenueShift(actor)).toMatchObject({
+      startLocal: '18:00:00', cutoffLocal: '03:00:00', startHour: 18, cutoffHour: 3,
+    })
+
+    const [changed] = await databasePool.execute<(RowDataPacket & { changes: unknown })[]>(
+      `SELECT changes FROM operation_log WHERE action = 'VENUE_SETTINGS_UPDATED'
+       AND venue_id = ? ORDER BY id DESC LIMIT 1`,
+      [actor.venueId],
+    )
+    const types = auditedTypes(changed[0]!.changes)
+    expect(types).toContain('business_day_start_local')
+    expect(types).toContain('business_day_cutoff_local')
+
+    // Saving the same configuration again records the thresholds but not the shift: an entry
+    // on every save would bury the one change that moves the operating day.
+    expect((await putSettings('integration_owner', { ...defaults, ...shift })).status).toBe(200)
+    const [unchanged] = await databasePool.execute<(RowDataPacket & { changes: unknown })[]>(
+      `SELECT changes FROM operation_log WHERE action = 'VENUE_SETTINGS_UPDATED'
+       AND venue_id = ? ORDER BY id DESC LIMIT 1`,
+      [actor.venueId],
+    )
+    const sameTypes = auditedTypes(unchanged[0]!.changes)
+    expect(sameTypes).not.toContain('business_day_start_local')
+  })
+
+  it('TU-38 refuses a shift that cannot serve the 19:00-01:00 booking window', async () => {
+    for (const shift of [
+      // Opens after 19:00, so a 19:00 booking could never be seated.
+      { businessDayStartLocal: '20:00', businessDayCutoffLocal: '02:00' },
+      // Closes before 01:00, so a 00:30 booking could never be seated.
+      { businessDayStartLocal: '11:00', businessDayCutoffLocal: '23:00' },
+      // A zero-length shift serves nothing at all.
+      { businessDayStartLocal: '17:00', businessDayCutoffLocal: '17:00' },
+    ]) {
+      const response = await putSettings('integration_owner', { ...defaults, ...shift })
+      expect(response.status, JSON.stringify(shift)).toBe(400)
+      expect((response.body as { error: { code: string } }).error.code)
+        .toBe('SHIFT_CANNOT_SERVE_BOOKING_WINDOW')
+    }
+    // Nothing was written, so the stored shift still answers.
+    expect(await getVenueShift(actor)).toMatchObject({ startLocal: '17:00:00', cutoffLocal: '05:00:00' })
+  })
+
+  it('TU-38 rejects a malformed boundary and half a shift', async () => {
+    // `thresholds` deliberately drops both shift keys, so each case controls the pair itself.
+    const thresholds = {
+      quickTimes: defaults.quickTimes,
+      upcomingMinutes: defaults.upcomingMinutes,
+      noShowMinutes: defaults.noShowMinutes,
+    }
+    for (const [shift, code] of [
+      [{ businessDayStartLocal: '18:00' }, 'INCOMPLETE_BUSINESS_DAY_SHIFT'],
+      [{ businessDayCutoffLocal: '03:00' }, 'INCOMPLETE_BUSINESS_DAY_SHIFT'],
+      [{ businessDayStartLocal: '18', businessDayCutoffLocal: '03:00' }, 'INVALID_BUSINESS_DAY_SHIFT'],
+      [{ businessDayStartLocal: '24:00', businessDayCutoffLocal: '03:00' }, 'INVALID_BUSINESS_DAY_SHIFT'],
+      [{ businessDayStartLocal: '18:60', businessDayCutoffLocal: '03:00' }, 'INVALID_BUSINESS_DAY_SHIFT'],
+      [{ businessDayStartLocal: 18, businessDayCutoffLocal: '03:00' }, 'INVALID_BUSINESS_DAY_SHIFT'],
+    ] as const) {
+      const response = await putSettings('integration_owner', { ...thresholds, ...shift })
+      expect(response.status, JSON.stringify(shift)).toBe(400)
+      expect((response.body as { error: { code: string } }).error.code, JSON.stringify(shift)).toBe(code)
+    }
+    // An unknown key is still refused, so the payload cannot grow silently.
+    expect((await putSettings('integration_owner', { ...defaults, extra: 1 })).status).toBe(400)
+    // Omitting the pair entirely is the existing contract and stays valid.
+    expect((await putSettings('integration_owner', thresholds)).status).toBe(200)
+  })
+
+  it('TU-38 refuses to move the shift while a party is still seated', async () => {
+    const booking = await createAndAssignBooking(actor, {
+      guestName: 'Đang ngồi', partySize: 2, expectedAt: '2030-10-24T21:00:00+07:00',
+      businessDate: '2030-10-24', sourceCode: 'HOTLINE', tableIds: [tableId],
+      capacityOverrideConfirmed: true,
+    }, new Date('2030-10-24T13:00:00.000Z'))
+    await checkInBooking(actor, booking.id, booking.version, new Date('2030-10-24T14:30:00.000Z'))
+
+    const refused = await putSettings('integration_owner', {
+      ...defaults, businessDayStartLocal: '18:00', businessDayCutoffLocal: '03:00',
+    })
+    expect(refused.status).toBe(409)
+    expect((refused.body as { error: { code: string } }).error.code).toBe('SHIFT_CHANGE_WITH_OPEN_VISITS')
+    // The rest of the configuration is not half-applied: the whole save was refused.
+    expect(await getVenueShift(actor)).toMatchObject({ startLocal: '17:00:00' })
+    expect((await login('integration_owner')).agent).toBeDefined()
+
+    // The same save with the shift left out is accepted, because nothing moves.
+    expect((await putSettings('integration_owner', { ...defaults, upcomingMinutes: 18 })).status).toBe(200)
   })
 })

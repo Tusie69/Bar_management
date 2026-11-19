@@ -37,6 +37,7 @@ import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { businessDateAt } from '../bookings/business-date.js'
+import { getVenueShift } from '../venues/venue-shift.js'
 import { applicationNow } from '../../time/application-clock.js'
 
 /** What the calling command is about to allocate. */
@@ -68,7 +69,8 @@ export async function lockOccupancyConflicts(
   now: Date = applicationNow(),
 ): Promise<OccupancyConflict[]> {
   if (!tableIds.length) return []
-  const currentBusinessDate = businessDateAt(now)
+  // TU-38: mốc cắt ca đọc từ venue (có cache), không phải hằng số 05:00.
+  const currentBusinessDate = businessDateAt(now, await getVenueShift(actor, connection))
   const tablePlaceholders = tableIds.map(() => '?').join(',')
   const exclusion = excludeAllocationIds.length
     ? ` AND a.id NOT IN (${excludeAllocationIds.map(() => '?').join(',')})`

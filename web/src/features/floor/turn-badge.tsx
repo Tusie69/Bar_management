@@ -62,7 +62,7 @@ export function TurnBadge({
     return (
       <span
         className={cn(
-          "turn-badge-html pointer-events-none inline-flex items-center justify-center rounded-full border border-white/90 bg-black text-[9.5px] leading-none font-extrabold text-white tabular-nums shadow-xs select-none",
+          "turn-badge-html pointer-events-none inline-flex items-center justify-center rounded-full border border-white/90 bg-black text-[9px] leading-none font-extrabold text-white tabular-nums shadow-xs select-none",
           count >= 10 && "px-1",
           className,
         )}

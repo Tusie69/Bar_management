@@ -865,6 +865,11 @@ export function FloorCanvas(props: FloorCanvasProps) {
             states={states}
             groups={groups}
             mapScale={view.k}
+            // Điện thoại: khung mặc định che 44% x 46% bản vẽ. Chưa có khách
+            // thì không vẽ gì, có khách thì cao vừa số dòng. Màn to vẫn giữ
+            // nguyên khung trong khu pha chế như mockup đã duyệt.
+            emptyState={isPhone ? "hidden" : "title-only"}
+            fitToRows={isPhone}
             readOnly={isReadOnly}
             hideGuestNames={hideGuestNames}
             onRowClick={

@@ -238,8 +238,13 @@ export default function AdminAccountsPage() {
             </p>
           ) : (
             <>
-              {/* Mobile (< 768px): thẻ xếp chồng hiển thị trọn vẹn mọi trường và thao tác >= 44px */}
-              <ul className="mt-4 grid gap-3 md:hidden">
+              {/*
+                Điện thoại và máy tính bảng (< 1024px): thẻ xếp chồng, mọi trường và thao tác >= 44px.
+                Ngưỡng là `lg` chứ không phải `md`: ở 768px bảng 5 cột cộng 4 nút thao tác bị dồn
+                thành ba hàng nút, cao hơn cả hàng dữ liệu và khó bấm. Thẻ vốn được thiết kế cho
+                bề ngang hẹp nên tablet dùng thẻ là đúng chỗ.
+              */}
+              <ul className="mt-4 grid gap-3 lg:hidden">
                 {rows.map((account) => {
                   const state = accountState(account)
                   const allowed = canActOn(actor, account) && can("user.manage")
@@ -341,8 +346,8 @@ export default function AdminAccountsPage() {
                 })}
               </ul>
 
-              {/* Tablet & Desktop (>= 768px): Table primitive với cuộn ngang an toàn */}
-              <div className="mt-4 hidden md:block">
+              {/* Máy tính (>= 1024px): Table primitive với cuộn ngang an toàn */}
+              <div className="mt-4 hidden lg:block">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -382,8 +387,14 @@ export default function AdminAccountsPage() {
                               {state.label}
                             </Badge>
                           </TableCell>
-                          <TableCell className="px-2.5 text-right">
-                            <div className="inline-grid grid-cols-2 gap-1.5 2xl:inline-flex 2xl:flex-nowrap">
+                          <TableCell className="px-2.5 text-right whitespace-normal">
+                            {/*
+                              `inline-grid grid-cols-2` trong ô `whitespace-nowrap` làm trình duyệt
+                              tính min-content của cột chỉ bằng MỘT cột lưới, nên bảng cấp thiếu chỗ
+                              và cụm nút tràn khỏi mép thẻ. `flex-wrap` tính min-content đúng và tự
+                              xuống dòng theo chỗ còn lại, nên không cần đoán breakpoint nào cả.
+                            */}
+                            <div className="flex flex-wrap justify-end gap-1.5">
                               <Button
                                 type="button"
                                 size="sm"

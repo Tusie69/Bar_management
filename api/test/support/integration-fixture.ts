@@ -6,6 +6,7 @@ import { app } from '../../src/app.js'
 import { hashPassword } from '../../src/auth/password.js'
 import { env } from '../../src/config/env.js'
 import { databasePool } from '../../src/database/pool.js'
+import { invalidateVenueShift } from '../../src/modules/venues/venue-shift.js'
 
 export const actor = { organizationId: env.organizationId, venueId: env.venueId, userId: 9801, membershipId: 9801 }
 export const otherVenueId = 9802
@@ -41,6 +42,9 @@ function serializeFixture<T>(operation: () => Promise<T>): Promise<T> {
 /** The destructive body, already inside the fixture queue when it runs. */
 async function truncateFixtureTables(): Promise<void> {
   if (env.database.name !== 'gam21_platform_it_test') throw new Error('Refusing destructive fixture outside integration database')
+  // TU-38: venues are deleted and reinserted under the same ids, so a shift cached from the
+  // previous test would survive into the next one and quietly answer for the wrong venue row.
+  invalidateVenueShift()
   await databasePool.execute('UPDATE operation_log SET compensates_operation_id = NULL WHERE compensates_operation_id IS NOT NULL')
   await databasePool.execute("UPDATE customers SET status = 'ACTIVE', merged_into_customer_id = NULL WHERE status = 'MERGED'")
   for (const table of ['customer_duplicate_dismissals', 'booking_call_logs', 'operation_log', 'reception_guest_counts', 'table_turns', 'table_allocations', 'table_group_members', 'table_groups', 'table_holds',

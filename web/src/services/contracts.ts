@@ -373,6 +373,13 @@ export interface VenueSettingsUpdate {
   quickTimes: string[]
   upcomingMinutes: number
   noShowMinutes: number
+  /**
+   * TU-38 — the operating shift. Optional, and sent as a pair: half a shift is rejected,
+   * because validating one half against the stored other half invites a combination neither
+   * request asked for.
+   */
+  businessDayStartLocal?: string
+  businessDayCutoffLocal?: string
 }
 
 export interface ReservationQuery {

@@ -40,10 +40,10 @@ import {
 } from "@/domain/booking-rules"
 import { type BookingClassification, type BookingSourceCode } from "@/domain/enums"
 import { useAction } from "@/hooks/use-action"
-import { useAvailability, useNow, useVenueSettings } from "@/hooks/use-data"
+import { useAvailability, useBusinessShift, useNow, useVenueSettings } from "@/hooks/use-data"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { NOTE_PHONE_ERROR, isPlausibleVnPhone, noteHasPhoneNumber } from "@/lib/text"
-import { addDays, businessDateOf, fmtBusinessDate, fmtDayMonth, type BusinessDate } from "@/lib/time"
+import { addDays, businessDateOf, fmtBusinessDate, fmtDayMonth, shiftHour, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
@@ -108,8 +108,10 @@ function BookingBody() {
   const ui = useUi()
   const model = useFloorModel()
   const now = useNow(30_000)
+  // TU-38: mốc cắt ca lấy từ cấu hình địa điểm, không mặc định 05:00.
+  const shiftCutoff = shiftHour(useBusinessShift().cutoffLocal)
   const quickTimes = useVenueSettings().data?.quickTimes ?? []
-  const today = businessDateOf(now)
+  const today = businessDateOf(now, shiftCutoff)
   const { run, pending } = useAction()
 
   const prefill = ui.bookingPrefill

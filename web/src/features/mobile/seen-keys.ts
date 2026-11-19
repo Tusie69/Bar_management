@@ -81,10 +81,7 @@ export function addSeenKeys(storageKey: string, businessDate: string, keys: Iter
  * lần đổi ngày, và trong khoảng giữa hai lượt đó chuông hiển thị số của ngày
  * cũ. `revision` chỉ để ép đọc lại sau khi vừa ghi.
  */
-export function useSeenKeys(
-  storageKey: string,
-  businessDate: string,
-): [Set<string>, (keys: Iterable<string>) => void] {
+export function useSeenKeys(storageKey: string, businessDate: string): [Set<string>, (keys: Iterable<string>) => void] {
   // Nền: những gì đã nằm trên đĩa cho ngày này. Đổi ngày là đọc lại, ngay
   // trong lượt render đó.
   const persisted = useMemo(() => readSeenKeys(storageKey, businessDate), [storageKey, businessDate])

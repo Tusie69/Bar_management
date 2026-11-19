@@ -11,7 +11,13 @@ import { foldVietnamese, NOTE_PHONE_ERROR, noteHasPhoneNumber, normalizePhone } 
 import { MockCustomerHistory } from "./customer-history"
 import { addDays, businessDateOf, fmtTime, fromVenueLocal, MS, type BusinessDate } from "@/lib/time"
 import { roleCan, PERMISSION_LABEL, type Permission } from "@/domain/access"
-import { BOOKING_MINUTE_STEP, isWithinBookingReceptionWindow } from "@/domain/booking-rules"
+import {
+  BOOKING_MINUTE_STEP,
+  isShiftBoundary,
+  isWithinBookingReceptionWindow,
+  normalizeShiftBoundary,
+  shiftServesBookingWindow,
+} from "@/domain/booking-rules"
 import {
   ROLE_LABEL,
   type RoleCode,
@@ -201,7 +207,28 @@ export class MockGamApi implements GamApi, DemoControls {
   async getTableTurnSummary(params: TableTurnQuery) {
     await this.latency("q")
     this.require("report.read")
-    return mockTableTurnSummary(projectTableTurns(this.db), params)
+    return mockTableTurnSummary(projectTableTurns(this.db), params, this.scopeInventory())
+  }
+
+  /**
+   * TU-38 — the countable scopes the averages divide by. The mock floor has no fixed
+   * cluster, so a scope is an ACTIVE non-spare table, exactly as the API computes it from
+   * `dining_tables` minus the tables a LAYOUT cluster owns.
+   */
+  private scopeInventory() {
+    const venueId = this.venue.id
+    const tables = [...this.db.tables.values()].filter(
+      (table) => table.venueId === venueId && table.status === "ACTIVE" && !table.isSpare,
+    )
+    return {
+      scopes: tables.map((table) => ({
+        scope: "TABLE" as const,
+        tableId: table.id,
+        groupId: null,
+        label: table.code,
+      })),
+      physicalTableTotal: tables.length,
+    }
   }
 
   private get venue() {
@@ -951,6 +978,8 @@ export class MockGamApi implements GamApi, DemoControls {
       quickTimes: [...this.quickTimes],
       upcomingMinutes: this.venue.upcomingWarningMinutes,
       noShowMinutes: this.venue.noShowWarningMinutes,
+      businessDayStartLocal: this.venue.businessDayStartLocal,
+      businessDayCutoffLocal: this.venue.businessDayCutoffLocal,
     }
   }
 
@@ -2732,11 +2761,39 @@ export class MockGamApi implements GamApi, DemoControls {
       this.fail("Cần 1–24 giờ nhanh HH:mm không trùng trong cửa sổ 19:00–01:00.")
     if (input.upcomingMinutes < 1 || input.upcomingMinutes > 240) this.fail("Mốc sắp đến phải từ 1 đến 240 phút.")
     if (input.noShowMinutes <= this.venue.lateWarningMinutes) this.fail("Mốc không tới phải lớn hơn mốc đến muộn.")
+
+    // TU-38: the operating shift, validated exactly as the API does so the mock cannot accept
+    // a shift the server would refuse.
+    const hasStart = input.businessDayStartLocal !== undefined
+    const hasCutoff = input.businessDayCutoffLocal !== undefined
+    if (hasStart !== hasCutoff) this.fail("Phải gửi cả giờ mở ca và mốc cắt ca.")
+    const startLocal = hasStart
+      ? normalizeShiftBoundary(input.businessDayStartLocal!)
+      : this.venue.businessDayStartLocal
+    const cutoffLocal = hasCutoff
+      ? normalizeShiftBoundary(input.businessDayCutoffLocal!)
+      : this.venue.businessDayCutoffLocal
+    const shiftChanged =
+      startLocal !== this.venue.businessDayStartLocal || cutoffLocal !== this.venue.businessDayCutoffLocal
+    if (hasStart && (!isShiftBoundary(input.businessDayStartLocal!) || !isShiftBoundary(input.businessDayCutoffLocal!)))
+      this.fail("Giờ mở ca và mốc cắt ca phải có dạng HH:mm hoặc HH:mm:ss.")
+    if (shiftChanged) {
+      if (!shiftServesBookingWindow(startLocal, cutoffLocal))
+        this.fail("Ca vận hành phải bao trọn cửa sổ nhận booking 19:00–01:00.")
+      const open = [...this.db.visits.values()].filter(
+        (visit) => visit.venueId === this.venue.id && visit.endedAt === null,
+      ).length
+      if (open > 0)
+        this.fail(`Còn ${open} lượt khách đang ngồi. Chỉ đổi ca vận hành khi quán không còn lượt nào mở.`)
+    }
+
     this.quickTimes = [...input.quickTimes]
     this.commit({ action: "VENUE_SETTINGS_UPDATED", entityType: "venue", undoable: false }, (tx) => {
       const row = tx.edit("venue", this.venue.id)
       row.upcomingWarningMinutes = input.upcomingMinutes
       row.noShowWarningMinutes = input.noShowMinutes
+      row.businessDayStartLocal = startLocal
+      row.businessDayCutoffLocal = cutoffLocal
       return { entityId: row.id, summary: "Cập nhật cấu hình quán" }
     })
     return this.getVenueSettings()

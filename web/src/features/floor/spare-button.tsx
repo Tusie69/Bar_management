@@ -56,7 +56,7 @@ export function SpareButton({
     inGroupProp ??
     Boolean(
       (table as { groupId?: unknown; groupCode?: unknown }).groupId ||
-        (table as { groupId?: unknown; groupCode?: unknown }).groupCode,
+      (table as { groupId?: unknown; groupCode?: unknown }).groupCode,
     )
 
   const decision = spareDecision({
@@ -88,7 +88,7 @@ export function SpareButton({
   }
 
   return (
-    <div className="flex flex-col gap-1 w-full" data-slot="spare-button-container">
+    <div className="flex w-full flex-col gap-1" data-slot="spare-button-container">
       <Button
         type="button"
         variant={variant}
@@ -114,7 +114,7 @@ export function SpareButton({
       </Button>
       {showReason && !decision.allowed && decision.reason ? (
         <span
-          className="text-[11px] leading-tight text-muted-foreground text-center px-1"
+          className="px-1 text-center text-[11px] leading-tight text-muted-foreground"
           role="note"
           data-slot="spare-button-reason"
         >

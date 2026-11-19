@@ -35,6 +35,8 @@ vi.mock("@/state/ui", () => ({
 
 vi.mock("@/hooks/use-data", () => ({
   useNow: () => new Date("2026-11-17T21:30:00+07:00"),
+  // TU-38: giờ ca đọc từ cấu hình địa điểm, không cố định 17:00-05:00.
+  useBusinessShift: () => ({ startLocal: "17:00:00", cutoffLocal: "05:00:00" }),
   useOverview: () => ({ data: undefined }),
   useReservations: () => ({ data: [] }),
 }))

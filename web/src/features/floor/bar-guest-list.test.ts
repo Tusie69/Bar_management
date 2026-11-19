@@ -310,3 +310,48 @@ describe("BarGuestList presentational component", () => {
     expect(listHtml).toContain("flex-wrap")
   })
 })
+
+describe("khung trên điện thoại (TU-39 follow-up 16/11)", () => {
+  /**
+   * Khung mặc định 166 x 334 nằm trong hệ toạ độ sơ đồ 374 x 732 — 44% chiều
+   * ngang, 46% chiều cao. Trên màn to đó là khoảng trống của khu pha chế;
+   * trên điện thoại nó là một mảng trắng che gần nửa sơ đồ.
+   */
+  it("không vẽ gì khi chưa có khách", () => {
+    const html = renderToString(
+      createElement("svg", null, createElement(BarGuestList, { rows: [], as: "svg", emptyState: "hidden" })),
+    )
+    expect(html).not.toContain("foreignObject")
+    expect(html).not.toContain("Chưa có khách")
+  })
+
+  it("co chiều cao về đúng số dòng khi bật fitToRows", () => {
+    const one = renderToString(
+      createElement("svg", null, createElement(BarGuestList, { rows: [makeSampleRow()], as: "svg", fitToRows: true })),
+    )
+    const height = Number(/<foreignObject[^>]*height="(\d+)"/.exec(one)?.[1])
+    expect(height).toBeGreaterThan(0)
+    expect(height).toBeLessThan(DEFAULT_BAR_GUEST_LIST_BOUNDS.height / 3)
+  })
+
+  it("nhiều dòng thì cao hơn, nhưng không bao giờ vượt khung gốc", () => {
+    const heightOf = (count: number) => {
+      const rows = Array.from({ length: count }, (_, index) =>
+        makeSampleRow({ bookingKey: `res:${index}`, seatNumbers: [index + 1], seatsLabel: `Bar${index + 1}` }),
+      )
+      const html = renderToString(
+        createElement("svg", null, createElement(BarGuestList, { rows, as: "svg", fitToRows: true })),
+      )
+      return Number(/<foreignObject[^>]*height="(\d+)"/.exec(html)?.[1])
+    }
+    expect(heightOf(4)).toBeGreaterThan(heightOf(1))
+    expect(heightOf(100)).toBeLessThanOrEqual(DEFAULT_BAR_GUEST_LIST_BOUNDS.height)
+  })
+
+  it("không bật fitToRows thì giữ nguyên khung như màn hình lớn", () => {
+    const html = renderToString(
+      createElement("svg", null, createElement(BarGuestList, { rows: [makeSampleRow()], as: "svg" })),
+    )
+    expect(html).toContain(`height="${DEFAULT_BAR_GUEST_LIST_BOUNDS.height}"`)
+  })
+})

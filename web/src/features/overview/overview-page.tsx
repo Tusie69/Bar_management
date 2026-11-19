@@ -6,8 +6,8 @@ import { EmptyState, GuardedButton, SectionTitle, TableCodes } from "@/component
 import { WarningChip } from "@/components/status"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { useNow, useOperations, useOverview, useReservations } from "@/hooks/use-data"
-import { fmtBusinessDate, fmtTime, MS, venueParts } from "@/lib/time"
+import { useBusinessShift, useNow, useOperations, useOverview, useReservations } from "@/hooks/use-data"
+import { fmtBusinessDate, fmtBusinessShift, fmtTime, MS, venueParts } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api, isApiError } from "@/services"
 import { useUi } from "@/state/ui"
@@ -18,6 +18,8 @@ export default function OverviewPage() {
   const overview = useOverview()
   const model = useFloorModel()
   const now = useNow(15_000)
+  // TU-38: giờ ca lấy từ cấu hình địa điểm, không cố định 17:00-05:00.
+  const shift = useBusinessShift()
   const bd = overview.data?.businessDate ?? model.floor?.businessDate ?? ""
   const reservations = useReservations(bd)
   const ops = useOperations(14)
@@ -106,7 +108,7 @@ export default function OverviewPage() {
               {fmtBusinessDate(bd)}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              17:00 → 05:00 · cập nhật lúc <span className="tnum">{fmtTime(now)}</span>
+              {fmtBusinessShift(shift)} · cập nhật lúc <span className="tnum">{fmtTime(now)}</span>
               {o.visitsTonight !== null && o.guestsTonight !== null ? (
                 <>
                   {" "}

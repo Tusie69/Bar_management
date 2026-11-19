@@ -220,7 +220,12 @@ describe("turns-helpers (NA-34 pure logic)", () => {
       completedTotal: 12,
       openTotal: 4,
       guestTotal: 39,
+      scopeTotal: 24,
+      physicalTableTotal: 30,
+      averagePerScope: 0.5,
+      averagePerPhysicalTable: 0.4,
       byBusinessDate: [{ businessDate: "2026-11-15", turns: 14, guests: 45 }],
+      byMonth: [{ month: "2026-11", turns: 14, guests: 45 }],
       byStaff: [],
       byScope: [],
     }

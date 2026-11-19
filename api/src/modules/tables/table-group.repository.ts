@@ -3,6 +3,7 @@ import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/prom
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { AppError } from '../../errors/app-error.js'
 import { businessDateAt } from '../bookings/business-date.js'
+import { DEFAULT_VENUE_SHIFT, shiftFromCutoff } from '../venues/venue-shift.js'
 import { applicationNow } from '../../time/application-clock.js'
 
 export interface GroupTableRow extends RowDataPacket {
@@ -158,13 +159,20 @@ export async function createTableGroup(
   options: CreateTableGroupOptions,
 ): Promise<{ id: number; symbolNo: number }> {
   const origin = options.origin ?? 'CLAIM'
-  const businessDate = options.businessDate ?? businessDateAt(applicationNow())
   // FOR UPDATE on the venue row serialises symbol allocation for this venue, so
   // two devices forming a cluster at the same moment queue instead of colliding.
-  const [venueRows] = await connection.execute<(RowDataPacket & { group_symbol_count: number })[]>(
-    'SELECT group_symbol_count FROM venues WHERE organization_id = ? AND id = ? FOR UPDATE',
+  // TU-38: the same read carries the shift cutoff, so the operating day of an implicit
+  // cluster follows the venue's configuration without a second query.
+  const [venueRows] = await connection.execute<(RowDataPacket & {
+    group_symbol_count: number; business_day_cutoff_local: string
+  })[]>(
+    `SELECT group_symbol_count,
+       TIME_FORMAT(business_day_cutoff_local, '%H:%i:%s') AS business_day_cutoff_local
+     FROM venues WHERE organization_id = ? AND id = ? FOR UPDATE`,
     [actor.organizationId, actor.venueId],
   )
+  const cutoffLocal = venueRows[0]?.business_day_cutoff_local ?? DEFAULT_VENUE_SHIFT.cutoffLocal
+  const businessDate = options.businessDate ?? businessDateAt(applicationNow(), shiftFromCutoff(cutoffLocal))
   const maximum = Number(venueRows[0]?.group_symbol_count ?? 0)
   // A LAYOUT cluster outlives its business date, so its symbol is reserved venue
   // wide; a CLAIM symbol is only reserved within its own business date.

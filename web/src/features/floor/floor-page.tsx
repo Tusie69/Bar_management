@@ -6,10 +6,10 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { ZoneCode } from "@/domain/venue-layout"
-import { useAvailability, useNow, useWaitlist } from "@/hooks/use-data"
+import { useAvailability, useBusinessShift, useNow, useWaitlist } from "@/hooks/use-data"
 import { useReceptionSearch } from "@/hooks/use-reception-search"
 import { useMediaQuery } from "@/hooks/use-media"
-import { atBusinessTime, businessDateOf, fmtBusinessDate, MS } from "@/lib/time"
+import { atBusinessTime, businessDateOf, fmtBusinessDate, MS, shiftHour } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { OverlayMotionMount, useAwaitingMotionController, usePresenceController, useStableNodeRef } from "@/lib/motion"
 import { isApiError } from "@/services"
@@ -88,8 +88,10 @@ function Segmented<T extends string>({
 export function FloorPage() {
   const ui = useUi()
   const now = useNow(1000)
+  // TU-38: mốc cắt ca lấy từ cấu hình địa điểm, không mặc định 05:00.
+  const shiftCutoff = shiftHour(useBusinessShift().cutoffLocal)
   const receptionist = useSession((state) => state.user.role === "RECEPTIONIST")
-  const currentDate = businessDateOf(now)
+  const currentDate = businessDateOf(now, shiftCutoff)
   const selectedDate = receptionist && ui.floorMode !== "live" ? ui.availDate : currentDate
   const model = useFloorModel(receptionist ? selectedDate : undefined)
   const search = useReceptionSearch(selectedDate, receptionist)
@@ -117,7 +119,7 @@ export function FloorPage() {
     })
 
   const live = receptionist || ui.floorMode === "live"
-  const today = model.floor?.businessDate ?? businessDateOf(now)
+  const today = model.floor?.businessDate ?? businessDateOf(now, shiftCutoff)
   const date = receptionist ? selectedDate : live ? today : ui.availDate
   const draft = ui.draft
   const view = receptionist || ui.pick || draft ? "map" : ui.view

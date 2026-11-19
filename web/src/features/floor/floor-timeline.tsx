@@ -4,8 +4,17 @@ import { STATE_META } from "@/components/status-meta"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { AllocationView, TableView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
-import { useDayAllocations } from "@/hooks/use-data"
-import { atBusinessTime, fmtTime, minutesBetween, MS, type BusinessDate } from "@/lib/time"
+import { useBusinessShift, useDayAllocations } from "@/hooks/use-data"
+import {
+  atBusinessTime,
+  fmtTime,
+  minutesBetween,
+  MS,
+  shiftHourLabels,
+  shiftSpanHours,
+  shiftStartHhmm,
+  type BusinessDate,
+} from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useUi } from "@/state/ui"
@@ -14,11 +23,9 @@ import type { FloorModel } from "./use-floor-model"
 // shortcut: reservations-page.tsx keeps its own older Timeline; point it here once that page gets the v2 look.
 const HW = 112
 const LW = 104
-const HOURS = 12
 const ZONES: ZoneCode[] = ["A", "B", "C", "BAR"]
 const GRID =
   "repeating-linear-gradient(90deg,var(--border) 0 1px,transparent 1px 112px),repeating-linear-gradient(90deg,var(--surface-2) 0 1px,transparent 1px 56px)"
-const pad2 = (n: number) => String(n).padStart(2, "0")
 
 /** "Thời gian" view (v2): one row per table, grouped by zone, from table_allocations. */
 export function FloorTimeline({
@@ -38,8 +45,12 @@ export function FloorTimeline({
   const ui = useUi()
   const scrollRef = useRef<HTMLDivElement>(null)
   const scrolledFor = useRef<string | null>(null)
-  const start = atBusinessTime(date, "17:00").getTime()
-  const end = start + HOURS * MS.HOUR
+  // TU-38: trục giờ chạy từ giờ mở ca tới mốc cắt của địa điểm, không cố định 17:00 + 12 giờ.
+  const shift = useBusinessShift()
+  const hours = shiftSpanHours(shift)
+  const hourLabels = shiftHourLabels(shift)
+  const start = atBusinessTime(date, shiftStartHhmm(shift)).getTime()
+  const end = start + hours * MS.HOUR
   const x = (t: Date) => Math.round(((Math.min(Math.max(t.getTime(), start), end) - start) / MS.HOUR) * HW)
   const nowX = now.getTime() >= start && now.getTime() <= end ? x(now) : null
 
@@ -214,19 +225,19 @@ export function FloorTimeline({
       ref={scrollRef}
       className="relative min-h-0 flex-1 scrollbar-thin overflow-auto rounded-xl border border-border bg-surface-1 shadow-xs"
     >
-      <div className="relative" style={{ width: LW + HOURS * HW }}>
+      <div className="relative" style={{ width: LW + hours * HW }}>
         <div className="sticky top-0 z-[5] flex h-11 border-b border-border bg-surface-1">
           <div className="sticky left-0 z-[6] flex w-[104px] shrink-0 items-center gap-2 border-r border-border bg-surface-1 px-3 text-xs font-semibold tracking-[0.03em] text-muted-foreground uppercase">
             Bàn<span className="ml-auto">Chỗ</span>
           </div>
-          <div className="relative shrink-0" style={{ width: HOURS * HW }}>
-            {Array.from({ length: HOURS }, (_, i) => (
+          <div className="relative shrink-0" style={{ width: hours * HW }}>
+            {hourLabels.map((label, i) => (
               <span
-                key={i}
+                key={label}
                 className="tnum absolute inset-y-0 flex items-center border-l border-border-subtle pl-2 text-xs font-semibold text-muted-foreground"
                 style={{ left: i * HW }}
               >
-                {pad2((17 + i) % 24)}h
+                {label}h
               </span>
             ))}
             {nowX !== null ? (
@@ -265,7 +276,7 @@ export function FloorTimeline({
                       {t.isSpare ? "sơ cua" : t.capacity}
                     </span>
                   </button>
-                  <div className="relative shrink-0" style={{ width: HOURS * HW, backgroundImage: GRID }}>
+                  <div className="relative shrink-0" style={{ width: hours * HW, backgroundImage: GRID }}>
                     {t.status === "OUT_OF_SERVICE" ? (
                       <div
                         className="absolute inset-x-0 inset-y-1"

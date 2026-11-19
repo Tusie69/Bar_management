@@ -11,9 +11,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { PERMISSION_GROUPS, PERMISSION_LABEL, PERMISSION_MATRIX } from "@/domain/access"
+import { isShiftBoundary, normalizeShiftBoundary, shiftServesBookingWindow } from "@/domain/booking-rules"
 import { AccountsSection } from "./accounts-section"
 import { ROLE_LABEL, type RoleCode } from "@/domain/enums"
-import type { VenueConfig } from "@/domain/models"
+import type { VenueConfig, VenueSettingsView } from "@/domain/models"
 import { DDL_TABLES } from "@/domain/schema"
 import { GROUP_SYMBOLS } from "@/domain/symbols"
 import { reportError, useAction } from "@/hooks/use-action"
@@ -69,7 +70,8 @@ export default function SettingsPage() {
   )
 }
 
-function DynamicVenueSettings({ readOnly }: { readOnly: boolean }) {
+/** Exported for the TU-38 shift-row render test; the page renders it inline. */
+export function DynamicVenueSettings({ readOnly }: { readOnly: boolean }) {
   const settings = useVenueSettings()
   const value = settings.data
   if (!value) return null
@@ -80,28 +82,54 @@ function DynamicVenueSettingsForm({
   value,
   readOnly,
 }: {
-  value: { quickTimes: string[]; upcomingMinutes: number; noShowMinutes: number }
+  value: VenueSettingsView
   readOnly: boolean
 }) {
   const queryClient = useQueryClient()
   const [quickTimes, setQuickTimes] = useState(value.quickTimes.join(", "))
   const [upcomingMinutes, setUpcomingMinutes] = useState(value.upcomingMinutes)
   const [noShowMinutes, setNoShowMinutes] = useState(value.noShowMinutes)
+  // TU-38: the operating shift, edited as "HH:mm" and sent as the pair the API expects.
+  const [startLocal, setStartLocal] = useState(value.businessDayStartLocal.slice(0, 5))
+  const [cutoffLocal, setCutoffLocal] = useState(value.businessDayCutoffLocal.slice(0, 5))
   const [pending, setPending] = useState(false)
   const parsedQuickTimes = quickTimes
     .split(/[\s,]+/)
     .map((time) => time.trim())
     .filter(Boolean)
+  const shiftDirty =
+    startLocal !== value.businessDayStartLocal.slice(0, 5) ||
+    cutoffLocal !== value.businessDayCutoffLocal.slice(0, 5)
   const dirty =
     quickTimes !== value.quickTimes.join(", ") ||
     upcomingMinutes !== value.upcomingMinutes ||
-    noShowMinutes !== value.noShowMinutes
+    noShowMinutes !== value.noShowMinutes ||
+    shiftDirty
+  // Checked here so the reason is on screen beside the field, not only in a toast after a
+  // round trip. The API validates the same thing: this does not replace it.
+  const shiftError = !isShiftBoundary(startLocal) || !isShiftBoundary(cutoffLocal)
+    ? "Giờ phải có dạng HH:mm."
+    : !shiftServesBookingWindow(startLocal, cutoffLocal)
+      ? "Ca vận hành phải bao trọn cửa sổ nhận booking 19:00–01:00."
+      : null
 
   const save = async () => {
-    if (pending) return
+    if (pending || shiftError) return
     setPending(true)
     try {
-      await api.updateVenueSettings({ quickTimes: parsedQuickTimes, upcomingMinutes, noShowMinutes })
+      await api.updateVenueSettings({
+        quickTimes: parsedQuickTimes,
+        upcomingMinutes,
+        noShowMinutes,
+        // Sent only when it moved: an unchanged shift is the server's to keep, and a save
+        // that always sends it would trip the open-visits guard for no reason.
+        ...(shiftDirty
+          ? {
+              businessDayStartLocal: normalizeShiftBoundary(startLocal),
+              businessDayCutoffLocal: normalizeShiftBoundary(cutoffLocal),
+            }
+          : {}),
+      })
       await queryClient.invalidateQueries({ queryKey: qk.settings })
       await queryClient.invalidateQueries({ queryKey: qk.catalog })
       await queryClient.invalidateQueries({ queryKey: ["floor"] })
@@ -118,6 +146,39 @@ function DynamicVenueSettingsForm({
       className="mb-6 rounded-xl border border-border bg-surface-1 px-4 shadow-xs md:px-5"
       aria-label="Cấu hình động theo quán"
     >
+      <Row
+        label="Ca vận hành"
+        hint={`Ngày kinh doanh bắt đầu lúc mở ca và kết thúc ở mốc cắt hôm sau. business_date = DATE(giờ địa phương - ${cutoffLocal}). Chỉ đổi được khi quán không còn lượt khách nào đang ngồi.`}
+      >
+        <div className="grid gap-1">
+          <span className="flex items-center gap-2">
+            <Input
+              aria-label="Giờ mở ca"
+              value={startLocal}
+              disabled={readOnly || pending}
+              onChange={(event) => setStartLocal(event.target.value.trim())}
+              className="tnum h-11 w-24"
+              placeholder="17:00"
+            />
+            <span aria-hidden="true" className="text-muted-foreground">
+              →
+            </span>
+            <Input
+              aria-label="Mốc cắt ca"
+              value={cutoffLocal}
+              disabled={readOnly || pending}
+              onChange={(event) => setCutoffLocal(event.target.value.trim())}
+              className="tnum h-11 w-24"
+              placeholder="05:00"
+            />
+          </span>
+          {shiftError ? (
+            <span role="alert" className="text-xs text-destructive" data-testid="settings-shift-error">
+              {shiftError}
+            </span>
+          ) : null}
+        </div>
+      </Row>
       <Row
         label="Giờ nhanh đặt bàn"
         hint="Nhập 1–24 giờ HH:mm, cách nhau bằng dấu phẩy. Biểu mẫu đặt bàn dùng mốc 15 phút. Giờ nhanh lệch mốc được giữ trong cấu hình."
@@ -158,7 +219,7 @@ function DynamicVenueSettingsForm({
       <div className="flex justify-end gap-2 py-4">
         <GuardedButton
           permission="venue.configure"
-          disabled={!dirty || pending || parsedQuickTimes.length === 0}
+          disabled={!dirty || pending || parsedQuickTimes.length === 0 || shiftError !== null}
           onClick={() => void save()}
         >
           {pending ? "Đang lưu…" : "Lưu cấu hình"}
@@ -267,7 +328,7 @@ function VenueForm({ v, readOnly }: { v: VenueConfig; readOnly: boolean }) {
       <section className="rounded-xl border border-border bg-surface-1 px-4 shadow-xs md:px-5">
         <Row
           label="Ngày kinh doanh"
-          hint="business_date = DATE(giờ địa phương - 05:00). Ví dụ 01:30 ngày 21/10 thuộc ca 20/10."
+          hint={`business_date = DATE(giờ địa phương - ${v.businessDayCutoffLocal.slice(0, 5)}). Mọi giờ trước mốc cắt thuộc ca của đêm hôm trước.`}
         >
           <span className="text-sm">
             {v.businessDayStartLocal.slice(0, 5)} → {v.businessDayCutoffLocal.slice(0, 5)} · {v.timezone}

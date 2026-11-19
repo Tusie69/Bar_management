@@ -74,11 +74,11 @@ import {
 import type { WaitlistEntryView } from "@/domain/models"
 import type { ZoneCode } from "@/domain/venue-layout"
 import { useAction } from "@/hooks/use-action"
-import { useBusinessDate, useNow, useReservations, useWaitlist } from "@/hooks/use-data"
+import { useBusinessDate, useBusinessShift, useNow, useReservations, useWaitlist } from "@/hooks/use-data"
 import { useDragScroll } from "@/hooks/use-drag-scroll"
 import { useIdempotencyKey } from "@/hooks/use-idempotency-key"
 import { isPlausibleVnPhone, NOTE_PHONE_ERROR, noteHasPhoneNumber } from "@/lib/text"
-import { businessDateOf, fmtCountdown, fmtElapsed, fmtTime, type BusinessDate } from "@/lib/time"
+import { businessDateOf, fmtCountdown, fmtElapsed, fmtTime, shiftHour, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api, isApiError } from "@/services"
 import { useCan, useSession } from "@/state/session"
@@ -356,6 +356,8 @@ function EntryCard({
   const startPick = useUi((s) => s.startPick)
   const openReservation = useUi((s) => s.openReservation)
   const now = useNow(1000)
+  // TU-38: mốc cắt ca lấy từ cấu hình địa điểm, không mặc định 05:00.
+  const shiftCutoff = shiftHour(useBusinessShift().cutoffLocal)
   const me = useSession((s) => s.user.id)
   const canReveal = useCan("customer.phone.reveal")
   const canOpenWalkIn = useCan("visit.walkin")
@@ -382,7 +384,7 @@ function EntryCard({
       : []
   const held = useHeldOrderActions(model)
   const policy = held.policy(e, linkedRes)
-  const today = e.businessDate === businessDateOf(now)
+  const today = e.businessDate === businessDateOf(now, shiftCutoff)
   const canConfirmLate =
     today &&
     linkedRes &&

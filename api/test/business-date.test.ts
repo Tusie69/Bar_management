@@ -9,6 +9,14 @@ import {
   validateBookingSchedule,
   validateCalendarDate,
 } from '../src/modules/bookings/business-date.js'
+import {
+  DEFAULT_VENUE_SHIFT,
+  shiftBoundaryHour,
+  shiftFromCutoff,
+  shiftLabel,
+  shiftSpanHours,
+  type VenueShift,
+} from '../src/modules/venues/venue-shift.js'
 
 const beforeBooking = new Date('2026-10-24T00:00:00.000Z')
 
@@ -169,5 +177,102 @@ describe('FX-18 past business date guard for the waitlist', () => {
   it('still validates the calendar format', () => {
     expect(() => assertBusinessDateNotPast('2026-02-30'))
       .toThrowError(expect.objectContaining({ code: 'INVALID_BUSINESS_DATE' }))
+  })
+})
+
+describe('TU-38 business date follows the venue shift, not the constants 17 and 5', () => {
+  /** A venue that opens at 18:00 and closes at 03:00 instead of the seeded 17:00-05:00. */
+  const lateShift: VenueShift = {
+    startLocal: '18:00:00',
+    cutoffLocal: '03:00:00',
+    startHour: 18,
+    cutoffHour: 3,
+    timeZone: 'Asia/Ho_Chi_Minh',
+  }
+  /** 04:00 local: inside the default shift, already past the late venue's cutoff. */
+  const fourAm = new Date('2026-10-24T21:00:00.000Z')
+  /** 17:30 local: the default venue is open, the late venue has not opened yet. */
+  const halfPastFive = new Date('2026-10-24T10:30:00.000Z')
+
+  it('rolls the operating day over at the configured cutoff', () => {
+    expect(businessDateAt(fourAm)).toBe('2026-10-24')
+    expect(businessDateAt(fourAm, lateShift)).toBe('2026-10-25')
+    expect(businessDateAt(fourAm, DEFAULT_VENUE_SHIFT)).toBe('2026-10-24')
+  })
+
+  it('treats the gap between cutoff and opening as outside the shift', () => {
+    // 04:00 is still last night's shift by default, but dead time for the late venue.
+    expect(currentBusinessDate(fourAm)).toBe('2026-10-24')
+    expect(() => currentBusinessDate(fourAm, lateShift)).toThrowError(
+      expect.objectContaining({ code: 'WALK_IN_OUTSIDE_BUSINESS_HOURS' }),
+    )
+    // 17:30 is the reverse: open by default, not yet open for a venue starting at 18:00.
+    expect(currentBusinessDate(halfPastFive)).toBe('2026-10-24')
+    expect(() => currentBusinessDate(halfPastFive, lateShift)).toThrowError(
+      expect.objectContaining({ code: 'WALK_IN_OUTSIDE_BUSINESS_HOURS' }),
+    )
+  })
+
+  it('names the configured shift back to the receptionist', () => {
+    expect(() => currentBusinessDate(fourAm, lateShift)).toThrowError(/ca 18:00–03:00/)
+    expect(() => assertCheckInBusinessDate('2026-10-24', fourAm, lateShift)).toThrowError(/03:00–18:00/)
+    expect(() => validateBookingSchedule('2026-10-25T00:30:00+07:00', '2026-10-25', beforeBooking, lateShift))
+      .toThrowError(/ca 18:00–03:00/)
+  })
+
+  it('derives the booking business date from the configured cutoff', () => {
+    // 00:30 is before either cutoff, so both shifts put it on the night before.
+    expect(validateBookingSchedule('2026-10-25T00:30:00+07:00', '2026-10-24', beforeBooking, lateShift).businessDate)
+      .toBe('2026-10-24')
+    // The mismatch message and code are unchanged; only the hours it quotes move.
+    expect(() => validateBookingSchedule('2026-10-25T00:30:00+07:00', '2026-10-25', beforeBooking, lateShift))
+      .toThrowError(expect.objectContaining({ code: 'BUSINESS_DATE_MISMATCH' }))
+  })
+
+  it('judges a past operating day by the configured cutoff', () => {
+    // At 04:00 the late venue has already rolled over to the 25th, so the 24th is past.
+    expect(assertBusinessDateNotPast('2026-10-24', fourAm)).toBe('2026-10-24')
+    expect(() => assertBusinessDateNotPast('2026-10-24', fourAm, lateShift)).toThrowError(
+      expect.objectContaining({ code: 'BUSINESS_DATE_IN_PAST' }),
+    )
+  })
+
+  it('accepts a walk-in on the operating day the configured shift is in', () => {
+    expect(assertCurrentBusinessDate('2026-10-24', fourAm)).toBe('2026-10-24')
+    // 01:00 local on the 25th: inside both shifts, and the night of the 24th for both.
+    const onePastMidnight = new Date('2026-10-24T18:00:00.000Z')
+    expect(assertCurrentBusinessDate('2026-10-24', onePastMidnight, lateShift)).toBe('2026-10-24')
+    expect(() => assertCurrentBusinessDate('2026-10-25', onePastMidnight, lateShift)).toThrowError(
+      expect.objectContaining({ code: 'BUSINESS_DATE_NOT_CURRENT' }),
+    )
+  })
+})
+
+describe('TU-38 shift helpers', () => {
+  it('reads the whole hour of a boundary and refuses a malformed column', () => {
+    expect(shiftBoundaryHour('18:00:00', 'business_day_start_local')).toBe(18)
+    expect(shiftBoundaryHour('03:30', 'business_day_cutoff_local')).toBe(3)
+    // A broken venue row must fail loudly, not silently become midnight and file a whole
+    // night of turns against the wrong operating day.
+    for (const broken of ['', 'abc', '25:00:00', '12:60:00']) {
+      expect(() => shiftBoundaryHour(broken, 'business_day_start_local')).toThrowError(
+        expect.objectContaining({ code: 'VENUE_SHIFT_INVALID', status: 500 }),
+      )
+    }
+  })
+
+  it('spans the shift and labels it, wrapping past midnight when it does', () => {
+    expect(shiftSpanHours(DEFAULT_VENUE_SHIFT)).toBe(12)
+    expect(shiftLabel(DEFAULT_VENUE_SHIFT)).toBe('17:00–05:00')
+    const sameDay: VenueShift = {
+      startLocal: '11:00:00', cutoffLocal: '23:00:00', startHour: 11, cutoffHour: 23,
+      timeZone: 'Asia/Ho_Chi_Minh',
+    }
+    expect(shiftSpanHours(sameDay)).toBe(12)
+  })
+
+  it('builds a cutoff-only shift for the paths that already hold the venue row', () => {
+    expect(shiftFromCutoff('03:00:00')).toMatchObject({ cutoffLocal: '03:00:00', cutoffHour: 3 })
+    expect(businessDateAt(new Date('2026-10-24T21:00:00.000Z'), shiftFromCutoff('03:00:00'))).toBe('2026-10-25')
   })
 })

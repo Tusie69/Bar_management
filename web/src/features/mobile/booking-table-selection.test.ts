@@ -26,10 +26,7 @@ const createTable = (patch: Partial<TableView> & Pick<TableView, "id" | "code">)
     ...patch,
   }) as TableView
 
-const createLiveState = (
-  state: FloorTableState["state"],
-  patch?: Partial<FloorTableState>,
-): FloorTableState =>
+const createLiveState = (state: FloorTableState["state"], patch?: Partial<FloorTableState>): FloorTableState =>
   ({
     tableId: 1,
     state,
@@ -38,10 +35,7 @@ const createLiveState = (
     ...patch,
   }) as FloorTableState
 
-const createAvail = (
-  status: TableAvailability["status"],
-  patch?: Partial<TableAvailability>,
-): TableAvailability =>
+const createAvail = (status: TableAvailability["status"], patch?: Partial<TableAvailability>): TableAvailability =>
   ({
     tableId: 1,
     status,
@@ -51,11 +45,7 @@ const createAvail = (
   }) as TableAvailability
 
 /** Simulates HEAD options computation: unconditionally unshifts preset into options without status check */
-function computeOptionsHEAD(
-  preset: number[],
-  tables: TableView[],
-  fitsIds: number[],
-) {
+function computeOptionsHEAD(preset: number[], tables: TableView[], fitsIds: number[]) {
   const list = tables
     .filter((t) => fitsIds.includes(t.id))
     .map((t) => ({ key: `t${t.id}`, ids: [t.id], label: t.code, sub: "4 chỗ" }))
@@ -66,12 +56,7 @@ function computeOptionsHEAD(
 }
 
 /** Simulates Fixed options computation: only unshifts preset if it is truly free/available */
-function computeOptionsFixed(
-  preset: number[],
-  tables: TableView[],
-  fitsIds: number[],
-  isPresetFree: boolean,
-) {
+function computeOptionsFixed(preset: number[], tables: TableView[], fitsIds: number[], isPresetFree: boolean) {
   const list = tables
     .filter((t) => fitsIds.includes(t.id))
     .map((t) => ({ key: `t${t.id}`, ids: [t.id], label: t.code, sub: "4 chỗ" }))
@@ -308,14 +293,7 @@ describe("S2 G4 - booking table selection & preset availability", () => {
     )
     expect(availableTomorrow).toBe(false)
 
-    const reason = bookingTableBlockReason(
-      tableB3,
-      liveToday,
-      availTomorrow,
-      bookableZones,
-      false,
-      4,
-    )
+    const reason = bookingTableBlockReason(tableB3, liveToday, availTomorrow, bookableZones, false, 4)
     expect(reason).toMatch(/Đã giữ cho booking ngày mai/)
 
     const issues = bookingSelectionIssues(
@@ -370,11 +348,28 @@ describe("booking map selection", () => {
   it("combines verified too-small tables when total capacity fits", () => {
     const first = createTable({ id: 1, code: "B5", capacity: 4 })
     const second = createTable({ id: 2, code: "B7", capacity: 4 })
-    expect(bookingSelectionIssues([1, 2], new Map([[1, first], [2, second]]), new Map(),
-      new Map([[1, createAvail("too_small")], [2, createAvail("too_small")]]), new Set([1]), false, 6)).toEqual([])
+    expect(
+      bookingSelectionIssues(
+        [1, 2],
+        new Map([
+          [1, first],
+          [2, second],
+        ]),
+        new Map(),
+        new Map([
+          [1, createAvail("too_small")],
+          [2, createAvail("too_small")],
+        ]),
+        new Set([1]),
+        false,
+        6,
+      ),
+    ).toEqual([])
   })
   it("does not infer availability from a live free state without a verified snapshot", () => {
-    expect(bookingTableBlockReason(table, { state: "free" } as FloorTableState, undefined, new Set([1]), true, 4)).not.toBeNull()
+    expect(
+      bookingTableBlockReason(table, { state: "free" } as FloorTableState, undefined, new Set([1]), true, 4),
+    ).not.toBeNull()
   })
   it.each(["available", "too_small"] as const)("allows %s tables so parties can combine capacity", (status) => {
     expect(bookingTableCanSelect(table, row(status), table)).toBe(true)

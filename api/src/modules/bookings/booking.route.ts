@@ -29,6 +29,7 @@ import {
 } from './booking.repository.js'
 import { formatDailyBookingText, getDailyBookingTextInput } from './booking-export.js'
 import { assertCurrentBusinessDate, validateCalendarDate } from './business-date.js'
+import { getVenueShift } from '../venues/venue-shift.js'
 import { assertPhoneDisclosureAllowed, phoneDisclosureLimiter } from './phone-rate-limit.js'
 import { resolveBookingMetadata, type GuestType } from './booking-metadata.js'
 import { parseHonorific, parseIconKeys, parseSocialPlatform } from './booking-flags.js'
@@ -339,9 +340,12 @@ bookingRouter.post('/walk-ins', requireAuthentication, requireCsrfProtection, re
   }
   const guestName = optionalText(body.guestName, 120, 'INVALID_GUEST_NAME', 'Tên khách không được vượt quá 120 ký tự.')
   const walkInOverride = parseCapacityOverride(body.capacityOverrideConfirmed)
-  const result = await createWalkIn(requireAuthenticatedActor(request), {
+  const walkInActor = requireAuthenticatedActor(request)
+  // TU-38: ngày nghiệp vụ của walk-in theo mốc cắt ca của địa điểm.
+  const walkInShift = await getVenueShift(walkInActor)
+  const result = await createWalkIn(walkInActor, {
     partySize: positiveInteger(body.partySize, 'INVALID_PARTY_SIZE', 'Số khách không hợp lệ.'),
-    businessDate: assertCurrentBusinessDate(body.businessDate, applicationNow()),
+    businessDate: assertCurrentBusinessDate(body.businessDate, applicationNow(), walkInShift),
     tableIds: body.tableIds.map((id) => positiveInteger(id, 'INVALID_TABLE_ID', 'Mã bàn không hợp lệ.')),
     ...(guestName ? { guestName } : {}),
     ...(typeof body.phoneNumber === 'string' && body.phoneNumber.trim()
