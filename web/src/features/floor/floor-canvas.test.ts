@@ -2532,4 +2532,87 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
     expect(adminHtml).not.toContain("Nguyễn 18-11-2026")
     expect(adminHtml).not.toContain("０９１２３４５６７８")
   })
+
+  it("ADM-02 round 3: masks Unicode separator phone variants across every Admin surface with exact redacted text while leaving Reception unaffected", () => {
+    const variants: Array<{ label: string; name: string }> = [
+      { label: "U+2212 minus", name: "Mai ０９０\u2212١٢٣\u22124567" },
+      { label: "U+2212 mixed Thai", name: "Vy ๐๙๑\u2212２３４\u2212٥٦٧٨" },
+      { label: "U+2010 hyphen", name: "An 090\u2010123\u20104567" },
+      { label: "U+2011 nb-hyphen", name: "Bình 090\u2011123\u20114567" },
+      { label: "U+2012 figure-dash", name: "Chi 090\u2012123\u20124567" },
+      { label: "U+2013 en-dash", name: "Dũng 090\u2013123\u20134567" },
+      { label: "U+2014 em-dash", name: "Em 090\u2014123\u20144567" },
+      { label: "U+2015 horiz-bar", name: "Giang 090\u2015123\u20154567" },
+      { label: "U+2043 hyphen-bullet", name: "Hà 090\u2043123\u20434567" },
+      { label: "U+FE58 small-em-dash", name: "Khánh 090\uFE58123\uFE584567" },
+      { label: "U+FE63 small-hyphen", name: "Linh 090\uFE63123\uFE634567" },
+      { label: "U+FF0D fw-hyphen", name: "Minh 090\uFF0D123\uFF0D4567" },
+      { label: "NBSP+thin-space", name: "Ngọc 090\u00A0123\u20094567" },
+      { label: "dots", name: "Oanh 090\u00B7123\u20224567" },
+    ]
+
+    const tA3 = realTables.find((t) => t.code === "A3")!
+    const bar1 = realTables.find((t) => t.code === "BAR01")!
+    const mkClaim = (tableIds: number[], displayName: string) => ({
+      kind: "visit" as const,
+      visitId: tableIds[0] * 10,
+      reservationId: null,
+      waitlistEntryId: null,
+      holdId: null,
+      displayName,
+      phoneLast3: "567",
+      partySize: 2,
+      startsAt: new Date("2026-11-18T20:15:00+07:00"),
+      deadlineAt: null,
+      paid: false,
+      origin: "RESERVATION" as const,
+      tableIds,
+      groupId: null,
+      symbolNo: null,
+      flags: [],
+      warning: null,
+      minutesLate: 0,
+      sourceCode: null,
+      note: null,
+      version: 1,
+    })
+
+    for (const { label, name } of variants) {
+      const states = new Map<number, FloorTableState>([
+        [tA3.id, { tableId: tA3.id, state: "seated", staleFromPreviousDay: false, claim: mkClaim([tA3.id], name) }],
+        [bar1.id, { tableId: bar1.id, state: "seated", staleFromPreviousDay: false, claim: mkClaim([bar1.id], name) }],
+      ])
+
+      const adminHtml = renderToString(
+        createElement(ReadOnlyFloorMap, {
+          tables: realTables,
+          zones: dummyZones,
+          states,
+          groups: [],
+          now: new Date("2026-11-18T21:15:00+07:00"),
+          canViewGuestNames: true,
+        }),
+      )
+
+      expect(adminHtml, `${label}: full guest string leaked`).not.toContain(name)
+      expect(adminHtml, `${label}: phone digits leaked`).not.toContain("4567")
+      expect(adminHtml, `${label}: Thai/fullwidth digits leaked`).not.toContain("٥٦٧٨")
+      // Exact Admin redaction text on regular tile, Bar seat, <title>, aria-label, and BarGuestList row
+      expect(adminHtml, `${label}: exact tile ARIA/title`).toContain('aria-label="Bàn A3, Đã tới, 2 khách"')
+      expect(adminHtml, `${label}: exact SVG title`).toContain("<title>Bàn A3, Đã tới, 2 khách</title>")
+      expect(adminHtml, `${label}: exact tile text`).toContain(">A3</text>")
+      expect(adminHtml, `${label}: exact Bar seat ARIA/title`).toContain('aria-label="Ghế Bar 1, Đã tới, 2 khách"')
+      expect(adminHtml, `${label}: exact Bar seat SVG title`).toContain("<title>Ghế Bar 1, Đã tới, 2 khách</title>")
+      expect(adminHtml, `${label}: exact BarGuestList row ARIA`).toContain(
+        'aria-label="Bar1, vào lúc 20:15, 2 khách, Trạng thái: Đã tới"',
+      )
+      expect(adminHtml, `${label}: BarGuestList omitted HTML title`).not.toContain(`title="${name}"`)
+
+      // Reception BarGuestList remains unaffected
+      const receptionBarHtml = renderToString(
+        createElement(BarGuestList, { tables: realTables, states, as: "html", readOnly: false }),
+      )
+      expect(receptionBarHtml, `${label}: Reception Bar row preserved`).toContain(name)
+    }
+  })
 })

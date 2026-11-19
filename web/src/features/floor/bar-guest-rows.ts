@@ -107,12 +107,17 @@ export function formatBarSeatLabel(seatNumbers: number[]): string {
     .join(", ")
 }
 
+const UNICODE_DASH_SEPARATORS = /[\p{Pd}\u2010-\u2015\u2043\u207B\u208B\u2212\u2796\uFE58\uFE63\uFF0D]/gu
+const UNICODE_DOT_SEPARATORS = /[\u002E\u00B7\u2022\u2024\u2027\u2219\u22C5\u3002\u30FB\uFF0E\uFF65]/gu
+const UNICODE_SPACE_SEPARATORS = /[\s\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]+/gu
+
 function normalizeForPhoneDetection(displayName: string): string {
   return displayName
     .normalize("NFKC")
     .replace(/\p{Cf}/gu, "")
-    .replace(/\p{Pd}/gu, "-")
-    .replace(/\s+/gu, " ")
+    .replace(UNICODE_DASH_SEPARATORS, "-")
+    .replace(UNICODE_DOT_SEPARATORS, ".")
+    .replace(UNICODE_SPACE_SEPARATORS, " ")
     .replace(/\p{Nd}/gu, "0")
     .trim()
 }

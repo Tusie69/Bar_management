@@ -125,7 +125,7 @@ describe("bar-guest-rows formatting helpers", () => {
     expect(formatBarGuestName("Nguyễn")).toBe("Nguyễn")
   })
 
-  it("detects full-width, non-ASCII Unicode, mixed, and spaced phone-shaped guest names for Admin masking", () => {
+  it("detects full-width, non-ASCII Unicode, mixed, spaced, and Unicode-separator phone-shaped guest names for Admin masking", () => {
     expect(isPhoneLikeGuestName("0901234567")).toBe(true)
     expect(isPhoneLikeGuestName("０９０１２３４５６７")).toBe(true)
     expect(isPhoneLikeGuestName("０９０ １２３ ４５６７")).toBe(true)
@@ -138,10 +138,34 @@ describe("bar-guest-rows formatting helpers", () => {
     expect(isPhoneLikeGuestName("๐๙๐-๑๒๓-๔๕๖๗")).toBe(true)
     expect(isPhoneLikeGuestName("090\u200B123\u00A04567")).toBe(true)
 
+    // ADM-02 round 3: Unicode minus sign (U+2212) and dash/space/dot look-alikes
+    expect(isPhoneLikeGuestName("Mai ０９０\u2212١٢٣\u22124567")).toBe(true)
+    expect(isPhoneLikeGuestName("Vy ๐๙๑\u2212２３４\u2212٥٦٧٨")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\u2010123\u20104567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\u2011123\u20114567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\u2012123\u20124567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\u2013123\u20134567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\u2014123\u20144567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\u2015123\u20154567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\u2043123\u20434567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\uFE58123\uFE584567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\uFE63123\uFE634567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\uFF0D123\uFF0D4567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\u00A0123\u20094567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\u202F123\u200A4567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\u3000123\u20034567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090.123.4567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\u00B7123\u00B74567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\u2022123\u20224567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\u2027123\u20274567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\u30FB123\u30FB4567")).toBe(true)
+    expect(isPhoneLikeGuestName("Khách 090\uFF0E123\uFF0E4567")).toBe(true)
+
     expect(isPhoneLikeGuestName("Phạm Quốc Khoa")).toBe(false)
     expect(isPhoneLikeGuestName("Dương Quốc Long")).toBe(false)
     expect(isPhoneLikeGuestName("Anh Minh 2")).toBe(false)
     expect(isPhoneLikeGuestName("Khách VIP 88")).toBe(false)
+    expect(isPhoneLikeGuestName("Họp lớp 2015")).toBe(false)
     expect(isPhoneLikeGuestName("")).toBe(false)
   })
 

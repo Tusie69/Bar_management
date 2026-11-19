@@ -979,11 +979,11 @@ try {
         // 24:BAR01, 25:BAR02
         const special = new Map([
           [2, { displayState: "IN_USE", claim: makeClaim(2, "Phạm Quốc Khoa") }],
-          [3, { displayState: "IN_USE", claim: makeClaim(3, "Khách ０９０ １２３ 4567") }],
-          [4, { displayState: "BOOKED", claim: makeClaim(4, "090 123 4567", "RESERVATION") }],
-          [5, { displayState: "IN_USE", claim: makeClaim(5, "０９０１２３４５６７") }],
+          [3, { displayState: "IN_USE", claim: makeClaim(3, "Khách 090\u2013123\u20434567") }],
+          [4, { displayState: "BOOKED", claim: makeClaim(4, "Vy ๐๙๑\u2212２３４\u2212٥٦٧٨", "RESERVATION") }],
+          [5, { displayState: "IN_USE", claim: makeClaim(5, "Mai ０９０\u2212١٢٣\u22124567") }],
           [6, { displayState: "OUT_OF_SERVICE", isOutOfService: true, claim: null }],
-          [24, { displayState: "IN_USE", claim: makeClaim(24, "０９１２３４５６７８") }],
+          [24, { displayState: "IN_USE", claim: makeClaim(24, "Mai ０９０\u2212١٢٣\u22124567") }],
           [25, { displayState: "IN_USE", claim: makeClaim(25, "Dương Quốc Long") }],
         ])
         const codes = [
@@ -1110,12 +1110,20 @@ try {
         : ""
       const telLinks = stage?.querySelectorAll('a[href^="tel:"]').length ?? 0
       const combined = `${stageText} | ${stageSvgTitles} | ${stageHtmlTitles} | ${stageAria}`
-      const phoneLeakRe = /090\s*123\s*4567|901\s*234\s*567|090\s*123|[０-９]{4,}|[０-９]{3}\s*[０-９]{3}/
+      const phoneLeakRe =
+        /090[\s\u00A0\u2009\u2010-\u2015\u2043\u2212\uFE58\uFE63\uFF0D.\u00B7\u2022]*123|901\s*234\s*567|4567|٥٦٧٨|[０-９]{3,}|[٠-٩]{3,}|[๐-๙]{3,}|Mai\s*０９０|Vy\s*๐๙๑/
+      const a3Aria = a3?.getAttribute("aria-label") ?? ""
+      const a3Title = a3?.querySelector("title")?.textContent ?? ""
+      const barFirstRowAria =
+        barPanel?.querySelector('[role="listitem"] [aria-label]')?.getAttribute("aria-label") ?? ""
       return {
         combined,
         stageText,
         a3Surface,
+        a3Aria,
+        a3Title,
         barSurface,
+        barFirstRowAria,
         telLinks,
         hasKhoa: combined.includes("Phạm Quốc Khoa"),
         hasLong: combined.includes("Dương Quốc Long"),
@@ -1129,6 +1137,21 @@ try {
       httpSurface.leaksPhone,
       false,
       `HTTP ${scenario.name}: leaked phone-shaped name (a3=${httpSurface.a3Surface}, bar=${httpSurface.barSurface})`,
+    )
+    assert.equal(
+      httpSurface.a3Aria,
+      "Bàn A3, Đã tới, 2 khách",
+      `HTTP ${scenario.name}: unexpected A3 aria-label: ${httpSurface.a3Aria}`,
+    )
+    assert.equal(
+      httpSurface.a3Title,
+      "Bàn A3, Đã tới, 2 khách",
+      `HTTP ${scenario.name}: unexpected A3 <title>: ${httpSurface.a3Title}`,
+    )
+    assert.match(
+      httpSurface.barFirstRowAria,
+      /^Bar1, vào lúc \d{2}:\d{2}, 2 khách, Trạng thái: Đã tới$/,
+      `HTTP ${scenario.name}: unexpected Bar1 redacted aria-label: ${httpSurface.barFirstRowAria}`,
     )
     if (scenario.expectNames) {
       assert(httpSurface.hasKhoa && httpSurface.hasLong, `HTTP ${scenario.name}: expected real guest names`)
