@@ -62,29 +62,36 @@ async function run(name, userId, width, fn) {
 }
 
 try {
-  await run("labels and manual threshold", 3, 1280, async (page) => {
+  await run("late-confirm threshold keeps the booking active", 3, 1280, async (page) => {
     // B3 starts 25 minutes late in the seed. A5 starts 10 minutes late.
     assert.equal((await snapshot(page)).find((t) => t.code === "B3").state, "late")
     await expect(table(page, "B3")).toHaveAttribute("aria-label", /Bàn B3, Tới muộn,/)
     await table(page, "B3").click()
     await expect(page.getByText(/trễ 25['’]/)).toBeVisible()
     await expect(page.getByRole("button", { name: "Check-in B3", exact: true })).toBeEnabled()
-    await expect(page.getByRole("button", { name: "Không tới", exact: true })).toBeDisabled()
-    await page.getByRole("button", { name: "Tới muộn", exact: true }).click()
+    const noShowAction = page.getByRole("button", { name: /^(Khách )?Không tới$/ })
+    const confirmLate = page.getByRole("button", { name: "Tới muộn", exact: true })
+    // The active booking actions now expose Late and Cancel only (Sprint 2 AT7).
+    await expect(noShowAction).toHaveCount(0)
+    await expect(confirmLate).toBeEnabled()
+    await confirmLate.click()
     await expect(table(page, "B3")).toHaveAttribute("aria-label", /Tới muộn \(đã báo tới muộn\)/)
     await expect(page.getByText("Khách đã báo sẽ tới muộn", { exact: true })).toBeVisible()
     assert.equal((await snapshot(page)).find((t) => t.code === "B3").state, "late_confirmed")
     await advance(page, 4)
-    await expect(table(page, "B3")).toContainText("+29'")
-    await expect(page.getByRole("button", { name: "Không tới", exact: true })).toBeDisabled()
+    await expect(page.getByText(/trễ 29['’]/)).toBeVisible()
+    assert.equal((await snapshot(page)).find((t) => t.code === "B3").state, "late_confirmed")
+    await expect(noShowAction).toHaveCount(0)
     await advance(page, 1)
     assert.equal((await snapshot(page)).find((t) => t.code === "B3").state, "noshow")
-    await expect(table(page, "B3")).toContainText("+30'")
-    await expect(page.getByRole("button", { name: "Không tới", exact: true })).toBeEnabled()
+    await expect(page.getByText(/trễ 30['’]/)).toBeVisible()
+    // Nam's decision in 2026-11-19-quyet-dinh-bo-nut-khong-toi.md supersedes the 05/11 decision lock, line 27.
+    await expect(noShowAction).toHaveCount(0)
+    await expect(confirmLate).toBeDisabled()
     await expect(page.getByRole("button", { name: "Check-in B3", exact: true })).toBeEnabled()
     await advance(page, 45)
     assert.equal((await snapshot(page)).find((t) => t.code === "B3").state, "noshow", "no automatic cancellation")
-    await expect(table(page, "B3")).toHaveAttribute("aria-label", /Không tới/)
+    await expect(table(page, "B3")).toHaveAttribute("aria-label", /Bàn B3, Tới muộn \(đã báo tới muộn\),/)
   })
   await run("combined legend and group", 3, 1280, async (page) => {
     await table(page, "B3").click()
@@ -111,9 +118,10 @@ try {
     ).size
     assert(expected < combined.length, "fixture proves group deduplication")
     const legend = page.getByRole("region", { name: "Chú giải trạng thái bàn", exact: true })
-    const chip = legend.getByText("Không tới", { exact: true })
+    const chip = legend.getByText("Tới muộn", { exact: true })
     await expect(chip).toHaveCount(1)
-    await expect(chip.locator("..")).toHaveText(`Không tới${expected}`)
+    const chipCount = chip.locator("xpath=../following-sibling::span")
+    await expect(chipCount).toHaveText(String(expected))
     for (const row of rows.filter((t) => t.state === "hold_overdue"))
       await expect(table(page, row.code)).toContainText("quá hạn")
     // A5 is not late yet at +11; advance to +16 to cover the unconfirmed late bucket too.
@@ -125,8 +133,8 @@ try {
       after.some((t) => t.state === "late"),
       "late fixture exists",
     )
-    await expect(chip.locator("..")).toHaveText(
-      `Không tới${new Set(after.map((t) => (t.claim?.groupId ? `group:${t.claim.groupId}` : `table:${t.tableId}`))).size}`,
+    await expect(chipCount).toHaveText(
+      String(new Set(after.map((t) => (t.claim?.groupId ? `group:${t.claim.groupId}` : `table:${t.tableId}`))).size),
     )
   })
   for (const width of [768, 1024, 1280, 1440]) {
@@ -156,16 +164,20 @@ try {
         )
       })
       assert(waiting.length > 0, "nonzero real waiting fixture")
-      if (userId === 1) await expect(page.getByRole("tablist", { name: "Lọc khu" })).toHaveCount(0)
-      for (const zone of userId === 1 ? ["Tất cả"] : ["Tất cả", "Khu A", "Khu B", "Khu C", "Bar"]) {
-        if (userId !== 1) await page.getByRole("tab", { name: zone, exact: true }).click()
+      const receptionist = userId === 1
+      if (receptionist) await expect(page.getByRole("tablist", { name: "Lọc khu" })).toHaveCount(0)
+      for (const zone of receptionist ? ["Tất cả"] : ["Tất cả", "Khu A", "Khu B", "Khu C", "Bar"]) {
+        if (!receptionist) await page.getByRole("tab", { name: zone, exact: true }).click()
         const marker = page.getByRole("button", { name: /^Bàn chờ(?:,|$)/ })
         await expect(marker).toHaveCount(1)
-        await expect(marker).toHaveAttribute("aria-label", `Bàn chờ, ${waiting.length} khách đang chờ`)
-        await expect(marker).toHaveText(`Bàn chờ +${waiting.length}`)
+        await expect(marker).toHaveAttribute(
+          "aria-label",
+          `Bàn chờ, ${waiting.length} ${receptionist ? "nhóm đang đợi" : "khách đang chờ"}`,
+        )
+        await expect(marker).toHaveText(receptionist ? `Chờ+${waiting.length}` : `Bàn chờ +${waiting.length}`)
         await expect(marker).toBeInViewport({ ratio: 1 })
         const inSvg = await marker.evaluate((node) => !!node.closest("svg"))
-        assert.equal(inSvg, zone === "Tất cả", `${zone}: marker placement`)
+        assert.equal(inSvg, !receptionist && zone === "Tất cả", `${zone}: marker placement`)
         if (zone !== "Tất cả") {
           const before = await marker.boundingBox()
           const canvas = page.locator('svg[role="group"]')
@@ -181,13 +193,14 @@ try {
           )
           await expect(marker).toBeInViewport({ ratio: 1 })
         }
-        if (userId === 1) {
+        if (receptionist) {
           await marker.click()
           const sheet = page.getByRole("dialog", { name: "Bàn chờ ảo", exact: true })
           await expect(sheet).toBeVisible()
           await expect(sheet).toContainText(waiting[0].displayName)
           await page.keyboard.press("Escape")
           await expect(sheet).toBeHidden()
+          await expect(marker).toBeVisible()
         }
         await expect(
           page.getByRole("button", { name: /zoom|full\s*screen|phóng to|thu nhỏ|toàn màn hình|^[+−-]$/i }),

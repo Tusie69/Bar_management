@@ -131,9 +131,13 @@ const scenarios = [
       const deferAlert = page.getByRole("button", { name: "Đã xem, xử lý sau" })
       if (await deferAlert.isVisible()) await deferAlert.click()
       await page.locator('[aria-label^="Bàn B5,"]').click()
-      await page.getByRole("button", { name: "Tạo đặt trước", exact: true }).click()
-      await page.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).click()
-      const submit = page.getByRole("button", { name: "Đặt bàn B5", exact: true })
+      await page
+        .getByRole("dialog", { name: "Chi tiết B5", exact: true })
+        .getByRole("button", { name: "Đặt bàn", exact: true })
+        .click()
+      const form = page.getByRole("form", { name: "Tạo đặt bàn B5", exact: true })
+      await form.getByRole("button", { name: /Chọn giờ bằng con lăn/ }).click()
+      const submit = form.getByRole("button", { name: "Đặt bàn B5", exact: true })
       await expect(submit).toBeEnabled()
       await expect(submit).toHaveCSS("opacity", "1")
     },
@@ -157,7 +161,8 @@ const scenarios = [
   ],
 ]
 for (const width of [360, 390, 430])
-  for (const action of ["Tạo đặt trước", "Mở bàn Walk-in"]) {
+  for (const action of ["Đặt bàn", "Mở bàn Walk-in"]) {
+    const isBooking = action === "Đặt bàn"
     scenarios.push([
       `owner-mobile-form ${action} ${width}`,
       "/floor",
@@ -168,13 +173,14 @@ for (const width of [360, 390, 430])
         }
         await page.locator('[aria-label^="Bàn B5,"]').first().click()
         await page.getByRole("button", { name: action, exact: true }).click()
-        const form = page.getByRole("dialog", { name: "Tạo đơn đặt bàn", exact: true })
+        const form = page.getByRole("dialog", { name: isBooking ? "Tạo đơn đặt bàn" : "Mở bàn Walk-in", exact: true })
         await expect(form).toBeVisible()
         const regions = await page
-          .getByRole("region", { name: /Khách quầy bar/ })
+          .getByRole("region", { name: /Khách quầy bar/, includeHidden: true })
           .evaluateAll((elements) => elements.map((el) => el.getAttribute("aria-label")))
         assert.equal(regions.length, 2)
         assert.equal(new Set(regions).size, 2, `Duplicate Bar landmarks: ${regions.join(", ")}`)
+        await expect(page.getByRole("region", { name: /Khách quầy bar/ })).toHaveCount(1)
         const scroll = form.getByRole("region", { name: /Khách quầy bar/ })
         await scroll.scrollIntoViewIfNeeded()
         await scroll.focus()
@@ -182,7 +188,7 @@ for (const width of [360, 390, 430])
         fs.mkdirSync("e2e/.artifacts/rereview4-fixes", { recursive: true })
         const theme = await page.locator("html").getAttribute("class")
         await page.screenshot({
-          path: `e2e/.artifacts/rereview4-fixes/${theme?.includes("dark") ? "dark" : "light"}-${action === "Tạo đặt trước" ? "booking" : "walkin"}-${width}.png`,
+          path: `e2e/.artifacts/rereview4-fixes/${theme?.includes("dark") ? "dark" : "light"}-${isBooking ? "booking" : "walkin"}-${width}.png`,
         })
       },
       3,
