@@ -158,6 +158,26 @@ export function diffBookingEditDraft(r: ReservationView, draft: BookingEditDraft
   }
 }
 
+/** Restores the saved booking source and social platform while preserving all other draft edits. */
+export function restoreBookingEditSource(r: ReservationView, draft: BookingEditDraft): BookingEditDraft {
+  const saved = initialBookingEditDraft(r)
+  return {
+    ...draft,
+    source: saved.source,
+    platform: saved.platform,
+  }
+}
+
+/** Restores the saved business date and arrival time while preserving all other draft edits. */
+export function restoreBookingEditSchedule(r: ReservationView, draft: BookingEditDraft): BookingEditDraft {
+  const saved = initialBookingEditDraft(r)
+  return {
+    ...draft,
+    businessDate: saved.businessDate,
+    time: saved.time,
+  }
+}
+
 export interface BookingEditSessionState {
   source: ReservationView
   draft: BookingEditDraft

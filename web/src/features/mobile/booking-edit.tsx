@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { AlertTriangle, ChevronLeft, LoaderCircle, Lock, Pencil } from "lucide-react"
+import { AlertTriangle, ChevronLeft, LoaderCircle, Lock, Pencil, RotateCcw } from "lucide-react"
 import {
   useCallback,
   useEffect,
@@ -45,11 +45,11 @@ import {
   slotLabel,
   toggleClassification,
 } from "@/domain/booking-rules"
-import { formatBookingSource } from "@/domain/enums"
+import { formatBookingSource, type BookingSourceCode } from "@/domain/enums"
 import type { ReservationView, TableAvailability, WaitlistEntryView } from "@/domain/models"
 import { MOCK_NOTE, useAction } from "@/hooks/use-action"
 import { qk, useReservations, useVenueSettings, useWaitlist } from "@/hooks/use-data"
-import { addDays, fmtBusinessDate, fmtDayMonth, type BusinessDate } from "@/lib/time"
+import { addDays, fmtBusinessDate, fmtDayMonth, fmtTime, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useMobileActions } from "./actions"
@@ -63,6 +63,8 @@ import {
   pinLoadedBooking,
   prepareTablePickerTarget,
   resolveBookingEditBackAction,
+  restoreBookingEditSchedule,
+  restoreBookingEditSource,
   syncBookingEditSession,
   validateBookingEditDraft,
   type BookingEditDraft,
@@ -88,6 +90,42 @@ function scrollFocusedIntoView(event: FocusEvent<HTMLInputElement | HTMLTextArea
 
 function EmptyPlaceholder() {
   return <span className="text-tx-3">(Trống)</span>
+}
+
+function formatSourceSummary(sourceCode: BookingSourceCode, platform?: string | null): string {
+  if (sourceCode === "SOCIAL") {
+    if (!platform) return "Social"
+    const label = SOCIAL_PLATFORMS.find((p) => p.value === platform)?.label ?? platform
+    return `Social · ${label}`
+  }
+  return formatBookingSource(sourceCode, null)
+}
+
+function RestoreSavedButton({
+  label,
+  disabled,
+  onRestore,
+}: {
+  label: string
+  disabled?: boolean
+  onRestore: (button: HTMLButtonElement) => void
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={(e) => onRestore(e.currentTarget)}
+      className="gm-press flex min-h-11 w-full items-center justify-between gap-2 rounded-xl border border-border-strong bg-surface-1 px-3 py-2 text-left text-[13px] font-medium text-tx-1 transition-colors hover:border-primary/50 hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-45"
+    >
+      <span className="flex min-w-0 items-center gap-2">
+        <RotateCcw className="size-3.5 shrink-0 text-primary-ink" aria-hidden />
+        <span className="text-pretty break-words">{label}</span>
+      </span>
+      <span className="shrink-0 rounded-md border border-border bg-surface-2 px-2 py-0.5 text-[11px] font-semibold text-[var(--text-muted)]">
+        Đã lưu
+      </span>
+    </button>
+  )
 }
 
 function EditableRow({
@@ -317,6 +355,26 @@ function BookingEditBody({
   const updateDraft = (patch: Partial<BookingEditDraft>) => {
     if (fieldsDisabled) return
     setSession((prev) => ({ ...prev, draft: { ...prev.draft, ...patch } }))
+  }
+
+  const restoreWithFocus = (
+    button: HTMLButtonElement,
+    restorer: (r: ReservationView, d: BookingEditDraft) => BookingEditDraft,
+  ) => {
+    if (fieldsDisabled) return
+    const wasFocused = typeof document !== "undefined" && document.activeElement === button
+    const fieldset = button.closest("fieldset")
+    setSession((prev) => ({ ...prev, draft: restorer(prev.source, prev.draft) }))
+    if (wasFocused && fieldset && typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        if (!fieldset.isConnected) return
+        const target =
+          fieldset.querySelector<HTMLElement>(
+            '[aria-checked="true"]:not([disabled]), [aria-pressed="true"]:not([disabled]), button:not([disabled])',
+          ) ?? fieldset.closest("div")?.parentElement?.querySelector<HTMLElement>("button:not([disabled])")
+        target?.focus({ preventScroll: true })
+      })
+    }
   }
 
   const partyCount = guestCount(draft.guest)
@@ -602,19 +660,20 @@ function BookingEditBody({
   const noteId = useId()
 
   const isBooked = source.status === "BOOKED"
-  const platformLabel = SOCIAL_PLATFORMS.find((p) => p.value === draft.platform)?.label ?? draft.platform
+  const savedSourceLabel = formatSourceSummary(source.sourceCode, source.socialPlatform)
   const sourceDisplay =
-    draft.source === "SOCIAL" ? (
-      draft.platform ? (
-        `Social · ${platformLabel}`
-      ) : (
-        <span>
-          Social · <EmptyPlaceholder />
-        </span>
-      )
+    draft.source === "SOCIAL" && !draft.platform ? (
+      <span>
+        Social · <EmptyPlaceholder />
+      </span>
     ) : (
-      formatBookingSource(draft.source, null)
+      formatSourceSummary(draft.source, draft.platform)
     )
+
+  const savedTime = fmtTime(source.expectedAt)
+  const savedTimeDisplay = isAfterMidnight(savedTime)
+    ? `${savedTime} (sáng ${fmtDayMonth(bookingCalendarDate(source.businessDate, savedTime))})`
+    : savedTime
 
   const timeNextDay = !!draft.time && isAfterMidnight(draft.time)
   const timeDisplay = draft.time ? (
@@ -872,6 +931,13 @@ function BookingEditBody({
                     )
                   })}
                 </div>
+                {diff.changed.businessDate || diff.changed.time ? (
+                  <RestoreSavedButton
+                    label={`Lịch ban đầu: ${fmtDayMonth(source.businessDate)} · ${savedTimeDisplay}`}
+                    disabled={fieldsDisabled}
+                    onRestore={(btn) => restoreWithFocus(btn, restoreBookingEditSchedule)}
+                  />
+                ) : null}
                 {draft.businessDate !== source.businessDate && source.tableIds.length > 0 ? (
                   <p role="status" className="m-0 text-xs text-st-late-ink">
                     Đổi sang ngày khác sẽ kiểm tra lại hoặc nhả bàn đang giữ.
@@ -890,16 +956,29 @@ function BookingEditBody({
               onOpen={() => isBooked && !fieldsDisabled && setEditingField("time")}
               onDone={() => setEditingField(null)}
             >
-              <BookingTimePicker
-                date={draft.businessDate}
-                value={draft.time}
-                now={m.now}
-                quickTimes={quickTimes}
-                onChange={(time) => updateDraft({ time })}
-                error={validation.errors.time}
-                legacyValue={validation.legacyTime}
-                compact
-              />
+              <div className="flex flex-col gap-2">
+                <BookingTimePicker
+                  date={draft.businessDate}
+                  value={draft.time}
+                  now={m.now}
+                  quickTimes={quickTimes}
+                  onChange={(time) => updateDraft({ time })}
+                  error={validation.errors.time}
+                  legacyValue={validation.legacyTime}
+                  compact
+                />
+                {diff.changed.time || diff.changed.businessDate ? (
+                  <RestoreSavedButton
+                    label={
+                      diff.changed.businessDate
+                        ? `Giờ ban đầu: ${savedTimeDisplay} · ${fmtDayMonth(source.businessDate)}`
+                        : `Giờ ban đầu: ${savedTimeDisplay}`
+                    }
+                    disabled={fieldsDisabled}
+                    onRestore={(btn) => restoreWithFocus(btn, restoreBookingEditSchedule)}
+                  />
+                ) : null}
+              </div>
             </EditableRow>
 
             {canAccessTablePicker ? (
@@ -972,13 +1051,22 @@ function BookingEditBody({
               onOpen={() => isBooked && !fieldsDisabled && setEditingField("source")}
               onDone={() => setEditingField(null)}
             >
-              <SourcePicker
-                source={draft.source}
-                onSourceChange={(source) => updateDraft({ source, platform: "" })}
-                platform={draft.platform}
-                onPlatformChange={(platform: SocialPlatform | "") => updateDraft({ platform })}
-                error={validation.errors.platform}
-              />
+              <div className="flex flex-col gap-2">
+                <SourcePicker
+                  source={draft.source}
+                  onSourceChange={(source) => updateDraft({ source, platform: "" })}
+                  platform={draft.platform}
+                  onPlatformChange={(platform: SocialPlatform | "") => updateDraft({ platform })}
+                  error={validation.errors.platform}
+                />
+                {diff.changed.source || diff.changed.platform ? (
+                  <RestoreSavedButton
+                    label={`Khôi phục: ${savedSourceLabel}`}
+                    disabled={fieldsDisabled}
+                    onRestore={(btn) => restoreWithFocus(btn, restoreBookingEditSource)}
+                  />
+                ) : null}
+              </div>
             </EditableRow>
 
             <EditableRow

@@ -13,6 +13,8 @@ import {
   pinLoadedBooking,
   prepareTablePickerTarget,
   resolveBookingEditBackAction,
+  restoreBookingEditSchedule,
+  restoreBookingEditSource,
   syncBookingEditSession,
   validateBookingEditDraft,
 } from "./booking-edit-model"
@@ -641,5 +643,108 @@ describe("booking-edit-model save-and-pick re-pin and error recovery (PR17-01, P
     })
     expect(recovered).toEqual({ status: "opened" })
     expect(opened).toEqual(latestFromServer)
+  })
+})
+
+describe("booking-edit-model restore paths and clean-state (PR17-I01, PR17-I02)", () => {
+  it("restores legacy sources (ZALO, FANPAGE, OTHER) and SOCIAL+platform while keeping other edits (PR17-I01)", () => {
+    const ctx = makeValidationCtx()
+
+    // 1. ZALO -> HOTLINE -> restore ZALO returns to clean-state (canSave=false)
+    for (const legacySource of ["ZALO", "FANPAGE", "OTHER"] as const) {
+      const r = makeReservation({ sourceCode: legacySource, socialPlatform: null })
+      const initial = initialBookingEditDraft(r)
+      const changed = { ...initial, source: "HOTLINE" as const, platform: "" as const }
+      expect(diffBookingEditDraft(r, changed).changed.source).toBe(true)
+      expect(validateBookingEditDraft(r, changed, diffBookingEditDraft(r, changed), ctx).canSave).toBe(true)
+
+      const restored = restoreBookingEditSource(r, changed)
+      const restoredDiff = diffBookingEditDraft(r, restored)
+      expect(restored.source).toBe(legacySource)
+      expect(restored.platform).toBe("")
+      expect(restoredDiff.isDirty).toBe(false)
+      expect(validateBookingEditDraft(r, restored, restoredDiff, ctx).canSave).toBe(false)
+    }
+
+    // 2. ZALO -> HOTLINE + note edit -> restore ZALO keeps note and saves source=ZALO
+    const rZalo = makeReservation({ sourceCode: "ZALO", socialPlatform: null, note: null })
+    const withNoteAndHotline = {
+      ...initialBookingEditDraft(rZalo),
+      source: "HOTLINE" as const,
+      platform: "" as const,
+      note: "Giữ ghi chú khi khôi phục Zalo",
+    }
+    const restoredWithNote = restoreBookingEditSource(rZalo, withNoteAndHotline)
+    const diffWithNote = diffBookingEditDraft(rZalo, restoredWithNote)
+    expect(restoredWithNote.source).toBe("ZALO")
+    expect(restoredWithNote.note).toBe("Giữ ghi chú khi khôi phục Zalo")
+    expect(diffWithNote.changed.source).toBe(false)
+    expect(diffWithNote.changed.note).toBe(true)
+    expect(diffWithNote.isDirty).toBe(true)
+    expect(validateBookingEditDraft(rZalo, restoredWithNote, diffWithNote, ctx).canSave).toBe(true)
+    const payload = buildUpdateReservationInput(rZalo, restoredWithNote)
+    expect(payload.sourceCode).toBe("ZALO")
+    expect(payload.socialPlatform).toBeNull()
+    expect(payload.note).toBe("Giữ ghi chú khi khôi phục Zalo")
+
+    // 3. SOCIAL + FB -> HOTLINE -> restore SOCIAL + FB returns clean-state
+    const rSocial = makeReservation({ sourceCode: "SOCIAL", socialPlatform: "FB" })
+    const switched = { ...initialBookingEditDraft(rSocial), source: "HOTLINE" as const, platform: "" as const }
+    const restoredSocial = restoreBookingEditSource(rSocial, switched)
+    expect(restoredSocial.source).toBe("SOCIAL")
+    expect(restoredSocial.platform).toBe("FB")
+    expect(diffBookingEditDraft(rSocial, restoredSocial).isDirty).toBe(false)
+  })
+
+  it("restores original past date+time without unlocking other past times and keeps note edits (PR17-I02)", () => {
+    const r = makeReservation({
+      businessDate: BD,
+      expectedAt: atBusinessTime(BD, "21:05"),
+      note: null,
+    })
+    const ctx = makeValidationCtx({ now: new Date("2026-11-19T21:30:00+07:00") })
+    const initial = initialBookingEditDraft(r)
+
+    // 1. Change 21:05 -> 22:30 -> restore original schedule returns clean-state (save disabled)
+    const to2230 = { ...initial, time: "22:30" }
+    expect(diffBookingEditDraft(r, to2230).changed.time).toBe(true)
+    expect(validateBookingEditDraft(r, to2230, diffBookingEditDraft(r, to2230), ctx).canSave).toBe(true)
+
+    const restored = restoreBookingEditSchedule(r, to2230)
+    const restoredDiff = diffBookingEditDraft(r, restored)
+    expect(restored.businessDate).toBe(BD)
+    expect(restored.time).toBe("21:05")
+    expect(restoredDiff.isDirty).toBe(false)
+    const restoredVal = validateBookingEditDraft(r, restored, restoredDiff, ctx)
+    expect(restoredVal.errors.time).toBeNull()
+    expect(restoredVal.canSave).toBe(false)
+
+    // 2. Other past times (e.g. 21:00, 21:10) remain blocked
+    for (const otherPast of ["21:00", "21:10"]) {
+      const badDraft = { ...initial, time: otherPast }
+      const badVal = validateBookingEditDraft(r, badDraft, diffBookingEditDraft(r, badDraft), ctx)
+      expect(badVal.errors.time).toContain("đã qua")
+      expect(badVal.canSave).toBe(false)
+    }
+
+    // 3. Change date + time + note -> restore schedule keeps note and clears schedule diff
+    const changedAll = {
+      ...initial,
+      businessDate: "2026-11-20",
+      time: "22:30",
+      note: "Khách đến muộn một chút",
+    }
+    const restoredWithNote = restoreBookingEditSchedule(r, changedAll)
+    const diffWithNote = diffBookingEditDraft(r, restoredWithNote)
+    expect(restoredWithNote.businessDate).toBe(BD)
+    expect(restoredWithNote.time).toBe("21:05")
+    expect(restoredWithNote.note).toBe("Khách đến muộn một chút")
+    expect(diffWithNote.changed.businessDate).toBe(false)
+    expect(diffWithNote.changed.time).toBe(false)
+    expect(diffWithNote.changed.note).toBe(true)
+    const valWithNote = validateBookingEditDraft(r, restoredWithNote, diffWithNote, ctx)
+    expect(valWithNote.errors.time).toBeNull()
+    expect(valWithNote.canSave).toBe(true)
+    expect(buildUpdateReservationInput(r, restoredWithNote).expectedAt?.getTime()).toBe(r.expectedAt.getTime())
   })
 })
