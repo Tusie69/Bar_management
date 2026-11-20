@@ -1013,7 +1013,22 @@ try {
         )
         const zoneIds = { A: 1, B: 2, C: 3, BAR: 4 }
         await json({
-          venue: { id: 1, name: "21GAM", timezone: "Asia/Ho_Chi_Minh", changeSeq: 10 },
+          venue: {
+            id: 1,
+            version: 1,
+            name: "21GAM",
+            timezone: "Asia/Ho_Chi_Minh",
+            businessDayStartLocal: "17:00:00",
+            businessDayCutoffLocal: "05:00:00",
+            upcomingWarningMinutes: 10,
+            lateWarningMinutes: 15,
+            noShowWarningMinutes: 30,
+            waitlistHoldDefaultMinutes: 15,
+            waitlistClaimLeaseSeconds: 300,
+            reservationHoldPolicy: "SEQUENTIAL",
+            reservationWindowMinutes: null,
+            changeSeq: 10,
+          },
           zones: [
             { id: 3, version: 1, code: "C", name: "Khu C", isBookable: true, isWaitingArea: false, displayOrder: 1 },
             { id: 2, version: 1, code: "B", name: "Khu B", isBookable: true, isWaitingArea: false, displayOrder: 2 },

@@ -22,7 +22,15 @@ export type AuditFilterType =
   | 'account'
 
 export interface AuditActionInfo {
-  type: AuditFilterType
+  /**
+   * `null` = hành động có nhãn tiếng Việt nhưng KHÔNG thuộc nhóm lọc nào.
+   *
+   * Biên bản 15/11 đặt tên đúng bảy nhóm, và một hành động mới không phải là
+   * lý do để dựng nhóm thứ tám hay để nhét nó vào một nhóm sai nghĩa. Dòng vẫn
+   * đọc được ở bộ lọc "Tất cả" — nhật ký không giấu một dòng chỉ vì bảng nhóm
+   * chưa có chỗ cho nó.
+   */
+  type: AuditFilterType | null
   /** Chữ hiện ở cột HÀNH ĐỘNG. */
   label: string
 }
@@ -56,6 +64,30 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionInfo>> = {
   AUTH_SESSION_REVOKED: { type: 'login', label: 'Phiên bị thu hồi' },
   AUTH_SESSION_FORCE_REVOKED: { type: 'login', label: 'Buộc đăng xuất thiết bị' },
 
+  // Module Phục vụ 2: duyệt một món là cho phép nó lên máy Phục vụ với một
+  // mức giá. Xếp vào nhóm "permission" vì đó là một lần cấp quyền bán, và vì
+  // biên bản chưa có nhóm lọc riêng cho danh mục món.
+  MENU_ITEM_VERIFIED: { type: 'permission', label: 'Duyệt món vào danh mục' },
+
+  // Module Phục vụ 3: một lần bấm "Gửi đơn". Dòng nhật ký mang người gọi món,
+  // Phiên, tổng tiền và mã món — KHÔNG mang nội dung ghi chú từng món, vì ghi
+  // chú là ô gõ tự do và đã có lần mang theo tên hay số điện thoại khách.
+  // Biên bản chưa có nhóm lọc riêng cho gọi món, và nhóm "Giảm giá / hủy món"
+  // nói về việc khác, nên dòng này có nhãn mà không có nhóm: nó đọc được ở bộ
+  // lọc "Tất cả" thay vì bị gán vào một nhóm sai nghĩa.
+  SALES_ORDER_CREATED: { type: null, label: 'Gửi đơn gọi món' },
+
+  // Module Phục vụ 5. Sửa số lượng không phải giảm giá hay hủy món, nên nó
+  // cũng không có nhóm — đọc được ở "Tất cả".
+  SALES_ORDER_LINE_ADJUSTED: { type: null, label: 'Sửa số lượng món' },
+
+  // Ba hành động hủy món thì thuộc đúng nhóm mà biên bản đã đặt tên:
+  // "Giảm giá / hủy món". Nhóm này rỗng từ 15/11 vì chưa có module gọi món;
+  // giờ nó có việc.
+  SALES_ORDER_CANCELLATION_REQUESTED: { type: 'discount', label: 'Yêu cầu hủy món' },
+  SALES_ORDER_CANCELLATION_APPROVED: { type: 'discount', label: 'Duyệt hủy món' },
+  SALES_ORDER_CANCELLATION_REJECTED: { type: 'discount', label: 'Từ chối hủy món' },
+
   ADMIN_ACCESS_LEVEL_CHANGED: { type: 'permission', label: 'Đổi cấp truy cập' },
   USER_PERMISSIONS_CHANGED: { type: 'permission', label: 'Đổi quyền' },
 
@@ -81,14 +113,10 @@ export const AUDIT_FILTERS: readonly AuditFilterDefinition[] = [
   { type: 'booking_cancel', label: 'Hủy booking', actions: byType('booking_cancel') },
   { type: 'table_move', label: 'Đổi bàn', actions: byType('table_move') },
   { type: 'phone_reveal', label: 'Xem SĐT đầy đủ', actions: byType('phone_reveal') },
-  {
-    type: 'discount',
-    label: 'Giảm giá / hủy món',
-    // Chưa có module gọi món và thanh toán, nên chưa có hành động nào để ghi.
-    // Giữ ô lọc để bảng khớp biên bản và để lần sau chỉ cần điền `actions`.
-    actions: [],
-    unsupportedNote: 'Chưa có module gọi món và thanh toán nên chưa có thao tác nào thuộc nhóm này.',
-  },
+  // Module Phục vụ 5 điền `actions` cho nhóm này, đúng như 0027 đã dự trù.
+  // Giảm giá vẫn chưa có (chưa có module thanh toán), nhưng hủy món thì có, và
+  // một ô lọc có việc thì không còn `unsupportedNote`.
+  { type: 'discount', label: 'Giảm giá / hủy món', actions: byType('discount') },
   { type: 'login', label: 'Đăng nhập', actions: byType('login') },
   { type: 'permission', label: 'Đổi quyền', actions: byType('permission') },
   { type: 'account', label: 'Tài khoản', actions: byType('account') },

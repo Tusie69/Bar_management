@@ -114,6 +114,17 @@ export async function publishFloorChange(
   }))
 }
 
+/** Reads the cursor on a fresh connection after commit, then emits only that cursor. */
+export async function publishCommittedFloorChange(organizationId: number, venueId: number): Promise<void> {
+  const [rows] = await databasePool.execute<(RowDataPacket & { change_seq: string | number })[]>(
+    'SELECT change_seq FROM venues WHERE organization_id = ? AND id = ?',
+    [organizationId, venueId],
+  )
+  if (rows[0]) {
+    await publishFloorChange({ organizationId, venueId, changeSeq: String(rows[0].change_seq) })
+  }
+}
+
 async function pollOnce(): Promise<void> {
   const venues = new Set<string>()
   for (const subscriber of subscribers) venues.add(venueKey(subscriber.organizationId, subscriber.venueId))

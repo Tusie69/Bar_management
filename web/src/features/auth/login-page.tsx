@@ -19,6 +19,7 @@ const PORTAL_NOTE: Record<AuthPortal, string> = {
   cashier: "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản Quản trị, Lễ tân, Phục vụ không đăng nhập được tại cổng này.",
   waiter: "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản Quản trị, Lễ tân, Thu ngân không đăng nhập được tại cổng này.",
   "customer-care": "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản của vai khác không đăng nhập được tại cổng này.",
+  preparation: "Tài khoản Bar và Bếp dùng chung cổng đăng nhập, nhưng mỗi tài khoản chỉ thấy và xử lý đúng quầy đã được cấp quyền.",
 }
 
 function keepFocusedFieldVisible(event: FocusEvent<HTMLInputElement>) {

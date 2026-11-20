@@ -41,13 +41,41 @@ function serializeFixture<T>(operation: () => Promise<T>): Promise<T> {
 
 /** The destructive body, already inside the fixture queue when it runs. */
 async function truncateFixtureTables(): Promise<void> {
-  if (env.database.name !== 'gam21_platform_it_test') throw new Error('Refusing destructive fixture outside integration database')
+  if (!['gam21_platform_it_test', 'gam21_platform_module4_test'].includes(env.database.name)) {
+    throw new Error('Refusing destructive fixture outside integration database')
+  }
   // TU-38: venues are deleted and reinserted under the same ids, so a shift cached from the
   // previous test would survive into the next one and quietly answer for the wrong venue row.
   invalidateVenueShift()
   await databasePool.execute('UPDATE operation_log SET compensates_operation_id = NULL WHERE compensates_operation_id IS NOT NULL')
   await databasePool.execute("UPDATE customers SET status = 'ACTIVE', merged_into_customer_id = NULL WHERE status = 'MERGED'")
-  for (const table of ['customer_duplicate_dismissals', 'booking_call_logs', 'operation_log', 'reception_guest_counts', 'table_turns', 'table_allocations', 'table_group_members', 'table_groups', 'table_holds',
+  // Module Phục vụ 3: đơn tham chiếu giá, biến thể, món và Phiên, nên phải xoá
+  // trước toàn bộ danh mục món và trước visits — nếu không FK chặn fixture và
+  // mọi file integration sau đó đỏ vì một lý do không liên quan tới nó.
+  await databasePool.execute('DELETE FROM preparation_ready_acknowledgements')
+  await databasePool.execute('DELETE FROM preparation_ready_audiences')
+  await databasePool.execute('DELETE FROM preparation_ready_events')
+  // Module Phục vụ 5: lịch sử sửa dòng và yêu cầu hủy tham chiếu dòng đơn, nên
+  // phải xoá trước sales_order_lines — nếu không FK chặn fixture và mọi file
+  // integration sau đó đỏ vì một lý do không liên quan tới nó.
+  await databasePool.execute('DELETE FROM sales_order_line_changes')
+  await databasePool.execute('DELETE FROM sales_order_cancellations')
+  await databasePool.execute('DELETE FROM preparation_ready_notifications')
+  await databasePool.execute('DELETE FROM preparation_print_retry_events')
+  await databasePool.execute('DELETE FROM preparation_print_outbox')
+  await databasePool.execute('DELETE FROM preparation_print_capabilities')
+  await databasePool.execute('DELETE FROM preparation_ticket_events')
+  await databasePool.execute('DELETE FROM preparation_tickets')
+  await databasePool.execute('DELETE FROM sales_order_lines')
+  await databasePool.execute('DELETE FROM sales_orders')
+  await databasePool.execute('DELETE FROM menu_variant_prices')
+  await databasePool.execute('DELETE FROM menu_item_variants')
+  await databasePool.execute('DELETE FROM menu_items')
+  // Categories form a two-level self-referencing tree. Remove leaves first so
+  // the normal FK remains enabled while the shared integration fixture resets.
+  await databasePool.execute('DELETE FROM menu_categories WHERE parent_id IS NOT NULL')
+  for (const table of ['menu_categories',
+    'customer_duplicate_dismissals', 'booking_call_logs', 'operation_log', 'reception_guest_counts', 'table_turns', 'table_allocations', 'table_group_members', 'table_groups', 'table_holds',
     'waitlist_table_preferences', 'waitlist_contact_attempts', 'waitlist_entries', 'reservations', 'visits',
     'customers', 'table_combination_members', 'table_combinations', 'table_adjacencies', 'dining_tables',
     'zones', 'floors', 'auth_sessions', 'membership_roles', 'memberships', 'idempotency_keys',
@@ -138,7 +166,24 @@ export async function login(username = 'integration_reception') {
 /** Test-only login at an explicit portal using the fixture credential. */
 export async function loginAtPortal(
   username: string,
-  portal: 'admin' | 'receptionist' | 'customer-care' | 'cashier' | 'waiter',
+  portal: 'admin' | 'receptionist' | 'customer-care' | 'cashier' | 'waiter' | 'preparation',
 ): Promise<import('supertest').Response> {
   return request(app).post('/api/v1/auth/login').set('Origin', env.webOrigin).send({ username, password, portal })
+}
+
+/** Adds a venue-scoped account using the fixture credential. */
+export async function seedFixtureAccount(id: number, username: string, role: string, venueId = actor.venueId): Promise<void> {
+  await databasePool.execute(
+    'INSERT INTO users (id, username, display_name, password_hash) VALUES (?, ?, ?, ?)',
+    [id, username, username, passwordHash],
+  )
+  await databasePool.execute(
+    'INSERT INTO memberships (id, organization_id, user_id) VALUES (?, ?, ?)',
+    [id, actor.organizationId, id],
+  )
+  await databasePool.execute(
+    `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
+     SELECT ?, ?, id, ? FROM roles WHERE code = ?`,
+    [actor.organizationId, id, venueId, role],
+  )
 }

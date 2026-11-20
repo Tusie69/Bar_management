@@ -8,11 +8,13 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { FloorPage } from "@/features/floor/floor-page"
 import { AuthBoundary } from "@/features/auth/auth-boundary"
 import { adminRoute } from "@/features/admin/admin-routes"
+import { waiterLegacyRoute, waiterRoute } from "@/features/waiter/waiter-routes"
 import { useRealtimeSync } from "@/hooks/use-data"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { AppShell } from "./shell"
 import { shouldUseMobileShell } from "./shell-mode"
 import { useSession } from "@/state/session"
+import { WAITER_HOME_PATH } from "@/features/waiter/waiter-access"
 
 const OverviewPage = lazy(() => import("@/features/overview/overview-page"))
 const ReservationsPage = lazy(() => import("@/features/reservations/reservations-page"))
@@ -22,6 +24,8 @@ const ReportsPage = lazy(() => import("@/features/reports/reports-page"))
 const SettingsPage = lazy(() => import("@/features/settings/settings-page"))
 // Phone (< 768px) gets its own app: Mobile V1. Desktop/Tablet keep AppShell.
 const MobileApp = lazy(() => import("@/features/mobile/mobile-app"))
+const PreparationPage = lazy(() => import("@/features/preparation/preparation-page"))
+const CancellationQueuePage = lazy(() => import("@/features/orders/cancellation-queue-page"))
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -43,6 +47,12 @@ function Root() {
   const mobile = useIsMobile()
   const location = useLocation()
   const role = useSession((state) => state.user.role)
+  // Module Phục vụ 1: Phục vụ có khu vực riêng và không dùng màn Điều phối.
+  // `waiterRoute` đã bắt mọi URL dưới /phucvu, nên tới được đây nghĩa là tài
+  // khoản Phục vụ đang ở một URL của vai khác — đưa họ về đúng khu vực của mình
+  // thay vì render một màn hình họ không có dữ liệu để đọc.
+  if (role === "WAITER") return <Navigate to={WAITER_HOME_PATH} replace />
+  if (role === "BAR" || role === "KITCHEN") return <Navigate to="/chebien" replace />
   if (role === "RECEPTIONIST" && location.pathname !== "/floor") return <Navigate to="/floor" replace />
   return shouldUseMobileShell(role, mobile) ? page(<MobileApp />) : <AppShell />
 }
@@ -58,9 +68,17 @@ function HomeRoute() {
 }
 
 const router = createBrowserRouter([
+  { path: "/chebien", element: page(<PreparationPage />) },
+  // Module Phục vụ 5: hàng chờ phê duyệt hủy món. Route riêng ở gốc, cùng lý do
+  // thứ tự như /chebien: nó không thuộc khung của Lễ tân và cũng không thuộc
+  // khu vực Phục vụ — người mở nó là người có quyền phê duyệt.
+  { path: "/duyet-huy-mon", element: page(<CancellationQueuePage />) },
   // TU-39: Trang Quản trị có shell, sidebar và registry riêng. Nó đứng trước
   // route "/" vì route đó bắt mọi URL còn lại và sẽ nuốt /admin.
   adminRoute,
+  // Module Phục vụ 1: khu vực Phục vụ, cùng lý do thứ tự như adminRoute.
+  waiterRoute,
+  waiterLegacyRoute,
   {
     path: "/",
     element: <Root />,

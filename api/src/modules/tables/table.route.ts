@@ -9,8 +9,9 @@ import {
 import { getAuthentication, requireAuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { hasPermission, inspectSession } from '../../auth/auth.service.js'
 import { AppError } from '../../errors/app-error.js'
-import { idempotent, idempotencyTransaction } from '../../middleware/idempotency.js'
+import { afterIdempotencyCommit, idempotent, idempotencyTransaction } from '../../middleware/idempotency.js'
 import { getFloorProjection } from './floor-projection.repository.js'
+import { toWaiterFloorProjection } from './waiter-floor-projection.js'
 import { publishFloorChange, subscribeToFloorChanges } from './floor-change-stream.js'
 import {
   addLayoutGroupMembers,
@@ -49,12 +50,43 @@ tableRouter.get('/', requireAuthentication, requirePermission('customer.view_mas
   response.json(await getFloorProjection(actor, businessDate))
 })
 
+/**
+ * Danh mục bàn: mặt bằng, khu vực, sức chứa, toạ độ. KHÔNG có dữ liệu khách,
+ * nên Phục vụ (`order.read`) đọc được cùng một payload mà Lễ tân đang đọc —
+ * không có phép chiếu riêng, và vì thế không có hai phiên bản mặt bằng để
+ * lệch nhau. Mọi thứ thuộc về khách nằm ở projection sơ đồ, không ở đây.
+ */
 tableRouter.get(
   '/catalog',
   requireAuthentication,
-  requirePermission('customer.view_masked'),
+  requireAnyPermission('customer.view_masked', 'order.read', 'preparation.bar.read', 'preparation.kitchen.read'),
   async (request, response) => {
     response.json(await getTableCatalog(requireAuthenticatedActor(request)))
+  },
+)
+
+/**
+ * Module Phục vụ 1 — sơ đồ bàn của ca hiện tại cho WAITER.
+ *
+ * Endpoint RIÊNG thay vì nhét một nhánh `if (role === WAITER)` vào `GET /`:
+ * payload của Lễ tân không đổi một byte nào, nên không có cách nào làm hỏng
+ * màn Điều phối khi sửa phần của Phục vụ. Cả hai dùng chung một
+ * `getFloorProjection`, nên hai màn hình không thể thấy hai trạng thái bàn
+ * khác nhau.
+ *
+ * `toWaiterFloorProjection` xoá tên, số điện thoại, nguồn đặt và mọi cờ nhận
+ * dạng khách TRƯỚC khi payload rời máy chủ. Đây là chốt thật: gọi thẳng
+ * endpoint bằng cookie phiên của một tài khoản Phục vụ cũng không lấy được
+ * những trường đó.
+ */
+tableRouter.get(
+  '/service',
+  requireAuthentication,
+  requirePermission('order.read'),
+  async (request, response) => {
+    const businessDate = parseBusinessDate(request.query.date)
+    const actor = requireAuthenticatedActor(request)
+    response.json(toWaiterFloorProjection(await getFloorProjection(actor, businessDate)))
   },
 )
 
@@ -198,12 +230,12 @@ function parseGroupVersion(value: unknown): number {
 }
 
 /** Pushes the committed change so other devices see it well inside two seconds. */
-function announce(actor: { organizationId: number; venueId: number }, changeSeq: number): void {
-  void publishFloorChange({
+function announce(response: Parameters<typeof afterIdempotencyCommit>[0], actor: { organizationId: number; venueId: number }, changeSeq: number): void {
+  afterIdempotencyCommit(response, () => publishFloorChange({
     organizationId: actor.organizationId,
     venueId: actor.venueId,
     changeSeq: String(changeSeq),
-  })
+  }))
 }
 
 tableRouter.get(
@@ -227,7 +259,7 @@ tableRouter.get(
 tableRouter.get(
   '/stream',
   requireAuthentication,
-  requirePermission('customer.view_masked'),
+  requireAnyPermission('customer.view_masked', 'order.read', 'preparation.bar.read', 'preparation.kitchen.read'),
   (request, response) => {
     const authentication = getAuthentication(request)!
     const actor = authentication.actor
@@ -240,9 +272,15 @@ tableRouter.get(
       authorize: async () => {
         const current = await inspectSession(authentication.sessionToken)
         if (!current.ok) return current.code
-        return await hasPermission(current.authentication.actor, 'customer.view_masked')
-          ? null
-          : 'SESSION_REVOKED'
+        // Khung SSE chỉ nói "sơ đồ đã đổi", không chở dữ liệu nào, nên Phục vụ
+        // nghe được bằng `order.read`: client nhận khung rồi gọi lại đúng
+        // endpoint của mình (`/tables/service`) và nhận đúng phép chiếu của
+        // mình. Mở kênh này KHÔNG mở thêm một byte dữ liệu khách nào.
+        const actor = current.authentication.actor
+        if (await hasPermission(actor, 'customer.view_masked')) return null
+        if (await hasPermission(actor, 'order.read')) return null
+        if (await hasPermission(actor, 'preparation.bar.read')) return null
+        return await hasPermission(actor, 'preparation.kitchen.read') ? null : 'SESSION_REVOKED'
       },
     })
   },
@@ -276,8 +314,8 @@ tableRouter.post(
       },
       idempotencyTransaction(response),
     )
+    announce(response, actor, result.changeSeq)
     response.status(201).json(result)
-    announce(actor, result.changeSeq)
   },
 )
 
@@ -301,8 +339,8 @@ tableRouter.post(
       },
       idempotencyTransaction(response),
     )
+    announce(response, actor, result.changeSeq)
     response.json(result)
-    announce(actor, result.changeSeq)
   },
 )
 
@@ -328,8 +366,8 @@ tableRouter.post(
       },
       idempotencyTransaction(response),
     )
+    announce(response, actor, result.changeSeq)
     response.json(result)
-    announce(actor, result.changeSeq)
   },
 )
 
@@ -349,6 +387,10 @@ tableRouter.post(
     const body = parseBody(request.body)
     const actor = requireAuthenticatedActor(request)
     const groupId = parseGroupId(request.params.id)
+    // Module Phục vụ 1: route này nhận `table.group.manage` HOẶC `visit.split`.
+    // Người chỉ có `visit.split` (Phục vụ) được tách đoàn khách đang ngồi,
+    // không được xếp mặt bằng, nên mọi nhánh dưới đây phải tự biết điều đó.
+    const canManageLayout = await hasPermission(actor, 'table.group.manage')
 
     // Only an explicit mode selects the dissolve branch, so a body with neither
     // mode nor keepTableIds still reports the missing table list it is missing.
@@ -356,13 +398,19 @@ tableRouter.post(
       if (body.mode !== 'ALL_TO_SINGLE') {
         throw new AppError(400, 'INVALID_SPLIT_MODE', 'Cách tách cụm bàn không hợp lệ.')
       }
+      // ALL_TO_SINGLE đi thẳng vào `dissolveLayoutGroup`: nó rã cả cụm, kể cả
+      // cụm chưa có khách. Đó là thao tác mặt bằng, không phải tách một Phiên.
+      if (!canManageLayout) {
+        throw new AppError(403, 'PERMISSION_DENIED',
+          'Rã cả cụm bàn là thao tác sắp xếp mặt bằng. Chỉ tách được cụm đang có khách.')
+      }
       const dissolved = await dissolveLayoutGroup(
         actor,
         { groupId, version: parseGroupVersion(body.version) },
         idempotencyTransaction(response),
       )
+      announce(response, actor, dissolved.changeSeq)
       response.json(dissolved)
-      announce(actor, dissolved.changeSeq)
       return
     }
 
@@ -371,11 +419,15 @@ tableRouter.post(
     }
     const result = await splitTableGroup(
       actor,
-      { groupId, keepTableIds: body.keepTableIds.map(Number) },
+      {
+        groupId,
+        keepTableIds: body.keepTableIds.map(Number),
+        ...(canManageLayout ? {} : { requireSeatedVisit: true }),
+      },
       idempotencyTransaction(response),
     )
+    announce(response, actor, result.changeSeq)
     response.json(result)
-    announce(actor, result.changeSeq)
   },
 )
 

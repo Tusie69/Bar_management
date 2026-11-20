@@ -12,6 +12,7 @@ import { PORTAL_CONFIG, portalLoginPath, type AuthPortal } from "@/domain/auth-p
 import type { RoleCode } from "@/domain/enums"
 import { roleCan } from "@/domain/access"
 import { sessionEndMessage } from "@/domain/session-end"
+import { clearWaiterCartDrafts } from "@/domain/waiter-cart-storage"
 import type { SessionUser } from "@/domain/models"
 import { api, ApiError, authApi, httpClient, type AuthSession, type AuthenticatedUser } from "@/services"
 
@@ -185,6 +186,10 @@ export const useSession = create<SessionState>((set, get) => ({
       .catch((error: unknown) => {
         currentAuthApi.clear()
         if (error instanceof ApiError && error.status === 401) {
+          // Không có phiên nào ở máy chủ, nên mọi nháp giỏ trên tab này thuộc
+          // về một phiên đã chết. Giữ lại chúng nghĩa là người đăng nhập tiếp
+          // theo trên cùng cái máy mở màn gọi món và thấy giỏ của người trước.
+          clearWaiterCartDrafts()
           set({
             principal: null,
             permissions: [],
@@ -215,6 +220,10 @@ export const useSession = create<SessionState>((set, get) => ({
     if (!authApi) return
     const portal = get().portal
     await authApi.logout()
+    // Module Phục vụ 3: nháp giỏ gọi món là của người vừa đăng xuất. Máy Phục
+    // vụ là máy dùng chung, nên một giỏ còn sót lại sẽ được người tiếp theo gửi
+    // cho sai bàn.
+    clearWaiterCartDrafts()
     set({
       principal: null,
       permissions: [],
@@ -245,6 +254,9 @@ export const useSession = create<SessionState>((set, get) => ({
   expire: (message = "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.", code?: string) => {
     const portal = get().portal
     authApi?.clear()
+    // Phiên bị thu hồi cũng là hết quyền với giỏ đang mở: không giữ lại nháp
+    // cho người đăng nhập sau trên cùng cái tab.
+    clearWaiterCartDrafts()
     set({
       principal: null,
       permissions: [],
@@ -271,9 +283,22 @@ httpClient?.setUnauthorizedHandler((error) => {
   }
 })
 
+/**
+ * CSRF token không còn hợp lệ cũng là mất quyền ghi: mọi request tạo/sửa từ
+ * đây sẽ bị máy chủ từ chối cho tới khi đăng nhập lại.
+ *
+ * Trước đây nhánh này chỉ đặt `authStatus` và `authError`, nên `principal` và
+ * `permissions` vẫn nằm đó — màn hình tiếp tục bật đủ nút cho một phiên đã
+ * không ghi được gì nữa. Giờ nó dọn đúng những thứ mà `logout` và `expire`
+ * dọn, cộng nháp giỏ, nên ba đường mất xác thực để lại cùng một trạng thái.
+ */
 httpClient?.setCsrfFailureHandler(() => {
   authApi?.clear()
+  clearWaiterCartDrafts()
   useSession.setState({
+    principal: null,
+    permissions: [],
+    mustChangePassword: false,
     authStatus: "error",
     authError: "Phiên bảo mật không còn hợp lệ. Hãy tải lại phiên trước khi tiếp tục.",
   })

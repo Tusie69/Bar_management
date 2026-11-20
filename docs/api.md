@@ -119,9 +119,9 @@ database dưới CHECK constraint `ck_auth_sessions_portal`, nên đổi nó s�
 Migration `0027_waiter_role_and_order_permissions.sql` thêm role `WAITER`, ba permission `order.create`, `order.read`,
 `payment.collect`, và nới `ck_auth_sessions_portal` để nhận `waiter`.
 
-**Ba permission order/payment là giàn giáo phân quyền, không phải nghiệp vụ đã có.** Module order chưa tồn tại trong
-repository này và không có endpoint nào đang dùng chúng. Chúng được tạo trước để route guard của module order tương lai
-có chỗ neo, và để bảng role × permission phản ánh đúng sáu cấp.
+**`order.read` và `order.create` đã có endpoint thật kể từ Module Phục vụ 2 và 3**: `order.read` canh catalog món, danh
+sách đơn theo Phiên và chi tiết đơn; `order.create` canh `POST /waiter/orders`. `payment.collect` vẫn là giàn giáo —
+module thanh toán chưa tồn tại và không endpoint nào đang dùng nó.
 
 Grants của ba permission mới:
 
@@ -137,6 +137,33 @@ Phục vụ quyền nào về khách hàng.
 
 Số permission sau 0027 và 0028: 36 cho `OWNER`, 34 cho `ADMIN` (= 36 trừ `venue.configure` và `customer.anonymize`),
 23 `RECEPTIONIST`, 7 `CUSTOMER_CARE`, 6 `CASHIER`, 2 `WAITER`.
+
+### Module Phục vụ 1 — quyền dọn chỗ cho khách đang ngồi (migration 0032)
+
+`0032_waiter_active_visit_permissions.sql` cấp thêm cho `WAITER` ba permission ĐÃ CÓ từ 0001: `visit.move`,
+`visit.combine` và `visit.split`. Không tạo permission mới, không sửa 0027.
+
+Ba quyền này đều gắn vào một Visit ĐANG MỞ, nên chúng không mở ra việc sắp xếp mặt bằng:
+
+| Permission           | RECEPTIONIST | WAITER    | Phạm vi                                       |
+| -------------------- | ------------ | --------- | --------------------------------------------- |
+| `visit.move`         | Có           | Có        | Đổi bàn của một Phiên đang mở                 |
+| `visit.combine`      | Có           | Có        | Ghép bàn vào một Phiên đang mở                |
+| `visit.split`        | Có           | Có        | Tách cụm bàn ĐANG CÓ KHÁCH                    |
+| `table.group.manage` | Có           | **Không** | Ghép / rã cụm bàn TRỐNG để sắp xếp mặt bằng   |
+
+`table.group.manage` cố ý KHÔNG cấp cho Phục vụ. Nó là quyền trên cụm bàn chưa có khách nào (C1/0017), tức là quyền xếp
+mặt bằng quán — biên bản giữ việc đó cho Lễ tân. Vì `POST /tables/groups/:id/split` nhận cả `visit.split`, route đó tự
+kiểm thêm hai điều khi người gọi KHÔNG có `table.group.manage`:
+
+- nhánh `mode: "ALL_TO_SINGLE"` (rã cả cụm, kể cả cụm trống) trả 403 `PERMISSION_DENIED`;
+- nhánh `keepTableIds` trả 403 `SPLIT_REQUIRES_SEATED_VISIT` nếu cụm không đang có một Visit mở — kiểm SAU khi đã lock
+  chủ sở hữu trong transaction, vì giữa lúc đọc trạng thái và lúc ghi khách có thể đã rời bàn.
+
+Phục vụ vẫn KHÔNG có: `reservation.*`, `waitlist.*`, `visit.checkin`, `visit.walkin`, `visit.end`, `visit.mark_paid`,
+`payment.collect`, `report.read`, `audit.read`, `venue.configure`, `user.*` và mọi `customer.*`.
+
+Số permission của `WAITER` sau 0032: 5.
 
 ### Quản lý thiết bị và phiên (TU-33)
 
@@ -308,8 +335,9 @@ Floor Projection and booking views continue to read thresholds directly from `ve
 
 | Method | Path                        | Permission                            | Request / response                                                                                                                                                                                                                               |
 | ------ | --------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| GET    | `/tables/catalog`           | `customer.view_masked`                | `{venue,zones,tables,combinations}`                                                                                                                                                                                                              |
+| GET    | `/tables/catalog`           | `customer.view_masked` or `order.read` | `{venue,zones,tables,combinations}`                                                                                                                                                                                                             |
 | GET    | `/tables?date=YYYY-MM-DD`   | `customer.view_masked`                | Atomic `{businessDate,serverNow,changeSeq,tables:FloorTableProjection[],groups:FloorGroupProjection[]}`                                                                                                                                          |
+| GET    | `/tables/service?date=YYYY-MM-DD` | `order.read`                    | Same shape, guest data removed. See **Floor projection for WAITER** below.                                                                                                                                                                      |
 | PATCH  | `/tables/:id/status`        | `table.assign`                        | Body `{businessDate,state,expectedVersion?,reason?}`; see limitation below                                                                                                                                                                       |
 | PATCH  | `/tables/:id/configuration` | `venue.configure`                     | Body `{isSpare?:boolean,status?:"ACTIVE"                                                                                                                                                                                                         | "OUT_OF_SERVICE",version,reason}`; returns `{table:{id,code,isBackup,status,version}}` |
 | POST   | `/tables/groups/:id/split`  | `table.group.manage` or `visit.split` | Body `{keepTableIds}`, or `{version,mode:"ALL_TO_SINGLE"}` to dissolve a cluster; `{operationId,changeSeq,summary,undoable:false,splitGroupId,group,keptTableIds,releasedTableIds,owner}`. See **Table groups** below for the cluster endpoints. |
@@ -333,6 +361,41 @@ with a different payload is refused `IDEMPOTENCY_KEY_REUSED`. A split is not und
 `is_undoable = 0` and undo stays closed with `NOT_UNDOABLE`.
 
 `claim` is null or a whitelisted `{kind,reservationId,visitId,waitlistEntryId,holdId,guestName,phoneLast3,partySize,turnNo,flags,groupId,groupDisplayCode,groupMemberTableIds,startsAt,deadlineAt,holdOverdue,paid,origin,sourceCode,version}`. `kind` is `RESERVATION`, `VISIT` or `WAITLIST_HOLD`. `turnNo` is currently null. `flags` only contains the structured values `BIRTHDAY`, `NEW` or `RETURNING`; notes are never parsed. A `VISIT` claim that was checked in from a booking keeps that booking's `reservationId`, `flags`, `sourceCode` and masked `phoneLast3`, resolved through `reservations.visit_id`; an independent Walk-in or Waitlist visit reports `reservationId` null, no flags and no source. `canCall` is true for any claim that has somewhere to log a call - a `reservationId`, a `waitlistEntryId` or a `visitId` - together with a `phoneLast3`. It no longer depends on the claim kind or the derived display state. The response never includes raw notes, full phone numbers, ciphertext or HMAC fields.
+
+### Floor projection for WAITER — `GET /tables/service?date=`
+
+`WAITER` has no `customer.view_masked`, so `GET /tables?date=` answers 403 for that role. Module Phục vụ 1 adds a
+separate read model on `order.read` instead of branching inside the receptionist endpoint: the receptionist payload does
+not change by a single byte, so the Điều phối screen cannot break while the Phục vụ screen is edited. Both endpoints
+call the same `getFloorProjection`, so the two screens can never show two different table states.
+
+`toWaiterFloorProjection` (`api/src/modules/tables/waiter-floor-projection.ts`) is a pure function that strips guest
+identity **before the payload leaves the server**. This is the enforcement point, not a display option: hiding a name
+with CSS or a `hideGuestNames` flag in the browser still sends it over the wire, into DevTools, into the query cache and
+to anyone who calls the endpoint directly with their own session cookie.
+
+`claim` keeps only `{kind,visitId,partySize,startsAt,deadlineAt,holdOverdue,paid,version,groupId,groupDisplayCode,groupMemberTableIds}`,
+plus `flags: []`, `origin: null`, `sourceCode: null` and `turnNo: null` to keep the shared projection contract shape.
+Absent at any depth: `guestName`, `phoneLast3`, `honorific`, `iconKeys`, booking notes, `canCall`, `reservationId`,
+`waitlistEntryId`, `holdId`, `lateConfirmedAt` and the legacy `activeVisit` block. The claim field list is written by
+hand as an **allow-list**, not as `Omit<...>`, so a future guest field added to `FloorClaimProjection` does not flow
+into the WAITER payload on its own.
+
+Every table keeps the operational fields Phục vụ works from: `tableId`, `tableCode`, `catalogStatus`, `isSpare`,
+`displayState`, `arrivalPhase`, `arrivalTime`, `minutesLate`, `staleFromPreviousDay`, `seatedTurnCount`, `claimOwner`
+and the cluster membership. A merged cluster therefore reports the **same `visitId` on every member table**, which is
+what makes "tap any cell, open the one shared session" true in the data rather than in the UI.
+
+`GET /tables/stream` accepts `customer.view_masked` **or** `order.read`. An SSE frame carries only a venue change
+cursor and no data, so Phục vụ listening on it opens no guest data; the client then refetches its own endpoint and gets
+its own projection.
+
+The only payment signal available today is `claim.paid` (`visits.paid_marked_at`). The payment module does not exist
+yet, so "waiting for the cashier" and "already paid" are not distinguishable at the data layer; the Phục vụ screen maps
+both to a view-only state. That is a limit of the current data, not a design choice, and it is the one thing Module 2
+has to split.
+
+Frontend side of this module: `docs/frontend-phucvu.md`.
 
 The endpoint performs two fixed-count reads inside one read-only `REPEATABLE READ` transaction. `serverNow` is the application clock instant used for every derived state and `changeSeq` is returned as a decimal string. Groups use persisted IDs and symbol numbers; display codes are zero-padded group numbers (`1 => G01`, `26 => G26`, `50 => G50`). The legacy `state` and `activeVisit` fields remain during rollout, but `activeVisit.note` is always null. GET has no lifecycle write side effects.
 
@@ -1305,3 +1368,231 @@ Migration 0030 replaces the former `0029_customer_history.sql` filename to keep 
 All writes use Origin/CSRF protection, optional `Idempotency-Key`, transactional audits with actor/time/before-after customer IDs, and optimistic versions. Full phone only enters requests; responses use `••• <last3>` or null and never return HMAC/ciphertext. Call logs and waitlist contacts retain parent IDs; immutable dismissal/audit history is not rewritten by merge. Typical errors: 403 permission/scope, 404 entity outside scope or missing, 409 version/undo/pair conflict, 422 validation/name/phone, 503 missing phone keys. Idempotency errors are 400 `INVALID_IDEMPOTENCY_KEY` for malformed keys, 409 `IDEMPOTENCY_IN_PROGRESS` while processing, and 422 `IDEMPOTENCY_KEY_REUSED` for a key bound to another user, venue, path or body; an exact successful retry replays the original response. The complete request/response and UI integration contract is `D:\GAM-APP\docs\contracts\na34-anonymous-visits-and-duplicates.md`.
 
 Assignment, undo, merge and dismissal advance the existing realtime cursors for every venue in the organization in the domain/audit transaction, covering org-wide readers connected through any venue and cross-venue customer references. Rollback and idempotent replay produce no extra cursor advance; other organizations are unaffected.
+
+## Waiter menu catalog (Module 2)
+
+Catalog chỉ đọc nằm ở `GET /api/v1/waiter/menu?visitId=<id>` và
+`GET /api/v1/waiter/menu/items/:itemId?visitId=<id>`. Cả hai yêu cầu session
+hợp lệ và `order.read`; venue luôn lấy từ session. Chi tiết schema, nguồn Excel,
+mapping và các dòng cần xác minh nằm trong `docs/menu-catalog-import.md`.
+
+## Waiter ordering — cart and submitted orders (Module 3)
+
+Requires migration `0036_sales_orders.sql`. Three endpoints, all under `/api/v1/waiter`, venue always taken from the
+session:
+
+| Method | Path                        | Permission     | Request / response                                                        |
+| ------ | --------------------------- | -------------- | ------------------------------------------------------------------------- |
+| POST   | `/waiter/orders`            | `order.create` | `{visitId,idempotencyKey,lines:[{variantId,priceId,priceVersion,quantity,note?}]}` → `201 {order}` |
+| GET    | `/waiter/visits/:id/orders` | `order.read`   | `{visitId,tableCodes,orderCount,totalAmountVnd,orders[]}`, newest order first |
+| GET    | `/waiter/orders/:id`        | `order.read`   | `{order}` with `lines[]` and `tickets[]`                                  |
+
+POST additionally requires Origin/CSRF protection. `order.create` is held by WAITER, CASHIER, ADMIN (WRITE) and OWNER;
+RECEPTIONIST has neither `order.create` nor `order.read` and receives 403 on all three.
+
+### What the client may send, and what it may not
+
+Exactly seven fields: `visitId`, `variantId`, `priceId`, `priceVersion`, `quantity`, `note` and `idempotencyKey`. The
+amount, item name, unit name and preparation station are **never** read from the request — the server reads them from
+the catalog and copies them into the order line. A bill assembled from client-supplied figures is a bill anyone with
+DevTools can rewrite. Extra fields in the body are ignored, not trusted.
+
+Shape validation is in the route (`INVALID_VISIT_ID`, `INVALID_VARIANT_ID`, `INVALID_PRICE_ID`,
+`INVALID_PRICE_VERSION`, `INVALID_QUANTITY`, `INVALID_LINE_NOTE`, `ORDER_LINES_REQUIRED`, `ORDER_TOO_MANY_LINES`,
+`ORDER_DUPLICATE_LINE`); limits are 50 lines per order, quantity 1-99 and note <= 200 characters. Every business rule
+lives in the repository, inside the transaction that holds the `visits` row lock - checking it in the route means
+checking data that is already stale by the next statement.
+
+### One variant, several lines
+
+The same `variantId` may appear on several lines of one order **when the notes differ**. "Two Macallan, one without
+ice" is two lines, and the bar has to receive both; forcing one line per variant would merge two customizations and
+lose one of the two messages on the way to the counter. There is deliberately no unique key on
+`(order_id, menu_item_variant_id)` - line identity is `(order_id, line_no)`.
+
+What *is* rejected is an exactly duplicated pair: same variant and same note, which the cart should already have merged
+into one line with a larger quantity (`400 ORDER_DUPLICATE_LINE`). Notes are compared after normalization - trimmed,
+inner whitespace collapsed, accents stripped, lowercased (`normalizeSearchText`, the same helper the rest of the system
+uses) - so "It  Da" and "it da" are one customization. The **stored** note is what the waiter typed; normalization is
+only for comparison. The cart merges on exactly this key (`cart-model.ts` -> `customizationKey`), so a real client
+never sends a pair the server considers duplicate.
+
+### Re-checked on the server, in one transaction
+
+1. The visit exists in the session's venue (`404 VISIT_NOT_FOUND`), is not ended (`409 VISIT_CLOSED`), is not marked
+   paid (`409 VISIT_NOT_ORDERABLE`), and still holds an open `USAGE` allocation (`409 VISIT_NOT_SEATED`).
+2. Each variant passes the **same** catalog predicates Module 2 uses to show it — item active and `VERIFIED`, variant
+   active and sellable, availability not `DISCONTINUED`, a current price row. Both predicates live in
+   `api/src/modules/menu/menu-catalog-sql.ts` so the screen and the order path cannot drift apart.
+3. `priceId` and `priceVersion` must still be the current price.
+
+Failures are collected across the whole cart, not reported one at a time: a waiter standing next to the table needs to
+hear about all three sold-out items in one answer.
+
+- `409 MENU_ITEM_UNAVAILABLE` - something cannot be sold. `details.variants[{variantId,itemName,
+  variantDisplayName,reason}]`, where `reason` is `TEMPORARILY_UNAVAILABLE`, `NOT_SELLABLE` or `NOT_IN_CATALOG`. A
+  variant belonging to another venue is `NOT_IN_CATALOG` and its name never appears in the response.
+- `409 MENU_PRICE_CHANGED` - a price moved. `details.changes[{variantId,itemName,variantDisplayName,submittedPriceId,
+  submittedPriceVersion,currentPriceId,currentPriceVersion,currentAmountVnd}]`. The server **does not** reprice and
+  **does not** create the order: the guest was quoted a number and has to hear the new one before anything is sent.
+- `409 ORDER_LINES_REJECTED` - **both** at once.
+
+`details` always carries both arrays, whichever code came back; an empty array means that kind of problem is absent.
+The three codes exist because the screen reacts differently (sold out -> drop from the cart; price changed -> ask the
+guest), but one submission reports everything it found. Reporting sold-out items first and price changes only on the
+next attempt made the waiter press send twice, next to the table, to learn the whole story. Findings are grouped by
+`variantId`, so two lines of the same variant with different notes produce one entry: a variant has one current price
+and one availability.
+
+Any of these rolls back the whole order. A partially sent order means the bar makes three drinks while the waiter
+believes they sent five.
+
+### Money limits
+
+Money crosses JSON as a `number`, and JavaScript is exact only up to 9.007e15, while `BIGINT UNSIGNED` holds 1.8e19. A
+value above the safe range is stored, read back, and silently rounded: the screen shows one total and the bill prints
+another, with no error anywhere. So three caps multiply to something still exact:
+
+| Cap | Value | Enforced by |
+| --- | ---: | --- |
+| lines per order | 50 | route, `ck_sales_orders_counts` |
+| quantity per line | 99 | route, `ck_sales_order_lines_quantity` |
+| unit price | 1,000,000,000 VND | repository, `ck_sales_order_lines_price` |
+| order total | 4,950,000,000,000 VND | repository, `ck_sales_orders_total` |
+
+A catalog price above the unit cap (or one that does not read back as a positive safe integer) is refused with
+`409 MENU_PRICE_OUT_OF_RANGE` and `details.variantId`, instead of being copied into an order line; the menu screen also
+refuses to put such a variant into the cart. A total that would exceed the cap is `409 ORDER_TOTAL_OUT_OF_RANGE`. Every
+amount read back out of the database goes through one guard that throws `500 ORDER_AMOUNT_UNREADABLE` rather than
+returning a rounded figure - a screen showing an error gets a phone call, a wrong total does not.
+
+### Price snapshot
+
+`sales_order_lines` stores `item_code`, `item_name`, `variant_display_name`, `unit_code`, `preparation_station`,
+`unit_price_vnd`, `price_id`, `price_version` and the line's `note`, plus the catalog ids for stock and reporting. `line_total_vnd` is a
+stored generated column, not a number the application writes. Nothing in the codebase updates this table: editing a
+submitted order (cancelling an item, changing a quantity) belongs to the next module and will be a new record, not an
+overwrite. Repricing a variant after the order is sent leaves the order's totals byte-identical.
+
+### Orders belong to the visit, tickets to the station
+
+One click on "Gửi đơn" creates one order; a visit accumulates many, numbered by `visit_sequence` (unique per visit,
+assigned under the visit row lock, so two simultaneous clicks cannot both take number 2). Orders reference `visit_id`,
+never `table_id` — a merged cluster of four tables is one visit, and a table-scoped order would point at a table the
+party no longer occupies after a move. Moving or merging tables mid-evening leaves every order attached to the visit.
+
+`preparation_tickets` holds one row per (order, station), derived from the `preparation_station` copied into each line.
+An order with drinks and food produces two tickets; drinks only produces one. Status is `QUEUED`; preparation state,
+printing and cancellation are the next module.
+
+### One click, one order
+
+`idempotencyKey` is required (`400 INVALID_IDEMPOTENCY_KEY` when missing or malformed) and reuses the FX-04 machinery
+on `idempotency_keys`: `requireBodyIdempotencyKey` lifts it out of the body into the header that `idempotent()` reads,
+so there is one anti-duplication mechanism rather than two. The order, its lines, its tickets, the audit row and the
+`idempotency_keys` row commit together.
+
+- Same key, same body → the original `201` is replayed with `Idempotent-Replayed: true`. No second order.
+- Same key, different body → `422 IDEMPOTENCY_KEY_REUSED`. The web client regenerates the key whenever the cart
+  changes, so a resubmission after an edit is a new request rather than a reused key.
+- Two concurrent clicks with the same key → the second waits on the unique-key INSERT and then either replays the
+  first response or answers `409 IDEMPOTENCY_IN_PROGRESS`. Exactly one order row exists either way.
+- A business failure (sold out, price changed) rolls the key row back too, so fixing the cart and pressing send again
+  works instead of being rejected as a reuse.
+
+### Audit
+
+Every order writes one `operation_log` row: `SALES_ORDER_CREATED`, `entity_type = 'sales_order'`, the ordering user,
+their membership, their auth session and the idempotency key. `changes` carries `visitId`, `visitSequence`,
+`lineCount`, `itemCount`, `totalAmountVnd`, `stations` and, per line, `itemCode`, `variantId`, `unitCode`, `station`,
+`quantity`, `unitPriceVnd`, `priceId`, `priceVersion` and `hasNote` — **a boolean, never the note text**. Item notes
+are a free-text field a waiter types into and have carried a guest name and phone number before now; the audit screen
+is not where that should surface. The note still reaches the bar: it lives on the order line.
+
+`SALES_ORDER_CREATED` has a Vietnamese label but no filter group. The 15/11 minutes name exactly seven groups and
+"Giảm giá / hủy món" means something else; the row reads under "Tất cả" rather than being filed under a group that
+misnames it. Each order also advances `venues.change_seq` once, for the realtime cursor.
+
+## Waiter order tracking and adjustment (Module 5)
+
+Requires migration `0040_order_adjustment_and_cancellation.sql`. Four endpoints on top of Module 3's order list:
+
+| Method | Path | Permission | Request / response |
+| --- | --- | --- | --- |
+| GET | `/waiter/visits/:id/orders` | `order.read` | Module 3's list, now with per-line Module 5 fields |
+| PATCH | `/waiter/orders/:orderId/lines/:lineNo` | `order.line.adjust` | `{expectedLineVersion,quantity,reason?,idempotencyKey}` → `{order}` |
+| POST | `/waiter/orders/:orderId/lines/:lineNo/cancellations` | `order.cancel.request` | `{expectedLineVersion,quantity,reason,acknowledgeWaste?,idempotencyKey}` → `201 {cancellation}` |
+| GET | `/orders/cancellations?status=&limit=` | `order.cancel.approve` | `{status,pendingCount,entries[]}` |
+| POST | `/orders/cancellations/:id/approve` \| `/reject` | `order.cancel.approve` | `{expectedVersion,note?,idempotencyKey}` → `{cancellationId,status,version,order}` |
+
+Writes require Origin/CSRF protection and a body `idempotencyKey`, same machinery as Module 3. **No route names a role.**
+Granting a new level of staff the right to approve is an INSERT into `role_permissions`, not a code change.
+
+New permissions, and who holds them:
+
+| Permission | WAITER | CASHIER | ADMIN / OWNER |
+| --- | --- | --- | --- |
+| `order.line.adjust` | yes | yes | yes |
+| `order.cancel.request` | yes | yes | yes |
+| `order.cancel.approve` | **no** | yes | yes |
+| `order.cancel.ready` | **no** | **no** | yes |
+
+A waiter who can approve their own cancellation turns "needs approval" into one extra tap, so WAITER does not get it.
+Writing off a drink that was already poured is a manager's call, so `order.cancel.ready` stops at ADMIN/OWNER.
+
+### Per-line state the screen reads
+
+Each line now carries `lineVersion`, `cancelledQuantity`, `netQuantity`, `netTotalVnd`, `preparationStatus`,
+`canAdjustQuantity` and `pendingCancellation`. An order summary carries `cancelledItemCount`, `cancelledAmountVnd` and
+`netAmountVnd`; the list view carries the same three for the whole visit.
+
+`preparationStatus` is the status of **the station ticket that carries the line**, because Module 4 accepts a ticket
+(one per station per order), not a line. Claiming "this line is ACCEPTED" when only the ticket was accepted would be a
+promise the data cannot keep.
+
+### Changing a quantity
+
+Allowed only while all three hold: the station ticket is still `SUBMITTED`, the line has no approved cancellation, and
+no request is pending. Outside that window the only road is a cancellation request with an approver on it.
+
+- `409 ORDER_LINE_VERSION_CONFLICT` — another device changed the line; the response carries `currentVersion`.
+- `409 ORDER_LINE_ALREADY_ACCEPTED` — the station took the ticket; carries `station` and `ticketStatus`.
+- `409 ORDER_LINE_CANCELLATION_PENDING` — a decision is outstanding on that line.
+- `409 ORDER_LINE_PARTIALLY_CANCELLED` — part of the line is already cancelled; order more with a new order instead.
+
+The write updates the line, the order's `item_count`/`total_amount_vnd`, the station ticket's `item_count`, a row in
+`sales_order_line_changes` and an audit row — all in one transaction. The ticket's `version` is bumped too, so a
+station about to accept a changed count is forced to reload rather than accept a stale number. A no-op (same quantity)
+changes nothing and writes no history: a "3 → 3" line only dilutes the log.
+
+### Cancelling an item
+
+`POST .../cancellations` creates a record and cancels nothing. It stores who asked, how many, why, and what state the
+item was in at that moment (`ticket_status_at_request`) — the approver needs to know where the item was when the waiter
+pressed, not only when they opened the queue. `reason` is required (`400 CANCEL_REASON_REQUIRED`). One pending request
+per line, enforced by a unique key (`409 ORDER_CANCELLATION_PENDING`): two requests would be approved twice and cancel
+double.
+
+Items already made have a separate policy, and the ordinary road refuses them by default. When the ticket is `READY` or
+`COLLECTED` the server derives `policy = 'READY_WASTE'` and requires **both** `order.cancel.ready`
+(`403 ORDER_CANCEL_READY_DENIED`) and an explicit `acknowledgeWaste: true` (`409 ORDER_LINE_ALREADY_READY`). The client
+never chooses the policy; the ticket state does.
+
+Approval updates the cancellation, the line's `cancelled_quantity`, the order's `cancelled_item_count` /
+`cancelled_amount_vnd`, the ticket's `cancelled_item_count`, the line-change history and the audit row in one
+transaction. The quantity is re-checked at decision time (`409 ORDER_LINE_QUANTITY_EXCEEDED`) because the line may have
+shrunk since the request. Rejection touches nothing but the request itself.
+
+**Nothing deletes an order line.** `total_amount_vnd` stays the total the guest was quoted when ordering; the cancelled
+part lives in its own column and `netAmountVnd` is the difference. Subtracting from the total would erase the number the
+guest actually heard, and a bill whose line vanished cannot be reconciled with the ticket printed at the station.
+
+### Audit
+
+`SALES_ORDER_LINE_ADJUSTED` (no filter group), plus `SALES_ORDER_CANCELLATION_REQUESTED` / `_APPROVED` / `_REJECTED`,
+which fill the `discount` group ("Giảm giá / hủy món") that 0027 reserved and left empty. The approval row carries both
+`requestedByUserId` and the deciding actor — two different people on one row is the whole point of approval.
+
+Free text never reaches the audit detail column: `changes` carries `hasReason` / `hasNote` booleans, while the reason
+itself lives in `sales_order_cancellations.reason` and the decision note in `sales_order_line_changes.reason`. Item
+notes and cancellation reasons are free-text fields staff type into, and they have carried a guest name before.

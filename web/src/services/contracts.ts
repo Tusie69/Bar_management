@@ -398,6 +398,41 @@ export interface UndoState {
   redo: UndoStateItem | null
 }
 
+/**
+ * Module Phục vụ 1 — một lần đọc sơ đồ cho màn `/phucvu`.
+ *
+ * Trả về cả danh mục bàn và trạng thái sơ đồ trong một lần, vì màn Phục vụ
+ * không vẽ được gì nếu thiếu một trong hai, và vì nó dùng một endpoint riêng
+ * (`GET /tables/service`) chứ không phải endpoint của Lễ tân.
+ *
+ * `floor.tables[].claim` ở đây KHÔNG mang tên, số điện thoại, nguồn đặt hay cờ
+ * nhận dạng khách: máy chủ đã lược chúng trước khi trả về.
+ */
+export interface WaiterFloorSnapshot {
+  catalog: Catalog
+  floor: FloorState
+}
+
+/**
+ * Module Phục vụ 1 — đổi hoặc ghép bàn cho một Phiên ĐANG MỞ.
+ *
+ * Phục vụ không gọi `moveClaim`/`combineTables` được: hai hàm đó đọc lại sơ đồ
+ * đầy đủ của Lễ tân để tìm claim, và tài khoản Phục vụ nhận 403 ở endpoint đó.
+ * Phép chiếu của Phục vụ đã mang `visitId` và `version`, nên ở đây gửi thẳng
+ * hai giá trị ấy và không cần đọc gì thêm.
+ *
+ * `tableIds` là BỘ BÀN CUỐI CÙNG của Phiên sau thao tác, giống hệt hợp đồng
+ * của `POST /visits/:id/move` và `POST /visits/:id/merge`. Không phải "các bàn
+ * thêm vào": một tham số mang hai nghĩa tuỳ chế độ là cách sinh ra lỗi mất bàn.
+ */
+export interface WaiterVisitTablesInput {
+  visitId: number
+  version: number
+  mode: "MOVE" | "MERGE"
+  tableIds: number[]
+  capacityOverrideConfirmed?: boolean
+}
+
 /* ---------------- Interface ---------------- */
 
 export interface GamApi {
@@ -417,6 +452,10 @@ export interface GamApi {
   getCatalog(): Promise<Catalog>
   getVenueSettings(): Promise<VenueSettingsView>
   getFloorState(at: Date, businessDate?: BusinessDate): Promise<FloorState>
+  /** Module Phục vụ 1: sơ đồ ca hiện tại, không kèm dữ liệu nhận dạng khách. */
+  getWaiterFloor(businessDate: BusinessDate): Promise<WaiterFloorSnapshot>
+  /** Module Phục vụ 1: đổi hoặc ghép bàn của một Phiên đang mở. */
+  updateWaiterVisitTables(input: WaiterVisitTablesInput): Promise<MutationResult>
   getReceptionGuestCount(businessDate: BusinessDate): Promise<ReceptionGuestCount>
   updateReceptionGuestCount(
     input: ReceptionGuestCountValues & { businessDate: BusinessDate; version: number },
@@ -554,6 +593,7 @@ export const REST_ENDPOINTS = {
   catalog: "GET /tables/catalog",
   sources: "GET /bookings/sources",
   floorState: "GET /tables?date=YYYY-MM-DD",
+  waiterFloorState: "GET /tables/service?date=YYYY-MM-DD",
   reservations: "GET /bookings?date=YYYY-MM-DD",
   receptionSearch: "GET /bookings/search?date=YYYY-MM-DD&last3=123",
   exportDailyBookingText: "GET /bookings/export?date=YYYY-MM-DD",

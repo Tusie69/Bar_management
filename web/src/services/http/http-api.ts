@@ -167,6 +167,25 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     latestFloorByDate.set(date, structuredClone(mapped))
     return mapped
   }
+  /**
+   * Module Phục vụ 1 — sơ đồ của vai WAITER.
+   *
+   * Endpoint riêng (`/tables/service`), không phải `/tables`: tài khoản Phục
+   * vụ không có `customer.view_masked` nên gọi `/tables` sẽ nhận 403. Payload
+   * dùng CHUNG hợp đồng projection với Lễ tân, chỉ thiếu các trường dữ liệu
+   * khách, nên nó đi qua đúng `mapFloorProjection` đã được kiểm kỹ thay vì một
+   * adapter thứ hai có thể lệch luật trạng thái bàn.
+   */
+  const waiterFloor = async (date: BusinessDate) => {
+    const [catalog, projection] = await Promise.all([
+      loadCatalog(),
+      get<BackendFloorProjection>(`/tables/service?date=${date}`),
+    ])
+    if (projection.businessDate !== date) {
+      throw new ApiError(502, "BUSINESS_DATE_RESPONSE_MISMATCH", "Unexpected business date in floor response.")
+    }
+    return { catalog, floor: mapFloorProjection(projection, catalog) }
+  }
   const snapshot = async (at: Date, date: BusinessDate = businessDateOf(at)) => {
     const [catalog, floorState, rows] = await Promise.all([loadCatalog(), floor(date), bookings.list(date)])
     return {
@@ -215,6 +234,18 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     getCatalog: loadCatalog,
     getVenueSettings: () => get<VenueSettingsView>("/settings"),
     getFloorState: async (at, date = businessDateOf(at)) => floor(date),
+    getWaiterFloor: (date) => waiterFloor(date),
+    updateWaiterVisitTables: async (input) => {
+      const confirmations = input.capacityOverrideConfirmed === undefined
+        ? {}
+        : { capacityOverrideConfirmed: input.capacityOverrideConfirmed }
+      if (input.mode === "MOVE") {
+        await visits.move(input.visitId, input.version, input.tableIds, confirmations)
+        return result("Đã đổi bàn.")
+      }
+      await visits.merge(input.visitId, input.version, input.tableIds, confirmations)
+      return result("Đã ghép bàn.")
+    },
     getReceptionGuestCount: async (date) =>
       (await get<{ guestCount: ReceptionGuestCount }>(`/reception/guest-counts?date=${date}`)).guestCount,
     updateReceptionGuestCount: async (input) =>

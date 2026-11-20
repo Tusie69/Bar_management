@@ -21,6 +21,10 @@
     "e2e:sprint4": "node e2e/sprint4-admin-capture.mjs",
     "a11y": "node e2e/a11y.mjs",
     "e2e:mobile": "node e2e/mobile-layout.mjs",
+    "e2e:waiter-menu": "node e2e/waiter-menu.mjs",
+    "e2e:waiter-order": "node e2e/waiter-order.mjs",
+    "e2e:waiter-order-board": "node e2e/waiter-order-board.mjs",
+    "e2e:preparation": "node e2e/preparation-queue.mjs",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
   },
   "dependencies": {

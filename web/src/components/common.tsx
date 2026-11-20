@@ -3,7 +3,7 @@ import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { PERMISSION_LABEL, type Permission } from "@/domain/access"
-import { symbolByNo } from "@/domain/symbols"
+import { groupSymbolPathAttributes, symbolByNo } from "@/domain/symbols"
 import { maskedPhone } from "@/lib/text"
 import { cn } from "@/lib/utils"
 import { initialsOf, toneFor } from "./tone"
@@ -31,7 +31,9 @@ export function GroupSymbolIcon({
       role="img"
       aria-label={title ?? `Ký hiệu ghép: ${sym.name}`}
     >
-      <path d={sym.path} fill="currentColor" />
+      {/* Nửa sau của bộ ký hiệu là cùng 12 hình nhưng vẽ viền; luật vẽ nằm
+          trong domain/symbols.ts để test được không cần DOM. */}
+      <path d={sym.path} {...groupSymbolPathAttributes(sym)} />
     </svg>
   )
 }

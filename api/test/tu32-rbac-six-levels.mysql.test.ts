@@ -159,12 +159,20 @@ mysqlDescribe('TU-32 — sáu cấp tài khoản', () => {
       }
     })
 
-    it('Phục vụ chỉ có order.create và order.read', async () => {
+    it('Phục vụ chỉ gọi món và dọn chỗ cho Phiên đang có khách', async () => {
       const session = await signIn(find(6))
-      expect([...session.permissions].sort()).toEqual(['order.create', 'order.read'])
+      // Module Phục vụ 1 (migration 0032) thêm ba quyền đổi / ghép / tách, và
+      // chỉ ba quyền đó: chúng đều gắn vào một Visit đang mở. `table.group.manage`
+      // là quyền xếp mặt bằng trên cụm bàn trống và vẫn thuộc Lễ tân.
+      expect([...session.permissions].sort()).toEqual([
+        'order.cancel.request', 'order.create', 'order.line.adjust', 'order.read',
+        'preparation.ready.acknowledge', 'preparation.ready.read',
+        'visit.combine', 'visit.move', 'visit.split',
+      ])
       // Biên bản không cấp cho Phục vụ quyền nào về khách hàng, kể cả 3 số cuối.
       expect(session.permissions).not.toContain('customer.view_masked')
       expect(session.permissions).not.toContain('booking.phone.call')
+      expect(session.permissions).not.toContain('table.group.manage')
     })
 
     it('Thu ngân lên đơn và thu tiền nhưng không đặt bàn', async () => {

@@ -4,7 +4,7 @@
  * staff use (docs/GAM_APP_Tong_hop_yeu_cau, db05).
  */
 
-export type RoleCode = "OWNER" | "ADMIN" | "RECEPTIONIST" | "CUSTOMER_CARE" | "CASHIER" | "WAITER"
+export type RoleCode = "OWNER" | "ADMIN" | "RECEPTIONIST" | "CUSTOMER_CARE" | "CASHIER" | "WAITER" | "BAR" | "KITCHEN"
 export type TableKind = "TABLE" | "BAR_SEAT"
 export type TableStatus = "ACTIVE" | "OUT_OF_SERVICE" | "RETIRED"
 export type CustomerStatus = "ACTIVE" | "MERGED" | "ANONYMIZED"
@@ -80,6 +80,8 @@ export const ROLE_LABEL: Record<RoleCode, string> = {
   CUSTOMER_CARE: "CSKH",
   CASHIER: "Thu ngân",
   WAITER: "Phục vụ",
+  BAR: "Quầy Bar",
+  KITCHEN: "Bếp",
 }
 
 export const SOURCE_LABEL: Record<BookingSourceCode, string> = {
