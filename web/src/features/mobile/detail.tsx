@@ -1,7 +1,7 @@
 import { formatHonorificName } from "@/domain/booking-identity"
 import { formatBookingSource } from "@/domain/enums"
 import { ChevronLeft } from "lucide-react"
-import { useState, type ReactNode } from "react"
+import { type ReactNode } from "react"
 import { RevealPhone } from "@/components/reveal-phone"
 import { Button } from "@/components/ui/button"
 import { useReservations, useWaitlist } from "@/hooks/use-data"
@@ -10,7 +10,6 @@ import { cn } from "@/lib/utils"
 import { useCan } from "@/state/session"
 import { CallCustomerControl } from "../bookings/call-customer"
 import { CallHistory } from "../bookings/call-history"
-import { EditReservationDialog } from "../reservations/reservation-detail"
 import { useMobileActions } from "./actions"
 import { useM } from "./context"
 import { codesOf, lateOf, subOf } from "./model"
@@ -36,7 +35,6 @@ export function DetailScreen({
 }) {
   const m = useM()
   const a = useMobileActions()
-  const [editOpen, setEditOpen] = useState(false)
   const canUpdate = useCan("reservation.update")
   const res = useReservations(bd).data
   const r = res?.find((x) => x.id === id)
@@ -55,10 +53,10 @@ export function DetailScreen({
           <ChevronLeft className="size-[22px]" aria-hidden />
         </button>
         <span className="min-w-0 truncate text-[15px] font-semibold text-tx-2">{backLabel}</span>
-        {canUpdate && r ? (
+        {canUpdate && r && r.status === "BOOKED" ? (
           <button
             type="button"
-            onClick={() => setEditOpen(true)}
+            onClick={() => m.openBookingEdit(r.id, r.businessDate)}
             aria-label="Sửa booking"
             disabled={waitlist.isPending || waitlist.isError || waitlist.isFetching || waitlist.isPlaceholderData}
             className="gm-press ml-auto inline-flex h-11 shrink-0 items-center rounded-xl border border-border-strong bg-surface-1 px-4 text-[13.5px] font-semibold text-tx-1 shadow-[var(--shadow-xs)] hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-50"
@@ -137,7 +135,10 @@ export function DetailScreen({
               : r.classification === "NEW"
                 ? "Chưa từng đặt bàn"
                 : "Chưa phân loại",
-          btn: canUpdate ? { label: "Sửa", go: () => setEditOpen(true) } : undefined,
+          btn:
+            canUpdate && r.status === "BOOKED"
+              ? { label: "Sửa", go: () => m.openBookingEdit(r.id, r.businessDate) }
+              : undefined,
         },
       ],
     },
@@ -361,7 +362,6 @@ export function DetailScreen({
           )}
         </footer>
       ) : null}
-      {r ? <EditReservationDialog open={editOpen} onOpenChange={setEditOpen} r={r} /> : null}
     </div>
   )
 }

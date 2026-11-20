@@ -1,15 +1,17 @@
 // Reproducible Playwright verification & screenshot capture for Sprint 4 Reception UI Refinement (mock mode).
 // Usage (from repo root): node web/e2e/reception-ui-refinement.mjs
 import assert from "node:assert/strict"
+import { randomUUID } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { chromium } from "@playwright/test"
+import { chromium, expect } from "@playwright/test"
 import { createServer } from "vite"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
-const outDir = process.env.RECEPTION_EVIDENCE_DIR || path.join(webRoot, "e2e", ".artifacts", "reception-ui-refinement")
+const outDir =
+  process.env.RECEPTION_EVIDENCE_DIR || path.join(__dirname, ".artifacts", `reception-ui-refinement-${randomUUID()}`)
 fs.mkdirSync(outDir, { recursive: true })
 
 const VIEWPORTS = [
@@ -893,7 +895,7 @@ try {
     await page.keyboard.press("Escape")
     await accountSheet.waitFor({ state: "detached" })
     assert(await menuTrigger.evaluate((el) => document.activeElement === el), "Closing Menu did not restore focus")
-    await menuTrigger.tap()
+    await menuTrigger.press("Enter")
     await notifications.waitFor({ state: "visible" })
     const disclosureHeight = await notifications.evaluate((el) => el.offsetHeight)
     assert(disclosureHeight >= 44, "Thông báo disclosure target is smaller than 44px")
@@ -906,8 +908,9 @@ try {
     await page.screenshot({ path: path.join(outDir, "reception-390x844-menu-notifications.png") })
     await firstAlert.press("Enter")
     await accountSheet.waitFor({ state: "detached" })
-    const alertDetail = page.getByRole("dialog").first()
+    const alertDetail = page.getByRole("dialog", { name: "Chi tiết Bàn G01", exact: true })
     await alertDetail.waitFor({ state: "visible" })
+    await expect(alertDetail.getByRole("button", { name: "Đóng", exact: true })).toBeFocused()
     assert(
       await alertDetail.evaluate((el) => el.contains(document.activeElement)),
       "Alert detail did not receive focus",
@@ -1284,10 +1287,9 @@ try {
     assert.deepEqual(errors, [], `${vp.label} (${vp.theme}) BDG-02 errors: ${errors.join(" | ")}`)
 
     if (vp.label === "1440x900" && vp.theme === "light" && bdgAudit.cropClip) {
-      const fix2Dir =
-        process.env.C1_CROP_DIR || "D:\\GAM-APP\\docs\\Sprint4\\evidence\\admin-floor-map-2026-11-18\\fix2"
-      if (fs.existsSync(fix2Dir)) {
-        await page.screenshot({ path: path.join(fix2Dir, "c1-c4-c5-crop-after.png"), clip: bdgAudit.cropClip })
+      const cropDir = process.env.C1_CROP_DIR || outDir
+      if (fs.existsSync(cropDir)) {
+        await page.screenshot({ path: path.join(cropDir, "c1-c4-c5-crop-after.png"), clip: bdgAudit.cropClip })
       }
       await page.screenshot({ path: path.join(outDir, "reception-bdg02-1440x900.png") })
     }
