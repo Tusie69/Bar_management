@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { guestValueFrom, toggleClassification } from "@/domain/booking-rules"
 import type { FloorTableState, ReservationView, TableAvailability, TableView } from "@/domain/models"
 import { NOTE_PHONE_ERROR } from "@/lib/text"
 import { atBusinessTime } from "@/lib/time"
@@ -9,7 +10,6 @@ import {
   buildUpdateReservationInput,
   diffBookingEditDraft,
   initialBookingEditDraft,
-  parsePartySize,
   pinLoadedBooking,
   prepareTablePickerTarget,
   resolveBookingEditBackAction,
@@ -131,8 +131,14 @@ describe("booking-edit-model dirty state and field diff", () => {
     const spaceDraft = { ...draft, name: "  Tú  ", note: "   " }
     expect(diffBookingEditDraft(r, spaceDraft).isDirty).toBe(false)
 
-    // Leading zero in party size parses to 4
-    expect(diffBookingEditDraft(r, { ...draft, partySizeText: "04" }).isDirty).toBe(false)
+    // Leading zero in "số khác..." parses to 4 (invalid in GuestPicker because <=6, so dirty & invalid)
+    // while leading zero for >6 (e.g. "08" for partySize 8) stays clean
+    const r8 = makeReservation({ partySize: 8 })
+    const draft8 = initialBookingEditDraft(r8)
+    expect(draft8.guest).toEqual({ mode: "other", party: 8, otherText: "8" })
+    expect(diffBookingEditDraft(r8, { ...draft8, guest: { mode: "other", party: 8, otherText: "08" } }).isDirty).toBe(
+      false,
+    )
   })
 
   it("detects edits and returns to clean when reverted across all fields", () => {
@@ -154,7 +160,7 @@ describe("booking-edit-model dirty state and field diff", () => {
       name: "Lan",
       honorific: null,
       classification: "NEW" as const,
-      partySizeText: "6",
+      guest: guestValueFrom(6),
       businessDate: "2026-11-20",
       time: "22:00",
       tableIds: [2],
@@ -179,6 +185,69 @@ describe("booking-edit-model dirty state and field diff", () => {
     expect(diffReverted.isDirty).toBe(false)
     expect(diffReverted.fieldsDirty).toBe(false)
     expect(diffReverted.tablesDirty).toBe(false)
+  })
+
+  it("returns draft to clean when choice chips (source, icon, classification, honorific, guest, time, date) revert to original", () => {
+    const r = makeReservation({
+      partySize: 4,
+      honorific: "MR",
+      classification: "UNCLASSIFIED",
+      sourceCode: "HOTLINE",
+      socialPlatform: null,
+      iconKeys: ["pin"],
+      isBirthday: false,
+    })
+    const initial = initialBookingEditDraft(r)
+    const ctx = makeValidationCtx()
+
+    // 1. Source chip: HOTLINE -> SOCIAL (FB) -> HOTLINE
+    const toSocial = { ...initial, source: "SOCIAL" as const, platform: "FB" as const }
+    expect(diffBookingEditDraft(r, toSocial).isDirty).toBe(true)
+    const backHotline = { ...toSocial, source: "HOTLINE" as const, platform: "" as const }
+    expect(diffBookingEditDraft(r, backHotline).isDirty).toBe(false)
+
+    // 2. Icon chips: ["pin"] -> ["pin", "star"] + birthday -> toggle back
+    const toggledIcons = { ...initial, iconKeys: ["pin", "star"], isBirthday: true }
+    expect(diffBookingEditDraft(r, toggledIcons).changed.icons).toBe(true)
+    const revertedIcons = { ...toggledIcons, iconKeys: ["pin"], isBirthday: false }
+    expect(diffBookingEditDraft(r, revertedIcons).isDirty).toBe(false)
+
+    // 3. Classification toggle: UNCLASSIFIED -> RETURNING -> toggle RETURNING again -> UNCLASSIFIED
+    const toReturning = { ...initial, classification: toggleClassification(initial.classification, "RETURNING") }
+    expect(toReturning.classification).toBe("RETURNING")
+    expect(diffBookingEditDraft(r, toReturning).changed.classification).toBe(true)
+    const backUnclassified = {
+      ...toReturning,
+      classification: toggleClassification(toReturning.classification, "RETURNING"),
+    }
+    expect(backUnclassified.classification).toBe("UNCLASSIFIED")
+    expect(diffBookingEditDraft(r, backUnclassified).isDirty).toBe(false)
+
+    // 4. GuestPicker: 4 -> 8 ("số khác") -> 4 quick chip
+    const toOther = { ...initial, guest: { mode: "other" as const, party: 8, otherText: "8" } }
+    expect(diffBookingEditDraft(r, toOther).changed.partySize).toBe(true)
+    expect(buildUpdateReservationInput(r, toOther).partySize).toBe(8)
+    const backQuick4 = { ...toOther, guest: guestValueFrom(4) }
+    expect(diffBookingEditDraft(r, backQuick4).isDirty).toBe(false)
+
+    // 5. Honorific, date, time: change and revert
+    const changedSchedule = {
+      ...initial,
+      honorific: null,
+      businessDate: "2026-11-20",
+      time: "21:30",
+    }
+    expect(diffBookingEditDraft(r, changedSchedule).isDirty).toBe(true)
+    const revertedSchedule = {
+      ...changedSchedule,
+      honorific: "MR" as const,
+      businessDate: BD,
+      time: "21:00",
+    }
+    expect(diffBookingEditDraft(r, revertedSchedule).isDirty).toBe(false)
+    expect(validateBookingEditDraft(r, revertedSchedule, diffBookingEditDraft(r, revertedSchedule), ctx).canSave).toBe(
+      false,
+    )
   })
 
   it("handles WF-01 phone-only booking (hasGuestName=false) without leaking fallback name", () => {
@@ -213,13 +282,25 @@ describe("booking-edit-model dirty state and field diff", () => {
 })
 
 describe("booking-edit-model validation", () => {
-  it("parses party size bounds cleanly", () => {
-    expect(parsePartySize("1")).toEqual({ ok: true, value: 1 })
-    expect(parsePartySize("500")).toEqual({ ok: true, value: 500 })
-    expect(parsePartySize("0").ok).toBe(false)
-    expect(parsePartySize("501").ok).toBe(false)
-    expect(parsePartySize("abc").ok).toBe(false)
-    expect(parsePartySize("").ok).toBe(false)
+  it("validates GuestPicker values (quick 1-6, >6 'số khác', and max 500)", () => {
+    const r = makeReservation({ partySize: 4 })
+    const base = initialBookingEditDraft(r)
+    const ctx = makeValidationCtx()
+
+    // Quick pick 1..6 and valid "số khác" > 6 up to 500
+    const quick6 = { ...base, guest: guestValueFrom(6) }
+    expect(validateBookingEditDraft(r, quick6, diffBookingEditDraft(r, quick6), ctx).errors.partySize).toBeNull()
+
+    const other500 = { ...base, guest: guestValueFrom(500) }
+    expect(validateBookingEditDraft(r, other500, diffBookingEditDraft(r, other500), ctx).errors.partySize).toBeNull()
+
+    // Invalid "số khác": empty, 0, <=6, >500, non-numeric
+    for (const badText of ["", "0", "4", "abc", "501"]) {
+      const bad = { ...base, guest: { mode: "other" as const, party: 4, otherText: badText } }
+      const res = validateBookingEditDraft(r, bad, diffBookingEditDraft(r, bad), ctx)
+      expect(res.errors.partySize).toBeTruthy()
+      expect(res.canSave).toBe(false)
+    }
   })
 
   it("rejects phone numbers (including full-width NFKC digits) and >500 chars in note", () => {
@@ -326,7 +407,7 @@ describe("booking-edit-model session pinning (B01) and pending guard (B03)", () 
     expect(next).not.toBe(session)
     expect(next.source.version).toBe(4)
     expect(next.source.partySize).toBe(3)
-    expect(next.draft.partySizeText).toBe("3")
+    expect(next.draft.guest).toEqual({ mode: "quick", party: 3, otherText: "" })
     expect(next.draft.note).toBe("Bàn gần cửa")
     expect(diffBookingEditDraft(next.source, next.draft).isDirty).toBe(false)
   })
@@ -362,7 +443,7 @@ describe("booking-edit-model session pinning (B01) and pending guard (B03)", () 
     }
     const syncedAfterRevert = syncBookingEditSession(revertedSession, refreshed)
     expect(syncedAfterRevert.source.version).toBe(4)
-    expect(syncedAfterRevert.draft.partySizeText).toBe("3")
+    expect(syncedAfterRevert.draft.guest).toEqual({ mode: "quick", party: 3, otherText: "" })
     expect(diffBookingEditDraft(syncedAfterRevert.source, syncedAfterRevert.draft).isDirty).toBe(false)
   })
 

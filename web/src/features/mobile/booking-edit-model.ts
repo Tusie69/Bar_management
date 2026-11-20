@@ -7,7 +7,14 @@ import {
   validateSocialPlatform,
 } from "@/components/booking-pickers"
 import { contactNameUpdate, initialContactName } from "@/domain/booking-identity"
-import { isBookingSlot, validateBookingTime } from "@/domain/booking-rules"
+import {
+  guestCount,
+  guestError,
+  guestValueFrom,
+  isBookingSlot,
+  validateBookingTime,
+  type GuestValue,
+} from "@/domain/booking-rules"
 import type { BookingClassification, BookingSourceCode } from "@/domain/enums"
 import type { FloorTableState, ReservationView, TableAvailability, TableView } from "@/domain/models"
 import { NOTE_PHONE_ERROR } from "@/lib/text"
@@ -38,7 +45,7 @@ export interface BookingEditDraft {
   name: string
   honorific: Honorific | null
   classification: BookingClassification
-  partySizeText: string
+  guest: GuestValue
   businessDate: BusinessDate
   time: string
   tableIds: number[]
@@ -96,7 +103,7 @@ export function initialBookingEditDraft(r: ReservationView): BookingEditDraft {
     name: initialContactName(r.hasGuestName, r.displayName),
     honorific: r.honorific ?? null,
     classification: r.classification,
-    partySizeText: String(r.partySize),
+    guest: guestValueFrom(r.partySize),
     businessDate: r.businessDate,
     time,
     tableIds: sortedUniqueNumbers(r.tableIds),
@@ -108,27 +115,10 @@ export function initialBookingEditDraft(r: ReservationView): BookingEditDraft {
   }
 }
 
-export function parsePartySize(text: string): { ok: true; value: number } | { ok: false; error: string } {
-  const trimmed = text.trim()
-  if (!trimmed) {
-    return { ok: false, error: "Vui lòng nhập số khách." }
-  }
-  if (!/^\d+$/.test(trimmed)) {
-    return { ok: false, error: "Số khách phải là số nguyên dương." }
-  }
-  const value = Number(trimmed)
-  if (!Number.isSafeInteger(value) || value < PARTY_SIZE_MIN || value > PARTY_SIZE_MAX) {
-    return { ok: false, error: `Số khách phải từ ${PARTY_SIZE_MIN} đến ${PARTY_SIZE_MAX}.` }
-  }
-  return { ok: true, value }
-}
-
 export function diffBookingEditDraft(r: ReservationView, draft: BookingEditDraft): BookingEditDiff {
   const saved = initialBookingEditDraft(r)
-  const parsedParty = parsePartySize(draft.partySizeText)
-  const partySizeChanged = parsedParty.ok
-    ? parsedParty.value !== r.partySize
-    : draft.partySizeText.trim() !== saved.partySizeText
+  const count = guestCount(draft.guest)
+  const partySizeChanged = count === null ? true : count !== r.partySize
 
   const draftPlatform = draft.source === "SOCIAL" ? draft.platform : ""
   const savedPlatform = saved.source === "SOCIAL" ? saved.platform : ""
@@ -312,8 +302,13 @@ export function validateBookingEditDraft(
     nameError = "Cần ít nhất tên khách hoặc số điện thoại."
   }
 
-  const parsedParty = parsePartySize(draft.partySizeText)
-  const partySizeError = parsedParty.ok ? null : parsedParty.error
+  const count = guestCount(draft.guest)
+  let partySizeError: string | null = guestError(draft.guest)
+  if (!partySizeError && count === null) {
+    partySizeError = "Nhập số khách."
+  } else if (!partySizeError && count !== null && (count < PARTY_SIZE_MIN || count > PARTY_SIZE_MAX)) {
+    partySizeError = `Số khách phải từ ${PARTY_SIZE_MIN} đến ${PARTY_SIZE_MAX}.`
+  }
 
   const originalSchedule = draft.businessDate === r.businessDate && draft.time === fmtTime(r.expectedAt)
   const timeError = originalSchedule
@@ -346,7 +341,7 @@ export function validateBookingEditDraft(
           adjusted.availMap,
           opts.bookableZoneIds,
           opts.isSameBusinessDate,
-          parsedParty.ok ? parsedParty.value : r.partySize,
+          count ?? r.partySize,
         )
         tablesError = issues[0] ?? null
       }
@@ -364,8 +359,8 @@ export function validateBookingEditDraft(
 
   const hasErrors = Object.values(errors).some(Boolean)
   const capacityWarning =
-    draft.tableIds.length > 0 && parsedParty.ok
-      ? capacityWarningText(draft.tableIds.length, selectedTablesCapacity(draft.tableIds, opts.byId), parsedParty.value)
+    draft.tableIds.length > 0 && count !== null
+      ? capacityWarningText(draft.tableIds.length, selectedTablesCapacity(draft.tableIds, opts.byId), count)
       : null
 
   return {
@@ -378,8 +373,7 @@ export function validateBookingEditDraft(
 }
 
 export function buildUpdateReservationInput(r: ReservationView, draft: BookingEditDraft): UpdateReservationInput {
-  const parsedParty = parsePartySize(draft.partySizeText)
-  const partySize = parsedParty.ok ? parsedParty.value : r.partySize
+  const partySize = guestCount(draft.guest) ?? r.partySize
   return {
     id: r.id,
     version: r.version,
@@ -403,8 +397,7 @@ export function buildUpdateReservationInput(r: ReservationView, draft: BookingEd
  * a fresh server booking query confirms the new version.
  */
 export function applySavedBookingEdit(source: ReservationView, draft: BookingEditDraft): ReservationView {
-  const parsedParty = parsePartySize(draft.partySizeText)
-  const partySize = parsedParty.ok ? parsedParty.value : source.partySize
+  const partySize = guestCount(draft.guest) ?? source.partySize
   const trimmedName = draft.name.trim()
   const hasGuestName = Boolean(trimmedName)
   const displayName = hasGuestName ? trimmedName : source.hasGuestName ? "Khách" : source.displayName

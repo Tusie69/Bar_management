@@ -717,6 +717,155 @@ try {
   await resetMockDemo(page)
   await page.reload({ waitUntil: "networkidle" })
 
+  // 1b. Choice controls parity with FormScreen (390 light): Nguồn, Icon, Loại khách, Số khách (<=6 & >6), Ngày, Giờ, Danh xưng
+  await (await openTableSheet(page, "B3")).getByRole("button", { name: "Sửa booking", exact: true }).click()
+  await expect(editPage).toBeVisible()
+
+  // Nguồn đặt: Hotline pre-selected, WK disabled; Hotline -> Social -> revert disables save -> Social + IG
+  await editPage.getByRole("button", { name: /^Nguồn đặt/ }).click()
+  await expect(editPage.getByRole("radio", { name: "Hotline", exact: true })).toHaveAttribute("aria-checked", "true")
+  await expect(editPage.getByRole("button", { name: "WK (chưa hỗ trợ)", exact: true })).toBeDisabled()
+  await settle(page)
+  await page.screenshot({ path: path.join(evidenceDir, "phone-390-light-choice-source.png") })
+
+  await editPage.getByRole("radio", { name: "Social", exact: true }).click()
+  await expect(editPage.getByRole("radio", { name: "Social", exact: true })).toHaveAttribute("aria-checked", "true")
+  await expect(editPage.getByText("Vui lòng chọn nền tảng mạng xã hội.", { exact: true })).toBeVisible()
+  await expect(saveBtn).toBeDisabled()
+  await editPage.getByLabel("Chọn nền tảng", { exact: true }).selectOption("FB")
+  await expect(saveBtn).toBeEnabled()
+  await editPage.getByRole("radio", { name: "Hotline", exact: true }).click()
+  await expect(saveBtn).toBeDisabled()
+  await editPage.getByRole("radio", { name: "Social", exact: true }).click()
+  await editPage.getByLabel("Chọn nền tảng", { exact: true }).selectOption("IG")
+  await expect(saveBtn).toBeEnabled()
+
+  // Đặc điểm (IconPicker): multi-select chips
+  await editPage.getByRole("button", { name: /^Đặc điểm/ }).click()
+  await editPage.getByRole("checkbox", { name: /Bàn sếp/ }).click()
+  await editPage.getByRole("checkbox", { name: "Sinh nhật", exact: true }).click()
+  await expect(editPage.getByRole("checkbox", { name: /Bàn sếp/ })).toHaveAttribute("aria-checked", "true")
+  await expect(editPage.getByRole("checkbox", { name: "Sinh nhật", exact: true })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  )
+  await settle(page)
+  await page.screenshot({ path: path.join(evidenceDir, "phone-390-light-choice-icons.png") })
+
+  // Loại khách: 2-button toggle control matching form.tsx
+  await editPage.getByRole("button", { name: /^Loại khách/ }).click()
+  assert.equal(await editPage.getByRole("radio", { name: "Chưa phân loại", exact: true }).count(), 0)
+  const returningRadio = editPage.getByRole("radio", { name: "Đã từng đặt bàn", exact: true })
+  const newRadio = editPage.getByRole("radio", { name: "Chưa từng đặt bàn", exact: true })
+  await returningRadio.click()
+  await expect(returningRadio).toHaveAttribute("aria-checked", "true")
+  await settle(page)
+  await page.screenshot({ path: path.join(evidenceDir, "phone-390-light-choice-classification.png") })
+  // Tapping active option again unselects back to UNCLASSIFIED
+  await returningRadio.click()
+  await expect(returningRadio).toHaveAttribute("aria-checked", "false")
+  await newRadio.click()
+  await expect(newRadio).toHaveAttribute("aria-checked", "true")
+
+  // Số khách: GuestPicker (1-6 chips + "số khác..."), no Stepper
+  await editPage.getByRole("button", { name: /^Số khách/ }).click()
+  assert.equal(await editPage.getByLabel("Tăng số khách", { exact: true }).count(), 0)
+  await expect(editPage.getByRole("radio", { name: "4 khách", exact: true })).toHaveAttribute("aria-checked", "true")
+  await settle(page)
+  await page.screenshot({ path: path.join(evidenceDir, "phone-390-light-choice-guests.png") })
+  await editPage.getByRole("radio", { name: "6 khách", exact: true }).click()
+  await expect(editPage.getByRole("radio", { name: "6 khách", exact: true })).toHaveAttribute("aria-checked", "true")
+
+  // Ngày đặt: current day pressed
+  await editPage.getByRole("button", { name: /^Ngày đặt/ }).click()
+  await expect(editPage.getByRole("button", { name: /^Hôm nay/ })).toHaveAttribute("aria-pressed", "true")
+  await settle(page)
+  await page.screenshot({ path: path.join(evidenceDir, "phone-390-light-choice-date.png") })
+
+  // Giờ hẹn: BookingTimePicker quick chips + wheel
+  await editPage.getByRole("button", { name: /^Giờ hẹn/ }).click()
+  await expect(editPage.getByRole("button", { name: /Chọn giờ bằng con lăn/ })).toBeVisible()
+  await editPage.getByRole("button", { name: "22:00", exact: true }).click()
+  await expect(editPage.getByRole("button", { name: "22:00", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await settle(page)
+  await page.screenshot({ path: path.join(evidenceDir, "phone-390-light-choice-time.png") })
+
+  // Danh xưng: HonorificPicker
+  await editPage.getByRole("button", { name: /^Danh xưng/ }).click()
+  await editPage.getByRole("radio", { name: "Mr", exact: true }).click()
+  await expect(editPage.getByRole("radio", { name: "Mr", exact: true })).toHaveAttribute("aria-checked", "true")
+  await settle(page)
+  await page.screenshot({ path: path.join(evidenceDir, "phone-390-light-choice-honorific.png") })
+
+  await assertLayoutAndTargets(page, '[role="dialog"][aria-label="Sửa booking"]', "390-light-choices")
+
+  // Save all choice edits and verify persistence after reopen
+  await saveBtn.click()
+  await expect(page.getByText("Đã lưu thay đổi", { exact: true })).toBeVisible()
+  await expect(editPage).toBeHidden()
+
+  await (await openTableSheet(page, "B3")).getByRole("button", { name: "Sửa booking", exact: true }).click()
+  await expect(editPage).toBeVisible()
+  await expect(editPage.getByRole("button", { name: /^Danh xưng/ })).toContainText("Mr")
+  await expect(editPage.getByRole("button", { name: /^Loại khách/ })).toContainText("Chưa từng đặt bàn")
+  await expect(editPage.getByRole("button", { name: /^Số khách/ })).toContainText("6 khách")
+  await expect(editPage.getByRole("button", { name: /^Giờ hẹn/ })).toContainText("22:00")
+  await expect(editPage.getByRole("button", { name: /^Nguồn đặt/ })).toContainText("Social · IG")
+  await expect(editPage.getByRole("button", { name: /^Đặc điểm/ })).toContainText("⭐ Bàn sếp")
+  await expect(editPage.getByRole("button", { name: /^Đặc điểm/ })).toContainText("🎂 Sinh nhật")
+
+  // Revert-to-original on every choice field disables save again
+  await expect(saveBtn).toBeDisabled()
+  await editPage.getByRole("button", { name: /^Nguồn đặt/ }).click()
+  await editPage.getByRole("radio", { name: "Hotline", exact: true }).click()
+  await expect(saveBtn).toBeEnabled()
+  await editPage.getByRole("radio", { name: "Social", exact: true }).click()
+  await editPage.getByLabel("Chọn nền tảng", { exact: true }).selectOption("IG")
+  await expect(saveBtn).toBeDisabled()
+
+  await editPage.getByRole("button", { name: /^Đặc điểm/ }).click()
+  await editPage.getByRole("checkbox", { name: /Bàn sếp/ }).click()
+  await expect(saveBtn).toBeEnabled()
+  await editPage.getByRole("checkbox", { name: /Bàn sếp/ }).click()
+  await expect(saveBtn).toBeDisabled()
+
+  await editPage.getByRole("button", { name: /^Số khách/ }).click()
+  await editPage.getByRole("radio", { name: "2 khách", exact: true }).click()
+  await expect(saveBtn).toBeEnabled()
+  await editPage.getByRole("radio", { name: "6 khách", exact: true }).click()
+  await expect(saveBtn).toBeDisabled()
+
+  await editPage.getByRole("button", { name: /^Loại khách/ }).click()
+  await editPage.getByRole("radio", { name: "Đã từng đặt bàn", exact: true }).click()
+  await expect(saveBtn).toBeEnabled()
+  await editPage.getByRole("radio", { name: "Chưa từng đặt bàn", exact: true }).click()
+  await expect(saveBtn).toBeDisabled()
+
+  await editPage.getByRole("button", { name: /^Giờ hẹn/ }).click()
+  await editPage.getByRole("button", { name: "22:30", exact: true }).click()
+  await expect(saveBtn).toBeEnabled()
+  await editPage.getByRole("button", { name: "22:00", exact: true }).click()
+  await expect(saveBtn).toBeDisabled()
+
+  await editPage.getByRole("button", { name: "Quay lại", exact: true }).click()
+  await expect(page.getByRole("alertdialog")).toHaveCount(0)
+  await expect(editPage).toBeHidden()
+
+  // Party size > 6 (B21 has 8 guests): opens with "số khác..." focused and pre-filled
+  await (await openTableSheet(page, "B21")).getByRole("button", { name: "Sửa booking", exact: true }).click()
+  await expect(editPage).toBeVisible()
+  await editPage.getByRole("button", { name: /^Số khách/ }).click()
+  const otherGuestInput = editPage.getByPlaceholder("số khác...", { exact: true })
+  await expect(otherGuestInput).toHaveValue("8")
+  await expect(otherGuestInput).toBeFocused()
+  await settle(page)
+  await page.screenshot({ path: path.join(evidenceDir, "phone-390-light-choice-guests-other.png") })
+  await editPage.getByRole("button", { name: "Quay lại", exact: true }).click()
+  await expect(editPage).toBeHidden()
+
+  await resetMockDemo(page)
+  await page.reload({ waitUntil: "networkidle" })
+
   // 2. Phone 390x844 (dark) screenshot & layout check
   await setSession(page, 1, "dark")
   await page.reload({ waitUntil: "networkidle" })

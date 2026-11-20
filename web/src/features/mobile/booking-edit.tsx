@@ -14,6 +14,7 @@ import {
 import { toast } from "sonner"
 import {
   BookingTimePicker,
+  GuestPicker,
   HonorificPicker,
   IconPicker,
   SOCIAL_PLATFORMS,
@@ -21,7 +22,6 @@ import {
   formatBookingIcons,
   type SocialPlatform,
 } from "@/components/booking-pickers"
-import { Stepper } from "@/components/common"
 import { RevealPhone } from "@/components/reveal-phone"
 import {
   AlertDialog,
@@ -37,8 +37,15 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { bookingCalendarDate, isAfterMidnight, slotLabel, toggleClassification } from "@/domain/booking-rules"
-import { formatBookingSource, type BookingClassification } from "@/domain/enums"
+import {
+  bookingCalendarDate,
+  guestCount,
+  guestError,
+  isAfterMidnight,
+  slotLabel,
+  toggleClassification,
+} from "@/domain/booking-rules"
+import { formatBookingSource } from "@/domain/enums"
 import type { ReservationView, TableAvailability, WaitlistEntryView } from "@/domain/models"
 import { MOCK_NOTE, useAction } from "@/hooks/use-action"
 import { qk, useReservations, useVenueSettings, useWaitlist } from "@/hooks/use-data"
@@ -53,7 +60,6 @@ import {
   buildUpdateReservationInput,
   diffBookingEditDraft,
   initialBookingEditDraft,
-  parsePartySize,
   pinLoadedBooking,
   prepareTablePickerTarget,
   resolveBookingEditBackAction,
@@ -122,8 +128,9 @@ function EditableRow({
           '[aria-checked="true"]:not([disabled]), [aria-pressed="true"]:not([disabled]), [aria-selected="true"]:not([disabled])',
         ) ??
         container.querySelector<HTMLElement>(
-          'input:not([disabled]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        )
+          "input:not([disabled]), textarea:not([disabled]), select:not([disabled])",
+        ) ??
+        container.querySelector<HTMLElement>('button:not([disabled]), [tabindex]:not([tabindex="-1"])')
       target?.focus({ preventScroll: true })
     } else if (!editing && wasEditing && restoreOnCloseRef.current) {
       restoreOnCloseRef.current = false
@@ -312,8 +319,8 @@ function BookingEditBody({
     setSession((prev) => ({ ...prev, draft: { ...prev.draft, ...patch } }))
   }
 
-  const parsedParty = parsePartySize(draft.partySizeText)
-  const validParty = parsedParty.ok ? parsedParty.value : source.partySize
+  const partyCount = guestCount(draft.guest)
+  const partyGuestError = guestError(draft.guest)
   const isSameBusinessDate = m.model.floor?.businessDate
     ? draft.businessDate === m.model.floor.businessDate
     : draft.businessDate === m.today
@@ -451,12 +458,18 @@ function BookingEditBody({
       top: i === 0 ? "Hôm nay" : fmtBusinessDate(addDays(m.today, i), "short").split(", ")[0],
       day: fmtDayMonth(addDays(m.today, i)),
     }))
-    if (!dates.some((d) => d.date === draft.businessDate)) {
-      const [top, day] = fmtBusinessDate(draft.businessDate, "short").split(", ")
-      dates.unshift({ date: draft.businessDate, top: top ?? "", day: day ?? draft.businessDate })
+    const extras = [source.businessDate, draft.businessDate].filter(
+      (d, idx, arr) => arr.indexOf(d) === idx && !dates.some((item) => item.date === d),
+    )
+    extras.sort()
+    for (const extraDate of extras) {
+      const [top, day] = fmtBusinessDate(extraDate, "short").split(", ")
+      const entry = { date: extraDate, top: top ?? "", day: day ?? extraDate }
+      if (extraDate < dates[0].date) dates.unshift(entry)
+      else dates.push(entry)
     }
     return dates
-  }, [m.today, draft.businessDate])
+  }, [m.today, source.businessDate, draft.businessDate])
 
   const saveFields = async (): Promise<ReservationView | null> => {
     if (!validation.canSave || !versionConfirmedRef.current || isPendingNow() || pickerLoadingRef.current) return null
@@ -586,7 +599,6 @@ function BookingEditBody({
   }
 
   const nameId = useId()
-  const partyId = useId()
   const noteId = useId()
 
   const isBooked = source.status === "BOOKED"
@@ -753,44 +765,45 @@ function BookingEditBody({
               onOpen={() => isBooked && !fieldsDisabled && setEditingField("classification")}
               onDone={() => setEditingField(null)}
             >
-              <div role="radiogroup" aria-label="Loại khách" className="grid grid-cols-3 gap-2">
-                {(
-                  [
-                    { value: "RETURNING", label: "Đã từng đặt" },
-                    { value: "NEW", label: "Chưa từng đặt" },
-                    { value: "UNCLASSIFIED", label: "Chưa phân loại" },
-                  ] as const
-                ).map((opt) => {
-                  const selected = draft.classification === opt.value
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      disabled={fieldsDisabled}
-                      onClick={() =>
-                        updateDraft({
-                          classification:
-                            opt.value === "UNCLASSIFIED"
-                              ? "UNCLASSIFIED"
-                              : toggleClassification(
-                                  draft.classification,
-                                  opt.value as Exclude<BookingClassification, "UNCLASSIFIED">,
-                                ),
-                        })
-                      }
-                      className={cn(
-                        "gm-press min-h-11 rounded-xl border px-2 py-1.5 text-[12.5px] leading-tight font-medium",
-                        selected
-                          ? "border-primary bg-primary-tint font-semibold text-primary-ink"
-                          : "border-border-strong bg-surface-1 text-tx-1 hover:bg-surface-2",
-                      )}
-                    >
-                      {opt.label}
-                    </button>
-                  )
-                })}
+              <div role="radiogroup" aria-label="Khách đã từng / chưa từng đặt bàn" className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={draft.classification === "RETURNING"}
+                  disabled={fieldsDisabled}
+                  className={cn(
+                    "gm-press h-12 rounded-xl border px-2 text-[13px] leading-tight font-medium",
+                    draft.classification === "RETURNING"
+                      ? "border-primary bg-primary-tint font-semibold text-primary-ink"
+                      : "border-border-strong bg-surface-1 text-tx-1 hover:bg-surface-2",
+                  )}
+                  onClick={() =>
+                    updateDraft({
+                      classification: toggleClassification(draft.classification, "RETURNING"),
+                    })
+                  }
+                >
+                  Đã từng đặt bàn
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={draft.classification === "NEW"}
+                  disabled={fieldsDisabled}
+                  className={cn(
+                    "gm-press h-12 rounded-xl border px-2 text-[13px] leading-tight font-medium",
+                    draft.classification === "NEW"
+                      ? "border-primary bg-primary-tint font-semibold text-primary-ink"
+                      : "border-border-strong bg-surface-1 text-tx-1 hover:bg-surface-2",
+                  )}
+                  onClick={() =>
+                    updateDraft({
+                      classification: toggleClassification(draft.classification, "NEW"),
+                    })
+                  }
+                >
+                  Chưa từng đặt bàn
+                </button>
               </div>
             </EditableRow>
           </div>
@@ -804,44 +817,17 @@ function BookingEditBody({
               editing={isBooked && editingField === "partySize"}
               disabled={fieldsDisabled}
               changed={diff.changed.partySize}
-              error={validation.errors.partySize}
+              error={editingField === "partySize" && partyGuestError ? null : validation.errors.partySize}
               display={
                 <span className="tnum">
-                  {parsedParty.ok ? `${parsedParty.value} khách` : draft.partySizeText || <EmptyPlaceholder />}
+                  {partyCount !== null ? `${partyCount} khách` : draft.guest.otherText.trim() || <EmptyPlaceholder />}
                 </span>
               }
               onOpen={() => isBooked && !fieldsDisabled && setEditingField("partySize")}
               onDone={() => setEditingField(null)}
             >
               <div className="flex flex-col gap-2.5">
-                <div className="flex flex-wrap items-center gap-3">
-                  <Stepper
-                    value={parsedParty.ok ? parsedParty.value : validParty}
-                    onChange={(n) => updateDraft({ partySizeText: String(n) })}
-                    min={1}
-                    max={500}
-                    label="số khách"
-                  />
-                  <div className="flex items-center gap-2">
-                    <label htmlFor={partyId} className="sr-only">
-                      Nhập số khách
-                    </label>
-                    <Input
-                      id={partyId}
-                      data-autofocus=""
-                      type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      value={draft.partySizeText}
-                      placeholder="(Trống)"
-                      disabled={fieldsDisabled}
-                      aria-invalid={Boolean(validation.errors.partySize) || undefined}
-                      onFocus={scrollFocusedIntoView}
-                      onChange={(e) => updateDraft({ partySizeText: e.target.value })}
-                      className="tnum h-11 w-24 rounded-xl bg-surface-1 text-center text-base font-semibold"
-                    />
-                  </div>
-                </div>
+                <GuestPicker value={draft.guest} onChange={(guest) => updateDraft({ guest })} showErrors />
                 {validation.capacityWarning ? (
                   <p
                     role="status"
@@ -899,7 +885,7 @@ function BookingEditBody({
               editing={isBooked && editingField === "time"}
               disabled={fieldsDisabled}
               changed={diff.changed.time}
-              error={validation.errors.time}
+              error={editingField === "time" && draft.time ? null : validation.errors.time}
               display={<span className="tnum">{timeDisplay}</span>}
               onOpen={() => isBooked && !fieldsDisabled && setEditingField("time")}
               onDone={() => setEditingField(null)}
@@ -981,7 +967,7 @@ function BookingEditBody({
               editing={isBooked && editingField === "source"}
               disabled={fieldsDisabled}
               changed={diff.changed.source || diff.changed.platform}
-              error={validation.errors.platform}
+              error={editingField === "source" ? null : validation.errors.platform}
               display={sourceDisplay}
               onOpen={() => isBooked && !fieldsDisabled && setEditingField("source")}
               onDone={() => setEditingField(null)}
