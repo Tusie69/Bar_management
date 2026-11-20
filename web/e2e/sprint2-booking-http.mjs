@@ -360,12 +360,13 @@ try {
         await page.getByRole("button", { name: "Sửa", exact: true }).click()
       } else {
         await table(page, "B4").click()
-        await page.getByRole("button", { name: "Xem booking", exact: true }).click()
         await page.getByRole("button", { name: "Sửa booking", exact: true }).click()
       }
       const editor = page.getByRole("dialog", { name: "Sửa booking", exact: true })
+      await editor.getByRole("button", { name: /^Tên khách/ }).click()
       await expect(editor.getByLabel("Tên khách", { exact: true })).toHaveValue("")
       const note = `Ghi chú WF-01 ${width}`
+      await editor.getByRole("button", { name: /^Ghi chú/ }).click()
       await editor.getByLabel("Ghi chú", { exact: true }).fill(note)
       await page.screenshot({ path: `${output}/wf-01-editor-${width}.png` })
       const updated = page.waitForResponse(
@@ -391,7 +392,9 @@ try {
 
       if (width === 390) {
         await step("WF-01: an intentional name edit is sent in the PUT payload", async () => {
+          await table(page, "B4").click()
           await page.getByRole("button", { name: "Sửa booking", exact: true }).click()
+          await editor.getByRole("button", { name: /^Tên khách/ }).click()
           await expect(editor.getByLabel("Tên khách", { exact: true })).toHaveValue("")
           await editor.getByLabel("Tên khách", { exact: true }).fill("Tên khách mới")
           const renamed = page.waitForResponse(
@@ -430,7 +433,9 @@ try {
     await page.getByRole("button", { name: /Khách · \*\*\*907/ }).click()
     await page.getByRole("button", { name: "Sửa", exact: true }).click()
     const editor = page.getByRole("dialog", { name: "Sửa booking", exact: true })
+    await editor.getByRole("button", { name: /^Tên khách/ }).click()
     await expect(editor.getByLabel("Tên khách", { exact: true })).toHaveValue("Khách")
+    await editor.getByRole("button", { name: /^Ghi chú/ }).click()
     await editor.getByLabel("Ghi chú", { exact: true }).fill("Giữ tên thật")
     const updated = page.waitForResponse(
       (response) =>
@@ -750,8 +755,16 @@ try {
     await expect(detail).toBeVisible()
     return detail
   }
+  const openBookingDetailByName = async (p, booking) => {
+    await p.getByRole("button", { name: "Chuyển sang tìm theo tên" }).click()
+    await p.getByRole("textbox", { name: "Tìm theo tên khách" }).fill(booking.guestName)
+    await p
+      .getByRole("button", { name: `${booking.guestName} · ***${booking.phoneLast3 ?? ""} · 1 bàn`, exact: true })
+      .click()
+    return p.getByRole("dialog", { name: "Chi tiết booking", exact: true })
+  }
   const closeDetail = (p) => p.locator('button[aria-label="Quay lại"]').first().click()
-  const labels = ["Quản lý đơn", "Xem booking", "Xem đơn chờ", "Đổi / Ghép bàn", "Hủy booking", "Khách đã đến"]
+  const labels = ["Quản lý đơn", "Sửa booking", "Xem đơn chờ", "Đổi / Ghép bàn", "Hủy booking", "Khách đã đến"]
 
   // The guard admits any `_test` database on 127.0.0.1, which is the suffix the
   // whole repo uses for throwaway databases, and refuses everything else before
@@ -806,7 +819,7 @@ try {
       try {
         let detail = await openHeld(p)
         for (const label of labels) await expect(detail.getByRole("button", { name: label, exact: true })).toBeVisible()
-        await detail.getByRole("button", { name: "Xem booking", exact: true }).click()
+        await detail.getByRole("button", { name: "Quản lý đơn", exact: true }).click()
         // The detail's linked entry is an ID assertion even when two guest names are identical.
         await expect(
           p.getByRole("dialog", { name: "Chi tiết booking" }).getByText(`#${entry.id} (Đặt trước)`, { exact: true }),
@@ -918,7 +931,7 @@ try {
                 const detail = await openHeld(p, "A5")
                 for (const label of ["Đổi / Ghép bàn", "Khách đã đến", ...(!pure ? ["Hủy booking"] : [])])
                   await expect(detail.getByRole("button", { name: label, exact: true })).toBeDisabled()
-                if (pure) await expect(detail.getByRole("button", { name: "Xem booking", exact: true })).toBeHidden()
+                if (pure) await expect(detail.getByRole("button", { name: /^(Xem|Sửa) booking$/ })).toBeHidden()
                 await p.screenshot({
                   path: `e2e/.artifacts/waitlist-hold/after/http-${pure ? "pure" : "offer"}-floor-${width}-${theme}.png`,
                 })
@@ -1002,7 +1015,7 @@ try {
             await p.unroute("**/api/v1/waitlist?**", route)
             await p.reload({ waitUntil: "domcontentloaded" })
             const recovered = await openHeld(p, "A5")
-            await recovered.getByRole("button", { name: "Xem booking", exact: true }).click()
+            await recovered.getByRole("button", { name: "Quản lý đơn", exact: true }).click()
             const detail = p.getByRole("dialog", { name: "Chi tiết booking", exact: true })
             await expect(detail).toContainText(booking.guestName)
             await expect(detail).toContainText("Chưa có bàn")
@@ -1025,13 +1038,11 @@ try {
   await step("F13 submit: a direct picker opened before a waitlist 503 sends zero writes", async () => {
     for (const width of [390, 768])
       await holdCase(
-        async ({ p, ids }) => {
+        async ({ p, ids, booking }) => {
           await p.setViewportSize({ width, height: width === 768 ? 1024 : 844 })
           await p.reload({ waitUntil: "domcontentloaded" })
           const before = snapshot(ids)
-          const floor = await openHeld(p)
-          await floor.getByRole("button", { name: "Xem booking", exact: true }).click()
-          const d = p.getByRole("dialog", { name: "Chi tiết booking", exact: true })
+          const d = await openBookingDetailByName(p, booking)
           await d.getByRole("button", { name: "Đổi / Ghép bàn", exact: true }).click()
           const route = (route) =>
             route.fulfill({
@@ -1256,12 +1267,12 @@ try {
     holdCase(
       async ({ p, booking }) => {
         let detail = await openHeld(p)
-        for (const label of ["Khách đã đến", "Xem booking", "Đổi bàn", "Hủy booking"])
+        for (const label of ["Khách đã đến", "Sửa booking", "Đổi bàn", "Hủy booking"])
           await expect(detail.getByRole("button", { name: label, exact: true })).toBeVisible()
         await expect(detail.getByRole("button", { name: "Xem đơn chờ", exact: true })).toBeHidden()
         await p.setViewportSize({ width: 768, height: 1024 })
-        await detail.getByRole("button", { name: "Xem booking", exact: true }).click()
-        detail = p.getByRole("dialog", { name: "Chi tiết booking", exact: true })
+        await detail.getByRole("button", { name: "Đóng", exact: true }).click()
+        detail = await openBookingDetailByName(p, booking)
         await expect(detail).toContainText(booking.guestName)
         for (const label of ["Đổi / Ghép bàn", "Sửa booking", "Hủy booking", "Khách đã đến"])
           await expect(detail.getByRole("button", { name: label, exact: true })).toBeVisible()
@@ -1360,7 +1371,7 @@ try {
             assert.equal(after.entries[0].status, "CANCELLED")
             assert.equal(after.allocations.filter((a) => a.kind === "HOLD" && !a.released_at).length, 0)
           } else {
-            await detail.getByRole("button", { name: "Xem booking", exact: true }).click()
+            await detail.getByRole("button", { name: "Quản lý đơn", exact: true }).click()
             await p
               .getByRole("dialog", { name: "Chi tiết booking", exact: true })
               .getByRole("button", { name: "Đổi trạng thái", exact: true })

@@ -15,14 +15,8 @@ async function observeTelNavigations(page) {
   })
   return navigations
 }
-const defaultChrome = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-const browser = await chromium.launch(
-  process.env.PW_CHROMIUM_PATH
-    ? { executablePath: process.env.PW_CHROMIUM_PATH }
-    : fs.existsSync(defaultChrome)
-      ? { executablePath: defaultChrome }
-      : {},
-)
+// Bundled Chromium keeps delivering page input after a headless tel: launch.
+const browser = await chromium.launch({ executablePath: process.env.PW_CHROMIUM_PATH })
 fs.mkdirSync("e2e/.artifacts", { recursive: true })
 let failures = 0
 const results = []
@@ -447,6 +441,9 @@ await flow(
     const outcome = page.getByRole("dialog", { name: "Kết quả cuộc gọi" })
     await outcome.getByRole("button", { name: "Không nghe máy", exact: true }).click()
     await outcome.waitFor({ state: "hidden" })
+    const tableSheet = page.getByRole("dialog", { name: "Chi tiết A5", exact: true })
+    await tableSheet.getByRole("button", { name: "Lịch sử gọi", exact: true }).click()
+    await expect(tableSheet.getByText("Không nghe máy", { exact: true })).toBeVisible()
   },
   {
     viewport: { width: 390, height: 844 },
@@ -496,9 +493,9 @@ await flow("waitlist: claim, accept offer -> hold, then seat when guest arrives"
   await dlg.getByRole("button", { name: "Ghi kết quả" }).click()
   await card.getByText("Đang giữ bàn").waitFor()
 
-  // Acceptance 4: pure waitlist entry without reservation hides "Xem booking" and opens entry detail
-  const xemBookingBtn = card.getByRole("button", { name: "Xem booking" })
-  assert.equal(await xemBookingBtn.count(), 0, "Pure waitlist hold must hide 'Xem booking'")
+  // Acceptance 4: a pure waitlist entry only opens entry detail.
+  const bookingActions = card.getByRole("button", { name: /^(Xem|Sửa) booking$/ })
+  assert.equal(await bookingActions.count(), 0, "Pure waitlist hold must hide booking actions")
   await card.getByRole("button", { name: "Xem đơn chờ" }).click()
   const entryDlg = page.getByRole("dialog").filter({ hasText: "Chi tiết mục chờ" })
   await entryDlg.waitFor()
@@ -556,12 +553,12 @@ await flow("inline form: occupied table is refused, free table is picked on the 
   await table(page, "B5").click()
   await page.getByRole("button", { name: "Mở bàn Walk-in", exact: true }).click()
   await page.getByRole("radio", { name: "4 khách" }).click()
-  await table(page, "A3").click()
+  await table(page, "B11").click()
   await page
-    .getByText(/A3: không trống/)
+    .getByText(/B11: không trống/)
     .first()
     .waitFor()
-  await page.getByRole("button", { name: "Bỏ B5" }).waitFor()
+  await expect(page.getByText(/B5 đang trống/)).toBeVisible()
   await page.getByRole("button", { name: "Mở bàn ngay" }).click()
   await expectOccupied(table(page, "B5"), 4)
 })
@@ -685,12 +682,11 @@ await flow("direct waitlist assignment -> HOLD_ACTIVE -> arrival check-in (phone
     await card.getByText("Đang giữ bàn").waitFor()
     await card.getByText("Đang giữ B5 + B7").waitFor()
 
-    // Acceptance 3: "Xem booking" opens linked reservation detail, showing guest name
-    await card.getByRole("button", { name: "Xem booking" }).click()
-    const backBtn = page.locator('button[aria-label="Quay lại"]').first()
-    await backBtn.waitFor()
-    assert(await page.getByText(tc.name).first().isVisible(), `Detail must show booking for ${tc.name}`)
-    await backBtn.click()
+    // Acceptance 3: "Sửa booking" opens the linked booking, showing the correct guest.
+    await card.getByRole("button", { name: "Sửa booking", exact: true }).click()
+    const editor = page.getByRole("dialog", { name: "Sửa booking", exact: true })
+    await expect(editor.getByRole("button", { name: /^Tên khách/ })).toContainText(tc.name)
+    await editor.getByRole("button", { name: "Quay lại", exact: true }).click()
     await card.getByText("Đang giữ bàn").waitFor()
 
     // Acceptance 5: "Đổi / Ghép bàn" opens table picker, cancel returns without mutating
@@ -1055,9 +1051,20 @@ await flow("booking pickers: keyboard navigation across expired selected time (M
   const closeToast = page.getByRole("button", { name: "Đóng thông báo" })
   if (await closeToast.isVisible()) await closeToast.click()
 
-  // Open the first booking's edit dialog
-  await page.locator("article").first().click()
-  await page.getByRole("button", { name: "Sửa booking" }).click()
+  const guestName = "MD-04 Đặt bàn"
+  await page.evaluate(async (contactName) => {
+    const { api, clock } = await import("/src/services/index.ts")
+    const { atBusinessTime, businessDateOf } = await import("/src/lib/time.ts")
+    await api.createReservation({
+      contactName,
+      partySize: 2,
+      expectedAt: atBusinessTime(businessDateOf(clock.now()), "23:00"),
+      sourceCode: "HOTLINE",
+    })
+  }, guestName)
+  await page.getByText(guestName, { exact: true }).click()
+  const detail = page.getByRole("dialog", { name: "Chi tiết booking", exact: true })
+  await detail.getByRole("button", { name: "Sửa booking", exact: true }).click()
   const editDialog = page.getByRole("dialog", { name: /Sửa booking/ })
   await editDialog.waitFor()
 
@@ -1068,6 +1075,7 @@ await flow("booking pickers: keyboard navigation across expired selected time (M
   })
 
   // The wheel is reachable by keyboard, skips expired values and keeps the selection in step.
+  await editDialog.getByRole("button", { name: /^Giờ hẹn/ }).click()
   const wheelButton = editDialog.getByRole("button", { name: /Chọn giờ bằng con lăn/ })
   await wheelButton.click()
   const hours = editDialog.getByRole("spinbutton", { name: "Giờ", exact: true })
@@ -1265,11 +1273,15 @@ for (const width of [390, 768])
           await openStatus()
         } else {
           await table(page, "B5").click()
+          const statusAction = page.getByRole("button", { name: "Đổi trạng thái", exact: true })
           if (surface === "detail") {
             await page.getByRole("button", { name: "Quản lý đơn", exact: true }).click()
-            if (width < 768)
-              openStatus = () => page.getByRole("button", { name: "Đổi trạng thái", exact: true }).click()
-          } else openStatus = () => page.getByRole("button", { name: "Đổi trạng thái", exact: true }).click()
+            if (width < 768) openStatus = () => statusAction.click()
+          } else if (width >= 768) {
+            openStatus = () => statusAction.click()
+          } else {
+            await expect(statusAction).toHaveCount(0)
+          }
           if (openStatus) await openStatus()
         }
         const noShow = page.getByRole("button", {
@@ -1357,14 +1369,17 @@ for (const width of [390, 768])
       await dismissHoldAlerts(page)
       await mockHeldFixture(page, "pure")
       await table(page, "A4").click()
+      const arrival = page.getByRole("button", { name: "Khách đã đến", exact: true })
+      await expect(arrival).toBeEnabled()
       for (const permission of ["visit.checkin", "waitlist.accept_offer", "reservation.create", "table.assign"]) {
         await page.evaluate(async (permission) => {
           const { PERMISSION_MATRIX } = await import("/src/domain/access.ts")
+          const { useSession } = await import("/src/state/session.ts")
           window.savedPermission = [...PERMISSION_MATRIX[permission]]
-          PERMISSION_MATRIX[permission] = PERMISSION_MATRIX[permission].filter((r) => r !== "OWNER_ADMIN")
+          window.currentRole = useSession.getState().user.role
+          PERMISSION_MATRIX[permission] = PERMISSION_MATRIX[permission].filter((r) => r !== window.currentRole)
           ;(await import("/src/services/index.ts")).clock.advance(0)
         }, permission)
-        const arrival = page.getByRole("button", { name: "Khách đã đến", exact: true })
         await expect(arrival).toBeDisabled()
         await arrival.evaluate((el) => el.click())
         assert.deepEqual(await page.evaluate(() => window.holdWrites), [])
@@ -1375,9 +1390,10 @@ for (const width of [390, 768])
         await expect(arrival).toBeEnabled()
         await arrival.click()
         const confirm = page.getByRole(width < 768 ? "alertdialog" : "dialog", { name: /Xác nhận khách đã đến/ })
+        await expect(confirm).toBeVisible()
         await page.evaluate(async (permission) => {
           const { PERMISSION_MATRIX } = await import("/src/domain/access.ts")
-          PERMISSION_MATRIX[permission] = PERMISSION_MATRIX[permission].filter((r) => r !== "OWNER_ADMIN")
+          PERMISSION_MATRIX[permission] = PERMISSION_MATRIX[permission].filter((r) => r !== window.currentRole)
         }, permission)
         await confirm.getByRole("button", { name: "Khách đã đến", exact: true }).click()
         await expect(
@@ -1402,7 +1418,7 @@ for (const width of [390, 768])
         await page.evaluate(async () => {
           const { PERMISSION_MATRIX } = await import("/src/domain/access.ts")
           PERMISSION_MATRIX["reservation.create"] = PERMISSION_MATRIX["reservation.create"].filter(
-            (r) => r !== "OWNER_ADMIN",
+            (r) => r !== window.currentRole,
           )
           ;(await import("/src/services/index.ts")).clock.advance(0)
         })

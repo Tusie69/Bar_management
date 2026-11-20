@@ -1,4 +1,5 @@
 import type { ClaimView, FloorGroup, FloorTableState, TableLiveState, TableView } from "@/domain/models"
+import { countPhoneDigits } from "@/domain/phone-shape"
 import { fmtTime } from "@/lib/time"
 
 export interface BarGuestRowIcons {
@@ -113,10 +114,7 @@ export function formatBarSeatLabel(seatNumbers: number[]): string {
  * string containing 9 or more digits anywhere as phone-shaped.
  */
 export function isPhoneLikeGuestName(displayName?: string | null): boolean {
-  if (!displayName) return false
-  const mapped = displayName.normalize("NFKC").replace(/\p{Nd}/gu, "0")
-  const digits = mapped.match(/[0-9]/g)
-  return (digits?.length ?? 0) >= 9
+  return countPhoneDigits(displayName ?? "") >= 9
 }
 
 /**
