@@ -76,8 +76,8 @@ export const ADMIN_PAGES: readonly AdminPage[] = [
     label: "Khách hàng",
     title: "Khách hàng",
     permission: "customer.view_masked",
-    status: "phase2",
-    note: "Danh sách khách, hồ sơ chi tiêu và nhãn VIP / khách quen / nguy cơ mất khách.",
+    status: "integrated",
+    note: "Danh sách khách và hồ sơ riêng từng khách: lượt ghé, booking, ghi chú phục vụ.",
   },
   {
     path: "visits",
