@@ -78,7 +78,7 @@ mysqlDescribe('TU-07/TU-08/TU-09 account and admin access model', () => {
     // CUSTOMER_CARE vẫn ở đây — biên bản không nhắc tới nó, và "không nhắc
     // tới" không phải là "bỏ đi".
     expect(roles.map((row) => row.code).sort())
-      .toEqual(['ADMIN', 'CASHIER', 'CUSTOMER_CARE', 'OWNER', 'RECEPTIONIST', 'WAITER'])
+      .toEqual(['ADMIN', 'BAR', 'CASHIER', 'CUSTOMER_CARE', 'KITCHEN', 'OWNER', 'RECEPTIONIST', 'WAITER'])
     expect(roles.some((row) => row.code === 'OWNER_ADMIN')).toBe(false)
     expect(Number(roles.find((row) => row.code === 'OWNER')?.id)).toBe(1)
     const [columns] = await databasePool.execute<RowDataPacket[]>(

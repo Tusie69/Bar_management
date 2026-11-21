@@ -73,9 +73,13 @@ describe("portal-bound login routes", () => {
     for (const target of ["/administrator", "/admin-other/turns", "//evil.example/admin/turns", "/admin/login"]) {
       expect(resolvePortalLoginDestination("admin", undefined, target)).toBe("/admin/overview")
     }
+    // Một cổng không phải admin bỏ qua redirect vào /admin và về ĐÚNG home của
+    // nó. Viết theo PORTAL_CONFIG thay vì hardcode "/floor": Phục vụ đã có khu
+    // vực riêng ở /phucvu, và cổng tiếp theo cũng sẽ có home riêng.
     for (const portal of ["receptionist", "cashier", "waiter"] as const) {
-      expect(resolvePortalLoginDestination(portal, undefined, "/admin/turns")).toBe("/floor")
+      expect(resolvePortalLoginDestination(portal, undefined, "/admin/turns")).toBe(PORTAL_CONFIG[portal].home)
     }
+    expect(PORTAL_CONFIG.waiter.home).toBe("/phucvu")
   })
 
   it("gives every portal exactly one role set and a home route", () => {

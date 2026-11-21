@@ -13,6 +13,12 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--dir", "web", "dev", "--port", "5173"],
       "port": 5173
+    },
+    {
+      "name": "web-mock",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set VITE_API_MODE=mock&& pnpm --dir web dev --port 5174"],
+      "port": 5174
     }
   ]
 }

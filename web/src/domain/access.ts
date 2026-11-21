@@ -46,6 +46,17 @@ export type Permission =
   | "order.create"
   | "order.read"
   | "payment.collect"
+  | "preparation.bar.read"
+  | "preparation.bar.transition"
+  | "preparation.kitchen.read"
+  | "preparation.kitchen.transition"
+  | "preparation.print.retry"
+  // Module Phuc vu 5. Phuc vu sua so luong va GUI yeu cau huy; quyen phe duyet
+  // va quyen ghi hao thuoc nguoi khac — do la ca diem cua viec phe duyet.
+  | "order.line.adjust"
+  | "order.cancel.request"
+  | "order.cancel.approve"
+  | "order.cancel.ready"
 
 const O: RoleCode = "OWNER"
 const A: RoleCode = "ADMIN"
@@ -54,6 +65,8 @@ const R: RoleCode = "RECEPTIONIST"
 const CC: RoleCode = "CUSTOMER_CARE"
 const C: RoleCode = "CASHIER"
 const W: RoleCode = "WAITER"
+const B: RoleCode = "BAR"
+const K: RoleCode = "KITCHEN"
 
 export const PERMISSION_MATRIX: Record<Permission, RoleCode[]> = {
   "reservation.create": [...M, R],
@@ -65,9 +78,12 @@ export const PERMISSION_MATRIX: Record<Permission, RoleCode[]> = {
   "table.spare.configure": [...M, R],
   "visit.checkin": [...M, R],
   "visit.walkin": [...M, R],
-  "visit.move": [...M, R],
-  "visit.combine": [...M, R],
-  "visit.split": [...M, R],
+  // Module Phục vụ 1 (migration 0032): Phục vụ dọn chỗ cho khách ĐANG NGỒI.
+  // Ba quyền này đều gắn vào một Visit đang mở, nên chúng không mở ra việc xếp
+  // mặt bằng — `table.group.manage` ở dưới vẫn chỉ thuộc Lễ tân và quản trị.
+  "visit.move": [...M, R, W],
+  "visit.combine": [...M, R, W],
+  "visit.split": [...M, R, W],
   // C1: a layout cluster is managed without touching a guest, so it has its own
   // permission; the server grants it to Lễ tân and the management roles.
   "table.group.manage": [...M, R],
@@ -97,6 +113,17 @@ export const PERMISSION_MATRIX: Record<Permission, RoleCode[]> = {
   "order.create": [...M, C, W],
   "order.read": [...M, C, W],
   "payment.collect": [...M, C],
+  "preparation.bar.read": [...M, B],
+  "preparation.bar.transition": [...M, B],
+  "preparation.kitchen.read": [...M, K],
+  "preparation.kitchen.transition": [...M, K],
+  "preparation.print.retry": [...M, B, K],
+  "order.line.adjust": [...M, C, W],
+  "order.cancel.request": [...M, C, W],
+  // Phuc vu KHONG duyet huy mon cua chinh minh.
+  "order.cancel.approve": [...M, C],
+  // Bo mot ly da pha la quyet dinh cua quan ly.
+  "order.cancel.ready": M,
 }
 
 export const PERMISSION_LABEL: Record<Permission, string> = {
@@ -136,6 +163,15 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "order.create": "Gọi món, lên đơn",
   "order.read": "Xem đơn và trạng thái chờ thanh toán",
   "payment.collect": "Thu tiền, in bill",
+  "preparation.bar.read": "Xem hàng đợi Bar",
+  "preparation.bar.transition": "Xử lý phiếu Bar",
+  "preparation.kitchen.read": "Xem hàng đợi Bếp",
+  "preparation.kitchen.transition": "Xử lý phiếu Bếp",
+  "preparation.print.retry": "Yêu cầu in lại phiếu chế biến",
+  "order.line.adjust": "Sửa số lượng món khi quầy chưa nhận phiếu",
+  "order.cancel.request": "Gửi yêu cầu hủy món",
+  "order.cancel.approve": "Phê duyệt hoặc từ chối yêu cầu hủy món",
+  "order.cancel.ready": "Yêu cầu hủy món đã làm xong (ghi hao)",
 }
 
 export function roleCan(role: RoleCode, permission: Permission): boolean {
@@ -196,4 +232,14 @@ export const PERMISSION_GROUPS: { title: string; items: Permission[] }[] = [
   // Nhóm này hiện chỉ để đối chiếu phân quyền sáu cấp. Chưa có màn hình nào
   // trong web đọc ba permission đó vì module order chưa tồn tại.
   { title: "Gọi món & thanh toán", items: ["order.create", "order.read", "payment.collect"] },
+  {
+    title: "Chế biến",
+    items: [
+      "preparation.bar.read",
+      "preparation.bar.transition",
+      "preparation.kitchen.read",
+      "preparation.kitchen.transition",
+      "preparation.print.retry",
+    ],
+  },
 ]

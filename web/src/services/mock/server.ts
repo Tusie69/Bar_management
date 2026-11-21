@@ -27,6 +27,7 @@ import {
   type WaitlistCloseReason,
 } from "@/domain/enums"
 import { callTargetKey } from "@/domain/call-target"
+import { redactFloorForWaiter } from "@/domain/waiter-privacy"
 import type {
   CallOutcome,
   CallTarget,
@@ -43,7 +44,7 @@ import type {
   TableTurnsParams,
 } from "@/domain/models"
 import type { ReservationRow, TableHoldRow, VisitRow, WaitlistEntryRow } from "@/domain/schema"
-import { symbolByNo } from "@/domain/symbols"
+import { GROUP_SYMBOL_COUNT_MAX, symbolByNo } from "@/domain/symbols"
 import { clock } from "../clock"
 import {
   ApiError,
@@ -63,6 +64,7 @@ import {
   type UpdateReservationInput,
   type VenueConfigPatch,
   type VenueSettingsUpdate,
+  type WaiterVisitTablesInput,
   type WalkInInput,
 } from "../contracts"
 import {
@@ -988,6 +990,27 @@ export class MockGamApi implements GamApi, DemoControls {
     return floorState(this.db, at, businessDate, businessDateOf(this.now))
   }
 
+  /**
+   * Module Phục vụ 1 — sơ đồ cho vai WAITER.
+   *
+   * Ở chế độ HTTP việc lược dữ liệu khách do máy chủ làm. Mock không có máy
+   * chủ, nên nó phải tự lược ngay tại đây: nếu không, bản demo sẽ hiện tên
+   * khách trên màn Phục vụ và người xem demo sẽ tin đó là thiết kế.
+   */
+  async getWaiterFloor(businessDate: BusinessDate) {
+    await this.latency("q")
+    return {
+      catalog: catalog(this.db),
+      floor: redactFloorForWaiter(floorState(this.db, this.now, businessDate, businessDateOf(this.now))),
+    }
+  }
+
+  /** Module Phục vụ 1: mock không có quyền nên catalog hai vai giống nhau. */
+  async getWaiterCatalog() {
+    await this.latency("q")
+    return catalog(this.db)
+  }
+
   async getAvailability(at: Date, partySize: number) {
     await this.latency("q")
     return availability(this.db, this.now, at, partySize)
@@ -1783,6 +1806,32 @@ export class MockGamApi implements GamApi, DemoControls {
       }
     }
     return this.fail("Thiếu đối tượng cần đổi bàn.")
+  }
+
+  /**
+   * Module Phục vụ 1 — đổi / ghép bàn từ màn `/phucvu`.
+   *
+   * Chuyển về đúng hai hàm đã có, nên luật nghiệp vụ của mock chỉ tồn tại ở
+   * một chỗ. `tableIds` là bộ bàn cuối cùng (giống hợp đồng HTTP), nên chế độ
+   * MERGE tự suy ra phần thêm vào thay vì để màn hình gửi hai nghĩa khác nhau.
+   */
+  async updateWaiterVisitTables(input: WaiterVisitTablesInput) {
+    const claim = { visitId: input.visitId, version: input.version }
+    const confirmations =
+      input.capacityOverrideConfirmed === undefined
+        ? {}
+        : { capacityOverrideConfirmed: input.capacityOverrideConfirmed }
+    if (input.mode === "MOVE") {
+      return this.moveClaim({ claim, tableIds: [...input.tableIds], ...confirmations })
+    }
+    const current = new Set(
+      [...this.db.allocations.values()]
+        .filter((allocation) => allocation.visitId === input.visitId && !allocation.releasedAt)
+        .map((allocation) => allocation.tableId),
+    )
+    const addTableIds = input.tableIds.filter((id) => !current.has(id))
+    if (!addTableIds.length) this.fail("Cần chọn ít nhất một bàn để ghép.", "INVALID_STATE")
+    return this.combineTables({ claim, addTableIds, ...confirmations })
   }
 
   async moveClaim(input: MoveInput) {
@@ -2729,8 +2778,8 @@ export class MockGamApi implements GamApi, DemoControls {
       this.fail("Chính sách WINDOWED cần khung giữ bàn 15 đến 720 phút.")
     }
     const maxUsed = Math.max(0, ...[...this.db.groups.values()].filter((g) => !g.dissolvedAt).map((g) => g.symbolNo))
-    if (next.groupSymbolCount < 1 || next.groupSymbolCount > 12)
-      this.fail("Số ký hiệu ghép từ 1 đến 12 (bộ ký hiệu hiện có).")
+    if (next.groupSymbolCount < 1 || next.groupSymbolCount > GROUP_SYMBOL_COUNT_MAX)
+      this.fail(`Số ký hiệu ghép từ 1 đến ${GROUP_SYMBOL_COUNT_MAX}.`)
     if (next.groupSymbolCount < maxUsed) this.fail(`Đang dùng ký hiệu số ${maxUsed}, không giảm thấp hơn.`)
     const result = this.commit({ action: "VENUE_CONFIG_UPDATED", entityType: "venue", undoable: true }, (tx) => {
       const row = tx.edit("venue", v.id)
@@ -2783,8 +2832,7 @@ export class MockGamApi implements GamApi, DemoControls {
       const open = [...this.db.visits.values()].filter(
         (visit) => visit.venueId === this.venue.id && visit.endedAt === null,
       ).length
-      if (open > 0)
-        this.fail(`Còn ${open} lượt khách đang ngồi. Chỉ đổi ca vận hành khi quán không còn lượt nào mở.`)
+      if (open > 0) this.fail(`Còn ${open} lượt khách đang ngồi. Chỉ đổi ca vận hành khi quán không còn lượt nào mở.`)
     }
 
     this.quickTimes = [...input.quickTimes]

@@ -102,6 +102,15 @@ export async function getAuditConfig(actor: AuthenticatedActor): Promise<AuditCo
 const DETAIL_KEYS = new Set([
   'from', 'to', 'tableCodes', 'fromTableCodes', 'toTableCodes', 'roleCode', 'accessLevel',
   'portal', 'result', 'reason', 'revokedSessions', 'partySize', 'guestCount', 'groupId',
+  // Module Phục vụ 3. `lines` cố ý KHÔNG có trong danh sách: mỗi dòng mang ghi
+  // chú món do nhân viên gõ tay, và cột chi tiết của nhật ký không phải chỗ để
+  // nó xuất hiện. Tổng tiền và số món đủ để đọc một dòng nhật ký gọi món.
+  'visitSequence', 'lineCount', 'itemCount', 'totalAmountVnd', 'stations',
+  // Module Phục vụ 5. `reason` và `note` cố ý KHÔNG có ở đây: lý do hủy và ghi
+  // chú quyết định là ô gõ tự do, và nguyên văn của chúng nằm ở
+  // `sales_order_cancellations` / `sales_order_line_changes` — truy được mà
+  // không đổ vào cột chi tiết của màn nhật ký.
+  'quantityBefore', 'quantityAfter', 'quantity', 'amountDeltaVnd', 'policy', 'ticketStatus', 'lineNo',
 ])
 
 function summarizeChanges(changes: unknown): string {
@@ -140,6 +149,14 @@ function describeTarget(row: AuditRow): string {
       return row.table_code ? `Bàn ${row.table_code}` : `Bàn #${id}`
     case 'table_group':
       return `Cụm bàn #${id}`
+    case 'sales_order':
+      return `Đơn gọi món #${id}`
+    case 'sales_order_line':
+      return `Dòng món #${id}`
+    case 'sales_order_cancellation':
+      return `Yêu cầu hủy món #${id}`
+    case 'menu_item':
+      return `Món #${id}`
     case 'venue':
       return 'Cấu hình quán'
     default:

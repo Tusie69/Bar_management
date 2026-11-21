@@ -23,4 +23,6 @@ export const READ_ONLY_ADMIN_PERMISSIONS: readonly string[] = [
   'session.read',
   // Ba permission order.* / payment.* của TU-32: Admin Read-Only chỉ được đọc.
   'order.read',
+  'preparation.bar.read',
+  'preparation.kitchen.read',
 ]

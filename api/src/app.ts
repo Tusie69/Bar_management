@@ -16,6 +16,10 @@ import { settingsRouter, venueSettingsRouter } from './modules/venues/venue-sett
 import { healthRouter } from './routes/health.route.js'
 import { receptionRouter } from './modules/reception/guest-count.route.js'
 import { customerHistoryRouter } from './modules/visits/customer-history.route.js'
+import { waiterMenuRouter } from './modules/menu/menu.route.js'
+import { waiterOrderRouter } from './modules/orders/order.route.js'
+import { orderCancellationRouter } from './modules/orders/order-cancellation.route.js'
+import { preparationRouter } from './modules/preparation/preparation.route.js'
 
 export const app: Express = express()
 
@@ -40,6 +44,10 @@ app.use('/api/v1/waitlist', waitlistRouter)
 app.use('/api/v1/settings', settingsRouter)
 app.use('/api/v1/venues', venueSettingsRouter)
 app.use('/api/v1/reception', receptionRouter)
+app.use('/api/v1/waiter', waiterMenuRouter)
+app.use('/api/v1/waiter', waiterOrderRouter)
+app.use('/api/v1/orders', orderCancellationRouter)
+app.use('/api/v1/preparation', preparationRouter)
 
 app.use(notFoundHandler)
 app.use(errorHandler)

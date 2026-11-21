@@ -62,10 +62,22 @@ describe('các loại thao tác phải ghi vết', () => {
     ])
   })
 
-  it('nhóm giảm giá chưa có hành động nào và nói rõ lý do', () => {
+  it('nhóm giảm giá giờ mang ba hành động hủy món và không còn ghi chú "chưa có"', () => {
     const discount = AUDIT_FILTERS.find((filter) => filter.type === 'discount')!
-    expect(discount.actions).toEqual([])
-    expect(discount.unsupportedNote).toBeTruthy()
+    // Module Phục vụ 5 điền nhóm này, đúng như 0027 dự trù. Giảm giá vẫn chưa
+    // có hành động nào (chưa có module thanh toán), nhưng hủy món thì có.
+    expect(discount.actions).toEqual([
+      'SALES_ORDER_CANCELLATION_APPROVED',
+      'SALES_ORDER_CANCELLATION_REJECTED',
+      'SALES_ORDER_CANCELLATION_REQUESTED',
+    ])
+    expect(discount.unsupportedNote).toBeUndefined()
+  })
+
+  it('sửa số lượng có nhãn nhưng không thuộc nhóm lọc nào', () => {
+    const info = AUDIT_ACTIONS.SALES_ORDER_LINE_ADJUSTED
+    expect(info?.type).toBeNull()
+    expect(info?.label).toBe('Sửa số lượng món')
   })
 })
 
@@ -86,8 +98,19 @@ describe('lọc theo loại', () => {
     expect(actions).toContain('USER_PERMISSIONS_CHANGED')
   })
 
-  it('nhóm chưa hỗ trợ trả về rỗng, không âm thầm bỏ bộ lọc', () => {
-    expect(actionsForTypes(['discount'])).toEqual([])
+  it('nhóm hủy món trả đúng ba hành động của nó, không âm thầm bỏ bộ lọc', () => {
+    // Trước Module Phục vụ 5 nhóm này rỗng, và test cũ canh rằng một nhóm rỗng
+    // trả về [] chứ không bị bỏ qua. Giờ nhóm có việc, nên điều cần canh là nó
+    // trả về ĐÚNG ba hành động hủy món — không kéo theo hành động của nhóm khác.
+    expect(actionsForTypes(['discount'])).toEqual([
+      'SALES_ORDER_CANCELLATION_APPROVED',
+      'SALES_ORDER_CANCELLATION_REJECTED',
+      'SALES_ORDER_CANCELLATION_REQUESTED',
+    ])
+  })
+
+  it('danh sách nhóm rỗng nghĩa là không lọc', () => {
+    expect(actionsForTypes([])).toEqual([])
   })
 
   it('từ chối loại không có thật', () => {

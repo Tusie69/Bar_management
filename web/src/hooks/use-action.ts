@@ -41,6 +41,10 @@ const CONFLICT_TITLE: Record<string, string> = {
   TABLE_ALREADY_GROUPED: "Bàn đã thuộc cụm khác",
   ENTRY_ALREADY_CLAIMED: "Người khác đang liên hệ",
   NO_SYMBOL_AVAILABLE: "Hết ký hiệu ghép bàn",
+  // Backend trả mã này, mock trả `NO_SYMBOL_AVAILABLE`. Thiếu dòng dưới đây
+  // thì lỗi từ máy chủ rơi vào nhánh mặc định và hiện "Dữ liệu vừa thay đổi" —
+  // một câu sai: không có dữ liệu nào vừa đổi, và tải lại trang không giúp gì.
+  GROUP_SYMBOL_UNAVAILABLE: "Hết ký hiệu ghép bàn",
   UNDO_CONFLICT_MODIFIED: "Không thể hoàn tác",
 }
 
@@ -59,7 +63,9 @@ export function reportError(e: unknown) {
             ? "Thao tác gốc vẫn giữ nguyên. Kiểm tra lại trên sơ đồ rồi xử lý thủ công nếu cần. Liên hệ đã gửi cho khách (gọi, Zalo) không hoàn tác được."
             : e.code === "TABLE_CONFLICT"
               ? "Chọn bàn khác, nhận trước xếp sau, hoặc thêm khách vào danh sách chờ."
-              : undefined,
+              : e.code === "GROUP_SYMBOL_UNAVAILABLE" || e.code === "NO_SYMBOL_AVAILABLE"
+                ? "Ký hiệu được trả lại khi một nhóm tan. Tách một nhóm đã xong, hoặc tăng “Số ký hiệu ghép bàn trong ca” ở Cài đặt."
+                : undefined,
       })
       return
     }

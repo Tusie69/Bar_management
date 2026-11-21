@@ -1,8 +1,8 @@
-export const AUTH_PORTALS = ["admin", "receptionist", "customer-care", "cashier", "waiter"] as const
+export const AUTH_PORTALS = ["admin", "receptionist", "customer-care", "cashier", "waiter", "preparation"] as const
 
 export type AuthPortal = (typeof AUTH_PORTALS)[number]
 
-export type PortalRole = "OWNER" | "ADMIN" | "RECEPTIONIST" | "CUSTOMER_CARE" | "CASHIER" | "WAITER"
+export type PortalRole = "OWNER" | "ADMIN" | "RECEPTIONIST" | "CUSTOMER_CARE" | "CASHIER" | "WAITER" | "BAR" | "KITCHEN"
 
 export const DEFAULT_AUTH_PORTAL: AuthPortal = "receptionist"
 
@@ -21,6 +21,7 @@ export const PORTAL_SLUGS: Readonly<Record<AuthPortal, string>> = {
   receptionist: "letan",
   cashier: "thungan",
   waiter: "phucvu",
+  preparation: "chebien",
   // Biên bản 15/11 không nhắc tới cổng chăm sóc khách hàng, nên nó giữ URL cũ
   // thay vì được đặt một tên tiếng Việt chưa ai chốt.
   "customer-care": "customer-care",
@@ -40,6 +41,8 @@ const PORTAL_ALIASES: Readonly<Record<string, AuthPortal>> = {
   cashier: "cashier",
   phucvu: "waiter",
   waiter: "waiter",
+  chebien: "preparation",
+  preparation: "preparation",
   "customer-care": "customer-care",
 }
 
@@ -62,7 +65,11 @@ export const PORTAL_CONFIG: Record<AuthPortal, { label: string; roles: readonly 
   receptionist: { label: "Lễ tân", roles: ["RECEPTIONIST"], home: "/floor" },
   "customer-care": { label: "Chăm sóc khách hàng", roles: ["CUSTOMER_CARE"], home: "/waitlist" },
   cashier: { label: "Thu ngân", roles: ["CASHIER"], home: "/floor" },
-  waiter: { label: "Phục vụ", roles: ["WAITER"], home: "/floor" },
+  // Module Phục vụ 1: Phục vụ có khu vực riêng ở /phucvu và KHÔNG dùng màn
+  // Điều phối của Lễ tân. Giá trị này phải khớp WAITER_HOME_PATH trong
+  // features/waiter/waiter-access.ts (có test ràng buộc).
+  waiter: { label: "Phục vụ", roles: ["WAITER"], home: "/phucvu" },
+  preparation: { label: "Chế biến", roles: ["BAR", "KITCHEN"], home: "/chebien" },
 }
 
 export function isAuthPortal(value: unknown): value is AuthPortal {

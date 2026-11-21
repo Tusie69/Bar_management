@@ -106,46 +106,71 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
   const post = <T>(path: string, body: unknown, idempotencyKey?: string) =>
     client.post<T>(path, body, { reviver: revive, idempotencyKey })
   const put = <T>(path: string, body: unknown) => client.put<T>(path, body, { reviver: revive })
-  let cachedCatalog: { value: Catalog; expiresAt: number } | null = null
-  let catalogLoad: Promise<Catalog> | null = null
+  let cachedCatalog: { value: Catalog; expiresAt: number; withSources: boolean } | null = null
+  // Khoá theo `withSources`: hai nhánh nạp gọi hai tập endpoint khác nhau, nên
+  // một request đang bay của nhánh này không trả lời thay cho nhánh kia được.
+  const catalogLoads = new Map<boolean, Promise<Catalog>>()
   let catalogGeneration = 0
   let catalogSessionRevision = client.sessionRevision
   const latestFloorByDate = new Map<BusinessDate, FloorState>()
+  // Ngày mà màn Phục vụ đã nạp. Tách khỏi `latestFloorByDate` vì hai luồng
+  // gọi hai endpoint khác nhau, và chỉ luồng đã dùng mới được làm mới.
+  const waiterFloorDates = new Set<BusinessDate>()
   const invalidateCatalog = () => {
     catalogGeneration += 1
     cachedCatalog = null
-    catalogLoad = null
+    catalogLoads.clear()
     latestFloorByDate.clear()
+    waiterFloorDates.clear()
   }
   // Scope reference data to this adapter/session; live allocations are always fetched.
-  const loadCatalog = async () => {
+  /**
+   * Module Phục vụ 1: `withSources: false` bỏ `GET /bookings/sources`.
+   *
+   * Endpoint đó đòi `customer.view_masked`, quyền mà tài khoản Phục vụ cố ý
+   * KHÔNG có. Gọi kèm nó làm cả `Promise.all` vỡ vì một 403, và màn `/phucvu`
+   * chỉ còn "Không tải được sơ đồ bàn" — dù `/tables/catalog` và
+   * `/tables/service` đều đã mở cho `order.read`.
+   *
+   * `sources: []` ở đây là giá trị ĐÚNG, không phải giá trị tạm: nguồn đặt bàn
+   * là dữ liệu khách, `toWaiterFloorProjection` đã xoá nó ở máy chủ, và không
+   * màn nào dưới `/phucvu` đọc `catalog.sources`. Nới quyền cho endpoint kia
+   * sẽ phá đúng cái chốt mà backend dựng lên.
+   */
+  const loadCatalog = async (withSources = true) => {
     // AuthApi updates the CSRF token on login, restore, logout and expiry.
     if (catalogSessionRevision !== client.sessionRevision) {
       invalidateCatalog()
       catalogSessionRevision = client.sessionRevision
     }
-    if (cachedCatalog && Date.now() < cachedCatalog.expiresAt) return structuredClone(cachedCatalog.value)
-    if (!catalogLoad) {
+    // Bản cache thiếu sources không phục vụ được người gọi đang cần sources.
+    if (cachedCatalog && Date.now() < cachedCatalog.expiresAt && (cachedCatalog.withSources || !withSources))
+      return structuredClone(cachedCatalog.value)
+    let pending = catalogLoads.get(withSources)
+    if (!pending) {
       const generation = catalogGeneration
       const sessionRevision = client.sessionRevision
-      const pending = Promise.all([
+      pending = Promise.all([
         get<BackendCatalog>("/tables/catalog"),
-        get<{ sources: BackendSource[] }>("/bookings/sources"),
+        withSources
+          ? get<{ sources: BackendSource[] }>("/bookings/sources")
+          : Promise.resolve({ sources: [] as BackendSource[] }),
       ]).then(([catalog, sources]) => {
         const value = mapCatalog(catalog, sources.sources)
         // An older request must not restore data invalidated by a mutation or login.
         if (generation === catalogGeneration && sessionRevision === client.sessionRevision)
-          cachedCatalog = { value, expiresAt: Date.now() + catalogMaxAgeMs }
+          cachedCatalog = { value, expiresAt: Date.now() + catalogMaxAgeMs, withSources }
         return value
       })
-      catalogLoad = pending
-      void pending
+      const started = pending
+      catalogLoads.set(withSources, started)
+      void started
         .finally(() => {
-          if (catalogLoad === pending) catalogLoad = null
+          if (catalogLoads.get(withSources) === started) catalogLoads.delete(withSources)
         })
         .catch(() => undefined)
     }
-    return structuredClone(await catalogLoad)
+    return structuredClone(await pending)
   }
   const floor = async (date: BusinessDate) => {
     const [catalog, projection] = await Promise.all([
@@ -167,6 +192,26 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     latestFloorByDate.set(date, structuredClone(mapped))
     return mapped
   }
+  /**
+   * Module Phục vụ 1 — sơ đồ của vai WAITER.
+   *
+   * Endpoint riêng (`/tables/service`), không phải `/tables`: tài khoản Phục
+   * vụ không có `customer.view_masked` nên gọi `/tables` sẽ nhận 403. Payload
+   * dùng CHUNG hợp đồng projection với Lễ tân, chỉ thiếu các trường dữ liệu
+   * khách, nên nó đi qua đúng `mapFloorProjection` đã được kiểm kỹ thay vì một
+   * adapter thứ hai có thể lệch luật trạng thái bàn.
+   */
+  const waiterFloor = async (date: BusinessDate) => {
+    const [catalog, projection] = await Promise.all([
+      loadCatalog(false),
+      get<BackendFloorProjection>(`/tables/service?date=${date}`),
+    ])
+    if (projection.businessDate !== date) {
+      throw new ApiError(502, "BUSINESS_DATE_RESPONSE_MISMATCH", "Unexpected business date in floor response.")
+    }
+    waiterFloorDates.add(date)
+    return { catalog, floor: mapFloorProjection(projection, catalog) }
+  }
   const snapshot = async (at: Date, date: BusinessDate = businessDateOf(at)) => {
     const [catalog, floorState, rows] = await Promise.all([loadCatalog(), floor(date), bookings.list(date)])
     return {
@@ -175,9 +220,24 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
       floor: floorState,
     }
   }
+  /**
+   * Làm mới sơ đồ sau xung đột phiên bản cụm bàn, THEO ĐÚNG luồng đã nạp.
+   *
+   * Bản cũ luôn gọi `floor()` — đường của Lễ tân, `GET /tables` với
+   * `customer.view_masked`. Tài khoản Phục vụ nhận 403, `allSettled` nuốt
+   * mất, và sơ đồ của họ đứng yên đúng lúc cần mới nhất: ngay sau khi một máy
+   * khác vừa đổi cụm bàn.
+   *
+   * Chưa luồng nào nạp thì không có gì để làm mới. Bản cũ đoán "hôm nay" và
+   * gọi đường Lễ tân, tức là đoán luôn cả vai người dùng.
+   */
   client.setGroupConflictHandler(async () => {
-    const dates = latestFloorByDate.size ? [...latestFloorByDate.keys()] : [businessDateOf(clock.now())]
-    await Promise.allSettled(dates.map(floor))
+    const tasks = [
+      ...[...latestFloorByDate.keys()].map((date) => floor(date)),
+      ...[...waiterFloorDates].map((date) => waiterFloor(date)),
+    ]
+    if (tasks.length === 0) return
+    await Promise.allSettled(tasks)
   })
   const listWaitlist = async (date: BusinessDate) => {
     const response = await get<{ businessDate: string; entries: BackendWaitlistEntry[] }>(`/waitlist?date=${date}`)
@@ -215,6 +275,20 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     getCatalog: loadCatalog,
     getVenueSettings: () => get<VenueSettingsView>("/settings"),
     getFloorState: async (at, date = businessDateOf(at)) => floor(date),
+    getWaiterFloor: (date) => waiterFloor(date),
+    getWaiterCatalog: () => loadCatalog(false),
+    updateWaiterVisitTables: async (input) => {
+      const confirmations =
+        input.capacityOverrideConfirmed === undefined
+          ? {}
+          : { capacityOverrideConfirmed: input.capacityOverrideConfirmed }
+      if (input.mode === "MOVE") {
+        await visits.move(input.visitId, input.version, input.tableIds, confirmations)
+        return result("Đã đổi bàn.")
+      }
+      await visits.merge(input.visitId, input.version, input.tableIds, confirmations)
+      return result("Đã ghép bàn.")
+    },
     getReceptionGuestCount: async (date) =>
       (await get<{ guestCount: ReceptionGuestCount }>(`/reception/guest-counts?date=${date}`)).guestCount,
     updateReceptionGuestCount: async (input) =>

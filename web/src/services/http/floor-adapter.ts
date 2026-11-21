@@ -57,8 +57,13 @@ export interface BackendFloorClaimProjection {
   visitId: number | null
   waitlistEntryId: number | null
   holdId: number | null
-  guestName: string
-  phoneLast3: string | null
+  /**
+   * Vắng mặt trong phép chiếu của Phục vụ (`GET /tables/service`): máy chủ
+   * không gửi tên khách cho vai đó. `undefined` ở đây nghĩa là "endpoint này
+   * không mang dữ liệu khách", không phải "khách chưa có tên".
+   */
+  guestName?: string
+  phoneLast3?: string | null
   partySize: number
   turnNo: number | null
   flags: Array<"BIRTHDAY" | "NEW" | "RETURNING">
@@ -371,8 +376,8 @@ function projectionClaim(
     reservationId: claim.reservationId,
     waitlistEntryId: claim.waitlistEntryId,
     holdId: claim.holdId,
-    displayName: claim.guestName,
-    phoneLast3: claim.phoneLast3,
+    displayName: claim.guestName ?? "",
+    phoneLast3: claim.phoneLast3 ?? null,
     partySize: claim.partySize,
     startsAt: validDate(claim.startsAt, `startsAt của bàn ${table.tableCode}`),
     deadlineAt: claim.deadlineAt === null ? null : validDate(claim.deadlineAt, `deadlineAt của bàn ${table.tableCode}`),

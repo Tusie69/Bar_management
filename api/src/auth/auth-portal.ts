@@ -10,7 +10,7 @@
  * `web/src/domain/auth-portal.ts`. API chỉ nhận mã portal tiếng Anh, nên một
  * URL alias không bao giờ cấp thêm quyền.
  */
-export const AUTH_PORTALS = ['admin', 'receptionist', 'customer-care', 'cashier', 'waiter'] as const
+export const AUTH_PORTALS = ['admin', 'receptionist', 'customer-care', 'cashier', 'waiter', 'preparation'] as const
 
 export type AuthPortal = typeof AUTH_PORTALS[number]
 
@@ -30,6 +30,7 @@ export const PORTAL_ROLE_CODES: Readonly<Record<AuthPortal, readonly string[]>> 
   'customer-care': ['CUSTOMER_CARE'],
   cashier: ['CASHIER'],
   waiter: ['WAITER'],
+  preparation: ['BAR', 'KITCHEN'],
 }
 
 export function isAuthPortal(value: unknown): value is AuthPortal {

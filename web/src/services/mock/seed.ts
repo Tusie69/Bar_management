@@ -18,6 +18,9 @@ export const DEMO_USERS: MockUser[] = [
   { id: 3, displayName: "Chủ quán", role: "OWNER", deviceLabel: "Laptop văn phòng" },
   { id: 4, displayName: "CSKH", role: "CUSTOMER_CARE", deviceLabel: "Điện thoại CSKH" },
   { id: 5, displayName: "Thu ngân", role: "CASHIER", deviceLabel: "Máy thu ngân" },
+  // Module Phục vụ 1: để mở được /phucvu trong bản prototype (chế độ mock)
+  // mà không cần backend. Quyền thật vẫn do backend quyết định ở chế độ HTTP.
+  { id: 6, displayName: "Phục vụ 1", role: "WAITER", deviceLabel: "Điện thoại phục vụ" },
 ]
 
 export const REMOTE_USER_ID = 2
@@ -135,7 +138,10 @@ export function seedDb(now: Date): MockDb {
     waitlistClaimLeaseSeconds: 300,
     reservationHoldPolicy: "SEQUENTIAL",
     reservationWindowMinutes: null,
-    groupSymbolCount: 12,
+    // Bằng số bàn + ghế bar của sơ đồ, giống luật của migration 0035: mock
+    // phải chạm cùng một trần với backend, nếu không prototype sẽ không bao
+    // giờ tái hiện được lỗi "hết ký hiệu" mà máy thật gặp.
+    groupSymbolCount: TABLES.length + BAR_SEATS.length,
     changeSeq: 1200,
     settings: { quick_times: ["21:00", "21:30", "22:00", "22:30"], upcoming_minutes: 10, no_show_minutes: 30 },
     version: 1,

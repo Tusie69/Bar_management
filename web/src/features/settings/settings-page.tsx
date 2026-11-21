@@ -16,7 +16,7 @@ import { AccountsSection } from "./accounts-section"
 import { ROLE_LABEL, type RoleCode } from "@/domain/enums"
 import type { VenueConfig, VenueSettingsView } from "@/domain/models"
 import { DDL_TABLES } from "@/domain/schema"
-import { GROUP_SYMBOLS } from "@/domain/symbols"
+import { GROUP_SYMBOLS, GROUP_SYMBOL_COUNT_MAX, GROUP_SYMBOL_DRAWN_COUNT } from "@/domain/symbols"
 import { reportError, useAction } from "@/hooks/use-action"
 import { qk, useCatalog, useVenueSettings } from "@/hooks/use-data"
 import { cn } from "@/lib/utils"
@@ -78,13 +78,7 @@ export function DynamicVenueSettings({ readOnly }: { readOnly: boolean }) {
   return <DynamicVenueSettingsForm key={JSON.stringify(value)} value={value} readOnly={readOnly} />
 }
 
-function DynamicVenueSettingsForm({
-  value,
-  readOnly,
-}: {
-  value: VenueSettingsView
-  readOnly: boolean
-}) {
+function DynamicVenueSettingsForm({ value, readOnly }: { value: VenueSettingsView; readOnly: boolean }) {
   const queryClient = useQueryClient()
   const [quickTimes, setQuickTimes] = useState(value.quickTimes.join(", "))
   const [upcomingMinutes, setUpcomingMinutes] = useState(value.upcomingMinutes)
@@ -98,8 +92,7 @@ function DynamicVenueSettingsForm({
     .map((time) => time.trim())
     .filter(Boolean)
   const shiftDirty =
-    startLocal !== value.businessDayStartLocal.slice(0, 5) ||
-    cutoffLocal !== value.businessDayCutoffLocal.slice(0, 5)
+    startLocal !== value.businessDayStartLocal.slice(0, 5) || cutoffLocal !== value.businessDayCutoffLocal.slice(0, 5)
   const dirty =
     quickTimes !== value.quickTimes.join(", ") ||
     upcomingMinutes !== value.upcomingMinutes ||
@@ -107,11 +100,12 @@ function DynamicVenueSettingsForm({
     shiftDirty
   // Checked here so the reason is on screen beside the field, not only in a toast after a
   // round trip. The API validates the same thing: this does not replace it.
-  const shiftError = !isShiftBoundary(startLocal) || !isShiftBoundary(cutoffLocal)
-    ? "Giờ phải có dạng HH:mm."
-    : !shiftServesBookingWindow(startLocal, cutoffLocal)
-      ? "Ca vận hành phải bao trọn cửa sổ nhận booking 19:00–01:00."
-      : null
+  const shiftError =
+    !isShiftBoundary(startLocal) || !isShiftBoundary(cutoffLocal)
+      ? "Giờ phải có dạng HH:mm."
+      : !shiftServesBookingWindow(startLocal, cutoffLocal)
+        ? "Ca vận hành phải bao trọn cửa sổ nhận booking 19:00–01:00."
+        : null
 
   const save = async () => {
     if (pending || shiftError) return
@@ -432,7 +426,7 @@ function VenueForm({ v, readOnly }: { v: VenueConfig; readOnly: boolean }) {
         </Row>
         <Row
           label="Số ký hiệu ghép bàn trong ca"
-          hint="Ký hiệu nhỏ nhất còn trống được gán khi ghép. Hết ký hiệu thì phải tách nhóm cũ."
+          hint="Ký hiệu nhỏ nhất còn trống được gán khi ghép; ký hiệu được trả lại khi nhóm tan. Đặt bằng số bàn thì không bao giờ hết."
         >
           <NumberField
             id="symbols"
@@ -442,9 +436,14 @@ function VenueForm({ v, readOnly }: { v: VenueConfig; readOnly: boolean }) {
             unit="ký hiệu"
             disabled={readOnly}
             min={1}
-            max={12}
+            max={GROUP_SYMBOL_COUNT_MAX}
           />
         </Row>
+        {form.symbols > GROUP_SYMBOL_DRAWN_COUNT ? (
+          <p className="pt-1 text-sm text-muted-foreground">
+            {`Bộ ký hiệu có ${GROUP_SYMBOL_DRAWN_COUNT} hình. Nhóm từ số ${GROUP_SYMBOL_DRAWN_COUNT + 1} trở đi hiện mã G${GROUP_SYMBOL_DRAWN_COUNT + 1} thay cho hình. Một nhóm luôn có ít nhất hai bàn, nên trường hợp này gần như không xảy ra.`}
+          </p>
+        ) : null}
         <div className="flex flex-wrap gap-2 pt-1 pb-4" aria-label="Bộ ký hiệu ghép">
           {GROUP_SYMBOLS.map((s) => (
             <span

@@ -59,3 +59,28 @@ pnpm --filter @21gam/api db:migrate
 
 Migration được chạy theo thứ tự tên file và ghi nhận trong bảng `schema_migrations`. Không sửa migration đã chạy; thay đổi schema bằng migration mới.
 
+### Khi chain bị chặn: `Migration đã bị thay đổi sau khi chạy`
+
+`db:migrate` dừng ở migration đầu tiên có checksum khác lúc chạy, và không nói còn bao nhiêu file chưa chạy. Xem toàn cảnh trước khi quyết định:
+
+```powershell
+pnpm --filter @21gam/api db:migrate:status
+```
+
+Lệnh này chỉ đọc. Nó in số migration đã chạy, danh sách còn chờ, và mọi file lệch checksum kèm cả hai giá trị. Khác kiểu xuống dòng (CRLF/LF) không bị coi là lệch, giống hệt `db:migrate`.
+
+Nguyên nhân thường gặp: ai đó chạy một bản nháp của migration trên máy mình, rồi sửa file trước khi commit. Database giữ checksum của bản nháp.
+
+Hai cách xử lý, theo thứ tự ưu tiên:
+
+1. **Dựng lại database.** Đúng cho mọi database dùng một lần — integration test, máy dev: `DROP DATABASE`, tạo lại, rồi `db:migrate`. Không có bước nào phải tin vào phán đoán của con người.
+2. **Ghi lại checksum**, chỉ khi database có dữ liệu không dựng lại được. Trước khi chạy, phải tự xác nhận schema thật đã khớp với nội dung file hiện tại:
+
+```powershell
+pnpm --filter @21gam/api db:migrate:status -- --repair=0031_x.sql --reason="chay ban nhap trước khi commit"
+```
+
+`--repair` KHÔNG chạy một câu SQL nào; nó chỉ cập nhật một dòng trong `schema_migrations`, và bắt buộc có `--reason`. Nếu schema thật sự khác file, sửa checksum là giấu đi sự khác nhau đó — lúc đó phải viết một migration mới để đưa schema về đúng, không phải repair.
+
+Không bao giờ áp dụng một migration bằng script riêng rồi tự chèn dòng vào `schema_migrations`: cách đó bỏ qua thứ tự chạy và không để lại dấu vết nào cho người sau.
+

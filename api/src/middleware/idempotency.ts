@@ -25,6 +25,7 @@ import { AppError } from '../errors/app-error.js'
 const keyPattern = /^[A-Za-z0-9_-]{8,64}$/
 const ttlHours = 24
 const activeConnections = new WeakMap<Response, PoolConnection>()
+const afterCommitCallbacks = new WeakMap<Response, Array<() => void | Promise<void>>>()
 
 type IdempotencyTestFault = 'FAIL_COMPLETION' | 'DROP_CONNECTION_BEFORE_COMMIT' | 'DROP_RESPONSE_AFTER_COMMIT'
 const testFaults = new Map<string, IdempotencyTestFault>()
@@ -32,6 +33,22 @@ const testFaults = new Map<string, IdempotencyTestFault>()
 /** The active transaction is exposed only to protected route handlers. */
 export function idempotencyTransaction(response: Response): PoolConnection | undefined {
   return activeConnections.get(response)
+}
+
+/**
+ * Registers a side effect that is allowed to run only after the idempotency
+ * transaction is durable. Routes without an idempotency transaction have
+ * already committed their repository transaction, so their callback can run
+ * immediately. Callback failures never roll back an already committed write.
+ */
+export function afterIdempotencyCommit(response: Response, callback: () => void | Promise<void>): void {
+  if (!activeConnections.has(response)) {
+    void Promise.resolve().then(callback).catch((error: unknown) => console.error(error))
+    return
+  }
+  const callbacks = afterCommitCallbacks.get(response) ?? []
+  callbacks.push(callback)
+  afterCommitCallbacks.set(response, callbacks)
 }
 
 /** Deterministic transport/finalization fault injection; unavailable outside disposable test databases. */
@@ -62,6 +79,35 @@ function isDuplicateKey(error: unknown): boolean {
 
 export function requestHash(scope: string, body: unknown): Buffer {
   return createHash('sha256').update(`${scope}\n${JSON.stringify(body ?? null)}`).digest()
+}
+
+/**
+ * Module Phục vụ 3 — mã chống trùng nằm TRONG body, không phải trong header.
+ *
+ * Hợp đồng của máy Phục vụ chỉ cho client gửi bảy trường, và `idempotencyKey`
+ * là một trong bảy; một header bắt buộc thêm sẽ là trường thứ tám mà mọi client
+ * (kể cả mock và E2E) phải tự nhớ gửi. Middleware này đọc nó từ body, kiểm định
+ * dạng, rồi đặt vào header để `idempotent()` bên dưới dùng nguyên cơ chế cũ —
+ * một bảng `idempotency_keys`, một transaction, không có đường thứ hai.
+ *
+ * Mã là BẮT BUỘC ở đây (khác `idempotent()`, nơi thiếu header nghĩa là bỏ qua):
+ * một lần bấm "Gửi đơn" mà không có mã thì hai lần chạm vào cùng cái nút sẽ
+ * thành hai đơn, và khách nhận hai lần món.
+ */
+export function requireBodyIdempotencyKey(field: string): RequestHandler {
+  return (request, _response, next) => {
+    const body = request.body as Record<string, unknown> | null | undefined
+    const value = body && typeof body === 'object' ? body[field] : undefined
+    if (typeof value !== 'string' || !keyPattern.test(value)) {
+      throw new AppError(400, 'INVALID_IDEMPOTENCY_KEY', 'Mã chống trùng không hợp lệ.')
+    }
+    const header = request.get('Idempotency-Key')
+    if (header !== undefined && header !== value) {
+      throw new AppError(400, 'INVALID_IDEMPOTENCY_KEY', 'Mã chống trùng trong header và body không khớp.')
+    }
+    request.headers['idempotency-key'] = value
+    next()
+  }
 }
 
 export function idempotent(scope: string): RequestHandler {
@@ -96,12 +142,23 @@ export function idempotent(scope: string): RequestHandler {
     const settle = async (commit: boolean): Promise<void> => {
       if (settled) return
       settled = true
+      let callbacks: Array<() => void | Promise<void>> = []
       try {
-        if (commit) await connection.commit()
-        else await connection.rollback()
+        if (commit) {
+          await connection.commit()
+          callbacks = afterCommitCallbacks.get(response) ?? []
+        } else await connection.rollback()
       } finally {
         activeConnections.delete(response)
+        afterCommitCallbacks.delete(response)
         connection.release()
+      }
+      for (const callback of callbacks) {
+        try {
+          await callback()
+        } catch (error) {
+          console.error(error)
+        }
       }
     }
 
@@ -136,6 +193,7 @@ export function idempotent(scope: string): RequestHandler {
     }
 
     activeConnections.set(response, connection)
+    afterCommitCallbacks.set(response, [])
     const sendJson = response.json.bind(response)
     response.json = ((body: unknown) => {
       if (settled) return sendJson(body)

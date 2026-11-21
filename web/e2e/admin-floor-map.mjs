@@ -1018,11 +1018,19 @@ try {
         await json({
           venue: {
             id: 1,
+            version: 1,
             name: "21GAM",
             timezone: "Asia/Ho_Chi_Minh",
-            changeSeq: 10,
             businessDayStartLocal: "17:00:00",
             businessDayCutoffLocal: "05:00:00",
+            upcomingWarningMinutes: 10,
+            lateWarningMinutes: 15,
+            noShowWarningMinutes: 30,
+            waitlistHoldDefaultMinutes: 15,
+            waitlistClaimLeaseSeconds: 300,
+            reservationHoldPolicy: "SEQUENTIAL",
+            reservationWindowMinutes: null,
+            changeSeq: 10,
           },
           zones: [
             { id: 3, version: 1, code: "C", name: "Khu C", isBookable: true, isWaitingArea: false, displayOrder: 1 },

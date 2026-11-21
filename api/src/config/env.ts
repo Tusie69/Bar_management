@@ -109,6 +109,10 @@ if (noShowPolicyMode !== 'MANUAL') {
 const noShowSystemUserId = readOptionalNumber('NO_SHOW_SYSTEM_USER_ID')
 const noShowAutomationCutoff = readOptionalUtcInstant('NO_SHOW_AUTOMATION_CUTOFF')
 const businessDayWorkerEnabled = readBoolean('BUSINESS_DAY_WORKER_ENABLED', true)
+const menuAllowPendingDemo = readBoolean('MENU_ALLOW_PENDING_DEMO', false)
+if (nodeEnv === 'production' && menuAllowPendingDemo) {
+  throw new Error('MENU_ALLOW_PENDING_DEMO không được bật trong production')
+}
 // §6: merging tables across two zones is OFF until anh Luân decides otherwise.
 // Turning it on only skips the cross-zone check; every other merge rule still
 // applies, so it is not a blanket permission for any combination of tables.
@@ -174,6 +178,10 @@ export const env = {
   },
   tableGroups: {
     allowCrossZoneMerge: allowCrossZoneTableMerge,
+  },
+  menu: {
+    /** Chỉ dành cho dữ liệu marketing đang chờ đối chiếu trong development. */
+    allowPendingDemo: menuAllowPendingDemo,
   },
   realtime: {
     /** How often the floor-change broadcaster re-reads venues.change_seq. */

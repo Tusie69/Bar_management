@@ -23,6 +23,20 @@ export interface SplitTableGroupInput {
   groupId: number
   /** Tables that stay with the party. Every other table of the group is released. */
   keepTableIds: number[]
+  /**
+   * Module Phục vụ 1 — người gọi chỉ có `visit.split`, không có
+   * `table.group.manage`.
+   *
+   * `visit.split` là quyền tách một ĐOÀN KHÁCH ĐANG NGỒI; `table.group.manage`
+   * là quyền xếp mặt bằng, kể cả trên cụm bàn chưa có ai. Route này nhận cả
+   * hai permission, nên nếu không có cờ này thì một tài khoản Phục vụ sẽ tách
+   * được cả cụm đang trống hoặc cụm chỉ đang giữ cho booking chưa tới — tức là
+   * sắp xếp mặt bằng bằng đúng quyền mà biên bản KHÔNG cấp cho họ.
+   *
+   * Kiểm ở đây, sau khi đã lock chủ sở hữu, chứ không kiểm ở route: giữa lúc
+   * route đọc trạng thái và lúc transaction này ghi, khách có thể đã rời bàn.
+   */
+  requireSeatedVisit?: boolean
 }
 
 /** Mirrors the client MutationResult contract, plus the split-specific detail. */
@@ -169,6 +183,10 @@ export async function splitTableGroup(
     }
 
     const owner = await lockOwner(connection, actor, probe[0]!)
+    if (input.requireSeatedVisit === true && owner.kind !== 'VISIT') {
+      throw new AppError(403, 'SPLIT_REQUIRES_SEATED_VISIT',
+        'Chỉ tách được cụm bàn đang có khách. Cụm bàn trống hoặc đang giữ cho booking do Lễ tân sắp xếp.')
+    }
     const allocations = await groupAllocations(connection, actor, input.groupId, true)
     const [groups] = await connection.execute<GroupRow[]>(
       `SELECT id, origin, business_date, symbol_no, dissolved_at FROM table_groups
