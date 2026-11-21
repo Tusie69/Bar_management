@@ -205,6 +205,86 @@ function rectsOverlap(a, b, tol = 0.5) {
   return !(a.right <= b.left + tol || b.right <= a.left + tol || a.bottom <= b.top + tol || b.bottom <= a.top + tol)
 }
 
+const decorationTestIds = {
+  guestBadge: "guest-count-badge",
+  turnBadge: "turn-badge",
+  leftIcons: "table-icons-bottom-left",
+  rightIcons: "table-icons-bottom-right",
+}
+
+async function countPaintedOverlap(table, kind, textIndex, { shift = 0, evidence } = {}) {
+  await table.evaluate(
+    (node, { testId, textIndex }) => {
+      const decoration = node.querySelector(`[data-testid="${testId}"]`)
+      const text = node.querySelectorAll("text")[textIndex]
+      if (!decoration || !text) throw new Error("Missing decoration or text for paint comparison")
+      decoration.setAttribute("data-reception-paint", "decoration")
+      text.setAttribute("data-reception-paint", "text")
+    },
+    { testId: decorationTestIds[kind], textIndex },
+  )
+
+  const decoration = '[data-reception-paint="decoration"]'
+  const text = '[data-reception-paint="text"]'
+  const shiftStyle = shift ? `${decoration} { translate: 0 ${shift}px !important; }` : ""
+  const layers = []
+  try {
+    for (const [name, hidden] of [
+      ["neither", `${decoration}, ${text}`],
+      ["badge-only", text],
+      ["text-only", decoration],
+    ]) {
+      const image = await table.screenshot({
+        animations: "disabled",
+        style: `${shiftStyle} ${hidden} { opacity: 0 !important; }`,
+        path: evidence && path.join(outDir, `${evidence}-${name}.png`),
+      })
+      layers.push(image.toString("base64"))
+    }
+    if (evidence) {
+      await table.screenshot({
+        animations: "disabled",
+        style: shiftStyle,
+        path: path.join(outDir, `${evidence}-both.png`),
+      })
+    }
+  } finally {
+    await table
+      .locator("[data-reception-paint]")
+      .evaluateAll((nodes) => nodes.forEach((node) => node.removeAttribute("data-reception-paint")))
+  }
+
+  // Diff each isolated layer against the same background to include the actual stroke and glyph edges.
+  return table.page().evaluate(async (layers) => {
+    const images = await Promise.all(
+      layers.map(async (layer) => {
+        const image = new Image()
+        image.src = `data:image/png;base64,${layer}`
+        await image.decode()
+        return image
+      }),
+    )
+    const canvas = document.createElement("canvas")
+    canvas.width = images[0].width
+    canvas.height = images[0].height
+    const ctx = canvas.getContext("2d")
+    const [background, badge, text] = images.map((image) => {
+      if (image.width !== canvas.width || image.height !== canvas.height) {
+        throw new Error("Paint comparison screenshots have different dimensions")
+      }
+      ctx.drawImage(image, 0, 0)
+      return ctx.getImageData(0, 0, canvas.width, canvas.height).data
+    })
+    const painted = (layer, i) =>
+      layer[i] !== background[i] || layer[i + 1] !== background[i + 1] || layer[i + 2] !== background[i + 2]
+    let overlap = 0
+    for (let i = 0; i < background.length; i += 4) {
+      if (painted(badge, i) && painted(text, i)) overlap++
+    }
+    return overlap
+  }, layers)
+}
+
 /** Browser-evaluated check: maps every painted badge/icon perimeter point into each cluster outline's SVG frame. */
 function measureOutlineStrokeIntersections(svgRoot) {
   const outlines = Array.from(svgRoot?.querySelectorAll('[data-cluster-outline="1"] > rect') ?? [])
@@ -502,17 +582,13 @@ try {
 
       const tableShapes = Array.from(svg?.querySelectorAll('[role="button"][aria-label]') ?? []).map((g) => {
         const shape = g.querySelector('rect[rx="4.5"], circle:not([fill="transparent"]):not(.focus-ring)')
-        const texts = Array.from(g.querySelectorAll("text"))
-          .filter(
-            (t) =>
-              !t.closest(
-                '[data-testid="guest-count-badge"], [data-testid="turn-badge"], [data-testid="table-icons-bottom-left"], [data-testid="table-icons-bottom-right"]',
-              ),
+        const texts = Array.from(g.querySelectorAll("text")).flatMap((t, index) =>
+          t.closest(
+            '[data-testid="guest-count-badge"], [data-testid="turn-badge"], [data-testid="table-icons-bottom-left"], [data-testid="table-icons-bottom-right"]',
           )
-          .map((t) => ({
-            text: t.textContent ?? "",
-            box: toBox(t.getBoundingClientRect()),
-          }))
+            ? []
+            : [{ text: t.textContent ?? "", box: toBox(t.getBoundingClientRect()), index }],
+        )
         const guestBadge = g.querySelector('[data-testid="guest-count-badge"]')
         const turnBadge = g.querySelector('[data-testid="turn-badge"]')
         const leftIcons = g.querySelector('[data-testid="table-icons-bottom-left"]')
@@ -751,10 +827,28 @@ try {
             top: txt.box.top + th * 0.16,
             bottom: txt.box.bottom - th * 0.16,
           }
-          assert(
-            !rectsOverlap(dec.box, glyphBox, 0.2),
-            `${vp.label}: ${dec.kind} (${dec.label}) overlaps text "${txt.text}" inside ${ts.aria} (dec=${JSON.stringify(dec.box)}, glyph=${JSON.stringify(glyphBox)})`,
+          const boxOverlap = rectsOverlap(dec.box, glyphBox, 0.2)
+          const isA6Title =
+            vp.label === "390x844" && ts.aria.startsWith("Bàn A6,") && dec.kind === "guestBadge" && txt === ts.texts[0]
+          if (!boxOverlap && !isA6Title) continue
+
+          const table = page.getByRole("button", { name: ts.aria, exact: true })
+          const pixels = await countPaintedOverlap(table, dec.kind, txt.index, {
+            evidence: isA6Title ? "a6-390x844" : undefined,
+          })
+          assert.equal(
+            pixels,
+            0,
+            `${vp.label}: ${dec.kind} (${dec.label}) overlaps text "${txt.text}" inside ${ts.aria}`,
           )
+          if (isA6Title) {
+            const shiftedPixels = await countPaintedOverlap(table, dec.kind, txt.index, {
+              shift: 8,
+              evidence: "a6-390x844-shifted",
+            })
+            assert(shiftedPixels > 0, "A6 control: the shifted badge must overlap painted text")
+            summary.a6Paint = { boxOverlap, pixels, shiftedPixels }
+          }
         }
         // Inside SVG bounds
         if (metrics.svgRect) {
@@ -847,6 +941,8 @@ try {
     }
     await context.close()
   }
+
+  assert(summary.a6Paint, "A6 paint control did not run at 390x844")
 
   // 2. Verify R1-R5 workflows + sheets on 390x844 (phone) and 1366x768 (laptop)
   {
