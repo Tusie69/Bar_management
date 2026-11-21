@@ -16,11 +16,11 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StatusLegend } from "@/features/floor/status-legend"
 import { reportError } from "@/hooks/use-action"
-import { useBusinessShift, useNow } from "@/hooks/use-data"
+import { useNow } from "@/hooks/use-data"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { fmtBusinessDate, fmtBusinessShift } from "@/lib/time"
 import { api } from "@/services"
-import { useWaiterFloor } from "./use-waiter-floor"
+import { useWaiterBusinessShift, useWaiterFloor } from "./use-waiter-floor"
 import { useWaiterSession } from "./use-waiter-session"
 import { waiterOrderPath, waiterOrdersViewPath } from "./waiter-access"
 import { WaiterFloor } from "./waiter-floor"
@@ -30,7 +30,7 @@ import { buildWaiterSheetView, WaiterTableSheet } from "./waiter-table-sheet"
 export function WaiterPage() {
   const session = useWaiterSession()
   const model = useWaiterFloor()
-  const shift = useBusinessShift()
+  const shift = useWaiterBusinessShift()
   const clientNow = useNow(30_000)
   const mobile = useIsMobile()
   const navigate = useNavigate()

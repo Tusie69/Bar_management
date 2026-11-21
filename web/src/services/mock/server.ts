@@ -1005,6 +1005,12 @@ export class MockGamApi implements GamApi, DemoControls {
     }
   }
 
+  /** Module Phục vụ 1: mock không có quyền nên catalog hai vai giống nhau. */
+  async getWaiterCatalog() {
+    await this.latency("q")
+    return catalog(this.db)
+  }
+
   async getAvailability(at: Date, partySize: number) {
     await this.latency("q")
     return availability(this.db, this.now, at, partySize)
@@ -1811,9 +1817,10 @@ export class MockGamApi implements GamApi, DemoControls {
    */
   async updateWaiterVisitTables(input: WaiterVisitTablesInput) {
     const claim = { visitId: input.visitId, version: input.version }
-    const confirmations = input.capacityOverrideConfirmed === undefined
-      ? {}
-      : { capacityOverrideConfirmed: input.capacityOverrideConfirmed }
+    const confirmations =
+      input.capacityOverrideConfirmed === undefined
+        ? {}
+        : { capacityOverrideConfirmed: input.capacityOverrideConfirmed }
     if (input.mode === "MOVE") {
       return this.moveClaim({ claim, tableIds: [...input.tableIds], ...confirmations })
     }
@@ -2825,8 +2832,7 @@ export class MockGamApi implements GamApi, DemoControls {
       const open = [...this.db.visits.values()].filter(
         (visit) => visit.venueId === this.venue.id && visit.endedAt === null,
       ).length
-      if (open > 0)
-        this.fail(`Còn ${open} lượt khách đang ngồi. Chỉ đổi ca vận hành khi quán không còn lượt nào mở.`)
+      if (open > 0) this.fail(`Còn ${open} lượt khách đang ngồi. Chỉ đổi ca vận hành khi quán không còn lượt nào mở.`)
     }
 
     this.quickTimes = [...input.quickTimes]

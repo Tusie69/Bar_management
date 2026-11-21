@@ -14,9 +14,44 @@
 import { useQuery } from "@tanstack/react-query"
 import { useMemo } from "react"
 import type { FloorGroup, FloorTableState, TableView, ZoneView } from "@/domain/models"
-import { useBusinessDate } from "@/hooks/use-data"
+import { useNow } from "@/hooks/use-data"
 import { api } from "@/services"
-import type { BusinessDate } from "@/lib/time"
+import { businessDateOf, FALLBACK_BUSINESS_SHIFT, shiftHour, type BusinessDate, type BusinessShift } from "@/lib/time"
+
+export const waiterCatalogQueryKey = ["waiter-catalog"] as const
+
+/**
+ * Catalog của màn Phục vụ. KHÔNG dùng `useCatalog` của Lễ tân: hook đó gọi
+ * `api.getCatalog()`, vốn nạp kèm `GET /bookings/sources` với quyền
+ * `customer.view_masked` mà tài khoản Phục vụ không có.
+ *
+ * Hỏng ở đó không hiện ra như một lỗi: `useBusinessShift` chỉ lặng lẽ trả
+ * `FALLBACK_BUSINESS_SHIFT`, nên máy Phục vụ tính ngày nghiệp vụ theo 17:00
+ * –05:00 cứng thay vì theo ca mà quán đã cấu hình (TU-38). Quán đổi giờ đóng
+ * ca là Phục vụ hỏi sai ngày và thấy sơ đồ rỗng, không một thông báo nào.
+ */
+export function useWaiterCatalogQuery() {
+  return useQuery({
+    queryKey: waiterCatalogQueryKey,
+    retry: api.mode === "mock" ? 1 : false,
+    queryFn: () => api.getWaiterCatalog(),
+    staleTime: 60_000,
+  })
+}
+
+/** Ca vận hành thật của quán, đọc qua catalog mà Phục vụ có quyền. */
+export function useWaiterBusinessShift(): BusinessShift {
+  const venue = useWaiterCatalogQuery().data?.venue
+  if (!venue) return FALLBACK_BUSINESS_SHIFT
+  return { startLocal: venue.businessDayStartLocal, cutoffLocal: venue.businessDayCutoffLocal }
+}
+
+/** Ngày nghiệp vụ theo ca thật, không theo hằng số mặc định. */
+export function useWaiterBusinessDate(): BusinessDate {
+  const now = useNow(30_000)
+  const shift = useWaiterBusinessShift()
+  return businessDateOf(now, shiftHour(shift.cutoffLocal))
+}
 
 export const waiterFloorQueryKey = (businessDate: string) => ["waiter-floor", businessDate] as const
 
@@ -46,7 +81,7 @@ export interface WaiterFloorModel {
 }
 
 export function useWaiterFloor(): WaiterFloorModel {
-  const businessDate = useBusinessDate()
+  const businessDate = useWaiterBusinessDate()
   const query = useWaiterFloorQuery(businessDate)
   const { data } = query
   return useMemo(() => {

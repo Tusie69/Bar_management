@@ -113,11 +113,15 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
   let catalogGeneration = 0
   let catalogSessionRevision = client.sessionRevision
   const latestFloorByDate = new Map<BusinessDate, FloorState>()
+  // Ngày mà màn Phục vụ đã nạp. Tách khỏi `latestFloorByDate` vì hai luồng
+  // gọi hai endpoint khác nhau, và chỉ luồng đã dùng mới được làm mới.
+  const waiterFloorDates = new Set<BusinessDate>()
   const invalidateCatalog = () => {
     catalogGeneration += 1
     cachedCatalog = null
     catalogLoads.clear()
     latestFloorByDate.clear()
+    waiterFloorDates.clear()
   }
   // Scope reference data to this adapter/session; live allocations are always fetched.
   /**
@@ -205,6 +209,7 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     if (projection.businessDate !== date) {
       throw new ApiError(502, "BUSINESS_DATE_RESPONSE_MISMATCH", "Unexpected business date in floor response.")
     }
+    waiterFloorDates.add(date)
     return { catalog, floor: mapFloorProjection(projection, catalog) }
   }
   const snapshot = async (at: Date, date: BusinessDate = businessDateOf(at)) => {
@@ -215,9 +220,24 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
       floor: floorState,
     }
   }
+  /**
+   * Làm mới sơ đồ sau xung đột phiên bản cụm bàn, THEO ĐÚNG luồng đã nạp.
+   *
+   * Bản cũ luôn gọi `floor()` — đường của Lễ tân, `GET /tables` với
+   * `customer.view_masked`. Tài khoản Phục vụ nhận 403, `allSettled` nuốt
+   * mất, và sơ đồ của họ đứng yên đúng lúc cần mới nhất: ngay sau khi một máy
+   * khác vừa đổi cụm bàn.
+   *
+   * Chưa luồng nào nạp thì không có gì để làm mới. Bản cũ đoán "hôm nay" và
+   * gọi đường Lễ tân, tức là đoán luôn cả vai người dùng.
+   */
   client.setGroupConflictHandler(async () => {
-    const dates = latestFloorByDate.size ? [...latestFloorByDate.keys()] : [businessDateOf(clock.now())]
-    await Promise.allSettled(dates.map(floor))
+    const tasks = [
+      ...[...latestFloorByDate.keys()].map((date) => floor(date)),
+      ...[...waiterFloorDates].map((date) => waiterFloor(date)),
+    ]
+    if (tasks.length === 0) return
+    await Promise.allSettled(tasks)
   })
   const listWaitlist = async (date: BusinessDate) => {
     const response = await get<{ businessDate: string; entries: BackendWaitlistEntry[] }>(`/waitlist?date=${date}`)
@@ -256,6 +276,7 @@ export function createHttpApi(client: HttpClient, _venueId: number): GamApi {
     getVenueSettings: () => get<VenueSettingsView>("/settings"),
     getFloorState: async (at, date = businessDateOf(at)) => floor(date),
     getWaiterFloor: (date) => waiterFloor(date),
+    getWaiterCatalog: () => loadCatalog(false),
     updateWaiterVisitTables: async (input) => {
       const confirmations =
         input.capacityOverrideConfirmed === undefined

@@ -454,6 +454,17 @@ export interface GamApi {
   getFloorState(at: Date, businessDate?: BusinessDate): Promise<FloorState>
   /** Module Phục vụ 1: sơ đồ ca hiện tại, không kèm dữ liệu nhận dạng khách. */
   getWaiterFloor(businessDate: BusinessDate): Promise<WaiterFloorSnapshot>
+  /**
+   * Module Phục vụ 1: catalog cho vai WAITER — cùng dữ liệu `getCatalog`
+   * nhưng KHÔNG kèm nguồn đặt bàn.
+   *
+   * `getCatalog` nạp thêm `GET /bookings/sources`, vốn đòi
+   * `customer.view_masked`. Tài khoản Phục vụ không có quyền đó, nên mọi màn
+   * `/phucvu` gọi `getCatalog` đều nhận 403 — và vì ca vận hành đọc từ
+   * `catalog.venue`, hỏng ở đây làm ngày nghiệp vụ rơi về hằng số mặc định
+   * mà không báo gì.
+   */
+  getWaiterCatalog(): Promise<Catalog>
   /** Module Phục vụ 1: đổi hoặc ghép bàn của một Phiên đang mở. */
   updateWaiterVisitTables(input: WaiterVisitTablesInput): Promise<MutationResult>
   getReceptionGuestCount(businessDate: BusinessDate): Promise<ReceptionGuestCount>
