@@ -66,6 +66,8 @@ async function resetMockDemo(page) {
 }
 
 async function openFloor(page, baseUrl, userId = 1, theme = "light") {
+  // The mock's historical bookings affect the seed IDs and birthday flags.
+  await page.clock.setFixedTime(new Date("2026-11-19T14:30:00Z"))
   await page.goto(`${baseUrl}/floor`, { waitUntil: "domcontentloaded" })
   await setSession(page, userId, theme)
   await page.reload({ waitUntil: "networkidle" })
@@ -875,9 +877,10 @@ try {
   await restoreSourceBtn.scrollIntoViewIfNeeded()
   await settle(page)
   await page.screenshot({ path: path.join(evidenceDir, "phone-390-light-restore-source.png") })
-  await restoreSourceBtn.click()
+  await restoreSourceBtn.press("Enter")
   await expect(zaloRadio).toHaveAttribute("aria-checked", "true")
   await expect(restoreSourceBtn).toHaveCount(0)
+  await expect(zaloRadio).toBeFocused()
   await expect(saveBtn).toBeDisabled()
 
   // With a note edit: Zalo -> Hotline -> restore Zalo keeps note, saves, source stays Zalo
@@ -925,9 +928,10 @@ try {
   const minuteWheel = editPage.getByRole("spinbutton", { name: "Phút", exact: true })
   await hourWheel.locator('[data-value="21"]').click()
   await expect(minuteWheel.locator('[data-value="05"]')).toBeDisabled()
-  await restoreTimeBtn.click()
+  await restoreTimeBtn.press("Enter")
   await expect(restoreTimeBtn).toHaveCount(0)
   await expect(wheelToggle).toHaveAttribute("aria-label", /21:05/)
+  await expect(wheelToggle).toBeFocused()
   await expect(saveBtn).toBeDisabled()
 
   // With a note edit: 21:05 -> 22:30 -> restore 21:05 keeps note and saves 21:05

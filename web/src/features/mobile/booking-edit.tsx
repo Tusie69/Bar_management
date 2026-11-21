@@ -369,9 +369,10 @@ function BookingEditBody({
       window.requestAnimationFrame(() => {
         if (!fieldset.isConnected) return
         const target =
-          fieldset.querySelector<HTMLElement>(
-            '[aria-checked="true"]:not([disabled]), [aria-pressed="true"]:not([disabled]), button:not([disabled])',
-          ) ?? fieldset.closest("div")?.parentElement?.querySelector<HTMLElement>("button:not([disabled])")
+          fieldset.querySelector<HTMLElement>('[aria-checked="true"]:enabled, [aria-pressed="true"]:enabled') ??
+          fieldset.querySelector<HTMLElement>('button[aria-label^="Chọn giờ bằng con lăn"]:enabled') ??
+          fieldset.querySelector<HTMLElement>("button:enabled") ??
+          fieldset.closest("div")?.parentElement?.querySelector<HTMLElement>("button:enabled")
         target?.focus({ preventScroll: true })
       })
     }
