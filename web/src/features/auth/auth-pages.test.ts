@@ -81,6 +81,10 @@ describe("Auth screens presentation", () => {
     expect(pwdHtml).toContain("Đổi mật khẩu trước khi tiếp tục")
     expect(pwdHtml).toContain("Mật khẩu tạm")
     expect(pwdHtml).toContain("tối thiểu 12 ký tự")
+    // Hai ô mật khẩu mới phải có nút hiện; ô "Mật khẩu tạm" thì không.
+    expect(pwdHtml).toContain('aria-label="Hiện mật khẩu mới"')
+    expect(pwdHtml).toContain('aria-label="Hiện mật khẩu nhập lại"')
+    expect(pwdHtml.match(/aria-pressed="false"/g)).toHaveLength(2)
 
     const srvHtml = renderHtml(createElement(ServerSessionPage) as ReactElement)
     expect(srvHtml).toContain("Xin chào, Chủ quán")
