@@ -391,6 +391,36 @@ describe("HTTP catalog cache", () => {
     expect(paths.filter((path) => path === "/bookings/sources")).toHaveLength(1)
   })
 
+  // Module Phục vụ 1: `/bookings/sources` đòi `customer.view_masked`, quyền mà
+  // tài khoản Phục vụ cố ý KHÔNG có. Một 403 ở đó từng làm vỡ cả `Promise.all`
+  // của `waiterFloor`, và màn `/phucvu` chỉ còn "Không tải được sơ đồ bàn" —
+  // dù `/tables/catalog` lẫn `/tables/service` đều đã mở cho `order.read`.
+  // Test này chặn đường về: nó cho endpoint kia trả 403 đúng như production.
+  it("loads the waiter floor without requesting booking sources", async () => {
+    const paths: string[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const url = new URL(input)
+        paths.push(url.pathname)
+        if (url.pathname === "/api/v1/tables/catalog") return json(catalog)
+        if (url.pathname === "/api/v1/tables/service") return json(emptyProjection("2026-11-21"))
+        if (url.pathname === "/api/v1/bookings/sources")
+          return new Response(JSON.stringify({ error: { code: "PERMISSION_DENIED", message: "Không đủ quyền." } }), {
+            status: 403,
+            headers: { "content-type": "application/json" },
+          })
+        return new Response(null, { status: 404 })
+      }),
+    )
+    const api = createHttpApi(new HttpClient("http://api.test"), 1)
+    const snapshot = await api.getWaiterFloor("2026-11-21")
+    expect(paths).not.toContain("/api/v1/bookings/sources")
+    expect(paths).toContain("/api/v1/tables/service")
+    expect(snapshot.catalog.sources).toEqual([])
+    expect(snapshot.catalog.tables).toHaveLength(1)
+  })
+
   it("refreshes externally changed configuration at the 60 second boundary", async () => {
     vi.useFakeTimers()
     const { api, paths, payload } = cacheFixture()
