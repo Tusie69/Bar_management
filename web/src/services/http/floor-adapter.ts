@@ -1,5 +1,12 @@
 import type { BookingSourceCode, VisitOrigin } from "@/domain/enums"
-import type { Catalog, ClaimView, FloorState, FloorTableState, TableLiveState } from "@/domain/models"
+import type {
+  Catalog,
+  ClaimView,
+  FloorState,
+  FloorTableState,
+  TableLiveState,
+  WaiterVisitPhase,
+} from "@/domain/models"
 import { businessDateOf, type BusinessDate } from "@/lib/time"
 import { ApiError } from "../contracts"
 
@@ -103,6 +110,11 @@ export interface BackendFloorTableProjection {
   groupDisplayCode: string | null
   groupMemberTableIds: number[]
   staleFromPreviousDay: boolean
+  /**
+   * Chỉ `GET /tables/service` (phép chiếu của Phục vụ) gửi trường này. Vắng
+   * mặt ở `GET /tables`, nên nó là tuỳ chọn chứ không phải nullable bắt buộc.
+   */
+  waiterPhase?: WaiterVisitPhase | null
 }
 
 export interface BackendFloorProjection {
@@ -450,6 +462,7 @@ export function mapFloorProjection(payload: BackendFloorProjection, catalog: Cat
       ...(table.claimOwner === undefined ? {} : { claimOwner: table.claimOwner }),
       claim: projectionClaim(table, group),
       staleFromPreviousDay: Boolean(table.staleFromPreviousDay),
+      ...(table.waiterPhase === undefined ? {} : { waiterPhase: table.waiterPhase }),
     }
   })
   return {

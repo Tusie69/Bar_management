@@ -12,23 +12,46 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
-import { MAX_LINE_NOTE_LENGTH, isOrderableAmount, type AddToCartInput } from "./cart-model"
-import type { WaiterMenuItem, WaiterMenuVariant } from "./menu-model"
+import { MAX_LINE_NOTE_LENGTH, type AddToCartInput } from "./cart-model"
+import { sellableVariants } from "./menu-card-model"
+import type { WaiterMenuItem } from "./menu-model"
 import { formatVnd } from "./menu-price"
 import { QuantityStepper } from "./quantity-stepper"
 
+export { sellableVariants }
+
 /**
- * Biến thể chọn được: còn hàng VÀ có giá dùng được.
+ * Ghi chú nhanh theo QUẦY NHẬN, theo mockup P8.
  *
- * Giá vượt trần tiền (hoặc 0, hoặc không phải số nguyên) thì không thêm vào giỏ
- * được, vì mọi tổng dựng từ nó đều là một con số đã bị làm tròn. Máy chủ cũng
- * từ chối (`MENU_PRICE_OUT_OF_RANGE`); chặn ở đây để nhân viên biết trước khi
- * nói với khách.
+ * Danh sách là hằng số trong code, không phải cấu hình: chưa có bảng nào chứa
+ * chúng, và dựng một bảng cho bốn chuỗi là làm phức tạp một thứ sẽ đổi vài lần
+ * một năm. Khi quán muốn tự sửa thì đó là một việc riêng, có màn quản trị.
+ *
+ * Bấm một nút là BẬT/TẮT một mẩu ghi chú, không phải ghi đè ô chữ: nhân viên
+ * vẫn gõ thêm được "cho chị kia ngồi trong" bên cạnh "Ít đá".
  */
-export function sellableVariants(item: WaiterMenuItem): WaiterMenuVariant[] {
-  return item.variants.filter(
-    (variant) => variant.availabilityStatus === "AVAILABLE" && isOrderableAmount(variant.amountVnd),
-  )
+export const NOTE_PRESETS: Record<"BAR" | "KITCHEN", readonly string[]> = {
+  BAR: ["Ít đá", "Không đá", "Ít ngọt", "Thêm chanh"],
+  KITCHEN: ["Ít cay", "Không hành", "Ít mặn", "Mang ra sau"],
+}
+
+/** Bật/tắt một mẩu ghi chú trong ô chữ, giữ nguyên phần người dùng tự gõ. */
+export function toggleNotePreset(note: string, preset: string): string {
+  const parts = note
+    .split("·")
+    .map((part) => part.trim())
+    .filter(Boolean)
+  const index = parts.findIndex((part) => part.toLowerCase() === preset.toLowerCase())
+  if (index >= 0) parts.splice(index, 1)
+  else parts.push(preset)
+  return parts.join(" · ")
+}
+
+export function notePresetActive(note: string, preset: string): boolean {
+  return note
+    .split("·")
+    .map((part) => part.trim().toLowerCase())
+    .includes(preset.toLowerCase())
 }
 
 export function MenuItemSheet({
@@ -116,14 +139,35 @@ export function MenuItemSheet({
                   </div>
                   <div className="grid gap-1.5">
                     <label className="text-sm font-medium" htmlFor="menu-line-note">
-                      Ghi chú cho Bar/Bếp
+                      Ghi chú cho {item.preparationStation === "BAR" ? "Bar" : "Bếp"}
                     </label>
+                    <div className="flex flex-wrap gap-2">
+                      {NOTE_PRESETS[item.preparationStation].map((preset) => {
+                        const active = notePresetActive(note, preset)
+                        return (
+                          <button
+                            key={preset}
+                            type="button"
+                            aria-pressed={active}
+                            onClick={() => setNote((current) => toggleNotePreset(current, preset))}
+                            className={cn(
+                              "min-h-10 rounded-full border px-3 text-sm font-medium transition-colors focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none",
+                              active
+                                ? "border-primary bg-primary text-primary-foreground"
+                                : "border-border bg-surface-1 text-foreground",
+                            )}
+                          >
+                            {preset}
+                          </button>
+                        )
+                      })}
+                    </div>
                     <Textarea
                       id="menu-line-note"
                       value={note}
                       maxLength={MAX_LINE_NOTE_LENGTH}
                       onChange={(event) => setNote(event.target.value)}
-                      placeholder="Ví dụ: ít đá, không đường"
+                      placeholder="Ghi thêm nếu khách dặn gì khác"
                       className="min-h-20"
                     />
                     <p className="text-xs text-muted-foreground">Không ghi tên hay số điện thoại khách vào đây.</p>

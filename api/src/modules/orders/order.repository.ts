@@ -3,6 +3,7 @@ import type { Pool, PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
+import { applicationNow } from '../../time/application-clock.js'
 import { currentPricePredicate, menuSourcePredicate } from '../menu/menu-catalog-sql.js'
 import type { MenuUnitCode } from '../menu/menu.model.js'
 import type {
@@ -18,7 +19,10 @@ import type {
   WaiterOrderLineInput,
   WaiterOrderListView,
   WaiterOrderSummary,
+  WaiterVisitItem,
+  WaiterVisitItemsView,
 } from './order.model.js'
+import { buildVisitBill, type VisitBill } from './visit-bill.js'
 
 /**
  * Module Phục vụ 3 — tạo đơn và đọc đơn theo Phiên bàn.
@@ -717,4 +721,166 @@ export async function getWaiterOrder(
   connection?: Queryable,
 ): Promise<WaiterOrderDetail> {
   return readOrderDetail(connection ?? databasePool, actor, orderId)
+}
+
+/* ------------------------- Module Phục vụ 1 (v1.1) ------------------------ */
+
+interface VisitItemRow extends RowDataPacket {
+  variant_id: number
+  menu_item_id: number
+  item_name: string
+  variant_display_name: string
+  unit_code: MenuUnitCode
+  preparation_station: PreparationStation
+  note: string | null
+  unit_price_vnd: string | number
+  quantity: string | number
+  total_vnd: string | number
+  first_line_id: string | number
+  price_id: number | null
+  price_version: number | null
+  current_amount_vnd: string | number | null
+  item_active: number | null
+  item_sellable_source: number | null
+  variant_active: number | null
+  is_sellable: number | null
+  availability_status: string | null
+}
+
+/**
+ * Món đã gọi của một Phiên, gộp để hiện trên bảng thao tác bàn.
+ *
+ * Gộp theo (biến thể, ghi chú, GIÁ LÚC GỌI). Giá nằm trong khoá gộp vì hai đơn
+ * của cùng một tối có thể mang hai giá khác nhau nếu quán đổi giá giữa chừng;
+ * gộp chúng lại sẽ phải chọn một giá để hiện, và con số đó sai với một trong
+ * hai lần khách đã nghe.
+ *
+ * Dòng đã bị hủy hết (`net_quantity = 0`) không xuất hiện: bảng này trả lời
+ * "khách đang có gì trên bàn", không phải "đã xảy ra chuyện gì với đơn". Lịch
+ * sử hủy vẫn đọc được ở màn Đơn của bàn.
+ */
+export async function listVisitItems(
+  actor: AuthenticatedActor,
+  visitId: number,
+): Promise<WaiterVisitItemsView> {
+  const [visits] = await databasePool.execute<TableCodesRow[]>(
+    `SELECT GROUP_CONCAT(DISTINCT dt.code ORDER BY dt.code SEPARATOR ',') AS table_codes
+     FROM visits v
+     LEFT JOIN table_allocations ta
+       ON ta.organization_id = v.organization_id AND ta.venue_id = v.venue_id
+      AND ta.visit_id = v.id AND ta.kind = 'USAGE' AND ta.released_at IS NULL
+     LEFT JOIN dining_tables dt
+       ON dt.organization_id = ta.organization_id AND dt.venue_id = ta.venue_id AND dt.id = ta.table_id
+     WHERE v.organization_id = ? AND v.venue_id = ? AND v.id = ?
+     GROUP BY v.id`,
+    [actor.organizationId, actor.venueId, visitId],
+  )
+  const visit = visits[0]
+  if (!visit) throw new AppError(404, 'VISIT_NOT_FOUND', 'Không tìm thấy Phiên bàn trong địa điểm này.')
+
+  const [rows] = await databasePool.execute<VisitItemRow[]>(
+    `SELECT l.menu_item_variant_id AS variant_id,
+            MIN(l.menu_item_id) AS menu_item_id,
+            l.item_name, l.variant_display_name, l.unit_code, l.preparation_station,
+            l.note, l.unit_price_vnd,
+            SUM(l.net_quantity) AS quantity,
+            SUM(l.net_total_vnd) AS total_vnd,
+            MIN(l.id) AS first_line_id,
+            p.id AS price_id, p.version AS price_version, p.amount_vnd AS current_amount_vnd,
+            mi.is_active AS item_active, ${menuSourcePredicate('mi')} AS item_sellable_source,
+            mv.is_active AS variant_active, mv.is_sellable, mv.availability_status
+       FROM sales_order_lines l
+       JOIN sales_orders o ON o.venue_id = l.venue_id AND o.id = l.order_id
+       LEFT JOIN menu_item_variants mv ON mv.venue_id = l.venue_id AND mv.id = l.menu_item_variant_id
+       LEFT JOIN menu_items mi ON mi.venue_id = mv.venue_id AND mi.id = mv.menu_item_id
+       LEFT JOIN menu_categories mc ON mc.venue_id = mi.venue_id AND mc.id = mi.category_id AND mc.is_active = 1
+       LEFT JOIN menu_variant_prices p
+         ON p.venue_id = mv.venue_id AND p.variant_id = mv.id AND ${currentPricePredicate('p')}
+      WHERE l.venue_id = ? AND o.visit_id = ? AND l.net_quantity > 0
+      GROUP BY l.menu_item_variant_id, l.item_name, l.variant_display_name, l.unit_code,
+               l.preparation_station, l.note, l.unit_price_vnd,
+               p.id, p.version, p.amount_vnd,
+               mi.is_active, item_sellable_source, mv.is_active, mv.is_sellable, mv.availability_status,
+               mc.id
+      ORDER BY first_line_id`,
+    [actor.venueId, visitId],
+  )
+
+  const [orderCounts] = await databasePool.execute<(RowDataPacket & { order_count: number })[]>(
+    'SELECT COUNT(*) AS order_count FROM sales_orders WHERE venue_id = ? AND visit_id = ?',
+    [actor.venueId, visitId],
+  )
+
+  const items = rows.map((row): WaiterVisitItem => {
+    const sellable =
+      row.item_active === 1 &&
+      Number(row.item_sellable_source) === 1 &&
+      row.variant_active === 1 &&
+      row.is_sellable === 1 &&
+      row.availability_status === 'AVAILABLE' &&
+      row.price_id !== null
+    return {
+      variantId: Number(row.variant_id),
+      menuItemId: Number(row.menu_item_id),
+      itemName: row.item_name,
+      variantDisplayName: row.variant_display_name,
+      unitCode: row.unit_code,
+      preparationStation: row.preparation_station,
+      note: row.note,
+      quantity: Number(row.quantity),
+      unitPriceVnd: readMoney(row.unit_price_vnd, 'unit_price_vnd'),
+      totalVnd: readMoney(row.total_vnd, 'net_total_vnd'),
+      reorder: sellable
+        ? {
+            priceId: Number(row.price_id),
+            priceVersion: Number(row.price_version),
+            amountVnd: readMoney(row.current_amount_vnd ?? 0, 'amount_vnd'),
+          }
+        : null,
+    }
+  })
+
+  return {
+    visitId,
+    tableCodes: visit.table_codes ? visit.table_codes.split(',') : [],
+    orderCount: Number(orderCounts[0]?.order_count ?? 0),
+    netAmountVnd: items.reduce((total, item) => total + item.totalVnd, 0),
+    items,
+  }
+}
+
+/**
+ * Module Phục vụ (v1.1) — PV-18: bill tạm tính của một Phiên.
+ *
+ * Dựng từ CHÍNH `listVisitItems` — danh sách món đã gọi mà bảng thao tác đang
+ * hiện. Một câu SQL thứ hai cho cùng một câu hỏi là hai câu trả lời sẽ lệch
+ * nhau ở lần sửa đầu tiên, và lúc đó tờ bill nói một đằng, màn hình một nẻo.
+ *
+ * Nó KHÔNG ghi gì: không bản ghi in, không đổi trạng thái Phiên, không chạm
+ * `paid_marked_at`. Bàn vẫn Đang dùng và vẫn gọi thêm được sau khi in — đó là
+ * khác biệt giữa "tạm tính" và "chốt bill".
+ */
+export async function getVisitBill(actor: AuthenticatedActor, visitId: number): Promise<VisitBill> {
+  const items = await listVisitItems(actor, visitId)
+  const [venues] = await databasePool.execute<(RowDataPacket & { vat_rate_basis_points: number })[]>(
+    'SELECT vat_rate_basis_points FROM venues WHERE organization_id = ? AND id = ?',
+    [actor.organizationId, actor.venueId],
+  )
+  const venue = venues[0]
+  if (!venue) throw new AppError(404, 'VENUE_NOT_FOUND', 'Không tìm thấy địa điểm vận hành.')
+  return buildVisitBill({
+    visitId,
+    tableCodes: items.tableCodes,
+    orderCount: items.orderCount,
+    lines: items.items.map((item) => ({
+      itemName: item.itemName,
+      variantDisplayName: item.variantDisplayName,
+      note: item.note,
+      quantity: item.quantity,
+      unitPriceVnd: item.unitPriceVnd,
+      amountVnd: item.totalVnd,
+    })),
+    vatRateBasisPoints: Number(venue.vat_rate_basis_points),
+    printedAt: applicationNow(),
+  })
 }

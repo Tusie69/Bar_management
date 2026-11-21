@@ -10,7 +10,7 @@
  * 3. Giỏ chỉ trống sau khi máy chủ trả về đơn. Màn này không bao giờ tự nói
  *    "đã gửi" trước khi có đơn thật.
  */
-import { AlertCircle, Send, ShoppingCart, Trash2, X } from "lucide-react"
+import { AlertCircle, Check, Send, ShoppingCart, Trash2, X } from "lucide-react"
 import { useState } from "react"
 import {
   AlertDialog,
@@ -22,7 +22,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
@@ -257,31 +256,47 @@ export function CartLineList({
 }
 
 /** Hiện sau mỗi lần gửi thành công. Số đơn là số mà Bar đọc được trên phiếu. */
+/**
+ * Thông báo "đã lên đơn", thu về MỘT DÒNG (mockup P9).
+ *
+ * Bản cũ chiếm ba dòng để nói số món, hai quầy nhận và tổng tiền. Màn này là
+ * màn gọi món: chỗ đó thuộc về danh sách món, và mọi chi tiết của đơn vừa gửi
+ * nằm sau nút "Xem" — một cú bấm cho người cần, không phải ba dòng cho mọi
+ * người.
+ */
 export function OrderSentBanner({
-  visitSequence,
-  itemCount,
-  totalVnd,
-  stations,
+  tableLabel,
+  submittedAtLabel,
+  onView,
   onDismiss,
 }: {
-  visitSequence: number
-  itemCount: number
-  totalVnd: number
-  stations: readonly ("BAR" | "KITCHEN")[]
+  /** "A3" hoặc "B11 + B12". */
+  tableLabel: string
+  /** Giờ gửi, dạng HH:MM. */
+  submittedAtLabel: string
+  onView: () => void
   onDismiss: () => void
 }) {
   return (
     <div
       role="status"
-      className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/40 bg-primary/5 px-4 py-3 text-sm"
+      className="flex items-center gap-2 rounded-xl border px-3 py-2 text-sm"
+      style={{ borderColor: "var(--st-seated)", background: "var(--st-seated-tint)" }}
     >
-      <Badge variant="secondary">Đơn {visitSequence}</Badge>
-      <span>
-        Đã gửi {itemCount} món tới {stations.map((station) => STATION_LABEL[station]).join(" và ")} ·{" "}
-        <strong className="tnum">{formatVnd(totalVnd)}</strong>
-      </span>
-      <Button type="button" variant="ghost" size="sm" className="ml-auto" onClick={onDismiss}>
-        Đóng
+      <Check className="size-4 shrink-0" style={{ color: "var(--st-seated-ink)" }} aria-hidden />
+      <span className="min-w-0 flex-1 truncate">{`Đã lên đơn cho ${tableLabel} · ${submittedAtLabel}`}</span>
+      <Button type="button" variant="outline" size="sm" className="h-9 shrink-0" onClick={onView}>
+        Xem
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="size-9 shrink-0"
+        aria-label="Đóng thông báo đã lên đơn"
+        onClick={onDismiss}
+      >
+        <X className="size-4" aria-hidden />
       </Button>
     </div>
   )

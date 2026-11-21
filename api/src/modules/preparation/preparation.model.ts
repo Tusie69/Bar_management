@@ -25,6 +25,10 @@ export interface PreparationLineView {
   /** Số lúc khách gọi. Giữ lại để quầy đối chiếu "đã hủy n trên tổng m". */
   originalQuantity: number
   note: string | null
+  pendingCancellation: {
+    cancellationId: number
+    quantity: number
+  } | null
 }
 
 export interface PreparationTicketView {
@@ -42,6 +46,12 @@ export interface PreparationTicketView {
   collectedAt: string | null
   waitSeconds: number
   tableCodes: string[]
+  orderedByDisplayName: string
+  guestFlags: {
+    vip: boolean
+    birthday: boolean
+    designated: boolean
+  }
   lines: PreparationLineView[]
 }
 

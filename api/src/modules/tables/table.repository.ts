@@ -2,6 +2,7 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise'
 
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { databasePool } from '../../database/pool.js'
+import { sqlBoolean } from '../../database/row-value.js'
 import { AppError } from '../../errors/app-error.js'
 import { redactPhoneNumbersInNote } from '../../security/note-privacy.js'
 import { getVenueSettings, type VenueSettings } from '../venues/venue-settings.repository.js'
@@ -93,7 +94,7 @@ function toTableView(row: TableRow): TableView {
             guestCount: Number(row.active_visit_guest_count),
             startedAt: isoDateTime(row.active_visit_started_at!),
             origin: row.active_visit_origin!,
-            paid: Boolean(row.active_visit_paid),
+            paid: sqlBoolean(row.active_visit_paid),
             note: redactPhoneNumbersInNote(row.active_visit_note),
           },
   }

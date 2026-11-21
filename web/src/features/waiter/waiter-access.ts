@@ -10,7 +10,7 @@
 import type { Permission } from "@/domain/access"
 import type { AuthPortal } from "@/domain/auth-portal"
 import type { RoleCode } from "@/domain/enums"
-import type { ClaimView, FloorTableState, TableLiveState } from "@/domain/models"
+import type { ClaimView, FloorTableState, TableLiveState, WaiterVisitPhase } from "@/domain/models"
 
 /** URL công bố của khu vực Phục vụ. Phải khớp `PORTAL_CONFIG.waiter.home`. */
 export const WAITER_BASE_PATH = "/phucvu"
@@ -33,6 +33,8 @@ export const WAITER_LEGACY_BASE_PATH = "/waiter"
  */
 export const WAITER_ORDER_PATH = "phien/:visitId/goi-mon"
 export const WAITER_ORDERS_VIEW_PATH = "orders"
+export const WAITER_QUEUE_PATH = "hang-doi"
+export const WAITER_QUEUE_ABSOLUTE_PATH = `${WAITER_BASE_PATH}/${WAITER_QUEUE_PATH}`
 
 export function waiterOrderPath(visitId: number): string {
   return `${WAITER_BASE_PATH}/phien/${visitId}/goi-mon`
@@ -40,6 +42,10 @@ export function waiterOrderPath(visitId: number): string {
 
 export function waiterOrdersViewPath(visitId: number): string {
   return `${WAITER_BASE_PATH}/${WAITER_ORDERS_VIEW_PATH}/${visitId}`
+}
+
+export function waiterRoleLabel(role: RoleCode): "Bartender" | "Phục vụ" {
+  return role === "BAR" ? "Bartender" : "Phục vụ"
 }
 
 /**
@@ -111,6 +117,12 @@ export type WaiterTablePhase = "empty" | "booked" | "serving" | "payment" | "out
 
 export interface WaiterTableCapability {
   phase: WaiterTablePhase
+  /**
+   * Trạng thái của LƯỢT KHÁCH (v1.1), do máy chủ tính; `null` khi bàn không có
+   * khách ngồi. `phase` quyết định nút nào bật; `visitPhase` quyết định màu và
+   * chữ mà Phục vụ đọc. Hai câu hỏi khác nhau nên hai trường khác nhau.
+   */
+  visitPhase: WaiterVisitPhase | null
   /** Nút chính `Gọi món`. */
   canOrder: boolean
   /** Nút `Xem đơn đã gọi`. */
@@ -159,7 +171,14 @@ export function waiterTableCapability(
 ): WaiterTableCapability {
   const allowOrder = options.canOrder !== false
   const allowRearrange = options.canRearrange !== false
-  const base = { canOrder: false, canViewOrders: false, canRearrange: false, visitId: null, notice: null }
+  const base = {
+    canOrder: false,
+    canViewOrders: false,
+    canRearrange: false,
+    visitId: null,
+    notice: null,
+    visitPhase: null,
+  }
 
   if (!state) return { ...base, phase: "empty" }
   if (state.state === "oos") {
@@ -173,6 +192,7 @@ export function waiterTableCapability(
     return {
       ...base,
       phase: "payment",
+      visitPhase: state.waiterPhase ?? "PAYMENT",
       canViewOrders: true,
       visitId: claim.visitId,
       notice: WAITER_PAYMENT_NOTICE,
@@ -181,6 +201,11 @@ export function waiterTableCapability(
   if (seated) {
     return {
       phase: "serving",
+      // Máy chủ chưa gửi trạng thái lượt khách (endpoint cũ, hoặc chế độ mock
+      // chưa dựng) thì "vừa ngồi xuống" là phỏng đoán an toàn nhất: nó làm
+      // Phục vụ đi tới hỏi bàn, còn đoán nhầm thành "Đang dùng" thì không ai
+      // ra cả.
+      visitPhase: state.waiterPhase ?? "ARRIVED",
       canOrder: allowOrder,
       canViewOrders: true,
       canRearrange: allowRearrange,
@@ -188,6 +213,13 @@ export function waiterTableCapability(
       notice: null,
     }
   }
+  /*
+   * v1.1: phép chiếu của Phục vụ thu mọi trạng thái đặt bàn về "trống", nên
+   * nhánh này KHÔNG chạy với dữ liệu từ `GET /tables/service`. Nó ở lại làm
+   * lưới an toàn cho một người gọi khác (test, hoặc một endpoint tương lai)
+   * đưa vào trạng thái đặt bàn: im lặng coi nó là bàn trống sẽ mở nút Gọi món
+   * cho một bàn chưa có ai ngồi.
+   */
   if (BOOKED_STATES.includes(state.state)) {
     return { ...base, phase: "booked", notice: "Bàn đã có khách đặt. Chưa gọi món được cho tới khi khách tới." }
   }

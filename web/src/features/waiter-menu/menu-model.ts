@@ -112,3 +112,106 @@ export function filterMenuItems(
       categoryMatches(item, categoryId, categories) && (!needle || normalizeMenuSearch(item.name).includes(needle)),
   )
 }
+
+/* ------------------------- Module Phục vụ 3 (v1.1) ----------------------- */
+
+/**
+ * Giá đại diện của một món khi lọc và sắp xếp: giá RẺ NHẤT còn bán được.
+ *
+ * Lọc "dưới 300k" phải giữ lại món có ly 280k dù chai của nó 2.3 triệu —
+ * khách hỏi món trong tầm tiền, không hỏi đơn vị trong tầm tiền. `null` khi
+ * món không còn đơn vị nào bán được.
+ */
+export function menuItemFromPrice(item: WaiterMenuItem): number | null {
+  const amounts = item.variants
+    .filter((variant) => variant.availabilityStatus === "AVAILABLE")
+    .map((variant) => variant.amountVnd)
+  return amounts.length === 0 ? null : Math.min(...amounts)
+}
+
+export type MenuSort = "default" | "price_asc" | "price_desc" | "name"
+
+export const MENU_SORT_LABEL: Record<MenuSort, string> = {
+  default: "Thứ tự danh mục",
+  price_asc: "Giá thấp → cao",
+  price_desc: "Giá cao → thấp",
+  name: "Tên A → Z",
+}
+
+export interface MenuQuery {
+  categoryId: number | null
+  search: string
+  /** Khoảng giá tính theo `menuItemFromPrice`; `null` nghĩa là không giới hạn. */
+  minVnd: number | null
+  maxVnd: number | null
+  sort: MenuSort
+}
+
+export const EMPTY_MENU_QUERY: MenuQuery = {
+  categoryId: null,
+  search: "",
+  minVnd: null,
+  maxVnd: null,
+  sort: "default",
+}
+
+/** Số bộ lọc đang bật, để nút "☰" đeo một con số thay vì im lặng. */
+export function activeFilterCount(query: MenuQuery): number {
+  let count = 0
+  if (query.minVnd !== null) count += 1
+  if (query.maxVnd !== null) count += 1
+  if (query.sort !== "default") count += 1
+  return count
+}
+
+/**
+ * Lọc theo danh mục, từ khóa và khoảng giá, rồi sắp xếp.
+ *
+ * Món không còn đơn vị nào bán được vẫn ĐI QUA bộ lọc giá: nhân viên cần thấy
+ * nó để trả lời khách "món đó hết rồi", và một món biến mất khỏi danh sách là
+ * một câu hỏi không có câu trả lời.
+ */
+export function queryMenuItems(
+  items: WaiterMenuItem[],
+  categories: WaiterMenuCategory[],
+  query: MenuQuery,
+): WaiterMenuItem[] {
+  const filtered = filterMenuItems(items, categories, query.categoryId, query.search).filter((item) => {
+    const price = menuItemFromPrice(item)
+    if (price === null) return true
+    if (query.minVnd !== null && price < query.minVnd) return false
+    if (query.maxVnd !== null && price > query.maxVnd) return false
+    return true
+  })
+  if (query.sort === "default") return filtered
+  const sorted = [...filtered]
+  if (query.sort === "name") {
+    sorted.sort((left, right) => left.name.localeCompare(right.name, "vi"))
+    return sorted
+  }
+  // Món hết hàng không có giá để so; dồn chúng xuống cuối thay vì để chúng
+  // nhảy lên đầu danh sách "giá thấp → cao" với một giá trị giả.
+  const direction = query.sort === "price_asc" ? 1 : -1
+  sorted.sort((left, right) => {
+    const leftPrice = menuItemFromPrice(left)
+    const rightPrice = menuItemFromPrice(right)
+    if (leftPrice === null) return rightPrice === null ? 0 : 1
+    if (rightPrice === null) return -1
+    return (leftPrice - rightPrice) * direction
+  })
+  return sorted
+}
+
+/**
+ * Danh mục mở sẵn khi vào màn Gọi món: Signature Cocktails.
+ *
+ * Tìm theo `code` trước vì mã là thứ ổn định; tên hiển thị đổi theo mùa menu.
+ * Không tìm thấy thì trả `null` — màn mở ở "Tất cả", đúng như hôm nay, chứ
+ * không mở một nhóm ngẫu nhiên.
+ */
+export function defaultCategoryId(categories: readonly WaiterMenuCategory[]): number | null {
+  const byCode = categories.find((category) => category.code.toUpperCase() === "SIGNATURE")
+  if (byCode) return byCode.id
+  const byName = categories.find((category) => normalizeMenuSearch(category.name).startsWith("signature"))
+  return byName?.id ?? null
+}

@@ -217,6 +217,19 @@ export type TableLiveState =
   | "oos"
   | "spare"
 
+/**
+ * Module Phục vụ 1 (v1.1) — sáu trạng thái của một lượt khách.
+ *
+ * Khác hẳn `TableLiveState`: cái kia nói về chỗ ngồi theo cách Lễ tân nhìn
+ * (trống, đã đặt, tới muộn…), cái này nói về đoàn khách đang ngồi theo cách
+ * Phục vụ nhìn (đang chờ đồ, đang dùng, đang thanh toán). Hai từ vựng khác
+ * nhau, nên hai kiểu khác nhau — gộp lại là mời người sau thêm "đang chờ đồ"
+ * vào bảng màu của Lễ tân.
+ *
+ * Giá trị do MÁY CHỦ tính và gửi xuống; web không tự suy ra từ đồng hồ máy.
+ */
+export type WaiterVisitPhase = "ARRIVED" | "ORDERING" | "AWAITING_FOOD" | "DINING" | "PAYMENT" | "CHECKED_OUT"
+
 export type BookingWarning = "late" | "noshow" | null
 
 export interface ClaimView {
@@ -261,6 +274,12 @@ export interface FloorTableState {
   claim: ClaimView | null
   /** Seated but the business day already rolled over: "bàn chưa nhả từ hôm trước". */
   staleFromPreviousDay: boolean
+  /**
+   * Chỉ có trong phép chiếu của Phục vụ (`GET /tables/service`). `undefined` ở
+   * các màn khác nghĩa là "endpoint này không tính trạng thái lượt khách",
+   * không phải "bàn chưa có trạng thái".
+   */
+  waiterPhase?: WaiterVisitPhase | null
 }
 
 /** One row of table_allocations, resolved for display (history + timeline). */

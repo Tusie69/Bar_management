@@ -224,7 +224,16 @@ describe('toWaiterFloorProjection — dữ liệu khách không rời máy chủ
     }
   })
 
-  it('bàn trống và bàn đã đặt chưa tới không mang Phiên nào để gọi món', () => {
+  /**
+   * v1.1: sơ đồ Phục vụ chỉ nói về khách ĐANG NGỒI.
+   *
+   * Một bàn đã đặt mà khách chưa tới phải ra khỏi payload hoàn toàn — không
+   * `BOOKED`, không giờ hẹn, không claim đặt bàn — chứ không phải được frontend
+   * lờ đi. Giữ lại trong payload nghĩa là "B2 có khách đặt lúc 22:00 cho 4
+   * người" vẫn đọc được từ DevTools của bất kỳ máy Phục vụ nào, và đó đúng là
+   * thứ biên bản 15/11 không cấp cho cấp thứ sáu.
+   */
+  it('bàn đã đặt chưa tới được chiếu thành bàn trống, không còn dấu vết đặt bàn', () => {
     const result = toWaiterFloorProjection(projection({
       tables: [
         table({ tableId: 21, tableCode: 'B1', displayState: 'EMPTY', claim: null, activeVisit: null }),
@@ -236,8 +245,46 @@ describe('toWaiterFloorProjection — dữ liệu khách không rời máy chủ
       ],
     }))
     expect(result.tables[0]?.claim).toBeNull()
-    expect(result.tables[1]?.claim).toMatchObject({ kind: 'RESERVATION', visitId: null })
+    expect(result.tables[1]?.claim).toBeNull()
+    expect(result.tables[1]?.displayState).toBe('EMPTY')
+    expect(result.tables[1]?.waiterPhase).toBeNull()
+    expect(result.tables[1]?.arrivalTime).toBeNull()
+    expect(result.tables[1]?.arrivalPhase).toBeNull()
+    expect(JSON.stringify(result)).not.toContain('2026-11-20T15:00:00.000Z')
     expect(JSON.stringify(result)).not.toContain(GUEST_NAME)
+  })
+
+  it('trạng thái lượt khách đi theo visitId, không theo ô bàn', () => {
+    const shared = { groupId: 7, groupDisplayCode: 'G01', groupMemberTableIds: [11, 12] }
+    const result = toWaiterFloorProjection(
+      projection({
+        tables: [
+          table({ claim: claim({ ...shared }), ...shared, claimOwner: 'GROUP' }),
+          table({ tableId: 12, tableCode: 'A2', claim: claim({ ...shared }), ...shared, claimOwner: 'GROUP' }),
+        ],
+      }),
+      new Map([[9001, 'AWAITING_FOOD' as const]]),
+    )
+    expect(result.tables.map((entry) => entry.waiterPhase)).toEqual(['AWAITING_FOOD', 'AWAITING_FOOD'])
+  })
+
+  /**
+   * Thiếu số liệu thì đoán về phía làm Phục vụ đi tới bàn, không đoán về phía
+   * "bàn này ổn rồi".
+   */
+  it('Phiên không có trong bản đồ trạng thái được coi là vừa ngồi xuống', () => {
+    const result = toWaiterFloorProjection(projection({ tables: [table({ claim: claim({}) })] }), new Map())
+    expect(result.tables[0]?.waiterPhase).toBe('ARRIVED')
+  })
+
+  it('bàn ngừng phục vụ không mang trạng thái lượt khách nào', () => {
+    const result = toWaiterFloorProjection(
+      projection({
+        tables: [table({ tableId: 31, tableCode: 'C1', displayState: 'OUT_OF_SERVICE', claim: null, activeVisit: null })],
+      }),
+    )
+    expect(result.tables[0]?.displayState).toBe('OUT_OF_SERVICE')
+    expect(result.tables[0]?.waiterPhase).toBeNull()
   })
 
   it('cờ đã thanh toán đi qua được, vì đó là thứ khoá gửi món mới', () => {

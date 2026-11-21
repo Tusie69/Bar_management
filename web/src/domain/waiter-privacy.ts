@@ -16,7 +16,7 @@
  * màn hình của Phục vụ phải lược dữ liệu ở trình duyệt thì nó đang gọi sai
  * endpoint.
  */
-import type { ClaimView, FloorGroup, FloorState } from "./models"
+import type { ClaimView, FloorGroup, FloorState, FloorTableState, WaiterVisitPhase } from "./models"
 
 /** Các trường của `ClaimView` mang thông tin nhận dạng khách. */
 export const WAITER_REDACTED_CLAIM_FIELDS = [
@@ -57,13 +57,41 @@ function redactGroup(group: FloorGroup): FloorGroup {
 }
 
 /**
+ * Trạng thái bàn mà sơ đồ Phục vụ được phép hiện.
+ *
+ * v1.1: sơ đồ chỉ nói về khách đang ngồi, nên mọi trạng thái đặt bàn của Lễ
+ * tân thu về "trống". Ở chế độ HTTP việc này do máy chủ làm; ở đây là để bản
+ * demo kể đúng câu chuyện đó thay vì hiện bảng màu của Lễ tân.
+ */
+function redactTableState(table: FloorTableState): FloorTableState {
+  const seated = table.state === "seated"
+  if (!seated && table.state !== "oos" && table.state !== "spare") {
+    return { ...table, state: "free", claim: null, waiterPhase: null }
+  }
+  if (!seated) return { ...table, claim: redactClaim(table.claim), waiterPhase: null }
+  return { ...table, claim: redactClaim(table.claim), waiterPhase: mockVisitPhase(table) }
+}
+
+/**
+ * Trạng thái lượt khách trong chế độ mock.
+ *
+ * Mock không có đơn và không có phiếu Bar/Bếp, nên nó KHÔNG thể biết bàn đang
+ * chờ đồ hay đang dùng. Nó nói đúng hai điều nó biết — đã thanh toán, hoặc vừa
+ * ngồi xuống — thay vì bịa ra một trạng thái giữa chừng. Bản demo hiện ít màu
+ * hơn thật, nhưng không màu nào trong đó là sai.
+ */
+function mockVisitPhase(table: FloorTableState): WaiterVisitPhase {
+  return table.claim?.paid ? "PAYMENT" : "ARRIVED"
+}
+
+/**
  * Giữ nguyên mọi thông tin vận hành (trạng thái bàn, số khách, giờ mở Phiên,
  * cờ đã thanh toán, cụm bàn, version) và xoá mọi thông tin nhận dạng khách.
  */
 export function redactFloorForWaiter(floor: FloorState): FloorState {
   return {
     ...floor,
-    tables: floor.tables.map((table) => ({ ...table, claim: redactClaim(table.claim) })),
+    tables: floor.tables.map(redactTableState),
     groups: floor.groups.map(redactGroup),
   }
 }

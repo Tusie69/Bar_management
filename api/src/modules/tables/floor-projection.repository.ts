@@ -2,6 +2,7 @@ import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { databasePool } from '../../database/pool.js'
+import { sqlBoolean } from '../../database/row-value.js'
 import { AppError } from '../../errors/app-error.js'
 import { businessDateAt } from '../bookings/business-date.js'
 import { shiftFromCutoff } from '../venues/venue-shift.js'
@@ -326,7 +327,7 @@ function buildClaim(
       startsAt: isoDateTime(row.visit_started_at!),
       deadlineAt: null,
       holdOverdue: false,
-      paid: Boolean(row.visit_paid),
+      paid: sqlBoolean(row.visit_paid),
       origin: row.visit_origin,
       sourceCode: row.visit_reservation_source_code,
       version: Number(row.visit_version),

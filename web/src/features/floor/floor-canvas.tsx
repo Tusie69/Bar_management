@@ -67,6 +67,19 @@ import { BarGuestList } from "./bar-guest-list"
 
 export type CanvasMode = "live" | "availability"
 
+/**
+ * Màu của một ô bàn khi người gọi muốn tự quyết, thay cho `STATE_META`.
+ *
+ * Bốn trường vì đó là đúng bốn thứ một ô bàn cần: viền (và ghế, và badge số
+ * khách), nền, chữ, và dòng nhãn nhỏ dưới mã bàn.
+ */
+export interface FloorCellTone {
+  short: string
+  color: string
+  tint: string
+  ink: string
+}
+
 const EMPTY_IDS: number[] = []
 
 interface BaseProps {
@@ -85,6 +98,18 @@ interface BaseProps {
   now: Date
   /** Omit customer names in read-only admin views while keeping operational status and counts. */
   hideGuestNames?: boolean
+  /**
+   * Tông màu riêng cho từng ô bàn, thay cho bảng màu trạng thái mặc định.
+   *
+   * Khu vực Phục vụ dùng nó để tô sáu trạng thái lượt khách (mới vào, đang gọi
+   * món, chờ đồ…) — một từ vựng khác hẳn `STATE_META`, vốn nói về chỗ ngồi
+   * theo cách Lễ tân nhìn. Truyền tông màu vào thay vì thêm nhánh `if` trong
+   * canvas: màn Điều phối không đổi một pixel nào, và không có cách nào sửa
+   * màu của Phục vụ mà lỡ tay đổi màu của Lễ tân.
+   *
+   * Chỉ những ô có mặt trong map mới đổi; ô vắng mặt vẽ như mọi màn khác.
+   */
+  cellTones?: ReadonlyMap<number, FloorCellTone>
   compact?: boolean
   /** Reception/mobile shell: always lock and uniformly fit the whole floor regardless of viewport width. */
   mobileShell?: boolean
@@ -995,6 +1020,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
                 clusterPad={tableClusterPadMap.get(t.id)}
                 readOnly={isReadOnly}
                 hideGuestNames={hideGuestNames}
+                tone={props.cellTones?.get(t.id)}
               />
             )
           })}
@@ -1335,12 +1361,15 @@ const LiveGlyph = memo(function LiveGlyph({
   clusterPad,
   readOnly = false,
   hideGuestNames = false,
+  tone,
 }: GlyphBase & {
   state?: FloorTableState
   now: Date
   clusterPad?: number
   readOnly?: boolean
   hideGuestNames?: boolean
+  /** Tông màu do người gọi quyết (khu vực Phục vụ); thắng `STATE_META`. */
+  tone?: FloorCellTone
 }) {
   const rawState: TableLiveState = fs?.state ?? "free"
   const state = rawState === "late_confirmed" ? "late" : rawState
@@ -1348,20 +1377,28 @@ const LiveGlyph = memo(function LiveGlyph({
   const seated = state === "seated"
   const isSpare = state === "spare" || (t.isSpare && state === "free")
   const dashed = isSpare || t.isSpare
-  const fill = seated
-    ? "var(--st-seated-fill)"
-    : state === "oos"
-      ? "url(#hatch)"
-      : isSpare
-        ? STATE_META.spare.tint
-        : state === "free"
-          ? "var(--surface-1)"
-          : meta.tint
-  const textColor = seated
-    ? "var(--on-seated)"
-    : state === "free" || state === "spare" || state === "oos"
-      ? "var(--foreground)"
-      : meta.ink
+  // Tông riêng chỉ áp cho ô CÓ KHÁCH. Một bàn trống được truyền nhầm tông màu
+  // vẫn phải trắng: "trống" là thứ Phục vụ đọc nhanh nhất trên sơ đồ, và tô
+  // màu nó là làm hỏng chính thông tin đó.
+  const cellTone = tone && seated ? tone : undefined
+  const fill = cellTone
+    ? cellTone.tint
+    : seated
+      ? "var(--st-seated-fill)"
+      : state === "oos"
+        ? "url(#hatch)"
+        : isSpare
+          ? STATE_META.spare.tint
+          : state === "free"
+            ? "var(--surface-1)"
+            : meta.tint
+  const textColor = cellTone
+    ? cellTone.ink
+    : seated
+      ? "var(--on-seated)"
+      : state === "free" || state === "spare" || state === "oos"
+        ? "var(--foreground)"
+        : meta.ink
   const claim = fs?.claim
   const isGroup =
     !!group ||
@@ -1404,7 +1441,12 @@ const LiveGlyph = memo(function LiveGlyph({
   let cellSubText = ""
   let showTimeIcon = false
 
-  if (seated) {
+  if (cellTone) {
+    // Ô bàn của Phục vụ nói trạng thái lượt khách, không nói giờ vào. Giờ vào
+    // đọc được ở bảng thao tác khi chạm vào bàn; thứ cần thấy từ xa là bàn
+    // nào đang chờ đồ.
+    cellSubText = cellTone.short
+  } else if (seated) {
     if (suppressGuestName) {
       cellSubText = claim?.startsAt ? fmtTime(claim.startsAt) : STATE_META.seated.short
     } else {
@@ -1429,7 +1471,7 @@ const LiveGlyph = memo(function LiveGlyph({
     cellSubText = "ngưng"
   }
 
-  const stroke = state === "free" || isSpare ? "var(--table-line)" : meta.color
+  const stroke = cellTone ? cellTone.color : state === "free" || isSpare ? "var(--table-line)" : meta.color
   const strokeWidth = isGroup ? 3 : 2
   const hasActiveClaim = !!claim && state !== "free" && state !== "spare" && state !== "oos"
   const showCountBadgeOnCell = hasActiveClaim && isAnchor
@@ -1454,15 +1496,17 @@ const LiveGlyph = memo(function LiveGlyph({
     const r = Math.max(9, (t.w || 20) / 2)
     const hasRoom = r >= 10
     const barSubText = hasRoom
-      ? seated
-        ? suppressGuestName
-          ? claim?.startsAt
-            ? fmtTime(claim.startsAt)
+      ? cellTone
+        ? cellTone.short
+        : seated
+          ? suppressGuestName
+            ? claim?.startsAt
+              ? fmtTime(claim.startsAt)
+              : ""
+            : formatCellGuestName(claim?.displayName, 4, true)
+          : isBookedState
+            ? (bookedTime ?? cellSubText)
             : ""
-          : formatCellGuestName(claim?.displayName, 4, true)
-        : isBookedState
-          ? (bookedTime ?? cellSubText)
-          : ""
       : ""
     return (
       <g
@@ -1612,7 +1656,10 @@ const LiveGlyph = memo(function LiveGlyph({
           strokeDasharray="3 3"
         />
       ) : null}
-      <Chairs t={t} color={state === "free" || state === "spare" ? "var(--table-line)" : meta.color} />
+      <Chairs
+        t={t}
+        color={cellTone ? cellTone.color : state === "free" || state === "spare" ? "var(--table-line)" : meta.color}
+      />
       <rect
         x={-hw}
         y={-hh}
@@ -1675,7 +1722,7 @@ const LiveGlyph = memo(function LiveGlyph({
           count={claim.partySize}
           x={cornerGeo.guestBadge.centerXFor(claim.partySize)}
           y={cornerGeo.guestBadge.y}
-          color={meta.color}
+          color={cellTone ? cellTone.color : meta.color}
           width={cornerGeo.guestBadge.widthFor(claim.partySize)}
           height={cornerGeo.guestBadge.height}
         />

@@ -26,9 +26,14 @@ interface TicketRow extends RowDataPacket {
   collected_at: Date | string | null
   table_codes: string | null
   ordered_by_user_id: number
+  ordered_by_display_name: string
+  is_boss_table: number
+  is_birthday: number
+  is_designated: number
 }
 
 interface LineRow extends RowDataPacket {
+  line_id: number
   order_id: number
   preparation_station: PreparationStation
   line_no: number
@@ -38,6 +43,8 @@ interface LineRow extends RowDataPacket {
   cancelled_quantity: number
   net_quantity: number
   note: string | null
+  cancellation_id: number | null
+  cancellation_quantity: number | null
 }
 
 const nextStatus: Record<Exclude<PreparationStatus, 'COLLECTED'>, PreparationStatus> = {
@@ -75,14 +82,30 @@ async function ticketLinesBatch(
   // 0040. Đọc cả ba con số thay vì chỉ `quantity`: quầy hành động theo số còn
   // lại, còn hai số kia là phần đối chiếu để phiếu nói được "đã hủy n trên m".
   const [rows] = await connection.execute<LineRow[]>(
-    `SELECT order_id, preparation_station, line_no, item_name, variant_display_name,
-            quantity, cancelled_quantity, net_quantity, note
-       FROM sales_order_lines
-      WHERE organization_id = ? AND venue_id = ? AND order_id IN (${orderIds.map(() => '?').join(',')})
-      ORDER BY order_id, preparation_station, line_no`,
+    `SELECT l.id AS line_id, l.order_id, l.preparation_station, l.line_no, l.item_name, l.variant_display_name,
+            l.quantity, l.cancelled_quantity, l.net_quantity, l.note,
+            c.id AS cancellation_id, c.quantity AS cancellation_quantity
+       FROM sales_order_lines l
+       LEFT JOIN sales_order_cancellations c
+         ON c.organization_id = l.organization_id AND c.venue_id = l.venue_id
+        AND c.order_id = l.order_id AND c.line_id = l.id
+        AND c.station = l.preparation_station AND c.status = 'PENDING'
+      WHERE l.organization_id = ? AND l.venue_id = ? AND l.order_id IN (${orderIds.map(() => '?').join(',')})
+      ORDER BY l.order_id, l.preparation_station, l.line_no`,
     [actor.organizationId, actor.venueId, ...orderIds],
   )
+  const seenLineIds = new Set<number>()
   for (const row of rows) {
+    const lineId = Number(row.line_id)
+    if (seenLineIds.has(lineId)) {
+      throw new AppError(
+        500,
+        'PREPARATION_PENDING_CANCELLATION_INVARIANT',
+        'Một dòng món có nhiều yêu cầu hủy đang chờ.',
+        { lineId },
+      )
+    }
+    seenLineIds.add(lineId)
     const key = `${Number(row.order_id)}:${row.preparation_station}`
     const lines = result.get(key) ?? []
     const originalQuantity = Number(row.quantity)
@@ -99,6 +122,10 @@ async function ticketLinesBatch(
       cancelledQuantity,
       originalQuantity,
       note: row.note,
+      pendingCancellation: row.cancellation_id === null ? null : {
+        cancellationId: Number(row.cancellation_id),
+        quantity: Number(row.cancellation_quantity),
+      },
     })
     result.set(key, lines)
   }
@@ -122,18 +149,43 @@ function baseTicket(row: TicketRow, lines: PreparationLineView[]): PreparationTi
     collectedAt: iso(row.collected_at),
     waitSeconds: Math.max(0, Math.floor((Date.now() - new Date(submittedAt).getTime()) / 1000)),
     tableCodes: row.table_codes ? row.table_codes.split(',') : [],
+    orderedByDisplayName: row.ordered_by_display_name || 'Nhân viên',
+    guestFlags: {
+      vip: Number(row.is_boss_table) !== 0,
+      birthday: Number(row.is_birthday) !== 0,
+      designated: Number(row.is_designated) !== 0,
+    },
     lines,
   }
 }
 
+// Match table-turn projection's canonical rule: the lowest linked reservation id
+// supplies the whole booking snapshot. The visit index keeps this a per-visit
+// lookup; reading each flag from that one row prevents synthetic mixed flags.
 const selectTickets = `SELECT t.id, t.order_id, t.visit_id, o.visit_sequence, t.station, t.status, t.version,
        o.submitted_at, t.accepted_at, t.started_at, t.ready_at, t.collected_at, o.ordered_by_user_id,
+       COALESCE(NULLIF(u.display_name, ''), 'Nhân viên') AS ordered_by_display_name,
+       CASE WHEN v.origin = 'WALK_IN' THEN 0 ELSE COALESCE(r.is_boss_table, 0) END AS is_boss_table,
+       CASE WHEN v.origin = 'WALK_IN' THEN 0 ELSE COALESCE(r.is_birthday, 0) END AS is_birthday,
+       CASE WHEN v.origin = 'WALK_IN' THEN 0 ELSE COALESCE(r.is_designated, 0) END AS is_designated,
        (SELECT GROUP_CONCAT(dt.code ORDER BY dt.code SEPARATOR ',')
           FROM table_allocations ta JOIN dining_tables dt ON dt.venue_id = ta.venue_id AND dt.id = ta.table_id
          WHERE ta.organization_id = t.organization_id AND ta.venue_id = t.venue_id
            AND ta.visit_id = t.visit_id AND ta.kind = 'USAGE' AND ta.released_at IS NULL) AS table_codes
   FROM preparation_tickets t
-  JOIN sales_orders o ON o.venue_id = t.venue_id AND o.id = t.order_id`
+  JOIN sales_orders o ON o.organization_id = t.organization_id AND o.venue_id = t.venue_id
+   AND o.id = t.order_id AND o.visit_id = t.visit_id
+  JOIN visits v ON v.organization_id = t.organization_id AND v.venue_id = t.venue_id AND v.id = t.visit_id
+  LEFT JOIN memberships om ON om.organization_id = o.organization_id
+   AND om.id = o.ordered_by_membership_id AND om.user_id = o.ordered_by_user_id
+  LEFT JOIN users u ON u.id = om.user_id
+  LEFT JOIN reservations r ON r.organization_id = v.organization_id
+   AND r.venue_id = v.venue_id AND r.visit_id = v.id
+   AND r.id = (
+     SELECT MIN(vr.id) FROM reservations vr FORCE INDEX (ix_reservations_visit)
+     WHERE vr.organization_id = v.organization_id
+       AND vr.venue_id = v.venue_id AND vr.visit_id = v.id
+   )`
 
 export async function getPreparationQueue(
   actor: AuthenticatedActor,

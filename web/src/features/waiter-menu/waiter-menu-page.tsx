@@ -1,14 +1,13 @@
 import { useQuery } from "@tanstack/react-query"
-import { AlertCircle, ArrowLeft, Clock3, ReceiptText, RefreshCw, Search, Users } from "lucide-react"
+import { AlertCircle, ArrowLeft, Clock3, RefreshCw, Search, Users } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-data"
-import { fmtElapsed } from "@/lib/time"
-import { isApiError } from "@/services"
+import { fmtElapsed, fmtTime } from "@/lib/time"
+import { isApiError, newIdempotencyKey } from "@/services"
 import { useCan, useSession } from "@/state/session"
 import { CartBar, CartSheet, OrderSentBanner } from "./cart-sheet"
 import {
@@ -18,14 +17,32 @@ import {
   type MenuPriceChange,
   type PriceChangeView,
 } from "./cart-model"
+import { WAITER_PHASE_TONE } from "@/features/waiter/waiter-phase"
 import { MenuCategoryTabs } from "./menu-category-tabs"
+import { MenuFilterSheet, MenuFilterSummary } from "./menu-filter-sheet"
+import { defaultVariant } from "./menu-card-model"
 import { MenuItemList } from "./menu-item-list"
 import { MenuItemSheet } from "./menu-item-sheet"
-import { filterMenuItems, type WaiterMenuItem } from "./menu-model"
+import {
+  EMPTY_MENU_QUERY,
+  defaultCategoryId,
+  queryMenuItems,
+  type MenuQuery,
+  type WaiterMenuItem,
+} from "./menu-model"
 import { PriceChangeDialog } from "./price-change-dialog"
 import { useWaiterCart } from "./use-waiter-cart"
 import { fetchWaiterMenu } from "./waiter-menu-api"
-import { submitWaiterOrder, type WaiterOrderDetail } from "./waiter-order-api"
+import {
+  clearVisitOrdering,
+  markVisitOrdering,
+  readWasteLines,
+  requestOrderCancellation,
+  submitWaiterOrder,
+  type OrderCancellationWasteLine,
+  type WaiterOrderDetail,
+} from "./waiter-order-api"
+import { CancelOrderDialog, OrderJustSentSheet } from "./order-just-sent-sheet"
 
 /**
  * Module Phục vụ 3 — màn gọi món: danh mục, giỏ và gửi đơn.
@@ -87,10 +104,12 @@ export default function WaiterMenuPage() {
   const venueId = useSession((state) => state.principal?.venueId ?? null)
   const userId = useSession((state) => state.principal?.id ?? null)
   const canOrder = useCan("order.create")
+  const canRequestCancel = useCan("order.cancel.request")
   const now = useNow(1_000)
   const [catalogVersion, setCatalogVersion] = useState<string | null>(null)
-  const [search, setSearch] = useState("")
-  const [categoryId, setCategoryId] = useState<number | null>(null)
+  const [query, setQuery] = useState<MenuQuery>(EMPTY_MENU_QUERY)
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [categoryTouched, setCategoryTouched] = useState(false)
   const [selectedItem, setSelectedItem] = useState<WaiterMenuItem | null>(null)
   const [cartOpen, setCartOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -98,6 +117,12 @@ export default function WaiterMenuPage() {
   const [notice, setNotice] = useState<string | null>(null)
   const [priceChanges, setPriceChanges] = useState<PriceChangeView[] | null>(null)
   const [sentOrder, setSentOrder] = useState<WaiterOrderDetail | null>(null)
+  const [justSentOpen, setJustSentOpen] = useState(false)
+  const [cancelTarget, setCancelTarget] = useState<WaiterOrderDetail | null>(null)
+  const [cancelError, setCancelError] = useState<string | null>(null)
+  const [cancelWasteLines, setCancelWasteLines] = useState<OrderCancellationWasteLine[]>([])
+  const [cancelSubmitting, setCancelSubmitting] = useState(false)
+  const [cancelRequestedOrderId, setCancelRequestedOrderId] = useState<number | null>(null)
   const submittingRef = useRef(false)
   const validVisitId = Number.isSafeInteger(visitId) && visitId > 0
 
@@ -115,19 +140,57 @@ export default function WaiterMenuPage() {
   })
 
   const items = useMemo(
-    () => filterMenuItems(menu.data?.items ?? [], menu.data?.categories ?? [], categoryId, search),
-    [categoryId, menu.data?.categories, menu.data?.items, search],
+    () => queryMenuItems(menu.data?.items ?? [], menu.data?.categories ?? [], query),
+    [menu.data?.categories, menu.data?.items, query],
   )
   const selectedCategory = useMemo(
-    () => menu.data?.categories.find((category) => category.id === categoryId) ?? null,
-    [categoryId, menu.data?.categories],
+    () => menu.data?.categories.find((category) => category.id === query.categoryId) ?? null,
+    [menu.data?.categories, query.categoryId],
   )
+
+  /**
+   * Mở sẵn Signature Cocktails (PV-07).
+   *
+   * `categoryTouched` để lần mở sẵn này KHÔNG quay lại sau khi nhân viên đã tự
+   * chọn "Tất cả" — một màn hình tự bật lại lựa chọn mà người dùng vừa bỏ là
+   * một màn hình cãi lại người dùng.
+   */
+  useEffect(() => {
+    if (categoryTouched || !menu.data) return
+    const fallback = defaultCategoryId(menu.data.categories)
+    setCategoryTouched(true)
+    if (fallback === null) return
+    setQuery((current) => (current.categoryId === null ? { ...current, categoryId: fallback } : current))
+  }, [categoryTouched, menu.data])
+
+  /**
+   * Module Phục vụ 1 (v1.1) — báo cho các máy khác rằng bàn này đang được lên đơn.
+   *
+   * Nhịp đập 60 giây, hạn sống ở máy chủ là 3 phút: đủ để một lần mất sóng
+   * ngắn không làm ô bàn nhấp nháy. Dọn dẹp khi rời màn là thứ quan trọng
+   * nhất ở đây — thiếu nó, bàn ở màu cam cho tới khi dấu hết hạn, và sơ đồ nói
+   * rằng có người đang đứng ở bàn đó trong khi không có ai.
+   *
+   * `canOrder` là điều kiện: một tài khoản chỉ xem được danh mục thì không
+   * phải là "đang gọi món" cho bàn nào cả.
+   */
+  useEffect(() => {
+    if (!validVisitId || !canOrder) return
+    void markVisitOrdering(visitId)
+    const timer = window.setInterval(() => void markVisitOrdering(visitId), 60_000)
+    return () => {
+      window.clearInterval(timer)
+      void clearVisitOrdering(visitId)
+    }
+  }, [canOrder, validVisitId, visitId])
 
   // Catalog có thể đổi trong lúc màn hình đang mở. Không giữ một filter trỏ
   // tới classification đã bị xóa/ẩn vì khi đó danh sách trống mà không rõ lý do.
   useEffect(() => {
-    if (categoryId !== null && menu.data && !selectedCategory) setCategoryId(null)
-  }, [categoryId, menu.data, selectedCategory])
+    if (query.categoryId !== null && menu.data && !selectedCategory) {
+      setQuery((current) => ({ ...current, categoryId: null }))
+    }
+  }, [menu.data, query.categoryId, selectedCategory])
 
   // Nháp của lần mở trước có thể chứa món đã hết. Soi lại với danh mục vừa tải
   // và nói ra những gì bị bỏ, thay vì để nhân viên bấm gửi rồi mới biết.
@@ -203,6 +266,7 @@ export default function WaiterMenuPage() {
 
   const visit = menu.data?.visit
   const tableLabel = visit?.tableCodes.join(" + ") ?? `Phiên #${visitId}`
+  const phaseTone = WAITER_PHASE_TONE[sentOrder ? "AWAITING_FOOD" : "ORDERING"]
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground">
       <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur">
@@ -218,40 +282,43 @@ export default function WaiterMenuPage() {
           </Button>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-lg font-semibold">
-                Gọi món · {visit?.tableCodes.join(" + ") ?? "Đang tải"}
-              </h1>
-              {visit ? <Badge variant="secondary">Đang phục vụ</Badge> : null}
+              <h1 className="truncate text-lg font-semibold">Gọi món</h1>
+              {/*
+                Khối màu trạng thái bàn (mockup P7/P9), cùng bảng màu với ô bàn
+                trên sơ đồ. Trạng thái được suy TỪ CHÍNH MÀN NÀY: mở màn là bàn
+                "Đang gọi món" — đó đúng là điều vừa báo cho máy chủ — và gửi
+                đơn xong là "Chờ đồ". Không đi hỏi lại máy chủ một sự thật mà
+                màn hình này là nguồn.
+              */}
+              {visit ? (
+                <span
+                  className="rounded-full border px-2.5 py-0.5 text-xs font-semibold"
+                  style={{ borderColor: phaseTone.color, background: phaseTone.tint, color: phaseTone.ink }}
+                >
+                  {`${visit.tableCodes.join(" + ")} · ${phaseTone.label}`}
+                </span>
+              ) : null}
             </div>
             <div className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
               <span className="inline-flex items-center gap-1">
-                <Users className="size-3" aria-hidden /> {visit?.guestCount ?? "—"} khách
+                <Users className="size-3" aria-hidden />
+                {`${visit?.guestCount ?? "—"} khách`}
               </span>
               <span className="inline-flex items-center gap-1">
-                <Clock3 className="size-3" aria-hidden />{" "}
+                <Clock3 className="size-3" aria-hidden />
                 {visit ? fmtElapsed(now.getTime() - new Date(visit.startedAt).getTime()) : "—"}
               </span>
             </div>
           </div>
-          <Button
-            variant="outline"
-            size="icon"
-            className="size-11 shrink-0"
-            onClick={() => navigate(`/phucvu/orders/${visitId}`)}
-            aria-label="Xem đơn đã gọi"
-          >
-            <ReceiptText />
-          </Button>
         </div>
       </header>
 
       <div className="mx-auto grid min-h-0 w-full max-w-7xl flex-1 content-start gap-4 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
         {sentOrder ? (
           <OrderSentBanner
-            visitSequence={sentOrder.visitSequence}
-            itemCount={sentOrder.itemCount}
-            totalVnd={sentOrder.totalAmountVnd}
-            stations={sentOrder.stations}
+            tableLabel={tableLabel}
+            submittedAtLabel={fmtTime(new Date(sentOrder.submittedAt))}
+            onView={() => setJustSentOpen(true)}
             onDismiss={() => setSentOrder(null)}
           />
         ) : null}
@@ -269,24 +336,60 @@ export default function WaiterMenuPage() {
             Tài khoản này chỉ xem được danh mục, không gửi đơn.
           </p>
         ) : null}
-        <div className="relative">
-          <Search
-            className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <Input
-            type="search"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            className="h-11 rounded-xl pl-10"
-            placeholder={selectedCategory ? `Tìm trong ${selectedCategory.name}…` : "Tìm tên món…"}
-            aria-label="Tìm món"
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <Search
+              className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+              aria-hidden
+            />
+            <Input
+              type="search"
+              value={query.search}
+              onChange={(event) => setQuery((current) => ({ ...current, search: event.target.value }))}
+              className="h-11 rounded-xl pl-10"
+              placeholder={selectedCategory ? `Tìm trong ${selectedCategory.name}…` : "Tìm tên món…"}
+              aria-label="Tìm món"
+            />
+          </div>
+          <MenuFilterSheet query={query} onChange={setQuery} open={filterOpen} onOpenChange={setFilterOpen} />
         </div>
+        <MenuFilterSummary
+          query={query}
+          onClear={() => setQuery((current) => ({ ...current, minVnd: null, maxVnd: null, sort: "default" }))}
+        />
         {menu.data ? (
-          <MenuCategoryTabs categories={menu.data.categories} selected={categoryId} onSelect={setCategoryId} />
+          <MenuCategoryTabs
+            categories={menu.data.categories}
+            selected={query.categoryId}
+            onSelect={(categoryId) => {
+              setCategoryTouched(true)
+              setQuery((current) => ({ ...current, categoryId }))
+            }}
+          />
         ) : null}
-        {menu.isPending ? <MenuSkeleton /> : <MenuItemList items={items} onOpen={setSelectedItem} />}
+        {menu.isPending ? (
+          <MenuSkeleton />
+        ) : (
+          <MenuItemList
+            items={items}
+            cart={cart.cart}
+            onOpen={setSelectedItem}
+            onAdd={(item) => {
+              if (!canOrder) return
+              const variant = defaultVariant(item)
+              if (!variant) return
+              cart.add({ item, variant, quantity: 1 })
+              setCartError(null)
+            }}
+            onRemove={(cartLineId) => {
+              const line = cart.cart.lines.find((candidate) => candidate.cartLineId === cartLineId)
+              if (!line) return
+              // Phần cuối cùng thì "−" là bỏ món khỏi giỏ, không phải về 0.
+              if (line.quantity <= 1) cart.remove(cartLineId)
+              else cart.setQuantity(cartLineId, line.quantity - 1)
+            }}
+          />
+        )}
       </div>
 
       {canOrder ? (
@@ -317,6 +420,59 @@ export default function WaiterMenuPage() {
         onNoteChange={cart.setNote}
         onRemove={cart.remove}
         onSubmit={() => void submit()}
+      />
+      <OrderJustSentSheet
+        orderId={sentOrder?.orderId ?? null}
+        tableLabel={tableLabel}
+        open={justSentOpen}
+        onClose={() => setJustSentOpen(false)}
+        canRequestCancel={canRequestCancel}
+        pendingCancelRequest={cancelRequestedOrderId !== null && cancelRequestedOrderId === sentOrder?.orderId}
+        onRequestCancel={(order) => {
+          setCancelError(null)
+          setCancelWasteLines([])
+          setCancelTarget(order)
+        }}
+      />
+      <CancelOrderDialog
+        open={cancelTarget !== null}
+        order={cancelTarget}
+        submitting={cancelSubmitting}
+        errorMessage={cancelError}
+        wasteLines={cancelWasteLines}
+        onCancel={() => {
+          setCancelTarget(null)
+          setCancelWasteLines([])
+          setCancelError(null)
+        }}
+        onSubmit={(input) => {
+          if (!cancelTarget) return
+          setCancelSubmitting(true)
+          setCancelError(null)
+          void requestOrderCancellation(cancelTarget.orderId, {
+            reason: input.reason,
+            ...(input.acknowledgeWaste ? { acknowledgeWaste: true } : {}),
+            idempotencyKey: newIdempotencyKey(),
+          })
+            .then(() => {
+              setCancelRequestedOrderId(cancelTarget.orderId)
+              setCancelTarget(null)
+              setCancelWasteLines([])
+            })
+            .catch((error: unknown) => {
+              // Máy chủ trả về danh sách món đã làm xong kèm lỗi. Hiện chúng
+              // ra rồi buộc một lần tick riêng, thay vì chỉ báo "cần xác nhận"
+              // mà không nói phần nào sẽ bị đổ đi.
+              if (isApiError(error)) {
+                const waste = readWasteLines(error.details)
+                if (waste.length > 0) setCancelWasteLines(waste)
+                setCancelError(error.message)
+                return
+              }
+              setCancelError("Không gửi được yêu cầu hủy. Thử lại sau.")
+            })
+            .finally(() => setCancelSubmitting(false))
+        }}
       />
       <PriceChangeDialog
         changes={priceChanges}

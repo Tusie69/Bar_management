@@ -39,6 +39,10 @@ const staff = [
   { roleCode: 'WAITER', userId: 9511, prefix: 'E2E_WAITER', fallbackName: 'E2E Phục vụ' },
   { roleCode: 'BAR', userId: 9512, prefix: 'E2E_BAR', fallbackName: 'E2E Bartender' },
   { roleCode: 'KITCHEN', userId: 9513, prefix: 'E2E_KITCHEN', fallbackName: 'E2E Bếp' },
+  // v1.1: cần một người DUYỆT để chạy hết luồng "Hủy đơn?" trên trình duyệt.
+  // Phục vụ cố ý không có `order.cancel.approve`, nên không có tài khoản này
+  // thì yêu cầu hủy gửi đi rồi nằm đó không ai quyết định được.
+  { roleCode: 'CASHIER', userId: 9514, prefix: 'E2E_CASHIER', fallbackName: 'E2E Thu ngân' },
 ] as const
 
 function fail(message: string): never {

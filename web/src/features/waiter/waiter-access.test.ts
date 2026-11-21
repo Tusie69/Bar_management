@@ -21,15 +21,25 @@ import {
   WAITER_HOME_PATH,
   WAITER_LEGACY_BASE_PATH,
   WAITER_PAYMENT_NOTICE,
+  WAITER_QUEUE_ABSOLUTE_PATH,
+  WAITER_QUEUE_PATH,
   WAITER_REARRANGE_PERMISSIONS,
   WAITER_ROLES,
   canEnterWaiter,
   waiterOrderPath,
   waiterOrdersViewPath,
+  waiterRoleLabel,
   waiterServedDuration,
   waiterTableCapability,
   waiterVisitTableIds,
 } from "./waiter-access"
+import { waiterRoute } from "./waiter-routes"
+import {
+  WAITER_TOOLBAR_ACTION_CLASS,
+  WAITER_TOOLBAR_CLASS,
+  WAITER_TOOLBAR_TEXT_CLASS,
+  WAITER_TOOLBAR_TEXT_ITEM_CLASS,
+} from "./waiter-toolbar-layout"
 import { isSplitRequest, waiterCurrentTables, waiterRearrangePlan, waiterTargetTables } from "./waiter-rearrange"
 
 const GUEST_NAME = "Chị Hồng Nhung"
@@ -140,6 +150,19 @@ describe("định tuyến khu vực Phục vụ", () => {
     // Không có đường nào từ khu vực Phục vụ trỏ ra ngoài nó.
     expect(waiterOrderPath(5).startsWith(WAITER_HOME_PATH)).toBe(true)
     expect(waiterOrdersViewPath(5).startsWith(WAITER_HOME_PATH)).toBe(true)
+  })
+
+  it("giữ các route gọi món/xem đơn và thêm hàng đợi trong cùng WaiterShell", () => {
+    const childPaths = waiterRoute.children?.map((route) => route.path).filter(Boolean)
+    expect(childPaths).toContain("phien/:visitId/goi-mon")
+    expect(childPaths).toContain("orders/:visitId")
+    expect(childPaths).toContain(WAITER_QUEUE_PATH)
+    expect(WAITER_QUEUE_ABSOLUTE_PATH).toBe("/phucvu/hang-doi")
+  })
+
+  it("nhãn vai phân biệt Bartender và Phục vụ", () => {
+    expect(waiterRoleLabel("BAR")).toBe("Bartender")
+    expect(waiterRoleLabel("WAITER")).toBe("Phục vụ")
   })
 })
 
@@ -467,6 +490,16 @@ describe("mobile-first: sơ đồ vừa khung Phục vụ ở mọi viewport b�
     { label: "iPad portrait 768x1024", vw: 768, vh: 1024 },
     { label: "laptop 1280x800", vw: 1280, vh: 800 },
   ]
+
+  it("toolbar 360px cho text co lại và giữ action ở kích thước chạm", () => {
+    expect(WAITER_TOOLBAR_CLASS).toContain("min-w-0")
+    expect(WAITER_TOOLBAR_TEXT_CLASS).toContain("min-w-0")
+    expect(WAITER_TOOLBAR_TEXT_CLASS).toContain("flex-1")
+    expect(WAITER_TOOLBAR_TEXT_CLASS).toContain("overflow-hidden")
+    expect(WAITER_TOOLBAR_TEXT_ITEM_CLASS).toContain("min-w-0")
+    expect(WAITER_TOOLBAR_TEXT_ITEM_CLASS).toContain("truncate")
+    expect(WAITER_TOOLBAR_ACTION_CLASS).toContain("shrink-0")
+  })
 
   it.each(viewports)("$label: cả sơ đồ nằm trong khung, không cuộn ngang", ({ label, vw, vh }) => {
     const containerW = Math.min(vw, MAX_CONTENT_W)

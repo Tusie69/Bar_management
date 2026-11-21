@@ -11,7 +11,9 @@ import { hasPermission, inspectSession } from '../../auth/auth.service.js'
 import { AppError } from '../../errors/app-error.js'
 import { afterIdempotencyCommit, idempotent, idempotencyTransaction } from '../../middleware/idempotency.js'
 import { getFloorProjection } from './floor-projection.repository.js'
-import { toWaiterFloorProjection } from './waiter-floor-projection.js'
+import { seatedVisitIds, toWaiterFloorProjection } from './waiter-floor-projection.js'
+import { readWaiterVisitActivity } from './waiter-visit-phase.repository.js'
+import { waiterVisitPhases } from './waiter-visit-phase.js'
 import { publishFloorChange, subscribeToFloorChanges } from './floor-change-stream.js'
 import {
   addLayoutGroupMembers,
@@ -86,7 +88,13 @@ tableRouter.get(
   async (request, response) => {
     const businessDate = parseBusinessDate(request.query.date)
     const actor = requireAuthenticatedActor(request)
-    response.json(toWaiterFloorProjection(await getFloorProjection(actor, businessDate)))
+    const projection = await getFloorProjection(actor, businessDate)
+    // Số đơn và số phiếu chỉ cần cho những Phiên ĐANG hiện trên sơ đồ, nên
+    // câu hỏi thứ hai đi theo kết quả của câu thứ nhất. Sơ đồ không có bàn nào
+    // có khách thì không có truy vấn nào chạy.
+    const activity = await readWaiterVisitActivity(actor, seatedVisitIds(projection))
+    const phases = waiterVisitPhases(activity, new Date(projection.serverNow))
+    response.json(toWaiterFloorProjection(projection, phases))
   },
 )
 

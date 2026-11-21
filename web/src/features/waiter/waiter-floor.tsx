@@ -14,7 +14,7 @@
  * mở Walk-in. Những thứ đó không có ở đây vì chúng không được mount, không
  * phải vì chúng bị ẩn bằng CSS.
  */
-import { FloorCanvas } from "@/features/floor/floor-canvas"
+import { FloorCanvas, type FloorCellTone } from "@/features/floor/floor-canvas"
 import type { FloorGroup, FloorTableState, TableView, ZoneView } from "@/domain/models"
 
 export interface WaiterFloorProps {
@@ -25,6 +25,8 @@ export interface WaiterFloorProps {
   now: Date
   selectedIds: number[]
   onTableClick: (tableId: number) => void
+  /** Sáu trạng thái lượt khách; xem `waiter-phase.ts`. */
+  cellTones?: ReadonlyMap<number, FloorCellTone>
   className?: string
 }
 
@@ -36,6 +38,7 @@ export function WaiterFloor({
   now,
   selectedIds,
   onTableClick,
+  cellTones,
   className,
 }: WaiterFloorProps) {
   return (
@@ -48,6 +51,7 @@ export function WaiterFloor({
       now={now}
       selectedIds={selectedIds}
       onTableClick={onTableClick}
+      cellTones={cellTones}
       hideGuestNames
       // Khoá camera và luôn fit cả sơ đồ: Phục vụ cầm điện thoại một tay, không
       // có nhịp nào để pan/zoom giữa lúc đang nhận món.

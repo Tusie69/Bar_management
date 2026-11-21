@@ -115,6 +115,11 @@ export interface WaiterOrderListView {
 
 export interface CancellationQueueEntry {
   cancellationId: number
+  /**
+   * Mã nhóm của một lần "Hủy đơn?"; `null` khi đây là yêu cầu lẻ của một món.
+   * Hàng chờ gom các dòng cùng `groupId` vào MỘT thẻ và quyết định một lần.
+   */
+  groupId: number | null
   status: CancellationStatus
   policy: CancellationPolicy
   version: number
@@ -249,8 +254,187 @@ export async function decideCancellation(
   })
 }
 
+/**
+ * Quyết định CẢ NHÓM "Hủy đơn?" bằng một lần bấm.
+ *
+ * Không gửi `expectedVersion`: một nhóm có nhiều dòng con, mỗi dòng một phiên
+ * bản, và máy chủ khóa rồi quyết định chúng trong cùng một transaction.
+ */
+export async function decideCancellationGroup(
+  groupId: number,
+  decision: "approve" | "reject",
+  input: { note?: string; idempotencyKey: string },
+): Promise<{ groupId: number; status: CancellationStatus; decidedCount: number; order: WaiterOrderDetail }> {
+  return requireHttp().post(`/orders/cancellations/groups/${groupId}/${decision}`, input, {
+    idempotencyKey: input.idempotencyKey,
+  })
+}
+
 /** Thông báo món đã xong của CHÍNH người đăng nhập (Module 4 lọc theo audience). */
 export async function fetchReadyNotifications(): Promise<ReadyNotification[]> {
   const response = await requireHttp().get<{ notifications: ReadyNotification[] }>("/preparation/ready-notifications")
   return response.notifications
+}
+
+/**
+ * Module Phục vụ 1 (v1.1) — báo rằng máy này đang mở màn Gọi món của Phiên.
+ *
+ * Mục đích duy nhất: để sơ đồ của những máy KHÁC tô bàn đó màu "Đang gọi món".
+ * Vì vậy lỗi ở đây không bao giờ được chặn việc gọi món — một bàn sai màu là
+ * phiền, một màn Gọi món không mở được vì cái dấu đó là hỏng việc. Cả hai hàm
+ * nuốt lỗi và chỉ ghi log.
+ */
+export async function markVisitOrdering(visitId: number): Promise<void> {
+  try {
+    await requireHttp().put(`/waiter/visits/${visitId}/ordering`, {})
+  } catch (error) {
+    console.warn("Không báo được trạng thái đang gọi món", error)
+  }
+}
+
+export async function clearVisitOrdering(visitId: number): Promise<void> {
+  try {
+    await requireHttp().delete(`/waiter/visits/${visitId}/ordering`)
+  } catch (error) {
+    console.warn("Không gỡ được trạng thái đang gọi món", error)
+  }
+}
+
+/* ---------------------- Module Phục vụ 1 (v1.1) ------------------------- */
+
+/** Một món đã gọi của Phiên, gộp qua mọi đơn. Xem api/.../order.model.ts. */
+export interface WaiterVisitItem {
+  variantId: number
+  menuItemId: number
+  itemName: string
+  variantDisplayName: string
+  unitCode: string
+  preparationStation: PreparationStation
+  note: string | null
+  quantity: number
+  unitPriceVnd: number
+  totalVnd: number
+  /** `null` khi món không còn bán được: nút "+" phải tắt kèm lý do. */
+  reorder: { priceId: number; priceVersion: number; amountVnd: number } | null
+}
+
+export interface WaiterVisitItemsView {
+  visitId: number
+  tableCodes: string[]
+  orderCount: number
+  netAmountVnd: number
+  items: WaiterVisitItem[]
+}
+
+export async function fetchVisitItems(visitId: number): Promise<WaiterVisitItemsView> {
+  return requireHttp().get<WaiterVisitItemsView>(`/waiter/visits/${visitId}/items`)
+}
+
+/**
+ * Module Phục vụ (v1.1) — "Hủy đơn?": xin hủy CẢ ĐƠN.
+ *
+ * Không hủy gì cả: nó gửi một yêu cầu tới Thu ngân / Admin Edit (chốt Q2 ngày
+ * 21/11) và trả về số món, số tiền sẽ bị hủy để màn hình nói lại cho đúng.
+ */
+export interface OrderCancellationRequestResult {
+  groupId: number
+  orderId: number
+  lineCount: number
+  /** Số phần sẽ phải ghi hao nếu được duyệt. 0 nghĩa là chưa món nào làm xong. */
+  wasteQuantity: number
+  totalQuantity: number
+  amountVnd: number
+}
+
+/** Món đã làm xong trong đơn; máy chủ trả kèm khi đòi xác nhận ghi hao. */
+export interface OrderCancellationWasteLine {
+  lineNo: number
+  itemName: string
+  variantDisplayName: string
+  quantity?: number
+}
+
+export function readWasteLines(details: Record<string, unknown>): OrderCancellationWasteLine[] {
+  const lines = details.wasteLines
+  if (!Array.isArray(lines)) return []
+  return lines.filter(
+    (line): line is OrderCancellationWasteLine =>
+      typeof line === "object" && line !== null && typeof (line as OrderCancellationWasteLine).lineNo === "number",
+  )
+}
+
+export async function requestOrderCancellation(
+  orderId: number,
+  input: { reason: string; acknowledgeWaste?: boolean; idempotencyKey: string },
+): Promise<OrderCancellationRequestResult> {
+  const response = await requireHttp().post<{ cancellation: OrderCancellationRequestResult }>(
+    `/waiter/orders/${orderId}/cancellations`,
+    input,
+    { idempotencyKey: input.idempotencyKey },
+  )
+  return response.cancellation
+}
+
+/* ------------------ Module Phục vụ (v1.1) — PV-20: hộp tin ---------------- */
+
+export interface StaffNotification {
+  notificationId: number
+  kind: "CANCELLATION_DECIDED"
+  visitId: number | null
+  orderId: number | null
+  cancellationGroupId: number | null
+  cancellationId: number | null
+  decision: "APPROVED" | "REJECTED" | null
+  lineCount: number
+  quantity: number
+  /** Số phần bị ghi hao; 0 nghĩa là không món nào đã làm xong. */
+  wasteQuantity: number
+  amountVnd: number
+  reason: string | null
+  decisionNote: string | null
+  decidedByUserId: number | null
+  decidedByDisplayName: string | null
+  decidedAt: string | null
+  tableCodes: string[]
+  visitSequence: number | null
+  createdAt: string
+  acknowledgedAt: string | null
+}
+
+export async function fetchStaffNotifications(): Promise<StaffNotification[]> {
+  const response = await requireHttp().get<{ notifications: StaffNotification[] }>("/waiter/notifications")
+  return response.notifications
+}
+
+export async function acknowledgeStaffNotification(notificationId: number): Promise<void> {
+  await requireHttp().post(`/waiter/notifications/${notificationId}/acknowledge`, {})
+}
+
+/* ----------------- Module Phục vụ (v1.1) — PV-18: bill tạm tính ---------- */
+
+export interface VisitBillLine {
+  itemName: string
+  variantDisplayName: string
+  note: string | null
+  quantity: number
+  unitPriceVnd: number
+  amountVnd: number
+}
+
+export interface VisitBill {
+  visitId: number
+  tableCodes: string[]
+  orderCount: number
+  lines: VisitBillLine[]
+  subtotalVnd: number
+  /** Điểm cơ bản: 1000 = 10%. */
+  vatRateBasisPoints: number
+  vatVnd: number
+  totalVnd: number
+  printedAt: string
+}
+
+export async function fetchVisitBill(visitId: number): Promise<VisitBill> {
+  const response = await requireHttp().get<{ bill: VisitBill }>(`/waiter/visits/${visitId}/bill`)
+  return response.bill
 }

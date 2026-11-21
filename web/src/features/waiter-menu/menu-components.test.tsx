@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 import { CartBar, CartLineList, OrderSentBanner } from "./cart-sheet"
-import type { CartLine } from "./cart-model"
+import { emptyCart, type CartLine } from "./cart-model"
 import { MenuCategoryTabs } from "./menu-category-tabs"
 import { MenuItemCard } from "./menu-item-card"
 import { MenuItemList } from "./menu-item-list"
@@ -52,15 +52,41 @@ describe("waiter menu presentation", () => {
   })
 
   it("labels temporarily unavailable items and never renders a fake zero glass price", () => {
-    const html = renderToStaticMarkup(<MenuItemCard item={item} onOpen={() => undefined} />)
+    const html = renderToStaticMarkup(
+      <MenuItemCard item={item} quantity={0} onOpen={noop} onAdd={noop} onRemove={null} />,
+    )
     expect(html).toContain("Tạm hết")
     expect(html).toContain("1.400.000đ")
     expect(html).not.toContain(">0đ<")
     expect(html).not.toContain("Ly")
   })
 
+  /**
+   * v1.1: thẻ chỉ còn tên · giá · − / +. Mô tả và quầy chế biến rời khỏi thẻ
+   * và chỉ còn trong cửa sổ chi tiết.
+   */
+  it("thẻ một hàng: không còn mô tả, quầy chế biến hay mũi tên", () => {
+    const html = renderToStaticMarkup(
+      <MenuItemCard item={item} quantity={0} onOpen={noop} onAdd={noop} onRemove={null} />,
+    )
+    expect(html).not.toContain("Quầy bar")
+    expect(html).not.toContain("Bếp")
+    expect(html).not.toContain(item.description ?? "@@không có@@")
+  })
+
+  it("món đang có trong giỏ: viền nổi, hiện số lượng và nút bớt", () => {
+    const html = renderToStaticMarkup(
+      <MenuItemCard item={item} quantity={3} onOpen={noop} onAdd={noop} onRemove={noop} />,
+    )
+    expect(html).toContain("border-primary")
+    expect(html).toContain(">3<")
+    expect(html).toContain(`Bớt một phần ${item.name}`)
+  })
+
   it("renders a clear empty state without cart or send-order controls", () => {
-    const html = renderToStaticMarkup(<MenuItemList items={[]} onOpen={() => undefined} />)
+    const html = renderToStaticMarkup(
+      <MenuItemList items={[]} cart={emptyCart(1, "k")} onOpen={noop} onAdd={noop} onRemove={noop} />,
+    )
     expect(html).toContain("Không tìm thấy món")
     expect(html).not.toContain("Giỏ")
     expect(html).not.toContain("Gửi đơn")
@@ -150,18 +176,18 @@ describe("giỏ gọi món — phần nhìn", () => {
     expect(html).toContain("380.000đ")
   })
 
-  it("báo đã gửi mang số đơn và quầy nhận, không tự hiện khi chưa có đơn", () => {
+  /**
+   * v1.1: thông báo thu về MỘT dòng. Chi tiết đơn nằm sau nút "Xem" — một cú
+   * bấm cho người cần, thay vì ba dòng chiếm chỗ của danh sách món.
+   */
+  it("báo đã lên đơn gọn một dòng, có nút Xem và nút đóng", () => {
     const html = renderToStaticMarkup(
-      <OrderSentBanner
-        visitSequence={2}
-        itemCount={5}
-        totalVnd={1_300_000}
-        stations={["BAR", "KITCHEN"]}
-        onDismiss={noop}
-      />,
+      <OrderSentBanner tableLabel="A3" submittedAtLabel="21:42" onView={noop} onDismiss={noop} />,
     )
-    expect(html).toContain("Đơn 2")
-    expect(html).toContain("Đã gửi 5 món tới Quầy bar và Bếp")
-    expect(html).toContain("1.300.000đ")
+    expect(html).toContain("Đã lên đơn cho A3 · 21:42")
+    expect(html).toContain(">Xem<")
+    expect(html).toContain("Đóng thông báo đã lên đơn")
+    // Không còn kể số món, quầy nhận và tổng tiền ngay trên dải báo.
+    expect(html).not.toContain("Quầy bar và Bếp")
   })
 })

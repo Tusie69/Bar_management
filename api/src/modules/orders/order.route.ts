@@ -11,10 +11,13 @@ import {
   requireBodyIdempotencyKey,
 } from '../../middleware/idempotency.js'
 import { publishCommittedFloorChange } from '../tables/floor-change-stream.js'
+import { clearVisitOrdering, markVisitOrdering } from '../tables/waiter-visit-phase.repository.js'
+import { acknowledgeStaffNotification, listStaffNotifications } from './staff-notification.repository.js'
 import type { WaiterOrderInput, WaiterOrderLineInput } from './order.model.js'
 import {
   MAX_CANCELLATION_REASON_LENGTH,
   adjustOrderLineQuantity,
+  requestOrderCancellation,
   requestOrderLineCancellation,
 } from './order-adjustment.repository.js'
 import {
@@ -22,7 +25,9 @@ import {
   MAX_LINE_QUANTITY,
   MAX_ORDER_LINES,
   createWaiterOrder,
+  getVisitBill,
   getWaiterOrder,
+  listVisitItems,
   listVisitOrders,
 } from './order.repository.js'
 
@@ -151,8 +156,96 @@ waiterOrderRouter.post(
       idempotencyTransaction(response),
     )
     const actor = requireAuthenticatedActor(request)
-    afterIdempotencyCommit(response, () => publishCommittedFloorChange(actor.organizationId, actor.venueId))
+    // Đơn đã gửi thì bàn chuyển sang "Chờ đồ", nên dấu "đang gọi món" phải tắt
+    // ngay trong cùng một lần bấm. Để nó lại thì bàn ở màu cam cho tới khi dấu
+    // hết hạn, và màu cam lúc đó nói sai: không ai đang lên đơn nữa, khách
+    // đang chờ đồ.
+    afterIdempotencyCommit(response, async () => {
+      await clearVisitOrdering(actor, input.visitId)
+      await publishCommittedFloorChange(actor.organizationId, actor.venueId)
+    })
     response.status(201).json({ order })
+  },
+)
+
+/**
+ * Module Phục vụ 1 (v1.1) — dấu "đang gọi món" của một Phiên.
+ *
+ * Hai endpoint này KHÔNG tạo, sửa hay xoá một thứ gì thuộc về khách. Chúng chỉ
+ * nói "máy này đang mở màn Gọi món của bàn kia", để sơ đồ của những máy khác
+ * tô bàn đó màu cam. Vì vậy quyền là `order.create` — ai lên đơn được thì mới
+ * có lý do mở màn Gọi món — chứ không phải một permission mới.
+ *
+ * `PUT`, không `POST`: gọi mười lần cũng ra một kết quả. Màn Gọi món đập nhịp
+ * định kỳ để dấu không hết hạn khi nhân viên còn đang tư vấn cho khách, và một
+ * endpoint tạo-mới sẽ sinh mười bản ghi cho một lần mở menu.
+ */
+waiterOrderRouter.put(
+  '/visits/:visitId/ordering',
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission('order.create'),
+  async (request, response) => {
+    const visitId = positiveInteger(request.params.visitId, 'INVALID_VISIT_ID', 'visitId phải là số nguyên dương.')
+    const actor = requireAuthenticatedActor(request)
+    const announced = await markVisitOrdering(actor, visitId)
+    if (announced) await publishCommittedFloorChange(actor.organizationId, actor.venueId)
+    response.json({ ordering: true })
+  },
+)
+
+waiterOrderRouter.delete(
+  '/visits/:visitId/ordering',
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission('order.create'),
+  async (request, response) => {
+    const visitId = positiveInteger(request.params.visitId, 'INVALID_VISIT_ID', 'visitId phải là số nguyên dương.')
+    const actor = requireAuthenticatedActor(request)
+    const cleared = await clearVisitOrdering(actor, visitId)
+    if (cleared) await publishCommittedFloorChange(actor.organizationId, actor.venueId)
+    response.json({ ordering: false })
+  },
+)
+
+/**
+ * Module Phục vụ 1 (v1.1) — món đã gọi của Phiên, gộp sẵn cho bảng thao tác bàn.
+ *
+ * Tách khỏi `/visits/:visitId/orders`: màn kia kể chuyện theo TỪNG ĐƠN (đơn 1
+ * lúc 21:42, đơn 2 lúc 22:30) vì đó là thứ cần khi đi tra một yêu cầu hủy.
+ * Màn này chỉ trả lời "trên bàn đang có gì", và để trả lời nó bằng endpoint
+ * kia thì điện thoại phải gọi một lần cho danh sách đơn rồi một lần nữa cho
+ * mỗi đơn.
+ */
+waiterOrderRouter.get(
+  '/visits/:visitId/items',
+  requireAuthentication,
+  requirePermission('order.read'),
+  async (request, response) => {
+    const visitId = positiveInteger(request.params.visitId, 'INVALID_VISIT_ID', 'visitId phải là số nguyên dương.')
+    response.setHeader('Cache-Control', 'private, no-cache')
+    response.json(await listVisitItems(requireAuthenticatedActor(request), visitId))
+  },
+)
+
+/**
+ * Module Phục vụ (v1.1) — PV-18: bill TẠM TÍNH của một Phiên.
+ *
+ * `GET`, và đó là cả điểm: nó không ghi gì, không đổi trạng thái bàn, không
+ * đánh dấu đã in. Bấm "In bill tạm tính" mười lần vẫn chỉ là mười lần đọc.
+ *
+ * Quyền `order.read` chứ không phải `payment.collect`: đây là một con số cho
+ * khách xem trước, không phải một lần thu tiền. Phục vụ đọc được đơn thì đọc
+ * được tổng của đơn.
+ */
+waiterOrderRouter.get(
+  '/visits/:visitId/bill',
+  requireAuthentication,
+  requirePermission('order.read'),
+  async (request, response) => {
+    const visitId = positiveInteger(request.params.visitId, 'INVALID_VISIT_ID', 'visitId phải là số nguyên dương.')
+    response.setHeader('Cache-Control', 'private, no-store')
+    response.json({ bill: await getVisitBill(requireAuthenticatedActor(request), visitId) })
   },
 )
 
@@ -220,6 +313,44 @@ waiterOrderRouter.patch(
 )
 
 /**
+ * Module Phục vụ (v1.1) — "Hủy đơn?": gửi yêu cầu hủy CẢ ĐƠN.
+ *
+ * Cùng quyền, cùng luật và cùng bảng với yêu cầu từng dòng; khác ở chỗ nó sinh
+ * một nhóm để người duyệt quyết định một lần. Nó vẫn KHÔNG hủy gì — quyết định
+ * nằm ở `/api/v1/orders/cancellations/groups/:groupId/approve|reject`.
+ */
+waiterOrderRouter.post(
+  '/orders/:orderId/cancellations',
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission('order.cancel.request'),
+  requireBodyIdempotencyKey('idempotencyKey'),
+  idempotent('waiter.order.cancellation.request'),
+  async (request, response) => {
+    const raw = objectBody(request.body)
+    const orderId = positiveInteger(request.params.orderId, 'INVALID_ORDER_ID', 'Mã đơn không hợp lệ.')
+    const reason = optionalText(raw.reason, 'INVALID_CANCELLATION_REASON', MAX_CANCELLATION_REASON_LENGTH)
+    if (!reason) {
+      throw new AppError(400, 'INVALID_CANCELLATION_REASON', 'Lý do hủy là bắt buộc.')
+    }
+    if (raw.acknowledgeWaste !== undefined && typeof raw.acknowledgeWaste !== 'boolean') {
+      throw new AppError(400, 'INVALID_WASTE_ACK', 'Xác nhận ghi hao không hợp lệ.')
+    }
+    const result = await requestOrderCancellation(
+      requireAuthenticatedActor(request),
+      {
+        orderId,
+        reason,
+        ...(raw.acknowledgeWaste === true ? { acknowledgeWaste: true as const } : {}),
+        idempotencyKey: String(raw.idempotencyKey),
+      },
+      idempotencyTransaction(response),
+    )
+    response.status(201).json({ cancellation: result })
+  },
+)
+
+/**
  * Module Phục vụ 5 — GỬI yêu cầu hủy món.
  *
  * Endpoint này không hủy gì. Nó ghi lại ai muốn hủy, bao nhiêu và vì sao; quyết
@@ -265,5 +396,36 @@ waiterOrderRouter.post(
       idempotencyTransaction(response),
     )
     response.status(201).json({ cancellation: result })
+  },
+)
+
+/**
+ * Module Phục vụ (v1.1) — PV-20: hộp tin của chính người đang đăng nhập.
+ *
+ * Quyền là `order.read`: ai đọc được đơn thì đọc được tin về đơn của mình. Lọc
+ * theo người nhận nằm ở repository, không ở đây — một endpoint "lấy tin" mà
+ * quên mệnh đề WHERE sẽ phát lý do hủy và số tiền của cả quán cho một người.
+ */
+waiterOrderRouter.get(
+  '/notifications',
+  requireAuthentication,
+  requirePermission('order.read'),
+  async (request, response) => {
+    response.setHeader('Cache-Control', 'private, no-store')
+    response.json({ notifications: await listStaffNotifications(requireAuthenticatedActor(request)) })
+  },
+)
+
+waiterOrderRouter.post(
+  '/notifications/:notificationId/acknowledge',
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission('order.read'),
+  async (request, response) => {
+    await acknowledgeStaffNotification(
+      requireAuthenticatedActor(request),
+      positiveInteger(request.params.notificationId, 'INVALID_NOTIFICATION_ID', 'Mã thông báo không hợp lệ.'),
+    )
+    response.json({ acknowledged: true })
   },
 )

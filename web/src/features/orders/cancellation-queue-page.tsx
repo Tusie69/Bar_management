@@ -19,11 +19,14 @@ import { isApiError, newIdempotencyKey } from "@/services"
 import { useCan, useSession } from "@/state/session"
 import {
   decideCancellation,
+  decideCancellationGroup,
   fetchCancellationQueue,
   type CancellationQueueEntry,
   type CancellationStatus,
 } from "@/features/waiter-menu/waiter-order-api"
 import { CancellationCard } from "./cancellation-card"
+import { CancellationGroupCard } from "./cancellation-group-card"
+import { groupCancellationEntries, type CancellationGroupItem } from "./cancellation-grouping"
 
 const TABS: { status: CancellationStatus; label: string }[] = [
   { status: "PENDING", label: "Chờ duyệt" },
@@ -46,6 +49,24 @@ export default function CancellationQueuePage() {
     enabled: canApprove && venueId !== null,
     staleTime: 5_000,
     refetchInterval: status === "PENDING" ? 20_000 : false,
+  })
+
+  const decideGroup = useMutation({
+    mutationFn: (input: { group: CancellationGroupItem; decision: "approve" | "reject" }) =>
+      decideCancellationGroup(input.group.groupId, input.decision, {
+        ...(notes[input.group.groupId]?.trim() ? { note: notes[input.group.groupId]!.trim() } : {}),
+        idempotencyKey: newIdempotencyKey(),
+      }),
+    onSuccess: () => {
+      setActionError(null)
+      void queryClient.invalidateQueries({ queryKey: ["cancellation-queue", venueId] })
+      void queryClient.invalidateQueries({ queryKey: ["waiter-orders", venueId] })
+      void queryClient.invalidateQueries({ queryKey: ["waiter-visit-items", venueId] })
+    },
+    onError: (error: unknown) => {
+      setActionError(isApiError(error) ? error.message : "Không ghi được quyết định. Tải lại hàng chờ rồi thử lại.")
+      void queryClient.invalidateQueries({ queryKey: ["cancellation-queue", venueId] })
+    },
   })
 
   const decide = useMutation({
@@ -159,16 +180,30 @@ export default function CancellationQueuePage() {
         </div>
       ) : (
         <ul className="grid gap-3">
-          {queue.data!.entries.map((entry) => (
-            <CancellationCard
-              key={entry.cancellationId}
-              entry={entry}
-              note={notes[entry.cancellationId] ?? ""}
-              busy={decide.isPending}
-              onNoteChange={(value) => setNotes((current) => ({ ...current, [entry.cancellationId]: value }))}
-              onDecide={(decision) => decide.mutate({ entry, decision })}
-            />
-          ))}
+          {groupCancellationEntries(queue.data!.entries).map((item) =>
+            item.kind === "order" ? (
+              <CancellationGroupCard
+                key={item.key}
+                group={item}
+                note={notes[item.groupId] ?? ""}
+                busy={decide.isPending || decideGroup.isPending}
+                decided={status !== "PENDING"}
+                onNoteChange={(value) => setNotes((current) => ({ ...current, [item.groupId]: value }))}
+                onDecide={(decision) => decideGroup.mutate({ group: item, decision })}
+              />
+            ) : (
+              <CancellationCard
+                key={item.key}
+                entry={item.entry}
+                note={notes[item.entry.cancellationId] ?? ""}
+                busy={decide.isPending || decideGroup.isPending}
+                onNoteChange={(value) =>
+                  setNotes((current) => ({ ...current, [item.entry.cancellationId]: value }))
+                }
+                onDecide={(decision) => decide.mutate({ entry: item.entry, decision })}
+              />
+            ),
+          )}
         </ul>
       )}
     </section>

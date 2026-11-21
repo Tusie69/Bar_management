@@ -196,3 +196,51 @@ export interface OrderRejectionDetails {
   variants: MenuUnavailableVariant[]
   changes: MenuPriceChange[]
 }
+
+/* ------------------------- Module Phục vụ 1 (v1.1) ------------------------ */
+
+/**
+ * Một món đã gọi của Phiên, GỘP qua mọi đơn.
+ *
+ * Đây là thứ bảng thao tác bàn hiện: khách đã gọi những gì, chứ không phải
+ * khách đã gọi theo từng đợt nào. Gộp ở máy chủ vì màn này chạy trên điện
+ * thoại ngoài sàn, và vì tra giá hiện hành là việc của danh mục.
+ */
+export interface WaiterVisitItem {
+  variantId: number
+  menuItemId: number
+  itemName: string
+  variantDisplayName: string
+  unitCode: MenuUnitCode
+  preparationStation: PreparationStation
+  /** Ghi chú đã chuẩn hoá. Hai dòng cùng món khác ghi chú là HAI mục. */
+  note: string | null
+  /** Số phần còn lại, đã trừ phần được duyệt hủy. */
+  quantity: number
+  /**
+   * Giá LÚC GỌI. Giữ nguyên để con số trên màn khớp con số khách đã nghe; đọc
+   * lại giá hôm nay sẽ hiện một tổng khác với tổng đã đọc cho khách.
+   */
+  unitPriceVnd: number
+  totalVnd: number
+  /**
+   * Thông tin để nút "+" gọi thêm MỘT phần y như cũ.
+   *
+   * `null` khi món không còn bán được: hết hàng, ngừng bán, hoặc không còn giá
+   * hiện hành. Nút "+" khi ấy phải tắt kèm lý do, chứ không gửi rồi nhận 409.
+   *
+   * Giá ở đây là giá HIỆN TẠI, không phải `unitPriceVnd`. Gửi lại `priceId` cũ
+   * thì máy chủ trả `MENU_PRICE_CHANGED` ngay khi giá vừa đổi trong ca — gọi
+   * thêm một ly như cũ sẽ hỏng vào đúng tối quán đổi giá.
+   */
+  reorder: { priceId: number; priceVersion: number; amountVnd: number } | null
+}
+
+export interface WaiterVisitItemsView {
+  visitId: number
+  tableCodes: string[]
+  orderCount: number
+  /** Tổng tiền các món còn lại, đã trừ phần đã hủy. */
+  netAmountVnd: number
+  items: WaiterVisitItem[]
+}

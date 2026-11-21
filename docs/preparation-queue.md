@@ -23,6 +23,19 @@ lấy từ session, station lấy từ URL đã validate, rồi middleware kiể
 và vai `KITCHEN` không có quyền Bar. Việc ẩn nút ở web chỉ là UX; gọi API trực
 tiếp vẫn bị server trả 403.
 
+Mỗi ticket trả `orderedByDisplayName`, là tên hiển thị của nhân viên đã gửi
+đơn; không trả username. Từ reservation liên kết trực tiếp với chính visit của
+đơn, snapshot chỉ chiếu ba cờ vận hành không định danh: VIP, sinh nhật và chỉ
+định. Walk-in hoặc visit không có reservation nhận cả ba cờ `false`. Response
+không mang tên khách, số điện thoại, ghi chú booking hay lịch sử khách hàng.
+
+Yêu cầu hủy `PENDING` được chiếu trên đúng từng line dưới dạng
+`pendingCancellation { cancellationId, quantity }`; không trả lý do hủy ở
+contract preparation. Một line đang chờ duyệt không khóa ticket và không đổi
+trạng thái các line khác. Batch line query vẫn trả đúng một dòng cho mỗi dòng
+món; unique open-cancellation của database và invariant trong repository chặn
+việc nhân đôi line.
+
 Mã bàn không được lưu trên order/ticket. Snapshot join allocation `USAGE` đang
 mở của `visit_id`, nên đổi bàn sau khi gửi sẽ hiện mã bàn mới. Khi ticket thành
 `READY`, một `preparation_ready_events` giữ đúng `visit_id` và

@@ -187,6 +187,7 @@ describe("dòng món trên màn Đơn của bàn", () => {
 function entry(overrides: Partial<CancellationQueueEntry> = {}): CancellationQueueEntry {
   return {
     cancellationId: 9,
+    groupId: null,
     status: "PENDING",
     policy: "STANDARD",
     version: 1,

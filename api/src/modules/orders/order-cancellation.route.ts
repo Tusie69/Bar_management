@@ -7,6 +7,7 @@ import { idempotencyTransaction, idempotent, requireBodyIdempotencyKey } from '.
 import type { CancellationStatus } from './order.model.js'
 import {
   MAX_DECISION_NOTE_LENGTH,
+  decideOrderCancellationGroup,
   decideOrderLineCancellation,
   listCancellations,
 } from './order-adjustment.repository.js'
@@ -97,6 +98,40 @@ for (const [path, decision] of [['approve', 'APPROVED'], ['reject', 'REJECTED']]
           ),
           decision,
           expectedVersion: positiveInteger(raw.expectedVersion, 'INVALID_VERSION', 'Phiên bản không hợp lệ.'),
+          ...(note === undefined ? {} : { note }),
+          idempotencyKey: String(raw.idempotencyKey),
+        },
+        idempotencyTransaction(response),
+      ))
+    },
+  )
+}
+
+/**
+ * Module Phục vụ (v1.1) — quyết định CẢ NHÓM "Hủy đơn?" bằng một lần bấm.
+ *
+ * Không có `expectedVersion` ở đây, và đó là chủ đích: một nhóm có nhiều dòng
+ * con, mỗi dòng một `version`, nên bắt client gửi đủ là bắt nó giữ một bản sao
+ * trạng thái mà nó không sở hữu. Thay vào đó, repository khóa mọi dòng con còn
+ * PENDING rồi quyết định chúng trong CÙNG một transaction; dòng nào đã được
+ * xử lý lẻ trước đó thì không còn PENDING và tự nằm ngoài.
+ */
+for (const [path, decision] of [['approve', 'APPROVED'], ['reject', 'REJECTED']] as const) {
+  orderCancellationRouter.post(
+    `/cancellations/groups/:groupId/${path}`,
+    requireAuthentication,
+    requireCsrfProtection,
+    requirePermission('order.cancel.approve'),
+    requireBodyIdempotencyKey('idempotencyKey'),
+    idempotent(`order.cancellation.group.${path}`),
+    async (request, response) => {
+      const raw = objectBody(request.body)
+      const note = decisionNote(raw.note)
+      response.json(await decideOrderCancellationGroup(
+        requireAuthenticatedActor(request),
+        {
+          groupId: positiveInteger(request.params.groupId, 'INVALID_CANCELLATION_ID', 'Mã yêu cầu hủy không hợp lệ.'),
+          decision,
           ...(note === undefined ? {} : { note }),
           idempotencyKey: String(raw.idempotencyKey),
         },

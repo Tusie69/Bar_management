@@ -13,7 +13,7 @@
  * thông tin Phiên chỉ đọc. Thứ tự này là thứ tự tay người dùng đã học, nên nó
  * được giữ nguyên trong markup, không sắp lại theo trạng thái.
  */
-import { ArrowLeftRight, ClipboardList, Columns3, Info, Scissors, UtensilsCrossed } from "lucide-react"
+import { ArrowLeftRight, Clock3, Columns3, Info, ReceiptText, Scissors, UsersRound, UtensilsCrossed } from "lucide-react"
 import { useMemo, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -27,6 +27,9 @@ import {
   waiterTableCapability,
   type WaiterTableCapability,
 } from "./waiter-access"
+import { WaiterBillSheet } from "./waiter-bill-sheet"
+import { useVisitItems, WaiterOrderedItems } from "./waiter-ordered-items"
+import { WAITER_PHASE_TONE } from "./waiter-phase"
 import {
   WAITER_REARRANGE_HINT,
   WAITER_REARRANGE_LABEL,
@@ -93,15 +96,6 @@ export function buildWaiterSheetView(input: {
   }
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 py-1.5">
-      <dt className="text-sm text-muted-foreground">{label}</dt>
-      <dd className="text-right text-sm font-medium tabular-nums">{value}</dd>
-    </div>
-  )
-}
-
 export interface WaiterTableSheetBodyProps {
   view: WaiterSheetView
   tables: TableView[]
@@ -136,6 +130,12 @@ export function WaiterTableSheetBody({
   const [mode, setMode] = useState<WaiterRearrangeMode | null>(null)
   const [selected, setSelected] = useState<number[]>([])
   const { capability } = view
+  const tone = capability.visitPhase === null ? null : WAITER_PHASE_TONE[capability.visitPhase]
+  const [billOpen, setBillOpen] = useState(false)
+  // Cùng khoá query với danh sách món bên dưới, nên đây không phải một request
+  // thứ hai — chỉ là cùng một câu trả lời đọc ở hai chỗ.
+  const visitItems = useVisitItems(capability.visitId)
+  const hasOrders = (visitItems.data?.items.length ?? 0) > 0
 
   const modes = useMemo<WaiterRearrangeMode[]>(() => {
     if (!capability.canRearrange) return []
@@ -186,12 +186,50 @@ export function WaiterTableSheetBody({
     <div className="grid gap-4" data-waiter-phase={capability.phase}>
       <section className="grid gap-1">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="secondary">{WAITER_PHASE_LABEL[capability.phase]}</Badge>
-          <span className="text-sm text-muted-foreground">{view.zoneName}</span>
+          {/*
+            Khối MÀU, không phải badge xám: trạng thái là thứ đầu tiên Phục vụ
+            đọc khi mở bảng này, và nó phải là cùng một màu với ô bàn vừa chạm
+            — hai màu khác nhau cho cùng một bàn là hai thông tin phải đối
+            chiếu bằng mắt.
+          */}
+          {tone ? (
+            <span
+              className="rounded-full border px-2.5 py-1 text-xs font-semibold"
+              style={{ borderColor: tone.color, background: tone.tint, color: tone.ink }}
+            >
+              {tone.label}
+            </span>
+          ) : (
+            <Badge variant="secondary">{WAITER_PHASE_LABEL[capability.phase]}</Badge>
+          )}
         </div>
-        {view.tableCodes.length > 1 ? (
-          <p className="text-sm text-muted-foreground">{`Gồm các bàn ${view.tableCodes.join(", ")}`}</p>
-        ) : null}
+        {/*
+          MỘT dòng thông tin, theo mockup P5. Bản cũ nói cùng những con số này
+          hai lần: một lần ở đây và một lần nữa trong bảng "Khu vực / Bàn / Số
+          khách / Mở Phiên / Đã phục vụ" ở dưới. Hai chỗ cùng nói một điều là
+          hai chỗ phải đọc để tin một điều.
+        */}
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+          {/*
+            Chuỗi ghép trong JS, không nội suy giữa chữ. `{n} khách` làm React
+            chèn comment node vào giữa, nên "4 khách" không còn là một đoạn
+            text liền — khó đọc với trình đọc màn hình và khó khớp trong test.
+          */}
+          {view.guestCount === null ? null : (
+            <span className="inline-flex items-center gap-1">
+              <UsersRound className="size-3.5" aria-hidden />
+              {`${view.guestCount} khách`}
+            </span>
+          )}
+          {view.openedAtLabel ? (
+            <span className="inline-flex items-center gap-1">
+              <Clock3 className="size-3.5" aria-hidden />
+              {`Vào ${view.openedAtLabel}${view.servedLabel ? ` · ${view.servedLabel}` : ""}`}
+            </span>
+          ) : null}
+          <span>{view.zoneName}</span>
+          {view.tableCodes.length > 1 ? <span>{view.tableCodes.join(" + ")}</span> : null}
+        </p>
       </section>
 
       {capability.notice ? (
@@ -211,16 +249,23 @@ export function WaiterTableSheetBody({
         >
           <UtensilsCrossed className="size-5" aria-hidden="true" /> Gọi món
         </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="h-11 w-full justify-center"
-          disabled={!capability.canViewOrders || pending}
-          onClick={onViewOrders}
-        >
-          <ClipboardList className="size-4" aria-hidden="true" /> Xem đơn đã gọi
-        </Button>
 
+        {/*
+          PV-18: chỉ hiện khi bàn ĐÃ CÓ ĐƠN. Một nút "In bill tạm tính" trên
+          bàn chưa gọi gì in ra tờ giấy 0đ — và nó chiếm chỗ của nút duy nhất
+          cần bấm lúc đó.
+        */}
+        {hasOrders ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11 w-full justify-center"
+            disabled={pending}
+            onClick={() => setBillOpen(true)}
+          >
+            <ReceiptText className="size-4" aria-hidden="true" /> In bill tạm tính
+          </Button>
+        ) : null}
         {modes.length ? (
           <div className="grid gap-2 rounded-lg border border-border-subtle p-2">
             <p className="px-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
@@ -293,17 +338,12 @@ export function WaiterTableSheetBody({
         ) : null}
       </section>
 
-      <dl className="divide-y divide-border-subtle border-t border-border-subtle pt-1">
-        <InfoRow label="Khu vực" value={view.zoneName} />
-        <InfoRow label="Bàn" value={view.tableCodes.join(", ") || "—"} />
-        <InfoRow label="Số khách" value={view.guestCount === null ? "—" : `${view.guestCount} khách`} />
-        <InfoRow label="Mở Phiên" value={view.openedAtLabel ?? "—"} />
-        <InfoRow label="Đã phục vụ" value={view.servedLabel ?? "—"} />
-        <InfoRow label="Trạng thái Phiên" value={WAITER_PHASE_LABEL[view.capability.phase]} />
-        {view.turnCount !== null && view.turnCount > 0 ? (
-          <InfoRow label="Lượt trong ca" value={`${view.turnCount}`} />
-        ) : null}
-      </dl>
+      {/* Món đã gọi + nút "+" (PV-06). Chỉ có Phiên thì mới có đơn để liệt kê. */}
+      {capability.visitId === null ? null : (
+        <WaiterOrderedItems visitId={capability.visitId} canOrder={capability.canOrder} onOpenOrders={onViewOrders} />
+      )}
+
+      <WaiterBillSheet visitId={capability.visitId} open={billOpen} onClose={() => setBillOpen(false)} />
     </div>
   )
 }
@@ -321,7 +361,11 @@ export function WaiterTableSheet({ open, onClose, side, ...body }: WaiterTableSh
       <SheetContent side={side} className={side === "bottom" ? "max-h-[85dvh] overflow-y-auto" : "overflow-y-auto"}>
         <SheetHeader>
           <SheetTitle>{body.view.title}</SheetTitle>
-          <SheetDescription>Thông tin phục vụ của bàn. Không hiển thị thông tin khách.</SheetDescription>
+          {/* sr-only: Radix cần mô tả cho hộp thoại, nhưng câu này không còn
+              chỗ trên màn — mọi thứ nó nói đã nằm ở dòng thông tin phía dưới. */}
+          <SheetDescription className="sr-only">
+            Thông tin phục vụ của bàn. Không hiển thị thông tin khách.
+          </SheetDescription>
         </SheetHeader>
         <div className="px-4 pb-6">
           <WaiterTableSheetBody {...body} />

@@ -70,6 +70,7 @@ function takeSessionEnd(): string | null {
 }
 
 function applyTheme(theme: Theme) {
+  if (typeof document === "undefined") return
   const root = document.documentElement
   root.classList.toggle("dark", theme === "dark")
   root.style.colorScheme = theme

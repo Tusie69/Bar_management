@@ -12,6 +12,7 @@ import type {
   WaiterOrderDetail,
 } from './order.model.js'
 import { MAX_LINE_QUANTITY, getWaiterOrder } from './order.repository.js'
+import { createCancellationNotification } from './staff-notification.repository.js'
 
 /**
  * Module Phục vụ 5 — sửa số lượng và hủy món trên một đơn ĐÃ GỬI.
@@ -61,10 +62,21 @@ export interface DecideCancellationInput {
   expectedVersion: number
   note?: string
   idempotencyKey: string
+  /**
+   * `true` khi lời gọi đến từ một quyết định CẢ NHÓM. Nhóm tự gửi MỘT thông
+   * báo cho cả đơn; không tắt ở đây thì một lần duyệt bốn dòng sẽ đổ bốn tin
+   * giống nhau vào chuông của Phục vụ.
+   */
+  suppressNotification?: boolean
 }
 
 export interface CancellationQueueEntry {
   cancellationId: number
+  /**
+   * Mã nhóm của một lần "Hủy đơn?"; `null` khi đây là yêu cầu lẻ của một món.
+   * Màn duyệt gom các dòng cùng `groupId` vào MỘT thẻ.
+   */
+  groupId: number | null
   status: CancellationStatus
   policy: CancellationPolicy
   version: number
@@ -132,6 +144,7 @@ interface CancellationRow extends RowDataPacket {
   id: number
   visit_id: number
   order_id: number
+  group_id: number | null
   line_id: number
   line_no: number
   quantity: number
@@ -590,6 +603,23 @@ export async function decideOrderLineCancellation(
           hasNote: Boolean(input.note),
         },
       })
+      if (input.suppressNotification !== true) {
+        await createCancellationNotification(connection, actor, {
+          targetUserId: Number(cancellation.requested_by_user_id),
+          visitId: Number(cancellation.visit_id),
+          orderId: Number(cancellation.order_id),
+          cancellationGroupId: null,
+          cancellationId: input.cancellationId,
+          decision: 'REJECTED',
+          lineCount: 1,
+          quantity: Number(cancellation.quantity),
+          wasteQuantity: cancellation.policy === 'READY_WASTE' ? Number(cancellation.quantity) : 0,
+          amountVnd: money(line.unit_price_vnd, 'unit_price_vnd') * Number(cancellation.quantity),
+          reason: cancellation.reason,
+          decisionNote: input.note ?? null,
+          decidedByUserId: actor.userId,
+        })
+      }
       await bumpVenueCursor(connection, actor)
       return {
         cancellationId: input.cancellationId,
@@ -676,6 +706,23 @@ export async function decideOrderLineCancellation(
         hasNote: Boolean(input.note),
       },
     })
+    if (input.suppressNotification !== true) {
+      await createCancellationNotification(connection, actor, {
+        targetUserId: Number(cancellation.requested_by_user_id),
+        visitId: Number(cancellation.visit_id),
+        orderId: Number(cancellation.order_id),
+        cancellationGroupId: null,
+        cancellationId: input.cancellationId,
+        decision: 'APPROVED',
+        lineCount: 1,
+        quantity,
+        wasteQuantity: cancellation.policy === 'READY_WASTE' ? quantity : 0,
+        amountVnd,
+        reason: cancellation.reason,
+        decisionNote: input.note ?? null,
+        decidedByUserId: actor.userId,
+      })
+    }
     await bumpVenueCursor(connection, actor)
     return {
       cancellationId: input.cancellationId,
@@ -692,7 +739,7 @@ export async function listCancellations(
   query: { status: CancellationStatus; limit: number },
 ): Promise<CancellationQueueView> {
   const [rows] = await databasePool.execute<CancellationRow[]>(
-    `SELECT c.id, c.visit_id, c.order_id, c.line_id, c.line_no, c.quantity, c.reason, c.policy, c.status,
+    `SELECT c.id, c.visit_id, c.order_id, c.group_id, c.line_id, c.line_no, c.quantity, c.reason, c.policy, c.status,
        c.station, c.ticket_status_at_request, c.requested_by_user_id, c.requested_at,
        c.decided_by_user_id, c.decided_at, c.decision_note, c.version,
        ru.display_name AS requested_by_display_name, du.display_name AS decided_by_display_name,
@@ -725,6 +772,12 @@ export async function listCancellations(
       const unitPriceVnd = money(row.unit_price_vnd, 'unit_price_vnd')
       return {
         cancellationId: Number(row.id),
+        /**
+         * Mã nhóm khi yêu cầu này thuộc một lần "Hủy đơn?"; `null` khi nó là
+         * yêu cầu lẻ của một món. Màn duyệt gom các dòng cùng nhóm vào MỘT
+         * thẻ và quyết định một lần.
+         */
+        groupId: row.group_id === null ? null : Number(row.group_id),
         status: row.status,
         policy: row.policy,
         version: Number(row.version),
@@ -754,3 +807,333 @@ export async function listCancellations(
 }
 
 export { MAX_LINE_QUANTITY }
+
+/* ---------------------- Module Phục vụ (v1.1) — hủy cả đơn ---------------- */
+
+export interface RequestOrderCancellationInput {
+  orderId: number
+  reason: string
+  /**
+   * Bắt buộc `true` khi đơn còn món đã READY/COLLECTED. Không có nó thì yêu
+   * cầu bị từ chối kèm danh sách món sẽ phải ghi hao, để Phục vụ nhìn thấy
+   * TRƯỚC khi gửi chứ không phải sau khi đã nói với khách là xong.
+   */
+  acknowledgeWaste?: boolean
+  idempotencyKey: string
+}
+
+export interface OrderCancellationRequestResult {
+  groupId: number
+  orderId: number
+  /** Số dòng món đã gửi yêu cầu. */
+  lineCount: number
+  /** Số phần phải ghi hao nếu được duyệt; 0 nghĩa là không món nào đã làm xong. */
+  wasteQuantity: number
+  totalQuantity: number
+  amountVnd: number
+}
+
+interface OrderLineForCancellationRow extends RowDataPacket {
+  line_id: number
+  line_no: number
+  item_name: string
+  item_code: string
+  variant_display_name: string
+  preparation_station: PreparationStation
+  unit_price_vnd: string | number
+  quantity: number
+  cancelled_quantity: number
+  ticket_status: PreparationStatus | null
+  pending_cancellation_id: number | null
+}
+
+/**
+ * "Hủy đơn?" — xin hủy MỌI phần còn lại của một đơn, bằng một yêu cầu.
+ *
+ * Nó không phải một lệnh hủy. Nó sinh ra đúng những dòng yêu cầu mà
+ * `requestOrderLineCancellation` sinh ra, gắn chung một `group_id`, để người
+ * duyệt thấy một thẻ "cả đơn" thay vì bốn thẻ rời và quyết định một lần.
+ *
+ * Luật giữ nguyên của đường từng dòng, không nới một chỗ nào:
+ *
+ * - `policy` tính theo TỪNG dòng. Món chưa làm là STANDARD, món đã xong là
+ *   READY_WASTE. Đây là câu trả lời cho V7: cho hủy cả đơn kể cả khi một phần
+ *   đã làm xong, nhưng phần đã làm đi theo đường ghi hao và hiện rõ là ghi hao.
+ * - Có món đã làm xong thì cần `order.cancel.ready` VÀ một lần tick riêng.
+ * - Dòng nào đang có yêu cầu chờ duyệt thì BỎ QUA, không ném lỗi: Phục vụ vừa
+ *   xin hủy một món rồi khách đổi ý hủy cả bàn là chuyện thường, và bắt họ đi
+ *   rút lại yêu cầu cũ trước là bắt họ làm việc của hệ thống.
+ */
+export async function requestOrderCancellation(
+  actor: AuthenticatedActor,
+  input: RequestOrderCancellationInput,
+  transaction?: PoolConnection,
+): Promise<OrderCancellationRequestResult> {
+  return inTransaction(transaction, async (connection) => {
+    const [orders] = await connection.execute<RowDataPacket[]>(
+      'SELECT visit_id FROM sales_orders WHERE organization_id = ? AND venue_id = ? AND id = ? FOR UPDATE',
+      [actor.organizationId, actor.venueId, input.orderId],
+    )
+    const orderRow = orders[0]
+    if (!orderRow) throw new AppError(404, 'ORDER_NOT_FOUND', 'Không tìm thấy đơn trong địa điểm này.')
+    const visitId = Number(orderRow.visit_id)
+
+    const [lines] = await connection.execute<OrderLineForCancellationRow[]>(
+      `SELECT l.id AS line_id, l.line_no, l.item_name, l.item_code, l.variant_display_name,
+              l.preparation_station, l.unit_price_vnd, l.quantity, l.cancelled_quantity,
+              t.status AS ticket_status,
+              (SELECT c.id FROM sales_order_cancellations c
+                WHERE c.venue_id = l.venue_id AND c.line_id = l.id AND c.status = 'PENDING'
+                LIMIT 1) AS pending_cancellation_id
+         FROM sales_order_lines l
+         LEFT JOIN preparation_tickets t
+           ON t.venue_id = l.venue_id AND t.order_id = l.order_id AND t.station = l.preparation_station
+        WHERE l.venue_id = ? AND l.order_id = ?
+        ORDER BY l.line_no
+        FOR UPDATE`,
+      [actor.venueId, input.orderId],
+    )
+
+    const pending = lines.filter(
+      (line) => line.pending_cancellation_id === null && Number(line.quantity) - Number(line.cancelled_quantity) > 0,
+    )
+    if (pending.length === 0) {
+      throw new AppError(
+        409,
+        'ORDER_NOTHING_TO_CANCEL',
+        'Đơn này không còn phần nào để hủy, hoặc mọi dòng đã có yêu cầu đang chờ duyệt.',
+      )
+    }
+
+    const madeAlready = pending.filter((line) => line.ticket_status === 'READY' || line.ticket_status === 'COLLECTED')
+    if (madeAlready.length > 0) {
+      if (!(await hasPermission(actor, 'order.cancel.ready'))) {
+        throw new AppError(
+          403,
+          'ORDER_CANCEL_READY_DENIED',
+          'Đơn có món đã làm xong. Chỉ người có quyền ghi hao mới xin hủy cả đơn được.',
+          {
+            wasteLines: madeAlready.map((line) => ({
+              lineNo: Number(line.line_no),
+              itemName: line.item_name,
+              variantDisplayName: line.variant_display_name,
+            })),
+          },
+        )
+      }
+      if (input.acknowledgeWaste !== true) {
+        throw new AppError(
+          409,
+          'ORDER_CANCEL_NEEDS_WASTE_ACK',
+          'Đơn có món đã làm xong. Hủy nghĩa là ghi hao phần đã pha — cần xác nhận rõ.',
+          {
+            wasteLines: madeAlready.map((line) => ({
+              lineNo: Number(line.line_no),
+              itemName: line.item_name,
+              variantDisplayName: line.variant_display_name,
+              quantity: Number(line.quantity) - Number(line.cancelled_quantity),
+            })),
+          },
+        )
+      }
+    }
+
+    let groupId: number | null = null
+    let totalQuantity = 0
+    let wasteQuantity = 0
+    let amountVnd = 0
+
+    for (const line of pending) {
+      const quantity = Number(line.quantity) - Number(line.cancelled_quantity)
+      const ticketStatus: PreparationStatus = line.ticket_status ?? 'SUBMITTED'
+      const policy: CancellationPolicy =
+        ticketStatus === 'READY' || ticketStatus === 'COLLECTED' ? 'READY_WASTE' : 'STANDARD'
+      let insertedId: number
+      try {
+        const [result] = await connection.execute<ResultSetHeader>(
+          `INSERT INTO sales_order_cancellations
+             (organization_id, venue_id, visit_id, order_id, group_id, line_id, line_no, quantity, reason, policy,
+              status, station, ticket_status_at_request, requested_by_user_id, requested_by_membership_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)`,
+          [actor.organizationId, actor.venueId, visitId, input.orderId, groupId, Number(line.line_id),
+            Number(line.line_no), quantity, input.reason, policy, line.preparation_station, ticketStatus,
+            actor.userId, actor.membershipId],
+        )
+        insertedId = Number(result.insertId)
+      } catch (error) {
+        if (!isDuplicateKey(error)) throw error
+        // Một máy khác vừa xin hủy đúng dòng này giữa lúc ta đang đọc. Khóa
+        // dòng đã giữ phần lớn trường hợp; đây là lưới cuối, và câu trả lời
+        // đúng là nói ra chứ không lặng lẽ bỏ qua một món.
+        throw new AppError(
+          409,
+          'ORDER_CANCELLATION_PENDING',
+          'Một món trong đơn vừa có yêu cầu hủy từ máy khác. Tải lại đơn rồi thử lại.',
+        )
+      }
+      // Dòng đầu tiên đặt tên cho cả nhóm: nhóm luôn truy ngược được về yêu
+      // cầu đã sinh ra nó, và không cần thêm một sequence nào.
+      if (groupId === null) {
+        groupId = insertedId
+        await connection.execute('UPDATE sales_order_cancellations SET group_id = ? WHERE id = ?', [groupId, groupId])
+      }
+      totalQuantity += quantity
+      if (policy === 'READY_WASTE') wasteQuantity += quantity
+      amountVnd += money(line.unit_price_vnd, 'unit_price_vnd') * quantity
+    }
+
+    const createdGroupId = groupId as number
+    await writeOperationLog(connection, actor, {
+      action: 'SALES_ORDER_CANCELLATION_REQUESTED',
+      entityType: 'sales_order_cancellation',
+      entityId: createdGroupId,
+      versionBefore: null,
+      versionAfter: 1,
+      idempotencyKey: input.idempotencyKey,
+      changes: {
+        type: 'sales_order_cancellation_requested',
+        scope: 'ORDER',
+        orderId: input.orderId,
+        groupId: createdGroupId,
+        lineCount: pending.length,
+        totalQuantity,
+        wasteQuantity,
+        amountVnd,
+        hasReason: true,
+      },
+    })
+    await bumpVenueCursor(connection, actor)
+    return {
+      groupId: createdGroupId,
+      orderId: input.orderId,
+      lineCount: pending.length,
+      wasteQuantity,
+      totalQuantity,
+      amountVnd,
+    }
+  })
+}
+
+export interface DecideOrderCancellationInput {
+  groupId: number
+  decision: Exclude<CancellationStatus, 'PENDING'>
+  note?: string
+  idempotencyKey: string
+}
+
+export interface OrderCancellationDecisionResult {
+  groupId: number
+  status: Exclude<CancellationStatus, 'PENDING'>
+  /** Số yêu cầu con đã quyết định trong lần bấm này. */
+  decidedCount: number
+  order: WaiterOrderDetail
+}
+
+/**
+ * Duyệt (hoặc từ chối) CẢ NHÓM bằng một lần bấm.
+ *
+ * Thu ngân nhìn thấy một thẻ "Đơn 2 · A3 · 4 món" và quyết định một lần. Bắt
+ * họ bấm bốn lần cho một quyết định là mời họ bấm nhầm ba lần đầu và bỏ sót
+ * lần thứ tư.
+ *
+ * Mỗi dòng con vẫn đi qua `decideOrderLineCancellation`, nên mọi luật của
+ * đường từng dòng — khóa dòng món, kiểm số lượng còn lại, ghi nhật ký, cập
+ * nhật tổng đơn — chạy y hệt. Hàm này chỉ là một vòng lặp trong CÙNG một
+ * transaction: duyệt nửa đơn rồi hỏng là trạng thái không ai giải thích được.
+ *
+ * Dòng con nào đã được quyết định trước đó thì bỏ qua, không làm hỏng cả
+ * nhóm: người duyệt hoàn toàn có thể đã xử lý lẻ một món trước khi mở thẻ này.
+ */
+export async function decideOrderCancellationGroup(
+  actor: AuthenticatedActor,
+  input: DecideOrderCancellationInput,
+  transaction?: PoolConnection,
+): Promise<OrderCancellationDecisionResult> {
+  return inTransaction(transaction, async (connection) => {
+    const [rows] = await connection.execute<
+      (RowDataPacket & {
+        id: number
+        version: number
+        order_id: number
+        visit_id: number
+        quantity: number
+        policy: CancellationPolicy
+        reason: string
+        requested_by_user_id: number
+        unit_price_vnd: string | number
+      })[]
+    >(
+      `SELECT c.id, c.version, c.order_id, c.visit_id, c.quantity, c.policy, c.reason,
+              c.requested_by_user_id, l.unit_price_vnd
+         FROM sales_order_cancellations c
+         JOIN sales_order_lines l ON l.id = c.line_id
+        WHERE c.organization_id = ? AND c.venue_id = ? AND c.group_id = ? AND c.status = 'PENDING'
+        ORDER BY c.id
+        FOR UPDATE`,
+      [actor.organizationId, actor.venueId, input.groupId],
+    )
+    if (rows.length === 0) {
+      throw new AppError(
+        409,
+        'ORDER_CANCELLATION_ALREADY_DECIDED',
+        'Yêu cầu hủy đơn này đã được quyết định trước đó.',
+      )
+    }
+    const first = rows[0]
+    if (!first) throw new AppError(409, 'ORDER_CANCELLATION_ALREADY_DECIDED', 'Yêu cầu hủy đơn đã được quyết định.')
+    const orderId = Number(first.order_id)
+    for (const row of rows) {
+      await decideOrderLineCancellation(
+        actor,
+        {
+          cancellationId: Number(row.id),
+          decision: input.decision,
+          expectedVersion: Number(row.version),
+          ...(input.note === undefined ? {} : { note: input.note }),
+          // Mã chống trùng của từng dòng phải KHÁC nhau: cùng một mã cho bốn
+          // lệnh ghi khác nhau sẽ bị lớp idempotency coi là một lần lặp lại và
+          // ba dòng sau lặng lẽ không chạy.
+          idempotencyKey: `${input.idempotencyKey}:${row.id}`,
+          // Cả nhóm là MỘT quyết định, nên nó gửi MỘT thông báo ở dưới.
+          suppressNotification: true,
+        },
+        connection,
+      )
+    }
+
+    // Thông báo của cả nhóm: cộng lại từ chính những dòng vừa quyết định, chứ
+    // không đọc lại đơn. Đọc lại đơn sẽ trả về trạng thái SAU khi hủy, và con
+    // số trong tin phải là con số đã bị hủy.
+    const quantity = rows.reduce((total, row) => total + Number(row.quantity), 0)
+    const wasteQuantity = rows.reduce(
+      (total, row) => total + (row.policy === 'READY_WASTE' ? Number(row.quantity) : 0),
+      0,
+    )
+    const amountVnd = rows.reduce(
+      (total, row) => total + money(row.unit_price_vnd, 'unit_price_vnd') * Number(row.quantity),
+      0,
+    )
+    await createCancellationNotification(connection, actor, {
+      targetUserId: Number(first.requested_by_user_id),
+      visitId: Number(first.visit_id),
+      orderId,
+      cancellationGroupId: input.groupId,
+      cancellationId: null,
+      decision: input.decision,
+      lineCount: rows.length,
+      quantity,
+      wasteQuantity,
+      amountVnd,
+      reason: first.reason,
+      decisionNote: input.note ?? null,
+      decidedByUserId: actor.userId,
+    })
+
+    return {
+      groupId: input.groupId,
+      status: input.decision,
+      decidedCount: rows.length,
+      order: await getWaiterOrder(actor, orderId, connection),
+    }
+  })
+}

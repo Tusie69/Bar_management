@@ -12,9 +12,12 @@
  */
 import { createElement } from "react"
 import { renderToString } from "react-dom/server"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { describe, expect, it } from "vitest"
 import type { ClaimView, FloorTableState, TableView } from "@/domain/models"
 import { WAITER_PAYMENT_NOTICE } from "./waiter-access"
+import { PreparationQueue } from "@/features/preparation/preparation-queue"
+import { WaiterQueueButton } from "./waiter-page"
 import { buildWaiterSheetView, WaiterTableSheetBody, type WaiterTableSheetBodyProps } from "./waiter-table-sheet"
 
 const GUEST_NAME = "Chị Hồng Nhung"
@@ -112,7 +115,18 @@ function render(
     onViewOrders: () => undefined,
     onRearrange: () => undefined,
   }
-  return renderToString(createElement(WaiterTableSheetBody, props))
+  return renderSheetBody(props)
+}
+
+/**
+ * Panel giờ nạp "Món đã gọi" qua TanStack Query, nên nó cần một client. Hộp
+ * chứa chỉ để `renderToString` chạy được; không có request nào đi ra trong lần
+ * render đầu, nên test vẫn đọc đúng phần tĩnh của panel.
+ */
+function renderSheetBody(props: WaiterTableSheetBodyProps): string {
+  return renderToString(
+    createElement(QueryClientProvider, { client: new QueryClient() }, createElement(WaiterTableSheetBody, props)),
+  )
 }
 
 /**
@@ -146,23 +160,100 @@ describe("panel chi tiết bàn — nút Gọi món", () => {
   it("bàn có Phiên đang mở: nút Gọi món bật", () => {
     const html = render(tableState())
     expect(orderButtonDisabled(html)).toBe(false)
-    expect(html).toContain("Đang phục vụ")
+    // v1.1: khối màu nói trạng thái LƯỢT KHÁCH. Máy chủ chưa gửi trạng thái
+    // thì panel đoán "Mới vào" — phía làm Phục vụ đi tới bàn.
+    expect(html).toContain("Mới vào")
     expect(html).toContain("4 khách")
     expect(html).toContain("55 phút")
+  })
+
+  it("khối màu đi theo trạng thái lượt khách mà máy chủ gửi", () => {
+    const html = render({ ...tableState(), waiterPhase: "AWAITING_FOOD" })
+    expect(html).toContain("Chờ đồ")
+    expect(html).toContain("#7B3FF2")
   })
 
   it("Phiên chờ thanh toán: nút Gọi món tắt và hiện đúng câu đã chốt", () => {
     const html = render(tableState({ claim: claim({ paid: true }) }))
     expect(orderButtonDisabled(html)).toBe(true)
     expect(html).toContain(WAITER_PAYMENT_NOTICE)
-    // Xem đơn vẫn mở được để Phục vụ trả lời khách.
-    expect(html).toContain("Xem đơn đã gọi")
+    expect(html).toContain("Thanh toán")
+  })
+
+  /**
+   * v1.1 bỏ nút "Xem đơn đã gọi": món đã gọi hiện thẳng trong panel. Đường vào
+   * màn Đơn của bàn — nơi có Xin hủy món và Xin ghi hao (V6) — nằm dưới danh
+   * sách món, nên nó chỉ xuất hiện khi đã tải được danh sách đó.
+   */
+  it("không còn nút Xem đơn đã gọi trên bảng thao tác", () => {
+    expect(render(tableState())).not.toContain("Xem đơn đã gọi")
+  })
+
+  /** Bảng thông tin trùng lặp đã bị bỏ; mọi con số nằm trên một dòng. */
+  it("không còn bảng Khu vực / Bàn / Số khách lặp lại", () => {
+    const html = render(tableState())
+    expect(html).not.toContain(">Mở Phiên<")
+    expect(html).not.toContain(">Trạng thái Phiên<")
+    expect(html).not.toContain(">Lượt trong ca<")
   })
 
   it("thiếu order.create: Phiên vẫn đang phục vụ nhưng nút Gọi món tắt", () => {
     const html = render(tableState(), { canOrder: false })
-    expect(html).toContain("Đang phục vụ")
+    expect(html).toContain("Mới vào")
     expect(orderButtonDisabled(html)).toBe(true)
+  })
+})
+
+describe("luồng hàng đợi Bartender", () => {
+  it("nút có accessible name chứa badge thật và vùng chạm 44px", () => {
+    const html = renderToString(createElement(WaiterQueueButton, { count: 4, onClick: () => undefined }))
+    expect(html).toContain("Hàng đợi Bar: 4 phiếu chưa hoàn tất")
+    expect(html).toContain("min-h-11")
+    expect(html).toContain(">4<")
+  })
+
+  it.each([
+    ["BAR", "Bar", "preparation.bar.read"],
+    ["KITCHEN", "Bếp", "preparation.kitchen.read"],
+  ] as const)("deep-link thiếu quyền %s hiện từ chối đúng station", (station, label, permission) => {
+    const client = new QueryClient()
+    const html = renderToString(
+      createElement(
+        QueryClientProvider,
+        { client },
+        createElement(PreparationQueue, {
+          station,
+          canRead: false,
+          canTransition: false,
+          canRetry: false,
+          embedded: true,
+        }),
+      ),
+    )
+    expect(html).toContain(`Không có quyền xem hàng đợi ${label}`)
+    expect(html).toContain(permission)
+  })
+
+  it("hàng đợi trong WaiterShell có nút về sơ đồ, không có chọn station hay đăng xuất riêng", () => {
+    const client = new QueryClient()
+    const html = renderToString(
+      createElement(
+        QueryClientProvider,
+        { client },
+        createElement(PreparationQueue, {
+          station: "BAR",
+          canRead: true,
+          canTransition: true,
+          canRetry: true,
+          embedded: true,
+          onBack: () => undefined,
+        }),
+      ),
+    )
+    expect(html).toContain("Quay về sơ đồ")
+    expect(html).toContain("Hàng đợi Bar")
+    expect(html).not.toContain(">Bếp<")
+    expect(html).not.toContain("Đăng xuất")
   })
 })
 
@@ -189,8 +280,8 @@ describe("panel chi tiết bàn — không có dữ liệu khách", () => {
     expect(html).not.toContain("BIRTHDAY")
     expect(html).not.toContain("khách quen")
     expect(html).not.toContain(`>${GUEST_PHONE_LAST3}<`)
-    // Và panel vẫn nói rõ nó không hiện thông tin khách.
-    expect(html).toContain("Đang phục vụ")
+    // Và panel vẫn nói đúng trạng thái lượt khách.
+    expect(html).toContain("Mới vào")
   })
 })
 
@@ -221,22 +312,22 @@ describe("panel chi tiết bàn — bàn ghép", () => {
     expect(views[0].groupId).toBe(7)
 
     // Và mỗi ô bàn vẫn hiện riêng trong danh sách thành viên của cụm.
-    const html = renderToString(
-      createElement(WaiterTableSheetBody, {
-        view: views[1],
-        tables: TABLES,
-        states,
-        byId: BY_ID,
-        canMove: true,
-        canCombine: true,
-        canSplit: true,
-        pending: false,
-        onOrder: () => undefined,
-        onViewOrders: () => undefined,
-        onRearrange: () => undefined,
-      } satisfies WaiterTableSheetBodyProps),
-    )
-    expect(html).toContain("Gồm các bàn A1, A2")
+    const html = renderSheetBody({
+      view: views[1],
+      tables: TABLES,
+      states,
+      byId: BY_ID,
+      canMove: true,
+      canCombine: true,
+      canSplit: true,
+      pending: false,
+      onOrder: () => undefined,
+      onViewOrders: () => undefined,
+      onRearrange: () => undefined,
+    } satisfies WaiterTableSheetBodyProps)
+    // v1.1: mã các bàn của cụm nằm trên DÒNG THÔNG TIN gộp, không còn ở một
+    // câu riêng bên dưới tiêu đề.
+    expect(html).toContain("A1 + A2")
     // `>Tách bàn<` là nhãn trên nút; tiêu đề nhóm "Đổi / Ghép / Tách bàn" cũng
     // chứa cụm từ đó, nên so khớp cả chuỗi sẽ khớp cả khi nút không có.
     expect(html).toContain(">Tách bàn<")

@@ -31,15 +31,20 @@ function ticket(ticketId, status, version) {
     station: "BAR", status, version, submittedAt: "2030-10-24T12:00:00.000Z",
     acceptedAt: null, startedAt: null, readyAt: null, collectedAt: null,
     waitSeconds: ticketId * 60, tableCodes: [`A${ticketId}`],
+    // L3: contract Giai doan 2 — nguoi goi va co van hanh, khong co ten khach.
+    orderedByDisplayName: ticketId === 2 ? "Minh" : "Phuc vu",
+    guestFlags: { vip: ticketId === 2, birthday: false, designated: ticketId === 2 },
     // L2: mock phải theo đúng hợp đồng mới — API trả số CÒN PHẢI LÀM kèm
     // cancelledQuantity và originalQuantity. Phiếu 2 mang thêm một dòng hủy một
     // phần và một dòng hủy toàn bộ để màn hình được kiểm cả ba trạng thái.
     lines: [
-      { lineNo: 1, itemName: `Món ${ticketId}`, variantDisplayName: "Ly", quantity: 2, cancelledQuantity: 0, originalQuantity: 2, note: ticketId === 1 ? "Ít đá" : null },
+      { lineNo: 1, itemName: `Món ${ticketId}`, variantDisplayName: "Ly", quantity: 2, cancelledQuantity: 0, originalQuantity: 2, note: ticketId === 1 ? "Ít đá" : null, pendingCancellation: null },
       ...(ticketId === 2
         ? [
-            { lineNo: 2, itemName: "Khay thịt muối", variantDisplayName: "Phần", quantity: 1, cancelledQuantity: 1, originalQuantity: 2, note: "Không hành" },
-            { lineNo: 3, itemName: "Khoai tây truffle", variantDisplayName: "Phần", quantity: 0, cancelledQuantity: 1, originalQuantity: 1, note: null },
+            { lineNo: 2, itemName: "Khay thịt muối", variantDisplayName: "Phần", quantity: 1, cancelledQuantity: 1, originalQuantity: 2, note: "Không hành", pendingCancellation: null },
+            { lineNo: 3, itemName: "Khoai tây truffle", variantDisplayName: "Phần", quantity: 0, cancelledQuantity: 1, originalQuantity: 1, note: null, pendingCancellation: null },
+            // L3: vua co phan da duyet huy, vua co yeu cau huy moi chua duyet.
+            { lineNo: 4, itemName: "Negroni", variantDisplayName: "Ly", quantity: 2, cancelledQuantity: 1, originalQuantity: 4, note: null, pendingCancellation: { cancellationId: 11, quantity: 1 } },
           ]
         : []),
     ],
@@ -103,6 +108,16 @@ for (const viewport of viewports) {
     expect(await full.evaluate((node) => node.className)).toContain("opacity-60")
     expect(await full.locator("div").first().evaluate((node) => getComputedStyle(node).textDecorationLine))
       .toContain("line-through")
+    // L3 — ngon ngu Bartender, metadata va co van hanh.
+    await expect(page.getByText("Đang pha", { exact: true })).toBeVisible()
+    await expect(page.getByText("Hoàn thành · chờ bàn giao", { exact: true })).toBeVisible()
+    await expect(ticket2).toContainText("Đơn 2 · gọi lúc 19:00 · Minh")
+    await expect(ticket2).not.toContainText("Phiên #")
+    await expect(ticket2.getByText("VIP")).toBeVisible()
+    await expect(ticket2.getByText("Chỉ định")).toBeVisible()
+    await expect(ticket2.locator('[data-line-no="4"]')).toContainText("Đã hủy 1, chỉ làm 2")
+    await expect(ticket2.locator('[data-line-no="4"]')).toContainText("Đang chờ duyệt hủy 1 phần")
+    await expect(ticket2.getByRole("button", { name: "Bắt đầu pha" })).toBeVisible()
     const metrics = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
     expect(metrics.scroll).toBeLessThanOrEqual(metrics.width)
     await page.getByRole("button", { name: "Tiếp nhận" }).click()
@@ -116,7 +131,7 @@ for (const viewport of viewports) {
     } else {
       await expect(retry).toHaveCount(0)
     }
-    const actionSize = await page.getByRole("button", { name: "Bắt đầu làm" }).first().evaluate((node) => node.getBoundingClientRect().height)
+    const actionSize = await page.getByRole("button", { name: "Bắt đầu pha" }).first().evaluate((node) => node.getBoundingClientRect().height)
     expect(actionSize).toBeGreaterThanOrEqual(44)
     await page.screenshot({ path: path.join(output, `bar-after-cancellation-${viewport.width}x${viewport.height}.png`) })
     console.log(`PASS preparation ${viewport.width}x${viewport.height}`)

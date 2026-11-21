@@ -3,16 +3,29 @@ import { describe, expect, it } from "vitest"
 import { roleCan } from "@/domain/access"
 import {
   PREPARATION_ACTION_CLASS,
-  PREPARATION_COLUMNS,
-  PREPARATION_NEXT_ACTION,
   PREPARATION_QUEUE_LAYOUT_CLASS,
   canShowPrintRetry,
+  fixedPreparationStation,
+  outstandingPreparationCount,
   preparationLineDisplay,
+  preparationWaitSeconds,
 } from "./preparation-layout"
+import { preparationColumns, preparationNextAction } from "./preparation-presentation"
 
 describe("màn hàng đợi chế biến", () => {
   it("có bốn lane, mục tiêu chạm mobile và breakpoint tablet/desktop", () => {
-    expect(PREPARATION_COLUMNS.map((column) => column.label)).toEqual(["Mới nhận", "Đã tiếp nhận", "Đang làm", "Hoàn thành"])
+    expect(preparationColumns("KITCHEN").map((column) => column.label)).toEqual([
+      "Mới nhận",
+      "Đã tiếp nhận",
+      "Đang làm",
+      "Hoàn thành",
+    ])
+    expect(preparationColumns("BAR").map((column) => column.label)).toEqual([
+      "Mới nhận",
+      "Đã tiếp nhận",
+      "Đang pha",
+      "Hoàn thành · chờ bàn giao",
+    ])
     expect(PREPARATION_QUEUE_LAYOUT_CLASS).toContain("md:grid-cols-2")
     expect(PREPARATION_QUEUE_LAYOUT_CLASS).toContain("xl:grid-cols-4")
     expect(PREPARATION_ACTION_CLASS).toContain("min-h-11")
@@ -25,9 +38,30 @@ describe("màn hàng đợi chế biến", () => {
     expect(roleCan("KITCHEN", "preparation.bar.transition")).toBe(false)
   })
 
+  it("/chebien giữ station cố định đúng cho BAR và KITCHEN", () => {
+    expect(fixedPreparationStation("BAR")).toBe("BAR")
+    expect(fixedPreparationStation("KITCHEN")).toBe("KITCHEN")
+    expect(fixedPreparationStation("ADMIN")).toBeNull()
+  })
+
+  it("badge chỉ đếm ticket chưa COLLECTED", () => {
+    expect(
+      outstandingPreparationCount([
+        { status: "SUBMITTED" },
+        { status: "ACCEPTED" },
+        { status: "PREPARING" },
+        { status: "READY" },
+        { status: "COLLECTED" },
+      ]),
+    ).toBe(4)
+    expect(outstandingPreparationCount(undefined)).toBe(0)
+  })
+
   it("READY chỉ rời queue qua acknowledgement COLLECTED", () => {
-    expect(PREPARATION_NEXT_ACTION.READY).toEqual({ status: "COLLECTED", label: "Đã nhận món" })
-    expect(PREPARATION_NEXT_ACTION.COLLECTED).toBeUndefined()
+    expect(preparationNextAction("KITCHEN", "READY")).toEqual({ status: "COLLECTED", label: "Đã nhận món" })
+    expect(preparationNextAction("BAR", "READY")).toEqual({ status: "COLLECTED", label: "Đã bàn giao món" })
+    expect(preparationNextAction("KITCHEN", "COLLECTED")).toBeNull()
+    expect(preparationNextAction("BAR", "COLLECTED")).toBeNull()
   })
 
   it("không render chức năng in giả khi worker chưa hoạt động", () => {
@@ -37,10 +71,34 @@ describe("màn hàng đợi chế biến", () => {
   })
 
   it.each([
-    [360, 800, 1], [390, 844, 1], [768, 1024, 2], [1280, 800, 4],
+    [360, 800, 1],
+    [390, 844, 1],
+    [768, 1024, 2],
+    [1280, 800, 4],
   ])("layout %ix%i dùng đúng số lane responsive", (width, _height, columns) => {
     const actual = width >= 1280 ? 4 : width >= 768 ? 2 : 1
     expect(actual).toBe(columns)
+  })
+})
+
+describe("đồng hồ chờ của phiếu", () => {
+  const submittedAt = "2026-11-22T10:00:00.000Z"
+
+  it("vừa gửi dưới một phút", () => {
+    expect(preparationWaitSeconds(submittedAt, 999, new Date("2026-11-22T10:00:30.000Z"))).toBe(30)
+  })
+
+  it("sau 3 phút", () => {
+    expect(preparationWaitSeconds(submittedAt, 0, new Date("2026-11-22T10:03:00.000Z"))).toBe(180)
+  })
+
+  it("đồng hồ client sớm hơn submittedAt không tạo thời gian âm", () => {
+    expect(preparationWaitSeconds(submittedAt, 20, new Date("2026-11-22T09:59:00.000Z"))).toBe(0)
+  })
+
+  it("submittedAt không hợp lệ thì dùng waitSeconds an toàn từ server", () => {
+    expect(preparationWaitSeconds("không-phải-ngày", 125.9, new Date("2026-11-22T10:03:00.000Z"))).toBe(125)
+    expect(preparationWaitSeconds("không-phải-ngày", -10, new Date("2026-11-22T10:03:00.000Z"))).toBe(0)
   })
 })
 
