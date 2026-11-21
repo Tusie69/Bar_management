@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type FocusEvent,
+  type MouseEvent,
   type MutableRefObject,
   type ReactNode,
 } from "react"
@@ -108,13 +109,13 @@ function RestoreSavedButton({
 }: {
   label: string
   disabled?: boolean
-  onRestore: (button: HTMLButtonElement) => void
+  onRestore: (event: MouseEvent<HTMLButtonElement>) => void
 }) {
   return (
     <button
       type="button"
       disabled={disabled}
-      onClick={(e) => onRestore(e.currentTarget)}
+      onClick={onRestore}
       className="gm-press flex min-h-11 w-full items-center justify-between gap-2 rounded-xl border border-border-strong bg-surface-1 px-3 py-2 text-left text-[13px] font-medium text-tx-1 transition-colors hover:border-primary/50 hover:bg-surface-2 disabled:pointer-events-none disabled:opacity-45"
     >
       <span className="flex min-w-0 items-center gap-2">
@@ -358,14 +359,15 @@ function BookingEditBody({
   }
 
   const restoreWithFocus = (
-    button: HTMLButtonElement,
+    event: MouseEvent<HTMLButtonElement>,
     restorer: (r: ReservationView, d: BookingEditDraft) => BookingEditDraft,
   ) => {
     if (fieldsDisabled) return
-    const wasFocused = typeof document !== "undefined" && document.activeElement === button
-    const fieldset = button.closest("fieldset")
+    const button = event.currentTarget
+    const shouldMoveFocus = event.detail === 0 && typeof document !== "undefined" && document.activeElement === button
+    const fieldset = shouldMoveFocus ? button.closest("fieldset") : null
     setSession((prev) => ({ ...prev, draft: restorer(prev.source, prev.draft) }))
-    if (wasFocused && fieldset && typeof window !== "undefined") {
+    if (fieldset && typeof window !== "undefined") {
       window.requestAnimationFrame(() => {
         if (!fieldset.isConnected) return
         const target =
@@ -936,7 +938,7 @@ function BookingEditBody({
                   <RestoreSavedButton
                     label={`Lịch ban đầu: ${fmtDayMonth(source.businessDate)} · ${savedTimeDisplay}`}
                     disabled={fieldsDisabled}
-                    onRestore={(btn) => restoreWithFocus(btn, restoreBookingEditSchedule)}
+                    onRestore={(event) => restoreWithFocus(event, restoreBookingEditSchedule)}
                   />
                 ) : null}
                 {draft.businessDate !== source.businessDate && source.tableIds.length > 0 ? (
@@ -976,7 +978,7 @@ function BookingEditBody({
                         : `Giờ ban đầu: ${savedTimeDisplay}`
                     }
                     disabled={fieldsDisabled}
-                    onRestore={(btn) => restoreWithFocus(btn, restoreBookingEditSchedule)}
+                    onRestore={(event) => restoreWithFocus(event, restoreBookingEditSchedule)}
                   />
                 ) : null}
               </div>
@@ -1064,7 +1066,7 @@ function BookingEditBody({
                   <RestoreSavedButton
                     label={`Khôi phục: ${savedSourceLabel}`}
                     disabled={fieldsDisabled}
-                    onRestore={(btn) => restoreWithFocus(btn, restoreBookingEditSource)}
+                    onRestore={(event) => restoreWithFocus(event, restoreBookingEditSource)}
                   />
                 ) : null}
               </div>
