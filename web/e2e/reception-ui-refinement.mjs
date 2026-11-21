@@ -205,6 +205,142 @@ function rectsOverlap(a, b, tol = 0.5) {
   return !(a.right <= b.left + tol || b.right <= a.left + tol || a.bottom <= b.top + tol || b.bottom <= a.top + tol)
 }
 
+const decorationTestIds = {
+  guestBadge: "guest-count-badge",
+  turnBadge: "turn-badge",
+  leftIcons: "table-icons-bottom-left",
+  rightIcons: "table-icons-bottom-right",
+}
+
+async function countPaintedOverlap(table, kind, textIndex, evidence) {
+  const intersection = await table.evaluate(
+    (node, { testId, textIndex }) => {
+      const decoration = node.querySelector(`[data-testid="${testId}"]`)
+      const text = node.querySelectorAll("text")[textIndex]
+      if (!decoration || !text) throw new Error("Missing decoration or text for paint comparison")
+
+      // SVG client rectangles omit strokes. Include each transformed stroke in the decoration box.
+      const box = decoration.getBoundingClientRect().toJSON()
+      for (const shape of decoration.querySelectorAll("rect, circle, ellipse, path, line, polygon, polyline, text")) {
+        const style = getComputedStyle(shape)
+        if (style.stroke === "none") continue
+        const matrix = shape.getScreenCTM()
+        const radius = Number.parseFloat(style.strokeWidth) / 2
+        const extent = radius * (style.strokeLinejoin === "miter" ? Number(style.strokeMiterlimit) : Math.SQRT2)
+        const scaleX = style.vectorEffect === "non-scaling-stroke" ? 1 : Math.hypot(matrix.a, matrix.c)
+        const scaleY = style.vectorEffect === "non-scaling-stroke" ? 1 : Math.hypot(matrix.b, matrix.d)
+        const shapeBox = shape.getBoundingClientRect()
+        box.left = Math.min(box.left, shapeBox.left - extent * scaleX)
+        box.right = Math.max(box.right, shapeBox.right + extent * scaleX)
+        box.top = Math.min(box.top, shapeBox.top - extent * scaleY)
+        box.bottom = Math.max(box.bottom, shapeBox.bottom + extent * scaleY)
+      }
+      const textBox = text.getBoundingClientRect()
+      const left = Math.max(box.left, textBox.left)
+      const right = Math.min(box.right, textBox.right)
+      const top = Math.max(box.top, textBox.top)
+      const bottom = Math.min(box.bottom, textBox.bottom)
+      if (right <= left || bottom <= top) return null
+
+      decoration.setAttribute("data-reception-paint", "decoration")
+      text.setAttribute("data-reception-paint", "text")
+      const tableBox = node.getBoundingClientRect()
+      return {
+        left: left - tableBox.left,
+        right: right - tableBox.left,
+        top: top - tableBox.top,
+        bottom: bottom - tableBox.top,
+      }
+    },
+    { testId: decorationTestIds[kind], textIndex },
+  )
+  if (!intersection) return 0
+
+  const decoration = '[data-reception-paint="decoration"]'
+  const text = '[data-reception-paint="text"]'
+  const page = table.page()
+  const layers = []
+  try {
+    // One crop keeps all captures aligned and excludes paint outside the badge/text intersection.
+    await table.scrollIntoViewIfNeeded()
+    const bounds = await table.boundingBox()
+    assert(bounds, "Missing table bounds for paint comparison")
+    const x = Math.floor(bounds.x + intersection.left)
+    const y = Math.floor(bounds.y + intersection.top)
+    const clip = {
+      x,
+      y,
+      width: Math.ceil(bounds.x + intersection.right) - x,
+      height: Math.ceil(bounds.y + intersection.bottom) - y,
+    }
+    for (const [name, hidden] of [
+      ["neither", `${decoration}, ${text}`],
+      ["text-only", decoration],
+      ["both", null],
+    ]) {
+      const image = await page.screenshot({
+        clip,
+        animations: "disabled",
+        style: hidden ? `${hidden} { opacity: 0 !important; }` : undefined,
+        path: evidence && path.join(outDir, `${evidence}-${name}.png`),
+      })
+      layers.push(image.toString("base64"))
+    }
+  } finally {
+    await table
+      .locator("[data-reception-paint]")
+      .evaluateAll((nodes) => nodes.forEach((node) => node.removeAttribute("data-reception-paint")))
+  }
+
+  return page.evaluate(async (layers) => {
+    const images = await Promise.all(
+      layers.map(async (layer) => {
+        const image = new Image()
+        image.src = `data:image/png;base64,${layer}`
+        await image.decode()
+        return image
+      }),
+    )
+    const canvas = document.createElement("canvas")
+    canvas.width = images[0].width
+    canvas.height = images[0].height
+    const ctx = canvas.getContext("2d")
+    const [background, text, combined] = images.map((image) => {
+      if (image.width !== canvas.width || image.height !== canvas.height) {
+        throw new Error("Paint comparison screenshots have different dimensions")
+      }
+      ctx.drawImage(image, 0, 0)
+      return ctx.getImageData(0, 0, canvas.width, canvas.height).data
+    })
+    const differs = (a, b, i) => a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2]
+    let overlap = 0
+    for (let i = 0; i < background.length; i += 4) {
+      if (differs(text, background, i) && differs(combined, text, i)) overlap++
+    }
+    return overlap
+  }, layers)
+}
+
+// Allow antialiasing noise at painted edges; the overlap controls change at least 46 pixels.
+const MAX_CHANGED_TEXT_PIXELS = 8
+
+function assertTextUncovered(pixels, description) {
+  assert(
+    pixels <= MAX_CHANGED_TEXT_PIXELS,
+    `${description}: ${pixels} changed text pixels (limit ${MAX_CHANGED_TEXT_PIXELS})`,
+  )
+}
+
+async function verifyPaintControl(table, evidence) {
+  const pixels = await countPaintedOverlap(table, "guestBadge", 0, evidence)
+  assert.throws(
+    () => assertTextUncovered(pixels, evidence),
+    assert.AssertionError,
+    `${evidence} must exceed the changed text pixel limit of ${MAX_CHANGED_TEXT_PIXELS}`,
+  )
+  return pixels
+}
+
 /** Browser-evaluated check: maps every painted badge/icon perimeter point into each cluster outline's SVG frame. */
 function measureOutlineStrokeIntersections(svgRoot) {
   const outlines = Array.from(svgRoot?.querySelectorAll('[data-cluster-outline="1"] > rect') ?? [])
@@ -502,17 +638,13 @@ try {
 
       const tableShapes = Array.from(svg?.querySelectorAll('[role="button"][aria-label]') ?? []).map((g) => {
         const shape = g.querySelector('rect[rx="4.5"], circle:not([fill="transparent"]):not(.focus-ring)')
-        const texts = Array.from(g.querySelectorAll("text"))
-          .filter(
-            (t) =>
-              !t.closest(
-                '[data-testid="guest-count-badge"], [data-testid="turn-badge"], [data-testid="table-icons-bottom-left"], [data-testid="table-icons-bottom-right"]',
-              ),
+        const texts = Array.from(g.querySelectorAll("text")).flatMap((t, index) =>
+          t.closest(
+            '[data-testid="guest-count-badge"], [data-testid="turn-badge"], [data-testid="table-icons-bottom-left"], [data-testid="table-icons-bottom-right"]',
           )
-          .map((t) => ({
-            text: t.textContent ?? "",
-            box: toBox(t.getBoundingClientRect()),
-          }))
+            ? []
+            : [{ text: t.textContent ?? "", box: toBox(t.getBoundingClientRect()), index }],
+        )
         const guestBadge = g.querySelector('[data-testid="guest-count-badge"]')
         const turnBadge = g.querySelector('[data-testid="turn-badge"]')
         const leftIcons = g.querySelector('[data-testid="table-icons-bottom-left"]')
@@ -710,6 +842,8 @@ try {
       `${vp.label}: expected >= 3 turn badges in mock mode, got ${metrics.turnBadges.length}`,
     )
     const allDecorations = []
+    let maxChangedTextPixels = 0
+    const guestBadgeTitlePixels = {}
     for (const ts of metrics.tableShapes) {
       if (!ts.box) continue
       const tableDecorations = [
@@ -740,21 +874,35 @@ try {
       }
 
       // Within the same table: no badge/icon overlaps own text, or each other
+      const table = page.getByRole("button", { name: ts.aria, exact: true })
       for (const dec of tableDecorations) {
         for (const txt of ts.texts) {
-          // SVG <text> getBoundingClientRect() includes ~18% transparent ascent/descent leading;
-          // tighten vertically by 18% to approximate painted glyph bounds while still catching real text collisions.
-          const th = txt.box.bottom - txt.box.top
-          const glyphBox = {
-            left: txt.box.left,
-            right: txt.box.right,
-            top: txt.box.top + th * 0.16,
-            bottom: txt.box.bottom - th * 0.16,
-          }
-          assert(
-            !rectsOverlap(dec.box, glyphBox, 0.2),
-            `${vp.label}: ${dec.kind} (${dec.label}) overlaps text "${txt.text}" inside ${ts.aria} (dec=${JSON.stringify(dec.box)}, glyph=${JSON.stringify(glyphBox)})`,
+          const trackedTable =
+            dec.kind === "guestBadge" && txt === ts.texts[0] ? /^Bàn (A6|B3|B21),/.exec(ts.aria)?.[1] : undefined
+          const isA6Title = vp.label === "390x844" && trackedTable === "A6"
+          const pixels = await countPaintedOverlap(table, dec.kind, txt.index, isA6Title ? "a6-390x844" : undefined)
+          assertTextUncovered(
+            pixels,
+            `${vp.label}: ${dec.kind} (${dec.label}) covers text "${txt.text}" inside ${ts.aria}`,
           )
+          maxChangedTextPixels = Math.max(maxChangedTextPixels, pixels)
+          if (trackedTable) guestBadgeTitlePixels[trackedTable] = pixels
+          if (isA6Title) {
+            const badge = table.getByTestId(decorationTestIds.guestBadge)
+            const translate = await badge.evaluate((node) => {
+              const previous = node.style.translate
+              node.style.translate = "0 8px"
+              return previous
+            })
+            try {
+              const shiftedPixels = await verifyPaintControl(table, "a6-390x844-shifted")
+              summary.a6Paint = { pixels, shiftedPixels }
+            } finally {
+              await badge.evaluate((node, previous) => {
+                node.style.translate = previous
+              }, translate)
+            }
+          }
         }
         // Inside SVG bounds
         if (metrics.svgRect) {
@@ -812,12 +960,7 @@ try {
 
     assert.deepEqual(errors, [], `${vp.label}: console/page errors: ${errors.join(" | ")}`)
 
-    // Dismiss the "Đã lưu bộ đếm khách" Sonner toast so the header and Đếm khách card are unobstructed in screenshots
-    const sonnerClose = page.locator("[data-sonner-toast] button")
-    if ((await sonnerClose.count()) > 0) {
-      await sonnerClose.first().click()
-      await page.waitForTimeout(300)
-    }
+    await page.getByText("Đã lưu bộ đếm khách", { exact: true }).waitFor({ state: "hidden", timeout: 10_000 })
 
     const shotPath = path.join(outDir, `reception-${vp.label}.png`)
     await page.screenshot({ path: shotPath })
@@ -830,6 +973,9 @@ try {
     }
 
     summary.viewports[vp.label] = {
+      dpr: await page.evaluate(() => window.devicePixelRatio),
+      maxChangedTextPixels,
+      guestBadgeTitlePixels,
       overflowX: metrics.docOverflowX,
       overflowY: metrics.docOverflowY,
       canvasScrollOverflowY: metrics.canvasScrollOverflowY,
@@ -846,6 +992,37 @@ try {
       screenshot: shotPath,
     }
     await context.close()
+  }
+
+  assert(summary.a6Paint, "A6 paint control did not run at 390x844")
+
+  const fixturePage = await browser.newPage({ deviceScaleFactor: 3 })
+  try {
+    for (const [name, text, badge] of [
+      [
+        "accent-edge",
+        '<text x="18" y="46" font-family="Arial" font-size="32" font-weight="bold">A6 - ẤỄỨ</text>',
+        '<rect x="5" y="1" width="100" height="20.92" fill="red" stroke="red"/>',
+      ],
+      [
+        "same-color-occlusion",
+        '<text x="18" y="36" font-family="Arial" font-size="24">ABCD</text>',
+        '<rect x="17" y="21" width="32" height="13" fill="white"/>',
+      ],
+    ]) {
+      await fixturePage.setContent(`
+        <svg width="190" height="70">
+          <g role="button" aria-label="Paint control">
+            <rect width="190" height="70" fill="white"/>
+            ${text}
+            <g data-testid="guest-count-badge">${badge}</g>
+          </g>
+        </svg>
+      `)
+      summary.a6Paint[name] = await verifyPaintControl(fixturePage.getByRole("button", { name: "Paint control" }), name)
+    }
+  } finally {
+    await fixturePage.close()
   }
 
   // 2. Verify R1-R5 workflows + sheets on 390x844 (phone) and 1366x768 (laptop)
