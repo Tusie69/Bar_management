@@ -46,7 +46,7 @@ export function WaiterForbidden() {
         <div className="grid gap-1.5">
           <h1 className="text-xl font-semibold tracking-[-0.015em]">Không có quyền truy cập</h1>
           <p className="text-sm leading-relaxed text-muted-foreground">
-            Khu vực Phục vụ chỉ dành cho tài khoản Phục vụ đăng nhập ở cổng /phucvu.
+            Khu vực Phục vụ chỉ dành cho tài khoản Phục vụ hoặc Bar đăng nhập ở cổng /phucvu.
           </p>
         </div>
         <Link to={home} className="text-sm font-medium text-primary-ink underline-offset-4 hover:underline">

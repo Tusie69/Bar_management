@@ -3,6 +3,7 @@ import {
   categoryMatches,
   filterMenuItems,
   normalizeMenuSearch,
+  orderedMenuCategories,
   type WaiterMenuCategory,
   type WaiterMenuItem,
 } from "./menu-model"
@@ -59,6 +60,16 @@ describe("waiter menu model", () => {
     expect(categoryMatches(item, 2, categories)).toBe(true)
     expect(categoryMatches(item, 1, categories)).toBe(true)
     expect(categoryMatches(item, 999, categories)).toBe(false)
+  })
+
+  it("orders classifications by parent group and sibling displayOrder", () => {
+    const input: WaiterMenuCategory[] = [
+      { id: 4, code: "B", name: "B", parentId: 1, displayOrder: 2 },
+      { id: 2, code: "SECOND", name: "Second", parentId: null, displayOrder: 2 },
+      { id: 1, code: "FIRST", name: "First", parentId: null, displayOrder: 1 },
+      { id: 3, code: "A", name: "A", parentId: 1, displayOrder: 1 },
+    ]
+    expect(orderedMenuCategories(input).map((category) => category.id)).toEqual([1, 3, 4, 2])
   })
 
   it("formats integer VND without converting back to thousands", () => {

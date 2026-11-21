@@ -48,6 +48,7 @@ export default function WaiterOrdersPage() {
   const venueId = useSession((state) => state.principal?.venueId ?? null)
   const canAdjust = useCan("order.line.adjust")
   const canRequestCancel = useCan("order.cancel.request")
+  const canRequestWaste = useCan("order.cancel.ready")
   const canApprove = useCan("order.cancel.approve")
   const validVisitId = Number.isSafeInteger(visitId) && visitId > 0
   const queryClient = useQueryClient()
@@ -59,6 +60,7 @@ export default function WaiterOrdersPage() {
     queryFn: () => fetchVisitOrders(visitId),
     enabled: validVisitId && venueId !== null,
     staleTime: 10_000,
+    refetchInterval: 5_000,
   })
   const ready = useQuery({
     queryKey: ["ready-notifications", venueId],
@@ -78,6 +80,7 @@ export default function WaiterOrdersPage() {
 
   function refresh(): void {
     void queryClient.invalidateQueries({ queryKey: ["waiter-orders", venueId, visitId] })
+    void queryClient.invalidateQueries({ queryKey: ["waiter-order", venueId] })
     void queryClient.invalidateQueries({ queryKey: ["cancellation-queue", venueId, "PENDING"] })
   }
 
@@ -211,10 +214,15 @@ export default function WaiterOrdersPage() {
               order={order}
               canAdjust={canAdjust}
               canRequestCancel={canRequestCancel}
+              canRequestWaste={canRequestWaste}
               busy={adjust.isPending || requestCancel.isPending}
               onAdjust={(line, quantity) => adjust.mutate({ line, orderId: order.orderId, quantity })}
               onRequestCancel={(line) => {
                 setActionError(null)
+                if ((line.preparationStatus === "READY" || line.preparationStatus === "COLLECTED") && !canRequestWaste) {
+                  setActionError("Bạn không có quyền ghi hao món đã làm xong. Hãy báo Thu ngân hoặc quản lý.")
+                  return
+                }
                 setCancelTarget({ line, orderId: order.orderId })
               }}
             />
@@ -231,12 +239,24 @@ export default function WaiterOrdersPage() {
       )}
 
       <CancelRequestDialog
-        line={cancelTarget?.line ?? null}
+        line={
+          cancelTarget &&
+          canRequestCancel &&
+          ((cancelTarget.line.preparationStatus !== "READY" && cancelTarget.line.preparationStatus !== "COLLECTED") ||
+            canRequestWaste)
+            ? cancelTarget.line
+            : null
+        }
         submitting={requestCancel.isPending}
         errorMessage={actionError}
         onCancel={() => setCancelTarget(null)}
         onSubmit={(draft) => {
           if (!cancelTarget) return
+          if (draft.acknowledgeWaste && !canRequestWaste) {
+            setCancelTarget(null)
+            setActionError("Bạn không có quyền ghi hao món đã làm xong. Hãy báo Thu ngân hoặc quản lý.")
+            return
+          }
           // `lineNo` chỉ duy nhất TRONG một đơn — hai đơn của cùng bàn đều có
           // dòng số 1 — nên mã đơn được giữ cùng dòng từ lúc mở hộp.
           requestCancel.mutate({ draft, orderId: cancelTarget.orderId })
@@ -250,6 +270,7 @@ function OrderCard({
   order,
   canAdjust,
   canRequestCancel,
+  canRequestWaste,
   busy,
   onAdjust,
   onRequestCancel,
@@ -257,6 +278,7 @@ function OrderCard({
   order: WaiterOrderSummary
   canAdjust: boolean
   canRequestCancel: boolean
+  canRequestWaste: boolean
   busy: boolean
   onAdjust: (line: WaiterOrderLine, quantity: number) => void
   onRequestCancel: (line: WaiterOrderLine) => void
@@ -268,6 +290,7 @@ function OrderCard({
     queryFn: () => fetchWaiterOrder(order.orderId),
     enabled: open,
     staleTime: 5_000,
+    refetchInterval: open ? 5_000 : false,
   })
 
   return (
@@ -312,6 +335,7 @@ function OrderCard({
                 line={line}
                 canAdjust={canAdjust}
                 canRequestCancel={canRequestCancel}
+                canRequestWaste={canRequestWaste}
                 busy={busy}
                 onAdjust={onAdjust}
                 onRequestCancel={onRequestCancel}

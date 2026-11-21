@@ -68,7 +68,10 @@ export const PORTAL_CONFIG: Record<AuthPortal, { label: string; roles: readonly 
   // Module Phục vụ 1: Phục vụ có khu vực riêng ở /phucvu và KHÔNG dùng màn
   // Điều phối của Lễ tân. Giá trị này phải khớp WAITER_HOME_PATH trong
   // features/waiter/waiter-access.ts (có test ràng buộc).
-  waiter: { label: "Phục vụ", roles: ["WAITER"], home: "/phucvu" },
+  // L9: BAR cũng vào được cổng này (câu trả lời Q1 — Bartender lên đơn cho
+  // khách gọi ở quầy). Phải khớp PORTAL_ROLE_CODES.waiter ở api/src/auth/
+  // auth-portal.ts và WAITER_ROLES ở features/waiter/waiter-access.ts.
+  waiter: { label: "Phục vụ", roles: ["WAITER", "BAR"], home: "/phucvu" },
   preparation: { label: "Chế biến", roles: ["BAR", "KITCHEN"], home: "/chebien" },
 }
 

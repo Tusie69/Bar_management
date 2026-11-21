@@ -27,8 +27,28 @@ CREATE TEMPORARY TABLE _gam_seed_guard (
 START TRANSACTION;
 INSERT INTO _gam_seed_guard VALUES (
   IF(COALESCE(DATABASE() REGEXP '(_dev|_test)$', 0)
-    AND (SELECT COUNT(*) FROM roles WHERE code IN ('OWNER','ADMIN','RECEPTIONIST','CUSTOMER_CARE','CASHIER')) = 5
-    AND (SELECT COUNT(*) FROM permissions) = 32
+    -- L6: điều kiện cũ là "đúng 32 permission". Mỗi migration RBAC mới lại nâng
+    -- tổng số permission lên, nên seed chết trên chính schema mới nhất và cả
+    -- nhóm không có dữ liệu để tự test. Thay bằng invariant mà seed THẬT SỰ
+    -- cần, kiểm theo MÃ chứ không theo tổng số — một con số cố định mới (= 50)
+    -- sẽ chết lại ở migration sau.
+    --
+    -- Seed gán tám vai, nên tám vai phải có mặt.
+    AND (SELECT COUNT(*) FROM roles WHERE code IN
+         ('OWNER','ADMIN','RECEPTIONIST','CUSTOMER_CARE','CASHIER','WAITER','BAR','KITCHEN')) = 8
+    -- Những permission mà dữ liệu demo cần để ba vai Phục vụ/Bar/Bếp có việc
+    -- làm sau khi đăng nhập. Thiếu một mã nghĩa là migration order/preparation
+    -- chưa chạy, và tài khoản demo sẽ mở ra một màn hình trống.
+    AND (SELECT COUNT(*) FROM permissions WHERE code IN
+         ('order.create','order.read','order.line.adjust','order.cancel.request',
+          'preparation.bar.read','preparation.kitchen.read',
+          'preparation.ready.read','preparation.ready.acknowledge','venue.configure')) = 9
+    -- Mỗi vai mà seed gán phải đã được migration cấp quyền. ADMIN không có
+    -- trong danh sách này vì seed không gán ADMIN cho tài khoản nào.
+    AND NOT EXISTS (
+      SELECT 1 FROM roles AS r
+      WHERE r.code IN ('OWNER','RECEPTIONIST','CUSTOMER_CARE','CASHIER','WAITER','BAR','KITCHEN')
+        AND NOT EXISTS (SELECT 1 FROM role_permissions AS rp WHERE rp.role_id = r.id))
     AND (SELECT COUNT(*) FROM organizations) = 0
     AND (SELECT COUNT(*) FROM venues) = 0
     AND (SELECT COUNT(*) FROM venue_settings) = 0
@@ -68,14 +88,28 @@ INSERT INTO users (id, username, display_name, password_hash, status) VALUES
   (3, 'demo_owner', 'Chủ quán (giả)', '!DEMO_NO_LOGIN', 'DISABLED'),
   (4, 'demo_care', 'CSKH (giả)', '!DEMO_NO_LOGIN', 'DISABLED'),
   (5, 'demo_cashier', 'Thu ngân (giả)', '!DEMO_NO_LOGIN', 'DISABLED'),
-  (6, 'demo_other', 'Nhân viên tổ chức khác (giả)', '!DEMO_NO_LOGIN', 'DISABLED');
+  (6, 'demo_other', 'Nhân viên tổ chức khác (giả)', '!DEMO_NO_LOGIN', 'DISABLED'),
+  -- L6: ba vai của module Gọi món – Chế biến. Không có ba dòng này thì không
+  -- ai kiểm được luồng Phục vụ gọi món → Bar/Bếp làm món trên máy dev.
+  --
+  -- `!DEMO_NO_LOGIN` KHÔNG phải mật khẩu: nó không có định dạng mà
+  -- `verifyPassword` chấp nhận, nên không chuỗi nào đăng nhập được vào nó, và
+  -- status DISABLED chặn thêm một lớp nữa. Mật khẩu thật cho E2E đi qua
+  -- `scripts/seed-e2e-staff.ts`, lấy từ biến môi trường và chỉ ghi vào database
+  -- `*_test` — một mật khẩu dùng chung viết thẳng vào file SQL này sẽ theo repo
+  -- ra mọi máy và mọi môi trường.
+  (7, 'demo_waiter', 'Phục vụ (giả)', '!DEMO_NO_LOGIN', 'DISABLED'),
+  (8, 'demo_bar', 'Bartender (giả)', '!DEMO_NO_LOGIN', 'DISABLED'),
+  (9, 'demo_kitchen', 'Bếp (giả)', '!DEMO_NO_LOGIN', 'DISABLED');
 INSERT INTO memberships (id, organization_id, user_id) VALUES
-  (1,1,1), (2,1,2), (3,1,3), (4,1,4), (5,1,5), (6,2,6);
+  (1,1,1), (2,1,2), (3,1,3), (4,1,4), (5,1,5), (6,2,6), (7,1,7), (8,1,8), (9,1,9);
 INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
 SELECT m.organization_id, m.id, r.id, m.organization_id
 FROM memberships m JOIN roles r ON r.code = CASE m.user_id
   WHEN 3 THEN 'OWNER' WHEN 4 THEN 'CUSTOMER_CARE'
-  WHEN 5 THEN 'CASHIER' ELSE 'RECEPTIONIST' END;
+  WHEN 5 THEN 'CASHIER'
+  WHEN 7 THEN 'WAITER' WHEN 8 THEN 'BAR' WHEN 9 THEN 'KITCHEN'
+  ELSE 'RECEPTIONIST' END;
 
 -- Same IDs/order and geometry as src/domain/venue-layout.ts + mock/seed.ts.
 INSERT INTO zones (id, organization_id, venue_id, code, name, is_bookable, is_waiting_area, sort_order) VALUES
@@ -342,7 +376,13 @@ INSERT INTO _gam_seed_guard VALUES (IF(
   AND (SELECT COUNT(*) FROM dining_tables WHERE venue_id=1 AND kind='BAR_SEAT') = 21
   -- Chỉ còn A10 sơ cua: C4, C5 là bàn thường từ migration 0019.
   AND (SELECT COUNT(*) FROM dining_tables WHERE venue_id=1 AND is_spare=1) = 1
-  AND (SELECT COUNT(*) FROM membership_roles) = 6
+  -- 6 vai cũ + Phục vụ, Bar, Bếp (L6).
+  AND (SELECT COUNT(*) FROM membership_roles) = 9
+  AND (SELECT COUNT(*) FROM membership_roles mr JOIN roles r ON r.id = mr.role_id
+        WHERE r.code IN ('WAITER','BAR','KITCHEN')) = 3
+  -- Không tài khoản demo nào đăng nhập được: cả 9 dòng đều DISABLED và mang
+  -- password marker, nên seed không thể trở thành một đường vào hệ thống.
+  AND NOT EXISTS (SELECT 1 FROM users WHERE status <> 'DISABLED' OR password_hash <> '!DEMO_NO_LOGIN')
   AND (SELECT COUNT(DISTINCT status) FROM reservations) = 4
   AND (SELECT COUNT(DISTINCT status) FROM waitlist_entries) = 7
   AND (SELECT COUNT(DISTINCT outcome) FROM waitlist_contact_attempts) = 8

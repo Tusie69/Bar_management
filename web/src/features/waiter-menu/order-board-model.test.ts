@@ -32,6 +32,7 @@ function line(overrides: Partial<WaiterOrderLine> = {}): WaiterOrderLine {
     preparationStatus: "SUBMITTED",
     canAdjustQuantity: true,
     pendingCancellation: null,
+    lastRejection: null,
     ...overrides,
   }
 }
@@ -86,7 +87,14 @@ describe("quyền thao tác trên một dòng món", () => {
 
   it("nhãn số lượng nói cả phần đã hủy", () => {
     expect(lineNetLabel(line())).toBe("3")
-    expect(lineNetLabel(line({ cancelledQuantity: 1, netQuantity: 2 }))).toBe("2 (đã hủy 1/3)")
+    expect(lineNetLabel(line({ cancelledQuantity: 1, netQuantity: 2 }))).toBe("2")
+
+  })
+
+  it("không nói quầy đã nhận khi trạng thái thật vẫn là SUBMITTED", () => {
+    const capability = lineCapability(line({ preparationStatus: "SUBMITTED", canAdjustQuantity: false }))
+    expect(capability.notice).toContain("chờ quầy nhận")
+    expect(capability.notice).not.toContain("Quầy đã nhận phiếu")
   })
 
   it("mọi trạng thái chế biến đều có nhãn tiếng Việt", () => {

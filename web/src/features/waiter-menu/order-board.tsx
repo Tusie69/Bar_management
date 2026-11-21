@@ -4,7 +4,7 @@
  * Tách khỏi trang để test render được: `Sheet`/`AlertDialog` của Radix vẽ vào
  * portal, nên `renderToStaticMarkup` không thấy gì bên trong chúng.
  */
-import { AlertCircle, BellRing, Hourglass, Trash2 } from "lucide-react"
+import { AlertCircle, BellRing, CircleX, Hourglass, Trash2 } from "lucide-react"
 import { useEffect, useState } from "react"
 import {
   AlertDialog,
@@ -45,6 +45,7 @@ export function OrderLineRow({
   line,
   canAdjust,
   canRequestCancel,
+  canRequestWaste,
   onAdjust,
   onRequestCancel,
   busy = false,
@@ -54,22 +55,34 @@ export function OrderLineRow({
   canAdjust: boolean
   /** Quyền `order.cancel.request`. */
   canRequestCancel: boolean
+  /** Quyền `order.cancel.ready`; tách riêng, không suy từ role hay quyền xin hủy thường. */
+  canRequestWaste: boolean
   onAdjust: (line: WaiterOrderLine, quantity: number) => void
   onRequestCancel: (line: WaiterOrderLine) => void
   busy?: boolean
 }) {
   const capability = lineCapability(line)
   const cancelled = line.cancelledQuantity > 0
+  const partiallyCancelled = cancelled && line.netQuantity > 0
+  const fullyCancelled = cancelled && line.netQuantity === 0
+  const rejected = line.pendingCancellation === null ? line.lastRejection : null
+  const canOpenCancellation = canRequestCancel && (!capability.needsWasteAcknowledgement || canRequestWaste)
+  const notice =
+    capability.needsWasteAcknowledgement && !canRequestWaste && line.pendingCancellation === null
+      ? "Món đã làm xong. Bạn không có quyền ghi hao; hãy báo Thu ngân hoặc quản lý."
+      : capability.notice
   return (
     <li className="grid gap-2 border-t border-border px-4 py-3 first:border-t-0">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className={cn("font-medium", line.netQuantity === 0 && "text-muted-foreground line-through")}>
-            <span className="tnum">{lineNetLabel(line)}×</span> {line.itemName}{" "}
-            <span className="text-muted-foreground">({line.variantDisplayName})</span>
+            <span className="tnum">{lineNetLabel(line)}×</span> {line.itemName}
           </p>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <PreparationBadge line={line} />
+            {partiallyCancelled ? <Badge variant="outline">Đã hủy {line.cancelledQuantity}</Badge> : null}
+            {fullyCancelled ? <Badge variant="destructive">Đã hủy toàn bộ</Badge> : null}
+            <span>{line.variantDisplayName}</span>
             <span>{STATION_LABEL[line.preparationStation]}</span>
             <span className="tnum">{formatVnd(line.unitPriceVnd)}/phần</span>
           </div>
@@ -81,14 +94,22 @@ export function OrderLineRow({
         </div>
       </div>
 
-      {capability.notice ? (
+      {rejected ? <RejectionAlert rejection={rejected} /> : null}
+
+      {partiallyCancelled ? (
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Dòng này đã hủy một phần. Muốn thêm thì gọi đơn mới; muốn bớt thì gửi yêu cầu hủy.
+        </p>
+      ) : null}
+
+      {notice ? (
         <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
           {line.pendingCancellation ? (
             <Hourglass className="mt-0.5 size-3.5 shrink-0" aria-hidden />
           ) : (
             <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
           )}
-          <span>{capability.notice}</span>
+          <span>{notice}</span>
         </p>
       ) : null}
 
@@ -100,7 +121,7 @@ export function OrderLineRow({
             onChange={(next) => onAdjust(line, next)}
           />
         ) : null}
-        {canRequestCancel && capability.canRequestCancel ? (
+        {canOpenCancellation && capability.canRequestCancel ? (
           <Button
             type="button"
             variant="outline"
@@ -115,6 +136,33 @@ export function OrderLineRow({
         ) : null}
       </div>
     </li>
+  )
+}
+
+function rejectionTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })
+}
+
+function RejectionAlert({ rejection }: { rejection: NonNullable<WaiterOrderLine["lastRejection"]> }) {
+  return (
+    <div
+      role="alert"
+      className="grid gap-1 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2.5 text-sm text-destructive"
+    >
+      <p className="flex items-start gap-2 font-semibold">
+        <CircleX className="mt-0.5 size-4 shrink-0" aria-hidden />
+        <span>Yêu cầu hủy {rejection.quantity} phần đã bị từ chối.</span>
+      </p>
+      <p className="pl-6 text-xs leading-relaxed">
+        Người từ chối: <strong>{rejection.rejectedByDisplayName}</strong> · {rejectionTime(rejection.rejectedAt)}
+      </p>
+      <p className="pl-6 text-xs leading-relaxed">
+        Ghi chú quyết định: {rejection.decisionNote?.trim() || "Không có ghi chú."}
+      </p>
+      <p className="pl-6 text-xs font-medium leading-relaxed">Hãy báo lại khách rằng yêu cầu hủy không được duyệt.</p>
+    </div>
   )
 }
 

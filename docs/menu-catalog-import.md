@@ -28,18 +28,40 @@ Giá nguồn dùng nghìn đồng và được nhân `1.000` thành số nguyên
 
 ## Kết quả dry-run nguồn ngày 18/11/2026
 
-| Chỉ tiêu | Số lượng |
-| --- | ---: |
-| Nhóm lớn | 7 |
-| Phân loại | 24 |
-| Bản ghi category (nhóm + phân loại) | 31 |
-| Món | 178 |
-| Biến thể | 226 |
-| Giá | 226 |
-| Cảnh báo | 8 |
-| Lỗi validation | 0 |
-| Dòng cần xác minh | 9 |
-| Giá bằng 0 | 0 |
+Cột “sau L10” là kết quả sau khi dòng `lon / chai` một giá được ánh xạ thành hai
+đơn vị thay vì một đơn vị `OTHER` bị khoá bán — xem “Đơn vị bán” bên dưới.
+
+| Chỉ tiêu | Trước L10 | Sau L10 |
+| --- | ---: | ---: |
+| Nhóm lớn | 7 | 7 |
+| Phân loại | 24 | 24 |
+| Bản ghi category (nhóm + phân loại) | 31 | 31 |
+| Món | 178 | 178 |
+| Biến thể | 226 | 232 |
+| Giá | 226 | 232 |
+| Cảnh báo | 8 | 2 |
+| Lỗi validation | 0 | 0 |
+| Dòng cần xác minh | 9 | 3 |
+| Giá bằng 0 | 0 | 0 |
+
+Sáu biến thể tăng thêm là đơn vị `CAN` của Coca-Cola, Soda, Tonic, Sprite, Red
+Bull và Lavie; sáu đơn vị `BOTTLE` tương ứng đã có trong con số 226 cũ.
+
+### Đơn vị bán
+
+| Nguồn ghi | Ánh xạ |
+| --- | --- |
+| `ly / chai` | `GLASS` + `BOTTLE`, mỗi đơn vị một giá riêng |
+| `ly`, `shot`, `chai`, `phần`, `bình chia` | một đơn vị tương ứng |
+| `combo 6 shot`, `combo 12 shot` | `SHOT_COMBO_6` / `SHOT_COMBO_12` |
+| `lon / chai` với MỘT giá | `CAN` (“Lon”) + `BOTTLE` (“Chai”), **cùng giá**, cả hai bán được |
+| `lon / chai` với HAI giá khác nhau | lỗi `AMBIGUOUS_CAN_OR_BOTTLE_PRICES`; importer không đoán |
+
+Dòng `lon / chai` một giá là L10. Theo câu trả lời Q5 (lon hay chai cùng giá,
+khách chọn kiểu nào thì phục vụ kiểu đó), nguồn không hề mơ hồ về tiền — thứ
+chưa biết là đơn vị, và câu trả lời là “cả hai”. Bản trước gộp thành một biến
+thể `OTHER` bị khoá bán, nên sáu món nước ngọt không xuất hiện trên màn Gọi món
+và phiếu Bar không nói được khách muốn lon hay chai.
 
 ## Chạy lại importer
 
@@ -55,10 +77,20 @@ Cơ chế là `menu_items.import_digest` (migration 0034): vân tay của nội 
 | Nguồn đổi, đang `VERIFIED` | Cập nhật, chuyển `REVIEW_REQUIRED`, giữ `verified_snapshot` của lần duyệt trước |
 | Nguồn đổi, đang `REJECTED` | Cập nhật nội dung, giữ `REJECTED` |
 | Món không còn trong file | Không xoá, không ẩn; báo mã món ở `orphanedItemCodes` |
+| Biến thể của món vẫn còn nhưng không còn trong file | `is_active = 0`, không `DELETE`; đếm ở `variantsDeactivated` |
 
 `VERIFIED` không bao giờ bị hạ thẳng về `PENDING_VERIFICATION`. Hai trạng thái đó khác nghĩa nhau: một cái là “chưa ai xem bao giờ”, cái kia là “đã duyệt rồi nhưng nguồn vừa đổi”. Cả hai đều bị catalog production lọc ra, nên món tự ẩn cho tới khi có người duyệt lại — thà ẩn còn hơn bán sai giá.
 
-Những cột KHÔNG thuộc về file Excel và không bị importer ghi đè: `menu_items.is_active`, `menu_item_variants.is_active`, `menu_item_variants.availability_status`. Đó là trạng thái vận hành (tắt món, hết hàng), không phải thuộc tính của nguồn.
+Những cột KHÔNG thuộc về file Excel và không bị importer ghi đè: `menu_items.is_active`, `menu_item_variants.availability_status`. Đó là trạng thái vận hành (tắt món, hết hàng), không phải thuộc tính của nguồn.
+
+`menu_item_variants.is_active` có một ngoại lệ hẹp, thêm cùng L10: một biến thể
+mà chính nguồn này đã tạo (`import_key IS NOT NULL`) nhưng không còn trong file
+thì bị TẮT khi nhập lại. Không có nó, biến thể `OTHER` của bản nhập cũ vẫn nằm
+đó và `AMBIGUOUS_UNIT` tiếp tục chặn duyệt món, nên sửa ánh xạ cũng không bán
+được hàng. Giới hạn: chỉ tắt chứ không xoá (dòng đơn đã bán và lịch sử giá tham
+chiếu tới biến thể), chỉ những biến thể có `import_key` nên biến thể thêm tay
+trong màn quản trị không bao giờ bị chạm tới, và chỉ những dòng còn `is_active =
+1` nên chạy lại trên nguồn không đổi vẫn không ghi gì.
 
 `summary.written` in ra số lần ghi thật của mỗi lượt chạy; chạy lại trên nguồn không đổi phải cho `changed: false` và mọi ô `*Created` / `*Updated` bằng 0.
 
@@ -95,8 +127,8 @@ pnpm --filter @21gam/api menu:verify -- --venue-id=1 --source=21GAM_MARKETING_ME
 
 | Mã | Ý nghĩa |
 | --- | --- |
-| `VARIANT_NOT_SELLABLE` | Biến thể đang khoá bán — dòng `300++` và sáu dòng `lon / chai` |
-| `AMBIGUOUS_UNIT` | `unit_code = OTHER`: nguồn ghi hai đơn vị nhưng chỉ có một giá |
+| `VARIANT_NOT_SELLABLE` | Biến thể đang khoá bán — dòng `300++` |
+| `AMBIGUOUS_UNIT` | `unit_code = OTHER`: chưa biết đây là đơn vị gì. Từ L10 importer không còn sinh `OTHER` cho `lon / chai`; mã này vẫn còn vì `OTHER` tới được từ dữ liệu nhập trước bản sửa và từ biến thể tạo tay |
 | `MISSING_PRICE` | Biến thể chưa có giá hiện hành |
 | `NO_VARIANT` | Món không có biến thể nào |
 | `ITEM_INACTIVE` | Món đang tắt |

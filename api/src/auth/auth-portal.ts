@@ -29,7 +29,12 @@ export const PORTAL_ROLE_CODES: Readonly<Record<AuthPortal, readonly string[]>> 
   receptionist: ['RECEPTIONIST'],
   'customer-care': ['CUSTOMER_CARE'],
   cashier: ['CASHIER'],
-  waiter: ['WAITER'],
+  // L9: Bartender lên đơn cho khách gọi ở quầy (câu trả lời Q1), nên BAR đăng
+  // nhập được ở cổng Phục vụ. Nó KHÔNG phải một đường vòng: `listPermissions`
+  // giao quyền với đúng các vai của cổng, nên ở đây BAR chỉ mang theo quyền của
+  // chính vai BAR — sáu permission order/preparation.ready mà migration 0041
+  // cấp — chứ không nhận thêm gì từ WAITER.
+  waiter: ['WAITER', 'BAR'],
   preparation: ['BAR', 'KITCHEN'],
 }
 

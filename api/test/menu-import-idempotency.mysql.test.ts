@@ -44,17 +44,38 @@ function row(overrides: Partial<MenuWorkbookRow> = {}): MenuWorkbookRow {
   }
 }
 
-/** Dòng thứ hai mô phỏng một món "lon / chai" một giá: luôn bị khoá bán. */
-function ambiguousRow(): MenuWorkbookRow {
+/**
+ * Dòng luôn bị chặn duyệt: giá nguồn `300++` là giá khởi điểm, nên biến thể
+ * được lưu mà không được phép bán.
+ *
+ * L10 đã lấy đi dòng "lon / chai" khỏi vai này — nó không còn mơ hồ kể từ câu
+ * trả lời Q5 — nên hàng đợi đối chiếu cần một dòng khác thực sự còn bị chặn,
+ * nếu không các test dưới đây chỉ còn kiểm một hàng đợi rỗng.
+ */
+function blockedRow(): MenuWorkbookRow {
   return row({
     rowNumber: 11,
     sequence: 2,
+    name: '(SPECIAL COCKTAIL)',
+    description: null,
+    glassShotPriceThousands: 300,
+    sellingUnit: 'ly',
+    note: '300++',
+  })
+}
+
+/** Món nước ngọt "lon / chai" một giá: sau L10 là Lon + Chai, cùng giá, bán được. */
+function softDrinkRow(overrides: Partial<MenuWorkbookRow> = {}): MenuWorkbookRow {
+  return row({
+    rowNumber: 12,
+    sequence: 3,
     group: 'Nước ngọt',
     category: 'Soft drink',
     name: 'COCA-COLA',
     description: null,
     glassShotPriceThousands: 25,
     sellingUnit: 'lon / chai',
+    ...overrides,
   })
 }
 
@@ -233,20 +254,20 @@ mysqlDescribe('Module Phục vụ 2 — import lại và đối chiếu', () => 
   })
 
   describe('3. Quy trình đối chiếu', () => {
-    it('hàng đợi chỉ gồm món chờ duyệt, và món mơ hồ bị chặn', async () => {
-      await runImport([row(), ambiguousRow()], FIRST_RUN)
+    it('hàng đợi chỉ gồm món chờ duyệt, và món giá khởi điểm bị chặn', async () => {
+      await runImport([row(), blockedRow()], FIRST_RUN)
       const plan = await buildVerificationPlan(scope, { source: MENU_IMPORT_SOURCE })
 
       expect(plan.entries).toHaveLength(2)
       expect(plan.verifiable.map((entry) => entry.candidate.name)).toEqual(['MOJITO'])
       const blocked = plan.blocked[0]!
-      expect(blocked.candidate.name).toBe('COCA-COLA')
+      expect(blocked.candidate.name).toBe('(SPECIAL COCKTAIL)')
       expect(blocked.blockers.map((blocker) => blocker.code))
-        .toEqual(expect.arrayContaining(['VARIANT_NOT_SELLABLE', 'AMBIGUOUS_UNIT']))
+        .toEqual(expect.arrayContaining(['VARIANT_NOT_SELLABLE']))
     })
 
     it('duyệt xong thì món lên VERIFIED và có một dòng nhật ký mang tên người duyệt', async () => {
-      await runImport([row(), ambiguousRow()], FIRST_RUN)
+      await runImport([row(), blockedRow()], FIRST_RUN)
       const verified = await verifyEverything()
       expect(verified).toHaveLength(1)
 
@@ -261,12 +282,12 @@ mysqlDescribe('Module Phục vụ 2 — import lại và đối chiếu', () => 
       expect(Number(audit[0]!.entity_id)).toBe(Number(after.id))
       expect(Number(audit[0]!.actor_user_id)).toBe(Number(after.verified_by_user_id))
 
-      // Món mơ hồ vẫn nằm ngoài menu.
-      expect((await itemRow('COCA-COLA')).source_status).toBe('PENDING_VERIFICATION')
+      // Món bị chặn vẫn nằm ngoài menu.
+      expect((await itemRow('(SPECIAL COCKTAIL)')).source_status).toBe('PENDING_VERIFICATION')
     })
 
     it('từ chối duyệt cả lô nếu trong lô còn món bị chặn', async () => {
-      await runImport([row(), ambiguousRow()], FIRST_RUN)
+      await runImport([row(), blockedRow()], FIRST_RUN)
       const plan = await buildVerificationPlan(scope, { source: MENU_IMPORT_SOURCE })
       await expect(applyVerification(scope, { userId: 9802, membershipId: 9802 }, plan.entries))
         .rejects.toMatchObject({ code: 'MENU_VERIFICATION_BLOCKED' })
@@ -301,11 +322,116 @@ mysqlDescribe('Module Phục vụ 2 — import lại và đối chiếu', () => 
 
   describe('4. Món biến mất khỏi nguồn', () => {
     it('được báo tên chứ không bị tự xoá hay tự ẩn', async () => {
-      await runImport([row(), ambiguousRow()], FIRST_RUN)
+      await runImport([row(), blockedRow()], FIRST_RUN)
       const outcome = await runImport([row()], SECOND_RUN)
 
       expect(outcome.orphanedItemCodes).toHaveLength(1)
-      expect((await itemRow('COCA-COLA')).source_status).toBe('PENDING_VERIFICATION')
+      expect((await itemRow('(SPECIAL COCKTAIL)')).source_status).toBe('PENDING_VERIFICATION')
+    })
+  })
+
+  describe('5. L10 — nước ngọt lon / chai một giá', () => {
+    async function variantRows(): Promise<(RowDataPacket & {
+      unit_code: string; display_name: string; is_active: number; is_sellable: number
+      import_key: string | null; amount_vnd: string | null
+    })[]> {
+      const [rows] = await databasePool.execute<(RowDataPacket & {
+        unit_code: string; display_name: string; is_active: number; is_sellable: number
+        import_key: string | null; amount_vnd: string | null
+      })[]>(
+        `SELECT v.unit_code, v.display_name, v.is_active, v.is_sellable, v.import_key, p.amount_vnd
+         FROM menu_item_variants AS v
+         JOIN menu_items AS mi ON mi.id = v.menu_item_id
+         LEFT JOIN menu_variant_prices AS p
+           ON p.variant_id = v.id AND p.is_active = 1 AND p.effective_to IS NULL
+         WHERE v.venue_id = ? AND mi.name = 'COCA-COLA'
+         ORDER BY v.display_order, v.id`,
+        [actor.venueId],
+      )
+      return rows
+    }
+
+    /** Dòng mà importer CŨ để lại: một biến thể OTHER bị khoá bán. */
+    async function insertLegacyOtherVariant(importKey: string | null): Promise<void> {
+      const [items] = await databasePool.execute<(RowDataPacket & { id: number })[]>(
+        "SELECT id FROM menu_items WHERE venue_id = ? AND name = 'COCA-COLA'",
+        [actor.venueId],
+      )
+      await databasePool.execute(
+        `INSERT INTO menu_item_variants
+           (venue_id, menu_item_id, code, import_key, unit_code, display_name,
+            is_active, is_sellable, availability_status, display_order)
+         VALUES (?, ?, ?, ?, 'OTHER', 'Lon / chai (cần xác minh)', 1, 0, 'AVAILABLE', 9)`,
+        [actor.venueId, Number(items[0]!.id), `LEGACY_${importKey ?? 'MANUAL'}`, importKey],
+      )
+    }
+
+    it('nhập thành Lon và Chai cùng giá, cả hai bán được', async () => {
+      const outcome = await runImport([softDrinkRow()], FIRST_RUN)
+
+      expect(outcome.tally.variantsCreated).toBe(2)
+      expect(outcome.tally.pricesCreated).toBe(2)
+      const variants = await variantRows()
+      expect(variants.map((variant) => [variant.unit_code, variant.display_name]))
+        .toEqual([['CAN', 'Lon'], ['BOTTLE', 'Chai']])
+      for (const variant of variants) {
+        expect(Number(variant.is_sellable)).toBe(1)
+        expect(Number(variant.is_active)).toBe(1)
+        expect(Number(variant.amount_vnd)).toBe(25_000)
+      }
+    })
+
+    it('duyệt được: không còn blocker đơn vị mơ hồ', async () => {
+      await runImport([softDrinkRow()], FIRST_RUN)
+      const plan = await buildVerificationPlan(scope, { source: MENU_IMPORT_SOURCE })
+      const entry = plan.entries.find((candidate) => candidate.candidate.name === 'COCA-COLA')!
+      expect(entry.blockers).toEqual([])
+      expect(await verifyEverything()).toContain(entry.candidate.code)
+    })
+
+    it('biến thể OTHER cũ của cùng nguồn bị tắt khi nhập lại, không bị xoá', async () => {
+      await runImport([softDrinkRow()], FIRST_RUN)
+      await insertLegacyOtherVariant('legacy-other-import-key')
+
+      // Nguồn đổi giá, nên món được ghi lại và việc dọn biến thể mới chạy.
+      const outcome = await runImport([softDrinkRow({ glassShotPriceThousands: 26 })], SECOND_RUN)
+
+      expect(outcome.tally.variantsDeactivated).toBe(1)
+      const variants = await variantRows()
+      // Vẫn còn ba dòng: không có DELETE nào.
+      expect(variants).toHaveLength(3)
+      const legacy = variants.find((variant) => variant.unit_code === 'OTHER')!
+      expect(Number(legacy.is_active)).toBe(0)
+      for (const variant of variants.filter((value) => value.unit_code !== 'OTHER')) {
+        expect(Number(variant.is_active)).toBe(1)
+      }
+      // Và hàng đợi đối chiếu không còn thấy nó, nên món duyệt được.
+      const plan = await buildVerificationPlan(scope, { source: MENU_IMPORT_SOURCE })
+      const entry = plan.entries.find((candidate) => candidate.candidate.name === 'COCA-COLA')!
+      expect(entry.blockers).toEqual([])
+    })
+
+    it('không tắt biến thể thêm tay, vì nó không có import_key', async () => {
+      await runImport([softDrinkRow()], FIRST_RUN)
+      await insertLegacyOtherVariant(null)
+
+      const outcome = await runImport([softDrinkRow({ glassShotPriceThousands: 26 })], SECOND_RUN)
+
+      expect(outcome.tally.variantsDeactivated).toBe(0)
+      const manual = (await variantRows()).find((variant) => variant.import_key === null)!
+      expect(Number(manual.is_active)).toBe(1)
+    })
+
+    it('chạy lại trên cùng file không tắt thêm gì và không tăng change_seq', async () => {
+      await runImport([softDrinkRow()], FIRST_RUN)
+      const seqBefore = await venueChangeSeq()
+
+      const second = await runImport([softDrinkRow()], SECOND_RUN)
+
+      expect(second.tally.variantsDeactivated).toBe(0)
+      expect(second.tally.itemsUnchanged).toBe(1)
+      expect(second.tally.changed).toBe(false)
+      expect(await venueChangeSeq()).toBe(seqBefore)
     })
   })
 })

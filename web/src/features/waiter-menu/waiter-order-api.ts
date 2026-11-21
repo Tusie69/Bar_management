@@ -26,6 +26,22 @@ export interface PendingCancellationView {
   requestedAt: string
 }
 
+/**
+ * L5 — lần từ chối gần nhất của một dòng món, khi nó còn là trạng thái hiện
+ * hành. Giai đoạn 3 dựng cảnh báo đỏ từ đây; hợp đồng có trước để màn hình
+ * không phải đoán hình dạng dữ liệu.
+ */
+export interface LineRejectionView {
+  cancellationId: number
+  quantity: number
+  reason: string
+  rejectedByUserId: number
+  rejectedByDisplayName: string
+  rejectedAt: string
+  /** Người duyệt không buộc phải giải thích, nên có thể `null`. */
+  decisionNote: string | null
+}
+
 export interface WaiterOrderLine {
   lineNo: number
   menuItemId: number
@@ -48,6 +64,11 @@ export interface WaiterOrderLine {
   preparationStatus: PreparationStatus | null
   canAdjustQuantity: boolean
   pendingCancellation: PendingCancellationView | null
+  /**
+   * `null` khi dòng chưa từng bị từ chối, hoặc khi sau lần từ chối đó đã có một
+   * yêu cầu mới hơn (`pendingCancellation` đang chờ, hoặc đã được duyệt).
+   */
+  lastRejection: LineRejectionView | null
 }
 
 export interface PreparationTicketView {

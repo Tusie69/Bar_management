@@ -1,12 +1,17 @@
 /** Module 4 preparation queue responsive and interaction acceptance. */
 import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import { chromium, expect } from "@playwright/test"
 
 const base = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5191"
+const output = process.env.E2E_SHOTS ?? path.join(os.tmpdir(), "21gam-preparation-queue")
+fs.mkdirSync(output, { recursive: true })
 const chrome = process.env.PW_CHROMIUM_PATH ?? "C:/Program Files/Google/Chrome/Application/chrome.exe"
 const browser = await chromium.launch(fs.existsSync(chrome) ? { executablePath: chrome } : {})
 const viewports = [
   { width: 360, height: 800 },
+  { width: 375, height: 812 },
   { width: 390, height: 844 },
   { width: 768, height: 1024 },
   { width: 1280, height: 800 },
@@ -26,7 +31,18 @@ function ticket(ticketId, status, version) {
     station: "BAR", status, version, submittedAt: "2030-10-24T12:00:00.000Z",
     acceptedAt: null, startedAt: null, readyAt: null, collectedAt: null,
     waitSeconds: ticketId * 60, tableCodes: [`A${ticketId}`],
-    lines: [{ lineNo: 1, itemName: `Món ${ticketId}`, variantDisplayName: "Ly", quantity: 2, note: ticketId === 1 ? "Ít đá" : null }],
+    // L2: mock phải theo đúng hợp đồng mới — API trả số CÒN PHẢI LÀM kèm
+    // cancelledQuantity và originalQuantity. Phiếu 2 mang thêm một dòng hủy một
+    // phần và một dòng hủy toàn bộ để màn hình được kiểm cả ba trạng thái.
+    lines: [
+      { lineNo: 1, itemName: `Món ${ticketId}`, variantDisplayName: "Ly", quantity: 2, cancelledQuantity: 0, originalQuantity: 2, note: ticketId === 1 ? "Ít đá" : null },
+      ...(ticketId === 2
+        ? [
+            { lineNo: 2, itemName: "Khay thịt muối", variantDisplayName: "Phần", quantity: 1, cancelledQuantity: 1, originalQuantity: 2, note: "Không hành" },
+            { lineNo: 3, itemName: "Khoai tây truffle", variantDisplayName: "Phần", quantity: 0, cancelledQuantity: 1, originalQuantity: 1, note: null },
+          ]
+        : []),
+    ],
   }
 }
 
@@ -67,6 +83,26 @@ for (const viewport of viewports) {
     await expect(page.getByRole("heading", { name: "Hàng đợi Bar" })).toBeVisible()
     await expect(page.getByRole("region", { name: "Các trạng thái hàng đợi" })).toBeVisible()
     await expect(page.getByText("Ít đá")).toBeVisible()
+
+    // L2 — ba trạng thái hủy trên cùng một phiếu.
+    const ticket2 = page.locator('[data-ticket-id="2"]')
+    // Không hủy: con số nguyên như khách gọi, không nhãn.
+    await expect(ticket2.locator('[data-line-no="1"]')).toContainText("2×")
+    await expect(ticket2.locator('[data-line-no="1"][data-cancelled]')).toHaveCount(0)
+    // Hủy 1 trong 2: hiện 1× kèm nhãn nói rõ chỉ làm 1, ghi chú vẫn còn.
+    const partial = ticket2.locator('[data-line-no="2"]')
+    await expect(partial).toHaveAttribute("data-cancelled", "partial")
+    await expect(partial).toContainText("1×")
+    await expect(partial).toContainText("Đã hủy 1, chỉ làm 1")
+    await expect(partial).toContainText("Không hành")
+    await expect(partial).toContainText("Phần")
+    // Hủy toàn bộ: gạch ngang, làm mờ, và nói thẳng là không làm.
+    const full = ticket2.locator('[data-line-no="3"]')
+    await expect(full).toHaveAttribute("data-cancelled", "all")
+    await expect(full).toContainText("Đã hủy toàn bộ, không làm")
+    expect(await full.evaluate((node) => node.className)).toContain("opacity-60")
+    expect(await full.locator("div").first().evaluate((node) => getComputedStyle(node).textDecorationLine))
+      .toContain("line-through")
     const metrics = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
     expect(metrics.scroll).toBeLessThanOrEqual(metrics.width)
     await page.getByRole("button", { name: "Tiếp nhận" }).click()
@@ -82,6 +118,7 @@ for (const viewport of viewports) {
     }
     const actionSize = await page.getByRole("button", { name: "Bắt đầu làm" }).first().evaluate((node) => node.getBoundingClientRect().height)
     expect(actionSize).toBeGreaterThanOrEqual(44)
+    await page.screenshot({ path: path.join(output, `bar-after-cancellation-${viewport.width}x${viewport.height}.png`) })
     console.log(`PASS preparation ${viewport.width}x${viewport.height}`)
   } catch (error) {
     failures += 1

@@ -19,6 +19,8 @@ import { createWalkIn } from '../src/modules/bookings/booking.repository.js'
 import { mergeVisitTables } from '../src/modules/visits/visit.repository.js'
 import type { WaiterOrderDetail, WaiterOrderListView } from '../src/modules/orders/order.model.js'
 import type { CancellationQueueView } from '../src/modules/orders/order-adjustment.repository.js'
+import type { PreparationQueueSnapshot, PreparationTicketView as PreparationQueueTicket }
+  from '../src/modules/preparation/preparation.model.js'
 import {
   actor,
   businessDate,
@@ -39,6 +41,7 @@ const mysqlDescribe = process.env.RUN_MYSQL_INTEGRATION === '1' && /_test$/.test
 const waiterUserId = 9931
 const cashierUserId = 9932
 const barUserId = 9933
+const kitchenUserId = 9935
 const secondTableId = 9934
 
 interface Session {
@@ -208,6 +211,46 @@ async function requestCancellation(
   })
 }
 
+/** Quyết định một yêu cầu hủy. Trả về thân phản hồi để test đọc tiếp. */
+async function decide(
+  cashier: Session,
+  cancellationId: number,
+  decision: 'approve' | 'reject',
+  expectedVersion = 1,
+  note?: string,
+) {
+  const response = await send(cashier, 'post', `/api/v1/orders/cancellations/${cancellationId}/${decision}`, {
+    expectedVersion,
+    ...(note === undefined ? {} : { note }),
+    idempotencyKey: idem(),
+  })
+  expect(response.status, JSON.stringify(response.body)).toBe(200)
+  return response.body as { cancellationId: number; status: string; version: number; order: WaiterOrderDetail }
+}
+
+/** Mã yêu cầu hủy vừa được gửi. */
+function cancellationIdOf(response: { body: unknown }): number {
+  return (response.body as { cancellation: { cancellationId: number } }).cancellation.cancellationId
+}
+
+/** Phiếu của một quầy, đọc qua đúng endpoint mà màn hàng đợi gọi. */
+async function queueTicket(session: Session, station: 'BAR' | 'KITCHEN', ticketId: number) {
+  const response = await read(session, `/api/v1/preparation/${station}/tickets`)
+  expect(response.status, JSON.stringify(response.body)).toBe(200)
+  const snapshot = response.body as unknown as PreparationQueueSnapshot
+  return {
+    snapshot,
+    ticket: snapshot.tickets.find((candidate) => candidate.ticketId === ticketId),
+  }
+}
+
+async function historyTicket(session: Session, station: 'BAR' | 'KITCHEN', ticketId: number) {
+  const response = await read(session, `/api/v1/preparation/${station}/history`)
+  expect(response.status, JSON.stringify(response.body)).toBe(200)
+  const body = response.body as unknown as { tickets: PreparationQueueTicket[] }
+  return body.tickets.find((candidate) => candidate.ticketId === ticketId)
+}
+
 mysqlDescribe('Module Phục vụ 5 — theo dõi và điều chỉnh đơn', () => {
   beforeAll(initializeFixture)
   beforeEach(async () => {
@@ -215,6 +258,9 @@ mysqlDescribe('Module Phục vụ 5 — theo dõi và điều chỉnh đơn', ()
     await seedFixtureAccount(waiterUserId, 'module5_phucvu', 'WAITER')
     await seedFixtureAccount(cashierUserId, 'module5_thungan', 'CASHIER')
     await seedFixtureAccount(barUserId, 'module5_bar', 'BAR')
+    // L2: hàng đợi Bếp phải được kiểm riêng — hai quầy đọc hai phiếu khác nhau
+    // của cùng một đơn, và lỗi trừ số lượng có thể chỉ xuất hiện ở một bên.
+    await seedFixtureAccount(kitchenUserId, 'module5_bep', 'KITCHEN')
   })
   afterAll(async () => {
     await clearFixture()
@@ -812,5 +858,531 @@ mysqlDescribe('Module Phục vụ 5 — theo dõi và điều chỉnh đơn', ()
       expect(queue.entries).toHaveLength(1)
       expect(queue.entries[0]).toMatchObject({ lineNo: 2, tableCodes: ['A1', 'M5'] })
     })
+  })
+
+  /**
+   * L2 — phiếu chế biến phải ghi số CÒN PHẢI LÀM.
+   *
+   * Trước bản sửa, `ticketLinesBatch` đọc `sales_order_lines.quantity` và bỏ qua
+   * `cancelled_quantity`, nên sau khi Thu ngân duyệt hủy một khay, Bếp vẫn thấy
+   * "2× KHAY THỊT MUỐI" và làm hai khay trong khi khách chỉ trả một.
+   */
+  describe('7. L2 — số lượng trên phiếu chế biến', () => {
+    it('không có gì bị hủy thì phiếu ghi nguyên số khách gọi', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const bar = await signIn('module5_bar', 'preparation')
+      const order = await createOrder(waiter, seeded)
+
+      const { ticket } = await queueTicket(bar, 'BAR', barTicket(order).ticketId)
+      expect(ticket!.lines).toHaveLength(1)
+      expect(ticket!.lines[0]).toMatchObject({
+        itemName: 'MACALLAN 12',
+        variantDisplayName: 'Ly',
+        quantity: 3,
+        cancelledQuantity: 0,
+        originalQuantity: 3,
+      })
+    })
+
+    it('hủy một phần: phiếu ghi phần còn lại, giữ cả số gốc để đối chiếu', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const cashier = await signIn('module5_thungan', 'cashier')
+      const bar = await signIn('module5_bar', 'preparation')
+      const order = await createOrder(waiter, seeded)
+      const ticketId = barTicket(order).ticketId
+
+      await decide(cashier, cancellationIdOf(await requestCancellation(waiter, order, { quantity: 1 })), 'approve')
+
+      const { ticket } = await queueTicket(bar, 'BAR', ticketId)
+      expect(ticket!.lines[0]).toMatchObject({ quantity: 2, cancelledQuantity: 1, originalQuantity: 3 })
+      // Đơn vị bán không bị mất cùng với số lượng.
+      expect(ticket!.lines[0]!.variantDisplayName).toBe('Ly')
+      // Thống kê phiếu: tổng lúc gửi KHÔNG đổi, phần đã hủy nằm riêng.
+      const stats = await ticketRow(ticketId)
+      expect(Number(stats.item_count)).toBe(3)
+      expect(Number(stats.cancelled_item_count)).toBe(1)
+    })
+
+    it('hủy toàn bộ: phiếu ghi 0 và dòng vẫn còn để quầy biết là không làm', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const cashier = await signIn('module5_thungan', 'cashier')
+      const bar = await signIn('module5_bar', 'preparation')
+      const order = await createOrder(waiter, seeded)
+      const ticketId = barTicket(order).ticketId
+
+      await decide(cashier, cancellationIdOf(await requestCancellation(waiter, order, { quantity: 3 })), 'approve')
+
+      const { ticket } = await queueTicket(bar, 'BAR', ticketId)
+      // Dòng KHÔNG bị lọc khỏi phiếu: "không có dòng" và "dòng đã hủy toàn bộ"
+      // đọc giống nhau trên màn hình, và cái đầu trông như phiếu bị mất món.
+      expect(ticket!.lines).toHaveLength(1)
+      expect(ticket!.lines[0]).toMatchObject({ quantity: 0, cancelledQuantity: 3, originalQuantity: 3 })
+      expect(ticket!.lines[0]!.quantity).toBeGreaterThanOrEqual(0)
+    })
+
+    it('phiếu Bếp trừ độc lập với phiếu Bar của cùng một đơn', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const cashier = await signIn('module5_thungan', 'cashier')
+      const bar = await signIn('module5_bar', 'preparation')
+      const kitchen = await signIn('module5_bep', 'preparation')
+      const order = await createOrder(waiter, seeded)
+      const barTicketId = barTicket(order).ticketId
+      const kitchenTicketId = order.tickets.find((candidate) => candidate.station === 'KITCHEN')!.ticketId
+
+      // Chỉ hủy dòng của Bếp (dòng 2: 1 phần khoai).
+      await decide(
+        cashier,
+        cancellationIdOf(await requestCancellation(waiter, order, { lineNo: 2, quantity: 1 })),
+        'approve',
+      )
+
+      const kitchenView = await queueTicket(kitchen, 'KITCHEN', kitchenTicketId)
+      expect(kitchenView.ticket!.lines[0]).toMatchObject({
+        itemName: 'TRUFFLE FRIES', quantity: 0, cancelledQuantity: 1, originalQuantity: 1,
+      })
+      // Phiếu Bar của cùng đơn không bị trừ lây.
+      const barView = await queueTicket(bar, 'BAR', barTicketId)
+      expect(barView.ticket!.lines[0]).toMatchObject({ quantity: 3, cancelledQuantity: 0 })
+      expect(Number((await ticketRow(barTicketId)).cancelled_item_count)).toBe(0)
+      expect(Number((await ticketRow(kitchenTicketId)).cancelled_item_count)).toBe(1)
+    })
+
+    it('hủy sau khi quầy đã nhận phiếu vẫn trừ đúng trên phiếu đang làm', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const cashier = await signIn('module5_thungan', 'cashier')
+      const bar = await signIn('module5_bar', 'preparation')
+      const order = await createOrder(waiter, seeded)
+      const ticketId = barTicket(order).ticketId
+
+      // SUBMITTED → ACCEPTED → PREPARING: quầy đang làm thì mới có khay bị bỏ.
+      const accepted = await advanceBarTicket(bar, ticketId, 'ACCEPTED', 1)
+      await advanceBarTicket(bar, ticketId, 'PREPARING', accepted)
+
+      const detail = (await read(waiter, `/api/v1/waiter/orders/${order.orderId}`))
+        .body as { order: WaiterOrderDetail }
+      await decide(
+        cashier,
+        cancellationIdOf(await requestCancellation(waiter, detail.order, { quantity: 1 })),
+        'approve',
+      )
+
+      const { ticket } = await queueTicket(bar, 'BAR', ticketId)
+      expect(ticket!.status).toBe('PREPARING')
+      expect(ticket!.lines[0]).toMatchObject({ quantity: 2, cancelledQuantity: 1, originalQuantity: 3 })
+    })
+
+    it('hàng đợi tự cập nhật: con trỏ thay đổi nên Bar/Bếp không phải tải lại tay', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const cashier = await signIn('module5_thungan', 'cashier')
+      const bar = await signIn('module5_bar', 'preparation')
+      const order = await createOrder(waiter, seeded)
+      const ticketId = barTicket(order).ticketId
+
+      const before = await queueTicket(bar, 'BAR', ticketId)
+      await decide(cashier, cancellationIdOf(await requestCancellation(waiter, order, { quantity: 1 })), 'approve')
+      const after = await queueTicket(bar, 'BAR', ticketId)
+
+      // `changeCursor` là `venues.change_seq`, cũng là thứ đẩy sự kiện
+      // `floor-changed` trên SSE mà màn hàng đợi đang nghe. Nó tiến nghĩa là
+      // máy của quầy được đánh thức, không phải chờ ai bấm tải lại.
+      expect(BigInt(after.snapshot.changeCursor)).toBeGreaterThan(BigInt(before.snapshot.changeCursor))
+      expect(after.ticket!.lines[0]!.quantity).toBe(2)
+    })
+
+    it('lịch sử phiếu đã hoàn thành cũng ghi phần còn lại, không ghi số gốc', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const cashier = await signIn('module5_thungan', 'cashier')
+      const bar = await signIn('module5_bar', 'preparation')
+      const order = await createOrder(waiter, seeded)
+      const ticketId = barTicket(order).ticketId
+
+      await decide(cashier, cancellationIdOf(await requestCancellation(waiter, order, { quantity: 1 })), 'approve')
+
+      // Đưa phiếu tới COLLECTED để nó rời hàng đợi và vào lịch sử. Version đọc
+      // lại từ snapshot vì lần duyệt hủy vừa rồi đã tăng version của phiếu.
+      let version = (await queueTicket(bar, 'BAR', ticketId)).ticket!.version
+      for (const toStatus of ['ACCEPTED', 'PREPARING', 'READY'] as const) {
+        version = await advanceBarTicket(bar, ticketId, toStatus, version)
+      }
+      const collected = await send(bar, 'post', `/api/v1/preparation/bar/tickets/${ticketId}/transition`, {
+        toStatus: 'COLLECTED', expectedVersion: version, idempotencyKey: idem(),
+      })
+      expect(collected.status, JSON.stringify(collected.body)).toBe(200)
+
+      expect((await queueTicket(bar, 'BAR', ticketId)).ticket).toBeUndefined()
+      const history = await historyTicket(bar, 'BAR', ticketId)
+      expect(history!.lines[0]).toMatchObject({ quantity: 2, cancelledQuantity: 1, originalQuantity: 3 })
+    })
+
+    it('một lần từ chối không trừ gì trên phiếu', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const cashier = await signIn('module5_thungan', 'cashier')
+      const bar = await signIn('module5_bar', 'preparation')
+      const order = await createOrder(waiter, seeded)
+
+      await decide(cashier, cancellationIdOf(await requestCancellation(waiter, order, { quantity: 1 })), 'reject')
+
+      const { ticket } = await queueTicket(bar, 'BAR', barTicket(order).ticketId)
+      expect(ticket!.lines[0]).toMatchObject({ quantity: 3, cancelledQuantity: 0, originalQuantity: 3 })
+    })
+  })
+
+  /**
+   * L5 (phần backend) — dòng món mang theo lần từ chối gần nhất.
+   *
+   * API chi tiết đơn trước đây chỉ join yêu cầu `PENDING`, nên một lần từ chối
+   * không để lại dấu vết nào ở phía Phục vụ: yêu cầu biến mất và người gửi
+   * thường bấm xin hủy lại. Khung cảnh báo đỏ là việc của Giai đoạn 3; ở đây chỉ
+   * có hợp đồng dữ liệu.
+   */
+  describe('8. L5 — lần từ chối gần nhất của dòng món', () => {
+    async function detailOf(session: Session, orderId: number): Promise<WaiterOrderDetail> {
+      const response = await read(session, `/api/v1/waiter/orders/${orderId}`)
+      expect(response.status, JSON.stringify(response.body)).toBe(200)
+      return (response.body as { order: WaiterOrderDetail }).order
+    }
+
+    it('trả người từ chối, thời điểm, lý do và ghi chú quyết định', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const cashier = await signIn('module5_thungan', 'cashier')
+      const order = await createOrder(waiter, seeded)
+
+      const cancellationId = cancellationIdOf(
+        await requestCancellation(waiter, order, { quantity: 2, reason: 'Khách đổi sang bia' }),
+      )
+      await decide(cashier, cancellationId, 'reject', 1, 'Món đã rót xong, không hủy được')
+
+      const detail = await detailOf(waiter, order.orderId)
+      expect(detail.lines[0]!.pendingCancellation).toBeNull()
+      const rejection = detail.lines[0]!.lastRejection!
+      const { rejectedAt, ...rest } = rejection
+      expect(rest).toEqual({
+        cancellationId,
+        quantity: 2,
+        reason: 'Khách đổi sang bia',
+        rejectedByUserId: cashierUserId,
+        rejectedByDisplayName: 'module5_thungan',
+        decisionNote: 'Món đã rót xong, không hủy được',
+      })
+      // Thời điểm là ISO-8601 UTC do server sinh, nên chỉ kiểm hình dạng.
+      expect(rejectedAt).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/)
+      // Dòng không bị trừ: từ chối không hủy gì.
+      expect(detail.lines[0]).toMatchObject({ quantity: 3, cancelledQuantity: 0, netQuantity: 3 })
+    })
+
+    it('ghi chú trống trả về null chứ không phải chuỗi rỗng bịa ra', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const cashier = await signIn('module5_thungan', 'cashier')
+      const order = await createOrder(waiter, seeded)
+
+      await decide(cashier, cancellationIdOf(await requestCancellation(waiter, order, { quantity: 1 })), 'reject')
+
+      expect((await detailOf(waiter, order.orderId)).lines[0]!.lastRejection!.decisionNote).toBeNull()
+    })
+
+    it('nhiều lần từ chối trên cùng dòng: chọn lần gần nhất, không nhân đôi dòng món', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const cashier = await signIn('module5_thungan', 'cashier')
+      const order = await createOrder(waiter, seeded)
+
+      const first = cancellationIdOf(await requestCancellation(waiter, order, { quantity: 1, reason: 'Lần một' }))
+      await decide(cashier, first, 'reject', 1, 'Không duyệt lần một')
+      const second = cancellationIdOf(await requestCancellation(waiter, order, { quantity: 2, reason: 'Lần hai' }))
+      await decide(cashier, second, 'reject', 1, 'Không duyệt lần hai')
+
+      const detail = await detailOf(waiter, order.orderId)
+      // Đơn có đúng hai dòng món; hai lịch sử hủy trên một dòng không được biến
+      // thành hai dòng món trên màn hình.
+      expect(detail.lines).toHaveLength(2)
+      expect(detail.lines[0]!.lastRejection).toMatchObject({
+        cancellationId: second,
+        quantity: 2,
+        reason: 'Lần hai',
+        decisionNote: 'Không duyệt lần hai',
+      })
+      // Lịch sử của lần một vẫn còn trong database.
+      const [history] = await databasePool.execute<(RowDataPacket & { id: number; status: string })[]>(
+        'SELECT id, status FROM sales_order_cancellations WHERE order_id = ? ORDER BY id',
+        [order.orderId],
+      )
+      expect(history.map((row) => [Number(row.id), row.status]))
+        .toEqual([[first, 'REJECTED'], [second, 'REJECTED']])
+    })
+
+    it('có yêu cầu mới đang chờ thì cảnh báo cũ không còn là trạng thái hiện hành', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const cashier = await signIn('module5_thungan', 'cashier')
+      const order = await createOrder(waiter, seeded)
+
+      await decide(cashier, cancellationIdOf(await requestCancellation(waiter, order, { quantity: 1 })), 'reject')
+      const pending = cancellationIdOf(await requestCancellation(waiter, order, { quantity: 1, reason: 'Xin lại' }))
+
+      const detail = await detailOf(waiter, order.orderId)
+      expect(detail.lines[0]!.pendingCancellation).toMatchObject({ cancellationId: pending, reason: 'Xin lại' })
+      expect(detail.lines[0]!.lastRejection).toBeNull()
+    })
+
+    it('được duyệt ở lần sau thì cảnh báo từ chối cũ không còn', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const cashier = await signIn('module5_thungan', 'cashier')
+      const order = await createOrder(waiter, seeded)
+
+      await decide(cashier, cancellationIdOf(await requestCancellation(waiter, order, { quantity: 1 })), 'reject')
+      const retry = await requestCancellation(waiter, await detailOf(waiter, order.orderId), { quantity: 1 })
+      await decide(cashier, cancellationIdOf(retry), 'approve')
+
+      const detail = await detailOf(waiter, order.orderId)
+      expect(detail.lines[0]!.lastRejection).toBeNull()
+      expect(detail.lines[0]).toMatchObject({ cancelledQuantity: 1, netQuantity: 2 })
+    })
+
+    it('đã duyệt một phần rồi lần sau bị từ chối: cảnh báo hiện, phần đã hủy giữ nguyên', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const cashier = await signIn('module5_thungan', 'cashier')
+      const order = await createOrder(waiter, seeded)
+
+      await decide(cashier, cancellationIdOf(await requestCancellation(waiter, order, { quantity: 1 })), 'approve')
+      const second = cancellationIdOf(
+        await requestCancellation(waiter, await detailOf(waiter, order.orderId), { quantity: 1, reason: 'Xin hủy thêm' }),
+      )
+      await decide(cashier, second, 'reject', 1, 'Chỉ duyệt một lần')
+
+      const detail = await detailOf(waiter, order.orderId)
+      // Lần từ chối là mới nhất nên nó là trạng thái hiện hành, và phần đã hủy
+      // của lần duyệt trước không bị cảnh báo này xoá đi.
+      expect(detail.lines[0]!.lastRejection).toMatchObject({ cancellationId: second, reason: 'Xin hủy thêm' })
+      expect(detail.lines[0]).toMatchObject({ cancelledQuantity: 1, netQuantity: 2 })
+    })
+
+    it('hai dòng trong một đơn mang hai cảnh báo riêng', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const cashier = await signIn('module5_thungan', 'cashier')
+      const order = await createOrder(waiter, seeded)
+
+      const barLine = cancellationIdOf(
+        await requestCancellation(waiter, order, { lineNo: 1, quantity: 1, reason: 'Dòng Bar' }),
+      )
+      await decide(cashier, barLine, 'reject', 1, 'Ghi chú dòng Bar')
+      const kitchenLine = cancellationIdOf(
+        await requestCancellation(waiter, order, { lineNo: 2, quantity: 1, reason: 'Dòng Bếp' }),
+      )
+      await decide(cashier, kitchenLine, 'reject', 1, 'Ghi chú dòng Bếp')
+
+      const detail = await detailOf(waiter, order.orderId)
+      expect(detail.lines).toHaveLength(2)
+      expect(detail.lines[0]!.lastRejection).toMatchObject({ cancellationId: barLine, reason: 'Dòng Bar' })
+      expect(detail.lines[1]!.lastRejection).toMatchObject({ cancellationId: kitchenLine, reason: 'Dòng Bếp' })
+    })
+
+    it('lần từ chối ở địa điểm khác không lọt vào đơn của địa điểm này', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const order = await createOrder(waiter, seeded)
+
+      // Dựng bằng SQL vì không có đường nào qua HTTP để tạo nó — và đó chính là
+      // điều cần kiểm. `line_id` là khoá chính nên hai địa điểm không thể dùng
+      // chung một dòng món; bài test này khẳng định tên người duyệt và ghi chú
+      // quyết định của venue khác không xuất hiện trong payload của venue này,
+      // và đơn của venue khác thì không đọc được.
+      const foreignCategory = await insertMenuCategory(otherVenueId, 'FOREIGN_L5')
+      const foreignItem = await insertMenuItem({
+        venueId: otherVenueId, categoryId: foreignCategory, code: 'FOREIGN_L5', name: 'Foreign secret L5',
+        verifiedByUserId: actor.userId,
+      })
+      const foreignVariant = await insertMenuVariant({
+        venueId: otherVenueId, itemId: foreignItem, code: 'GLASS', unit: 'GLASS',
+      })
+      const foreignPrice = await insertMenuPrice(otherVenueId, foreignVariant, 777_000)
+      const [foreignVisit] = await databasePool.execute<ResultSetHeader>(
+        `INSERT INTO visits (organization_id, venue_id, origin, guest_count, started_at, business_date,
+           created_by_user_id)
+         VALUES (?, ?, 'WALK_IN', 2, UTC_TIMESTAMP(3), ?, ?)`,
+        [actor.organizationId, otherVenueId, businessDate, actor.userId],
+      )
+      const foreignVisitId = Number(foreignVisit.insertId)
+      const [foreignOrder] = await databasePool.execute<ResultSetHeader>(
+        `INSERT INTO sales_orders (organization_id, venue_id, visit_id, visit_sequence, business_date,
+           ordered_by_user_id, ordered_by_membership_id, line_count, item_count, total_amount_vnd)
+         VALUES (?, ?, ?, 1, ?, ?, ?, 1, 1, 777000)`,
+        [actor.organizationId, otherVenueId, foreignVisitId, businessDate, actor.userId, actor.membershipId],
+      )
+      const foreignOrderId = Number(foreignOrder.insertId)
+      const [foreignLine] = await databasePool.execute<ResultSetHeader>(
+        `INSERT INTO sales_order_lines (organization_id, venue_id, order_id, line_no, menu_item_id,
+           menu_item_variant_id, price_id, price_version, item_code, item_name, variant_display_name, unit_code,
+           preparation_station, unit_price_vnd, quantity)
+         VALUES (?, ?, ?, 1, ?, ?, ?, 1, 'FOREIGN_L5', 'Foreign secret L5', 'Ly', 'GLASS', 'BAR', 777000, 1)`,
+        [actor.organizationId, otherVenueId, foreignOrderId, foreignItem, foreignVariant, foreignPrice],
+      )
+      await databasePool.execute(
+        `INSERT INTO sales_order_cancellations (organization_id, venue_id, visit_id, order_id, line_id, line_no,
+           quantity, reason, policy, status, station, ticket_status_at_request, requested_by_user_id,
+           requested_by_membership_id, decided_by_user_id, decided_at, decision_note)
+         VALUES (?, ?, ?, ?, ?, 1, 1, 'Foreign reason L5', 'STANDARD', 'REJECTED', 'BAR', 'SUBMITTED', ?, ?, ?,
+           UTC_TIMESTAMP(3), 'Foreign decision note L5')`,
+        [actor.organizationId, otherVenueId, foreignVisitId, foreignOrderId, Number(foreignLine.insertId),
+          actor.userId, actor.membershipId, actor.userId],
+      )
+
+      const detail = await detailOf(waiter, order.orderId)
+      expect(detail.lines.every((line) => line.lastRejection === null)).toBe(true)
+      const serialized = JSON.stringify(detail)
+      expect(serialized).not.toContain('Foreign reason L5')
+      expect(serialized).not.toContain('Foreign decision note L5')
+      expect(serialized).not.toContain('Foreign secret L5')
+
+      // Và đơn của địa điểm khác không đọc được bằng phiên này.
+      expect((await read(waiter, `/api/v1/waiter/orders/${foreignOrderId}`)).status).toBe(404)
+    })
+  })
+
+  it('luồng nghiệm thu 29 bước giữ đúng Phiên, số lượng, người gọi, người duyệt và audit', async () => {
+    const checkpoints: string[] = []
+    const mark = (label: string) => checkpoints.push(label)
+
+    const seeded = await seedCatalog()
+    mark('Lễ tân mở bàn')
+    const waiter = await signIn('module5_phucvu', 'waiter')
+    mark('Phục vụ đăng nhập')
+    expect((await read(waiter, `/api/v1/waiter/visits/${seeded.visitId}/orders`)).status).toBe(200)
+    mark('Phục vụ thấy Phiên mở')
+
+    let order = await createOrder(waiter, seeded)
+    expect(order.status).toBe('SUBMITTED')
+    mark('Gửi đơn')
+    expect(order.orderedByUserId).toBe(waiterUserId)
+    mark('Ghi đúng người gọi')
+    const initialBarTicket = order.tickets.find((ticket) => ticket.station === 'BAR')!
+    const initialKitchenTicket = order.tickets.find((ticket) => ticket.station === 'KITCHEN')!
+    expect(initialBarTicket).toBeDefined()
+    mark('Sinh phiếu Bar')
+    expect(initialKitchenTicket).toBeDefined()
+    mark('Sinh phiếu Bếp')
+
+    const adjusted = await send(waiter, 'patch', `/api/v1/waiter/orders/${order.orderId}/lines/1`, {
+      expectedLineVersion: order.lines[0]!.lineVersion,
+      quantity: 4,
+      idempotencyKey: idem(),
+    })
+    expect(adjusted.status, JSON.stringify(adjusted.body)).toBe(200)
+    mark('Sửa số lượng')
+    order = (adjusted.body as { order: WaiterOrderDetail }).order
+    expect(order.lines[0]).toMatchObject({ quantity: 4, netQuantity: 4 })
+    mark('Đọc lại số lượng mới')
+
+    const firstRequest = await requestCancellation(waiter, order, {
+      lineNo: 1, quantity: 1, reason: 'Khách bớt một ly',
+    })
+    expect(firstRequest.status).toBe(201)
+    mark('Gửi yêu cầu hủy thứ nhất')
+    const secondRequest = await requestCancellation(waiter, order, {
+      lineNo: 2, quantity: 1, reason: 'Khách xin bỏ món ăn',
+    })
+    expect(secondRequest.status).toBe(201)
+    mark('Gửi yêu cầu hủy thứ hai')
+    const cashier = await signIn('module5_thungan', 'cashier')
+    const pending = await read(cashier, '/api/v1/orders/cancellations?status=PENDING')
+    expect((pending.body as CancellationQueueView).pendingCount).toBe(2)
+    mark('Thu ngân thấy hai yêu cầu')
+    await decide(cashier, cancellationIdOf(firstRequest), 'approve', 1, 'Đồng ý bớt một ly')
+    mark('Thu ngân duyệt một')
+    await decide(cashier, cancellationIdOf(secondRequest), 'reject', 1, 'Món ăn đã xác nhận')
+    mark('Thu ngân từ chối một')
+
+    const refreshedOrder = await read(waiter, `/api/v1/waiter/orders/${order.orderId}`)
+    expect(refreshedOrder.status).toBe(200)
+    order = (refreshedOrder.body as { order: WaiterOrderDetail }).order
+    expect(order.lines[0]).toMatchObject({ cancelledQuantity: 1, netQuantity: 3 })
+    mark('Phục vụ thấy phần đã hủy')
+    expect(order.lines[1]!.lastRejection).toMatchObject({
+      rejectedByUserId: cashierUserId,
+      rejectedByDisplayName: 'module5_thungan',
+      decisionNote: 'Món ăn đã xác nhận',
+    })
+    mark('Phục vụ thấy rejection')
+    const bar = await signIn('module5_bar', 'preparation')
+    const kitchen = await signIn('module5_bep', 'preparation')
+    const barProjection = await queueTicket(bar, 'BAR', initialBarTicket.ticketId)
+    expect(barProjection.ticket?.lines[0]).toMatchObject({ quantity: 3, cancelledQuantity: 1, originalQuantity: 4 })
+    mark('Bar thấy số lượng mới')
+    const kitchenProjection = await queueTicket(kitchen, 'KITCHEN', initialKitchenTicket.ticketId)
+    expect(kitchenProjection.ticket?.lines[0]).toMatchObject({ quantity: 1, cancelledQuantity: 0, originalQuantity: 1 })
+    mark('Bếp giữ số lượng bị từ chối')
+
+    const transition = async (
+      session: Session,
+      station: 'bar' | 'kitchen',
+      ticketId: number,
+      toStatus: 'ACCEPTED' | 'PREPARING' | 'READY',
+    ) => {
+      const current = await ticketRow(ticketId)
+      const response = await send(session, 'post', `/api/v1/preparation/${station}/tickets/${ticketId}/transition`, {
+        toStatus,
+        expectedVersion: current.version,
+        idempotencyKey: idem(),
+      })
+      expect(response.status, JSON.stringify(response.body)).toBe(200)
+    }
+
+    await transition(bar, 'bar', initialBarTicket.ticketId, 'ACCEPTED')
+    mark('Bar tiếp nhận')
+    await transition(bar, 'bar', initialBarTicket.ticketId, 'PREPARING')
+    mark('Bar bắt đầu làm')
+    await transition(bar, 'bar', initialBarTicket.ticketId, 'READY')
+    mark('Bar hoàn thành')
+    await transition(kitchen, 'kitchen', initialKitchenTicket.ticketId, 'ACCEPTED')
+    mark('Bếp tiếp nhận')
+    await transition(kitchen, 'kitchen', initialKitchenTicket.ticketId, 'PREPARING')
+    mark('Bếp bắt đầu làm')
+    await transition(kitchen, 'kitchen', initialKitchenTicket.ticketId, 'READY')
+    mark('Bếp hoàn thành')
+
+    const [visitRows] = await databasePool.execute<(RowDataPacket & { version: number })[]>(
+      'SELECT version FROM visits WHERE venue_id = ? AND id = ?',
+      [actor.venueId, seeded.visitId],
+    )
+    const moved = await send(waiter, 'post', `/api/v1/visits/${seeded.visitId}/move`, {
+      version: Number(visitRows[0]!.version),
+      tableIds: [secondTableId],
+    })
+    expect(moved.status, JSON.stringify(moved.body)).toBe(200)
+    expect((moved.body as { visit: { id: number } }).visit.id).toBe(seeded.visitId)
+    mark('Đổi bàn giữ nguyên Phiên')
+
+    const bartender = await signIn('module5_bar', 'waiter')
+    const bartenderOrder = await createOrder(bartender, seeded, 1)
+    expect(bartenderOrder).toMatchObject({ orderedByUserId: barUserId, orderedByDisplayName: 'module5_bar' })
+    mark('Bartender gọi món đứng tên mình')
+    expect((await read(bartender, '/api/v1/orders/cancellations?status=PENDING')).status).toBe(403)
+    mark('Bartender không duyệt hủy')
+
+    const finalViewResponse = await read(waiter, `/api/v1/waiter/visits/${seeded.visitId}/orders`)
+    const finalView = finalViewResponse.body as WaiterOrderListView
+    expect(finalView.orderCount).toBe(2)
+    expect(finalView.netAmountVnd).toBe(finalView.totalAmountVnd - finalView.cancelledAmountVnd)
+    expect(new Set(finalView.orders.map((entry) => entry.orderedByUserId))).toEqual(new Set([waiterUserId, barUserId]))
+    mark('Đối chiếu tổng tiền và người gọi')
+    const createdAudit = await auditRows('SALES_ORDER_CREATED')
+    expect(new Set(createdAudit.map((entry) => Number(entry.actor_user_id)))).toEqual(new Set([waiterUserId, barUserId]))
+    expect(Number((await auditRows('SALES_ORDER_CANCELLATION_APPROVED'))[0]?.actor_user_id)).toBe(cashierUserId)
+    expect(Number((await auditRows('SALES_ORDER_CANCELLATION_REJECTED'))[0]?.actor_user_id)).toBe(cashierUserId)
+    mark('Đối chiếu người duyệt và audit')
+
+    expect(checkpoints).toHaveLength(29)
   })
 })

@@ -23,6 +23,7 @@ const launchOptions = process.env.PW_CHROMIUM_PATH
   : { executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe" }
 const viewports = [
   { name: "360x800", width: 360, height: 800 },
+  { name: "375x812", width: 375, height: 812 },
   { name: "390x844", width: 390, height: 844 },
   { name: "768x1024", width: 768, height: 1024 },
   { name: "1280x800", width: 1280, height: 800 },
@@ -166,6 +167,7 @@ async function readOverflow(page) {
     scrollWidth: document.documentElement.scrollWidth,
     clientWidth: document.documentElement.clientWidth,
     overflow: [...document.querySelectorAll("button,input,output,main,section,li")]
+      .filter((element) => !element.closest('[role="tablist"]'))
       .map((element) => ({
         label: element.getAttribute("aria-label") || element.textContent?.trim().slice(0, 30),
         rect: element.getBoundingClientRect(),

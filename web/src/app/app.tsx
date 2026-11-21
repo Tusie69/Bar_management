@@ -47,11 +47,17 @@ function Root() {
   const mobile = useIsMobile()
   const location = useLocation()
   const role = useSession((state) => state.user.role)
+  const portal = useSession((state) => state.portal)
   // Module Phục vụ 1: Phục vụ có khu vực riêng và không dùng màn Điều phối.
   // `waiterRoute` đã bắt mọi URL dưới /phucvu, nên tới được đây nghĩa là tài
   // khoản Phục vụ đang ở một URL của vai khác — đưa họ về đúng khu vực của mình
   // thay vì render một màn hình họ không có dữ liệu để đọc.
   if (role === "WAITER") return <Navigate to={WAITER_HOME_PATH} replace />
+  // L9: BAR có hai khu vực và cổng đăng nhập là thứ chọn giữa chúng. Một
+  // Bartender đăng nhập ở `/phucvu` phải về khu vực Phục vụ; dòng cũ đẩy mọi
+  // phiên BAR về `/chebien`, nên vừa đăng nhập xong là bị bật ra khỏi màn Gọi
+  // món. Cổng preparation vẫn về `/chebien` như trước.
+  if (role === "BAR" && portal === "waiter") return <Navigate to={WAITER_HOME_PATH} replace />
   if (role === "BAR" || role === "KITCHEN") return <Navigate to="/chebien" replace />
   if (role === "RECEPTIONIST" && location.pathname !== "/floor") return <Navigate to="/floor" replace />
   return shouldUseMobileShell(role, mobile) ? page(<MobileApp />) : <AppShell />

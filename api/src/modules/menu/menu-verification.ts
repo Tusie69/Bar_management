@@ -58,9 +58,13 @@ export interface VerificationOptions {
 }
 
 /**
- * `OTHER` là đơn vị bán mà importer dùng khi nguồn nói "lon / chai" nhưng chỉ
- * có một giá: nó chưa biết đang bán lon hay chai. Duyệt một dòng như thế là
- * chốt một đơn vị bán mà không ai chọn.
+ * `OTHER` là "chưa biết đây là đơn vị gì". Duyệt một dòng như thế là chốt một
+ * đơn vị bán mà không ai chọn, nên nó vẫn là chặn cứng.
+ *
+ * L10: importer KHÔNG còn sinh `OTHER` cho dòng "lon / chai" một giá — câu trả
+ * lời Q5 nói rõ hai đơn vị cùng giá, nên nó ánh xạ thành `CAN` + `BOTTLE`. Luật
+ * ở đây giữ nguyên vì `OTHER` vẫn tới được từ dữ liệu nhập trước bản sửa và từ
+ * các biến thể tạo tay trong màn quản trị.
  */
 const AMBIGUOUS_UNITS: readonly string[] = ['OTHER']
 

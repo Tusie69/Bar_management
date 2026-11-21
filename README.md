@@ -64,6 +64,27 @@ Schema GAM-APP v1.2 được quản lý bằng các migration trong `api/databas
 
 Không chạy seed trên database có dữ liệu vận hành và không dùng dữ liệu khách thật trong môi trường phát triển. Docker Compose chỉ khởi động MySQL; API và web chạy riêng bằng các lệnh pnpm ở trên.
 
+### Tài khoản demo và tài khoản đăng nhập được
+
+Seed tạo chín tài khoản phủ hết các vai, kể cả Phục vụ, Bar và Bếp. **Không tài
+khoản nào trong đó đăng nhập được**: tất cả đều `DISABLED` và mang password
+marker `!DEMO_NO_LOGIN`, vì một mật khẩu viết trong file SQL là một mật khẩu
+dùng chung mà ai đọc repo cũng biết.
+
+Khi cần đăng nhập thật để chạy luồng Gọi món – Chế biến trên trình duyệt, dùng
+script provisioning riêng. Nó chỉ chạy trên database có hậu tố `_test`, lấy mật
+khẩu từ biến môi trường và không in mật khẩu ra:
+
+```powershell
+cd api
+node --env-file=.env.e2e.local --import tsx scripts/seed-e2e-staff.ts
+```
+
+File env cần `DB_NAME`, thông tin kết nối MySQL và ba cặp
+`E2E_WAITER_USERNAME`/`E2E_WAITER_PASSWORD`, `E2E_BAR_*`, `E2E_KITCHEN_*`. Mọi
+file `.env.*` đều đã bị `.gitignore` bỏ qua. Cổng đăng nhập: WAITER và BAR vào
+`/phucvu/login`, BAR và KITCHEN vào `/chebien/login`.
+
 ## Chạy với MySQL cài trực tiếp
 
 Docker không bắt buộc. Có thể dùng MySQL Community Server 9.7.x; không dùng XAMPP/MariaDB cho schema chính thức.

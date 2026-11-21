@@ -49,6 +49,8 @@ export interface MenuImportTally {
   itemsRejectedKept: number
   variantsCreated: number
   variantsUpdated: number
+  /** Biến thể do chính nguồn này tạo nhưng không còn trong file: tắt, không xoá. */
+  variantsDeactivated: number
   pricesCreated: number
   pricesRepriced: number
   pricesUnchanged: number
@@ -73,6 +75,7 @@ export function emptyMenuImportTally(): MenuImportTally {
     itemsRejectedKept: 0,
     variantsCreated: 0,
     variantsUpdated: 0,
+    variantsDeactivated: 0,
     pricesCreated: 0,
     pricesRepriced: 0,
     pricesUnchanged: 0,
@@ -278,6 +281,50 @@ async function upsertItem(
     if (price.action === 'CREATED') tally.pricesCreated += 1
     else if (price.action === 'REPRICED') tally.pricesRepriced += 1
     else tally.pricesUnchanged += 1
+  }
+
+  await deactivateRetiredVariants(connection, venueId, itemId, item, tally)
+}
+
+/**
+ * Biến thể của món này mà nguồn không còn ghi nữa.
+ *
+ * L10: dòng "lon / chai" một giá từng được nhập thành MỘT biến thể `OTHER` bị
+ * khoá bán. Lần nhập lại ánh xạ nó thành `CAN` + `BOTTLE`, nhưng biến thể
+ * `OTHER` cũ vẫn nằm đó và `AMBIGUOUS_UNIT` tiếp tục chặn duyệt món — nên sửa
+ * ánh xạ mà không dọn biến thể cũ thì sáu món nước ngọt vẫn không bán được.
+ *
+ * Ba giới hạn, để việc dọn này không trở thành một lệnh xoá dữ liệu:
+ *
+ * - Chỉ TẮT (`is_active = 0`), không `DELETE`. Dòng đơn đã bán tham chiếu
+ *   biến thể, và lịch sử giá là bằng chứng kế toán.
+ * - Chỉ những biến thể có `import_key`, tức do importer tạo. Biến thể thêm tay
+ *   trong màn quản trị không có `import_key` và không bao giờ bị lệnh này chạm
+ *   tới. Món đang xét luôn là món của nguồn này (nó vừa được khớp theo
+ *   `import_key` của plan), nên mọi biến thể có `import_key` ở đây đều cùng
+ *   nguồn.
+ * - Chỉ những dòng còn `is_active = 1`, nên lần chạy thứ hai trên cùng file
+ *   không ghi gì và `changed` không bị bật lại — đó là điều kiện để
+ *   `venues.change_seq` không tăng khi nguồn không đổi.
+ */
+async function deactivateRetiredVariants(
+  connection: PoolConnection,
+  venueId: number,
+  itemId: number,
+  item: ImportItem,
+  tally: MenuImportTally,
+): Promise<void> {
+  const keys = item.variants.map((itemVariant) => itemVariant.importKey)
+  const keyFilter = keys.length ? ` AND import_key NOT IN (${keys.map(() => '?').join(', ')})` : ''
+  const [result] = await connection.execute<ResultSetHeader>(
+    `UPDATE menu_item_variants
+     SET is_active = 0, version = version + 1, updated_at = UTC_TIMESTAMP(3)
+     WHERE venue_id = ? AND menu_item_id = ? AND is_active = 1 AND import_key IS NOT NULL${keyFilter}`,
+    [venueId, itemId, ...keys],
+  )
+  if (result.affectedRows > 0) {
+    tally.variantsDeactivated += result.affectedRows
+    tally.changed = true
   }
 }
 

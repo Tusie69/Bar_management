@@ -22,6 +22,7 @@ import {
   WAITER_LEGACY_BASE_PATH,
   WAITER_PAYMENT_NOTICE,
   WAITER_REARRANGE_PERMISSIONS,
+  WAITER_ROLES,
   canEnterWaiter,
   waiterOrderPath,
   waiterOrdersViewPath,
@@ -104,15 +105,27 @@ describe("định tuyến khu vực Phục vụ", () => {
     expect(canEnterWaiter("RECEPTIONIST", "waiter")).toBe(false)
   })
 
-  it("chỉ WAITER đăng nhập ở cổng waiter vào được", () => {
+  it("chỉ WAITER và BAR đăng nhập ở cổng waiter vào được", () => {
     expect(canEnterWaiter("WAITER", "waiter")).toBe(true)
     // Chế độ mock của prototype không có cổng.
     expect(canEnterWaiter("WAITER", null)).toBe(true)
     expect(canEnterWaiter("WAITER", "receptionist")).toBe(false)
-    for (const role of ["OWNER", "ADMIN", "RECEPTIONIST", "CASHIER", "CUSTOMER_CARE"] as RoleCode[]) {
+    for (const role of ["OWNER", "ADMIN", "RECEPTIONIST", "CASHIER", "CUSTOMER_CARE", "KITCHEN"] as RoleCode[]) {
       expect(canEnterWaiter(role, "waiter"), `${role} không được vào /phucvu`).toBe(false)
       expect(canEnterWaiter(role, null), `${role} không được vào /phucvu`).toBe(false)
     }
+  })
+
+  // L9 — Bartender lên đơn cho khách gọi ngay tại quầy (câu trả lời Q1).
+  it("BAR vào được /phucvu, nhưng chỉ khi phiên dùng đúng cổng waiter", () => {
+    expect(canEnterWaiter("BAR", "waiter")).toBe(true)
+    // Phiên Bar ở cổng chế biến phải ở lại /chebien; nếu nó cũng mở được khu
+    // vực Phục vụ thì hai màn hình tranh nhau cùng một tài khoản.
+    expect(canEnterWaiter("BAR", "preparation")).toBe(false)
+    expect(canEnterWaiter("BAR", null)).toBe(false)
+    expect(WAITER_ROLES).toEqual(["WAITER", "BAR"])
+    // Hai danh sách phải khớp nhau, nếu không đăng nhập xong lại bị chặn ở cửa.
+    expect([...PORTAL_CONFIG.waiter.roles]).toEqual([...WAITER_ROLES])
   })
 
   it("mọi mục navigation của Lễ tân đều nằm ngoài khu vực Phục vụ", () => {

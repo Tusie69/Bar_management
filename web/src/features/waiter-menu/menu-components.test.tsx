@@ -33,18 +33,22 @@ const item: WaiterMenuItem = {
 }
 
 describe("waiter menu presentation", () => {
-  it("keeps top-level category order and includes Tất cả", () => {
+  it("groups API classifications under parents, keeps displayOrder, and includes Tất cả", () => {
     const categories: WaiterMenuCategory[] = [
-      { id: 1, code: "COCKTAIL", name: "Cocktail", parentId: null, displayOrder: 1 },
       { id: 2, code: "SPIRIT", name: "Rượu mạnh", parentId: null, displayOrder: 2 },
       { id: 3, code: "GIN", name: "Gin", parentId: 2, displayOrder: 1 },
+      { id: 4, code: "CLASSIC", name: "Classic Cocktails", parentId: 1, displayOrder: 2 },
+      { id: 1, code: "COCKTAIL", name: "Cocktail", parentId: null, displayOrder: 1 },
+      { id: 5, code: "SIGNATURE", name: "Signature Cocktails", parentId: 1, displayOrder: 1 },
     ]
     const html = renderToStaticMarkup(
       <MenuCategoryTabs categories={categories} selected={null} onSelect={() => undefined} />,
     )
     expect(html.indexOf("Tất cả")).toBeLessThan(html.indexOf("Cocktail"))
+    expect(html.indexOf("Cocktail")).toBeLessThan(html.indexOf("Signature Cocktails"))
+    expect(html.indexOf("Signature Cocktails")).toBeLessThan(html.indexOf("Classic Cocktails"))
     expect(html.indexOf("Cocktail")).toBeLessThan(html.indexOf("Rượu mạnh"))
-    expect(html).not.toContain(">Gin<")
+    expect(html.indexOf("Rượu mạnh")).toBeLessThan(html.indexOf("Gin"))
   })
 
   it("labels temporarily unavailable items and never renders a fake zero glass price", () => {

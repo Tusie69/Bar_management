@@ -49,6 +49,38 @@ export interface WaiterMenuView {
   items: WaiterMenuItem[]
 }
 
+/**
+ * API trả cả nhóm cha và classification con. Thứ tự hiển thị phải giữ các
+ * classification cạnh nhóm của chúng, thay vì phụ thuộc thứ tự mảng/ID từ DB.
+ */
+export function orderedMenuCategories(categories: readonly WaiterMenuCategory[]): WaiterMenuCategory[] {
+  const byId = new Map(categories.map((category) => [category.id, category]))
+  const children = new Map<number | null, WaiterMenuCategory[]>()
+  const compare = (left: WaiterMenuCategory, right: WaiterMenuCategory) =>
+    left.displayOrder - right.displayOrder || left.id - right.id
+
+  for (const category of categories) {
+    const parentId = category.parentId !== null && byId.has(category.parentId) ? category.parentId : null
+    const siblings = children.get(parentId) ?? []
+    siblings.push(category)
+    children.set(parentId, siblings)
+  }
+  for (const siblings of children.values()) siblings.sort(compare)
+
+  const ordered: WaiterMenuCategory[] = []
+  const visited = new Set<number>()
+  const append = (category: WaiterMenuCategory) => {
+    if (visited.has(category.id)) return
+    visited.add(category.id)
+    ordered.push(category)
+    for (const child of children.get(category.id) ?? []) append(child)
+  }
+  for (const root of children.get(null) ?? []) append(root)
+  // Dữ liệu lỗi có vòng lặp vẫn phải render được, không làm mất danh mục.
+  for (const category of [...categories].sort(compare)) append(category)
+  return ordered
+}
+
 export function normalizeMenuSearch(value: string): string {
   return value
     .normalize("NFD")

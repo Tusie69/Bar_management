@@ -10,6 +10,7 @@ import {
   PREPARATION_NEXT_ACTION,
   PREPARATION_QUEUE_LAYOUT_CLASS,
   canShowPrintRetry,
+  preparationLineDisplay,
   type PreparationTicketStatus,
 } from "./preparation-layout"
 
@@ -27,7 +28,18 @@ interface Ticket {
   submittedAt: string
   waitSeconds: number
   tableCodes: string[]
-  lines: Array<{ lineNo: number; itemName: string; variantDisplayName: string; quantity: number; note: string | null }>
+  // L2: `quantity` là số CÒN PHẢI LÀM (API đã trừ phần bị hủy); hai trường kia
+  // để phiếu nói được "đã hủy n trên m" thay vì chỉ hiện một con số nhỏ hơn mà
+  // không giải thích.
+  lines: Array<{
+    lineNo: number
+    itemName: string
+    variantDisplayName: string
+    quantity: number
+    cancelledQuantity: number
+    originalQuantity: number
+    note: string | null
+  }>
 }
 
 interface QueueSnapshot {
@@ -65,13 +77,36 @@ function TicketCard({ ticket, canTransition, canRetry, onTransition, onRetry, pe
         </span>
       </header>
       <ul className="grid gap-2" aria-label="Món trên phiếu">
-        {ticket.lines.map((line) => (
-          <li key={line.lineNo} className="border-t border-border-subtle pt-2 first:border-0 first:pt-0">
-            <div className="flex gap-2 text-sm"><strong className="min-w-6 text-primary-ink">{line.quantity}×</strong><span>{line.itemName}</span></div>
-            {line.variantDisplayName ? <p className="pl-8 text-xs text-muted-foreground">{line.variantDisplayName}</p> : null}
-            {line.note ? <p className="mt-1 rounded-md bg-amber-400/10 px-2 py-1 text-xs font-medium">Ghi chú: {line.note}</p> : null}
-          </li>
-        ))}
+        {ticket.lines.map((line) => {
+          // L2: số lượng, kiểu gạch/mờ và nhãn đã hủy đều do một hàm thuần
+          // quyết định, nên luật đó test được mà không cần dựng DOM.
+          const display = preparationLineDisplay(line)
+          return (
+            <li
+              key={line.lineNo}
+              className={`border-t border-border-subtle pt-2 first:border-0 first:pt-0${display.fullyCancelled ? " opacity-60" : ""}`}
+              data-line-no={line.lineNo}
+              data-cancelled={display.cancelledLabel === null ? undefined : display.fullyCancelled ? "all" : "partial"}
+            >
+              <div className={`flex gap-2 text-sm${display.fullyCancelled ? " line-through decoration-2" : ""}`}>
+                <strong className="min-w-6 text-primary-ink">{display.quantity}×</strong><span>{line.itemName}</span>
+              </div>
+              {/* Đơn vị bán và ghi chú giữ nguyên ở MỌI trạng thái hủy: quầy vẫn
+                  cần biết khách gọi lon hay chai, và "ít đá" vẫn đúng cho phần
+                  còn lại. */}
+              {line.variantDisplayName ? <p className="pl-8 text-xs text-muted-foreground">{line.variantDisplayName}</p> : null}
+              {display.cancelledLabel ? (
+                <p
+                  className="mt-1 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs font-semibold text-destructive"
+                  role="status"
+                >
+                  {display.cancelledLabel}
+                </p>
+              ) : null}
+              {line.note ? <p className="mt-1 rounded-md bg-amber-400/10 px-2 py-1 text-xs font-medium">Ghi chú: {line.note}</p> : null}
+            </li>
+          )
+        })}
       </ul>
       <footer className="flex gap-2">
         {action && canTransition ? <Button className={PREPARATION_ACTION_CLASS} disabled={pending} onClick={() => onTransition(ticket, action.status)}>{action.label}</Button> : null}

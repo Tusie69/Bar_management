@@ -45,6 +45,7 @@ const mysqlDescribe = process.env.RUN_MYSQL_INTEGRATION === '1' && /_test$/.test
 const password = 'Waiter-Module3-Password-01'
 const waiterUserId = 9881
 const receptionistUserId = 9882
+const barUserId = 9884
 const secondTableId = 9883
 
 interface SignedIn {
@@ -212,6 +213,8 @@ mysqlDescribe('Module Phục vụ 3 — giỏ gọi món và gửi đơn', () =>
     await resetFixture()
     await seedAccount(waiterUserId, 'module3_phucvu', 'WAITER')
     await seedAccount(receptionistUserId, 'module3_letan', 'RECEPTIONIST')
+    // L9: Bartender lên đơn cho khách gọi tại quầy (câu trả lời Q1).
+    await seedAccount(barUserId, 'module3_bar', 'BAR')
   })
   afterAll(async () => {
     await clearFixture()
@@ -483,6 +486,67 @@ mysqlDescribe('Module Phục vụ 3 — giỏ gọi món và gửi đơn', () =>
       expect(response.status).toBe(403)
       expect(await countOrders(seeded.visitId)).toBe(0)
       expect((await receptionist.agent.get(`/api/v1/waiter/visits/${seeded.visitId}/orders`)).status).toBe(403)
+    })
+
+    // L9 — bốn khẳng định này là toàn bộ phạm vi mới của vai BAR: vào được cổng
+    // Phục vụ, gửi được đơn đứng tên mình, và KHÔNG chạm tới phần phê duyệt hủy
+    // hay dữ liệu khách. Nếu một trong hai điều sau đổi, nó phải đổi ở đây
+    // trước khi đổi ngoài sản phẩm.
+    it('Bartender đăng nhập cổng Phục vụ và gửi được đơn đứng tên mình', async () => {
+      const seeded = await seedCatalog()
+      const bar = await signIn('module3_bar', 'waiter')
+      const response = await post(bar, '/api/v1/waiter/orders', {
+        visitId: seeded.visitId, idempotencyKey: nextKey(), lines: [glassLine(seeded, 2)],
+      })
+      expect(response.status, JSON.stringify(response.body)).toBe(201)
+      const order = (response.body as { order: WaiterOrderDetail }).order
+      expect(order).toMatchObject({
+        status: 'SUBMITTED',
+        orderedByUserId: barUserId,
+        orderedByDisplayName: 'module3_bar',
+      })
+      // Và nó đọc lại được đơn của bàn, nên màn Đơn của bàn không trống.
+      const list = await bar.agent.get(`/api/v1/waiter/visits/${seeded.visitId}/orders`)
+      expect(list.status).toBe(200)
+      expect((list.body as WaiterOrderListView).orders).toHaveLength(1)
+    })
+
+    it('Bartender gửi được yêu cầu hủy nhưng không phê duyệt được', async () => {
+      const seeded = await seedCatalog()
+      const bar = await signIn('module3_bar', 'waiter')
+      const created = await post(bar, '/api/v1/waiter/orders', {
+        visitId: seeded.visitId, idempotencyKey: nextKey(), lines: [glassLine(seeded, 2)],
+      })
+      expect(created.status).toBe(201)
+      const order = (created.body as { order: WaiterOrderDetail }).order
+
+      const requested = await post(
+        bar,
+        `/api/v1/waiter/orders/${order.orderId}/lines/1/cancellations`,
+        {
+          quantity: 1,
+          reason: 'Khách đổi ý',
+          expectedLineVersion: order.lines[0]!.lineVersion,
+          idempotencyKey: nextKey(),
+        },
+      )
+      expect(requested.status, JSON.stringify(requested.body)).toBe(201)
+
+      // Vừa xin vừa duyệt thì bước duyệt không còn nghĩa gì.
+      const queue = await bar.agent.get('/api/v1/orders/cancellations')
+      expect(queue.status).toBe(403)
+    })
+
+    it('Bartender không đọc được dữ liệu khách', async () => {
+      await seedCatalog()
+      const bar = await signIn('module3_bar', 'waiter')
+      // Danh sách bàn đầy đủ cần customer.view_masked; BAR không có quyền đó.
+      expect((await bar.agent.get('/api/v1/tables')).status).toBe(403)
+    })
+
+    it('Bartender vẫn đăng nhập được cổng chế biến', async () => {
+      const preparation = await signIn('module3_bar', 'preparation')
+      expect(preparation.csrfToken).toBeTruthy()
     })
 
     it('không gửi được đơn mà không có CSRF token', async () => {

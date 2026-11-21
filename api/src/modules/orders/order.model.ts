@@ -62,6 +62,22 @@ export interface WaiterOrderLine {
   canAdjustQuantity: boolean
   /** Yêu cầu hủy đang chờ phê duyệt của dòng này, nếu có. */
   pendingCancellation: PendingCancellationView | null
+  /**
+   * L5 — lần từ chối GẦN NHẤT của dòng này, và chỉ khi nó còn là trạng thái
+   * hiện hành.
+   *
+   * Trước đây API chỉ join yêu cầu `PENDING`, nên khi Thu ngân từ chối, yêu cầu
+   * biến mất khỏi màn Phục vụ mà không để lại dấu vết nào: người gửi không biết
+   * mình bị từ chối hay hệ thống mất yêu cầu, và thường bấm xin hủy lại.
+   *
+   * `null` khi dòng chưa từng bị từ chối, HOẶC khi đã có một yêu cầu mới hơn
+   * sau lần từ chối đó (một `PENDING` đang chờ, hoặc một lần `APPROVED`). Lý do:
+   * đây là "trạng thái hiện hành", không phải "lịch sử". Dán một cảnh báo đỏ của
+   * lần từ chối cũ lên một dòng đang có yêu cầu mới chờ duyệt sẽ nói sai chuyện
+   * đang xảy ra. Lịch sử đầy đủ vẫn nằm trong `sales_order_cancellations` và
+   * `sales_order_line_changes`; không dòng nào bị xoá.
+   */
+  lastRejection: LineRejectionView | null
 }
 
 export type PreparationStatus = 'SUBMITTED' | 'ACCEPTED' | 'PREPARING' | 'READY' | 'COLLECTED'
@@ -77,6 +93,26 @@ export interface PendingCancellationView {
   requestedByUserId: number
   requestedByDisplayName: string
   requestedAt: string
+}
+
+/**
+ * L5 — một lần từ chối yêu cầu hủy, nhìn từ phía dòng món.
+ *
+ * `rejectedByUserId` và `rejectedAt` không thể null: `ck_sales_order_cancellations_decision`
+ * của migration 0040 bắt buộc mọi dòng khác `PENDING` phải có người quyết định
+ * và thời điểm. `decisionNote` thì có thể trống — người duyệt không buộc phải
+ * giải thích, và một chuỗi rỗng bịa ra sẽ khó phân biệt với "họ đã viết gì đó".
+ */
+export interface LineRejectionView {
+  cancellationId: number
+  /** Số lượng mà yêu cầu bị từ chối đã xin hủy. */
+  quantity: number
+  /** Lý do Phục vụ đã ghi khi xin hủy. */
+  reason: string
+  rejectedByUserId: number
+  rejectedByDisplayName: string
+  rejectedAt: string
+  decisionNote: string | null
 }
 
 export interface PreparationTicketView {

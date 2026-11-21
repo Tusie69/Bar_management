@@ -118,6 +118,16 @@ export default function WaiterMenuPage() {
     () => filterMenuItems(menu.data?.items ?? [], menu.data?.categories ?? [], categoryId, search),
     [categoryId, menu.data?.categories, menu.data?.items, search],
   )
+  const selectedCategory = useMemo(
+    () => menu.data?.categories.find((category) => category.id === categoryId) ?? null,
+    [categoryId, menu.data?.categories],
+  )
+
+  // Catalog có thể đổi trong lúc màn hình đang mở. Không giữ một filter trỏ
+  // tới classification đã bị xóa/ẩn vì khi đó danh sách trống mà không rõ lý do.
+  useEffect(() => {
+    if (categoryId !== null && menu.data && !selectedCategory) setCategoryId(null)
+  }, [categoryId, menu.data, selectedCategory])
 
   // Nháp của lần mở trước có thể chứa món đã hết. Soi lại với danh mục vừa tải
   // và nói ra những gì bị bỏ, thay vì để nhân viên bấm gửi rồi mới biết.
@@ -269,7 +279,7 @@ export default function WaiterMenuPage() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             className="h-11 rounded-xl pl-10"
-            placeholder="Tìm tên món…"
+            placeholder={selectedCategory ? `Tìm trong ${selectedCategory.name}…` : "Tìm tên món…"}
             aria-label="Tìm món"
           />
         </div>

@@ -42,8 +42,15 @@ export function waiterOrdersViewPath(visitId: number): string {
   return `${WAITER_BASE_PATH}/${WAITER_ORDERS_VIEW_PATH}/${visitId}`
 }
 
-/** Vai duy nhất vào được `/phucvu`, khớp `PORTAL_CONFIG.waiter.roles`. */
-export const WAITER_ROLES: readonly RoleCode[] = ["WAITER"]
+/**
+ * Vai vào được `/phucvu`, khớp `PORTAL_CONFIG.waiter.roles`.
+ *
+ * L9: BAR có ở đây vì Bartender lên đơn cho khách gọi ngay tại quầy (câu trả
+ * lời Q1). Vào được khu vực không phải là làm được mọi thứ trong đó: mọi nút
+ * vẫn đi qua permission của phiên, và BAR không có `visit.move/combine/split`
+ * nên menu Đổi/Ghép/Tách tự tắt mà không cần một `if (role === "BAR")` nào.
+ */
+export const WAITER_ROLES: readonly RoleCode[] = ["WAITER", "BAR"]
 
 /**
  * Hai permission mà mọi màn của Phục vụ dựa vào. `order.read` để đọc sơ đồ và
@@ -80,6 +87,12 @@ export const WAITER_FORBIDDEN_PATHS: readonly string[] = [
  */
 export function canEnterWaiter(role: RoleCode, portal: AuthPortal | null): boolean {
   if (!WAITER_ROLES.includes(role)) return false
+  // L9: BAR là vai DUY NHẤT có hai khu vực — `/phucvu` để lên đơn và `/chebien`
+  // để làm món — nên với nó cổng là thứ phân biệt hai khu vực, và nó phải nêu
+  // rõ cổng waiter. Nếu cho `portal === null` qua thì một phiên Bar ở cổng
+  // preparation cũng mở được khu vực Phục vụ, và hai màn hình đó sẽ tranh nhau
+  // cùng một tài khoản.
+  if (role !== "WAITER") return portal === "waiter"
   return portal === null || portal === "waiter"
 }
 

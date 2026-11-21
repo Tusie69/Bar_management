@@ -7,6 +7,7 @@ import {
   PREPARATION_NEXT_ACTION,
   PREPARATION_QUEUE_LAYOUT_CLASS,
   canShowPrintRetry,
+  preparationLineDisplay,
 } from "./preparation-layout"
 
 describe("màn hàng đợi chế biến", () => {
@@ -40,5 +41,60 @@ describe("màn hàng đợi chế biến", () => {
   ])("layout %ix%i dùng đúng số lane responsive", (width, _height, columns) => {
     const actual = width >= 1280 ? 4 : width >= 768 ? 2 : 1
     expect(actual).toBe(columns)
+  })
+})
+
+/**
+ * L2 — con số mà Bar/Bếp hành động theo.
+ *
+ * Trường hợp "2× khay thịt muối" trong báo cáo kiểm thử ngày 21/11: Phục vụ gọi
+ * 2 khay, xin hủy 1, Thu ngân duyệt, và phiếu Bếp vẫn ghi 2 — Bếp làm thừa một
+ * khay mà không ai biết cho tới lúc tính tiền.
+ */
+describe("L2 — dòng phiếu sau khi có người duyệt hủy", () => {
+  it("không có gì bị hủy thì hiển thị bình thường, không nhãn", () => {
+    expect(preparationLineDisplay({ quantity: 2, cancelledQuantity: 0, originalQuantity: 2 })).toEqual({
+      quantity: 2,
+      fullyCancelled: false,
+      cancelledLabel: null,
+    })
+  })
+
+  it("hủy 1 trong 2 thì hiện 1× kèm nhãn nói rõ chỉ làm 1", () => {
+    expect(preparationLineDisplay({ quantity: 1, cancelledQuantity: 1, originalQuantity: 2 })).toEqual({
+      quantity: 1,
+      fullyCancelled: false,
+      cancelledLabel: "Đã hủy 1, chỉ làm 1",
+    })
+  })
+
+  it("hủy 2 trong 5 thì nhãn ghi đúng cả hai con số", () => {
+    expect(preparationLineDisplay({ quantity: 3, cancelledQuantity: 2, originalQuantity: 5 })).toEqual({
+      quantity: 3,
+      fullyCancelled: false,
+      cancelledLabel: "Đã hủy 2, chỉ làm 3",
+    })
+  })
+
+  it("hủy toàn bộ thì gạch/mờ dòng và nói thẳng là không làm", () => {
+    expect(preparationLineDisplay({ quantity: 0, cancelledQuantity: 2, originalQuantity: 2 })).toEqual({
+      quantity: 0,
+      fullyCancelled: true,
+      cancelledLabel: "Đã hủy toàn bộ, không làm",
+    })
+  })
+
+  it("không bao giờ hiện số âm, kể cả khi dữ liệu vào đã sai", () => {
+    // Database có CHECK `cancelled_quantity <= quantity` và cột sinh UNSIGNED,
+    // nên trường hợp này không tới được từ API. Nó ở đây để một con số âm không
+    // bao giờ trở thành "làm -1 món" trên màn hình của quầy.
+    const display = preparationLineDisplay({ quantity: -1, cancelledQuantity: 3, originalQuantity: 2 })
+    expect(display.quantity).toBe(0)
+    expect(display.fullyCancelled).toBe(true)
+  })
+
+  it("nhãn hủy toàn bộ không bao giờ đọc như một việc còn phải làm", () => {
+    const display = preparationLineDisplay({ quantity: 0, cancelledQuantity: 4, originalQuantity: 4 })
+    expect(display.cancelledLabel).not.toContain("chỉ làm")
   })
 })

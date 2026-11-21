@@ -240,12 +240,17 @@ function mapVariants(
     case 'lon / chai': {
       const prices = [firstPrice, bottlePrice].filter((price): price is number => price !== null)
       if (prices.length === 1) {
-        warnings.push({
-          rowNumber: row.rowNumber,
-          code: 'AMBIGUOUS_CAN_OR_BOTTLE',
-          message: 'Một giá cho “lon / chai” chưa xác định được đơn vị; lưu OTHER và khóa bán để đối chiếu.',
-        })
-        return make('OTHER', 'Lon / chai (cần xác minh)', prices[0] ?? null, 1, null, false)
+        // L10 / câu trả lời Q5: lon hay chai CÙNG giá, khách chọn kiểu nào thì
+        // phục vụ kiểu đó. Nguồn chỉ có một giá nên không còn gì mơ hồ về tiền;
+        // thứ chưa biết trước đây là đơn vị, và câu trả lời là "cả hai". Bản cũ
+        // gộp thành một biến thể OTHER rồi khoá bán, nên sáu món nước ngọt
+        // không xuất hiện trên màn Gọi món và Bar cũng không biết khách muốn
+        // lon hay chai.
+        const amount = prices[0]!
+        return [
+          ...make('CAN', 'Lon', amount, 1),
+          ...make('BOTTLE', 'Chai', amount, 2),
+        ]
       }
       errors.push({
         rowNumber: row.rowNumber,
@@ -351,7 +356,7 @@ export function buildMenuImportPlan(rows: MenuWorkbookRow[]): MenuImportPlan {
 
   const verificationRows = new Set(
     warnings
-      .filter((issue) => ['STARTING_PRICE_REQUIRES_VERIFICATION', 'AMBIGUOUS_CAN_OR_BOTTLE', 'DUPLICATE_ITEM_NAME'].includes(issue.code))
+      .filter((issue) => ['STARTING_PRICE_REQUIRES_VERIFICATION', 'DUPLICATE_ITEM_NAME'].includes(issue.code))
       .map((issue) => issue.rowNumber)
       .filter((rowNumber): rowNumber is number => rowNumber !== null),
   )

@@ -35,6 +35,8 @@ interface LineRow extends RowDataPacket {
   item_name: string
   variant_display_name: string
   quantity: number
+  cancelled_quantity: number
+  net_quantity: number
   note: string | null
 }
 
@@ -69,8 +71,12 @@ async function ticketLinesBatch(
   const result = new Map<string, PreparationLineView[]>()
   if (tickets.length === 0) return result
   const orderIds = [...new Set(tickets.map((ticket) => Number(ticket.order_id)))]
+  // L2: `net_quantity` là cột sinh `quantity - cancelled_quantity` của migration
+  // 0040. Đọc cả ba con số thay vì chỉ `quantity`: quầy hành động theo số còn
+  // lại, còn hai số kia là phần đối chiếu để phiếu nói được "đã hủy n trên m".
   const [rows] = await connection.execute<LineRow[]>(
-    `SELECT order_id, preparation_station, line_no, item_name, variant_display_name, quantity, note
+    `SELECT order_id, preparation_station, line_no, item_name, variant_display_name,
+            quantity, cancelled_quantity, net_quantity, note
        FROM sales_order_lines
       WHERE organization_id = ? AND venue_id = ? AND order_id IN (${orderIds.map(() => '?').join(',')})
       ORDER BY order_id, preparation_station, line_no`,
@@ -79,8 +85,21 @@ async function ticketLinesBatch(
   for (const row of rows) {
     const key = `${Number(row.order_id)}:${row.preparation_station}`
     const lines = result.get(key) ?? []
-    lines.push({ lineNo: Number(row.line_no), itemName: row.item_name,
-      variantDisplayName: row.variant_display_name, quantity: Number(row.quantity), note: row.note })
+    const originalQuantity = Number(row.quantity)
+    const cancelledQuantity = Number(row.cancelled_quantity)
+    lines.push({
+      lineNo: Number(row.line_no),
+      itemName: row.item_name,
+      variantDisplayName: row.variant_display_name,
+      // `Math.max(0, …)` không phải để che một dữ liệu sai: cột sinh đã là
+      // UNSIGNED và có CHECK đứng sau. Nó ở đây để một con số âm — nếu CHECK
+      // nào đó bị bỏ trong tương lai — không bao giờ tới được tay quầy dưới
+      // dạng "làm -1 món".
+      quantity: Math.max(0, Number(row.net_quantity)),
+      cancelledQuantity,
+      originalQuantity,
+      note: row.note,
+    })
     result.set(key, lines)
   }
   return result

@@ -47,18 +47,43 @@ describe('menu Excel import mapping', () => {
     expect(plan.items[1]?.variants[0]).toMatchObject({ unitCode: 'SHARING_JUG' })
   })
 
-  it('locks ambiguous can/bottle and 300++ variants for verification', () => {
+  // L10 / câu trả lời Q5: lon hay chai CÙNG giá, khách chọn kiểu nào thì phục
+  // vụ kiểu đó. Bản trước gộp thành một biến thể OTHER bị khoá bán, nên sáu món
+  // nước ngọt không hiện trên màn Gọi món.
+  it('maps a single-price "lon / chai" row to a sellable CAN and BOTTLE pair', () => {
     const plan = buildMenuImportPlan([
       row({ name: 'COCA-COLA', sellingUnit: 'lon / chai', bottlePriceThousands: null, glassShotPriceThousands: 60 }),
+    ])
+    expect(plan.errors).toEqual([])
+    expect(plan.warnings).toEqual([])
+    expect(plan.items[0]?.variants).toHaveLength(2)
+    expect(plan.items[0]?.variants[0]).toMatchObject({
+      unitCode: 'CAN', displayName: 'Lon', isSellable: true, amountVnd: 60_000, displayOrder: 1,
+    })
+    expect(plan.items[0]?.variants[1]).toMatchObject({
+      unitCode: 'BOTTLE', displayName: 'Chai', isSellable: true, amountVnd: 60_000, displayOrder: 2,
+    })
+    // Hai biến thể của cùng một món phải có khoá nhập khác nhau, nếu không lần
+    // nhập thứ hai sẽ coi chúng là một dòng và ghi đè lẫn nhau.
+    expect(plan.items[0]?.variants[0]?.importKey).not.toBe(plan.items[0]?.variants[1]?.importKey)
+    expect(plan.variantCount).toBe(2)
+  })
+
+  it('still refuses to guess when "lon / chai" carries two different prices', () => {
+    const plan = buildMenuImportPlan([
+      row({ name: 'COCA-COLA', sellingUnit: 'lon / chai', glassShotPriceThousands: 60, bottlePriceThousands: 90 }),
+    ])
+    expect(plan.errors.map((error) => error.code)).toContain('AMBIGUOUS_CAN_OR_BOTTLE_PRICES')
+    expect(plan.items[0]?.variants).toEqual([])
+  })
+
+  it('locks 300++ variants for verification', () => {
+    const plan = buildMenuImportPlan([
       row({ rowNumber: 8, sequence: 2, name: '(SPECIAL COCKTAIL)', sellingUnit: 'ly', bottlePriceThousands: null, glassShotPriceThousands: 300, note: '300++' }),
     ])
     expect(plan.errors).toEqual([])
-    expect(plan.items[0]?.variants[0]).toMatchObject({ unitCode: 'OTHER', isSellable: false, amountVnd: 60_000 })
-    expect(plan.items[1]?.variants[0]).toMatchObject({ unitCode: 'GLASS', isSellable: false, amountVnd: 300_000 })
-    expect(plan.warnings.map((warning) => warning.code)).toEqual([
-      'AMBIGUOUS_CAN_OR_BOTTLE',
-      'STARTING_PRICE_REQUIRES_VERIFICATION',
-    ])
+    expect(plan.items[0]?.variants[0]).toMatchObject({ unitCode: 'GLASS', isSellable: false, amountVnd: 300_000 })
+    expect(plan.warnings.map((warning) => warning.code)).toEqual(['STARTING_PRICE_REQUIRES_VERIFICATION'])
   })
 
   it('reports unmapped units and duplicate names instead of silently merging', () => {

@@ -10,6 +10,7 @@ const launchOptions = process.env.PW_CHROMIUM_PATH
   : { executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe" }
 const viewports = [
   { name: "360x800", width: 360, height: 800 },
+  { name: "375x812", width: 375, height: 812 },
   { name: "390x844", width: 390, height: 844 },
   { name: "768x1024", width: 768, height: 1024 },
   { name: "1280x800", width: 1280, height: 800 },
@@ -53,8 +54,9 @@ const menu = {
     status: "OPEN",
   },
   categories: [
-    { id: 1, code: "SPIRITS", name: "Rượu mạnh", parentId: null, displayOrder: 1 },
-    { id: 2, code: "WHISKY", name: "Single Malt Whisky", parentId: 1, displayOrder: 1 },
+    { id: 1, code: "COCKTAIL", name: "Cocktail", parentId: null, displayOrder: 1 },
+    { id: 5, code: "SIGNATURE", name: "Signature Cocktails rất dài", parentId: 1, displayOrder: 2 },
+    { id: 2, code: "CLASSIC", name: "Classic Cocktails", parentId: 1, displayOrder: 1 },
     { id: 3, code: "FOOD_GROUP", name: "Đồ ăn", parentId: null, displayOrder: 2 },
     { id: 4, code: "FOOD", name: "Food", parentId: 3, displayOrder: 1 },
   ],
@@ -92,6 +94,17 @@ const menu = {
       displayOrder: 1,
       variants: [variant(4, "PORTION", "Phần", 180000, "TEMPORARILY_UNAVAILABLE")],
     },
+    {
+      id: 4,
+      code: "SIGNATURE_MACALLAN",
+      categoryId: 5,
+      name: "SIGNATURE MACALLAN",
+      description: "Món thuộc classification khác",
+      preparationStation: "BAR",
+      availabilityStatus: "AVAILABLE",
+      displayOrder: 1,
+      variants: [variant(5, "GLASS", "Ly", 420000)],
+    },
   ],
 }
 
@@ -125,11 +138,17 @@ for (const viewport of viewports) {
   await expect(page.getByText("MACALLAN 12", { exact: true })).toBeVisible()
   await expect(page.getByText("TRUFFLE FRIES", { exact: true })).toBeVisible()
   await expect(page.getByText("Tạm hết", { exact: true })).toBeVisible()
+  const tablist = page.getByRole("tablist", { name: "Nhóm món" })
+  await expect(tablist).toBeVisible()
+  const tablistHeight = await tablist.evaluate((element) => element.getBoundingClientRect().height)
+  if (tablistHeight < 40) failures.push(`${viewport.name}: thanh danh mục co còn ${tablistHeight}px`)
+  await expect(page.getByRole("tab", { name: "Classic Cocktails", exact: true })).toBeVisible()
 
   const dimensions = await page.evaluate(() => ({
     scrollWidth: document.documentElement.scrollWidth,
     clientWidth: document.documentElement.clientWidth,
     overflow: [...document.querySelectorAll("button,input,main,section")]
+      .filter((element) => !element.closest('[role="tablist"]'))
       .map((element) => ({
         label: element.getAttribute("aria-label") || element.textContent?.trim().slice(0, 30),
         rect: element.getBoundingClientRect(),
@@ -155,7 +174,18 @@ for (const viewport of viewports) {
     await expect(page.getByRole("button", { name: /Thêm vào giỏ · 380\.000đ/ })).toBeVisible()
     await page.keyboard.press("Escape")
     await page.getByRole("searchbox", { name: "Tìm món" }).fill("")
-    await page.getByRole("tab", { name: "Đồ ăn" }).click()
+    await page.getByRole("tab", { name: "Classic Cocktails", exact: true }).click()
+    await expect(page.getByRole("searchbox", { name: "Tìm món" })).toHaveAttribute(
+      "placeholder",
+      "Tìm trong Classic Cocktails…",
+    )
+    await expect(page.getByText("MACALLAN 12", { exact: true })).toBeVisible()
+    await expect(page.getByText("SIGNATURE MACALLAN", { exact: true })).toHaveCount(0)
+    await page.getByRole("searchbox", { name: "Tìm món" }).fill("signature")
+    await expect(page.getByText("SIGNATURE MACALLAN", { exact: true })).toHaveCount(0)
+    await expect(page.getByRole("heading", { name: "Không tìm thấy món", exact: true })).toBeVisible()
+    await page.getByRole("searchbox", { name: "Tìm món" }).fill("")
+    await page.getByRole("tab", { name: "Đồ ăn", exact: true }).click()
     await expect(page.getByText("TRUFFLE FRIES", { exact: true })).toBeVisible()
     await expect(page.getByText("MACALLAN 12", { exact: true })).toHaveCount(0)
   }

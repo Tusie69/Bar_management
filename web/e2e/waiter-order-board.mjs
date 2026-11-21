@@ -6,7 +6,8 @@
  * 1. Trạng thái món đọc được trên từng dòng, theo phiếu của quầy mang dòng đó.
  * 2. Sửa số lượng CHỈ hiện khi quầy chưa nhận phiếu, và gửi kèm
  *    `expectedLineVersion` — không có nó thì hai máy ghi đè nhau.
- * 3. Món đã xong đổi nút thành "Xin ghi hao" và buộc một lần tick riêng.
+ * 3. Phục vụ không có `order.cancel.ready`: không thấy/mở được ghi hao và được
+ *    hướng dẫn báo Thu ngân hoặc quản lý.
  * 4. Phục vụ gửi yêu cầu hủy có lý do; màn này KHÔNG có nút hủy thẳng.
  * 5. Người có quyền phê duyệt thấy hàng chờ; người không có quyền đọc một câu
  *    rõ ràng thay vì một danh sách trống.
@@ -25,6 +26,7 @@ const launchOptions = process.env.PW_CHROMIUM_PATH
   : { executablePath: "C:/Program Files/Google/Chrome/Application/chrome.exe" }
 const viewports = [
   { name: "360x800", width: 360, height: 800 },
+  { name: "375x812", width: 375, height: 812 },
   { name: "390x844", width: 390, height: 844 },
   { name: "768x1024", width: 768, height: 1024 },
   { name: "1280x800", width: 1280, height: 800 },
@@ -75,6 +77,7 @@ const line = (overrides = {}) => ({
   preparationStatus: "SUBMITTED",
   canAdjustQuantity: true,
   pendingCancellation: null,
+  lastRejection: null,
   ...overrides,
 })
 
@@ -110,14 +113,25 @@ const detail = {
     ...summary,
     businessDate: "2030-01-01",
     lines: [
-      line(),
+      line({
+        lastRejection: {
+          cancellationId: 8,
+          quantity: 1,
+          reason: "Khách đổi ý",
+          rejectedByUserId: 2,
+          rejectedByDisplayName: "Thu ngân Lan",
+          rejectedAt: "2030-01-01T13:50:00.000Z",
+          decisionNote: "Món đã được phục vụ",
+        },
+      }),
       line({
         lineNo: 2,
         itemName: "BOTTLE ONLY RESERVE",
         variantDisplayName: "Chai",
-        quantity: 1,
-        lineTotalVnd: 180000,
+        quantity: 2,
+        lineTotalVnd: 360000,
         unitPriceVnd: 180000,
+        cancelledQuantity: 1,
         netQuantity: 1,
         netTotalVnd: 180000,
         preparationStatus: "ACCEPTED",
@@ -271,8 +285,17 @@ for (const viewport of viewports) {
   await expect(page.getByRole("button", { name: "Tăng số lượng MACALLAN 12 Ly" })).toBeVisible()
   await expect(page.getByRole("button", { name: /Tăng số lượng BOTTLE ONLY RESERVE/ })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /Tăng số lượng TRUFFLE FRIES/ })).toHaveCount(0)
-  // Món đã xong đổi nút thành ghi hao.
-  await expect(page.getByRole("button", { name: "Xin ghi hao" })).toBeVisible()
+  // Phục vụ không có quyền ghi hao: nút và dialog đều không tồn tại.
+  await expect(page.getByRole("button", { name: "Xin ghi hao" })).toHaveCount(0)
+  await expect(page.getByText(/không có quyền ghi hao/)).toBeVisible()
+  await expect(page.getByText(/Thu ngân hoặc quản lý/)).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Xin ghi hao món đã làm" })).toHaveCount(0)
+  // Rejection và hủy một phần đọc được ngay trên đúng dòng.
+  await expect(page.getByText("Yêu cầu hủy 1 phần đã bị từ chối.")).toBeVisible()
+  await expect(page.getByText(/Người từ chối: Thu ngân Lan/)).toBeVisible()
+  await expect(page.getByText(/Món đã được phục vụ/)).toBeVisible()
+  await expect(page.getByText("Đã hủy 1", { exact: true })).toBeVisible()
+  await expect(page.getByText(/Dòng này đã hủy một phần/)).toBeVisible()
 
   await page.getByRole("button", { name: "Tăng số lượng MACALLAN 12 Ly" }).click()
   await expect.poll(() => adjustCalls.length).toBe(1)

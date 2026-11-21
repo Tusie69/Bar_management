@@ -71,15 +71,15 @@ export function lineCapability(line: WaiterOrderLine): LineCapability {
       ? null
       : madeAlready
         ? "Món đã làm xong. Hủy món là ghi hao và cần người có quyền phê duyệt."
-        : "Quầy đã nhận phiếu. Sửa số lượng phải đi qua yêu cầu hủy có phê duyệt.",
+        : status === "SUBMITTED"
+          ? "Dòng đang chờ quầy nhận. Hiện không thể sửa trực tiếp số lượng."
+          : "Quầy đã nhận phiếu. Sửa số lượng phải đi qua yêu cầu hủy có phê duyệt.",
   }
 }
 
 /** Phần khách còn phải trả cho một dòng, sau phần đã hủy. */
 export function lineNetLabel(line: WaiterOrderLine): string {
-  return line.cancelledQuantity === 0
-    ? `${line.quantity}`
-    : `${line.netQuantity} (đã hủy ${line.cancelledQuantity}/${line.quantity})`
+  return `${line.netQuantity}`
 }
 
 export interface OrderBoardTotals {

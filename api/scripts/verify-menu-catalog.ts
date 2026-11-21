@@ -99,11 +99,16 @@ async function resolveVerifier(args: Arguments): Promise<{ userId: number; membe
   )
   const membership = rows[0]
   if (!membership) throw new Error(`Tài khoản #${userId} không thuộc organization #${args.organizationId}.`)
+  // `listPermissions` trả mảng rỗng khi actor không có portal, nên thiếu dòng
+  // này thì `hasPermission` luôn false và `--apply` không bao giờ chạy được,
+  // kể cả với OWNER. Cổng `admin` là cổng của OWNER/ADMIN — đúng cổng mà một
+  // người duyệt menu sẽ dùng nếu thao tác qua giao diện thay vì script.
   const actor = {
     userId,
     membershipId: Number(membership.membership_id),
     organizationId: args.organizationId,
     venueId: args.venueId,
+    portal: 'admin' as const,
   }
   if (!(await hasPermission(actor, 'venue.configure'))) {
     throw new Error(`Tài khoản #${userId} không có quyền venue.configure tại địa điểm #${args.venueId}.`)

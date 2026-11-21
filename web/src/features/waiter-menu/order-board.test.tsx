@@ -29,16 +29,21 @@ function line(overrides: Partial<WaiterOrderLine> = {}): WaiterOrderLine {
     preparationStatus: "SUBMITTED",
     canAdjustQuantity: true,
     pendingCancellation: null,
+    lastRejection: null,
     ...overrides,
   }
 }
 
-function row(target: WaiterOrderLine, options: { canAdjust?: boolean; canRequestCancel?: boolean } = {}): string {
+function row(
+  target: WaiterOrderLine,
+  options: { canAdjust?: boolean; canRequestCancel?: boolean; canRequestWaste?: boolean } = {},
+): string {
   return renderToStaticMarkup(
     <OrderLineRow
       line={target}
       canAdjust={options.canAdjust ?? true}
       canRequestCancel={options.canRequestCancel ?? true}
+      canRequestWaste={options.canRequestWaste ?? true}
       onAdjust={noop}
       onRequestCancel={noop}
     />,
@@ -71,6 +76,13 @@ describe("dòng món trên màn Đơn của bàn", () => {
     expect(html).not.toContain("Tăng số lượng")
   })
 
+  it("Phục vụ không có order.cancel.ready không thấy và không mở được ghi hao", () => {
+    const html = row(line({ preparationStatus: "READY", canAdjustQuantity: false }), { canRequestWaste: false })
+    expect(html).not.toContain("Xin ghi hao")
+    expect(html).toContain("không có quyền ghi hao")
+    expect(html).toContain("Thu ngân hoặc quản lý")
+  })
+
   it("đang chờ phê duyệt: không còn thao tác nào, chỉ còn trạng thái", () => {
     const html = row(
       line({
@@ -93,7 +105,9 @@ describe("dòng món trên màn Đơn của bàn", () => {
 
   it("phần đã hủy hiện cùng tổng cũ bị gạch, dòng không biến mất", () => {
     const html = row(line({ quantity: 3, cancelledQuantity: 1, netQuantity: 2, netTotalVnd: 760_000 }))
-    expect(html).toContain("2 (đã hủy 1/3)")
+    expect(html).toContain("2×")
+    expect(html).toContain("Đã hủy 1")
+    expect(html).toContain("Dòng này đã hủy một phần")
     expect(html).toContain("760.000đ")
     expect(html).toContain("<s")
     expect(html).toContain("1.140.000đ")
@@ -103,7 +117,56 @@ describe("dòng món trên màn Đơn của bàn", () => {
     const html = row(line({ quantity: 2, cancelledQuantity: 2, netQuantity: 0, netTotalVnd: 0 }))
     expect(html).toContain("line-through")
     expect(html).toContain("đã bị hủy toàn bộ")
+    expect(html).toContain("Đã hủy toàn bộ")
     expect(html).not.toContain("Xin hủy món")
+  })
+
+  it("hiện rejection hiện hành đủ người, thời gian, ghi chú và hướng dẫn khách", () => {
+    const html = row(
+      line({
+        lastRejection: {
+          cancellationId: 10,
+          quantity: 1,
+          reason: "Khách đổi ý",
+          rejectedByUserId: 2,
+          rejectedByDisplayName: "Thu ngân Lan",
+          rejectedAt: "2030-01-01T14:10:00.000Z",
+          decisionNote: "Món đã được phục vụ",
+        },
+      }),
+    )
+    expect(html).toContain("Yêu cầu hủy 1 phần đã bị từ chối")
+    expect(html).toContain("Thu ngân Lan")
+    expect(html).toContain("Món đã được phục vụ")
+    expect(html).toContain("Hãy báo lại khách")
+  })
+
+  it("không hiện rejection cũ khi đã có yêu cầu mới đang chờ", () => {
+    const html = row(
+      line({
+        pendingCancellation: {
+          cancellationId: 11,
+          quantity: 1,
+          reason: "Yêu cầu mới",
+          policy: "STANDARD",
+          version: 1,
+          requestedByUserId: 6,
+          requestedByDisplayName: "Phục vụ",
+          requestedAt: "2030-01-01T14:12:00.000Z",
+        },
+        lastRejection: {
+          cancellationId: 10,
+          quantity: 1,
+          reason: "Yêu cầu cũ",
+          rejectedByUserId: 2,
+          rejectedByDisplayName: "Thu ngân",
+          rejectedAt: "2030-01-01T14:10:00.000Z",
+          decisionNote: "Cũ",
+        },
+      }),
+    )
+    expect(html).toContain("Đang chờ phê duyệt")
+    expect(html).not.toContain("đã bị từ chối")
   })
 
   it("thiếu quyền thì không hiện thao tác tương ứng", () => {

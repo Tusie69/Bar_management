@@ -45,7 +45,7 @@ conflict, 422 `INVALID_PHONE_NUMBER` / `BOOKING_PHONE_UNAVAILABLE`, 429 rate lim
 | GET    | `/auth/sessions`            | Session + `session.read`          | `{sessions:[...]}`; các phiên đang hoạt động trong organization (TU-33)                                       |
 | POST   | `/auth/sessions/:id/revoke` | Session + CSRF + `session.revoke` | `{revokedSessions,targetUserId}`; buộc đăng xuất một phiên (TU-33)                                            |
 
-`portal` is one of `admin`, `receptionist`, `customer-care`, `cashier` or `waiter`. The server verifies the password before checking portal eligibility, creates no session for a denied portal and stores the verified portal on the server-side session. Mapping is `admin → OWNER | ADMIN`, `receptionist → RECEPTIONIST`, `customer-care → CUSTOMER_CARE`, `cashier → CASHIER`, `waiter → WAITER`. The mapping lives in one place (`PORTAL_ROLE_CODES` in `api/src/auth/auth-portal.ts`) and the session-validation SQL is generated from it, so login and session checks cannot disagree about which roles a portal accepts. ADMIN must have access level `WRITE` or `READ_ONLY` on its active venue grant. A multi-role account receives only roles and permissions mapped to the selected portal; the request value never grants a role. Changing a client URL cannot change the session portal. Invalid portal is `INVALID_PORTAL` (400); valid credentials at a disallowed portal are `PORTAL_ACCESS_DENIED` (403).
+`portal` is one of `admin`, `receptionist`, `customer-care`, `cashier`, `waiter` or `preparation`. The server verifies the password before checking portal eligibility, creates no session for a denied portal and stores the verified portal on the server-side session. Mapping is `admin → OWNER | ADMIN`, `receptionist → RECEPTIONIST`, `customer-care → CUSTOMER_CARE`, `cashier → CASHIER`, `waiter → WAITER | BAR`, `preparation → BAR | KITCHEN`. BAR is the one role with two portals: `/phucvu` to take an order the guest places at the counter (L9) and `/chebien` to work the bar queue. It carries only its OWN role permissions at either portal, because `listPermissions` intersects the account's roles with the roles the portal accepts. The mapping lives in one place (`PORTAL_ROLE_CODES` in `api/src/auth/auth-portal.ts`) and the session-validation SQL is generated from it, so login and session checks cannot disagree about which roles a portal accepts. ADMIN must have access level `WRITE` or `READ_ONLY` on its active venue grant. A multi-role account receives only roles and permissions mapped to the selected portal; the request value never grants a role. Changing a client URL cannot change the session portal. Invalid portal is `INVALID_PORTAL` (400); valid credentials at a disallowed portal are `PORTAL_ACCESS_DENIED` (403).
 
 `user` contains `{id,username,displayName,organizationId,venueId,roles,accessLevel}`; `accessLevel` is `WRITE`, `READ_ONLY`, or `null` for non-ADMIN roles. `roles` contains only active role codes eligible for the session portal and venue. Raw session tokens are never included in JSON. Login is limited after five failed credential attempts for the same IP/username in a 15-minute window. `/auth/me` restores the same portal after refresh. Disabled users, suspended memberships, expired/revoked sessions, or revocation of the last role eligible for the session portal make the next authenticated request return 401. Logout revokes the database session and clears the HttpOnly cookie. Migration `0012_add_auth_session_portal.sql` revokes legacy active sessions that had no server-verified portal instead of assigning one heuristically.
 
@@ -1549,6 +1549,53 @@ Each line now carries `lineVersion`, `cancelledQuantity`, `netQuantity`, `netTot
 `preparationStatus` is the status of **the station ticket that carries the line**, because Module 4 accepts a ticket
 (one per station per order), not a line. Claiming "this line is ACCEPTED" when only the ticket was accepted would be a
 promise the data cannot keep.
+
+#### `lastRejection` (L5)
+
+A line also carries `lastRejection`: `{ cancellationId, quantity, reason, rejectedByUserId, rejectedByDisplayName,
+rejectedAt, decisionNote }`, or `null`. `decisionNote` is nullable — an approver is not required to explain. The other
+fields are not: `ck_sales_order_cancellations_decision` (migration 0040) forces every non-`PENDING` row to carry a
+decider and a timestamp.
+
+Before this, the detail endpoint joined only `PENDING` cancellations, so a rejection left no trace at all on the waiter
+screen: the request simply vanished and the waiter usually asked again. The field is the **current state**, not the
+history:
+
+| Line history (oldest → newest) | `pendingCancellation` | `lastRejection` |
+| --- | --- | --- |
+| nothing | `null` | `null` |
+| REJECTED | `null` | that rejection |
+| REJECTED, REJECTED | `null` | the **newer** rejection |
+| REJECTED, then a new PENDING | the pending one | `null` |
+| REJECTED, then APPROVED | `null` | `null` |
+
+The join takes the line's newest cancellation (`MAX(id)`) and keeps it only if its status is `REJECTED`, which is what
+makes the last two rows `null` and also guarantees one row per line — a line with several cancellations is never
+duplicated in `lines`. Nothing is deleted: the full history stays in `sales_order_cancellations` and
+`sales_order_line_changes`. Both the pending and the rejection join are scoped by `venue_id`, so an approver's name
+never crosses a venue boundary.
+
+### Preparation ticket lines (L2)
+
+`GET /api/v1/preparation/:station/tickets` and `.../history` return, per line, `quantity`, `cancelledQuantity` and
+`originalQuantity`.
+
+`quantity` is what the station still has to make — `originalQuantity - cancelledQuantity`, read from the
+`net_quantity` generated column of migration 0040 — **not** the quantity the guest ordered. It was the ordered quantity
+before, so after a cashier approved the cancellation of one of two trays, the kitchen ticket still said "2×" and two
+trays got made while the guest paid for one.
+
+It is never negative, and `0` means the line was cancelled in full. Such a line is still returned rather than filtered
+out: "no line" and "a line nobody has to make" look identical on screen, and the first one reads like a ticket that
+lost an item. The screen renders `0` struck through and dimmed with "Đã hủy toàn bộ, không làm"; a partial cancellation
+reads "Đã hủy n, chỉ làm m". Unit and note are kept in every case.
+
+Ticket statistics are untouched by this: `preparation_tickets.item_count` stays the count at submit time and the
+cancelled part lives in `cancelled_item_count`.
+
+A decision on a cancellation bumps `venues.change_seq`, which is both the queue snapshot's `changeCursor` and the
+trigger behind the `floor-changed` SSE event the queue screen listens to, so Bar/Kitchen refresh within seconds without
+anyone pressing reload.
 
 ### Changing a quantity
 

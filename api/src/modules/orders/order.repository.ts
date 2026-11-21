@@ -92,6 +92,13 @@ interface LineRow extends RowDataPacket {
   cancellation_requested_by: number | null
   cancellation_requested_by_name: string | null
   cancellation_requested_at: Date | string | null
+  rejection_id: number | null
+  rejection_quantity: number | null
+  rejection_reason: string | null
+  rejection_decided_by: number | null
+  rejection_decided_by_name: string | null
+  rejection_decided_at: Date | string | null
+  rejection_decision_note: string | null
   menu_item_id: number
   menu_item_variant_id: number
   item_code: string
@@ -530,13 +537,29 @@ async function readOrderDetail(
        c.id AS cancellation_id, c.quantity AS cancellation_quantity, c.reason AS cancellation_reason,
        c.policy AS cancellation_policy, c.version AS cancellation_version,
        c.requested_by_user_id AS cancellation_requested_by, cu.display_name AS cancellation_requested_by_name,
-       c.requested_at AS cancellation_requested_at
+       c.requested_at AS cancellation_requested_at,
+       r.id AS rejection_id, r.quantity AS rejection_quantity, r.reason AS rejection_reason,
+       r.decided_by_user_id AS rejection_decided_by, ru.display_name AS rejection_decided_by_name,
+       r.decided_at AS rejection_decided_at, r.decision_note AS rejection_decision_note
      FROM sales_order_lines l
      LEFT JOIN preparation_tickets t
        ON t.venue_id = l.venue_id AND t.order_id = l.order_id AND t.station = l.preparation_station
      LEFT JOIN sales_order_cancellations c
-       ON c.line_id = l.id AND c.status = 'PENDING'
+       ON c.venue_id = l.venue_id AND c.line_id = l.id AND c.status = 'PENDING'
      LEFT JOIN users cu ON cu.id = c.requested_by_user_id
+     -- L5: lần từ chối gần nhất, và CHỈ khi nó còn là trạng thái hiện hành của
+     -- dòng. Điều kiện "r.id = MAX(id) của dòng" làm hai việc cùng lúc: nó chọn
+     -- đúng một hàng nên dòng món không bị nhân đôi khi dòng có nhiều lịch sử
+     -- hủy, và nó tự loại lần từ chối cũ khi sau đó đã có một yêu cầu mới
+     -- (PENDING đang chờ, hoặc APPROVED) — vì khi ấy MAX(id) không còn là dòng
+     -- REJECTED. Scope venue_id ở cả join và subquery: line_id là khoá chính nên
+     -- không thể trùng giữa hai địa điểm, nhưng tên người duyệt là thứ không
+     -- được đi qua biên venue vì một lỗi join sau này.
+     LEFT JOIN sales_order_cancellations r
+       ON r.venue_id = l.venue_id AND r.line_id = l.id AND r.status = 'REJECTED'
+      AND r.id = (SELECT MAX(h.id) FROM sales_order_cancellations h
+                   WHERE h.venue_id = l.venue_id AND h.line_id = l.id)
+     LEFT JOIN users ru ON ru.id = r.decided_by_user_id
      WHERE l.venue_id = ? AND l.order_id = ?
      ORDER BY l.line_no`,
     [actor.venueId, orderId],
@@ -584,6 +607,15 @@ async function readOrderDetail(
         requestedByUserId: Number(row.cancellation_requested_by),
         requestedByDisplayName: row.cancellation_requested_by_name ?? '',
         requestedAt: isoDateTime(row.cancellation_requested_at ?? new Date()),
+      },
+      lastRejection: row.rejection_id === null ? null : {
+        cancellationId: Number(row.rejection_id),
+        quantity: Number(row.rejection_quantity),
+        reason: row.rejection_reason ?? '',
+        rejectedByUserId: Number(row.rejection_decided_by),
+        rejectedByDisplayName: row.rejection_decided_by_name ?? '',
+        rejectedAt: isoDateTime(row.rejection_decided_at ?? new Date()),
+        decisionNote: row.rejection_decision_note ?? null,
       },
     })),
     tickets: tickets.map((row): PreparationTicketView => ({
