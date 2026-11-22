@@ -363,6 +363,70 @@ mysqlDescribe('Module 4 preparation queue', () => {
     expectPreparationPrivacy(historical)
   })
 
+  it('lùi một bước, xoá mốc thời gian của bước bị lùi và từ chối lùi từ READY', async () => {
+    const seeded = await seedTickets()
+    const bar = await signIn('module4_bar')
+    const path = `/api/v1/preparation/BAR/tickets/${seeded.barId}`
+
+    expect((await post(bar, `${path}/transition`,
+      { toStatus: 'ACCEPTED', expectedVersion: 1, idempotencyKey: idem() })).status).toBe(200)
+    expect((await post(bar, `${path}/transition`,
+      { toStatus: 'PREPARING', expectedVersion: 2, idempotencyKey: idem() })).status).toBe(200)
+
+    // Chỉ lùi đúng một bước.
+    const twoSteps = await post(bar, `${path}/revert`,
+      { toStatus: 'SUBMITTED', expectedVersion: 3, reason: 'nhảy hai bước', idempotencyKey: idem() })
+    expect(twoSteps.status).toBe(409)
+    expect(json<{ error: { code: string } }>(twoSteps).error.code).toBe('INVALID_PREPARATION_TRANSITION')
+
+    // Lý do là tùy chọn; gửi kèm thì nhật ký giữ lại.
+    const reverted = await post(bar, `${path}/revert`,
+      { toStatus: 'ACCEPTED', expectedVersion: 3, reason: 'Bàn VIP chen vào', idempotencyKey: idem() })
+    expect(reverted.status, JSON.stringify(reverted.body)).toBe(200)
+    const back = json<{ ticket: { status: string; version: number; acceptedAt: string | null; startedAt: string | null } }>(reverted).ticket
+    expect(back).toMatchObject({ status: 'ACCEPTED', version: 4 })
+    // Mốc "bắt đầu pha" bị xoá vì nó sẽ được ghi lại ở lần đi tới sau; mốc
+    // "đã nhận" giữ nguyên vì bước đó không bị lùi.
+    expect(back.startedAt).toBeNull()
+    expect(back.acceptedAt).not.toBeNull()
+
+    const [events] = await databasePool.execute<RowDataPacket[]>(
+      `SELECT from_status, to_status, reason FROM preparation_ticket_events
+        WHERE ticket_id = ? ORDER BY ticket_version`,
+      [seeded.barId],
+    )
+    expect(events.map((row) => [row.from_status, row.to_status, row.reason])).toEqual([
+      ['SUBMITTED', 'ACCEPTED', null],
+      ['ACCEPTED', 'PREPARING', null],
+      ['PREPARING', 'ACCEPTED', 'Bàn VIP chen vào'],
+    ])
+
+    const [audit] = await databasePool.execute<RowDataPacket[]>(
+      `SELECT action FROM operation_log WHERE entity_type = 'preparation_ticket' AND entity_id = ?
+        ORDER BY change_seq DESC LIMIT 1`,
+      [seeded.barId],
+    )
+    expect(audit[0]?.action).toBe('PREPARATION_TICKET_REVERTED')
+
+    // Lùi về "Mới nhận" xoá luôn mốc đã nhận — và không cần lý do nào cả.
+    const toQueue = await post(bar, `${path}/revert`,
+      { toStatus: 'SUBMITTED', expectedVersion: 4, idempotencyKey: idem() })
+    expect(toQueue.status, JSON.stringify(toQueue.body)).toBe(200)
+    expect(json<{ ticket: { status: string; acceptedAt: string | null } }>(toQueue).ticket)
+      .toMatchObject({ status: 'SUBMITTED', acceptedAt: null })
+
+    // READY đã bắn thông báo "món xong" cho Phục vụ và Thu ngân, nên không lùi được.
+    let version = 5
+    for (const toStatus of ['ACCEPTED', 'PREPARING', 'READY'] as const) {
+      expect((await post(bar, `${path}/transition`,
+        { toStatus, expectedVersion: version++, idempotencyKey: idem() })).status).toBe(200)
+    }
+    const fromReady = await post(bar, `${path}/revert`,
+      { toStatus: 'ACCEPTED', expectedVersion: version, idempotencyKey: idem() })
+    expect(fromReady.status).toBe(409)
+    expect(json<{ error: { code: string } }>(fromReady).error.code).toBe('PREPARATION_REVERT_NOT_ALLOWED')
+  })
+
   it('persists quantity progress across queue reads with optimistic concurrency', async () => {
     const seeded = await seedTickets()
     await seedPreparationLines(seeded.orderId)
@@ -813,6 +877,9 @@ mysqlDescribe('Module 4 preparation queue', () => {
 
   it('delivers READY independently to the ordering waiter and cashier audience with idempotent acknowledgement', async () => {
     const seeded = await seedTickets()
+    // `itemCount` của thông báo là tổng `net_quantity` của các dòng món, nên
+    // không có dòng nào thì nó bằng 0 và assert bên dưới không thể đúng.
+    await seedPreparationLines(seeded.orderId)
     await databasePool.execute(
       `INSERT INTO membership_roles (organization_id, membership_id, role_id, venue_id)
        SELECT ?, ?, id, ? FROM roles WHERE code = 'WAITER'`,
@@ -833,10 +900,16 @@ mysqlDescribe('Module 4 preparation queue', () => {
     }
     const waiterReady = await get(waiterSession, '/api/v1/preparation/ready-notifications')
     const cashierReady = await get(cashierSession, '/api/v1/preparation/ready-notifications')
-    const waiterNotifications = json<{ notifications: Array<{ eventId: number; visitId: number; audience: string; orderedByUserId: number }> }>(waiterReady).notifications
+    const waiterNotifications = json<{ notifications: Array<{ eventId: number; visitId: number; audience: string; orderedByUserId: number
+      visitSequence: number | null; tableCodes: string[]; itemCount: number }> }>(waiterReady).notifications
     const cashierNotifications = json<{ notifications: Array<{ visitId: number; audience: string; orderedByUserId: number }> }>(cashierReady).notifications
     expect(waiterNotifications[0]).toMatchObject({ visitId: seeded.visitId, audience: 'ORDERED_BY_USER', orderedByUserId: actor.userId })
     expect(cashierNotifications[0]).toMatchObject({ visitId: seeded.visitId, audience: 'CASHIER_ROLE', orderedByUserId: actor.userId })
+    // Chuông của Phục vụ đọc được mà không phải mở từng bàn ra dò: bàn nào,
+    // đơn số mấy, bao nhiêu món.
+    expect(waiterNotifications[0]!.tableCodes.length).toBeGreaterThan(0)
+    expect(waiterNotifications[0]!.itemCount).toBeGreaterThan(0)
+    expect(waiterNotifications[0]!.visitSequence).not.toBeNull()
     const eventId = Number(waiterNotifications[0]!.eventId)
     const waiterKey = idem()
     const ackPath = `/api/v1/preparation/ready-notifications/${eventId}/acknowledge`
