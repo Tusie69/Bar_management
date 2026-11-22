@@ -273,7 +273,7 @@
 [data-gm] header [role="button"],
 [data-gm] [role="tablist"] button,
 [data-gm] [role="tablist"] [role="tab"],
-[data-gm] [role="region"] button,
+[data-gm] [role="region"] button:not([data-bar-guest-row]),
 [data-gm] .reception-control-btn,
 [data-gm] input:not([type="checkbox"]):not([type="radio"]),
 [data-gm] select {
@@ -286,8 +286,13 @@ foreignObject[data-mobile-waitlist-marker] {
   overflow: visible !important;
 }
 
-[data-gm] foreignObject button,
-foreignObject button,
+/* Dòng của danh sách khách quầy bar được loại trừ: nó là một hàng trong bảng
+   dày đặc, không phải một nút điều khiển. Ép 44px cho một dòng chữ 10,5px làm
+   mỗi dòng cao gấp ba lần nội dung, và cái bảng chỉ còn hiện được hai khách
+   trong khoảng trống mà nó chiếm. Dòng vẫn rộng hết bảng và cao 26px, trên
+   ngưỡng 24×24 của WCAG 2.5.8. */
+[data-gm] foreignObject button:not([data-bar-guest-row]),
+foreignObject button:not([data-bar-guest-row]),
 [data-gm] button[aria-label*="Bàn chờ"],
 button[aria-label*="Bàn chờ"],
 .pointer-events-auto.absolute.bottom-3.right-3 button {

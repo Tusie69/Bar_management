@@ -42,8 +42,8 @@ import {
  */
 // tiêu đề: py-1.5 (12) + 12px * 1.3 + viền dưới 1
 const HEADER_PIXEL_HEIGHT = 29
-// một dòng: py-1.5 (12) + 10.5px * 1.25 (mọi thông tin nằm trên cùng một dòng)
-const ROW_BASE_PIXEL_HEIGHT = 25
+// một dòng: min-h-[26px] đang lớn hơn py-1 (8) + 10.5px * 1.25, nên nó quyết định
+const ROW_BASE_PIXEL_HEIGHT = 26
 // divide-y giữa hai dòng
 const ROW_DIVIDER_PIXEL_HEIGHT = 1
 
@@ -367,17 +367,19 @@ export function BarGuestList({
                   {readOnly ? (
                     <div
                       aria-label={rowAriaLabel}
-                      className="flex min-h-6 w-full min-w-0 cursor-default flex-col items-stretch overflow-hidden rounded-none px-1.5 py-1.5 text-left"
+                      data-bar-guest-row=""
+                      className="flex min-h-[26px] w-full min-w-0 cursor-default flex-col items-stretch overflow-hidden rounded-none px-1.5 py-1 text-left"
                     >
                       {rowBody}
                     </div>
                   ) : (
                     <button
                       type="button"
+                      data-bar-guest-row=""
                       onClick={() => onRowClick?.(row)}
                       aria-label={rowAriaLabel}
                       className={cn(
-                        "flex min-h-6 w-full min-w-0 flex-col items-stretch overflow-hidden rounded-none px-1.5 py-1.5 text-left transition-colors focus-visible:bg-surface-2 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none focus-visible:ring-inset",
+                        "flex min-h-[26px] w-full min-w-0 flex-col items-stretch overflow-hidden rounded-none px-1.5 py-1 text-left transition-colors focus-visible:bg-surface-2 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none focus-visible:ring-inset",
                         onRowClick ? "cursor-pointer hover:bg-surface-2/80" : "cursor-default hover:bg-surface-2/40",
                       )}
                     >
