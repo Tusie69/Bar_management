@@ -2,14 +2,18 @@ import { describe, expect, it } from "vitest"
 
 import {
   PREPARATION_EMPTY_QUEUE_TEXT,
+  PREPARATION_FILTER_EMPTY_TEXT,
   PREPARATION_WAIT_CRITICAL_SECONDS,
   PREPARATION_WAIT_WARNING_SECONDS,
   preparationColumns,
+  preparationColumnCount,
   preparationGuestFlagBadges,
   preparationMetaLine,
   preparationNextAction,
   preparationPendingCancellationLabel,
   preparationQueueViewState,
+  preparationQueueFilterLabel,
+  preparationQueueFilterProjection,
   preparationStationLabel,
   preparationSubmittedAtLabel,
   preparationTableLabel,
@@ -277,5 +281,106 @@ describe("L3 — trạng thái màn hình", () => {
 
   it("refetch nền giữ snapshot cũ, màn hình không nháy về loading", () => {
     expect(preparationQueueViewState({ hasSnapshot: true, ticketCount: 4 })).toBe("tickets")
+  })
+})
+
+describe("BT-07 — bộ lọc nhanh", () => {
+  const now = new Date("2026-11-22T10:12:00.000Z")
+  const tickets = [
+    {
+      id: 3,
+      submittedAt: "2026-11-22T10:00:00.000Z",
+      waitSeconds: 0,
+      guestFlags: { vip: false, designated: false },
+    },
+    {
+      id: 1,
+      submittedAt: "2026-11-22T10:10:00.000Z",
+      waitSeconds: 0,
+      guestFlags: { vip: true, designated: false },
+    },
+    {
+      id: 2,
+      submittedAt: "2026-11-22T10:09:00.000Z",
+      waitSeconds: 0,
+      guestFlags: { vip: false, designated: true },
+    },
+  ]
+
+  it("không mutate hoặc sort snapshot và giữ đúng thứ tự server", () => {
+    const frozenTickets = Object.freeze([...tickets])
+    const originalOrder = frozenTickets.map((ticket) => ticket.id)
+    const projection = preparationQueueFilterProjection(frozenTickets, "all", now)
+    expect(projection.visibleTickets.map((ticket) => ticket.id)).toEqual([3, 1, 2])
+    expect(frozenTickets.map((ticket) => ticket.id)).toEqual(originalOrder)
+    expect(
+      preparationQueueFilterProjection(frozenTickets, "vip", now).visibleTickets.map((ticket) => ticket.id),
+    ).toEqual([1])
+    expect(frozenTickets.map((ticket) => ticket.id)).toEqual(originalOrder)
+    expect(projection.hiddenCount).toBe(0)
+    expect(projection.hiddenCriticalCount).toBe(0)
+  })
+
+  it("VIP và Chỉ định là hai lựa chọn đơn, không kết hợp", () => {
+    expect(preparationQueueFilterProjection(tickets, "vip", now).visibleTickets.map((ticket) => ticket.id)).toEqual([1])
+    expect(
+      preparationQueueFilterProjection(tickets, "designated", now).visibleTickets.map((ticket) => ticket.id),
+    ).toEqual([2])
+  })
+
+  it("hidden-critical dùng cùng current time nên đổi theo tick", () => {
+    const before = preparationQueueFilterProjection(tickets, "vip", new Date("2026-11-22T10:11:59.000Z"))
+    const afterTick = preparationQueueFilterProjection(tickets, "vip", now)
+    expect(before.hiddenCriticalCount).toBe(0)
+    expect(afterTick.hiddenCriticalCount).toBe(1)
+    expect(afterTick.hiddenCount).toBe(2)
+  })
+
+  it("submittedAt lỗi dùng waitSeconds fallback để tính hidden-critical", () => {
+    const projection = preparationQueueFilterProjection(
+      [
+        {
+          id: 4,
+          submittedAt: "không-hợp-lệ",
+          waitSeconds: PREPARATION_WAIT_CRITICAL_SECONDS,
+          guestFlags: { vip: false, designated: false },
+        },
+      ],
+      "vip",
+      now,
+    )
+    expect(projection.hiddenCriticalCount).toBe(1)
+  })
+
+  it("đồng hồ client sớm hơn submittedAt được clamp khi tính hidden-critical", () => {
+    const projection = preparationQueueFilterProjection(
+      [
+        {
+          id: 5,
+          submittedAt: "2026-11-22T10:30:00.000Z",
+          waitSeconds: PREPARATION_WAIT_CRITICAL_SECONDS,
+          guestFlags: { vip: false, designated: false },
+        },
+      ],
+      "vip",
+      new Date("2026-11-22T10:00:00.000Z"),
+    )
+    expect(projection.hiddenCount).toBe(1)
+    expect(projection.hiddenCriticalCount).toBe(0)
+  })
+
+  it("count cột giải thích visible/total cho screen reader", () => {
+    expect(preparationColumnCount(2, 5, "all")).toEqual({ text: "5", accessibleLabel: "5 phiếu" })
+    expect(preparationColumnCount(2, 5, "vip")).toEqual({
+      text: "2/5",
+      accessibleLabel: "2 phiếu hiển thị trên tổng 5 phiếu",
+    })
+  })
+
+  it("nhãn filter và empty-filter là nội dung sản phẩm đã chốt", () => {
+    expect(preparationQueueFilterLabel("all")).toBe("Tất cả")
+    expect(preparationQueueFilterLabel("vip")).toBe("VIP")
+    expect(preparationQueueFilterLabel("designated")).toBe("Chỉ định")
+    expect(PREPARATION_FILTER_EMPTY_TEXT).toBe("Không có phiếu nào khớp bộ lọc.")
   })
 })

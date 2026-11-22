@@ -18,7 +18,15 @@ const viewports = [
 ]
 
 const session = {
-  user: { id: 41, username: "bar_e2e", displayName: "Bar E2E", organizationId: 1, venueId: 1, roles: ["BAR"], accessLevel: null },
+  user: {
+    id: 41,
+    username: "bar_e2e",
+    displayName: "Bar E2E",
+    organizationId: 1,
+    venueId: 1,
+    roles: ["BAR"],
+    accessLevel: null,
+  },
   permissions: ["preparation.bar.read", "preparation.bar.transition", "preparation.print.retry"],
   csrfToken: "preparation-e2e-csrf",
   portal: "preparation",
@@ -27,10 +35,20 @@ const session = {
 
 function ticket(ticketId, status, version) {
   return {
-    ticketId, orderId: ticketId + 100, visitId: 50 + ticketId, visitSequence: ticketId,
-    station: "BAR", status, version, submittedAt: "2030-10-24T12:00:00.000Z",
-    acceptedAt: null, startedAt: null, readyAt: null, collectedAt: null,
-    waitSeconds: ticketId * 60, tableCodes: [`A${ticketId}`],
+    ticketId,
+    orderId: ticketId + 100,
+    visitId: 50 + ticketId,
+    visitSequence: ticketId,
+    station: "BAR",
+    status,
+    version,
+    submittedAt: "2030-10-24T12:00:00.000Z",
+    acceptedAt: null,
+    startedAt: null,
+    readyAt: null,
+    collectedAt: null,
+    waitSeconds: ticketId * 60,
+    tableCodes: [`A${ticketId}`],
     // L3: contract Giai doan 2 — nguoi goi va co van hanh, khong co ten khach.
     orderedByDisplayName: ticketId === 2 ? "Minh" : "Phuc vu",
     guestFlags: { vip: ticketId === 2, birthday: false, designated: ticketId === 2 },
@@ -38,13 +56,57 @@ function ticket(ticketId, status, version) {
     // cancelledQuantity và originalQuantity. Phiếu 2 mang thêm một dòng hủy một
     // phần và một dòng hủy toàn bộ để màn hình được kiểm cả ba trạng thái.
     lines: [
-      { lineNo: 1, itemName: `Món ${ticketId}`, variantDisplayName: "Ly", quantity: 2, cancelledQuantity: 0, originalQuantity: 2, note: ticketId === 1 ? "Ít đá" : null, pendingCancellation: null },
+      {
+        lineNo: 1,
+        itemName: `Món ${ticketId}`,
+        variantDisplayName: "Ly",
+        menuItemVariantId: 100 + ticketId,
+        unitCode: "GLASS",
+        quantity: 2,
+        cancelledQuantity: 0,
+        originalQuantity: 2,
+        note: ticketId === 1 ? "Ít đá" : null,
+        pendingCancellation: null,
+      },
       ...(ticketId === 2
         ? [
-            { lineNo: 2, itemName: "Khay thịt muối", variantDisplayName: "Phần", quantity: 1, cancelledQuantity: 1, originalQuantity: 2, note: "Không hành", pendingCancellation: null },
-            { lineNo: 3, itemName: "Khoai tây truffle", variantDisplayName: "Phần", quantity: 0, cancelledQuantity: 1, originalQuantity: 1, note: null, pendingCancellation: null },
+            {
+              lineNo: 2,
+              itemName: "Khay thịt muối",
+              variantDisplayName: "Phần",
+              menuItemVariantId: 202,
+              unitCode: "PORTION",
+              quantity: 1,
+              cancelledQuantity: 1,
+              originalQuantity: 2,
+              note: "Không hành",
+              pendingCancellation: null,
+            },
+            {
+              lineNo: 3,
+              itemName: "Khoai tây truffle",
+              variantDisplayName: "Phần",
+              menuItemVariantId: 203,
+              unitCode: "PORTION",
+              quantity: 0,
+              cancelledQuantity: 1,
+              originalQuantity: 1,
+              note: null,
+              pendingCancellation: null,
+            },
             // L3: vua co phan da duyet huy, vua co yeu cau huy moi chua duyet.
-            { lineNo: 4, itemName: "Negroni", variantDisplayName: "Ly", quantity: 2, cancelledQuantity: 1, originalQuantity: 4, note: null, pendingCancellation: { cancellationId: 11, quantity: 1 } },
+            {
+              lineNo: 4,
+              itemName: "Negroni",
+              variantDisplayName: "Ly",
+              menuItemVariantId: 204,
+              unitCode: "GLASS",
+              quantity: 2,
+              cancelledQuantity: 1,
+              originalQuantity: 4,
+              note: null,
+              pendingCancellation: { cancellationId: 11, quantity: 1, groupId: 11 },
+            },
           ]
         : []),
     ],
@@ -64,11 +126,21 @@ for (const viewport of viewports) {
   await page.route("**/api/v1/tables/stream", (route) => route.abort())
   await page.route("**/api/v1/preparation/BAR/tickets", async (route) => {
     if (route.request().method() !== "GET") return route.fallback()
-    await route.fulfill({ json: {
-      station: "BAR", changeCursor: String(firstVersion), generatedAt: new Date().toISOString(),
-      printing: { enabled: printEnabled }, limit: 200,
-      tickets: [ticket(1, firstStatus, firstVersion), ticket(2, "ACCEPTED", 2), ticket(3, "PREPARING", 3), ticket(4, "READY", 4)],
-    } })
+    await route.fulfill({
+      json: {
+        station: "BAR",
+        changeCursor: String(firstVersion),
+        generatedAt: new Date().toISOString(),
+        printing: { enabled: printEnabled },
+        limit: 200,
+        tickets: [
+          ticket(1, firstStatus, firstVersion),
+          ticket(2, "ACCEPTED", 2),
+          ticket(3, "PREPARING", 3),
+          ticket(4, "READY", 4),
+        ],
+      },
+    })
   })
   await page.route("**/api/v1/preparation/BAR/tickets/1/transition", async (route) => {
     transitionCount += 1
@@ -106,8 +178,12 @@ for (const viewport of viewports) {
     await expect(full).toHaveAttribute("data-cancelled", "all")
     await expect(full).toContainText("Đã hủy toàn bộ, không làm")
     expect(await full.evaluate((node) => node.className)).toContain("opacity-60")
-    expect(await full.locator("div").first().evaluate((node) => getComputedStyle(node).textDecorationLine))
-      .toContain("line-through")
+    expect(
+      await full
+        .locator("div")
+        .first()
+        .evaluate((node) => getComputedStyle(node).textDecorationLine),
+    ).toContain("line-through")
     // L3 — ngon ngu Bartender, metadata va co van hanh.
     await expect(page.getByText("Đang pha", { exact: true })).toBeVisible()
     await expect(page.getByText("Hoàn thành · chờ bàn giao", { exact: true })).toBeVisible()
@@ -118,7 +194,10 @@ for (const viewport of viewports) {
     await expect(ticket2.locator('[data-line-no="4"]')).toContainText("Đã hủy 1, chỉ làm 2")
     await expect(ticket2.locator('[data-line-no="4"]')).toContainText("Đang chờ duyệt hủy 1 phần")
     await expect(ticket2.getByRole("button", { name: "Bắt đầu pha" })).toBeVisible()
-    const metrics = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }))
+    const metrics = await page.evaluate(() => ({
+      width: document.documentElement.clientWidth,
+      scroll: document.documentElement.scrollWidth,
+    }))
     expect(metrics.scroll).toBeLessThanOrEqual(metrics.width)
     await page.getByRole("button", { name: "Tiếp nhận" }).click()
     await expect.poll(() => transitionCount).toBe(1)
@@ -131,9 +210,14 @@ for (const viewport of viewports) {
     } else {
       await expect(retry).toHaveCount(0)
     }
-    const actionSize = await page.getByRole("button", { name: "Bắt đầu pha" }).first().evaluate((node) => node.getBoundingClientRect().height)
+    const actionSize = await page
+      .getByRole("button", { name: "Bắt đầu pha" })
+      .first()
+      .evaluate((node) => node.getBoundingClientRect().height)
     expect(actionSize).toBeGreaterThanOrEqual(44)
-    await page.screenshot({ path: path.join(output, `bar-after-cancellation-${viewport.width}x${viewport.height}.png`) })
+    await page.screenshot({
+      path: path.join(output, `bar-after-cancellation-${viewport.width}x${viewport.height}.png`),
+    })
     console.log(`PASS preparation ${viewport.width}x${viewport.height}`)
   } catch (error) {
     failures += 1

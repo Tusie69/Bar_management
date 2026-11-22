@@ -2,8 +2,11 @@ import { createElement } from "react"
 import { renderToString } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 import { PreparationTicketCard } from "./preparation-ticket-card"
-import type { PreparationStationCode } from "./preparation-presentation"
+import type { PreparationQueueFilter, PreparationStationCode } from "./preparation-presentation"
+import { PreparationQueueFilterBar } from "./preparation-queue"
 import type { PreparationTicket } from "./preparation-queue-data"
+import type { PreparationAggregateItem } from "./preparation-totals"
+import { PreparationTotalsPanel } from "./preparation-totals-panel"
 
 type PreparationLine = PreparationTicket["lines"][number]
 
@@ -12,6 +15,8 @@ function line(overrides: Partial<PreparationLine> = {}): PreparationLine {
     lineNo: 1,
     itemName: "Nước suối",
     variantDisplayName: "Chai",
+    menuItemVariantId: 101,
+    unitCode: "BOTTLE",
     quantity: 1,
     cancelledQuantity: 0,
     originalQuantity: 1,
@@ -64,6 +69,33 @@ function renderTicket(
 }
 
 const NOW = new Date("2026-11-22T10:03:00.000Z")
+
+function renderFilterBar(input: {
+  filter: PreparationQueueFilter
+  totalCount: number
+  visibleCount: number
+  hiddenCount: number
+  hiddenCriticalCount: number
+}): string {
+  return renderToString(createElement(PreparationQueueFilterBar, { ...input, onFilterChange: () => undefined }))
+}
+
+function aggregateItem(overrides: Partial<PreparationAggregateItem> = {}): PreparationAggregateItem {
+  return {
+    menuItemVariantId: 987654,
+    itemName: "Negroni",
+    variantDisplayName: "Ly",
+    unitCode: "GLASS",
+    quantity: 5,
+    notedLineCount: 0,
+    pendingCancellationQuantity: 0,
+    ...overrides,
+  }
+}
+
+function renderTotalsPanel(station: PreparationStationCode, items: readonly PreparationAggregateItem[]): string {
+  return renderToString(createElement(PreparationTotalsPanel, { station, items }))
+}
 
 describe("phiếu trong hàng đợi", () => {
   it("UI tính lại nhãn chờ từ current time, không giữ waitSeconds của snapshot", () => {
@@ -197,7 +229,9 @@ describe("L3 — hủy chờ duyệt trên card", () => {
 
   it("pendingCancellation hiện đúng số phần và có role status", () => {
     const html = renderTicket(
-      ticket({ lines: [line({ quantity: 3, pendingCancellation: { cancellationId: 9, quantity: 2 } })] }),
+      ticket({
+        lines: [line({ quantity: 3, pendingCancellation: { cancellationId: 9, quantity: 2, groupId: null } })],
+      }),
       NOW,
     )
     expect(html).toContain("Đang chờ duyệt hủy 2 phần")
@@ -211,7 +245,7 @@ describe("L3 — hủy chờ duyệt trên card", () => {
       ticket({
         status: "ACCEPTED",
         lines: [
-          line({ quantity: 3, pendingCancellation: { cancellationId: 9, quantity: 2 } }),
+          line({ quantity: 3, pendingCancellation: { cancellationId: 9, quantity: 2, groupId: null } }),
           line({ lineNo: 2, itemName: "Gin tonic", quantity: 1 }),
         ],
       }),
@@ -253,7 +287,7 @@ describe("L3 — hủy chờ duyệt trên card", () => {
             quantity: 2,
             cancelledQuantity: 1,
             originalQuantity: 4,
-            pendingCancellation: { cancellationId: 11, quantity: 1 },
+            pendingCancellation: { cancellationId: 11, quantity: 1, groupId: 11 },
           }),
         ],
       }),
@@ -287,5 +321,117 @@ describe("L3 — hồi quy card", () => {
   it("không có quyền/không có máy in thì không có nút in lại", () => {
     expect(renderTicket(ticket(), NOW)).not.toContain("Yêu cầu in lại")
     expect(renderTicket(ticket(), NOW, { canRetry: true })).toContain("Yêu cầu in lại")
+  })
+})
+
+describe("BT-07 — controls bộ lọc", () => {
+  it("snapshot thật sự rỗng không render filter controls", () => {
+    expect(
+      renderFilterBar({ filter: "all", totalCount: 0, visibleCount: 0, hiddenCount: 0, hiddenCriticalCount: 0 }),
+    ).toBe("")
+  })
+
+  it("mặc định all là lựa chọn duy nhất được nhấn và chưa có dải nhắc", () => {
+    const html = renderFilterBar({
+      filter: "all",
+      totalCount: 5,
+      visibleCount: 5,
+      hiddenCount: 0,
+      hiddenCriticalCount: 0,
+    })
+    expect(html).toContain('aria-label="Lọc hàng đợi"')
+    expect(html).not.toContain('aria-label="Bộ lọc hàng đợi"')
+    expect(html).toContain('aria-pressed="true">Tất cả')
+    expect(html).toContain('aria-pressed="false">VIP')
+    expect(html).toContain('aria-pressed="false">Chỉ định')
+    expect(html).not.toContain("phiếu bị ẩn")
+  })
+
+  it("filter hiện số bị ẩn, số critical và nút Xem tất cả trong flow mobile", () => {
+    const html = renderFilterBar({
+      filter: "vip",
+      totalCount: 5,
+      visibleCount: 2,
+      hiddenCount: 3,
+      hiddenCriticalCount: 1,
+    })
+    expect(html).toContain("Đang lọc VIP — 3 phiếu bị ẩn.")
+    expect(html).toContain("1 phiếu bị ẩn đã chờ quá lâu.")
+    expect(html).toContain("Xem tất cả")
+    expect(html).toContain("flex-col")
+    expect(html).toContain("min-h-11")
+  })
+
+  it("không có ticket khớp filter dùng empty state riêng, không dùng empty queue", () => {
+    const html = renderFilterBar({
+      filter: "designated",
+      totalCount: 4,
+      visibleCount: 0,
+      hiddenCount: 4,
+      hiddenCriticalCount: 2,
+    })
+    expect(html).toContain("Không có phiếu nào khớp bộ lọc.")
+    expect(html).not.toContain("Chưa có phiếu đang chờ.")
+    expect(html).toContain("Xem tất cả")
+  })
+})
+
+describe("BT-11 — panel tổng món", () => {
+  it("BAR có title và empty text đúng", () => {
+    const html = renderTotalsPanel("BAR", [])
+    expect(html).toContain("Tổng món đang chờ pha")
+    expect(html).toContain("Không còn món đang chờ pha.")
+  })
+
+  it("KITCHEN có title và empty text đúng, không dùng chữ pha", () => {
+    const html = renderTotalsPanel("KITCHEN", [])
+    expect(html).toContain("Tổng món đang chờ làm")
+    expect(html).toContain("Không còn món đang chờ làm.")
+    expect(html).not.toContain("chờ pha")
+  })
+
+  it("không render raw identity hoặc unit code", () => {
+    const html = renderTotalsPanel("BAR", [aggregateItem({ menuItemVariantId: 987654, unitCode: "BOTTLE" })])
+    expect(html).not.toContain("987654")
+    expect(html).not.toContain("BOTTLE")
+    expect(html).toContain("Negroni")
+  })
+
+  it("mặc định mở, mô tả toàn queue và header đủ target 44px", () => {
+    const html = renderTotalsPanel("BAR", [aggregateItem()])
+    expect(html).toContain('aria-expanded="true"')
+    expect(html).toContain("Tính trên toàn bộ hàng đợi, không phụ thuộc bộ lọc.")
+    expect(html).toContain("min-h-11")
+  })
+
+  it("danh sách có list semantics và vùng cuộn dọc giới hạn chiều cao", () => {
+    const html = renderTotalsPanel("BAR", [aggregateItem()])
+    expect(html).toContain("<ul")
+    expect(html).toContain("<li")
+    expect(html).toContain("max-h-72")
+    expect(html).toContain("overflow-y-auto")
+  })
+
+  it("hiện noted-line label số ít và số nhiều", () => {
+    const html = renderTotalsPanel("BAR", [
+      aggregateItem({ menuItemVariantId: 1, notedLineCount: 1 }),
+      aggregateItem({ menuItemVariantId: 2, notedLineCount: 3 }),
+    ])
+    expect(html).toContain("1 dòng có ghi chú")
+    expect(html).toContain("3 dòng có ghi chú")
+  })
+
+  it("hiện pending cancellation quantity nhưng không lộ cancellation ID hoặc group ID", () => {
+    const html = renderTotalsPanel("BAR", [aggregateItem({ quantity: 5, pendingCancellationQuantity: 2 })])
+    expect(html).toContain("5×")
+    expect(html).toContain("2 phần đang chờ duyệt hủy")
+    expect(html).not.toContain("cancellationId")
+    expect(html).not.toContain("groupId")
+  })
+
+  it("không render note hoặc pending label khi count bằng 0", () => {
+    const html = renderTotalsPanel("BAR", [aggregateItem()])
+    expect(html).not.toContain("dòng có ghi chú")
+    expect(html).not.toContain("phần đang chờ duyệt hủy")
   })
 })

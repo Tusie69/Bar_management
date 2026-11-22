@@ -58,13 +58,14 @@ async function seedTickets(): Promise<{ visitId: number; orderId: number; barId:
 async function seedPreparationLines(
   orderId: number,
   venueId = actor.venueId,
-): Promise<{ barLineId: number; kitchenLineId: number }> {
+): Promise<{ barLineId: number; kitchenLineId: number; barVariantId: number; kitchenVariantId: number }> {
   const [category] = await databasePool.execute<import('mysql2/promise').ResultSetHeader>(
     `INSERT INTO menu_categories (venue_id, code, name) VALUES (?, ?, 'Preparation')`,
     [venueId, `PREP_${orderId}`],
   )
   const lineIds: number[] = []
-  for (const [index, station, quantity] of [[1, 'BAR', 3], [2, 'KITCHEN', 2]] as const) {
+  const variantIds: number[] = []
+  for (const [index, station, quantity, unitCode] of [[1, 'BAR', 3, 'GLASS'], [2, 'KITCHEN', 2, 'PORTION']] as const) {
     const [item] = await databasePool.execute<import('mysql2/promise').ResultSetHeader>(
       `INSERT INTO menu_items
         (venue_id, category_id, code, name, normalized_name, preparation_station)
@@ -74,9 +75,10 @@ async function seedPreparationLines(
     )
     const [variant] = await databasePool.execute<import('mysql2/promise').ResultSetHeader>(
       `INSERT INTO menu_item_variants (venue_id, menu_item_id, code, unit_code, display_name)
-       VALUES (?, ?, ?, 'OTHER', 'Phần')`,
-      [venueId, item.insertId, `PREP_${orderId}_${station}_VARIANT`],
+       VALUES (?, ?, ?, ?, 'Phần')`,
+      [venueId, item.insertId, `PREP_${orderId}_${station}_VARIANT`, unitCode],
     )
+    variantIds.push(Number(variant.insertId))
     const [price] = await databasePool.execute<import('mysql2/promise').ResultSetHeader>(
       `INSERT INTO menu_variant_prices
         (venue_id, variant_id, amount_vnd, effective_from, source)
@@ -88,13 +90,64 @@ async function seedPreparationLines(
         (organization_id, venue_id, order_id, line_no, menu_item_id, menu_item_variant_id,
          price_id, price_version, item_code, item_name, variant_display_name, unit_code,
          preparation_station, unit_price_vnd, quantity, note)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 'Phần', 'OTHER', ?, 1000, ?, NULL)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, 'Phần', ?, ?, 1000, ?, NULL)`,
       [actor.organizationId, venueId, orderId, index, item.insertId, variant.insertId,
-        price.insertId, `PREP_${orderId}_${station}`, `${station} item`, station, quantity],
+        price.insertId, `PREP_${orderId}_${station}`, `${station} item`, unitCode, station, quantity],
     )
     lineIds.push(Number(line.insertId))
   }
-  return { barLineId: lineIds[0]!, kitchenLineId: lineIds[1]! }
+  return {
+    barLineId: lineIds[0]!,
+    kitchenLineId: lineIds[1]!,
+    barVariantId: variantIds[0]!,
+    kitchenVariantId: variantIds[1]!,
+  }
+}
+
+async function seedSameLabelBarLines(
+  orderId: number,
+  ticketId: number,
+): Promise<Array<{ lineNo: number; variantId: number; unitCode: 'GLASS' | 'BOTTLE' }>> {
+  const [category] = await databasePool.execute<import('mysql2/promise').ResultSetHeader>(
+    `INSERT INTO menu_categories (venue_id, code, name) VALUES (?, ?, 'Same label identity')`,
+    [actor.venueId, `SAME_LABEL_${orderId}`],
+  )
+  const [item] = await databasePool.execute<import('mysql2/promise').ResultSetHeader>(
+    `INSERT INTO menu_items
+      (venue_id, category_id, code, name, normalized_name, preparation_station)
+     VALUES (?, ?, ?, 'Nước khoáng', 'nuoc khoang', 'BAR')`,
+    [actor.venueId, category.insertId, `SAME_LABEL_${orderId}`],
+  )
+  const result: Array<{ lineNo: number; variantId: number; unitCode: 'GLASS' | 'BOTTLE' }> = []
+  for (const [lineNo, unitCode] of [[1, 'GLASS'], [2, 'BOTTLE']] as const) {
+    const [variant] = await databasePool.execute<import('mysql2/promise').ResultSetHeader>(
+      `INSERT INTO menu_item_variants (venue_id, menu_item_id, code, unit_code, display_name)
+       VALUES (?, ?, ?, ?, 'Tiêu chuẩn')`,
+      [actor.venueId, item.insertId, `SAME_LABEL_${orderId}_${unitCode}`, unitCode],
+    )
+    const [price] = await databasePool.execute<import('mysql2/promise').ResultSetHeader>(
+      `INSERT INTO menu_variant_prices
+        (venue_id, variant_id, amount_vnd, effective_from, source)
+       VALUES (?, ?, 1000, UTC_TIMESTAMP(3), 'INTEGRATION')`,
+      [actor.venueId, variant.insertId],
+    )
+    await databasePool.execute(
+      `INSERT INTO sales_order_lines
+        (organization_id, venue_id, order_id, line_no, menu_item_id, menu_item_variant_id,
+         price_id, price_version, item_code, item_name, variant_display_name, unit_code,
+         preparation_station, unit_price_vnd, quantity, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 'Nước khoáng', 'Tiêu chuẩn', ?, 'BAR', 1000, 1, NULL)`,
+      [actor.organizationId, actor.venueId, orderId, lineNo, item.insertId, variant.insertId,
+        price.insertId, `SAME_LABEL_${orderId}`, unitCode],
+    )
+    result.push({ lineNo, variantId: Number(variant.insertId), unitCode })
+  }
+  await databasePool.execute(
+    `UPDATE preparation_tickets SET line_count = 2, item_count = 2
+     WHERE organization_id = ? AND venue_id = ? AND id = ?`,
+    [actor.organizationId, actor.venueId, ticketId],
+  )
+  return result
 }
 
 async function linkReservation(
@@ -128,6 +181,8 @@ async function seedCancellation(input: {
   status: 'PENDING' | 'APPROVED' | 'REJECTED'
   station: 'BAR' | 'KITCHEN'
   venueId?: number
+  grouped?: boolean
+  groupId?: number
 }): Promise<number> {
   const decided = input.status === 'PENDING'
     ? { columns: '', values: '', params: [] }
@@ -142,7 +197,50 @@ async function seedCancellation(input: {
       input.lineNo, input.quantity, input.status, input.station, actor.userId, actor.membershipId,
       ...decided.params],
   )
+  if (input.grouped || input.groupId !== undefined) {
+    await databasePool.execute(
+      `UPDATE sales_order_cancellations SET group_id = ?
+       WHERE organization_id = ? AND venue_id = ? AND id = ?`,
+      [input.groupId ?? result.insertId, actor.organizationId, input.venueId ?? actor.venueId, result.insertId],
+    )
+  }
   return Number(result.insertId)
+}
+
+type PrivacyLine = Record<string, unknown> & {
+  pendingCancellation: Record<string, unknown> | null
+}
+
+type PrivacyTicket = Record<string, unknown> & {
+  lines: PrivacyLine[]
+}
+
+const preparationPrivateKeys = [
+  'reason',
+  'policy',
+  'ticketStatusAtRequest',
+  'requestedByUserId',
+  'requestedByMembershipId',
+  'guestName',
+  'customerName',
+  'contactName',
+  'phone',
+  'phoneLast3',
+  'bookingNote',
+  'customerHistory',
+  'username',
+] as const
+
+function expectPreparationPrivacy(ticket: PrivacyTicket): void {
+  for (const key of preparationPrivateKeys) {
+    expect(ticket).not.toHaveProperty(key)
+    for (const line of ticket.lines) {
+      expect(line).not.toHaveProperty(key)
+      if (line.pendingCancellation !== null) {
+        expect(line.pendingCancellation).not.toHaveProperty(key)
+      }
+    }
+  }
 }
 
 async function enablePrinting(station: 'BAR' | 'KITCHEN'): Promise<void> {
@@ -208,7 +306,7 @@ mysqlDescribe('Module 4 preparation queue', () => {
     await linkReservation(seeded.visitId, { vip: true, birthday: false, designated: true })
     await linkReservation(seeded.visitId, { vip: false, birthday: true, designated: false })
     const pendingId = await seedCancellation({ ...seeded, lineId: lines.barLineId, lineNo: 1, quantity: 1,
-      status: 'PENDING', station: 'BAR' })
+      status: 'PENDING', station: 'BAR', grouped: true })
     const bar = await signIn('module4_bar')
 
     const queue = await get(bar, '/api/v1/preparation/BAR/tickets')
@@ -217,7 +315,7 @@ mysqlDescribe('Module 4 preparation queue', () => {
       ticketId: number
       orderedByDisplayName: string
       guestFlags: { vip: boolean; birthday: boolean; designated: boolean }
-      lines: Array<Record<string, unknown> & { pendingCancellation: unknown }>
+      lines: PrivacyLine[]
     }> }>(queue).tickets[0]!
     expect(ticket).toMatchObject({
       ticketId: seeded.barId,
@@ -225,21 +323,27 @@ mysqlDescribe('Module 4 preparation queue', () => {
       guestFlags: { vip: true, birthday: false, designated: true },
     })
     expect(ticket.lines).toHaveLength(1)
-    expect(ticket.lines[0]!.pendingCancellation).toEqual({ cancellationId: pendingId, quantity: 1 })
-    for (const forbidden of ['guestName', 'customerName', 'contactName', 'phone', 'phoneLast3',
-      'bookingNote', 'customerHistory', 'username']) {
-      expect(ticket).not.toHaveProperty(forbidden)
-      expect(ticket.lines[0]).not.toHaveProperty(forbidden)
-    }
+    expect(ticket.lines[0]).toMatchObject({
+      menuItemVariantId: lines.barVariantId,
+      unitCode: 'GLASS',
+      pendingCancellation: { cancellationId: pendingId, quantity: 1, groupId: pendingId },
+    })
+    expectPreparationPrivacy(ticket)
 
     const accepted = await post(bar, `/api/v1/preparation/BAR/tickets/${seeded.barId}/transition`,
       { toStatus: 'ACCEPTED', expectedVersion: 1, idempotencyKey: idem() })
     expect(accepted.status, JSON.stringify(accepted.body)).toBe(200)
-    expect(json<{ ticket: typeof ticket }>(accepted).ticket).toMatchObject({
+    const acceptedTicket = json<{ ticket: typeof ticket }>(accepted).ticket
+    expect(acceptedTicket).toMatchObject({
       orderedByDisplayName: 'integration_reception',
       guestFlags: { vip: true, birthday: false, designated: true },
-      lines: [{ pendingCancellation: { cancellationId: pendingId, quantity: 1 } }],
+      lines: [{
+        menuItemVariantId: lines.barVariantId,
+        unitCode: 'GLASS',
+        pendingCancellation: { cancellationId: pendingId, quantity: 1, groupId: pendingId },
+      }],
     })
+    expectPreparationPrivacy(acceptedTicket)
     const conflict = await post(bar, `/api/v1/preparation/BAR/tickets/${seeded.barId}/transition`,
       { toStatus: 'PREPARING', expectedVersion: 1, idempotencyKey: idem() })
     expect(conflict.status).toBe(409)
@@ -256,6 +360,133 @@ mysqlDescribe('Module 4 preparation queue', () => {
     expect(historical.guestFlags).toEqual(ticket.guestFlags)
     expect(Object.keys(historical).sort()).toEqual(Object.keys(ticket).sort())
     expect(Object.keys(historical.lines[0]!).sort()).toEqual(Object.keys(ticket.lines[0]!).sort())
+    expectPreparationPrivacy(historical)
+  })
+
+  it('keeps two same-label variants distinct and stable from queue through collected history', async () => {
+    const seeded = await seedTickets()
+    const identities = await seedSameLabelBarLines(seeded.orderId, seeded.barId)
+    const bar = await signIn('module4_bar')
+
+    const queue = await get(bar, '/api/v1/preparation/BAR/tickets')
+    expect(queue.status).toBe(200)
+    const queued = json<{ tickets: PrivacyTicket[] }>(queue).tickets[0]!
+    expect(queued.lines).toHaveLength(2)
+    expect(queued.lines.map((line) => ({
+      lineNo: line.lineNo,
+      itemName: line.itemName,
+      variantDisplayName: line.variantDisplayName,
+      menuItemVariantId: line.menuItemVariantId,
+      unitCode: line.unitCode,
+    }))).toEqual([
+      {
+        lineNo: 1,
+        itemName: 'Nước khoáng',
+        variantDisplayName: 'Tiêu chuẩn',
+        menuItemVariantId: identities[0]!.variantId,
+        unitCode: 'GLASS',
+      },
+      {
+        lineNo: 2,
+        itemName: 'Nước khoáng',
+        variantDisplayName: 'Tiêu chuẩn',
+        menuItemVariantId: identities[1]!.variantId,
+        unitCode: 'BOTTLE',
+      },
+    ])
+    expect(identities[0]!.variantId).not.toBe(identities[1]!.variantId)
+
+    let version = 1
+    for (const toStatus of ['ACCEPTED', 'PREPARING', 'READY', 'COLLECTED'] as const) {
+      const transition = await post(bar, `/api/v1/preparation/BAR/tickets/${seeded.barId}/transition`,
+        { toStatus, expectedVersion: version++, idempotencyKey: idem() })
+      expect(transition.status, JSON.stringify(transition.body)).toBe(200)
+    }
+
+    const history = await get(bar, '/api/v1/preparation/BAR/history?limit=10')
+    expect(history.status).toBe(200)
+    const historical = json<{ tickets: PrivacyTicket[] }>(history).tickets[0]!
+    expect(historical.lines).toHaveLength(2)
+    expect(historical.lines.map((line) => ({
+      lineNo: line.lineNo,
+      menuItemVariantId: line.menuItemVariantId,
+      unitCode: line.unitCode,
+    }))).toEqual(identities.map((identity) => ({
+      lineNo: identity.lineNo,
+      menuItemVariantId: identity.variantId,
+      unitCode: identity.unitCode,
+    })))
+    expect(Object.keys(historical).sort()).toEqual(Object.keys(queued).sort())
+    expect(historical.lines.map((line) => Object.keys(line).sort()))
+      .toEqual(queued.lines.map((line) => Object.keys(line).sort()))
+  })
+
+  it('projects one cancellation group across BAR and KITCHEN without inferring order-level state', async () => {
+    const seeded = await seedTickets()
+    const lines = await seedPreparationLines(seeded.orderId)
+    const barCancellationId = await seedCancellation({
+      ...seeded,
+      lineId: lines.barLineId,
+      lineNo: 1,
+      quantity: 2,
+      status: 'PENDING',
+      station: 'BAR',
+      grouped: true,
+    })
+    const kitchenCancellationId = await seedCancellation({
+      ...seeded,
+      lineId: lines.kitchenLineId,
+      lineNo: 2,
+      quantity: 1,
+      status: 'PENDING',
+      station: 'KITCHEN',
+      groupId: barCancellationId,
+    })
+    const bar = await signIn('module4_bar')
+    const kitchen = await signIn('module4_kitchen')
+
+    const barQueue = await get(bar, '/api/v1/preparation/BAR/tickets')
+    const kitchenQueue = await get(kitchen, '/api/v1/preparation/KITCHEN/tickets')
+    expect(barQueue.status).toBe(200)
+    expect(kitchenQueue.status).toBe(200)
+    const barSnapshot = json<Record<string, unknown> & { tickets: PrivacyTicket[] }>(barQueue)
+    const kitchenSnapshot = json<Record<string, unknown> & { tickets: PrivacyTicket[] }>(kitchenQueue)
+    const barTicket = barSnapshot.tickets[0]!
+    const kitchenTicket = kitchenSnapshot.tickets[0]!
+
+    expect(barTicket.lines).toHaveLength(1)
+    expect(barTicket.lines[0]).toMatchObject({
+      lineNo: 1,
+      itemName: 'BAR item',
+      menuItemVariantId: lines.barVariantId,
+      unitCode: 'GLASS',
+      pendingCancellation: {
+        cancellationId: barCancellationId,
+        quantity: 2,
+        groupId: barCancellationId,
+      },
+    })
+    expect(barTicket.lines.some((line) => line.itemName === 'KITCHEN item')).toBe(false)
+
+    expect(kitchenTicket.lines).toHaveLength(1)
+    expect(kitchenTicket.lines[0]).toMatchObject({
+      lineNo: 2,
+      itemName: 'KITCHEN item',
+      menuItemVariantId: lines.kitchenVariantId,
+      unitCode: 'PORTION',
+      pendingCancellation: {
+        cancellationId: kitchenCancellationId,
+        quantity: 1,
+        groupId: barCancellationId,
+      },
+    })
+    expect(kitchenTicket.lines.some((line) => line.itemName === 'BAR item')).toBe(false)
+
+    for (const response of [barSnapshot, barTicket, kitchenSnapshot, kitchenTicket]) {
+      expect(response).not.toHaveProperty('wholeOrderPending')
+      expect(response).not.toHaveProperty('allStationsPending')
+      expect(response).not.toHaveProperty('orderCancellationPending')
+    }
   })
 
   it('returns explicit false flags for walk-ins and ignores unrelated reservations and cross-organization users', async () => {
@@ -394,10 +625,14 @@ mysqlDescribe('Module 4 preparation queue', () => {
 
     const after = await get(bar, '/api/v1/preparation/BAR/tickets')
     const ticket = json<{ tickets: Array<{ ticketId: number; lines: Array<Record<string, unknown> & {
-      pendingCancellation: { cancellationId: number; quantity: number } | null
+      pendingCancellation: { cancellationId: number; quantity: number; groupId: number | null } | null
     }> }> }>(after).tickets.find((item) => item.ticketId === seeded.barId)!
     expect(ticket.lines).toHaveLength(1)
-    expect(ticket.lines[0]!.pendingCancellation).toEqual({ cancellationId: pendingId, quantity: 2 })
+    expect(ticket.lines[0]).toMatchObject({
+      menuItemVariantId: lines.barVariantId,
+      unitCode: 'GLASS',
+      pendingCancellation: { cancellationId: pendingId, quantity: 2, groupId: null },
+    })
     expect(ticket.lines[0]!.pendingCancellation?.cancellationId).not.toBe(foreignCancellationId)
     expect(ticket.lines[0]).not.toHaveProperty('reason')
   })

@@ -10,7 +10,7 @@
  * thuộc quầy, chỉ nhãn mới phụ thuộc.
  */
 import { fmtTime } from "@/lib/time"
-import type { PreparationTicketStatus } from "./preparation-layout"
+import { preparationWaitSeconds, type PreparationTicketStatus } from "./preparation-layout"
 
 export type PreparationStationCode = "BAR" | "KITCHEN"
 
@@ -252,3 +252,72 @@ export function preparationQueueViewState(input: {
 }
 
 export const PREPARATION_EMPTY_QUEUE_TEXT = "Chưa có phiếu đang chờ."
+
+/* ---------------- bộ lọc nhanh ---------------- */
+
+export type PreparationQueueFilter = "all" | "vip" | "designated"
+
+export const PREPARATION_QUEUE_FILTERS: readonly PreparationQueueFilter[] = ["all", "vip", "designated"]
+
+export const PREPARATION_FILTER_EMPTY_TEXT = "Không có phiếu nào khớp bộ lọc."
+
+export function preparationQueueFilterLabel(filter: PreparationQueueFilter): string {
+  if (filter === "vip") return "VIP"
+  if (filter === "designated") return "Chỉ định"
+  return "Tất cả"
+}
+
+interface PreparationFilterableTicket {
+  submittedAt: string
+  waitSeconds: number
+  guestFlags: { vip: boolean; designated: boolean }
+}
+
+export interface PreparationQueueFilterProjection<T> {
+  visibleTickets: T[]
+  hiddenCount: number
+  hiddenCriticalCount: number
+}
+
+/**
+ * Projection tại chỗ của snapshot: giữ nguyên thứ tự server và không ghi ngược
+ * vào React Query. Cùng `now` và helper của card được dùng cho hidden-critical,
+ * nên một tick 30 giây cập nhật cả card lẫn dải nhắc mà không cần timer thứ hai.
+ */
+export function preparationQueueFilterProjection<T extends PreparationFilterableTicket>(
+  tickets: readonly T[],
+  filter: PreparationQueueFilter,
+  now: Date,
+): PreparationQueueFilterProjection<T> {
+  if (filter === "all") return { visibleTickets: [...tickets], hiddenCount: 0, hiddenCriticalCount: 0 }
+
+  const visibleTickets: T[] = []
+  let hiddenCriticalCount = 0
+  for (const ticket of tickets) {
+    const visible = filter === "vip" ? ticket.guestFlags.vip : ticket.guestFlags.designated
+    if (visible) {
+      visibleTickets.push(ticket)
+    } else if (
+      preparationWaitTone(preparationWaitSeconds(ticket.submittedAt, ticket.waitSeconds, now)) === "critical"
+    ) {
+      hiddenCriticalCount += 1
+    }
+  }
+  return {
+    visibleTickets,
+    hiddenCount: tickets.length - visibleTickets.length,
+    hiddenCriticalCount,
+  }
+}
+
+export function preparationColumnCount(
+  visible: number,
+  total: number,
+  filter: PreparationQueueFilter,
+): { text: string; accessibleLabel: string } {
+  if (filter === "all") return { text: String(total), accessibleLabel: `${total} phiếu` }
+  return {
+    text: `${visible}/${total}`,
+    accessibleLabel: `${visible} phiếu hiển thị trên tổng ${total} phiếu`,
+  }
+}

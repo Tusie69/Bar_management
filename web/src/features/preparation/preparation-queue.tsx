@@ -9,9 +9,15 @@ import { useSession } from "@/state/session"
 import { PREPARATION_QUEUE_LAYOUT_CLASS, canShowPrintRetry, type PreparationTicketStatus } from "./preparation-layout"
 import {
   PREPARATION_EMPTY_QUEUE_TEXT,
+  PREPARATION_FILTER_EMPTY_TEXT,
+  PREPARATION_QUEUE_FILTERS,
+  preparationColumnCount,
   preparationColumns,
+  preparationQueueFilterLabel,
+  preparationQueueFilterProjection,
   preparationQueueViewState,
   preparationStationLabel,
+  type PreparationQueueFilter,
   type PreparationQueueStatus,
 } from "./preparation-presentation"
 import {
@@ -21,6 +27,8 @@ import {
   type PreparationTicket,
 } from "./preparation-queue-data"
 import { PreparationTicketCard } from "./preparation-ticket-card"
+import { aggregatePreparationItems } from "./preparation-totals"
+import { PreparationTotalsPanel } from "./preparation-totals-panel"
 
 /** Lần tải đầu: ba khung xám thay cho bốn cột trống. */
 function PreparationQueueSkeleton() {
@@ -30,6 +38,66 @@ function PreparationQueueSkeleton() {
       {[0, 1, 2].map((row) => (
         <Skeleton key={row} className="h-24 rounded-xl" />
       ))}
+    </div>
+  )
+}
+
+export interface PreparationQueueFilterBarProps {
+  filter: PreparationQueueFilter
+  totalCount: number
+  visibleCount: number
+  hiddenCount: number
+  hiddenCriticalCount: number
+  onFilterChange: (filter: PreparationQueueFilter) => void
+}
+
+export function PreparationQueueFilterBar({
+  filter,
+  totalCount,
+  visibleCount,
+  hiddenCount,
+  hiddenCriticalCount,
+  onFilterChange,
+}: PreparationQueueFilterBarProps) {
+  if (totalCount === 0) return null
+  const activeLabel = preparationQueueFilterLabel(filter)
+
+  return (
+    <div className="mb-3 grid min-w-0 gap-2.5">
+      <div role="group" aria-label="Lọc hàng đợi" className="grid min-w-0 grid-cols-3 gap-2 sm:flex sm:w-fit">
+        {PREPARATION_QUEUE_FILTERS.map((option) => (
+          <Button
+            key={option}
+            type="button"
+            variant={filter === option ? "default" : "outline"}
+            className="min-h-11 min-w-0 px-2 sm:px-4"
+            aria-pressed={filter === option}
+            onClick={() => onFilterChange(option)}
+          >
+            {preparationQueueFilterLabel(option)}
+          </Button>
+        ))}
+      </div>
+      {filter !== "all" && hiddenCount > 0 ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex min-w-0 flex-col gap-2 rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="min-w-0">
+            <p>{`Đang lọc ${activeLabel} — ${hiddenCount} phiếu bị ẩn.`}</p>
+            {hiddenCriticalCount > 0 ? (
+              <p className="mt-1 font-semibold text-destructive">
+                {`${hiddenCriticalCount} phiếu bị ẩn đã chờ quá lâu.`}
+              </p>
+            ) : null}
+            {visibleCount === 0 ? <p className="mt-1 font-medium">{PREPARATION_FILTER_EMPTY_TEXT}</p> : null}
+          </div>
+          <Button type="button" variant="outline" className="min-h-11 shrink-0" onClick={() => onFilterChange("all")}>
+            Xem tất cả
+          </Button>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -59,6 +127,7 @@ export function PreparationQueue({
   const queryClient = useQueryClient()
   const queue = usePreparationQueue(station, canRead)
   const now = useNow(30_000)
+  const [filter, setFilter] = useState<PreparationQueueFilter>("all")
   const [pendingId, setPendingId] = useState<number | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const snapshot = queue.data
@@ -114,7 +183,12 @@ export function PreparationQueue({
     }
   }
 
-  const grouped = useMemo(
+  const filterProjection = useMemo(
+    () => preparationQueueFilterProjection(snapshot?.tickets ?? [], filter, now),
+    [filter, now, snapshot],
+  )
+  const aggregateItems = useMemo(() => aggregatePreparationItems(snapshot?.tickets ?? []), [snapshot])
+  const groupedTotal = useMemo(
     () =>
       Object.fromEntries(
         columns.map((column) => [
@@ -123,6 +197,16 @@ export function PreparationQueue({
         ]),
       ) as Record<PreparationQueueStatus, PreparationTicket[]>,
     [columns, snapshot],
+  )
+  const groupedVisible = useMemo(
+    () =>
+      Object.fromEntries(
+        columns.map((column) => [
+          column.status,
+          filterProjection.visibleTickets.filter((ticket) => ticket.status === column.status),
+        ]),
+      ) as Record<PreparationQueueStatus, PreparationTicket[]>,
+    [columns, filterProjection.visibleTickets],
   )
 
   // Refetch nền không xóa snapshot cũ: còn `queue.data` thì màn hình vẫn vẽ
@@ -188,33 +272,60 @@ export function PreparationQueue({
           {PREPARATION_EMPTY_QUEUE_TEXT}
         </p>
       ) : (
-        <section className={PREPARATION_QUEUE_LAYOUT_CLASS} aria-label="Các trạng thái hàng đợi">
-          {columns.map((column) => (
-            <section key={column.status} className={`min-w-0 rounded-2xl border p-2.5 ${column.tone}`}>
-              <h2 className="mb-2 flex items-center justify-between gap-2 px-1 text-sm font-bold">
-                <span className="min-w-0 break-words">{column.label}</span>
-                <span className="shrink-0 rounded-full bg-surface-1 px-2 py-0.5 text-xs">
-                  {grouped[column.status].length}
-                </span>
-              </h2>
-              <div className="grid min-w-0 gap-2.5">
-                {grouped[column.status].map((ticket) => (
-                  <PreparationTicketCard
-                    key={ticket.ticketId}
-                    ticket={ticket}
-                    station={station}
-                    now={now}
-                    canTransition={canTransition}
-                    canRetry={canRetry}
-                    pending={pendingId === ticket.ticketId}
-                    onTransition={(item, status) => void transition(item, status)}
-                    onRetry={(item) => void retry(item)}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
-        </section>
+        <>
+          <PreparationQueueFilterBar
+            filter={filter}
+            totalCount={snapshot!.tickets.length}
+            visibleCount={filterProjection.visibleTickets.length}
+            hiddenCount={filterProjection.hiddenCount}
+            hiddenCriticalCount={filterProjection.hiddenCriticalCount}
+            onFilterChange={setFilter}
+          />
+          <PreparationTotalsPanel station={station} items={aggregateItems} />
+          <section className={PREPARATION_QUEUE_LAYOUT_CLASS} aria-label="Các trạng thái hàng đợi">
+            {columns.map((column) => {
+              const count = preparationColumnCount(
+                groupedVisible[column.status].length,
+                groupedTotal[column.status].length,
+                filter,
+              )
+              return (
+                <section
+                  key={column.status}
+                  data-queue-status={column.status}
+                  className={`min-w-0 rounded-2xl border p-2.5 ${column.tone}`}
+                >
+                  <h2 className="mb-2 flex items-center justify-between gap-2 px-1 text-sm font-bold">
+                    <span className="min-w-0 break-words">{column.label}</span>
+                    <span
+                      className="shrink-0 rounded-full bg-surface-1 px-2 py-0.5 text-xs"
+                      aria-label={count.accessibleLabel}
+                      data-visible-count={groupedVisible[column.status].length}
+                      data-total-count={groupedTotal[column.status].length}
+                    >
+                      {count.text}
+                    </span>
+                  </h2>
+                  <div className="grid min-w-0 gap-2.5">
+                    {groupedVisible[column.status].map((ticket) => (
+                      <PreparationTicketCard
+                        key={ticket.ticketId}
+                        ticket={ticket}
+                        station={station}
+                        now={now}
+                        canTransition={canTransition}
+                        canRetry={canRetry}
+                        pending={pendingId === ticket.ticketId}
+                        onTransition={(item, status) => void transition(item, status)}
+                        onRetry={(item) => void retry(item)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              )
+            })}
+          </section>
+        </>
       )}
     </section>
   )

@@ -29,12 +29,15 @@ Mỗi ticket trả `orderedByDisplayName`, là tên hiển thị của nhân vi�
 định. Walk-in hoặc visit không có reservation nhận cả ba cờ `false`. Response
 không mang tên khách, số điện thoại, ghi chú booking hay lịch sử khách hàng.
 
-Yêu cầu hủy `PENDING` được chiếu trên đúng từng line dưới dạng
-`pendingCancellation { cancellationId, quantity }`; không trả lý do hủy ở
-contract preparation. Một line đang chờ duyệt không khóa ticket và không đổi
-trạng thái các line khác. Batch line query vẫn trả đúng một dòng cho mỗi dòng
-món; unique open-cancellation của database và invariant trong repository chặn
-việc nhân đôi line.
+Mỗi line mang `menuItemVariantId` và `unitCode` từ chính snapshot
+`sales_order_lines`, để client có định danh món ổn định mà không phải suy từ
+tên hiển thị. Yêu cầu hủy `PENDING` được chiếu trên đúng từng line dưới dạng
+`pendingCancellation { cancellationId, quantity, groupId }`; `groupId` là
+`null` với yêu cầu lẻ và là mã nhóm với yêu cầu hủy cả đơn. Contract
+preparation không trả lý do hủy. Một line đang chờ duyệt không khóa ticket và
+không đổi trạng thái các line khác. Batch line query vẫn trả đúng một dòng cho
+mỗi dòng món; unique open-cancellation của database và invariant trong
+repository chặn việc nhân đôi line.
 
 Mã bàn không được lưu trên order/ticket. Snapshot join allocation `USAGE` đang
 mở của `visit_id`, nên đổi bàn sau khi gửi sẽ hiện mã bàn mới. Khi ticket thành

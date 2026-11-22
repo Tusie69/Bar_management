@@ -53,12 +53,14 @@ function session({ roles, portal, permissions, displayName }) {
   }
 }
 
-/** Dòng phiếu theo đúng contract Giai đoạn 2. */
+/** Dòng phiếu theo đúng contract Preparation Giai đoạn 4C1. */
 function line(overrides = {}) {
   return {
     lineNo: 1,
     itemName: "Negroni",
     variantDisplayName: "Ly",
+    menuItemVariantId: 101,
+    unitCode: "GLASS",
     quantity: 2,
     cancelledQuantity: 0,
     originalQuantity: 2,
@@ -91,7 +93,7 @@ function ticket(station, { ticketId, status, version, minutesAgo, flags = {}, ex
     tableCodes: [`B${ticketId}`],
     orderedByDisplayName: orderedBy,
     guestFlags: { vip: false, birthday: false, designated: false, ...flags },
-    lines: [line({ itemName: `Món ${ticketId}` }), ...extraLines],
+    lines: [line({ itemName: "Negroni", note: ticketId === 1 ? "Ít đá" : null }), ...extraLines],
   }
 }
 
@@ -122,10 +124,12 @@ function tickets(station, firstStatus, firstVersion) {
           lineNo: 2,
           itemName: "Khay thịt muối",
           variantDisplayName: "Phần",
+          menuItemVariantId: 202,
+          unitCode: "PORTION",
           quantity: 2,
           cancelledQuantity: 1,
           originalQuantity: 4,
-          pendingCancellation: { cancellationId: 11, quantity: 1 },
+          pendingCancellation: { cancellationId: 11, quantity: 1, groupId: 11 },
         }),
       ],
     }),
@@ -264,6 +268,36 @@ async function assertSharedTicketContent(page) {
   await expect(page.getByText(/Khách:|Điện thoại|Ghi chú đặt bàn/)).toHaveCount(0)
 }
 
+async function assertTotalsPanel(page, { title, queueReads }) {
+  const panel = page.locator("[data-preparation-totals]")
+  const toggle = panel.getByRole("button", { name: title })
+  const list = panel.getByRole("list", { name: title })
+
+  await expect(panel).toBeVisible()
+  await expect(toggle).toHaveAttribute("aria-expanded", "true")
+  await expect(panel).toContainText("Tính trên toàn bộ hàng đợi, không phụ thuộc bộ lọc.")
+  const negroni = list.getByRole("listitem").filter({ hasText: "Negroni" })
+  await expect(negroni).toContainText("6×")
+  await expect(negroni).toContainText("1 dòng có ghi chú")
+  await expect(negroni).not.toContainText("Ít đá")
+  const meatTray = list.getByRole("listitem").filter({ hasText: "Khay thịt muối" })
+  await expect(meatTray).toContainText("2×")
+  await expect(meatTray).toContainText("1 phần đang chờ duyệt hủy")
+  await expect(panel).not.toContainText(/\b101\b|\b202\b|GLASS|PORTION/)
+
+  const queueReadsBeforeCollapse = queueReads()
+  await toggle.click()
+  await expect(toggle).toHaveAttribute("aria-expanded", "false")
+  await expect(list).toHaveCount(0)
+  await page.waitForTimeout(100)
+  expect(queueReads()).toBe(queueReadsBeforeCollapse)
+  await toggle.click()
+  await expect(toggle).toHaveAttribute("aria-expanded", "true")
+  await expect(list).toBeVisible()
+
+  return panel.innerText()
+}
+
 const failures = []
 const browser = await chromium.launch(launchOptions)
 
@@ -273,6 +307,7 @@ for (const viewport of viewports) {
   const { context, page } = await newPage(browser, viewport)
   const transitions = []
   const kitchenReads = []
+  let queueReads = 0
   let firstStatus = "SUBMITTED"
   let firstVersion = 1
 
@@ -299,6 +334,7 @@ for (const viewport of viewports) {
   })
   await page.route("**/api/v1/preparation/BAR/tickets", (route) => {
     if (route.request().method() !== "GET") return route.fallback()
+    queueReads += 1
     return route.fulfill({ json: queueSnapshot("BAR", tickets("BAR", firstStatus, firstVersion)) })
   })
   await page.route("**/api/v1/preparation/BAR/tickets/1/transition", async (route) => {
@@ -357,6 +393,43 @@ for (const viewport of viewports) {
     // 8. Metadata, cờ và hủy chờ duyệt vẫn render trong route nhúng.
     await assertSharedTicketContent(page)
 
+    // BT-11. Tổng dùng toàn snapshot: READY không góp vào 6× Negroni, pending
+    // không trừ 2× khay thịt và collapse không chạm API.
+    const totalsTextBeforeFilter = await assertTotalsPanel(page, {
+      title: "Tổng món đang chờ pha",
+      queueReads: () => queueReads,
+    })
+
+    // BT-07. Filter chỉ chiếu snapshot tại chỗ: một lựa chọn, không refetch,
+    // không đổi thứ tự và count cột nói rõ visible/total.
+    const queueReadsBeforeFilter = queueReads
+    await expect(page.getByRole("group", { name: "Lọc hàng đợi" })).toBeVisible()
+    await page.getByRole("button", { name: "VIP", exact: true }).click()
+    await expect(page.locator('[data-ticket-id="2"]')).toBeVisible()
+    await expect(page.locator('[data-ticket-id="1"]')).toHaveCount(0)
+    await expect(page.locator('[data-ticket-id="3"]')).toHaveCount(0)
+    await expect(page.locator('[data-ticket-id="4"]')).toHaveCount(0)
+    await expect(page.getByText("Đang lọc VIP — 3 phiếu bị ẩn.")).toBeVisible()
+    await expect(page.getByText("1 phiếu bị ẩn đã chờ quá lâu.")).toBeVisible()
+    expect(await page.locator("[data-preparation-totals]").innerText()).toBe(totalsTextBeforeFilter)
+    await expect(page.locator('[data-queue-status="SUBMITTED"] [data-visible-count]')).toHaveText("0/1")
+    await expect(page.locator('[data-queue-status="ACCEPTED"] [data-visible-count]')).toHaveAttribute(
+      "aria-label",
+      "1 phiếu hiển thị trên tổng 1 phiếu",
+    )
+    await page.waitForTimeout(100)
+    expect(queueReads).toBe(queueReadsBeforeFilter)
+    const filteredMetrics = await horizontalOverflow(page)
+    expect(filteredMetrics.wide).toEqual([])
+    expect(filteredMetrics.scrollWidth).toBeLessThanOrEqual(filteredMetrics.clientWidth)
+
+    await page.getByRole("button", { name: "Chỉ định", exact: true }).click()
+    await expect(page.getByText("Đang lọc Chỉ định — 3 phiếu bị ẩn.")).toBeVisible()
+    expect(queueReads).toBe(queueReadsBeforeFilter)
+    await page.getByRole("button", { name: "Xem tất cả" }).click()
+    await expect(page.locator("[data-ticket-id]")).toHaveCount(4)
+    await expect(page.getByText(/phiếu bị ẩn/)).toHaveCount(0)
+
     // 12. Nút hành động chính đủ lớn để bấm bằng ngón tay.
     const actionHeight = await page
       .getByRole("button", { name: "Tiếp nhận" })
@@ -380,11 +453,20 @@ for (const viewport of viewports) {
     await expect(page.locator('[data-ticket-id="1"]').getByRole("button", { name: "Bắt đầu pha" })).toBeVisible()
     await expect(page.getByRole("button", { name: "Tiếp nhận" })).toHaveCount(0)
 
+    // State filter thuộc vòng đời component, không theo route hay storage.
+    await page.getByRole("button", { name: "VIP", exact: true }).click()
+    await expect(page.locator("[data-ticket-id]")).toHaveCount(1)
+
     // 10. Quay về sơ đồ Phục vụ.
     await page.getByRole("button", { name: "Quay về sơ đồ" }).click()
     await expect.poll(() => new URL(page.url()).pathname).toBe("/phucvu")
     await expect(page.locator("header").first()).toContainText("Bartender")
-    await expect(page.getByRole("button", { name: /^Hàng đợi Bar:/ })).toBeVisible()
+    const queueButton = page.getByRole("button", { name: /^Hàng đợi Bar:/ })
+    await expect(queueButton).toBeVisible()
+    await queueButton.click()
+    await expect.poll(() => new URL(page.url()).pathname).toBe("/phucvu/hang-doi")
+    await expect(page.getByRole("button", { name: "Tất cả", exact: true })).toHaveAttribute("aria-pressed", "true")
+    await expect(page.locator("[data-ticket-id]")).toHaveCount(4)
 
     console.log(`PASS ${label}`)
   } catch (error) {
@@ -401,6 +483,7 @@ for (const viewport of [viewports[0], viewports[3]]) {
   const { context, page } = await newPage(browser, viewport)
   const transitions = []
   const barReads = []
+  let queueReads = 0
   let firstStatus = "SUBMITTED"
   let firstVersion = 1
 
@@ -421,6 +504,7 @@ for (const viewport of [viewports[0], viewports[3]]) {
   })
   await page.route("**/api/v1/preparation/KITCHEN/tickets", (route) => {
     if (route.request().method() !== "GET") return route.fallback()
+    queueReads += 1
     return route.fulfill({ json: queueSnapshot("KITCHEN", tickets("KITCHEN", firstStatus, firstVersion)) })
   })
   await page.route("**/api/v1/preparation/KITCHEN/tickets/1/transition", async (route) => {
@@ -466,6 +550,24 @@ for (const viewport of [viewports[0], viewports[3]]) {
     // 5. Metadata, cờ và hủy chờ duyệt vẫn render ở màn Bếp.
     await assertSharedTicketContent(page)
 
+    const totalsTextBeforeFilter = await assertTotalsPanel(page, {
+      title: "Tổng món đang chờ làm",
+      queueReads: () => queueReads,
+    })
+    await expect(page.getByRole("button", { name: "Tổng món đang chờ pha" })).toHaveCount(0)
+
+    // BT-07 áp dụng cùng projection tại chỗ cho Bếp.
+    const queueReadsBeforeFilter = queueReads
+    await page.getByRole("button", { name: "VIP", exact: true }).click()
+    await expect(page.locator('[data-ticket-id="2"]')).toBeVisible()
+    await expect(page.locator("[data-ticket-id]")).toHaveCount(1)
+    await expect(page.getByText("Đang lọc VIP — 3 phiếu bị ẩn.")).toBeVisible()
+    expect(await page.locator("[data-preparation-totals]").innerText()).toBe(totalsTextBeforeFilter)
+    await page.waitForTimeout(100)
+    expect(queueReads).toBe(queueReadsBeforeFilter)
+    await page.getByRole("button", { name: "Xem tất cả" }).click()
+    await expect(page.locator("[data-ticket-id]")).toHaveCount(4)
+
     // 6. Không tràn ngang.
     const metrics = await horizontalOverflow(page)
     expect(metrics.wide).toEqual([])
@@ -489,7 +591,130 @@ for (const viewport of [viewports[0], viewports[3]]) {
   }
 }
 
-/* ========= 3. Chuông thông báo của WaiterShell vẫn gộp hai nguồn ========= */
+/* ============== 3. Filtered-empty thật trên mobile KITCHEN ============== */
+
+{
+  const viewport = { width: 360, height: 800 }
+  const { context, page } = await newPage(browser, viewport)
+  const snapshotTickets = tickets("KITCHEN", "SUBMITTED", 1).map((item) => ({
+    ...item,
+    guestFlags: { ...item.guestFlags, designated: false },
+  }))
+  let queueReads = 0
+
+  await page.route("**/api/v1/auth/me", (route) =>
+    route.fulfill({
+      json: session({
+        roles: ["KITCHEN"],
+        portal: "preparation",
+        displayName: "Bếp Filter E2E",
+        permissions: ["preparation.kitchen.read", "preparation.kitchen.transition"],
+      }),
+    }),
+  )
+  await page.route("**/api/v1/tables/stream", (route) => route.abort())
+  await page.route("**/api/v1/preparation/BAR/**", (route) =>
+    route.fulfill({ status: 403, json: { code: "FORBIDDEN" } }),
+  )
+  await page.route("**/api/v1/preparation/KITCHEN/tickets", (route) => {
+    if (route.request().method() !== "GET") return route.fallback()
+    queueReads += 1
+    return route.fulfill({ json: queueSnapshot("KITCHEN", snapshotTickets) })
+  })
+
+  const label = "kitchen filtered-empty 360x800"
+  try {
+    await page.goto(`${base}/chebien`, { waitUntil: "networkidle" })
+    const cards = page.locator("[data-ticket-id]")
+    const initialOrder = await cards.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-ticket-id")))
+    expect(initialOrder).toEqual(["1", "2", "3", "4"])
+    const queueReadsBeforeFilter = queueReads
+
+    await expect(page.getByRole("group", { name: "Lọc hàng đợi" })).toBeVisible()
+    await page.getByRole("button", { name: "Chỉ định", exact: true }).click()
+    await expect(page.getByText("Không có phiếu nào khớp bộ lọc.")).toBeVisible()
+    await expect(page.getByText("Đang lọc Chỉ định — 4 phiếu bị ẩn.")).toBeVisible()
+    await expect(page.getByText("1 phiếu bị ẩn đã chờ quá lâu.")).toBeVisible()
+    await expect(page.getByText("Chưa có phiếu đang chờ.")).toHaveCount(0)
+    await expect(cards).toHaveCount(0)
+    for (const status of ["SUBMITTED", "ACCEPTED", "PREPARING", "READY"]) {
+      await expect(page.locator(`[data-queue-status="${status}"] [data-visible-count]`)).toHaveText("0/1")
+    }
+    await page.waitForTimeout(100)
+    expect(queueReads).toBe(queueReadsBeforeFilter)
+    const filteredMetrics = await horizontalOverflow(page)
+    expect(filteredMetrics.wide).toEqual([])
+    expect(filteredMetrics.scrollWidth).toBeLessThanOrEqual(filteredMetrics.clientWidth)
+
+    await page.getByRole("button", { name: "Xem tất cả" }).click()
+    await expect(cards).toHaveCount(4)
+    const restoredOrder = await cards.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-ticket-id")))
+    expect(restoredOrder).toEqual(initialOrder)
+    expect(queueReads).toBe(queueReadsBeforeFilter)
+
+    await page.screenshot({ path: path.join(output, "kitchen-filtered-empty-360x800.png") })
+    console.log(`PASS ${label}`)
+  } catch (error) {
+    failures.push(label)
+    console.error(`FAIL ${label}:`, error)
+  } finally {
+    await context.close()
+  }
+}
+
+/* =============== 4. Aggregate rỗng nhưng queue còn READY =============== */
+
+{
+  const viewport = { width: 360, height: 800 }
+  const { context, page } = await newPage(browser, viewport)
+  const readyOnly = [
+    ticket("KITCHEN", {
+      ticketId: 4,
+      status: "READY",
+      version: 4,
+      minutesAgo: 2,
+      orderedBy: "Lan",
+    }),
+  ]
+
+  await page.route("**/api/v1/auth/me", (route) =>
+    route.fulfill({
+      json: session({
+        roles: ["KITCHEN"],
+        portal: "preparation",
+        displayName: "Bếp Empty Totals E2E",
+        permissions: ["preparation.kitchen.read", "preparation.kitchen.transition"],
+      }),
+    }),
+  )
+  await page.route("**/api/v1/tables/stream", (route) => route.abort())
+  await page.route("**/api/v1/preparation/KITCHEN/tickets", (route) =>
+    route.fulfill({ json: queueSnapshot("KITCHEN", readyOnly) }),
+  )
+
+  const label = "kitchen empty totals 360x800"
+  try {
+    await page.goto(`${base}/chebien`, { waitUntil: "networkidle" })
+    const panel = page.locator("[data-preparation-totals]")
+    await expect(panel).toBeVisible()
+    await expect(panel.getByRole("button", { name: "Tổng món đang chờ làm" })).toHaveAttribute("aria-expanded", "true")
+    await expect(panel).toContainText("Không còn món đang chờ làm.")
+    await expect(panel).not.toContainText("pha")
+    await expect(page.locator('[data-ticket-id="4"]')).toBeVisible()
+    await expect(page.getByText("Chưa có phiếu đang chờ.")).toHaveCount(0)
+    const metrics = await horizontalOverflow(page)
+    expect(metrics.wide).toEqual([])
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth)
+    console.log(`PASS ${label}`)
+  } catch (error) {
+    failures.push(label)
+    console.error(`FAIL ${label}:`, error)
+  } finally {
+    await context.close()
+  }
+}
+
+/* ========= 5. Chuông thông báo của WaiterShell vẫn gộp hai nguồn ========= */
 
 /*
  * Giai đoạn 3 đổi màn hàng đợi, không đổi chuông. Ba điều phải còn nguyên, và

@@ -1,3 +1,5 @@
+import type { MenuUnitCode } from '../menu/menu.model.js'
+
 export type PreparationStation = 'BAR' | 'KITCHEN'
 export type PreparationStatus = 'SUBMITTED' | 'ACCEPTED' | 'PREPARING' | 'READY' | 'COLLECTED'
 
@@ -5,6 +7,8 @@ export interface PreparationLineView {
   lineNo: number
   itemName: string
   variantDisplayName: string
+  menuItemVariantId: number
+  unitCode: MenuUnitCode
   /**
    * L2 — số món Bar/Bếp CÒN PHẢI LÀM: `originalQuantity - cancelledQuantity`.
    *
@@ -28,6 +32,7 @@ export interface PreparationLineView {
   pendingCancellation: {
     cancellationId: number
     quantity: number
+    groupId: number | null
   } | null
 }
 

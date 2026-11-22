@@ -3,6 +3,7 @@ import type { PoolConnection, RowDataPacket } from 'mysql2/promise'
 import type { AuthenticatedActor } from '../../auth/authenticated-actor.js'
 import { databasePool } from '../../database/pool.js'
 import { AppError } from '../../errors/app-error.js'
+import type { MenuUnitCode } from '../menu/menu.model.js'
 import type {
   PreparationLineView,
   PreparationQueueSnapshot,
@@ -39,12 +40,15 @@ interface LineRow extends RowDataPacket {
   line_no: number
   item_name: string
   variant_display_name: string
+  menu_item_variant_id: number
+  unit_code: MenuUnitCode
   quantity: number
   cancelled_quantity: number
   net_quantity: number
   note: string | null
   cancellation_id: number | null
   cancellation_quantity: number | null
+  cancellation_group_id: number | null
 }
 
 const nextStatus: Record<Exclude<PreparationStatus, 'COLLECTED'>, PreparationStatus> = {
@@ -83,8 +87,10 @@ async function ticketLinesBatch(
   // lại, còn hai số kia là phần đối chiếu để phiếu nói được "đã hủy n trên m".
   const [rows] = await connection.execute<LineRow[]>(
     `SELECT l.id AS line_id, l.order_id, l.preparation_station, l.line_no, l.item_name, l.variant_display_name,
+            l.menu_item_variant_id, l.unit_code,
             l.quantity, l.cancelled_quantity, l.net_quantity, l.note,
-            c.id AS cancellation_id, c.quantity AS cancellation_quantity
+            c.id AS cancellation_id, c.quantity AS cancellation_quantity,
+            c.group_id AS cancellation_group_id
        FROM sales_order_lines l
        LEFT JOIN sales_order_cancellations c
          ON c.organization_id = l.organization_id AND c.venue_id = l.venue_id
@@ -114,6 +120,8 @@ async function ticketLinesBatch(
       lineNo: Number(row.line_no),
       itemName: row.item_name,
       variantDisplayName: row.variant_display_name,
+      menuItemVariantId: Number(row.menu_item_variant_id),
+      unitCode: row.unit_code,
       // `Math.max(0, …)` không phải để che một dữ liệu sai: cột sinh đã là
       // UNSIGNED và có CHECK đứng sau. Nó ở đây để một con số âm — nếu CHECK
       // nào đó bị bỏ trong tương lai — không bao giờ tới được tay quầy dưới
@@ -125,6 +133,7 @@ async function ticketLinesBatch(
       pendingCancellation: row.cancellation_id === null ? null : {
         cancellationId: Number(row.cancellation_id),
         quantity: Number(row.cancellation_quantity),
+        groupId: row.cancellation_group_id === null ? null : Number(row.cancellation_group_id),
       },
     })
     result.set(key, lines)

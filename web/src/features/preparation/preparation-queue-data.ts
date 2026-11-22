@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { httpClient } from "@/services"
 import { useSession } from "@/state/session"
+import type { MenuUnitCode } from "../waiter-menu/menu-model"
 import type { PreparationTicketStatus } from "./preparation-layout"
 
 export type PreparationStation = "BAR" | "KITCHEN"
@@ -30,6 +31,8 @@ export interface PreparationTicket {
     lineNo: number
     itemName: string
     variantDisplayName: string
+    menuItemVariantId: number
+    unitCode: MenuUnitCode
     quantity: number
     cancelledQuantity: number
     originalQuantity: number
@@ -37,6 +40,7 @@ export interface PreparationTicket {
     pendingCancellation: {
       cancellationId: number
       quantity: number
+      groupId: number | null
     } | null
   }>
 }

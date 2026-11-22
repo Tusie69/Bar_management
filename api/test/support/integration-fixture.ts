@@ -49,6 +49,9 @@ async function truncateFixtureTables(): Promise<void> {
   invalidateVenueShift()
   await databasePool.execute('UPDATE operation_log SET compensates_operation_id = NULL WHERE compensates_operation_id IS NOT NULL')
   await databasePool.execute("UPDATE customers SET status = 'ACTIVE', merged_into_customer_id = NULL WHERE status = 'MERGED'")
+  // Migration 0044: notifications reference orders, visits and users. Clear the
+  // inbox first so later fixture cleanup can delete every referenced parent.
+  await databasePool.execute('DELETE FROM staff_notifications')
   // Module Phục vụ 3: đơn tham chiếu giá, biến thể, món và Phiên, nên phải xoá
   // trước toàn bộ danh mục món và trước visits — nếu không FK chặn fixture và
   // mọi file integration sau đó đỏ vì một lý do không liên quan tới nó.
