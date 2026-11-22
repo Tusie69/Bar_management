@@ -25,3 +25,19 @@ export function parseGuestCountDraft(draft: GuestCountDraft): ReceptionGuestCoun
   }
   return values
 }
+
+/** Trần của một ô đếm khách: UNSIGNED INT của máy chủ. */
+export const GUEST_COUNT_MAX = 4_294_967_295
+
+/**
+ * Bấm + hoặc − trên một ô đếm khách.
+ *
+ * Ô đang trống (hoặc đang chứa thứ không phải số) tính như 0, nên bấm + lần
+ * đầu ra 1 chứ không ra chuỗi rỗng. Kẹp trong [0, trần] để nút không bao giờ
+ * đẩy ô sang giá trị mà `parseGuestCountDraft` từ chối.
+ */
+export function stepGuestCountValue(current: string, delta: number): string {
+  const base = /^\d+$/.test(current) ? Number(current) : 0
+  const next = Math.min(GUEST_COUNT_MAX, Math.max(0, base + delta))
+  return String(next)
+}

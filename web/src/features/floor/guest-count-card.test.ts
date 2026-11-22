@@ -13,7 +13,7 @@ vi.hoisted(() => {
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 import { qk } from "@/hooks/use-data"
 import { GuestCountCard, GuestCountSheetPanel } from "./guest-count-card"
-import { guestCountDraft, parseGuestCountDraft } from "./guest-count-values"
+import { GUEST_COUNT_MAX, guestCountDraft, parseGuestCountDraft, stepGuestCountValue } from "./guest-count-values"
 
 const values = {
   arrivedBefore: 2,
@@ -92,6 +92,11 @@ describe("GuestCountCard", () => {
     expect(editHtml).toContain('aria-label="Đã từng đặt bàn"')
     expect(editHtml).toContain("Hủy")
     expect(editHtml).toContain("Lưu")
+    // Mỗi ô có hai nút cộng trừ ngay cạnh, con số đọc từ trái sang.
+    expect(editHtml).toContain('aria-label="Thêm 1 · Trước 21:30"')
+    expect(editHtml).toContain('aria-label="Bớt 1 · Trước 21:30"')
+    expect(editHtml).toContain("text-left")
+    expect(editHtml).not.toContain("text-right")
 
     const conflictHtml = renderToString(
       createElement(GuestCountSheetPanel, {
@@ -116,6 +121,16 @@ describe("GuestCountCard", () => {
   it("accepts six non-negative integers without deriving totals", () => {
     expect(parseGuestCountDraft(guestCountDraft(values))).toEqual(values)
     expect(parseGuestCountDraft({ ...guestCountDraft(values), arrivedTotal: "99" })).toMatchObject({ arrivedTotal: 99 })
+  })
+
+  it("nút cộng trừ đi từng bước và không bao giờ ra giá trị bị từ chối", () => {
+    expect(stepGuestCountValue("0", 1)).toBe("1")
+    expect(stepGuestCountValue("7", -1)).toBe("6")
+    // Ô trống tính như 0 — bấm + lần đầu phải ra 1.
+    expect(stepGuestCountValue("", 1)).toBe("1")
+    // Không tụt xuống âm, không vượt trần UNSIGNED INT.
+    expect(stepGuestCountValue("0", -1)).toBe("0")
+    expect(stepGuestCountValue(String(GUEST_COUNT_MAX), 1)).toBe(String(GUEST_COUNT_MAX))
   })
 
   it("rejects blanks, negative values and decimals", () => {

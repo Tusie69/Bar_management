@@ -1,4 +1,4 @@
-import { Check, Pencil, Users, X } from "lucide-react"
+import { Check, Minus, Pencil, Plus, Users, X } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type ReactElement } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -14,6 +14,7 @@ import {
   guestCountDraft,
   guestCountKeys,
   parseGuestCountDraft,
+  stepGuestCountValue,
   type GuestCountDraft,
   type GuestCountKey,
 } from "./guest-count-values"
@@ -186,30 +187,63 @@ export function GuestCountSheetPanel({
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-2.5" data-testid="guest-count-editor">
-        {FIELDS.map((field) => (
-          <label
-            key={field.key}
-            className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface-1 px-3 py-2.5 shadow-xs"
-          >
-            <span className={cn("text-xs", field.highlighted ? "font-semibold text-tx-strong" : "text-tx-2")}>
-              {field.label}
-            </span>
-            <Input
-              type="number"
-              min={0}
-              step={1}
-              inputMode="numeric"
-              aria-label={field.label}
-              value={draft?.[field.key] ?? ""}
-              onChange={(event) => {
-                const next = event.target.value
-                if (/^\d*$/.test(next)) onDraftChange(field.key, next)
-              }}
-              className="tnum h-11 text-right text-base font-bold text-tx-strong"
-            />
-          </label>
-        ))}
+      {/*
+        Một ô mỗi dòng: ô cũ xếp hai cột, số nằm sát mép phải và không có cách
+        nào sửa ngoài bàn phím số. Lễ tân đếm khách bằng cách cộng từng người,
+        nên hai nút − + phải ở ngay cạnh, còn con số đọc từ trái sang.
+      */}
+      <div className="grid gap-2.5" data-testid="guest-count-editor">
+        {FIELDS.map((field) => {
+          const value = draft?.[field.key] ?? ""
+          const step = (delta: number) => onDraftChange(field.key, stepGuestCountValue(value, delta))
+          return (
+            <label
+              key={field.key}
+              className="flex flex-col gap-1.5 rounded-xl border border-border bg-surface-1 px-3 py-2.5 shadow-xs"
+            >
+              <span className={cn("text-xs", field.highlighted ? "font-semibold text-tx-strong" : "text-tx-2")}>
+                {field.label}
+              </span>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={0}
+                  step={1}
+                  inputMode="numeric"
+                  aria-label={field.label}
+                  value={value}
+                  onChange={(event) => {
+                    const next = event.target.value
+                    if (/^\d*$/.test(next)) onDraftChange(field.key, next)
+                  }}
+                  // Đã có hai nút − + nên giấu mũi tên tăng giảm mặc định của trình duyệt.
+                  className="tnum h-11 min-w-0 flex-1 text-left text-base font-bold text-tx-strong [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-11 shrink-0"
+                  aria-label={`Bớt 1 · ${field.label}`}
+                  disabled={!/^[1-9]\d*$/.test(value)}
+                  onClick={() => step(-1)}
+                >
+                  <Minus aria-hidden />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-11 shrink-0"
+                  aria-label={`Thêm 1 · ${field.label}`}
+                  onClick={() => step(1)}
+                >
+                  <Plus aria-hidden />
+                </Button>
+              </div>
+            </label>
+          )
+        })}
       </div>
       {!valid ? (
         <p role="status" className="mt-2.5 text-xs font-medium text-destructive">
