@@ -958,7 +958,13 @@ export function TableSheet({
               <div
                 key={index}
                 className={cn(
-                  "grid items-stretch gap-2",
+                  // items-start, KHÔNG stretch: ô "Sơ cua" mang thêm một dòng
+                  // giải thích khi nút bị khóa, nên nó cao hơn hẳn hai ô kia.
+                  // Với stretch, nút bên cạnh bị kéo cao bằng cả ô đó — một
+                  // nút "Đổi bàn" cao gấp ba lần nút thường. h-12 cố định giữ
+                  // mọi nút trong hàng bằng nhau, còn dòng giải thích rơi
+                  // xuống dưới nút của chính nó.
+                  "grid items-start gap-2 [&_button]:h-12",
                   row.length === 3
                     ? "grid-cols-3 [&_button]:px-1.5 [&_button]:text-[12.5px] [&_button]:leading-[1.2]"
                     : "grid-cols-2",
