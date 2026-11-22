@@ -123,6 +123,23 @@ describe("giỏ gọi món", () => {
     expect(cartStations(cartWithGlass(1))).toEqual(["BAR"])
   })
 
+  it("giữ dấu cách đang gõ dở trong ghi chú, nhưng cắt khi gửi", () => {
+    // Gõ "ít đá": sau phím space giỏ phải còn "ít ", nếu không thì ký tự tiếp
+    // theo dính liền thành "ítđá" và nhân viên không bấm được dấu cách.
+    const typing = setLineNote(cartWithGlass(2), LINE_1, "ít ", KEY_A)
+    expect(typing.lines[0]!.note).toBe("ít ")
+    expect(cartPayload(typing).lines[0]!.note).toBe("ít")
+
+    const typed = setLineNote(typing, LINE_1, "ít đá", KEY_A)
+    expect(typed.lines[0]!.note).toBe("ít đá")
+
+    // Dấu cách đầu dòng và khoảng trắng thừa bên trong vẫn gọn ngay khi gõ.
+    expect(setLineNote(cartWithGlass(2), LINE_1, "  ít   đá", KEY_A).lines[0]!.note).toBe("ít đá")
+
+    // Ghi chú chỉ có dấu cách thì không gửi trường note.
+    expect(cartPayload(setLineNote(cartWithGlass(2), LINE_1, " ", KEY_A)).lines[0]).not.toHaveProperty("note")
+  })
+
   it("payload chỉ mang bảy trường được phép gửi, không mang cartLineId", () => {
     const cart = setLineNote(cartWithGlass(2), LINE_1, "ít đá", KEY_A)
     const payload = cartPayload(cart)

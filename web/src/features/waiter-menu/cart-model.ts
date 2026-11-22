@@ -121,6 +121,18 @@ export function normalizeNote(value: string): string {
 }
 
 /**
+ * Ghi chú ĐANG GÕ, dùng cho ô nhập có kiểm soát.
+ *
+ * `normalizeNote` cắt hai đầu, nên nếu dùng cho mỗi lần gõ thì dấu cách vừa bấm
+ * bị xoá ngay trước khi hiện ra: gõ "ít đá" chỉ ra "ítđá". Ở đây dấu cách cuối
+ * được giữ lại một ký tự để còn gõ tiếp từ sau; phần cắt hai đầu để dành cho
+ * lúc lưu và gửi (`cartPayload`).
+ */
+export function normalizeNoteWhileTyping(value: string): string {
+  return value.replace(/^\s+/, "").replace(/\s+/g, " ").slice(0, MAX_LINE_NOTE_LENGTH)
+}
+
+/**
  * Khóa nhận dạng một CUSTOMIZE: biến thể cộng ghi chú đã chuẩn hoá.
  *
  * Chuẩn hoá bỏ dấu và hạ chữ thường, nên "Ít Đá" và "it da" là một customize.
@@ -230,7 +242,7 @@ export function setLineQuantity(cart: Cart, cartLineId: string, quantity: number
 export function setLineNote(cart: Cart, cartLineId: string, note: string, submitKey: string): Cart {
   const target = cart.lines.find((line) => line.cartLineId === cartLineId)
   if (!target) return cart
-  const updated: CartLine = { ...target, note: normalizeNote(note) }
+  const updated: CartLine = { ...target, note: normalizeNoteWhileTyping(note) }
   const key = customizationKey(updated)
   const twin = cart.lines.find((line) => line.cartLineId !== cartLineId && customizationKey(line) === key)
   if (!twin) {
@@ -296,13 +308,17 @@ export function cartPayload(cart: Cart): CartPayload {
   return {
     visitId: cart.visitId,
     idempotencyKey: cart.submitKey,
-    lines: cart.lines.map((line) => ({
-      variantId: line.variantId,
-      priceId: line.priceId,
-      priceVersion: line.priceVersion,
-      quantity: line.quantity,
-      ...(line.note ? { note: line.note } : {}),
-    })),
+    lines: cart.lines.map((line) => {
+      // Ghi chú trong giỏ có thể còn dấu cách cuối của lần gõ dở; cắt tại đây.
+      const note = normalizeNote(line.note)
+      return {
+        variantId: line.variantId,
+        priceId: line.priceId,
+        priceVersion: line.priceVersion,
+        quantity: line.quantity,
+        ...(note ? { note } : {}),
+      }
+    }),
   }
 }
 
