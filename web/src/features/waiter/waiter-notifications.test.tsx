@@ -2,8 +2,8 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 import { readyBadgeCount } from "@/features/waiter-menu/order-board-model"
-import type { StaffNotification } from "@/features/waiter-menu/waiter-order-api"
-import { CancellationDecisionCard } from "./waiter-notifications"
+import type { ReadyNotification, StaffNotification } from "@/features/waiter-menu/waiter-order-api"
+import { CancellationDecisionCard, ReadyTicketCard } from "./waiter-notifications"
 import { waiterOrdersViewPath } from "./waiter-access"
 
 function notification(overrides: Partial<StaffNotification> = {}): StaffNotification {
@@ -121,7 +121,60 @@ describe("số trên chuông Phục vụ", () => {
     expect(readyBadgeCount(ready) + [notification()].length).toBe(2)
   })
 
-  it("Mở bàn mới nhất đi tới đúng màn đơn của Phiên", () => {
+  it("Mở bàn đi tới đúng màn đơn của Phiên", () => {
     expect(waiterOrdersViewPath(77)).toBe("/phucvu/orders/77")
+  })
+})
+
+/**
+ * Tin "món đã xong" trước đây gộp thành một dòng "3 phiếu món đã xong" với nút
+ * "Mở bàn mới nhất" — đọc xong vẫn không biết bàn nào, đơn nào, quầy nào.
+ */
+describe("thẻ món đã xong trong chuông Phục vụ", () => {
+  function readyNotification(overrides: Partial<ReadyNotification> = {}): ReadyNotification {
+    return {
+      eventId: 1,
+      ticketId: 9,
+      visitId: 77,
+      orderedByUserId: 41,
+      station: "BAR",
+      audience: "ORDERED_BY_USER",
+      createdAt: "2030-10-24T06:37:00.000Z",
+      acknowledgedAt: null,
+      visitSequence: 1,
+      tableCodes: ["A3"],
+      itemCount: 4,
+      ...overrides,
+    }
+  }
+  const readyCard = (value: ReadyNotification): string =>
+    renderToStaticMarkup(createElement(ReadyTicketCard, { notification: value, onOpen: () => undefined }))
+
+  it("nói rõ quầy nào, bàn nào, đơn nào và bao nhiêu món", () => {
+    const html = readyCard(readyNotification())
+    expect(html).toContain("Quầy bar đã xong món cho bàn A3")
+    expect(html).toContain("Đơn 1")
+    expect(html).toContain("4 món")
+    expect(html).toContain("Mở bàn")
+    expect(html).not.toContain("phiếu món đã xong")
+  })
+
+  it("bếp và nhiều bàn đọc đúng tên", () => {
+    const html = readyCard(readyNotification({ station: "KITCHEN", tableCodes: ["A3", "A4"] }))
+    expect(html).toContain("Bếp đã xong món cho bàn A3 + A4")
+  })
+
+  it("thiếu bàn, thiếu đơn thì bỏ qua chứ không hiện chỗ trống hay NaN", () => {
+    const html = readyCard(readyNotification({ tableCodes: [], visitSequence: null, itemCount: 0 }))
+    expect(html).toContain("Quầy bar đã xong món")
+    expect(html).not.toContain("Đơn ")
+    expect(html).not.toContain("NaN")
+    expect(html).not.toContain("undefined")
+  })
+
+  it("giờ hỏng hiện — chứ không phải Invalid Date", () => {
+    const html = readyCard(readyNotification({ createdAt: "không-phải-ngày" }))
+    expect(html).not.toContain("Invalid Date")
+    expect(html).toContain("—")
   })
 })

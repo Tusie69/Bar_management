@@ -160,6 +160,12 @@ export interface ReadyNotification {
   audience: "ORDERED_BY_USER" | "CASHIER_ROLE"
   createdAt: string
   acknowledgedAt: string | null
+  /** Số đơn trong phiên ("Đơn 1"); null khi phiếu không còn gắn với đơn nào. */
+  visitSequence?: number | null
+  /** Bàn đang giữ phiên, ví dụ ["A3"]. */
+  tableCodes?: string[]
+  /** Số món của phiếu, đã trừ phần bị hủy. */
+  itemCount?: number
 }
 
 function requireHttp(): NonNullable<typeof httpClient> {

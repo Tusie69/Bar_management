@@ -9,23 +9,25 @@
  * cái chuông cạnh nhau là hai cái không ai nhìn.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Bell, Check, CircleX } from "lucide-react"
+import { Bell, BellRing, Check, CircleX } from "lucide-react"
 import { useNavigate } from "react-router"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { formatVnd } from "@/features/waiter-menu/menu-price"
-import { readyBadgeCount } from "@/features/waiter-menu/order-board-model"
+import { readyBadgeCount, STATION_LABEL } from "@/features/waiter-menu/order-board-model"
 import {
   acknowledgeStaffNotification,
   fetchReadyNotifications,
   fetchStaffNotifications,
+  type ReadyNotification,
   type StaffNotification,
 } from "@/features/waiter-menu/waiter-order-api"
 import { cn } from "@/lib/utils"
 import { useSession } from "@/state/session"
 import { waiterOrdersViewPath } from "./waiter-access"
 
-function decidedAtLabel(value: string | null): string {
+/** Giờ phút của một mốc thời gian; "—" nếu máy chủ gửi về thứ không đọc được. */
+function timeLabel(value: string | null): string {
   if (!value) return "—"
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return "—"
@@ -69,7 +71,7 @@ export function CancellationDecisionCard({
         {notification.wasteQuantity > 0 ? ` · ghi hao ${notification.wasteQuantity} phần` : ""}
       </p>
       <p className="text-xs text-muted-foreground">
-        {`${notification.decidedByDisplayName ?? "—"} · ${decidedAtLabel(notification.decidedAt)}`}
+        {`${notification.decidedByDisplayName ?? "—"} · ${timeLabel(notification.decidedAt)}`}
       </p>
       {notification.reason ? (
         <p className="text-xs text-muted-foreground">{`Lý do đã gửi: ${notification.reason}`}</p>
@@ -90,6 +92,41 @@ export function CancellationDecisionCard({
           Đã đọc
         </Button>
       </div>
+    </li>
+  )
+}
+
+/**
+ * Một phiếu món vừa làm xong.
+ *
+ * Bản cũ gộp tất cả thành một dòng "N phiếu món đã xong" với nút "Mở bàn mới
+ * nhất": Phục vụ không biết bàn nào, đơn nào, quầy nào vừa xong, nên phải mở
+ * từng bàn ra dò. Mỗi phiếu một thẻ, và thẻ nói đủ bàn, đơn, quầy, số món và
+ * giờ xong.
+ */
+export function ReadyTicketCard({
+  notification,
+  onOpen,
+}: {
+  notification: ReadyNotification
+  onOpen: () => void
+}) {
+  const station = STATION_LABEL[notification.station] ?? "Quầy"
+  const table = notification.tableCodes?.join(" + ") || null
+  const order = notification.visitSequence == null ? null : `Đơn ${notification.visitSequence}`
+  const items = notification.itemCount && notification.itemCount > 0 ? `${notification.itemCount} món` : null
+  const detail = [order, items, timeLabel(notification.createdAt)].filter(Boolean).join(" · ")
+  return (
+    <li className="grid gap-1.5 rounded-xl border border-primary/40 bg-primary/5 px-3 py-2.5 text-sm">
+      <p className="flex items-start gap-2 font-semibold">
+        <BellRing className="mt-0.5 size-4 shrink-0 text-primary-ink" aria-hidden />
+        <span>{table ? `${station} đã xong món cho bàn ${table}` : `${station} đã xong món`}</span>
+      </p>
+      <p className="text-xs text-muted-foreground">{detail}</p>
+      <p className="text-xs text-muted-foreground">Ra lấy món và mang lên cho khách.</p>
+      <Button type="button" variant="outline" size="sm" className="h-9" onClick={onOpen}>
+        Mở bàn
+      </Button>
     </li>
   )
 }
@@ -122,7 +159,6 @@ export function WaiterNotificationsButton() {
   const readyPending = (ready.data ?? []).filter((entry) => entry.acknowledgedAt === null)
   const decisionList = decisions.data ?? []
   const count = readyBadgeCount(ready.data) + decisionList.length
-  const firstReady = readyPending[0]
 
   return (
     <Popover>
@@ -147,20 +183,13 @@ export function WaiterNotificationsButton() {
           <p className="py-2 text-center text-sm text-muted-foreground">Chưa có thông báo nào.</p>
         ) : (
           <ul className="grid gap-2">
-            {firstReady ? (
-              <li className="grid gap-1.5 rounded-xl border border-primary/40 bg-primary/5 px-3 py-2.5 text-sm">
-                <p className="font-semibold">{`${readyBadgeCount(ready.data)} phiếu món đã xong`}</p>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-9"
-                  onClick={() => navigate(waiterOrdersViewPath(firstReady.visitId))}
-                >
-                  Mở bàn mới nhất
-                </Button>
-              </li>
-            ) : null}
+            {readyPending.map((entry) => (
+              <ReadyTicketCard
+                key={`${entry.eventId}:${entry.audience}`}
+                notification={entry}
+                onOpen={() => navigate(waiterOrdersViewPath(entry.visitId))}
+              />
+            ))}
             {decisionList.map((notification) => (
               <CancellationDecisionCard
                 key={notification.notificationId}

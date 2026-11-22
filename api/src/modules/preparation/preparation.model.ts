@@ -84,4 +84,10 @@ export interface ReadyNotificationView {
   audience: ReadyAudience
   createdAt: string
   acknowledgedAt: string | null
+  /** Số đơn trong phiên ("Đơn 1"), để Phục vụ đọc được tin mà không phải mở ra. */
+  visitSequence: number | null
+  /** Bàn đang giữ phiên, ví dụ ["A3"]. Rỗng khi phiên đã trả bàn. */
+  tableCodes: string[]
+  /** Số món của phiếu này (đã trừ phần bị hủy). */
+  itemCount: number
 }
