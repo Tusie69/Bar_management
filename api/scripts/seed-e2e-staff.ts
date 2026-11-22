@@ -43,6 +43,15 @@ const staff = [
   // Phục vụ cố ý không có `order.cancel.approve`, nên không có tài khoản này
   // thì yêu cầu hủy gửi đi rồi nằm đó không ai quyết định được.
   { roleCode: 'CASHIER', userId: 9514, prefix: 'E2E_CASHIER', fallbackName: 'E2E Thu ngân' },
+  // Lễ tân: để kiểm bằng mắt cả hai đầu của một tối — người xếp bàn và người
+  // gọi món — trên cùng một bộ dữ liệu. Chín tài khoản trong demo.sql đều
+  // DISABLED, nên trước đây không có đường nào đăng nhập vào màn Lễ tân.
+  { roleCode: 'RECEPTIONIST', userId: 9515, prefix: 'E2E_RECEPTIONIST', fallbackName: 'E2E Lễ tân' },
+  // Chủ quán: màn Cấu hình là nơi duy nhất đổi được ca vận hành từ giao diện.
+  // `seed-e2e-owner.ts` cũng tạo một OWNER, nhưng nó bị ghim vào đúng một
+  // database và tự dựng khu/bàn riêng, nên không dùng được cho một database
+  // demo đã có sẵn mặt bằng thật.
+  { roleCode: 'OWNER', userId: 9510, prefix: 'E2E_OWNER', fallbackName: 'E2E Chủ quán' },
 ] as const
 
 function fail(message: string): never {
