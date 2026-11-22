@@ -39,6 +39,27 @@ không đổi trạng thái các line khác. Batch line query vẫn trả đúng
 mỗi dòng món; unique open-cancellation của database và invariant trong
 repository chặn việc nhân đôi line.
 
+Web dùng `groupId` để phân biệt yêu cầu hủy riêng với yêu cầu "Hủy đơn?" và
+chỉ mô tả phần BAR/Bếp đang có trong chính ticket. Màn một station không suy ra
+trạng thái station còn lại hoặc toàn order. Cảnh báo này không vô hiệu hóa nút
+transition; backend vẫn là nơi quyết định hành vi và xung đột phiên bản.
+
+Mỗi line còn trả `doneQuantity` và `progressVersion`. Bar/Bếp cập nhật tiến độ
+qua `POST /preparation/:station/tickets/:ticketId/lines/:lineNo/progress` với
+`doneQuantity`, `expectedVersion` và `idempotencyKey`. Tiến độ chỉ sửa được khi
+phiếu ở `ACCEPTED` hoặc `PREPARING`, không được vượt `quantity`, có audit
+append-only và phát cùng floor-change SSE để các thiết bị nhìn thấy nhau.
+
+Việc tick đủ không tự chuyển trạng thái phiếu. Khi báo READY mà còn dòng chưa
+đủ, UI chỉ cảnh báo mềm và vẫn cho người vận hành quyết định. Nếu một yêu cầu
+hủy được duyệt sau khi đã làm một phần, server tính lại tại thời điểm duyệt:
+`wasteQuantity = min(quantity xin hủy, doneQuantity hiện tại)`. Phần đã làm là
+hao hụt, phần chưa làm hủy bình thường; tiến độ còn lại được giảm tương ứng.
+
+Âm báo phiếu mới mặc định tắt, do người dùng bật theo thiết bị. Snapshot đầu
+tiên không phát âm, high-water trong session ngăn phát lại và Web Locks cùng
+marker localStorage bảo đảm chỉ một tab phát cho cùng venue/station.
+
 Mã bàn không được lưu trên order/ticket. Snapshot join allocation `USAGE` đang
 mở của `visit_id`, nên đổi bàn sau khi gửi sẽ hiện mã bàn mới. Khi ticket thành
 `READY`, một `preparation_ready_events` giữ đúng `visit_id` và

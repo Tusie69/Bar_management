@@ -150,6 +150,7 @@ interface CancellationRow extends RowDataPacket {
   quantity: number
   reason: string
   policy: CancellationPolicy
+  waste_quantity: number
   status: CancellationStatus
   station: PreparationStation
   ticket_status_at_request: PreparationStatus
@@ -544,6 +545,61 @@ async function lockCancellation(
   return row
 }
 
+async function resolveCancellationWaste(
+  connection: PoolConnection,
+  actor: AuthenticatedActor,
+  line: LockedLineRow,
+  cancellationQuantity: number,
+): Promise<{ policy: CancellationPolicy; wasteQuantity: number }> {
+  if (line.ticket_id === null) return { policy: 'STANDARD', wasteQuantity: 0 }
+  if (line.ticket_status === 'READY' || line.ticket_status === 'COLLECTED') {
+    return { policy: 'READY_WASTE', wasteQuantity: cancellationQuantity }
+  }
+  const [rows] = await connection.execute<(RowDataPacket & { done_quantity: number })[]>(
+    `SELECT done_quantity FROM preparation_line_progress
+      WHERE organization_id = ? AND venue_id = ? AND ticket_id = ? AND line_id = ? FOR UPDATE`,
+    [actor.organizationId, actor.venueId, Number(line.ticket_id), Number(line.line_id)],
+  )
+  const wasteQuantity = Math.min(cancellationQuantity, Math.max(0, Number(rows[0]?.done_quantity ?? 0)))
+  return { policy: wasteQuantity > 0 ? 'READY_WASTE' : 'STANDARD', wasteQuantity }
+}
+
+async function consumeCancelledProgress(
+  connection: PoolConnection,
+  actor: AuthenticatedActor,
+  line: LockedLineRow,
+  wasteQuantity: number,
+  cancellationId: number,
+): Promise<void> {
+  if (wasteQuantity <= 0 || line.ticket_id === null) return
+  const [rows] = await connection.execute<(RowDataPacket & { done_quantity: number; version: number })[]>(
+    `SELECT done_quantity, version FROM preparation_line_progress
+      WHERE organization_id = ? AND venue_id = ? AND ticket_id = ? AND line_id = ? FOR UPDATE`,
+    [actor.organizationId, actor.venueId, Number(line.ticket_id), Number(line.line_id)],
+  )
+  const progress = rows[0]
+  if (!progress) return
+  const before = Math.max(0, Number(progress.done_quantity))
+  const after = Math.max(0, before - wasteQuantity)
+  const version = Number(progress.version) + 1
+  await connection.execute(
+    `UPDATE preparation_line_progress
+        SET done_quantity = ?, version = ?, updated_by_user_id = ?, updated_by_membership_id = ?,
+            updated_at = UTC_TIMESTAMP(3)
+      WHERE organization_id = ? AND venue_id = ? AND ticket_id = ? AND line_id = ?`,
+    [after, version, actor.userId, actor.membershipId, actor.organizationId, actor.venueId,
+      Number(line.ticket_id), Number(line.line_id)],
+  )
+  await connection.execute(
+    `INSERT INTO preparation_line_progress_events
+      (organization_id, venue_id, ticket_id, line_id, station, line_no, quantity_before, quantity_after,
+       progress_version, actor_user_id, actor_membership_id, idempotency_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [actor.organizationId, actor.venueId, Number(line.ticket_id), Number(line.line_id), line.preparation_station,
+      Number(line.line_no), before, after, version, actor.userId, actor.membershipId, `cancel-${cancellationId}`],
+  )
+}
+
 /**
  * Phê duyệt hoặc từ chối một yêu cầu hủy.
  *
@@ -613,7 +669,7 @@ export async function decideOrderLineCancellation(
           decision: 'REJECTED',
           lineCount: 1,
           quantity: Number(cancellation.quantity),
-          wasteQuantity: cancellation.policy === 'READY_WASTE' ? Number(cancellation.quantity) : 0,
+          wasteQuantity: 0,
           amountVnd: money(line.unit_price_vnd, 'unit_price_vnd') * Number(cancellation.quantity),
           reason: cancellation.reason,
           decisionNote: input.note ?? null,
@@ -643,13 +699,14 @@ export async function decideOrderLineCancellation(
     }
     const unitPriceVnd = money(line.unit_price_vnd, 'unit_price_vnd')
     const amountVnd = unitPriceVnd * quantity
+    const waste = await resolveCancellationWaste(connection, actor, line, quantity)
 
     await connection.execute(
       `UPDATE sales_order_cancellations
-       SET status = 'APPROVED', decided_by_user_id = ?, decided_at = UTC_TIMESTAMP(3), decision_note = ?,
+       SET status = 'APPROVED', policy = ?, waste_quantity = ?, decided_by_user_id = ?, decided_at = UTC_TIMESTAMP(3), decision_note = ?,
            version = version + 1, updated_at = UTC_TIMESTAMP(3)
        WHERE id = ? AND version = ?`,
-      [actor.userId, input.note ?? null, input.cancellationId, input.expectedVersion],
+      [waste.policy, waste.wasteQuantity, actor.userId, input.note ?? null, input.cancellationId, input.expectedVersion],
     )
     await connection.execute(
       `UPDATE sales_order_lines
@@ -657,6 +714,7 @@ export async function decideOrderLineCancellation(
        WHERE id = ?`,
       [quantity, Number(line.line_id)],
     )
+    await consumeCancelledProgress(connection, actor, line, waste.wasteQuantity, input.cancellationId)
     await connection.execute(
       `UPDATE sales_orders
        SET cancelled_item_count = cancelled_item_count + ?, cancelled_amount_vnd = cancelled_amount_vnd + ?,
@@ -697,7 +755,8 @@ export async function decideOrderLineCancellation(
         itemCode: line.item_code,
         station: line.preparation_station,
         quantity,
-        policy: cancellation.policy,
+        policy: waste.policy,
+        wasteQuantity: waste.wasteQuantity,
         ticketStatus: line.ticket_status,
         amountDeltaVnd: -amountVnd,
         // Người yêu cầu và người duyệt là hai người khác nhau trên cùng một
@@ -716,7 +775,7 @@ export async function decideOrderLineCancellation(
         decision: 'APPROVED',
         lineCount: 1,
         quantity,
-        wasteQuantity: cancellation.policy === 'READY_WASTE' ? quantity : 0,
+        wasteQuantity: waste.wasteQuantity,
         amountVnd,
         reason: cancellation.reason,
         decisionNote: input.note ?? null,
@@ -1105,10 +1164,13 @@ export async function decideOrderCancellationGroup(
     // không đọc lại đơn. Đọc lại đơn sẽ trả về trạng thái SAU khi hủy, và con
     // số trong tin phải là con số đã bị hủy.
     const quantity = rows.reduce((total, row) => total + Number(row.quantity), 0)
-    const wasteQuantity = rows.reduce(
-      (total, row) => total + (row.policy === 'READY_WASTE' ? Number(row.quantity) : 0),
-      0,
+    const [wasteRows] = await connection.execute<(RowDataPacket & { total: number | string })[]>(
+      `SELECT COALESCE(SUM(waste_quantity), 0) AS total
+         FROM sales_order_cancellations
+        WHERE organization_id = ? AND venue_id = ? AND group_id = ?`,
+      [actor.organizationId, actor.venueId, input.groupId],
     )
+    const wasteQuantity = input.decision === 'APPROVED' ? Number(wasteRows[0]?.total ?? 0) : 0
     const amountVnd = rows.reduce(
       (total, row) => total + money(row.unit_price_vnd, 'unit_price_vnd') * Number(row.quantity),
       0,

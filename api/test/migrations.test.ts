@@ -129,3 +129,17 @@ it('order adjustment migration keeps lines, separates cancelled money and gates 
   expect(waiterGrant).not.toContain('order.cancel.approve')
   expect(waiterGrant).not.toContain('order.cancel.ready')
 })
+
+it('preparation progress migration persists versioned quantity and exact cancellation waste', async () => {
+  const sql = await readFile(
+    new URL('../database/migrations/0046_preparation_line_progress.sql', import.meta.url),
+    'utf8',
+  )
+  expect(sql).toContain('CREATE TABLE preparation_line_progress')
+  expect(sql).toContain('CREATE TABLE preparation_line_progress_events')
+  expect(sql).toContain('uq_preparation_line_progress_line_no')
+  expect(sql).toContain('uq_preparation_line_progress_event_version')
+  expect(sql).toContain('waste_quantity')
+  expect(sql).toContain('ck_sales_order_cancellations_waste_quantity')
+  expect(sql.slice(sql.indexOf('-- migrate:down'))).not.toMatch(/DELETE|DROP/i)
+})

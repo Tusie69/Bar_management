@@ -1,4 +1,4 @@
-import { Clock3, Printer } from "lucide-react"
+import { Clock3, Minus, Plus, Printer, TriangleAlert } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -21,6 +21,12 @@ import {
   type PreparationStationCode,
 } from "./preparation-presentation"
 import type { PreparationTicket } from "./preparation-queue-data"
+import {
+  isGroupedPendingCancellation,
+  preparationGroupedCancellationDetail,
+  preparationGroupedCancellationTitle,
+  summarizePreparationGroupedCancellation,
+} from "./preparation-cancellation-summary"
 
 /**
  * Một phiếu trên hàng đợi quầy.
@@ -40,6 +46,7 @@ export function PreparationTicketCard({
   canRetry,
   onTransition,
   onRetry,
+  onProgress,
   pending,
 }: {
   ticket: PreparationTicket
@@ -49,6 +56,7 @@ export function PreparationTicketCard({
   canRetry: boolean
   onTransition: (ticket: PreparationTicket, status: PreparationTicketStatus) => void
   onRetry: (ticket: PreparationTicket) => void
+  onProgress: (ticket: PreparationTicket, lineNo: number, doneQuantity: number, expectedVersion: number) => void
   pending: boolean
 }) {
   const action = preparationNextAction(station, ticket.status)
@@ -56,6 +64,11 @@ export function PreparationTicketCard({
   const waitTone = preparationWaitTone(waitSeconds)
   const waitToneClass = PREPARATION_WAIT_TONE_CLASS[waitTone]
   const flags = preparationGuestFlagBadges(ticket.guestFlags)
+  const groupedCancellation = summarizePreparationGroupedCancellation(ticket.lines)
+  const progressEditable = canTransition && (ticket.status === "ACCEPTED" || ticket.status === "PREPARING")
+  const incompleteLineCount = ticket.lines.filter(
+    (line) => line.quantity > 0 && line.doneQuantity < line.quantity,
+  ).length
   return (
     <article
       className={cn("grid min-w-0 gap-3 rounded-xl border bg-surface-1 p-3 shadow-xs", waitToneClass.card)}
@@ -94,6 +107,25 @@ export function PreparationTicketCard({
         ) : null}
         <p className="text-xs break-words text-muted-foreground">{preparationMetaLine(ticket)}</p>
       </header>
+      {groupedCancellation ? (
+        <section
+          className="grid min-w-0 gap-1 rounded-lg border border-destructive/40 bg-destructive/10 p-2.5 text-xs"
+          aria-label="Yêu cầu hủy theo đơn đang chờ duyệt"
+          data-grouped-cancellation={groupedCancellation.coversAllActiveLines ? "all" : "partial"}
+        >
+          <p className="flex min-w-0 items-start gap-2 font-semibold text-destructive">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <span className="min-w-0 break-words">
+              {preparationGroupedCancellationTitle(station, groupedCancellation)}
+            </span>
+          </p>
+          <p>{preparationGroupedCancellationDetail(groupedCancellation)}</p>
+          {groupedCancellation.hasSingleLinePendingAlongsideGroup ? (
+            <p>Phiếu này đồng thời có yêu cầu hủy riêng từng món.</p>
+          ) : null}
+          {groupedCancellation.groupCount > 1 ? <p>Phiếu này có nhiều nhóm yêu cầu hủy đang chờ duyệt.</p> : null}
+        </section>
+      ) : null}
       <ul className="grid min-w-0 gap-2" aria-label="Món trên phiếu">
         {ticket.lines.map((line) => {
           const display = preparationLineDisplay(line)
@@ -132,15 +164,59 @@ export function PreparationTicketCard({
                   ⏳ {pendingLabel}
                 </p>
               ) : null}
+              {isGroupedPendingCancellation(line) ? (
+                <p className="mt-1 text-xs font-medium text-destructive">Thuộc yêu cầu hủy theo đơn</p>
+              ) : null}
               {line.note ? (
                 <p className="mt-1 rounded-md bg-amber-400/10 px-2 py-1 text-xs font-medium break-words">
                   Ghi chú: {line.note}
                 </p>
               ) : null}
+              {line.quantity > 0 ? (
+                <div
+                  className="mt-2 flex min-w-0 items-center justify-between gap-2"
+                  aria-label={`Tiến độ ${line.itemName}`}
+                >
+                  <span className="text-xs font-semibold" aria-live="polite">
+                    Đã làm {line.doneQuantity}/{line.quantity}
+                  </span>
+                  {progressEditable ? (
+                    <div className="flex shrink-0 gap-1" role="group" aria-label={`Cập nhật tiến độ ${line.itemName}`}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="size-11"
+                        disabled={pending || line.doneQuantity <= 0}
+                        aria-label={`Giảm số đã làm của ${line.itemName}`}
+                        onClick={() => onProgress(ticket, line.lineNo, line.doneQuantity - 1, line.progressVersion)}
+                      >
+                        <Minus className="size-4" aria-hidden="true" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="size-11"
+                        disabled={pending || line.doneQuantity >= line.quantity}
+                        aria-label={`Tăng số đã làm của ${line.itemName}`}
+                        onClick={() => onProgress(ticket, line.lineNo, line.doneQuantity + 1, line.progressVersion)}
+                      >
+                        <Plus className="size-4" aria-hidden="true" />
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </li>
           )
         })}
       </ul>
+      {ticket.status === "PREPARING" && incompleteLineCount > 0 ? (
+        <p className="rounded-lg border border-amber-400/40 bg-amber-400/10 p-2 text-xs" role="status">
+          {`${incompleteLineCount} dòng chưa đủ số lượng. Bạn vẫn có thể báo xong nếu đã đối chiếu thực tế.`}
+        </p>
+      ) : null}
       <footer className="flex min-w-0 gap-2">
         {action && canTransition ? (
           <Button

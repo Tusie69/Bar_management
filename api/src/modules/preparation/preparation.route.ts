@@ -18,6 +18,7 @@ import {
   listReadyNotifications,
   retryPreparationPrint,
   transitionPreparationTicket,
+  updatePreparationLineProgress,
 } from './preparation.repository.js'
 
 export const preparationRouter: Router = Router()
@@ -93,6 +94,41 @@ preparationRouter.post(
       station: station(request.params.station),
       toStatus,
       expectedVersion: positiveInteger(input.expectedVersion, 'INVALID_VERSION'),
+      idempotencyKey: String(input.idempotencyKey),
+    }, idempotencyTransaction(response))
+    afterIdempotencyCommit(response, () => publishFloorChange({
+      organizationId: actor.organizationId,
+      venueId: actor.venueId,
+      changeSeq: result.changeCursor,
+    }))
+    response.json(result)
+  },
+)
+
+preparationRouter.post(
+  '/:station/tickets/:ticketId/lines/:lineNo/progress',
+  requireAuthentication,
+  requireCsrfProtection,
+  stationPermission('transition'),
+  requireBodyIdempotencyKey('idempotencyKey'),
+  idempotent('preparation.line.progress'),
+  async (request, response) => {
+    const input = body(request.body)
+    const doneQuantity = Number(input.doneQuantity)
+    const expectedVersion = Number(input.expectedVersion)
+    if (!Number.isSafeInteger(doneQuantity) || doneQuantity < 0) {
+      throw new AppError(400, 'INVALID_DONE_QUANTITY', 'Số phần đã làm phải là số nguyên không âm.')
+    }
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
+      throw new AppError(400, 'INVALID_PROGRESS_VERSION', 'Version tiến độ không hợp lệ.')
+    }
+    const actor = requireAuthenticatedActor(request)
+    const result = await updatePreparationLineProgress(actor, {
+      ticketId: positiveInteger(request.params.ticketId, 'INVALID_TICKET_ID'),
+      lineNo: positiveInteger(request.params.lineNo, 'INVALID_LINE_NO'),
+      station: station(request.params.station),
+      doneQuantity,
+      expectedVersion,
       idempotencyKey: String(input.idempotencyKey),
     }, idempotencyTransaction(response))
     afterIdempotencyCommit(response, () => publishFloorChange({

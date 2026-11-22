@@ -64,6 +64,8 @@ function line(overrides = {}) {
     quantity: 2,
     cancelledQuantity: 0,
     originalQuantity: 2,
+    doneQuantity: 0,
+    progressVersion: 0,
     note: null,
     pendingCancellation: null,
     ...overrides,
@@ -75,7 +77,10 @@ function line(overrides = {}) {
  * `minutesAgo` chọn sẵn để phiếu 2 rơi vào warning (9 phút) và phiếu 3 rơi vào
  * critical (14 phút).
  */
-function ticket(station, { ticketId, status, version, minutesAgo, flags = {}, extraLines = [], orderedBy }) {
+function ticket(
+  station,
+  { ticketId, status, version, minutesAgo, flags = {}, baseLine = {}, extraLines = [], orderedBy },
+) {
   return {
     ticketId,
     orderId: ticketId + 100,
@@ -93,7 +98,7 @@ function ticket(station, { ticketId, status, version, minutesAgo, flags = {}, ex
     tableCodes: [`B${ticketId}`],
     orderedByDisplayName: orderedBy,
     guestFlags: { vip: false, birthday: false, designated: false, ...flags },
-    lines: [line({ itemName: "Negroni", note: ticketId === 1 ? "Ít đá" : null }), ...extraLines],
+    lines: [line({ itemName: "Negroni", note: ticketId === 1 ? "Ít đá" : null, ...baseLine }), ...extraLines],
   }
 }
 
@@ -110,7 +115,14 @@ function queueSnapshot(station, tickets) {
 
 function tickets(station, firstStatus, firstVersion) {
   return [
-    ticket(station, { ticketId: 1, status: firstStatus, version: firstVersion, minutesAgo: 3, orderedBy: "Minh" }),
+    ticket(station, {
+      ticketId: 1,
+      status: firstStatus,
+      version: firstVersion,
+      minutesAgo: 3,
+      orderedBy: "Minh",
+      baseLine: { pendingCancellation: { cancellationId: 91_001, quantity: 1, groupId: 99_001 } },
+    }),
     ticket(station, {
       ticketId: 2,
       status: "ACCEPTED",
@@ -118,6 +130,7 @@ function tickets(station, firstStatus, firstVersion) {
       minutesAgo: 9,
       orderedBy: "Minh",
       flags: { vip: true, designated: true },
+      baseLine: { pendingCancellation: { cancellationId: 92_001, quantity: 1, groupId: null } },
       extraLines: [
         // Vừa có phần đã được duyệt hủy, vừa có yêu cầu hủy mới chưa duyệt.
         line({
@@ -268,6 +281,23 @@ async function assertSharedTicketContent(page) {
   await expect(page.getByText(/Khách:|Điện thoại|Ghi chú đặt bàn/)).toHaveCount(0)
 }
 
+async function assertGroupedCancellationContent(page, stationLabel) {
+  const full = page.locator('[data-ticket-id="1"]')
+  const fullBanner = full.locator('[data-grouped-cancellation="all"]')
+  await expect(fullBanner).toContainText(`Toàn bộ phần ${stationLabel} của phiếu đang chờ duyệt hủy theo đơn.`)
+  await expect(fullBanner).toContainText("1 dòng · 1 phần đang chờ duyệt.")
+  await expect(full.locator('[data-line-no="1"]')).toContainText("Thuộc yêu cầu hủy theo đơn")
+  await expect(full).not.toContainText("91001")
+  await expect(full).not.toContainText("99001")
+
+  const partial = page.locator('[data-ticket-id="2"]')
+  const partialBanner = partial.locator('[data-grouped-cancellation="partial"]')
+  await expect(partialBanner).toContainText(`Một phần phiếu ${stationLabel} thuộc yêu cầu hủy theo đơn đang chờ duyệt.`)
+  await expect(partialBanner).toContainText("Phiếu này đồng thời có yêu cầu hủy riêng từng món.")
+  await expect(partial.locator('[data-line-no="1"]')).not.toContainText("Thuộc yêu cầu hủy theo đơn")
+  await expect(partial.locator('[data-line-no="2"]')).toContainText("Thuộc yêu cầu hủy theo đơn")
+}
+
 async function assertTotalsPanel(page, { title, queueReads }) {
   const panel = page.locator("[data-preparation-totals]")
   const toggle = panel.getByRole("button", { name: title })
@@ -350,6 +380,7 @@ for (const viewport of viewports) {
           version: firstVersion,
           minutesAgo: 3,
           orderedBy: "Minh",
+          baseLine: { pendingCancellation: { cancellationId: 91_001, quantity: 1, groupId: 99_001 } },
         }),
         changeCursor: "8",
       },
@@ -373,6 +404,9 @@ for (const viewport of viewports) {
     // 4. Hàng đợi cố định station BAR.
     await expect(page.getByRole("heading", { name: "Hàng đợi Bar" })).toBeVisible()
     expect(kitchenReads).toEqual([])
+    const audioToggle = page.getByRole("button", { name: "Bật âm báo phiếu mới" })
+    await expect(audioToggle).toBeVisible()
+    await expect(audioToggle).toHaveAttribute("aria-pressed", "false")
 
     // 5 + 6. Có nút quay về sơ đồ, không có bộ chọn Bar/Bếp và không có nút
     // đăng xuất riêng của `/chebien`.
@@ -392,6 +426,7 @@ for (const viewport of viewports) {
 
     // 8. Metadata, cờ và hủy chờ duyệt vẫn render trong route nhúng.
     await assertSharedTicketContent(page)
+    await assertGroupedCancellationContent(page, "Bar")
 
     // BT-11. Tổng dùng toàn snapshot: READY không góp vào 6× Negroni, pending
     // không trừ 2× khay thịt và collapse không chạm API.
@@ -451,6 +486,10 @@ for (const viewport of viewports) {
     expect(transitions[0].expectedVersion).toBe(1)
     expect(typeof transitions[0].idempotencyKey).toBe("string")
     await expect(page.locator('[data-ticket-id="1"]').getByRole("button", { name: "Bắt đầu pha" })).toBeVisible()
+    await expect(page.locator('[data-ticket-id="1"]').getByText("Đã làm 0/2")).toBeVisible()
+    await expect(
+      page.locator('[data-ticket-id="1"]').getByRole("button", { name: "Tăng số đã làm của Negroni" }),
+    ).toBeVisible()
     await expect(page.getByRole("button", { name: "Tiếp nhận" })).toHaveCount(0)
 
     // State filter thuộc vòng đời component, không theo route hay storage.
@@ -520,6 +559,7 @@ for (const viewport of [viewports[0], viewports[3]]) {
           version: firstVersion,
           minutesAgo: 3,
           orderedBy: "Minh",
+          baseLine: { pendingCancellation: { cancellationId: 91_001, quantity: 1, groupId: 99_001 } },
         }),
         changeCursor: "8",
       },
@@ -534,6 +574,7 @@ for (const viewport of [viewports[0], viewports[3]]) {
     await expect(page.getByRole("heading", { name: "Hàng đợi Bếp" })).toBeVisible()
     await expect(page.getByRole("heading", { name: "Hàng đợi Bar" })).toHaveCount(0)
     expect(barReads).toEqual([])
+    await expect(page.getByRole("button", { name: "Bật âm báo phiếu mới" })).toHaveAttribute("aria-pressed", "false")
 
     // 2. Nhãn KITCHEN giữ nguyên.
     await expect(page.getByText("Đang làm", { exact: true })).toBeVisible()
@@ -549,6 +590,7 @@ for (const viewport of [viewports[0], viewports[3]]) {
 
     // 5. Metadata, cờ và hủy chờ duyệt vẫn render ở màn Bếp.
     await assertSharedTicketContent(page)
+    await assertGroupedCancellationContent(page, "Bếp")
 
     const totalsTextBeforeFilter = await assertTotalsPanel(page, {
       title: "Tổng món đang chờ làm",

@@ -14,6 +14,8 @@ function line(overrides: Partial<PreparationLine> = {}): PreparationLine {
     quantity: 2,
     cancelledQuantity: 0,
     originalQuantity: 2,
+    doneQuantity: 0,
+    progressVersion: 0,
     note: null,
     pendingCancellation: null,
     ...overrides,

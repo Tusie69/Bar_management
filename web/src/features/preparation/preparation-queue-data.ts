@@ -36,6 +36,8 @@ export interface PreparationTicket {
     quantity: number
     cancelledQuantity: number
     originalQuantity: number
+    doneQuantity: number
+    progressVersion: number
     note: string | null
     pendingCancellation: {
       cancellationId: number

@@ -363,6 +363,26 @@ mysqlDescribe('Module 4 preparation queue', () => {
     expectPreparationPrivacy(historical)
   })
 
+  it('persists quantity progress across queue reads with optimistic concurrency', async () => {
+    const seeded = await seedTickets()
+    await seedPreparationLines(seeded.orderId)
+    const bar = await signIn('module4_bar')
+    expect((await post(bar, `/api/v1/preparation/BAR/tickets/${seeded.barId}/transition`, {
+      toStatus: 'ACCEPTED', expectedVersion: 1, idempotencyKey: idem(),
+    })).status).toBe(200)
+    const path = `/api/v1/preparation/BAR/tickets/${seeded.barId}/lines/1/progress`
+    const updated = await post(bar, path, { doneQuantity: 1, expectedVersion: 0, idempotencyKey: idem() })
+    expect(updated.status, JSON.stringify(updated.body)).toBe(200)
+    expect(json<{ ticket: { lines: Array<{ doneQuantity: number; progressVersion: number }> } }>(updated)
+      .ticket.lines[0]).toMatchObject({ doneQuantity: 1, progressVersion: 1 })
+    const conflict = await post(bar, path, { doneQuantity: 2, expectedVersion: 0, idempotencyKey: idem() })
+    expect(conflict.status).toBe(409)
+    expect(json<{ error: { code: string } }>(conflict).error.code).toBe('PREPARATION_PROGRESS_VERSION_CONFLICT')
+    const queue = await get(bar, '/api/v1/preparation/BAR/tickets')
+    expect(json<{ tickets: Array<{ lines: Array<{ doneQuantity: number; progressVersion: number }> }> }>(queue)
+      .tickets[0]!.lines[0]).toMatchObject({ doneQuantity: 1, progressVersion: 1 })
+  })
+
   it('keeps two same-label variants distinct and stable from queue through collected history', async () => {
     const seeded = await seedTickets()
     const identities = await seedSameLabelBarLines(seeded.orderId, seeded.barId)

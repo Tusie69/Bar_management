@@ -20,6 +20,8 @@ function line(overrides: Partial<PreparationLine> = {}): PreparationLine {
     quantity: 1,
     cancelledQuantity: 0,
     originalQuantity: 1,
+    doneQuantity: 0,
+    progressVersion: 0,
     note: null,
     pendingCancellation: null,
     ...overrides,
@@ -64,11 +66,39 @@ function renderTicket(
       pending: false,
       onTransition: () => undefined,
       onRetry: () => undefined,
+      onProgress: () => undefined,
     }),
   )
 }
 
 const NOW = new Date("2026-11-22T10:03:00.000Z")
+
+describe("tiến độ theo số lượng", () => {
+  it("hiện done/total và stepper chỉ khi phiếu đang được xử lý", () => {
+    const html = renderTicket(
+      ticket({ status: "PREPARING", lines: [line({ quantity: 3, doneQuantity: 1, progressVersion: 2 })] }),
+      NOW,
+      { canTransition: true },
+    )
+    expect(html).toContain("Đã làm <!-- -->1<!-- -->/<!-- -->3")
+    expect(html).toContain("Tăng số đã làm của Nước suối")
+    expect(html).toContain("Giảm số đã làm của Nước suối")
+    expect(html).toContain("1 dòng chưa đủ số lượng")
+    expect(html).toContain("Bạn vẫn có thể báo xong")
+  })
+
+  it("không hiện stepper khi chưa nhận phiếu và không cảnh báo khi đã đủ", () => {
+    const submitted = renderTicket(ticket(), NOW, { canTransition: true })
+    expect(submitted).toContain("Đã làm <!-- -->0<!-- -->/<!-- -->1")
+    expect(submitted).not.toContain("Cập nhật tiến độ")
+    const complete = renderTicket(
+      ticket({ status: "PREPARING", lines: [line({ doneQuantity: 1, progressVersion: 1 })] }),
+      NOW,
+      { canTransition: true },
+    )
+    expect(complete).not.toContain("chưa đủ số lượng")
+  })
+})
 
 function renderFilterBar(input: {
   filter: PreparationQueueFilter
@@ -253,7 +283,7 @@ describe("L3 — hủy chờ duyệt trên card", () => {
       { canTransition: true },
     )
     expect(html).toContain("Bắt đầu pha")
-    expect(html).not.toContain('disabled=""')
+    expect(html.match(/<button[^>]*>Bắt đầu pha<\/button>/)?.[0]).not.toContain('disabled=""')
     // Dòng còn lại vẫn hiển thị bình thường.
     expect(html).toContain("Gin tonic")
   })
@@ -297,6 +327,51 @@ describe("L3 — hủy chờ duyệt trên card", () => {
     expect(html).toContain("Đang chờ duyệt hủy 1 phần")
     expect(html).toContain('data-cancelled="partial"')
     expect(html).toContain('data-pending-cancellation="true"')
+  })
+
+  it("group phủ toàn bộ phần Bar hiện banner nhưng không khóa transition", () => {
+    const html = renderTicket(
+      ticket({
+        status: "ACCEPTED",
+        lines: [line({ pendingCancellation: { cancellationId: 901, quantity: 1, groupId: 77 } })],
+      }),
+      NOW,
+      { canTransition: true },
+    )
+    expect(html).toContain("Toàn bộ phần Bar của phiếu đang chờ duyệt hủy theo đơn.")
+    expect(html).toContain("1 dòng · 1 phần đang chờ duyệt.")
+    expect(html).toContain("Thuộc yêu cầu hủy theo đơn")
+    expect(html).toContain('data-grouped-cancellation="all"')
+    expect(html).toContain("Bắt đầu pha")
+    expect(html.match(/<button[^>]*>Bắt đầu pha<\/button>/)?.[0]).not.toContain('disabled=""')
+    expect(html).not.toContain("901")
+    expect(html).not.toContain("77")
+  })
+
+  it("group chỉ phủ một phần dùng wording station và báo pending riêng song song", () => {
+    const lines = [
+      line({ pendingCancellation: { cancellationId: 1, quantity: 1, groupId: 10 } }),
+      line({
+        lineNo: 2,
+        pendingCancellation: { cancellationId: 2, quantity: 1, groupId: null },
+      }),
+    ]
+    const bar = renderTicket(ticket({ lines }), NOW)
+    const kitchen = renderTicket(ticket({ station: "KITCHEN", lines }), NOW, { station: "KITCHEN" })
+    expect(bar).toContain("Một phần phiếu Bar thuộc yêu cầu hủy theo đơn đang chờ duyệt.")
+    expect(kitchen).toContain("Một phần phiếu Bếp thuộc yêu cầu hủy theo đơn đang chờ duyệt.")
+    expect(bar).toContain("Phiếu này đồng thời có yêu cầu hủy riêng từng món.")
+    expect(bar).toContain('data-grouped-cancellation="partial"')
+  })
+
+  it("chỉ pending riêng không tạo banner hoặc nhãn group", () => {
+    const html = renderTicket(
+      ticket({ lines: [line({ pendingCancellation: { cancellationId: 3, quantity: 1, groupId: null } })] }),
+      NOW,
+    )
+    expect(html).toContain("Đang chờ duyệt hủy 1 phần")
+    expect(html).not.toContain("Yêu cầu hủy theo đơn đang chờ duyệt")
+    expect(html).not.toContain("Thuộc yêu cầu hủy theo đơn")
   })
 })
 

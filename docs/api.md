@@ -1628,7 +1628,19 @@ never chooses the policy; the ticket state does.
 Approval updates the cancellation, the line's `cancelled_quantity`, the order's `cancelled_item_count` /
 `cancelled_amount_vnd`, the ticket's `cancelled_item_count`, the line-change history and the audit row in one
 transaction. The quantity is re-checked at decision time (`409 ORDER_LINE_QUANTITY_EXCEEDED`) because the line may have
-shrunk since the request. Rejection touches nothing but the request itself.
+shrunk since the request. The server also recomputes waste from the current preparation progress rather than trusting
+the request-time policy: `waste_quantity = min(requested quantity, done_quantity)`. That exact value is persisted; the
+already-made part is waste, the remainder is an ordinary cancellation, and remaining progress is reduced by the waste
+quantity. A `READY`/`COLLECTED` ticket still means the requested quantity has all been made. Rejection touches nothing
+but the request itself and records no waste.
+
+### Preparation line progress
+
+`POST /preparation/:station/tickets/:ticketId/lines/:lineNo/progress` stores the shared `doneQuantity` for one line.
+The request carries `doneQuantity`, `expectedVersion` and `idempotencyKey`; the response returns the refreshed ticket.
+Only the station transition permission may write it, only `ACCEPTED`/`PREPARING` tickets are editable, and the value
+must be an integer from zero through the line's current net `quantity`. Each update has its own optimistic version,
+append-only event and venue cursor bump so SSE refreshes other devices without coupling progress to ticket status.
 
 **Nothing deletes an order line.** `total_amount_vnd` stays the total the guest was quoted when ordering; the cancelled
 part lives in its own column and `netAmountVnd` is the difference. Subtracting from the total would erase the number the

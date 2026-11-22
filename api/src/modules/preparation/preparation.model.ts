@@ -28,6 +28,10 @@ export interface PreparationLineView {
   cancelledQuantity: number
   /** Số lúc khách gọi. Giữ lại để quầy đối chiếu "đã hủy n trên tổng m". */
   originalQuantity: number
+  /** Số phần đã làm xong trên số lượng còn hiệu lực của dòng. */
+  doneQuantity: number
+  /** Version riêng cho thao tác tiến độ đa thiết bị. */
+  progressVersion: number
   note: string | null
   pendingCancellation: {
     cancellationId: number

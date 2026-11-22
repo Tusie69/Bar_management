@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
-import { ArrowLeft, ChefHat, GlassWater, LogOut, RefreshCw } from "lucide-react"
+import { ArrowLeft, ChefHat, GlassWater, LogOut, RefreshCw, Volume2, VolumeX } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-data"
@@ -29,6 +29,7 @@ import {
 import { PreparationTicketCard } from "./preparation-ticket-card"
 import { aggregatePreparationItems } from "./preparation-totals"
 import { PreparationTotalsPanel } from "./preparation-totals-panel"
+import { usePreparationAudio } from "./preparation-audio"
 
 /** Lần tải đầu: ba khung xám thay cho bốn cột trống. */
 function PreparationQueueSkeleton() {
@@ -131,6 +132,7 @@ export function PreparationQueue({
   const [pendingId, setPendingId] = useState<number | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const snapshot = queue.data
+  const audio = usePreparationAudio(venueId, station, snapshot?.tickets)
   const canRetry = canShowPrintRetry(hasRetryPermission, snapshot?.printing.enabled === true)
   const stationLabel = preparationStationLabel(station)
   const readPermission = `preparation.${station.toLowerCase()}.read`
@@ -178,6 +180,31 @@ export function PreparationQueue({
       setActionError(null)
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : "Không yêu cầu in lại được.")
+    } finally {
+      setPendingId(null)
+    }
+  }
+
+  const updateProgress = async (
+    ticket: PreparationTicket,
+    lineNo: number,
+    doneQuantity: number,
+    expectedVersion: number,
+  ) => {
+    if (!httpClient) return
+    setPendingId(ticket.ticketId)
+    try {
+      const idempotencyKey = newIdempotencyKey()
+      await httpClient.post(
+        `/preparation/${station}/tickets/${ticket.ticketId}/lines/${lineNo}/progress`,
+        { doneQuantity, expectedVersion, idempotencyKey },
+        { idempotencyKey },
+      )
+      setActionError(null)
+      await refresh()
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Không cập nhật được tiến độ món.")
+      await refresh()
     } finally {
       setPendingId(null)
     }
@@ -250,6 +277,17 @@ export function PreparationQueue({
         </div>
         <div className="flex shrink-0 gap-2">
           {stationControls}
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-11"
+            aria-pressed={audio.enabled}
+            aria-label={audio.enabled ? "Tắt âm báo phiếu mới" : "Bật âm báo phiếu mới"}
+            onClick={() => audio.setEnabled(!audio.enabled)}
+          >
+            {audio.enabled ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
+          </Button>
           <Button variant="outline" size="icon" className="size-11" onClick={() => void refresh()} aria-label="Tải lại">
             <RefreshCw className="size-4" />
           </Button>
@@ -318,6 +356,9 @@ export function PreparationQueue({
                         pending={pendingId === ticket.ticketId}
                         onTransition={(item, status) => void transition(item, status)}
                         onRetry={(item) => void retry(item)}
+                        onProgress={(item, lineNo, doneQuantity, expectedVersion) =>
+                          void updateProgress(item, lineNo, doneQuantity, expectedVersion)
+                        }
                       />
                     ))}
                   </div>

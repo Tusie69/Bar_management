@@ -49,6 +49,9 @@ async function truncateFixtureTables(): Promise<void> {
   invalidateVenueShift()
   await databasePool.execute('UPDATE operation_log SET compensates_operation_id = NULL WHERE compensates_operation_id IS NOT NULL')
   await databasePool.execute("UPDATE customers SET status = 'ACTIVE', merged_into_customer_id = NULL WHERE status = 'MERGED'")
+  await databasePool.execute(
+    "UPDATE visits SET end_reason = 'ENTRY_ERROR', merged_into_visit_id = NULL WHERE merged_into_visit_id IS NOT NULL",
+  )
   // Migration 0044: notifications reference orders, visits and users. Clear the
   // inbox first so later fixture cleanup can delete every referenced parent.
   await databasePool.execute('DELETE FROM staff_notifications')
@@ -68,6 +71,8 @@ async function truncateFixtureTables(): Promise<void> {
   await databasePool.execute('DELETE FROM preparation_print_outbox')
   await databasePool.execute('DELETE FROM preparation_print_capabilities')
   await databasePool.execute('DELETE FROM preparation_ticket_events')
+  await databasePool.execute('DELETE FROM preparation_line_progress_events')
+  await databasePool.execute('DELETE FROM preparation_line_progress')
   await databasePool.execute('DELETE FROM preparation_tickets')
   await databasePool.execute('DELETE FROM sales_order_lines')
   await databasePool.execute('DELETE FROM sales_orders')

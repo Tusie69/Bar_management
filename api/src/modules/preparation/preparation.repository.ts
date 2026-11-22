@@ -34,6 +34,7 @@ interface TicketRow extends RowDataPacket {
 }
 
 interface LineRow extends RowDataPacket {
+  ticket_id: number
   line_id: number
   order_id: number
   preparation_station: PreparationStation
@@ -49,6 +50,8 @@ interface LineRow extends RowDataPacket {
   cancellation_id: number | null
   cancellation_quantity: number | null
   cancellation_group_id: number | null
+  done_quantity: number | null
+  progress_version: number | null
 }
 
 const nextStatus: Record<Exclude<PreparationStatus, 'COLLECTED'>, PreparationStatus> = {
@@ -81,24 +84,28 @@ async function ticketLinesBatch(
 ): Promise<Map<string, PreparationLineView[]>> {
   const result = new Map<string, PreparationLineView[]>()
   if (tickets.length === 0) return result
-  const orderIds = [...new Set(tickets.map((ticket) => Number(ticket.order_id)))]
+  const ticketIds = tickets.map((ticket) => Number(ticket.id))
   // L2: `net_quantity` là cột sinh `quantity - cancelled_quantity` của migration
   // 0040. Đọc cả ba con số thay vì chỉ `quantity`: quầy hành động theo số còn
   // lại, còn hai số kia là phần đối chiếu để phiếu nói được "đã hủy n trên m".
   const [rows] = await connection.execute<LineRow[]>(
-    `SELECT l.id AS line_id, l.order_id, l.preparation_station, l.line_no, l.item_name, l.variant_display_name,
+    `SELECT t.id AS ticket_id, l.id AS line_id, l.order_id, l.preparation_station, l.line_no, l.item_name, l.variant_display_name,
             l.menu_item_variant_id, l.unit_code,
             l.quantity, l.cancelled_quantity, l.net_quantity, l.note,
             c.id AS cancellation_id, c.quantity AS cancellation_quantity,
-            c.group_id AS cancellation_group_id
-       FROM sales_order_lines l
+            c.group_id AS cancellation_group_id, p.done_quantity, p.version AS progress_version
+       FROM preparation_tickets t
+       JOIN sales_order_lines l ON l.organization_id = t.organization_id AND l.venue_id = t.venue_id
+        AND l.order_id = t.order_id AND l.preparation_station = t.station
        LEFT JOIN sales_order_cancellations c
          ON c.organization_id = l.organization_id AND c.venue_id = l.venue_id
         AND c.order_id = l.order_id AND c.line_id = l.id
         AND c.station = l.preparation_station AND c.status = 'PENDING'
-      WHERE l.organization_id = ? AND l.venue_id = ? AND l.order_id IN (${orderIds.map(() => '?').join(',')})
-      ORDER BY l.order_id, l.preparation_station, l.line_no`,
-    [actor.organizationId, actor.venueId, ...orderIds],
+       LEFT JOIN preparation_line_progress p ON p.organization_id = t.organization_id AND p.venue_id = t.venue_id
+        AND p.ticket_id = t.id AND p.line_id = l.id
+      WHERE t.organization_id = ? AND t.venue_id = ? AND t.id IN (${ticketIds.map(() => '?').join(',')})
+      ORDER BY t.id, l.line_no`,
+    [actor.organizationId, actor.venueId, ...ticketIds],
   )
   const seenLineIds = new Set<number>()
   for (const row of rows) {
@@ -112,7 +119,7 @@ async function ticketLinesBatch(
       )
     }
     seenLineIds.add(lineId)
-    const key = `${Number(row.order_id)}:${row.preparation_station}`
+    const key = String(Number(row.ticket_id))
     const lines = result.get(key) ?? []
     const originalQuantity = Number(row.quantity)
     const cancelledQuantity = Number(row.cancelled_quantity)
@@ -129,6 +136,8 @@ async function ticketLinesBatch(
       quantity: Math.max(0, Number(row.net_quantity)),
       cancelledQuantity,
       originalQuantity,
+      doneQuantity: Math.min(Math.max(0, Number(row.done_quantity ?? 0)), Math.max(0, Number(row.net_quantity))),
+      progressVersion: Number(row.progress_version ?? 0),
       note: row.note,
       pendingCancellation: row.cancellation_id === null ? null : {
         cancellationId: Number(row.cancellation_id),
@@ -209,7 +218,7 @@ export async function getPreparationQueue(
     [actor.organizationId, actor.venueId, station],
   )
   const lineMap = await ticketLinesBatch(databasePool, actor, rows)
-  const tickets = rows.map((row) => baseTicket(row, lineMap.get(`${Number(row.order_id)}:${row.station}`) ?? []))
+  const tickets = rows.map((row) => baseTicket(row, lineMap.get(String(Number(row.id))) ?? []))
   const [capabilities] = await databasePool.execute<(RowDataPacket & { enabled: number })[]>(
     `SELECT EXISTS(SELECT 1 FROM preparation_print_capabilities
       WHERE organization_id = ? AND venue_id = ? AND station = ? AND is_enabled = 1
@@ -238,7 +247,7 @@ export async function getPreparationHistory(
   const page = rows.slice(0, limit)
   const lineMap = await ticketLinesBatch(databasePool, actor, page)
   return {
-    tickets: page.map((row) => baseTicket(row, lineMap.get(`${Number(row.order_id)}:${row.station}`) ?? [])),
+    tickets: page.map((row) => baseTicket(row, lineMap.get(String(Number(row.id))) ?? [])),
     nextBeforeTicketId: rows.length > limit ? Number(page.at(-1)!.id) : null,
     limit,
   }
@@ -345,7 +354,114 @@ export async function transitionPreparationTicket(
     )
     const updated = updatedRows[0]!
     const updatedLines = await ticketLinesBatch(connection, actor, [updated])
-    const result = { ticket: baseTicket(updated, updatedLines.get(`${Number(updated.order_id)}:${updated.station}`) ?? []), changeCursor: String(changeSeq) }
+    const result = { ticket: baseTicket(updated, updatedLines.get(String(Number(updated.id))) ?? []), changeCursor: String(changeSeq) }
+    if (owns) await connection.commit()
+    return result
+  } catch (error) {
+    if (owns) await connection.rollback()
+    throw error
+  } finally {
+    if (owns) connection.release()
+  }
+}
+
+interface ProgressLineRow extends RowDataPacket {
+  ticket_id: number
+  order_id: number
+  line_id: number
+  line_no: number
+  net_quantity: number
+  status: PreparationStatus
+  done_quantity: number | null
+  progress_version: number | null
+}
+
+/** Cập nhật số phần đã làm của một dòng, có optimistic concurrency riêng. */
+export async function updatePreparationLineProgress(
+  actor: AuthenticatedActor,
+  input: {
+    ticketId: number
+    station: PreparationStation
+    lineNo: number
+    doneQuantity: number
+    expectedVersion: number
+    idempotencyKey: string
+  },
+  transaction?: PoolConnection,
+): Promise<{ ticket: PreparationTicketView; changeCursor: string }> {
+  const connection = transaction ?? await databasePool.getConnection()
+  const owns = transaction === undefined
+  try {
+    if (owns) await connection.beginTransaction()
+    const [rows] = await connection.execute<ProgressLineRow[]>(
+      `SELECT t.id AS ticket_id, t.order_id, t.status, l.id AS line_id, l.line_no, l.net_quantity,
+              p.done_quantity, p.version AS progress_version
+         FROM preparation_tickets t
+         JOIN sales_order_lines l ON l.organization_id = t.organization_id AND l.venue_id = t.venue_id
+          AND l.order_id = t.order_id AND l.preparation_station = t.station AND l.line_no = ?
+         LEFT JOIN preparation_line_progress p ON p.organization_id = t.organization_id AND p.venue_id = t.venue_id
+          AND p.ticket_id = t.id AND p.line_id = l.id
+        WHERE t.organization_id = ? AND t.venue_id = ? AND t.id = ? AND t.station = ?
+        FOR UPDATE`,
+      [input.lineNo, actor.organizationId, actor.venueId, input.ticketId, input.station],
+    )
+    const current = rows[0]
+    if (!current) throw new AppError(404, 'PREPARATION_LINE_NOT_FOUND', 'Không tìm thấy món trong phiếu của quầy này.')
+    if (current.status !== 'ACCEPTED' && current.status !== 'PREPARING') {
+      throw new AppError(409, 'PREPARATION_PROGRESS_NOT_EDITABLE', 'Chỉ cập nhật tiến độ sau khi nhận và trước khi báo xong.', {
+        status: current.status,
+      })
+    }
+    const currentVersion = Number(current.progress_version ?? 0)
+    if (currentVersion !== input.expectedVersion) {
+      throw new AppError(409, 'PREPARATION_PROGRESS_VERSION_CONFLICT', 'Tiến độ vừa được thiết bị khác cập nhật.', {
+        expectedVersion: input.expectedVersion,
+        currentVersion,
+      })
+    }
+    const netQuantity = Math.max(0, Number(current.net_quantity))
+    if (input.doneQuantity > netQuantity) {
+      throw new AppError(409, 'PREPARATION_PROGRESS_QUANTITY_EXCEEDED', 'Số đã làm vượt số lượng còn hiệu lực.', {
+        netQuantity,
+      })
+    }
+    const before = Math.max(0, Number(current.done_quantity ?? 0))
+    const newVersion = currentVersion + 1
+    if (currentVersion === 0) {
+      await connection.execute(
+        `INSERT INTO preparation_line_progress
+          (organization_id, venue_id, ticket_id, line_id, station, line_no, done_quantity, version,
+           updated_by_user_id, updated_by_membership_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [actor.organizationId, actor.venueId, input.ticketId, Number(current.line_id), input.station,
+          input.lineNo, input.doneQuantity, newVersion, actor.userId, actor.membershipId],
+      )
+    } else {
+      await connection.execute(
+        `UPDATE preparation_line_progress
+            SET done_quantity = ?, version = ?, updated_by_user_id = ?, updated_by_membership_id = ?,
+                updated_at = UTC_TIMESTAMP(3)
+          WHERE organization_id = ? AND venue_id = ? AND ticket_id = ? AND line_id = ? AND version = ?`,
+        [input.doneQuantity, newVersion, actor.userId, actor.membershipId, actor.organizationId, actor.venueId,
+          input.ticketId, Number(current.line_id), currentVersion],
+      )
+    }
+    await connection.execute(
+      `INSERT INTO preparation_line_progress_events
+        (organization_id, venue_id, ticket_id, line_id, station, line_no, quantity_before, quantity_after,
+         progress_version, actor_user_id, actor_membership_id, idempotency_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [actor.organizationId, actor.venueId, input.ticketId, Number(current.line_id), input.station, input.lineNo,
+        before, input.doneQuantity, newVersion, actor.userId, actor.membershipId, input.idempotencyKey],
+    )
+    const changeSeq = await bumpCursor(connection, actor)
+    const [ticketRows] = await connection.execute<TicketRow[]>(
+      `${selectTickets} WHERE t.organization_id = ? AND t.venue_id = ? AND t.id = ? AND t.station = ?`,
+      [actor.organizationId, actor.venueId, input.ticketId, input.station],
+    )
+    const ticket = ticketRows[0]!
+    const lines = await ticketLinesBatch(connection, actor, [ticket])
+    const result = { ticket: baseTicket(ticket, lines.get(String(input.ticketId)) ?? []), changeCursor: String(changeSeq) }
     if (owns) await connection.commit()
     return result
   } catch (error) {

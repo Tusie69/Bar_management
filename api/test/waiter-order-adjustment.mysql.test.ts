@@ -760,6 +760,37 @@ mysqlDescribe('Module Phục vụ 5 — theo dõi và điều chỉnh đơn', ()
       )
       expect(rows[0]).toMatchObject({ policy: 'READY_WASTE', ticket_status_at_request: 'READY' })
     })
+
+    it('tính lại hao hụt theo tiến độ thật tại lúc duyệt hủy một phần', async () => {
+      const seeded = await seedCatalog()
+      const waiter = await signIn('module5_phucvu', 'waiter')
+      const bar = await signIn('module5_bar', 'preparation')
+      const cashier = await signIn('module5_thungan', 'cashier')
+      const order = await createOrder(waiter, seeded)
+      const ticket = barTicket(order)
+      let ticketVersion = await advanceBarTicket(bar, ticket.ticketId, 'ACCEPTED', 1)
+      ticketVersion = await advanceBarTicket(bar, ticket.ticketId, 'PREPARING', ticketVersion)
+      expect(ticketVersion).toBe(3)
+      const progress = await send(bar, 'post',
+        `/api/v1/preparation/BAR/tickets/${ticket.ticketId}/lines/1/progress`, {
+          doneQuantity: 2, expectedVersion: 0, idempotencyKey: idem(),
+        })
+      expect(progress.status, JSON.stringify(progress.body)).toBe(200)
+
+      const requested = await requestCancellation(waiter, order, { quantity: 3 })
+      expect(requested.status, JSON.stringify(requested.body)).toBe(201)
+      await decide(cashier, cancellationIdOf(requested), 'approve')
+
+      const [cancellations] = await databasePool.execute<(RowDataPacket & {
+        policy: string; waste_quantity: number
+      })[]>('SELECT policy, waste_quantity FROM sales_order_cancellations')
+      expect(cancellations[0]).toMatchObject({ policy: 'READY_WASTE', waste_quantity: 2 })
+      const [progressRows] = await databasePool.execute<(RowDataPacket & { done_quantity: number })[]>(
+        'SELECT done_quantity FROM preparation_line_progress WHERE ticket_id = ? AND line_no = 1',
+        [ticket.ticketId],
+      )
+      expect(Number(progressRows[0]!.done_quantity)).toBe(0)
+    })
   })
 
   describe('6. Đồng thời và đổi bàn', () => {
