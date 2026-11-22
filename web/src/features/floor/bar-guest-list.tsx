@@ -5,8 +5,8 @@
  * Implements M1 requirements:
  * - Title "Khách quầy bar" 12-13px, medium bold.
  * - Content 10-12px, line height 1.3-1.4, small padding, not touching the frame.
- * - Long names wrap to at most 2 lines with min-width: 0, overflow-wrap, line-clamp.
- * - No white-space: nowrap on the whole row.
+ * - Mỗi khách một dòng: ghế, giờ, số khách rồi tên khách ở cuối dòng.
+ * - Tên khách dài thì cắt bớt bằng truncate (vẫn xem đủ qua title/aria-label).
  * - Internal scrolling when long, nothing overflows the frame.
  * - Scales to real screen pixels via mapScale prop counter-scaling.
  * - Accessible list semantics with full name in aria-label and status icon cues.
@@ -14,7 +14,15 @@
  */
 
 import { Users } from "lucide-react"
-import { useEffect, useMemo, useRef, type CSSProperties, type ReactElement } from "react"
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactElement,
+} from "react"
 import { STATE_META } from "@/components/status-meta"
 import type { FloorGroup, FloorTableState, TableView } from "@/domain/models"
 import { cn } from "@/lib/utils"
@@ -25,11 +33,19 @@ import {
   type BarGuestRow,
 } from "./bar-guest-rows"
 
-/** Chiều cao thật của từng phần, tính bằng pixel màn hình (xem markup bên dưới). */
-const HEADER_PIXEL_HEIGHT = 25
-const LIST_PADDING_PIXELS = 8
-const ROW_PIXEL_HEIGHT = 24
-const ROW_GAP_PIXELS = 4
+/**
+ * Chiều cao thật của từng phần, tính bằng pixel màn hình (xem markup bên dưới).
+ *
+ * Đây chỉ là ước lượng cho lần vẽ đầu (và cho render phía máy chủ); sau khi gắn
+ * vào DOM thì chiều cao được đo thật bằng ResizeObserver, nên tên khách dài
+ * xuống hai dòng cũng không bị cắt.
+ */
+// tiêu đề: py-1.5 (12) + 12px * 1.3 + viền dưới 1
+const HEADER_PIXEL_HEIGHT = 29
+// một dòng: py-1.5 (12) + 10.5px * 1.25 (mọi thông tin nằm trên cùng một dòng)
+const ROW_BASE_PIXEL_HEIGHT = 25
+// divide-y giữa hai dòng
+const ROW_DIVIDER_PIXEL_HEIGHT = 1
 
 export interface BarGuestListProps {
   /** Floor tables to derive bar rows from */
@@ -110,6 +126,36 @@ export function BarGuestList({
   }, [directRows, tables, states, groups, hideGuestNames, readOnly])
 
   const containerRef = useRef<HTMLDivElement>(null)
+  const headerRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLUListElement>(null)
+  /** Chiều cao thật của nội dung (pixel màn hình), đo sau khi đã vẽ. */
+  const [measuredPixelHeight, setMeasuredPixelHeight] = useState<number | null>(null)
+
+  const shouldMeasure = fitToRows && as === "svg" && rows.length > 0
+
+  useLayoutEffect(() => {
+    if (!shouldMeasure) {
+      setMeasuredPixelHeight(null)
+      return
+    }
+    const header = headerRef.current
+    const body = bodyRef.current
+    if (!header || !body) return
+
+    const measure = () => {
+      const next = header.offsetHeight + body.offsetHeight
+      if (next > 0) setMeasuredPixelHeight((prev) => (prev !== null && Math.abs(prev - next) < 0.5 ? prev : next))
+    }
+    measure()
+
+    if (typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(measure)
+    observer.observe(header)
+    observer.observe(body)
+    return () => {
+      observer.disconnect()
+    }
+  }, [shouldMeasure, rows])
 
   useEffect(() => {
     const el = containerRef.current
@@ -145,14 +191,13 @@ export function BarGuestList({
   const isSvg = as === "svg"
 
   // Chiều cao vừa đủ số dòng, tính bằng pixel màn hình thật rồi mới đổi về đơn
-  // vị sơ đồ. Các con số dưới đây là chiều cao do chính markup ở dưới quy định:
-  // tiêu đề (12px * 1.3 + padding 8 + viền 1), danh sách đệm 4px trên dưới,
-  // mỗi dòng cao 24px (`h-6`) và cách nhau 4px (`space-y-1`).
-  const contentPixelHeight =
+  // vị sơ đồ. Mỗi khách chiếm đúng một dòng; tên khách nằm cuối dòng đó và tự
+  // cắt bớt nếu không đủ chỗ, nên không có dòng nào cao gấp đôi.
+  const estimatedPixelHeight =
     HEADER_PIXEL_HEIGHT +
-    LIST_PADDING_PIXELS +
-    rows.length * ROW_PIXEL_HEIGHT +
-    Math.max(0, rows.length - 1) * ROW_GAP_PIXELS
+    rows.length * ROW_BASE_PIXEL_HEIGHT +
+    Math.max(0, rows.length - 1) * ROW_DIVIDER_PIXEL_HEIGHT
+  const contentPixelHeight = measuredPixelHeight ?? estimatedPixelHeight
   const effectiveHeight =
     fitToRows && rows.length > 0 && isSvg ? Math.min(height, Math.ceil(contentPixelHeight / scale)) : height
 
@@ -191,7 +236,7 @@ export function BarGuestList({
       onWheel={(e) => e.stopPropagation()}
     >
       {/* Title bar: 12-13px, medium bold, line-height 1.3-1.4 */}
-      <div className="shrink-0 border-b border-border-subtle bg-surface-2/80 px-2.5 py-1.5">
+      <div ref={headerRef} className="shrink-0 border-b border-border-subtle bg-surface-2/80 px-2.5 py-1.5">
         <div className="text-[12px] leading-[1.3] font-semibold tracking-tight break-words text-foreground">
           {title}
         </div>
@@ -212,7 +257,12 @@ export function BarGuestList({
             Chưa có khách
           </div>
         ) : (
-          <ul role="list" aria-label="Danh sách khách quầy bar" className="divide-y divide-border-subtle/80">
+          <ul
+            ref={bodyRef}
+            role="list"
+            aria-label="Danh sách khách quầy bar"
+            className="divide-y divide-border-subtle/80"
+          >
             {rows.map((row) => {
               const meta = STATE_META[row.state] ?? STATE_META.free
               const statusColor = meta.color
@@ -250,7 +300,7 @@ export function BarGuestList({
 
               const rowBody = (
                 <>
-                  <div className="flex w-full min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5">
+                  <div className="flex w-full min-w-0 flex-nowrap items-center gap-x-1">
                     <span className="inline-flex min-w-0 shrink items-center gap-1">
                       <span
                         className="inline-block size-1.5 shrink-0 rounded-full"
@@ -268,6 +318,14 @@ export function BarGuestList({
                       <Users className="size-2 opacity-70" aria-hidden="true" />
                       {row.partySize}
                     </span>
+                    {displayGuestName ? (
+                      <span
+                        className="min-w-0 flex-1 truncate font-medium text-foreground"
+                        title={displayGuestName}
+                      >
+                        {displayGuestName}
+                      </span>
+                    ) : null}
                     {activeIcons.length > 0 ? (
                       <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-[9px]">
                         {visibleIcons.map((icon) => (
@@ -296,14 +354,6 @@ export function BarGuestList({
                       </span>
                     ) : null}
                   </div>
-                  {displayGuestName ? (
-                    <span
-                      className="line-clamp-2 w-full min-w-0 font-medium break-words text-foreground"
-                      title={displayGuestName}
-                    >
-                      {displayGuestName}
-                    </span>
-                  ) : null}
                   <span className="sr-only">{` (${statusShort})`}</span>
                 </>
               )
@@ -317,7 +367,7 @@ export function BarGuestList({
                   {readOnly ? (
                     <div
                       aria-label={rowAriaLabel}
-                      className="flex min-h-6 w-full min-w-0 cursor-default flex-col items-stretch gap-0.5 overflow-hidden rounded-none px-1.5 py-1.5 text-left"
+                      className="flex min-h-6 w-full min-w-0 cursor-default flex-col items-stretch overflow-hidden rounded-none px-1.5 py-1.5 text-left"
                     >
                       {rowBody}
                     </div>
@@ -327,7 +377,7 @@ export function BarGuestList({
                       onClick={() => onRowClick?.(row)}
                       aria-label={rowAriaLabel}
                       className={cn(
-                        "flex min-h-6 w-full min-w-0 flex-col items-stretch gap-0.5 overflow-hidden rounded-none px-1.5 py-1.5 text-left transition-colors focus-visible:bg-surface-2 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none focus-visible:ring-inset",
+                        "flex min-h-6 w-full min-w-0 flex-col items-stretch overflow-hidden rounded-none px-1.5 py-1.5 text-left transition-colors focus-visible:bg-surface-2 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none focus-visible:ring-inset",
                         onRowClick ? "cursor-pointer hover:bg-surface-2/80" : "cursor-default hover:bg-surface-2/40",
                       )}
                     >

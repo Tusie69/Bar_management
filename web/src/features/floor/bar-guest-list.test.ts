@@ -85,14 +85,14 @@ describe("BarGuestList presentational component", () => {
     expect(html).toContain("Bar5, 17")
   })
 
-  it("handles long Vietnamese names with up to 2 lines and full title tooltip", () => {
+  it("giữ tên khách dài trên cùng một dòng, cắt bớt và vẫn có tooltip đầy đủ", () => {
     const longName = "Nguyễn Thị Hoàng Oanh"
     const rows = [makeSampleRow({ guestName: longName })]
 
     const html = renderToString(createElement(BarGuestList, { rows, as: "html" }))
     expect(html).toContain(`title="${longName}"`)
     expect(html).toContain(longName)
-    expect(html).toContain("line-clamp-2")
+    expect(html).not.toContain("line-clamp-2")
     expect(html).toContain("truncate")
   })
 
@@ -307,7 +307,8 @@ describe("BarGuestList presentational component", () => {
     expect(rowButton).toContain("rounded-none")
     expect(rowLi).not.toMatch(/rounded-(sm|md|lg|xl|2xl|full)/)
     expect(rowButton).not.toMatch(/rounded-(sm|md|lg|xl|2xl|full)/)
-    expect(listHtml).toContain("flex-wrap")
+    // Mỗi khách gói gọn trong một dòng, tên khách ở cuối dòng và tự cắt bớt.
+    expect(listHtml).toContain("flex-nowrap")
   })
 })
 
@@ -346,6 +347,21 @@ describe("khung trên điện thoại (TU-39 follow-up 16/11)", () => {
     }
     expect(heightOf(4)).toBeGreaterThan(heightOf(1))
     expect(heightOf(100)).toBeLessThanOrEqual(DEFAULT_BAR_GUEST_LIST_BOUNDS.height)
+  })
+
+  it("tên khách nằm cùng dòng nên không làm khung cao thêm", () => {
+    const heightOf = (guestName: string) => {
+      const html = renderToString(
+        createElement(
+          "svg",
+          null,
+          createElement(BarGuestList, { rows: [makeSampleRow({ guestName })], as: "svg", fitToRows: true }),
+        ),
+      )
+      return Number(/<foreignObject[^>]*height="(\d+)"/.exec(html)?.[1])
+    }
+    // Mỗi khách đúng một dòng: có tên hay không thì khung cũng cao như nhau.
+    expect(heightOf("Hưng")).toBe(heightOf(""))
   })
 
   it("không bật fitToRows thì giữ nguyên khung như màn hình lớn", () => {
