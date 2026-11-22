@@ -365,6 +365,132 @@ export async function transitionPreparationTicket(
   }
 }
 
+/**
+ * Lùi phiếu về đúng một bước, kèm lý do.
+ *
+ * Vì sao không nhập chung vào `transitionPreparationTicket`: hàm đó là QUY
+ * TRÌNH, và luật "chỉ được đi tới bước kế tiếp" của nó là thứ giữ cho hàng đợi
+ * không bị một cú chạm nhầm đẩy lung tung. Lùi là SỬA SAI — nó cần lý do, cần
+ * một hành động nhật ký riêng để lọc ra được, và cần một bộ luật riêng về nơi
+ * được phép lùi. Gộp hai thứ vào một hàm là cách để bộ luật của cái này rò
+ * sang cái kia sau một lần refactor.
+ *
+ * Chỉ hai bước được lùi:
+ *   ACCEPTED  → SUBMITTED   (nhận nhầm, hoặc trả phiếu về hàng chờ cho người khác)
+ *   PREPARING → ACCEPTED    (bấm bắt đầu nhưng chưa pha)
+ *
+ * READY thì KHÔNG. Lúc một phiếu thành READY, máy chủ đã ghi
+ * `preparation_ready_events` và đẩy thông báo "món xong" tới Phục vụ và Thu
+ * ngân — nhân viên có thể đã đứng dậy đi lấy món. Rút lại một thông báo đã tới
+ * tay người khác không phải việc một cú kéo trên màn hình quầy quyết định
+ * được; món làm xong rồi mà phải làm lại thì đó là chuyện của đường hủy/ghi
+ * hao, nơi có người duyệt.
+ *
+ * Lý do là tùy chọn. Nhật ký vẫn ghi ai lùi, từ đâu về đâu và lúc nào, nên một
+ * lần lùi không bao giờ mất dấu; bắt gõ lý do cho từng lần ở một quầy đang bận
+ * chỉ sinh ra những câu gõ cho xong, và một trường như thế còn tệ hơn trống.
+ *
+ * Mốc thời gian của bước bị lùi được XOÁ (`accepted_at`, `started_at`), vì nó
+ * sẽ được ghi lại khi phiếu đi tới lần nữa; giữ lại thì báo cáo thời gian chờ
+ * đọc ra một phiếu được nhận trước khi nó vào hàng. Toàn bộ lịch sử vẫn nằm
+ * đủ trong `preparation_ticket_events`, không mất dấu lần nhận đầu.
+ *
+ * Tiến độ từng món (`preparation_line_progress`) giữ nguyên: số phần đã pha là
+ * một việc đã xảy ra thật, không phải hệ quả của trạng thái phiếu.
+ */
+const previousStatus: Record<'ACCEPTED' | 'PREPARING', PreparationStatus> = {
+  ACCEPTED: 'SUBMITTED',
+  PREPARING: 'ACCEPTED',
+}
+
+export const PREPARATION_REVERT_REASON_MAX_LENGTH = 200
+
+export async function revertPreparationTicket(
+  actor: AuthenticatedActor,
+  input: {
+    ticketId: number
+    station: PreparationStation
+    toStatus: PreparationStatus
+    expectedVersion: number
+    /** Câu giải thích tùy chọn; `null` là bình thường. */
+    reason: string | null
+    idempotencyKey: string
+  },
+  transaction?: PoolConnection,
+): Promise<{ ticket: PreparationTicketView; changeCursor: string }> {
+  const connection = transaction ?? await databasePool.getConnection()
+  const owns = transaction === undefined
+  try {
+    if (owns) await connection.beginTransaction()
+    const [rows] = await connection.execute<TicketRow[]>(
+      `${selectTickets}
+        WHERE t.organization_id = ? AND t.venue_id = ? AND t.id = ? AND t.station = ? FOR UPDATE`,
+      [actor.organizationId, actor.venueId, input.ticketId, input.station],
+    )
+    const current = rows[0]
+    if (!current) throw new AppError(404, 'PREPARATION_TICKET_NOT_FOUND', 'Không tìm thấy phiếu trong quầy và địa điểm này.')
+    if (Number(current.version) !== input.expectedVersion) {
+      throw new AppError(409, 'PREPARATION_VERSION_CONFLICT', 'Phiếu đã được thiết bị khác cập nhật. Hãy tải lại hàng đợi.',
+        { expectedVersion: input.expectedVersion, currentVersion: Number(current.version) })
+    }
+    if (current.status !== 'ACCEPTED' && current.status !== 'PREPARING') {
+      throw new AppError(409, 'PREPARATION_REVERT_NOT_ALLOWED',
+        'Chỉ lùi được phiếu đang ở "Đã tiếp nhận" hoặc "Đang pha".', { status: current.status })
+    }
+    const required = previousStatus[current.status]
+    if (input.toStatus !== required) {
+      throw new AppError(409, 'INVALID_PREPARATION_TRANSITION', `Chỉ được lùi ${current.status} về ${required}.`,
+        { fromStatus: current.status, requiredStatus: required })
+    }
+    const clearedMilestone = input.toStatus === 'SUBMITTED'
+      ? 'accepted_by_user_id = NULL, accepted_at = NULL, started_by_user_id = NULL, started_at = NULL'
+      : 'started_by_user_id = NULL, started_at = NULL'
+    await connection.execute(
+      `UPDATE preparation_tickets SET status = ?, ${clearedMilestone}, version = version + 1, updated_at = UTC_TIMESTAMP(3)
+        WHERE organization_id = ? AND venue_id = ? AND id = ? AND station = ? AND version = ?`,
+      [input.toStatus, actor.organizationId, actor.venueId, input.ticketId, input.station, input.expectedVersion],
+    )
+    const newVersion = input.expectedVersion + 1
+    await connection.execute(
+      `INSERT INTO preparation_ticket_events
+        (organization_id, venue_id, ticket_id, station, from_status, to_status, reason, ticket_version,
+         actor_user_id, actor_membership_id, idempotency_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [actor.organizationId, actor.venueId, input.ticketId, input.station, current.status, input.toStatus,
+        input.reason, newVersion, actor.userId, actor.membershipId, input.idempotencyKey],
+    )
+    const changeSeq = await bumpCursor(connection, actor)
+    await connection.execute(
+      `INSERT INTO operation_log
+        (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id, auth_session_id,
+         idempotency_key, action, entity_type, entity_id, entity_version_before, entity_version_after,
+         changes, reason_code, is_undoable)
+       VALUES (?, ?, ?, 'USER', ?, ?, ?, ?, 'PREPARATION_TICKET_REVERTED', 'preparation_ticket', ?, ?, ?,
+         CAST(? AS JSON), 'MANUAL', 0)`,
+      [actor.organizationId, actor.venueId, changeSeq, actor.userId, actor.membershipId, actor.authSessionId ?? null,
+        input.idempotencyKey, input.ticketId, input.expectedVersion, newVersion,
+        JSON.stringify([{ type: 'preparation_ticket_reverted', station: input.station,
+          fromStatus: current.status, toStatus: input.toStatus, reason: input.reason,
+          visitId: Number(current.visit_id) }])],
+    )
+    const [updatedRows] = await connection.execute<TicketRow[]>(
+      `${selectTickets} WHERE t.organization_id = ? AND t.venue_id = ? AND t.id = ? AND t.station = ?`,
+      [actor.organizationId, actor.venueId, input.ticketId, input.station],
+    )
+    const updated = updatedRows[0]!
+    const updatedLines = await ticketLinesBatch(connection, actor, [updated])
+    const result = { ticket: baseTicket(updated, updatedLines.get(String(Number(updated.id))) ?? []), changeCursor: String(changeSeq) }
+    if (owns) await connection.commit()
+    return result
+  } catch (error) {
+    if (owns) await connection.rollback()
+    throw error
+  } finally {
+    if (owns) connection.release()
+  }
+}
+
+
 interface ProgressLineRow extends RowDataPacket {
   ticket_id: number
   order_id: number
@@ -539,6 +665,9 @@ interface ReadyNotificationRow extends RowDataPacket {
   audience: 'ORDERED_BY_USER' | 'CASHIER_ROLE'
   created_at: Date | string
   acknowledged_at: Date | string | null
+  visit_sequence: number | null
+  table_codes: string | null
+  item_count: number | string | null
 }
 
 async function actorIsCashier(connection: PoolConnection | typeof databasePool, actor: AuthenticatedActor): Promise<boolean> {
@@ -554,10 +683,20 @@ export async function listReadyNotifications(actor: AuthenticatedActor): Promise
   const cashier = await actorIsCashier(databasePool, actor)
   const [rows] = await databasePool.execute<ReadyNotificationRow[]>(
     `SELECT e.id event_id, e.ticket_id, e.visit_id, e.ordered_by_user_id, t.station,
-       a.audience, e.created_at, ack.acknowledged_at
+       a.audience, e.created_at, ack.acknowledged_at, o.visit_sequence,
+       (SELECT GROUP_CONCAT(DISTINCT dt.code ORDER BY dt.code SEPARATOR ',')
+          FROM table_allocations ta
+          JOIN dining_tables dt ON dt.organization_id = ta.organization_id AND dt.venue_id = ta.venue_id
+           AND dt.id = ta.table_id
+          WHERE ta.organization_id = e.organization_id AND ta.venue_id = e.venue_id
+            AND ta.visit_id = e.visit_id AND ta.kind = 'USAGE' AND ta.released_at IS NULL) AS table_codes,
+       (SELECT COALESCE(SUM(l.net_quantity), 0) FROM sales_order_lines l
+          WHERE l.organization_id = t.organization_id AND l.venue_id = t.venue_id
+            AND l.order_id = t.order_id AND l.preparation_station = t.station) AS item_count
      FROM preparation_ready_events e
      JOIN preparation_ready_audiences a ON a.event_id = e.id
      JOIN preparation_tickets t ON t.venue_id = e.venue_id AND t.id = e.ticket_id
+     LEFT JOIN sales_orders o ON o.venue_id = t.venue_id AND o.id = t.order_id
      LEFT JOIN preparation_ready_acknowledgements ack ON ack.event_id = e.id AND ack.audience = a.audience
        AND ack.acknowledged_by_membership_id = ?
      WHERE e.organization_id = ? AND e.venue_id = ?
@@ -568,7 +707,10 @@ export async function listReadyNotifications(actor: AuthenticatedActor): Promise
   )
   return { notifications: rows.map((row) => ({ eventId: Number(row.event_id), ticketId: Number(row.ticket_id),
     visitId: Number(row.visit_id), orderedByUserId: Number(row.ordered_by_user_id), station: row.station,
-    audience: row.audience, createdAt: iso(row.created_at)!, acknowledgedAt: iso(row.acknowledged_at) })) }
+    audience: row.audience, createdAt: iso(row.created_at)!, acknowledgedAt: iso(row.acknowledged_at),
+    visitSequence: row.visit_sequence === null ? null : Number(row.visit_sequence),
+    tableCodes: row.table_codes ? row.table_codes.split(',') : [],
+    itemCount: Number(row.item_count ?? 0) })) }
 }
 
 export async function acknowledgeReadyNotification(

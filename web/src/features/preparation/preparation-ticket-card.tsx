@@ -1,4 +1,4 @@
-import { Clock3, Minus, Plus, Printer, TriangleAlert } from "lucide-react"
+import { Clock3, GripVertical, Minus, Plus, Printer, TriangleAlert, Undo2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -47,6 +47,9 @@ export function PreparationTicketCard({
   onTransition,
   onRetry,
   onProgress,
+  onRevert,
+  onDragHandlePointerDown,
+  dragging = false,
   pending,
 }: {
   ticket: PreparationTicket
@@ -57,6 +60,11 @@ export function PreparationTicketCard({
   onTransition: (ticket: PreparationTicket, status: PreparationTicketStatus) => void
   onRetry: (ticket: PreparationTicket) => void
   onProgress: (ticket: PreparationTicket, lineNo: number, doneQuantity: number, expectedVersion: number) => void
+  /** Lùi một bước. Không truyền nghĩa là màn này không cho lùi. */
+  onRevert?: (ticket: PreparationTicket) => void
+  /** Bắt đầu cú kéo. Không truyền thì thẻ không có tay nắm. */
+  onDragHandlePointerDown?: (event: React.PointerEvent, ticket: PreparationTicket) => void
+  dragging?: boolean
   pending: boolean
 }) {
   const action = preparationNextAction(station, ticket.status)
@@ -66,18 +74,38 @@ export function PreparationTicketCard({
   const flags = preparationGuestFlagBadges(ticket.guestFlags)
   const groupedCancellation = summarizePreparationGroupedCancellation(ticket.lines)
   const progressEditable = canTransition && (ticket.status === "ACCEPTED" || ticket.status === "PREPARING")
+  // Lùi chỉ có nghĩa ở hai bước giữa; READY đã bắn thông báo ra ngoài quầy.
+  const canRevert =
+    canTransition && onRevert !== undefined && (ticket.status === "ACCEPTED" || ticket.status === "PREPARING")
   const incompleteLineCount = ticket.lines.filter(
     (line) => line.quantity > 0 && line.doneQuantity < line.quantity,
   ).length
   return (
     <article
-      className={cn("grid min-w-0 gap-3 rounded-xl border bg-surface-1 p-3 shadow-xs", waitToneClass.card)}
+      className={cn(
+        "grid min-w-0 gap-3 rounded-xl border bg-surface-1 p-3 shadow-xs",
+        waitToneClass.card,
+        dragging && "opacity-50",
+      )}
       data-ticket-id={ticket.ticketId}
+      data-dragging={dragging ? "true" : undefined}
       data-visit-id={ticket.visitId}
       data-wait-tone={waitTone}
     >
       <header className="grid min-w-0 gap-1">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          {onDragHandlePointerDown ? (
+            <button
+              type="button"
+              // touch-action-none: trình duyệt nhường chuyển động cho cú kéo.
+              // Chỉ riêng tay nắm, nên vuốt ở chỗ khác vẫn cuộn được danh sách.
+              className="-ml-1 grid size-9 shrink-0 cursor-grab touch-none place-items-center rounded-lg text-muted-foreground hover:bg-surface-2 active:cursor-grabbing"
+              aria-label={`Kéo phiếu ${preparationTableLabel(ticket.tableCodes)} sang cột khác`}
+              onPointerDown={(event) => onDragHandlePointerDown(event, ticket)}
+            >
+              <GripVertical className="size-4" aria-hidden="true" />
+            </button>
+          ) : null}
           <p className="min-w-0 flex-1 text-base font-bold break-words text-foreground">
             {preparationTableLabel(ticket.tableCodes)}
           </p>
@@ -225,6 +253,20 @@ export function PreparationTicketCard({
             onClick={() => onTransition(ticket, action.status)}
           >
             {action.label}
+          </Button>
+        ) : null}
+        {canRevert ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-11 shrink-0"
+            disabled={pending}
+            onClick={() => onRevert?.(ticket)}
+            aria-label="Lùi phiếu về bước trước"
+            title="Lùi phiếu về bước trước"
+          >
+            <Undo2 className="size-4" aria-hidden="true" />
           </Button>
         ) : null}
         {canRetry ? (

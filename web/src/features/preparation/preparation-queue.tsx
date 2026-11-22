@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
 import { ArrowLeft, ChefHat, GlassWater, LogOut, RefreshCw, Volume2, VolumeX } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useNow } from "@/hooks/use-data"
 import { httpClient, newIdempotencyKey } from "@/services"
@@ -27,6 +28,8 @@ import {
   type PreparationTicket,
 } from "./preparation-queue-data"
 import { PreparationTicketCard } from "./preparation-ticket-card"
+import { planPreparationDrop } from "./preparation-drag"
+import { usePreparationDrag } from "./use-preparation-drag"
 import { aggregatePreparationItems } from "./preparation-totals"
 import { PreparationTotalsPanel } from "./preparation-totals-panel"
 import { usePreparationAudio } from "./preparation-audio"
@@ -210,6 +213,48 @@ export function PreparationQueue({
     }
   }
 
+  const revert = async (ticket: PreparationTicket, toStatus: PreparationTicketStatus) => {
+    if (!httpClient) return
+    setPendingId(ticket.ticketId)
+    try {
+      const idempotencyKey = newIdempotencyKey()
+      await httpClient.post(
+        `/preparation/${station}/tickets/${ticket.ticketId}/revert`,
+        { toStatus, expectedVersion: ticket.version, idempotencyKey },
+        { idempotencyKey },
+      )
+      setActionError(null)
+      await refresh()
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : "Không lùi được phiếu.")
+      await refresh()
+    } finally {
+      setPendingId(null)
+    }
+  }
+
+  const handleDrop = (ticketId: number, toStatus: PreparationQueueStatus) => {
+    const ticket = snapshot?.tickets.find((item) => item.ticketId === ticketId)
+    if (!ticket) return
+    const plan = planPreparationDrop(ticket.status, toStatus, canTransition)
+    if (plan.kind === "same") return
+    if (plan.kind === "blocked") {
+      setActionError(plan.blockedReason)
+      return
+    }
+    setActionError(null)
+    if (!plan.toStatus) return
+    // Tiến hay lùi đều là một cú kéo, một yêu cầu: không hỏi lại giữa chừng.
+    if (plan.kind === "revert") void revert(ticket, plan.toStatus)
+    else void transition(ticket, plan.toStatus)
+  }
+
+  const { drag, startDrag } = usePreparationDrag(handleDrop)
+  const draggingTicket = drag ? (snapshot?.tickets.find((item) => item.ticketId === drag.ticketId) ?? null) : null
+  const dropPlan =
+    draggingTicket && drag?.overStatus
+      ? planPreparationDrop(draggingTicket.status, drag.overStatus, canTransition)
+      : null
   const filterProjection = useMemo(
     () => preparationQueueFilterProjection(snapshot?.tickets ?? [], filter, now),
     [filter, now, snapshot],
@@ -331,7 +376,25 @@ export function PreparationQueue({
                 <section
                   key={column.status}
                   data-queue-status={column.status}
-                  className={`min-w-0 rounded-2xl border p-2.5 ${column.tone}`}
+                  data-drop-state={
+                    drag?.overStatus === column.status
+                      ? dropPlan?.kind === "blocked"
+                        ? "blocked"
+                        : dropPlan?.kind === "same"
+                          ? "same"
+                          : "allowed"
+                      : undefined
+                  }
+                  className={cn(
+                    "min-w-0 rounded-2xl border p-2.5 transition-colors",
+                    column.tone,
+                    drag?.overStatus === column.status &&
+                      (dropPlan?.kind === "blocked"
+                        ? "border-destructive/60 bg-destructive/10"
+                        : dropPlan?.kind === "same"
+                          ? ""
+                          : "border-primary bg-primary/10"),
+                  )}
                 >
                   <h2 className="mb-2 flex items-center justify-between gap-2 px-1 text-sm font-bold">
                     <span className="min-w-0 break-words">{column.label}</span>
@@ -354,6 +417,19 @@ export function PreparationQueue({
                         canTransition={canTransition}
                         canRetry={canRetry}
                         pending={pendingId === ticket.ticketId}
+                        dragging={drag?.ticketId === ticket.ticketId}
+                        onDragHandlePointerDown={
+                          canTransition ? (event, item) => startDrag(event, item.ticketId) : undefined
+                        }
+                        onRevert={(item) => {
+                          const plan = planPreparationDrop(
+                            item.status,
+                            item.status === "PREPARING" ? "ACCEPTED" : "SUBMITTED",
+                            canTransition,
+                          )
+                          if (plan.kind === "revert" && plan.toStatus) void revert(item, plan.toStatus)
+                          else if (plan.blockedReason) setActionError(plan.blockedReason)
+                        }}
                         onTransition={(item, status) => void transition(item, status)}
                         onRetry={(item) => void retry(item)}
                         onProgress={(item, lineNo, doneQuantity, expectedVersion) =>
@@ -368,6 +444,15 @@ export function PreparationQueue({
           </section>
         </>
       )}
+      {drag && draggingTicket ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-primary bg-surface-1 px-2.5 py-1.5 text-sm font-semibold shadow-lg"
+          style={{ left: drag.x, top: drag.y }}
+        >
+          {draggingTicket.tableCodes.join(", ") || `#${draggingTicket.ticketId}`}
+        </div>
+      ) : null}
     </section>
   )
 }

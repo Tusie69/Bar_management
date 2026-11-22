@@ -6,12 +6,44 @@ tối đa một ticket `BAR` và một ticket `KITCHEN`; mỗi ticket chỉ đ�
 
 ## State machine và đồng thời
 
-Luồng duy nhất là `SUBMITTED → ACCEPTED → PREPARING → READY → COLLECTED`. API transition
+Luồng đi tới là `SUBMITTED → ACCEPTED → PREPARING → READY → COLLECTED`. API transition
 yêu cầu `expectedVersion`; version sai trả `409 PREPARATION_VERSION_CONFLICT`.
-Không có endpoint quay lùi, bỏ bước hay sửa ticket `COLLECTED`. `READY` còn nằm
+Không có endpoint bỏ bước hay sửa ticket `COLLECTED`. `READY` còn nằm
 trong queue cho tới khi nhân viên xác nhận đã nhận món bằng `COLLECTED`. Mỗi bước ghi người
 thực hiện/thời gian, tăng version, thêm `preparation_ticket_events`, và thêm một
 audit `PREPARATION_TICKET_TRANSITIONED` trong cùng transaction.
+
+## Lùi một bước
+
+`POST /api/v1/preparation/:station/tickets/:ticketId/revert` lùi phiếu đúng một
+bước: `ACCEPTED → SUBMITTED` và `PREPARING → ACCEPTED`. Quầy thật có lúc phải
+lùi — bấm nhầm "Tiếp nhận", hoặc một bàn VIP chen vào nên phiếu đang cầm phải
+trả về hàng chờ cho người khác.
+
+`READY` thì KHÔNG lùi được (`409 PREPARATION_REVERT_NOT_ALLOWED`). Lúc phiếu
+thành `READY`, máy chủ đã ghi `preparation_ready_events` và đẩy thông báo "món
+xong" tới Phục vụ và Thu ngân; có thể đã có người đi lấy món. Rút lại một thông
+báo đã tới tay người khác không phải việc một cú kéo trên màn hình quầy quyết
+định — món phải làm lại thì đi đường xin hủy / ghi hao, nơi có người duyệt.
+
+Endpoint dùng chung quyền `preparation.bar.transition` / `preparation.kitchen.transition`,
+cũng yêu cầu `expectedVersion` và idempotency key như bước đi tới. Mốc thời gian
+của bước bị lùi bị XOÁ (`accepted_at`, `started_at`) vì nó sẽ được ghi lại ở lần
+đi tới sau; lịch sử đầy đủ vẫn nằm trong `preparation_ticket_events`, nơi mỗi
+dòng mang `from_status → to_status`, người thực hiện và một cột `reason` TÙY
+CHỌN (migration 0047). Audit riêng là `PREPARATION_TICKET_REVERTED`, nên lọc ra
+được các lần sửa tay mà không lẫn với bước đi tới.
+
+Tiến độ từng món (`preparation_line_progress`) không bị xoá khi lùi: số phần đã
+pha là một việc đã xảy ra thật, không phải hệ quả của trạng thái phiếu.
+
+Trên web, cả hai chiều đều kéo thả được giữa các cột, một bước mỗi lần. Luật
+nằm ở hàm thuần `planPreparationDrop` (`web/src/features/preparation/preparation-drag.ts`),
+dùng chung cho cú kéo và nút bấm, nên hai đường không bao giờ nói khác nhau.
+Cú kéo bắt đầu từ một tay nắm riêng trên thẻ chứ không phải cả thẻ: thẻ có nút
+cộng trừ tiến độ, và biến cả thẻ thành vùng kéo thì mỗi lần vuốt để cuộn lại
+thành một lần đổi trạng thái. Dùng Pointer Events chứ không phải HTML5
+drag-and-drop, vì màn hình quầy là máy tính bảng.
 
 Snapshot dùng `GET /api/v1/preparation/:station/tickets`, chỉ trả tối đa 200
 ticket đang hoạt động (`SUBMITTED` đến `READY`). Lịch sử `COLLECTED` dùng

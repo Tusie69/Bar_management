@@ -17,6 +17,8 @@ import {
   getPreparationQueue,
   listReadyNotifications,
   retryPreparationPrint,
+  revertPreparationTicket,
+  PREPARATION_REVERT_REASON_MAX_LENGTH,
   transitionPreparationTicket,
   updatePreparationLineProgress,
 } from './preparation.repository.js'
@@ -94,6 +96,49 @@ preparationRouter.post(
       station: station(request.params.station),
       toStatus,
       expectedVersion: positiveInteger(input.expectedVersion, 'INVALID_VERSION'),
+      idempotencyKey: String(input.idempotencyKey),
+    }, idempotencyTransaction(response))
+    afterIdempotencyCommit(response, () => publishFloorChange({
+      organizationId: actor.organizationId,
+      venueId: actor.venueId,
+      changeSeq: result.changeCursor,
+    }))
+    response.json(result)
+  },
+)
+
+preparationRouter.post(
+  '/:station/tickets/:ticketId/revert',
+  requireAuthentication,
+  requireCsrfProtection,
+  stationPermission('transition'),
+  requireBodyIdempotencyKey('idempotencyKey'),
+  idempotent('preparation.ticket.revert'),
+  async (request, response) => {
+    const input = body(request.body)
+    const toStatus = input.toStatus
+    // READY và COLLECTED không nằm trong danh sách: xem chú thích của
+    // `revertPreparationTicket`. Chặn ngay ở đây để lỗi nói đúng chuyện thay
+    // vì rơi xuống repository rồi báo "sai bước".
+    if (toStatus !== 'SUBMITTED' && toStatus !== 'ACCEPTED') {
+      throw new AppError(400, 'INVALID_PREPARATION_STATUS', 'Chỉ lùi được về "Mới nhận" hoặc "Đã tiếp nhận".')
+    }
+    // Lý do là TÙY CHỌN: ở quầy thật, lùi một bước là thao tác sửa tay xảy ra
+    // liên tục giữa lúc bận, và bắt gõ một câu cho mỗi lần chỉ sinh ra những
+    // chữ "a" gõ cho xong. Ai gửi, lùi từ đâu về đâu, lúc nào thì nhật ký vẫn
+    // ghi đủ; chỗ này chỉ nhận thêm câu giải thích khi có người muốn viết.
+    const reason = typeof input.reason === 'string' ? input.reason.trim().replace(/\s+/g, ' ') : ''
+    if (reason.length > PREPARATION_REVERT_REASON_MAX_LENGTH) {
+      throw new AppError(400, 'PREPARATION_REVERT_REASON_TOO_LONG',
+        `Lý do tối đa ${PREPARATION_REVERT_REASON_MAX_LENGTH} ký tự.`)
+    }
+    const actor = requireAuthenticatedActor(request)
+    const result = await revertPreparationTicket(actor, {
+      ticketId: positiveInteger(request.params.ticketId, 'INVALID_TICKET_ID'),
+      station: station(request.params.station),
+      toStatus,
+      expectedVersion: positiveInteger(input.expectedVersion, 'INVALID_VERSION'),
+      reason: reason || null,
       idempotencyKey: String(input.idempotencyKey),
     }, idempotencyTransaction(response))
     afterIdempotencyCommit(response, () => publishFloorChange({

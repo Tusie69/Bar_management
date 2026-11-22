@@ -54,7 +54,13 @@ function ticket(overrides: Partial<PreparationTicket> = {}): PreparationTicket {
 function renderTicket(
   value: PreparationTicket,
   now: Date,
-  options: { station?: PreparationStationCode; canTransition?: boolean; canRetry?: boolean } = {},
+  options: {
+    station?: PreparationStationCode
+    canTransition?: boolean
+    canRetry?: boolean
+    draggable?: boolean
+    revertable?: boolean
+  } = {},
 ): string {
   return renderToString(
     createElement(PreparationTicketCard, {
@@ -67,6 +73,8 @@ function renderTicket(
       onTransition: () => undefined,
       onRetry: () => undefined,
       onProgress: () => undefined,
+      ...(options.revertable ? { onRevert: () => undefined } : {}),
+      ...(options.draggable ? { onDragHandlePointerDown: () => undefined } : {}),
     }),
   )
 }
@@ -508,5 +516,33 @@ describe("BT-11 — panel tổng món", () => {
     const html = renderTotalsPanel("BAR", [aggregateItem()])
     expect(html).not.toContain("dòng có ghi chú")
     expect(html).not.toContain("phần đang chờ duyệt hủy")
+  })
+})
+
+describe("kéo thả và lùi một bước", () => {
+  it("thẻ có tay nắm kéo khi màn hình cho kéo", () => {
+    const html = renderTicket(ticket({ status: "ACCEPTED", version: 2 }), NOW, {
+      canTransition: true,
+      draggable: true,
+    })
+    expect(html).toContain("Kéo phiếu A1 sang cột khác")
+  })
+
+  it("không có tay nắm khi phiên không được đổi trạng thái", () => {
+    const html = renderTicket(ticket({ status: "ACCEPTED" }), NOW, { canTransition: false })
+    expect(html).not.toContain("sang cột khác")
+  })
+
+  it("nút lùi chỉ có ở hai bước giữa", () => {
+    for (const status of ["ACCEPTED", "PREPARING"] as const) {
+      const html = renderTicket(ticket({ status }), NOW, { canTransition: true, revertable: true })
+      expect(html, status).toContain("Lùi phiếu về bước trước")
+    }
+    // Mới nhận thì không có bước nào để lùi; Hoàn thành thì đã bắn thông báo
+    // ra ngoài quầy, nên cả hai đều không có nút.
+    for (const status of ["SUBMITTED", "READY"] as const) {
+      const html = renderTicket(ticket({ status }), NOW, { canTransition: true, revertable: true })
+      expect(html, status).not.toContain("Lùi phiếu về bước trước")
+    }
   })
 })
