@@ -66,6 +66,8 @@ async function resetMockDemo(page) {
 }
 
 async function openFloor(page, baseUrl, userId = 1, theme = "light") {
+  // The mock's historical bookings affect the seed IDs and birthday flags.
+  await page.clock.setFixedTime(new Date("2026-11-19T14:30:00Z"))
   await page.goto(`${baseUrl}/floor`, { waitUntil: "domcontentloaded" })
   await setSession(page, userId, theme)
   await page.reload({ waitUntil: "networkidle" })
@@ -74,6 +76,14 @@ async function openFloor(page, baseUrl, userId = 1, theme = "light") {
 
 async function settle(page, ms = 350) {
   await page.waitForTimeout(ms)
+}
+
+async function expectPointerRestoreWithoutFocus(restoreButton, editPage) {
+  await expect(restoreButton).toHaveCount(0)
+  await restoreButton
+    .page()
+    .evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  await expect(editPage.locator("fieldset :focus")).toHaveCount(0)
 }
 
 async function openTableSheet(page, code) {
@@ -120,7 +130,7 @@ try {
   browser = await launchBrowser()
 
   // 1. Phone 390x844 (light) — complete end-to-end edit flow
-  const ctx390 = await browser.newContext({ viewport: { width: 390, height: 844 } })
+  const ctx390 = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true })
   const page = await ctx390.newPage()
   const errors = []
   page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`))
@@ -875,17 +885,24 @@ try {
   await restoreSourceBtn.scrollIntoViewIfNeeded()
   await settle(page)
   await page.screenshot({ path: path.join(evidenceDir, "phone-390-light-restore-source.png") })
-  await restoreSourceBtn.click()
+  await restoreSourceBtn.press("Enter")
   await expect(zaloRadio).toHaveAttribute("aria-checked", "true")
   await expect(restoreSourceBtn).toHaveCount(0)
+  await expect(zaloRadio).toBeFocused()
   await expect(saveBtn).toBeDisabled()
+
+  await editPage.getByRole("radio", { name: "Hotline", exact: true }).tap()
+  await restoreSourceBtn.tap()
+  await expectPointerRestoreWithoutFocus(restoreSourceBtn, editPage)
+  await expect(zaloRadio).toHaveAttribute("aria-checked", "true")
 
   // With a note edit: Zalo -> Hotline -> restore Zalo keeps note, saves, source stays Zalo
   await editPage.getByRole("button", { name: /^Ghi chú/ }).click()
   await editPage.getByLabel("Ghi chú", { exact: true }).fill("Giữ ghi chú với Zalo")
   await editPage.getByRole("button", { name: /^Nguồn đặt/ }).click()
   await editPage.getByRole("radio", { name: "Hotline", exact: true }).click()
-  await editPage.getByRole("button", { name: /Khôi phục: Zalo/ }).click()
+  await restoreSourceBtn.click()
+  await expectPointerRestoreWithoutFocus(restoreSourceBtn, editPage)
   await expect(zaloRadio).toHaveAttribute("aria-checked", "true")
   await expect(editPage.getByRole("button", { name: /^Ghi chú/ })).toContainText("Giữ ghi chú với Zalo")
   await expect(saveBtn).toBeEnabled()
@@ -925,17 +942,37 @@ try {
   const minuteWheel = editPage.getByRole("spinbutton", { name: "Phút", exact: true })
   await hourWheel.locator('[data-value="21"]').click()
   await expect(minuteWheel.locator('[data-value="05"]')).toBeDisabled()
-  await restoreTimeBtn.click()
+  await restoreTimeBtn.press("Enter")
   await expect(restoreTimeBtn).toHaveCount(0)
   await expect(wheelToggle).toHaveAttribute("aria-label", /21:05/)
+  await expect(wheelToggle).toBeFocused()
   await expect(saveBtn).toBeDisabled()
+
+  await doneBtn.click()
+  await editPage.getByRole("button", { name: /^Ngày đặt/ }).click()
+  const originalDateChip = editPage.getByRole("button", { name: /^Hôm nay/ })
+  const otherDateChip = editPage.locator('fieldset button[aria-pressed="false"]').first()
+  const restoreScheduleBtn = editPage.getByRole("button", { name: /^Lịch ban đầu:/ })
+  await expect(originalDateChip).toHaveAttribute("aria-pressed", "true")
+  await otherDateChip.click()
+  await expect(originalDateChip).toHaveAttribute("aria-pressed", "false")
+  await restoreScheduleBtn.press("Enter")
+  await expect(restoreScheduleBtn).toHaveCount(0)
+  await expect(originalDateChip).toHaveAttribute("aria-pressed", "true")
+  await expect(originalDateChip).toBeFocused()
+  await expect(saveBtn).toBeDisabled()
+  await otherDateChip.click()
+  await restoreScheduleBtn.click()
+  await expectPointerRestoreWithoutFocus(restoreScheduleBtn, editPage)
+  await expect(originalDateChip).toHaveAttribute("aria-pressed", "true")
 
   // With a note edit: 21:05 -> 22:30 -> restore 21:05 keeps note and saves 21:05
   await editPage.getByRole("button", { name: /^Ghi chú/ }).click()
   await editPage.getByLabel("Ghi chú", { exact: true }).fill("Giữ ghi chú 21:05")
   await editPage.getByRole("button", { name: /^Giờ hẹn/ }).click()
   await editPage.getByRole("button", { name: "22:30", exact: true }).click()
-  await editPage.getByRole("button", { name: /Giờ ban đầu: 21:05/ }).click()
+  await restoreTimeBtn.click()
+  await expectPointerRestoreWithoutFocus(restoreTimeBtn, editPage)
   await expect(editPage.getByRole("button", { name: /^Ghi chú/ })).toContainText("Giữ ghi chú 21:05")
   await expect(saveBtn).toBeEnabled()
   await saveBtn.click()
