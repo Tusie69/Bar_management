@@ -80,6 +80,10 @@ export function PreparationTicketCard({
   const incompleteLineCount = ticket.lines.filter(
     (line) => line.quantity > 0 && line.doneQuantity < line.quantity,
   ).length
+  const showIncompleteWarning = ticket.status === "PREPARING" && incompleteLineCount > 0
+  const incompleteWarningId = showIncompleteWarning
+    ? `preparation-ticket-${ticket.ticketId}-incomplete-warning`
+    : undefined
   return (
     <article
       className={cn(
@@ -134,11 +138,21 @@ export function PreparationTicketCard({
           </ul>
         ) : null}
         <p className="text-xs break-words text-muted-foreground">{preparationMetaLine(ticket)}</p>
+        {showIncompleteWarning ? (
+          <p
+            id={incompleteWarningId}
+            className="rounded-lg border border-amber-400/40 bg-amber-400/10 p-2 text-xs"
+            role="status"
+          >
+            {`${incompleteLineCount} dòng chưa đủ số lượng. Bạn vẫn có thể báo xong nếu đã đối chiếu thực tế.`}
+          </p>
+        ) : null}
         {(action && canTransition) || canRevert || canRetry ? (
           <div className="flex min-w-0 gap-2" data-ticket-actions>
             {action && canTransition ? (
               <Button
                 className={PREPARATION_ACTION_CLASS}
+                aria-describedby={incompleteWarningId}
                 disabled={pending}
                 onClick={() => onTransition(ticket, action.status)}
               >
@@ -279,11 +293,6 @@ export function PreparationTicketCard({
           )
         })}
       </ul>
-      {ticket.status === "PREPARING" && incompleteLineCount > 0 ? (
-        <p className="rounded-lg border border-amber-400/40 bg-amber-400/10 p-2 text-xs" role="status">
-          {`${incompleteLineCount} dòng chưa đủ số lượng. Bạn vẫn có thể báo xong nếu đã đối chiếu thực tế.`}
-        </p>
-      ) : null}
     </article>
   )
 }

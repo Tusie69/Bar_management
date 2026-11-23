@@ -142,9 +142,12 @@ export function PreparationQueue({
   const sectionRef = useRef<HTMLElement>(null)
   const refresh = useCallback(() => queue.refetch(), [queue])
   const scrollToColumn = useCallback((status: PreparationQueueStatus) => {
-    sectionRef.current
-      ?.querySelector<HTMLElement>(`[data-queue-status="${status}"]`)
-      ?.scrollIntoView({ behavior: "smooth", block: "start" })
+    const column = sectionRef.current?.querySelector<HTMLElement>(`[data-queue-status="${status}"]`)
+    if (!column) return
+    const reduceMotion =
+      typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    column.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" })
+    column.querySelector<HTMLElement>(`#queue-${status}`)?.focus({ preventScroll: true })
   }, [])
 
   useEffect(() => {
@@ -329,7 +332,7 @@ export function PreparationQueue({
           </span>
           <div className="min-w-0">
             <h1 className="truncate text-base font-bold sm:text-xl">{`Hàng đợi ${stationLabel}`}</h1>
-            <p className="truncate text-xs text-muted-foreground">Tự cập nhật khi có thay đổi</p>
+            <p className="truncate text-xs text-muted-foreground">Tự cập nhật</p>
           </div>
         </div>
         {stationControls ? <div className="order-last w-full sm:order-none sm:w-auto">{stationControls}</div> : null}
@@ -430,7 +433,11 @@ export function PreparationQueue({
                           : "border-primary bg-primary/10"),
                   )}
                 >
-                  <h2 className="mb-2 flex items-center justify-between gap-2 px-1 text-sm font-bold">
+                  <h2
+                    id={`queue-${column.status}`}
+                    tabIndex={-1}
+                    className="mb-2 flex items-center justify-between gap-2 rounded-md px-1 text-sm font-bold focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  >
                     <span className="min-w-0 break-words">{column.label}</span>
                     <span
                       className="shrink-0 rounded-full bg-surface-1 px-2 py-0.5 text-xs"
