@@ -9,9 +9,8 @@
  * component, nên không có gì để sót.
  *
  * Mobile-first: header cao 56px, nội dung chiếm phần còn lại của `100dvh`,
- * không có thanh ngang nào phải cuộn. Nội dung dùng hết bề rộng khả dụng để
- * sơ đồ bàn phóng theo màn tablet/desktop; các trang danh sách tự giới hạn độ
- * rộng bên trong nếu cần.
+ * không có thanh ngang nào phải cuộn. Trên tablet và desktop nội dung được
+ * giới hạn bề ngang và căn giữa, vì sơ đồ quán có tỷ lệ cố định.
  */
 import { LogOut, UserRound } from "lucide-react"
 import { Outlet, useNavigate } from "react-router"
@@ -70,7 +69,7 @@ export function WaiterShell() {
           </DropdownMenu>
         </div>
       </header>
-      <main className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
+      <main className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col overflow-hidden">
         <Outlet />
       </main>
     </div>
