@@ -150,7 +150,7 @@ const servicePayload = {
   ],
 }
 
-function makeLongLines(count) {
+function makeLongLines(count, doneQuantity = 0) {
   return Array.from({ length: count }, (_, idx) => ({
     lineNo: idx + 1,
     itemName: `Món thử dài ${idx + 1}`,
@@ -160,21 +160,21 @@ function makeLongLines(count) {
     quantity: 2,
     cancelledQuantity: 0,
     originalQuantity: 2,
-    doneQuantity: 0,
-    progressVersion: 0,
+    doneQuantity,
+    progressVersion: doneQuantity > 0 ? 1 : 0,
     note: "Ghi chú: Ít đá, để riêng sốt và báo lại nhân viên khi món sẵn sàng.",
     pendingCancellation: null,
   }))
 }
 
-function makePrepTickets(firstStatus = "SUBMITTED", firstVersion = 1) {
-  return [
+function makePrepTickets(firstStatus = "SUBMITTED", firstVersion = 1, station = "BAR", options = {}) {
+  const tickets = [
     {
       ticketId: 1,
       orderId: 101,
       visitId: 1,
       visitSequence: 1,
-      station: "BAR",
+      station,
       status: firstStatus,
       version: firstVersion,
       submittedAt: "2026-11-23T12:00:00.000Z",
@@ -193,7 +193,7 @@ function makePrepTickets(firstStatus = "SUBMITTED", firstVersion = 1) {
       orderId: 102,
       visitId: 2,
       visitSequence: 1,
-      station: "BAR",
+      station,
       status: "ACCEPTED",
       version: 2,
       submittedAt: "2026-11-23T12:01:00.000Z",
@@ -212,7 +212,7 @@ function makePrepTickets(firstStatus = "SUBMITTED", firstVersion = 1) {
       orderId: 103,
       visitId: 3,
       visitSequence: 1,
-      station: "BAR",
+      station,
       status: "PREPARING",
       version: 3,
       submittedAt: "2026-11-23T12:02:00.000Z",
@@ -224,14 +224,14 @@ function makePrepTickets(firstStatus = "SUBMITTED", firstVersion = 1) {
       tableCodes: ["A4"],
       orderedByDisplayName: "E2E Phục vụ",
       guestFlags: { vip: false, birthday: false, designated: false },
-      lines: makeLongLines(1),
+      lines: makeLongLines(options.preparingLines ?? 1),
     },
     {
       ticketId: 4,
       orderId: 104,
       visitId: 4,
       visitSequence: 1,
-      station: "BAR",
+      station,
       status: "READY",
       version: 4,
       submittedAt: "2026-11-23T12:05:00.000Z",
@@ -246,6 +246,28 @@ function makePrepTickets(firstStatus = "SUBMITTED", firstVersion = 1) {
       lines: makeLongLines(1),
     },
   ]
+  if (options.includeCompletePreparing) {
+    tickets.push({
+      ticketId: 5,
+      orderId: 105,
+      visitId: 5,
+      visitSequence: 1,
+      station,
+      status: "PREPARING",
+      version: 1,
+      submittedAt: "2026-11-23T12:03:00.000Z",
+      acceptedAt: "2026-11-23T12:04:00.000Z",
+      startedAt: "2026-11-23T12:05:00.000Z",
+      readyAt: null,
+      collectedAt: null,
+      waitSeconds: 420,
+      tableCodes: ["B1"],
+      orderedByDisplayName: "E2E Phục vụ",
+      guestFlags: { vip: false, birthday: false, designated: false },
+      lines: makeLongLines(1, 2),
+    })
+  }
+  return tickets
 }
 
 async function setupWaiterRoutes(page) {
@@ -376,8 +398,10 @@ async function setupWaiterRoutes(page) {
 }
 
 try {
-  // 1. UI-20 + UI-22 on /phucvu at 820x1180 and 1440x900
+  // 1. UI-20 + UI-22 on /phucvu at 320x640, 640x400, 820x1180, 1440x900
   for (const vp of [
+    { width: 320, height: 640 },
+    { width: 640, height: 400 },
     { width: 820, height: 1180 },
     { width: 1440, height: 900 },
   ]) {
@@ -388,19 +412,59 @@ try {
       await expect(page.getByRole("group", { name: "Sơ đồ bàn ca hiện tại" })).toBeVisible()
       // UI-22: WAITER does not see queue button
       await expect(page.getByRole("button", { name: /Hàng đợi/ })).toHaveCount(0)
-      // UI-20: main & floor canvas span full viewport width
+      // UI-20 (owner decision B): centered max-w-3xl shell, full plan fits without vertical scroll, real plan/table bounds
       const dims = await page.evaluate(() => {
+        const vw = document.documentElement.clientWidth
         const main = document.querySelector("main")
         const svg = document.querySelector('svg[aria-label="Sơ đồ bàn ca hiện tại"]')
+        const bg = svg?.querySelector('rect[data-bg="1"]')
+        const mainRect = main?.getBoundingClientRect()
+        const svgRect = svg?.getBoundingClientRect()
+        const bgRect = bg?.getBoundingClientRect()
         return {
-          vw: document.documentElement.clientWidth,
-          mainWidth: main ? Math.round(main.getBoundingClientRect().width) : 0,
-          svgWidth: svg ? Math.round(svg.getBoundingClientRect().width) : 0,
+          vw,
+          overflowX: document.documentElement.scrollWidth > vw,
+          overflowY: document.documentElement.scrollHeight > window.innerHeight,
+          mainWidth: mainRect ? Math.round(mainRect.width) : 0,
+          svgHeight: svgRect ? Math.round(svgRect.height) : 0,
+          bgWidth: bgRect ? Number(bgRect.width.toFixed(2)) : 0,
+          bgHeight: bgRect ? Number(bgRect.height.toFixed(2)) : 0,
+          bgFitsVertically: bgRect && svgRect ? bgRect.bottom <= svgRect.bottom + 1 : false,
         }
       })
-      expect(dims.mainWidth).toBe(dims.vw)
-      expect(dims.svgWidth).toBe(dims.vw)
-      console.log(`PASS UI-20/UI-22 /phucvu ${vp.width}x${vp.height}: svg=${dims.svgWidth}px`)
+      expect(dims.overflowX).toBe(false)
+      expect(dims.overflowY).toBe(false)
+      expect(dims.mainWidth).toBe(Math.min(dims.vw, 768))
+      expect(dims.bgWidth).toBeGreaterThan(vp.height < 500 ? 120 : 250)
+      expect(dims.bgFitsVertically).toBe(true)
+      // Last table (BAR01) reachable without scroll
+      await page.getByRole("button", { name: /BAR01|Ghế Bar 1/ }).click()
+      await expect(page.getByRole("dialog").or(page.locator("[data-mobile-table-sheet]"))).toBeVisible()
+      console.log(
+        `PASS UI-20/UI-22 /phucvu ${vp.width}x${vp.height}: main=${dims.mainWidth}px bg=${dims.bgWidth}x${dims.bgHeight}px`,
+      )
+    } finally {
+      await context.close()
+    }
+  }
+
+  // Verify /phucvu/phien/1/goi-mon stays centered (max-w-3xl) on 1440x900 and no horizontal overflow at 640x400
+  for (const vp of [
+    { width: 640, height: 400 },
+    { width: 1440, height: 900 },
+  ]) {
+    const { context, page } = await openContext(vp)
+    try {
+      await setupWaiterRoutes(page)
+      await page.goto(`${base}/phucvu/phien/1/goi-mon`, { waitUntil: "networkidle" })
+      const metrics = await page.evaluate(() => ({
+        vw: document.documentElement.clientWidth,
+        overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        mainWidth: Math.round(document.querySelector("main").getBoundingClientRect().width),
+      }))
+      expect(metrics.overflowX).toBe(false)
+      expect(metrics.mainWidth).toBe(Math.min(metrics.vw, 768))
+      console.log(`PASS /phucvu/phien/1/goi-mon ${vp.width}x${vp.height}: main=${metrics.mainWidth}px`)
     } finally {
       await context.close()
     }
@@ -475,10 +539,22 @@ try {
       const heading = page.getByRole("heading", { name: "Hàng đợi Bar" })
       await expect(heading).toBeVisible()
 
-      // UI-32: no Cursor 89
-      const headerText = await page.locator("header").first().innerText()
-      expect(headerText).not.toContain("Cursor")
-      expect(headerText).toContain("Tự cập nhật khi có thay đổi")
+      // UI-32 & P1B-04: no Cursor 89, short Vietnamese subtitle fits without ellipsis
+      const headerMetrics = await page.evaluate(() => {
+        const header = document.querySelector("header")
+        const subtitle = header.querySelector("p")
+        return {
+          headerText: header.innerText,
+          subtitleText: subtitle?.textContent?.trim() ?? "",
+          subtitleClientWidth: subtitle?.clientWidth ?? 0,
+          subtitleScrollWidth: subtitle?.scrollWidth ?? 0,
+        }
+      })
+      expect(headerMetrics.headerText).not.toContain("Cursor")
+      expect(headerMetrics.subtitleText).toBe("Tự cập nhật")
+      if (vp.width <= 390) {
+        expect(headerMetrics.subtitleScrollWidth).toBeLessThanOrEqual(headerMetrics.subtitleClientWidth)
+      }
 
       // UI-33: on 320/390, icon buttons stay on title row and >= 44px
       if (vp.width <= 390) {
@@ -550,6 +626,239 @@ try {
       }
 
       console.log(`PASS UI-30..34 ${vp.width}x${vp.height}`)
+    } finally {
+      await context.close()
+    }
+  }
+
+  // 3b. P1B-02, P1B-03, P1B-04, P1B-05 checks across BAR, KITCHEN, and embedded /phucvu/hang-doi
+  for (const station of ["BAR", "KITCHEN"]) {
+    const { context, page } = await openContext({ width: 820, height: 1180 })
+    const transitions = []
+    let tickets = makePrepTickets("SUBMITTED", 1, station, {
+      preparingLines: 10,
+      includeCompletePreparing: true,
+    })
+
+    await page.route("**/api/v1/auth/me", (route) =>
+      route.fulfill({
+        json: makeSession({
+          roles: [station],
+          portal: "preparation",
+          displayName: `${station} E2E`,
+          permissions: [`preparation.${station.toLowerCase()}.read`, `preparation.${station.toLowerCase()}.transition`],
+        }),
+      }),
+    )
+    await page.route(`**/api/v1/preparation/${station}/tickets`, (route) =>
+      route.fulfill({
+        json: {
+          station,
+          changeCursor: "89",
+          generatedAt: NOW,
+          printing: { enabled: false },
+          limit: 200,
+          tickets,
+        },
+      }),
+    )
+    await page.route(`**/api/v1/preparation/${station}/tickets/*/transition`, async (route) => {
+      const url = route.request().url()
+      const id = Number(url.match(/tickets\/(\d+)\/transition/)?.[1] ?? 0)
+      const body = route.request().postDataJSON()
+      transitions.push({ id, ...body })
+      tickets = tickets.map((t) => (t.ticketId === id ? { ...t, status: body.toStatus, version: t.version + 1 } : t))
+      const updated = tickets.find((t) => t.ticketId === id)
+      await route.fulfill({ json: { ticket: updated, changeCursor: "90" } })
+    })
+
+    try {
+      await page.goto(`${base}/chebien`, { waitUntil: "networkidle" })
+      await expect(page.getByRole("heading", { name: `Hàng đợi ${station === "BAR" ? "Bar" : "Bếp"}` })).toBeVisible()
+
+      // P1B-02: 10-line PREPARING ticket warning in header above Báo hoàn thành + aria-describedby
+      const ticket3 = page.locator('[data-ticket-id="3"]')
+      const ticket3Header = ticket3.locator("header")
+      const completeBtn = ticket3Header.getByRole("button", { name: "Báo hoàn thành" })
+      const warning = ticket3Header.getByRole("status")
+      await expect(warning).toHaveText("10 dòng chưa đủ số lượng. Bạn vẫn có thể báo xong nếu đã đối chiếu thực tế.")
+      const describedBy = await completeBtn.getAttribute("aria-describedby")
+      expect(describedBy).toBe("preparation-ticket-3-incomplete-warning")
+      expect(await warning.getAttribute("id")).toBe(describedBy)
+      const layout = await ticket3Header.evaluate((hdr) => {
+        const w = hdr.querySelector('[role="status"]').getBoundingClientRect()
+        const b = hdr.querySelector("[data-ticket-actions]").getBoundingClientRect()
+        return { warningBottom: w.bottom, actionsTop: b.top }
+      })
+      expect(layout.warningBottom).toBeLessThanOrEqual(layout.actionsTop + 1)
+
+      // Complete PREPARING ticket (#5) must NOT have warning or aria-describedby
+      const ticket5 = page.locator('[data-ticket-id="5"]')
+      await expect(ticket5.locator('[role="status"]')).toHaveCount(0)
+      expect(
+        await ticket5
+          .locator("header")
+          .getByRole("button", { name: "Báo hoàn thành" })
+          .getAttribute("aria-describedby"),
+      ).toBeNull()
+
+      // P1B-03: jump link #queue-READY -> Enter focuses heading -> Tab enters READY column
+      const nav = page.getByRole("navigation", { name: "Chuyển nhanh theo cột" })
+      const readyLink = nav.locator('a[href="#queue-READY"]')
+      await readyLink.focus()
+      await page.keyboard.press("Enter")
+      const focusAfterEnter = await page.evaluate(() => ({
+        id: document.activeElement?.id ?? null,
+        tag: document.activeElement?.tagName ?? null,
+        tabIndex: document.activeElement?.getAttribute("tabindex") ?? null,
+      }))
+      expect(focusAfterEnter).toEqual({ id: "queue-READY", tag: "H2", tabIndex: "-1" })
+      await page.keyboard.press("Tab")
+      const focusInsideReady = await page.evaluate(
+        () => !!document.activeElement?.closest('[data-queue-status="READY"]'),
+      )
+      expect(focusInsideReady).toBe(true)
+
+      // Trigger Báo hoàn thành via keyboard/click -> single POST with toStatus=READY, expectedVersion=3
+      await completeBtn.focus()
+      await page.keyboard.press("Enter")
+      await expect.poll(() => transitions.length).toBe(1)
+      expect(transitions[0]).toMatchObject({ id: 3, toStatus: "READY", expectedVersion: 3 })
+
+      // Drag across columns (1: SUBMITTED->ACCEPTED, 2: ACCEPTED->PREPARING) + blocked revert from READY (4->PREPARING)
+      for (const [ticketId, toStatus] of [
+        [1, "ACCEPTED"],
+        [2, "PREPARING"],
+      ]) {
+        const handle = page.locator(`[data-ticket-id="${ticketId}"]`).getByRole("button", {
+          name: /Kéo phiếu .* sang cột khác/,
+        })
+        const targetCol = page.locator(`[data-queue-status="${toStatus}"]`)
+        await handle.scrollIntoViewIfNeeded()
+        const hBox = await handle.boundingBox()
+        const tBox = await targetCol.boundingBox()
+        await page.mouse.move(hBox.x + hBox.width / 2, hBox.y + hBox.height / 2)
+        await page.mouse.down()
+        await page.mouse.move(tBox.x + tBox.width / 2, tBox.y + 40, { steps: 10 })
+        await page.mouse.up()
+      }
+      await expect.poll(() => transitions.length).toBe(3)
+
+      // Blocked revert from READY -> PREPARING (ticket 3 is now at top of READY beside PREPARING)
+      const readyHandle = page.locator('[data-ticket-id="3"]').getByRole("button", {
+        name: /Kéo phiếu .* sang cột khác/,
+      })
+      const prepCol = page.locator('[data-queue-status="PREPARING"]')
+      await prepCol.locator("h2").scrollIntoViewIfNeeded()
+      const rhBox = await readyHandle.boundingBox()
+      const pBox = await prepCol.boundingBox()
+      await page.mouse.move(rhBox.x + rhBox.width / 2, rhBox.y + rhBox.height / 2)
+      await page.mouse.down()
+      await page.mouse.move(pBox.x + pBox.width / 2, pBox.y + 40, { steps: 10 })
+      await page.mouse.up()
+      await expect(page.getByRole("alert")).toBeVisible()
+      expect(transitions.length).toBe(3)
+      console.log(`PASS P1B-02/P1B-03 ${station} 820x1180`)
+    } finally {
+      await context.close()
+    }
+  }
+
+  // P1B-03 on embedded BAR queue (/phucvu/hang-doi) at 820x1180
+  {
+    const { context, page } = await openContext({ width: 820, height: 1180 })
+    await page.route("**/api/v1/auth/me", (route) =>
+      route.fulfill({
+        json: makeSession({
+          roles: ["BAR"],
+          portal: "waiter",
+          displayName: "Bar Embedded E2E",
+          permissions: ["order.read", "preparation.bar.read", "preparation.bar.transition"],
+        }),
+      }),
+    )
+    await page.route("**/api/v1/preparation/BAR/tickets", (route) =>
+      route.fulfill({
+        json: {
+          station: "BAR",
+          changeCursor: "89",
+          generatedAt: NOW,
+          printing: { enabled: false },
+          limit: 200,
+          tickets: makePrepTickets("SUBMITTED", 1, "BAR"),
+        },
+      }),
+    )
+    try {
+      await page.goto(`${base}/phucvu/hang-doi`, { waitUntil: "networkidle" })
+      const readyLink = page
+        .getByRole("navigation", { name: "Chuyển nhanh theo cột" })
+        .locator('a[href="#queue-READY"]')
+      await readyLink.focus()
+      await page.keyboard.press("Enter")
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe("queue-READY")
+      await page.keyboard.press("Tab")
+      expect(await page.evaluate(() => !!document.activeElement?.closest('[data-queue-status="READY"]'))).toBe(true)
+      console.log("PASS P1B-03 embedded /phucvu/hang-doi 820x1180")
+    } finally {
+      await context.close()
+    }
+  }
+
+  // P1B-04 KITCHEN 320x640 subtitle + P1B-05 1024x768 drag handle >= 44px
+  for (const [station, vp] of [
+    ["KITCHEN", { width: 320, height: 640 }],
+    ["BAR", { width: 1024, height: 768 }],
+    ["KITCHEN", { width: 1024, height: 768 }],
+  ]) {
+    const { context, page } = await openContext(vp)
+    await page.route("**/api/v1/auth/me", (route) =>
+      route.fulfill({
+        json: makeSession({
+          roles: [station],
+          portal: "preparation",
+          displayName: `${station} E2E`,
+          permissions: [`preparation.${station.toLowerCase()}.read`, `preparation.${station.toLowerCase()}.transition`],
+        }),
+      }),
+    )
+    await page.route(`**/api/v1/preparation/${station}/tickets`, (route) =>
+      route.fulfill({
+        json: {
+          station,
+          changeCursor: "89",
+          generatedAt: NOW,
+          printing: { enabled: false },
+          limit: 200,
+          tickets: makePrepTickets("SUBMITTED", 1, station),
+        },
+      }),
+    )
+    try {
+      await page.goto(`${base}/chebien`, { waitUntil: "networkidle" })
+      await expect(page.getByRole("heading", { name: `Hàng đợi ${station === "BAR" ? "Bar" : "Bếp"}` })).toBeVisible()
+      if (vp.width === 320) {
+        const sub = await page.evaluate(() => {
+          const p = document.querySelector("header p")
+          return {
+            text: p?.textContent?.trim(),
+            cw: p?.clientWidth ?? 0,
+            sw: p?.scrollWidth ?? 0,
+            overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          }
+        })
+        expect(sub.text).toBe("Tự cập nhật")
+        expect(sub.sw).toBeLessThanOrEqual(sub.cw)
+        expect(sub.overflowX).toBe(false)
+      } else {
+        const handleBox = await page
+          .locator('[data-ticket-id="1"]')
+          .getByRole("button", { name: /Kéo phiếu .* sang cột khác/ })
+          .boundingBox()
+        expect(handleBox.width).toBeGreaterThanOrEqual(44)
+        expect(handleBox.height).toBeGreaterThanOrEqual(44)
+      }
+      console.log(`PASS P1B-04/05 ${station} ${vp.width}x${vp.height}`)
     } finally {
       await context.close()
     }
