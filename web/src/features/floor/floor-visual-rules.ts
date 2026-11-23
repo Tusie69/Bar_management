@@ -1317,3 +1317,55 @@ export function computeClusterDecorations({
     }
   })
 }
+
+/** Minimum screen-pixel touch target dimension on floor tables and bar seats (UI-11). */
+export const MIN_TABLE_HIT_PX = 44.5
+
+export function computeTableHitBox(t: TableView, minHitSvg: number): { w: number; h: number } {
+  if (t.kind === "BAR_SEAT") {
+    const r = Math.max(9, (t.w || 20) / 2)
+    const side = Math.max(r * 2 + 10, minHitSvg)
+    return { w: side, h: side }
+  }
+  return {
+    w: Math.max(t.w + 16, minHitSvg),
+    h: Math.max(t.h + 16, minHitSvg),
+  }
+}
+
+function distanceToTableVisual(t: TableView, svgX: number, svgY: number): number {
+  if (t.kind === "BAR_SEAT") {
+    const r = Math.max(9, (t.w || 20) / 2)
+    return Math.max(0, Math.hypot(svgX - t.x, svgY - t.y) - r)
+  }
+  const dx = Math.max(0, Math.abs(svgX - t.x) - t.w / 2)
+  const dy = Math.max(0, Math.abs(svgY - t.y) - t.h / 2)
+  return Math.hypot(dx, dy)
+}
+
+export function findNearestTableInHitArea(
+  tables: TableView[],
+  svgX: number,
+  svgY: number,
+  minHitSvg: number,
+  focusZone?: ZoneCode | null,
+): TableView | null {
+  let best: { table: TableView; dimmed: boolean; edgeDist: number; centerDist: number } | null = null
+  for (const t of tables) {
+    const hit = computeTableHitBox(t, minHitSvg)
+    if (Math.abs(svgX - t.x) > hit.w / 2 || Math.abs(svgY - t.y) > hit.h / 2) continue
+    const dimmed = Boolean(focusZone && t.zoneCode !== focusZone)
+    const edgeDist = distanceToTableVisual(t, svgX, svgY)
+    const centerDist = Math.hypot(svgX - t.x, svgY - t.y)
+    if (
+      !best ||
+      (best.dimmed && !dimmed) ||
+      (best.dimmed === dimmed &&
+        (edgeDist < best.edgeDist - 1e-6 ||
+          (Math.abs(edgeDist - best.edgeDist) <= 1e-6 && centerDist < best.centerDist)))
+    ) {
+      best = { table: t, dimmed, edgeDist, centerDist }
+    }
+  }
+  return best?.table ?? null
+}

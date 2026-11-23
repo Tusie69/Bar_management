@@ -45,8 +45,10 @@ import {
   CLUSTER_CODE_STROKE,
   CLUSTER_OUTLINE_STROKE,
   computeClusterDecorations,
+  computeTableHitBox,
   computeZoneBounds,
   findGroupRepresentativeId,
+  findNearestTableInHitArea,
   formatCellGuestName,
   formatGroupCode,
   formatTableCellLabel,
@@ -56,6 +58,7 @@ import {
   GUEST_FLAG_META,
   guestBadgeWidth,
   isPhoneLikeGuestName,
+  MIN_TABLE_HIT_PX,
   resolveCellCornerIcons,
   supportedFlags,
   tableCanActivate,
@@ -325,6 +328,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
   const selectedTableId = selectedIds[0]
 
   const wrapRef = useRef<HTMLDivElement>(null)
+  const svgRef = useRef<SVGSVGElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const measuredSize = useRef({ w: 0, h: 0 })
   /** A manual view only applies to the zone it was made in; otherwise the view is fitted. */
@@ -789,6 +793,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
   }
 
   const isPhone = phoneViewport
+  const minHitSvg = !isReadOnly && view.k > 0 ? Math.ceil((MIN_TABLE_HIT_PX / view.k) * 100) / 100 : MIN_TABLE_HIT_PX
   // When the plan is fitted to the viewport the SVG must not grow past it:
   // any extra height brings the vertical scrollbar straight back.
   const neededHeight = isAllZone ? Math.ceil(FLOOR_H * view.k + (isPhone ? 4 : CANVAS_BOTTOM_GAP)) : size.h
@@ -819,7 +824,39 @@ export function FloorCanvas(props: FloorCanvasProps) {
             }
       }
     >
-      <svg width={size.w} height={svgHeight} className="block" role="group" aria-label={ariaLabel ?? "Sơ đồ bàn 21GAM"}>
+      <svg
+        ref={svgRef}
+        width={size.w}
+        height={svgHeight}
+        className="block"
+        role="group"
+        aria-label={ariaLabel ?? "Sơ đồ bàn 21GAM"}
+        onClick={
+          isReadOnly
+            ? undefined
+            : (e) => {
+                if (isSuppressed(suppressClick)) return
+                const target = e.target as Element | null
+                if (
+                  target?.closest?.(
+                    '[role="button"], button, [data-testid="bar-guest-list"], [data-mobile-waitlist-marker]',
+                  )
+                ) {
+                  return
+                }
+                const svgEl = svgRef.current
+                if (!svgEl || view.k <= 0) return
+                const rect = svgEl.getBoundingClientRect()
+                const svgX = (e.clientX - rect.left - view.x) / view.k
+                const svgY = (e.clientY - rect.top - view.y) / view.k
+                const nearest = findNearestTableInHitArea(tables, svgX, svgY, minHitSvg, focusZone)
+                if (nearest) {
+                  e.stopPropagation()
+                  handleTable(nearest.id)
+                }
+              }
+        }
+      >
         <defs>
           <pattern id="dot-grid" width="12" height="12" patternUnits="userSpaceOnUse">
             <circle cx="1" cy="1" r="0.7" fill="var(--floor-grid)" />
@@ -1006,6 +1043,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
               dim: !!dim,
               pickHint: !!pickable && pickable.has(t.id),
               disabled: !!pickable && !pickable.has(t.id) && !selected.has(t.id),
+              minHitSvg,
               onActivate: handleTable,
             }
             if (mode === "availability") {
@@ -1212,6 +1250,7 @@ interface GlyphBase {
   dim: boolean
   pickHint: boolean
   disabled: boolean
+  minHitSvg?: number
   onActivate: (id: number) => void
 }
 
@@ -1356,6 +1395,7 @@ const LiveGlyph = memo(function LiveGlyph({
   dim,
   pickHint,
   disabled,
+  minHitSvg = MIN_TABLE_HIT_PX,
   onActivate,
   state: fs,
   clusterPad,
@@ -1492,6 +1532,8 @@ const LiveGlyph = memo(function LiveGlyph({
 
   const ariaText = describe(t, rawState, fs, { hideGuestNames, maskPhoneNames })
 
+  const hitBox = readOnly ? null : computeTableHitBox(t, minHitSvg)
+
   if (t.kind === "BAR_SEAT") {
     const r = Math.max(9, (t.w || 20) / 2)
     const hasRoom = r >= 10
@@ -1524,11 +1566,29 @@ const LiveGlyph = memo(function LiveGlyph({
         data-search-highlighted={searchHighlighted || undefined}
         className={`${readOnly ? "cursor-default" : disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
         opacity={dim ? 0.3 : 1}
-        onClick={readOnly ? undefined : () => onActivate(t.id)}
+        onClick={
+          readOnly
+            ? undefined
+            : (e) => {
+                e.stopPropagation()
+                onActivate(t.id)
+              }
+        }
         onKeyDown={readOnly ? undefined : (e) => onKey(e, t.id, onActivate)}
       >
         {readOnly ? <title>{ariaText}</title> : null}
-        <circle r={r + 5} fill="transparent" />
+        {hitBox ? (
+          <rect
+            data-hit-area="1"
+            x={-hitBox.w / 2}
+            y={-hitBox.h / 2}
+            width={hitBox.w}
+            height={hitBox.h}
+            fill="transparent"
+            pointerEvents="none"
+          />
+        ) : null}
+        <circle r={r + 2} fill="transparent" />
         <circle
           className="focus-ring opacity-0"
           r={r + 4}
@@ -1609,11 +1669,29 @@ const LiveGlyph = memo(function LiveGlyph({
       data-search-highlighted={searchHighlighted || undefined}
       className={`${readOnly ? "cursor-default" : disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
       opacity={dim ? 0.3 : 1}
-      onClick={readOnly ? undefined : () => onActivate(t.id)}
+      onClick={
+        readOnly
+          ? undefined
+          : (e) => {
+              e.stopPropagation()
+              onActivate(t.id)
+            }
+      }
       onKeyDown={readOnly ? undefined : (e) => onKey(e, t.id, onActivate)}
     >
       {readOnly ? <title>{ariaText}</title> : null}
-      <rect x={-hw - 8} y={-hh - 8} width={t.w + 16} height={t.h + 16} fill="transparent" />
+      {hitBox ? (
+        <rect
+          data-hit-area="1"
+          x={-hitBox.w / 2}
+          y={-hitBox.h / 2}
+          width={hitBox.w}
+          height={hitBox.h}
+          fill="transparent"
+          pointerEvents="none"
+        />
+      ) : null}
+      <rect x={-hw - 2} y={-hh - 2} width={t.w + 4} height={t.h + 4} fill="transparent" />
       <rect
         className="focus-ring opacity-0"
         x={-hw - 6}
@@ -1834,6 +1912,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
   dim,
   pickHint,
   disabled,
+  minHitSvg = MIN_TABLE_HIT_PX,
   onActivate,
   avail,
 }: GlyphBase & { avail?: TableAvailability }) {
@@ -1879,6 +1958,8 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
           .join(" ")
       : undefined
 
+  const hitBox = computeTableHitBox(t, minHitSvg)
+
   if (t.kind === "BAR_SEAT") {
     const r = Math.max(9, (t.w || 20) / 2)
     return (
@@ -1895,10 +1976,22 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
         data-is-group={isGroup ? "true" : undefined}
         className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
         opacity={opacity}
-        onClick={() => onActivate(t.id)}
+        onClick={(e) => {
+          e.stopPropagation()
+          onActivate(t.id)
+        }}
         onKeyDown={(e) => onKey(e, t.id, onActivate)}
       >
-        <circle r={r + 4.5} fill="transparent" />
+        <rect
+          data-hit-area="1"
+          x={-hitBox.w / 2}
+          y={-hitBox.h / 2}
+          width={hitBox.w}
+          height={hitBox.h}
+          fill="transparent"
+          pointerEvents="none"
+        />
+        <circle r={r + 2} fill="transparent" />
         <circle
           className="focus-ring opacity-0"
           r={r + 3.5}
@@ -1950,10 +2043,22 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
       data-is-group={isGroup ? "true" : undefined}
       className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
       opacity={opacity}
-      onClick={() => onActivate(t.id)}
+      onClick={(e) => {
+        e.stopPropagation()
+        onActivate(t.id)
+      }}
       onKeyDown={(e) => onKey(e, t.id, onActivate)}
     >
-      <rect x={-hw - 8} y={-hh - 8} width={t.w + 16} height={t.h + 16} fill="transparent" />
+      <rect
+        data-hit-area="1"
+        x={-hitBox.w / 2}
+        y={-hitBox.h / 2}
+        width={hitBox.w}
+        height={hitBox.h}
+        fill="transparent"
+        pointerEvents="none"
+      />
+      <rect x={-hw - 2} y={-hh - 2} width={t.w + 4} height={t.h + 4} fill="transparent" />
       <rect
         className="focus-ring opacity-0"
         x={-hw - 6}

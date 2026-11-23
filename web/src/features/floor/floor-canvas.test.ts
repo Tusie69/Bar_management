@@ -9,8 +9,10 @@ import { FloorCanvas, ReadOnlyFloorMap } from "./floor-canvas"
 import {
   calculateStatusCounts,
   computeClusterDecorations,
+  computeTableHitBox,
   computeZoneBounds,
   findGroupRepresentativeId,
+  findNearestTableInHitArea,
   formatCellGuestName,
   formatGroupCode,
   oneOutlinePerCluster,
@@ -2800,5 +2802,56 @@ describe("ReadOnlyFloorMap and FloorCanvas readOnly mode", () => {
         'aria-label="Bar1, vào lúc 20:15, 2 khách, Trạng thái: Đã tới"',
       )
     }
+  })
+})
+
+describe("UI-11 small table and bar seat hit areas", () => {
+  it("renders >=44px invisible hit-area rects on interactive FloorCanvas without changing bar seat radius or adding them in readOnly", () => {
+    const html = renderCanvas({
+      tables: realTables,
+      mode: "live",
+      selectedIds: [],
+    })
+    expect(html).toContain('data-hit-area="1"')
+    expect(html).toContain('width="44.5" height="44.5"')
+    // Visual bar seat circle radius remains unchanged (r=10.5 for w=21 in realTables, or r=10 for BAR_SEAT_SIZE=20)
+    expect(html).toContain('r="10.5"')
+
+    const readOnlyHtml = renderToString(
+      createElement(ReadOnlyFloorMap, {
+        tables: realTables,
+        zones: dummyZones,
+        now: new Date("2026-11-09T19:30:00Z"),
+      }),
+    )
+    expect(readOnlyHtml).not.toContain('data-hit-area="1"')
+  })
+
+  it("picks the nearest bar seat or small table inside expanded hit areas without stealing taps from neighbours", () => {
+    const bar1 = realTables.find((t) => t.code === "BAR01")!
+    const bar2 = realTables.find((t) => t.code === "BAR02")!
+    const bar3 = realTables.find((t) => t.code === "BAR03")!
+    const bar5 = realTables.find((t) => t.code === "BAR05")!
+    const a10 = realTables.find((t) => t.code === "A10")!
+    const minHitSvg = 44.5 / 0.99
+
+    const box = computeTableHitBox(bar1, minHitSvg)
+    expect(box.w * 0.99).toBeGreaterThanOrEqual(44)
+    expect(box.h * 0.99).toBeGreaterThanOrEqual(44)
+
+    // Tap in the aisle to the left of BAR05 resolves to BAR05 (not BAR04 or BAR06)
+    expect(findNearestTableInHitArea(realTables, bar5.x - 16, bar5.y, minHitSvg)?.id).toBe(bar5.id)
+    // Tap between A10 right edge (138) and BAR02 rim (146) closer to BAR02 picks BAR02
+    expect(findNearestTableInHitArea(realTables, 143, bar2.y, minHitSvg)?.id).toBe(bar2.id)
+    // Tap slightly closer to BAR01 than BAR02 (midpoint is y=650) picks BAR01
+    expect(findNearestTableInHitArea(realTables, bar1.x, 652, minHitSvg)?.id).toBe(bar1.id)
+    // Tap slightly closer to BAR02 than BAR01 picks BAR02 (not stolen by BAR03 above)
+    expect(findNearestTableInHitArea(realTables, bar2.x, 648, minHitSvg)?.id).toBe(bar2.id)
+    // Tap between BAR02 (y=638) and BAR03 (y=614) closer to BAR03 picks BAR03
+    expect(findNearestTableInHitArea(realTables, bar3.x, 620, minHitSvg)?.id).toBe(bar3.id)
+    // Tap closer to A10 right edge (111 + 27 = 138) than BAR02 rim (156 - 10 = 146) picks A10
+    expect(findNearestTableInHitArea(realTables, 140, a10.y, minHitSvg)?.id).toBe(a10.id)
+    // Tap far from any table returns null
+    expect(findNearestTableInHitArea(realTables, 340, 680, minHitSvg)).toBeNull()
   })
 })
