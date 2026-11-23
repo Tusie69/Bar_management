@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { createRequire } from "node:module"
+import { assertAuditDatabase, requireAuditRun } from "./ui-audit-launch.mjs"
 
 const guest = "Nguyễn Hoàng Gia Minh Anh Phương Thanh Hải, đại diện nhóm khách"
 const note = "Khách muốn chỗ ngồi yên tĩnh, ưu tiên ghế tựa và giữ lối đi bên cạnh thông thoáng. "
@@ -13,25 +14,22 @@ const menuItems = [
   ["Shisha bạc hà", "Shisha táo xanh", "Shisha dưa hấu"],
 ]
 
-async function catalog() {
+async function openDatabase(database) {
+  assertAuditDatabase(database)
   const require = createRequire(new URL("../../api/package.json", import.meta.url))
-  const mysql = require("mysql2/promise")
-  const { DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME } = process.env
-  assert(
-    /_test$/.test(DB_NAME ?? "") && ["127.0.0.1", "localhost", "::1"].includes(DB_HOST) && Number(DB_PORT) > 1024,
-    "Menu fixture requires an explicit local MySQL _test database",
-  )
-  const db = await mysql.createConnection({
-    host: DB_HOST,
-    port: Number(DB_PORT),
-    user: DB_USER,
-    password: DB_PASSWORD,
-    database: DB_NAME,
+  const { name, ...connection } = database
+  return require("mysql2/promise").createConnection({
+    ...connection,
+    database: name,
     charset: "utf8mb4",
   })
+}
+
+async function catalog(database) {
+  const db = await openDatabase(database)
   try {
     const [[row]] = await db.query("SELECT DATABASE() AS name")
-    assert.equal(row.name, DB_NAME)
+    assert.equal(row.name, database.name)
     await db.beginTransaction()
     const [[owner]] = await db.execute("SELECT id FROM users WHERE username = ?", [process.env.E2E_OWNER_USERNAME])
     assert(owner, "Seed the audit OWNER before loading the catalog")
@@ -91,8 +89,9 @@ async function catalog() {
   }
 }
 
-export async function seedBusy({ browser, api, base, sessions, credentials, block }) {
-  await catalog()
+export async function seedBusy({ browser, sessions, credentials, block }) {
+  const { api, base, database } = requireAuditRun()
+  await catalog(database)
   const contexts = {}
   try {
     for (const [role, session] of Object.entries(sessions)) {
@@ -103,6 +102,7 @@ export async function seedBusy({ browser, api, base, sessions, credentials, bloc
       const method = data === undefined ? "GET" : "POST"
       const res = await contexts[role].request.fetch(new URL("/api/v1" + endpoint, api).href, {
         method,
+        maxRedirects: 0,
         headers: { origin: base.origin, "x-csrf-token": sessions[role].csrf, "idempotency-key": key },
         ...(data !== undefined && { data: { ...data, idempotencyKey: key } }),
       })
@@ -315,14 +315,7 @@ export async function seedBusy({ browser, api, base, sessions, credentials, bloc
         "audit-50-rows",
         "Audit API returned " + auditCount + " entries for " + businessDate + ".",
       )
-    const dbRequire = createRequire(new URL("../../api/package.json", import.meta.url))
-    const db = await dbRequire("mysql2/promise").createConnection({
-      host: process.env.DB_HOST,
-      port: Number(process.env.DB_PORT),
-      user: process.env.DB_USER,
-      database: process.env.DB_NAME,
-      password: process.env.DB_PASSWORD,
-    })
+    const db = await openDatabase(database)
     try {
       const [[customer]] = await db.execute(
         "SELECT id FROM customers WHERE organization_id=1 AND display_name LIKE ? ORDER BY id LIMIT 1",

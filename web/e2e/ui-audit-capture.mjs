@@ -5,16 +5,12 @@ import path from "node:path"
 import { parseArgs, stripVTControlCharacters } from "node:util"
 import { chromium } from "@playwright/test"
 import axe from "axe-core"
+import { requireAuditRun } from "./ui-audit-launch.mjs"
 
+const { base, api, database, id: runId } = requireAuditRun()
 const { values } = parseArgs({ options: { out: { type: "string" }, phase: { type: "string", default: "all" } } })
 const out = path.resolve(values.out ?? path.join(import.meta.dirname, ".artifacts/ui-audit-2026-11-23"))
-const base = new URL(process.env.E2E_BASE_URL ?? "http://127.0.0.1:35123")
-const api = new URL(process.env.E2E_API_URL ?? "http://127.0.0.1:34123")
 assert(["all", "quiet", "busy"].includes(values.phase), "Use --phase all, quiet or busy")
-assert(
-  [base, api].every((url) => ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)),
-  "Use local audit servers",
-)
 
 const sizes = [
   [320, 640],
@@ -363,11 +359,14 @@ const credentials = (role) => {
 }
 async function login(page, role) {
   const { username, password } = credentials(role)
-  await page.goto(new URL("/" + portals[role] + "/login", base).href, { waitUntil: "domcontentloaded" })
+  await page.goto(new URL("/" + portals[role] + "/login", base).href, {
+    waitUntil: "domcontentloaded",
+    timeout: 30_000,
+  })
   await page.getByLabel("Tên đăng nhập", { exact: true }).fill(username)
   await page.getByLabel("Mật khẩu", { exact: true }).fill(password)
   const response = page.waitForResponse(
-    (res) => res.url().endsWith("/api/v1/auth/login") && res.request().method() === "POST",
+    (res) => res.url() === new URL("/api/v1/auth/login", api).href && res.request().method() === "POST",
   )
   await submit(page).click()
   const res = await response
@@ -376,6 +375,7 @@ async function login(page, role) {
   const session = await page.request.get(new URL("/api/v1/auth/me", api).href, {
     headers: { origin: base.origin },
     timeout: 9000,
+    maxRedirects: 0,
   })
   assert(session.ok(), role + " session HTTP " + session.status())
   return (await session.json()).csrfToken
@@ -593,8 +593,19 @@ async function save() {
   return uniqueBlocks.length
 }
 
-await mkdir(out, { recursive: true })
+const fixturePath = path.join(out, ".fixture.json")
+let dynamic
 if (values.phase === "busy") {
+  try {
+    const cached = JSON.parse(await readFile(fixturePath, "utf8"))
+    assert(
+      cached?.runId === runId && cached.databaseName === database.name && cached.fixture,
+      "Fixture cache belongs to a different audit run or database; use a fresh output directory",
+    )
+    dynamic = cached.fixture
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error
+  }
   for (const [name, target] of [
     ["findings", records],
     ["blocked", blocked],
@@ -615,6 +626,7 @@ if (values.phase === "busy") {
       audited.add(record.role + record.route + record.viewport.width)
     }
 }
+await mkdir(out, { recursive: true })
 const browser = await chromium.launch(
   process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : { channel: "chrome" },
 )
@@ -643,18 +655,9 @@ try {
       await routeShots(browser, sessions, "quiet")
     }
     const { seedBusy, interactions } = await import("./ui-audit-seed.mjs")
-    const fixturePath = path.join(out, ".fixture.json")
-    let dynamic
-    if (values.phase === "busy") {
-      try {
-        dynamic = JSON.parse(await readFile(fixturePath, "utf8"))
-      } catch (error) {
-        if (error.code !== "ENOENT") throw error
-      }
-    }
     if (!dynamic) {
-      dynamic = await seedBusy({ browser, api, base, sessions, credentials, block })
-      await writeFile(fixturePath, JSON.stringify(dynamic))
+      dynamic = await seedBusy({ browser, sessions, credentials, block })
+      await writeFile(fixturePath, JSON.stringify({ runId, databaseName: database.name, fixture: dynamic }))
     }
     await routeShots(browser, sessions, "busy", dynamic)
     await interactions({
