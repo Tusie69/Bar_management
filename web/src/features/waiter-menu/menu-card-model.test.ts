@@ -84,11 +84,16 @@ describe("cardPriceLabel", () => {
    * nhân viên sẽ đọc nó cho khách nghe trước khi biết khách muốn chai.
    */
   it("nhiều đơn vị: khoảng giá, không phải giá rẻ nhất", () => {
-    const many = item([
-      variant({ variantId: 1, amountVnd: 280_000 }),
-      variant({ variantId: 2, amountVnd: 2_300_000 }),
-    ])
+    const many = item([variant({ variantId: 1, amountVnd: 280_000 }), variant({ variantId: 2, amountVnd: 2_300_000 })])
     expect(cardPriceLabel(many, formatVnd)).toBe("280.000đ – 2.300.000đ")
+  })
+
+  it("nhiều đơn vị cùng giá: chỉ hiện một giá, không lặp lại khoảng giá", () => {
+    const samePrice = item([
+      variant({ variantId: 1, displayName: "Lon", amountVnd: 65_000 }),
+      variant({ variantId: 2, displayName: "Chai", unitCode: "BOTTLE", amountVnd: 65_000 }),
+    ])
+    expect(cardPriceLabel(samePrice, formatVnd)).toBe("65.000đ")
   })
 
   /**
