@@ -259,20 +259,20 @@
 }
 
 /*
- * Breakpoint đo KHUNG CHỨA chứ không đo cửa sổ. Xem ghi chú ở
- * `admin-theme.css` về lý do: vùng nội dung hẹp hơn cửa sổ 280px khi còn
- * sidebar và 32px khi sidebar thu thành drawer.
+ * UI-54: Lưới KPI 2x2 dưới 768px (và trong container <= 700px) để 4 thẻ không
+ * xếp dọc chiếm trọn màn hình đầu tiên trên điện thoại.
  */
-@container adm-content (max-width: 700px) {
+@media (max-width: 767px) {
   .turns-metrics-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
   }
 }
 
-@container adm-content (max-width: 480px) {
+@container adm-content (max-width: 700px) {
   .turns-metrics-grid {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
   }
 }
 

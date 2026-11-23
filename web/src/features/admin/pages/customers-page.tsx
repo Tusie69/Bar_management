@@ -152,7 +152,11 @@ function CustomerList() {
           <DemoBadge className="mt-2 sm:ml-auto" />
         </div>
 
-        <div role="group" aria-label="Lọc khách" className="flex flex-wrap gap-2">
+        <div
+          role="group"
+          aria-label="Lọc khách"
+          className="flex min-w-0 flex-nowrap gap-2 overflow-x-auto pb-1 md:flex-wrap md:overflow-visible md:pb-0"
+        >
           {SEGMENTS.map((item) => {
             const active = item.id === segment
             return (
@@ -163,9 +167,9 @@ function CustomerList() {
                 title={item.hint}
                 onClick={() => setSegment(item.id)}
                 className={cn(
-                  "inline-flex h-10 shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-[background-color,border-color,color,transform] duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--adm-action)] active:scale-[0.97]",
+                  "inline-flex h-11 shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-[background-color,border-color,color,transform] duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--adm-action)] active:scale-[0.97] md:h-10",
                   active
-                    ? "border-[var(--adm-action)]/40 bg-[var(--adm-tint-blue)] text-[var(--adm-action)]"
+                    ? "border-[var(--adm-action)]/40 bg-[var(--adm-tint-blue)] text-[var(--adm-action-active)]"
                     : "border-[var(--adm-border)] bg-[var(--adm-surface)] text-[var(--adm-text)] hover:bg-[var(--adm-surface-sunken)]",
                 )}
               >
@@ -175,7 +179,7 @@ function CustomerList() {
                     className={cn(
                       "min-w-6 rounded-full px-1.5 text-center text-xs tabular-nums",
                       active
-                        ? "bg-[var(--adm-surface)] text-[var(--adm-action)]"
+                        ? "bg-[var(--adm-surface)] text-[var(--adm-action-active)]"
                         : "bg-[var(--adm-surface-sunken)] text-[var(--adm-text-muted)]",
                     )}
                   >
