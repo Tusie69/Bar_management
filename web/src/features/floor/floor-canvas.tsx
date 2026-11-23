@@ -590,8 +590,10 @@ export function FloorCanvas(props: FloorCanvasProps) {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top }
   }
 
+  const canMoveCamera = !isReadOnly && !compact && !planLocked
+
   const onPointerDown = (e: React.PointerEvent) => {
-    if (isReadOnly || compact || planLocked) return
+    if (isReadOnly) return
     pointers.current.set(e.pointerId, local(e))
     const pts = [...pointers.current.values()]
     if (pts.length === 1) {
@@ -606,8 +608,8 @@ export function FloorCanvas(props: FloorCanvasProps) {
         pinchDist: Math.hypot(a.x - b.x, a.y - b.y),
         pinchMid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
       }
-      setIsInteracting(true)
-      wrapRef.current?.setPointerCapture(e.pointerId)
+      if (canMoveCamera) setIsInteracting(true)
+      wrapRef.current?.setPointerCapture?.(e.pointerId)
     }
   }
 
@@ -617,6 +619,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
     const pts = [...pointers.current.values()]
     const g = gesture.current
     if (pts.length >= 2 && g.pinchDist && g.pinchMid) {
+      if (!canMoveCamera) return
       const [a, b] = pts
       const dist = Math.hypot(a.x - b.x, a.y - b.y)
       const k = Math.min(baseK * 5, Math.max(baseK * 0.6, g.view.k * (dist / g.pinchDist)))
@@ -630,10 +633,10 @@ export function FloorCanvas(props: FloorCanvasProps) {
     const dy = p.y - g.startY
     if (!g.dragging && Math.hypot(dx, dy) > 6) {
       g.dragging = true
-      setIsInteracting(true)
-      wrapRef.current?.setPointerCapture(e.pointerId)
+      if (canMoveCamera) setIsInteracting(true)
+      wrapRef.current?.setPointerCapture?.(e.pointerId)
     }
-    if (g.dragging) {
+    if (g.dragging && canMoveCamera) {
       setView({ k: g.view.k, x: g.view.x + dx, y: g.view.y + dy })
     }
   }
