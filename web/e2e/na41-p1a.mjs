@@ -261,6 +261,29 @@ async function verifyBarBisectorAndHitResolution(browser, baseUrl) {
       }
     }
 
+    // 0. Locked-camera drag suppression on phone viewports (/floor & /phucvu 390x844)
+    if (!role.isDesktop) {
+      const transformBefore = await page.locator('svg[role="group"] > g').first().getAttribute("transform")
+      await page.mouse.move(geo.p6.x, geo.p6.y)
+      await page.mouse.down()
+      await page.mouse.move(geo.p5.x, geo.p5.y, { steps: 10 })
+      await page.mouse.up()
+      await page.waitForTimeout(80)
+      const transformAfter = await page.locator('svg[role="group"] > g').first().getAttribute("transform")
+      assert.equal(transformAfter, transformBefore, `${role.label}: locked camera transform changed on drag`)
+      assert.equal(
+        await page.locator('svg[role="group"] g[role="button"][aria-pressed="true"]').count(),
+        0,
+        `${role.label}: drag from BAR06 to BAR05 selected a table`,
+      )
+      assert.equal(
+        await page.locator(role.detailSelector).count(),
+        0,
+        `${role.label}: drag from BAR06 to BAR05 opened detail panel`,
+      )
+      await page.waitForTimeout(260)
+    }
+
     // 1. Click both sides of BAR05/BAR06 perpendicular bisector
     await page.mouse.click(geo.bar6Side.x, geo.bar6Side.y)
     await assertSeatSelectedAndDetailMatches(page, 6, role.detailSelector)
@@ -276,6 +299,17 @@ async function verifyBarBisectorAndHitResolution(browser, baseUrl) {
     await closeBottomSheetIfMobile()
 
     await page.touchscreen.tap(geo.bar5Side.x, geo.bar5Side.y)
+    await assertSeatSelectedAndDetailMatches(page, 5, role.detailSelector)
+    await closeBottomSheetIfMobile()
+
+    // 2b. Keyboard Enter on BAR06 and Space on BAR05
+    await page.getByRole("button", { name: /^Ghế Bar 6,/ }).focus()
+    await page.keyboard.press("Enter")
+    await assertSeatSelectedAndDetailMatches(page, 6, role.detailSelector)
+    await closeBottomSheetIfMobile()
+
+    await page.getByRole("button", { name: /^Ghế Bar 5,/ }).focus()
+    await page.keyboard.press("Space")
     await assertSeatSelectedAndDetailMatches(page, 5, role.detailSelector)
     await closeBottomSheetIfMobile()
 
@@ -313,6 +347,19 @@ async function verifyBarBisectorAndHitResolution(browser, baseUrl) {
         await page.locator('svg[role="group"] g[role="button"][aria-pressed="true"]').count(),
         0,
         `${role.label}: post-drag click suppression failed`,
+      )
+
+      // Post-suppression click selects BAR05 cleanly
+      await page.waitForTimeout(350)
+      const geoAfterDrag = await getBarBisectorGeometry(page)
+      assert(geoAfterDrag, `${role.label}: missing BAR05/BAR06 geometry after drag`)
+      await page.mouse.click(geoAfterDrag.p5.x, geoAfterDrag.p5.y)
+      await assertSeatSelectedAndDetailMatches(page, 5, role.detailSelector)
+
+      // Clear selection before merge mode
+      await page.getByRole("button", { name: "Ca tối nay" }).click()
+      await page.waitForFunction(
+        () => document.querySelectorAll('svg[role="group"] g[role="button"][aria-pressed="true"]').length === 0,
       )
 
       // Merge mode: select C4 and C1
