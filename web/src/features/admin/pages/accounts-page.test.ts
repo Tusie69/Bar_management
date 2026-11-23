@@ -184,8 +184,10 @@ describe("AdminAccountsPage & dialogs", () => {
     expect(html).toContain('aria-label="Tìm theo tên hoặc tài khoản"')
     expect(html).toContain("Tạo tài khoản")
     expect(html).toContain("Danh sách tài khoản")
-    // Desktop table cells + mobile cards both render all fields
+    // Desktop table cells + mobile cards both render all fields and desktop overflow menu trigger
     expect(html).toContain("<table")
+    expect(html).toContain('data-testid="account-actions-menu-4"')
+    expect(html).toContain('aria-label="Thao tác khác cho Lễ tân 1"')
     expect(html).toContain("Lễ tân 1")
     expect(html).toContain("le_tan_1")
     expect(html).toContain("/letan")

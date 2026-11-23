@@ -263,7 +263,7 @@ function AdminSidebar({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
       <div className="border-t border-[var(--adm-border-subtle)] p-3" data-testid="admin-sidebar-footer">
         <div className="flex items-center gap-2.5 rounded-xl border border-[var(--adm-border-subtle)] bg-[var(--adm-surface-sunken)]/70 px-3 py-2.5">
-          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--adm-tint-blue)] text-xs font-semibold text-[var(--adm-action)]">
+          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--adm-tint-blue)] text-xs font-semibold text-[var(--adm-action-active)]">
             {initials(displayName)}
           </span>
           <span className="min-w-0 leading-tight">

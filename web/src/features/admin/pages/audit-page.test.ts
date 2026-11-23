@@ -54,7 +54,7 @@ describe("AdminAuditPage", () => {
             actionType: "BOOKING_CANCEL",
             actionLabel: "Hủy booking",
             target: "Bàn A7 · Phạm Quốc Khoa",
-            detail: "Khách báo bận",
+            detail: "portal: admin · result: FAILURE",
             device: "Web Admin",
           },
         ],
@@ -66,16 +66,18 @@ describe("AdminAuditPage", () => {
     }
   })
 
-  it("renders action filter chips, date inputs, export button, retention note, and entries", () => {
+  it("renders action filter chips, date inputs, Lọc sheet trigger, Vietnamese audit details, and entries", () => {
     const html = renderToString(createElement(AdminAuditPage) as ReactElement)
     expect(html).toContain("Tất cả")
     expect(html).toContain("Hủy booking")
     expect(html).toContain("Từ ngày")
     expect(html).toContain("Đến ngày")
+    expect(html).toContain("Lọc")
     expect(html).toContain("Xuất file")
     expect(html).toContain("giữ 90 ngày")
     expect(html).toContain("Bàn A7 · Phạm Quốc Khoa")
-    expect(html).toContain("Khách báo bận")
+    expect(html).toContain("Cổng: Quản trị · Kết quả: Thất bại")
+    expect(html).not.toContain("portal: admin")
     expect(html).toContain("@owner")
     expect(html).toContain("Còn thao tác cũ hơn")
   })

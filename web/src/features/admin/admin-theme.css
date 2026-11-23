@@ -246,7 +246,7 @@
 
 .admin-portal .adm-nav-item[aria-current="page"] {
   background: var(--adm-tint-blue);
-  color: var(--adm-action);
+  color: var(--adm-action-active);
   font-weight: 600;
 }
 
@@ -263,7 +263,7 @@
 
 .admin-portal .adm-nav-item[aria-current="page"]:hover {
   background: var(--adm-tint-blue-hover);
-  color: var(--adm-action);
+  color: var(--adm-action-active);
 }
 
 .admin-portal .adm-nav-item:focus-visible {
@@ -291,6 +291,9 @@
   left: 8px;
   z-index: var(--z-skip);
   transform: translateY(-220%);
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   padding: 10px 14px;
   border: 1px solid var(--adm-action);
   border-radius: var(--radius-sm);
