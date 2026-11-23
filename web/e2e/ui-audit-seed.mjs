@@ -1,7 +1,14 @@
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { createRequire } from "node:module"
-import { assertAuditDatabase, requireAuditRun } from "./ui-audit-launch.mjs"
+import {
+  AuditFailure,
+  assertAuditDatabase,
+  auditReason,
+  auditStep,
+  reportAudit,
+  requireAuditRun,
+} from "./ui-audit-launch.mjs"
 
 const guest = "Nguyễn Hoàng Gia Minh Anh Phương Thanh Hải, đại diện nhóm khách"
 const note = "Khách muốn chỗ ngồi yên tĩnh, ưu tiên ghế tựa và giữ lối đi bên cạnh thông thoáng. "
@@ -32,7 +39,7 @@ async function catalog(database) {
     assert.equal(row.name, database.name)
     await db.beginTransaction()
     const [[owner]] = await db.execute("SELECT id FROM users WHERE username = ?", [process.env.E2E_OWNER_USERNAME])
-    assert(owner, "Seed the audit OWNER before loading the catalog")
+    if (!owner) throw new AuditFailure("Seed the audit OWNER before loading the catalog")
     const [[existing]] = await db.query("SELECT id FROM menu_categories WHERE venue_id=1 AND code='NA40_0'")
     if (!existing) {
       for (const [index, name] of displayNames.entries()) {
@@ -91,7 +98,7 @@ async function catalog(database) {
 
 export async function seedBusy({ browser, sessions, credentials, block }) {
   const { api, base, database } = requireAuditRun()
-  await catalog(database)
+  await auditStep("Seed the audit catalog", () => catalog(database))
   const contexts = {}
   try {
     for (const [role, session] of Object.entries(sessions)) {
@@ -100,32 +107,24 @@ export async function seedBusy({ browser, sessions, credentials, block }) {
     const req = async (role, endpoint, data) => {
       const key = randomUUID()
       const method = data === undefined ? "GET" : "POST"
-      const res = await contexts[role].request.fetch(new URL("/api/v1" + endpoint, api).href, {
-        method,
-        maxRedirects: 0,
-        headers: { origin: base.origin, "x-csrf-token": sessions[role].csrf, "idempotency-key": key },
-        ...(data !== undefined && { data: { ...data, idempotencyKey: key } }),
+      const url = new URL("/api/v1" + endpoint, api)
+      const step = role + " " + method + " " + url.pathname
+      return auditStep(step, async () => {
+        const res = await contexts[role].request.fetch(url.href, {
+          method,
+          maxRedirects: 0,
+          headers: { origin: base.origin, "x-csrf-token": sessions[role].csrf, "idempotency-key": key },
+          ...(data !== undefined && { data: { ...data, idempotencyKey: key } }),
+        })
+        if (!res.ok()) throw new AuditFailure(step + " HTTP " + res.status())
+        return res.json()
       })
-      const result = await res.json()
-      assert(
-        res.ok(),
-        method +
-          " " +
-          endpoint +
-          " HTTP " +
-          res.status() +
-          " " +
-          (result.error?.code ?? "") +
-          " " +
-          (result.error?.message ?? ""),
-      )
-      return result
     }
     const trySeed = async (role, route, state, fn) => {
       try {
         return await fn()
       } catch (error) {
-        block(role, route, state, error.message)
+        block(role, route, state, auditReason(error, "Seed step failed"))
       }
     }
     const now = new Date(process.env.E2E_FIXED_NOW ?? Date.now())
@@ -341,7 +340,7 @@ export async function seedBusy({ browser, sessions, credentials, block }) {
       visitId,
       customerId,
     }
-    console.log("Fixture " + JSON.stringify(fixture))
+    reportAudit("Busy fixture seeded")
     return fixture
   } finally {
     await Promise.all(Object.values(contexts).map((context) => context.close()))

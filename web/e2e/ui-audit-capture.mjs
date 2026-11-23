@@ -2,15 +2,15 @@ import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { parseArgs, stripVTControlCharacters } from "node:util"
+import { parseArgs } from "node:util"
 import { chromium } from "@playwright/test"
 import axe from "axe-core"
-import { requireAuditRun } from "./ui-audit-launch.mjs"
+import { AuditFailure, auditReason, auditStep, reportAudit, requireAuditRun } from "./ui-audit-launch.mjs"
 
 const { base, api, database, id: runId } = requireAuditRun()
 const { values } = parseArgs({ options: { out: { type: "string" }, phase: { type: "string", default: "all" } } })
 const out = path.resolve(values.out ?? path.join(import.meta.dirname, ".artifacts/ui-audit-2026-11-23"))
-assert(["all", "quiet", "busy"].includes(values.phase), "Use --phase all, quiet or busy")
+if (!["all", "quiet", "busy"].includes(values.phase)) throw new AuditFailure("Use --phase all, quiet or busy")
 
 const sizes = [
   [320, 640],
@@ -185,33 +185,19 @@ function scrollContainers() {
 function setup(page) {
   const errors = new Set()
   page.on("console", (msg) => {
-    if (msg.type() === "error") errors.add(msg.text())
+    if (msg.type() === "error") errors.add("Browser console error")
   })
-  page.on("pageerror", (err) => errors.add(err.message))
+  page.on("pageerror", () => errors.add("Uncaught browser error"))
   page.on("requestfailed", (req) => {
-    if (req.failure()?.errorText !== "net::ERR_ABORTED")
-      errors.add(req.method() + " " + safeUrl(req.url()) + " " + req.failure()?.errorText)
+    const url = new URL(req.url())
+    if (url.origin === api.origin && req.failure()?.errorText !== "net::ERR_ABORTED")
+      errors.add(url.pathname + " request failed")
   })
   page.on("response", (res) => {
-    if (res.status() >= 400) errors.add(res.request().method() + " " + safeUrl(res.url()) + " HTTP " + res.status())
+    const url = new URL(res.url())
+    if (url.origin === api.origin && res.status() >= 400) errors.add(url.pathname + " HTTP " + res.status())
   })
   return errors
-}
-
-function sanitize(text) {
-  for (const [key, value] of Object.entries(process.env)) {
-    if (/^(E2E_.*PASSWORD|DB_PASSWORD|MYSQL_ROOT_PASSWORD)$/.test(key) && value)
-      text = text.replaceAll(value, "[redacted]")
-  }
-  return stripVTControlCharacters(text)
-    .replace(/https?:\/\/[^\s"')]+/g, (url) => {
-      try {
-        return safeUrl(url)
-      } catch {
-        return url
-      }
-    })
-    .slice(0, 700)
 }
 
 async function settle(page) {
@@ -233,7 +219,7 @@ async function shot(page, errors, role, route, state, { fullPage = false, checkA
   const viewport = { ...page.viewportSize(), deviceScaleFactor: await page.evaluate(() => devicePixelRatio) }
   const file = evidenceName(role, route, state, [viewport.width, viewport.height])
   if (records.some((record) => record.file === file)) return
-  const finalUrl = page.url()
+  const finalUrl = safeUrl(page.url())
   let axeViolations = []
   const key = role + route + viewport.width
   if (checkAxe && [390, 1440].includes(viewport.width) && !audited.has(key)) {
@@ -250,8 +236,8 @@ async function shot(page, errors, role, route, state, { fullPage = false, checkA
           })),
       )
       audited.add(key)
-    } catch (error) {
-      block(role, route, "axe-" + viewport.width, sanitize(error.message))
+    } catch {
+      block(role, route, "axe-" + viewport.width, "Accessibility scan failed")
     }
   }
   const findings = await page.evaluate(measure)
@@ -266,7 +252,7 @@ async function shot(page, errors, role, route, state, { fullPage = false, checkA
     file,
     ...(scroll && { scroll }),
     ...findings,
-    consoleErrors: [...errors].map(sanitize),
+    consoleErrors: [...errors],
     axe: axeViolations,
   })
 }
@@ -310,8 +296,8 @@ async function capture(page, errors, role, route, state, checkAxe = false) {
           scroll: { container, index: Number(index), position: label, ...position },
         })
       }
-    } catch (error) {
-      block(role, route, state + "-scroll-" + index, sanitize(error.message))
+    } catch {
+      block(role, route, state + "-scroll-" + index, "Scroll capture failed")
     } finally {
       await el
         .evaluate((node, [left, top]) => node.scrollTo({ left, top, behavior: "instant" }), starting)
@@ -332,7 +318,7 @@ const load = async (page, route) => {
       page.waitForResponse((res) => res.url() === new URL("/api/v1/auth/me", api).href, { timeout: 9000 }),
       navigation,
     ])
-    assert(session.ok(), "Protected route " + route + " returned auth/me HTTP " + session.status())
+    if (!session.ok()) throw new AuditFailure("GET /api/v1/auth/me HTTP " + session.status())
     await page.waitForFunction(
       () =>
         !!document.querySelector("main, [role=main], #root button, #root h1") &&
@@ -354,31 +340,42 @@ const credentials = (role) => {
   const prefix = "E2E_" + role.toUpperCase()
   const username = process.env[prefix + "_USERNAME"]
   const password = process.env[prefix + "_PASSWORD"]
-  assert(username && password, "Missing " + prefix + "_USERNAME or " + prefix + "_PASSWORD")
+  if (!username || !password) throw new AuditFailure("Missing credentials for " + role)
   return { username, password }
 }
 async function login(page, role) {
   const { username, password } = credentials(role)
-  await page.goto(new URL("/" + portals[role] + "/login", base).href, {
-    waitUntil: "domcontentloaded",
-    timeout: 30_000,
-  })
-  await page.getByLabel("Tên đăng nhập", { exact: true }).fill(username)
-  await page.getByLabel("Mật khẩu", { exact: true }).fill(password)
-  const response = page.waitForResponse(
-    (res) => res.url() === new URL("/api/v1/auth/login", api).href && res.request().method() === "POST",
+  const route = "/" + portals[role] + "/login"
+  await auditStep(role + " open " + route, () =>
+    page.goto(new URL(route, base).href, { waitUntil: "domcontentloaded", timeout: 30_000 }),
   )
-  await submit(page).click()
-  const res = await response
-  assert(res.ok(), role + " login HTTP " + res.status())
-  await page.waitForURL((url) => !url.pathname.endsWith("/login"))
-  const session = await page.request.get(new URL("/api/v1/auth/me", api).href, {
-    headers: { origin: base.origin },
-    timeout: 9000,
-    maxRedirects: 0,
+  for (const [label, value] of [
+    ["Tên đăng nhập", username],
+    ["Mật khẩu", password],
+  ]) {
+    await auditStep(role + ' fill "' + label + '" on ' + route, () =>
+      page.getByLabel(label, { exact: true }).fill(value),
+    )
+  }
+  const [res] = await auditStep(role + " POST /api/v1/auth/login", () =>
+    Promise.all([
+      page.waitForResponse(
+        (res) => res.url() === new URL("/api/v1/auth/login", api).href && res.request().method() === "POST",
+      ),
+      submit(page).click(),
+    ]),
+  )
+  if (!res.ok()) throw new AuditFailure(role + " POST /api/v1/auth/login HTTP " + res.status())
+  await auditStep(role + " leave " + route, () => page.waitForURL((url) => !url.pathname.endsWith("/login")))
+  return auditStep(role + " GET /api/v1/auth/me", async () => {
+    const session = await page.request.get(new URL("/api/v1/auth/me", api).href, {
+      headers: { origin: base.origin },
+      timeout: 9000,
+      maxRedirects: 0,
+    })
+    if (!session.ok()) throw new AuditFailure(role + " GET /api/v1/auth/me HTTP " + session.status())
+    return (await session.json()).csrfToken
   })
-  assert(session.ok(), role + " session HTTP " + session.status())
-  return (await session.json()).csrfToken
 }
 async function visitScreen(page, role, route) {
   await load(page, route)
@@ -401,7 +398,7 @@ async function attempt(role, route, state, fn) {
   try {
     return await fn()
   } catch (error) {
-    block(role, route, state, sanitize(error.message))
+    block(role, route, state, auditReason(error, "Capture step failed"))
   }
 }
 
@@ -510,7 +507,7 @@ async function routeShots(browser, sessions, phase, dynamic = {}) {
       }
     }
     await Promise.all(Array.from({ length: 3 }, captureSizes))
-    console.log(phase + " " + role + " " + records.length + " screenshots")
+    reportAudit(phase + " " + role + " " + records.length + " screenshots")
     await save()
   }
 }
@@ -531,9 +528,7 @@ async function save() {
         : [label + (height === "500" ? "-keyboard" : "")]
     return !requested.every((name) => hasShot(role, route, name, [width, height]))
   })
-  const uniqueBlocks = [
-    ...new Set(unresolved.map((entry) => JSON.stringify({ ...entry, reason: sanitize(entry.reason) }))),
-  ].map((entry) => JSON.parse(entry))
+  const uniqueBlocks = [...new Set(unresolved.map((entry) => JSON.stringify(entry)))].map((entry) => JSON.parse(entry))
   await writeFile(path.join(out, "blocked.json"), JSON.stringify(uniqueBlocks, null, 2))
   const esc = (s) =>
     String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c])
@@ -598,10 +593,9 @@ let dynamic
 if (values.phase === "busy") {
   try {
     const cached = JSON.parse(await readFile(fixturePath, "utf8"))
-    assert(
-      cached?.runId === runId && cached.databaseName === database.name && cached.fixture,
-      "Fixture cache belongs to a different audit run or database; use a fresh output directory",
-    )
+    if (cached?.runId !== runId || cached.databaseName !== database.name || !cached.fixture) {
+      throw new AuditFailure("Fixture cache belongs to a different audit run or database; use a fresh output directory")
+    }
     dynamic = cached.fixture
   } catch (error) {
     if (error.code !== "ENOENT") throw error
@@ -620,21 +614,33 @@ if (values.phase === "busy") {
     (record) =>
       record.role === "login" || !record.consoleErrors.some((error) => /\/api\/v1\/auth\/me HTTP 401$/.test(error)),
   )
-  records.splice(0, records.length, ...authenticated)
+  records.splice(
+    0,
+    records.length,
+    ...authenticated.map((record) => ({
+      ...record,
+      requestedUrl: safeUrl(record.requestedUrl),
+      finalUrl: safeUrl(record.finalUrl),
+      consoleErrors: record.consoleErrors.length ? ["Browser error recorded in an earlier capture"] : [],
+    })),
+  )
+  for (const entry of blocked) entry.reason = "Blocked in an earlier capture"
   for (const record of records)
     if (record.state === "quiet" && [390, 1440].includes(record.viewport.width)) {
       audited.add(record.role + record.route + record.viewport.width)
     }
 }
 await mkdir(out, { recursive: true })
-const browser = await chromium.launch(
-  process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : { channel: "chrome" },
+const browser = await auditStep("Launch Chromium", () =>
+  chromium.launch(
+    process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : { channel: "chrome" },
+  ),
 )
 let blockedCount
 try {
   const sessions = {}
   for (const role of Object.keys(portals)) {
-    console.log("Authenticating " + role)
+    reportAudit("Authenticating " + role)
     const { page, context } = await openPage(browser, undefined, [1440, 900])
     try {
       const csrf = await login(page, role)
@@ -656,7 +662,7 @@ try {
     }
     const { seedBusy, interactions } = await import("./ui-audit-seed.mjs")
     if (!dynamic) {
-      dynamic = await seedBusy({ browser, sessions, credentials, block })
+      dynamic = await auditStep("Seed the busy fixture", () => seedBusy({ browser, sessions, credentials, block }))
       await writeFile(fixturePath, JSON.stringify({ runId, databaseName: database.name, fixture: dynamic }))
     }
     await routeShots(browser, sessions, "busy", dynamic)
@@ -673,9 +679,9 @@ try {
       block,
     })
   }
-  assert(records.length > 0, "No evidence generated")
+  if (!records.length) throw new AuditFailure("No evidence generated")
 } finally {
   await browser.close()
   blockedCount = await save()
 }
-console.log(records.length + " screenshots, " + blockedCount + " blocked observations")
+reportAudit(records.length + " screenshots, " + blockedCount + " blocked observations")
