@@ -78,7 +78,15 @@ const FOUR_DIGIT_COUNTS = [
   { key: "returningGuests", label: "Đã từng đặt bàn", value: "1299" },
 ]
 
+async function ensureGuestCountExpanded(page) {
+  const toggle = page.getByTestId("guest-count-toggle")
+  if ((await toggle.count()) > 0 && (await toggle.isVisible())) {
+    await toggle.click()
+  }
+}
+
 async function setAndVerifyGuestCounts(page, fields) {
+  await ensureGuestCountExpanded(page)
   await page.getByRole("button", { name: "Sửa bộ đếm khách" }).click()
   const editor = page.getByTestId("guest-count-editor")
   await editor.waitFor({ state: "visible" })
@@ -89,6 +97,7 @@ async function setAndVerifyGuestCounts(page, fields) {
   await editor.waitFor({ state: "detached" })
 
   // Reopen to confirm all 6 persisted values
+  await ensureGuestCountExpanded(page)
   await page.getByRole("button", { name: "Sửa bộ đếm khách" }).click()
   await editor.waitFor({ state: "visible" })
   for (const f of fields) {
@@ -100,7 +109,33 @@ async function setAndVerifyGuestCounts(page, fields) {
   await page.waitForTimeout(150)
 }
 
-async function assertGuestCounterLayout(page, vpLabel, fields) {
+async function assertGuestCounterLayout(page, vpLabel, fields, isPhone = false) {
+  const overlaps = (a, b, tol = 0.2) =>
+    !(a.right <= b.left + tol || b.right <= a.left + tol || a.bottom <= b.top + tol || b.bottom <= a.top + tol)
+
+  if (isPhone) {
+    const collapseBtn = page.getByTestId("guest-count-collapse")
+    if ((await collapseBtn.count()) > 0 && (await collapseBtn.isVisible())) {
+      await collapseBtn.click()
+    }
+    const toggle = page.getByTestId("guest-count-toggle")
+    assert(
+      (await toggle.count()) > 0 && (await toggle.isVisible()),
+      `${vpLabel}: phone GuestCountCard should collapse to toggle chip`,
+    )
+    const collapsedBox = await page.evaluate(() => {
+      const card = document.querySelector('[data-testid="guest-count-card"]')?.getBoundingClientRect() ?? null
+      const c4 = document.querySelector('[role="button"][aria-label^="Bàn C4"]')?.getBoundingClientRect() ?? null
+      const b7 = document.querySelector('[role="button"][aria-label^="Bàn B7"]')?.getBoundingClientRect() ?? null
+      const toBox = (r) => (r ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom } : null)
+      return { card: toBox(card), c4: toBox(c4), b7: toBox(b7) }
+    })
+    assert(collapsedBox.card && collapsedBox.c4 && collapsedBox.b7, `${vpLabel}: missing collapsed card or C4/B7`)
+    assert(!overlaps(collapsedBox.card, collapsedBox.c4, 0.5), `${vpLabel}: collapsed GuestCountCard overlaps C4`)
+    assert(!overlaps(collapsedBox.card, collapsedBox.b7, 0.5), `${vpLabel}: collapsed GuestCountCard overlaps B7`)
+    await toggle.click()
+  }
+
   const layout = await page.evaluate(
     (keys) => {
       const card = document.querySelector('[data-testid="guest-count-card"]')
@@ -141,8 +176,6 @@ async function assertGuestCounterLayout(page, vpLabel, fields) {
   )
 
   assert(layout, `${vpLabel}: guest-count-card missing`)
-  const overlaps = (a, b, tol = 0.2) =>
-    !(a.right <= b.left + tol || b.right <= a.left + tol || a.bottom <= b.top + tol || b.bottom <= a.top + tol)
 
   for (let i = 0; i < layout.items.length; i++) {
     const item = layout.items[i]
@@ -185,9 +218,15 @@ async function assertGuestCounterLayout(page, vpLabel, fields) {
     )
   }
 
-  assert(layout.c4 && layout.b7, `${vpLabel}: C4 or B7 missing`)
-  assert(!overlaps(layout.cardRect, layout.c4, 0.5), `${vpLabel}: populated GuestCountCard overlaps C4`)
-  assert(!overlaps(layout.cardRect, layout.b7, 0.5), `${vpLabel}: populated GuestCountCard overlaps B7`)
+  if (isPhone) {
+    await page.getByTestId("guest-count-collapse").click()
+    await page.waitForTimeout(50)
+    await page.locator("header").click({ position: { x: 2, y: 2 } })
+  } else {
+    assert(layout.c4 && layout.b7, `${vpLabel}: C4 or B7 missing`)
+    assert(!overlaps(layout.cardRect, layout.c4, 0.5), `${vpLabel}: populated GuestCountCard overlaps C4`)
+    assert(!overlaps(layout.cardRect, layout.b7, 0.5), `${vpLabel}: populated GuestCountCard overlaps B7`)
+  }
 
   return { minCrossColGap: Number(minCrossColGap.toFixed(2)), cardHeight: Number(layout.cardRect.height.toFixed(2)) }
 }
@@ -453,7 +492,7 @@ try {
 
     // Populate the 6 guest counter values so screenshots & layout assertions validate real populated data
     await setAndVerifyGuestCounts(page, POPULATED_COUNTS)
-    const counterStats = await assertGuestCounterLayout(page, vp.label, POPULATED_COUNTS)
+    const counterStats = await assertGuestCounterLayout(page, vp.label, POPULATED_COUNTS, vp.width < 768)
 
     // Real keyboard Tab traversal across interactive controls (never lands on any notification launcher)
     const visitedLabels = []
@@ -749,12 +788,13 @@ try {
     assert(metrics.wall.bottom <= metrics.canvas.bottom + 1, `${vp.label}: wall clipped bottom`)
 
     if (vp.width >= 768) {
-      assert(metrics.shell.width <= 629, `${vp.label}: reception shell exceeded 628px (${metrics.shell.width})`)
-      const leftMargin = metrics.shell.left
-      const rightMargin = metrics.vw - metrics.shell.right
       assert(
-        Math.abs(leftMargin - rightMargin) <= 2,
-        `${vp.label}: reception shell not centered (${leftMargin} vs ${rightMargin})`,
+        Math.abs(metrics.shell.width - metrics.vw) <= 2,
+        `${vp.label}: reception shell should use available width (${metrics.shell.width} vs ${metrics.vw})`,
+      )
+      assert(
+        Math.abs(metrics.shell.left) <= 1,
+        `${vp.label}: reception shell not anchored at left (${metrics.shell.left})`,
       )
     }
 
@@ -969,7 +1009,7 @@ try {
     let fourDigitStats = null
     if (["375x812", "390x844", "768x1024", "1024x768"].includes(vp.label)) {
       await setAndVerifyGuestCounts(page, FOUR_DIGIT_COUNTS)
-      fourDigitStats = await assertGuestCounterLayout(page, `${vp.label} (4-digit)`, FOUR_DIGIT_COUNTS)
+      fourDigitStats = await assertGuestCounterLayout(page, `${vp.label} (4-digit)`, FOUR_DIGIT_COUNTS, vp.width < 768)
     }
 
     summary.viewports[vp.label] = {
@@ -1098,6 +1138,7 @@ try {
     summary.flows.receptionNotifications = { menuPreservedUnread: true, sectionMarkedSeen: true, detailFocus: true }
 
     // R1: Open guest count edit, set Tổng đã tới = 42, save and confirm persisted on card
+    await ensureGuestCountExpanded(page)
     await page.getByRole("button", { name: "Sửa bộ đếm khách" }).click()
     await page.getByTestId("guest-count-editor").waitFor({ state: "visible" })
     await page.waitForTimeout(250)
@@ -1108,6 +1149,10 @@ try {
     await page.getByTestId("guest-count-editor").waitFor({ state: "detached" })
     const updatedCardText = await page.getByTestId("guest-count-card").innerText()
     assert(updatedCardText.includes("42"), `R1: Expected 42 in GuestCountCard, got: ${updatedCardText}`)
+    const collapseAfterR1 = page.getByTestId("guest-count-collapse")
+    if ((await collapseAfterR1.count()) > 0 && (await collapseAfterR1.isVisible())) {
+      await collapseAfterR1.click()
+    }
 
     // R3: One-tap Xuất Text without preview dialog
     await page.getByRole("button", { name: "Xuất text Zalo" }).click()
