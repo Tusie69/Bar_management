@@ -796,6 +796,11 @@ try {
         Math.abs(metrics.shell.left) <= 1,
         `${vp.label}: reception shell not anchored at left (${metrics.shell.left})`,
       )
+    } else {
+      assert(
+        metrics.shell.width <= 629,
+        `${vp.label}: reception shell below 768px exceeded 628px (${metrics.shell.width})`,
+      )
     }
 
     assert(

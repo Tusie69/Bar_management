@@ -60,6 +60,8 @@ describe("GuestCountCard", () => {
     expect(expandedHtml).toContain("Đã từng đặt bàn")
     expect(expandedHtml).toContain("text-xs")
     expect(expandedHtml).not.toMatch(/text-\[(?:8|9|9\.5|10|11)px\]/)
+    expect(expandedHtml).not.toContain("lg:min-h-8")
+    expect(expandedHtml).not.toContain("lg:min-w-8")
     expect(expandedHtml).not.toContain("<input")
   })
 

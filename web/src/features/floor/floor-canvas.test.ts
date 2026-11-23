@@ -2810,12 +2810,39 @@ describe("UI-11 small table and bar seat hit areas", () => {
     const html = renderCanvas({
       tables: realTables,
       mode: "live",
-      selectedIds: [],
+      selectedIds: [realTables[0].id],
     })
     expect(html).toContain('data-hit-area="1"')
     expect(html).toContain('width="44.5" height="44.5"')
     // Visual bar seat circle radius remains unchanged (r=10.5 for w=21 in realTables, or r=10 for BAR_SEAT_SIZE=20)
     expect(html).toContain('r="10.5"')
+    // Focus rings, transparent padding shapes, and selection rings must not intercept pointer hits
+    const focusRingMatches = html.match(/<(?:circle|rect)[^>]*class="focus-ring[^"]*"[^>]*>/g) ?? []
+    expect(focusRingMatches.length).toBeGreaterThan(0)
+    for (const tag of focusRingMatches) {
+      expect(tag).toContain('pointer-events="none"')
+    }
+    const transparentMatches = html.match(/<(?:circle|rect)[^>]*fill="transparent"[^>]*>/g) ?? []
+    expect(transparentMatches.length).toBeGreaterThan(0)
+    for (const tag of transparentMatches) {
+      expect(tag).toContain('pointer-events="none"')
+    }
+
+    const availHtml = renderCanvas({
+      tables: realTables,
+      mode: "availability",
+      selectedIds: [realTables[0].id],
+    })
+    const availFocusRings = availHtml.match(/<(?:circle|rect)[^>]*class="focus-ring[^"]*"[^>]*>/g) ?? []
+    expect(availFocusRings.length).toBeGreaterThan(0)
+    for (const tag of availFocusRings) {
+      expect(tag).toContain('pointer-events="none"')
+    }
+    const availTransparent = availHtml.match(/<(?:circle|rect)[^>]*fill="transparent"[^>]*>/g) ?? []
+    expect(availTransparent.length).toBeGreaterThan(0)
+    for (const tag of availTransparent) {
+      expect(tag).toContain('pointer-events="none"')
+    }
 
     const readOnlyHtml = renderToString(
       createElement(ReadOnlyFloorMap, {

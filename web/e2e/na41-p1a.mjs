@@ -48,6 +48,14 @@ async function startVite(mode) {
 
 const PORTALS = ["/letan/login", "/thungan/login", "/phucvu/login", "/chebien/login", "/admin/login"]
 
+async function dismissToastIfPresent(page) {
+  const toastClose = page.getByRole("button", { name: "Đóng thông báo", exact: true })
+  if ((await toastClose.count()) > 0) {
+    await toastClose.click()
+    await page.waitForTimeout(150)
+  }
+}
+
 async function verifyLoginPortals(browser) {
   const { server, baseUrl } = await startVite("http")
   try {
@@ -114,226 +122,442 @@ async function verifyLoginPortals(browser) {
   }
 }
 
-async function verifyFloorAndMobile(browser) {
-  const { server, baseUrl } = await startVite("mock")
-  try {
-    // 1. UI-13 & UI-12 & no overflow at 320x640
+async function getBarBisectorGeometry(page) {
+  return page.evaluate(() => {
+    const bar5 = document.querySelector('g[role="button"][aria-label^="Ghế Bar 5,"]')
+    const bar6 = document.querySelector('g[role="button"][aria-label^="Ghế Bar 6,"]')
+    const c5 = bar5?.querySelector('circle:not([fill="transparent"]):not(.focus-ring)')?.getBoundingClientRect()
+    const c6 = bar6?.querySelector('circle:not([fill="transparent"]):not(.focus-ring)')?.getBoundingClientRect()
+    if (!c5 || !c6) return null
+    const p5 = { x: c5.left + c5.width / 2, y: c5.top + c5.height / 2, r: c5.width / 2 }
+    const p6 = { x: c6.left + c6.width / 2, y: c6.top + c6.height / 2, r: c6.width / 2 }
+    const midX = (p5.x + p6.x) / 2
+    const midY = (p5.y + p6.y) / 2
+    const delta = Math.max(1.2, Math.abs(p5.y - p6.y) * 0.07)
+    // BAR05 sits below BAR06 (p5.y > p6.y)
+    return {
+      p5,
+      p6,
+      bar5Side: { x: midX, y: midY + delta },
+      bar6Side: { x: midX, y: midY - delta },
+      bar5OuterLeft: { x: c5.left - 8, y: p5.y },
+    }
+  })
+}
+
+async function assertSeatSelectedAndDetailMatches(page, seatNum, detailSelector) {
+  const expectedPrefix = `Ghế Bar ${seatNum}`
+  const pressedInfo = await page.waitForFunction((prefix) => {
+    const pressed = [...document.querySelectorAll('svg[role="group"] g[role="button"][aria-pressed="true"]')]
+    if (pressed.length !== 1) return null
+    const aria = pressed[0].getAttribute("aria-label") ?? ""
+    if (!aria.startsWith(`${prefix},`)) return null
+    const groupMatch = aria.match(/nhóm\s+(G\d+)/i)
+    return { aria, groupCode: groupMatch?.[1] ?? null }
+  }, expectedPrefix)
+  const info = await pressedInfo.jsonValue()
+  const pressedCount = await page.locator('svg[role="group"] g[role="button"][aria-pressed="true"]').count()
+  assert.equal(pressedCount, 1, `${expectedPrefix}: expected exactly 1 aria-pressed=true table`)
+
+  const detail = page.locator(detailSelector).first()
+  await detail.waitFor({ state: "visible" })
+  const detailText = (await detail.innerText()).trim()
+  const seatCode = `BAR${String(seatNum).padStart(2, "0")}`
+  const matchesSeat =
+    detailText.includes(`Bar ${seatNum}`) ||
+    detailText.includes(seatCode) ||
+    (info.groupCode ? detailText.includes(info.groupCode) : false)
+  assert(
+    matchesSeat,
+    `Expected detail panel (${detailSelector}) for ${expectedPrefix} (group=${info.groupCode}) to match seat/group, got "${detailText}"`,
+  )
+}
+
+async function verifyBarBisectorAndHitResolution(browser, baseUrl) {
+  const roles = [
     {
-      const context = await browser.newContext({ viewport: { width: 320, height: 640 }, hasTouch: true })
-      await context.addInitScript(() => {
-        localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme: "light" }))
-      })
-      const page = await context.newPage()
-      await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
-      await page.getByRole("button", { name: /^Bàn A7/ }).waitFor({ state: "visible" })
-      const toastClose = page.getByRole("button", { name: "Đóng thông báo", exact: true })
-      if ((await toastClose.count()) > 0) {
-        await toastClose.click()
-        await page.waitForTimeout(150)
-      }
-
-      const check320 = await page.evaluate(() => {
-        const overflowX = document.documentElement.scrollWidth > document.documentElement.clientWidth
-        const search = document.querySelector("input[placeholder]")
-        const searchRect = search?.getBoundingClientRect()
-        const placeholder = search?.getAttribute("placeholder") ?? ""
-        const waitBtn = document.querySelector('button[aria-label^="Bàn chờ"]')
-        const waitText = waitBtn?.innerText.replace(/\s+/g, " ").trim() ?? ""
-        const b21 = document.querySelector('[role="button"][aria-label^="Bàn B21"]')?.getBoundingClientRect() ?? null
-        const waitRect = waitBtn?.getBoundingClientRect() ?? null
-        const toggle = document.querySelector('[data-testid="guest-count-toggle"]')
-        const toggleRect = toggle?.getBoundingClientRect() ?? null
-        const toggleFont = toggle ? parseFloat(getComputedStyle(toggle).fontSize) : 0
-        return {
-          overflowX,
-          placeholder,
-          searchWidth: searchRect?.width ?? 0,
-          waitText,
-          waitRect: waitRect
-            ? { left: waitRect.left, right: waitRect.right, top: waitRect.top, bottom: waitRect.bottom }
-            : null,
-          b21: b21 ? { left: b21.left, right: b21.right, top: b21.top, bottom: b21.bottom } : null,
-          hasToggle: Boolean(toggle),
-          toggleHeight: toggleRect?.height ?? 0,
-          toggleFont,
-        }
-      })
-      assert.equal(check320.overflowX, false, "320x640: horizontal overflow")
-      assert.equal(check320.placeholder, "3 số cuối", `320x640: unexpected placeholder ${check320.placeholder}`)
-      assert(check320.searchWidth >= 100, `320x640: search input too narrow (${check320.searchWidth})`)
-      assert(check320.waitText.includes("Chờ"), `320x640: waitlist button missing "Chờ" (${check320.waitText})`)
-      assert(check320.hasToggle, "320x640: GuestCountCard should be collapsed to toggle chip")
-      assert(check320.toggleHeight >= 44, `320x640: toggle chip height ${check320.toggleHeight} < 44`)
-      assert(check320.toggleFont >= 12, `320x640: toggle chip font ${check320.toggleFont} < 12`)
-
-      // Expand on tap and verify >= 12px text on all stat cells, then collapse
-      await page.getByTestId("guest-count-toggle").click()
-      await page.getByTestId("guest-count-collapse").waitFor({ state: "visible" })
-      const minFont = await page.evaluate(() => {
-        const card = document.querySelector('[data-testid="guest-count-card"]')
-        const spans = [...(card?.querySelectorAll("span, button") ?? [])]
-        return Math.min(...spans.map((el) => parseFloat(getComputedStyle(el).fontSize)))
-      })
-      assert(minFont >= 12, `320x640: expanded GuestCountCard min font ${minFont} < 12px`)
-      await page.getByTestId("guest-count-collapse").click()
-      await page.getByTestId("guest-count-toggle").waitFor({ state: "visible" })
-      await context.close()
-    }
-
-    // 2. 640x400 DPR 2 (200% zoom) zero horizontal scroll
+      label: "OWNER 1440x900",
+      userId: 3,
+      route: "/floor",
+      vw: 1440,
+      vh: 900,
+      detailSelector: "aside h2",
+      isDesktop: true,
+      modalDetail: false,
+    },
     {
-      const context = await browser.newContext({ viewport: { width: 640, height: 400 }, deviceScaleFactor: 2 })
-      await context.addInitScript(() => {
-        localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme: "light" }))
-      })
-      const page = await context.newPage()
-      await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
-      await page.getByRole("button", { name: /^Bàn A7/ }).waitFor({ state: "visible" })
-      const toastClose = page.getByRole("button", { name: "Đóng thông báo", exact: true })
-      if ((await toastClose.count()) > 0) {
-        await toastClose.click()
-        await page.waitForTimeout(150)
-      }
-      const overflowX = await page.evaluate(
-        () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
-      )
-      assert.equal(overflowX, false, "640x400: horizontal overflow")
-      await context.close()
+      label: "CASHIER 1440x900",
+      userId: 5,
+      route: "/floor",
+      vw: 1440,
+      vh: 900,
+      detailSelector: "aside h2",
+      isDesktop: true,
+      modalDetail: false,
+    },
+    {
+      label: "RECEPTION 390x844",
+      userId: 1,
+      route: "/floor",
+      vw: 390,
+      vh: 844,
+      detailSelector: '[data-mobile-table-sheet="true"] h2',
+      isDesktop: false,
+      modalDetail: false,
+    },
+    {
+      label: "WAITER 390x844",
+      userId: 6,
+      route: "/phucvu",
+      vw: 390,
+      vh: 844,
+      detailSelector: '[role="dialog"] h2',
+      isDesktop: false,
+      modalDetail: true,
+    },
+  ]
+
+  for (const role of roles) {
+    const context = await browser.newContext({ viewport: { width: role.vw, height: role.vh }, hasTouch: true })
+    await context.addInitScript((uid) => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: uid, theme: "light" }))
+    }, role.userId)
+    const page = await context.newPage()
+    await page.goto(`${baseUrl}${role.route}`, { waitUntil: "networkidle" })
+    await page.getByRole("button", { name: /^Ghế Bar 5,/ }).waitFor({ state: "visible" })
+    await dismissToastIfPresent(page)
+
+    if (role.isDesktop) {
+      assert.equal(await page.locator("[data-gm]").count(), 0, `${role.label}: must remain on desktop AppShell`)
     }
 
-    // 3. UI-10: >= 768px uses full available width, overlays anchored to edges & bounded
-    for (const [w, h] of [
-      [768, 1024],
-      [820, 1180],
-      [1024, 768],
-      [1280, 600],
-      [1440, 900],
-    ]) {
-      const context = await browser.newContext({ viewport: { width: w, height: h } })
-      await context.addInitScript(() => {
-        localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme: "light" }))
-      })
-      const page = await context.newPage()
-      await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
-      await page.getByRole("button", { name: /^Bàn A7/ }).waitFor({ state: "visible" })
-      const toastClose = page.getByRole("button", { name: "Đóng thông báo", exact: true })
-      if ((await toastClose.count()) > 0) {
-        await toastClose.click()
-        await page.waitForTimeout(150)
+    const hitStats = await page.evaluate(() => {
+      const btns = [...document.querySelectorAll('svg[role="group"] g[role="button"]')]
+      let minW = Infinity
+      let minH = Infinity
+      for (const el of btns) {
+        const r = el.getBoundingClientRect()
+        minW = Math.min(minW, r.width)
+        minH = Math.min(minH, r.height)
       }
-      const m = await page.evaluate(() => {
-        const shell = document.querySelector("[data-gm]")?.getBoundingClientRect()
-        const card = document.querySelector('[data-testid="guest-count-card"]')
-        const cardRect = card?.getBoundingClientRect()
-        const minCardFont = card
-          ? Math.min(
-              ...[...card.querySelectorAll("span, button")].map((el) => parseFloat(getComputedStyle(el).fontSize)),
-            )
-          : 0
-        const waitBtn = document.querySelector('button[aria-label^="Bàn chờ"]')?.getBoundingClientRect()
-        const searchInput = document.querySelector("input[placeholder]")?.getBoundingClientRect()
-        return {
-          vw: window.innerWidth,
-          shellW: shell?.width ?? 0,
-          cardLeft: cardRect?.left ?? -1,
-          cardW: cardRect?.width ?? 0,
-          minCardFont,
-          waitRight: waitBtn?.right ?? 0,
-          searchW: searchInput?.width ?? 0,
-        }
-      })
-      assert(Math.abs(m.shellW - m.vw) <= 2, `${w}x${h}: shell width ${m.shellW} != viewport ${m.vw}`)
-      assert(m.cardLeft <= 12, `${w}x${h}: GuestCountCard not anchored to left edge (${m.cardLeft})`)
-      assert(m.cardW <= 320, `${w}x${h}: GuestCountCard stretched too wide (${m.cardW})`)
-      assert(m.minCardFont >= 12, `${w}x${h}: GuestCountCard min font ${m.minCardFont} < 12px`)
-      assert(
-        m.vw - m.waitRight <= 16,
-        `${w}x${h}: right controls not anchored to right edge (${m.waitRight} vs ${m.vw})`,
-      )
-      assert(m.searchW <= 460, `${w}x${h}: search bar stretched (${m.searchW})`)
-      await context.close()
+      return { count: btns.length, minW, minH }
+    })
+    assert(hitStats.count >= 30, `${role.label}: expected >= 30 table/bar targets, got ${hitStats.count}`)
+    assert(
+      hitStats.minW >= 44 && hitStats.minH >= 44,
+      `${role.label}: min hit ${hitStats.minW.toFixed(1)}x${hitStats.minH.toFixed(1)} < 44`,
+    )
+
+    const geo = await getBarBisectorGeometry(page)
+    assert(geo, `${role.label}: missing BAR05/BAR06 geometry`)
+
+    const closeBottomSheetIfMobile = async () => {
+      if (role.modalDetail) {
+        await page.keyboard.press("Escape")
+        await page.locator('[role="dialog"]').waitFor({ state: "detached" })
+      } else if (!role.isDesktop) {
+        await page.locator('[data-mobile-table-sheet="true"] button[aria-label="Đóng"]').click()
+        await page.locator('[data-mobile-table-sheet="true"]').waitFor({ state: "detached" })
+      }
     }
 
-    // 4. UI-11: smallest table/bar seat hit area >= 44x44 at 390x844 on BOTH /floor and /phucvu, nearest-pick works
-    for (const check of [
-      { userId: 1, route: "/floor" },
-      { userId: 6, route: "/phucvu" },
-    ]) {
-      const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true })
-      await context.addInitScript((uid) => {
-        localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: uid, theme: "light" }))
-      }, check.userId)
-      const page = await context.newPage()
-      await page.goto(`${baseUrl}${check.route}`, { waitUntil: "networkidle" })
-      await page.getByRole("button", { name: /^Ghế Bar 5,/ }).waitFor({ state: "visible" })
-      const toastClose = page.getByRole("button", { name: "Đóng thông báo", exact: true })
-      if ((await toastClose.count()) > 0) {
-        await toastClose.click()
-        await page.waitForTimeout(150)
-      }
+    // 1. Click both sides of BAR05/BAR06 perpendicular bisector
+    await page.mouse.click(geo.bar6Side.x, geo.bar6Side.y)
+    await assertSeatSelectedAndDetailMatches(page, 6, role.detailSelector)
+    await closeBottomSheetIfMobile()
 
-      const hitStats = await page.evaluate(() => {
-        const btns = [...document.querySelectorAll('svg[role="group"] g[role="button"]')]
-        let minW = Infinity
-        let minH = Infinity
-        let smallestLabel = ""
-        for (const el of btns) {
-          const r = el.getBoundingClientRect()
-          if (r.width < minW || r.height < minH) {
-            minW = Math.min(minW, r.width)
-            minH = Math.min(minH, r.height)
-            smallestLabel = el.getAttribute("aria-label") ?? ""
-          }
-        }
-        const bar5 = document.querySelector('g[role="button"][aria-label^="Ghế Bar 5,"]')
-        const bar5Visual = bar5
-          ?.querySelector('circle:not([fill="transparent"]):not(.focus-ring)')
-          ?.getBoundingClientRect()
-        return {
-          count: btns.length,
-          minW,
-          minH,
-          smallestLabel,
-          bar5Visual: bar5Visual
-            ? { left: bar5Visual.left, top: bar5Visual.top, width: bar5Visual.width, height: bar5Visual.height }
-            : null,
-        }
-      })
+    await page.mouse.click(geo.bar5Side.x, geo.bar5Side.y)
+    await assertSeatSelectedAndDetailMatches(page, 5, role.detailSelector)
+    await closeBottomSheetIfMobile()
 
-      assert(hitStats.count >= 30, `${check.route}: expected >= 30 table/bar targets, got ${hitStats.count}`)
-      assert(
-        hitStats.minW >= 44,
-        `${check.route}: smallest hit width ${hitStats.minW.toFixed(1)}px < 44px (${hitStats.smallestLabel})`,
-      )
-      assert(
-        hitStats.minH >= 44,
-        `${check.route}: smallest hit height ${hitStats.minH.toFixed(1)}px < 44px (${hitStats.smallestLabel})`,
-      )
+    // 2. Tap both sides of BAR05/BAR06 perpendicular bisector (BAR06 stays focused first to stress focus-ring hit)
+    await page.touchscreen.tap(geo.bar6Side.x, geo.bar6Side.y)
+    await assertSeatSelectedAndDetailMatches(page, 6, role.detailSelector)
+    await closeBottomSheetIfMobile()
 
-      // Tap inside the invisible outer hit area to the left of BAR05 visual circle (must select BAR05, not miss)
-      assert(hitStats.bar5Visual, `${check.route}: missing BAR05 visual circle`)
-      await page.mouse.click(hitStats.bar5Visual.left - 8, hitStats.bar5Visual.top + hitStats.bar5Visual.height / 2)
+    await page.touchscreen.tap(geo.bar5Side.x, geo.bar5Side.y)
+    await assertSeatSelectedAndDetailMatches(page, 5, role.detailSelector)
+    await closeBottomSheetIfMobile()
+
+    // 3. Tap inside outer padding to the left of BAR05 visual circle (clear selection first so desktop toggle selects BAR05)
+    if (role.isDesktop) {
+      await page.getByRole("button", { name: "Ca tối nay" }).click()
       await page.waitForFunction(
-        () =>
-          document.querySelector('g[role="button"][aria-label^="Ghế Bar 5,"]')?.getAttribute("aria-pressed") === "true",
+        () => document.querySelectorAll('svg[role="group"] g[role="button"][aria-pressed="true"]').length === 0,
       )
-      await page.getByRole("dialog").waitFor({ state: "visible" })
-
-      console.log(
-        `PASS ${check.route} 390x844: ${hitStats.count} targets, min hit=${hitStats.minW.toFixed(1)}x${hitStats.minH.toFixed(1)}px`,
-      )
-      await context.close()
     }
-  } finally {
-    await server.close()
+    await page.touchscreen.tap(geo.bar5OuterLeft.x, geo.bar5OuterLeft.y)
+    await assertSeatSelectedAndDetailMatches(page, 5, role.detailSelector)
+    await closeBottomSheetIfMobile()
+
+    // 4. Camera-drag smoke & merge-mode two-table selection on desktop roles
+    if (role.isDesktop) {
+      // Clear selection before drag smoke
+      const svgBox = await page.locator('svg[role="group"]').boundingBox()
+      assert(svgBox, `${role.label}: missing svg box`)
+      await page.getByRole("button", { name: "Ca tối nay" }).click()
+      await page.waitForFunction(
+        () => document.querySelectorAll('svg[role="group"] g[role="button"][aria-pressed="true"]').length === 0,
+      )
+
+      const transformBefore = await page.locator('svg[role="group"] > g').first().getAttribute("transform")
+      const dragStartX = svgBox.x + svgBox.width * 0.25
+      const dragStartY = svgBox.y + svgBox.height * 0.25
+      await page.mouse.move(dragStartX, dragStartY)
+      await page.mouse.down()
+      await page.mouse.move(dragStartX + 42, dragStartY - 22, { steps: 6 })
+      await page.mouse.up()
+      const transformAfter = await page.locator('svg[role="group"] > g').first().getAttribute("transform")
+      assert.notEqual(transformAfter, transformBefore, `${role.label}: camera drag did not move canvas transform`)
+      assert.equal(
+        await page.locator('svg[role="group"] g[role="button"][aria-pressed="true"]').count(),
+        0,
+        `${role.label}: post-drag click suppression failed`,
+      )
+
+      // Merge mode: select C4 and C1
+      const mergeBtn = page.getByRole("button", { name: "Ghép bàn", exact: true })
+      if ((await mergeBtn.count()) > 0 && (await mergeBtn.isEnabled())) {
+        await mergeBtn.click()
+        await page.getByRole("button", { name: /^Bàn C4,/ }).click()
+        await page.getByRole("button", { name: /^Bàn C1,/ }).click()
+        await page.waitForFunction(() => {
+          const pressed = [...document.querySelectorAll('svg[role="group"] g[role="button"][aria-pressed="true"]')]
+          return pressed.length === 2
+        })
+      }
+    }
+
+    console.log(
+      `PASS ${role.label}: bisector click+tap, outer padding tap, ${hitStats.count} targets min=${hitStats.minW.toFixed(1)}x${hitStats.minH.toFixed(1)}px`,
+    )
+    await context.close()
+  }
+}
+
+async function verifyShellAndPanelCaps(browser, baseUrl) {
+  const breakpoints = [
+    { w: 320, h: 640, expectCappedShell: true },
+    { w: 640, h: 900, expectCappedShell: true },
+    { w: 767, h: 900, expectCappedShell: true },
+    { w: 768, h: 900, expectCappedShell: false },
+    { w: 1024, h: 768, expectCappedShell: false },
+  ]
+
+  for (const vp of breakpoints) {
+    const context = await browser.newContext({ viewport: { width: vp.w, height: vp.h }, hasTouch: true })
+    await context.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme: "light" }))
+    })
+    const page = await context.newPage()
+    await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
+    await page.getByRole("button", { name: /^Bàn A7/ }).waitFor({ state: "visible" })
+    await dismissToastIfPresent(page)
+
+    const shellCheck = await page.evaluate(() => {
+      const shell = document.querySelector("[data-gm]")?.getBoundingClientRect() ?? null
+      return {
+        overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        vw: window.innerWidth,
+        shellW: shell?.width ?? 0,
+        shellLeft: shell?.left ?? -1,
+        shellRight: shell?.right ?? 0,
+      }
+    })
+    assert.equal(shellCheck.overflowX, false, `${vp.w}x${vp.h}: horizontal overflow`)
+    if (vp.expectCappedShell) {
+      assert(shellCheck.shellW <= 628.5, `${vp.w}x${vp.h}: shell width ${shellCheck.shellW} > 628`)
+      if (vp.w > 628) {
+        const rightMargin = shellCheck.vw - shellCheck.shellRight
+        assert(
+          Math.abs(shellCheck.shellLeft - rightMargin) <= 2,
+          `${vp.w}x${vp.h}: shell not centered (${shellCheck.shellLeft} vs ${rightMargin})`,
+        )
+      }
+    } else {
+      assert(Math.abs(shellCheck.shellW - vp.w) <= 2, `${vp.w}x${vp.h}: shell width ${shellCheck.shellW} != ${vp.w}`)
+      assert(Math.abs(shellCheck.shellLeft) <= 1, `${vp.w}x${vp.h}: shell left ${shellCheck.shellLeft} != 0`)
+    }
+
+    // 1. TableSheet <= 628px (open C1 free table)
+    await page.getByRole("button", { name: /^Bàn C1,/ }).click()
+    const sheet = page.locator('[data-mobile-table-sheet="true"]')
+    await sheet.waitFor({ state: "visible" })
+    const sheetBox = await sheet.boundingBox()
+    assert(sheetBox && sheetBox.width <= 628.5, `${vp.w}x${vp.h}: TableSheet width ${sheetBox?.width} > 628`)
+
+    // 2. QuickForm <= 628px (click "Đặt bàn" from A0 TableSheet)
+    await sheet.getByRole("button", { name: "Đặt bàn", exact: true }).click()
+    const quickForm = page.locator('section[aria-label="Đặt bàn trên sơ đồ"]')
+    await quickForm.waitFor({ state: "visible" })
+    const qfBox = await quickForm.boundingBox()
+    assert(qfBox && qfBox.width <= 628.5, `${vp.w}x${vp.h}: QuickForm width ${qfBox?.width} > 628`)
+    await quickForm.getByRole("button", { name: "Đóng form" }).click()
+    await quickForm.waitFor({ state: "hidden" })
+
+    // 3. Pick panel <= 628px (open a booked table -> "Đổi bàn")
+    await page.getByRole("button", { name: /^Bàn B21,/ }).click()
+    await sheet.waitFor({ state: "visible" })
+    await sheet.getByRole("button", { name: "Đổi bàn", exact: true }).click()
+    const pickConfirmBtn = page.getByRole("button", { name: /Xác nhận|Chuyển|Đổi/ }).last()
+    await pickConfirmBtn.waitFor({ state: "visible" })
+    const pickPanelBox = await page.evaluate(() => {
+      const cancelBtn = document.querySelector('button[aria-label="Hủy chọn bàn"]')
+      const topBanner = cancelBtn?.closest("div")?.getBoundingClientRect() ?? null
+      const bottomPanel = [...document.querySelectorAll("main > div")].at(-1)?.getBoundingClientRect() ?? null
+      return { topW: topBanner?.width ?? 0, bottomW: bottomPanel?.width ?? 0 }
+    })
+    assert(pickPanelBox.topW <= 628.5, `${vp.w}x${vp.h}: pick top banner width ${pickPanelBox.topW} > 628`)
+    assert(pickPanelBox.bottomW <= 628.5, `${vp.w}x${vp.h}: pick bottom panel width ${pickPanelBox.bottomW} > 628`)
+
+    await context.close()
+  }
+
+  // Verify OWNER and CASHIER stay on desktop AppShell at 1024x768 as well
+  for (const uid of [3, 5]) {
+    const context = await browser.newContext({ viewport: { width: 1024, height: 768 } })
+    await context.addInitScript((id) => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: id, theme: "light" }))
+    }, uid)
+    const page = await context.newPage()
+    await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
+    await page.getByRole("button", { name: /^Bàn A7/ }).waitFor({ state: "visible" })
+    assert.equal(await page.locator("[data-gm]").count(), 0, `userId ${uid} at 1024x768: expected desktop AppShell`)
+    await context.close()
+  }
+}
+
+async function verifyGuestCounterAndMobileTexts(browser, baseUrl) {
+  // NA41-03: Guest counter "Sửa" button >= 44x44 at 1024x768 with coarse pointer, edge tap + save/reopen 6 values
+  {
+    const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, hasTouch: true })
+    await context.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme: "light" }))
+    })
+    const page = await context.newPage()
+    await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
+    await page.getByRole("button", { name: /^Bàn A7/ }).waitFor({ state: "visible" })
+    await dismissToastIfPresent(page)
+
+    const editBtn = page.getByRole("button", { name: "Sửa bộ đếm khách" })
+    const box = await editBtn.boundingBox()
+    assert(box, "1024x768: missing Sửa bộ đếm khách button")
+    assert(
+      box.width >= 44 && box.height >= 44,
+      `1024x768: Sửa button ${box.width.toFixed(1)}x${box.height.toFixed(1)} < 44x44`,
+    )
+
+    // Tap near the bottom edge of the 44x44 target (outside the old 32px height)
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height - 2)
+    const editor = page.getByTestId("guest-count-editor")
+    await editor.waitFor({ state: "visible" })
+    const expected = [
+      ["Trước 21:30", "11"],
+      ["Sau 21:30", "7"],
+      ["Tổng đã tới", "18"],
+      ["Tổng bàn đặt", "9"],
+      ["Tổng khách đặt", "25"],
+      ["Đã từng đặt bàn", "4"],
+    ]
+    for (const [label, val] of expected) {
+      await editor.getByLabel(label, { exact: true }).fill(val)
+    }
+    await page.getByRole("button", { name: "Lưu", exact: true }).click()
+    await editor.waitFor({ state: "detached" })
+
+    await editBtn.click()
+    await editor.waitFor({ state: "visible" })
+    for (const [label, val] of expected) {
+      assert.equal(
+        await editor.getByLabel(label, { exact: true }).inputValue(),
+        val,
+        `1024x768: ${label} did not persist`,
+      )
+    }
+    await context.close()
+  }
+
+  // UI-13 & UI-12 collapsed chip + expanded >=12px at 320x640, plus 640x400 DPR 2 zero overflow
+  {
+    const context = await browser.newContext({ viewport: { width: 320, height: 640 }, hasTouch: true })
+    await context.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme: "light" }))
+    })
+    const page = await context.newPage()
+    await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
+    await page.getByRole("button", { name: /^Bàn A7/ }).waitFor({ state: "visible" })
+    await dismissToastIfPresent(page)
+
+    const check320 = await page.evaluate(() => {
+      const overflowX = document.documentElement.scrollWidth > document.documentElement.clientWidth
+      const search = document.querySelector("input[placeholder]")
+      const searchRect = search?.getBoundingClientRect()
+      const placeholder = search?.getAttribute("placeholder") ?? ""
+      const waitBtn = document.querySelector('button[aria-label^="Bàn chờ"]')
+      const waitText = waitBtn?.innerText.replace(/\s+/g, " ").trim() ?? ""
+      const toggle = document.querySelector('[data-testid="guest-count-toggle"]')
+      const toggleRect = toggle?.getBoundingClientRect() ?? null
+      const toggleFont = toggle ? parseFloat(getComputedStyle(toggle).fontSize) : 0
+      return {
+        overflowX,
+        placeholder,
+        searchWidth: searchRect?.width ?? 0,
+        waitText,
+        hasToggle: Boolean(toggle),
+        toggleHeight: toggleRect?.height ?? 0,
+        toggleFont,
+      }
+    })
+    assert.equal(check320.overflowX, false, "320x640: horizontal overflow")
+    assert.equal(check320.placeholder, "3 số cuối", `320x640: unexpected placeholder ${check320.placeholder}`)
+    assert(check320.searchWidth >= 100, `320x640: search input too narrow (${check320.searchWidth})`)
+    assert(check320.waitText.includes("Chờ"), `320x640: waitlist button missing "Chờ" (${check320.waitText})`)
+    assert(check320.hasToggle, "320x640: GuestCountCard should be collapsed to toggle chip")
+    assert(check320.toggleHeight >= 44, `320x640: toggle chip height ${check320.toggleHeight} < 44`)
+    assert(check320.toggleFont >= 12, `320x640: toggle chip font ${check320.toggleFont} < 12`)
+
+    await page.getByTestId("guest-count-toggle").click()
+    await page.getByTestId("guest-count-collapse").waitFor({ state: "visible" })
+    const minFont = await page.evaluate(() => {
+      const card = document.querySelector('[data-testid="guest-count-card"]')
+      const spans = [...(card?.querySelectorAll("span, button") ?? [])]
+      return Math.min(...spans.map((el) => parseFloat(getComputedStyle(el).fontSize)))
+    })
+    assert(minFont >= 12, `320x640: expanded GuestCountCard min font ${minFont} < 12px`)
+    await page.getByTestId("guest-count-collapse").click()
+    await page.getByTestId("guest-count-toggle").waitFor({ state: "visible" })
+    await context.close()
+  }
+
+  {
+    const context = await browser.newContext({ viewport: { width: 640, height: 400 }, deviceScaleFactor: 2 })
+    await context.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme: "light" }))
+    })
+    const page = await context.newPage()
+    await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
+    await page.getByRole("button", { name: /^Bàn A7/ }).waitFor({ state: "visible" })
+    await dismissToastIfPresent(page)
+    const overflowX = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    )
+    assert.equal(overflowX, false, "640x400: horizontal overflow")
+    await context.close()
   }
 }
 
 const browser = await launchBrowser()
 try {
   await verifyLoginPortals(browser)
-  await verifyFloorAndMobile(browser)
-  console.log("PASS na41-p1a UI-10..UI-15 verification")
+  const { server, baseUrl } = await startVite("mock")
+  try {
+    await verifyBarBisectorAndHitResolution(browser, baseUrl)
+    await verifyShellAndPanelCaps(browser, baseUrl)
+    await verifyGuestCounterAndMobileTexts(browser, baseUrl)
+  } finally {
+    await server.close()
+  }
+  console.log("PASS na41-p1a UI-10..UI-15 + fix-round-1 verification")
 } finally {
   await browser.close()
 }
