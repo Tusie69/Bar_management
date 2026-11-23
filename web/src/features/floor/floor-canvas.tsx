@@ -294,15 +294,6 @@ function normalizeTableGeometry(t: TableView): TableView {
   return { ...t, w: Math.max(t.w, spec.w), h: Math.max(t.h, spec.h), seating: t.seating ?? spec.seating }
 }
 
-/** A drag ends with a click event; ignore clicks right after a drag. */
-function markSuppressed(ref: { current: number }) {
-  ref.current = performance.now()
-}
-
-function isSuppressed(ref: { current: number }) {
-  return performance.now() - ref.current < 250
-}
-
 export function FloorCanvas(props: FloorCanvasProps) {
   const isReadOnly = props.readOnly === true
   const hideGuestNames = Boolean(props.hideGuestNames)
@@ -348,7 +339,9 @@ export function FloorCanvas(props: FloorCanvasProps) {
     return window.matchMedia("(prefers-reduced-motion: reduce)").matches
   })
 
-  const pointers = useRef(new Map<number, { x: number; y: number }>())
+  const pointers = useRef(
+    new Map<number, { startX: number; startY: number; x: number; y: number; dragged: boolean; captured: boolean }>(),
+  )
   const gesture = useRef<{
     startX: number
     startY: number
@@ -357,7 +350,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
     pinchDist?: number
     pinchMid?: { x: number; y: number }
   } | null>(null)
-  const suppressClick = useRef(0)
+  const suppressNextClick = useRef(false)
 
   // Listen to zoneRefitTick from useUi to support re-clicking active zone tab (disabled in readOnly mode)
   const zoneRefitTick = useUi((s) => (isReadOnly ? 0 : s.zoneRefitTick))
@@ -592,13 +585,72 @@ export function FloorCanvas(props: FloorCanvasProps) {
 
   const canMoveCamera = !isReadOnly && !compact && !planLocked
 
+  const capturePointer = (pointerId: number) => {
+    const entry = pointers.current.get(pointerId)
+    if (!entry || entry.captured) return
+    try {
+      wrapRef.current?.setPointerCapture?.(pointerId)
+      entry.captured = true
+    } catch {
+      // Ignore synthetic/inactive pointer capture errors
+    }
+  }
+
+  const removePointer = (pointerId: number, suppressIfDragged: boolean, upEvent?: React.PointerEvent) => {
+    const entry = pointers.current.get(pointerId)
+    if (!entry) return
+    pointers.current.delete(pointerId)
+    let wasDragged = Boolean(gesture.current?.dragging) || entry.dragged
+    if (upEvent && !wasDragged) {
+      const pt = local(upEvent)
+      if (Math.hypot(pt.x - entry.startX, pt.y - entry.startY) > 6) {
+        wasDragged = true
+      }
+    }
+    if (suppressIfDragged && wasDragged) {
+      suppressNextClick.current = true
+    }
+    if (pointers.current.size === 0) {
+      gesture.current = null
+      setIsInteracting(false)
+    } else if (pointers.current.size === 1) {
+      const [p] = [...pointers.current.values()]
+      gesture.current = {
+        startX: wasDragged ? p.x : p.startX,
+        startY: wasDragged ? p.y : p.startY,
+        view,
+        dragging: wasDragged || p.dragged,
+      }
+    }
+  }
+
+  const onPointerDownCapture = () => {
+    if (isReadOnly) return
+    if (pointers.current.size === 0) {
+      suppressNextClick.current = false
+    }
+  }
+
   const onPointerDown = (e: React.PointerEvent) => {
     if (isReadOnly) return
-    pointers.current.set(e.pointerId, local(e))
+    const pt = local(e)
+    const multiTouch = pointers.current.size >= 1
+    pointers.current.set(e.pointerId, {
+      startX: pt.x,
+      startY: pt.y,
+      x: pt.x,
+      y: pt.y,
+      dragged: multiTouch,
+      captured: false,
+    })
     const pts = [...pointers.current.values()]
     if (pts.length === 1) {
-      gesture.current = { startX: pts[0].x, startY: pts[0].y, view, dragging: false }
+      gesture.current = { startX: pt.x, startY: pt.y, view, dragging: false }
     } else if (pts.length === 2) {
+      for (const [id, entry] of pointers.current) {
+        entry.dragged = true
+        capturePointer(id)
+      }
       const [a, b] = pts
       gesture.current = {
         startX: 0,
@@ -609,13 +661,15 @@ export function FloorCanvas(props: FloorCanvasProps) {
         pinchMid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
       }
       if (canMoveCamera) setIsInteracting(true)
-      wrapRef.current?.setPointerCapture?.(e.pointerId)
     }
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
-    if (!pointers.current.has(e.pointerId) || !gesture.current) return
-    pointers.current.set(e.pointerId, local(e))
+    const entry = pointers.current.get(e.pointerId)
+    if (!entry || !gesture.current) return
+    const pt = local(e)
+    entry.x = pt.x
+    entry.y = pt.y
     const pts = [...pointers.current.values()]
     const g = gesture.current
     if (pts.length >= 2 && g.pinchDist && g.pinchMid) {
@@ -628,29 +682,38 @@ export function FloorCanvas(props: FloorCanvasProps) {
       setView({ k, x: mid.x - (g.pinchMid.x - g.view.x) * f, y: mid.y - (g.pinchMid.y - g.view.y) * f })
       return
     }
-    const p = pts[0]
-    const dx = p.x - g.startX
-    const dy = p.y - g.startY
+    const dx = pt.x - g.startX
+    const dy = pt.y - g.startY
     if (!g.dragging && Math.hypot(dx, dy) > 6) {
       g.dragging = true
+      entry.dragged = true
       if (canMoveCamera) setIsInteracting(true)
-      wrapRef.current?.setPointerCapture?.(e.pointerId)
+      capturePointer(e.pointerId)
     }
     if (g.dragging && canMoveCamera) {
       setView({ k: g.view.k, x: g.view.x + dx, y: g.view.y + dy })
     }
   }
 
-  const endPointer = (e: React.PointerEvent) => {
-    pointers.current.delete(e.pointerId)
-    if (gesture.current?.dragging) markSuppressed(suppressClick)
-    if (pointers.current.size === 0) {
-      gesture.current = null
-      setIsInteracting(false)
-    } else if (pointers.current.size === 1) {
-      const [p] = [...pointers.current.values()]
-      gesture.current = { startX: p.x, startY: p.y, view, dragging: true }
-    }
+  const onPointerUpCapture = (e: React.PointerEvent) => {
+    removePointer(e.pointerId, true, e)
+  }
+
+  const onPointerCancelCapture = (e: React.PointerEvent) => {
+    removePointer(e.pointerId, false)
+  }
+
+  const onLostPointerCapture = (e: React.PointerEvent) => {
+    if (e.target !== e.currentTarget) return
+    removePointer(e.pointerId, false)
+  }
+
+  const onPointerLeave = (e: React.PointerEvent) => {
+    const entry = pointers.current.get(e.pointerId)
+    if (!entry) return
+    const hasCapture = wrapRef.current?.hasPointerCapture?.(e.pointerId)
+    if (entry.captured && hasCapture !== false) return
+    removePointer(e.pointerId, false)
   }
 
   const selected = useMemo(() => new Set(selectedIds), [selectedIds])
@@ -683,7 +746,6 @@ export function FloorCanvas(props: FloorCanvasProps) {
 
   const handleTable = (id: number) => {
     if (isReadOnly || !onTableClick) return
-    if (isSuppressed(suppressClick)) return
     if (!tableCanActivate(id, pickable, selected)) {
       onBlockedTableClick?.(id)
       return
@@ -822,16 +884,30 @@ export function FloorCanvas(props: FloorCanvasProps) {
           : cn("touch-none-pan", planLocked ? "overflow-y-hidden" : "overflow-y-auto"),
         className,
       )}
+      onPointerDownCapture={isReadOnly ? undefined : onPointerDownCapture}
       onPointerDown={isReadOnly ? undefined : onPointerDown}
       onPointerMove={isReadOnly ? undefined : onPointerMove}
-      onPointerUp={isReadOnly ? undefined : endPointer}
-      onPointerCancel={isReadOnly ? undefined : endPointer}
+      onPointerUpCapture={isReadOnly ? undefined : onPointerUpCapture}
+      onPointerCancelCapture={isReadOnly ? undefined : onPointerCancelCapture}
+      onPointerLeave={isReadOnly ? undefined : onPointerLeave}
+      onLostPointerCapture={isReadOnly ? undefined : onLostPointerCapture}
+      onClickCapture={
+        isReadOnly
+          ? undefined
+          : (e) => {
+              if (!suppressNextClick.current) return
+              const native = e.nativeEvent
+              if ("pointerId" in native && (native as PointerEvent).pointerId === -1) return
+              suppressNextClick.current = false
+              e.stopPropagation()
+            }
+      }
       onClick={
         isReadOnly
           ? undefined
           : (e) => {
               if (e.target === e.currentTarget || (e.target as Element).getAttribute?.("data-bg") === "1") {
-                if (!isSuppressed(suppressClick)) onBackgroundClick?.()
+                onBackgroundClick?.()
               }
             }
       }
@@ -847,7 +923,6 @@ export function FloorCanvas(props: FloorCanvasProps) {
           isReadOnly
             ? undefined
             : (e) => {
-                if (isSuppressed(suppressClick)) return
                 const target = e.target as Element | null
                 if (
                   target?.closest?.(
@@ -973,8 +1048,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation()
-                  // The marker sits mid-floor: a finger landing on it must still pan and pinch.
-                  if (!isSuppressed(suppressClick)) onOpenWaitlist()
+                  onOpenWaitlist()
                 }}
                 aria-label={waitingCount !== undefined ? `Bàn chờ, ${waitingCount} khách đang chờ` : "Bàn chờ"}
                 style={{ height: waitlistPos.touchHeight, width: waitlistPos.width }}
