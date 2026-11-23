@@ -480,11 +480,25 @@ describe("BT-11 — panel tổng món", () => {
     expect(html).toContain("Negroni")
   })
 
-  it("mặc định mở, mô tả toàn queue và header đủ target 44px", () => {
-    const html = renderTotalsPanel("BAR", [aggregateItem()])
+  it("mặc định mở trên SSR/desktop, hiện tổng số phần, mô tả toàn queue và header đủ target 44px", () => {
+    const html = renderTotalsPanel("BAR", [
+      aggregateItem({ quantity: 5 }),
+      aggregateItem({ menuItemVariantId: 2, quantity: 3 }),
+    ])
     expect(html).toContain('aria-expanded="true"')
+    expect(html).toContain("8 phần")
     expect(html).toContain("Tính trên toàn bộ hàng đợi, không phụ thuộc bộ lọc.")
     expect(html).toContain("min-h-11")
+  })
+
+  it("nút hành động chính của phiếu nằm trong header phía trước danh sách món", () => {
+    const html = renderTicket(ticket({ status: "SUBMITTED" }), NOW, { canTransition: true })
+    const headerEnd = html.indexOf("</header>")
+    const actionIdx = html.indexOf("Tiếp nhận")
+    const listIdx = html.indexOf('aria-label="Món trên phiếu"')
+    expect(actionIdx).toBeGreaterThan(-1)
+    expect(actionIdx).toBeLessThan(headerEnd)
+    expect(headerEnd).toBeLessThan(listIdx)
   })
 
   it("danh sách có list semantics và vùng cuộn dọc giới hạn chiều cao", () => {

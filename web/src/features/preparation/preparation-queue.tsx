@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { ArrowLeft, ChefHat, GlassWater, LogOut, RefreshCw, Volume2, VolumeX } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -138,9 +138,14 @@ export function PreparationQueue({
   const audio = usePreparationAudio(venueId, station, snapshot?.tickets)
   const canRetry = canShowPrintRetry(hasRetryPermission, snapshot?.printing.enabled === true)
   const stationLabel = preparationStationLabel(station)
-  const readPermission = `preparation.${station.toLowerCase()}.read`
   const columns = useMemo(() => preparationColumns(station), [station])
+  const sectionRef = useRef<HTMLElement>(null)
   const refresh = useCallback(() => queue.refetch(), [queue])
+  const scrollToColumn = useCallback((status: PreparationQueueStatus) => {
+    sectionRef.current
+      ?.querySelector<HTMLElement>(`[data-queue-status="${status}"]`)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }, [])
 
   useEffect(() => {
     if (!httpClient || !canRead) return
@@ -292,36 +297,43 @@ export function PreparationQueue({
   if (!canRead)
     return (
       <section className="grid min-h-0 flex-1 place-items-center p-6 text-center">
-        <div>
+        <div className="max-w-sm">
           <h1 className="text-xl font-semibold">{`Không có quyền xem hàng đợi ${stationLabel}`}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            {`Phiên này thiếu quyền ${readPermission}. Backend cũng sẽ từ chối dữ liệu quầy.`}
+            Tài khoản này chỉ dùng cho nhân viên có quyền xem màn hình quầy. Hãy liên hệ quản lý nếu cần mở quyền.
           </p>
         </div>
       </section>
     )
 
   return (
-    <section className={`${embedded ? "h-full overflow-y-auto" : "min-h-dvh"} min-w-0 bg-background p-3 sm:p-4`}>
-      <header className="mb-4 flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-surface-1 p-3 sm:p-4">
-        <div className="flex min-w-0 items-center gap-3">
+    <section
+      ref={sectionRef}
+      className={`${embedded ? "h-full overflow-y-auto" : "min-h-dvh"} min-w-0 bg-background p-3 sm:p-4`}
+    >
+      <header className="mb-4 flex min-w-0 flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-surface-1 p-3 sm:gap-3 sm:p-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
           {onBack ? (
-            <Button variant="outline" className="min-h-11 shrink-0" onClick={onBack} aria-label="Quay về sơ đồ">
-              <ArrowLeft className="size-4" aria-hidden="true" /> Sơ đồ
+            <Button
+              variant="outline"
+              className="min-h-11 min-w-11 shrink-0 px-2.5 sm:px-3"
+              onClick={onBack}
+              aria-label="Quay về sơ đồ"
+            >
+              <ArrowLeft className="size-4" aria-hidden="true" />
+              <span className="hidden min-[380px]:inline">Sơ đồ</span>
             </Button>
           ) : null}
-          <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground">
+          <span className="hidden size-11 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground sm:grid">
             {station === "BAR" ? <GlassWater className="size-5" /> : <ChefHat className="size-5" />}
           </span>
           <div className="min-w-0">
-            <h1 className="truncate text-xl font-bold">{`Hàng đợi ${stationLabel}`}</h1>
-            <p className="truncate text-xs text-muted-foreground">
-              Cursor {snapshot?.changeCursor ?? "—"} · tự tải lại khi có thay đổi
-            </p>
+            <h1 className="truncate text-base font-bold sm:text-xl">{`Hàng đợi ${stationLabel}`}</h1>
+            <p className="truncate text-xs text-muted-foreground">Tự cập nhật khi có thay đổi</p>
           </div>
         </div>
-        <div className="flex shrink-0 gap-2">
-          {stationControls}
+        {stationControls ? <div className="order-last w-full sm:order-none sm:w-auto">{stationControls}</div> : null}
+        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
           <Button
             type="button"
             variant="outline"
@@ -365,6 +377,28 @@ export function PreparationQueue({
             onFilterChange={setFilter}
           />
           <PreparationTotalsPanel station={station} items={aggregateItems} />
+          <nav aria-label="Chuyển nhanh theo cột" className="mb-3 flex flex-wrap gap-2 xl:hidden">
+            {columns.map((column) => {
+              const count = preparationColumnCount(
+                groupedVisible[column.status].length,
+                groupedTotal[column.status].length,
+                filter,
+              )
+              return (
+                <a
+                  key={column.status}
+                  href={`#queue-${column.status}`}
+                  className="inline-flex min-h-11 shrink-0 items-center rounded-md border border-border bg-surface-1 px-3 text-xs font-semibold text-foreground shadow-xs transition-colors hover:border-border-strong hover:bg-surface-2 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none"
+                  onClick={(event) => {
+                    event.preventDefault()
+                    scrollToColumn(column.status)
+                  }}
+                >
+                  {`${column.label} (${count.text})`}
+                </a>
+              )
+            })}
+          </nav>
           <section className={PREPARATION_QUEUE_LAYOUT_CLASS} aria-label="Các trạng thái hàng đợi">
             {columns.map((column) => {
               const count = preparationColumnCount(
