@@ -617,8 +617,13 @@ async function runVerification(webRoot) {
       await page.locator("table tbody tr").first().waitFor({ state: "visible" })
 
       const rowLayout = await page.evaluate(() => {
+        const container = document.querySelector('[data-testid="admin-accounts-page"] [data-slot="table-container"]')
+        const tableOverflow = container ? container.scrollWidth > container.clientWidth + 1 : false
         const rows = Array.from(document.querySelectorAll("table tbody tr"))
         const issues = []
+        if (tableOverflow) {
+          issues.push(`Table overflows container: ${container.scrollWidth} > ${container.clientWidth}`)
+        }
         for (const row of rows) {
           const actionCell = row.querySelector("td:last-child")
           const buttons = actionCell ? Array.from(actionCell.querySelectorAll("button")) : []

@@ -358,11 +358,11 @@ export default function AdminAccountsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="px-2.5">Tài khoản</TableHead>
-                      <TableHead className="px-2.5">Vai trò</TableHead>
-                      <TableHead className="px-2.5">Cổng đăng nhập</TableHead>
-                      <TableHead className="px-2.5">Trạng thái</TableHead>
-                      <TableHead className="px-2.5 text-right">Thao tác</TableHead>
+                      <TableHead className="px-2">Tài khoản</TableHead>
+                      <TableHead className="px-2">Vai trò</TableHead>
+                      <TableHead className="px-2 whitespace-normal xl:whitespace-nowrap">Cổng đăng nhập</TableHead>
+                      <TableHead className="px-2">Trạng thái</TableHead>
+                      <TableHead className="px-2 text-right">Thao tác</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -374,17 +374,17 @@ export default function AdminAccountsPage() {
                       const isSelected = selected?.id === account.id
                       return (
                         <TableRow key={account.id} data-state={isSelected ? "selected" : undefined}>
-                          <TableCell className="px-2.5 whitespace-normal">
+                          <TableCell className="px-2 whitespace-normal">
                             <span className="block font-medium text-[var(--adm-text)]">{account.displayName}</span>
                             <span className="adm-caption block text-[var(--adm-text-muted)]">@{account.username}</span>
                           </TableCell>
-                          <TableCell className="px-2.5">
+                          <TableCell className="px-2">
                             <Badge variant="secondary">{roleLabel(account)}</Badge>
                           </TableCell>
-                          <TableCell className="px-2.5 font-mono text-xs text-[var(--adm-text-muted)]">
+                          <TableCell className="px-2 font-mono text-xs text-[var(--adm-text-muted)]">
                             {portalPath(account)}
                           </TableCell>
-                          <TableCell className="px-2.5">
+                          <TableCell className="px-2">
                             <Badge className={TONE_BADGE_CLASS[state.tone]}>
                               <span
                                 aria-hidden
@@ -394,7 +394,7 @@ export default function AdminAccountsPage() {
                               {state.label}
                             </Badge>
                           </TableCell>
-                          <TableCell className="px-2.5 text-right whitespace-nowrap">
+                          <TableCell className="px-2 text-right whitespace-nowrap">
                             {/* UI-51: Một hàng thao tác chính + menu "..." cho Đổi mật khẩu và Khóa/Mở khóa. */}
                             <div className="inline-flex flex-nowrap items-center justify-end gap-1.5">
                               <Button
