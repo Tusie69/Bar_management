@@ -45,8 +45,10 @@ import {
   CLUSTER_CODE_STROKE,
   CLUSTER_OUTLINE_STROKE,
   computeClusterDecorations,
+  computeTableHitBox,
   computeZoneBounds,
   findGroupRepresentativeId,
+  findNearestTableInHitArea,
   formatCellGuestName,
   formatGroupCode,
   formatTableCellLabel,
@@ -56,6 +58,7 @@ import {
   GUEST_FLAG_META,
   guestBadgeWidth,
   isPhoneLikeGuestName,
+  MIN_TABLE_HIT_PX,
   resolveCellCornerIcons,
   supportedFlags,
   tableCanActivate,
@@ -241,13 +244,22 @@ function ClusterRectRing({ w, h }: { w: number; h: number }) {
       strokeWidth={1.5}
       strokeDasharray="5 3"
       data-selection-ring="1"
+      pointerEvents="none"
     />
   )
 }
 
 function ClusterCircleRing({ r }: { r: number }) {
   return (
-    <circle r={r + 2.8} fill="none" stroke="#64748B" strokeWidth={1.6} strokeDasharray="5 3" data-selection-ring="1" />
+    <circle
+      r={r + 2.8}
+      fill="none"
+      stroke="#64748B"
+      strokeWidth={1.6}
+      strokeDasharray="5 3"
+      data-selection-ring="1"
+      pointerEvents="none"
+    />
   )
 }
 
@@ -280,15 +292,6 @@ function normalizeTableGeometry(t: TableView): TableView {
   if (!spec) return t
   if (t.w >= spec.w && t.h >= spec.h) return t
   return { ...t, w: Math.max(t.w, spec.w), h: Math.max(t.h, spec.h), seating: t.seating ?? spec.seating }
-}
-
-/** A drag ends with a click event; ignore clicks right after a drag. */
-function markSuppressed(ref: { current: number }) {
-  ref.current = performance.now()
-}
-
-function isSuppressed(ref: { current: number }) {
-  return performance.now() - ref.current < 250
 }
 
 export function FloorCanvas(props: FloorCanvasProps) {
@@ -325,6 +328,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
   const selectedTableId = selectedIds[0]
 
   const wrapRef = useRef<HTMLDivElement>(null)
+  const svgRef = useRef<SVGSVGElement>(null)
   const [size, setSize] = useState({ w: 0, h: 0 })
   const measuredSize = useRef({ w: 0, h: 0 })
   /** A manual view only applies to the zone it was made in; otherwise the view is fitted. */
@@ -335,7 +339,9 @@ export function FloorCanvas(props: FloorCanvasProps) {
     return window.matchMedia("(prefers-reduced-motion: reduce)").matches
   })
 
-  const pointers = useRef(new Map<number, { x: number; y: number }>())
+  const pointers = useRef(
+    new Map<number, { startX: number; startY: number; x: number; y: number; dragged: boolean; captured: boolean }>(),
+  )
   const gesture = useRef<{
     startX: number
     startY: number
@@ -344,7 +350,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
     pinchDist?: number
     pinchMid?: { x: number; y: number }
   } | null>(null)
-  const suppressClick = useRef(0)
+  const suppressNextClick = useRef(false)
 
   // Listen to zoneRefitTick from useUi to support re-clicking active zone tab (disabled in readOnly mode)
   const zoneRefitTick = useUi((s) => (isReadOnly ? 0 : s.zoneRefitTick))
@@ -577,13 +583,74 @@ export function FloorCanvas(props: FloorCanvasProps) {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top }
   }
 
+  const canMoveCamera = !isReadOnly && !compact && !planLocked
+
+  const capturePointer = (pointerId: number) => {
+    const entry = pointers.current.get(pointerId)
+    if (!entry || entry.captured) return
+    try {
+      wrapRef.current?.setPointerCapture?.(pointerId)
+      entry.captured = true
+    } catch {
+      // Ignore synthetic/inactive pointer capture errors
+    }
+  }
+
+  const removePointer = (pointerId: number, suppressIfDragged: boolean, upEvent?: React.PointerEvent) => {
+    const entry = pointers.current.get(pointerId)
+    if (!entry) return
+    pointers.current.delete(pointerId)
+    let wasDragged = Boolean(gesture.current?.dragging) || entry.dragged
+    if (upEvent && !wasDragged) {
+      const pt = local(upEvent)
+      if (Math.hypot(pt.x - entry.startX, pt.y - entry.startY) > 6) {
+        wasDragged = true
+      }
+    }
+    if (suppressIfDragged && wasDragged) {
+      suppressNextClick.current = true
+    }
+    if (pointers.current.size === 0) {
+      gesture.current = null
+      setIsInteracting(false)
+    } else if (pointers.current.size === 1) {
+      const [p] = [...pointers.current.values()]
+      gesture.current = {
+        startX: wasDragged ? p.x : p.startX,
+        startY: wasDragged ? p.y : p.startY,
+        view,
+        dragging: wasDragged || p.dragged,
+      }
+    }
+  }
+
+  const onPointerDownCapture = () => {
+    if (isReadOnly) return
+    if (pointers.current.size === 0) {
+      suppressNextClick.current = false
+    }
+  }
+
   const onPointerDown = (e: React.PointerEvent) => {
-    if (isReadOnly || compact || planLocked) return
-    pointers.current.set(e.pointerId, local(e))
+    if (isReadOnly) return
+    const pt = local(e)
+    const multiTouch = pointers.current.size >= 1
+    pointers.current.set(e.pointerId, {
+      startX: pt.x,
+      startY: pt.y,
+      x: pt.x,
+      y: pt.y,
+      dragged: multiTouch,
+      captured: false,
+    })
     const pts = [...pointers.current.values()]
     if (pts.length === 1) {
-      gesture.current = { startX: pts[0].x, startY: pts[0].y, view, dragging: false }
+      gesture.current = { startX: pt.x, startY: pt.y, view, dragging: false }
     } else if (pts.length === 2) {
+      for (const [id, entry] of pointers.current) {
+        entry.dragged = true
+        capturePointer(id)
+      }
       const [a, b] = pts
       gesture.current = {
         startX: 0,
@@ -593,17 +660,20 @@ export function FloorCanvas(props: FloorCanvasProps) {
         pinchDist: Math.hypot(a.x - b.x, a.y - b.y),
         pinchMid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
       }
-      setIsInteracting(true)
-      wrapRef.current?.setPointerCapture(e.pointerId)
+      if (canMoveCamera) setIsInteracting(true)
     }
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
-    if (!pointers.current.has(e.pointerId) || !gesture.current) return
-    pointers.current.set(e.pointerId, local(e))
+    const entry = pointers.current.get(e.pointerId)
+    if (!entry || !gesture.current) return
+    const pt = local(e)
+    entry.x = pt.x
+    entry.y = pt.y
     const pts = [...pointers.current.values()]
     const g = gesture.current
     if (pts.length >= 2 && g.pinchDist && g.pinchMid) {
+      if (!canMoveCamera) return
       const [a, b] = pts
       const dist = Math.hypot(a.x - b.x, a.y - b.y)
       const k = Math.min(baseK * 5, Math.max(baseK * 0.6, g.view.k * (dist / g.pinchDist)))
@@ -612,29 +682,38 @@ export function FloorCanvas(props: FloorCanvasProps) {
       setView({ k, x: mid.x - (g.pinchMid.x - g.view.x) * f, y: mid.y - (g.pinchMid.y - g.view.y) * f })
       return
     }
-    const p = pts[0]
-    const dx = p.x - g.startX
-    const dy = p.y - g.startY
+    const dx = pt.x - g.startX
+    const dy = pt.y - g.startY
     if (!g.dragging && Math.hypot(dx, dy) > 6) {
       g.dragging = true
-      setIsInteracting(true)
-      wrapRef.current?.setPointerCapture(e.pointerId)
+      entry.dragged = true
+      if (canMoveCamera) setIsInteracting(true)
+      capturePointer(e.pointerId)
     }
-    if (g.dragging) {
+    if (g.dragging && canMoveCamera) {
       setView({ k: g.view.k, x: g.view.x + dx, y: g.view.y + dy })
     }
   }
 
-  const endPointer = (e: React.PointerEvent) => {
-    pointers.current.delete(e.pointerId)
-    if (gesture.current?.dragging) markSuppressed(suppressClick)
-    if (pointers.current.size === 0) {
-      gesture.current = null
-      setIsInteracting(false)
-    } else if (pointers.current.size === 1) {
-      const [p] = [...pointers.current.values()]
-      gesture.current = { startX: p.x, startY: p.y, view, dragging: true }
-    }
+  const onPointerUpCapture = (e: React.PointerEvent) => {
+    removePointer(e.pointerId, true, e)
+  }
+
+  const onPointerCancelCapture = (e: React.PointerEvent) => {
+    removePointer(e.pointerId, false)
+  }
+
+  const onLostPointerCapture = (e: React.PointerEvent) => {
+    if (e.target !== e.currentTarget) return
+    removePointer(e.pointerId, false)
+  }
+
+  const onPointerLeave = (e: React.PointerEvent) => {
+    const entry = pointers.current.get(e.pointerId)
+    if (!entry) return
+    const hasCapture = wrapRef.current?.hasPointerCapture?.(e.pointerId)
+    if (entry.captured && hasCapture !== false) return
+    removePointer(e.pointerId, false)
   }
 
   const selected = useMemo(() => new Set(selectedIds), [selectedIds])
@@ -667,7 +746,6 @@ export function FloorCanvas(props: FloorCanvasProps) {
 
   const handleTable = (id: number) => {
     if (isReadOnly || !onTableClick) return
-    if (isSuppressed(suppressClick)) return
     if (!tableCanActivate(id, pickable, selected)) {
       onBlockedTableClick?.(id)
       return
@@ -789,6 +867,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
   }
 
   const isPhone = phoneViewport
+  const minHitSvg = !isReadOnly && view.k > 0 ? Math.ceil((MIN_TABLE_HIT_PX / view.k) * 100) / 100 : MIN_TABLE_HIT_PX
   // When the plan is fitted to the viewport the SVG must not grow past it:
   // any extra height brings the vertical scrollbar straight back.
   const neededHeight = isAllZone ? Math.ceil(FLOOR_H * view.k + (isPhone ? 4 : CANVAS_BOTTOM_GAP)) : size.h
@@ -805,21 +884,66 @@ export function FloorCanvas(props: FloorCanvasProps) {
           : cn("touch-none-pan", planLocked ? "overflow-y-hidden" : "overflow-y-auto"),
         className,
       )}
+      onPointerDownCapture={isReadOnly ? undefined : onPointerDownCapture}
       onPointerDown={isReadOnly ? undefined : onPointerDown}
       onPointerMove={isReadOnly ? undefined : onPointerMove}
-      onPointerUp={isReadOnly ? undefined : endPointer}
-      onPointerCancel={isReadOnly ? undefined : endPointer}
+      onPointerUpCapture={isReadOnly ? undefined : onPointerUpCapture}
+      onPointerCancelCapture={isReadOnly ? undefined : onPointerCancelCapture}
+      onPointerLeave={isReadOnly ? undefined : onPointerLeave}
+      onLostPointerCapture={isReadOnly ? undefined : onLostPointerCapture}
+      onClickCapture={
+        isReadOnly
+          ? undefined
+          : (e) => {
+              if (!suppressNextClick.current) return
+              const native = e.nativeEvent
+              if ("pointerId" in native && (native as PointerEvent).pointerId === -1) return
+              suppressNextClick.current = false
+              e.stopPropagation()
+            }
+      }
       onClick={
         isReadOnly
           ? undefined
           : (e) => {
               if (e.target === e.currentTarget || (e.target as Element).getAttribute?.("data-bg") === "1") {
-                if (!isSuppressed(suppressClick)) onBackgroundClick?.()
+                onBackgroundClick?.()
               }
             }
       }
     >
-      <svg width={size.w} height={svgHeight} className="block" role="group" aria-label={ariaLabel ?? "Sơ đồ bàn 21GAM"}>
+      <svg
+        ref={svgRef}
+        width={size.w}
+        height={svgHeight}
+        className="block"
+        role="group"
+        aria-label={ariaLabel ?? "Sơ đồ bàn 21GAM"}
+        onClick={
+          isReadOnly
+            ? undefined
+            : (e) => {
+                const target = e.target as Element | null
+                if (
+                  target?.closest?.(
+                    '[role="button"], button, [data-testid="bar-guest-list"], [data-mobile-waitlist-marker]',
+                  )
+                ) {
+                  return
+                }
+                const svgEl = svgRef.current
+                if (!svgEl || view.k <= 0) return
+                const rect = svgEl.getBoundingClientRect()
+                const svgX = (e.clientX - rect.left - view.x) / view.k
+                const svgY = (e.clientY - rect.top - view.y) / view.k
+                const nearest = findNearestTableInHitArea(tables, svgX, svgY, minHitSvg, focusZone)
+                if (nearest) {
+                  e.stopPropagation()
+                  handleTable(nearest.id)
+                }
+              }
+        }
+      >
         <defs>
           <pattern id="dot-grid" width="12" height="12" patternUnits="userSpaceOnUse">
             <circle cx="1" cy="1" r="0.7" fill="var(--floor-grid)" />
@@ -924,8 +1048,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation()
-                  // The marker sits mid-floor: a finger landing on it must still pan and pinch.
-                  if (!isSuppressed(suppressClick)) onOpenWaitlist()
+                  onOpenWaitlist()
                 }}
                 aria-label={waitingCount !== undefined ? `Bàn chờ, ${waitingCount} khách đang chờ` : "Bàn chờ"}
                 style={{ height: waitlistPos.touchHeight, width: waitlistPos.width }}
@@ -1006,6 +1129,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
               dim: !!dim,
               pickHint: !!pickable && pickable.has(t.id),
               disabled: !!pickable && !pickable.has(t.id) && !selected.has(t.id),
+              minHitSvg,
               onActivate: handleTable,
             }
             if (mode === "availability") {
@@ -1212,6 +1336,7 @@ interface GlyphBase {
   dim: boolean
   pickHint: boolean
   disabled: boolean
+  minHitSvg?: number
   onActivate: (id: number) => void
 }
 
@@ -1255,7 +1380,7 @@ function Chairs({ t, color }: { t: TableView; color: string }) {
       break
   }
   return (
-    <g aria-hidden>
+    <g aria-hidden pointerEvents="none">
       {chairs.map(([x, y, w, h], i) => (
         <rect key={i} x={x} y={y} width={w} height={h} rx={1.6} fill="var(--floor)" stroke={color} strokeWidth={0.9} />
       ))}
@@ -1356,6 +1481,7 @@ const LiveGlyph = memo(function LiveGlyph({
   dim,
   pickHint,
   disabled,
+  minHitSvg = MIN_TABLE_HIT_PX,
   onActivate,
   state: fs,
   clusterPad,
@@ -1492,6 +1618,8 @@ const LiveGlyph = memo(function LiveGlyph({
 
   const ariaText = describe(t, rawState, fs, { hideGuestNames, maskPhoneNames })
 
+  const hitBox = readOnly ? null : computeTableHitBox(t, minHitSvg)
+
   if (t.kind === "BAR_SEAT") {
     const r = Math.max(9, (t.w || 20) / 2)
     const hasRoom = r >= 10
@@ -1524,11 +1652,29 @@ const LiveGlyph = memo(function LiveGlyph({
         data-search-highlighted={searchHighlighted || undefined}
         className={`${readOnly ? "cursor-default" : disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
         opacity={dim ? 0.3 : 1}
-        onClick={readOnly ? undefined : () => onActivate(t.id)}
+        onClick={
+          readOnly
+            ? undefined
+            : (e) => {
+                e.stopPropagation()
+                onActivate(t.id)
+              }
+        }
         onKeyDown={readOnly ? undefined : (e) => onKey(e, t.id, onActivate)}
       >
         {readOnly ? <title>{ariaText}</title> : null}
-        <circle r={r + 5} fill="transparent" />
+        {hitBox ? (
+          <rect
+            data-hit-area="1"
+            x={-hitBox.w / 2}
+            y={-hitBox.h / 2}
+            width={hitBox.w}
+            height={hitBox.h}
+            fill="transparent"
+            pointerEvents="none"
+          />
+        ) : null}
+        <circle r={r + 2} fill="transparent" pointerEvents="none" />
         <circle
           className="focus-ring opacity-0"
           r={r + 4}
@@ -1536,8 +1682,11 @@ const LiveGlyph = memo(function LiveGlyph({
           stroke="var(--ring)"
           strokeWidth={1.5}
           strokeDasharray="2 2"
+          pointerEvents="none"
         />
-        {searchHighlighted ? <circle r={r + 5} fill="none" stroke="var(--primary)" strokeWidth={3} /> : null}
+        {searchHighlighted ? (
+          <circle r={r + 5} fill="none" stroke="var(--primary)" strokeWidth={3} pointerEvents="none" />
+        ) : null}
         {selected ? (
           <PickedCircleRing r={r} />
         ) : groupHighlighted ? (
@@ -1550,6 +1699,7 @@ const LiveGlyph = memo(function LiveGlyph({
             strokeOpacity={0.35}
             strokeWidth={1}
             strokeDasharray="2 2"
+            pointerEvents="none"
           />
         ) : null}
         <circle
@@ -1609,11 +1759,29 @@ const LiveGlyph = memo(function LiveGlyph({
       data-search-highlighted={searchHighlighted || undefined}
       className={`${readOnly ? "cursor-default" : disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
       opacity={dim ? 0.3 : 1}
-      onClick={readOnly ? undefined : () => onActivate(t.id)}
+      onClick={
+        readOnly
+          ? undefined
+          : (e) => {
+              e.stopPropagation()
+              onActivate(t.id)
+            }
+      }
       onKeyDown={readOnly ? undefined : (e) => onKey(e, t.id, onActivate)}
     >
       {readOnly ? <title>{ariaText}</title> : null}
-      <rect x={-hw - 8} y={-hh - 8} width={t.w + 16} height={t.h + 16} fill="transparent" />
+      {hitBox ? (
+        <rect
+          data-hit-area="1"
+          x={-hitBox.w / 2}
+          y={-hitBox.h / 2}
+          width={hitBox.w}
+          height={hitBox.h}
+          fill="transparent"
+          pointerEvents="none"
+        />
+      ) : null}
+      <rect x={-hw - 2} y={-hh - 2} width={t.w + 4} height={t.h + 4} fill="transparent" pointerEvents="none" />
       <rect
         className="focus-ring opacity-0"
         x={-hw - 6}
@@ -1625,6 +1793,7 @@ const LiveGlyph = memo(function LiveGlyph({
         stroke="var(--ring)"
         strokeWidth={1.5}
         strokeDasharray="3 2"
+        pointerEvents="none"
       />
       {searchHighlighted ? (
         <rect
@@ -1636,6 +1805,7 @@ const LiveGlyph = memo(function LiveGlyph({
           fill="none"
           stroke="var(--primary)"
           strokeWidth={3}
+          pointerEvents="none"
         />
       ) : null}
       {selected ? (
@@ -1654,6 +1824,7 @@ const LiveGlyph = memo(function LiveGlyph({
           strokeOpacity={0.35}
           strokeWidth={1}
           strokeDasharray="3 3"
+          pointerEvents="none"
         />
       ) : null}
       <Chairs
@@ -1834,6 +2005,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
   dim,
   pickHint,
   disabled,
+  minHitSvg = MIN_TABLE_HIT_PX,
   onActivate,
   avail,
 }: GlyphBase & { avail?: TableAvailability }) {
@@ -1879,6 +2051,8 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
           .join(" ")
       : undefined
 
+  const hitBox = computeTableHitBox(t, minHitSvg)
+
   if (t.kind === "BAR_SEAT") {
     const r = Math.max(9, (t.w || 20) / 2)
     return (
@@ -1895,10 +2069,22 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
         data-is-group={isGroup ? "true" : undefined}
         className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
         opacity={opacity}
-        onClick={() => onActivate(t.id)}
+        onClick={(e) => {
+          e.stopPropagation()
+          onActivate(t.id)
+        }}
         onKeyDown={(e) => onKey(e, t.id, onActivate)}
       >
-        <circle r={r + 4.5} fill="transparent" />
+        <rect
+          data-hit-area="1"
+          x={-hitBox.w / 2}
+          y={-hitBox.h / 2}
+          width={hitBox.w}
+          height={hitBox.h}
+          fill="transparent"
+          pointerEvents="none"
+        />
+        <circle r={r + 2} fill="transparent" pointerEvents="none" />
         <circle
           className="focus-ring opacity-0"
           r={r + 3.5}
@@ -1906,13 +2092,21 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
           stroke="var(--ring)"
           strokeWidth={1.5}
           strokeDasharray="2 2"
+          pointerEvents="none"
         />
         {selected ? (
           <PickedCircleRing r={r} />
         ) : groupHighlighted ? (
           <ClusterCircleRing r={r} />
         ) : pickHint ? (
-          <circle r={r + 2.8} fill="none" stroke="var(--foreground)" strokeOpacity={0.3} strokeDasharray="2 2" />
+          <circle
+            r={r + 2.8}
+            fill="none"
+            stroke="var(--foreground)"
+            strokeOpacity={0.3}
+            strokeDasharray="2 2"
+            pointerEvents="none"
+          />
         ) : null}
         <circle
           r={r}
@@ -1950,10 +2144,22 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
       data-is-group={isGroup ? "true" : undefined}
       className={`${disabled ? "cursor-not-allowed" : "cursor-pointer"} outline-none [&:focus-visible_.focus-ring]:opacity-100`}
       opacity={opacity}
-      onClick={() => onActivate(t.id)}
+      onClick={(e) => {
+        e.stopPropagation()
+        onActivate(t.id)
+      }}
       onKeyDown={(e) => onKey(e, t.id, onActivate)}
     >
-      <rect x={-hw - 8} y={-hh - 8} width={t.w + 16} height={t.h + 16} fill="transparent" />
+      <rect
+        data-hit-area="1"
+        x={-hitBox.w / 2}
+        y={-hitBox.h / 2}
+        width={hitBox.w}
+        height={hitBox.h}
+        fill="transparent"
+        pointerEvents="none"
+      />
+      <rect x={-hw - 2} y={-hh - 2} width={t.w + 4} height={t.h + 4} fill="transparent" pointerEvents="none" />
       <rect
         className="focus-ring opacity-0"
         x={-hw - 6}
@@ -1965,6 +2171,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
         stroke="var(--ring)"
         strokeWidth={1.5}
         strokeDasharray="3 2"
+        pointerEvents="none"
       />
       {selected || groupHighlighted ? (
         <rect
@@ -1978,6 +2185,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
           strokeWidth={1.5}
           strokeDasharray="5 3"
           data-selection-ring="1"
+          pointerEvents="none"
         />
       ) : pickHint && !selected ? (
         <rect
@@ -1990,6 +2198,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
           stroke="var(--foreground)"
           strokeOpacity={0.3}
           strokeDasharray="3 3"
+          pointerEvents="none"
         />
       ) : null}
       <Chairs t={t} color={ok || selected ? "var(--foreground)" : "var(--table-line)"} />

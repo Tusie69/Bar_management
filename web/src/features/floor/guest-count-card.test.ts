@@ -32,22 +32,37 @@ const sampleCount = {
 }
 
 describe("GuestCountCard", () => {
-  it("always shows all six fields with no collapse toggle, Thu gọn button, or inline edit inputs", () => {
+  it("renders collapsed chip by default on phones and expands to show all six fields at >=12px with no inline edit inputs", () => {
     const client = new QueryClient()
-    const html = renderToString(
+    const collapsedHtml = renderToString(
       createElement(QueryClientProvider, { client }, createElement(GuestCountCard, { businessDate: "2026-11-15" })),
     )
-    expect(html).toContain('data-testid="guest-count-card"')
-    expect(html).toContain("Đếm khách")
-    expect(html).toContain("Trước 21:30")
-    expect(html).toContain("Sau 21:30")
-    expect(html).toContain("Tổng đã tới")
-    expect(html).toContain("Tổng bàn đặt")
-    expect(html).toContain("Tổng khách đặt")
-    expect(html).toContain("Đã từng đặt bàn")
-    expect(html).not.toContain('data-testid="guest-count-card-collapsed"')
-    expect(html).not.toContain("Thu gọn")
-    expect(html).not.toContain("<input")
+    expect(collapsedHtml).toContain('data-testid="guest-count-card"')
+    expect(collapsedHtml).toContain('data-testid="guest-count-toggle"')
+    expect(collapsedHtml).toContain('aria-expanded="false"')
+    expect(collapsedHtml).toContain("Đếm khách")
+    expect(collapsedHtml).not.toContain("<input")
+
+    const expandedHtml = renderToString(
+      createElement(
+        QueryClientProvider,
+        { client },
+        createElement(GuestCountCard, { businessDate: "2026-11-15", defaultExpanded: true }),
+      ),
+    )
+    expect(expandedHtml).toContain('data-testid="guest-count-card"')
+    expect(expandedHtml).toContain("Đếm khách")
+    expect(expandedHtml).toContain("Trước 21:30")
+    expect(expandedHtml).toContain("Sau 21:30")
+    expect(expandedHtml).toContain("Tổng đã tới")
+    expect(expandedHtml).toContain("Tổng bàn đặt")
+    expect(expandedHtml).toContain("Tổng khách đặt")
+    expect(expandedHtml).toContain("Đã từng đặt bàn")
+    expect(expandedHtml).toContain("text-xs")
+    expect(expandedHtml).not.toMatch(/text-\[(?:8|9|9\.5|10|11)px\]/)
+    expect(expandedHtml).not.toContain("lg:min-h-8")
+    expect(expandedHtml).not.toContain("lg:min-w-8")
+    expect(expandedHtml).not.toContain("<input")
   })
 
   it("renders view summary and modal edit controls inside GuestCountSheetPanel without expanding the map card", () => {
@@ -154,7 +169,11 @@ describe("GuestCountCard", () => {
       updatedAt: null,
     })
     const html = renderToString(
-      createElement(QueryClientProvider, { client }, createElement(GuestCountCard, { businessDate: "2026-11-15" })),
+      createElement(
+        QueryClientProvider,
+        { client },
+        createElement(GuestCountCard, { businessDate: "2026-11-15", defaultExpanded: true }),
+      ),
     )
     for (const num of ["123", "345", "468", "42", "129", "1299"]) {
       expect(html).toContain(`>${num}<`)

@@ -351,8 +351,7 @@ export default function MobileApp() {
         }
         className={cn(
           "gm-shell-viewport fixed inset-x-0 top-0 w-full touch-manipulation overflow-hidden",
-          isReceptionist &&
-            "mx-auto max-w-[var(--gm-max-w)] md:border-x md:border-border/70 md:shadow-[var(--shadow-float)]",
+          isReceptionist && "mx-auto max-w-[var(--gm-max-w)] md:max-w-none",
         )}
       >
         <div

@@ -68,7 +68,9 @@ describe("Auth screens presentation", () => {
     expect(html).toContain('aria-label="Hiện mật khẩu"')
     expect(html).toContain("Phiên đã hết hạn")
     expect(html).toContain('role="alert"')
-    expect(html).toContain("cookie HttpOnly")
+    expect(html).toContain("Phiên đăng nhập được bảo vệ.")
+    expect(html).not.toContain("cookie HttpOnly")
+    expect(html).not.toContain("CSRF")
   })
 
   it("renders PortalUnderConstruction, PasswordChangeGate, ServerSessionPage, and SessionEndedNotice", () => {

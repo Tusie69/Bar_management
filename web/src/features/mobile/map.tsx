@@ -26,7 +26,6 @@ import { fmtBusinessDate, fmtTime, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useUi } from "@/state/ui"
 import { useReceptionSearch } from "@/hooks/use-reception-search"
-import { usePlanWidth } from "@/hooks/use-plan-width"
 import { FloorCanvas } from "../floor/floor-canvas"
 import { SpareButton } from "../floor/spare-button"
 import { LayoutActions, LayoutMergeControls } from "../floor/layout-merge-controls"
@@ -102,9 +101,6 @@ export function MapScreen({
   const layoutIds = useUi((s) => s.pickSelection)
   const waitingCount = (m.waitlist ?? []).filter(isWaitingForTable).length
   const canExport = m.can("customer.view_masked")
-  // Cỡ máy thật, không phải cỡ viewport: Safari thu nhỏ trang thì iPhone X báo
-  // ~506px và trước đây nhận bộ chrome của máy to, đè lên Khu B/Khu C.
-  const planWidth = usePlanWidth()
   // The plan owns the screen: its own controls float on it instead of stacking above it.
   const planChrome = receptionist && !pick && !draft
 
@@ -215,7 +211,7 @@ export function MapScreen({
         <header className="gm-glass-chrome z-[5] shrink-0 border-b border-border/70 bg-[var(--glass-chrome)] px-3 pt-[var(--top-safe)] backdrop-blur-md">
           {/* A single 48px row is the whole fixed chrome: menu, search, export.
               Undo/redo, date, Đếm khách and ⓘ float on the plan itself. */}
-          <div className="flex h-[48px] items-center gap-2">
+          <div className="flex h-[48px] items-center justify-between gap-1.5 sm:gap-2">
             <button
               type="button"
               onClick={m.openAccount}
@@ -232,7 +228,7 @@ export function MapScreen({
                 <h1 className="sr-only">Sơ đồ bàn</h1>
                 <ReceptionSearchField
                   search={search}
-                  className="[&_button]:min-h-[44px] [&_button]:min-w-[44px] [&_input]:h-11 [&_input]:min-h-[44px] [&_input]:rounded-xl [&_input]:border-border [&_input]:bg-surface-1 [&_input]:pl-11 [&_input]:shadow-[var(--shadow-xs)]"
+                  className="md:mx-auto md:max-w-md [&_button]:min-h-[44px] [&_button]:min-w-[44px] [&_input]:h-11 [&_input]:min-h-[44px] [&_input]:rounded-xl [&_input]:border-border [&_input]:bg-surface-1 [&_input]:pr-2 [&_input]:pl-10 [&_input]:text-[13px] [&_input]:shadow-[var(--shadow-xs)] sm:[&_input]:pl-11 sm:[&_input]:text-sm"
                 />
               </>
             ) : (
@@ -249,7 +245,7 @@ export function MapScreen({
                   aria-label="Xuất text Zalo"
                   title="Xuất text booking để gửi nhóm Zalo"
                   className={cn(
-                    "gm-press inline-flex h-11 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-3.5 text-[14px] font-semibold text-primary-foreground shadow-[var(--shadow-xs)] hover:bg-[var(--primary-hover)]",
+                    "gm-press inline-flex h-11 shrink-0 items-center gap-1.5 rounded-xl bg-primary px-2.5 text-[13px] font-semibold text-primary-foreground shadow-[var(--shadow-xs)] hover:bg-[var(--primary-hover)] sm:px-3.5 sm:text-[14px]",
                     (!canExport || loading) && "cursor-not-allowed opacity-50",
                   )}
                 >
@@ -306,7 +302,7 @@ export function MapScreen({
         </div>
       ) : null}
       {pick ? (
-        <div className="z-[6] mx-3 mt-1.5 mb-2 flex shrink-0 items-start gap-2 rounded-2xl border border-primary/50 bg-surface-1 py-2.5 pr-1.5 pl-3.5 shadow-[var(--shadow-soft)]">
+        <div className="z-[6] mx-auto mt-1.5 mb-2 flex w-[calc(100%-1.5rem)] max-w-[var(--gm-max-w)] shrink-0 items-start gap-2 rounded-2xl border border-primary/50 bg-surface-1 py-2.5 pr-1.5 pl-3.5 shadow-[var(--shadow-soft)]">
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="text-[14px] font-semibold text-tx-strong">{pick.title}</span>
             <span className="text-[13px] text-pretty text-[var(--text-muted)]">{pick.hint}</span>
@@ -358,7 +354,7 @@ export function MapScreen({
         {/* Search results float OVER the plan so document flow doesn't jump the camera. */}
         {planChrome && search.active ? (
           <div className="pointer-events-none absolute inset-x-0 top-1.5 z-[11] px-2.5">
-            <div className="gm-glass-chrome pointer-events-auto rounded-2xl border border-border bg-popover/95 px-3 py-2.5 shadow-[var(--shadow-float)] backdrop-blur-md">
+            <div className="gm-glass-chrome pointer-events-auto mx-auto w-full max-w-[var(--gm-max-w)] rounded-2xl border border-border bg-popover/95 px-3 py-2.5 shadow-[var(--shadow-float)] backdrop-blur-md">
               <ReceptionSearchResults search={search} onOpenBooking={m.openDetail} />
             </div>
           </div>
@@ -406,11 +402,11 @@ export function MapScreen({
                           onPointerEnter={() => void prewarmMotionController()}
                           onPointerDown={() => void prewarmMotionController()}
                           aria-label={`Bàn chờ, ${waitingCount} nhóm đang đợi`}
-                          className="gm-press inline-flex h-11 min-h-[44px] min-w-[44px] items-center gap-1 rounded-xl border border-border/80 bg-surface-1/92 px-1.5 text-[12px] font-semibold text-tx-strong shadow-[var(--shadow-soft)] backdrop-blur-md dark:border-slate-700/80 dark:bg-[#1e232d]/92"
+                          className="gm-press inline-flex h-11 min-h-[44px] min-w-[44px] items-center gap-1 rounded-xl border border-border/80 bg-surface-1/92 px-2 text-xs font-semibold text-tx-strong shadow-[var(--shadow-soft)] backdrop-blur-md dark:border-slate-700/80 dark:bg-[#1e232d]/92"
                         >
                           <ListOrdered className="size-3.5 shrink-0" aria-hidden />
-                          {planWidth >= 375 ? <span>Chờ</span> : null}
-                          {waitingCount > 0 ? <span className="tnum">+{waitingCount}</span> : ""}
+                          <span>Chờ</span>
+                          {waitingCount > 0 ? <span className="tnum">+{waitingCount}</span> : null}
                         </button>
                       </div>
                     </div>
@@ -458,7 +454,7 @@ export function MapScreen({
             const pickCap = selectedTablesCapacity(pickSel, m.model.byId)
             const pickCapWarn = capacityWarningText(pickSel.length, pickCap, pick.targetParty)
             return (
-              <div className="z-[12] flex shrink-0 flex-col gap-2.5 rounded-t-[20px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-[calc(14px+var(--bottom-safe))] shadow-[var(--shadow-float)]">
+              <div className="z-[12] mx-auto flex w-full max-w-[var(--gm-max-w)] shrink-0 flex-col gap-2.5 rounded-t-[20px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-[calc(14px+var(--bottom-safe))] shadow-[var(--shadow-float)] md:border-x">
                 {pick.question && pickSel.length ? (
                   <span className="text-[15px] font-semibold text-tx-strong">
                     {pick.question(codesOf(pickSel, m.model))}
@@ -531,7 +527,7 @@ export function MapScreen({
                 : {}),
             }}
             className={cn(
-              "z-[12] flex max-h-[62dvh] min-h-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)] outline-none",
+              "z-[12] mx-auto flex max-h-[62dvh] min-h-0 w-full max-w-[var(--gm-max-w)] flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)] outline-none md:border-x",
               !keyboardSafeHeight && "pb-[var(--bottom-safe)]",
               !quickForm.isOpen && "pointer-events-none",
             )}
@@ -894,7 +890,7 @@ export function TableSheet({
         data-motion-state={isOpen ? "open" : "closing"}
         style={awaitingMotion ? { opacity: 0 } : undefined}
         className={cn(
-          "absolute inset-x-0 bottom-[var(--nav-h)] z-[12] flex max-h-[82dvh] flex-col gap-3 overflow-y-auto rounded-t-[20px] border-t border-border bg-surface-1 px-4 pt-4 pb-[calc(16px+var(--bottom-safe))] shadow-[var(--shadow-float)]",
+          "absolute inset-x-0 bottom-[var(--nav-h)] z-[12] mx-auto flex max-h-[82dvh] w-full max-w-[var(--gm-max-w)] flex-col gap-3 overflow-y-auto rounded-t-[20px] border-t border-border bg-surface-1 px-4 pt-4 pb-[calc(16px+var(--bottom-safe))] shadow-[var(--shadow-float)] md:border-x",
           !isOpen && "pointer-events-none",
         )}
       >
