@@ -38,7 +38,7 @@ conflict, 422 `INVALID_PHONE_NUMBER` / `BOOKING_PHONE_UNAVAILABLE`, 429 rate lim
 
 | Method | Path                        | Access                            | Response                                                                                                      |
 | ------ | --------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| GET    | `/health`                   | Public                            | `{ok:true}`; process liveness, not a database check                                                           |
+| GET    | `/health`                   | Public                            | `{ok:true, appEnv}`; process liveness, not a database check. `appEnv` = `production` \| `dev` \| `local` (TU-41)                                                          |
 | POST   | `/auth/login`               | Trusted origin                    | Body `{username,password,portal}`; returns `{user,permissions,csrfToken,portal,expiresAt}` and session cookie |
 | GET    | `/auth/me`                  | Session                           | `{user,permissions,csrfToken,portal}`                                                                         |
 | POST   | `/auth/logout`              | Session + CSRF                    | 204, no body                                                                                                  |

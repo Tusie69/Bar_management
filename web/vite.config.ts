@@ -14,6 +14,10 @@ export default defineConfig(({ command, mode }) => {
     }
     const venueId = Number(env.VITE_VENUE_ID ?? 1)
     if (!Number.isSafeInteger(venueId) || venueId <= 0) throw new Error("VITE_VENUE_ID phải là số nguyên dương.")
+    const appEnv = env.VITE_APP_ENV?.trim()
+    if (appEnv && !["production", "dev", "local"].includes(appEnv)) {
+      throw new Error("VITE_APP_ENV phải là production, dev hoặc local.")
+    }
   }
   return {
     plugins: [react(), tailwindcss()],

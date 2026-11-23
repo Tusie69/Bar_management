@@ -1,0 +1,13 @@
+# Hai phút một lần, KHÔNG hoãn trong giờ mở cửa (Hưng chọn 23/11/2026): bản
+# Dev phải có code mới nhất để cả nhóm test bất kỳ lúc nào.
+
+[Unit]
+Description=Kiểm tra develop mỗi 2 phút để tự triển khai bản DEV
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=2min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

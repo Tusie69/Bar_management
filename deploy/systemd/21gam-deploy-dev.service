@@ -1,0 +1,16 @@
+# Một lần kiểm tra và triển khai develop lên BẢN DEV (TU-41).
+# Cài đặt: xem docs/dev-environment.md mục 6.
+
+[Unit]
+Description=21GAM tự động triển khai develop lên bản DEV
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/srv/21gam-dev/deploy/scripts/auto-deploy-dev.sh
+# Build nhường hẳn CPU và ổ đĩa cho Production đang phục vụ khách.
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=30min
