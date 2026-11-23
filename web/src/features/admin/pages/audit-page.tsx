@@ -10,7 +10,7 @@
  */
 import { useQuery } from "@tanstack/react-query"
 import { AlertTriangle, Download, LoaderCircle, SlidersHorizontal } from "lucide-react"
-import { useState } from "react"
+import { type Ref, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -24,6 +24,7 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
+  SheetTrigger,
 } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -40,6 +41,7 @@ export default function AdminAuditPage() {
   const [to, setTo] = useState("")
   const [exporting, setExporting] = useState(false)
   const [filterSheetOpen, setFilterSheetOpen] = useState(false)
+  const sheetFromInputRef = useRef<HTMLInputElement>(null)
 
   const filters = useQuery({
     queryKey: ["admin", "audit-filters"],
@@ -108,86 +110,101 @@ export default function AdminAuditPage() {
             />
           ))}
         </div>
-        <div className="flex min-w-0 items-center gap-2 md:hidden">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setFilterSheetOpen(true)}
-            data-testid="audit-filter-sheet-trigger"
-            className={
-              dateFilterCount > 0
-                ? "border-[var(--adm-action)] bg-[var(--adm-tint-blue)] text-[var(--adm-action-active)] hover:bg-[var(--adm-tint-blue-hover)] hover:text-[var(--adm-action-active)]"
-                : "bg-[var(--adm-surface)] text-[var(--adm-text)]"
-            }
-          >
-            <SlidersHorizontal className="size-4" aria-hidden />
-            <span>Lọc</span>
-            {dateFilterCount > 0 ? (
-              <span className="rounded-full bg-[var(--adm-action)]/12 px-1.5 py-0.5 text-xs font-semibold tabular-nums">
-                {dateFilterCount}
-              </span>
-            ) : null}
-          </Button>
-          <Button type="button" disabled={exportDisabled} title={exportTitle} onClick={exportFile} className="flex-1">
-            {exporting ? (
-              <LoaderCircle className="size-4 animate-spin" aria-hidden />
-            ) : (
-              <Download className="size-4" aria-hidden />
-            )}
-            Xuất file
-          </Button>
-        </div>
-        <div className="hidden min-w-0 flex-wrap items-end gap-2.5 md:flex">
-          <DateField id="audit-from" label="Từ ngày" value={from} onChange={setFrom} />
-          <DateField id="audit-to" label="Đến ngày" value={to} onChange={setTo} />
-          <Button type="button" disabled={exportDisabled} title={exportTitle} onClick={exportFile} className="ml-auto">
-            {exporting ? (
-              <LoaderCircle className="size-4 animate-spin" aria-hidden />
-            ) : (
-              <Download className="size-4" aria-hidden />
-            )}
-            Xuất file
-          </Button>
-        </div>
-      </div>
-
-      <Sheet open={filterSheetOpen} onOpenChange={setFilterSheetOpen}>
-        <SheetContent
-          side="bottom"
-          className="admin-portal adm-dialog rounded-t-2xl border-t border-[var(--adm-border)] p-0"
-          data-testid="audit-filter-sheet"
-        >
-          <SheetHeader className="border-b border-[var(--adm-border-subtle)] px-5 py-4 text-left">
-            <SheetTitle className="adm-h2 pr-10">Lọc nhật ký</SheetTitle>
-            <SheetDescription className="adm-supporting text-[var(--adm-text-muted)]">
-              Chọn khoảng ngày kinh doanh cần xem.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="grid gap-3 px-5 py-4">
-            <DateField id="audit-from-sheet" label="Từ ngày" value={from} onChange={setFrom} />
-            <DateField id="audit-to-sheet" label="Đến ngày" value={to} onChange={setTo} />
+        <Sheet open={filterSheetOpen} onOpenChange={setFilterSheetOpen}>
+          <div className="flex min-w-0 items-center gap-2 md:hidden">
+            <SheetTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                data-testid="audit-filter-sheet-trigger"
+                className={
+                  dateFilterCount > 0
+                    ? "border-[var(--adm-action)] bg-[var(--adm-tint-blue)] text-[var(--adm-action-active)] hover:bg-[var(--adm-tint-blue-hover)] hover:text-[var(--adm-action-active)]"
+                    : "bg-[var(--adm-surface)] text-[var(--adm-text)]"
+                }
+              >
+                <SlidersHorizontal className="size-4" aria-hidden />
+                <span>Lọc</span>
+                {dateFilterCount > 0 ? (
+                  <span className="rounded-full bg-[var(--adm-action)]/12 px-1.5 py-0.5 text-xs font-semibold tabular-nums">
+                    {dateFilterCount}
+                  </span>
+                ) : null}
+              </Button>
+            </SheetTrigger>
+            <Button type="button" disabled={exportDisabled} title={exportTitle} onClick={exportFile} className="flex-1">
+              {exporting ? (
+                <LoaderCircle className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <Download className="size-4" aria-hidden />
+              )}
+              Xuất file
+            </Button>
           </div>
-          <SheetFooter className="flex-row gap-2 border-t border-[var(--adm-border-subtle)] px-5 py-4">
+          <div className="hidden min-w-0 flex-wrap items-end gap-2.5 md:flex">
+            <DateField id="audit-from" label="Từ ngày" value={from} onChange={setFrom} />
+            <DateField id="audit-to" label="Đến ngày" value={to} onChange={setTo} />
             <Button
               type="button"
-              variant="outline"
-              disabled={dateFilterCount === 0}
-              onClick={() => {
-                setFrom("")
-                setTo("")
-              }}
-              className="bg-[var(--adm-surface)]"
+              disabled={exportDisabled}
+              title={exportTitle}
+              onClick={exportFile}
+              className="ml-auto"
             >
-              Xóa ngày lọc
+              {exporting ? (
+                <LoaderCircle className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <Download className="size-4" aria-hidden />
+              )}
+              Xuất file
             </Button>
-            <SheetClose asChild>
-              <Button type="button" className="flex-1">
-                Xong
+          </div>
+
+          <SheetContent
+            side="bottom"
+            className="admin-portal adm-dialog rounded-t-2xl border-t border-[var(--adm-border)] p-0"
+            data-testid="audit-filter-sheet"
+          >
+            <SheetHeader className="border-b border-[var(--adm-border-subtle)] px-5 py-4 text-left">
+              <SheetTitle className="adm-h2 pr-10">Lọc nhật ký</SheetTitle>
+              <SheetDescription className="adm-supporting text-[var(--adm-text-muted)]">
+                Chọn khoảng ngày kinh doanh cần xem.
+              </SheetDescription>
+            </SheetHeader>
+            <div className="grid gap-3 px-5 py-4">
+              <DateField
+                id="audit-from-sheet"
+                label="Từ ngày"
+                value={from}
+                onChange={setFrom}
+                inputRef={sheetFromInputRef}
+              />
+              <DateField id="audit-to-sheet" label="Đến ngày" value={to} onChange={setTo} />
+            </div>
+            <SheetFooter className="flex-row gap-2 border-t border-[var(--adm-border-subtle)] px-5 py-4">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={dateFilterCount === 0}
+                onClick={() => {
+                  // Giữ focus trong Sheet trước khi nút tự vô hiệu hóa do count về 0.
+                  sheetFromInputRef.current?.focus()
+                  setFrom("")
+                  setTo("")
+                }}
+                className="bg-[var(--adm-surface)]"
+              >
+                Xóa ngày lọc
               </Button>
-            </SheetClose>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
+              <SheetClose asChild>
+                <Button type="button" className="flex-1">
+                  Xong
+                </Button>
+              </SheetClose>
+            </SheetFooter>
+          </SheetContent>
+        </Sheet>
+      </div>
 
       <section data-adm-reveal className="adm-card min-w-0 p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-2">
@@ -366,11 +383,13 @@ function DateField({
   label,
   value,
   onChange,
+  inputRef,
 }: {
   id: string
   label: string
   value: string
   onChange: (value: string) => void
+  inputRef?: Ref<HTMLInputElement>
 }) {
   return (
     <div className="grid min-w-[140px] flex-1 gap-1.5 sm:w-44 sm:flex-initial">
@@ -378,6 +397,7 @@ function DateField({
         {label}
       </Label>
       <Input
+        ref={inputRef}
         id={id}
         type="date"
         value={value}

@@ -167,7 +167,7 @@ function CustomerList() {
                 title={item.hint}
                 onClick={() => setSegment(item.id)}
                 className={cn(
-                  "inline-flex h-11 shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-[background-color,border-color,color,transform] duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--adm-action)] active:scale-[0.97] md:h-10",
+                  "inline-flex h-11 shrink-0 items-center gap-2 rounded-full border px-4 text-sm font-medium transition-[background-color,border-color,color,transform] duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--adm-action)] active:scale-[0.97] xl:h-10",
                   active
                     ? "border-[var(--adm-action)]/40 bg-[var(--adm-tint-blue)] text-[var(--adm-action-active)]"
                     : "border-[var(--adm-border)] bg-[var(--adm-surface)] text-[var(--adm-text)] hover:bg-[var(--adm-surface-sunken)]",

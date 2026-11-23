@@ -375,8 +375,12 @@ export default function AdminAccountsPage() {
                       return (
                         <TableRow key={account.id} data-state={isSelected ? "selected" : undefined}>
                           <TableCell className="px-2 whitespace-normal">
-                            <span className="block font-medium text-[var(--adm-text)]">{account.displayName}</span>
-                            <span className="adm-caption block text-[var(--adm-text-muted)]">@{account.username}</span>
+                            <span className="block font-medium [overflow-wrap:anywhere] text-[var(--adm-text)]">
+                              {account.displayName}
+                            </span>
+                            <span className="adm-caption block [overflow-wrap:anywhere] text-[var(--adm-text-muted)]">
+                              @{account.username}
+                            </span>
                           </TableCell>
                           <TableCell className="px-2">
                             <Badge variant="secondary">{roleLabel(account)}</Badge>
@@ -417,7 +421,7 @@ export default function AdminAccountsPage() {
                               >
                                 Xem
                               </Button>
-                              <DropdownMenu>
+                              <DropdownMenu modal={false}>
                                 <DropdownMenuTrigger asChild>
                                   <Button
                                     ref={(node) => {
@@ -434,9 +438,19 @@ export default function AdminAccountsPage() {
                                     <MoreHorizontal className="size-4" aria-hidden />
                                   </Button>
                                 </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="admin-portal">
+                                <DropdownMenuContent
+                                  align="end"
+                                  className="admin-portal"
+                                  onPointerDownOutside={(event) => {
+                                    // Ngăn layer đang chạy exit animation tự đóng lại khi bấm chính nút trigger để mở lại.
+                                    if (menuTriggerRefs.current.get(account.id)?.contains(event.target as Node)) {
+                                      event.preventDefault()
+                                    }
+                                  }}
+                                >
                                   <DropdownMenuItem
                                     disabled={!allowed || busy}
+                                    className="min-h-11 xl:min-h-0"
                                     onSelect={() =>
                                       openPasswordDialog(account.id, menuTriggerRefs.current.get(account.id) ?? null)
                                     }
@@ -445,6 +459,7 @@ export default function AdminAccountsPage() {
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     disabled={!allowed || busy}
+                                    className="min-h-11 xl:min-h-0"
                                     onSelect={() =>
                                       void run(account, async () => {
                                         await api.setAccountStatus(

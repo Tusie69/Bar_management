@@ -38,6 +38,18 @@ describe("UI-52 định dạng chi tiết nhật ký sang tiếng Việt", () =>
     expect(fmtAuditDetail("unknownKey: rawValue · portal: customPortal")).toBe(
       "unknownKey: rawValue · Cổng: customPortal",
     )
+    expect(fmtAuditDetail("constructor: raw")).toBe("constructor: raw")
+    expect(fmtAuditDetail("portal: toString")).toBe("Cổng: toString")
+    expect(fmtAuditDetail("stations: toString")).toBe("Quầy: toString")
     expect(fmtAuditDetail("Khách báo bận")).toBe("Khách báo bận")
+  })
+
+  it("dịch các trạng thái phiếu thực tế của PreparationStatus", () => {
+    expect(fmtAuditDetail("ticketStatus: ACCEPTED · policy: STANDARD")).toBe(
+      "Trạng thái phiếu: Đã tiếp nhận · Chính sách: Chuẩn",
+    )
+    expect(fmtAuditDetail("ticketStatus: PREPARING · policy: READY_WASTE")).toBe(
+      "Trạng thái phiếu: Đang làm · Chính sách: Hủy món đã làm",
+    )
   })
 })

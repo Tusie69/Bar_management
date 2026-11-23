@@ -316,9 +316,13 @@ function createFixtureAuditEntries() {
 }
 
 async function setupHttpStubs(context, options = {}) {
-  const { readOnly = false } = options
+  const { readOnly = false, longAccount = false, extraAuditEntries = [] } = options
   const accounts = createFixtureAccounts()
-  const auditEntries = createFixtureAuditEntries()
+  if (longAccount && accounts[0]) {
+    accounts[0].displayName = "W".repeat(120)
+    accounts[0].username = "w".repeat(80)
+  }
+  const auditEntries = [...extraAuditEntries, ...createFixtureAuditEntries()]
   const auditRequests = []
   const statusMutations = []
   const passwordResets = []
@@ -549,6 +553,7 @@ async function runVerification(webRoot) {
   const browser = await launchBrowser()
   const mockVite = await startViteServer(webRoot, { VITE_API_MODE: "mock", VITE_API_BASE_URL: "" })
   const httpVite = await startViteServer(webRoot, { VITE_API_MODE: "http", VITE_API_BASE_URL: "/api/v1" })
+  const axeSummary = []
 
   try {
     // 1. UI-50 + UI-53 on Accounts at 320x640 and 360x780 (HTTP stub with long name)
@@ -644,10 +649,88 @@ async function runVerification(webRoot) {
       assert(rowLayout.rowCount >= 5)
       assert.deepEqual(rowLayout.issues, [], `UI-51 layout issues at ${vp.width}: ${rowLayout.issues.join("; ")}`)
 
-      // Test overflow menu actions on first row (id 9524)
+      // R02: Open menu by mouse -> axe serious/critical = 0 + R03: menu items >= 44x44 at <= 1024
       const menuTrigger = page.getByTestId("account-actions-menu-9524")
       await menuTrigger.click()
+      const pwItem = page.getByRole("menuitem", { name: "Đổi mật khẩu" })
       const lockItem = page.getByRole("menuitem", { name: "Khóa" })
+      await lockItem.waitFor({ state: "visible" })
+
+      const openMenuViolations = await runAxe(page)
+      assert.deepEqual(
+        openMenuViolations,
+        [],
+        `R02 axe serious/critical violations with menu open at ${vp.width}: ${JSON.stringify(openMenuViolations)}`,
+      )
+      axeSummary.push({
+        route: "/admin/accounts#menu-open",
+        viewport: `${vp.width}x${vp.height}`,
+        seriousOrCritical: 0,
+      })
+
+      if (vp.width <= 1024) {
+        const menuBoxes = await Promise.all([pwItem.boundingBox(), lockItem.boundingBox()])
+        for (const [idx, box] of menuBoxes.entries()) {
+          assert(
+            box && box.width >= 44 && box.height >= 44,
+            `R03 menu item #${idx} < 44x44 at ${vp.width}: ${JSON.stringify(box)}`,
+          )
+        }
+      }
+
+      // Close with Escape -> focus returns to trigger
+      await page.keyboard.press("Escape")
+      await lockItem.waitFor({ state: "detached" })
+      assert.equal(
+        await page.evaluate(() => document.activeElement?.getAttribute("data-testid")),
+        "account-actions-menu-9524",
+        `R02 Escape must return focus to trigger at ${vp.width}`,
+      )
+
+      // R02: Open menu by keyboard (Enter), run axe, navigate with ArrowDown/ArrowUp, open & close PasswordResetDialog
+      await menuTrigger.focus()
+      await page.keyboard.press("Enter")
+      await pwItem.waitFor({ state: "visible" })
+      const kbMenuViolations = await runAxe(page)
+      assert.deepEqual(
+        kbMenuViolations,
+        [],
+        `R02 keyboard-opened menu axe violations at ${vp.width}: ${JSON.stringify(kbMenuViolations)}`,
+      )
+      const afterOpenEl = await page.evaluate(() => ({
+        role: document.activeElement?.getAttribute("role"),
+        text: document.activeElement?.textContent?.trim(),
+      }))
+      assert.equal(afterOpenEl.role, "menuitem")
+      assert.equal(afterOpenEl.text, "Đổi mật khẩu")
+      await page.keyboard.press("ArrowDown")
+      await page.waitForTimeout(50)
+      const afterDownEl = await page.evaluate(() => ({
+        role: document.activeElement?.getAttribute("role"),
+        text: document.activeElement?.textContent?.trim(),
+      }))
+      assert.equal(afterDownEl.role, "menuitem")
+      assert.equal(afterDownEl.text, "Khóa")
+      await page.keyboard.press("ArrowUp")
+      await page.waitForTimeout(50)
+      const afterUpEl = await page.evaluate(() => ({
+        role: document.activeElement?.getAttribute("role"),
+        text: document.activeElement?.textContent?.trim(),
+      }))
+      assert.equal(afterUpEl.role, "menuitem")
+      assert.equal(afterUpEl.text, "Đổi mật khẩu")
+      await page.keyboard.press("Enter")
+      await page.getByTestId("admin-password-dialog").waitFor({ state: "visible" })
+      await page.keyboard.press("Escape")
+      await page.getByTestId("admin-password-dialog").waitFor({ state: "detached" })
+      assert.equal(
+        await page.evaluate(() => document.activeElement?.getAttribute("data-testid")),
+        "account-actions-menu-9524",
+        `R02 PasswordResetDialog Escape must return focus to trigger at ${vp.width}`,
+      )
+
+      // Test overflow menu actions on first row (id 9524)
+      await menuTrigger.click()
       await lockItem.waitFor({ state: "visible" })
       await lockItem.click()
       await page.waitForTimeout(200)
@@ -661,12 +744,70 @@ async function runVerification(webRoot) {
       assert.equal(stubs.statusMutations.length, 2)
       assert.equal(stubs.statusMutations[1].status, "ACTIVE")
 
-      // Open Đổi mật khẩu via overflow menu
-      await menuTrigger.click()
-      await page.getByRole("menuitem", { name: "Đổi mật khẩu" }).click()
-      await page.getByTestId("admin-password-dialog").waitFor({ state: "visible" })
+      // Protected SuperAdmin (OWNER, id 3) keeps both menu items disabled
+      await page.getByTestId("account-actions-menu-3").click()
+      assert.equal(await page.getByRole("menuitem", { name: "Đổi mật khẩu" }).getAttribute("aria-disabled"), "true")
+      assert.equal(await page.getByRole("menuitem", { name: "Khóa" }).getAttribute("aria-disabled"), "true")
       await page.keyboard.press("Escape")
-      await page.getByTestId("admin-password-dialog").waitFor({ state: "detached" })
+      await context.close()
+    }
+
+    // R04: Long valid account displayName (120 W) and username (80 w) must wrap without pushing actions out of view
+    for (const vp of [
+      { width: 320, height: 640 },
+      { width: 640, height: 400 },
+      { width: 1024, height: 768 },
+      { width: 1440, height: 900 },
+    ]) {
+      const context = await browser.newContext({ viewport: vp })
+      await setupHttpStubs(context, { longAccount: true })
+      const page = await context.newPage()
+      await page.goto(`${httpVite.baseUrl}/admin/accounts`, { waitUntil: "networkidle" })
+      await page.getByTestId("admin-accounts-page").waitFor({ state: "visible" })
+
+      const docOverflow = await page.evaluate(
+        () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      )
+      assert.equal(docOverflow, false, `R04 doc horizontal overflow at ${vp.width}x${vp.height}`)
+
+      if (vp.width >= 1024) {
+        await page.locator("table tbody tr").first().waitFor({ state: "visible" })
+        const longCheck = await page.evaluate(() => {
+          const container = document.querySelector('[data-testid="admin-accounts-page"] [data-slot="table-container"]')
+          const containerRect = container.getBoundingClientRect()
+          const row = document.querySelector("table tbody tr")
+          const buttons = Array.from(row.querySelectorAll("td:last-child button")).map((b) => {
+            const r = b.getBoundingClientRect()
+            return { text: b.textContent?.trim(), left: r.left, right: r.right, width: r.width, height: r.height }
+          })
+          return {
+            scrollWidth: container.scrollWidth,
+            clientWidth: container.clientWidth,
+            containerRight: containerRect.right,
+            buttons,
+          }
+        })
+        assert(
+          longCheck.scrollWidth <= longCheck.clientWidth + 1,
+          `R04 table overflow at ${vp.width}: ${longCheck.scrollWidth} > ${longCheck.clientWidth}`,
+        )
+        assert.equal(longCheck.buttons.length, 3)
+        for (const btn of longCheck.buttons) {
+          assert(
+            btn.right <= longCheck.containerRight + 1 && btn.right <= vp.width + 1,
+            `R04 action button '${btn.text}' pushed out of view at ${vp.width}: ${JSON.stringify(btn)} vs containerRight=${longCheck.containerRight}`,
+          )
+        }
+        const firstRow = page.locator("table tbody tr").first()
+        await firstRow.getByRole("button", { name: "Đổi quyền" }).click()
+        await firstRow.getByRole("button", { name: "Xem" }).click()
+        await page.getByTestId("admin-account-detail-dialog").waitFor({ state: "visible" })
+        await page.keyboard.press("Escape")
+        await page.getByTestId("admin-account-detail-dialog").waitFor({ state: "detached" })
+        await page.getByTestId("account-actions-menu-9524").click()
+        await page.getByRole("menuitem", { name: "Khóa" }).waitFor({ state: "visible" })
+        await page.keyboard.press("Escape")
+      }
       await context.close()
     }
 
@@ -681,16 +822,44 @@ async function runVerification(webRoot) {
       const lockItem = page.getByRole("menuitem", { name: "Khóa" })
       assert.equal(await pwItem.getAttribute("aria-disabled"), "true")
       assert.equal(await lockItem.getAttribute("aria-disabled"), "true")
+      await page.keyboard.press("Escape")
       await context.close()
     }
 
-    // 3. UI-52 + UI-53 on Audit (390x844 and 1440x900)
+    // 3. UI-52 + UI-53 + R01 + R06 on Audit (390x844, 640x400, and 1440x900)
+    const r06Entries = [
+      {
+        id: 102,
+        occurredAt: "2026-11-23T01:55:00.000Z",
+        actor: "Phục vụ 1",
+        actorUsername: "phuc_vu_1",
+        action: "ORDER_CANCELLATION_REQUESTED",
+        actionType: "discount",
+        actionLabel: "Xin hủy món",
+        target: "Đơn #18 · Bàn A2",
+        detail: "ticketStatus: ACCEPTED · policy: STANDARD · quantity: 1",
+        device: "iPad Phục vụ",
+      },
+      {
+        id: 103,
+        occurredAt: "2026-11-23T01:54:00.000Z",
+        actor: "Phục vụ 1",
+        actorUsername: "phuc_vu_1",
+        action: "ORDER_CANCELLATION_APPROVED",
+        actionType: "discount",
+        actionLabel: "Duyệt hủy món",
+        target: "Đơn #18 · Bàn A2",
+        detail: "ticketStatus: PREPARING · policy: READY_WASTE · quantity: 1",
+        device: "POS Thu ngân",
+      },
+    ]
     for (const vp of [
       { width: 390, height: 844 },
+      { width: 640, height: 400 },
       { width: 1440, height: 900 },
     ]) {
       const context = await browser.newContext({ viewport: vp })
-      const stubs = await setupHttpStubs(context)
+      const stubs = await setupHttpStubs(context, { extraAuditEntries: r06Entries })
       const page = await context.newPage()
       await page.goto(`${httpVite.baseUrl}/admin/audit`, { waitUntil: "networkidle" })
       await page
@@ -702,8 +871,13 @@ async function runVerification(webRoot) {
       const bodyText = await page.locator('[data-testid="admin-main-content"]').innerText()
       assert(!bodyText.includes("portal: admin"), "Raw 'portal: admin' leaked into Audit UI")
       assert(!bodyText.includes("result: FAILURE"), "Raw 'result: FAILURE' leaked into Audit UI")
+      assert(!bodyText.includes("ticketStatus:"), "Raw 'ticketStatus:' leaked into Audit UI")
+      assert(!bodyText.includes("ACCEPTED"), "Raw 'ACCEPTED' leaked into Audit UI")
+      assert(!bodyText.includes("PREPARING"), "Raw 'PREPARING' leaked into Audit UI")
       assert(bodyText.includes("Cổng: Quản trị · Kết quả: Thất bại"))
       assert(bodyText.includes("Vai trò: Phục vụ · Cấp truy cập: Chỉ xem · unknownKey: rawValue"))
+      assert(bodyText.includes("Trạng thái phiếu: Đã tiếp nhận · Chính sách: Chuẩn · Số lượng: 1"))
+      assert(bodyText.includes("Trạng thái phiếu: Đang làm · Chính sách: Hủy món đã làm · Số lượng: 1"))
 
       if (vp.width < 768) {
         const mobileAudit = await page.evaluate(() => {
@@ -720,16 +894,126 @@ async function runVerification(webRoot) {
         assert.equal(mobileAudit.chipsOneRow, true, "Audit mobile chips must be 1 horizontally scrollable row")
         assert.equal(mobileAudit.desktopFromVisible, false, "Inline date inputs must be hidden on mobile")
 
-        // Open Lọc sheet, set date range, verify query params
-        await page.getByTestId("audit-filter-sheet-trigger").click()
+        // R01: Keyboard open via SheetTrigger, Tab traversal, clear dates keeps focus inside Sheet, close returns focus
+        const trigger = page.getByTestId("audit-filter-sheet-trigger")
+        assert.equal(await trigger.getAttribute("aria-haspopup"), "dialog")
+        assert.equal(await trigger.getAttribute("aria-expanded"), "false")
+
+        await trigger.focus()
+        await page.keyboard.press("Enter")
         await page.getByTestId("audit-filter-sheet").waitFor({ state: "visible" })
+        assert.equal(await trigger.getAttribute("aria-expanded"), "true")
+
+        // Fill dates and Tab through inputs + footer buttons
         await page.locator("#audit-from-sheet").fill("2026-11-20")
+        const toRespPromise = page.waitForResponse(
+          (res) => res.url().includes("/api/v1/operations/audit") && res.url().includes("to=2026-11-23"),
+        )
         await page.locator("#audit-to-sheet").fill("2026-11-23")
+        await toRespPromise
+        const filledQuery = stubs.auditRequests.at(-1)
+        assert.equal(filledQuery?.from, "2026-11-20")
+        assert.equal(filledQuery?.to, "2026-11-23")
+
+        const tabUntil = async (predicate, label) => {
+          for (let i = 0; i < 8; i++) {
+            await page.keyboard.press("Tab")
+            const hit = await page.evaluate(predicate)
+            if (hit) return
+          }
+          assert.fail(`Tab could not reach ${label} at ${vp.width}`)
+        }
+        await page.locator("#audit-from-sheet").focus()
+        await tabUntil(() => document.activeElement?.id === "audit-to-sheet", "#audit-to-sheet")
+        await tabUntil(() => document.activeElement?.textContent?.trim() === "Xóa ngày lọc", "Xóa ngày lọc")
+        await tabUntil(() => document.activeElement?.textContent?.trim() === "Xong", "Xong")
+
+        // Clear dates with Xóa ngày lọc -> focus stays inside Sheet on #audit-from-sheet & query drops from/to
+        const clearRespPromise = page.waitForResponse(
+          (res) => res.url().includes("/api/v1/operations/audit") && !res.url().includes("from="),
+        )
+        await page.getByRole("button", { name: "Xóa ngày lọc" }).click()
+        await clearRespPromise
+        assert.equal(await page.locator("#audit-from-sheet").inputValue(), "")
+        assert.equal(await page.locator("#audit-to-sheet").inputValue(), "")
+        const focusAfterClear = await page.evaluate(() => ({
+          id: document.activeElement?.id ?? null,
+          inSheet: Boolean(document.activeElement?.closest('[data-testid="audit-filter-sheet"]')),
+        }))
+        assert.equal(focusAfterClear.inSheet, true, `R01 focus escaped Sheet after clear at ${vp.width}`)
+        assert.equal(focusAfterClear.id, "audit-from-sheet")
+        const clearedQuery = stubs.auditRequests.at(-1)
+        assert.equal(clearedQuery?.from, undefined)
+        assert.equal(clearedQuery?.to, undefined)
+
+        // Close with Escape -> focus returns to trigger
+        await page.keyboard.press("Escape")
+        await page.getByTestId("audit-filter-sheet").waitFor({ state: "detached" })
+        assert.equal(
+          await page.evaluate(() => document.activeElement?.getAttribute("data-testid")),
+          "audit-filter-sheet-trigger",
+          `R01 Escape must return focus to Lọc at ${vp.width}`,
+        )
+
+        // Re-open with Enter, set dates, close with Xong -> focus returns to trigger & query has dates
+        await page.keyboard.press("Enter")
+        await page.getByTestId("audit-filter-sheet").waitFor({ state: "visible" })
+        await page.locator("#audit-from-sheet").fill("2026-11-21")
+        const reToResp = page.waitForResponse(
+          (res) => res.url().includes("/api/v1/operations/audit") && res.url().includes("to=2026-11-22"),
+        )
+        await page.locator("#audit-to-sheet").fill("2026-11-22")
+        await reToResp
         await page.getByRole("button", { name: "Xong" }).click()
         await page.getByTestId("audit-filter-sheet").waitFor({ state: "detached" })
+        assert.equal(
+          await page.evaluate(() => document.activeElement?.getAttribute("data-testid")),
+          "audit-filter-sheet-trigger",
+          `R01 Xong must return focus to Lọc at ${vp.width}`,
+        )
         const lastQuery = stubs.auditRequests.at(-1)
-        assert.equal(lastQuery?.from, "2026-11-20")
-        assert.equal(lastQuery?.to, "2026-11-23")
+        assert.equal(lastQuery?.from, "2026-11-21")
+        assert.equal(lastQuery?.to, "2026-11-22")
+
+        // Re-open with Enter, close with close (X) button -> focus returns to trigger
+        await page.keyboard.press("Enter")
+        await page.getByTestId("audit-filter-sheet").waitFor({ state: "visible" })
+        await page.locator('[data-testid="audit-filter-sheet"] button:has-text("Đóng")').click()
+        await page.getByTestId("audit-filter-sheet").waitFor({ state: "detached" })
+        assert.equal(
+          await page.evaluate(() => document.activeElement?.getAttribute("data-testid")),
+          "audit-filter-sheet-trigger",
+          `R01 close button must return focus to Lọc at ${vp.width}`,
+        )
+      }
+      await context.close()
+    }
+
+    // R03: Customers filter chips >= 44x44 at 390x844, 820x1180, and 1024x768
+    for (const vp of [
+      { width: 390, height: 844 },
+      { width: 820, height: 1180 },
+      { width: 1024, height: 768 },
+    ]) {
+      const context = await browser.newContext({ viewport: vp })
+      await context.addInitScript(() => {
+        localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 3, theme: "light" }))
+      })
+      const page = await context.newPage()
+      await page.goto(`${mockVite.baseUrl}/admin/customers`, { waitUntil: "networkidle" })
+      await page.locator('[role="group"][aria-label="Lọc khách"] button').first().waitFor({ state: "visible" })
+      const chipBoxes = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('[role="group"][aria-label="Lọc khách"] button')).map((btn) => {
+          const r = btn.getBoundingClientRect()
+          return { text: btn.textContent?.trim(), width: r.width, height: r.height }
+        }),
+      )
+      assert.equal(chipBoxes.length, 4)
+      for (const chip of chipBoxes) {
+        assert(
+          chip.width >= 44 && chip.height >= 44,
+          `R03 customer chip '${chip.text}' < 44x44 at ${vp.width}: ${JSON.stringify(chip)}`,
+        )
       }
       await context.close()
     }
@@ -792,7 +1076,6 @@ async function runVerification(webRoot) {
       { path: "/admin/reconciliation", mode: "mock", ready: "admin-main-content" },
       { path: "/admin/settings", mode: "mock", ready: "admin-main-content" },
     ]
-    const axeSummary = []
     for (const vp of [
       { width: 390, height: 844 },
       { width: 1440, height: 900 },

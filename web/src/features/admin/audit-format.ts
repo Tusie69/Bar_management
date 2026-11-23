@@ -86,6 +86,8 @@ const DETAIL_VALUE_LABELS: Readonly<Record<string, Readonly<Record<string, strin
   },
   ticketStatus: {
     SUBMITTED: "Mới gửi",
+    ACCEPTED: "Đã tiếp nhận",
+    PREPARING: "Đang làm",
     IN_PROGRESS: "Đang làm",
     READY: "Đã xong",
     COLLECTED: "Đã lấy",
@@ -110,17 +112,21 @@ const STATION_LABELS: Readonly<Record<string, string>> = {
   KITCHEN: "Bếp",
 }
 
+function ownValue<T>(table: Readonly<Record<string, T>> | undefined, key: string): T | undefined {
+  return table && Object.hasOwn(table, key) ? table[key] : undefined
+}
+
 function formatDetailValue(key: string, value: string): string {
   if (key === "stations") {
     return value
       .split(",")
       .map((part) => {
         const trimmed = part.trim()
-        return STATION_LABELS[trimmed] ?? trimmed
+        return ownValue(STATION_LABELS, trimmed) ?? trimmed
       })
       .join(", ")
   }
-  return DETAIL_VALUE_LABELS[key]?.[value] ?? value
+  return ownValue(ownValue(DETAIL_VALUE_LABELS, key), value) ?? value
 }
 
 /**
@@ -136,7 +142,7 @@ export function fmtAuditDetail(detail: string): string {
       if (sep === -1) return segment
       const key = segment.slice(0, sep).trim()
       const value = segment.slice(sep + 2).trim()
-      const keyLabel = DETAIL_KEY_LABELS[key]
+      const keyLabel = ownValue(DETAIL_KEY_LABELS, key)
       if (!keyLabel) return segment
       return `${keyLabel}: ${formatDetailValue(key, value)}`
     })
