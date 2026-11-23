@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PORTAL_CONFIG, resolvePortalLoginDestination, type AuthPortal } from "@/domain/auth-portal"
 import { sessionEndUnsavedWarning } from "@/domain/session-end"
+import { cn } from "@/lib/utils"
 import { isApiError } from "@/services"
 import { useSession } from "@/state/session"
 
@@ -19,7 +20,8 @@ const PORTAL_NOTE: Record<AuthPortal, string> = {
   cashier: "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản Quản trị, Lễ tân, Phục vụ không đăng nhập được tại cổng này.",
   waiter: "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản Quản trị, Lễ tân, Thu ngân không đăng nhập được tại cổng này.",
   "customer-care": "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản của vai khác không đăng nhập được tại cổng này.",
-  preparation: "Tài khoản Bar và Bếp dùng chung cổng đăng nhập, nhưng mỗi tài khoản chỉ thấy và xử lý đúng quầy đã được cấp quyền.",
+  preparation:
+    "Tài khoản Bar và Bếp dùng chung cổng đăng nhập, nhưng mỗi tài khoản chỉ thấy và xử lý đúng quầy đã được cấp quyền.",
 }
 
 function keepFocusedFieldVisible(event: FocusEvent<HTMLInputElement>) {
@@ -38,12 +40,25 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
   const [pending, setPending] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [touched, setTouched] = useState({ username: false, password: false })
+  const [submitAttempted, setSubmitAttempted] = useState(false)
+
+  const usernameMissing = !username.trim()
+  const passwordMissing = !password
+  const submitDisabled = pending || usernameMissing || passwordMissing
+  const showUsernameHint = (touched.username || submitAttempted) && usernameMissing
+  const showPasswordHint = (touched.password || submitAttempted) && passwordMissing
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
-    if (!username.trim() || !password) return
+    if (usernameMissing || passwordMissing) {
+      setSubmitAttempted(true)
+      return
+    }
     setPending(true)
     setError(null)
+    setTouched({ username: false, password: false })
+    setSubmitAttempted(false)
     try {
       await login(username.trim(), password, portal)
       setPassword("")
@@ -106,10 +121,21 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
               value={username}
               onChange={(event) => setUsername(event.target.value)}
               onFocus={keepFocusedFieldVisible}
+              onBlur={() => setTouched((prev) => ({ ...prev, username: true }))}
+              aria-invalid={showUsernameHint || undefined}
+              aria-describedby={showUsernameHint ? "username-hint" : undefined}
               disabled={pending}
               required
               className="h-11 scroll-my-4"
             />
+            {showUsernameHint ? (
+              <p
+                id="username-hint"
+                className="text-[length:var(--type-error-size)] leading-[var(--type-error-lh)] font-medium text-destructive"
+              >
+                Vui lòng nhập tên đăng nhập.
+              </p>
+            ) : null}
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="password">Mật khẩu</Label>
@@ -124,6 +150,9 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 onFocus={keepFocusedFieldVisible}
+                onBlur={() => setTouched((prev) => ({ ...prev, password: true }))}
+                aria-invalid={showPasswordHint || undefined}
+                aria-describedby={showPasswordHint ? "password-hint" : undefined}
                 disabled={pending}
                 required
                 className="h-11 scroll-my-4 pr-12"
@@ -145,6 +174,14 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
                 )}
               </Button>
             </div>
+            {showPasswordHint ? (
+              <p
+                id="password-hint"
+                className="text-[length:var(--type-error-size)] leading-[var(--type-error-lh)] font-medium text-destructive"
+              >
+                Vui lòng nhập mật khẩu.
+              </p>
+            ) : null}
           </div>
           {error || sessionMessage ? (
             <div
@@ -155,15 +192,24 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
               {!error && unsavedWarning ? <p className="text-xs text-muted-foreground">{unsavedWarning}</p> : null}
             </div>
           ) : null}
-          <Button type="submit" size="default" disabled={pending || !username.trim() || !password} className="w-full">
-            <LogIn className="size-4" aria-hidden="true" />
-            {pending ? "Đang đăng nhập…" : "Đăng nhập"}
-          </Button>
+          <div
+            className={cn("w-full", submitDisabled && !pending && "cursor-not-allowed")}
+            onClick={() => {
+              if (!pending && (usernameMissing || passwordMissing)) {
+                setSubmitAttempted(true)
+              }
+            }}
+          >
+            <Button type="submit" size="default" disabled={submitDisabled} className="w-full">
+              <LogIn className="size-4" aria-hidden="true" />
+              {pending ? "Đang đăng nhập…" : "Đăng nhập"}
+            </Button>
+          </div>
         </form>
 
         <p className="flex items-center justify-center gap-2 border-t border-border-subtle pt-3 text-xs text-muted-foreground">
           <ShieldCheck className="size-4 shrink-0" aria-hidden="true" />
-          <span>Phiên đăng nhập dùng cookie HttpOnly và CSRF protection.</span>
+          <span>Phiên đăng nhập được bảo vệ.</span>
         </p>
       </div>
     </main>
