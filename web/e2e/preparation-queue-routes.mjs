@@ -303,7 +303,12 @@ async function assertTotalsPanel(page, { title, queueReads }) {
   const toggle = panel.getByRole("button", { name: title })
   const list = panel.getByRole("list", { name: title })
 
+  const isMobile = (page.viewportSize()?.width ?? 1280) < 768
   await expect(panel).toBeVisible()
+  if (isMobile) {
+    await expect(toggle).toHaveAttribute("aria-expanded", "false")
+    await toggle.click()
+  }
   await expect(toggle).toHaveAttribute("aria-expanded", "true")
   await expect(panel).toContainText("Tính trên toàn bộ hàng đợi, không phụ thuộc bộ lọc.")
   const negroni = list.getByRole("listitem").filter({ hasText: "Negroni" })
@@ -739,7 +744,10 @@ for (const viewport of [viewports[0], viewports[3]]) {
     await page.goto(`${base}/chebien`, { waitUntil: "networkidle" })
     const panel = page.locator("[data-preparation-totals]")
     await expect(panel).toBeVisible()
-    await expect(panel.getByRole("button", { name: "Tổng món đang chờ làm" })).toHaveAttribute("aria-expanded", "true")
+    const totalsToggle = panel.getByRole("button", { name: "Tổng món đang chờ làm" })
+    await expect(totalsToggle).toHaveAttribute("aria-expanded", "false")
+    await totalsToggle.click()
+    await expect(totalsToggle).toHaveAttribute("aria-expanded", "true")
     await expect(panel).toContainText("Không còn món đang chờ làm.")
     await expect(panel).not.toContainText("pha")
     await expect(page.locator('[data-ticket-id="4"]')).toBeVisible()
