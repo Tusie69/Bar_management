@@ -261,14 +261,15 @@ async function verifyBarBisectorAndHitResolution(browser, baseUrl) {
       }
     }
 
-    // 0. Locked-camera drag suppression on phone viewports (/floor & /phucvu 390x844)
+    const cdp = await context.newCDPSession(page)
+
+    // 0. Locked-camera drag suppression + NA41-06 (<250ms post-drag click/tap) + NA41-07 (leave <6px before capture)
     if (!role.isDesktop) {
       const transformBefore = await page.locator('svg[role="group"] > g').first().getAttribute("transform")
       await page.mouse.move(geo.p6.x, geo.p6.y)
       await page.mouse.down()
       await page.mouse.move(geo.p5.x, geo.p5.y, { steps: 10 })
       await page.mouse.up()
-      await page.waitForTimeout(80)
       const transformAfter = await page.locator('svg[role="group"] > g').first().getAttribute("transform")
       assert.equal(transformAfter, transformBefore, `${role.label}: locked camera transform changed on drag`)
       assert.equal(
@@ -281,7 +282,78 @@ async function verifyBarBisectorAndHitResolution(browser, baseUrl) {
         0,
         `${role.label}: drag from BAR06 to BAR05 opened detail panel`,
       )
-      await page.waitForTimeout(260)
+
+      // NA41-06: immediate mouse click (<250ms after drag) must select BAR05
+      const mouseDragEndedAt = Date.now()
+      await page.mouse.click(geo.p5.x, geo.p5.y)
+      const mouseElapsed = Date.now() - mouseDragEndedAt
+      assert(mouseElapsed < 250, `${role.label}: immediate post-drag click took ${mouseElapsed}ms (>= 250ms)`)
+      await assertSeatSelectedAndDetailMatches(page, 5, role.detailSelector)
+      await closeBottomSheetIfMobile()
+
+      // NA41-06 touch: touch drag BAR06 -> BAR05 selects nothing, immediate tap (<250ms) selects BAR05
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchStart",
+        touchPoints: [{ x: geo.p6.x, y: geo.p6.y, id: 0 }],
+      })
+      for (let i = 1; i <= 6; i += 1) {
+        const t = i / 6
+        await cdp.send("Input.dispatchTouchEvent", {
+          type: "touchMove",
+          touchPoints: [
+            {
+              x: geo.p6.x + (geo.p5.x - geo.p6.x) * t,
+              y: geo.p6.y + (geo.p5.y - geo.p6.y) * t,
+              id: 0,
+            },
+          ],
+        })
+      }
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+      assert.equal(
+        await page.locator('svg[role="group"] g[role="button"][aria-pressed="true"]').count(),
+        0,
+        `${role.label}: touch drag BAR06->BAR05 selected a table`,
+      )
+      assert.equal(
+        await page.locator(role.detailSelector).count(),
+        0,
+        `${role.label}: touch drag BAR06->BAR05 opened detail panel`,
+      )
+      const touchDragEndedAt = Date.now()
+      await page.waitForTimeout(50)
+      await page.touchscreen.tap(geo.p5.x, geo.p5.y)
+      const touchElapsed = Date.now() - touchDragEndedAt
+      assert(touchElapsed < 250, `${role.label}: immediate post-drag tap took ${touchElapsed}ms (>= 250ms)`)
+      await assertSeatSelectedAndDetailMatches(page, 5, role.detailSelector)
+      await closeBottomSheetIfMobile()
+
+      // NA41-07: press inside canvas wrapper, move 3px (<6px) outside wrapper and release; first tap selects BAR05
+      const boundary = await page.evaluate(() => {
+        const svg = document.querySelector('svg[role="group"]')
+        const wrap = svg?.parentElement
+        if (!wrap) return null
+        const r = wrap.getBoundingClientRect()
+        const start = { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + 2) }
+        const end = { x: Math.round(r.left + r.width / 2), y: Math.round(r.top - 1) }
+        const startEl = document.elementFromPoint(start.x, start.y)
+        const endEl = document.elementFromPoint(end.x, end.y)
+        return {
+          start,
+          end,
+          startInside: Boolean(startEl && wrap.contains(startEl)),
+          endOutside: Boolean(!endEl || !wrap.contains(endEl)),
+        }
+      })
+      assert(boundary && boundary.startInside && boundary.endOutside, `${role.label}: invalid NA41-07 boundary points`)
+      await page.mouse.move(boundary.start.x, boundary.start.y)
+      await page.mouse.down()
+      await page.mouse.move(boundary.end.x, boundary.end.y, { steps: 3 })
+      await page.mouse.up()
+      await page.waitForTimeout(300)
+      await page.touchscreen.tap(geo.p5.x, geo.p5.y)
+      await assertSeatSelectedAndDetailMatches(page, 5, role.detailSelector)
+      await closeBottomSheetIfMobile()
     }
 
     // 1. Click both sides of BAR05/BAR06 perpendicular bisector
@@ -313,6 +385,25 @@ async function verifyBarBisectorAndHitResolution(browser, baseUrl) {
     await assertSeatSelectedAndDetailMatches(page, 5, role.detailSelector)
     await closeBottomSheetIfMobile()
 
+    // 2c. Touch wobble < 6 px (4px x, 2px y -> 4.47px) still selects BAR05
+    if (role.isDesktop) {
+      await page.getByRole("button", { name: "Ca tối nay" }).click()
+      await page.waitForFunction(
+        () => document.querySelectorAll('svg[role="group"] g[role="button"][aria-pressed="true"]').length === 0,
+      )
+    }
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x: geo.p5.x, y: geo.p5.y, id: 0 }],
+    })
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: geo.p5.x + 4, y: geo.p5.y + 2, id: 0 }],
+    })
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
+    await assertSeatSelectedAndDetailMatches(page, 5, role.detailSelector)
+    await closeBottomSheetIfMobile()
+
     // 3. Tap inside outer padding to the left of BAR05 visual circle (clear selection first so desktop toggle selects BAR05)
     if (role.isDesktop) {
       await page.getByRole("button", { name: "Ca tối nay" }).click()
@@ -324,7 +415,7 @@ async function verifyBarBisectorAndHitResolution(browser, baseUrl) {
     await assertSeatSelectedAndDetailMatches(page, 5, role.detailSelector)
     await closeBottomSheetIfMobile()
 
-    // 4. Camera-drag smoke & merge-mode two-table selection on desktop roles
+    // 4. Camera-drag smoke, NA41-06 immediate (<250ms) post-drag click, & merge-mode two-table selection on desktop roles
     if (role.isDesktop) {
       // Clear selection before drag smoke
       const svgBox = await page.locator('svg[role="group"]').boundingBox()
@@ -341,6 +432,7 @@ async function verifyBarBisectorAndHitResolution(browser, baseUrl) {
       await page.mouse.down()
       await page.mouse.move(dragStartX + 42, dragStartY - 22, { steps: 6 })
       await page.mouse.up()
+      const dragEndedAt = Date.now()
       const transformAfter = await page.locator('svg[role="group"] > g').first().getAttribute("transform")
       assert.notEqual(transformAfter, transformBefore, `${role.label}: camera drag did not move canvas transform`)
       assert.equal(
@@ -349,11 +441,12 @@ async function verifyBarBisectorAndHitResolution(browser, baseUrl) {
         `${role.label}: post-drag click suppression failed`,
       )
 
-      // Post-suppression click selects BAR05 cleanly
-      await page.waitForTimeout(350)
+      // Immediate (<250ms) post-drag click selects BAR05 cleanly
       const geoAfterDrag = await getBarBisectorGeometry(page)
       assert(geoAfterDrag, `${role.label}: missing BAR05/BAR06 geometry after drag`)
       await page.mouse.click(geoAfterDrag.p5.x, geoAfterDrag.p5.y)
+      const desktopElapsed = Date.now() - dragEndedAt
+      assert(desktopElapsed < 250, `${role.label}: immediate post-drag click took ${desktopElapsed}ms (>= 250ms)`)
       await assertSeatSelectedAndDetailMatches(page, 5, role.detailSelector)
 
       // Clear selection before merge mode
