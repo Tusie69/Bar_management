@@ -244,13 +244,22 @@ function ClusterRectRing({ w, h }: { w: number; h: number }) {
       strokeWidth={1.5}
       strokeDasharray="5 3"
       data-selection-ring="1"
+      pointerEvents="none"
     />
   )
 }
 
 function ClusterCircleRing({ r }: { r: number }) {
   return (
-    <circle r={r + 2.8} fill="none" stroke="#64748B" strokeWidth={1.6} strokeDasharray="5 3" data-selection-ring="1" />
+    <circle
+      r={r + 2.8}
+      fill="none"
+      stroke="#64748B"
+      strokeWidth={1.6}
+      strokeDasharray="5 3"
+      data-selection-ring="1"
+      pointerEvents="none"
+    />
   )
 }
 
@@ -1294,7 +1303,7 @@ function Chairs({ t, color }: { t: TableView; color: string }) {
       break
   }
   return (
-    <g aria-hidden>
+    <g aria-hidden pointerEvents="none">
       {chairs.map(([x, y, w, h], i) => (
         <rect key={i} x={x} y={y} width={w} height={h} rx={1.6} fill="var(--floor)" stroke={color} strokeWidth={0.9} />
       ))}
@@ -1588,7 +1597,7 @@ const LiveGlyph = memo(function LiveGlyph({
             pointerEvents="none"
           />
         ) : null}
-        <circle r={r + 2} fill="transparent" />
+        <circle r={r + 2} fill="transparent" pointerEvents="none" />
         <circle
           className="focus-ring opacity-0"
           r={r + 4}
@@ -1596,8 +1605,11 @@ const LiveGlyph = memo(function LiveGlyph({
           stroke="var(--ring)"
           strokeWidth={1.5}
           strokeDasharray="2 2"
+          pointerEvents="none"
         />
-        {searchHighlighted ? <circle r={r + 5} fill="none" stroke="var(--primary)" strokeWidth={3} /> : null}
+        {searchHighlighted ? (
+          <circle r={r + 5} fill="none" stroke="var(--primary)" strokeWidth={3} pointerEvents="none" />
+        ) : null}
         {selected ? (
           <PickedCircleRing r={r} />
         ) : groupHighlighted ? (
@@ -1610,6 +1622,7 @@ const LiveGlyph = memo(function LiveGlyph({
             strokeOpacity={0.35}
             strokeWidth={1}
             strokeDasharray="2 2"
+            pointerEvents="none"
           />
         ) : null}
         <circle
@@ -1691,7 +1704,7 @@ const LiveGlyph = memo(function LiveGlyph({
           pointerEvents="none"
         />
       ) : null}
-      <rect x={-hw - 2} y={-hh - 2} width={t.w + 4} height={t.h + 4} fill="transparent" />
+      <rect x={-hw - 2} y={-hh - 2} width={t.w + 4} height={t.h + 4} fill="transparent" pointerEvents="none" />
       <rect
         className="focus-ring opacity-0"
         x={-hw - 6}
@@ -1703,6 +1716,7 @@ const LiveGlyph = memo(function LiveGlyph({
         stroke="var(--ring)"
         strokeWidth={1.5}
         strokeDasharray="3 2"
+        pointerEvents="none"
       />
       {searchHighlighted ? (
         <rect
@@ -1714,6 +1728,7 @@ const LiveGlyph = memo(function LiveGlyph({
           fill="none"
           stroke="var(--primary)"
           strokeWidth={3}
+          pointerEvents="none"
         />
       ) : null}
       {selected ? (
@@ -1732,6 +1747,7 @@ const LiveGlyph = memo(function LiveGlyph({
           strokeOpacity={0.35}
           strokeWidth={1}
           strokeDasharray="3 3"
+          pointerEvents="none"
         />
       ) : null}
       <Chairs
@@ -1991,7 +2007,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
           fill="transparent"
           pointerEvents="none"
         />
-        <circle r={r + 2} fill="transparent" />
+        <circle r={r + 2} fill="transparent" pointerEvents="none" />
         <circle
           className="focus-ring opacity-0"
           r={r + 3.5}
@@ -1999,13 +2015,21 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
           stroke="var(--ring)"
           strokeWidth={1.5}
           strokeDasharray="2 2"
+          pointerEvents="none"
         />
         {selected ? (
           <PickedCircleRing r={r} />
         ) : groupHighlighted ? (
           <ClusterCircleRing r={r} />
         ) : pickHint ? (
-          <circle r={r + 2.8} fill="none" stroke="var(--foreground)" strokeOpacity={0.3} strokeDasharray="2 2" />
+          <circle
+            r={r + 2.8}
+            fill="none"
+            stroke="var(--foreground)"
+            strokeOpacity={0.3}
+            strokeDasharray="2 2"
+            pointerEvents="none"
+          />
         ) : null}
         <circle
           r={r}
@@ -2058,7 +2082,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
         fill="transparent"
         pointerEvents="none"
       />
-      <rect x={-hw - 2} y={-hh - 2} width={t.w + 4} height={t.h + 4} fill="transparent" />
+      <rect x={-hw - 2} y={-hh - 2} width={t.w + 4} height={t.h + 4} fill="transparent" pointerEvents="none" />
       <rect
         className="focus-ring opacity-0"
         x={-hw - 6}
@@ -2070,6 +2094,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
         stroke="var(--ring)"
         strokeWidth={1.5}
         strokeDasharray="3 2"
+        pointerEvents="none"
       />
       {selected || groupHighlighted ? (
         <rect
@@ -2083,6 +2108,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
           strokeWidth={1.5}
           strokeDasharray="5 3"
           data-selection-ring="1"
+          pointerEvents="none"
         />
       ) : pickHint && !selected ? (
         <rect
@@ -2095,6 +2121,7 @@ const AvailabilityGlyph = memo(function AvailabilityGlyph({
           stroke="var(--foreground)"
           strokeOpacity={0.3}
           strokeDasharray="3 3"
+          pointerEvents="none"
         />
       ) : null}
       <Chairs t={t} color={ok || selected ? "var(--foreground)" : "var(--table-line)"} />

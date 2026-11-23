@@ -302,7 +302,7 @@ export function MapScreen({
         </div>
       ) : null}
       {pick ? (
-        <div className="z-[6] mx-3 mt-1.5 mb-2 flex shrink-0 items-start gap-2 rounded-2xl border border-primary/50 bg-surface-1 py-2.5 pr-1.5 pl-3.5 shadow-[var(--shadow-soft)]">
+        <div className="z-[6] mx-auto mt-1.5 mb-2 flex w-[calc(100%-1.5rem)] max-w-[var(--gm-max-w)] shrink-0 items-start gap-2 rounded-2xl border border-primary/50 bg-surface-1 py-2.5 pr-1.5 pl-3.5 shadow-[var(--shadow-soft)]">
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="text-[14px] font-semibold text-tx-strong">{pick.title}</span>
             <span className="text-[13px] text-pretty text-[var(--text-muted)]">{pick.hint}</span>
@@ -454,7 +454,7 @@ export function MapScreen({
             const pickCap = selectedTablesCapacity(pickSel, m.model.byId)
             const pickCapWarn = capacityWarningText(pickSel.length, pickCap, pick.targetParty)
             return (
-              <div className="z-[12] flex shrink-0 flex-col gap-2.5 rounded-t-[20px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-[calc(14px+var(--bottom-safe))] shadow-[var(--shadow-float)] md:mx-auto md:w-full md:max-w-[var(--gm-max-w)] md:border-x">
+              <div className="z-[12] mx-auto flex w-full max-w-[var(--gm-max-w)] shrink-0 flex-col gap-2.5 rounded-t-[20px] border-t border-border bg-surface-1 px-4 pt-3.5 pb-[calc(14px+var(--bottom-safe))] shadow-[var(--shadow-float)] md:border-x">
                 {pick.question && pickSel.length ? (
                   <span className="text-[15px] font-semibold text-tx-strong">
                     {pick.question(codesOf(pickSel, m.model))}
@@ -527,7 +527,7 @@ export function MapScreen({
                 : {}),
             }}
             className={cn(
-              "z-[12] flex max-h-[62dvh] min-h-0 flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)] outline-none md:mx-auto md:w-full md:max-w-[var(--gm-max-w)] md:border-x",
+              "z-[12] mx-auto flex max-h-[62dvh] min-h-0 w-full max-w-[var(--gm-max-w)] flex-col overflow-hidden rounded-t-[20px] border-t border-border bg-popover shadow-[var(--shadow-float)] outline-none md:border-x",
               !keyboardSafeHeight && "pb-[var(--bottom-safe)]",
               !quickForm.isOpen && "pointer-events-none",
             )}
@@ -890,7 +890,7 @@ export function TableSheet({
         data-motion-state={isOpen ? "open" : "closing"}
         style={awaitingMotion ? { opacity: 0 } : undefined}
         className={cn(
-          "absolute inset-x-0 bottom-[var(--nav-h)] z-[12] flex max-h-[82dvh] flex-col gap-3 overflow-y-auto rounded-t-[20px] border-t border-border bg-surface-1 px-4 pt-4 pb-[calc(16px+var(--bottom-safe))] shadow-[var(--shadow-float)] md:mx-auto md:w-full md:max-w-[var(--gm-max-w)] md:border-x",
+          "absolute inset-x-0 bottom-[var(--nav-h)] z-[12] mx-auto flex max-h-[82dvh] w-full max-w-[var(--gm-max-w)] flex-col gap-3 overflow-y-auto rounded-t-[20px] border-t border-border bg-surface-1 px-4 pt-4 pb-[calc(16px+var(--bottom-safe))] shadow-[var(--shadow-float)] md:border-x",
           !isOpen && "pointer-events-none",
         )}
       >

@@ -349,7 +349,10 @@ export default function MobileApp() {
             ...(keyboardSafeHeight ? { height: keyboardSafeHeight } : {}),
           } as CSSProperties
         }
-        className="gm-shell-viewport fixed inset-x-0 top-0 w-full touch-manipulation overflow-hidden"
+        className={cn(
+          "gm-shell-viewport fixed inset-x-0 top-0 w-full touch-manipulation overflow-hidden",
+          isReceptionist && "mx-auto max-w-[var(--gm-max-w)] md:max-w-none",
+        )}
       >
         <div
           ref={shellContentRef}

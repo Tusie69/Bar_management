@@ -143,7 +143,7 @@ export function GuestCountCard({
               onClick={onEdit ?? onOpen}
               aria-label="Sửa bộ đếm khách"
               title="Sửa"
-              className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold text-tx-2 transition-colors hover:bg-surface-2 hover:text-tx-strong focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:outline-none active:scale-95 lg:min-h-8 lg:min-w-8"
+              className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold text-tx-2 transition-colors hover:bg-surface-2 hover:text-tx-strong focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:outline-none active:scale-95"
             >
               <Pencil className="size-3" aria-hidden />
               Sửa
