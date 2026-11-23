@@ -53,9 +53,7 @@ export function CancellationGroupCard({
       {group.wasteQuantity > 0 ? (
         <p className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <span>
-            {`${group.wasteQuantity} phần đã làm xong — duyệt nghĩa là ghi hao số này.`}
-          </span>
+          <span>{`${group.wasteQuantity} phần đã làm xong — duyệt nghĩa là ghi hao số này.`}</span>
         </p>
       ) : null}
 
@@ -89,7 +87,7 @@ export function CancellationGroupCard({
           <Input
             value={note}
             onChange={(event) => onNoteChange(event.target.value)}
-            placeholder="Ghi chú quyết định (không bắt buộc)"
+            placeholder="Ghi chú (không bắt buộc)"
             className="h-11"
             aria-label={`Ghi chú quyết định cho đơn ${group.visitSequence}`}
           />

@@ -144,8 +144,8 @@ export default function CancellationQueuePage() {
             onClick={() => setStatus(tab.status)}
             className={
               status === tab.status
-                ? "h-10 rounded-full border border-primary bg-primary px-4 text-sm font-medium text-primary-foreground"
-                : "h-10 rounded-full border border-border bg-surface-1 px-4 text-sm font-medium text-tx-2"
+                ? "min-h-11 rounded-full border border-primary bg-primary px-4 text-sm font-medium text-primary-foreground"
+                : "min-h-11 rounded-full border border-border bg-surface-1 px-4 text-sm font-medium text-tx-2"
             }
           >
             {tab.label}
@@ -197,9 +197,7 @@ export default function CancellationQueuePage() {
                 entry={item.entry}
                 note={notes[item.entry.cancellationId] ?? ""}
                 busy={decide.isPending || decideGroup.isPending}
-                onNoteChange={(value) =>
-                  setNotes((current) => ({ ...current, [item.entry.cancellationId]: value }))
-                }
+                onNoteChange={(value) => setNotes((current) => ({ ...current, [item.entry.cancellationId]: value }))}
                 onDecide={(decision) => decide.mutate({ entry: item.entry, decision })}
               />
             ),

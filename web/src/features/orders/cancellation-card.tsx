@@ -72,7 +72,7 @@ export function CancellationCard({
             value={note}
             maxLength={200}
             onChange={(event) => onNoteChange(event.target.value)}
-            placeholder="Ghi chú quyết định (không bắt buộc)"
+            placeholder="Ghi chú (không bắt buộc)"
             aria-label={`Ghi chú quyết định cho yêu cầu ${entry.cancellationId}`}
             className="h-11"
           />

@@ -1,6 +1,7 @@
 import { useId, useState } from "react"
 import { ChevronDown } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 import type { PreparationStation } from "./preparation-queue-data"
 import { preparationTotalsEmptyText, preparationTotalsTitle, type PreparationAggregateItem } from "./preparation-totals"
@@ -20,9 +21,12 @@ export function PreparationTotalsPanel({
   station: PreparationStation
   items: readonly PreparationAggregateItem[]
 }) {
-  const [expanded, setExpanded] = useState(true)
+  const isMobile = useIsMobile()
+  const [expandedOverride, setExpandedOverride] = useState<boolean | null>(null)
+  const expanded = expandedOverride ?? !isMobile
   const contentId = useId()
   const title = preparationTotalsTitle(station)
+  const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0)
 
   return (
     <section
@@ -33,22 +37,27 @@ export function PreparationTotalsPanel({
       <Button
         type="button"
         variant="ghost"
-        className="min-h-11 w-full min-w-0 justify-between rounded-2xl px-3 py-2 text-left"
+        className="min-h-11 w-full min-w-0 justify-between gap-2 rounded-2xl px-3 py-2 text-left"
         aria-expanded={expanded}
         aria-controls={contentId}
-        onClick={() => setExpanded((value) => !value)}
+        onClick={() => setExpandedOverride(!expanded)}
       >
-        <span className="min-w-0 font-bold break-words">{title}</span>
-        <ChevronDown
-          className={cn("size-4 shrink-0 transition-transform", expanded && "rotate-180")}
-          aria-hidden="true"
-        />
+        <span className="min-w-0 truncate font-bold">{title}</span>
+        <span className="flex shrink-0 items-center gap-2">
+          <span className="tnum rounded-full bg-surface-2 px-2 py-0.5 text-xs font-semibold text-foreground">
+            {`${totalQuantity} phần`}
+          </span>
+          <ChevronDown
+            className={cn("size-4 shrink-0 transition-transform", expanded && "rotate-180")}
+            aria-hidden="true"
+          />
+        </span>
       </Button>
-      <p className="px-3 pb-2 text-xs break-words text-muted-foreground">
-        Tính trên toàn bộ hàng đợi, không phụ thuộc bộ lọc.
-      </p>
       {expanded ? (
         <div id={contentId} className="max-h-72 min-w-0 overflow-y-auto border-t border-border-subtle p-3">
+          <p className="mb-2 text-xs break-words text-muted-foreground">
+            Tính trên toàn bộ hàng đợi, không phụ thuộc bộ lọc.
+          </p>
           {items.length ? (
             <ul className="grid min-w-0 gap-2" aria-label={title}>
               {items.map((item) => (

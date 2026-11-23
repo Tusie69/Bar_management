@@ -41,7 +41,7 @@ export function WaiterShell() {
         <button
           type="button"
           onClick={() => navigate(WAITER_HOME_PATH)}
-          className="flex min-w-0 max-w-[7.5rem] items-baseline gap-2 rounded-md px-1 py-0.5 text-left sm:max-w-none"
+          className="flex min-h-11 max-w-[7.5rem] min-w-0 items-center gap-2 rounded-md px-1 py-0.5 text-left sm:max-w-none"
         >
           <span className="text-base font-semibold tracking-tight">21GAM</span>
           <span className="truncate text-sm text-muted-foreground">{waiterRoleLabel(role)}</span>
