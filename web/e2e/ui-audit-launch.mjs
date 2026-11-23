@@ -6,6 +6,7 @@ import { createRequire } from "node:module"
 import { devNull } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { debuglog } from "node:util"
 
 const host = "127.0.0.1"
 const workerFlag = "--ui-audit-worker"
@@ -108,6 +109,11 @@ async function launch() {
 }
 
 async function supervise() {
+  if (debuglog("child_process").enabled) {
+    console.error("Disable NODE_DEBUG for child_process before running the UI audit")
+    process.exitCode = 1
+    return
+  }
   // Dependencies can write raw errors directly to their process streams.
   const worker = fork(fileURLToPath(import.meta.url), [workerFlag, ...process.argv.slice(2)], {
     stdio: ["ignore", "ignore", "ignore", "ipc"],
