@@ -32,6 +32,7 @@ export function HomeScreen() {
   const ref = useKeepScroll("home")
   return (
     <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <ToastSlot />
       <div ref={ref} data-scroll className="min-h-0 flex-1 overflow-x-clip overflow-y-auto">
         <Hero title={m.isOwner ? "Tổng quan" : "Tiếp đón"} />
         {m.isOwner ? <OwnerBody /> : <ReceptionBody />}
@@ -83,7 +84,6 @@ function Hero({ title }: { title: string }) {
         <UndoRedoButtons glass />
         <BellButton glass />
       </div>
-      <ToastSlot className="mt-1.5" />
       <div className="relative flex items-baseline justify-between gap-3 px-0.5 pt-4">
         <h1 className="m-0 text-[26px] leading-[1.15] font-bold tracking-[-0.022em] text-tx-strong">{title}</h1>
         <span className="tnum text-[13px] font-medium whitespace-nowrap text-tx-2">{fmtBusinessDate(m.today)}</span>
