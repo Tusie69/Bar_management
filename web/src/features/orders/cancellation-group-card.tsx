@@ -6,11 +6,13 @@
  * duyệt phải thấy nó trước khi ngón tay chạm nút, không phải sau.
  */
 import { AlertTriangle, Check, X } from "lucide-react"
+import { useRef, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { formatVnd } from "@/features/waiter-menu/menu-price"
 import { PREPARATION_LABEL, STATION_LABEL } from "@/features/waiter-menu/order-board-model"
+import { CancellationApproveDialog } from "./cancellation-approve-dialog"
 import type { CancellationGroupItem } from "./cancellation-grouping"
 
 function timeLabel(value: string): string {
@@ -35,6 +37,11 @@ export function CancellationGroupCard({
   onNoteChange: (value: string) => void
   onDecide: (decision: "approve" | "reject") => void
 }) {
+  const waste = group.wasteQuantity > 0
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const approveButtonRef = useRef<HTMLButtonElement>(null)
+  const tableOrderLabel = `Đơn ${group.visitSequence} · ${group.tableCodes.length > 0 ? `Bàn ${group.tableCodes.join(" + ")}` : "—"}`
+
   return (
     <li className="grid gap-3 rounded-2xl border-2 border-border-strong bg-surface-1 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -50,7 +57,7 @@ export function CancellationGroupCard({
         <strong className="tnum shrink-0 text-base">{formatVnd(group.amountVnd)}</strong>
       </div>
 
-      {group.wasteQuantity > 0 ? (
+      {waste ? (
         <p className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
           <span>{`${group.wasteQuantity} phần đã làm xong — duyệt nghĩa là ghi hao số này.`}</span>
@@ -96,15 +103,41 @@ export function CancellationGroupCard({
               <X className="size-4" aria-hidden /> Từ chối
             </Button>
             <Button
+              ref={approveButtonRef}
               type="button"
-              variant={group.wasteQuantity > 0 ? "destructive" : "default"}
+              variant={waste ? "destructive" : "default"}
               className="h-11"
               disabled={busy}
-              onClick={() => onDecide("approve")}
+              onClick={() => setConfirmOpen(true)}
             >
               <Check className="size-4" aria-hidden /> Duyệt cả đơn
             </Button>
           </div>
+          <CancellationApproveDialog
+            open={confirmOpen}
+            onOpenChange={setConfirmOpen}
+            triggerRef={approveButtonRef}
+            title={waste ? "Xác nhận duyệt ghi hao cả đơn" : "Xác nhận duyệt hủy cả đơn"}
+            description={
+              waste
+                ? "Thao tác này chấp nhận hủy toàn bộ đơn và ghi hao các món đã làm xong."
+                : "Thao tác này chấp nhận hủy toàn bộ các món trong đơn."
+            }
+            waste={waste}
+            tableOrderLabel={tableOrderLabel}
+            quantityLabel={`${group.totalQuantity} phần (${group.entryCount} dòng món)`}
+            amountVnd={group.amountVnd}
+            items={group.entries.map((entry) => ({
+              key: entry.cancellationId,
+              quantity: entry.quantity,
+              itemName: entry.itemName,
+              variantDisplayName: entry.variantDisplayName,
+              amountVnd: entry.amountVnd,
+            }))}
+            wasteNoticeDetail={waste ? `${group.wasteQuantity} phần đã làm xong trong đơn này.` : undefined}
+            busy={busy}
+            onConfirm={() => onDecide("approve")}
+          />
         </>
       )}
     </li>

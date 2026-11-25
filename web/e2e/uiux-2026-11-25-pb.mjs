@@ -1305,7 +1305,11 @@ try {
   // 4. UX-02 + UX-24 + Landmark <main> on /duyet-huy-mon
   for (const vp of CORE_5) {
     const { context, page, consoleErrors } = await openContext(browser, vp)
-    let approveHit = false
+    let approveNormalPayloads = []
+    let approveWastePayloads = []
+    let approveGroupPayloads = []
+    let rejectNormalPayloads = []
+    let wasteDelayMs = 0
     try {
       await page.route("**/api/v1/auth/me", (route) =>
         route.fulfill({
@@ -1320,9 +1324,22 @@ try {
       await page.route("**/api/v1/orders/cancellations?*", (route) =>
         route.fulfill({ json: { pendingCount: 3, entries: cancellationQueueEntries } }),
       )
-      await page.route("**/api/v1/orders/cancellations/2/approve", (route) => {
-        approveHit = true
+      await page.route("**/api/v1/orders/cancellations/1/approve", (route) => {
+        approveNormalPayloads.push(route.request().postDataJSON())
+        return route.fulfill({ json: { cancellationId: 1, status: "APPROVED", version: 2 } })
+      })
+      await page.route("**/api/v1/orders/cancellations/1/reject", (route) => {
+        rejectNormalPayloads.push(route.request().postDataJSON())
+        return route.fulfill({ json: { cancellationId: 1, status: "REJECTED", version: 2 } })
+      })
+      await page.route("**/api/v1/orders/cancellations/2/approve", async (route) => {
+        approveWastePayloads.push(route.request().postDataJSON())
+        if (wasteDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, wasteDelayMs))
         return route.fulfill({ json: { cancellationId: 2, status: "APPROVED", version: 2 } })
+      })
+      await page.route("**/api/v1/orders/cancellations/groups/90/approve", (route) => {
+        approveGroupPayloads.push(route.request().postDataJSON())
+        return route.fulfill({ json: { groupId: 90, status: "APPROVED", decidedCount: 1 } })
       })
 
       await page.goto(`${vite.baseUrl}/duyet-huy-mon`, { waitUntil: "networkidle" })
@@ -1378,11 +1395,170 @@ try {
 
       await saveShot(page, `owner-duyet-huy-mon-busy-${vp.join("x")}.png`)
 
-      // Verify UX-02 constraint: NO confirmation dialog added, 1-click triggers approve directly
+      const assertOpenDialogLayout = async (stageLabel) => {
+        const dialog = page.getByRole("alertdialog")
+        await expect(dialog).toBeVisible()
+        if (captureDir) await page.waitForTimeout(300)
+        await runAuditProbes(page, `/duyet-huy-mon dialog ${stageLabel} ${vp.join("x")}`, {
+          allowContrastTargets: ["text-destructive"],
+        })
+        const metrics = await dialog.evaluate((el) => {
+          const rect = el.getBoundingClientRect()
+          const btns = [...el.querySelectorAll("button")].map((b) => {
+            const br = b.getBoundingClientRect()
+            return { text: b.textContent?.trim() ?? "", w: Math.round(br.width), h: Math.round(br.height) }
+          })
+          return {
+            vw: document.documentElement.clientWidth,
+            vh: window.innerHeight,
+            left: rect.left,
+            right: rect.right,
+            top: rect.top,
+            bottom: rect.bottom,
+            scrollW: el.scrollWidth,
+            clientW: el.clientWidth,
+            btns,
+          }
+        })
+        assert(
+          metrics.left >= 0 && metrics.right <= metrics.vw && metrics.scrollW <= metrics.clientW + 1,
+          `UX-02 dialog overflow (${stageLabel} ${vp.join("x")}): ${JSON.stringify(metrics)}`,
+        )
+        assert(
+          metrics.top >= 0 && metrics.bottom <= metrics.vh,
+          `UX-02 dialog vertical overflow (${stageLabel} ${vp.join("x")}): ${JSON.stringify(metrics)}`,
+        )
+        for (const b of metrics.btns) {
+          assert(
+            b.w >= 44 && b.h >= 44,
+            `UX-02 dialog button < 44px (${stageLabel} ${vp.join("x")}): ${JSON.stringify(b)}`,
+          )
+        }
+        return dialog
+      }
+
+      if ([320, 390, 820, 1440].includes(vp[0])) {
+        // 1) Normal approve ("Duyệt hủy"): open -> no API -> Huỷ bỏ closes & returns focus
+        const normalBtn = page.getByRole("button", { name: "Duyệt hủy", exact: true })
+        await normalBtn.click()
+        const normalDialog = await assertOpenDialogLayout("normal")
+        assert.equal(approveNormalPayloads.length, 0, "UX-02: opening normal dialog must not call API")
+        await expect(normalDialog).toContainText("Khoai tây chiên sốt Truffle")
+        await expect(normalDialog).toContainText("1 phần")
+        await expect(normalDialog).toContainText("Bàn A1 + A2 · đơn 1")
+        await expect(normalDialog).toContainText("145.000đ")
+        assert.equal(
+          (await normalDialog.textContent())?.includes("Ghi hao món đã làm - tính vào hao hụt"),
+          false,
+          "UX-02: normal dialog must not show waste warning",
+        )
+        assert.equal(
+          await normalDialog.getByRole("button", { name: "Xác nhận", exact: true }).getAttribute("data-variant"),
+          "default",
+        )
+        if (vp[0] === 390) await saveShot(page, `ux02-confirm-normal-${vp.join("x")}.png`)
+        await normalDialog.getByRole("button", { name: "Huỷ bỏ", exact: true }).click()
+        await expect(page.getByRole("alertdialog")).toHaveCount(0)
+        assert.equal(approveNormalPayloads.length, 0, "UX-02: Huỷ bỏ must not call API")
+        await expect(normalBtn).toBeFocused()
+
+        // 2) Waste approve ("Duyệt ghi hao"): open -> no API -> screenshot -> Esc closes & returns focus
+        const wasteBtn = page.getByRole("button", { name: "Duyệt ghi hao", exact: true })
+        await wasteBtn.click()
+        const wasteDialog = await assertOpenDialogLayout("waste")
+        assert.equal(approveWastePayloads.length, 0, "UX-02: opening waste dialog must not call API")
+        await expect(wasteDialog).toContainText("21GAM Negroni Khói Quế")
+        await expect(wasteDialog).toContainText("1 phần")
+        await expect(wasteDialog).toContainText("Bàn A3 · đơn 1")
+        await expect(wasteDialog).toContainText("220.000đ")
+        await expect(wasteDialog).toContainText("Ghi hao món đã làm - tính vào hao hụt")
+        assert.equal(
+          await wasteDialog.getByRole("button", { name: "Xác nhận", exact: true }).getAttribute("data-variant"),
+          "destructive",
+        )
+        await saveShot(page, `ux02-confirm-waste-${vp.join("x")}.png`)
+        await page.keyboard.press("Escape")
+        await expect(page.getByRole("alertdialog")).toHaveCount(0)
+        assert.equal(approveWastePayloads.length, 0, "UX-02: Escape must not call API")
+        await expect(wasteBtn).toBeFocused()
+
+        // 3) Group approve ("Duyệt cả đơn"): open -> no API -> Esc closes & returns focus
+        const groupBtn = page.getByRole("button", { name: "Duyệt cả đơn", exact: true })
+        await groupBtn.click()
+        const groupDialog = await assertOpenDialogLayout("group")
+        assert.equal(approveGroupPayloads.length, 0, "UX-02: opening group dialog must not call API")
+        await expect(groupDialog).toContainText("Old Fashioned")
+        await expect(groupDialog).toContainText("1 phần (1 dòng món)")
+        await expect(groupDialog).toContainText("Đơn 2 · Bàn BAR01")
+        await expect(groupDialog).toContainText("250.000đ")
+        await expect(groupDialog).toContainText("Ghi hao món đã làm - tính vào hao hụt")
+        assert.equal(
+          await groupDialog.getByRole("button", { name: "Xác nhận", exact: true }).getAttribute("data-variant"),
+          "destructive",
+        )
+        if (vp[0] === 390) await saveShot(page, `ux02-confirm-group-${vp.join("x")}.png`)
+        await page.keyboard.press("Escape")
+        await expect(page.getByRole("alertdialog")).toHaveCount(0)
+        assert.equal(approveGroupPayloads.length, 0)
+        await expect(groupBtn).toBeFocused()
+      }
+
       if (vp[0] === 390) {
-        await page.getByRole("button", { name: "Duyệt ghi hao" }).click()
-        await expect.poll(() => approveHit).toBe(true)
-        assert.equal(await page.getByRole("alertdialog").count(), 0, "UX-02: must not add confirmation dialog")
+        // 4) Reject ("Từ chối") works directly without confirmation dialog
+        await page.getByRole("button", { name: "Từ chối", exact: true }).first().click()
+        await expect.poll(() => rejectNormalPayloads.length).toBe(1)
+        assert.equal(await page.getByRole("alertdialog").count(), 0, "UX-02: reject must not open dialog")
+        assert.equal(rejectNormalPayloads[0]?.expectedVersion, 1)
+        assert.equal(typeof rejectNormalPayloads[0]?.idempotencyKey, "string")
+
+        // 5) Keyboard Tab/Enter/Esc + payload + sending state ("Đang duyệt...") on waste approve
+        const noteInput = page.getByLabel("Ghi chú quyết định cho yêu cầu 2", { exact: true })
+        await noteInput.fill("Khách đổi món khác")
+        const wasteBtn = page.getByRole("button", { name: "Duyệt ghi hao", exact: true })
+        await wasteBtn.focus()
+        await page.keyboard.press("Enter")
+        await expect(page.getByRole("alertdialog")).toBeVisible()
+        await page.keyboard.press("Escape")
+        await expect(page.getByRole("alertdialog")).toHaveCount(0)
+        await expect(wasteBtn).toBeFocused()
+
+        await page.keyboard.press("Enter")
+        const dialog = page.getByRole("alertdialog")
+        await expect(dialog).toBeVisible()
+        for (let step = 0; step < 4; step++) {
+          const activeText = await page.evaluate(() => document.activeElement?.textContent?.trim() ?? "")
+          if (activeText === "Xác nhận") break
+          await page.keyboard.press("Tab")
+        }
+        assert.equal(
+          await page.evaluate(() => document.activeElement?.textContent?.trim()),
+          "Xác nhận",
+          "UX-02: Tab must focus Xác nhận button inside dialog",
+        )
+
+        wasteDelayMs = 300
+        await page.keyboard.press("Enter")
+        await expect(dialog.getByRole("button", { name: "Đang duyệt...", exact: true })).toBeDisabled()
+        await expect(dialog.getByRole("button", { name: "Huỷ bỏ", exact: true })).toBeDisabled()
+        await expect.poll(() => approveWastePayloads.length).toBe(1)
+        assert.equal(approveWastePayloads[0]?.expectedVersion, 1)
+        assert.equal(approveWastePayloads[0]?.note, "Khách đổi món khác")
+        assert.equal(typeof approveWastePayloads[0]?.idempotencyKey, "string")
+        await expect(page.getByRole("alertdialog")).toHaveCount(0)
+
+        // 6) Confirm normal approve & group approve each call API exactly once with original payload
+        await page.getByRole("button", { name: "Duyệt hủy", exact: true }).click()
+        await page.getByRole("alertdialog").getByRole("button", { name: "Xác nhận", exact: true }).click()
+        await expect.poll(() => approveNormalPayloads.length).toBe(1)
+        assert.equal(approveNormalPayloads[0]?.expectedVersion, 1)
+        assert.equal(typeof approveNormalPayloads[0]?.idempotencyKey, "string")
+        await expect(page.getByRole("alertdialog")).toHaveCount(0)
+
+        await page.getByRole("button", { name: "Duyệt cả đơn", exact: true }).click()
+        await page.getByRole("alertdialog").getByRole("button", { name: "Xác nhận", exact: true }).click()
+        await expect.poll(() => approveGroupPayloads.length).toBe(1)
+        assert.equal(typeof approveGroupPayloads[0]?.idempotencyKey, "string")
+        await expect(page.getByRole("alertdialog")).toHaveCount(0)
       }
       checks++
     } finally {

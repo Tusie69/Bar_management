@@ -6,12 +6,14 @@
  * sẽ chết trước khi vẽ được gì.
  */
 import { Check, X } from "lucide-react"
+import { useRef, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { formatVnd } from "@/features/waiter-menu/menu-price"
 import { PREPARATION_LABEL, POLICY_LABEL, STATION_LABEL } from "@/features/waiter-menu/order-board-model"
 import type { CancellationQueueEntry } from "@/features/waiter-menu/waiter-order-api"
+import { CancellationApproveDialog } from "./cancellation-approve-dialog"
 
 function timeLabel(value: string): string {
   const date = new Date(value)
@@ -33,6 +35,10 @@ export function CancellationCard({
   onDecide: (decision: "approve" | "reject") => void
 }) {
   const waste = entry.policy === "READY_WASTE"
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const approveButtonRef = useRef<HTMLButtonElement>(null)
+  const tableOrderLabel = `Bàn ${entry.tableCodes.join(" + ") || `#${entry.visitId}`} · đơn ${entry.visitSequence}`
+
   return (
     <li className="grid gap-3 rounded-2xl border border-border bg-surface-1 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -44,8 +50,7 @@ export function CancellationCard({
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <Badge variant={waste ? "destructive" : "secondary"}>{POLICY_LABEL[entry.policy]}</Badge>
             <span>
-              Bàn {entry.tableCodes.join(" + ") || `#${entry.visitId}`} · đơn {entry.visitSequence} · dòng{" "}
-              {entry.lineNo}
+              {tableOrderLabel} · dòng {entry.lineNo}
             </span>
             <span>{STATION_LABEL[entry.station]}</span>
             <span>{PREPARATION_LABEL[entry.ticketStatusAtRequest]} khi xin hủy</span>
@@ -81,14 +86,40 @@ export function CancellationCard({
               <X className="size-4" aria-hidden /> Từ chối
             </Button>
             <Button
+              ref={approveButtonRef}
               type="button"
               variant={waste ? "destructive" : "default"}
               disabled={busy}
-              onClick={() => onDecide("approve")}
+              onClick={() => setConfirmOpen(true)}
             >
               <Check className="size-4" aria-hidden /> {waste ? "Duyệt ghi hao" : "Duyệt hủy"}
             </Button>
           </div>
+          <CancellationApproveDialog
+            open={confirmOpen}
+            onOpenChange={setConfirmOpen}
+            triggerRef={approveButtonRef}
+            title={waste ? "Xác nhận duyệt ghi hao" : "Xác nhận duyệt hủy món"}
+            description={
+              waste
+                ? "Thao tác này chấp nhận hủy món đã làm và ghi nhận vào hao hụt."
+                : "Thao tác này chấp nhận hủy món và trừ khỏi đơn hiện tại."
+            }
+            waste={waste}
+            tableOrderLabel={tableOrderLabel}
+            quantityLabel={`${entry.quantity} phần`}
+            amountVnd={entry.amountVnd}
+            items={[
+              {
+                key: entry.cancellationId,
+                quantity: entry.quantity,
+                itemName: entry.itemName,
+                variantDisplayName: entry.variantDisplayName,
+              },
+            ]}
+            busy={busy}
+            onConfirm={() => onDecide("approve")}
+          />
         </div>
       ) : (
         <Badge variant="outline" className="w-fit">
