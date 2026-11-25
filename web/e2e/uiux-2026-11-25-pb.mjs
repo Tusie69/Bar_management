@@ -1805,20 +1805,20 @@ try {
 
           const assertLoginViewport = async (stage) => {
             const layout = await page.evaluate(() => {
-              const pwd = document.getElementById("password")
+              const field = document.getElementById("password")
               const submit = document.querySelector('button[type="submit"]')
-              const pwdBox = pwd?.getBoundingClientRect()
+              const fieldBox = field?.getBoundingClientRect()
               const subBox = submit?.getBoundingClientRect()
               return {
                 vh: window.innerHeight,
-                pwdTop: pwdBox?.top ?? -1,
-                pwdBottom: pwdBox?.bottom ?? 9999,
+                inputTop: fieldBox?.top ?? -1,
+                inputBottom: fieldBox?.bottom ?? 9999,
                 subTop: subBox?.top ?? -1,
                 subBottom: subBox?.bottom ?? 9999,
               }
             })
             assert(
-              layout.pwdTop >= 0 && layout.pwdBottom <= layout.vh,
+              layout.inputTop >= 0 && layout.inputBottom <= layout.vh,
               `UX-12 ${vp.join("x")} (${stage}): password input outside viewport (${JSON.stringify(layout)})`,
             )
             assert(
