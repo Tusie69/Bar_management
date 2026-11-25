@@ -15,6 +15,7 @@ import { assignWaitlistTables } from "../waitlist/assign-waitlist"
 import { CallCustomerControl } from "../bookings/call-customer"
 import { useMobileActions } from "./actions"
 import { useM } from "./context"
+import { ToastSlot } from "./overlays"
 import { codesOf, isOpenEntry, type Tone, toneStyle } from "./model"
 import { card, CardSkeleton, EmptyBox, PlainHeader, Seg, useKeepScroll } from "./ui"
 
@@ -49,7 +50,7 @@ export function WaitScreen({ embedded = false }: { embedded?: boolean }) {
   )
   const body = (
     <>
-      {embedded ? <div className="px-4 pb-3">{kindFilter}</div> : m.toastBanner}
+      {embedded ? <div className="px-4 pb-3">{kindFilter}</div> : <ToastSlot />}
       <div ref={ref} className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-1 pb-6">
         {m.waitlistError ? (
           <EmptyBox

@@ -19,6 +19,7 @@ import { isApiError } from "@/services"
 import { useCan } from "@/state/session"
 import { ZaloBookingExport } from "../reservations/zalo-booking-export"
 import { useM } from "./context"
+import { ToastSlot } from "./overlays"
 import { byTime, chipOf, levelOf } from "./model"
 import { BookingCard, CardSkeleton, Chip, EmptyBox, PlainHeader, Seg, useKeepScroll } from "./ui"
 
@@ -178,7 +179,7 @@ export function ListScreen() {
       </PlainHeader>
 
       <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {m.toastBanner}
+        <ToastSlot />
         {mode === "timeline" ? (
           <Timeline bd={bd} reservations={res ?? []} />
         ) : (

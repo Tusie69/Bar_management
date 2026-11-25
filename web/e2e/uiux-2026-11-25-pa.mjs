@@ -11,6 +11,7 @@ import { createServer } from "vite"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
+const FIXED_CLOCK_ISO = "2026-11-25T04:00:00Z"
 
 const { values: cliArgs } = parseArgs({
   options: { "capture-dir": { type: "string" } },
@@ -67,7 +68,8 @@ async function waitSettle(page) {
         .map((a) => a.finished.catch(() => {})),
     )
   })
-  await page.waitForTimeout(120)
+  // Wait for FloorCanvas 320ms transform transition to finish if running
+  await page.waitForTimeout(360)
 }
 
 async function maybeShot(page, name) {
@@ -122,7 +124,6 @@ async function measureScreen(page) {
       for (const el of document.querySelectorAll(
         "button, a[href], input:not([type=hidden]), select, [role=button], [role=tab]",
       )) {
-        if (el.hasAttribute("data-bar-guest-row")) continue
         if (el.closest("[inert]")) continue
         const s = getComputedStyle(el)
         if (s.display === "none" || s.visibility !== "visible") continue
@@ -154,12 +155,77 @@ async function openContext(browser, userId, width, height, { reducedMotion = fal
     localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: uid, theme: "light" }))
   }, userId)
   const page = await context.newPage()
+  await page.clock.install({ time: new Date(FIXED_CLOCK_ISO) })
+  await page.clock.resume()
   const errors = []
   page.on("console", (msg) => {
     if (msg.type() === "error") errors.push(msg.text())
   })
   page.on("pageerror", (err) => errors.push(err.message))
   return { context, page, errors }
+}
+
+async function checkFocusIndicator(page, label) {
+  const focusRing = await page.evaluate(() => {
+    const el = document.activeElement
+    if (!el || el === document.body) return null
+    const s = getComputedStyle(el)
+    return {
+      tag: el.tagName,
+      aria: el.getAttribute("aria-label") || el.textContent?.trim() || "",
+      focusVisible: el.matches(":focus-visible"),
+      outlineStyle: s.outlineStyle,
+      outlineWidth: s.outlineWidth,
+      boxShadow: s.boxShadow,
+    }
+  })
+  assert(
+    focusRing &&
+      focusRing.focusVisible &&
+      ((focusRing.outlineStyle !== "none" && parseFloat(focusRing.outlineWidth) > 0) ||
+        (focusRing.boxShadow !== "none" && focusRing.boxShadow !== "")),
+    `${label}: missing focus-visible indicator (${JSON.stringify(focusRing)})`,
+  )
+  return focusRing
+}
+
+async function closeToastAndAssertExitFrame(page, width, label, method = "enter") {
+  const openRect = await page.locator(".gm-toast-banner").boundingBox()
+  assert(openRect, `${label}: missing open toast rect before close`)
+
+  const closeBtn = page.getByRole("button", { name: "Đóng thông báo", exact: true })
+  if (method === "enter") {
+    await closeBtn.focus()
+    await page.keyboard.press("Enter")
+  } else {
+    await closeBtn.click()
+  }
+
+  // Sample immediately during exit animation (data-state="closed")
+  const exitSample = await page.evaluate(() => {
+    const el = document.querySelector(".gm-toast-banner")
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    return {
+      state: el.getAttribute("data-state"),
+      left: r.left,
+      right: r.right,
+      width: r.width,
+      pointerEvents: getComputedStyle(el).pointerEvents,
+    }
+  })
+  if (exitSample) {
+    assert(
+      exitSample.left >= 11 && exitSample.right <= width - 11,
+      `${label}: Toast15 exit frame clipped/overflowed (${JSON.stringify(exitSample)}, viewport=${width})`,
+    )
+    assert(
+      exitSample.width <= openRect.width + 1,
+      `${label}: Toast15 exit frame grew wider (${exitSample.width} > ${openRect.width})`,
+    )
+    assert.equal(exitSample.pointerEvents, "none", `${label}: exiting toast must pass through pointers`)
+  }
+  await page.locator(".gm-toast-banner").waitFor({ state: "detached" })
 }
 
 const RECEPTION_VIEWPORTS = [
@@ -185,15 +251,28 @@ async function verifyReceptionFloor(browser, baseUrl, summary) {
       await waitSettle(page)
       await maybeShot(page, `receptionist-floor-busy-${w}x${h}.png`)
 
-      // UX-01 + DS-01: Toast15 sits below header, never covers header, legend, GuestCountCard, or row C1/C2/C4
+      // PA-R01: FloorCanvas <g> keeps 320ms transition duration in normal motion
+      const gTransition = await page.evaluate(() => {
+        const g = document.querySelector('svg[role="group"] > g')
+        return g ? getComputedStyle(g).transitionDuration : null
+      })
+      assert.equal(gTransition, "0.32s", `${label}: FloorCanvas transitionDuration must remain 0.32s`)
+
+      // UX-01 + DS-01 + PA-R08: Toast15 sits below header, never covers controls or C4/C1/C2; strict elementFromPoint
       const toastInfo = await page.evaluate(() => {
         const header = document.querySelector("header")
         const toast = document.querySelector(".gm-toast-banner")
         const menuBtn = document.querySelector('header button[aria-label^="Menu"]')
+        const searchInput = document.querySelector('header input[aria-label^="Tìm "]')
+        const searchModeBtn = document.querySelector('header button[aria-label^="Chuyển sang tìm "]')
         const exportBtn = document.querySelector('header button[aria-label="Xuất text Zalo"]')
         const legendBtn = document.querySelector('button[aria-label^="Ký hiệu:"]')
         const guestCard = document.querySelector('[data-testid="guest-count-card"]')
+        const dateBtn = document.querySelector('button[aria-label="Chọn ngày kinh doanh"]')
+        const waitBtn = document.querySelector('button[aria-label^="Bàn chờ,"]')
+        const c4 = document.querySelector('g[role="button"][aria-label^="Bàn C4,"]')
         const c1 = document.querySelector('g[role="button"][aria-label^="Bàn C1,"]')
+        const c2 = document.querySelector('g[role="button"][aria-label^="Bàn C2,"]')
         const viewBtn = [...document.querySelectorAll(".gm-toast-banner button")].find(
           (b) => b.textContent?.trim() === "Xem",
         )
@@ -209,7 +288,7 @@ async function verifyReceptionFloor(browser, baseUrl, summary) {
           const r = el.getBoundingClientRect()
           const hit = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2)
           return {
-            contains: Boolean(hit && (el.contains(hit) || hit.contains(el))),
+            contains: Boolean(hit && el.contains(hit)),
             inToast: Boolean(hit && hit.closest(".gm-toast-banner")),
             hitTag: hit?.tagName ?? null,
           }
@@ -218,20 +297,27 @@ async function verifyReceptionFloor(browser, baseUrl, summary) {
           headerRect: rect(header),
           toastRect: rect(toast),
           toastBgPointer: toast ? getComputedStyle(toast).pointerEvents : null,
-          toastBackdrop: toast ? getComputedStyle(toast).backdropFilter : null,
           viewRect: rect(viewBtn),
           viewPointer: viewBtn ? getComputedStyle(viewBtn).pointerEvents : null,
           closeRect: rect(closeBtn),
           closePointer: closeBtn ? getComputedStyle(closeBtn).pointerEvents : null,
           legendRect: rect(legendBtn),
           guestCardRect: rect(guestCard),
+          c4Rect: rect(c4),
           c1Rect: rect(c1),
+          c2Rect: rect(c2),
           hits: {
             menu: centerHit(menuBtn),
+            search: centerHit(searchInput),
+            searchMode: centerHit(searchModeBtn),
             export: centerHit(exportBtn),
             legend: centerHit(legendBtn),
             guestCard: centerHit(guestCard),
+            date: centerHit(dateBtn),
+            wait: centerHit(waitBtn),
+            c4: centerHit(c4),
             c1: centerHit(c1),
+            c2: centerHit(c2),
           },
         }
       })
@@ -249,12 +335,22 @@ async function verifyReceptionFloor(browser, baseUrl, summary) {
         toastInfo.toastRect.bottom <= toastInfo.guestCardRect.top + 1,
         `${label}: Toast15 bottom (${toastInfo.toastRect.bottom}) overlaps GuestCountCard top (${toastInfo.guestCardRect.top})`,
       )
-      assert(
-        toastInfo.toastRect.bottom <= toastInfo.c1Rect.top + 1,
-        `${label}: Toast15 bottom (${toastInfo.toastRect.bottom}) overlaps Bàn C1 top (${toastInfo.c1Rect.top})`,
-      )
+      for (const [tName, tRect] of [
+        ["C4", toastInfo.c4Rect],
+        ["C1", toastInfo.c1Rect],
+        ["C2", toastInfo.c2Rect],
+      ]) {
+        assert(tRect, `${label}: missing Bàn ${tName}`)
+        assert(
+          toastInfo.toastRect.bottom <= tRect.top + 1,
+          `${label}: Toast15 bottom (${toastInfo.toastRect.bottom}) overlaps Bàn ${tName} top (${tRect.top})`,
+        )
+      }
       for (const [key, hit] of Object.entries(toastInfo.hits)) {
-        assert(hit?.contains && !hit.inToast, `${label}: elementFromPoint on ${key} failed: ${JSON.stringify(hit)}`)
+        assert(
+          hit?.contains && !hit.inToast,
+          `${label}: strict elementFromPoint on ${key} failed: ${JSON.stringify(hit)}`,
+        )
       }
       assert.equal(toastInfo.toastBgPointer, "none", `${label}: Toast15 background should pass through pointer events`)
       assert.equal(toastInfo.viewPointer, "auto", `${label}: Xem button must accept pointer events`)
@@ -280,46 +376,78 @@ async function verifyReceptionFloor(browser, baseUrl, summary) {
         assert.equal(item.backdrop, "none", `${label}: unexpected backdrop-filter on ${item.label}: ${item.backdrop}`)
       }
 
-      // UX-09: BarGuestList >= 12px and no clipped seat code or missing guest name
-      const barStats = await page.evaluate(() => {
-        const list = document.querySelector('[data-testid="bar-guest-list"]')
-        if (!list) return null
-        const smallTexts = []
-        for (const el of list.querySelectorAll("*")) {
-          if (!(el instanceof HTMLElement)) continue
-          if (el.closest(".sr-only")) continue
-          const hasText = [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim())
-          if (!hasText) continue
-          const fs = parseFloat(getComputedStyle(el).fontSize)
-          if (fs < 12) smallTexts.push({ text: el.innerText, fs })
-        }
-        const rows = [...list.querySelectorAll("[data-bar-guest-row]")].map((row) => {
+      // UX-09 + PA-R03 + PA-R04: BarGuestList scroll to every row, full name/code without clipping, >= 44px button, non-overlapping hits
+      const rowCount = await page.locator('[data-testid="bar-guest-list"] [data-bar-guest-row]').count()
+      assert(rowCount >= 5, `${label}: expected >= 5 BarGuestList rows, got ${rowCount}`)
+      const barRowsInfo = []
+      for (let idx = 0; idx < rowCount; idx++) {
+        const rowLoc = page.locator('[data-testid="bar-guest-list"] [data-bar-guest-row]').nth(idx)
+        await rowLoc.evaluate((el) => el.scrollIntoView({ block: "nearest" }))
+        const info = await rowLoc.evaluate((row) => {
+          const r = row.getBoundingClientRect()
+          const smallTexts = []
+          for (const el of row.querySelectorAll("*")) {
+            if (!(el instanceof HTMLElement) || el.closest(".sr-only")) continue
+            const hasText = [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim())
+            if (!hasText) continue
+            const fs = parseFloat(getComputedStyle(el).fontSize)
+            if (fs < 12) smallTexts.push({ text: el.innerText, fs })
+          }
           const spans = [...row.querySelectorAll("span:not(.sr-only)")].filter((s) =>
             [...s.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim()),
           )
           const codeEl = spans[0]
-          const nameEl = row.querySelector("span.truncate")
+          const nameEl = row.querySelector("span[title]")
+          const nameStyle = nameEl ? getComputedStyle(nameEl) : null
+          const cx = (r.left + r.right) / 2
+          const midHit = document.elementFromPoint(cx, (r.top + r.bottom) / 2)
+          const topHit = document.elementFromPoint(cx, r.top + 4)
+          const botHit = document.elementFromPoint(cx, r.bottom - 4)
           return {
+            tag: row.tagName,
+            w: r.width,
+            h: r.height,
+            top: r.top,
+            bottom: r.bottom,
+            smallTexts,
             code: codeEl?.textContent?.trim() ?? "",
             codeOverflow: codeEl ? codeEl.scrollWidth > codeEl.clientWidth + 1 : false,
             name: nameEl?.textContent?.trim() ?? "",
-            nameWidth: nameEl ? Math.round(nameEl.getBoundingClientRect().width) : 0,
+            nameOverflow: nameEl ? nameEl.scrollWidth > nameEl.clientWidth + 1 : false,
+            nameTextOverflow: nameStyle?.textOverflow ?? "",
+            hitsOk:
+              Boolean(midHit && row.contains(midHit)) &&
+              Boolean(topHit && row.contains(topHit)) &&
+              Boolean(botHit && row.contains(botHit)),
           }
         })
-        return { smallTexts, rows }
-      })
-      assert(barStats && barStats.rows.length > 0, `${label}: missing BarGuestList rows`)
-      assert.deepEqual(barStats.smallTexts, [], `${label}: BarGuestList has <12px text`)
-      for (const row of barStats.rows) {
-        assert(/^(Bar|G)\d/.test(row.code), `${label}: invalid BarGuestList seat/group code "${row.code}"`)
-        assert(!row.codeOverflow, `${label}: BarGuestList code "${row.code}" clipped`)
-        assert(
-          row.name.length > 0 && row.nameWidth >= 40,
-          `${label}: BarGuestList guest name lost/squeezed: ${JSON.stringify(row)}`,
-        )
+        assert.deepEqual(info.smallTexts, [], `${label} row[${idx}]: <12px text`)
+        assert(/^(Bar|G)\d/.test(info.code), `${label} row[${idx}]: invalid code "${info.code}"`)
+        assert(!info.codeOverflow, `${label} row[${idx}]: code "${info.code}" clipped`)
+        assert(info.name.length > 0, `${label} row[${idx}]: missing guest name`)
+        assert(!info.nameOverflow, `${label} row[${idx}]: guest name clipped horizontally: ${JSON.stringify(info)}`)
+        assert.notEqual(info.nameTextOverflow, "ellipsis", `${label} row[${idx}]: guest name uses ellipsis`)
+        if (w <= 1024) {
+          assert(info.w >= 44 && info.h >= 44, `${label} row[${idx}]: ${info.w.toFixed(1)}x${info.h.toFixed(1)} < 44`)
+          assert(info.hitsOk, `${label} row[${idx}]: center/edge hit failed: ${JSON.stringify(info)}`)
+        }
+        barRowsInfo.push(info)
       }
+      // Verify consecutive bar rows do not overlap vertically at the same scroll position
+      const verticalOverlap = await page.evaluate(() => {
+        const rows = [...document.querySelectorAll('[data-testid="bar-guest-list"] [data-bar-guest-row]')]
+        for (let i = 1; i < rows.length; i++) {
+          const prev = rows[i - 1].getBoundingClientRect()
+          const cur = rows[i].getBoundingClientRect()
+          if (prev.bottom > cur.top + 0.5) {
+            return { i, prevBottom: prev.bottom, curTop: cur.top }
+          }
+        }
+        return null
+      })
+      assert.equal(verticalOverlap, null, `${label}: bar rows overlap vertically: ${JSON.stringify(verticalOverlap)}`)
 
-      // Landmarks, overflow, touch targets, small fonts
+      // Landmarks, overflow, touch targets, small fonts (now includes [data-bar-guest-row]!)
       const stats = await measureScreen(page)
       assert(!stats.overflowX, `${label}: horizontal overflow`)
       assert.equal(stats.mainCount, 1, `${label}: expected 1 <main>`)
@@ -329,8 +457,10 @@ async function verifyReceptionFloor(browser, baseUrl, summary) {
       assert.deepEqual(stats.smallTargets, [], `${label}: touch targets < 44px: ${JSON.stringify(stats.smallTargets)}`)
 
       // Run axe on key viewports (including GuestCountCard UX-07)
+      let axeStatus = "not-run"
       if ([320, 390, 820, 1024, 1440].includes(w)) {
         await runAxeSeriousCritical(page, label)
+        axeStatus = "0-serious-critical"
       }
 
       // Open StatusLegend while Toast15 is STILL visible (DS-01 + DS-02)
@@ -364,44 +494,67 @@ async function verifyReceptionFloor(browser, baseUrl, summary) {
         await dialog.waitFor({ state: "detached" })
       }
 
-      // Verify Toast15 does NOT auto-hide after 1.5s, and closes on click
+      // Toast15 exit frame check at 320 / 1440 via Enter
+      if (w === 320 || w === 1440) {
+        await closeToastAndAssertExitFrame(page, w, label, "enter")
+      }
+
+      // At 390x844: Toast15 does NOT auto-hide after 1.5s, Tab/Shift+Tab between Xem & Đóng, Space on Xem opens target, tap Bar row opens sheet
       if (w === 390) {
         await page.waitForTimeout(1500)
         assert.equal(await page.locator(".gm-toast-banner").count(), 1, `${label}: Toast15 unexpectedly auto-hid`)
-        await page.getByRole("button", { name: "Đóng thông báo", exact: true }).click()
-        await page.locator(".gm-toast-banner").waitFor({ state: "detached" })
 
-        // Focus-visible ring check on Tab
+        const viewBtn = page.locator(".gm-toast-banner").getByRole("button", { name: "Xem", exact: true })
+        await viewBtn.focus()
+        const f1 = await checkFocusIndicator(page, `${label} Xem`)
+        assert.equal(f1.aria, "Xem")
+
         await page.keyboard.press("Tab")
-        const focusRing = await page.evaluate(() => {
-          const el = document.activeElement
-          if (!el || el === document.body) return null
-          const s = getComputedStyle(el)
-          return {
-            tag: el.tagName,
-            focusVisible: el.matches(":focus-visible"),
-            outlineStyle: s.outlineStyle,
-            outlineWidth: s.outlineWidth,
-            boxShadow: s.boxShadow,
-          }
-        })
+        const f2 = await checkFocusIndicator(page, `${label} Đóng`)
+        assert.equal(f2.aria, "Đóng thông báo")
+
+        await page.keyboard.press("Shift+Tab")
+        const f3 = await checkFocusIndicator(page, `${label} Shift+Tab back to Xem`)
+        assert.equal(f3.aria, "Xem")
+
+        // Space on Xem opens TableSheet for B3 and marks toast handled
+        await page.keyboard.press("Space")
+        const sheet = page.locator('[data-mobile-table-sheet="true"]')
+        await sheet.waitFor({ state: "visible" })
+        await page.locator(".gm-toast-banner").waitFor({ state: "detached" })
+        await sheet.getByRole("button", { name: "Đóng", exact: true }).click()
+        await sheet.waitFor({ state: "detached" })
+
+        // Tap a BarGuestList row opens its TableSheet
+        const firstBarRow = page.locator('[data-testid="bar-guest-list"] [data-bar-guest-row]').first()
+        await firstBarRow.scrollIntoViewIfNeeded()
+        await firstBarRow.click()
+        await sheet.waitFor({ state: "visible" })
+        const sheetHeading = await sheet.locator("h2").textContent()
         assert(
-          focusRing &&
-            focusRing.focusVisible &&
-            ((focusRing.outlineStyle !== "none" && parseFloat(focusRing.outlineWidth) > 0) ||
-              (focusRing.boxShadow !== "none" && focusRing.boxShadow !== "")),
-          `${label}: missing focus-visible indicator (${JSON.stringify(focusRing)})`,
+          sheetHeading && /Bar|Ghế Bar/.test(sheetHeading),
+          `${label}: BarGuestList click opened wrong sheet: ${sheetHeading}`,
         )
+        await sheet.getByRole("button", { name: "Đóng", exact: true }).click()
+        await sheet.waitFor({ state: "detached" })
       }
 
       assert.deepEqual(errors, [], `${label}: console/page errors: ${errors.join("; ")}`)
-      summary.push({ screen: label, overflowX: stats.overflowX, smallTargets: 0, smallFonts: 0, axe: 0 })
+      summary.push({
+        screen: label,
+        overflowX: stats.overflowX,
+        smallTargets: stats.smallTargets.length,
+        smallFonts: stats.smallHtmlFonts.length,
+        barRows: barRowsInfo.length,
+        minBarRowH: Math.round(Math.min(...barRowsInfo.map((r) => r.h)) * 10) / 10,
+        axe: axeStatus,
+      })
     } finally {
       await context.close()
     }
   }
 
-  // DS-01 + DS-02 explicit 320x640 shots + reduced-motion toast close check
+  // DS-01 + DS-02 explicit 320x640 shots + reduced-motion FloorCanvas & Toast15 exit frame check
   {
     const { context, page, errors } = await openContext(browser, 1, 320, 640, { reducedMotion: true })
     try {
@@ -410,15 +563,22 @@ async function verifyReceptionFloor(browser, baseUrl, summary) {
       await waitSettle(page)
       await maybeShot(page, "A-reception-toast-overlap-320x640.png")
 
+      // PA-R01 reduced-motion check
+      const gTransition = await page.evaluate(() => {
+        const g = document.querySelector('svg[role="group"] > g')
+        return g ? getComputedStyle(g).transitionProperty : null
+      })
+      assert.equal(gTransition, "none", "320x640 reduced-motion: FloorCanvas transitionProperty must be none")
+
       await page.getByRole("button", { name: /^Ký hiệu:/ }).click()
       await page.getByRole("dialog", { name: "Chú giải ký hiệu" }).waitFor({ state: "visible" })
       await waitSettle(page)
       await maybeShot(page, "A-reception-legend-320x640.png")
       await page.keyboard.press("Escape")
 
-      await page.getByRole("button", { name: "Đóng thông báo", exact: true }).click()
-      await page.locator(".gm-toast-banner").waitFor({ state: "detached" })
+      await closeToastAndAssertExitFrame(page, 320, "320x640 reduced-motion", "enter")
       assert.deepEqual(errors, [], `320x640 reduced-motion errors: ${errors.join("; ")}`)
+      summary.push({ screen: "receptionist 320x640 reduced-motion", axe: "not-run" })
     } finally {
       await context.close()
     }
@@ -436,8 +596,8 @@ async function verifyTableSheetAndQuickForm(browser, baseUrl, summary) {
     const { context, page, errors } = await openContext(browser, 1, w, h)
     try {
       await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
-      await page.getByRole("button", { name: "Đóng thông báo", exact: true }).click()
-      await page.locator(".gm-toast-banner").waitFor({ state: "detached" })
+      await waitSettle(page)
+      await closeToastAndAssertExitFrame(page, w, label, w === 390 ? "enter" : "click")
 
       // UX-04 + UX-19 (CallHistory): open B3 booked table sheet
       await page.getByRole("button", { name: /^Bàn B3,/ }).click()
@@ -456,7 +616,6 @@ async function verifyTableSheetAndQuickForm(browser, baseUrl, summary) {
         const s = getComputedStyle(el)
         const [fr, fg, fb] = parse(s.color)
         const [br, bg, bb, ba = 1] = parse(s.backgroundColor)
-        // Composite over white #ffffff surface-1
         const cr = br * ba + 255 * (1 - ba)
         const cg = bg * ba + 255 * (1 - ba)
         const cb = bb * ba + 255 * (1 - ba)
@@ -508,7 +667,92 @@ async function verifyTableSheetAndQuickForm(browser, baseUrl, summary) {
       const mStats = await measureScreen(page)
       assert(!mStats.overflowX, `${label}: QuickForm horizontal overflow`)
       assert.deepEqual(errors, [], `${label}: console/page errors: ${errors.join("; ")}`)
-      summary.push({ screen: label, contrast: Number(contrast.toFixed(2)), overflowX: false })
+      summary.push({
+        screen: label,
+        contrast: Number(contrast.toFixed(2)),
+        overflowX: false,
+        axe: "0-serious-critical",
+      })
+    } finally {
+      await context.close()
+    }
+  }
+}
+
+async function verifyToastTabSwitchPersistence(browser, baseUrl, summary) {
+  // PA-R02: Toast15 must NOT remount or replay gm-toast-in across tab switches (Owner & Cashier at 390x844)
+  for (const [roleName, userId] of [
+    ["owner", 3],
+    ["cashier", 5],
+  ]) {
+    const label = `${roleName} tab-switch Toast15 390x844`
+    const { context, page, errors } = await openContext(browser, userId, 390, 844)
+    try {
+      await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
+      await page.locator(".gm-toast-banner").waitFor({ state: "visible" })
+      await waitSettle(page)
+
+      const initialAnims = await page.evaluate(() => {
+        const el = document.querySelector(".gm-toast-banner")
+        window.__paToastRef = el
+        return el ? el.getAnimations().map((a) => [a.animationName, a.playState]) : []
+      })
+      assert(initialAnims.some(([name, state]) => name === "gm-toast-in" && state === "finished"))
+
+      // Switch Sơ đồ -> Danh sách
+      await page
+        .getByRole("navigation", { name: "Điều hướng chính" })
+        .getByRole("button", { name: "Danh sách" })
+        .click()
+      await page.waitForURL("**/reservations")
+      await page.getByRole("heading", { name: "Danh sách", level: 1 }).waitFor({ state: "visible" })
+      await page.waitForTimeout(80)
+      const listCheck = await page.evaluate(() => {
+        const el = document.querySelector(".gm-toast-banner")
+        const header = document.querySelector("header")
+        const seg = document.querySelector('[role="tablist"][aria-label="Kiểu xem"]')
+        return {
+          same: el === window.__paToastRef,
+          anims: el ? el.getAnimations().map((a) => [a.animationName, a.playState]) : [],
+          tTop: el?.getBoundingClientRect().top ?? 0,
+          hBottom: header?.getBoundingClientRect().bottom ?? 0,
+          sBottom: seg?.getBoundingClientRect().bottom ?? 0,
+        }
+      })
+      assert(listCheck.same, `${label} -> Danh sách: Toast15 remounted (${JSON.stringify(listCheck)})`)
+      assert(
+        !listCheck.anims.some(([name, state]) => name === "gm-toast-in" && state === "running"),
+        `${label} -> Danh sách: gm-toast-in replayed (${JSON.stringify(listCheck.anims)})`,
+      )
+      assert(listCheck.tTop >= listCheck.hBottom - 1 && listCheck.tTop >= listCheck.sBottom - 1)
+
+      // Switch Danh sách -> Đơn chờ
+      await page
+        .getByRole("navigation", { name: "Điều hướng chính" })
+        .getByRole("button", { name: /^Đơn chờ/ })
+        .click()
+      await page.waitForURL("**/waitlist")
+      await page.getByRole("heading", { name: "Đơn chờ", level: 1 }).waitFor({ state: "visible" })
+      await page.waitForTimeout(80)
+      const waitCheck = await page.evaluate(() => {
+        const el = document.querySelector(".gm-toast-banner")
+        const header = document.querySelector("header")
+        return {
+          same: el === window.__paToastRef,
+          anims: el ? el.getAnimations().map((a) => [a.animationName, a.playState]) : [],
+          tTop: el?.getBoundingClientRect().top ?? 0,
+          hBottom: header?.getBoundingClientRect().bottom ?? 0,
+        }
+      })
+      assert(waitCheck.same, `${label} -> Đơn chờ: Toast15 remounted (${JSON.stringify(waitCheck)})`)
+      assert(
+        !waitCheck.anims.some(([name, state]) => name === "gm-toast-in" && state === "running"),
+        `${label} -> Đơn chờ: gm-toast-in replayed (${JSON.stringify(waitCheck.anims)})`,
+      )
+      assert(waitCheck.tTop >= waitCheck.hBottom - 1)
+
+      assert.deepEqual(errors, [], `${label}: errors: ${errors.join("; ")}`)
+      summary.push({ screen: label, toastSameInstance: true, axe: "not-run" })
     } finally {
       await context.close()
     }
@@ -543,7 +787,7 @@ async function verifyOwnerAndWaiter(browser, baseUrl, summary) {
       assert.notEqual(stats.mainStats[0].display, "contents", `${label}: <main> must not be display:contents`)
       assert(!stats.overflowX, `${label}: horizontal overflow`)
       assert.deepEqual(errors, [], `${label}: errors: ${errors.join("; ")}`)
-      summary.push({ screen: label, overflowX: false, mainCount: stats.mainCount })
+      summary.push({ screen: label, overflowX: false, mainCount: stats.mainCount, axe: "not-run" })
     } finally {
       await context.close()
     }
@@ -561,58 +805,58 @@ async function verifyOwnerAndWaiter(browser, baseUrl, summary) {
       assert.equal(stats.mainCount, 1, `${label}: expected 1 <main>`)
       assert.notEqual(stats.mainStats[0].display, "contents", `${label}: <main> must not be display:contents`)
       assert(!stats.overflowX, `${label}: horizontal overflow`)
+      let axeStatus = "not-run"
       if (route === "/overview") {
-        // Verify axe does not report landmark-no-duplicate-banner
         await page.evaluate(axe.source)
         const bannerViolations = await page.evaluate(async () => {
           const res = await window.axe.run(document, { resultTypes: ["violations"] })
           return res.violations.filter((v) => v.id === "landmark-no-duplicate-banner" || v.id === "landmark-unique")
         })
         assert.equal(bannerViolations.length, 0, `${label}: duplicate banner violation`)
+        axeStatus = "landmark-rules-0"
       }
       assert.deepEqual(errors, [], `${label}: errors: ${errors.join("; ")}`)
-      summary.push({ screen: label, overflowX: false, mainCount: stats.mainCount })
+      summary.push({ screen: label, overflowX: false, mainCount: stats.mainCount, axe: axeStatus })
     } finally {
       await context.close()
     }
   }
 
-  // UX-19 tablet <= 1024: Owner /floor and /reservations at 820x1180 and 1024x768
+  // UX-19 tablet <= 1024: Owner /floor at 820x1180 and 1024x768 (reservations-page.tsx reverted to PC per PA-R05)
   for (const [w, h] of [
     [820, 1180],
     [1024, 768],
   ]) {
-    for (const route of ["/floor", "/reservations"]) {
-      const label = `owner ${route} ${w}x${h}`
-      const { context, page, errors } = await openContext(browser, 3, w, h)
+    const label = `owner /floor ${w}x${h}`
+    const { context, page, errors } = await openContext(browser, 3, w, h)
+    try {
+      await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
+      await waitSettle(page)
+      const tabHeights = await page.evaluate(() =>
+        [...document.querySelectorAll('[role="tablist"][aria-label="Lọc khu"] [role="tab"]')].map((b) =>
+          Math.round(b.getBoundingClientRect().height),
+        ),
+      )
+      assert(tabHeights.length >= 4 && tabHeights.every((ht) => ht >= 44), `${label} zone tabs: ${tabHeights}`)
+      const availBtn = page.getByRole("button", { name: "Xem khả dụng", exact: true })
+      const availBox = await availBtn.boundingBox()
+      assert(availBox && availBox.height >= 44, `${label} Xem khả dụng height ${availBox?.height} < 44`)
+      assert.deepEqual(errors, [], `${label}: errors: ${errors.join("; ")}`)
+      summary.push({ screen: label, zoneTabs: tabHeights.length, axe: "not-run" })
+    } finally {
+      await context.close()
+    }
+
+    // Also capture owner /reservations tablet shots without asserting PC's legacy filter chip heights
+    if (captureDir) {
+      const { context: c2, page: p2, errors: e2 } = await openContext(browser, 3, w, h)
       try {
-        await page.goto(`${baseUrl}${route}`, { waitUntil: "networkidle" })
-        await waitSettle(page)
-        if (route === "/reservations") await maybeShot(page, `owner-reservations-busy-${w}x${h}.png`)
-        if (route === "/floor") {
-          const tabHeights = await page.evaluate(() =>
-            [...document.querySelectorAll('[role="tablist"][aria-label="Lọc khu"] [role="tab"]')].map((b) =>
-              Math.round(b.getBoundingClientRect().height),
-            ),
-          )
-          assert(tabHeights.length >= 4 && tabHeights.every((ht) => ht >= 44), `${label} zone tabs: ${tabHeights}`)
-          const availBtn = page.getByRole("button", { name: "Xem khả dụng", exact: true })
-          const availBox = await availBtn.boundingBox()
-          assert(availBox && availBox.height >= 44, `${label} Xem khả dụng height ${availBox?.height} < 44`)
-        } else {
-          const chipHeights = await page.evaluate(() =>
-            [...document.querySelectorAll('[role="tablist"][aria-label="Lọc trạng thái"] [role="tab"]')].map((b) =>
-              Math.round(b.getBoundingClientRect().height),
-            ),
-          )
-          assert(
-            chipHeights.length >= 4 && chipHeights.every((ht) => ht >= 44),
-            `${label} filter chips: ${chipHeights}`,
-          )
-        }
-        assert.deepEqual(errors, [], `${label}: errors: ${errors.join("; ")}`)
+        await p2.goto(`${baseUrl}/reservations`, { waitUntil: "networkidle" })
+        await waitSettle(p2)
+        await maybeShot(p2, `owner-reservations-busy-${w}x${h}.png`)
+        assert.deepEqual(e2, [], `owner /reservations ${w}x${h}: errors: ${e2.join("; ")}`)
       } finally {
-        await context.close()
+        await c2.close()
       }
     }
   }
@@ -651,7 +895,7 @@ async function verifyOwnerAndWaiter(browser, baseUrl, summary) {
         assert(s.subW <= s.circleW + 1, `${label}: bar seat text overflows circle: ${JSON.stringify(s)}`)
       }
       assert.deepEqual(errors, [], `${label}: errors: ${errors.join("; ")}`)
-      summary.push({ screen: label, barSeatsChecked: barCheck.length })
+      summary.push({ screen: label, barSeatsChecked: barCheck.length, axe: "not-run" })
     } finally {
       await context.close()
     }
@@ -665,8 +909,9 @@ async function main() {
   try {
     await verifyReceptionFloor(browser, vite.baseUrl, summary)
     await verifyTableSheetAndQuickForm(browser, vite.baseUrl, summary)
+    await verifyToastTabSwitchPersistence(browser, vite.baseUrl, summary)
     await verifyOwnerAndWaiter(browser, vite.baseUrl, summary)
-    console.log("PA E2E PASS:", JSON.stringify({ checked: summary.length, captureDir: captureDir || null }))
+    console.log("PA E2E PASS:", JSON.stringify({ checked: summary.length, captureDir: captureDir || null, summary }))
   } finally {
     await browser.close()
     await vite.close()

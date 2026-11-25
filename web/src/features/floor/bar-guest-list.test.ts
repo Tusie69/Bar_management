@@ -85,7 +85,7 @@ describe("BarGuestList presentational component", () => {
     expect(html).toContain("Bar5, 17")
   })
 
-  it("giữ tên khách dài trên cùng một dòng, cắt bớt và vẫn có tooltip đầy đủ", () => {
+  it("cho phép tên khách dài xuống dòng đầy đủ, không cắt chữ và vẫn có tooltip", () => {
     const longName = "Nguyễn Thị Hoàng Oanh"
     const rows = [makeSampleRow({ guestName: longName })]
 
@@ -93,7 +93,20 @@ describe("BarGuestList presentational component", () => {
     expect(html).toContain(`title="${longName}"`)
     expect(html).toContain(longName)
     expect(html).not.toContain("line-clamp-2")
-    expect(html).toContain("truncate")
+    expect(html).not.toContain("truncate")
+    expect(html).toContain("break-words")
+  })
+
+  it("đặt min-h-[45px] (>= 44px) cho dòng tương tác nhưng giữ nguyên dòng readOnly tĩnh", () => {
+    const interactive = renderToString(createElement(BarGuestList, { rows: [makeSampleRow()], as: "html" }))
+    expect(interactive).toContain("<button")
+    expect(interactive).toContain("min-h-[45px]")
+
+    const staticHtml = renderToString(
+      createElement(BarGuestList, { rows: [makeSampleRow()], as: "html", readOnly: true }),
+    )
+    expect(staticHtml).not.toContain("<button")
+    expect(staticHtml).toContain("min-h-[26px]")
   })
 
   it("renders walk-in without a name and contains no phone number", () => {

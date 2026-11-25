@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils"
 
 const chip = (on: boolean) =>
   cn(
-    "tnum h-11 min-w-0 rounded-md border px-1.5 text-sm whitespace-nowrap outline-none select-none sm:px-2",
+    "tnum h-11 min-w-0 rounded-md border px-2 text-sm whitespace-nowrap outline-none select-none",
     "transition-[transform,background-color,border-color,color,box-shadow] duration-[var(--duration-hover)] ease-[var(--ease-spring-default)]",
     "active:scale-[0.97] active:duration-[var(--duration-press)] active:ease-[var(--ease-press)]",
     "focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25",

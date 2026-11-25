@@ -119,12 +119,7 @@ export default function ReservationsPage() {
             </Button>
           </div>
           {date !== today ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="min-h-11 rounded-lg bg-surface-1 xl:h-9 xl:min-h-9"
-              onClick={() => setDate(today)}
-            >
+            <Button variant="outline" size="sm" className="rounded-lg bg-surface-1" onClick={() => setDate(today)}>
               Hôm nay
             </Button>
           ) : null}
@@ -144,8 +139,8 @@ export default function ReservationsPage() {
             {search ? (
               <Button
                 variant="ghost"
-                size="icon"
-                className="absolute top-1/2 right-0 -translate-y-1/2 xl:size-8"
+                size="icon-sm"
+                className="absolute top-1/2 right-1 -translate-y-1/2"
                 aria-label="Xóa tìm kiếm"
                 onClick={() => setSearch("")}
               >
@@ -204,7 +199,7 @@ export default function ReservationsPage() {
                 aria-selected={filter === f.value}
                 onClick={() => setFilter(f.value)}
                 className={cn(
-                  "inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm font-medium transition-[background-color,border-color,color,transform] duration-150 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.97] xl:h-9 xl:min-h-9",
+                  "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm font-medium transition-[background-color,border-color,color,transform] duration-150 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.97] sm:h-9",
                   filter === f.value
                     ? "border-primary bg-primary-tint font-semibold text-primary-ink"
                     : "border-border bg-surface-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground",
@@ -216,7 +211,7 @@ export default function ReservationsPage() {
             ))}
           </div>
           <Select value={source} onValueChange={(v) => setSource(v as "ALL" | BookingSourceCode)}>
-            <SelectTrigger className="min-h-11 w-[150px] xl:h-9 xl:min-h-9" aria-label="Lọc nguồn đặt">
+            <SelectTrigger className="h-9 w-[150px]" aria-label="Lọc nguồn đặt">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
