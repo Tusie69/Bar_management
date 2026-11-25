@@ -272,7 +272,14 @@ function Stat({
       ) : (
         <dd className="grid gap-0.5">
           {/* Ngày đầy đủ (10 ký tự) không vừa ô nửa màn hình điện thoại ở cỡ số lớn. */}
-          <span className={cn("adm-kpi-value tabular-nums", value.length > 6 && "max-sm:text-[1.5rem]!")}>{value}</span>
+          <span
+            className={cn(
+              "adm-kpi-value tabular-nums",
+              value.length > 6 && "max-[380px]:text-[1.125rem]! max-sm:text-[1.5rem]!",
+            )}
+          >
+            {value}
+          </span>
           {sub ? <span className="adm-caption">{sub}</span> : null}
         </dd>
       )}
