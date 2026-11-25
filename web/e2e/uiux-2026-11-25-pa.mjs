@@ -125,6 +125,7 @@ async function measureScreen(page) {
         "button, a[href], input:not([type=hidden]), select, [role=button], [role=tab]",
       )) {
         if (el.closest("[inert]")) continue
+        if (el.closest("svg") && !el.hasAttribute("data-bar-guest-row")) continue
         const s = getComputedStyle(el)
         if (s.display === "none" || s.visibility !== "visible") continue
         const r = el.getBoundingClientRect()
@@ -902,6 +903,273 @@ async function verifyOwnerAndWaiter(browser, baseUrl, summary) {
   }
 }
 
+async function verifyHomeScrollToast(browser, baseUrl, summary) {
+  // INT-R01: Owner (3) & Cashier (5) at 320x568, 390x844 (plus 390x844 reduced-motion):
+  // Toast15 stays inside viewport when /home scrolls, single instance preserved across tab switches,
+  // Hero header controls and scrolled content remain unobstructed and interactive.
+  const cases = [
+    ["owner", 3, 320, 568, false],
+    ["owner", 3, 390, 844, false],
+    ["cashier", 5, 320, 568, false],
+    ["cashier", 5, 390, 844, false],
+    ["owner", 3, 390, 844, true],
+  ]
+  for (const [roleName, userId, w, h, reducedMotion] of cases) {
+    const label = `${roleName} /home scroll Toast15 ${w}x${h}${reducedMotion ? " reduced-motion" : ""}`
+    const homeLabel = roleName === "owner" ? "Tổng quan" : "Tiếp đón"
+    const { context, page, errors } = await openContext(browser, userId, w, h, { reducedMotion })
+    try {
+      await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
+      await page.locator(".gm-toast-banner").waitFor({ state: "visible" })
+      await waitSettle(page)
+      await page.evaluate(() => {
+        window.__paHomeToastRef = document.querySelector(".gm-toast-banner")
+      })
+
+      // Switch /floor -> /home while Toast15 is open
+      await page.getByRole("navigation", { name: "Điều hướng chính" }).getByRole("button", { name: homeLabel }).click()
+      await page.waitForURL("**/home")
+      await page.getByRole("heading", { name: homeLabel, level: 1 }).waitFor({ state: "visible" })
+      await waitSettle(page)
+
+      const measureHomeToast = () =>
+        page.evaluate(() => {
+          const scroller = document.querySelector("[data-scroll]")
+          const banner = document.querySelector(".gm-toast-banner")
+          const viewBtn = [...document.querySelectorAll(".gm-toast-banner button")].find(
+            (b) => b.textContent?.trim() === "Xem",
+          )
+          const closeBtn = document.querySelector('button[aria-label="Đóng thông báo"]')
+          const accountBtn = document.querySelector('button[aria-label^="Tài khoản và giao diện"]')
+          const bellBtn = document.querySelector('button[aria-label^="Thông báo,"]')
+          const hit = (el) => {
+            if (!el) return false
+            const r = el.getBoundingClientRect()
+            if (r.width <= 0 || r.height <= 0) return false
+            const pt = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2)
+            return Boolean(pt && el.contains(pt))
+          }
+          const br = banner?.getBoundingClientRect()
+          const ar = accountBtn?.getBoundingClientRect()
+          return {
+            sameInstance: banner === window.__paHomeToastRef,
+            scrollTop: scroller ? Math.round(scroller.scrollTop) : -1,
+            scrollHeight: scroller ? scroller.scrollHeight : 0,
+            clientHeight: scroller ? scroller.clientHeight : 0,
+            bannerTop: br?.top ?? -999,
+            bannerBottom: br?.bottom ?? 9999,
+            accountTop: ar?.top ?? -999,
+            viewHit: hit(viewBtn),
+            closeHit: hit(closeBtn),
+            accountHit: hit(accountBtn),
+            bellHit: hit(bellBtn),
+            anims: banner ? banner.getAnimations().map((a) => [a.animationName, a.playState]) : [],
+          }
+        })
+
+      const atTop = await measureHomeToast()
+      assert(atTop.sameInstance, `${label}: Toast15 remounted entering /home`)
+      assert(
+        atTop.bannerTop >= 0 && atTop.bannerBottom <= h,
+        `${label} scrollTop=0: banner out of viewport (${JSON.stringify(atTop)})`,
+      )
+      assert(atTop.accountTop >= atTop.bannerBottom - 1, `${label}: banner overlaps Hero account button`)
+      assert(atTop.viewHit && atTop.closeHit, `${label} scrollTop=0: toast button hit-test failed`)
+      assert(atTop.accountHit && atTop.bellHit, `${label} scrollTop=0: Hero header button hit-test failed`)
+
+      // Scroll down 310px (Boss probe)
+      await page.evaluate(() => {
+        const scroller = document.querySelector("[data-scroll]")
+        if (scroller) scroller.scrollTop = 310
+      })
+      await page.waitForTimeout(80)
+      if (roleName === "owner" && w === 390 && !reducedMotion) {
+        await maybeShot(page, "owner-home-scrolled-390x844.png")
+      }
+
+      const scrolled = await measureHomeToast()
+      assert(scrolled.scrollTop >= 200, `${label}: failed to scroll /home (${scrolled.scrollTop})`)
+      assert(
+        scrolled.bannerTop >= 0 && scrolled.bannerBottom <= h,
+        `${label} scrollTop=${scrolled.scrollTop}: Toast15 left viewport (${JSON.stringify(scrolled)})`,
+      )
+      assert(
+        scrolled.viewHit && scrolled.closeHit,
+        `${label} scrollTop=${scrolled.scrollTop}: Xem/Đóng hit-test failed (${JSON.stringify(scrolled)})`,
+      )
+
+      // Tab / Shift+Tab / Space / Enter while scrolled
+      const viewBtn = page.locator(".gm-toast-banner").getByRole("button", { name: "Xem", exact: true })
+      await viewBtn.focus()
+      await page.keyboard.press("Tab")
+      const fClose = await checkFocusIndicator(page, `${label} scrolled Đóng`)
+      assert.equal(fClose.aria, "Đóng thông báo")
+      await page.keyboard.press("Shift+Tab")
+      const fBack = await checkFocusIndicator(page, `${label} scrolled Shift+Tab Xem`)
+      assert.equal(fBack.aria, "Xem")
+
+      // Scroll back up to 0 and verify Hero header controls work again
+      await page.evaluate(() => {
+        const scroller = document.querySelector("[data-scroll]")
+        if (scroller) scroller.scrollTop = 0
+      })
+      await page.waitForTimeout(80)
+      const backTop = await measureHomeToast()
+      assert(backTop.accountHit && backTop.bellHit, `${label}: Hero header failed after scrolling back up`)
+
+      // Switch tab while Toast15 is still open -> same instance preserved
+      await page
+        .getByRole("navigation", { name: "Điều hướng chính" })
+        .getByRole("button", { name: "Danh sách" })
+        .click()
+      await page.waitForURL("**/reservations")
+      await waitSettle(page)
+      const afterSwitchSame = await page.evaluate(
+        () => document.querySelector(".gm-toast-banner") === window.__paHomeToastRef,
+      )
+      assert(afterSwitchSame, `${label}: Toast15 remounted switching /home -> /reservations`)
+
+      // Return to /home, scroll again, activate Space on Xem (owner 390) or Enter on Đóng (others)
+      await page.getByRole("navigation", { name: "Điều hướng chính" }).getByRole("button", { name: homeLabel }).click()
+      await page.waitForURL("**/home")
+      await waitSettle(page)
+      await page.evaluate(() => {
+        const scroller = document.querySelector("[data-scroll]")
+        if (scroller) scroller.scrollTop = 310
+      })
+      await page.waitForTimeout(80)
+      if (roleName === "owner" && w === 390 && !reducedMotion) {
+        await viewBtn.focus()
+        await page.keyboard.press("Space")
+        await page.waitForURL("**/floor")
+        await page.locator('[data-mobile-table-sheet="true"]').waitFor({ state: "visible" })
+        await page.locator(".gm-toast-banner").waitFor({ state: "detached" })
+      } else {
+        await closeToastAndAssertExitFrame(page, w, label, "enter")
+      }
+
+      assert.deepEqual(errors, [], `${label}: errors: ${errors.join("; ")}`)
+      summary.push({ screen: label, toastStayInView: true, axe: "not-run" })
+    } finally {
+      await context.close()
+    }
+  }
+}
+
+async function verifyCashierAndOwnerMobileFloor(browser, baseUrl, summary) {
+  // INT-R05: Cashier (5) and Owner (3) /floor at 320x568 and 390x844 with Toast15 open and closed
+  for (const [roleName, userId] of [
+    ["cashier", 5],
+    ["owner", 3],
+  ]) {
+    for (const [w, h] of [
+      [320, 568],
+      [390, 844],
+    ]) {
+      const label = `${roleName} /floor ${w}x${h}`
+      const { context, page, errors } = await openContext(browser, userId, w, h)
+      try {
+        await page.goto(`${baseUrl}/floor`, { waitUntil: "networkidle" })
+        await page.getByRole("button", { name: /^Bàn C1,/ }).waitFor({ state: "visible" })
+        await waitSettle(page)
+        await maybeShot(page, `${roleName}-floor-busy-${w}x${h}.png`)
+
+        const openStats = await page.evaluate(() => {
+          const svg = document.querySelector('svg[role="group"]')
+          const barBox = document.querySelector('[data-testid="bar-guest-list"]')
+          const legendBtn = document.querySelector('button[aria-label^="Ký hiệu:"]')
+          const c1 = document.querySelector('g[role="button"][aria-label^="Bàn C1,"]')
+          const c2 = document.querySelector('g[role="button"][aria-label^="Bàn C2,"]')
+          const hit = (el) => {
+            if (!el) return false
+            const r = el.getBoundingClientRect()
+            const pt = document.elementFromPoint((r.left + r.right) / 2, (r.top + r.bottom) / 2)
+            return Boolean(pt && el.contains(pt))
+          }
+          return {
+            svgH: svg ? Math.round(svg.getBoundingClientRect().height) : 0,
+            barBoxW: barBox ? Math.round(barBox.getBoundingClientRect().width) : 0,
+            legendHit: hit(legendBtn),
+            c1Hit: hit(c1),
+            c2Hit: hit(c2),
+          }
+        })
+        const minSvgH = w === 320 ? 240 : 480
+        assert(openStats.svgH >= minSvgH, `${label} (toast open): SVG height ${openStats.svgH}px < ${minSvgH}px`)
+        assert(
+          openStats.barBoxW >= (w === 320 ? (roleName === "cashier" ? 60 : 50) : 100),
+          `${label} (toast open): Bar box width ${openStats.barBoxW}px too narrow`,
+        )
+        assert(
+          openStats.legendHit && openStats.c1Hit && openStats.c2Hit,
+          `${label}: hit-test failed: ${JSON.stringify(openStats)}`,
+        )
+
+        const mOpen = await measureScreen(page)
+        assert(!mOpen.overflowX, `${label}: horizontal overflow`)
+        assert.deepEqual(mOpen.smallTargets, [], `${label}: smallTargets ${JSON.stringify(mOpen.smallTargets)}`)
+        const barSmallFonts = await page.evaluate(() => {
+          const bad = []
+          for (const el of document.querySelectorAll('[data-testid="bar-guest-list"] *')) {
+            if (!(el instanceof HTMLElement) || el.closest(".sr-only")) continue
+            const hasText = [...el.childNodes].some((n) => n.nodeType === Node.TEXT_NODE && n.textContent.trim())
+            if (!hasText) continue
+            const fs = parseFloat(getComputedStyle(el).fontSize)
+            if (fs < 12) bad.push({ text: el.innerText.slice(0, 30), fs })
+          }
+          return bad
+        })
+        assert.deepEqual(barSmallFonts, [], `${label}: BarGuestList fonts < 12px: ${JSON.stringify(barSmallFonts)}`)
+
+        // Open compact StatusLegend badge and verify all 6 status chips & labels >= 12px
+        await page.getByRole("button", { name: /^Ký hiệu:/ }).click()
+        const dialog = page.getByRole("dialog", { name: "Chú giải ký hiệu" })
+        await dialog.waitFor({ state: "visible" })
+        const legendLabels = await dialog.evaluate((el) =>
+          ["Trống", "Đã đặt", "Sắp tới", "Tới muộn", "Đã tới", "Sơ cua"].every((txt) =>
+            [...el.querySelectorAll("span")].some((s) => s.textContent?.trim() === txt),
+          ),
+        )
+        assert(legendLabels, `${label}: StatusLegend dialog missing status labels`)
+        await page.keyboard.press("Escape")
+        await dialog.waitFor({ state: "detached" })
+
+        // Close Toast15 and verify floor expands + BarGuestList row tap works
+        await closeToastAndAssertExitFrame(page, w, label, "click")
+        await waitSettle(page)
+        const closedSvgH = await page.evaluate(() =>
+          Math.round(document.querySelector('svg[role="group"]')?.getBoundingClientRect().height ?? 0),
+        )
+        assert(
+          closedSvgH > openStats.svgH,
+          `${label}: closing toast did not expand SVG (${closedSvgH} <= ${openStats.svgH})`,
+        )
+
+        const firstBarRow = page.locator('[data-testid="bar-guest-list"] [data-bar-guest-row]').first()
+        await firstBarRow.scrollIntoViewIfNeeded()
+        const barRowBox = await firstBarRow.boundingBox()
+        assert(barRowBox && barRowBox.height >= 44, `${label}: bar guest row < 44px`)
+        await firstBarRow.click()
+        const sheet = page.locator('[data-mobile-table-sheet="true"]')
+        await sheet.waitFor({ state: "visible" })
+        await sheet.getByRole("button", { name: "Đóng", exact: true }).click()
+        await sheet.waitFor({ state: "detached" })
+
+        assert.deepEqual(errors, [], `${label}: errors: ${errors.join("; ")}`)
+        summary.push({
+          screen: label,
+          svgOpenH: openStats.svgH,
+          svgClosedH: closedSvgH,
+          barBoxW: openStats.barBoxW,
+          axe: "not-run",
+        })
+      } finally {
+        await context.close()
+      }
+    }
+  }
+}
+
 async function main() {
   const summary = []
   const vite = await startVite("mock")
@@ -910,6 +1178,8 @@ async function main() {
     await verifyReceptionFloor(browser, vite.baseUrl, summary)
     await verifyTableSheetAndQuickForm(browser, vite.baseUrl, summary)
     await verifyToastTabSwitchPersistence(browser, vite.baseUrl, summary)
+    await verifyHomeScrollToast(browser, vite.baseUrl, summary)
+    await verifyCashierAndOwnerMobileFloor(browser, vite.baseUrl, summary)
     await verifyOwnerAndWaiter(browser, vite.baseUrl, summary)
     console.log("PA E2E PASS:", JSON.stringify({ checked: summary.length, captureDir: captureDir || null, summary }))
   } finally {

@@ -706,9 +706,223 @@ async function verifyMockAdminAndShell(browser, capture, outDir) {
         const focusActive = await page.evaluate(() => document.activeElement?.tagName ?? "BODY")
         assert.notEqual(focusActive, "BODY", `${item.route} ${w}x${h} keyboard focus fell to BODY`)
 
+        // INT-R04: ReservationsPage UX-19 touch targets >= 44px at 820x1180 and 1024x768, search padding, date controls, row actions
+        if (item.route === "/reservations" && [820, 1024, 1440].includes(w)) {
+          await page.getByRole("button", { name: "Ngày sau", exact: true }).click()
+          const todayBtn = page.getByRole("button", { name: "Hôm nay", exact: true })
+          await todayBtn.waitFor({ state: "visible" })
+          const searchInput = page.getByLabel("Tìm booking", { exact: true })
+          await searchInput.fill("Khach hang dat ban khu VIP tang tret toi thu bay")
+          const clearBtn = page.getByRole("button", { name: "Xóa tìm kiếm", exact: true })
+          await clearBtn.waitFor({ state: "visible" })
+
+          const resControls = await page.evaluate(() => {
+            const box = (el) => {
+              if (!el) return null
+              const r = el.getBoundingClientRect()
+              return { w: Math.round(r.width), h: Math.round(r.height), right: r.right, left: r.left }
+            }
+            const input = document.querySelector('input[aria-label="Tìm booking"]')
+            const clear = document.querySelector('button[aria-label="Xóa tìm kiếm"]')
+            const today = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Hôm nay")
+            const source = document.querySelector('button[aria-label="Lọc nguồn đặt"]')
+            const chips = [...document.querySelectorAll('[role="tablist"][aria-label="Lọc trạng thái"] [role="tab"]')]
+            const viewTabs = [...document.querySelectorAll('[role="group"][aria-label="Kiểu xem"] button')]
+            const rowActions = [...document.querySelectorAll('table button[aria-label^="Check-in "], table button')]
+              .filter((b) => /^(Check-in|Phân bàn)/.test(b.textContent?.trim() || ""))
+              .slice(0, 2)
+            const cr = clear?.getBoundingClientRect()
+            const clearHit = cr ? document.elementFromPoint(cr.left + cr.width / 2, cr.top + cr.height / 2) : null
+            return {
+              inputPr: input ? parseFloat(getComputedStyle(input).paddingRight) : 0,
+              clear: box(clear),
+              clearHitOk: Boolean(clear && clearHit && clear.contains(clearHit)),
+              today: box(today),
+              source: box(source),
+              chips: chips.map((c) => box(c)),
+              viewTabs: viewTabs.map((v) => box(v)),
+              rowActions: rowActions.map((a) => box(a)),
+            }
+          })
+          if (w <= 1024) {
+            assert(resControls.inputPr >= 44, `INT-R04 ${w}x${h}: search input pr=${resControls.inputPr} < 44`)
+            assert(
+              resControls.clear && resControls.clear.w >= 44 && resControls.clear.h >= 44,
+              `INT-R04 ${w}x${h}: clear btn < 44`,
+            )
+            assert(resControls.clearHitOk, `INT-R04 ${w}x${h}: clear btn hit-test failed`)
+            assert(resControls.today && resControls.today.h >= 44, `INT-R04 ${w}x${h}: Hôm nay btn < 44`)
+            assert(resControls.source && resControls.source.h >= 44, `INT-R04 ${w}x${h}: source select < 44`)
+            assert(
+              resControls.chips.every((c) => c && c.h >= 44),
+              `INT-R04 ${w}x${h}: filter chips < 44: ${JSON.stringify(resControls.chips)}`,
+            )
+            assert(
+              resControls.viewTabs.every((v) => v && v.h >= 44),
+              `INT-R04 ${w}x${h}: view tabs < 44`,
+            )
+            assert(
+              resControls.rowActions.every((a) => a && a.h >= 44),
+              `INT-R04 ${w}x${h}: row actions < 44`,
+            )
+          } else {
+            assert(resControls.today && resControls.today.h <= 40, `INT-R04 1440: Hôm nay should stay compact`)
+          }
+
+          await clearBtn.click()
+          assert.equal(await searchInput.inputValue(), "", `INT-R04 ${w}x${h}: clear search failed`)
+          await todayBtn.click()
+          await page.getByRole("tab", { name: /^Sắp đến/ }).click()
+          await page.getByRole("tab", { name: /^Tất cả/ }).click()
+        }
+
         assert.equal(errors.length, 0, `${item.route} ${w}x${h} console errors: ${errors.join("; ")}`)
         await ctx.close()
       }
+    }
+  } finally {
+    await server.close()
+  }
+}
+
+async function verifyPopulatedAuditEvidence(browser, capture, outDir) {
+  // INT-R07: populated /admin/audit capture matching live audit layout alongside empty state
+  const { server, baseUrl } = await startVite("http")
+  const auditFilters = {
+    retentionDays: 90,
+    canExport: true,
+    filters: [
+      { type: "AUTH", label: "Đăng nhập / Phiên", supported: true },
+      { type: "USER", label: "Tài khoản", supported: true },
+      { type: "BOOKING", label: "Đặt bàn", supported: true },
+      { type: "ORDER", label: "Gọi món / Hủy món", supported: true },
+    ],
+  }
+  const auditEntries = {
+    entries: [
+      {
+        id: 401,
+        occurredAt: "2026-11-25T13:18:22.000Z",
+        actor: "Chủ quán",
+        actorUsername: "owner",
+        action: "ORDER_CANCEL_APPROVED",
+        actionLabel: "Duyệt hủy món",
+        actionType: "ORDER",
+        target: "Đơn 2 · Ghế Bar 1",
+        device: "Chrome Mobile · 390×844",
+        detail: "policy: READY_WASTE · quantity: 1",
+      },
+      {
+        id: 400,
+        occurredAt: "2026-11-25T13:05:10.000Z",
+        actor: "Lễ tân 1",
+        actorUsername: "letan1",
+        action: "BOOKING_CHECK_IN",
+        actionLabel: "Check-in khách",
+        actionType: "BOOKING",
+        target: "Bàn A3 · Bùi Khánh Linh",
+        device: "Safari iPad · 820×1180",
+        detail: "partySize: 4 · tableCodes: A3",
+      },
+      {
+        id: 399,
+        occurredAt: "2026-11-25T12:42:00.000Z",
+        actor: "Chủ quán",
+        actorUsername: "owner",
+        action: "USER_PERMISSION_UPDATE",
+        actionLabel: "Cập nhật quyền",
+        actionType: "USER",
+        target: "Tài khoản @phucvu1",
+        device: "Chrome Desktop · 1440×900",
+        detail: "roleCode: WAITER · accessLevel: WRITE",
+      },
+      {
+        id: 398,
+        occurredAt: "2026-11-25T12:00:05.000Z",
+        actor: "Thu ngân 1",
+        actorUsername: "thungan1",
+        action: "AUTH_LOGIN",
+        actionLabel: "Đăng nhập cổng",
+        actionType: "AUTH",
+        target: "Cổng Thu ngân",
+        device: "Chrome Mobile · 390×844",
+        detail: "portal: cashier · result: SUCCESS",
+      },
+    ],
+    hasMore: false,
+    nextCursor: null,
+    retentionDays: 90,
+    windowStart: "2026-08-27T00:00:00.000Z",
+  }
+
+  try {
+    for (const [w, h] of [
+      [320, 568],
+      [390, 844],
+      [820, 1180],
+      [1024, 768],
+      [1440, 900],
+    ]) {
+      const ctx = await browser.newContext({ viewport: { width: w, height: h }, hasTouch: w <= 1024 })
+      await ctx.addInitScript(() => {
+        window.EventSource = class extends EventTarget {
+          close() {}
+        }
+        localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 3, theme: "light" }))
+      })
+      const page = await ctx.newPage()
+      const errors = []
+      attachConsoleErrorGuard(page, errors)
+      await page.route("**/api/v1/**", async (route) => {
+        const pathname = new URL(route.request().url()).pathname
+        if (pathname === "/api/v1/auth/me") {
+          return route.fulfill({
+            json: {
+              user: {
+                id: 3,
+                username: "owner",
+                displayName: "Chủ quán",
+                organizationId: 1,
+                venueId: 1,
+                roles: ["OWNER"],
+                accessLevel: null,
+              },
+              permissions: ["report.read", "user.read", "customer.view_masked", "audit.read", "venue.configure"],
+              csrfToken: "t",
+              portal: "admin",
+            },
+          })
+        }
+        if (pathname === "/api/v1/venue/shift") {
+          return route.fulfill({ json: { startLocal: "17:00:00", cutoffLocal: "05:00:00" } })
+        }
+        if (pathname === "/api/v1/operations/audit/filters") {
+          return route.fulfill({ json: auditFilters })
+        }
+        if (pathname === "/api/v1/operations/audit") {
+          return route.fulfill({ json: auditEntries })
+        }
+        return route.fulfill({ json: {} })
+      })
+
+      await page.goto(`${baseUrl}/admin/audit`, { waitUntil: "networkidle" })
+      await settle(page)
+      await page.getByText("4 bản ghi").waitFor({ state: "visible" })
+      const m = await measureLayout(page)
+      assert.equal(m.docOverflow, false, `populated /admin/audit ${w}x${h} overflow`)
+      assert.equal(
+        m.smallFonts.length,
+        0,
+        `populated /admin/audit ${w}x${h} smallFonts: ${JSON.stringify(m.smallFonts)}`,
+      )
+      if (capture) {
+        await page.screenshot({
+          path: path.join(outDir, `admin-audit-populated-busy-${w}x${h}.png`),
+          animations: "disabled",
+        })
+      }
+      assert.equal(errors.length, 0, `populated /admin/audit ${w}x${h} errors: ${errors.join("; ")}`)
+      await ctx.close()
     }
   } finally {
     await server.close()
@@ -910,6 +1124,7 @@ async function main() {
   try {
     await verifyDs04AdminGuard(browser, args.capture, args.out)
     await verifyMockAdminAndShell(browser, args.capture, args.out)
+    await verifyPopulatedAuditEvidence(browser, args.capture, args.out)
     await verifyReservationsMobileNestedFix(browser, args.capture, args.out)
     await verifyMobileAppReservationsAnd24h(browser, args.capture, args.out)
     console.log(
