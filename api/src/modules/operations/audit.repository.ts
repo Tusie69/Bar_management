@@ -22,6 +22,7 @@ import {
   parseExportLevels,
   parseRetentionDays,
 } from './audit-actions.js'
+import { applicationNow } from '../../time/application-clock.js'
 
 export interface AuditQuery {
   /** Ngày kinh doanh dạng YYYY-MM-DD; để trống thì lấy theo retention. */
@@ -194,7 +195,7 @@ export async function listAuditEntries(actor: AuthenticatedActor, query: AuditQu
     return {
       entries: [], hasMore: false, nextCursor: null,
       retentionDays: config.retentionDays,
-      windowStart: new Date(Date.now() - config.retentionDays * 86_400_000).toISOString(),
+      windowStart: new Date(applicationNow().getTime() - config.retentionDays * 86_400_000).toISOString(),
     }
   }
 
@@ -251,6 +252,6 @@ export async function listAuditEntries(actor: AuthenticatedActor, query: AuditQu
     hasMore,
     nextCursor: hasMore ? Number(page[page.length - 1]!.id) : null,
     retentionDays: config.retentionDays,
-    windowStart: new Date(Date.now() - config.retentionDays * 86_400_000).toISOString(),
+    windowStart: new Date(applicationNow().getTime() - config.retentionDays * 86_400_000).toISOString(),
   }
 }

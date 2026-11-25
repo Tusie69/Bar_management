@@ -1316,6 +1316,36 @@ and the target rules: nobody edits their own permissions (`409 CANNOT_MANAGE_SEL
 (`403 OWNER_PROTECTED`). A code outside the ceiling is rejected with `400 PERMISSION_NOT_GRANTABLE` rather than
 silently ignored.
 
+## Dev clock (TU-42) — chỉ có trên bản Dev
+
+Router `/api/v1/dev` chỉ được gắn khi `APP_ENV=dev`. Trên Production mọi đường dẫn `/api/v1/dev/*` trả **404** mặc định (không phải 403).
+
+| Method | Path         | Quyền                                      | Request                                                                 | Response 200 | Lỗi |
+| ------ | ------------ | ------------------------------------------ | ----------------------------------------------------------------------- | ------------ | --- |
+| GET    | `/dev/clock` | Đã đăng nhập (mọi vai)                     | —                                                                       | `DevClockState` | 401 `AUTHENTICATION_REQUIRED` |
+| PUT    | `/dev/clock` | Session + CSRF + `venue.configure` (SuperAdmin) | Đúng một khoá: `{"preset":"17:00"\|"21:50"\|"23:30"\|"04:55"}`, `{"at":"YYYY-MM-DDTHH:mm"}` (giờ Việt Nam) hoặc `{"mode":"real"}` | `DevClockState` | 400 `INVALID_DEV_CLOCK_PAYLOAD`, `INVALID_DEV_CLOCK_PRESET`, `INVALID_DEV_CLOCK_AT`, `DEV_CLOCK_OUT_OF_RANGE` (quá ±31 ngày); 403 `PERMISSION_DENIED` |
+
+`DevClockState` = `{appEnv:"dev", simulated, offsetMs, now, realNow, setBy, setAt, canEdit}`. `now` là giờ nghiệp vụ (đã cộng `offsetMs`), `realNow` là giờ thật, `setAt` là giờ THẬT lúc đổi.
+
+Ví dụ:
+
+```bash
+curl -s -b jar -c jar -H 'Origin: https://dev.21gamofhanoi.com' -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' -X PUT https://dev.21gamofhanoi.com/api/v1/dev/clock -d '{"preset":"23:30"}'
+# {"appEnv":"dev","simulated":true,"offsetMs":45000000,"now":"2026-11-25T16:30:00.000Z",
+#  "realNow":"2026-11-25T04:00:00.000Z","setBy":"Owner dev","setAt":"2026-11-25T04:00:00.000Z","canEdit":true}
+```
+
+Mốc chọn nhanh rơi vào ca **đang mở hoặc sắp mở theo giờ thật**: ngày ca = ngày lịch của (giờ thật − mốc cắt ca); giờ trước mốc cắt (04:55) thuộc rạng sáng hôm sau. Bấm 23:30 lúc 10h sáng 25/11 → 23:30 tối 25/11.
+
+Sau một lần PUT thành công:
+- độ lệch lưu ở `venue_settings` khoá `dev_clock` (giữ qua restart / tự triển khai);
+- `operation_log` thêm dòng `DEV_CLOCK_CHANGED` (nhãn "Đổi giờ giả lập (Dev)", `occurred_at` = giờ thật, `changes` mang giờ giả lập trước/sau);
+- mọi máy đang mở `GET /tables/stream` nhận sự kiện SSE `dev-clock-changed` `{offsetMs, now}` và tự tải lại.
+
+**Cái gì đi theo đồng hồ giả lập:** `applicationNow()` ở API, mọi `UTC_TIMESTAMP()` / `NOW()` / `DEFAULT CURRENT_TIMESTAMP` trong SQL (qua `SET timestamp` trên từng kết nối MySQL), worker no-show và cắt ngày vận hành, `serverNow` của sơ đồ bàn, đồng hồ trên trình duyệt.
+**Cái gì giữ giờ thật:** hạn phiên đăng nhập (`expires_at`), giới hạn tần suất, TTL bộ nhớ đệm, thời điểm ghi nhật ký của chính thao tác đổi giờ.
+
 ## Audit log (TU-35)
 
 | Method | Path                        | Permission                  | Request / response                                                                            |

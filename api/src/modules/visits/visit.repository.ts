@@ -13,6 +13,7 @@ import {
 import { lockOccupancyConflicts } from '../tables/table-occupancy.js'
 import { acknowledgeCapacity } from '../tables/table-capacity.js'
 import { recordTableTurn } from './table-turn.repository.js'
+import { applicationNow } from '../../time/application-clock.js'
 
 export type CloseVisitMode = 'MANUAL' | 'AFTER_PAYMENT'
 export type ManualCloseReason = 'GUEST_LEFT' | 'ENTRY_ERROR'
@@ -202,7 +203,7 @@ export async function closeVisit(
       `SELECT released_at FROM table_allocations WHERE venue_id = ? AND id = ?`,
       [actor.venueId, allocationIds[0]!],
     )
-    const closedAt = releasedRows[0]?.released_at ?? new Date()
+    const closedAt = releasedRows[0]?.released_at ?? applicationNow()
     if (allocationUpdate.affectedRows !== allocationIds.length) {
       throw new AppError(409, 'ALLOCATION_RELEASE_CONFLICT', 'Danh sách bàn vừa được thay đổi. Vui lòng tải lại.')
     }
@@ -229,7 +230,7 @@ export async function closeVisit(
       visitId: input.visitId,
       businessDate: visitBusinessDate,
       allocations: closingAllocations,
-      seatedAt: visit.started_at ?? new Date(),
+      seatedAt: visit.started_at ?? applicationNow(),
       releasedAt: closedAt,
       guestCount: Number(visit.guest_count),
       guestName: visit.contact_name ?? visit.customer_name ?? 'Khách',

@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { lazy, Suspense } from "react"
 import { createBrowserRouter, Navigate, RouterProvider, useLocation } from "react-router"
 import { ConfirmDialog, ConflictDialog, OverrideDialog } from "@/components/dialogs"
+import { DevClock } from "@/components/dev-clock"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -122,6 +123,8 @@ export function App() {
           <GlobalLayer />
           <RouterProvider router={router} />
         </AuthBoundary>
+        {/* TU-42: chỉ hiện ở bản Dev (APP_ENV=dev + HTTP). */}
+        <DevClock />
         <Toaster position="top-center" richColors={false} closeButton visibleToasts={3} duration={3000} />
       </TooltipProvider>
     </QueryClientProvider>

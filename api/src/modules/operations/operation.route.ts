@@ -14,6 +14,7 @@ import {
 } from './audit-actions.js'
 import { getAuditConfig, listAuditEntries } from './audit.repository.js'
 import { toCsv } from './audit-csv.js'
+import { applicationNow } from '../../time/application-clock.js'
 
 export const operationRouter: Router = Router()
 
@@ -147,7 +148,7 @@ operationRouter.get(
       throw new AppError(403, 'AUDIT_EXPORT_DENIED', 'Tài khoản không được phép xuất file nhật ký.')
     }
     const page = await listAuditEntries(actor, { ...queryOf(request), limit: 5000 })
-    const stamp = new Date().toISOString().slice(0, 10)
+    const stamp = applicationNow().toISOString().slice(0, 10)
     response.setHeader('Content-Type', 'text/csv; charset=utf-8')
     response.setHeader('Content-Disposition', `attachment; filename="nhat-ky-thao-tac-${stamp}.csv"`)
     response.send(toCsv(page.entries))

@@ -5,8 +5,8 @@ tên miền phụ `dev.21gamofhanoi.com`, thư mục `/srv/21gam-dev`, user Linu
 `gam21dev`, cổng API `3001`, database `gam21_platform_dev` với user MySQL riêng
 `gam21dev`. Dữ liệu ở Dev là **dữ liệu giả**; không bao giờ chép dữ liệu khách
 thật từ Production sang. Mọi màn hình Dev có dải băng đỏ
-"MÔI TRƯỜNG DEV — DỮ LIỆU GIẢ". Dev tự kéo `develop` mỗi 2 phút, kể cả trong
-giờ quán mở cửa.
+"MÔI TRƯỜNG DEV — DỮ LIỆU GIẢ" và nút **Đồng hồ Dev** để giả lập giờ trong ca
+(mục 11). Dev tự kéo `develop` mỗi 2 phút, kể cả trong giờ quán mở cửa.
 
 ![Dev vs Production](dev-environment.png)
 
@@ -245,7 +245,40 @@ Thêm: `curl -sI https://dev.21gamofhanoi.com/ | grep -i x-robots` ra
 `noindex, nofollow`; realtime vẫn chạy (2 máy cùng mở sơ đồ bàn Dev, đổi trên
 máy 1 thì máy 2 đổi theo).
 
-## 11. Khi có sự cố
+## 11. Đồng hồ giả lập (TU-42)
+
+Nhiều tính năng chỉ chạy trong ca 17:00–05:00 (đặt bàn 19:00–01:00, màu bàn
+theo giờ hẹn, gọi món theo Phiên bàn). Bản Dev cho phép "nhảy" giờ của **ứng
+dụng** để test bất kỳ lúc nào. Không đụng đồng hồ hệ điều hành của VPS —
+Production cùng máy vẫn chạy giờ thật.
+
+**Dùng:** nút đỏ góc dưới trái mọi màn Dev ("Giờ thật 10:31" / "Giả lập
+23:30 · 25/11"). Bấm mở bảng: 4 mốc chọn nhanh (17:00 mở ca · 21:50 sắp tới
+giờ hẹn · 23:30 cao điểm · 04:55 cuối ca), ô nhập ngày giờ bất kỳ (±31 ngày),
+nút **Giờ thật**. Chỉ tài khoản SuperAdmin thấy các nút; vai khác chỉ xem.
+Đổi xong mọi máy đang mở tự nhảy giờ và tải lại sơ đồ trong ~2 giây.
+
+**Hoạt động thế nào:** API cộng một độ lệch vào giờ thật. Mọi chỗ code lấy giờ
+đi qua `applicationNow()`; phía database, mỗi lần mượn kết nối MySQL API chạy
+`SET timestamp = <giờ giả lập>` nên `UTC_TIMESTAMP()`, `NOW()` và giá trị mặc
+định `CURRENT_TIMESTAMP` đều thấy giờ giả lập mà không phải sửa câu SQL nào.
+Móc này chỉ gắn khi `APP_ENV=dev`. Độ lệch lưu trong `venue_settings` (khoá
+`dev_clock`), giữ nguyên qua mỗi lần tự triển khai.
+
+**Giữ giờ thật có chủ ý:** hạn phiên đăng nhập (nhảy lên 14 tiếng không làm cả
+nhóm bị đăng xuất), giới hạn tần suất xem SĐT, bộ nhớ đệm.
+
+**Lưu ý khi test:**
+- Dữ liệu tạo ở giờ giả lập mang giờ giả lập (`created_at` 23:30 dù thật là
+  10h sáng). Lùi giờ về trước lúc tạo thì có thể thấy dữ liệu "từ tương lai" —
+  bình thường với bản Dev; muốn sạch thì xoá database Dev (mục 8).
+- Worker cắt ngày vận hành chạy theo giờ giả lập: đặt 04:55 rồi để trôi qua
+  05:00 là ca bị đóng thật trên database Dev, đúng như quán.
+- Sau khi demo xong, bấm **Giờ thật** để người test sau không bị bất ngờ.
+
+API: `GET/PUT /api/v1/dev/clock` — xem docs/api.md mục "Dev clock (TU-42)".
+
+## 12. Khi có sự cố
 
 | Triệu chứng | Nhìn ở đâu |
 | --- | --- |
@@ -254,6 +287,7 @@ máy 1 thì máy 2 đổi theo).
 | `EADDRINUSE :3001` | Có tiến trình khác giữ cổng: `sudo ss -ltnp \| grep 3001` |
 | 502 trên Dev | `sudo systemctl status 21gam-api-dev` |
 | Không thấy dải băng đỏ | `web/.env.production` thiếu `VITE_APP_ENV=dev`, build lại web |
+| Giờ trên Dev lệch mà không ai nhớ đã đổi | Bấm nút đồng hồ góc dưới trái: dòng "… đổi lúc …" nói ai đổi; Nhật ký thao tác có dòng "Đổi giờ giả lập (Dev)". Bấm **Giờ thật** |
 | Production chậm khi Dev đang build | Bình thường trong 1–3 phút; build Dev chạy `Nice=15`, I/O `idle`. Kéo dài thì tạm `sudo systemctl stop 21gam-deploy-dev.timer` |
 
 Gỡ hẳn bản Dev: dừng và disable `21gam-deploy-dev.timer`, `21gam-api-dev`;

@@ -12,6 +12,7 @@ import { recordAuthAudit } from './auth-audit.js'
 import { notifySessionsRevoked, type SessionEndCode } from './session-lifecycle.js'
 import { READ_ONLY_ADMIN_PERMISSIONS } from './read-only-permissions.js'
 import { OWNER_ONLY_PERMISSIONS } from '../modules/accounts/permission-model.js'
+import { realNow } from '../time/application-clock.js'
 
 interface LoginRow extends RowDataPacket {
   user_id: number
@@ -147,8 +148,8 @@ export async function login(
     })[]>(
       `SELECT id, device_id, device_label FROM auth_sessions
        WHERE organization_id = ? AND user_id = ? AND revoked_at IS NULL
-         AND expires_at > UTC_TIMESTAMP(3)`,
-      [env.organizationId, user.user_id],
+         AND expires_at > ?`,
+      [env.organizationId, user.user_id, realNow()],
     )
     replacedSessionIds = activeRows.map((row) => Number(row.id))
     const replacedDevices = activeRows.map((row) => ({
@@ -161,8 +162,8 @@ export async function login(
         `UPDATE auth_sessions
          SET revoked_at = UTC_TIMESTAMP(3), revoke_reason = 'SESSION_REPLACED'
          WHERE organization_id = ? AND user_id = ? AND revoked_at IS NULL
-           AND expires_at > UTC_TIMESTAMP(3)`,
-        [env.organizationId, user.user_id],
+           AND expires_at > ?`,
+        [env.organizationId, user.user_id, realNow()],
       )
     }
 
@@ -295,7 +296,7 @@ export async function inspectSession(sessionToken: string): Promise<SessionInspe
     `SELECT s.id AS session_id, s.organization_id, s.membership_id, s.user_id,
        u.username, u.display_name, s.portal, u.must_change_password,
        (s.revoked_at IS NOT NULL) AS session_revoked, s.revoke_reason,
-       (s.expires_at <= UTC_TIMESTAMP(3)) AS session_expired,
+       (s.expires_at <= ?) AS session_expired,
        u.status AS user_status, m.status AS membership_status, v.status AS venue_status,
        EXISTS (
          SELECT 1 FROM membership_roles AS mr
@@ -311,7 +312,8 @@ export async function inspectSession(sessionToken: string): Promise<SessionInspe
      JOIN venues AS v ON v.organization_id = s.organization_id AND v.id = ?
      WHERE s.organization_id = ? AND s.token_hash = ?
      LIMIT 1`,
-    [env.venueId, ...portalRoleMatch.parameters, env.venueId, env.organizationId, hashSessionToken(sessionToken)],
+    // TU-42: tham số đầu là giờ THẬT cho `session_expired` — hạn phiên không đi theo đồng hồ giả lập.
+    [realNow(), env.venueId, ...portalRoleMatch.parameters, env.venueId, env.organizationId, hashSessionToken(sessionToken)],
   )
   const row = rows[0]
   if (!row || !isAuthPortal(row.portal)) {

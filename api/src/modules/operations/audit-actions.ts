@@ -96,6 +96,9 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionInfo>> = {
   USER_ACCOUNT_UNLOCKED: { type: 'account', label: 'Mở khóa tài khoản' },
   USER_PASSWORD_RESET: { type: 'account', label: 'Đặt lại mật khẩu' },
   USER_PASSWORD_CHANGED: { type: 'account', label: 'Đổi mật khẩu' },
+
+  // TU-42: chỉ có trên bản Dev. Không thuộc nhóm lọc nào — đọc ở "Tất cả".
+  DEV_CLOCK_CHANGED: { type: null, label: 'Đổi giờ giả lập (Dev)' },
 }
 
 export interface AuditFilterDefinition {

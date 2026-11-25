@@ -11,6 +11,7 @@ import { assertBusinessDateNotPast, assertCheckInBusinessDate } from '../booking
 import { getVenueShift } from '../venues/venue-shift.js'
 import { protectPhoneNumber, type PhoneKeyRing, type ProtectedPhone } from '../bookings/phone-security.js'
 import { createTableGroup, dissolveUnusedGroups, lockAndValidateAssignableTables } from '../tables/table-group.repository.js'
+import { applicationNow } from '../../time/application-clock.js'
 
 export type WaitlistStatus = 'WAITING' | 'CONTACTING' | 'OFFERED' | 'HOLD_ACTIVE' | 'SEATED' | 'DECLINED' | 'CANCELLED'
 export type ContactChannel = 'IN_PERSON' | 'PHONE_CALLBACK' | 'ZALO_THREAD' | 'FANPAGE_THREAD' | 'OTHER'
@@ -160,7 +161,7 @@ function protectedPhoneValues(phone: ProtectedPhone): [Buffer, number, Buffer, n
 export async function createWaitlistEntry(
   actor: AuthenticatedActor,
   input: CreateWaitlistInput,
-  now = new Date(),
+  now = applicationNow(),
   transaction?: PoolConnection,
 ): Promise<WaitlistEntryView> {
   assertNoteHasNoPhoneNumber(input.note)
@@ -452,7 +453,7 @@ export function seatWaitlistEntry(
 export async function seatWaitlistEntry(
   actor: AuthenticatedActor,
   input: SeatWaitlistInput,
-  now = new Date(),
+  now = applicationNow(),
 ): Promise<SeatWaitlistResult> {
   const connection = await databasePool.getConnection()
   try {
