@@ -23,7 +23,7 @@ import {
   ShieldCheck,
   UserPlus,
 } from "lucide-react"
-import { useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -83,6 +83,24 @@ export default function AdminAccountsPage() {
   const dialogReturnFocusRef = useRef<HTMLElement | null>(null)
   const menuTriggerRefs = useRef(new Map<number, HTMLButtonElement | null>())
   const switchingToPasswordRef = useRef(false)
+  const filterScrollRef = useRef<HTMLDivElement>(null)
+  const [canScrollFiltersRight, setCanScrollFiltersRight] = useState(false)
+
+  const syncFilterScrollCue = useCallback(() => {
+    const el = filterScrollRef.current
+    if (!el) return
+    setCanScrollFiltersRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 2)
+  }, [])
+
+  useEffect(() => {
+    const el = filterScrollRef.current
+    if (!el) return
+    syncFilterScrollCue()
+    if (typeof ResizeObserver === "undefined") return
+    const ro = new ResizeObserver(syncFilterScrollCue)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [syncFilterScrollCue])
 
   const openDetailDialog = (accountId: number, trigger: HTMLElement) => {
     dialogReturnFocusRef.current = trigger
@@ -142,41 +160,52 @@ export default function AdminAccountsPage() {
             className="h-11 bg-[var(--adm-surface)] pl-10"
           />
         </div>
-        <div
-          role="group"
-          aria-label="Lọc theo vai trò"
-          className="flex w-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-1 md:w-auto md:flex-wrap md:overflow-visible md:pb-0"
-        >
-          {ACCOUNT_FILTERS.map((filter) => {
-            const active = filter.key === filterKey
-            return (
-              <Button
-                key={filter.key}
-                type="button"
-                variant="outline"
-                disabled={filter.unsupported}
-                title={filter.unsupported ? "Vai trò Kho chưa có trong hệ thống phân quyền." : undefined}
-                aria-pressed={active}
-                onClick={() => setFilterKey(filter.key)}
-                className={
-                  active
-                    ? "shrink-0 border-[var(--adm-action)] bg-[var(--adm-tint-blue)] text-[var(--adm-action-active)] hover:bg-[var(--adm-tint-blue-hover)] hover:text-[var(--adm-action-active)]"
-                    : "shrink-0 bg-[var(--adm-surface)] text-[var(--adm-text)]"
-                }
-              >
-                <span>{filter.label}</span>
-                <span
+        <div className="relative w-full min-w-0 md:w-auto" data-scroll-right={canScrollFiltersRight ? "true" : "false"}>
+          <div
+            ref={filterScrollRef}
+            onScroll={syncFilterScrollCue}
+            role="group"
+            aria-label="Lọc theo vai trò"
+            className="no-scrollbar flex w-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pr-6 pb-1 md:w-auto md:flex-wrap md:overflow-visible md:pr-0 md:pb-0"
+          >
+            {ACCOUNT_FILTERS.map((filter) => {
+              const active = filter.key === filterKey
+              return (
+                <Button
+                  key={filter.key}
+                  type="button"
+                  variant="outline"
+                  disabled={filter.unsupported}
+                  title={filter.unsupported ? "Vai trò Kho chưa có trong hệ thống phân quyền." : undefined}
+                  aria-pressed={active}
+                  onClick={() => setFilterKey(filter.key)}
                   className={
                     active
-                      ? "rounded-full bg-[var(--adm-action)]/12 px-1.5 py-0.5 text-xs font-semibold tabular-nums"
-                      : "rounded-full bg-[var(--adm-surface-sunken)] px-1.5 py-0.5 text-xs font-medium text-[var(--adm-text-muted)] tabular-nums"
+                      ? "shrink-0 border-[var(--adm-action)] bg-[var(--adm-tint-blue)] text-[var(--adm-action-active)] hover:bg-[var(--adm-tint-blue-hover)] hover:text-[var(--adm-action-active)]"
+                      : "shrink-0 bg-[var(--adm-surface)] text-[var(--adm-text)]"
                   }
                 >
-                  {counts[filter.key] ?? 0}
-                </span>
-              </Button>
-            )
-          })}
+                  <span>{filter.label}</span>
+                  <span
+                    className={
+                      active
+                        ? "rounded-full bg-[var(--adm-action)]/12 px-1.5 py-0.5 text-xs font-semibold tabular-nums"
+                        : "rounded-full bg-[var(--adm-surface-sunken)] px-1.5 py-0.5 text-xs font-medium text-[var(--adm-text-muted)] tabular-nums"
+                    }
+                  >
+                    {counts[filter.key] ?? 0}
+                  </span>
+                </Button>
+              )
+            })}
+          </div>
+          {canScrollFiltersRight ? (
+            <span
+              aria-hidden="true"
+              data-testid="accounts-filter-scroll-cue"
+              className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-[var(--adm-canvas)] via-[var(--adm-canvas)]/80 to-transparent md:hidden"
+            />
+          ) : null}
         </div>
         <Button
           type="button"

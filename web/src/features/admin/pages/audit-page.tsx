@@ -10,7 +10,7 @@
  */
 import { useQuery } from "@tanstack/react-query"
 import { AlertTriangle, Download, LoaderCircle, SlidersHorizontal } from "lucide-react"
-import { type Ref, useRef, useState } from "react"
+import { type Ref, useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -42,12 +42,30 @@ export default function AdminAuditPage() {
   const [exporting, setExporting] = useState(false)
   const [filterSheetOpen, setFilterSheetOpen] = useState(false)
   const sheetFromInputRef = useRef<HTMLInputElement>(null)
+  const filterScrollRef = useRef<HTMLDivElement>(null)
+  const [canScrollFiltersRight, setCanScrollFiltersRight] = useState(false)
+
+  const syncFilterScrollCue = useCallback(() => {
+    const el = filterScrollRef.current
+    if (!el) return
+    setCanScrollFiltersRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 2)
+  }, [])
 
   const filters = useQuery({
     queryKey: ["admin", "audit-filters"],
     queryFn: () => api.getAuditFilters(),
     retry: false,
   })
+
+  useEffect(() => {
+    const el = filterScrollRef.current
+    if (!el) return
+    syncFilterScrollCue()
+    if (typeof ResizeObserver === "undefined") return
+    const ro = new ResizeObserver(syncFilterScrollCue)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [syncFilterScrollCue, filters.data?.filters.length])
 
   const query = {
     ...(from ? { from } : {}),
@@ -93,22 +111,33 @@ export default function AdminAuditPage() {
   return (
     <div className="grid min-w-0 gap-4">
       <div data-adm-reveal className="grid min-w-0 gap-2.5 md:gap-3">
-        <div
-          role="group"
-          aria-label="Lọc theo loại thao tác"
-          className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-1 md:flex-wrap md:overflow-visible md:pb-0"
-        >
-          <FilterChip label="Tất cả" active={types.length === 0} onClick={() => setTypes([])} />
-          {(filters.data?.filters ?? []).map((filter) => (
-            <FilterChip
-              key={filter.type}
-              label={filter.label}
-              active={types.includes(filter.type)}
-              disabled={!filter.supported}
-              title={filter.note}
-              onClick={() => toggle(filter.type)}
+        <div className="relative min-w-0" data-scroll-right={canScrollFiltersRight ? "true" : "false"}>
+          <div
+            ref={filterScrollRef}
+            onScroll={syncFilterScrollCue}
+            role="group"
+            aria-label="Lọc theo loại thao tác"
+            className="no-scrollbar flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pr-6 pb-1 md:flex-wrap md:overflow-visible md:pr-0 md:pb-0"
+          >
+            <FilterChip label="Tất cả" active={types.length === 0} onClick={() => setTypes([])} />
+            {(filters.data?.filters ?? []).map((filter) => (
+              <FilterChip
+                key={filter.type}
+                label={filter.label}
+                active={types.includes(filter.type)}
+                disabled={!filter.supported}
+                title={filter.note}
+                onClick={() => toggle(filter.type)}
+              />
+            ))}
+          </div>
+          {canScrollFiltersRight ? (
+            <span
+              aria-hidden="true"
+              data-testid="audit-filter-scroll-cue"
+              className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-[var(--adm-canvas)] via-[var(--adm-canvas)]/80 to-transparent md:hidden"
             />
-          ))}
+          ) : null}
         </div>
         <Sheet open={filterSheetOpen} onOpenChange={setFilterSheetOpen}>
           <div className="flex min-w-0 items-center gap-2 md:hidden">
@@ -370,7 +399,7 @@ function FilterChip({
       className={
         active
           ? "shrink-0 border-[var(--adm-action)] bg-[var(--adm-tint-blue)] text-[var(--adm-action-active)] hover:bg-[var(--adm-tint-blue-hover)] hover:text-[var(--adm-action-active)]"
-          : "shrink-0 bg-[var(--adm-surface)] text-[var(--adm-text)]"
+          : "shrink-0 bg-[var(--adm-surface)] text-[var(--adm-text)] disabled:border-dashed disabled:text-[var(--adm-text-muted)] disabled:opacity-70"
       }
     >
       {label}
