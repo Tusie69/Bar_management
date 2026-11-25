@@ -1,5 +1,5 @@
 import { ChartColumn, Check, ChevronDown, ChevronRight, Clock, List, ListOrdered, Map as MapIcon } from "lucide-react"
-import { useMemo, useState, type ReactNode } from "react"
+import { useMemo, useState } from "react"
 import { useNavigate } from "react-router"
 import { ROLE_LABEL } from "@/domain/enums"
 import { useOverview } from "@/hooks/use-data"
@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 import { isApiError } from "@/services"
 import { useSession } from "@/state/session"
 import { useM } from "./context"
+import { ToastSlot } from "./overlays"
 import { menuButtonLabel } from "./menu-alerts"
 import { isOpenEntry, splitShift, tableText } from "./model"
 import {
@@ -32,7 +33,7 @@ export function HomeScreen() {
   return (
     <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div ref={ref} data-scroll className="min-h-0 flex-1 overflow-x-clip overflow-y-auto">
-        <Hero title={m.isOwner ? "Tổng quan" : "Tiếp đón"} toastBanner={m.toastBanner} />
+        <Hero title={m.isOwner ? "Tổng quan" : "Tiếp đón"} />
         {m.isOwner ? <OwnerBody /> : <ReceptionBody />}
       </div>
     </main>
@@ -40,7 +41,7 @@ export function HomeScreen() {
 }
 
 /* Flat hills, only on the two home screens. Last hill = page background so it blends into content. */
-function Hero({ title, toastBanner }: { title: string; toastBanner?: ReactNode }) {
+function Hero({ title }: { title: string }) {
   const m = useM()
   const user = useSession((s) => s.user)
   return (
@@ -82,7 +83,7 @@ function Hero({ title, toastBanner }: { title: string; toastBanner?: ReactNode }
         <UndoRedoButtons glass />
         <BellButton glass />
       </div>
-      {toastBanner ? <div className="relative -mx-3 mt-1.5">{toastBanner}</div> : null}
+      <ToastSlot className="mt-1.5" />
       <div className="relative flex items-baseline justify-between gap-3 px-0.5 pt-4">
         <h1 className="m-0 text-[26px] leading-[1.15] font-bold tracking-[-0.022em] text-tx-strong">{title}</h1>
         <span className="tnum text-[13px] font-medium whitespace-nowrap text-tx-2">{fmtBusinessDate(m.today)}</span>

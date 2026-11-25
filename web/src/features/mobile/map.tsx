@@ -46,6 +46,7 @@ import { useM, type TablePick } from "./context"
 import { menuButtonLabel } from "./menu-alerts"
 import { codesOf, duration, type Tone, toneStyle } from "./model"
 import { useRestoreTriggerFocus } from "./overlay-focus"
+import { ToastSlot } from "./overlays"
 import { useQuickFormEscape, useQuickFormPresence } from "./quick-form-presence"
 import { MenuUnreadDot, PlainHeader, UndoRedoButtons } from "./ui"
 
@@ -262,7 +263,7 @@ export function MapScreen({
         />
       )}
       <main className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--floor)]">
-        {m.toastBanner}
+        <ToastSlot />
         {/* The receptionist works on the whole floor and reads the counts inside the ⓘ popup,
           so neither the zone tabs nor the legend card take screen height from the plan. */}
         {!receptionist && !pick ? (

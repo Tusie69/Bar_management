@@ -52,7 +52,27 @@ async function dismissToastIfPresent(page) {
   const toastClose = page.getByRole("button", { name: "Đóng thông báo", exact: true })
   if ((await toastClose.count()) > 0) {
     await toastClose.click()
-    await page.waitForTimeout(150)
+    await page
+      .locator(".gm-toast-banner")
+      .waitFor({ state: "detached" })
+      .catch(() => {})
+    // Chờ phép fit 320ms của FloorCanvas ổn định sau khi ẩn banner (PA-R01)
+    await page.evaluate(
+      () =>
+        new Promise((resolve) => {
+          const g = document.querySelector('svg[role="group"] > g')
+          if (!g) return resolve()
+          let done = false
+          const finish = () => {
+            if (done) return
+            done = true
+            resolve()
+          }
+          g.addEventListener("transitionend", finish, { once: true })
+          setTimeout(finish, 420)
+        }),
+    )
+    await page.waitForTimeout(40)
   }
 }
 

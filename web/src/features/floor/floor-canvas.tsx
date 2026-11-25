@@ -959,7 +959,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
           transform={`translate(${view.x} ${view.y}) scale(${view.k})`}
           style={{
             transition:
-              isInteracting || prefersReducedMotion ? "none" : "transform 110ms cubic-bezier(0.16, 1, 0.3, 1)",
+              isInteracting || prefersReducedMotion ? "none" : "transform 320ms cubic-bezier(0.16, 1, 0.3, 1)",
           }}
         >
           <rect

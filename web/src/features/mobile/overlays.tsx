@@ -10,7 +10,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react"
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { useNavigate } from "react-router"
 import {
   AlertDialog,
@@ -555,6 +555,41 @@ export function ConfirmDialog({ c, onClose }: { c: Confirm | null; onClose: () =
   )
 }
 
+/** Reserves the banner row in-flow and syncs the single MobileApp Toast15 vertical offset. */
+export function ToastSlot({ className }: { className?: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const slot = ref.current
+    const shell = slot?.closest<HTMLElement>("[data-gm-shell-content]")
+    if (!slot || !shell) return
+
+    const sync = () => {
+      const top = slot.getBoundingClientRect().top - shell.getBoundingClientRect().top
+      shell.style.setProperty("--gm-toast-top", `${Math.round(top)}px`)
+    }
+    sync()
+
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(sync) : null
+    ro?.observe(slot)
+    if (slot.parentElement) ro?.observe(slot.parentElement)
+    const prevSibling = slot.parentElement?.previousElementSibling
+    if (prevSibling) ro?.observe(prevSibling)
+    ro?.observe(shell)
+
+    const scroller = slot.closest<HTMLElement>("[data-scroll]")
+    scroller?.addEventListener("scroll", sync, { passive: true })
+    return () => {
+      ro?.disconnect()
+      scroller?.removeEventListener("scroll", sync)
+    }
+  }, [])
+
+  return (
+    <div ref={ref} aria-hidden className={cn("shrink-0", className)} style={{ height: "var(--gm-toast-h, 0px)" }} />
+  )
+}
+
 /** 15': light floating banner, never blocks, keeps mounted through exit animation. */
 export function Toast15({
   r,
@@ -568,10 +603,26 @@ export function Toast15({
   const m = useM()
   const { isOpen, present, markExited } = usePresenceController({ open: Boolean(r) })
   const [cachedR, setCachedR] = useState<ReservationView | null>(r)
+  const hostRef = useRef<HTMLDivElement>(null)
 
   if (r && r !== cachedR) {
     setCachedR(r)
   }
+
+  useLayoutEffect(() => {
+    const el = hostRef.current
+    const shell = el?.closest<HTMLElement>("[data-gm-shell-content]")
+    if (!shell) return
+    const syncHeight = () => {
+      const h = el && isOpen && present ? Math.ceil(el.getBoundingClientRect().height) : 0
+      shell.style.setProperty("--gm-toast-h", `${h}px`)
+    }
+    syncHeight()
+    if (!el || !isOpen || !present || typeof ResizeObserver === "undefined") return
+    const ro = new ResizeObserver(syncHeight)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [isOpen, present, cachedR])
 
   useEffect(() => {
     if (!isOpen && present && typeof window !== "undefined") {
@@ -589,7 +640,9 @@ export function Toast15({
 
   return (
     <div
-      className={cn("pointer-events-none shrink-0", isOpen ? "px-3 pt-1.5 pb-1" : "relative h-0 overflow-visible px-3")}
+      ref={hostRef}
+      style={{ top: "var(--gm-toast-top, 0px)" }}
+      className="pointer-events-none absolute inset-x-0 z-[10] px-3 pt-1.5 pb-1"
     >
       <div
         role={isOpen ? "status" : undefined}
@@ -599,10 +652,7 @@ export function Toast15({
         onAnimationEnd={() => {
           if (!isOpen) markExited()
         }}
-        className={cn(
-          "gm-toast-banner pointer-events-none mx-auto flex w-full max-w-[var(--gm-max-w)] items-center gap-2.5 rounded-2xl border border-border bg-surface-1 py-2 pr-1.5 pl-3 shadow-[var(--shadow-sm)]",
-          !isOpen && "absolute inset-x-3 top-1.5 z-[42]",
-        )}
+        className="gm-toast-banner pointer-events-none mx-auto flex w-full max-w-[var(--gm-max-w)] items-center gap-2.5 rounded-2xl border border-border bg-surface-1 py-2 pr-1.5 pl-3 shadow-[var(--shadow-sm)]"
       >
         <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-st-late-tint text-st-late-ink">
           <Clock className="size-[17px]" aria-hidden />
