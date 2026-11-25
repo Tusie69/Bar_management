@@ -25,9 +25,7 @@ const PORTAL_NOTE: Record<AuthPortal, string> = {
 }
 
 function keepFocusedFieldVisible(event: FocusEvent<HTMLInputElement>) {
-  const input = event.currentTarget
-  input.form?.querySelector<HTMLElement>('button[type="submit"]')?.scrollIntoView({ block: "nearest" })
-  input.scrollIntoView({ block: "nearest" })
+  event.currentTarget.scrollIntoView({ block: "nearest" })
 }
 
 export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirectTo?: string | null }) {
@@ -128,7 +126,7 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
               aria-describedby={showUsernameHint ? "username-hint" : undefined}
               disabled={pending}
               required
-              className="h-11 scroll-mt-4 scroll-mb-20"
+              className="h-11 scroll-mt-4 scroll-mb-24"
             />
             {showUsernameHint ? (
               <p
@@ -157,7 +155,7 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
                 aria-describedby={showPasswordHint ? "password-hint" : undefined}
                 disabled={pending}
                 required
-                className="h-11 scroll-mt-4 scroll-mb-20 pr-12"
+                className="h-11 scroll-mt-4 scroll-mb-24 pr-12"
               />
               <Button
                 type="button"

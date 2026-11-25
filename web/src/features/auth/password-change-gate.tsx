@@ -18,9 +18,7 @@ import { useSession } from "@/state/session"
 const PASSWORD_MIN = 12
 
 function keepFocusedFieldVisible(event: FocusEvent<HTMLInputElement>) {
-  const input = event.currentTarget
-  input.form?.querySelector<HTMLElement>('button[type="submit"]')?.scrollIntoView({ block: "nearest" })
-  input.scrollIntoView({ block: "nearest" })
+  event.currentTarget.scrollIntoView({ block: "nearest" })
 }
 
 export function PasswordChangeGate() {
@@ -56,25 +54,25 @@ export function PasswordChangeGate() {
 
   return (
     <main className="flex min-h-dvh flex-col overflow-y-auto bg-background px-4 py-4 sm:py-8 [@media(max-height:560px)]:py-2">
-      <section className="mx-auto my-auto grid w-full max-w-md gap-4 rounded-2xl border border-border bg-surface-1 p-5 shadow-md sm:gap-5 sm:p-8 [@media(max-height:560px)]:gap-2.5 [@media(max-height:560px)]:p-3.5">
-        <div className="grid gap-2">
-          <span className="grid size-11 place-items-center rounded-xl bg-primary-tint text-primary-ink">
+      <section className="mx-auto my-auto grid w-full max-w-md gap-4 rounded-2xl border border-border bg-surface-1 p-5 shadow-md sm:gap-5 sm:p-8 [@media(max-height:560px)]:gap-2 [@media(max-height:560px)]:p-3.5">
+        <div className="grid gap-2 [@media(max-height:560px)]:gap-1">
+          <span className="grid size-11 place-items-center rounded-xl bg-primary-tint text-primary-ink [@media(max-height:560px)]:hidden">
             <KeyRound className="size-5" aria-hidden="true" />
           </span>
           <h1 className="text-xl font-semibold tracking-[-0.015em]">Đổi mật khẩu trước khi tiếp tục</h1>
-          <p className="text-sm leading-relaxed text-muted-foreground">
+          <p className="text-sm leading-relaxed text-muted-foreground [@media(max-height:560px)]:text-xs [@media(max-height:560px)]:leading-snug">
             {displayName ? `${displayName}, tài khoản ` : "Tài khoản "}
             đang dùng mật khẩu tạm. Hãy đặt mật khẩu riêng của bạn; trước khi đổi, các chức năng khác đều bị khóa.
           </p>
         </div>
         <form
-          className="grid gap-3.5"
+          className="grid gap-3.5 [@media(max-height:560px)]:gap-2"
           onSubmit={(event) => {
             event.preventDefault()
             submit()
           }}
         >
-          <div className="grid gap-1.5">
+          <div className="grid gap-1.5 [@media(max-height:560px)]:gap-1">
             <Label htmlFor="pwd-current">Mật khẩu tạm</Label>
             <Input
               id="pwd-current"
@@ -83,10 +81,10 @@ export function PasswordChangeGate() {
               value={currentPassword}
               onChange={(event) => setCurrentPassword(event.target.value)}
               onFocus={keepFocusedFieldVisible}
-              className="h-11 scroll-mt-4 scroll-mb-20"
+              className="h-11 scroll-mt-4 scroll-mb-24"
             />
           </div>
-          <div className="grid gap-1.5">
+          <div className="grid gap-1.5 [@media(max-height:560px)]:gap-1">
             <Label htmlFor="pwd-new">Mật khẩu mới (tối thiểu {PASSWORD_MIN} ký tự)</Label>
             <div className="relative">
               <Input
@@ -96,7 +94,7 @@ export function PasswordChangeGate() {
                 value={newPassword}
                 onChange={(event) => setNewPassword(event.target.value)}
                 onFocus={keepFocusedFieldVisible}
-                className="h-11 scroll-mt-4 scroll-mb-20 pr-12"
+                className="h-11 scroll-mt-4 scroll-mb-24 pr-12"
               />
               <Button
                 type="button"
@@ -116,7 +114,7 @@ export function PasswordChangeGate() {
               </Button>
             </div>
           </div>
-          <div className="grid gap-1.5">
+          <div className="grid gap-1.5 [@media(max-height:560px)]:gap-1">
             <Label htmlFor="pwd-confirm">Nhập lại mật khẩu mới</Label>
             <div className="relative">
               <Input
@@ -127,7 +125,7 @@ export function PasswordChangeGate() {
                 value={confirmPassword}
                 onChange={(event) => setConfirmPassword(event.target.value)}
                 onFocus={keepFocusedFieldVisible}
-                className="h-11 scroll-mt-4 scroll-mb-20 pr-12"
+                className="h-11 scroll-mt-4 scroll-mb-24 pr-12"
               />
               <Button
                 type="button"
