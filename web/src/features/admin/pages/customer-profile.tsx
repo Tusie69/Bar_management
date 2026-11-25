@@ -275,7 +275,7 @@ function Stat({
           <span
             className={cn(
               "adm-kpi-value tabular-nums",
-              value.length > 6 && "max-[380px]:text-[1.125rem]! max-sm:text-[1.5rem]!",
+              value.length > 6 && "max-sm:text-[clamp(1.0625rem,5vw,1.5rem)]!",
             )}
           >
             {value}
