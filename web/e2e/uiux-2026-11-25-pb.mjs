@@ -1608,10 +1608,60 @@ try {
         assert.equal(typeof approveWastePayloads[1]?.idempotencyKey, "string")
         await expect(page.getByRole("alertdialog")).toHaveCount(0)
 
+        // RR-03: Immediate rejection before React renders busy=true (with 0ms timers delayed to 100ms) -> 1 call, unlocks & closes dialog, focuses trigger, retry succeeds once
+        const normalApproveBtn = page.getByRole("button", { name: "Duyệt hủy", exact: true })
+        await normalApproveBtn.click()
+        const fastFailDialog = page.getByRole("alertdialog")
+        await expect(fastFailDialog).toBeVisible()
+        await page.evaluate(() => {
+          const origFetch = window.fetch.bind(window)
+          const origSetTimeout = window.setTimeout.bind(window)
+          window.__rr03FetchAttempts = 0
+          window.setTimeout = (fn, delay, ...args) => origSetTimeout(fn, delay === 0 ? 100 : delay, ...args)
+          window.fetch = (input, init) => {
+            const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input)
+            if (url.includes("/api/v1/orders/cancellations/1/approve")) {
+              window.__rr03FetchAttempts += 1
+              window.fetch = origFetch
+              origSetTimeout(() => {
+                window.setTimeout = origSetTimeout
+              }, 150)
+              return Promise.reject(new TypeError("Failed to fetch"))
+            }
+            return origFetch(input, init)
+          }
+        })
+        await fastFailDialog.getByRole("button", { name: "Xác nhận", exact: true }).evaluate((button) => {
+          button.click()
+          button.click()
+        })
+        await expect(page.getByRole("alertdialog")).toHaveCount(0)
+        await expect(page.getByRole("alert")).toContainText("Không thể kết nối tới máy chủ. Kiểm tra mạng rồi thử lại.")
+        await expect(normalApproveBtn).toBeFocused()
+        assert.equal(
+          await page.evaluate(() => window.__rr03FetchAttempts),
+          1,
+          "RR-03: rapid same-tick click on immediate reject must attempt fetch once",
+        )
+        assert.equal(approveNormalPayloads.length, 0)
+
+        // Retry after immediate error with fast success (0ms delay) -> dialog opens unlocked and submits exactly once
+        normalDelayMs = 0
+        removeNormalOnSuccess = false
+        await page.keyboard.press("Enter")
+        const fastSuccessDialog = page.getByRole("alertdialog")
+        await expect(fastSuccessDialog).toBeVisible()
+        await expect(fastSuccessDialog.getByRole("button", { name: "Xác nhận", exact: true })).toBeEnabled()
+        await expect(fastSuccessDialog.getByRole("button", { name: "Huỷ bỏ", exact: true })).toBeEnabled()
+        await fastSuccessDialog.getByRole("button", { name: "Xác nhận", exact: true }).click()
+        await expect.poll(() => approveNormalPayloads.length).toBe(1)
+        await expect(page.getByRole("alertdialog")).toHaveCount(0)
+        await expect(normalApproveBtn).toBeFocused()
+
         // RR-01 + RR-02: Normal approve dblclick with delayed response -> strictly 1 POST; refetch removes row -> focus moves to Chờ duyệt tab and Tab continues
         normalDelayMs = 500
         removeNormalOnSuccess = true
-        await page.getByRole("button", { name: "Duyệt hủy", exact: true }).click()
+        await normalApproveBtn.click()
         const normalConfirmDialog = page.getByRole("alertdialog")
         await expect(normalConfirmDialog).toBeVisible()
         await normalConfirmDialog.getByRole("button", { name: "Xác nhận", exact: true }).dblclick()
@@ -1620,9 +1670,13 @@ try {
         await expect(page.getByRole("alertdialog")).toHaveCount(0)
         await expect(page.getByRole("button", { name: "Duyệt hủy", exact: true })).toHaveCount(0)
         await page.waitForTimeout(100)
-        assert.equal(approveNormalPayloads.length, 1, "RR-01: dblclick normal approve must send exactly 1 POST")
-        assert.equal(approveNormalPayloads[0]?.expectedVersion, 1)
-        assert.equal(typeof approveNormalPayloads[0]?.idempotencyKey, "string")
+        assert.equal(
+          approveNormalPayloads.length,
+          2,
+          "RR-01: dblclick normal approve must send exactly 1 additional POST",
+        )
+        assert.equal(approveNormalPayloads[1]?.expectedVersion, 1)
+        assert.equal(typeof approveNormalPayloads[1]?.idempotencyKey, "string")
         const pendingTab = page.getByRole("tab", { name: "Chờ duyệt", exact: true })
         await expect(pendingTab).toBeFocused()
         await page.keyboard.press("Tab")

@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { CancellationApproveSendingStatus, CancellationApproveSummary } from "./cancellation-approve-dialog"
 import { CancellationCard } from "./cancellation-card"
+import { createApproveConfirmTracker } from "./cancellation-confirm-tracker"
 import { CancellationGroupCard } from "./cancellation-group-card"
 import type { CancellationGroupItem } from "./cancellation-grouping"
 
@@ -177,5 +178,68 @@ describe("thẻ hủy cả đơn và hộp xác nhận duyệt", () => {
     expect(statusHtml).toContain('aria-label="Đang duyệt..."')
     expect(statusHtml).toContain('tabindex="0"')
     expect(statusHtml).toContain("Đang duyệt yêu cầu, vui lòng chờ...")
+  })
+
+  it("RR-03: mở khóa và đóng hộp khi promise reject ngay trước lúc UI nhận busy=true, sau đó bấm lại gọi đúng 1 lần", async () => {
+    const tracker = createApproveConfirmTracker()
+    tracker.sync({ open: true, busy: false })
+
+    let settledCount = 0
+    const onConfirm = vi.fn(() => Promise.reject(new TypeError("Failed to fetch")))
+
+    expect(tracker.submit(onConfirm, () => (settledCount += 1))).toBe(true)
+    expect(tracker.submit(onConfirm, () => (settledCount += 1))).toBe(false)
+    expect(tracker.isLocked()).toBe(true)
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(settledCount).toBe(1)
+    expect(tracker.isLocked()).toBe(false)
+
+    tracker.sync({ open: false, busy: false })
+    tracker.sync({ open: true, busy: false })
+    const retryConfirm = vi.fn(() => Promise.resolve({ ok: true }))
+    expect(tracker.submit(retryConfirm, () => (settledCount += 1))).toBe(true)
+    expect(retryConfirm).toHaveBeenCalledTimes(1)
+
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(settledCount).toBe(2)
+    expect(tracker.isLocked()).toBe(false)
+  })
+
+  it("RR-03: lỗi đồng bộ và thành công chậm đều giải khóa đúng chu kỳ và không đóng trùng", async () => {
+    const tracker = createApproveConfirmTracker()
+    tracker.sync({ open: true, busy: false })
+
+    let settledCount = 0
+    const syncThrow = vi.fn(() => {
+      throw new Error("network down")
+    })
+    expect(tracker.submit(syncThrow, () => (settledCount += 1))).toBe(true)
+    expect(settledCount).toBe(1)
+    expect(tracker.isLocked()).toBe(false)
+
+    let resolveSlow!: () => void
+    const slowPromise = new Promise<void>((resolve) => {
+      resolveSlow = resolve
+    })
+    const slowConfirm = vi.fn(() => slowPromise)
+    expect(tracker.submit(slowConfirm, () => (settledCount += 1))).toBe(true)
+    expect(tracker.isLocked()).toBe(true)
+
+    tracker.sync({ open: true, busy: true })
+    expect(tracker.consumeReadyToClose()).toBe(false)
+
+    resolveSlow()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(settledCount).toBe(1)
+
+    tracker.sync({ open: true, busy: false })
+    expect(tracker.consumeReadyToClose()).toBe(true)
+    expect(tracker.isLocked()).toBe(false)
   })
 })

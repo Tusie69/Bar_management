@@ -192,7 +192,11 @@ export default function CancellationQueuePage() {
                 decided={status !== "PENDING"}
                 fallbackFocusRef={pendingTabRef}
                 onNoteChange={(value) => setNotes((current) => ({ ...current, [item.groupId]: value }))}
-                onDecide={(decision) => decideGroup.mutate({ group: item, decision })}
+                onDecide={(decision) =>
+                  decision === "approve"
+                    ? decideGroup.mutateAsync({ group: item, decision })
+                    : decideGroup.mutate({ group: item, decision })
+                }
               />
             ) : (
               <CancellationCard
@@ -202,7 +206,11 @@ export default function CancellationQueuePage() {
                 busy={decide.isPending || decideGroup.isPending}
                 fallbackFocusRef={pendingTabRef}
                 onNoteChange={(value) => setNotes((current) => ({ ...current, [item.entry.cancellationId]: value }))}
-                onDecide={(decision) => decide.mutate({ entry: item.entry, decision })}
+                onDecide={(decision) =>
+                  decision === "approve"
+                    ? decide.mutateAsync({ entry: item.entry, decision })
+                    : decide.mutate({ entry: item.entry, decision })
+                }
               />
             ),
           )}

@@ -35,7 +35,7 @@ export function CancellationCard({
   busy: boolean
   fallbackFocusRef?: RefObject<HTMLElement | null>
   onNoteChange: (value: string) => void
-  onDecide: (decision: "approve" | "reject") => void
+  onDecide: (decision: "approve" | "reject") => void | Promise<unknown>
 }) {
   const waste = entry.policy === "READY_WASTE"
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -88,7 +88,12 @@ export function CancellationCard({
             className="h-11"
           />
           <div className="grid gap-2 sm:grid-cols-2">
-            <Button type="button" variant="outline" disabled={busy} onClick={() => onDecide("reject")}>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void Promise.resolve(onDecide("reject")).catch(() => undefined)}
+            >
               <X className="size-4" aria-hidden /> Từ chối
             </Button>
             <Button

@@ -38,7 +38,7 @@ export function CancellationGroupCard({
   decided: boolean
   fallbackFocusRef?: RefObject<HTMLElement | null>
   onNoteChange: (value: string) => void
-  onDecide: (decision: "approve" | "reject") => void
+  onDecide: (decision: "approve" | "reject") => void | Promise<unknown>
 }) {
   const waste = group.wasteQuantity > 0
   const [confirmOpen, setConfirmOpen] = useState(false)
@@ -105,7 +105,13 @@ export function CancellationGroupCard({
             aria-label={`Ghi chú quyết định cho đơn ${group.visitSequence}`}
           />
           <div className="grid grid-cols-2 gap-2">
-            <Button type="button" variant="outline" className="h-11" disabled={busy} onClick={() => onDecide("reject")}>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11"
+              disabled={busy}
+              onClick={() => void Promise.resolve(onDecide("reject")).catch(() => undefined)}
+            >
               <X className="size-4" aria-hidden /> Từ chối
             </Button>
             <Button

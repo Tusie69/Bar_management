@@ -17,6 +17,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { formatVnd } from "@/features/waiter-menu/menu-price"
+import { createApproveConfirmTracker } from "./cancellation-confirm-tracker"
 
 export interface ApproveConfirmItem {
   key: string | number
@@ -143,33 +144,35 @@ export function CancellationApproveDialog({
   items: readonly ApproveConfirmItem[]
   wasteNoticeDetail?: string
   busy: boolean
-  onConfirm: () => void
+  onConfirm: () => unknown
 }) {
-  const wasBusyRef = useRef(false)
-  // Chốt đồng bộ chặn nhấp đúp / Enter lặp trước khi React render lại với `busy=true`.
-  const submittingRef = useRef(false)
+  const [tracker] = useState(createApproveConfirmTracker)
   const [submitting, setSubmitting] = useState(false)
   const sendingStatusRef = useRef<HTMLParagraphElement>(null)
+  const onOpenChangeRef = useRef(onOpenChange)
   const locked = busy || submitting
 
   if ((!open || busy) && submitting) {
     setSubmitting(false)
   }
 
+  useLayoutEffect(() => {
+    onOpenChangeRef.current = onOpenChange
+    tracker.sync({ open, busy })
+  }, [busy, onOpenChange, open, tracker])
+
   useEffect(() => {
-    if (!open) {
-      wasBusyRef.current = false
-      submittingRef.current = false
-      return
+    tracker.setMounted(true)
+    return () => {
+      tracker.setMounted(false)
     }
-    if (busy) {
-      wasBusyRef.current = true
-    } else if (wasBusyRef.current) {
-      wasBusyRef.current = false
-      submittingRef.current = false
+  }, [tracker])
+
+  useEffect(() => {
+    if (tracker.consumeReadyToClose()) {
       onOpenChange(false)
     }
-  }, [busy, onOpenChange, open])
+  }, [busy, onOpenChange, open, tracker])
 
   useLayoutEffect(() => {
     if (open && locked) {
@@ -181,7 +184,7 @@ export function CancellationApproveDialog({
     <AlertDialog
       open={open}
       onOpenChange={(next) => {
-        if (!next && (busy || submittingRef.current)) return
+        if (!next && tracker.isLocked()) return
         onOpenChange(next)
       }}
     >
@@ -193,7 +196,7 @@ export function CancellationApproveDialog({
           }
         }}
         onEscapeKeyDown={(event) => {
-          if (busy || submittingRef.current) event.preventDefault()
+          if (tracker.isLocked()) event.preventDefault()
         }}
         onCloseAutoFocus={(event) => {
           if (triggerRef.current?.isConnected && !triggerRef.current.disabled) {
@@ -232,7 +235,7 @@ export function CancellationApproveDialog({
           <AlertDialogCancel
             disabled={locked}
             onClick={(event) => {
-              if (busy || submittingRef.current) {
+              if (tracker.isLocked()) {
                 event.preventDefault()
                 return
               }
@@ -246,10 +249,12 @@ export function CancellationApproveDialog({
             disabled={locked}
             onClick={(event) => {
               event.preventDefault()
-              if (busy || submittingRef.current) return
-              submittingRef.current = true
+              if (tracker.isLocked()) return
               setSubmitting(true)
-              onConfirm()
+              tracker.submit(onConfirm, () => {
+                setSubmitting(false)
+                onOpenChangeRef.current(false)
+              })
             }}
           >
             {locked ? "Đang duyệt..." : "Xác nhận"}
