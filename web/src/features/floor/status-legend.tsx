@@ -35,13 +35,13 @@ export function LegendChipsGrid({ chips }: { chips: LegendChipItem[] }) {
       className={cn(
         chips.length > 6
           ? "flex flex-wrap items-center gap-1.5 sm:gap-2"
-          : "grid grid-cols-3 gap-1.5 sm:flex sm:flex-wrap sm:items-center sm:gap-2",
+          : "grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:items-center sm:gap-2",
       )}
     >
       {chips.map((chip) => (
         <div
           key={chip.key}
-          className="flex h-7 min-w-0 items-center justify-between gap-1 rounded-md border border-border-subtle bg-surface-2/65 px-2 text-[11px] font-medium text-foreground sm:inline-flex sm:h-7 sm:w-auto sm:justify-start sm:gap-1.5 sm:px-2.5 sm:text-xs"
+          className="flex min-h-7 min-w-0 items-center justify-between gap-1.5 rounded-md border border-border-subtle bg-surface-2/65 px-2 py-1 text-xs font-medium text-foreground sm:inline-flex sm:w-auto sm:justify-start sm:px-2.5"
         >
           <div className="flex min-w-0 items-center gap-1.5">
             {chip.isDashed ? (
@@ -66,7 +66,7 @@ export function LegendChipsGrid({ chips }: { chips: LegendChipItem[] }) {
             ) : (
               <span className="size-2.5 shrink-0 rounded-[3px]" style={{ background: chip.colorVar }} aria-hidden />
             )}
-            <span className="truncate text-muted-foreground">{chip.label}</span>
+            <span className="leading-tight text-muted-foreground">{chip.label}</span>
           </div>
           <span className="shrink-0 font-bold text-foreground tabular-nums">{chip.count}</span>
         </div>
@@ -116,7 +116,7 @@ function StatusLegendContent({
             <span className="absolute -bottom-2 -left-2 text-[11px]">🔥</span>
             <span className="absolute -right-2 -bottom-2 text-[11px]">📌</span>
           </div>
-          <ul className="grid flex-1 gap-1 text-[11px] leading-snug text-muted-foreground">
+          <ul className="grid flex-1 gap-1 text-xs leading-snug text-muted-foreground">
             <li>
               <span className="font-semibold text-foreground">Số khách</span> · góc trên trái
             </li>
@@ -132,9 +132,7 @@ function StatusLegendContent({
             </li>
           </ul>
         </div>
-        <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-          Mã bàn và giờ khách đến nằm trong ô bàn.
-        </p>
+        <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Mã bàn và giờ khách đến nằm trong ô bàn.</p>
       </div>
 
       {/* Bottom-left corner: who the guest is */}
@@ -184,7 +182,7 @@ function StatusLegendContent({
       {/* Merge group */}
       <div className="rounded-lg border border-border/50 bg-background/50 p-2.5">
         <div className="mb-1 font-semibold text-foreground">Nhóm bàn ghép</div>
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
+        <p className="text-xs leading-relaxed text-muted-foreground">
           <span className="font-bold text-foreground">G01 / G02</span>: các bàn ghép thuộc cùng MỘT tốp khách. Khi ghép,
           mọi bàn trong nhóm có trạng thái giống nhau và tổng số khách chỉ tính 1 lần.
         </p>
@@ -201,7 +199,7 @@ function StatusLegendContent({
           <div className="text-[10px] text-muted-foreground">20:00 · 2</div>
           <div className="text-[10.5px] font-medium text-foreground">Dương Quốc Long</div>
         </div>
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
+        <p className="text-xs leading-relaxed text-muted-foreground">
           Mỗi dòng luôn có đủ: mã ghế (ghép thì nối bằng dấu gạch) · giờ đặt · số khách. Khách vào thẳng chưa đặt trước
           thì giờ ghi là <span className="font-semibold text-foreground">vào HH:MM</span>. Màu chấm theo trạng thái
           khách.
@@ -220,7 +218,7 @@ function StatusLegendContent({
             </span>
             <span>Bàn sơ cua</span>
           </div>
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
+          <p className="text-xs leading-relaxed text-muted-foreground">
             Ô bàn viền nét đứt dùng dự phòng khi khu vực chính đã kín hoặc cần kê thêm bàn (ví dụ A10). Bình thường
             không tính vào số bàn trống sẵn sàng nhận; chỉ chuyển sang màu trạng thái tương ứng khi Lễ tân xếp khách.
           </p>
@@ -228,7 +226,7 @@ function StatusLegendContent({
       ) : null}
 
       {showReceptionNote ? (
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
+        <p className="text-xs leading-relaxed text-muted-foreground">
           Bàn tới muộn chuyển sang màu đỏ khi quá giờ hẹn. Mặc định ẩn chú giải icon dưới nút ⓘ để không che bàn; chú
           giải màu bàn vẫn luôn hiển thị.
         </p>
@@ -290,9 +288,9 @@ export function StatusLegend({ tables = [], states, className, variant = "card" 
       >
         <span
           aria-hidden="true"
-          className="grid size-[34px] place-items-center rounded-full border border-[var(--adm-border,#e2dfd8)] bg-[var(--adm-surface,#ffffff)] text-[15px] leading-none font-bold text-[var(--adm-brand-navy,#102a43)] shadow-xs transition-[transform,background-color,border-color,color,box-shadow] duration-[var(--duration-hover,160ms)] ease-[var(--ease-spring-default,ease)] group-hover:border-[var(--adm-border-strong,#b8b3a8)] group-hover:bg-[var(--adm-surface-sunken,#f0eee9)] group-focus-visible:border-[var(--adm-action,#1d6fc2)] group-focus-visible:ring-[3px] group-focus-visible:ring-[var(--adm-action,#1d6fc2)]/25 group-active:scale-95 group-data-[state=open]:border-[var(--adm-action,#1d6fc2)] group-data-[state=open]:bg-[var(--adm-tint-blue,#e8f1fa)] group-data-[state=open]:text-[var(--adm-action,#1d6fc2)]"
+          className="grid size-[34px] place-items-center rounded-full border border-[var(--adm-border,#e2dfd8)] bg-[var(--adm-surface,#ffffff)] text-[var(--adm-brand-navy,#102a43)] shadow-xs transition-[transform,background-color,border-color,color,box-shadow] duration-[var(--duration-hover,160ms)] ease-[var(--ease-spring-default,ease)] group-hover:border-[var(--adm-border-strong,#b8b3a8)] group-hover:bg-[var(--adm-surface-sunken,#f0eee9)] group-focus-visible:border-[var(--adm-action,#1d6fc2)] group-focus-visible:ring-[3px] group-focus-visible:ring-[var(--adm-action,#1d6fc2)]/25 group-active:scale-95 group-data-[state=open]:border-[var(--adm-action,#1d6fc2)] group-data-[state=open]:bg-[var(--adm-tint-blue,#e8f1fa)] group-data-[state=open]:text-[var(--adm-action,#1d6fc2)]"
         >
-          !
+          <Info className="size-4 shrink-0" aria-hidden="true" />
         </span>
       </button>
     )
@@ -399,7 +397,7 @@ export function StatusLegend({ tables = [], states, className, variant = "card" 
             type="button"
             aria-label="Ký hiệu: mở bảng chú giải trạng thái, ký hiệu khách và nhóm bàn"
             className={cn(
-              "grid size-11 min-h-[44px] min-w-[44px] place-items-center rounded-full border border-border bg-surface-1/92 text-tx-strong shadow-sm backdrop-blur-md transition-[transform,background-color,border-color] duration-[var(--duration-hover)] ease-[var(--ease-spring-default)] hover:border-border-strong hover:bg-surface-2 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-95",
+              "grid size-11 min-h-[44px] min-w-[44px] place-items-center rounded-full border border-border bg-surface-1 text-tx-strong shadow-[var(--shadow-xs)] transition-[transform,background-color,border-color] duration-[var(--duration-hover)] ease-[var(--ease-spring-default)] hover:border-border-strong hover:bg-surface-2 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-95",
               className,
             )}
           >
@@ -413,7 +411,7 @@ export function StatusLegend({ tables = [], states, className, variant = "card" 
           aria-label="Chú giải trạng thái bàn"
         >
           <div className="mb-2 flex items-center justify-between gap-2 px-0.5">
-            <span className="text-[11px] font-semibold tracking-[0.04em] text-muted-foreground uppercase sm:text-xs">
+            <span className="text-xs font-semibold tracking-[0.04em] text-muted-foreground uppercase">
               Trạng thái · Số bàn / ghế
             </span>
             <PopoverTrigger asChild>

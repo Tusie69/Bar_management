@@ -329,6 +329,21 @@ export default function MobileApp() {
       setPick(p)
       go("map")
     },
+    toastBanner: (
+      <Toast15
+        r={toast15 && !busy ? toast15 : null}
+        onView={() => {
+          if (!toast15) return
+          handle(`l${toast15.id}`)
+          const target = notificationTarget(toast15.tableIds[0], toast15.id, toast15.businessDate)
+          if (target?.kind === "table") ctx.openTable(target.tableId)
+          else if (target?.kind === "reservation") setDetail({ id: target.reservationId, bd: target.businessDate })
+        }}
+        onClose={() => {
+          if (toast15) handle(`l${toast15.id}`)
+        }}
+      />
+    ),
   }
 
   const titleOf = tab
@@ -404,11 +419,14 @@ export default function MobileApp() {
           ) : (
             <>
               <PlainHeader title={other?.label ?? "21GAM"} />
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                <Suspense fallback={null}>
-                  <Outlet />
-                </Suspense>
-              </div>
+              <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {ctx.toastBanner}
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <Suspense fallback={null}>
+                    <Outlet />
+                  </Suspense>
+                </div>
+              </main>
             </>
           )}
         </div>
@@ -477,20 +495,6 @@ export default function MobileApp() {
             />
           ) : null}
         </FullScreenPresence>
-
-        <Toast15
-          r={toast15 && !busy ? toast15 : null}
-          onView={() => {
-            if (!toast15) return
-            handle(`l${toast15.id}`)
-            const target = notificationTarget(toast15.tableIds[0], toast15.id, toast15.businessDate)
-            if (target?.kind === "table") ctx.openTable(target.tableId)
-            else if (target?.kind === "reservation") setDetail({ id: target.reservationId, bd: target.businessDate })
-          }}
-          onClose={() => {
-            if (toast15) handle(`l${toast15.id}`)
-          }}
-        />
 
         <CreateSheet open={overlay === "create"} onClose={() => setOverlay(null)} />
         <AccountSheet

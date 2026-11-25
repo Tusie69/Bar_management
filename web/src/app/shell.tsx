@@ -140,7 +140,7 @@ function AppSidebar() {
                     </NavLink>
                   </SidebarMenuButton>
                   {badges[item.to] ? (
-                    <SidebarMenuBadge className="tnum rounded-full bg-surface-3 px-1.5 text-[11px] font-semibold text-tx-1 group-data-[collapsible=icon]:top-0.5 group-data-[collapsible=icon]:right-0.5 group-data-[collapsible=icon]:flex! group-data-[collapsible=icon]:h-4 group-data-[collapsible=icon]:min-w-4 group-data-[collapsible=icon]:bg-st-noshow group-data-[collapsible=icon]:px-1 group-data-[collapsible=icon]:text-white">
+                    <SidebarMenuBadge className="tnum rounded-full bg-surface-3 px-1.5 text-xs font-semibold text-tx-1 group-data-[collapsible=icon]:top-0.5 group-data-[collapsible=icon]:right-0.5 group-data-[collapsible=icon]:flex! group-data-[collapsible=icon]:h-4 group-data-[collapsible=icon]:min-w-4 group-data-[collapsible=icon]:bg-st-noshow group-data-[collapsible=icon]:px-1 group-data-[collapsible=icon]:text-white">
                       {badges[item.to]}
                     </SidebarMenuBadge>
                   ) : null}
@@ -200,7 +200,7 @@ function TopBar() {
         <AccountMenu />
         {!receptionist ? (
           <Button
-            className="hidden h-10 rounded-lg px-3.5 shadow-xs sm:inline-flex"
+            className="hidden h-11 rounded-lg px-3.5 shadow-xs sm:inline-flex xl:h-10"
             onClick={() => navigate("/reservations")}
           >
             Theo dõi đơn đặt bàn
@@ -263,14 +263,17 @@ function ClockMenu() {
         <Button
           variant="ghost"
           className="tnum h-11 min-h-[44px] gap-2 rounded-lg px-2.5 text-sm font-medium"
-          aria-label={`Giờ ${clock.isSimulated ? "mô phỏng" : "thực"} ${fmtTime(now)}. Mở điều khiển thời gian`}
+          aria-label={`${fmtTime(now)}${clock.isSimulated ? " mô phỏng" : ""} - Mở điều khiển thời gian`}
         >
-          <Clock4 className="text-muted-foreground" />
-          {fmtTime(now)}
+          <Clock4 className="text-muted-foreground" aria-hidden="true" />
+          <span>{fmtTime(now)}</span>
           {clock.isSimulated ? (
-            <span className="hidden rounded-full bg-surface-2 px-2 py-0.5 text-[11px] font-medium text-tx-3 lg:inline">
-              mô phỏng
-            </span>
+            <>
+              {" "}
+              <span className="hidden rounded-full bg-surface-2 px-2 py-0.5 text-xs font-medium text-tx-3 lg:inline">
+                mô phỏng
+              </span>
+            </>
           ) : null}
         </Button>
       </PopoverTrigger>
@@ -628,7 +631,7 @@ function Identity() {
       </span>
       <span className="leading-tight">
         <span className="block text-[13px] font-semibold text-tx-strong">{displayName}</span>
-        <span className="block text-[11px] text-tx-3">{subtitle}</span>
+        <span className="block text-xs text-tx-3">{subtitle}</span>
       </span>
     </div>
   )

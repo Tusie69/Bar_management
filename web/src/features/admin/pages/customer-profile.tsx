@@ -95,7 +95,7 @@ export default function CustomerProfilePage({ id }: { id: number | null }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Link
           to={backTo}
-          className="group -ml-2 inline-flex h-10 items-center gap-2 rounded-full pr-3 pl-2 text-sm font-medium text-[var(--adm-text-muted)] transition-[background-color,color,transform] duration-150 outline-none hover:bg-[var(--adm-surface-sunken)] hover:text-[var(--adm-text)] focus-visible:outline-2 focus-visible:outline-[var(--adm-action)] active:scale-[0.98]"
+          className="group -ml-2 inline-flex min-h-11 items-center gap-2 rounded-full pr-3 pl-2 text-sm font-medium text-[var(--adm-text-muted)] transition-[background-color,color,transform] duration-150 outline-none hover:bg-[var(--adm-surface-sunken)] hover:text-[var(--adm-text)] focus-visible:outline-2 focus-visible:outline-[var(--adm-action)] active:scale-[0.98] xl:h-10 xl:min-h-10"
         >
           <ArrowLeft className="size-4 transition-transform duration-150 group-hover:-translate-x-0.5" aria-hidden />
           Danh sách khách
@@ -120,15 +120,15 @@ function ProfileBody({ profile }: { profile: ProfileWithStatus }) {
       {notice ? <StatusNotice notice={notice} /> : null}
 
       <section data-adm-reveal aria-labelledby="customer-name" className="adm-card min-w-0 overflow-hidden">
-        <div className="bg-[linear-gradient(115deg,var(--adm-tint-blue)_0%,var(--adm-surface)_55%,color-mix(in_oklab,var(--adm-tint-amber)_65%,var(--adm-surface))_100%)] px-4 py-5 sm:px-6 sm:py-6">
+        <div className="bg-[var(--adm-surface)] px-4 py-5 sm:px-6 sm:py-6">
           <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-center">
-            <span className="self-start rounded-full bg-[var(--adm-surface)] p-1 shadow-[var(--shadow-sm)] sm:self-auto">
+            <span className="self-start rounded-full border border-[var(--adm-border-subtle)] bg-[var(--adm-surface)] p-1 shadow-[var(--shadow-xs)] sm:self-auto">
               <CustomerAvatar customer={profile} size={68} />
             </span>
             <div className="grid min-w-0 flex-1 gap-2">
-              <h1 id="customer-name" className="adm-h1 min-w-0 break-words">
+              <h2 id="customer-name" className="adm-h1 min-w-0 break-words">
                 <CustomerName name={profile.displayName} />
-              </h1>
+              </h2>
               <dl className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-2 text-sm">
                 <MetaItem label="Mã khách">
                   <span className="font-semibold tabular-nums">{customerCode(profile.id)}</span>
@@ -272,7 +272,14 @@ function Stat({
       ) : (
         <dd className="grid gap-0.5">
           {/* Ngày đầy đủ (10 ký tự) không vừa ô nửa màn hình điện thoại ở cỡ số lớn. */}
-          <span className={cn("adm-kpi-value tabular-nums", value.length > 6 && "max-sm:text-[1.5rem]!")}>{value}</span>
+          <span
+            className={cn(
+              "adm-kpi-value tabular-nums",
+              value.length > 6 && "max-sm:text-[clamp(1.0625rem,5vw,1.5rem)]!",
+            )}
+          >
+            {value}
+          </span>
           {sub ? <span className="adm-caption">{sub}</span> : null}
         </dd>
       )}
@@ -319,7 +326,7 @@ function HistorySection({ profile }: { profile: ProfileWithStatus }) {
         <div
           role="group"
           aria-label="Lọc lịch sử"
-          className="inline-flex max-w-full rounded-full border border-[var(--adm-border)] bg-[var(--adm-surface-sunken)] p-1"
+          className="inline-flex max-w-full flex-wrap gap-1 rounded-xl border border-[var(--adm-border)] bg-[var(--adm-surface-sunken)] p-1"
         >
           {tabs.map((tab) => (
             <button
@@ -328,14 +335,21 @@ function HistorySection({ profile }: { profile: ProfileWithStatus }) {
               aria-pressed={filter === tab.id}
               onClick={() => setFilter(tab.id)}
               className={cn(
-                "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-sm font-medium whitespace-nowrap transition-[background-color,color,box-shadow] duration-150 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--adm-action)]",
+                "inline-flex min-h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-medium whitespace-nowrap transition-[background-color,color,box-shadow] duration-150 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--adm-action)] xl:h-9 xl:min-h-9",
                 filter === tab.id
                   ? "bg-[var(--adm-surface)] text-[var(--adm-text)] shadow-[var(--shadow-xs)]"
-                  : "text-[var(--adm-text-muted)] hover:text-[var(--adm-text)]",
+                  : "text-[var(--tx-2)] hover:text-[var(--adm-text)]",
               )}
             >
               {tab.label}
-              <span className="text-xs tabular-nums opacity-70">{tab.count}</span>
+              <span
+                className={cn(
+                  "text-xs tabular-nums",
+                  filter === tab.id ? "text-[var(--adm-text-muted)]" : "text-[var(--tx-2)]",
+                )}
+              >
+                {tab.count}
+              </span>
             </button>
           ))}
         </div>
@@ -361,7 +375,7 @@ function HistorySection({ profile }: { profile: ProfileWithStatus }) {
                 {group.events.map((event, index) => (
                   <li
                     key={`${event.kind}-${event.kind === "visit" ? event.visit.id : event.booking.id}`}
-                    className="relative grid grid-cols-[36px_minmax(0,1fr)] gap-3 pb-3 last:pb-0"
+                    className="group relative grid grid-cols-[36px_minmax(0,1fr)] gap-3 pb-3 last:pb-0"
                   >
                     {index < group.events.length - 1 ? (
                       <span className="absolute top-9 bottom-0 left-[17.5px] w-px bg-[var(--adm-border)]" aria-hidden />
@@ -405,10 +419,10 @@ function EventCard({ children, dashed }: { children: React.ReactNode; dashed?: b
   return (
     <div
       className={cn(
-        "grid min-w-0 gap-1.5 rounded-xl border px-3.5 py-3 transition-colors duration-150",
+        "grid min-w-0 gap-1.5",
         dashed
-          ? "border-dashed border-[var(--adm-border-strong)] bg-[var(--adm-surface)] hover:bg-[var(--adm-canvas)]"
-          : "border-[var(--adm-border)] bg-[var(--adm-surface)] shadow-[var(--shadow-xs)] hover:border-[var(--adm-border-strong)]",
+          ? "rounded-lg border border-dashed border-[var(--adm-border-strong)] bg-[var(--adm-canvas)]/55 px-3 py-2.5 transition-colors duration-150 hover:bg-[var(--adm-canvas)]"
+          : "border-b border-[var(--adm-border-subtle)] pt-1 pb-3 group-last:border-b-0 group-last:pb-0",
       )}
     >
       {children}
@@ -587,7 +601,7 @@ function ProfileProblem({
       >
         <Icon className="size-5" aria-hidden />
       </span>
-      <h1 className="adm-h2">{content.title}</h1>
+      <h2 className="adm-h2">{content.title}</h2>
       <p className="adm-body text-[var(--adm-text-muted)]">{message ?? content.body}</p>
       <div className="flex flex-wrap gap-2 pt-1">
         {onRetry ? (

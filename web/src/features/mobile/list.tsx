@@ -10,7 +10,7 @@ import {
   atBusinessTime,
   FALLBACK_BUSINESS_SHIFT,
   fmtBusinessDate,
-  fmtTime12,
+  fmtTime,
   MS,
   type BusinessDate,
 } from "@/lib/time"
@@ -177,46 +177,49 @@ export function ListScreen() {
         </div>
       </PlainHeader>
 
-      {mode === "timeline" ? (
-        <Timeline bd={bd} reservations={res ?? []} />
-      ) : (
-        <div ref={ref} className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-3 pb-20">
-          {resQuery.isError ? (
-            <EmptyBox
-              title="Lỗi tải danh sách"
-              body={
-                isApiError(resQuery.error)
-                  ? resQuery.error.message
-                  : resQuery.error instanceof Error
+      <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {m.toastBanner}
+        {mode === "timeline" ? (
+          <Timeline bd={bd} reservations={res ?? []} />
+        ) : (
+          <div ref={ref} className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-3 pb-20">
+            {resQuery.isError ? (
+              <EmptyBox
+                title="Lỗi tải danh sách"
+                body={
+                  isApiError(resQuery.error)
                     ? resQuery.error.message
-                    : "Không thể tải danh sách đặt bàn."
-              }
-            />
-          ) : !res ? (
-            <CardSkeleton />
-          ) : shown.length ? (
-            <>
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-surface-2 px-3.5 py-2.5">
-                <span className="text-[13.5px] font-semibold text-tx-strong">{shift}</span>
-                <span className="tnum text-[13px] font-medium text-tx-2">
-                  {shown.length} booking, {guests} khách
-                </span>
-              </div>
-              {shown.map((r) => (
-                <BookingCard key={r.id} r={r} actions={levelOf(r) < 9} />
-              ))}
-            </>
-          ) : res.length ? (
-            <EmptyBox title="Không có booking khớp bộ lọc" body="Thử bỏ bớt bộ lọc hoặc tìm bằng 3 số cuối SĐT." />
-          ) : (
-            <EmptyBox
-              title="Chưa có booking cho ngày này"
-              body="Tạo booking mới, giờ đến từ 7:00 PM đến 1:00 AM."
-              action={{ label: "Đặt bàn", onClick: () => m.openForm({ mode: "booking" }) }}
-            />
-          )}
-        </div>
-      )}
+                    : resQuery.error instanceof Error
+                      ? resQuery.error.message
+                      : "Không thể tải danh sách đặt bàn."
+                }
+              />
+            ) : !res ? (
+              <CardSkeleton />
+            ) : shown.length ? (
+              <>
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-surface-2 px-3.5 py-2.5">
+                  <span className="text-[13.5px] font-semibold text-tx-strong">{shift}</span>
+                  <span className="tnum text-[13px] font-medium text-tx-2">
+                    {shown.length} booking, {guests} khách
+                  </span>
+                </div>
+                {shown.map((r) => (
+                  <BookingCard key={r.id} r={r} actions={levelOf(r) < 9} />
+                ))}
+              </>
+            ) : res.length ? (
+              <EmptyBox title="Không có booking khớp bộ lọc" body="Thử bỏ bớt bộ lọc hoặc tìm bằng 3 số cuối SĐT." />
+            ) : (
+              <EmptyBox
+                title="Chưa có booking cho ngày này"
+                body="Tạo booking mới, giờ đến từ 19:00 đến 01:00."
+                action={{ label: "Đặt bàn", onClick: () => m.openForm({ mode: "booking" }) }}
+              />
+            )}
+          </div>
+        )}
+      </main>
     </>
   )
 }
@@ -264,8 +267,8 @@ function Timeline({ bd, reservations }: { bd: BusinessDate; reservations: Reserv
         end: a.releasedAt ? toMin(a.releasedAt) : undefined,
         label: `${a.name}${a.partySize ? `, ${a.partySize}` : ""}`,
         aria: usage
-          ? `${a.name}, ${a.releasedAt ? `${fmtTime12(a.startsAt)} đến ${fmtTime12(a.releasedAt)}, đã rời` : `ngồi từ ${fmtTime12(a.startsAt)}`}`
-          : `${fmtTime12(a.startsAt)} ${a.name}${a.partySize ? `, ${a.partySize} khách` : ""}`,
+          ? `${a.name}, ${a.releasedAt ? `${fmtTime(a.startsAt)} đến ${fmtTime(a.releasedAt)}, đã rời` : `ngồi từ ${fmtTime(a.startsAt)}`}`
+          : `${fmtTime(a.startsAt)} ${a.name}${a.partySize ? `, ${a.partySize} khách` : ""}`,
         tone: a.warning ?? "reserved",
         reservationId: a.reservationId,
       }
@@ -287,7 +290,7 @@ function Timeline({ bd, reservations }: { bd: BusinessDate; reservations: Reserv
           kind: "booking",
           min: toMin(r.expectedAt),
           label: `${r.displayName}, ${r.partySize}`,
-          aria: `${fmtTime12(r.expectedAt)} ${r.displayName}, ${r.partySize} khách, ${chipOf(r, m.now)}`,
+          aria: `${fmtTime(r.expectedAt)} ${r.displayName}, ${r.partySize} khách, ${chipOf(r, m.now)}`,
           tone: r.warning ?? "reserved",
           reservationId: r.id,
         })),
@@ -341,7 +344,7 @@ function Timeline({ bd, reservations }: { bd: BusinessDate; reservations: Reserv
                   className="tnum absolute inset-y-0 flex items-center border-l border-border pl-1.5 text-xs font-medium whitespace-nowrap text-[var(--text-muted)]"
                   style={{ left: tickX }}
                 >
-                  {!collidesWithNow && `${h % 12 || 12} ${h < 12 ? "AM" : "PM"}`}
+                  {!collidesWithNow && `${String(h).padStart(2, "0")}:00`}
                 </span>
               )
             })}
@@ -350,7 +353,7 @@ function Timeline({ bd, reservations }: { bd: BusinessDate; reservations: Reserv
                 className="tnum absolute top-2 z-[6] flex h-6 -translate-x-1/2 items-center rounded-full bg-primary px-2.5 text-[11px] font-semibold whitespace-nowrap text-primary-foreground shadow-[var(--shadow-xs)]"
                 style={{ left: nowMin * PX }}
               >
-                {fmtTime12(m.now)}
+                {fmtTime(m.now)}
               </span>
             ) : null}
           </div>

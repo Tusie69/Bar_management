@@ -959,7 +959,7 @@ export function FloorCanvas(props: FloorCanvasProps) {
           transform={`translate(${view.x} ${view.y}) scale(${view.k})`}
           style={{
             transition:
-              isInteracting || prefersReducedMotion ? "none" : "transform 320ms cubic-bezier(0.16, 1, 0.3, 1)",
+              isInteracting || prefersReducedMotion ? "none" : "transform 110ms cubic-bezier(0.16, 1, 0.3, 1)",
           }}
         >
           <rect
@@ -1623,9 +1623,17 @@ const LiveGlyph = memo(function LiveGlyph({
   if (t.kind === "BAR_SEAT") {
     const r = Math.max(9, (t.w || 20) / 2)
     const hasRoom = r >= 10
+    const BAR_PHASE_SHORT: Record<string, string> = {
+      "mới vào": "mới",
+      "đang gọi": "gọi",
+      "chờ đồ": "chờ",
+      "đang dùng": "dùng",
+      "thanh toán": "bill",
+      "đã về": "về",
+    }
     const barSubText = hasRoom
       ? cellTone
-        ? cellTone.short
+        ? (BAR_PHASE_SHORT[cellTone.short] ?? cellTone.short)
         : seated
           ? suppressGuestName
             ? claim?.startsAt

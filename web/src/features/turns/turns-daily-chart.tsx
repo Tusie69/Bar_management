@@ -163,7 +163,7 @@ export function TurnsDailyChart({ days, shiftLabel }: TurnsDailyChartProps) {
                       >
                         {shortLabel.split(", ")[0]}
                       </div>
-                      <div className="text-[11px] leading-4" style={{ color: "var(--turns-muted)" }}>
+                      <div className="text-xs leading-4" style={{ color: "var(--turns-muted)" }}>
                         {fmtDayMonth(day.businessDate)}
                       </div>
                     </div>

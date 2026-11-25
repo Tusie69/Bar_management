@@ -5,7 +5,7 @@ import { type ReactNode } from "react"
 import { RevealPhone } from "@/components/reveal-phone"
 import { Button } from "@/components/ui/button"
 import { useReservations, useWaitlist } from "@/hooks/use-data"
-import { fmtBusinessDate, fmtDayMonth, fmtTime12, MS, venueDateString, type BusinessDate } from "@/lib/time"
+import { fmtBusinessDate, fmtDayMonth, fmtTime, MS, venueDateString, type BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useCan } from "@/state/session"
 import { CallCustomerControl } from "../bookings/call-customer"
@@ -94,18 +94,18 @@ export function DetailScreen({
     onClose()
     m.openTable(r.tableIds[0])
   }
-  const created = r.createdAt ? `${fmtDayMonth(venueDateString(r.createdAt))}, ${fmtTime12(r.createdAt)}` : null
+  const created = r.createdAt ? `${fmtDayMonth(venueDateString(r.createdAt))}, ${fmtTime(r.createdAt)}` : null
   const creator = r.createdByName ? `Tạo booking, ${r.createdByName}` : "Tạo booking"
-  const at = (min: number) => fmtTime12(new Date(r.expectedAt.getTime() + min * MS.MIN))
+  const at = (min: number) => fmtTime(new Date(r.expectedAt.getTime() + min * MS.MIN))
 
   const groups: { title: string; rows: Row[] }[] = [
     {
       title: "Thời gian",
       rows: [
-        { k: "Giờ hẹn", v: fmtTime12(r.expectedAt) },
+        { k: "Giờ hẹn", v: fmtTime(r.expectedAt) },
         {
           k: "Giờ đến thực tế",
-          v: r.checkedInAt ? fmtTime12(r.checkedInAt) : r.status === "BOOKED" ? "Chưa đến" : "Không có",
+          v: r.checkedInAt ? fmtTime(r.checkedInAt) : r.status === "BOOKED" ? "Chưa đến" : "Không có",
         },
         ...(late ? [{ k: "Đang trễ", v: `${late} phút` }] : []),
         { k: "Ngày kinh doanh", v: fmtBusinessDate(r.businessDate) },
@@ -181,7 +181,7 @@ export function DetailScreen({
         { k: created ?? "Thời gian tạo", v: created ? creator : "Chưa có dữ liệu" },
         ...(r.warning ? [{ k: at(m.th.late), v: `Hệ thống: cảnh báo trễ ${m.th.late} phút` }] : []),
         ...(r.warning === "noshow" ? [{ k: at(m.th.noshow), v: `Hệ thống: cảnh báo trễ ${m.th.noshow} phút` }] : []),
-        ...(r.checkedInAt ? [{ k: fmtTime12(r.checkedInAt), v: "Check-in" }] : []),
+        ...(r.checkedInAt ? [{ k: fmtTime(r.checkedInAt), v: "Check-in" }] : []),
       ],
     },
   ]
@@ -228,7 +228,7 @@ export function DetailScreen({
                 {formatHonorificName(r.displayName, r.honorific)}
               </span>
               <span className="tnum text-[14px] font-medium text-tx-2">
-                {fmtTime12(r.expectedAt)}, {r.partySize} khách,{" "}
+                {fmtTime(r.expectedAt)}, {r.partySize} khách,{" "}
                 {r.tableIds.length ? `Bàn ${codesOf(r.tableIds, m.model)}` : "Chưa có bàn"}
               </span>
             </div>

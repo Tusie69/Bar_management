@@ -69,7 +69,7 @@ function Segmented<T extends string>({
             aria-selected={on}
             onClick={() => onChange(o.value)}
             className={cn(
-              "flex h-[32px] items-center gap-1.5 rounded-md px-2.5 text-xs whitespace-nowrap transition-[background-color,color,box-shadow,transform] duration-150 focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.98] sm:text-sm",
+              "flex min-h-11 items-center gap-1.5 rounded-md px-2.5 text-xs whitespace-nowrap transition-[background-color,color,box-shadow,transform] duration-150 focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.98] sm:text-sm xl:h-9 xl:min-h-9",
               on
                 ? "bg-surface-1 font-semibold text-foreground shadow-xs"
                 : "font-medium text-tx-2 hover:text-foreground",
@@ -323,7 +323,12 @@ export function FloorPage() {
             size="sm"
           />
           <span className="text-muted-foreground">Chạm bàn trống để chọn vị trí.</span>
-          <Button variant="ghost" size="sm" className="ml-auto h-8 gap-1.5" onClick={() => ui.setFloorMode("live")}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto min-h-11 gap-1.5 xl:h-9 xl:min-h-9"
+            onClick={() => ui.setFloorMode("live")}
+          >
             <Radio className="size-3.5" /> Về Live
           </Button>
         </div>
@@ -362,7 +367,7 @@ export function FloorPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-8 shrink-0 gap-1 px-2 text-xs"
+                    className="min-h-11 shrink-0 gap-1 px-2.5 text-xs xl:h-9 xl:min-h-9"
                     onClick={() => ui.setFloorMode("availability")}
                   >
                     <Search className="size-3.5" /> Xem khả dụng
@@ -484,7 +489,7 @@ export function FloorPage() {
               {!live && !bottomIsDraft ? (
                 <Button
                   variant="ghost"
-                  size="icon-sm"
+                  size="icon"
                   className="absolute top-1.5 right-2 z-10"
                   aria-label="Đóng chi tiết"
                   onClick={() => setAvailSel([])}

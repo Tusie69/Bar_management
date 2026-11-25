@@ -119,7 +119,12 @@ export default function ReservationsPage() {
             </Button>
           </div>
           {date !== today ? (
-            <Button variant="outline" size="sm" className="rounded-lg bg-surface-1" onClick={() => setDate(today)}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="min-h-11 rounded-lg bg-surface-1 xl:h-9 xl:min-h-9"
+              onClick={() => setDate(today)}
+            >
               Hôm nay
             </Button>
           ) : null}
@@ -139,8 +144,8 @@ export default function ReservationsPage() {
             {search ? (
               <Button
                 variant="ghost"
-                size="icon-sm"
-                className="absolute top-1/2 right-1 -translate-y-1/2"
+                size="icon"
+                className="absolute top-1/2 right-0 -translate-y-1/2 xl:size-8"
                 aria-label="Xóa tìm kiếm"
                 onClick={() => setSearch("")}
               >
@@ -199,7 +204,7 @@ export default function ReservationsPage() {
                 aria-selected={filter === f.value}
                 onClick={() => setFilter(f.value)}
                 className={cn(
-                  "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm font-medium transition-[background-color,border-color,color,transform] duration-150 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.97] sm:h-9",
+                  "inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-sm font-medium transition-[background-color,border-color,color,transform] duration-150 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.97] xl:h-9 xl:min-h-9",
                   filter === f.value
                     ? "border-primary bg-primary-tint font-semibold text-primary-ink"
                     : "border-border bg-surface-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground",
@@ -211,7 +216,7 @@ export default function ReservationsPage() {
             ))}
           </div>
           <Select value={source} onValueChange={(v) => setSource(v as "ALL" | BookingSourceCode)}>
-            <SelectTrigger className="h-9 w-[150px]" aria-label="Lọc nguồn đặt">
+            <SelectTrigger className="min-h-11 w-[150px] xl:h-9 xl:min-h-9" aria-label="Lọc nguồn đặt">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -435,31 +440,33 @@ function ReservationList({
               {showDate ? fmtBusinessDate(g.hour) : `${g.hour}:00`} · {g.items.length}
             </p>
             <ul>
-              {g.items.map((r) => (
-                <li key={r.id}>
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => ui.openReservation(r.id, r.businessDate)}
-                    onKeyDown={(e) => e.key === "Enter" && ui.openReservation(r.id, r.businessDate)}
-                    className="flex min-h-16 items-center gap-3 border-b px-4 py-2 active:bg-surface-2"
-                  >
-                    <span className="tnum w-12 shrink-0 font-semibold">{fmtTime(r.expectedAt)}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium">
-                        {r.displayName} <span className="font-normal text-muted-foreground">· {r.partySize} khách</span>
+              {g.items.map((r) => {
+                const rowAction = action(r)
+                return (
+                  <li key={r.id} className="relative flex min-h-16 items-center gap-3 border-b px-4 py-2">
+                    <button
+                      type="button"
+                      onClick={() => ui.openReservation(r.id, r.businessDate)}
+                      className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left outline-none after:absolute after:inset-0 after:content-[''] focus-visible:ring-[3px] focus-visible:ring-primary/25 active:bg-surface-2"
+                    >
+                      <span className="tnum w-12 shrink-0 font-semibold">{fmtTime(r.expectedAt)}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">
+                          {r.displayName}{" "}
+                          <span className="font-normal text-muted-foreground">· {r.partySize} khách</span>
+                        </span>
+                        <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                          <ReservationStatusChip r={r} />
+                          {r.tableIds.length ? (
+                            <TableCodes codes={codes(r.tableIds)} symbolNo={r.symbolNo} className="[&>span]:text-xs" />
+                          ) : null}
+                        </span>
                       </span>
-                      <span className="mt-1 flex flex-wrap items-center gap-1.5">
-                        <ReservationStatusChip r={r} />
-                        {r.tableIds.length ? (
-                          <TableCodes codes={codes(r.tableIds)} symbolNo={r.symbolNo} className="[&>span]:text-xs" />
-                        ) : null}
-                      </span>
-                    </span>
-                    {action(r)}
-                  </div>
-                </li>
-              ))}
+                    </button>
+                    {rowAction ? <div className="relative z-10 shrink-0">{rowAction}</div> : null}
+                  </li>
+                )
+              })}
             </ul>
           </li>
         ))}
