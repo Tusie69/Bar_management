@@ -30,7 +30,7 @@ import { roleCan, type Permission } from "@/domain/access"
 import { ROLE_LABEL } from "@/domain/enums"
 import type { ReservationView } from "@/domain/models"
 import { usePresenceController } from "@/lib/motion"
-import { fmtTime12 } from "@/lib/time"
+import { fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useSession } from "@/state/session"
@@ -446,7 +446,7 @@ export function StatusDialog({ r, onClose }: { r: ReservationView | null; onClos
           </DialogTitle>
           <DialogDescription className="text-[13px] text-[var(--text-muted)]">
             {activeR
-              ? `${activeR.displayName}, ${fmtTime12(activeR.expectedAt)}, ${tableText(activeR.tableIds, m.model)}`
+              ? `${activeR.displayName}, ${fmtTime(activeR.expectedAt)}, ${tableText(activeR.tableIds, m.model)}`
               : ""}
           </DialogDescription>
         </DialogHeader>
@@ -612,7 +612,7 @@ export function Toast15({
             {cachedR.displayName} đã trễ {m.th.late} phút
           </span>
           <span className="tnum truncate text-[12.5px] text-[var(--text-muted)]">
-            {cachedR.partySize} khách · {tableText(cachedR.tableIds, m.model)} · hẹn {fmtTime12(cachedR.expectedAt)}
+            {cachedR.partySize} khách · {tableText(cachedR.tableIds, m.model)} · hẹn {fmtTime(cachedR.expectedAt)}
           </span>
         </span>
         <button

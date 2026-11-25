@@ -4,7 +4,7 @@ import { useNavigate } from "react-router"
 import { ROLE_LABEL } from "@/domain/enums"
 import { useOverview } from "@/hooks/use-data"
 import { initials } from "@/lib/text"
-import { fmtBusinessDate, fmtTime12, MS } from "@/lib/time"
+import { fmtBusinessDate, fmtTime, MS } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { isApiError } from "@/services"
 import { useSession } from "@/state/session"
@@ -365,7 +365,7 @@ function OwnerBody() {
                       {late ? `${r.displayName}, trễ ${late} phút` : `${r.displayName}, chưa có bàn`}
                     </span>
                     <span className="tnum text-[13px] text-[var(--text-muted)]">
-                      {fmtTime12(r.expectedAt)}, {r.partySize} khách
+                      {fmtTime(r.expectedAt)}, {r.partySize} khách
                       {r.tableIds.length ? `, ${tableText(r.tableIds, m.model)}` : ""}
                     </span>
                   </span>

@@ -10,7 +10,7 @@ import {
   atBusinessTime,
   FALLBACK_BUSINESS_SHIFT,
   fmtBusinessDate,
-  fmtTime12,
+  fmtTime,
   MS,
   type BusinessDate,
 } from "@/lib/time"
@@ -213,7 +213,7 @@ export function ListScreen() {
             ) : (
               <EmptyBox
                 title="Chưa có booking cho ngày này"
-                body="Tạo booking mới, giờ đến từ 7:00 PM đến 1:00 AM."
+                body="Tạo booking mới, giờ đến từ 19:00 đến 01:00."
                 action={{ label: "Đặt bàn", onClick: () => m.openForm({ mode: "booking" }) }}
               />
             )}
@@ -267,8 +267,8 @@ function Timeline({ bd, reservations }: { bd: BusinessDate; reservations: Reserv
         end: a.releasedAt ? toMin(a.releasedAt) : undefined,
         label: `${a.name}${a.partySize ? `, ${a.partySize}` : ""}`,
         aria: usage
-          ? `${a.name}, ${a.releasedAt ? `${fmtTime12(a.startsAt)} đến ${fmtTime12(a.releasedAt)}, đã rời` : `ngồi từ ${fmtTime12(a.startsAt)}`}`
-          : `${fmtTime12(a.startsAt)} ${a.name}${a.partySize ? `, ${a.partySize} khách` : ""}`,
+          ? `${a.name}, ${a.releasedAt ? `${fmtTime(a.startsAt)} đến ${fmtTime(a.releasedAt)}, đã rời` : `ngồi từ ${fmtTime(a.startsAt)}`}`
+          : `${fmtTime(a.startsAt)} ${a.name}${a.partySize ? `, ${a.partySize} khách` : ""}`,
         tone: a.warning ?? "reserved",
         reservationId: a.reservationId,
       }
@@ -290,7 +290,7 @@ function Timeline({ bd, reservations }: { bd: BusinessDate; reservations: Reserv
           kind: "booking",
           min: toMin(r.expectedAt),
           label: `${r.displayName}, ${r.partySize}`,
-          aria: `${fmtTime12(r.expectedAt)} ${r.displayName}, ${r.partySize} khách, ${chipOf(r, m.now)}`,
+          aria: `${fmtTime(r.expectedAt)} ${r.displayName}, ${r.partySize} khách, ${chipOf(r, m.now)}`,
           tone: r.warning ?? "reserved",
           reservationId: r.id,
         })),
@@ -344,7 +344,7 @@ function Timeline({ bd, reservations }: { bd: BusinessDate; reservations: Reserv
                   className="tnum absolute inset-y-0 flex items-center border-l border-border pl-1.5 text-xs font-medium whitespace-nowrap text-[var(--text-muted)]"
                   style={{ left: tickX }}
                 >
-                  {!collidesWithNow && `${h % 12 || 12} ${h < 12 ? "AM" : "PM"}`}
+                  {!collidesWithNow && `${String(h).padStart(2, "0")}:00`}
                 </span>
               )
             })}
@@ -353,7 +353,7 @@ function Timeline({ bd, reservations }: { bd: BusinessDate; reservations: Reserv
                 className="tnum absolute top-2 z-[6] flex h-6 -translate-x-1/2 items-center rounded-full bg-primary px-2.5 text-[11px] font-semibold whitespace-nowrap text-primary-foreground shadow-[var(--shadow-xs)]"
                 style={{ left: nowMin * PX }}
               >
-                {fmtTime12(m.now)}
+                {fmtTime(m.now)}
               </span>
             ) : null}
           </div>
