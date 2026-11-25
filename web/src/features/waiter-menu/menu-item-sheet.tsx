@@ -151,7 +151,7 @@ export function MenuItemSheet({
                             aria-pressed={active}
                             onClick={() => setNote((current) => toggleNotePreset(current, preset))}
                             className={cn(
-                              "min-h-10 rounded-full border px-3 text-sm font-medium transition-colors focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none",
+                              "min-h-11 rounded-lg border px-3 text-sm font-medium transition-colors hover:border-border-strong focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.97]",
                               active
                                 ? "border-primary bg-primary text-primary-foreground"
                                 : "border-border bg-surface-1 text-foreground",

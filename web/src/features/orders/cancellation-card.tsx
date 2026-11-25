@@ -80,7 +80,12 @@ export function CancellationCard({
             <Button type="button" variant="outline" disabled={busy} onClick={() => onDecide("reject")}>
               <X className="size-4" aria-hidden /> Từ chối
             </Button>
-            <Button type="button" disabled={busy} onClick={() => onDecide("approve")}>
+            <Button
+              type="button"
+              variant={waste ? "destructive" : "default"}
+              disabled={busy}
+              onClick={() => onDecide("approve")}
+            >
               <Check className="size-4" aria-hidden /> {waste ? "Duyệt ghi hao" : "Duyệt hủy"}
             </Button>
           </div>

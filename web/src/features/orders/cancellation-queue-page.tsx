@@ -89,7 +89,7 @@ export default function CancellationQueuePage() {
 
   if (!canApprove) {
     return (
-      <section className="mx-auto grid max-w-md gap-4 p-6 text-center">
+      <main className="mx-auto grid max-w-md gap-4 p-6 text-center">
         <AlertCircle className="mx-auto size-9 text-destructive" aria-hidden />
         <div className="grid gap-1.5">
           <h1 className="text-lg font-semibold">Không có quyền phê duyệt hủy món</h1>
@@ -101,12 +101,12 @@ export default function CancellationQueuePage() {
         <Button variant="outline" onClick={() => navigate(-1)}>
           <ArrowLeft /> Quay lại
         </Button>
-      </section>
+      </main>
     )
   }
 
   return (
-    <section className="mx-auto grid w-full max-w-3xl content-start gap-4 px-4 py-4 sm:px-5">
+    <main className="mx-auto grid w-full max-w-3xl content-start gap-4 px-4 py-4 sm:px-5">
       <header className="flex items-center gap-3">
         <Button
           variant="outline"
@@ -144,8 +144,8 @@ export default function CancellationQueuePage() {
             onClick={() => setStatus(tab.status)}
             className={
               status === tab.status
-                ? "min-h-11 rounded-full border border-primary bg-primary px-4 text-sm font-medium text-primary-foreground"
-                : "min-h-11 rounded-full border border-border bg-surface-1 px-4 text-sm font-medium text-tx-2"
+                ? "min-h-11 rounded-lg border border-primary bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-[var(--primary-hover)] focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.97]"
+                : "min-h-11 rounded-lg border border-border bg-surface-1 px-4 text-sm font-medium text-tx-2 transition-colors hover:border-border-strong hover:text-foreground focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.97]"
             }
           >
             {tab.label}
@@ -204,6 +204,6 @@ export default function CancellationQueuePage() {
           )}
         </ul>
       )}
-    </section>
+    </main>
   )
 }

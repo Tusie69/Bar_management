@@ -46,13 +46,15 @@ export function MenuItemCard({
       <button
         type="button"
         onClick={onOpen}
-        className="min-w-0 flex-1 py-1 text-left focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none"
+        className="min-h-11 min-w-0 flex-1 py-1 text-left focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none"
       >
         <span className="flex flex-wrap items-center gap-x-2">
           <span className="text-sm leading-snug font-semibold text-foreground">{item.name}</span>
           {mode === "blocked" ? <Badge variant="secondary">Tạm hết</Badge> : null}
         </span>
-        <span className="mt-0.5 block text-xs font-medium text-primary-ink">{cardPriceLabel(item, formatVnd)}</span>
+        <span className="tnum mt-0.5 block text-xs font-medium text-primary-ink">
+          {cardPriceLabel(item, formatVnd)}
+        </span>
       </button>
 
       {onRemove ? (
@@ -60,7 +62,7 @@ export function MenuItemCard({
           type="button"
           variant="outline"
           size="icon"
-          className="size-10 shrink-0"
+          className="shrink-0"
           aria-label={`Bớt một phần ${item.name}`}
           onClick={onRemove}
         >
@@ -75,11 +77,9 @@ export function MenuItemCard({
       <Button
         type="button"
         size="icon"
-        className="size-10 shrink-0"
+        className="shrink-0"
         disabled={mode === "blocked"}
-        aria-label={
-          mode === "sheet" ? `Chọn đơn vị cho ${item.name}` : `Gọi thêm một phần ${item.name}`
-        }
+        aria-label={mode === "sheet" ? `Chọn đơn vị cho ${item.name}` : `Gọi thêm một phần ${item.name}`}
         onClick={mode === "sheet" ? onOpen : onAdd}
       >
         <Plus className="size-4" aria-hidden />

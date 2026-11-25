@@ -131,7 +131,7 @@ export function WaiterPage() {
     return (
       <section className="mx-auto grid max-w-md gap-3 p-6 text-center">
         <AlertTriangle className="mx-auto size-8 text-amber-500" aria-hidden="true" />
-        <h2 className="text-lg font-semibold">Không tải được sơ đồ bàn</h2>
+        <h1 className="text-lg font-semibold">Không tải được sơ đồ bàn</h1>
         <p className="text-sm text-muted-foreground">
           Kiểm tra kết nối rồi thử lại. Sơ đồ luôn lấy từ máy chủ, nên không có bản cũ nào để hiện tạm.
         </p>
@@ -144,6 +144,7 @@ export function WaiterPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <h1 className="sr-only">Sơ đồ bàn phục vụ</h1>
       {/*
         Ngày kinh doanh, ca, và chú giải trạng thái gói trong MỘT dòng cao 44px.
         Chú giải dùng biến thể `badge` (nút tròn ⓘ, số đếm nằm trong popover)

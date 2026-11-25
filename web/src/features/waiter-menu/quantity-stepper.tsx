@@ -27,7 +27,6 @@ export function QuantityStepper({
         type="button"
         variant="ghost"
         size="icon"
-        className="size-10"
         disabled={value <= min}
         onClick={() => onChange(value - 1)}
         aria-label={`Giảm số lượng ${label}`}
@@ -41,7 +40,6 @@ export function QuantityStepper({
         type="button"
         variant="ghost"
         size="icon"
-        className="size-10"
         disabled={value >= MAX_LINE_QUANTITY}
         onClick={() => onChange(value + 1)}
         aria-label={`Tăng số lượng ${label}`}

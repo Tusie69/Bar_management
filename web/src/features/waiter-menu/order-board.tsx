@@ -125,8 +125,7 @@ export function OrderLineRow({
           <Button
             type="button"
             variant="outline"
-            size="sm"
-            className="h-10"
+            className="min-h-11"
             disabled={busy}
             onClick={() => onRequestCancel(line)}
           >
@@ -161,7 +160,7 @@ function RejectionAlert({ rejection }: { rejection: NonNullable<WaiterOrderLine[
       <p className="pl-6 text-xs leading-relaxed">
         Ghi chú quyết định: {rejection.decisionNote?.trim() || "Không có ghi chú."}
       </p>
-      <p className="pl-6 text-xs font-medium leading-relaxed">Hãy báo lại khách rằng yêu cầu hủy không được duyệt.</p>
+      <p className="pl-6 text-xs leading-relaxed font-medium">Hãy báo lại khách rằng yêu cầu hủy không được duyệt.</p>
     </div>
   )
 }
@@ -300,7 +299,7 @@ export function ReadyBanner({ count, onOpen }: { count: number; onOpen?: () => v
         <strong className="tnum">{count}</strong> phiếu món đã xong cho bàn này.
       </span>
       {onOpen ? (
-        <Button type="button" variant="ghost" size="sm" className="ml-auto" onClick={onOpen}>
+        <Button type="button" variant="ghost" className="ml-auto min-h-11" onClick={onOpen}>
           Đã nhận
         </Button>
       ) : null}

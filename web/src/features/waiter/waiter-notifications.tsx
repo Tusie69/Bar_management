@@ -84,11 +84,11 @@ export function CancellationDecisionCard({
       ) : null}
       <div className="flex gap-2">
         {notification.visitId !== null ? (
-          <Button type="button" variant="outline" size="sm" className="h-9 flex-1" onClick={onOpen}>
+          <Button type="button" variant="outline" className="min-h-11 flex-1" onClick={onOpen}>
             Mở bàn
           </Button>
         ) : null}
-        <Button type="button" size="sm" className="h-9 flex-1" disabled={busy} onClick={onAcknowledge}>
+        <Button type="button" className="min-h-11 flex-1" disabled={busy} onClick={onAcknowledge}>
           Đã đọc
         </Button>
       </div>
@@ -104,13 +104,7 @@ export function CancellationDecisionCard({
  * từng bàn ra dò. Mỗi phiếu một thẻ, và thẻ nói đủ bàn, đơn, quầy, số món và
  * giờ xong.
  */
-export function ReadyTicketCard({
-  notification,
-  onOpen,
-}: {
-  notification: ReadyNotification
-  onOpen: () => void
-}) {
+export function ReadyTicketCard({ notification, onOpen }: { notification: ReadyNotification; onOpen: () => void }) {
   const station = STATION_LABEL[notification.station] ?? "Quầy"
   const table = notification.tableCodes?.join(" + ") || null
   const order = notification.visitSequence == null ? null : `Đơn ${notification.visitSequence}`
@@ -124,7 +118,7 @@ export function ReadyTicketCard({
       </p>
       <p className="text-xs text-muted-foreground">{detail}</p>
       <p className="text-xs text-muted-foreground">Ra lấy món và mang lên cho khách.</p>
-      <Button type="button" variant="outline" size="sm" className="h-9" onClick={onOpen}>
+      <Button type="button" variant="outline" className="min-h-11" onClick={onOpen}>
         Mở bàn
       </Button>
     </li>
@@ -195,9 +189,7 @@ export function WaiterNotificationsButton() {
                 key={notification.notificationId}
                 notification={notification}
                 busy={acknowledge.isPending}
-                onOpen={() =>
-                  notification.visitId !== null && navigate(waiterOrdersViewPath(notification.visitId))
-                }
+                onOpen={() => notification.visitId !== null && navigate(waiterOrdersViewPath(notification.visitId))}
                 onAcknowledge={() => acknowledge.mutate(notification.notificationId)}
               />
             ))}
