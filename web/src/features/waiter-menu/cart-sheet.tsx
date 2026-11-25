@@ -225,7 +225,6 @@ export function CartLineList({
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="size-9"
                 onClick={() => onRemove(line.cartLineId)}
                 aria-label={lineLabel(line, "Bỏ", "khỏi giỏ")}
               >
@@ -285,14 +284,14 @@ export function OrderSentBanner({
     >
       <Check className="size-4 shrink-0" style={{ color: "var(--st-seated-ink)" }} aria-hidden />
       <span className="min-w-0 flex-1 truncate">{`Đã lên đơn cho ${tableLabel} · ${submittedAtLabel}`}</span>
-      <Button type="button" variant="outline" size="sm" className="h-9 shrink-0" onClick={onView}>
+      <Button type="button" variant="outline" className="min-h-11 shrink-0 px-3" onClick={onView}>
         Xem
       </Button>
       <Button
         type="button"
         variant="ghost"
         size="icon"
-        className="size-9 shrink-0"
+        className="shrink-0"
         aria-label="Đóng thông báo đã lên đơn"
         onClick={onDismiss}
       >

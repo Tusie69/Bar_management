@@ -72,9 +72,14 @@ export function OrderJustSentBody({ order }: { order: WaiterOrderDetail }) {
 
       <ul className="rounded-xl border border-border px-3">
         {order.lines.map((line) => (
-          <li key={line.lineNo} className="flex items-start gap-3 border-t border-border-subtle py-2.5 first:border-t-0">
+          <li
+            key={line.lineNo}
+            className="flex items-start gap-3 border-t border-border-subtle py-2.5 first:border-t-0"
+          >
             <div className="min-w-0 flex-1">
-              <p className={cn("text-sm font-semibold", line.netQuantity === 0 && "text-muted-foreground line-through")}>
+              <p
+                className={cn("text-sm font-semibold", line.netQuantity === 0 && "text-muted-foreground line-through")}
+              >
                 {`${line.netQuantity}× ${line.itemName}`}
               </p>
               <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
@@ -150,7 +155,7 @@ export function CancelOrderDialog({
                   aria-pressed={reason === candidate}
                   onClick={() => setReason(candidate)}
                   className={cn(
-                    "min-h-10 rounded-full border px-3 text-sm font-medium transition-colors focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none",
+                    "min-h-11 rounded-lg border px-3 text-sm font-medium transition-colors hover:border-border-strong focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.97]",
                     reason === candidate
                       ? "border-primary bg-primary text-primary-foreground"
                       : "border-border bg-surface-1 text-foreground",
@@ -254,9 +259,7 @@ export function OrderJustSentSheet({
       <SheetContent side="bottom" className="max-h-[85dvh] overflow-y-auto">
         <SheetHeader>
           <SheetTitle>{`Đơn vừa đặt · ${tableLabel}`}</SheetTitle>
-          <SheetDescription className="sr-only">
-            Món, giờ gửi, người gọi và quầy nhận của đơn vừa gửi.
-          </SheetDescription>
+          <SheetDescription className="sr-only">Món, giờ gửi, người gọi và quầy nhận của đơn vừa gửi.</SheetDescription>
         </SheetHeader>
         <div className="grid gap-3 px-4 pb-6">
           {detail.isPending ? (

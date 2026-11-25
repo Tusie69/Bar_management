@@ -9,6 +9,7 @@ import { httpClient, newIdempotencyKey } from "@/services"
 import { useSession } from "@/state/session"
 import { PREPARATION_QUEUE_LAYOUT_CLASS, canShowPrintRetry, type PreparationTicketStatus } from "./preparation-layout"
 import {
+  PREPARATION_CALLOUT_CLASS,
   PREPARATION_EMPTY_QUEUE_TEXT,
   PREPARATION_FILTER_EMPTY_TEXT,
   PREPARATION_QUEUE_FILTERS,
@@ -86,7 +87,10 @@ export function PreparationQueueFilterBar({
         <div
           role="status"
           aria-live="polite"
-          className="flex min-w-0 flex-col gap-2 rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+          className={cn(
+            "flex min-w-0 flex-col gap-2 rounded-xl p-3 text-sm sm:flex-row sm:items-center sm:justify-between",
+            PREPARATION_CALLOUT_CLASS.warning,
+          )}
         >
           <div className="min-w-0">
             <p>{`Đang lọc ${activeLabel} — ${hiddenCount} phiếu bị ẩn.`}</p>
@@ -297,20 +301,22 @@ export function PreparationQueue({
   })
   const loadFailedWithoutData = snapshot === undefined && queue.error !== null
 
+  const Root = embedded ? "section" : "main"
+
   if (!canRead)
     return (
-      <section className="grid min-h-0 flex-1 place-items-center p-6 text-center">
+      <Root className="grid min-h-0 flex-1 place-items-center p-6 text-center">
         <div className="max-w-sm">
           <h1 className="text-xl font-semibold">{`Không có quyền xem hàng đợi ${stationLabel}`}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Tài khoản này chỉ dùng cho nhân viên có quyền xem màn hình quầy. Hãy liên hệ quản lý nếu cần mở quyền.
           </p>
         </div>
-      </section>
+      </Root>
     )
 
   return (
-    <section
+    <Root
       ref={sectionRef}
       className={`${embedded ? "h-full overflow-y-auto" : "min-h-dvh"} min-w-0 bg-background p-3 sm:p-4`}
     >
@@ -380,7 +386,10 @@ export function PreparationQueue({
             onFilterChange={setFilter}
           />
           <PreparationTotalsPanel station={station} items={aggregateItems} />
-          <nav aria-label="Chuyển nhanh theo cột" className="mb-3 flex flex-wrap gap-2 xl:hidden">
+          <nav
+            aria-label="Chuyển nhanh theo cột"
+            className="mb-3 no-scrollbar flex flex-nowrap gap-2 overflow-x-auto pb-0.5 md:flex-wrap md:overflow-visible md:pb-0 xl:hidden"
+          >
             {columns.map((column) => {
               const count = preparationColumnCount(
                 groupedVisible[column.status].length,
@@ -440,7 +449,7 @@ export function PreparationQueue({
                   >
                     <span className="min-w-0 break-words">{column.label}</span>
                     <span
-                      className="shrink-0 rounded-full bg-surface-1 px-2 py-0.5 text-xs"
+                      className="tnum shrink-0 rounded-full bg-surface-1 px-2 py-0.5 text-xs"
                       aria-label={count.accessibleLabel}
                       data-visible-count={groupedVisible[column.status].length}
                       data-total-count={groupedTotal[column.status].length}
@@ -494,6 +503,6 @@ export function PreparationQueue({
           {draggingTicket.tableCodes.join(", ") || `#${draggingTicket.ticketId}`}
         </div>
       ) : null}
-    </section>
+    </Root>
   )
 }

@@ -51,7 +51,7 @@ export function CancellationGroupCard({
       </div>
 
       {group.wasteQuantity > 0 ? (
-        <p className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+        <p className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-[var(--st-late-ink)]">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
           <span>{`${group.wasteQuantity} phần đã làm xong — duyệt nghĩa là ghi hao số này.`}</span>
         </p>
@@ -95,7 +95,13 @@ export function CancellationGroupCard({
             <Button type="button" variant="outline" className="h-11" disabled={busy} onClick={() => onDecide("reject")}>
               <X className="size-4" aria-hidden /> Từ chối
             </Button>
-            <Button type="button" className="h-11" disabled={busy} onClick={() => onDecide("approve")}>
+            <Button
+              type="button"
+              variant={group.wasteQuantity > 0 ? "destructive" : "default"}
+              className="h-11"
+              disabled={busy}
+              onClick={() => onDecide("approve")}
+            >
               <Check className="size-4" aria-hidden /> Duyệt cả đơn
             </Button>
           </div>

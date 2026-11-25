@@ -140,7 +140,11 @@ export function MenuFilterSummary({ query, onClear }: { query: MenuQuery; onClea
       <span>
         Đang lọc: {[band, query.sort === "default" ? null : MENU_SORT_LABEL[query.sort]].filter(Boolean).join(" · ")}
       </span>
-      <button type="button" onClick={onClear} className="underline">
+      <button
+        type="button"
+        onClick={onClear}
+        className="inline-flex min-h-11 min-w-11 items-center justify-center px-1 underline focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none"
+      >
         Bỏ lọc
       </button>
     </p>
