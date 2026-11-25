@@ -144,6 +144,25 @@ export function PreparationQueue({
   const stationLabel = preparationStationLabel(station)
   const columns = useMemo(() => preparationColumns(station), [station])
   const sectionRef = useRef<HTMLElement>(null)
+  const jumpNavRef = useRef<HTMLDivElement>(null)
+  const [canScrollJumpRight, setCanScrollJumpRight] = useState(false)
+  const syncJumpScrollCue = useCallback(() => {
+    const el = jumpNavRef.current
+    if (!el) {
+      setCanScrollJumpRight(false)
+      return
+    }
+    setCanScrollJumpRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 4)
+  }, [])
+  useEffect(() => {
+    const el = jumpNavRef.current
+    if (!el) return
+    syncJumpScrollCue()
+    if (typeof ResizeObserver === "undefined") return
+    const ro = new ResizeObserver(syncJumpScrollCue)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [columns, snapshot, filter, syncJumpScrollCue])
   const refresh = useCallback(() => queue.refetch(), [queue])
   const scrollToColumn = useCallback((status: PreparationQueueStatus) => {
     const column = sectionRef.current?.querySelector<HTMLElement>(`[data-queue-status="${status}"]`)
@@ -386,30 +405,40 @@ export function PreparationQueue({
             onFilterChange={setFilter}
           />
           <PreparationTotalsPanel station={station} items={aggregateItems} />
-          <nav
-            aria-label="Chuyển nhanh theo cột"
-            className="mb-3 no-scrollbar flex flex-nowrap gap-2 overflow-x-auto pb-0.5 md:flex-wrap md:overflow-visible md:pb-0 xl:hidden"
-          >
-            {columns.map((column) => {
-              const count = preparationColumnCount(
-                groupedVisible[column.status].length,
-                groupedTotal[column.status].length,
-                filter,
-              )
-              return (
-                <a
-                  key={column.status}
-                  href={`#queue-${column.status}`}
-                  className="inline-flex min-h-11 shrink-0 items-center rounded-md border border-border bg-surface-1 px-3 text-xs font-semibold text-foreground shadow-xs transition-colors hover:border-border-strong hover:bg-surface-2 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none"
-                  onClick={(event) => {
-                    event.preventDefault()
-                    scrollToColumn(column.status)
-                  }}
-                >
-                  {`${column.label} (${count.text})`}
-                </a>
-              )
-            })}
+          <nav aria-label="Chuyển nhanh theo cột" className="relative mb-3 xl:hidden">
+            <div
+              ref={jumpNavRef}
+              onScroll={syncJumpScrollCue}
+              className="no-scrollbar flex flex-nowrap gap-2 overflow-x-auto pr-1 pb-0.5 md:flex-wrap md:overflow-visible md:pr-0 md:pb-0"
+            >
+              {columns.map((column) => {
+                const count = preparationColumnCount(
+                  groupedVisible[column.status].length,
+                  groupedTotal[column.status].length,
+                  filter,
+                )
+                return (
+                  <a
+                    key={column.status}
+                    href={`#queue-${column.status}`}
+                    className="inline-flex min-h-11 shrink-0 items-center rounded-md border border-border bg-surface-1 px-3 text-xs font-semibold text-foreground shadow-xs transition-colors hover:border-border-strong hover:bg-surface-2 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none"
+                    onClick={(event) => {
+                      event.preventDefault()
+                      scrollToColumn(column.status)
+                    }}
+                  >
+                    {`${column.label} (${count.text})`}
+                  </a>
+                )
+              })}
+            </div>
+            {canScrollJumpRight ? (
+              <span
+                aria-hidden="true"
+                data-testid="preparation-jump-scroll-cue"
+                className="pointer-events-none absolute inset-y-0 right-0 w-10 bg-gradient-to-l from-background via-background/85 to-transparent md:hidden"
+              />
+            ) : null}
           </nav>
           <section className={PREPARATION_QUEUE_LAYOUT_CLASS} aria-label="Các trạng thái hàng đợi">
             {columns.map((column) => {
