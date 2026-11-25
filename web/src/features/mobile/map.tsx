@@ -294,12 +294,12 @@ export function MapScreen({
                 )
               })}
             </div>
-            {draft ? null : <StatusLegend tables={m.model.tables} states={m.model.states} />}
           </div>
         ) : null}
         {/* Idle "Ghép bàn" button is off the receptionist's screen: merging starts from the
-          table sheet. The active merge panel still shows so nobody gets stuck in pick mode. */}
-        {!pick && !layoutPick && !receptionist ? (
+          table sheet. Roles without table.group.manage (e.g. Cashier) also skip the idle locked
+          row so mobile floor height stays readable. */}
+        {!pick && !layoutPick && !receptionist && m.can("table.group.manage") ? (
           <div className="shrink-0 px-4 pb-1.5">
             <LayoutMergeControls model={m.model} />
           </div>
@@ -416,7 +416,18 @@ export function MapScreen({
                         </div>
                       </div>
                     )
-                  : undefined
+                  : !receptionist && !pick && !draft
+                    ? () => (
+                        <div className="pointer-events-none absolute inset-0">
+                          <StatusLegend
+                            variant="badge"
+                            tables={m.model.tables}
+                            states={m.model.states}
+                            className="pointer-events-auto absolute top-1.5 right-1.5 z-10 size-11"
+                          />
+                        </div>
+                      )
+                    : undefined
               }
               waitingCount={receptionist || draft || pick ? undefined : waitingCount}
               onOpenWaitlist={receptionist || draft || pick ? undefined : () => m.go("wait")}
