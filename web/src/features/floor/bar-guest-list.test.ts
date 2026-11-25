@@ -307,8 +307,8 @@ describe("BarGuestList presentational component", () => {
     expect(rowButton).toContain("rounded-none")
     expect(rowLi).not.toMatch(/rounded-(sm|md|lg|xl|2xl|full)/)
     expect(rowButton).not.toMatch(/rounded-(sm|md|lg|xl|2xl|full)/)
-    // Mỗi khách gói gọn trong một dòng, tên khách ở cuối dòng và tự cắt bớt.
-    expect(listHtml).toContain("flex-nowrap")
+    // Mã ghế, giờ và số khách gói gọn, tên khách xuống dòng để không mất tên hoặc mã ở 320px.
+    expect(listHtml).toContain("flex-wrap")
   })
 })
 
