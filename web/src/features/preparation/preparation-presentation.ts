@@ -152,7 +152,7 @@ export const PREPARATION_WAIT_TONE_CLASS: Record<PreparationWaitTone, { chip: st
     card: "border-amber-500/60",
   },
   critical: {
-    chip: "bg-destructive/15 font-bold text-[var(--st-late-ink)]",
+    chip: "bg-destructive/15 font-bold text-destructive",
     card: "border-destructive/60 ring-1 ring-destructive/30",
   },
 }

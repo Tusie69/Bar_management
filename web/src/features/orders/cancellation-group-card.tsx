@@ -51,7 +51,7 @@ export function CancellationGroupCard({
       </div>
 
       {group.wasteQuantity > 0 ? (
-        <p className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-[var(--st-late-ink)]">
+        <p className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
           <span>{`${group.wasteQuantity} phần đã làm xong — duyệt nghĩa là ghi hao số này.`}</span>
         </p>
