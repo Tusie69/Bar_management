@@ -253,7 +253,7 @@ describe("G3 - status metadata and language (HU-32 section 4)", () => {
     expect(html).toContain("Sơ cua")
   })
 
-  it("admin variant renders only the round '!' button without a permanent legend row", () => {
+  it("admin variant renders only the round Info button without a permanent legend row (UX-25)", () => {
     const html = renderToString(
       React.createElement(StatusLegend, {
         variant: "admin",
@@ -263,7 +263,8 @@ describe("G3 - status metadata and language (HU-32 section 4)", () => {
 
     expect(html).toContain('data-testid="so-legend-trigger"')
     expect(html).toContain('aria-label="Chú giải ký hiệu"')
-    expect(html).toContain(">!<")
+    expect(html).toContain("lucide-info")
+    expect(html).not.toContain(">!<")
     expect(html).not.toContain("Trạng thái · Số bàn / ghế")
     expect(html).not.toContain("so-legend-item")
   })

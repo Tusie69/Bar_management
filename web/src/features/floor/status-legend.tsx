@@ -288,9 +288,9 @@ export function StatusLegend({ tables = [], states, className, variant = "card" 
       >
         <span
           aria-hidden="true"
-          className="grid size-[34px] place-items-center rounded-full border border-[var(--adm-border,#e2dfd8)] bg-[var(--adm-surface,#ffffff)] text-[15px] leading-none font-bold text-[var(--adm-brand-navy,#102a43)] shadow-xs transition-[transform,background-color,border-color,color,box-shadow] duration-[var(--duration-hover,160ms)] ease-[var(--ease-spring-default,ease)] group-hover:border-[var(--adm-border-strong,#b8b3a8)] group-hover:bg-[var(--adm-surface-sunken,#f0eee9)] group-focus-visible:border-[var(--adm-action,#1d6fc2)] group-focus-visible:ring-[3px] group-focus-visible:ring-[var(--adm-action,#1d6fc2)]/25 group-active:scale-95 group-data-[state=open]:border-[var(--adm-action,#1d6fc2)] group-data-[state=open]:bg-[var(--adm-tint-blue,#e8f1fa)] group-data-[state=open]:text-[var(--adm-action,#1d6fc2)]"
+          className="grid size-[34px] place-items-center rounded-full border border-[var(--adm-border,#e2dfd8)] bg-[var(--adm-surface,#ffffff)] text-[var(--adm-brand-navy,#102a43)] shadow-xs transition-[transform,background-color,border-color,color,box-shadow] duration-[var(--duration-hover,160ms)] ease-[var(--ease-spring-default,ease)] group-hover:border-[var(--adm-border-strong,#b8b3a8)] group-hover:bg-[var(--adm-surface-sunken,#f0eee9)] group-focus-visible:border-[var(--adm-action,#1d6fc2)] group-focus-visible:ring-[3px] group-focus-visible:ring-[var(--adm-action,#1d6fc2)]/25 group-active:scale-95 group-data-[state=open]:border-[var(--adm-action,#1d6fc2)] group-data-[state=open]:bg-[var(--adm-tint-blue,#e8f1fa)] group-data-[state=open]:text-[var(--adm-action,#1d6fc2)]"
         >
-          !
+          <Info className="size-4 shrink-0" aria-hidden="true" />
         </span>
       </button>
     )
