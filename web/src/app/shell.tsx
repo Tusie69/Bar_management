@@ -265,12 +265,15 @@ function ClockMenu() {
           className="tnum h-11 min-h-[44px] gap-2 rounded-lg px-2.5 text-sm font-medium"
           aria-label={`${fmtTime(now)}${clock.isSimulated ? " mô phỏng" : ""} - Mở điều khiển thời gian`}
         >
-          <Clock4 className="text-muted-foreground" />
-          {fmtTime(now)}
+          <Clock4 className="text-muted-foreground" aria-hidden="true" />
+          <span>{fmtTime(now)}</span>
           {clock.isSimulated ? (
-            <span className="hidden rounded-full bg-surface-2 px-2 py-0.5 text-xs font-medium text-tx-3 lg:inline">
-              mô phỏng
-            </span>
+            <>
+              {" "}
+              <span className="hidden rounded-full bg-surface-2 px-2 py-0.5 text-xs font-medium text-tx-3 lg:inline">
+                mô phỏng
+              </span>
+            </>
           ) : null}
         </Button>
       </PopoverTrigger>
