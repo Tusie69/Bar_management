@@ -54,19 +54,24 @@ export function PreparationTotalsPanel({
         </span>
       </Button>
       {expanded ? (
-        <div id={contentId} className="max-h-72 min-w-0 overflow-y-auto border-t border-border-subtle p-3">
+        <div
+          id={contentId}
+          tabIndex={0}
+          aria-label={`Danh sách ${title}`}
+          className="max-h-72 min-w-0 overflow-y-auto border-t border-border-subtle p-2.5 focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none md:max-h-44 lg:max-h-48"
+        >
           <p className="mb-2 text-xs break-words text-muted-foreground">
             Tính trên toàn bộ hàng đợi, không phụ thuộc bộ lọc.
           </p>
           {items.length ? (
-            <ul className="grid min-w-0 gap-2" aria-label={title}>
+            <ul className="grid min-w-0 gap-1.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" aria-label={title}>
               {items.map((item) => (
                 <li
                   key={item.menuItemVariantId}
-                  className="grid min-w-0 gap-1 rounded-xl bg-surface-2 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-3"
+                  className="grid min-w-0 gap-1 rounded-xl bg-surface-2 px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-2"
                 >
                   <div className="flex min-w-0 gap-2">
-                    <strong className="shrink-0 text-primary-ink">{`${item.quantity}×`}</strong>
+                    <strong className="tnum shrink-0 text-primary-ink">{`${item.quantity}×`}</strong>
                     <div className="min-w-0">
                       <p className="font-medium break-words">{item.itemName}</p>
                       {item.variantDisplayName ? (

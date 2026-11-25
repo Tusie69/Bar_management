@@ -25,7 +25,9 @@ const PORTAL_NOTE: Record<AuthPortal, string> = {
 }
 
 function keepFocusedFieldVisible(event: FocusEvent<HTMLInputElement>) {
-  event.currentTarget.scrollIntoView({ block: "nearest" })
+  const input = event.currentTarget
+  input.form?.querySelector<HTMLElement>('button[type="submit"]')?.scrollIntoView({ block: "nearest" })
+  input.scrollIntoView({ block: "nearest" })
 }
 
 export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirectTo?: string | null }) {
@@ -81,19 +83,19 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
   }
 
   return (
-    <main className="flex min-h-dvh flex-col overflow-y-auto bg-background px-4 py-4 sm:py-8">
-      <div className="mx-auto my-auto grid w-full max-w-md gap-4 rounded-2xl border border-border bg-surface-1 p-5 shadow-md sm:gap-5 sm:p-8">
-        <header className="grid gap-2.5 text-center">
+    <main className="flex min-h-dvh flex-col overflow-y-auto bg-background px-4 py-4 sm:py-8 [@media(max-height:560px)]:py-2">
+      <div className="mx-auto my-auto grid w-full max-w-md gap-4 rounded-2xl border border-border bg-surface-1 p-5 shadow-md sm:gap-5 sm:p-8 [@media(max-height:560px)]:gap-2 [@media(max-height:560px)]:p-3.5">
+        <header className="grid gap-2.5 text-center [@media(max-height:560px)]:gap-1">
           <img
             src="/21gam-logo.png"
             alt="21GAM"
-            className="mx-auto size-12 rounded-xl border border-border-subtle object-cover shadow-xs sm:size-14"
+            className="mx-auto size-12 rounded-xl border border-border-subtle object-cover shadow-xs sm:size-14 [@media(max-height:560px)]:hidden"
           />
           <div className="grid gap-1">
             <h1 className="text-[1.375rem] leading-tight font-bold tracking-[-0.022em] text-foreground sm:text-2xl">
               Đăng nhập {PORTAL_CONFIG[portal].label}
             </h1>
-            <p className="text-[0.8125rem] leading-relaxed text-muted-foreground sm:text-sm">
+            <p className="text-[0.8125rem] leading-relaxed text-muted-foreground sm:text-sm [@media(max-height:560px)]:leading-snug">
               Chỉ tài khoản được cấp quyền cho cổng {PORTAL_CONFIG[portal].label.toLocaleLowerCase("vi-VN")} mới có thể
               đăng nhập.
             </p>
@@ -105,13 +107,13 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
           có cổng riêng. Nhân viên gõ nhầm cổng là chuyện xảy ra hằng tuần, và
           "sai tên đăng nhập hoặc mật khẩu" là câu trả lời sai cho việc đó.
         */}
-        <div className="flex items-start gap-2.5 rounded-xl border border-border-subtle bg-surface-2/80 px-3.5 py-2.5 text-xs leading-relaxed text-tx-2">
+        <div className="flex items-start gap-2.5 rounded-xl border border-border-subtle bg-surface-2/80 px-3.5 py-2.5 text-xs leading-relaxed text-tx-2 [@media(max-height:560px)]:py-1.5 [@media(max-height:560px)]:leading-snug">
           <Info className="mt-0.5 size-3.5 shrink-0 text-primary-ink" aria-hidden="true" />
           <p>{PORTAL_NOTE[portal]}</p>
         </div>
 
-        <form className="grid gap-3.5 sm:gap-4" onSubmit={submit}>
-          <div className="grid gap-1.5">
+        <form className="grid gap-3.5 sm:gap-4 [@media(max-height:560px)]:gap-2" onSubmit={submit}>
+          <div className="grid gap-1.5 [@media(max-height:560px)]:gap-1">
             <Label htmlFor="username">Tên đăng nhập</Label>
             <Input
               id="username"
@@ -126,7 +128,7 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
               aria-describedby={showUsernameHint ? "username-hint" : undefined}
               disabled={pending}
               required
-              className="h-11 scroll-my-4"
+              className="h-11 scroll-mt-4 scroll-mb-20"
             />
             {showUsernameHint ? (
               <p
@@ -137,7 +139,7 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
               </p>
             ) : null}
           </div>
-          <div className="grid gap-1.5">
+          <div className="grid gap-1.5 [@media(max-height:560px)]:gap-1">
             <Label htmlFor="password">Mật khẩu</Label>
             {/* Lễ tân gõ mật khẩu trên bàn phím điện thoại giữa ca đông, gõ sai
                 mà không thấy gì thì chỉ còn cách xoá hết gõ lại. */}
@@ -155,7 +157,7 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
                 aria-describedby={showPasswordHint ? "password-hint" : undefined}
                 disabled={pending}
                 required
-                className="h-11 scroll-my-4 pr-12"
+                className="h-11 scroll-mt-4 scroll-mb-20 pr-12"
               />
               <Button
                 type="button"
@@ -207,7 +209,7 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
           </div>
         </form>
 
-        <p className="flex items-center justify-center gap-2 border-t border-border-subtle pt-3 text-xs text-muted-foreground">
+        <p className="flex items-center justify-center gap-2 border-t border-border-subtle pt-3 text-xs text-muted-foreground [@media(max-height:560px)]:pt-2">
           <ShieldCheck className="size-4 shrink-0" aria-hidden="true" />
           <span>Phiên đăng nhập được bảo vệ.</span>
         </p>

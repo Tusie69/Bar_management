@@ -18,7 +18,9 @@ import { useSession } from "@/state/session"
 const PASSWORD_MIN = 12
 
 function keepFocusedFieldVisible(event: FocusEvent<HTMLInputElement>) {
-  event.currentTarget.scrollIntoView({ block: "nearest" })
+  const input = event.currentTarget
+  input.form?.querySelector<HTMLElement>('button[type="submit"]')?.scrollIntoView({ block: "nearest" })
+  input.scrollIntoView({ block: "nearest" })
 }
 
 export function PasswordChangeGate() {
@@ -53,8 +55,8 @@ export function PasswordChangeGate() {
   }
 
   return (
-    <main className="flex min-h-dvh flex-col overflow-y-auto bg-background px-4 py-4 sm:py-8">
-      <section className="mx-auto my-auto grid w-full max-w-md gap-4 rounded-2xl border border-border bg-surface-1 p-5 shadow-md sm:gap-5 sm:p-8">
+    <main className="flex min-h-dvh flex-col overflow-y-auto bg-background px-4 py-4 sm:py-8 [@media(max-height:560px)]:py-2">
+      <section className="mx-auto my-auto grid w-full max-w-md gap-4 rounded-2xl border border-border bg-surface-1 p-5 shadow-md sm:gap-5 sm:p-8 [@media(max-height:560px)]:gap-2.5 [@media(max-height:560px)]:p-3.5">
         <div className="grid gap-2">
           <span className="grid size-11 place-items-center rounded-xl bg-primary-tint text-primary-ink">
             <KeyRound className="size-5" aria-hidden="true" />
@@ -81,7 +83,7 @@ export function PasswordChangeGate() {
               value={currentPassword}
               onChange={(event) => setCurrentPassword(event.target.value)}
               onFocus={keepFocusedFieldVisible}
-              className="h-11 scroll-my-4"
+              className="h-11 scroll-mt-4 scroll-mb-20"
             />
           </div>
           <div className="grid gap-1.5">
@@ -94,7 +96,7 @@ export function PasswordChangeGate() {
                 value={newPassword}
                 onChange={(event) => setNewPassword(event.target.value)}
                 onFocus={keepFocusedFieldVisible}
-                className="h-11 scroll-my-4 pr-12"
+                className="h-11 scroll-mt-4 scroll-mb-20 pr-12"
               />
               <Button
                 type="button"
@@ -125,7 +127,7 @@ export function PasswordChangeGate() {
                 value={confirmPassword}
                 onChange={(event) => setConfirmPassword(event.target.value)}
                 onFocus={keepFocusedFieldVisible}
-                className="h-11 scroll-my-4 pr-12"
+                className="h-11 scroll-mt-4 scroll-mb-20 pr-12"
               />
               <Button
                 type="button"

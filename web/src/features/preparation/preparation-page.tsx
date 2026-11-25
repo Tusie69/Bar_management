@@ -26,12 +26,16 @@ export default function PreparationPage() {
       canRetry={can("preparation.print.retry")}
       stationControls={
         !fixedStation ? (
-          <div className="flex rounded-lg border border-border p-1">
-            <Button size="sm" variant={station === "BAR" ? "default" : "ghost"} onClick={() => setStation("BAR")}>
+          <div className="flex gap-1 rounded-lg border border-border p-1">
+            <Button
+              className="min-h-11 px-3 xl:min-h-9"
+              variant={station === "BAR" ? "default" : "ghost"}
+              onClick={() => setStation("BAR")}
+            >
               Bar
             </Button>
             <Button
-              size="sm"
+              className="min-h-11 px-3 xl:min-h-9"
               variant={station === "KITCHEN" ? "default" : "ghost"}
               onClick={() => setStation("KITCHEN")}
             >
