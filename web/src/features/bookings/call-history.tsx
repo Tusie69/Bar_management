@@ -45,7 +45,7 @@ export function CallHistory({ target, className }: { target: CallTarget; classNa
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="relative inline-flex items-center gap-1.5 self-start rounded-md py-1 text-xs font-medium text-tx-2 transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none after:pointer-coarse:absolute after:pointer-coarse:-inset-x-2 after:pointer-coarse:-inset-y-2 after:pointer-coarse:content-['']"
+        className="relative inline-flex min-h-11 items-center gap-1.5 self-start rounded-md px-1.5 py-2 text-xs font-medium text-tx-2 transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
       >
         <History className="size-3.5" aria-hidden />
         Lịch sử gọi

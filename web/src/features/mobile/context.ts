@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react"
+import { createContext, useContext, type ReactNode } from "react"
 import type { BookingCancelReason, RoleCode } from "@/domain/enums"
 import type { Permission } from "@/domain/access"
 import type { ReservationView, WaitlistEntryView } from "@/domain/models"
@@ -73,6 +73,7 @@ export interface MobileCtx {
   ask: (c: Confirm) => void
   askCancel: (req: CancelBookingRequest) => void
   startPick: (p: TablePick) => void
+  toastBanner?: ReactNode
 }
 
 export const MobileContext = createContext<MobileCtx | null>(null)

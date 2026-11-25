@@ -177,46 +177,49 @@ export function ListScreen() {
         </div>
       </PlainHeader>
 
-      {mode === "timeline" ? (
-        <Timeline bd={bd} reservations={res ?? []} />
-      ) : (
-        <div ref={ref} className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-3 pb-20">
-          {resQuery.isError ? (
-            <EmptyBox
-              title="Lỗi tải danh sách"
-              body={
-                isApiError(resQuery.error)
-                  ? resQuery.error.message
-                  : resQuery.error instanceof Error
+      <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {m.toastBanner}
+        {mode === "timeline" ? (
+          <Timeline bd={bd} reservations={res ?? []} />
+        ) : (
+          <div ref={ref} className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-4 pt-3 pb-20">
+            {resQuery.isError ? (
+              <EmptyBox
+                title="Lỗi tải danh sách"
+                body={
+                  isApiError(resQuery.error)
                     ? resQuery.error.message
-                    : "Không thể tải danh sách đặt bàn."
-              }
-            />
-          ) : !res ? (
-            <CardSkeleton />
-          ) : shown.length ? (
-            <>
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-surface-2 px-3.5 py-2.5">
-                <span className="text-[13.5px] font-semibold text-tx-strong">{shift}</span>
-                <span className="tnum text-[13px] font-medium text-tx-2">
-                  {shown.length} booking, {guests} khách
-                </span>
-              </div>
-              {shown.map((r) => (
-                <BookingCard key={r.id} r={r} actions={levelOf(r) < 9} />
-              ))}
-            </>
-          ) : res.length ? (
-            <EmptyBox title="Không có booking khớp bộ lọc" body="Thử bỏ bớt bộ lọc hoặc tìm bằng 3 số cuối SĐT." />
-          ) : (
-            <EmptyBox
-              title="Chưa có booking cho ngày này"
-              body="Tạo booking mới, giờ đến từ 7:00 PM đến 1:00 AM."
-              action={{ label: "Đặt bàn", onClick: () => m.openForm({ mode: "booking" }) }}
-            />
-          )}
-        </div>
-      )}
+                    : resQuery.error instanceof Error
+                      ? resQuery.error.message
+                      : "Không thể tải danh sách đặt bàn."
+                }
+              />
+            ) : !res ? (
+              <CardSkeleton />
+            ) : shown.length ? (
+              <>
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-surface-2 px-3.5 py-2.5">
+                  <span className="text-[13.5px] font-semibold text-tx-strong">{shift}</span>
+                  <span className="tnum text-[13px] font-medium text-tx-2">
+                    {shown.length} booking, {guests} khách
+                  </span>
+                </div>
+                {shown.map((r) => (
+                  <BookingCard key={r.id} r={r} actions={levelOf(r) < 9} />
+                ))}
+              </>
+            ) : res.length ? (
+              <EmptyBox title="Không có booking khớp bộ lọc" body="Thử bỏ bớt bộ lọc hoặc tìm bằng 3 số cuối SĐT." />
+            ) : (
+              <EmptyBox
+                title="Chưa có booking cho ngày này"
+                body="Tạo booking mới, giờ đến từ 7:00 PM đến 1:00 AM."
+                action={{ label: "Đặt bàn", onClick: () => m.openForm({ mode: "booking" }) }}
+              />
+            )}
+          </div>
+        )}
+      </main>
     </>
   )
 }

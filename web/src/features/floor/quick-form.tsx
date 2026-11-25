@@ -574,7 +574,7 @@ export function QuickForm({
                       type="button"
                       onClick={() => setDateOpen(true)}
                       aria-expanded={false}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-sm border border-strong bg-background px-3 text-sm font-medium"
+                      className="inline-flex min-h-11 items-center gap-1.5 rounded-sm border border-strong bg-background px-3 text-sm font-medium"
                     >
                       {dateLabel(draft.date, dates.indexOf(draft.date))}
                       <ChevronDown className="size-4 text-tx-2" aria-hidden />
@@ -592,7 +592,7 @@ export function QuickForm({
                           onClick={() => setDateOpen(false)}
                           aria-expanded
                           aria-label="Thu gọn danh sách ngày"
-                          className="inline-flex h-7 items-center gap-1 rounded-sm px-2 text-xs text-tx-2"
+                          className="inline-flex min-h-11 items-center gap-1 rounded-sm px-2 text-xs text-tx-2"
                         >
                           Thu gọn
                           <ChevronDown className="size-3.5 rotate-180" aria-hidden />

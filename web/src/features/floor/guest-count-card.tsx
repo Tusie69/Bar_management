@@ -92,7 +92,7 @@ export function GuestCountCard({
   const collapseRef = useRef<HTMLButtonElement>(null)
   const expanded = isWide || phoneExpanded
   const count = query.data ?? emptyCount(businessDate)
-  const shell = "rounded-xl border border-border bg-surface-1/92 shadow-sm backdrop-blur-md"
+  const shell = "rounded-xl border border-border bg-surface-1 shadow-xs"
 
   if (!expanded) {
     return (
@@ -105,7 +105,7 @@ export function GuestCountCard({
             window.requestAnimationFrame(() => collapseRef.current?.focus({ preventScroll: true }))
           }}
           aria-expanded={false}
-          aria-label={`Đếm khách, tổng đã tới ${count.arrivedTotal}. Chạm để mở rộng`}
+          aria-label={`Đếm khách, ${count.arrivedTotal} đã tới. Chạm để mở rộng`}
           data-testid="guest-count-toggle"
           className={cn(
             shell,
@@ -170,8 +170,8 @@ export function GuestCountCard({
         type="button"
         onClick={onOpen}
         className="grid min-h-[44px] grid-cols-2 gap-x-2.5 gap-y-1 text-left active:scale-[0.98] md:gap-x-3"
-        aria-label={`Đếm khách. Trước 21:30 ${count.arrivedBefore}, sau 21:30 ${count.arrivedAfter}, tổng đã tới ${count.arrivedTotal}, tổng bàn đặt ${count.bookedTables}, tổng khách đặt ${count.bookedGuests}, đã từng đặt bàn ${count.returningGuests}.`}
       >
+        <span className="sr-only">Đếm khách chi tiết. Chạm để mở bảng: </span>
         {FIELDS.map((field) => (
           <StatCell key={field.key} field={field} value={count[field.key]} />
         ))}

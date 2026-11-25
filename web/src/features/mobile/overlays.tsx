@@ -357,7 +357,7 @@ export function AccountSheet({
                     onClose()
                   })
                 }}
-                className="h-12 w-full justify-start gap-2.5 rounded-2xl border-destructive/40 bg-[var(--destructive-tint)] px-4 text-[15px] font-semibold text-destructive hover:border-destructive/60 hover:bg-[var(--destructive-tint)]"
+                className="h-12 w-full justify-start gap-2.5 rounded-2xl border-destructive/40 bg-[var(--destructive-tint)] px-4 text-[15px] font-semibold text-[var(--st-late-ink)] hover:border-destructive/60 hover:bg-[var(--destructive-tint)]"
               >
                 <LogOut className="size-4 shrink-0" aria-hidden />
                 {loggingOut ? "Đang đăng xuất…" : "Đăng xuất"}
@@ -589,41 +589,54 @@ export function Toast15({
 
   return (
     <div
-      role={isOpen ? "status" : undefined}
-      aria-hidden={!isOpen || undefined}
-      inert={!isOpen}
-      data-state={isOpen ? "open" : "closed"}
-      onAnimationEnd={() => {
-        if (!isOpen) markExited()
-      }}
-      className="gm-toast-banner gm-glass-chrome absolute inset-x-3 top-[calc(var(--top-safe)+8px)] z-[42] flex items-center gap-2.5 rounded-2xl border border-border bg-[var(--glass)] py-2 pr-1.5 pl-3 shadow-[var(--shadow-float)] backdrop-blur-md"
+      className={cn("pointer-events-none shrink-0", isOpen ? "px-3 pt-1.5 pb-1" : "relative h-0 overflow-visible px-3")}
     >
-      <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-st-late-tint text-st-late-ink">
-        <Clock className="size-[17px]" aria-hidden />
-      </span>
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="text-[14px] leading-snug font-semibold text-tx-strong">
-          {cachedR.displayName} đã trễ {m.th.late} phút
-        </span>
-        <span className="tnum truncate text-[12.5px] text-[var(--text-muted)]">
-          {cachedR.partySize} khách · {tableText(cachedR.tableIds, m.model)} · hẹn {fmtTime12(cachedR.expectedAt)}
-        </span>
-      </span>
-      <button
-        type="button"
-        onClick={onView}
-        className="gm-press h-11 shrink-0 rounded-xl px-3 text-[14px] font-semibold text-primary-ink hover:bg-primary-tint"
+      <div
+        role={isOpen ? "status" : undefined}
+        aria-hidden={!isOpen || undefined}
+        inert={!isOpen}
+        data-state={isOpen ? "open" : "closed"}
+        onAnimationEnd={() => {
+          if (!isOpen) markExited()
+        }}
+        className={cn(
+          "gm-toast-banner pointer-events-none mx-auto flex w-full max-w-[var(--gm-max-w)] items-center gap-2.5 rounded-2xl border border-border bg-surface-1 py-2 pr-1.5 pl-3 shadow-[var(--shadow-sm)]",
+          !isOpen && "absolute inset-x-3 top-1.5 z-[42]",
+        )}
       >
-        Xem
-      </button>
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="Đóng thông báo"
-        className="gm-press grid size-11 shrink-0 place-items-center rounded-xl text-subtle hover:bg-surface-2 hover:text-tx-1"
-      >
-        <X className="size-4" aria-hidden />
-      </button>
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-st-late-tint text-st-late-ink">
+          <Clock className="size-[17px]" aria-hidden />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="text-[14px] leading-snug font-semibold text-tx-strong">
+            {cachedR.displayName} đã trễ {m.th.late} phút
+          </span>
+          <span className="tnum truncate text-[12.5px] text-[var(--text-muted)]">
+            {cachedR.partySize} khách · {tableText(cachedR.tableIds, m.model)} · hẹn {fmtTime12(cachedR.expectedAt)}
+          </span>
+        </span>
+        <button
+          type="button"
+          onClick={onView}
+          className={cn(
+            "gm-press h-11 min-w-11 shrink-0 rounded-xl px-3 text-[14px] font-semibold text-primary-ink hover:bg-primary-tint",
+            isOpen ? "pointer-events-auto" : "pointer-events-none",
+          )}
+        >
+          Xem
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Đóng thông báo"
+          className={cn(
+            "gm-press grid size-11 min-h-11 min-w-11 shrink-0 place-items-center rounded-xl text-subtle hover:bg-surface-2 hover:text-tx-1",
+            isOpen ? "pointer-events-auto" : "pointer-events-none",
+          )}
+        >
+          <X className="size-4" aria-hidden />
+        </button>
+      </div>
     </div>
   )
 }
