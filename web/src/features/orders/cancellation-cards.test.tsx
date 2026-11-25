@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
-import { CancellationApproveSummary } from "./cancellation-approve-dialog"
+import { CancellationApproveSendingStatus, CancellationApproveSummary } from "./cancellation-approve-dialog"
+import { CancellationCard } from "./cancellation-card"
 import { CancellationGroupCard } from "./cancellation-group-card"
 import type { CancellationGroupItem } from "./cancellation-grouping"
 
@@ -151,5 +152,30 @@ describe("thẻ hủy cả đơn và hộp xác nhận duyệt", () => {
     expect(bodyHtml).toContain("21GAM Negroni Khói Quế")
     expect(bodyHtml).toContain("Đơn 2 · Bàn BAR01")
     expect(bodyHtml).toContain("470.000đ")
+  })
+
+  it("thẻ đơn dùng nút default/destructive theo chính sách và chưa vẽ hộp xác nhận khi đóng", () => {
+    const standardEntry = groupItem().entries[0]!
+    const wasteEntry = { ...standardEntry, policy: "READY_WASTE" as const, ticketStatusAtRequest: "READY" as const }
+    const standardHtml = renderToStaticMarkup(
+      <CancellationCard entry={standardEntry} note="" busy={false} onNoteChange={noop} onDecide={noop} />,
+    )
+    const wasteHtml = renderToStaticMarkup(
+      <CancellationCard entry={wasteEntry} note="" busy={false} onNoteChange={noop} onDecide={noop} />,
+    )
+    expect(standardHtml).toContain("Duyệt hủy")
+    expect(standardHtml).toContain('data-variant="default"')
+    expect(standardHtml).not.toContain("Huỷ bỏ")
+    expect(wasteHtml).toContain("Duyệt ghi hao")
+    expect(wasteHtml).toContain('data-variant="destructive"')
+  })
+
+  it("trạng thái đang gửi có role=status, tên truy cập và tabIndex=0 để giữ focus trong hộp", () => {
+    const statusHtml = renderToStaticMarkup(<CancellationApproveSendingStatus />)
+    expect(statusHtml).toContain('role="status"')
+    expect(statusHtml).toContain('aria-live="polite"')
+    expect(statusHtml).toContain('aria-label="Đang duyệt..."')
+    expect(statusHtml).toContain('tabindex="0"')
+    expect(statusHtml).toContain("Đang duyệt yêu cầu, vui lòng chờ...")
   })
 })

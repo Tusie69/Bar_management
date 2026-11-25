@@ -6,13 +6,14 @@
  * duyệt phải thấy nó trước khi ngón tay chạm nút, không phải sau.
  */
 import { AlertTriangle, Check, X } from "lucide-react"
-import { useRef, useState } from "react"
+import { useRef, useState, type RefObject } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { formatVnd } from "@/features/waiter-menu/menu-price"
 import { PREPARATION_LABEL, STATION_LABEL } from "@/features/waiter-menu/order-board-model"
 import { CancellationApproveDialog } from "./cancellation-approve-dialog"
+import { useFocusFallbackOnUnmount } from "./cancellation-focus"
 import type { CancellationGroupItem } from "./cancellation-grouping"
 
 function timeLabel(value: string): string {
@@ -26,6 +27,7 @@ export function CancellationGroupCard({
   note,
   busy,
   decided,
+  fallbackFocusRef,
   onNoteChange,
   onDecide,
 }: {
@@ -34,16 +36,20 @@ export function CancellationGroupCard({
   busy: boolean
   /** Hàng chờ đã xử lý (APPROVED/REJECTED): chỉ xem, không còn nút quyết định. */
   decided: boolean
+  fallbackFocusRef?: RefObject<HTMLElement | null>
   onNoteChange: (value: string) => void
   onDecide: (decision: "approve" | "reject") => void
 }) {
   const waste = group.wasteQuantity > 0
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const cardRef = useRef<HTMLLIElement>(null)
   const approveButtonRef = useRef<HTMLButtonElement>(null)
   const tableOrderLabel = `Đơn ${group.visitSequence} · ${group.tableCodes.length > 0 ? `Bàn ${group.tableCodes.join(" + ")}` : "—"}`
 
+  useFocusFallbackOnUnmount(cardRef, fallbackFocusRef)
+
   return (
-    <li className="grid gap-3 rounded-2xl border-2 border-border-strong bg-surface-1 p-4">
+    <li ref={cardRef} className="grid gap-3 rounded-2xl border-2 border-border-strong bg-surface-1 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="flex flex-wrap items-center gap-2 font-semibold">
@@ -117,6 +123,7 @@ export function CancellationGroupCard({
             open={confirmOpen}
             onOpenChange={setConfirmOpen}
             triggerRef={approveButtonRef}
+            fallbackFocusRef={fallbackFocusRef}
             title={waste ? "Xác nhận duyệt ghi hao cả đơn" : "Xác nhận duyệt hủy cả đơn"}
             description={
               waste

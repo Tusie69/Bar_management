@@ -6,7 +6,7 @@
  * sẽ chết trước khi vẽ được gì.
  */
 import { Check, X } from "lucide-react"
-import { useRef, useState } from "react"
+import { useRef, useState, type RefObject } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,6 +14,7 @@ import { formatVnd } from "@/features/waiter-menu/menu-price"
 import { PREPARATION_LABEL, POLICY_LABEL, STATION_LABEL } from "@/features/waiter-menu/order-board-model"
 import type { CancellationQueueEntry } from "@/features/waiter-menu/waiter-order-api"
 import { CancellationApproveDialog } from "./cancellation-approve-dialog"
+import { useFocusFallbackOnUnmount } from "./cancellation-focus"
 
 function timeLabel(value: string): string {
   const date = new Date(value)
@@ -25,22 +26,27 @@ export function CancellationCard({
   entry,
   note,
   busy,
+  fallbackFocusRef,
   onNoteChange,
   onDecide,
 }: {
   entry: CancellationQueueEntry
   note: string
   busy: boolean
+  fallbackFocusRef?: RefObject<HTMLElement | null>
   onNoteChange: (value: string) => void
   onDecide: (decision: "approve" | "reject") => void
 }) {
   const waste = entry.policy === "READY_WASTE"
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const cardRef = useRef<HTMLLIElement>(null)
   const approveButtonRef = useRef<HTMLButtonElement>(null)
   const tableOrderLabel = `Bàn ${entry.tableCodes.join(" + ") || `#${entry.visitId}`} · đơn ${entry.visitSequence}`
 
+  useFocusFallbackOnUnmount(cardRef, fallbackFocusRef)
+
   return (
-    <li className="grid gap-3 rounded-2xl border border-border bg-surface-1 p-4">
+    <li ref={cardRef} className="grid gap-3 rounded-2xl border border-border bg-surface-1 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-medium">
@@ -99,6 +105,7 @@ export function CancellationCard({
             open={confirmOpen}
             onOpenChange={setConfirmOpen}
             triggerRef={approveButtonRef}
+            fallbackFocusRef={fallbackFocusRef}
             title={waste ? "Xác nhận duyệt ghi hao" : "Xác nhận duyệt hủy món"}
             description={
               waste

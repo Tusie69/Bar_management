@@ -1305,11 +1305,17 @@ try {
   // 4. UX-02 + UX-24 + Landmark <main> on /duyet-huy-mon
   for (const vp of CORE_5) {
     const { context, page, consoleErrors } = await openContext(browser, vp)
+    let currentEntries = [...cancellationQueueEntries]
     let approveNormalPayloads = []
     let approveWastePayloads = []
     let approveGroupPayloads = []
     let rejectNormalPayloads = []
+    let normalDelayMs = 0
     let wasteDelayMs = 0
+    let groupDelayMs = 0
+    let wasteShouldFail = false
+    let removeNormalOnSuccess = false
+    let removeGroupOnSuccess = false
     try {
       await page.route("**/api/v1/auth/me", (route) =>
         route.fulfill({
@@ -1322,10 +1328,14 @@ try {
         }),
       )
       await page.route("**/api/v1/orders/cancellations?*", (route) =>
-        route.fulfill({ json: { pendingCount: 3, entries: cancellationQueueEntries } }),
+        route.fulfill({ json: { pendingCount: currentEntries.length, entries: currentEntries } }),
       )
-      await page.route("**/api/v1/orders/cancellations/1/approve", (route) => {
+      await page.route("**/api/v1/orders/cancellations/1/approve", async (route) => {
         approveNormalPayloads.push(route.request().postDataJSON())
+        if (normalDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, normalDelayMs))
+        if (removeNormalOnSuccess) {
+          currentEntries = currentEntries.filter((entry) => entry.cancellationId !== 1)
+        }
         return route.fulfill({ json: { cancellationId: 1, status: "APPROVED", version: 2 } })
       })
       await page.route("**/api/v1/orders/cancellations/1/reject", (route) => {
@@ -1335,10 +1345,20 @@ try {
       await page.route("**/api/v1/orders/cancellations/2/approve", async (route) => {
         approveWastePayloads.push(route.request().postDataJSON())
         if (wasteDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, wasteDelayMs))
+        if (wasteShouldFail) {
+          return route.fulfill({
+            status: 409,
+            json: { error: { code: "CONFLICT", message: "Yêu cầu đã thay đổi, vui lòng tải lại." } },
+          })
+        }
         return route.fulfill({ json: { cancellationId: 2, status: "APPROVED", version: 2 } })
       })
-      await page.route("**/api/v1/orders/cancellations/groups/90/approve", (route) => {
+      await page.route("**/api/v1/orders/cancellations/groups/90/approve", async (route) => {
         approveGroupPayloads.push(route.request().postDataJSON())
+        if (groupDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, groupDelayMs))
+        if (removeGroupOnSuccess) {
+          currentEntries = currentEntries.filter((entry) => entry.groupId !== 90)
+        }
         return route.fulfill({ json: { groupId: 90, status: "APPROVED", decidedCount: 1 } })
       })
 
@@ -1536,29 +1556,100 @@ try {
           "UX-02: Tab must focus Xác nhận button inside dialog",
         )
 
-        wasteDelayMs = 300
+        // RR-01 + RR-02: Rapid double Enter on Xác nhận -> 1 request; focus stays inside dialog status on Tab/Shift+Tab; Esc blocked; error restores focus & allows retry
+        wasteDelayMs = 350
+        wasteShouldFail = true
+        await page.keyboard.press("Enter")
         await page.keyboard.press("Enter")
         await expect(dialog.getByRole("button", { name: "Đang duyệt...", exact: true })).toBeDisabled()
         await expect(dialog.getByRole("button", { name: "Huỷ bỏ", exact: true })).toBeDisabled()
-        await expect.poll(() => approveWastePayloads.length).toBe(1)
-        assert.equal(approveWastePayloads[0]?.expectedVersion, 1)
-        assert.equal(approveWastePayloads[0]?.note, "Khách đổi món khác")
-        assert.equal(typeof approveWastePayloads[0]?.idempotencyKey, "string")
+        const statusEl = dialog.getByRole("status")
+        await expect(statusEl).toBeVisible()
+        await expect(statusEl).toBeFocused()
+        assert.equal(
+          await statusEl.getAttribute("aria-label"),
+          "Đang duyệt...",
+          "RR-02: sending status focus target must expose accessible name",
+        )
+        await page.keyboard.press("Tab")
+        assert.equal(
+          await page.evaluate(() => Boolean(document.activeElement?.closest('[role="alertdialog"]'))),
+          true,
+          "RR-02: Tab while sending must keep focus inside alertdialog",
+        )
+        await expect(statusEl).toBeFocused()
+        await page.keyboard.press("Shift+Tab")
+        assert.equal(
+          await page.evaluate(() => Boolean(document.activeElement?.closest('[role="alertdialog"]'))),
+          true,
+          "RR-02: Shift+Tab while sending must keep focus inside alertdialog",
+        )
+        await expect(statusEl).toBeFocused()
+        await page.keyboard.press("Escape")
+        await expect(dialog).toBeVisible()
+
+        // Wait for 409 error -> dialog closes, alert is readable, focus returns to trigger, lock resets for retry
+        await expect(page.getByRole("alertdialog")).toHaveCount(0)
+        await expect(page.getByRole("alert")).toContainText("Yêu cầu đã thay đổi, vui lòng tải lại.")
+        await expect(wasteBtn).toBeFocused()
+        assert.equal(approveWastePayloads.length, 1, "RR-01: rapid Enter must send exactly 1 POST")
+
+        // Retry after error -> reopen works cleanly and sends 1 POST with note & expectedVersion
+        wasteShouldFail = false
+        wasteDelayMs = 250
+        await page.keyboard.press("Enter")
+        const retryDialog = page.getByRole("alertdialog")
+        await expect(retryDialog).toBeVisible()
+        await expect(retryDialog.getByRole("button", { name: "Xác nhận", exact: true })).toBeEnabled()
+        await retryDialog.getByRole("button", { name: "Xác nhận", exact: true }).click()
+        await expect.poll(() => approveWastePayloads.length).toBe(2)
+        assert.equal(approveWastePayloads[1]?.expectedVersion, 1)
+        assert.equal(approveWastePayloads[1]?.note, "Khách đổi món khác")
+        assert.equal(typeof approveWastePayloads[1]?.idempotencyKey, "string")
         await expect(page.getByRole("alertdialog")).toHaveCount(0)
 
-        // 6) Confirm normal approve & group approve each call API exactly once with original payload
+        // RR-01 + RR-02: Normal approve dblclick with delayed response -> strictly 1 POST; refetch removes row -> focus moves to Chờ duyệt tab and Tab continues
+        normalDelayMs = 500
+        removeNormalOnSuccess = true
         await page.getByRole("button", { name: "Duyệt hủy", exact: true }).click()
-        await page.getByRole("alertdialog").getByRole("button", { name: "Xác nhận", exact: true }).click()
-        await expect.poll(() => approveNormalPayloads.length).toBe(1)
+        const normalConfirmDialog = page.getByRole("alertdialog")
+        await expect(normalConfirmDialog).toBeVisible()
+        await normalConfirmDialog.getByRole("button", { name: "Xác nhận", exact: true }).dblclick()
+        await expect(normalConfirmDialog.getByRole("button", { name: "Đang duyệt...", exact: true })).toBeDisabled()
+        await expect(normalConfirmDialog.getByRole("status")).toBeFocused()
+        await expect(page.getByRole("alertdialog")).toHaveCount(0)
+        await expect(page.getByRole("button", { name: "Duyệt hủy", exact: true })).toHaveCount(0)
+        await page.waitForTimeout(100)
+        assert.equal(approveNormalPayloads.length, 1, "RR-01: dblclick normal approve must send exactly 1 POST")
         assert.equal(approveNormalPayloads[0]?.expectedVersion, 1)
         assert.equal(typeof approveNormalPayloads[0]?.idempotencyKey, "string")
-        await expect(page.getByRole("alertdialog")).toHaveCount(0)
+        const pendingTab = page.getByRole("tab", { name: "Chờ duyệt", exact: true })
+        await expect(pendingTab).toBeFocused()
+        await page.keyboard.press("Tab")
+        await expect(page.getByRole("tab", { name: "Đã duyệt", exact: true })).toBeFocused()
 
+        // RR-01 + RR-02: Group approve dblclick with delayed response -> strictly 1 POST; refetch removes group -> focus moves to Chờ duyệt tab and Tab continues
+        groupDelayMs = 500
+        removeGroupOnSuccess = true
         await page.getByRole("button", { name: "Duyệt cả đơn", exact: true }).click()
-        await page.getByRole("alertdialog").getByRole("button", { name: "Xác nhận", exact: true }).click()
-        await expect.poll(() => approveGroupPayloads.length).toBe(1)
-        assert.equal(typeof approveGroupPayloads[0]?.idempotencyKey, "string")
+        const groupConfirmDialog = page.getByRole("alertdialog")
+        await expect(groupConfirmDialog).toBeVisible()
+        await groupConfirmDialog.getByRole("button", { name: "Xác nhận", exact: true }).dblclick()
+        await expect(groupConfirmDialog.getByRole("button", { name: "Đang duyệt...", exact: true })).toBeDisabled()
+        await expect(groupConfirmDialog.getByRole("status")).toBeFocused()
         await expect(page.getByRole("alertdialog")).toHaveCount(0)
+        await expect(page.getByRole("button", { name: "Duyệt cả đơn", exact: true })).toHaveCount(0)
+        await page.waitForTimeout(100)
+        assert.equal(approveGroupPayloads.length, 1, "RR-01: dblclick group approve must send exactly 1 POST")
+        assert.equal(typeof approveGroupPayloads[0]?.idempotencyKey, "string")
+        await expect(pendingTab).toBeFocused()
+        await page.keyboard.press("Tab")
+        await expect(page.getByRole("tab", { name: "Đã duyệt", exact: true })).toBeFocused()
+        assert.deepEqual(
+          consoleErrors.filter((msg) => !msg.includes("409")),
+          [],
+          `/duyet-huy-mon unexpected console errors: ${consoleErrors}`,
+        )
       }
       checks++
     } finally {

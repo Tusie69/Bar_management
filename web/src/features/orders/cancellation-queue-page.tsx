@@ -11,7 +11,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { AlertCircle, ArrowLeft, RefreshCw } from "lucide-react"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { useNavigate } from "react-router"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -42,6 +42,7 @@ export default function CancellationQueuePage() {
   const [status, setStatus] = useState<CancellationStatus>("PENDING")
   const [notes, setNotes] = useState<Record<number, string>>({})
   const [actionError, setActionError] = useState<string | null>(null)
+  const pendingTabRef = useRef<HTMLButtonElement>(null)
 
   const queue = useQuery({
     queryKey: ["cancellation-queue", venueId, status],
@@ -138,6 +139,7 @@ export default function CancellationQueuePage() {
         {TABS.map((tab) => (
           <button
             key={tab.status}
+            ref={tab.status === "PENDING" ? pendingTabRef : undefined}
             type="button"
             role="tab"
             aria-selected={status === tab.status}
@@ -188,6 +190,7 @@ export default function CancellationQueuePage() {
                 note={notes[item.groupId] ?? ""}
                 busy={decide.isPending || decideGroup.isPending}
                 decided={status !== "PENDING"}
+                fallbackFocusRef={pendingTabRef}
                 onNoteChange={(value) => setNotes((current) => ({ ...current, [item.groupId]: value }))}
                 onDecide={(decision) => decideGroup.mutate({ group: item, decision })}
               />
@@ -197,6 +200,7 @@ export default function CancellationQueuePage() {
                 entry={item.entry}
                 note={notes[item.entry.cancellationId] ?? ""}
                 busy={decide.isPending || decideGroup.isPending}
+                fallbackFocusRef={pendingTabRef}
                 onNoteChange={(value) => setNotes((current) => ({ ...current, [item.entry.cancellationId]: value }))}
                 onDecide={(decision) => decide.mutate({ entry: item.entry, decision })}
               />
