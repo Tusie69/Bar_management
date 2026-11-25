@@ -67,7 +67,8 @@ export function createApproveConfirmTracker(): ApproveConfirmTracker {
       try {
         result = onConfirm()
       } catch {
-        clearAttemptFlags()
+        // Giữ chốt lượt gửi cho tới khi sync({ open: false }) xác nhận hộp đã đóng
+        // để hai lần kích hoạt trong cùng lượt JS không gọi lại onConfirm.
         onSettled()
         return true
       }

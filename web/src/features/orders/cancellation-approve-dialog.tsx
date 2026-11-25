@@ -249,10 +249,12 @@ export function CancellationApproveDialog({
             disabled={locked}
             onClick={(event) => {
               event.preventDefault()
-              if (tracker.isLocked()) return
+              if (!open || tracker.isLocked()) return
               setSubmitting(true)
               tracker.submit(onConfirm, () => {
-                setSubmitting(false)
+                if (!tracker.isLocked()) {
+                  setSubmitting(false)
+                }
                 onOpenChangeRef.current(false)
               })
             }}

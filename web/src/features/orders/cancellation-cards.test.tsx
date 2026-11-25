@@ -210,7 +210,31 @@ describe("thẻ hủy cả đơn và hộp xác nhận duyệt", () => {
     expect(tracker.isLocked()).toBe(false)
   })
 
-  it("RR-03: lỗi đồng bộ và thành công chậm đều giải khóa đúng chu kỳ và không đóng trùng", async () => {
+  it("RR-04: callback ném đồng bộ giữ chốt tới khi open=false, hai lần gọi liên tiếp chỉ chạy 1 lần và mở lại gửi được 1 lần", () => {
+    const tracker = createApproveConfirmTracker()
+    tracker.sync({ open: true, busy: false })
+
+    let closeRequests = 0
+    const syncThrow = vi.fn(() => {
+      throw new Error("sync boom")
+    })
+
+    expect(tracker.submit(syncThrow, () => (closeRequests += 1))).toBe(true)
+    expect(tracker.isLocked()).toBe(true)
+    expect(tracker.submit(syncThrow, () => (closeRequests += 1))).toBe(false)
+    expect(syncThrow).toHaveBeenCalledTimes(1)
+    expect(closeRequests).toBe(1)
+
+    tracker.sync({ open: false, busy: false })
+    expect(tracker.isLocked()).toBe(false)
+
+    tracker.sync({ open: true, busy: false })
+    const retryConfirm = vi.fn(() => Promise.resolve({ ok: true }))
+    expect(tracker.submit(retryConfirm, () => (closeRequests += 1))).toBe(true)
+    expect(retryConfirm).toHaveBeenCalledTimes(1)
+  })
+
+  it("RR-03: lỗi đồng bộ giữ chốt tới khi đóng hộp và thành công chậm giải khóa đúng chu kỳ", async () => {
     const tracker = createApproveConfirmTracker()
     tracker.sync({ open: true, busy: false })
 
@@ -220,7 +244,13 @@ describe("thẻ hủy cả đơn và hộp xác nhận duyệt", () => {
     })
     expect(tracker.submit(syncThrow, () => (settledCount += 1))).toBe(true)
     expect(settledCount).toBe(1)
+    expect(tracker.isLocked()).toBe(true)
+    expect(tracker.submit(syncThrow, () => (settledCount += 1))).toBe(false)
+    expect(syncThrow).toHaveBeenCalledTimes(1)
+
+    tracker.sync({ open: false, busy: false })
     expect(tracker.isLocked()).toBe(false)
+    tracker.sync({ open: true, busy: false })
 
     let resolveSlow!: () => void
     const slowPromise = new Promise<void>((resolve) => {
