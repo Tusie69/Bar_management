@@ -435,31 +435,33 @@ function ReservationList({
               {showDate ? fmtBusinessDate(g.hour) : `${g.hour}:00`} · {g.items.length}
             </p>
             <ul>
-              {g.items.map((r) => (
-                <li key={r.id}>
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => ui.openReservation(r.id, r.businessDate)}
-                    onKeyDown={(e) => e.key === "Enter" && ui.openReservation(r.id, r.businessDate)}
-                    className="flex min-h-16 items-center gap-3 border-b px-4 py-2 active:bg-surface-2"
-                  >
-                    <span className="tnum w-12 shrink-0 font-semibold">{fmtTime(r.expectedAt)}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-medium">
-                        {r.displayName} <span className="font-normal text-muted-foreground">· {r.partySize} khách</span>
+              {g.items.map((r) => {
+                const rowAction = action(r)
+                return (
+                  <li key={r.id} className="relative flex min-h-16 items-center gap-3 border-b px-4 py-2">
+                    <button
+                      type="button"
+                      onClick={() => ui.openReservation(r.id, r.businessDate)}
+                      className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left outline-none after:absolute after:inset-0 after:content-[''] focus-visible:ring-[3px] focus-visible:ring-primary/25 active:bg-surface-2"
+                    >
+                      <span className="tnum w-12 shrink-0 font-semibold">{fmtTime(r.expectedAt)}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">
+                          {r.displayName}{" "}
+                          <span className="font-normal text-muted-foreground">· {r.partySize} khách</span>
+                        </span>
+                        <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                          <ReservationStatusChip r={r} />
+                          {r.tableIds.length ? (
+                            <TableCodes codes={codes(r.tableIds)} symbolNo={r.symbolNo} className="[&>span]:text-xs" />
+                          ) : null}
+                        </span>
                       </span>
-                      <span className="mt-1 flex flex-wrap items-center gap-1.5">
-                        <ReservationStatusChip r={r} />
-                        {r.tableIds.length ? (
-                          <TableCodes codes={codes(r.tableIds)} symbolNo={r.symbolNo} className="[&>span]:text-xs" />
-                        ) : null}
-                      </span>
-                    </span>
-                    {action(r)}
-                  </div>
-                </li>
-              ))}
+                    </button>
+                    {rowAction ? <div className="relative z-10 shrink-0">{rowAction}</div> : null}
+                  </li>
+                )
+              })}
             </ul>
           </li>
         ))}

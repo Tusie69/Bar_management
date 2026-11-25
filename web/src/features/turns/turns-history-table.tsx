@@ -207,7 +207,7 @@ export function TurnsHistoryTable({
                       Bàn
                     </th>
                     <th scope="col" className="turns-history-pax-col text-right">
-                      Pax
+                      Khách
                     </th>
                     <th scope="col" className="turns-history-guest-col">
                       Khách hàng
@@ -314,7 +314,7 @@ export function TurnsHistoryTable({
                         </td>
                         <td
                           className="turns-history-pax-col text-right font-semibold whitespace-nowrap"
-                          data-label="Pax"
+                          data-label="Khách"
                         >
                           {row.guestCount}
                         </td>

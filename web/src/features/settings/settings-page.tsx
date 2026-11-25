@@ -669,7 +669,7 @@ function AccessSettings() {
                     <TableRow key={p} className="h-11">
                       <TableCell className="pl-4">
                         <span className="block">{PERMISSION_LABEL[p]}</span>
-                        <span className="text-[11px] text-subtle">{p}</span>
+                        <span className="text-xs text-subtle">{p}</span>
                       </TableCell>
                       {ROLES.map((r) => (
                         <TableCell key={r} className={cn("text-center", r === user.role && "bg-surface-2")}>
