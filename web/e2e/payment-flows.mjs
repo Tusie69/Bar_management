@@ -99,9 +99,14 @@ try {
         const orderedCodes = rowCodes.filter((c) => ["G02", "G04", "A3", "A2", "BAR01"].includes(c))
         assert.deepEqual(orderedCodes, ["G02", "G04", "A3", "A2", "BAR01"], `${vp.name}: unexpected sort order ${orderedCodes}`)
 
-        // Cluster G02 never renders "B11 + B12"
+        // Cluster G02 never renders "B11 + B12"; G06 (no mock lines) shows "Chưa có dữ liệu" instead of "0đ"
         const listText = await page.locator(".pay-sess-list").textContent()
         assert(!listText.includes("B11 + B12"), `${vp.name}: cluster must show G02, never B11 + B12`)
+        const g06Row = page.locator(".pay-sess", { hasText: "G06" })
+        await expect(g06Row.getByText("Chưa có dữ liệu")).toBeVisible()
+        await expect(g06Row.getByText("0đ", { exact: true })).toHaveCount(0)
+        const g06TileText = await page.locator('[aria-label^="BAR10,"]').textContent()
+        assert(!g06TileText?.includes("0k"), `${vp.name}: G06 tile without lines must hide amount`)
 
         // Notifications bell: unread dot -> open clears unread -> stays cleared until new PAID event
         const bell = page.getByRole("button", { name: /Thông báo thanh toán/ })
@@ -142,10 +147,18 @@ try {
         await expect(page.getByText("Làm tròn lên nghìn (bước cuối)")).toBeVisible()
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-s2-detail.png`) })
 
-        // NA45-03: direct URL to /cash on SERVING bill redirects back to S2 detail with prebill instruction
+        // NA45-03 & NA45-12: from /payment, opening direct URL /cash on SERVING bill redirects with replace
+        // back to S2 detail; a single browser Back returns straight to /payment without looping.
+        const a3Url = page.url()
+        await page.getByRole("button", { name: "Phiên đang mở" }).click()
+        await expect(page).toHaveURL(/\/payment$/)
         await page.goto(`${base}/payment/${a3VisitId}/cash`, { waitUntil: "networkidle" })
         await expect(page.getByRole("heading", { name: "Chi tiết Phiên" })).toBeVisible()
         await expect(page.getByText(/chưa tạo tạm tính/)).toBeVisible()
+        await page.goBack({ waitUntil: "networkidle" })
+        assert.equal(new URL(page.url()).pathname, "/payment", `${vp.name}: Back after prebill redirect should return to /payment`)
+        await page.goto(a3Url, { waitUntil: "networkidle" })
+        await expect(page.getByRole("heading", { name: "Chi tiết Phiên" })).toBeVisible()
 
         // NA45-06: scroll down on S2, click Xem tạm tính -> S3 must scroll to top so back & 80mm toggle are in viewport
         await page.evaluate(() => {
@@ -240,12 +253,13 @@ try {
     {
       const { context, page, errors } = await openRole(vp, 5, "/payment")
       try {
-        // Network error on Cash (G04), then retry with SAME button & SAME amount succeeds
+        // Network error on Cash (G04), then retry with SAME button & SAME amount reuses exact idempotency key
         await page.locator(".pay-sess", { hasText: "G04" }).click()
         await page.locator(".pay-sess", { hasText: "G04" }).click()
         await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
         await page.getByRole("button", { name: /Tiền mặt/ }).click()
         await page.getByRole("button", { name: "500.000", exact: true }).click()
+        const keysBeforeRetry = await page.evaluate(() => window.__21gamPaymentMock.getAttemptKeys().length)
         await page.evaluate(() => window.__21gamPaymentMock.setFault({ nextConfirm: "net" }))
         const confirmBtn = page.getByRole("button", { name: /Xác nhận đã nhận/ })
         await confirmBtn.click()
@@ -254,6 +268,12 @@ try {
         // Retry with the exact same button and amount (same idempotency key path)
         await confirmBtn.click()
         await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
+        const retryKeys = await page.evaluate(
+          (n) => window.__21gamPaymentMock.getAttemptKeys().slice(n),
+          keysBeforeRetry,
+        )
+        assert.equal(retryKeys.length, 2, `${vp.name}: expected 2 confirm attempts on retry, got ${retryKeys.length}`)
+        assert.equal(retryKeys[0], retryKeys[1], `${vp.name}: retry must reuse identical idempotency key`)
 
         // VERSION_CONFLICT on BAR01: must reload bill and NOT claim "already paid", then retry succeeds
         await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
@@ -328,11 +348,15 @@ try {
         assert.equal(zoomTiming.fviewDur, "0.6s", `${vp.name}: .pay-fview reduced-motion duration was ${zoomTiming.fviewDur}`)
         assert.equal(zoomTiming.fszDur, "0.6s", `${vp.name}: .pay-fsz reduced-motion duration was ${zoomTiming.fszDur}`)
 
-        // Loading skeleton + .pay-spin runs infinitely at 1.2s under reducedMotion: "reduce"
+        // Loading skeleton + .pay-spin runs infinitely at 1.2s under reducedMotion: "reduce",
+        // and pay buttons remain locked (not rendered/enabled) until bill finishes loading.
         await page.evaluate(() => window.__21gamPaymentMock.setFault({ billDelayMs: 1200 }))
         await page.locator(".pay-sess", { hasText: "A3" }).click()
         const spin = page.locator(".pay-spin").first()
         await spin.waitFor({ state: "visible" })
+        await expect(page.getByText(/Đang tải dữ liệu bill/)).toBeVisible()
+        await expect(page.getByRole("button", { name: "Xem tạm tính" })).toHaveCount(0)
+        await expect(page.getByRole("button", { name: "Chốt bill & thu tiền" })).toHaveCount(0)
         const spinTiming = await spin.evaluate((el) => {
           const cs = getComputedStyle(el)
           return { dur: cs.animationDuration, iter: cs.animationIterationCount }
@@ -342,7 +366,8 @@ try {
           { dur: "1.2s", iter: "infinite" },
           `${vp.name}: .pay-spin reduced-motion timing was ${JSON.stringify(spinTiming)}`,
         )
-        await expect(page.getByRole("heading", { name: "Chi tiết Phiên" })).toBeVisible()
+        await expect(page.getByText("Tiger Crystal")).toBeVisible()
+        await expect(page.getByRole("button", { name: "Chốt bill & thu tiền" })).toBeEnabled()
 
         assert.deepEqual(errors, [], `${vp.name} reducedMotion console errors: ${errors.join(" | ")}`)
         results.push(`PASS ${vp.name} reduced motion + loading lock`)
@@ -352,7 +377,51 @@ try {
     }
   }
 
-  // 4. Waiter PA-A flow + unified A3 visitId + S4-S7 blocked under BOTH /payment and /phucvu
+  // 4. Unified single-mock cross-role A3 flow (Cashier <-> Waiter share exact A3 visitId) + S4-S7 blocked
+  {
+    const { context, page, errors } = await openRole(VIEWPORTS[2], 5, "/payment")
+    try {
+      const a3Row = page.locator(".pay-sess", { hasText: "A3" })
+      await a3Row.click()
+      await a3Row.click()
+      await expect(page.getByText("Tiger Crystal")).toBeVisible()
+      await expect(page.getByText("231.000đ").first()).toBeVisible()
+      const cashierA3Id = new URL(page.url()).pathname.split("/")[2]
+      assert(/^\d+$/.test(cashierA3Id), `Cashier A3 visitId must be numeric, got ${cashierA3Id}`)
+
+      // Switch to Waiter in the SAME page & MockGamApi instance via TopBar AccountMenu
+      await page.getByRole("button", { name: /Tài khoản:/ }).click()
+      await page.getByRole("menuitemradio", { name: /Phục vụ 1/ }).click()
+      await expect(page).toHaveURL(/\/phucvu/)
+
+      await page.locator('[aria-label^="Bàn A3,"]').first().click()
+      await page.getByRole("button", { name: /Xem tạm tính & gọi thu ngân/ }).click()
+      const waiterA3Id = new URL(page.url()).pathname.split("/")[3]
+      assert.equal(waiterA3Id, cashierA3Id, `Waiter and Cashier A3 visitId mismatch: ${waiterA3Id} vs ${cashierA3Id}`)
+      await expect(page.getByText("Tiger Crystal")).toBeVisible()
+      await expect(page.getByText("231.000đ").first()).toBeVisible()
+
+      await page.getByRole("button", { name: "Gửi yêu cầu thanh toán" }).click()
+      await expect(page.getByRole("button", { name: "Đã gửi · chờ Thu ngân chốt" })).toBeDisabled()
+
+      // Verify the single MockGamApi dataset has exactly 1 updated A3 row with AWAITING_PAYMENT + requestedAt
+      const openA3Rows = await page.evaluate(async () => {
+        const rows = await window.__21gamPaymentMock.listOpen()
+        return rows.filter((r) => r.code === "A3")
+      })
+      assert.equal(openA3Rows.length, 1, `Expected 1 A3 open row, got ${openA3Rows.length}`)
+      assert.equal(openA3Rows[0].visitId, cashierA3Id)
+      assert.equal(openA3Rows[0].status, "AWAITING_PAYMENT")
+      assert.ok(openA3Rows[0].requestedAt, "Expected requestedAt on A3 after Waiter request")
+
+      assert.deepEqual(errors, [], `Cross-role A3 console errors: ${errors.join(" | ")}`)
+      results.push("PASS 1440 unified single-mock A3 Cashier <-> Waiter request sync")
+    } finally {
+      await context.close()
+    }
+  }
+
+  // 5. Waiter PA-A flow at 390 + S4-S7 blocked under BOTH /payment and /phucvu
   {
     const { context, page, errors } = await openRole(VIEWPORTS[0], 6, "/phucvu")
     try {
@@ -360,6 +429,15 @@ try {
       await page.getByRole("button", { name: /Xem tạm tính & gọi thu ngân/ }).click()
       const waiterVisitId = new URL(page.url()).pathname.split("/")[3]
       assert(/^\d+$/.test(waiterVisitId), `Waiter A3 visitId must be numeric, got ${waiterVisitId}`)
+
+      // NA45-12: Waiter direct ?view=preview on SERVING A3 redirects with replace to S2; single Back returns to /phucvu
+      await page.goto(`${base}/phucvu`, { waitUntil: "networkidle" })
+      await page.goto(`${base}/phucvu/phien/${waiterVisitId}/thanh-toan?view=preview`, { waitUntil: "networkidle" })
+      await expect(page.getByText(/chưa tạo tạm tính/)).toBeVisible()
+      await page.goBack({ waitUntil: "networkidle" })
+      assert.equal(new URL(page.url()).pathname, "/phucvu", "Waiter Back after prebill redirect should return to /phucvu")
+      await page.locator('[aria-label^="Bàn A3,"]').first().click()
+      await page.getByRole("button", { name: /Xem tạm tính & gọi thu ngân/ }).click()
 
       await expect(page.getByText("PHƯƠNG ÁN A · QUYỀN PHỤC VỤ")).toBeVisible()
       await expect(page.getByRole("button", { name: "Chốt bill & thu tiền" })).toHaveCount(0)

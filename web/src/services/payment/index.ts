@@ -8,7 +8,12 @@
  */
 import { ApiError, api } from "@/services"
 import type { PaymentApi } from "./contracts"
-import { mockPaymentApi, setPaymentMockFault, simulatePaymentVersionBump } from "./mock-payment"
+import {
+  getPaymentAttemptKeys,
+  mockPaymentApi,
+  setPaymentMockFault,
+  simulatePaymentVersionBump,
+} from "./mock-payment"
 
 const unimplementedHttpPaymentApi: PaymentApi = {
   listOpen: async () => {
@@ -50,6 +55,8 @@ if (api.mode === "mock" && !import.meta.env.PROD && typeof window !== "undefined
   ;(window as unknown as Record<string, unknown>).__21gamPaymentMock = {
     setFault: setPaymentMockFault,
     bumpVersion: simulatePaymentVersionBump,
+    getAttemptKeys: getPaymentAttemptKeys,
+    listOpen: () => mockPaymentApi.listOpen(),
     reset: () => (api as unknown as { reset?: () => void }).reset?.(),
   }
 }

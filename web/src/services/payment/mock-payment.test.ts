@@ -42,7 +42,11 @@ describe("mockPaymentApi", () => {
     expect(Number.isSafeInteger(Number(a3Bill.visitId))).toBe(true)
   })
 
-  it("shows honest empty lines for seeded or newly created visits without mock order lines", async () => {
+  it("shows honest empty lines and hasOrderLines=false for seeded or newly created visits without mock order lines", async () => {
+    const list = await paymentApi.listOpen()
+    expect(list.find((b) => b.code === "A3")?.hasOrderLines).toBe(true)
+    expect(list.find((b) => b.code === "G06")?.hasOrderLines).toBe(false)
+
     const g06Id = await visitIdByCode("G06")
     const g06Bill = await paymentApi.getBill(g06Id)
     expect(g06Bill.lines).toEqual([])
@@ -56,6 +60,8 @@ describe("mockPaymentApi", () => {
     const newBill = await paymentApi.getBill(String(seated.visitId))
     expect(newBill.lines).toEqual([])
     expect(newBill.dueVnd).toBe(0)
+    const afterList = await paymentApi.listOpen()
+    expect(afterList.find((b) => b.visitId === String(seated.visitId))?.hasOrderLines).toBe(false)
   })
 
   it("transitions SERVING -> AWAITING_PAYMENT on createPrebill without recording money", async () => {
@@ -164,6 +170,69 @@ describe("mockPaymentApi", () => {
 
     const ntfs = await paymentApi.listNotifications()
     expect(ntfs.filter((n) => n.type === "PAID" && n.visitId === g04Id)).toHaveLength(1)
+  })
+
+  it("treats a visit released without payment as CLOSED_UNPAID (never PAID or DUPLICATE_PAYMENT)", async () => {
+    const a3Id = await visitIdByCode("A3")
+    const a3 = await paymentApi.getBill(a3Id)
+
+    api.setSession(receptionist)
+    await api.endVisit(Number(a3Id), a3.version)
+
+    api.setSession(cashier)
+    const closed = await paymentApi.getBill(a3Id)
+    expect(closed.status).toBe("CLOSED_UNPAID")
+    expect(closed.paidAt).toBeUndefined()
+    expect(closed.paidBy).toBeUndefined()
+
+    const open = await paymentApi.listOpen()
+    expect(open.find((x) => x.visitId === a3Id)).toBeUndefined()
+
+    await expect(paymentApi.createPrebill(a3Id, closed.version)).rejects.toMatchObject({
+      code: "INVALID_STATE",
+      status: 409,
+    })
+    await expect(paymentApi.confirmCash(a3Id, closed.dueVnd, closed.version, "k-unpaid-1")).rejects.toMatchObject({
+      code: "INVALID_STATE",
+      status: 409,
+    })
+    await expect(paymentApi.confirmTransfer(a3Id, true, closed.version, "k-unpaid-2")).rejects.toMatchObject({
+      code: "INVALID_STATE",
+      status: 409,
+    })
+
+    const ntfs = await paymentApi.listNotifications()
+    expect(ntfs.some((n) => n.type === "PAID" && n.visitId === a3Id)).toBe(false)
+  })
+
+  it("does not allow dup fault to finalize a SERVING bill before prebill/version/line guards", async () => {
+    const a2Id = await visitIdByCode("A2")
+    const serving = await paymentApi.getBill(a2Id)
+    expect(serving.status).toBe("SERVING")
+
+    setPaymentMockFault({ nextConfirm: "dup" })
+    await expect(paymentApi.confirmCash(a2Id, serving.dueVnd, serving.version, "k-dup-serving")).rejects.toMatchObject({
+      code: "INVALID_STATE",
+      status: 409,
+    })
+
+    const stillServing = await paymentApi.getBill(a2Id)
+    expect(stillServing.status).toBe("SERVING")
+    const catalog = await api.getCatalog()
+    const a2TableId = catalog.tables.find((t) => t.code === "A2")!.id
+    const floor = await api.getFloorState(clock.now())
+    expect(floor.tables.find((t) => t.tableId === a2TableId)?.state).toBe("seated")
+    const ntfs = await paymentApi.listNotifications()
+    expect(ntfs.some((n) => n.type === "PAID" && n.visitId === a2Id)).toBe(false)
+
+    // After prebill, dup fault does finalize and return DUPLICATE_PAYMENT
+    const prebill = await paymentApi.createPrebill(a2Id, stillServing.version)
+    setPaymentMockFault({ nextConfirm: "dup" })
+    await expect(paymentApi.confirmTransfer(a2Id, true, prebill.version, "k-dup-after-prebill")).rejects.toMatchObject({
+      code: "DUPLICATE_PAYMENT",
+      status: 409,
+    })
+    expect((await paymentApi.getBill(a2Id)).status).toBe("PAID")
   })
 
   it("simulates network error without recording money and dup 409 fault with full finalization + table release", async () => {

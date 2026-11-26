@@ -400,6 +400,104 @@ describe("Cash, QR, Method, PAID locks, and Error states", () => {
     expect(qrHtml).toContain("Bill này đã thanh toán")
   })
 
+  it("renders CLOSED_UNPAID honestly and locks all payment actions (never says paid)", () => {
+    const unpaidBill = sampleBill({ status: "CLOSED_UNPAID" })
+    const cardHtml = renderToStaticMarkup(createElement(BillRoundsCard, { bill: unpaidBill }))
+    expect(cardHtml).toContain("Đã trả bàn · chưa thu")
+    expect(cardHtml).not.toContain("Đã thanh toán")
+
+    const detailHtml = renderToStaticMarkup(
+      createElement(DetailActionPane, {
+        bill: unpaidBill,
+        canCollect: true,
+        isWaiter: false,
+        busy: false,
+        onPreview: () => undefined,
+        onCollect: () => undefined,
+        onRequestPayment: () => undefined,
+      }),
+    )
+    expect(detailHtml).toContain("Phiên đã trả bàn nhưng chưa ghi nhận thu tiền")
+
+    for (const html of [
+      renderToStaticMarkup(
+        createElement(MethodActionPane, {
+          bill: unpaidBill,
+          lastMethod: null,
+          onSelectMethod: () => undefined,
+          onToList: () => undefined,
+        }),
+      ),
+      renderToStaticMarkup(
+        createElement(CashActionPane, {
+          bill: unpaidBill,
+          busy: false,
+          error: null,
+          onClearError: () => undefined,
+          onConfirm: () => undefined,
+          onToList: () => undefined,
+        }),
+      ),
+      renderToStaticMarkup(
+        createElement(QrActionPane, {
+          bill: unpaidBill,
+          busy: false,
+          error: null,
+          onCheckTransfer: async () => ({ found: false }),
+          onConfirmManual: () => undefined,
+          onToList: () => undefined,
+          onCopied: () => undefined,
+        }),
+      ),
+    ]) {
+      expect(html).toContain("Phiên đã trả bàn nhưng chưa thu tiền")
+      expect(html).not.toContain("Bill này đã thanh toán")
+    }
+  })
+
+  it("hides floor tile amount and marks aria-label when summary hasOrderLines is false", () => {
+    const html = renderToStaticMarkup(
+      createElement(PaymentFloorMap, {
+        sessions: [
+          {
+            visitId: "901",
+            billCode: "B0901",
+            sessionCode: "S-0901",
+            code: "G06",
+            tables: ["BAR10", "BAR11", "BAR12"],
+            clusterCode: "G06",
+            status: "SERVING",
+            openedAt: "21:14",
+            waiterName: "Phục vụ",
+            guests: 3,
+            dueVnd: 0,
+            hasOrderLines: false,
+            version: 1,
+          },
+          {
+            visitId: "902",
+            billCode: "B0902",
+            sessionCode: "S-0902",
+            code: "A3",
+            tables: ["A3"],
+            status: "SERVING",
+            openedAt: "19:04",
+            waiterName: "Minh",
+            guests: 4,
+            dueVnd: 0,
+            hasOrderLines: true,
+            version: 1,
+          },
+        ],
+        selectedId: null,
+        onSelectSession: () => undefined,
+        onClearSelection: () => undefined,
+      }),
+    )
+    expect(html).toContain("chưa có dữ liệu món")
+    expect(html).toContain("A3, đang dùng, 0đ")
+  })
+
   it("applies selected class on Method row and renders cluster receipt on Success", () => {
     const methodHtml = renderToStaticMarkup(
       createElement(MethodActionPane, {
