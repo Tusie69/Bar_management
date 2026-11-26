@@ -217,7 +217,7 @@ export function PaymentFlowWorkspace({
 
   const sessionBills = sessionBillsQuery.data
   const needsPreviewFetch =
-    step === "preview" || Boolean(sessionBills && sessionBills.bills.length === 0 && sessionBills.status !== "CLOSED_UNPAID")
+    step === "preview" || Boolean(sessionBills && sessionBills.bills.length === 0)
 
   const previewQuery = useQuery({
     queryKey: ["payment-preview", visitIdParam],
