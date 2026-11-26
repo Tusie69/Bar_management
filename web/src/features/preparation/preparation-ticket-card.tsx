@@ -1,4 +1,4 @@
-import { Clock3, GripVertical, Minus, Plus, Printer, TriangleAlert, Undo2 } from "lucide-react"
+import { Clock3, GripVertical, Minus, Plus, Printer, ReceiptText, TriangleAlert, Undo2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -47,6 +47,7 @@ export function PreparationTicketCard({
   canRetry,
   onTransition,
   onRetry,
+  onOpenBill,
   onProgress,
   onRevert,
   onDragHandlePointerDown,
@@ -60,6 +61,7 @@ export function PreparationTicketCard({
   canRetry: boolean
   onTransition: (ticket: PreparationTicket, status: PreparationTicketStatus) => void
   onRetry: (ticket: PreparationTicket) => void
+  onOpenBill?: (ticket: PreparationTicket) => void
   onProgress: (ticket: PreparationTicket, lineNo: number, doneQuantity: number, expectedVersion: number) => void
   /** Lùi một bước. Không truyền nghĩa là màn này không cho lùi. */
   onRevert?: (ticket: PreparationTicket) => void
@@ -148,7 +150,7 @@ export function PreparationTicketCard({
             {`${incompleteLineCount} dòng chưa đủ số lượng. Bạn vẫn có thể báo xong nếu đã đối chiếu thực tế.`}
           </p>
         ) : null}
-        {(action && canTransition) || canRevert || canRetry ? (
+        {(action && canTransition) || canRevert || canRetry || onOpenBill ? (
           <div className="flex min-w-0 gap-2" data-ticket-actions>
             {action && canTransition ? (
               <Button
@@ -184,6 +186,20 @@ export function PreparationTicketCard({
                 aria-label="Yêu cầu in lại"
               >
                 <Printer className="size-4" />
+              </Button>
+            ) : null}
+            {onOpenBill ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="size-11 shrink-0"
+                disabled={pending}
+                onClick={() => onOpenBill(ticket)}
+                aria-label={`Hóa đơn ${preparationTableLabel(ticket.tableCodes)}`}
+                title="Xem tạm tính & xuất hóa đơn"
+              >
+                <ReceiptText className="size-4" aria-hidden="true" />
               </Button>
             ) : null}
           </div>
