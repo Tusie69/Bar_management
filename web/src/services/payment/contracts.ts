@@ -60,6 +60,18 @@ export interface PayBillSummary {
   version: number
 }
 
+export interface PaidBillSummary {
+  billCode: string
+  visitId: string
+  code: string
+  tables: string[]
+  clusterCode?: string
+  dueVnd: number
+  method: PaymentMethod
+  paidAt: string
+  paidBy: string
+}
+
 export interface PayBill {
   billCode: string
   visitId: string
@@ -215,8 +227,10 @@ export interface PaymentApi {
   issueInvoice(visitId: string, version: number, idempotencyKey: string): Promise<PayBill>
   getSessionBills(visitId: string): Promise<SessionBills>
   requestCancel(billCode: string, reason: string): Promise<CancelRequest>
+  listMyCancelRequests?(billCode?: string): Promise<CancelRequest[]>
   listCancelRequests(): Promise<CancelRequest[]>
   decideCancel(requestId: string, approve: boolean, note?: string): Promise<CancelRequest>
   cancelPaid(billCode: string, reason: string): Promise<void>
+  listPaidBills?(): Promise<PaidBillSummary[]>
   listAudit(billCode?: string): Promise<PaymentAuditEntry[]>
 }
