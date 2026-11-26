@@ -31,7 +31,8 @@ export interface PaymentErrorState {
   confirmedAt?: string
 }
 
-function PaidClosedBanner({ onToList }: { onToList: () => void }) {
+function ClosedBillBanner({ status, onToList }: { status: PayBill["status"]; onToList: () => void }) {
+  const unpaid = status === "CLOSED_UNPAID"
   return (
     <div
       role="status"
@@ -39,8 +40,12 @@ function PaidClosedBanner({ onToList }: { onToList: () => void }) {
     >
       <Info className="mt-0.5 size-5 shrink-0 text-[var(--text-muted)]" aria-hidden />
       <span>
-        <b className="block text-sm text-[var(--ink-strong)]">Bill này đã thanh toán</b>
-        Phiên đã đóng. Mọi thao tác chọn phương thức, kiểm tra và xác nhận thu tiền đã được khóa.
+        <b className="block text-sm text-[var(--ink-strong)]">
+          {unpaid ? "Phiên đã trả bàn nhưng chưa thu tiền" : "Bill này đã thanh toán"}
+        </b>
+        {unpaid
+          ? "Lượt khách đã kết thúc mà chưa có biên nhận thu tiền. Mọi thao tác thu tiền đã được khóa."
+          : "Phiên đã đóng. Mọi thao tác chọn phương thức, kiểm tra và xác nhận thu tiền đã được khóa."}
         <span className="mt-2 flex flex-wrap gap-2">
           <button
             type="button"
@@ -149,7 +154,7 @@ export function MethodActionPane({
   onSelectMethod: (method: PaymentMethod) => void
   onToList?: () => void
 }) {
-  const isPaid = bill.status === "PAID"
+  const isClosed = bill.status === "PAID" || bill.status === "CLOSED_UNPAID"
   const dueSub =
     bill.roundingVnd > 0
       ? `Đã làm tròn lên từ ${formatVnd(bill.preRoundVnd)} · Bill ${bill.billCode}`
@@ -171,12 +176,12 @@ export function MethodActionPane({
           <span className="text-[13px] text-[var(--text-muted)]">{dueSub}</span>
         </div>
 
-        {isPaid ? <PaidClosedBanner onToList={onToList ?? (() => undefined)} /> : null}
+        {isClosed ? <ClosedBillBanner status={bill.status} onToList={onToList ?? (() => undefined)} /> : null}
 
         <div className="pay-mlist" role="group" aria-label="Chọn một phương thức thanh toán">
           <button
             type="button"
-            disabled={isPaid}
+            disabled={isClosed}
             className={cn("pay-mrow", lastMethod === "CASH" && "sel", "disabled:cursor-not-allowed disabled:opacity-50")}
             onClick={() => onSelectMethod("CASH")}
           >
@@ -199,7 +204,7 @@ export function MethodActionPane({
 
           <button
             type="button"
-            disabled={isPaid}
+            disabled={isClosed}
             className={cn("pay-mrow", lastMethod === "TRANSFER" && "sel", "disabled:cursor-not-allowed disabled:opacity-50")}
             onClick={() => onSelectMethod("TRANSFER")}
           >
@@ -260,10 +265,10 @@ export function CashActionPane({
   const [givenVnd, setGivenVnd] = useState<number | null>(null)
   const chips = useMemo(() => quickCashAmounts(bill.dueVnd), [bill.dueVnd])
   const res = useMemo(() => evaluateCashInput(bill.dueVnd, givenVnd), [givenVnd, bill.dueVnd])
-  const isPaid = bill.status === "PAID"
+  const isClosed = bill.status === "PAID" || bill.status === "CLOSED_UNPAID"
 
   const isShort = res.state === "short"
-  const canSubmit = givenVnd !== null && !isShort && !busy && !isPaid
+  const canSubmit = givenVnd !== null && !isShort && !busy && !isClosed
 
   const resMeta = (() => {
     if (res.state === "short") {
@@ -333,7 +338,7 @@ export function CashActionPane({
                 inputMode="numeric"
                 autoComplete="off"
                 placeholder="0"
-                disabled={busy || isPaid}
+                disabled={busy || isClosed}
                 aria-describedby="pay-cash-res"
                 aria-invalid={isShort}
                 value={givenVnd !== null ? formatNumberVnd(givenVnd) : ""}
@@ -362,7 +367,7 @@ export function CashActionPane({
                 <button
                   key={v}
                   type="button"
-                  disabled={busy || isPaid}
+                  disabled={busy || isClosed}
                   aria-pressed={pressed}
                   onClick={() => {
                     setGivenVnd(v)
@@ -383,7 +388,7 @@ export function CashActionPane({
         </div>
 
         <div className="grid gap-2">
-          {isPaid && error?.kind !== "dup" ? <PaidClosedBanner onToList={onToList} /> : null}
+          {isClosed && error?.kind !== "dup" ? <ClosedBillBanner status={bill.status} onToList={onToList} /> : null}
           <PaymentErrorBanner error={error} context="cash" onToList={onToList} />
 
           <div
@@ -452,15 +457,15 @@ export function QrActionPane({
   const [ack, setAck] = useState(false)
 
   const qrRef = `21GAM ${bill.billCode}`
-  const isPaid = bill.status === "PAID"
+  const isClosed = bill.status === "PAID" || bill.status === "CLOSED_UNPAID"
 
   useEffect(() => {
-    if (qrStatus === "found" || isPaid) return
+    if (qrStatus === "found" || isClosed) return
     const timer = window.setInterval(() => {
       setElapsedSec((s) => s + 1)
     }, 1000)
     return () => window.clearInterval(timer)
-  }, [isPaid, qrStatus])
+  }, [isClosed, qrStatus])
 
   const mm = String(Math.floor(elapsedSec / 60)).padStart(2, "0")
   const ss = String(elapsedSec % 60).padStart(2, "0")
@@ -489,7 +494,7 @@ export function QrActionPane({
   }[qrStatus]
 
   const handleCheck = async () => {
-    if (qrStatus === "checking" || busy || isPaid) return
+    if (qrStatus === "checking" || busy || isClosed) return
     setQrStatus("checking")
     try {
       const res = await onCheckTransfer()
@@ -570,10 +575,10 @@ export function QrActionPane({
         </div>
 
         <div className="grid gap-2">
-          {isPaid && error?.kind !== "dup" ? <PaidClosedBanner onToList={onToList} /> : null}
+          {isClosed && error?.kind !== "dup" ? <ClosedBillBanner status={bill.status} onToList={onToList} /> : null}
           <PaymentErrorBanner error={error} context="qr" onToList={onToList} />
 
-          {!isPaid && error?.kind !== "dup" ? (
+          {!isClosed && error?.kind !== "dup" ? (
             <div
               role="status"
               aria-live="polite"
@@ -597,7 +602,7 @@ export function QrActionPane({
               </span>
               <button
                 type="button"
-                disabled={qrStatus === "checking" || busy || isPaid}
+                disabled={qrStatus === "checking" || busy || isClosed}
                 onClick={() => void handleCheck()}
                 aria-label="Kiểm tra giao dịch (mô phỏng)"
                 className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-border-strong bg-surface-1 px-3 text-[13px] font-medium text-foreground cursor-pointer hover:border-foreground disabled:cursor-not-allowed disabled:opacity-50"
@@ -610,7 +615,7 @@ export function QrActionPane({
 
           <button
             type="button"
-            disabled={busy || isPaid}
+            disabled={busy || isClosed}
             onClick={() => {
               setAck(false)
               setConfirmOpen(true)
@@ -668,9 +673,9 @@ export function QrActionPane({
               </button>
               <button
                 type="button"
-                disabled={!ack || busy || isPaid}
+                disabled={!ack || busy || isClosed}
                 onClick={() => {
-                  if (!ack || isPaid) return
+                  if (!ack || isClosed) return
                   setConfirmOpen(false)
                   onConfirmManual()
                 }}

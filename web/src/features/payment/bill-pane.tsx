@@ -12,6 +12,9 @@ import {
 
 function statusPillMeta(status: PayBill["status"]): { label: string; cls: string } {
   if (status === "PAID") return { label: "Đã thanh toán", cls: "bg-[var(--st-free-tint)] text-[var(--text-muted)]" }
+  if (status === "CLOSED_UNPAID") {
+    return { label: "Đã trả bàn · chưa thu", cls: "bg-[var(--destructive-tint)] text-[var(--destructive-ink)]" }
+  }
   if (status === "AWAITING_PAYMENT") {
     return { label: "Chờ thanh toán", cls: "bg-[var(--st-pending-tint)] text-[var(--st-pending-ink)]" }
   }
@@ -209,6 +212,8 @@ export function DetailActionPane({
 }) {
   const { makingCount } = useMemo(() => countActiveLines(bill.lines), [bill.lines])
   const isPaid = bill.status === "PAID"
+  const isClosedUnpaid = bill.status === "CLOSED_UNPAID"
+  const isClosed = isPaid || isClosedUnpaid
   const isPending = bill.status === "AWAITING_PAYMENT"
   const hasLines = bill.lines.length > 0
   const dueSub =
@@ -217,11 +222,13 @@ export function DetailActionPane({
       : `Không cần làm tròn · Bill ${bill.billCode}`
   const statusNote = isPaid
     ? "Bill đã đóng"
-    : !hasLines
-      ? "Chưa có dữ liệu món (mô phỏng)"
-      : isPending
-        ? `Tạm tính lúc ${bill.pendingAt ?? "21:42"} · chưa nhận tiền`
-        : "Chưa tạo tạm tính"
+    : isClosedUnpaid
+      ? "Phiên đã trả bàn nhưng chưa ghi nhận thu tiền"
+      : !hasLines
+        ? "Chưa có dữ liệu món (mô phỏng)"
+        : isPending
+          ? `Tạm tính lúc ${bill.pendingAt ?? "21:42"} · chưa nhận tiền`
+          : "Chưa tạo tạm tính"
   const requested = Boolean(bill.requestedAt)
 
   return (
@@ -254,7 +261,7 @@ export function DetailActionPane({
         <div className="grid gap-2.5">
           <button
             type="button"
-            disabled={busy || !hasLines}
+            disabled={busy || !hasLines || isClosedUnpaid}
             onClick={onPreview}
             className="inline-flex min-h-[52px] w-full items-center justify-center gap-2 rounded-lg border border-border-strong bg-surface-1 px-5 text-[15px] font-medium cursor-pointer transition-colors hover:border-foreground disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -265,7 +272,7 @@ export function DetailActionPane({
           {canCollect ? (
             <button
               type="button"
-              disabled={isPaid || busy || !hasLines}
+              disabled={isClosed || busy || !hasLines}
               onClick={onCollect}
               className="inline-flex min-h-[60px] w-full items-center justify-center gap-2 rounded-lg bg-primary px-5 text-[17px] font-bold text-primary-foreground cursor-pointer transition-colors hover:bg-[var(--primary-hover)] disabled:cursor-not-allowed disabled:bg-surface-3 disabled:text-[var(--text-subtle)]"
             >
@@ -277,7 +284,7 @@ export function DetailActionPane({
           {!canCollect && isWaiter ? (
             <button
               type="button"
-              disabled={requested || isPaid || busy || !hasLines}
+              disabled={requested || isClosed || busy || !hasLines}
               onClick={onRequestPayment}
               className="inline-flex min-h-[60px] w-full items-center justify-center gap-2 rounded-lg bg-primary px-5 text-[17px] font-bold text-primary-foreground cursor-pointer transition-colors hover:bg-[var(--primary-hover)] disabled:cursor-not-allowed disabled:bg-surface-3 disabled:text-[var(--text-subtle)]"
             >
@@ -316,7 +323,7 @@ export function ProvisionalPreviewView({
   const qrRef = `21GAM ${bill.billCode}`
   const place = bill.clusterCode ? `${bill.code} (${bill.tables.join(", ")})` : bill.code
   const pendingAt = bill.pendingAt ?? "21:42"
-  const isPaid = bill.status === "PAID"
+  const isClosed = bill.status === "PAID" || bill.status === "CLOSED_UNPAID"
   const requested = Boolean(bill.requestedAt)
   const vatLabel = bill.vatLabel ?? PAYMENT_VAT_CONFIG.label
 
@@ -539,7 +546,7 @@ export function ProvisionalPreviewView({
               {canCollect ? (
                 <button
                   type="button"
-                  disabled={isPaid || busy}
+                  disabled={isClosed || busy}
                   onClick={onCollect}
                   className="inline-flex min-h-[60px] w-full items-center justify-center gap-2 rounded-lg bg-primary px-5 text-[17px] font-bold text-primary-foreground cursor-pointer hover:bg-[var(--primary-hover)] disabled:cursor-not-allowed disabled:bg-surface-3 disabled:text-[var(--text-subtle)]"
                 >
@@ -551,7 +558,7 @@ export function ProvisionalPreviewView({
               {!canCollect && isWaiter ? (
                 <button
                   type="button"
-                  disabled={requested || isPaid || busy}
+                  disabled={requested || isClosed || busy}
                   onClick={onRequestPayment}
                   className="inline-flex min-h-[60px] w-full items-center justify-center gap-2 rounded-lg bg-primary px-5 text-[17px] font-bold text-primary-foreground cursor-pointer hover:bg-[var(--primary-hover)] disabled:cursor-not-allowed disabled:bg-surface-3 disabled:text-[var(--text-subtle)]"
                 >

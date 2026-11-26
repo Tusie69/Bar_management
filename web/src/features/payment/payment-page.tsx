@@ -133,18 +133,25 @@ export function PaymentFlowWorkspace({
   }, [queryClient, visitIdParam])
 
   const goToStep = useCallback(
-    (nextVisitId: string, nextStep: PaymentStep, state?: { prebillNotice?: string }) => {
+    (nextVisitId: string, nextStep: PaymentStep, options?: { prebillNotice?: string; replace?: boolean }) => {
       idempotencyKeyRef.current = null
+      const navOpts =
+        options?.prebillNotice || options?.replace
+          ? {
+              ...(options.prebillNotice ? { state: { prebillNotice: options.prebillNotice } } : {}),
+              ...(options.replace ? { replace: true } : {}),
+            }
+          : undefined
       if (nextStep === "list") {
         navigate(homePath)
         return
       }
       if (homePath === "/phucvu") {
-        navigate(`/phucvu/phien/${nextVisitId}/thanh-toan${nextStep === "preview" ? "?view=preview" : ""}`, { state })
+        navigate(`/phucvu/phien/${nextVisitId}/thanh-toan${nextStep === "preview" ? "?view=preview" : ""}`, navOpts)
         return
       }
-      if (nextStep === "detail") navigate(`${homePath}/${nextVisitId}`, { state })
-      else navigate(`${homePath}/${nextVisitId}/${nextStep}`, { state })
+      if (nextStep === "detail") navigate(`${homePath}/${nextVisitId}`, navOpts)
+      else navigate(`${homePath}/${nextVisitId}/${nextStep}`, navOpts)
     },
     [homePath, navigate],
   )
@@ -187,7 +194,7 @@ export function PaymentFlowWorkspace({
 
   const handleCloseToMethod = async () => {
     const bill = billQuery.data
-    if (!bill || bill.status === "PAID" || !canCollect || inFlightRef.current) return
+    if (!bill || bill.status === "PAID" || bill.status === "CLOSED_UNPAID" || !canCollect || inFlightRef.current) return
     inFlightRef.current = true
     setBusy(true)
     try {
@@ -258,6 +265,7 @@ export function PaymentFlowWorkspace({
     if (!needsPrebillRedirect || !bill) return
     goToStep(bill.visitId, "detail", {
       prebillNotice: "Phiên đang phục vụ, chưa tạo tạm tính. Hãy bấm Xem tạm tính hoặc Chốt bill & thu tiền trước.",
+      replace: true,
     })
   }, [bill, goToStep, needsPrebillRedirect])
 
@@ -382,6 +390,7 @@ export function PaymentFlowWorkspace({
                       const isSel = selectedId === s.visitId
                       const isPend = s.status === "AWAITING_PAYMENT"
                       const isCluster = Boolean(s.clusterCode && s.tables.length > 1)
+                      const hasLines = s.hasOrderLines !== false
                       return (
                         <button
                           key={s.visitId}
@@ -424,10 +433,15 @@ export function PaymentFlowWorkspace({
                           </span>
                           <span className="grid justify-items-end">
                             <small className="text-xs text-[var(--text-muted)]">
-                              {isPend ? "Phải trả" : "Tạm tính"}
+                              {!hasLines ? "Dữ liệu món" : isPend ? "Phải trả" : "Tạm tính"}
                             </small>
-                            <b className="tnum text-lg font-extrabold tracking-[-0.02em] text-[var(--ink-strong)]">
-                              {formatVnd(s.dueVnd)}
+                            <b
+                              className={cn(
+                                "tnum font-extrabold tracking-[-0.02em]",
+                                hasLines ? "text-lg text-[var(--ink-strong)]" : "text-sm font-semibold text-[var(--text-muted)]",
+                              )}
+                            >
+                              {hasLines ? formatVnd(s.dueVnd) : "Chưa có dữ liệu"}
                             </b>
                           </span>
                         </button>
@@ -588,7 +602,11 @@ export function PaymentFlowWorkspace({
               ) : (
                 <div className="rounded-2xl border border-border bg-surface-1 p-6 text-center shadow-xs">
                   <p className="font-semibold">
-                    {bill?.status === "PAID" ? "Bill này đã được thanh toán." : "Không có biên nhận trong phiên này."}
+                    {bill?.status === "PAID"
+                      ? "Bill này đã được thanh toán."
+                      : bill?.status === "CLOSED_UNPAID"
+                        ? "Phiên đã trả bàn nhưng chưa ghi nhận thu tiền."
+                        : "Không có biên nhận trong phiên này."}
                   </p>
                   <button
                     type="button"

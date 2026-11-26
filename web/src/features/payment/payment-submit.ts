@@ -64,7 +64,7 @@ export async function submitPaymentConfirm(params: {
   } = params
   // Synchronous in-flight guard prevents duplicate submissions on fast double clicks.
   if (inFlightRef.current || busy) return null
-  if (!bill || bill.status === "PAID" || !canCollect) return null
+  if (!bill || bill.status === "PAID" || bill.status === "CLOSED_UNPAID" || !canCollect) return null
 
   inFlightRef.current = true
   setBusy(true)

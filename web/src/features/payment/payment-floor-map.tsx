@@ -442,8 +442,9 @@ export function PaymentFloorMap({
                   }
                   const isPending = session.status === "AWAITING_PAYMENT"
                   const isSelected = session.visitId === selectedId
+                  const hasLines = session.hasOrderLines !== false
                   const firstTableNormalized = normalizeTableCode(session.tables[0] ?? "")
-                  const showAmount = !spot.seat && firstTableNormalized === spot.code
+                  const showAmount = !spot.seat && hasLines && firstTableNormalized === spot.code
                   return (
                     <button
                       key={spot.code}
@@ -455,7 +456,7 @@ export function PaymentFloorMap({
                         isPending ? "pay-ft-pend" : "pay-ft-on",
                         isSelected && "pay-ft-sel",
                       )}
-                      aria-label={`${spot.code}, ${isPending ? "chờ thanh toán" : "đang dùng"}, ${formatVnd(session.dueVnd)}${session.clusterCode ? `, cụm ${session.clusterCode}` : ""}`}
+                      aria-label={`${spot.code}, ${isPending ? "chờ thanh toán" : "đang dùng"}, ${hasLines ? formatVnd(session.dueVnd) : "chưa có dữ liệu món"}${session.clusterCode ? `, cụm ${session.clusterCode}` : ""}`}
                     >
                       <b>{spot.label}</b>
                       {showAmount ? <small className="font-semibold tnum">{formatCompactVnd(session.dueVnd)}</small> : null}
