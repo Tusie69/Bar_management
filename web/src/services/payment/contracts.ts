@@ -8,7 +8,7 @@
  * Money values are always integer VND (never floating point).
  */
 
-export type VisitPayStatus = "SERVING" | "AWAITING_PAYMENT" | "PAID"
+export type VisitPayStatus = "SERVING" | "AWAITING_PAYMENT" | "PAID" | "CLOSED_UNPAID"
 export type PayLineState = "SERVED" | "MAKING" | "CANCELLED"
 export type PaymentMethod = "CASH" | "TRANSFER"
 export type PaymentNotificationType = "CANCELLED_ITEM" | "PAYMENT_REQUEST" | "AWAITING_PAYMENT" | "PAID"
@@ -40,6 +40,7 @@ export interface PayBillSummary {
   waiterName: string
   guests: number
   dueVnd: number
+  hasOrderLines?: boolean
   vatLabel?: string
   vatNote?: string
   version: number

@@ -220,6 +220,7 @@ export class MockGamApi implements GamApi, DemoControls {
   private paymentMeta = new Map<number, PaymentVisitMeta>()
   private paymentPaidLog: PaymentNotification[] = []
   private paymentIdempotency = new Map<string, { fingerprint: string; receipt: Receipt }>()
+  private paymentAttemptKeys: string[] = []
   private paymentFault: { nextConfirm?: "net" | "dup"; qrFound?: boolean; billDelayMs?: number } = {}
 
   constructor(options: { businessDayWorkerEnabled?: boolean } = {}) {
@@ -3018,6 +3019,7 @@ export class MockGamApi implements GamApi, DemoControls {
     this.initPaymentBills()
     this.paymentPaidLog = []
     this.paymentIdempotency.clear()
+    this.paymentAttemptKeys = []
     this.paymentFault = {}
     this.seq = venueOf(this.db).changeSeq
     this.emit({
@@ -3077,7 +3079,7 @@ export class MockGamApi implements GamApi, DemoControls {
     if (existing) return existing
     const created: PaymentVisitMeta = {
       billCode: `B${String(visit.id).padStart(4, "0")}`,
-      status: visit.endedAt || visit.paidMarkedAt ? "PAID" : "SERVING",
+      status: visit.paidMarkedAt ? "PAID" : visit.endedAt ? "CLOSED_UNPAID" : "SERVING",
       waiterName: "Phục vụ",
       lines: [],
       versionOffset: 0,
@@ -3102,7 +3104,8 @@ export class MockGamApi implements GamApi, DemoControls {
       ? (groupCodeFromSymbol(groupSymbolNo(this.db, alloc.groupId)) ?? undefined)
       : undefined
     const clusterCode = tables.length > 1 ? (liveGroupCode ?? meta.closedClusterCode) : undefined
-    const status: VisitPayStatus = visit.endedAt || visit.paidMarkedAt ? "PAID" : meta.status
+    const hasPaymentProof = meta.status === "PAID" || Boolean(meta.paidAt) || Boolean(visit.paidMarkedAt)
+    const status: VisitPayStatus = hasPaymentProof ? "PAID" : visit.endedAt ? "CLOSED_UNPAID" : meta.status
     const totals = calcBillTotals(meta.lines)
     const roundCount = new Set(meta.lines.map((l) => l.orderRound)).size
 
@@ -3163,6 +3166,10 @@ export class MockGamApi implements GamApi, DemoControls {
     meta.versionOffset += 1
   }
 
+  getPaymentAttemptKeys(): string[] {
+    return [...this.paymentAttemptKeys]
+  }
+
   async listPaymentOpen(): Promise<PayBillSummary[]> {
     await this.latency("q")
     this.requirePaymentRead()
@@ -3172,7 +3179,7 @@ export class MockGamApi implements GamApi, DemoControls {
       const meta = this.paymentMeta.get(visit.id)
       if (meta?.status === "PAID") continue
       const b = this.buildPayBill(visit)
-      if (b.status === "PAID") continue
+      if (b.status === "PAID" || b.status === "CLOSED_UNPAID") continue
       open.push({
         visitId: b.visitId,
         billCode: b.billCode,
@@ -3187,6 +3194,7 @@ export class MockGamApi implements GamApi, DemoControls {
         waiterName: b.waiterName,
         guests: b.guests,
         dueVnd: b.dueVnd,
+        hasOrderLines: b.lines.length > 0,
         version: b.version,
       })
     }
@@ -3209,6 +3217,9 @@ export class MockGamApi implements GamApi, DemoControls {
     const { visit, bill } = this.resolvePaymentVisit(visitId)
     if (bill.status === "PAID") {
       throw new ApiError(409, "INVALID_STATE", "Bill này đã được thanh toán.")
+    }
+    if (bill.status === "CLOSED_UNPAID") {
+      throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc (đã trả bàn) nhưng chưa ghi nhận thu tiền.")
     }
     if (bill.version !== version) {
       throw new ApiError(409, "VERSION_CONFLICT", "Bill vừa được cập nhật trên thiết bị khác.")
@@ -3238,6 +3249,9 @@ export class MockGamApi implements GamApi, DemoControls {
     const { visit, bill } = this.resolvePaymentVisit(visitId)
     if (bill.status === "PAID") {
       throw new ApiError(409, "INVALID_STATE", "Bill này đã được thanh toán.")
+    }
+    if (bill.status === "CLOSED_UNPAID") {
+      throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc (đã trả bàn) nhưng chưa ghi nhận thu tiền.")
     }
     const meta = this.ensurePaymentMeta(visit)
     const nowTime = fmtTime(this.now)
@@ -3323,6 +3337,7 @@ export class MockGamApi implements GamApi, DemoControls {
     idempotencyKey: string,
   ): Receipt {
     this.require("payment.collect")
+    this.paymentAttemptKeys.push(idempotencyKey)
     const fingerprint = `${visitId}:${method}:${manual ? 1 : 0}:${method === "CASH" ? givenVnd : 0}:${version}`
     const existing = this.paymentIdempotency.get(idempotencyKey)
     if (existing) {
@@ -3338,23 +3353,15 @@ export class MockGamApi implements GamApi, DemoControls {
     }
 
     const { visit, bill } = this.resolvePaymentVisit(visitId)
-    if (this.paymentFault.nextConfirm === "dup") {
-      this.paymentFault.nextConfirm = undefined
-      const dupAt = fmtTime(this.now)
-      if (bill.status !== "PAID") {
-        this.finalizePaidBill(visit, bill, method, "Hà · Thu ngân", dupAt)
-      }
-      throw new ApiError(409, "DUPLICATE_PAYMENT", "Bill này đã được thanh toán trên thiết bị khác", {
-        confirmedBy: "Thu ngân Hà",
-        confirmedAt: dupAt,
-      })
-    }
-
     if (bill.status === "PAID") {
+      if (this.paymentFault.nextConfirm === "dup") this.paymentFault.nextConfirm = undefined
       throw new ApiError(409, "DUPLICATE_PAYMENT", "Bill này đã được thanh toán trên thiết bị khác", {
         confirmedBy: bill.paidBy ?? "Thu ngân khác",
         confirmedAt: bill.paidAt ?? fmtTime(this.now),
       })
+    }
+    if (bill.status === "CLOSED_UNPAID") {
+      throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc (đã trả bàn) nhưng chưa ghi nhận thu tiền.")
     }
     if (bill.version !== version) {
       throw new ApiError(409, "VERSION_CONFLICT", "Bill vừa được cập nhật, vui lòng tải lại.")
@@ -3367,6 +3374,16 @@ export class MockGamApi implements GamApi, DemoControls {
     }
     if (method === "CASH" && (!Number.isSafeInteger(givenVnd) || givenVnd < bill.dueVnd)) {
       throw new ApiError(400, "VALIDATION_FAILED", "Số tiền khách đưa chưa đủ.")
+    }
+
+    if (this.paymentFault.nextConfirm === "dup") {
+      this.paymentFault.nextConfirm = undefined
+      const dupAt = fmtTime(this.now)
+      this.finalizePaidBill(visit, bill, method, "Hà · Thu ngân", dupAt)
+      throw new ApiError(409, "DUPLICATE_PAYMENT", "Bill này đã được thanh toán trên thiết bị khác", {
+        confirmedBy: "Thu ngân Hà",
+        confirmedAt: dupAt,
+      })
     }
 
     const confirmedAt = fmtTime(this.now)
@@ -3446,7 +3463,7 @@ export class MockGamApi implements GamApi, DemoControls {
           })
         }
       }
-      if (bill.status !== "PAID") {
+      if (bill.status !== "PAID" && bill.status !== "CLOSED_UNPAID") {
         if (meta.requestedAt) {
           const reqDate = meta.requestedAtDate ?? atBusinessTime(visit.businessDate, meta.requestedAt)
           items.push({
