@@ -24,6 +24,10 @@ describe("TU-42 đồng hồ Dev phía trình duyệt", () => {
   })
 
   it("hiển thị giờ Việt Nam", () => {
-    expect(vnParts(new Date("2026-11-25T16:30:00Z"))).toEqual({ time: "23:30", day: "25/11", input: "2026-11-25T23:30" })
+    expect(vnParts(new Date("2026-11-25T16:30:00Z"))).toEqual({
+      time: "23:30",
+      day: "25/11",
+      input: "2026-11-25T23:30",
+    })
   })
 })

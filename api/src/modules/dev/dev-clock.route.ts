@@ -19,6 +19,7 @@ import { getVenueShift } from '../venues/venue-shift.js'
 import { realNow } from '../../time/application-clock.js'
 import { DEV_CLOCK_PRESETS, offsetFor, parseDevClockRequest } from './dev-clock.model.js'
 import { readDevClock, saveDevClock } from './dev-clock.repository.js'
+import { parseDevScenario, resetDevData, seedDevScenario } from './dev-data.repository.js'
 
 export const devRouter: Router = Router()
 
@@ -47,5 +48,36 @@ devRouter.put(
       offsetMs: state.offsetMs, now: state.now,
     })
     response.set('Cache-Control', 'no-store').json(state)
+  },
+)
+
+/**
+ * TU-43 — dữ liệu mẫu tức thì. Cùng điều kiện với đổi giờ: chỉ SuperAdmin
+ * (`venue.configure`), chỉ trên bản Dev (router không gắn ở Production → 404),
+ * và repository còn hỏi lại MySQL tên database phải kết thúc bằng `_dev`.
+ */
+devRouter.post(
+  '/seed',
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission('venue.configure'),
+  async (request, response) => {
+    const actor = requireAuthenticatedActor(request)
+    const result = await seedDevScenario(actor, parseDevScenario(request.body as unknown))
+    await broadcastVenueEvent(actor.organizationId, actor.venueId, 'dev-data-changed', { scenario: result.scenario })
+    response.set('Cache-Control', 'no-store').json(result)
+  },
+)
+
+devRouter.post(
+  '/reset',
+  requireAuthentication,
+  requireCsrfProtection,
+  requirePermission('venue.configure'),
+  async (request, response) => {
+    const actor = requireAuthenticatedActor(request)
+    const result = await resetDevData(actor)
+    await broadcastVenueEvent(actor.organizationId, actor.venueId, 'dev-data-changed', { scenario: 'reset' })
+    response.set('Cache-Control', 'no-store').json(result)
   },
 )

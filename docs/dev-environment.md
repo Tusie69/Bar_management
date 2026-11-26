@@ -95,8 +95,9 @@ asdev git clone --branch develop https://github.com/Tusie69/Bar_management.git /
 cd /srv/21gam-dev && asdev pnpm install --frozen-lockfile
 ```
 
-> Trước khi PR TU-41 được merge vào `develop`, clone bằng
-> `--branch feature/TU-41-dev-environment`. Sau khi merge: `asdev git checkout develop && asdev git pull`.
+> Code Dev (TU-41, TU-42, TU-43) nằm ở nhánh `Hưng` cho tới khi PR `Hưng → develop`
+> được merge. Muốn dựng trước khi merge thì clone bằng `--branch Hưng`; sau khi
+> merge: `asdev git checkout develop && asdev git pull`.
 
 API:
 
@@ -110,16 +111,41 @@ asdev pnpm db:migrate
 asdev pnpm db:seed          # dữ liệu giả: khu, bàn, khách, booking mẫu (chỉ chạy được trên _dev/_test)
 ```
 
-Tài khoản đăng nhập Dev (lệnh hỏi xác nhận và mật khẩu, phải gõ tay trong
-terminal; seed tạo 9 tài khoản mẫu nhưng tất cả đều bị khoá):
+Tài khoản đăng nhập Dev cho **mọi vai** (TU-43). Trước hết đặt mật khẩu
+chung trong `.env` (≥ 12 ký tự, khác hẳn mọi mật khẩu Production; repo công
+khai nên mật khẩu không nằm trong code):
 
 ```bash
-asdev pnpm auth:bootstrap --username admin_dev --display-name "Admin Dev" \
-  --organization-id 1 --venue-id 1 --role-code OWNER
+asdev nano .env          # DEV_DEMO_PASSWORD=<mật khẩu chung của nhóm>
+asdev pnpm dev:accounts  # tạo / mở khoá / đặt lại mật khẩu cho 9 tài khoản mẫu
 ```
 
-Tạo tiếp tài khoản Lễ tân/Phục vụ… bằng màn **Tài khoản & phân quyền** trên
-Dev. Đặt tên khác Production (VD hậu tố `_dev`) để khỏi nhầm.
+| Vai | Tên đăng nhập | Cổng |
+| --- | --- | --- |
+| SuperAdmin | `superadmin_dev` | `/admin` |
+| Admin Edit | `adminedit_dev` | `/admin` |
+| Admin Read-Only (Cổ đông) | `adminview_dev` | `/admin` |
+| Lễ tân | `letan_dev` | `/letan` |
+| Phục vụ | `phucvu_dev` | `/phucvu` |
+| Bartender | `bartender_dev` | `/chebien` (hàng đợi Bar) và `/phucvu` (gọi món ở quầy) |
+| Bếp | `bep_dev` | `/chebien` |
+| Thu ngân | `thungan_dev` | `/thungan` |
+| Chăm sóc khách | `cskh_dev` | `/customer-care` |
+
+Mật khẩu của cả 9 tài khoản = `DEV_DEMO_PASSWORD`. Đổi mật khẩu chung: sửa
+`.env` rồi chạy lại `pnpm dev:accounts`. Lệnh từ chối chạy nếu không phải
+`APP_ENV=dev`. Tài khoản chỉ tồn tại trong database Dev, nên không đăng nhập
+được vào Production.
+
+Danh mục món (cần cho kịch bản có gọi món ở mục 12). File Excel danh mục
+không nằm trong repo; chép lên VPS rồi:
+
+```bash
+asdev pnpm menu:import --file=/đường/dẫn/21GAM_Danh_muc_mon_Menu_v1.0.xlsx           # chạy thử, không ghi
+asdev pnpm menu:import --file=/đường/dẫn/21GAM_Danh_muc_mon_Menu_v1.0.xlsx --apply   # ghi vào database Dev
+```
+
+(Với pnpm 11 không thêm `--` trước tham số.)
 
 Web:
 
@@ -206,14 +232,18 @@ sudo systemctl stop 21gam-api-dev
 sudo mysql -e "DROP DATABASE gam21_platform_dev;
   CREATE DATABASE gam21_platform_dev CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
 cd /srv/21gam-dev/api && asdev pnpm db:migrate && asdev pnpm db:seed
-asdev pnpm auth:bootstrap --username admin_dev --display-name "Admin Dev" \
-  --organization-id 1 --venue-id 1 --role-code OWNER
+asdev pnpm dev:accounts
+asdev pnpm menu:import --file=/đường/dẫn/21GAM_Danh_muc_mon_Menu_v1.0.xlsx --apply
 sudo systemctl start 21gam-api-dev
 ```
 
 Gõ đúng tên `gam21_platform_dev`. Grant của user `gam21dev` vẫn còn (grant gắn
-theo tên database), không cần cấp lại. Sau khi xoá, mọi tài khoản Dev khác
-cũng mất — tạo lại qua màn Tài khoản.
+theo tên database), không cần cấp lại. `pnpm dev:accounts` tạo lại đủ 9 tài
+khoản mẫu.
+
+Chỉ muốn xoá dữ liệu vận hành (đặt bàn, Phiên, đơn…) mà giữ mặt bằng, menu,
+tài khoản thì không cần mục này: bấm **Xoá sạch dữ liệu** trong bảng Đồng hồ
+Dev (mục 12).
 
 ## 9. Biến môi trường riêng của Dev
 
@@ -226,6 +256,7 @@ cũng mất — tạo lại qua màn Tài khoản.
 | | `DB_NAME` / `DB_USER` | `gam21_platform_dev` / `gam21dev` | Phải có hậu tố `_dev` |
 | | `SESSION_COOKIE_NAME` | `21gam_dev_session` | |
 | | `SESSION_CSRF_SECRET`, `PHONE_*` | sinh mới bằng `init-local-secrets.mjs` | **Không** chép từ Production |
+| | `DEV_DEMO_PASSWORD` | ≥ 12 ký tự | Mật khẩu chung của tài khoản mẫu (TU-43) |
 | `web/.env.production` | `VITE_APP_ENV` | `dev` | Bật dải băng đỏ + tiền tố `[DEV]` ở tiêu đề tab |
 | | `VITE_API_BASE_URL` | `https://dev.21gamofhanoi.com` | |
 
@@ -278,7 +309,40 @@ nhóm bị đăng xuất), giới hạn tần suất xem SĐT, bộ nhớ đệm
 
 API: `GET/PUT /api/v1/dev/clock` — xem docs/api.md mục "Dev clock (TU-42)".
 
-## 12. Khi có sự cố
+## 12. Dữ liệu mẫu tức thì (TU-43)
+
+Trong bảng **Đồng hồ Dev** (nút đỏ góc dưới trái), tài khoản SuperAdmin có
+thêm khối **Dữ liệu mẫu**:
+
+| Nút | Dựng gì |
+| --- | --- |
+| **Ca trống** | Chỉ còn mặt bằng, menu, tài khoản mẫu |
+| **Ca vắng** | ~10 tốp: 7 tốp đang ngồi (có ghế quầy Bar), 3 đặt trước sắp tới, vài đơn gọi món |
+| **Ca đông** | ~45 tốp: ~26 tốp đang ngồi gồm 1 cụm bàn ghép và 14 ghế quầy Bar; đặt trước trễ (đỏ), sắp tới (vàng), còn lâu (xanh dương); đặt trước chưa xếp bàn; 6 khách Bàn chờ; ~50 đơn gọi món, phiếu Bar/Bếp rải đủ cột Mới → Đã lấy; 1 yêu cầu huỷ món |
+| **Xoá sạch dữ liệu** | Bấm 2 lần. Xoá dữ liệu vận hành, giữ mặt bằng, menu, tài khoản |
+
+Cách dùng: chọn giờ trong ca ở Đồng hồ Dev (VD **23:30**) rồi bấm kịch bản.
+Ngoài giờ ca thì nút báo lỗi `DEV_SEED_OUTSIDE_SHIFT` và không xoá gì.
+
+- Bấm lại là **xoá cũ rồi tạo lại**, không cộng dồn.
+- Dữ liệu dựng bằng chính hàm nghiệp vụ của Lễ tân/Phục vụ/Bar (không chèn
+  SQL tay), người thao tác là tài khoản mẫu đúng vai (`letan_dev`,
+  `phucvu_dev`, `bartender_dev`, `bep_dev`).
+- Tên và SĐT là giả (đầu số `0900000xxx`); giờ theo đồng hồ giả lập.
+- Món lấy từ danh mục đã `menu:import`. Chưa nhập danh mục thì kịch bản vẫn
+  dựng bàn và khách, bỏ phần gọi món và báo rõ trong thông báo.
+- Mọi máy đang mở tự tải lại sau khi bấm. Nhật ký thao tác có dòng
+  "Tạo dữ liệu mẫu (Dev)" / "Xoá sạch dữ liệu (Dev)".
+
+An toàn: router `/api/v1/dev/*` chỉ gắn khi `APP_ENV=dev` (Production trả
+404); chỉ quyền `venue.configure` (SuperAdmin); trước khi ghi, API hỏi chính
+MySQL tên database và từ chối nếu không kết thúc bằng `_dev`. Một bảng mới do
+migration thêm mà chưa xếp loại "xoá / giữ" thì nút Xoá sạch từ chối chạy
+(test `api/test/dev-data.test.ts` bắt lỗi này từ lúc chạy test).
+
+API: `POST /api/v1/dev/seed`, `POST /api/v1/dev/reset` — xem docs/api.md.
+
+## 13. Khi có sự cố
 
 | Triệu chứng | Nhìn ở đâu |
 | --- | --- |
@@ -288,6 +352,9 @@ API: `GET/PUT /api/v1/dev/clock` — xem docs/api.md mục "Dev clock (TU-42)".
 | 502 trên Dev | `sudo systemctl status 21gam-api-dev` |
 | Không thấy dải băng đỏ | `web/.env.production` thiếu `VITE_APP_ENV=dev`, build lại web |
 | Giờ trên Dev lệch mà không ai nhớ đã đổi | Bấm nút đồng hồ góc dưới trái: dòng "… đổi lúc …" nói ai đổi; Nhật ký thao tác có dòng "Đổi giờ giả lập (Dev)". Bấm **Giờ thật** |
+| Bấm "Ca đông" báo `DEV_SEED_OUTSIDE_SHIFT` | Đồng hồ đang ngoài ca: chọn 23:30 ở Đồng hồ Dev rồi bấm lại |
+| Ca đông không có đơn món | Chưa `menu:import --apply` danh mục món (mục 4) |
+| Tài khoản mẫu không đăng nhập được | `DEV_DEMO_PASSWORD` trống hoặc chưa chạy `pnpm dev:accounts` sau khi đổi |
 | Production chậm khi Dev đang build | Bình thường trong 1–3 phút; build Dev chạy `Nice=15`, I/O `idle`. Kéo dài thì tạm `sudo systemctl stop 21gam-deploy-dev.timer` |
 
 Gỡ hẳn bản Dev: dừng và disable `21gam-deploy-dev.timer`, `21gam-api-dev`;

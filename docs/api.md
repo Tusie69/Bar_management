@@ -1346,6 +1346,26 @@ Sau một lần PUT thành công:
 **Cái gì đi theo đồng hồ giả lập:** `applicationNow()` ở API, mọi `UTC_TIMESTAMP()` / `NOW()` / `DEFAULT CURRENT_TIMESTAMP` trong SQL (qua `SET timestamp` trên từng kết nối MySQL), worker no-show và cắt ngày vận hành, `serverNow` của sơ đồ bàn, đồng hồ trên trình duyệt.
 **Cái gì giữ giờ thật:** hạn phiên đăng nhập (`expires_at`), giới hạn tần suất, TTL bộ nhớ đệm, thời điểm ghi nhật ký của chính thao tác đổi giờ.
 
+## Dev data (TU-43) — chỉ có trên bản Dev
+
+Cùng router `/api/v1/dev` (chỉ gắn khi `APP_ENV=dev`; Production trả **404**).
+
+| Method | Path | Quyền | Request | Response 200 | Lỗi |
+| ------ | ---- | ----- | ------- | ------------ | --- |
+| POST | `/dev/seed` | Session + CSRF + `venue.configure` | `{"scenario":"empty"\|"quiet"\|"busy"}` | `DevDataResult` | 400 `INVALID_DEV_SCENARIO`; 403 `PERMISSION_DENIED`; 409 `DEV_SEED_OUTSIDE_SHIFT` (đồng hồ ngoài ca), `DEV_DATABASE_REQUIRED` (database không có hậu tố `_dev`), `DEV_RESET_UNCLASSIFIED_TABLE` |
+| POST | `/dev/reset` | Session + CSRF + `venue.configure` | `{}` | `DevDataResult` (`scenario:"reset"`) | 403, 409 như trên |
+
+`DevDataResult` = `{scenario, businessDate, simulatedNow, counts:{accountsCreated, seatedParties, bookingsUpcoming, bookingsLate, bookingsUnassigned, waitlist, tableGroups, orders, cancellationRequests, menuItemsAvailable}, notes[], durationMs}`. `notes` liệt kê bước bị bỏ qua (VD chưa có danh mục món).
+
+```bash
+curl -s -b jar -H 'Origin: https://dev.21gamofhanoi.com' -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' -X POST https://dev.21gamofhanoi.com/api/v1/dev/seed -d '{"scenario":"busy"}'
+# {"scenario":"busy","businessDate":"2026-11-26","counts":{"seatedParties":26,"bookingsLate":3,"bookingsUpcoming":4,
+#  "bookingsUnassigned":4,"waitlist":6,"tableGroups":1,"orders":53,"cancellationRequests":1,...},"notes":[],"durationMs":2945}
+```
+
+Sau mỗi lần gọi thành công: dữ liệu vận hành cũ bị xoá trước (không cộng dồn), `operation_log` có dòng `DEV_DATA_SEEDED` / `DEV_DATA_RESET`, mọi máy mở `GET /tables/stream` nhận SSE `dev-data-changed`.
+
 ## Audit log (TU-35)
 
 | Method | Path                        | Permission                  | Request / response                                                                            |

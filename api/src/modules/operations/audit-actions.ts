@@ -99,6 +99,9 @@ export const AUDIT_ACTIONS: Readonly<Record<string, AuditActionInfo>> = {
 
   // TU-42: chỉ có trên bản Dev. Không thuộc nhóm lọc nào — đọc ở "Tất cả".
   DEV_CLOCK_CHANGED: { type: null, label: 'Đổi giờ giả lập (Dev)' },
+  // TU-43: chỉ có trên bản Dev.
+  DEV_DATA_SEEDED: { type: null, label: 'Tạo dữ liệu mẫu (Dev)' },
+  DEV_DATA_RESET: { type: null, label: 'Xoá sạch dữ liệu (Dev)' },
 }
 
 export interface AuditFilterDefinition {

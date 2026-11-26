@@ -37,3 +37,35 @@ export function vnParts(date: Date) {
     input: `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}T${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}`,
   }
 }
+
+/** TU-43 — POST /api/v1/dev/seed và /dev/reset. */
+export type DevScenario = "empty" | "quiet" | "busy"
+
+export const DEV_SCENARIOS: readonly { scenario: DevScenario; label: string; hint: string }[] = [
+  { scenario: "empty", label: "Ca trống", hint: "Chỉ mặt bằng, menu, tài khoản" },
+  { scenario: "quiet", label: "Ca vắng", hint: "~10 tốp" },
+  { scenario: "busy", label: "Ca đông", hint: "~45 tốp, ghép bàn, Bàn chờ, đơn món" },
+]
+
+export interface DevDataResult {
+  scenario: DevScenario | "reset"
+  businessDate: string | null
+  simulatedNow: string
+  counts: Record<string, number>
+  notes: string[]
+  durationMs: number
+}
+
+/** Câu tóm tắt ngắn cho thông báo sau khi bấm. */
+export function summarizeDevData(result: DevDataResult): string {
+  if (result.scenario === "reset") return "Đã xoá sạch dữ liệu vận hành trên Dev."
+  const c = result.counts
+  const parts = [
+    `${c.seatedParties ?? 0} tốp đang ngồi`,
+    `${(c.bookingsLate ?? 0) + (c.bookingsUpcoming ?? 0) + (c.bookingsUnassigned ?? 0)} đặt trước`,
+    `${c.waitlist ?? 0} Bàn chờ`,
+    `${c.orders ?? 0} đơn món`,
+  ]
+  const label = DEV_SCENARIOS.find((item) => item.scenario === result.scenario)?.label ?? result.scenario
+  return `${label}: ${parts.join(" · ")} (${Math.round(result.durationMs / 100) / 10} giây)`
+}

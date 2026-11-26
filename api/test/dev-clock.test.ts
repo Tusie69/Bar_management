@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
 import { offsetFor, parseDevClockRequest, presetInstant, venueLocalToInstant } from '../src/modules/dev/dev-clock.model.js'
-import {
-  applicationNow,
-  getDevClockOffsetMs,
-  mysqlSessionTimestampSql,
-  setDevClockOffsetMs,
-} from '../src/time/application-clock.js'
 
 // Giờ Việt Nam = UTC+7. 10:00 sáng 25/11/2026 = 03:00Z.
 const morning = new Date('2026-11-25T03:00:00.000Z')
@@ -53,15 +47,22 @@ describe('TU-42 giờ tự nhập', () => {
 })
 
 describe('TU-42 đồng hồ ngoài bản Dev', () => {
-  it('không đặt được độ lệch khi APP_ENV khác dev', () => {
-    // Môi trường test là APP_ENV=local.
-    expect(() => setDevClockOffsetMs(60_000)).toThrow(/APP_ENV=dev/)
-    expect(getDevClockOffsetMs()).toBe(0)
-    expect(Math.abs(applicationNow().getTime() - Date.now())).toBeLessThan(1000)
-  })
-
-  it('độ lệch 0 trả MySQL về giờ thật của nó', () => {
-    expect(mysqlSessionTimestampSql()).toBe('SET timestamp = DEFAULT')
+  // Nạp lại module với APP_ENV=local để test không phụ thuộc file api/.env của
+  // máy đang chạy (máy dựng bản Dev thật có APP_ENV=dev trong .env).
+  it('không đặt được độ lệch khi APP_ENV khác dev; độ lệch 0 trả MySQL về giờ thật', async () => {
+    const { vi } = await import('vitest')
+    vi.resetModules()
+    vi.stubEnv('APP_ENV', 'local')
+    try {
+      const clock = await import('../src/time/application-clock.js')
+      expect(() => clock.setDevClockOffsetMs(60_000)).toThrow(/APP_ENV=dev/)
+      expect(clock.getDevClockOffsetMs()).toBe(0)
+      expect(Math.abs(clock.applicationNow().getTime() - Date.now())).toBeLessThan(1000)
+      expect(clock.mysqlSessionTimestampSql()).toBe('SET timestamp = DEFAULT')
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
   })
 })
 

@@ -9,10 +9,14 @@ import { clock, httpClient } from "@/services"
 import { useSession } from "@/state/session"
 import {
   DEV_CLOCK_PRESETS,
+  DEV_SCENARIOS,
   devClockAvailable,
+  summarizeDevData,
   vnParts,
   type DevClockChange,
   type DevClockState,
+  type DevDataResult,
+  type DevScenario,
 } from "@/services/dev-clock-api"
 
 const POLL_MS = 30_000
@@ -32,6 +36,8 @@ export function DevClock() {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [custom, setCustom] = useState("")
+  // TU-43: Xoá sạch cần bấm hai lần (lần 1 đổi nút thành "Bấm lần nữa để xoá").
+  const [confirmReset, setConfirmReset] = useState(false)
   const now = useNow(1000)
   const enabled = devClockAvailable() && authStatus === "authenticated" && httpClient !== null
 
@@ -68,6 +74,8 @@ export function DevClock() {
     if (typeof EventSource !== "undefined" && httpClient) {
       stream = new EventSource(`${httpClient.root}/tables/stream`, { withCredentials: true })
       stream.addEventListener("dev-clock-changed", () => void refresh())
+      // TU-43: máy khác vừa dựng hoặc xoá dữ liệu mẫu → tải lại mọi màn.
+      stream.addEventListener("dev-data-changed", () => void queryClient.invalidateQueries())
       // Tài khoản không có quyền xem sơ đồ nhận 403: đóng hẳn, dựa vào poll,
       // để EventSource không thử lại mãi.
       stream.onerror = () => {
@@ -80,7 +88,7 @@ export function DevClock() {
       document.removeEventListener("visibilitychange", onVisible)
       stream?.close()
     }
-  }, [enabled, refresh])
+  }, [enabled, refresh, queryClient])
 
   useEffect(() => {
     // Rời bản Dev / đăng xuất: trả đồng hồ trình duyệt về giờ thật.
@@ -97,6 +105,28 @@ export function DevClock() {
       toast.error(error instanceof Error ? error.message : "Không đổi được giờ giả lập.")
     } finally {
       setBusy(false)
+    }
+  }
+
+  const runData = async (target: DevScenario | "reset") => {
+    if (!httpClient) return
+    setBusy(true)
+    try {
+      // Ca đông chạy qua toàn bộ nghiệp vụ thật (đặt bàn, gọi món, phiếu Bar/Bếp) nên
+      // có thể mất vài chục giây trên VPS; nới thời gian chờ thay vì báo lỗi giả.
+      const result =
+        target === "reset"
+          ? await httpClient.post<DevDataResult>("/dev/reset", {}, { timeoutMs: 120_000 })
+          : await httpClient.post<DevDataResult>("/dev/seed", { scenario: target }, { timeoutMs: 120_000 })
+      void queryClient.invalidateQueries()
+      toast.success(summarizeDevData(result))
+      for (const note of result.notes.slice(0, 3)) toast.info(note)
+      setOpen(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Không tạo được dữ liệu mẫu.")
+    } finally {
+      setBusy(false)
+      setConfirmReset(false)
     }
   }
 
@@ -170,9 +200,43 @@ export function DevClock() {
               >
                 Giờ thật
               </Button>
+              <div className="grid gap-2 border-t pt-3">
+                <p className="font-semibold">Dữ liệu mẫu</p>
+                <p className="text-xs text-muted-foreground">
+                  Mỗi nút xoá dữ liệu vận hành cũ rồi dựng lại theo giờ đang chọn ở trên.
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {DEV_SCENARIOS.map((item) => (
+                    <Button
+                      key={item.scenario}
+                      variant="outline"
+                      size="sm"
+                      disabled={busy}
+                      title={item.hint}
+                      className="h-11"
+                      data-testid={`dev-seed-${item.scenario}`}
+                      onClick={() => void runData(item.scenario)}
+                    >
+                      {item.label}
+                    </Button>
+                  ))}
+                </div>
+                <Button
+                  variant={confirmReset ? "destructive" : "ghost"}
+                  size="sm"
+                  className="h-11"
+                  disabled={busy}
+                  data-testid="dev-reset"
+                  onClick={() => (confirmReset ? void runData("reset") : setConfirmReset(true))}
+                >
+                  {confirmReset ? "Bấm lần nữa để xoá sạch" : "Xoá sạch dữ liệu"}
+                </Button>
+              </div>
             </>
           ) : (
-            <p className="text-xs text-muted-foreground">Chỉ tài khoản SuperAdmin đổi được giờ giả lập.</p>
+            <p className="text-xs text-muted-foreground">
+              Chỉ tài khoản SuperAdmin đổi được giờ giả lập và dữ liệu mẫu.
+            </p>
           )}
         </div>
       ) : null}
