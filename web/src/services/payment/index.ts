@@ -53,6 +53,9 @@ const unimplementedHttpPaymentApi: PaymentApi = {
   requestCancel: async () => {
     throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
   },
+  listMyCancelRequests: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
   listCancelRequests: async () => {
     throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
   },
@@ -60,6 +63,9 @@ const unimplementedHttpPaymentApi: PaymentApi = {
     throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
   },
   cancelPaid: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
+  listPaidBills: async () => {
     throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
   },
   listAudit: async () => {
