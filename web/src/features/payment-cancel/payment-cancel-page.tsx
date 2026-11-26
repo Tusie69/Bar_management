@@ -3,15 +3,11 @@ import { ArrowLeft, Lock, RefreshCw } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router"
 import type { RoleCode } from "@/domain/enums"
-import { useBusinessDate } from "@/hooks/use-data"
-import { api, clock, isApiError } from "@/services"
+import { api, clock } from "@/services"
 import {
   isPaymentAvailable,
   paymentApi,
-  type PaidBillSummary,
   type PaymentApi,
-  type PaymentAuditEntry,
-  type SessionBills,
 } from "@/services/payment"
 import { useCan, useSession } from "@/state/session"
 import { AuditPanel } from "./audit-panel"
@@ -21,8 +17,6 @@ import {
   canDirectCancelPaid,
   canReadPaymentAudit,
   collectAuditBillCodes,
-  extractPaidBillsFromSessions,
-  paidCandidatesFromVisits,
   type PaidBillCandidate,
 } from "./cancel-model"
 import { CancelQueuePanel } from "./cancel-queue-panel"
@@ -55,7 +49,6 @@ export function PaymentCancelWorkspace({
   const principal = useSession((s) => s.principal)
   const sessionCanAuditRead = useCan("audit.read")
   const sessionCanCollect = useCan("payment.collect")
-  const today = useBusinessDate()
 
   const role = accessOverride?.role ?? sessionUser.role
   const canAuditRead = accessOverride?.canAuditRead ?? sessionCanAuditRead
@@ -115,43 +108,10 @@ export function PaymentCancelWorkspace({
   })
 
   const paidBillsQuery = useQuery({
-    queryKey: ["payment-cancel-paid-bills", today, role],
+    queryKey: ["payment-cancel-paid-bills", role],
     queryFn: async (): Promise<PaidBillCandidate[]> => {
-      if (typeof payApi.listPaidBills === "function") {
-        try {
-          const rows: PaidBillSummary[] = await payApi.listPaidBills()
-          return rows
-        } catch (err) {
-          // ponytail: interim 1a680da stub throws 501 NOT_IMPLEMENTED_YET until W1 mock commit lands
-          if (!isApiError(err) || err.code !== "NOT_IMPLEMENTED_YET") throw err
-        }
-      }
-
-      // ponytail: temporary fallback until W1 merges `listPaidBills()` into nam-frontend-nhap
-      const [catalog, visits] = await Promise.all([api.getCatalog(), api.listVisits(today)])
-      const tableCodeById = new Map(catalog.tables.map((t) => [t.id, t.code]))
-
-      if (role === "RECEPTIONIST") {
-        return paidCandidatesFromVisits(visits, tableCodeById)
-      }
-
-      const candidateVisitIds = new Set<string>()
-      for (const v of visits) {
-        if (v.paidMarkedAt !== null) candidateVisitIds.add(String(v.id))
-      }
-      const auditEntries: PaymentAuditEntry[] = await payApi.listAudit()
-      for (const entry of auditEntries) {
-        if (entry.visitId) candidateVisitIds.add(entry.visitId)
-      }
-
-      const sessionResults = await Promise.allSettled(
-        [...candidateVisitIds].map((vid) => payApi.getSessionBills(vid)),
-      )
-      const sessions: SessionBills[] = []
-      for (const res of sessionResults) {
-        if (res.status === "fulfilled") sessions.push(res.value)
-      }
-      return extractPaidBillsFromSessions(sessions)
+      if (!payApi.listPaidBills) return []
+      return payApi.listPaidBills()
     },
     enabled: isPaymentAvailable && allowed && showDirectCancel,
     refetchInterval: REFRESH_INTERVAL_MS,
