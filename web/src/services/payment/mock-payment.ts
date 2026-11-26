@@ -29,15 +29,11 @@ export const mockPaymentApi: PaymentApi = {
     mockServer().issuePaymentInvoice(visitId, version, idempotencyKey),
   getSessionBills: (visitId) => mockServer().getPaymentSessionBills(visitId),
   requestCancel: (billCode, reason) => mockServer().requestPaymentCancel(billCode, reason),
-  listMyCancelRequests: async () => {
-    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
-  },
+  listMyCancelRequests: (billCode) => mockServer().listMyPaymentCancelRequests(billCode),
   listCancelRequests: () => mockServer().listPaymentCancelRequests(),
   decideCancel: (requestId, approve, note) => mockServer().decidePaymentCancel(requestId, approve, note),
   cancelPaid: (billCode, reason) => mockServer().cancelPaidBill(billCode, reason),
-  listPaidBills: async () => {
-    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
-  },
+  listPaidBills: () => mockServer().listPaidPaymentBills(),
   listAudit: (billCode) => mockServer().listPaymentAudit(billCode),
 }
 
