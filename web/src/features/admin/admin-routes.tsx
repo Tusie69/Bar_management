@@ -11,7 +11,7 @@
 import { lazy, Suspense, type ComponentType } from "react"
 import { Navigate, type RouteObject } from "react-router"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AdminGuard, AdminPageGuard } from "./admin-guard"
+import { AdminGuard, AdminLoading, AdminPageGuard } from "./admin-guard"
 import { ADMIN_HOME_PATH, ADMIN_PAGES, type AdminPage } from "./admin-pages"
 import { AdminPlaceholder } from "./admin-placeholder"
 
@@ -75,7 +75,7 @@ export const adminRoute: RouteObject = {
   path: "/admin",
   element: (
     <AdminGuard>
-      <Suspense fallback={null}>
+      <Suspense fallback={<AdminLoading />}>
         <AdminShell />
       </Suspense>
     </AdminGuard>

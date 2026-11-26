@@ -71,7 +71,7 @@ export function AdminShell() {
   const drawerRef = useRef<HTMLDivElement>(null)
   const [drawerEl, drawerCallbackRef] = useStableNodeRef<HTMLDivElement>(drawerRef)
   const [drawerOverlayEl, drawerOverlayCallbackRef] = useStableNodeRef<HTMLButtonElement>()
-  const desktopSidebarRef = useRef<HTMLDivElement>(null)
+  const desktopSidebarRef = useRef<HTMLElement>(null)
   const headerRef = useRef<HTMLElement>(null)
   const mainRef = useRef<HTMLElement>(null)
   const setTitle = useCallback((value: string | null) => setOverride(value), [])
@@ -158,13 +158,14 @@ export function AdminShell() {
           Chuyển đến nội dung chính
         </a>
         {/* Desktop ≥1024px: sidebar cố định. Dưới mức đó: drawer. */}
-        <div
+        <aside
           ref={desktopSidebarRef}
+          aria-label="Thanh bên quản trị"
           className="hidden w-[var(--adm-sidebar-w)] shrink-0 lg:block"
           data-testid="admin-sidebar"
         >
           <AdminSidebar />
-        </div>
+        </aside>
         {drawerMounted ? (
           <div
             className={`fixed inset-0 z-[var(--z-drawer)] lg:hidden ${drawerOpen ? "" : "pointer-events-none"}`}
@@ -237,7 +238,7 @@ function AdminSidebar({ onNavigate }: { onNavigate?: () => void }) {
           <span className="adm-h2 block tracking-[-0.02em] text-[var(--adm-brand-navy)]">21GAM</span>
           <span className="adm-caption block">Cổng quản trị</span>
         </div>
-        <span className="rounded-full border border-[var(--adm-border)] bg-[var(--adm-surface-sunken)] px-2 py-0.5 text-[11px] font-semibold tracking-[0.02em] text-[var(--adm-text-muted)]">
+        <span className="rounded-full border border-[var(--adm-border)] bg-[var(--adm-surface-sunken)] px-2 py-0.5 text-xs font-semibold tracking-[0.02em] text-[var(--adm-text-muted)]">
           Quản trị
         </span>
       </div>
@@ -263,7 +264,7 @@ function AdminSidebar({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
       <div className="border-t border-[var(--adm-border-subtle)] p-3" data-testid="admin-sidebar-footer">
         <div className="flex items-center gap-2.5 rounded-xl border border-[var(--adm-border-subtle)] bg-[var(--adm-surface-sunken)]/70 px-3 py-2.5">
-          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--adm-tint-blue)] text-xs font-semibold text-[var(--adm-action)]">
+          <span className="grid size-8 shrink-0 place-items-center rounded-full bg-[var(--adm-tint-blue)] text-xs font-semibold text-[var(--adm-action-active)]">
             {initials(displayName)}
           </span>
           <span className="min-w-0 leading-tight">

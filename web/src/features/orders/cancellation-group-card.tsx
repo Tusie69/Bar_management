@@ -6,11 +6,14 @@
  * duyệt phải thấy nó trước khi ngón tay chạm nút, không phải sau.
  */
 import { AlertTriangle, Check, X } from "lucide-react"
+import { useRef, useState, type RefObject } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { formatVnd } from "@/features/waiter-menu/menu-price"
 import { PREPARATION_LABEL, STATION_LABEL } from "@/features/waiter-menu/order-board-model"
+import { CancellationApproveDialog } from "./cancellation-approve-dialog"
+import { useFocusFallbackOnUnmount } from "./cancellation-focus"
 import type { CancellationGroupItem } from "./cancellation-grouping"
 
 function timeLabel(value: string): string {
@@ -24,6 +27,7 @@ export function CancellationGroupCard({
   note,
   busy,
   decided,
+  fallbackFocusRef,
   onNoteChange,
   onDecide,
 }: {
@@ -32,11 +36,20 @@ export function CancellationGroupCard({
   busy: boolean
   /** Hàng chờ đã xử lý (APPROVED/REJECTED): chỉ xem, không còn nút quyết định. */
   decided: boolean
+  fallbackFocusRef?: RefObject<HTMLElement | null>
   onNoteChange: (value: string) => void
-  onDecide: (decision: "approve" | "reject") => void
+  onDecide: (decision: "approve" | "reject") => void | Promise<unknown>
 }) {
+  const waste = group.wasteQuantity > 0
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const cardRef = useRef<HTMLLIElement>(null)
+  const approveButtonRef = useRef<HTMLButtonElement>(null)
+  const tableOrderLabel = `Đơn ${group.visitSequence} · ${group.tableCodes.length > 0 ? `Bàn ${group.tableCodes.join(" + ")}` : "—"}`
+
+  useFocusFallbackOnUnmount(cardRef, fallbackFocusRef)
+
   return (
-    <li className="grid gap-3 rounded-2xl border-2 border-border-strong bg-surface-1 p-4">
+    <li ref={cardRef} className="grid gap-3 rounded-2xl border-2 border-border-strong bg-surface-1 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="flex flex-wrap items-center gap-2 font-semibold">
@@ -50,12 +63,10 @@ export function CancellationGroupCard({
         <strong className="tnum shrink-0 text-base">{formatVnd(group.amountVnd)}</strong>
       </div>
 
-      {group.wasteQuantity > 0 ? (
+      {waste ? (
         <p className="flex items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <span>
-            {`${group.wasteQuantity} phần đã làm xong — duyệt nghĩa là ghi hao số này.`}
-          </span>
+          <span>{`${group.wasteQuantity} phần đã làm xong — duyệt nghĩa là ghi hao số này.`}</span>
         </p>
       ) : null}
 
@@ -89,18 +100,57 @@ export function CancellationGroupCard({
           <Input
             value={note}
             onChange={(event) => onNoteChange(event.target.value)}
-            placeholder="Ghi chú quyết định (không bắt buộc)"
+            placeholder="Ghi chú (không bắt buộc)"
             className="h-11"
             aria-label={`Ghi chú quyết định cho đơn ${group.visitSequence}`}
           />
           <div className="grid grid-cols-2 gap-2">
-            <Button type="button" variant="outline" className="h-11" disabled={busy} onClick={() => onDecide("reject")}>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11"
+              disabled={busy}
+              onClick={() => void Promise.resolve(onDecide("reject")).catch(() => undefined)}
+            >
               <X className="size-4" aria-hidden /> Từ chối
             </Button>
-            <Button type="button" className="h-11" disabled={busy} onClick={() => onDecide("approve")}>
+            <Button
+              ref={approveButtonRef}
+              type="button"
+              variant={waste ? "destructive" : "default"}
+              className="h-11"
+              disabled={busy}
+              onClick={() => setConfirmOpen(true)}
+            >
               <Check className="size-4" aria-hidden /> Duyệt cả đơn
             </Button>
           </div>
+          <CancellationApproveDialog
+            open={confirmOpen}
+            onOpenChange={setConfirmOpen}
+            triggerRef={approveButtonRef}
+            fallbackFocusRef={fallbackFocusRef}
+            title={waste ? "Xác nhận duyệt ghi hao cả đơn" : "Xác nhận duyệt hủy cả đơn"}
+            description={
+              waste
+                ? "Thao tác này chấp nhận hủy toàn bộ đơn và ghi hao các món đã làm xong."
+                : "Thao tác này chấp nhận hủy toàn bộ các món trong đơn."
+            }
+            waste={waste}
+            tableOrderLabel={tableOrderLabel}
+            quantityLabel={`${group.totalQuantity} phần (${group.entryCount} dòng món)`}
+            amountVnd={group.amountVnd}
+            items={group.entries.map((entry) => ({
+              key: entry.cancellationId,
+              quantity: entry.quantity,
+              itemName: entry.itemName,
+              variantDisplayName: entry.variantDisplayName,
+              amountVnd: entry.amountVnd,
+            }))}
+            wasteNoticeDetail={waste ? `${group.wasteQuantity} phần đã làm xong trong đơn này.` : undefined}
+            busy={busy}
+            onConfirm={() => onDecide("approve")}
+          />
         </>
       )}
     </li>

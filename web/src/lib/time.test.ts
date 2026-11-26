@@ -5,7 +5,7 @@ import {
   businessSlots,
   FALLBACK_BUSINESS_SHIFT,
   fmtBusinessShift,
-  fmtTime12,
+  fmtTime,
   fromVenueLocal,
   shiftHour,
   shiftHourLabels,
@@ -13,12 +13,12 @@ import {
   shiftStartHhmm,
 } from "./time"
 
-describe("fmtTime12", () => {
-  it("formats venue time as 12h", () => {
-    expect(fmtTime12(fromVenueLocal("2026-10-25", "19:15"))).toBe("7:15 PM")
-    expect(fmtTime12(fromVenueLocal("2026-10-25", "00:05"))).toBe("12:05 AM")
-    expect(fmtTime12(fromVenueLocal("2026-10-25", "12:00"))).toBe("12:00 PM")
-    expect(fmtTime12(fromVenueLocal("2026-10-25", "09:30"))).toBe("9:30 AM")
+describe("fmtTime", () => {
+  it("formats venue time as 24h HH:mm", () => {
+    expect(fmtTime(fromVenueLocal("2026-10-25", "19:15"))).toBe("19:15")
+    expect(fmtTime(fromVenueLocal("2026-10-25", "00:05"))).toBe("00:05")
+    expect(fmtTime(fromVenueLocal("2026-10-25", "12:00"))).toBe("12:00")
+    expect(fmtTime(fromVenueLocal("2026-10-25", "09:30"))).toBe("09:30")
   })
 })
 
@@ -49,13 +49,9 @@ describe("TU-38 business shift helpers", () => {
   })
 
   it("labels a timeline axis across the shift", () => {
-    expect(shiftHourLabels(overnight)).toEqual([
-      "17", "18", "19", "20", "21", "22", "23", "00", "01", "02", "03", "04",
-    ])
+    expect(shiftHourLabels(overnight)).toEqual(["17", "18", "19", "20", "21", "22", "23", "00", "01", "02", "03", "04"])
     expect(shiftHourLabels(lateOvernight)).toEqual(["18", "19", "20", "21", "22", "23", "00", "01", "02"])
-    expect(shiftHourLabels(sameDay)).toEqual([
-      "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22",
-    ])
+    expect(shiftHourLabels(sameDay)).toEqual(["11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22"])
   })
 
   it("derives the business date from the configured cutoff, not a fixed 05:00", () => {

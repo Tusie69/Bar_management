@@ -10,7 +10,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react"
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { useNavigate } from "react-router"
 import {
   AlertDialog,
@@ -30,7 +30,7 @@ import { roleCan, type Permission } from "@/domain/access"
 import { ROLE_LABEL } from "@/domain/enums"
 import type { ReservationView } from "@/domain/models"
 import { usePresenceController } from "@/lib/motion"
-import { fmtTime12 } from "@/lib/time"
+import { fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
 import { useSession } from "@/state/session"
@@ -357,7 +357,7 @@ export function AccountSheet({
                     onClose()
                   })
                 }}
-                className="h-12 w-full justify-start gap-2.5 rounded-2xl border-destructive/40 bg-[var(--destructive-tint)] px-4 text-[15px] font-semibold text-destructive hover:border-destructive/60 hover:bg-[var(--destructive-tint)]"
+                className="h-12 w-full justify-start gap-2.5 rounded-2xl border-destructive/40 bg-[var(--destructive-tint)] px-4 text-[15px] font-semibold text-[var(--st-late-ink)] hover:border-destructive/60 hover:bg-[var(--destructive-tint)]"
               >
                 <LogOut className="size-4 shrink-0" aria-hidden />
                 {loggingOut ? "Đang đăng xuất…" : "Đăng xuất"}
@@ -446,7 +446,7 @@ export function StatusDialog({ r, onClose }: { r: ReservationView | null; onClos
           </DialogTitle>
           <DialogDescription className="text-[13px] text-[var(--text-muted)]">
             {activeR
-              ? `${activeR.displayName}, ${fmtTime12(activeR.expectedAt)}, ${tableText(activeR.tableIds, m.model)}`
+              ? `${activeR.displayName}, ${fmtTime(activeR.expectedAt)}, ${tableText(activeR.tableIds, m.model)}`
               : ""}
           </DialogDescription>
         </DialogHeader>
@@ -555,6 +555,41 @@ export function ConfirmDialog({ c, onClose }: { c: Confirm | null; onClose: () =
   )
 }
 
+/** Reserves the banner row in-flow and syncs the single MobileApp Toast15 vertical offset. */
+export function ToastSlot({ className }: { className?: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const slot = ref.current
+    const shell = slot?.closest<HTMLElement>("[data-gm-shell-content]")
+    if (!slot || !shell) return
+
+    const sync = () => {
+      const top = slot.getBoundingClientRect().top - shell.getBoundingClientRect().top
+      shell.style.setProperty("--gm-toast-top", `${Math.round(top)}px`)
+    }
+    sync()
+
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(sync) : null
+    ro?.observe(slot)
+    if (slot.parentElement) ro?.observe(slot.parentElement)
+    const prevSibling = slot.parentElement?.previousElementSibling
+    if (prevSibling) ro?.observe(prevSibling)
+    ro?.observe(shell)
+
+    const scroller = slot.closest<HTMLElement>("[data-scroll]")
+    scroller?.addEventListener("scroll", sync, { passive: true })
+    return () => {
+      ro?.disconnect()
+      scroller?.removeEventListener("scroll", sync)
+    }
+  }, [])
+
+  return (
+    <div ref={ref} aria-hidden className={cn("shrink-0", className)} style={{ height: "var(--gm-toast-h, 0px)" }} />
+  )
+}
+
 /** 15': light floating banner, never blocks, keeps mounted through exit animation. */
 export function Toast15({
   r,
@@ -568,10 +603,26 @@ export function Toast15({
   const m = useM()
   const { isOpen, present, markExited } = usePresenceController({ open: Boolean(r) })
   const [cachedR, setCachedR] = useState<ReservationView | null>(r)
+  const hostRef = useRef<HTMLDivElement>(null)
 
   if (r && r !== cachedR) {
     setCachedR(r)
   }
+
+  useLayoutEffect(() => {
+    const el = hostRef.current
+    const shell = el?.closest<HTMLElement>("[data-gm-shell-content]")
+    if (!shell) return
+    const syncHeight = () => {
+      const h = el && isOpen && present ? Math.ceil(el.getBoundingClientRect().height) : 0
+      shell.style.setProperty("--gm-toast-h", `${h}px`)
+    }
+    syncHeight()
+    if (!el || !isOpen || !present || typeof ResizeObserver === "undefined") return
+    const ro = new ResizeObserver(syncHeight)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [isOpen, present, cachedR])
 
   useEffect(() => {
     if (!isOpen && present && typeof window !== "undefined") {
@@ -589,41 +640,53 @@ export function Toast15({
 
   return (
     <div
-      role={isOpen ? "status" : undefined}
-      aria-hidden={!isOpen || undefined}
-      inert={!isOpen}
-      data-state={isOpen ? "open" : "closed"}
-      onAnimationEnd={() => {
-        if (!isOpen) markExited()
-      }}
-      className="gm-toast-banner gm-glass-chrome absolute inset-x-3 top-[calc(var(--top-safe)+8px)] z-[42] flex items-center gap-2.5 rounded-2xl border border-border bg-[var(--glass)] py-2 pr-1.5 pl-3 shadow-[var(--shadow-float)] backdrop-blur-md"
+      ref={hostRef}
+      style={{ top: "var(--gm-toast-top, 0px)" }}
+      className="pointer-events-none absolute inset-x-0 z-[10] px-3 pt-1.5 pb-1"
     >
-      <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-st-late-tint text-st-late-ink">
-        <Clock className="size-[17px]" aria-hidden />
-      </span>
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="text-[14px] leading-snug font-semibold text-tx-strong">
-          {cachedR.displayName} đã trễ {m.th.late} phút
-        </span>
-        <span className="tnum truncate text-[12.5px] text-[var(--text-muted)]">
-          {cachedR.partySize} khách · {tableText(cachedR.tableIds, m.model)} · hẹn {fmtTime12(cachedR.expectedAt)}
-        </span>
-      </span>
-      <button
-        type="button"
-        onClick={onView}
-        className="gm-press h-11 shrink-0 rounded-xl px-3 text-[14px] font-semibold text-primary-ink hover:bg-primary-tint"
+      <div
+        role={isOpen ? "status" : undefined}
+        aria-hidden={!isOpen || undefined}
+        inert={!isOpen}
+        data-state={isOpen ? "open" : "closed"}
+        onAnimationEnd={() => {
+          if (!isOpen) markExited()
+        }}
+        className="gm-toast-banner pointer-events-none mx-auto flex w-full max-w-[var(--gm-max-w)] items-center gap-2.5 rounded-2xl border border-border bg-surface-1 py-2 pr-1.5 pl-3 shadow-[var(--shadow-sm)]"
       >
-        Xem
-      </button>
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label="Đóng thông báo"
-        className="gm-press grid size-11 shrink-0 place-items-center rounded-xl text-subtle hover:bg-surface-2 hover:text-tx-1"
-      >
-        <X className="size-4" aria-hidden />
-      </button>
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-st-late-tint text-st-late-ink">
+          <Clock className="size-[17px]" aria-hidden />
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="text-[14px] leading-snug font-semibold text-tx-strong">
+            {cachedR.displayName} đã trễ {m.th.late} phút
+          </span>
+          <span className="tnum truncate text-[12.5px] text-[var(--text-muted)]">
+            {cachedR.partySize} khách · {tableText(cachedR.tableIds, m.model)} · hẹn {fmtTime(cachedR.expectedAt)}
+          </span>
+        </span>
+        <button
+          type="button"
+          onClick={onView}
+          className={cn(
+            "gm-press h-11 min-w-11 shrink-0 rounded-xl px-3 text-[14px] font-semibold text-primary-ink hover:bg-primary-tint",
+            isOpen ? "pointer-events-auto" : "pointer-events-none",
+          )}
+        >
+          Xem
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Đóng thông báo"
+          className={cn(
+            "gm-press grid size-11 min-h-11 min-w-11 shrink-0 place-items-center rounded-xl text-subtle hover:bg-surface-2 hover:text-tx-1",
+            isOpen ? "pointer-events-auto" : "pointer-events-none",
+          )}
+        >
+          <X className="size-4" aria-hidden />
+        </button>
+      </div>
     </div>
   )
 }

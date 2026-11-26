@@ -9,118 +9,11 @@
 @import "@fontsource/be-vietnam-pro/500.css";
 @import "@fontsource/be-vietnam-pro/600.css";
 @import "@fontsource/be-vietnam-pro/700.css";
+@import "./admin-tokens.css";
 
 .admin-portal,
 .admin-root {
-  --adm-canvas: #f7f6f3;
-  --adm-surface: #ffffff;
-  --adm-surface-sunken: #f0eee9;
-  --adm-border: #e2dfd8;
-  --adm-text: #1a1a1a;
-  --adm-text-muted: #6e6a62;
-  --adm-text-invert: #ffffff;
-  --adm-action: #1d6fc2;
-  --adm-tint-blue: #e8f1fa;
-  --adm-tint-amber: #fdf3dc;
-  --adm-tint-red: #fbe9e9;
-  --adm-brand-navy: #102a43;
-  --adm-state-booked: #1d6fc2;
-  --adm-state-soon: #e0a106;
-  --adm-state-late: #d13b3b;
-  --adm-state-inuse: #2e9e57;
-  --adm-state-empty: #b9b4aa;
-
-  /* Derived helpers from existing admin palette via color-mix() */
-  --adm-border-subtle: color-mix(in oklab, var(--adm-border) 62%, transparent);
-  --adm-border-strong: color-mix(in oklab, var(--adm-border) 82%, var(--adm-text));
-  --adm-action-hover: color-mix(in oklab, var(--adm-action) 90%, #000);
-  --adm-action-active: color-mix(in oklab, var(--adm-action) 82%, #000);
-  --adm-tint-green: color-mix(in oklab, var(--adm-state-inuse) 12%, var(--adm-surface));
-  --adm-tint-blue-hover: color-mix(in oklab, var(--adm-action) 13%, var(--adm-surface));
-  --adm-scrim: color-mix(in oklab, var(--adm-brand-navy) 34%, transparent);
-  --adm-glass: color-mix(in oklab, var(--adm-surface) 90%, transparent);
-
-  --adm-sidebar-w: 232px;
-  --adm-header-h: 75px;
-
-  /* Bridge --admin-* tokens for NA-33 / NA-34 */
-  --admin-brand-navy: var(--adm-brand-navy);
-  --admin-text-primary: var(--adm-text);
-  --admin-text-muted: var(--adm-text-muted);
-  --admin-text-invert: var(--adm-text-invert);
-  --admin-action-blue: var(--adm-action);
-  --admin-tint-blue: var(--adm-tint-blue);
-  --admin-tint-amber: var(--adm-tint-amber);
-  --admin-tint-red: var(--adm-tint-red);
-  --admin-surface: var(--adm-surface);
-  --admin-surface-sunken: var(--adm-surface-sunken);
-  --admin-canvas: var(--adm-canvas);
-  --admin-border: var(--adm-border);
-  --admin-state-inuse: var(--adm-state-inuse);
-  --admin-state-soon: var(--adm-state-soon);
-  --admin-state-booked: var(--adm-state-booked);
-  --admin-state-late: var(--adm-state-late);
-  --admin-state-empty: var(--adm-state-empty);
-  --admin-state-soon-ink: #854d0e;
-  --admin-state-late-ink: #991b1b;
-  --admin-state-inuse-ink: #1e3a0f;
-
-  /* Bridge shared primitive tokens so components/ui/* stay light-only & unified in Admin */
-  --background: var(--adm-canvas);
-  --foreground: var(--adm-text);
-  --surface-1: var(--adm-surface);
-  --surface-2: var(--adm-surface-sunken);
-  --surface-3: color-mix(in oklab, var(--adm-surface-sunken) 85%, var(--adm-border));
-  --text-muted: var(--adm-text-muted);
-  --text-subtle: color-mix(in oklab, var(--adm-text-muted) 84%, var(--adm-surface));
-  --tx-1: var(--adm-text);
-  --tx-strong: #111827;
-  --tx-head: var(--adm-text);
-  --tx-2: #4a4741;
-  --tx-3: var(--adm-text-muted);
-  --card: var(--adm-surface);
-  --card-foreground: var(--adm-text);
-  --popover: var(--adm-surface);
-  --popover-foreground: var(--adm-text);
-  --primary: var(--adm-action);
-  --primary-foreground: var(--adm-text-invert);
-  --primary-ink: var(--adm-action);
-  --primary-tint: var(--adm-tint-blue);
-  --primary-hover: var(--adm-action-hover);
-  --primary-active: var(--adm-action-active);
-  --secondary: var(--adm-surface-sunken);
-  --secondary-foreground: var(--adm-text);
-  --muted: var(--adm-surface-sunken);
-  --muted-foreground: var(--adm-text-muted);
-  --accent: var(--adm-surface-sunken);
-  --accent-foreground: var(--adm-text);
-  --destructive: var(--adm-state-late);
-  --destructive-foreground: #ffffff;
-  --destructive-badge-bg: var(--adm-state-late);
-  --destructive-tint: var(--adm-tint-red);
-  --border: var(--adm-border);
-  --border-strong: var(--adm-border-strong);
-  --border-subtle: var(--adm-border-subtle);
-  --input: var(--adm-border-strong);
-  --ring: var(--adm-action);
-  --scrim: var(--adm-scrim);
-
-  --shadow-xs: 0 1px 2px color-mix(in oklab, var(--adm-brand-navy) 5%, transparent);
-  --shadow-sm:
-    0 1px 2px color-mix(in oklab, var(--adm-brand-navy) 5%, transparent),
-    0 4px 12px -4px color-mix(in oklab, var(--adm-brand-navy) 8%, transparent);
-  --shadow-md:
-    0 2px 6px color-mix(in oklab, var(--adm-brand-navy) 6%, transparent),
-    0 12px 28px -8px color-mix(in oklab, var(--adm-brand-navy) 13%, transparent);
-  --shadow-float:
-    0 1px 2px color-mix(in oklab, var(--adm-brand-navy) 6%, transparent),
-    0 18px 42px -12px color-mix(in oklab, var(--adm-brand-navy) 20%, transparent);
-  --shadow-drawer: 8px 0 32px -8px color-mix(in oklab, var(--adm-brand-navy) 16%, transparent);
-
-  color-scheme: light;
   font-family: "Be Vietnam Pro", "Roboto", system-ui, sans-serif;
-  font-variant-numeric: tabular-nums;
-  color: var(--adm-text);
 }
 
 .admin-portal {
@@ -246,7 +139,7 @@
 
 .admin-portal .adm-nav-item[aria-current="page"] {
   background: var(--adm-tint-blue);
-  color: var(--adm-action);
+  color: var(--adm-action-active);
   font-weight: 600;
 }
 
@@ -263,7 +156,7 @@
 
 .admin-portal .adm-nav-item[aria-current="page"]:hover {
   background: var(--adm-tint-blue-hover);
-  color: var(--adm-action);
+  color: var(--adm-action-active);
 }
 
 .admin-portal .adm-nav-item:focus-visible {
@@ -291,6 +184,9 @@
   left: 8px;
   z-index: var(--z-skip);
   transform: translateY(-220%);
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   padding: 10px 14px;
   border: 1px solid var(--adm-action);
   border-radius: var(--radius-sm);
@@ -339,14 +235,6 @@
 
   .admin-portal {
     --adm-scrim: color-mix(in oklab, var(--adm-brand-navy) 64%, transparent);
-  }
-}
-
-@media (prefers-contrast: more) {
-  .admin-portal,
-  .admin-root {
-    --adm-border: #b8b3a8;
-    --adm-text-muted: #4b473f;
   }
 }
 

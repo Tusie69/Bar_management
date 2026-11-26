@@ -17,40 +17,41 @@ import { useSession } from "@/state/session"
 import { canReadAdminPage } from "./admin-access"
 import { ADMIN_PAGES, type AdminPage } from "./admin-pages"
 import { useAdminSession } from "./use-admin-session"
+import "./admin-tokens.css"
 
 /**
  * Khung chờ giữ đúng hình học của shell thật (sidebar 232px, header 75px),
- * để lúc shell vào chỗ không có cú nhảy layout. Một spinner giữa trang
- * trống làm cả màn hình dịch một nhịp ngay khi người dùng bắt đầu đọc.
- *
- * Màu viết thẳng hex vì `admin-theme.css` đi cùng shell đã lazy-load, còn
- * cửa này nằm trong bundle chính nên chưa có token `--adm-*`.
+ * để lúc shell vào chỗ không có cú nhảy layout. Nạp sớm `admin-tokens.css`
+ * (không kéo font Be Vietnam Pro vào bundle chính) để không flash Daylight/Service.
  */
-function AdminLoading() {
+export function AdminLoading() {
   return (
     <div
-      className="flex h-dvh min-h-0 w-full overflow-hidden bg-[#f7f6f3]"
+      className="admin-portal flex h-dvh min-h-0 w-full overflow-hidden bg-[var(--adm-canvas)]"
       role="status"
       aria-live="polite"
       aria-label="Đang kiểm tra quyền quản trị"
     >
-      <div className="hidden w-[232px] shrink-0 border-r border-[#e2dfd8] bg-white lg:block" aria-hidden="true">
+      <div
+        className="hidden w-[var(--adm-sidebar-w)] shrink-0 border-r border-[var(--adm-border)] bg-[var(--adm-surface)] lg:block"
+        aria-hidden="true"
+      >
         <div className="grid gap-2 px-4 pt-6 pb-4">
-          <div className="h-6 w-24 rounded bg-[#f0eee9]" />
-          <div className="h-5 w-16 rounded bg-[#f0eee9]" />
+          <div className="h-6 w-24 rounded bg-[var(--adm-surface-sunken)]" />
+          <div className="h-5 w-16 rounded bg-[var(--adm-surface-sunken)]" />
         </div>
         <div className="grid gap-1 px-4">
           {ADMIN_PAGES.map((page) => (
-            <div key={page.path} className="h-[42px] rounded-lg bg-[#f0eee9]" />
+            <div key={page.path} className="h-[42px] rounded-lg bg-[var(--adm-surface-sunken)]" />
           ))}
         </div>
       </div>
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[75px] shrink-0 items-center gap-2 border-b border-[#e2dfd8] bg-white px-4 text-sm text-[#6e6a62] md:px-6">
+        <header className="flex h-[var(--adm-header-h)] shrink-0 items-center gap-2 border-b border-[var(--adm-border)] bg-[var(--adm-surface)] px-4 text-sm text-[var(--adm-text-muted)] md:px-6">
           <LoaderCircle className="size-5 animate-spin" /> Đang kiểm tra quyền quản trị…
         </header>
         <div className="min-h-0 flex-1 p-4 md:p-6" aria-hidden="true">
-          <div className="h-44 rounded-xl border border-[#e2dfd8] bg-white" />
+          <div className="h-44 rounded-xl border border-[var(--adm-border)] bg-[var(--adm-surface)]" />
         </div>
       </div>
     </div>
@@ -61,14 +62,17 @@ export function AdminForbidden({ message }: { message: string }) {
   const portal = useSession((state) => state.portal)
   const home = portal ? PORTAL_CONFIG[portal].home : "/floor"
   return (
-    <main className="grid min-h-dvh place-items-center bg-[#f7f6f3] p-4">
-      <section className="grid max-w-md gap-4 rounded-xl border border-[#e2dfd8] bg-white p-6 text-center">
-        <ShieldAlert className="mx-auto size-10 text-[#d13b3b]" />
+    <main className="admin-portal grid min-h-dvh place-items-center bg-[var(--adm-canvas)] p-4">
+      <section className="grid max-w-md gap-4 rounded-xl border border-[var(--adm-border)] bg-[var(--adm-surface)] p-6 text-center">
+        <ShieldAlert className="mx-auto size-10 text-[var(--adm-state-late)]" />
         <div>
-          <h1 className="text-xl font-semibold text-[#1a1a1a]">Không có quyền truy cập</h1>
-          <p className="mt-2 text-sm text-[#6e6a62]">{message}</p>
+          <h1 className="text-xl font-semibold text-[var(--adm-text)]">Không có quyền truy cập</h1>
+          <p className="mt-2 text-sm text-[var(--adm-text-muted)]">{message}</p>
         </div>
-        <Link to={home} className="text-sm font-medium text-[#1d6fc2] underline-offset-4 hover:underline">
+        <Link
+          to={home}
+          className="inline-flex min-h-11 items-center justify-center rounded-lg px-3 text-sm font-medium text-[var(--adm-action)] underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-[var(--adm-action)]"
+        >
           Về màn hình làm việc của bạn
         </Link>
       </section>

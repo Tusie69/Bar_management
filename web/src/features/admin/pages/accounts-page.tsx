@@ -18,15 +18,17 @@ import {
   LoaderCircle,
   Lock,
   LockOpen,
+  MoreHorizontal,
   Search,
   ShieldCheck,
   UserPlus,
 } from "lucide-react"
-import { useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -79,14 +81,33 @@ export default function AdminAccountsPage() {
   const [passwordTargetId, setPasswordTargetId] = useState<number | null>(null)
   const [detailTargetId, setDetailTargetId] = useState<number | null>(null)
   const dialogReturnFocusRef = useRef<HTMLElement | null>(null)
+  const menuTriggerRefs = useRef(new Map<number, HTMLButtonElement | null>())
   const switchingToPasswordRef = useRef(false)
+  const filterScrollRef = useRef<HTMLDivElement>(null)
+  const [canScrollFiltersRight, setCanScrollFiltersRight] = useState(false)
+
+  const syncFilterScrollCue = useCallback(() => {
+    const el = filterScrollRef.current
+    if (!el) return
+    setCanScrollFiltersRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 2)
+  }, [])
+
+  useEffect(() => {
+    const el = filterScrollRef.current
+    if (!el) return
+    syncFilterScrollCue()
+    if (typeof ResizeObserver === "undefined") return
+    const ro = new ResizeObserver(syncFilterScrollCue)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [syncFilterScrollCue])
 
   const openDetailDialog = (accountId: number, trigger: HTMLElement) => {
     dialogReturnFocusRef.current = trigger
     setDetailTargetId(accountId)
   }
 
-  const openPasswordDialog = (accountId: number, trigger: HTMLElement) => {
+  const openPasswordDialog = (accountId: number, trigger: HTMLElement | null) => {
     dialogReturnFocusRef.current = trigger
     setPasswordTargetId(accountId)
   }
@@ -124,7 +145,7 @@ export default function AdminAccountsPage() {
 
   return (
     <div className="grid min-w-0 gap-4" data-testid="admin-accounts-page">
-      <div data-adm-reveal className="flex flex-wrap items-center gap-2">
+      <div data-adm-reveal className="flex min-w-0 flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1 basis-full md:max-w-80 md:basis-72">
           <Search
             className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-[var(--adm-text-muted)]"
@@ -139,37 +160,52 @@ export default function AdminAccountsPage() {
             className="h-11 bg-[var(--adm-surface)] pl-10"
           />
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {ACCOUNT_FILTERS.map((filter) => {
-            const active = filter.key === filterKey
-            return (
-              <Button
-                key={filter.key}
-                type="button"
-                variant="outline"
-                disabled={filter.unsupported}
-                title={filter.unsupported ? "Vai trò Kho chưa có trong hệ thống phân quyền." : undefined}
-                aria-pressed={active}
-                onClick={() => setFilterKey(filter.key)}
-                className={
-                  active
-                    ? "border-[var(--adm-action)] bg-[var(--adm-tint-blue)] text-[var(--adm-action)] hover:bg-[var(--adm-tint-blue-hover)] hover:text-[var(--adm-action)]"
-                    : "bg-[var(--adm-surface)] text-[var(--adm-text)]"
-                }
-              >
-                <span>{filter.label}</span>
-                <span
+        <div className="relative w-full min-w-0 md:w-auto" data-scroll-right={canScrollFiltersRight ? "true" : "false"}>
+          <div
+            ref={filterScrollRef}
+            onScroll={syncFilterScrollCue}
+            role="group"
+            aria-label="Lọc theo vai trò"
+            className="no-scrollbar flex w-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pr-6 pb-1 md:w-auto md:flex-wrap md:overflow-visible md:pr-0 md:pb-0"
+          >
+            {ACCOUNT_FILTERS.map((filter) => {
+              const active = filter.key === filterKey
+              return (
+                <Button
+                  key={filter.key}
+                  type="button"
+                  variant="outline"
+                  disabled={filter.unsupported}
+                  title={filter.unsupported ? "Vai trò Kho chưa có trong hệ thống phân quyền." : undefined}
+                  aria-pressed={active}
+                  onClick={() => setFilterKey(filter.key)}
                   className={
                     active
-                      ? "rounded-full bg-[var(--adm-action)]/12 px-1.5 py-0.5 text-xs font-semibold tabular-nums"
-                      : "rounded-full bg-[var(--adm-surface-sunken)] px-1.5 py-0.5 text-xs font-medium text-[var(--adm-text-muted)] tabular-nums"
+                      ? "shrink-0 border-[var(--adm-action)] bg-[var(--adm-tint-blue)] text-[var(--adm-action-active)] hover:bg-[var(--adm-tint-blue-hover)] hover:text-[var(--adm-action-active)]"
+                      : "shrink-0 bg-[var(--adm-surface)] text-[var(--adm-text)]"
                   }
                 >
-                  {counts[filter.key] ?? 0}
-                </span>
-              </Button>
-            )
-          })}
+                  <span>{filter.label}</span>
+                  <span
+                    className={
+                      active
+                        ? "rounded-full bg-[var(--adm-action)]/12 px-1.5 py-0.5 text-xs font-semibold tabular-nums"
+                        : "rounded-full bg-[var(--adm-surface-sunken)] px-1.5 py-0.5 text-xs font-medium text-[var(--adm-text-muted)] tabular-nums"
+                    }
+                  >
+                    {counts[filter.key] ?? 0}
+                  </span>
+                </Button>
+              )
+            })}
+          </div>
+          {canScrollFiltersRight ? (
+            <span
+              aria-hidden="true"
+              data-testid="accounts-filter-scroll-cue"
+              className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-[var(--adm-canvas)] via-[var(--adm-canvas)]/80 to-transparent md:hidden"
+            />
+          ) : null}
         </div>
         <Button
           type="button"
@@ -244,7 +280,7 @@ export default function AdminAccountsPage() {
                 thành ba hàng nút, cao hơn cả hàng dữ liệu và khó bấm. Thẻ vốn được thiết kế cho
                 bề ngang hẹp nên tablet dùng thẻ là đúng chỗ.
               */}
-              <ul className="mt-4 grid gap-3 lg:hidden">
+              <ul className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-3 lg:hidden">
                 {rows.map((account) => {
                   const state = accountState(account)
                   const allowed = canActOn(actor, account) && can("user.manage")
@@ -256,12 +292,12 @@ export default function AdminAccountsPage() {
                       key={account.id}
                       className={
                         isSelected
-                          ? "grid gap-3 rounded-xl border border-[var(--adm-action)] bg-[var(--adm-tint-blue)]/45 p-3.5 shadow-xs"
-                          : "grid gap-3 rounded-xl border border-[var(--adm-border)] bg-[var(--adm-surface)] p-3.5"
+                          ? "grid min-w-0 gap-3 rounded-xl border border-[var(--adm-action)] bg-[var(--adm-tint-blue)]/45 p-3.5 shadow-xs"
+                          : "grid min-w-0 gap-3 rounded-xl border border-[var(--adm-border)] bg-[var(--adm-surface)] p-3.5"
                       }
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
+                      <div className="flex min-w-0 items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
                           <p className="adm-h3 truncate text-[var(--adm-text)]">{account.displayName}</p>
                           <p className="adm-caption truncate text-[var(--adm-text-muted)]">@{account.username}</p>
                         </div>
@@ -275,16 +311,16 @@ export default function AdminAccountsPage() {
                         </Badge>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-y border-[var(--adm-border-subtle)] py-2 text-xs text-[var(--adm-text-muted)]">
-                        <span>
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 border-y border-[var(--adm-border-subtle)] py-2 text-xs text-[var(--adm-text-muted)]">
+                        <span className="min-w-0 break-words">
                           Vai trò: <strong className="font-medium text-[var(--adm-text)]">{roleLabel(account)}</strong>
                         </span>
-                        <span>
+                        <span className="min-w-0 break-words">
                           Cổng: <code className="font-mono text-[var(--adm-text)]">{portalPath(account)}</code>
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <Button
                           type="button"
                           variant={isSelected ? "default" : "outline"}
@@ -292,8 +328,8 @@ export default function AdminAccountsPage() {
                           onClick={() => setSelectedId(account.id)}
                           className={
                             isSelected
-                              ? "w-full"
-                              : "w-full bg-[var(--adm-surface-sunken)]/70 hover:bg-[var(--adm-surface-sunken)]"
+                              ? "min-h-11 min-w-0 flex-1 basis-[120px] px-3"
+                              : "min-h-11 min-w-0 flex-1 basis-[120px] bg-[var(--adm-surface-sunken)]/70 px-3 hover:bg-[var(--adm-surface-sunken)]"
                           }
                         >
                           <ShieldCheck className="size-4" aria-hidden /> Đổi quyền
@@ -303,7 +339,7 @@ export default function AdminAccountsPage() {
                           variant="outline"
                           disabled={busy}
                           onClick={(event) => openDetailDialog(account.id, event.currentTarget)}
-                          className="w-full bg-[var(--adm-surface)]"
+                          className="min-h-11 min-w-0 flex-1 basis-[120px] bg-[var(--adm-surface)] px-3"
                         >
                           <Eye className="size-4" aria-hidden /> Xem
                         </Button>
@@ -312,7 +348,7 @@ export default function AdminAccountsPage() {
                           variant="outline"
                           disabled={!allowed || busy}
                           onClick={(event) => openPasswordDialog(account.id, event.currentTarget)}
-                          className="w-full bg-[var(--adm-surface)]"
+                          className="min-h-11 min-w-0 flex-1 basis-[120px] bg-[var(--adm-surface)] px-3"
                         >
                           <KeyRound className="size-4" aria-hidden /> Đổi mật khẩu
                         </Button>
@@ -328,7 +364,7 @@ export default function AdminAccountsPage() {
                                 : "Đã khóa tài khoản và thu hồi phiên đang đăng nhập."
                             })
                           }
-                          className="w-full bg-[var(--adm-surface)]"
+                          className="min-h-11 min-w-0 flex-1 basis-[120px] bg-[var(--adm-surface)] px-3"
                         >
                           {locked ? (
                             <>
@@ -351,11 +387,11 @@ export default function AdminAccountsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="px-2.5">Tài khoản</TableHead>
-                      <TableHead className="px-2.5">Vai trò</TableHead>
-                      <TableHead className="px-2.5">Cổng đăng nhập</TableHead>
-                      <TableHead className="px-2.5">Trạng thái</TableHead>
-                      <TableHead className="px-2.5 text-right">Thao tác</TableHead>
+                      <TableHead className="px-2">Tài khoản</TableHead>
+                      <TableHead className="px-2">Vai trò</TableHead>
+                      <TableHead className="px-2 whitespace-normal xl:whitespace-nowrap">Cổng đăng nhập</TableHead>
+                      <TableHead className="px-2">Trạng thái</TableHead>
+                      <TableHead className="px-2 text-right">Thao tác</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -367,17 +403,21 @@ export default function AdminAccountsPage() {
                       const isSelected = selected?.id === account.id
                       return (
                         <TableRow key={account.id} data-state={isSelected ? "selected" : undefined}>
-                          <TableCell className="px-2.5 whitespace-normal">
-                            <span className="block font-medium text-[var(--adm-text)]">{account.displayName}</span>
-                            <span className="adm-caption block text-[var(--adm-text-muted)]">@{account.username}</span>
+                          <TableCell className="px-2 whitespace-normal">
+                            <span className="block font-medium [overflow-wrap:anywhere] text-[var(--adm-text)]">
+                              {account.displayName}
+                            </span>
+                            <span className="adm-caption block [overflow-wrap:anywhere] text-[var(--adm-text-muted)]">
+                              @{account.username}
+                            </span>
                           </TableCell>
-                          <TableCell className="px-2.5">
+                          <TableCell className="px-2">
                             <Badge variant="secondary">{roleLabel(account)}</Badge>
                           </TableCell>
-                          <TableCell className="px-2.5 font-mono text-xs text-[var(--adm-text-muted)]">
+                          <TableCell className="px-2 font-mono text-xs text-[var(--adm-text-muted)]">
                             {portalPath(account)}
                           </TableCell>
-                          <TableCell className="px-2.5">
+                          <TableCell className="px-2">
                             <Badge className={TONE_BADGE_CLASS[state.tone]}>
                               <span
                                 aria-hidden
@@ -387,14 +427,9 @@ export default function AdminAccountsPage() {
                               {state.label}
                             </Badge>
                           </TableCell>
-                          <TableCell className="px-2.5 text-right whitespace-normal">
-                            {/*
-                              `inline-grid grid-cols-2` trong ô `whitespace-nowrap` làm trình duyệt
-                              tính min-content của cột chỉ bằng MỘT cột lưới, nên bảng cấp thiếu chỗ
-                              và cụm nút tràn khỏi mép thẻ. `flex-wrap` tính min-content đúng và tự
-                              xuống dòng theo chỗ còn lại, nên không cần đoán breakpoint nào cả.
-                            */}
-                            <div className="flex flex-wrap justify-end gap-1.5">
+                          <TableCell className="px-2 text-right whitespace-nowrap">
+                            {/* UI-51: Một hàng thao tác chính + menu "..." cho Đổi mật khẩu và Khóa/Mở khóa. */}
+                            <div className="inline-flex flex-nowrap items-center justify-end gap-1.5">
                               <Button
                                 type="button"
                                 size="sm"
@@ -415,45 +450,70 @@ export default function AdminAccountsPage() {
                               >
                                 Xem
                               </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                disabled={!allowed || busy}
-                                onClick={(event) => openPasswordDialog(account.id, event.currentTarget)}
-                                className="h-11 px-2.5 xl:h-9"
-                              >
-                                Đổi mật khẩu
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                disabled={!allowed || busy}
-                                onClick={() =>
-                                  void run(account, async () => {
-                                    await api.setAccountStatus(
-                                      account.id,
-                                      account.version,
-                                      locked ? "ACTIVE" : "DISABLED",
-                                    )
-                                    return locked
-                                      ? "Đã mở khóa tài khoản."
-                                      : "Đã khóa tài khoản và thu hồi phiên đang đăng nhập."
-                                  })
-                                }
-                                className="h-11 px-2.5 xl:h-9"
-                              >
-                                {locked ? (
-                                  <>
-                                    <LockOpen className="size-3.5" aria-hidden /> Mở khóa
-                                  </>
-                                ) : (
-                                  <>
-                                    <Lock className="size-3.5" aria-hidden /> Khóa
-                                  </>
-                                )}
-                              </Button>
+                              <DropdownMenu modal={false}>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    ref={(node) => {
+                                      menuTriggerRefs.current.set(account.id, node)
+                                    }}
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={busy}
+                                    aria-label={`Thao tác khác cho ${account.displayName}`}
+                                    data-testid={`account-actions-menu-${account.id}`}
+                                    className="size-11 p-0 xl:size-9"
+                                  >
+                                    <MoreHorizontal className="size-4" aria-hidden />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent
+                                  align="end"
+                                  className="admin-portal"
+                                  onPointerDownOutside={(event) => {
+                                    // Ngăn layer đang chạy exit animation tự đóng lại khi bấm chính nút trigger để mở lại.
+                                    if (menuTriggerRefs.current.get(account.id)?.contains(event.target as Node)) {
+                                      event.preventDefault()
+                                    }
+                                  }}
+                                >
+                                  <DropdownMenuItem
+                                    disabled={!allowed || busy}
+                                    className="min-h-11 xl:min-h-0"
+                                    onSelect={() =>
+                                      openPasswordDialog(account.id, menuTriggerRefs.current.get(account.id) ?? null)
+                                    }
+                                  >
+                                    <KeyRound className="size-4" aria-hidden /> Đổi mật khẩu
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    disabled={!allowed || busy}
+                                    className="min-h-11 xl:min-h-0"
+                                    onSelect={() =>
+                                      void run(account, async () => {
+                                        await api.setAccountStatus(
+                                          account.id,
+                                          account.version,
+                                          locked ? "ACTIVE" : "DISABLED",
+                                        )
+                                        return locked
+                                          ? "Đã mở khóa tài khoản."
+                                          : "Đã khóa tài khoản và thu hồi phiên đang đăng nhập."
+                                      })
+                                    }
+                                  >
+                                    {locked ? (
+                                      <>
+                                        <LockOpen className="size-4" aria-hidden /> Mở khóa
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Lock className="size-4" aria-hidden /> Khóa
+                                      </>
+                                    )}
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -563,7 +623,7 @@ function PermissionPanel({
 
   if (!superAdmin) {
     return (
-      <section data-adm-reveal className="adm-card grid content-start gap-2 p-5">
+      <section data-adm-reveal className="adm-card grid min-w-0 content-start gap-2 p-5">
         <h2 className="adm-h2">Quyền của tài khoản</h2>
         <p className="adm-supporting text-[var(--adm-text-muted)]">
           Chỉ SuperAdmin xem và đổi được bảng phân quyền. Tài khoản Admin dùng được mọi tính năng vận hành, nhưng không
@@ -575,7 +635,7 @@ function PermissionPanel({
 
   if (!account) {
     return (
-      <section data-adm-reveal className="adm-card grid content-start gap-2 p-5">
+      <section data-adm-reveal className="adm-card grid min-w-0 content-start gap-2 p-5">
         <h2 className="adm-h2">Quyền của tài khoản</h2>
         <p className="adm-supporting text-[var(--adm-text-muted)]">
           Chọn một tài khoản trong danh sách để xem và sửa quyền.
@@ -589,7 +649,7 @@ function PermissionPanel({
   const dirty = Object.keys(draft).length > 0
 
   return (
-    <section data-adm-reveal className="adm-card grid content-start gap-3.5 p-4 sm:p-5">
+    <section data-adm-reveal className="adm-card grid min-w-0 content-start gap-3.5 p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <h2 className="adm-h2 break-words">

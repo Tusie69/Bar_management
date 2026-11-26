@@ -147,12 +147,21 @@ export function preparationWaitAccessibleLabel(seconds: number): string {
 /** Tone của nhãn chờ và viền card. Không bao giờ chỉ dựa vào màu. */
 export const PREPARATION_WAIT_TONE_CLASS: Record<PreparationWaitTone, { chip: string; card: string }> = {
   normal: { chip: "bg-surface-2 text-foreground", card: "border-border" },
-  warning: { chip: "bg-amber-400/20 font-bold text-amber-700 dark:text-amber-300", card: "border-amber-500/60" },
+  warning: {
+    chip: "bg-amber-400/20 font-bold text-[var(--st-upcoming-ink)]",
+    card: "border-amber-500/60",
+  },
   critical: {
     chip: "bg-destructive/15 font-bold text-destructive",
     card: "border-destructive/60 ring-1 ring-destructive/30",
   },
 }
+
+/** Lớp bề mặt callout theo mục đích sử dụng (cảnh báo bộ lọc/thiếu số lượng vs ghi chú món), giữ nguyên sắc vàng. */
+export const PREPARATION_CALLOUT_CLASS = {
+  warning: "border border-amber-400/40 bg-amber-400/10",
+  note: "bg-amber-400/10",
+} as const
 
 /* ---------------- metadata đầu phiếu ---------------- */
 

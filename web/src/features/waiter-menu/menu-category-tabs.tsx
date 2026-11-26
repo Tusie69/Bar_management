@@ -13,7 +13,7 @@ export function MenuCategoryTabs({
   const visible = orderedMenuCategories(categories)
   return (
     <div
-      className="-mx-4 min-h-12 shrink-0 touch-pan-x overflow-x-auto overscroll-x-contain px-4 [scrollbar-width:none] sm:mx-0 sm:px-0"
+      className="-mx-4 min-h-12 shrink-0 touch-pan-x [scrollbar-width:none] overflow-x-auto overscroll-x-contain px-4 sm:mx-0 sm:px-0"
       role="tablist"
       aria-label="Nhóm món"
     >
@@ -55,7 +55,7 @@ function CategoryButton({
       title={title}
       onClick={onClick}
       className={cn(
-        "min-h-10 max-w-56 shrink-0 truncate rounded-full border px-4 py-2 text-sm font-medium transition-colors focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none",
+        "min-h-11 max-w-56 shrink-0 truncate rounded-lg border px-4 py-2 text-sm font-medium transition-colors focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-[0.97]",
         active
           ? "border-primary bg-primary text-primary-foreground"
           : "border-border bg-surface-1 text-tx-2 hover:border-border-strong hover:text-foreground",

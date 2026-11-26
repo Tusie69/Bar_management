@@ -1,4 +1,4 @@
-import { Check, Minus, Pencil, Plus, Users, X } from "lucide-react"
+import { Check, ChevronUp, Minus, Pencil, Plus, Users, X } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type ReactElement } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
 import type { ReceptionGuestCount } from "@/domain/models"
 import { useReceptionGuestCount, useUpdateReceptionGuestCount } from "@/hooks/use-data"
+import { useMediaQuery } from "@/hooks/use-media"
 import type { BusinessDate } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { ApiError } from "@/services/contracts"
@@ -49,11 +50,11 @@ const FIELDS: FieldMeta[] = [
 
 function StatCell({ field, value }: { field: FieldMeta; value: number }): ReactElement {
   return (
-    <div className="flex min-w-0 flex-col md:flex-row md:items-center md:justify-between md:gap-1">
+    <div className="flex min-w-0 items-center justify-between gap-1">
       <span
         data-testid={`guest-count-label-${field.key}`}
         className={cn(
-          "text-[8px] leading-[1.15] whitespace-nowrap md:text-[9.5px] md:leading-[1.2]",
+          "text-xs leading-[1.35] whitespace-nowrap",
           field.highlighted ? "font-semibold text-tx-strong" : "text-tx-2",
         )}
       >
@@ -62,7 +63,7 @@ function StatCell({ field, value }: { field: FieldMeta; value: number }): ReactE
       </span>
       <span
         data-testid={`guest-count-value-${field.key}`}
-        className="tnum shrink-0 text-[9.5px] leading-[1.15] font-bold text-tx-strong md:text-right md:text-[10px] md:leading-[1.2]"
+        className="tnum shrink-0 text-right text-xs leading-[1.35] font-bold text-tx-strong"
       >
         {value}
       </span>
@@ -74,53 +75,103 @@ export function GuestCountCard({
   businessDate,
   onOpen,
   onEdit,
+  defaultExpanded = false,
   className,
 }: {
   businessDate: BusinessDate
   onOpen?: () => void
   onEdit?: () => void
+  defaultExpanded?: boolean
   className?: string
 }): ReactElement {
   const query = useReceptionGuestCount(businessDate)
   const canEdit = useCan("reservation.update")
+  const isWide = useMediaQuery("(min-width: 768px)")
+  const [phoneExpanded, setPhoneExpanded] = useState(defaultExpanded)
+  const toggleRef = useRef<HTMLButtonElement>(null)
+  const collapseRef = useRef<HTMLButtonElement>(null)
+  const expanded = isWide || phoneExpanded
   const count = query.data ?? emptyCount(businessDate)
-  const shell = "rounded-xl border border-border bg-surface-1/92 shadow-sm backdrop-blur-md"
+  const shell = "rounded-xl border border-border bg-surface-1 shadow-xs"
+
+  if (!expanded) {
+    return (
+      <div data-testid="guest-count-card" className={cn(className)}>
+        <button
+          ref={toggleRef}
+          type="button"
+          onClick={() => {
+            setPhoneExpanded(true)
+            window.requestAnimationFrame(() => collapseRef.current?.focus({ preventScroll: true }))
+          }}
+          aria-expanded={false}
+          aria-label={`Đếm khách, ${count.arrivedTotal} đã tới. Chạm để mở rộng`}
+          data-testid="guest-count-toggle"
+          className={cn(
+            shell,
+            "gm-press inline-flex min-h-[44px] items-center gap-1.5 px-2.5 py-1 text-left text-xs text-tx-strong",
+          )}
+        >
+          <Users className="size-3.5 shrink-0" aria-hidden />
+          <span className="flex flex-col leading-[1.2]">
+            <span className="font-semibold whitespace-nowrap">Đếm khách</span>
+            <span className="tnum font-bold whitespace-nowrap text-tx-2">{count.arrivedTotal} đã tới</span>
+          </span>
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div
       data-testid="guest-count-card"
       className={cn(
         shell,
-        "flex w-[144px] flex-col gap-0.5 px-1.5 py-1 text-left md:w-[244px] md:gap-1 md:px-2.5 md:py-1.5",
+        "flex w-[268px] max-w-[calc(100vw-16px)] flex-col gap-1 px-2.5 py-1.5 text-left md:w-[296px] md:px-3 md:py-2",
         className,
       )}
     >
       <div className="flex items-center justify-between gap-1">
-        <span className="inline-flex items-center gap-1 whitespace-nowrap">
-          <Users className="size-3 shrink-0" aria-hidden />
-          <span className="text-[10px] leading-tight font-bold whitespace-nowrap text-tx-strong md:text-[11px]">
-            Đếm khách
-          </span>
+        <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+          <Users className="size-3.5 shrink-0" aria-hidden />
+          <span className="text-xs leading-tight font-bold whitespace-nowrap text-tx-strong">Đếm khách</span>
         </span>
-        {canEdit ? (
-          <button
-            type="button"
-            onClick={onEdit ?? onOpen}
-            aria-label="Sửa bộ đếm khách"
-            title="Sửa"
-            className="relative inline-flex h-4 shrink-0 items-center gap-0.5 rounded-sm px-1 text-[9px] font-semibold text-tx-2 transition-colors hover:bg-surface-2 hover:text-tx-strong focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:outline-none active:scale-95 md:h-5 [@media(pointer:coarse)]:after:absolute [@media(pointer:coarse)]:after:top-1/2 [@media(pointer:coarse)]:after:left-1/2 [@media(pointer:coarse)]:after:min-h-[44px] [@media(pointer:coarse)]:after:min-w-[44px] [@media(pointer:coarse)]:after:-translate-x-1/2 [@media(pointer:coarse)]:after:-translate-y-1/2"
-          >
-            <Pencil className="size-2.5" aria-hidden />
-            Sửa
-          </button>
-        ) : null}
+        <div className="flex items-center gap-1">
+          {canEdit ? (
+            <button
+              type="button"
+              onClick={onEdit ?? onOpen}
+              aria-label="Sửa bộ đếm khách"
+              title="Sửa"
+              className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center gap-1 rounded-lg px-2 text-xs font-semibold text-tx-2 transition-colors hover:bg-surface-2 hover:text-tx-strong focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:outline-none active:scale-95"
+            >
+              <Pencil className="size-3" aria-hidden />
+              Sửa
+            </button>
+          ) : null}
+          {!isWide ? (
+            <button
+              ref={collapseRef}
+              type="button"
+              onClick={() => {
+                setPhoneExpanded(false)
+                window.requestAnimationFrame(() => toggleRef.current?.focus({ preventScroll: true }))
+              }}
+              aria-label="Thu gọn đếm khách"
+              data-testid="guest-count-collapse"
+              className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-lg text-tx-2 transition-colors hover:bg-surface-2 hover:text-tx-strong focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:outline-none active:scale-95"
+            >
+              <ChevronUp className="size-4" aria-hidden />
+            </button>
+          ) : null}
+        </div>
       </div>
       <button
         type="button"
         onClick={onOpen}
-        className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-left active:scale-[0.98] md:gap-x-3 md:gap-y-1"
-        aria-label={`Đếm khách. Trước 21:30 ${count.arrivedBefore}, sau 21:30 ${count.arrivedAfter}, tổng đã tới ${count.arrivedTotal}, tổng bàn đặt ${count.bookedTables}, tổng khách đặt ${count.bookedGuests}, đã từng đặt bàn ${count.returningGuests}.`}
+        className="grid min-h-[44px] grid-cols-2 gap-x-2.5 gap-y-1 text-left active:scale-[0.98] md:gap-x-3"
       >
+        <span className="sr-only">Đếm khách chi tiết. Chạm để mở bảng: </span>
         {FIELDS.map((field) => (
           <StatCell key={field.key} field={field} value={count[field.key]} />
         ))}
@@ -217,7 +268,7 @@ export function GuestCountSheetPanel({
                     if (/^\d*$/.test(next)) onDraftChange(field.key, next)
                   }}
                   // Đã có hai nút − + nên giấu mũi tên tăng giảm mặc định của trình duyệt.
-                  className="tnum h-11 min-w-0 flex-1 text-left text-base font-bold text-tx-strong [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  className="tnum h-11 min-w-0 flex-1 [appearance:textfield] text-left text-base font-bold text-tx-strong [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 />
                 <Button
                   type="button"

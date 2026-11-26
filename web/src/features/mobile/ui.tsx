@@ -3,7 +3,7 @@ import { useEffect, useRef, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { SOURCE_LABEL } from "@/domain/enums"
 import type { ReservationView } from "@/domain/models"
-import { fmtTime12 } from "@/lib/time"
+import { fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { useUndoRedo, useUndoRedoShortcuts } from "@/features/operations/use-undo-redo"
 import { useMobileActions } from "./actions"
@@ -245,7 +245,7 @@ export function EmptyBox({
 }
 
 export function NowMarker({ now }: { now: Date }) {
-  const t = fmtTime12(now)
+  const t = fmtTime(now)
   return (
     <div role="separator" aria-label={`Bây giờ ${t}`} className="flex items-center gap-2.5 pt-2.5 pb-0.5">
       <span className="tnum inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1 text-xs font-semibold whitespace-nowrap text-primary-foreground shadow-[var(--shadow-xs)]">
@@ -305,41 +305,40 @@ export function BookingCard({ r, actions }: { r: ReservationView; actions?: bool
   const open = () => m.openDetail(r.id, r.businessDate)
   return (
     <article
-      role="button"
-      tabIndex={0}
-      onClick={open}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault()
-          open()
-        }
-      }}
-      aria-label={`${fmtTime12(r.expectedAt)} ${r.displayName}, ${r.partySize} khách, ${chip}. Mở chi tiết`}
       className={cn(
         card,
-        "gm-press-card flex cursor-pointer flex-col gap-2 p-4 outline-none hover:border-border-strong",
+        "relative flex flex-col gap-2 p-4 hover:border-border-strong",
         (r.status === "CANCELLED" || r.status === "NO_SHOW") && "opacity-70",
       )}
       style={isNoShowWarn ? { borderColor: "color-mix(in oklab, var(--st-noshow) 65%, var(--border))" } : undefined}
     >
       <div className="flex items-center gap-2.5">
-        <span
-          className={cn(
-            "tnum shrink-0 rounded-lg px-2 py-1 text-[13px] font-semibold",
-            dim ? "bg-surface-2 text-subtle" : "bg-surface-2 text-tx-strong",
-          )}
+        <button
+          type="button"
+          onClick={open}
+          aria-label={`${fmtTime(r.expectedAt)} ${r.displayName}, ${r.partySize} khách, ${chip}. Mở chi tiết`}
+          className="gm-press-card flex min-h-11 min-w-0 flex-1 items-center gap-2.5 rounded-lg text-left outline-none after:absolute after:inset-0 after:rounded-2xl after:content-[''] focus-visible:ring-[3px] focus-visible:ring-primary/25"
         >
-          {fmtTime12(r.expectedAt)}
-        </span>
-        <span
-          className={cn(
-            "min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.01em]",
-            dim ? "text-tx-2" : "text-tx-strong",
-          )}
-        >
-          {r.displayName}
-        </span>
-        <StatusChip r={r} onClick={() => m.openStatus(r)} />
+          <span
+            className={cn(
+              "tnum shrink-0 rounded-lg px-2 py-1 text-[13px] font-semibold",
+              dim ? "bg-surface-2 text-subtle" : "bg-surface-2 text-tx-strong",
+            )}
+          >
+            {fmtTime(r.expectedAt)}
+          </span>
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.01em]",
+              dim ? "text-tx-2" : "text-tx-strong",
+            )}
+          >
+            {r.displayName}
+          </span>
+        </button>
+        <div className="relative z-10 shrink-0">
+          <StatusChip r={r} onClick={() => m.openStatus(r)} />
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-tx-2">
@@ -389,7 +388,7 @@ export function BookingCard({ r, actions }: { r: ReservationView; actions?: bool
       ) : null}
 
       {actions && r.status === "BOOKED" ? (
-        <div className="flex gap-2 pt-1">
+        <div className="relative z-10 flex gap-2 pt-1">
           <Button
             type="button"
             variant={unassigned ? "outline" : "default"}

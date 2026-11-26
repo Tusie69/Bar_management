@@ -5,7 +5,7 @@
  * giờ quán (UTC+7), không phải giờ của máy đang mở trang.
  */
 import { describe, expect, it } from "vitest"
-import { fmtAuditTime } from "./audit-format"
+import { fmtAuditDetail, fmtAuditTime } from "./audit-format"
 
 describe("giờ trên dòng nhật ký", () => {
   it("đổi UTC sang giờ quán", () => {
@@ -24,5 +24,32 @@ describe("giờ trên dòng nhật ký", () => {
 
   it("giá trị hỏng không làm vỡ bảng", () => {
     expect(fmtAuditTime("không phải ngày")).toBe("—")
+  })
+})
+
+describe("UI-52 định dạng chi tiết nhật ký sang tiếng Việt", () => {
+  it("đổi portal và result sang nhãn tiếng Việt", () => {
+    expect(fmtAuditDetail("portal: admin · result: FAILURE")).toBe("Cổng: Quản trị · Kết quả: Thất bại")
+    expect(fmtAuditDetail("portal: preparation · result: SUCCESS")).toBe("Cổng: Chế biến · Kết quả: Thành công")
+    expect(fmtAuditDetail("roleCode: WAITER · accessLevel: READ_ONLY")).toBe("Vai trò: Phục vụ · Cấp truy cập: Chỉ xem")
+  })
+
+  it("giữ nguyên khóa lạ hoặc giá trị chưa biết", () => {
+    expect(fmtAuditDetail("unknownKey: rawValue · portal: customPortal")).toBe(
+      "unknownKey: rawValue · Cổng: customPortal",
+    )
+    expect(fmtAuditDetail("constructor: raw")).toBe("constructor: raw")
+    expect(fmtAuditDetail("portal: toString")).toBe("Cổng: toString")
+    expect(fmtAuditDetail("stations: toString")).toBe("Quầy: toString")
+    expect(fmtAuditDetail("Khách báo bận")).toBe("Khách báo bận")
+  })
+
+  it("dịch các trạng thái phiếu thực tế của PreparationStatus", () => {
+    expect(fmtAuditDetail("ticketStatus: ACCEPTED · policy: STANDARD")).toBe(
+      "Trạng thái phiếu: Đã tiếp nhận · Chính sách: Chuẩn",
+    )
+    expect(fmtAuditDetail("ticketStatus: PREPARING · policy: READY_WASTE")).toBe(
+      "Trạng thái phiếu: Đang làm · Chính sách: Hủy món đã làm",
+    )
   })
 })

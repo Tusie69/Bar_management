@@ -296,16 +296,21 @@ export function TurnLedgerPage({ initialPreset = "today" }: TurnLedgerPageProps)
 
           <Popover open={datePopoverOpen} onOpenChange={setDatePopoverOpen}>
             <PopoverTrigger asChild>
-              <button
-                type="button"
-                className="turns-date-chip-btn"
-                data-active={preset === "date" ? "true" : "false"}
-                aria-label="Chọn một ngày kinh doanh cụ thể"
-                data-testid="turns-date-picker-trigger"
-              >
-                <CalendarDays className="size-4" aria-hidden="true" />
-                {preset === "date" ? `${fmtBusinessDate(pickedDate, "short")}/${pickedDate.slice(0, 4)}` : "Chọn ngày"}
-              </button>
+              {(() => {
+                const pickedDateText = `${fmtBusinessDate(pickedDate, "short")}/${pickedDate.slice(0, 4)}`
+                return (
+                  <button
+                    type="button"
+                    className="turns-date-chip-btn"
+                    data-active={preset === "date" ? "true" : "false"}
+                    aria-label={preset === "date" ? `Chọn ngày ${pickedDateText}` : "Chọn ngày kinh doanh cụ thể"}
+                    data-testid="turns-date-picker-trigger"
+                  >
+                    <CalendarDays className="size-4" aria-hidden="true" />
+                    {preset === "date" ? pickedDateText : "Chọn ngày"}
+                  </button>
+                )
+              })()}
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="start">
               <Calendar

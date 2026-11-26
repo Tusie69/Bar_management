@@ -235,7 +235,7 @@ export function WaiterOrderedItems({ visitId, canOrder, onOpenOrders }: WaiterOr
       <button
         type="button"
         onClick={onOpenOrders}
-        className="justify-self-start py-1 text-xs text-muted-foreground underline"
+        className="inline-flex min-h-11 items-center justify-self-start py-2 text-xs text-muted-foreground underline focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none"
       >
         <ReceiptText className="mr-1 inline size-3.5" aria-hidden />
         Xem chi tiết đơn · xin hủy món

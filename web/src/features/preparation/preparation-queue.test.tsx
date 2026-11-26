@@ -93,6 +93,15 @@ describe("tiến độ theo số lượng", () => {
     expect(html).toContain("Giảm số đã làm của Nước suối")
     expect(html).toContain("1 dòng chưa đủ số lượng")
     expect(html).toContain("Bạn vẫn có thể báo xong")
+    const warningId = "preparation-ticket-1-incomplete-warning"
+    expect(html).toContain(`id="${warningId}"`)
+    expect(html).toContain(`aria-describedby="${warningId}"`)
+    const headerEnd = html.indexOf("</header>")
+    const warningIdx = html.indexOf(warningId)
+    const actionsIdx = html.indexOf("data-ticket-actions")
+    expect(warningIdx).toBeGreaterThan(-1)
+    expect(warningIdx).toBeLessThan(actionsIdx)
+    expect(actionsIdx).toBeLessThan(headerEnd)
   })
 
   it("không hiện stepper khi chưa nhận phiếu và không cảnh báo khi đã đủ", () => {
@@ -105,6 +114,7 @@ describe("tiến độ theo số lượng", () => {
       { canTransition: true },
     )
     expect(complete).not.toContain("chưa đủ số lượng")
+    expect(complete).not.toContain("aria-describedby")
   })
 })
 
@@ -480,11 +490,25 @@ describe("BT-11 — panel tổng món", () => {
     expect(html).toContain("Negroni")
   })
 
-  it("mặc định mở, mô tả toàn queue và header đủ target 44px", () => {
-    const html = renderTotalsPanel("BAR", [aggregateItem()])
+  it("mặc định mở trên SSR/desktop, hiện tổng số phần, mô tả toàn queue và header đủ target 44px", () => {
+    const html = renderTotalsPanel("BAR", [
+      aggregateItem({ quantity: 5 }),
+      aggregateItem({ menuItemVariantId: 2, quantity: 3 }),
+    ])
     expect(html).toContain('aria-expanded="true"')
+    expect(html).toContain("8 phần")
     expect(html).toContain("Tính trên toàn bộ hàng đợi, không phụ thuộc bộ lọc.")
     expect(html).toContain("min-h-11")
+  })
+
+  it("nút hành động chính của phiếu nằm trong header phía trước danh sách món", () => {
+    const html = renderTicket(ticket({ status: "SUBMITTED" }), NOW, { canTransition: true })
+    const headerEnd = html.indexOf("</header>")
+    const actionIdx = html.indexOf("Tiếp nhận")
+    const listIdx = html.indexOf('aria-label="Món trên phiếu"')
+    expect(actionIdx).toBeGreaterThan(-1)
+    expect(actionIdx).toBeLessThan(headerEnd)
+    expect(headerEnd).toBeLessThan(listIdx)
   })
 
   it("danh sách có list semantics và vùng cuộn dọc giới hạn chiều cao", () => {

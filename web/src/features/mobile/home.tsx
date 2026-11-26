@@ -4,11 +4,12 @@ import { useNavigate } from "react-router"
 import { ROLE_LABEL } from "@/domain/enums"
 import { useOverview } from "@/hooks/use-data"
 import { initials } from "@/lib/text"
-import { fmtBusinessDate, fmtTime12, MS } from "@/lib/time"
+import { fmtBusinessDate, fmtTime, MS } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { isApiError } from "@/services"
 import { useSession } from "@/state/session"
 import { useM } from "./context"
+import { ToastSlot } from "./overlays"
 import { menuButtonLabel } from "./menu-alerts"
 import { isOpenEntry, splitShift, tableText } from "./model"
 import {
@@ -30,10 +31,13 @@ export function HomeScreen() {
   const m = useM()
   const ref = useKeepScroll("home")
   return (
-    <div ref={ref} data-scroll className="min-h-0 flex-1 overflow-x-clip overflow-y-auto">
-      <Hero title={m.isOwner ? "Tổng quan" : "Tiếp đón"} />
-      {m.isOwner ? <OwnerBody /> : <ReceptionBody />}
-    </div>
+    <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <ToastSlot />
+      <div ref={ref} data-scroll className="min-h-0 flex-1 overflow-x-clip overflow-y-auto">
+        <Hero title={m.isOwner ? "Tổng quan" : "Tiếp đón"} />
+        {m.isOwner ? <OwnerBody /> : <ReceptionBody />}
+      </div>
+    </main>
   )
 }
 
@@ -73,7 +77,7 @@ function Hero({ title }: { title: string }) {
         </button>
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-[15px] leading-tight font-semibold text-tx-strong">{user.displayName}</span>
-          <span className="self-start rounded-full border border-[var(--border-subtle)] bg-[var(--glass)] px-2 text-[11.5px] leading-5 font-medium text-tx-2 backdrop-blur-sm">
+          <span className="self-start rounded-full border border-[var(--border-subtle)] bg-surface-1 px-2 text-xs leading-5 font-medium text-tx-2">
             {ROLE_LABEL[user.role]}
           </span>
         </div>
@@ -362,7 +366,7 @@ function OwnerBody() {
                       {late ? `${r.displayName}, trễ ${late} phút` : `${r.displayName}, chưa có bàn`}
                     </span>
                     <span className="tnum text-[13px] text-[var(--text-muted)]">
-                      {fmtTime12(r.expectedAt)}, {r.partySize} khách
+                      {fmtTime(r.expectedAt)}, {r.partySize} khách
                       {r.tableIds.length ? `, ${tableText(r.tableIds, m.model)}` : ""}
                     </span>
                   </span>

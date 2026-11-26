@@ -1,6 +1,6 @@
 /** Pure helpers for Mobile V1: tone, chip text, attention order. Same rules as the round-2 prototype. */
 import type { ReservationView, WaitlistEntryView } from "@/domain/models"
-import { fmtBusinessDate, fmtTime12, MS } from "@/lib/time"
+import { fmtBusinessDate, fmtTime, MS } from "@/lib/time"
 import type { FloorModel } from "../floor/use-floor-model"
 
 export type Tone = "reserved" | "late" | "noshow" | "seated" | null
@@ -47,7 +47,7 @@ export function chipOf(r: ReservationView, now: Date): string {
 }
 
 export function subOf(r: ReservationView, now: Date, th: Thresholds): string {
-  if (r.status === "CHECKED_IN") return r.checkedInAt ? `Đến lúc ${fmtTime12(r.checkedInAt)}` : ""
+  if (r.status === "CHECKED_IN") return r.checkedInAt ? `Đến lúc ${fmtTime(r.checkedInAt)}` : ""
   if (r.status !== "BOOKED") return ""
   if (r.warning === "noshow") return `Quá mốc ${th.noshow} phút. Bàn vẫn đang giữ.`
   if (r.warning === "late") return `Quá mốc ${th.late} phút`

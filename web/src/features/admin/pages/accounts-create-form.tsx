@@ -127,7 +127,7 @@ export function CreateAccountForm({ roles, onClose, onCreated }: Props) {
                     aria-pressed={selected}
                     className={
                       selected
-                        ? "border-[var(--adm-action)] bg-[var(--adm-tint-blue)] text-[var(--adm-action)] hover:bg-[var(--adm-tint-blue-hover)]"
+                        ? "border-[var(--adm-action)] bg-[var(--adm-tint-blue)] text-[var(--adm-action-active)] hover:bg-[var(--adm-tint-blue-hover)]"
                         : "bg-[var(--adm-surface)]"
                     }
                   >
@@ -152,7 +152,7 @@ export function CreateAccountForm({ roles, onClose, onCreated }: Props) {
                       aria-pressed={selected}
                       className={
                         selected
-                          ? "border-[var(--adm-action)] bg-[var(--adm-tint-blue)] text-[var(--adm-action)] hover:bg-[var(--adm-tint-blue-hover)]"
+                          ? "border-[var(--adm-action)] bg-[var(--adm-tint-blue)] text-[var(--adm-action-active)] hover:bg-[var(--adm-tint-blue-hover)]"
                           : "bg-[var(--adm-surface)]"
                       }
                     >

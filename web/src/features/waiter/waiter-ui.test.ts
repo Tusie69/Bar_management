@@ -215,24 +215,29 @@ describe("luồng hàng đợi Bartender", () => {
   it.each([
     ["BAR", "Bar", "preparation.bar.read"],
     ["KITCHEN", "Bếp", "preparation.kitchen.read"],
-  ] as const)("deep-link thiếu quyền %s hiện từ chối đúng station", (station, label, permission) => {
-    const client = new QueryClient()
-    const html = renderToString(
-      createElement(
-        QueryClientProvider,
-        { client },
-        createElement(PreparationQueue, {
-          station,
-          canRead: false,
-          canTransition: false,
-          canRetry: false,
-          embedded: true,
-        }),
-      ),
-    )
-    expect(html).toContain(`Không có quyền xem hàng đợi ${label}`)
-    expect(html).toContain(permission)
-  })
+  ] as const)(
+    "deep-link thiếu quyền %s hiện từ chối đúng station và không lộ mã quyền",
+    (station, label, permission) => {
+      const client = new QueryClient()
+      const html = renderToString(
+        createElement(
+          QueryClientProvider,
+          { client },
+          createElement(PreparationQueue, {
+            station,
+            canRead: false,
+            canTransition: false,
+            canRetry: false,
+            embedded: true,
+          }),
+        ),
+      )
+      expect(html).toContain(`Không có quyền xem hàng đợi ${label}`)
+      expect(html).toContain("liên hệ quản lý")
+      expect(html).not.toContain(permission)
+      expect(html).not.toContain("Backend")
+    },
+  )
 
   it("hàng đợi trong WaiterShell có nút về sơ đồ, không có chọn station hay đăng xuất riêng", () => {
     const client = new QueryClient()

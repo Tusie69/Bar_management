@@ -385,7 +385,7 @@ function BookingBody() {
                     className="tnum"
                     onClick={() => toggle(t.id)}
                   >
-                    {t.code} <span className="text-[11px] opacity-70">{t.capacity}</span>
+                    {t.code} <span className="text-xs opacity-80">{t.capacity}</span>
                   </Button>
                 ))}
                 {(model.catalog?.combinations ?? []).map((c) => {
@@ -402,7 +402,7 @@ function BookingBody() {
                         setTables(c.memberIds)
                       }}
                     >
-                      <Link2 /> {c.code} <span className="text-[11px] opacity-70">{c.capacity}</span>
+                      <Link2 /> {c.code} <span className="text-xs opacity-80">{c.capacity}</span>
                     </Button>
                   )
                 })}

@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { PORTAL_CONFIG, resolvePortalLoginDestination, type AuthPortal } from "@/domain/auth-portal"
 import { sessionEndUnsavedWarning } from "@/domain/session-end"
+import { cn } from "@/lib/utils"
 import { isApiError } from "@/services"
 import { useSession } from "@/state/session"
 
@@ -19,7 +20,8 @@ const PORTAL_NOTE: Record<AuthPortal, string> = {
   cashier: "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản Quản trị, Lễ tân, Phục vụ không đăng nhập được tại cổng này.",
   waiter: "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản Quản trị, Lễ tân, Thu ngân không đăng nhập được tại cổng này.",
   "customer-care": "Mỗi vai trò đăng nhập ở cổng riêng. Tài khoản của vai khác không đăng nhập được tại cổng này.",
-  preparation: "Tài khoản Bar và Bếp dùng chung cổng đăng nhập, nhưng mỗi tài khoản chỉ thấy và xử lý đúng quầy đã được cấp quyền.",
+  preparation:
+    "Tài khoản Bar và Bếp dùng chung cổng đăng nhập, nhưng mỗi tài khoản chỉ thấy và xử lý đúng quầy đã được cấp quyền.",
 }
 
 function keepFocusedFieldVisible(event: FocusEvent<HTMLInputElement>) {
@@ -38,12 +40,25 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
   const [pending, setPending] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [touched, setTouched] = useState({ username: false, password: false })
+  const [submitAttempted, setSubmitAttempted] = useState(false)
+
+  const usernameMissing = !username.trim()
+  const passwordMissing = !password
+  const submitDisabled = pending || usernameMissing || passwordMissing
+  const showUsernameHint = (touched.username || submitAttempted) && usernameMissing
+  const showPasswordHint = (touched.password || submitAttempted) && passwordMissing
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
-    if (!username.trim() || !password) return
+    if (usernameMissing || passwordMissing) {
+      setSubmitAttempted(true)
+      return
+    }
     setPending(true)
     setError(null)
+    setTouched({ username: false, password: false })
+    setSubmitAttempted(false)
     try {
       await login(username.trim(), password, portal)
       setPassword("")
@@ -66,19 +81,19 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
   }
 
   return (
-    <main className="flex min-h-dvh flex-col overflow-y-auto bg-background px-4 py-4 sm:py-8">
-      <div className="mx-auto my-auto grid w-full max-w-md gap-4 rounded-2xl border border-border bg-surface-1 p-5 shadow-md sm:gap-5 sm:p-8">
-        <header className="grid gap-2.5 text-center">
+    <main className="flex min-h-dvh flex-col overflow-y-auto bg-background px-4 py-4 sm:py-8 [@media(max-height:560px)]:py-2">
+      <div className="mx-auto my-auto grid w-full max-w-md gap-4 rounded-2xl border border-border bg-surface-1 p-5 shadow-md sm:gap-5 sm:p-8 [@media(max-height:560px)]:gap-2 [@media(max-height:560px)]:p-3.5">
+        <header className="grid gap-2.5 text-center [@media(max-height:560px)]:gap-1">
           <img
             src="/21gam-logo.png"
             alt="21GAM"
-            className="mx-auto size-12 rounded-xl border border-border-subtle object-cover shadow-xs sm:size-14"
+            className="mx-auto size-12 rounded-xl border border-border-subtle object-cover shadow-xs sm:size-14 [@media(max-height:560px)]:hidden"
           />
           <div className="grid gap-1">
             <h1 className="text-[1.375rem] leading-tight font-bold tracking-[-0.022em] text-foreground sm:text-2xl">
               Đăng nhập {PORTAL_CONFIG[portal].label}
             </h1>
-            <p className="text-[0.8125rem] leading-relaxed text-muted-foreground sm:text-sm">
+            <p className="text-[0.8125rem] leading-relaxed text-muted-foreground sm:text-sm [@media(max-height:560px)]:leading-snug">
               Chỉ tài khoản được cấp quyền cho cổng {PORTAL_CONFIG[portal].label.toLocaleLowerCase("vi-VN")} mới có thể
               đăng nhập.
             </p>
@@ -90,13 +105,13 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
           có cổng riêng. Nhân viên gõ nhầm cổng là chuyện xảy ra hằng tuần, và
           "sai tên đăng nhập hoặc mật khẩu" là câu trả lời sai cho việc đó.
         */}
-        <div className="flex items-start gap-2.5 rounded-xl border border-border-subtle bg-surface-2/80 px-3.5 py-2.5 text-xs leading-relaxed text-tx-2">
+        <div className="flex items-start gap-2.5 rounded-xl border border-border-subtle bg-surface-2/80 px-3.5 py-2.5 text-xs leading-relaxed text-tx-2 [@media(max-height:560px)]:py-1.5 [@media(max-height:560px)]:leading-snug">
           <Info className="mt-0.5 size-3.5 shrink-0 text-primary-ink" aria-hidden="true" />
           <p>{PORTAL_NOTE[portal]}</p>
         </div>
 
-        <form className="grid gap-3.5 sm:gap-4" onSubmit={submit}>
-          <div className="grid gap-1.5">
+        <form className="grid gap-3.5 sm:gap-4 [@media(max-height:560px)]:gap-2" onSubmit={submit}>
+          <div className="grid gap-1.5 [@media(max-height:560px)]:gap-1">
             <Label htmlFor="username">Tên đăng nhập</Label>
             <Input
               id="username"
@@ -106,12 +121,23 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
               value={username}
               onChange={(event) => setUsername(event.target.value)}
               onFocus={keepFocusedFieldVisible}
+              onBlur={() => setTouched((prev) => ({ ...prev, username: true }))}
+              aria-invalid={showUsernameHint || undefined}
+              aria-describedby={showUsernameHint ? "username-hint" : undefined}
               disabled={pending}
               required
-              className="h-11 scroll-my-4"
+              className="h-11 scroll-mt-4 scroll-mb-24"
             />
+            {showUsernameHint ? (
+              <p
+                id="username-hint"
+                className="text-[length:var(--type-error-size)] leading-[var(--type-error-lh)] font-medium text-destructive"
+              >
+                Vui lòng nhập tên đăng nhập.
+              </p>
+            ) : null}
           </div>
-          <div className="grid gap-1.5">
+          <div className="grid gap-1.5 [@media(max-height:560px)]:gap-1">
             <Label htmlFor="password">Mật khẩu</Label>
             {/* Lễ tân gõ mật khẩu trên bàn phím điện thoại giữa ca đông, gõ sai
                 mà không thấy gì thì chỉ còn cách xoá hết gõ lại. */}
@@ -124,9 +150,12 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 onFocus={keepFocusedFieldVisible}
+                onBlur={() => setTouched((prev) => ({ ...prev, password: true }))}
+                aria-invalid={showPasswordHint || undefined}
+                aria-describedby={showPasswordHint ? "password-hint" : undefined}
                 disabled={pending}
                 required
-                className="h-11 scroll-my-4 pr-12"
+                className="h-11 scroll-mt-4 scroll-mb-24 pr-12"
               />
               <Button
                 type="button"
@@ -145,6 +174,14 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
                 )}
               </Button>
             </div>
+            {showPasswordHint ? (
+              <p
+                id="password-hint"
+                className="text-[length:var(--type-error-size)] leading-[var(--type-error-lh)] font-medium text-destructive"
+              >
+                Vui lòng nhập mật khẩu.
+              </p>
+            ) : null}
           </div>
           {error || sessionMessage ? (
             <div
@@ -155,15 +192,24 @@ export function LoginPage({ portal, redirectTo }: { portal: AuthPortal; redirect
               {!error && unsavedWarning ? <p className="text-xs text-muted-foreground">{unsavedWarning}</p> : null}
             </div>
           ) : null}
-          <Button type="submit" size="default" disabled={pending || !username.trim() || !password} className="w-full">
-            <LogIn className="size-4" aria-hidden="true" />
-            {pending ? "Đang đăng nhập…" : "Đăng nhập"}
-          </Button>
+          <div
+            className={cn("w-full", submitDisabled && !pending && "cursor-not-allowed")}
+            onClick={() => {
+              if (!pending && (usernameMissing || passwordMissing)) {
+                setSubmitAttempted(true)
+              }
+            }}
+          >
+            <Button type="submit" size="default" disabled={submitDisabled} className="w-full">
+              <LogIn className="size-4" aria-hidden="true" />
+              {pending ? "Đang đăng nhập…" : "Đăng nhập"}
+            </Button>
+          </div>
         </form>
 
-        <p className="flex items-center justify-center gap-2 border-t border-border-subtle pt-3 text-xs text-muted-foreground">
+        <p className="flex items-center justify-center gap-2 border-t border-border-subtle pt-3 text-xs text-muted-foreground [@media(max-height:560px)]:pt-2">
           <ShieldCheck className="size-4 shrink-0" aria-hidden="true" />
-          <span>Phiên đăng nhập dùng cookie HttpOnly và CSRF protection.</span>
+          <span>Phiên đăng nhập được bảo vệ.</span>
         </p>
       </div>
     </main>

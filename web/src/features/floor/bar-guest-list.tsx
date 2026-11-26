@@ -14,15 +14,7 @@
  */
 
 import { Users } from "lucide-react"
-import {
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactElement,
-} from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactElement } from "react"
 import { STATE_META } from "@/components/status-meta"
 import type { FloorGroup, FloorTableState, TableView } from "@/domain/models"
 import { cn } from "@/lib/utils"
@@ -42,8 +34,8 @@ import {
  */
 // tiêu đề: py-1.5 (12) + 12px * 1.3 + viền dưới 1
 const HEADER_PIXEL_HEIGHT = 29
-// một dòng: min-h-[26px] đang lớn hơn py-1 (8) + 10.5px * 1.25, nên nó quyết định
-const ROW_BASE_PIXEL_HEIGHT = 26
+// một dòng khách tương tác tối thiểu 45px (bảo đảm >= 44 CSS px sau counter-scale SVG), gồm cụm mã ghế/số khách/giờ và tên khách wrap đầy đủ
+const ROW_BASE_PIXEL_HEIGHT = 45
 // divide-y giữa hai dòng
 const ROW_DIVIDER_PIXEL_HEIGHT = 1
 
@@ -191,12 +183,10 @@ export function BarGuestList({
   const isSvg = as === "svg"
 
   // Chiều cao vừa đủ số dòng, tính bằng pixel màn hình thật rồi mới đổi về đơn
-  // vị sơ đồ. Mỗi khách chiếm đúng một dòng; tên khách nằm cuối dòng đó và tự
-  // cắt bớt nếu không đủ chỗ, nên không có dòng nào cao gấp đôi.
+  // vị sơ đồ. Mỗi hàng tương tác cao tối thiểu 45px (>= 44 CSS px sau scale); sau khi gắn vào DOM,
+  // ResizeObserver đo chiều cao thực tế nếu tên khách wrap nhiều dòng.
   const estimatedPixelHeight =
-    HEADER_PIXEL_HEIGHT +
-    rows.length * ROW_BASE_PIXEL_HEIGHT +
-    Math.max(0, rows.length - 1) * ROW_DIVIDER_PIXEL_HEIGHT
+    HEADER_PIXEL_HEIGHT + rows.length * ROW_BASE_PIXEL_HEIGHT + Math.max(0, rows.length - 1) * ROW_DIVIDER_PIXEL_HEIGHT
   const contentPixelHeight = measuredPixelHeight ?? estimatedPixelHeight
   const effectiveHeight =
     fitToRows && rows.length > 0 && isSvg ? Math.min(height, Math.ceil(contentPixelHeight / scale)) : height
@@ -252,7 +242,7 @@ export function BarGuestList({
         {rows.length === 0 ? (
           <div
             data-testid="bar-guest-list-empty"
-            className="flex h-full items-center justify-center p-2 text-center text-[11px] leading-[1.35] text-muted-foreground/80 italic"
+            className="flex h-full items-center justify-center p-2 text-center text-xs leading-[1.35] text-muted-foreground/80 italic"
           >
             Chưa có khách
           </div>
@@ -300,34 +290,28 @@ export function BarGuestList({
 
               const rowBody = (
                 <>
-                  <div className="flex w-full min-w-0 flex-nowrap items-center gap-x-1">
-                    <span className="inline-flex min-w-0 shrink items-center gap-1">
+                  <div className="flex w-full min-w-0 flex-wrap items-center gap-x-1 gap-y-0">
+                    <span className="inline-flex max-w-full min-w-0 items-center gap-1">
                       <span
                         className="inline-block size-1.5 shrink-0 rounded-full"
                         style={{ backgroundColor: statusColor }}
                         aria-hidden="true"
                       />
-                      <span className="max-w-14 truncate text-[10px] font-semibold tracking-tight text-foreground">
+                      <span className="min-w-0 text-xs leading-[1.25] font-semibold tracking-tight break-words text-foreground">
                         {row.seatsLabel}
                       </span>
                     </span>
-                    <span className="tnum shrink-0 text-[9.5px] text-muted-foreground">
-                      {row.time ?? (row.seatedTime ? `vào ${row.seatedTime}` : "")}
-                    </span>
-                    <span className="tnum inline-flex shrink-0 items-center gap-0.5 text-[9.5px] text-muted-foreground">
-                      <Users className="size-2 opacity-70" aria-hidden="true" />
+                    <span className="tnum inline-flex shrink-0 items-center gap-0.5 text-xs leading-[1.25] text-muted-foreground">
+                      <Users className="size-3 opacity-70" aria-hidden="true" />
                       {row.partySize}
                     </span>
-                    {displayGuestName ? (
-                      <span
-                        className="min-w-0 flex-1 truncate font-medium text-foreground"
-                        title={displayGuestName}
-                      >
-                        {displayGuestName}
+                    {row.time || row.seatedTime ? (
+                      <span className="tnum shrink-0 text-xs leading-[1.25] text-muted-foreground">
+                        {row.time ?? `vào ${row.seatedTime}`}
                       </span>
                     ) : null}
                     {activeIcons.length > 0 ? (
-                      <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-[9px]">
+                      <span className="ml-auto inline-flex shrink-0 items-center gap-0.5 text-xs leading-none">
                         {visibleIcons.map((icon) => (
                           <span key={icon.key} title={icon.label} aria-label={icon.label}>
                             {icon.emoji}
@@ -337,7 +321,7 @@ export function BarGuestList({
                           <span
                             title={overflowLabels}
                             aria-label={`và ${overflowCount} mục khác: ${overflowLabels}`}
-                            className="text-[9px] font-semibold text-muted-foreground/80 select-none"
+                            className="text-xs font-semibold text-muted-foreground/80 select-none"
                           >
                             {`+${overflowCount}`}
                           </span>
@@ -354,6 +338,14 @@ export function BarGuestList({
                       </span>
                     ) : null}
                   </div>
+                  {displayGuestName ? (
+                    <span
+                      className="block w-full min-w-0 text-xs leading-[1.25] font-medium [overflow-wrap:anywhere] break-words text-foreground"
+                      title={displayGuestName}
+                    >
+                      {displayGuestName}
+                    </span>
+                  ) : null}
                   <span className="sr-only">{` (${statusShort})`}</span>
                 </>
               )
@@ -362,7 +354,7 @@ export function BarGuestList({
                 <li
                   key={row.bookingKey}
                   role="listitem"
-                  className="min-w-0 overflow-hidden rounded-none text-[10.5px] leading-[1.25]"
+                  className="min-w-0 overflow-hidden rounded-none text-xs leading-[1.25]"
                 >
                   {readOnly ? (
                     <div
@@ -379,7 +371,7 @@ export function BarGuestList({
                       onClick={() => onRowClick?.(row)}
                       aria-label={rowAriaLabel}
                       className={cn(
-                        "flex min-h-[26px] w-full min-w-0 flex-col items-stretch overflow-hidden rounded-none px-1.5 py-1 text-left transition-colors focus-visible:bg-surface-2 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none focus-visible:ring-inset",
+                        "flex min-h-[45px] w-full min-w-0 flex-col items-stretch justify-center overflow-hidden rounded-none px-1 py-1 text-left transition-colors focus-visible:bg-surface-2 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none focus-visible:ring-inset",
                         onRowClick ? "cursor-pointer hover:bg-surface-2/80" : "cursor-default hover:bg-surface-2/40",
                       )}
                     >

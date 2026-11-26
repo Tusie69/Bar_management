@@ -94,5 +94,7 @@ export function cardPriceLabel(item: WaiterMenuItem, format: (amountVnd: number)
     return `${format(only.amountVnd)} · ${only.displayName}`
   }
   const amounts = quotable.map((variant) => variant.amountVnd)
-  return `${format(Math.min(...amounts))} – ${format(Math.max(...amounts))}`
+  const low = Math.min(...amounts)
+  const high = Math.max(...amounts)
+  return low === high ? format(low) : `${format(low)} – ${format(high)}`
 }

@@ -42,7 +42,7 @@ import { MapScreen, TableSheet } from "./map"
 import { isOpenEntry } from "./model"
 import { notificationTarget } from "./notification-target"
 import { useRestoreTriggerFocus } from "./overlay-focus"
-import { AccountSheet, AlertsSheet, ConfirmDialog, CreateSheet, StatusDialog, Toast15 } from "./overlays"
+import { AccountSheet, AlertsSheet, ConfirmDialog, CreateSheet, StatusDialog, Toast15, ToastSlot } from "./overlays"
 import { useSeenKeys } from "./seen-keys"
 import { PlainHeader } from "./ui"
 import { EntryDetailScreen, WaitScreen } from "./wait"
@@ -351,15 +351,28 @@ export default function MobileApp() {
         }
         className={cn(
           "gm-shell-viewport fixed inset-x-0 top-0 w-full touch-manipulation overflow-hidden",
-          isReceptionist &&
-            "mx-auto max-w-[var(--gm-max-w)] md:border-x md:border-border/70 md:shadow-[var(--shadow-float)]",
+          isReceptionist && "mx-auto max-w-[var(--gm-max-w)] md:max-w-none",
         )}
       >
         <div
           ref={shellContentRef}
+          data-gm-shell-content=""
           aria-hidden={hasFullScreenModal || undefined}
           className="absolute inset-x-0 top-0 bottom-[var(--nav-h)] flex flex-col overflow-hidden"
         >
+          <Toast15
+            r={toast15 && !busy ? toast15 : null}
+            onView={() => {
+              if (!toast15) return
+              handle(`l${toast15.id}`)
+              const target = notificationTarget(toast15.tableIds[0], toast15.id, toast15.businessDate)
+              if (target?.kind === "table") ctx.openTable(target.tableId)
+              else if (target?.kind === "reservation") setDetail({ id: target.reservationId, bd: target.businessDate })
+            }}
+            onClose={() => {
+              if (toast15) handle(`l${toast15.id}`)
+            }}
+          />
           {tab === "home" ? (
             <HomeScreen />
           ) : tab === "list" ? (
@@ -405,11 +418,14 @@ export default function MobileApp() {
           ) : (
             <>
               <PlainHeader title={other?.label ?? "21GAM"} />
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                <Suspense fallback={null}>
-                  <Outlet />
-                </Suspense>
-              </div>
+              <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <ToastSlot />
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <Suspense fallback={null}>
+                    <Outlet />
+                  </Suspense>
+                </div>
+              </main>
             </>
           )}
         </div>
@@ -478,20 +494,6 @@ export default function MobileApp() {
             />
           ) : null}
         </FullScreenPresence>
-
-        <Toast15
-          r={toast15 && !busy ? toast15 : null}
-          onView={() => {
-            if (!toast15) return
-            handle(`l${toast15.id}`)
-            const target = notificationTarget(toast15.tableIds[0], toast15.id, toast15.businessDate)
-            if (target?.kind === "table") ctx.openTable(target.tableId)
-            else if (target?.kind === "reservation") setDetail({ id: target.reservationId, bd: target.businessDate })
-          }}
-          onClose={() => {
-            if (toast15) handle(`l${toast15.id}`)
-          }}
-        />
 
         <CreateSheet open={overlay === "create"} onClose={() => setOverlay(null)} />
         <AccountSheet

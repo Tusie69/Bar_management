@@ -9,6 +9,7 @@ import {
   type PreparationTicketStatus,
 } from "./preparation-layout"
 import {
+  PREPARATION_CALLOUT_CLASS,
   PREPARATION_WAIT_TONE_CLASS,
   preparationGuestFlagBadges,
   preparationMetaLine,
@@ -80,6 +81,10 @@ export function PreparationTicketCard({
   const incompleteLineCount = ticket.lines.filter(
     (line) => line.quantity > 0 && line.doneQuantity < line.quantity,
   ).length
+  const showIncompleteWarning = ticket.status === "PREPARING" && incompleteLineCount > 0
+  const incompleteWarningId = showIncompleteWarning
+    ? `preparation-ticket-${ticket.ticketId}-incomplete-warning`
+    : undefined
   return (
     <article
       className={cn(
@@ -92,14 +97,14 @@ export function PreparationTicketCard({
       data-visit-id={ticket.visitId}
       data-wait-tone={waitTone}
     >
-      <header className="grid min-w-0 gap-1">
+      <header className="grid min-w-0 gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           {onDragHandlePointerDown ? (
             <button
               type="button"
               // touch-action-none: trình duyệt nhường chuyển động cho cú kéo.
               // Chỉ riêng tay nắm, nên vuốt ở chỗ khác vẫn cuộn được danh sách.
-              className="-ml-1 grid size-9 shrink-0 cursor-grab touch-none place-items-center rounded-lg text-muted-foreground hover:bg-surface-2 active:cursor-grabbing"
+              className="-ml-1 grid size-11 shrink-0 cursor-grab touch-none place-items-center rounded-lg text-muted-foreground hover:bg-surface-2 active:cursor-grabbing xl:size-9"
               aria-label={`Kéo phiếu ${preparationTableLabel(ticket.tableCodes)} sang cột khác`}
               onPointerDown={(event) => onDragHandlePointerDown(event, ticket)}
             >
@@ -111,7 +116,7 @@ export function PreparationTicketCard({
           </p>
           <span
             className={cn(
-              "flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs font-medium",
+              "tnum flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs font-medium",
               waitToneClass.chip,
             )}
             data-wait-tone={waitTone}
@@ -134,6 +139,55 @@ export function PreparationTicketCard({
           </ul>
         ) : null}
         <p className="text-xs break-words text-muted-foreground">{preparationMetaLine(ticket)}</p>
+        {showIncompleteWarning ? (
+          <p
+            id={incompleteWarningId}
+            className={cn("rounded-lg p-2 text-xs", PREPARATION_CALLOUT_CLASS.warning)}
+            role="status"
+          >
+            {`${incompleteLineCount} dòng chưa đủ số lượng. Bạn vẫn có thể báo xong nếu đã đối chiếu thực tế.`}
+          </p>
+        ) : null}
+        {(action && canTransition) || canRevert || canRetry ? (
+          <div className="flex min-w-0 gap-2" data-ticket-actions>
+            {action && canTransition ? (
+              <Button
+                className={PREPARATION_ACTION_CLASS}
+                aria-describedby={incompleteWarningId}
+                disabled={pending}
+                onClick={() => onTransition(ticket, action.status)}
+              >
+                {action.label}
+              </Button>
+            ) : null}
+            {canRevert ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="size-11 shrink-0"
+                disabled={pending}
+                onClick={() => onRevert?.(ticket)}
+                aria-label="Lùi phiếu về bước trước"
+                title="Lùi phiếu về bước trước"
+              >
+                <Undo2 className="size-4" aria-hidden="true" />
+              </Button>
+            ) : null}
+            {canRetry ? (
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-11 shrink-0"
+                disabled={pending}
+                onClick={() => onRetry(ticket)}
+                aria-label="Yêu cầu in lại"
+              >
+                <Printer className="size-4" />
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
       </header>
       {groupedCancellation ? (
         <section
@@ -170,7 +224,7 @@ export function PreparationTicketCard({
               data-pending-cancellation={pendingLabel === null ? undefined : "true"}
             >
               <div className={cn("flex min-w-0 gap-2 text-sm", display.fullyCancelled && "line-through decoration-2")}>
-                <strong className="min-w-6 text-primary-ink">{display.quantity}×</strong>
+                <strong className="tnum min-w-6 text-primary-ink">{display.quantity}×</strong>
                 <span className="min-w-0 break-words">{line.itemName}</span>
               </div>
               {line.variantDisplayName ? (
@@ -196,7 +250,12 @@ export function PreparationTicketCard({
                 <p className="mt-1 text-xs font-medium text-destructive">Thuộc yêu cầu hủy theo đơn</p>
               ) : null}
               {line.note ? (
-                <p className="mt-1 rounded-md bg-amber-400/10 px-2 py-1 text-xs font-medium break-words">
+                <p
+                  className={cn(
+                    "mt-1 rounded-md px-2 py-1 text-xs font-medium break-words",
+                    PREPARATION_CALLOUT_CLASS.note,
+                  )}
+                >
                   Ghi chú: {line.note}
                 </p>
               ) : null}
@@ -205,7 +264,7 @@ export function PreparationTicketCard({
                   className="mt-2 flex min-w-0 items-center justify-between gap-2"
                   aria-label={`Tiến độ ${line.itemName}`}
                 >
-                  <span className="text-xs font-semibold" aria-live="polite">
+                  <span className="tnum text-xs font-semibold" aria-live="polite">
                     Đã làm {line.doneQuantity}/{line.quantity}
                   </span>
                   {progressEditable ? (
@@ -240,48 +299,6 @@ export function PreparationTicketCard({
           )
         })}
       </ul>
-      {ticket.status === "PREPARING" && incompleteLineCount > 0 ? (
-        <p className="rounded-lg border border-amber-400/40 bg-amber-400/10 p-2 text-xs" role="status">
-          {`${incompleteLineCount} dòng chưa đủ số lượng. Bạn vẫn có thể báo xong nếu đã đối chiếu thực tế.`}
-        </p>
-      ) : null}
-      <footer className="flex min-w-0 gap-2">
-        {action && canTransition ? (
-          <Button
-            className={PREPARATION_ACTION_CLASS}
-            disabled={pending}
-            onClick={() => onTransition(ticket, action.status)}
-          >
-            {action.label}
-          </Button>
-        ) : null}
-        {canRevert ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            className="size-11 shrink-0"
-            disabled={pending}
-            onClick={() => onRevert?.(ticket)}
-            aria-label="Lùi phiếu về bước trước"
-            title="Lùi phiếu về bước trước"
-          >
-            <Undo2 className="size-4" aria-hidden="true" />
-          </Button>
-        ) : null}
-        {canRetry ? (
-          <Button
-            variant="outline"
-            size="icon"
-            className="size-11 shrink-0"
-            disabled={pending}
-            onClick={() => onRetry(ticket)}
-            aria-label="Yêu cầu in lại"
-          >
-            <Printer className="size-4" />
-          </Button>
-        ) : null}
-      </footer>
     </article>
   )
 }

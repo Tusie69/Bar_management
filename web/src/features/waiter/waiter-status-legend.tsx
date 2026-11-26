@@ -34,7 +34,7 @@ function PhaseRow({ phase, count }: { phase: WaiterVisitPhase; count: number }) 
           <span className="text-xs font-semibold text-foreground">{tone.label}</span>
           <span className="tnum shrink-0 text-xs font-bold text-foreground">{count}</span>
         </div>
-        <p className="text-[11px] leading-snug text-muted-foreground">{WAITER_PHASE_HINT[phase]}</p>
+        <p className="text-xs leading-snug text-muted-foreground">{WAITER_PHASE_HINT[phase]}</p>
       </div>
     </li>
   )
@@ -60,7 +60,7 @@ export function WaiterStatusLegendBody({
             <PhaseRow key={phase} phase={phase} count={counts[phase]} />
           ))}
         </ul>
-        <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+        <p className="mt-2 text-xs leading-snug text-muted-foreground">
           Ô bàn trắng là bàn trống. Bàn khách đã đặt mà chưa tới cũng hiện trắng — việc đặt bàn là của Lễ tân.
         </p>
       </section>
@@ -87,7 +87,7 @@ export function WaiterStatusLegendBody({
                 4
               </span>
             </span>
-            <p className="flex-1 text-[11px] leading-snug text-muted-foreground">
+            <p className="flex-1 text-xs leading-snug text-muted-foreground">
               Số tròn góc trên trái là <span className="font-semibold text-foreground">số khách</span> của cả đoàn, đếm
               một lần cho mỗi lượt khách chứ không nhân lên theo số bàn.
             </p>
@@ -101,7 +101,7 @@ export function WaiterStatusLegendBody({
                 G04
               </span>
             </span>
-            <p className="flex-1 text-[11px] leading-snug text-muted-foreground">
+            <p className="flex-1 text-xs leading-snug text-muted-foreground">
               Khung bao quanh nhiều ô kèm nhãn <span className="font-semibold text-foreground">G04</span> là{" "}
               <span className="font-semibold text-foreground">cụm bàn ghép</span>. Chạm vào ô nào cũng mở cùng một
               Phiên, nên không thể lên hai đơn cho một đoàn.
@@ -115,7 +115,7 @@ export function WaiterStatusLegendBody({
             >
               A10
             </span>
-            <p className="flex-1 text-[11px] leading-snug text-muted-foreground">
+            <p className="flex-1 text-xs leading-snug text-muted-foreground">
               Viền nét đứt là <span className="font-semibold text-foreground">Bàn sơ cua</span>, chỉ kê thêm khi khu
               chính đã kín.
             </p>
@@ -154,7 +154,7 @@ export function WaiterStatusLegend({ states, className }: WaiterStatusLegendProp
       type="button"
       aria-label="Chú giải: sáu trạng thái lượt khách và ký hiệu trên ô bàn"
       className={cn(
-        "grid size-11 min-h-[44px] min-w-[44px] place-items-center rounded-full border border-border bg-surface-1/92 text-tx-strong shadow-sm backdrop-blur-md transition-[transform,background-color,border-color] hover:border-border-strong hover:bg-surface-2 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-95",
+        "grid size-11 min-h-[44px] min-w-[44px] place-items-center rounded-full border border-border bg-surface-1 text-tx-strong shadow-sm transition-[transform,background-color,border-color] hover:border-border-strong hover:bg-surface-2 focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/25 focus-visible:outline-none active:scale-95",
         className,
       )}
     >

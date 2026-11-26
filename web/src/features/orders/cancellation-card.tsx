@@ -6,12 +6,15 @@
  * sẽ chết trước khi vẽ được gì.
  */
 import { Check, X } from "lucide-react"
+import { useRef, useState, type RefObject } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { formatVnd } from "@/features/waiter-menu/menu-price"
 import { PREPARATION_LABEL, POLICY_LABEL, STATION_LABEL } from "@/features/waiter-menu/order-board-model"
 import type { CancellationQueueEntry } from "@/features/waiter-menu/waiter-order-api"
+import { CancellationApproveDialog } from "./cancellation-approve-dialog"
+import { useFocusFallbackOnUnmount } from "./cancellation-focus"
 
 function timeLabel(value: string): string {
   const date = new Date(value)
@@ -23,18 +26,27 @@ export function CancellationCard({
   entry,
   note,
   busy,
+  fallbackFocusRef,
   onNoteChange,
   onDecide,
 }: {
   entry: CancellationQueueEntry
   note: string
   busy: boolean
+  fallbackFocusRef?: RefObject<HTMLElement | null>
   onNoteChange: (value: string) => void
-  onDecide: (decision: "approve" | "reject") => void
+  onDecide: (decision: "approve" | "reject") => void | Promise<unknown>
 }) {
   const waste = entry.policy === "READY_WASTE"
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const cardRef = useRef<HTMLLIElement>(null)
+  const approveButtonRef = useRef<HTMLButtonElement>(null)
+  const tableOrderLabel = `Bàn ${entry.tableCodes.join(" + ") || `#${entry.visitId}`} · đơn ${entry.visitSequence}`
+
+  useFocusFallbackOnUnmount(cardRef, fallbackFocusRef)
+
   return (
-    <li className="grid gap-3 rounded-2xl border border-border bg-surface-1 p-4">
+    <li ref={cardRef} className="grid gap-3 rounded-2xl border border-border bg-surface-1 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="font-medium">
@@ -44,8 +56,7 @@ export function CancellationCard({
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <Badge variant={waste ? "destructive" : "secondary"}>{POLICY_LABEL[entry.policy]}</Badge>
             <span>
-              Bàn {entry.tableCodes.join(" + ") || `#${entry.visitId}`} · đơn {entry.visitSequence} · dòng{" "}
-              {entry.lineNo}
+              {tableOrderLabel} · dòng {entry.lineNo}
             </span>
             <span>{STATION_LABEL[entry.station]}</span>
             <span>{PREPARATION_LABEL[entry.ticketStatusAtRequest]} khi xin hủy</span>
@@ -72,18 +83,55 @@ export function CancellationCard({
             value={note}
             maxLength={200}
             onChange={(event) => onNoteChange(event.target.value)}
-            placeholder="Ghi chú quyết định (không bắt buộc)"
+            placeholder="Ghi chú (không bắt buộc)"
             aria-label={`Ghi chú quyết định cho yêu cầu ${entry.cancellationId}`}
             className="h-11"
           />
           <div className="grid gap-2 sm:grid-cols-2">
-            <Button type="button" variant="outline" disabled={busy} onClick={() => onDecide("reject")}>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void Promise.resolve(onDecide("reject")).catch(() => undefined)}
+            >
               <X className="size-4" aria-hidden /> Từ chối
             </Button>
-            <Button type="button" disabled={busy} onClick={() => onDecide("approve")}>
+            <Button
+              ref={approveButtonRef}
+              type="button"
+              variant={waste ? "destructive" : "default"}
+              disabled={busy}
+              onClick={() => setConfirmOpen(true)}
+            >
               <Check className="size-4" aria-hidden /> {waste ? "Duyệt ghi hao" : "Duyệt hủy"}
             </Button>
           </div>
+          <CancellationApproveDialog
+            open={confirmOpen}
+            onOpenChange={setConfirmOpen}
+            triggerRef={approveButtonRef}
+            fallbackFocusRef={fallbackFocusRef}
+            title={waste ? "Xác nhận duyệt ghi hao" : "Xác nhận duyệt hủy món"}
+            description={
+              waste
+                ? "Thao tác này chấp nhận hủy món đã làm và ghi nhận vào hao hụt."
+                : "Thao tác này chấp nhận hủy món và trừ khỏi đơn hiện tại."
+            }
+            waste={waste}
+            tableOrderLabel={tableOrderLabel}
+            quantityLabel={`${entry.quantity} phần`}
+            amountVnd={entry.amountVnd}
+            items={[
+              {
+                key: entry.cancellationId,
+                quantity: entry.quantity,
+                itemName: entry.itemName,
+                variantDisplayName: entry.variantDisplayName,
+              },
+            ]}
+            busy={busy}
+            onConfirm={() => onDecide("approve")}
+          />
         </div>
       ) : (
         <Badge variant="outline" className="w-fit">

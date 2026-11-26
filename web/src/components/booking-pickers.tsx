@@ -54,7 +54,7 @@ export function GuestPicker({
           Số khách
         </span>
       </div>
-      <div role="radiogroup" aria-labelledby={`${id}-label`} className="grid grid-cols-6 gap-1.5">
+      <div role="radiogroup" aria-labelledby={`${id}-label`} className="grid grid-cols-6 gap-1 sm:gap-1.5">
         {GUEST_QUICK.map((n) => {
           const on = value.mode === "quick" && value.party === n
           return (

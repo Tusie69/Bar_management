@@ -15,7 +15,7 @@ import {
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { CANCEL_REASONS, type BookingCancelReason } from "@/domain/enums"
-import { fmtTime12 } from "@/lib/time"
+import { fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { CANCEL_NOTE_MAX_LENGTH, DEFAULT_CANCEL_REASON, validateCancelBookingInput } from "./cancel-booking"
 import { useM, type CancelBookingRequest } from "./context"
@@ -89,7 +89,7 @@ export function CancelBookingDialog({ req, onClose }: { req: CancelBookingReques
           </AlertDialogTitle>
           <AlertDialogDescription className="text-[13.5px] leading-snug text-pretty text-[var(--text-muted)] sm:text-[14px] sm:leading-relaxed">
             {r
-              ? `Booking ${fmtTime12(r.expectedAt)} (${r.partySize} khách). Bàn đang giữ sẽ được nhả và ghi vào nhật ký.`
+              ? `Booking ${fmtTime(r.expectedAt)} (${r.partySize} khách). Bàn đang giữ sẽ được nhả và ghi vào nhật ký.`
               : "Booking bị hủy và bàn được nhả. Thao tác được ghi vào nhật ký."}
           </AlertDialogDescription>
         </AlertDialogHeader>

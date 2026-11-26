@@ -68,7 +68,7 @@ export function ReceptionSearchField({ search, className }: { search: ReceptionS
         maxLength={byName ? 120 : 3}
         autoComplete="off"
         aria-label={byName ? "Tìm theo tên khách" : "Tìm 3 số cuối SĐT"}
-        placeholder={byName ? "Tên khách" : "3 số cuối SĐT"}
+        placeholder={byName ? "Tên khách" : "3 số cuối"}
         className="h-10 min-h-[40px] min-w-0 bg-surface-1 pl-10 text-sm"
         onChange={(event) =>
           search.setValue(byName ? event.target.value : event.target.value.replace(/\D/g, "").slice(0, 3))

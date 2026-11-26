@@ -38,14 +38,15 @@ export function WaiterShell() {
   return (
     <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background">
       <header className="flex h-14 min-w-0 shrink-0 items-center gap-2 border-b border-border bg-surface-1 px-3">
-        <button
+        <Button
           type="button"
+          variant="ghost"
           onClick={() => navigate(WAITER_HOME_PATH)}
-          className="flex min-w-0 max-w-[7.5rem] items-baseline gap-2 rounded-md px-1 py-0.5 text-left sm:max-w-none"
+          className="min-h-11 max-w-[7.5rem] min-w-0 shrink justify-start gap-2 px-1.5 py-0.5 text-left min-[360px]:max-w-[9.5rem] sm:max-w-none sm:px-2"
         >
           <span className="text-base font-semibold tracking-tight">21GAM</span>
-          <span className="truncate text-sm text-muted-foreground">{waiterRoleLabel(role)}</span>
-        </button>
+          <span className="truncate text-sm font-normal text-muted-foreground">{waiterRoleLabel(role)}</span>
+        </Button>
         <div className="ml-auto flex min-w-0 items-center gap-1">
           {/* Tên nhân viên hiện ở MỌI bề ngang: một ca có nhiều máy dùng chung,
               và biết mình đang đăng nhập bằng tài khoản nào là việc của header. */}
