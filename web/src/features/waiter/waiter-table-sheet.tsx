@@ -15,14 +15,17 @@
  */
 import { ArrowLeftRight, Clock3, Columns3, Info, ReceiptText, Scissors, UsersRound, UtensilsCrossed } from "lucide-react"
 import { useMemo, useState } from "react"
+import { useInRouterContext, useNavigate } from "react-router"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import type { FloorTableState, TableView } from "@/domain/models"
 import { fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { useSession } from "@/state/session"
 import {
   WAITER_PHASE_LABEL,
+  waiterPaymentPath,
   waiterServedDuration,
   waiterTableCapability,
   type WaiterTableCapability,
@@ -136,6 +139,7 @@ export function WaiterTableSheetBody({
   // thứ hai — chỉ là cùng một câu trả lời đọc ở hai chỗ.
   const visitItems = useVisitItems(capability.visitId)
   const hasOrders = (visitItems.data?.items.length ?? 0) > 0
+  const isBar = useSession((state) => state.user.role === "BAR")
 
   const modes = useMemo<WaiterRearrangeMode[]>(() => {
     if (!capability.canRearrange) return []
@@ -266,6 +270,9 @@ export function WaiterTableSheetBody({
             <ReceiptText className="size-4" aria-hidden="true" /> In bill tạm tính
           </Button>
         ) : null}
+        {!isBar && capability.visitId !== null ? (
+          <WaiterPaymentLinkButton visitId={capability.visitId} pending={pending} />
+        ) : null}
         {modes.length ? (
           <div className="grid gap-2 rounded-lg border border-border-subtle p-2">
             <p className="px-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
@@ -346,6 +353,33 @@ export function WaiterTableSheetBody({
       <WaiterBillSheet visitId={capability.visitId} open={billOpen} onClose={() => setBillOpen(false)} />
     </div>
   )
+}
+
+function WaiterPaymentRouterButton({ visitId, pending }: { visitId: number; pending: boolean }) {
+  const navigate = useNavigate()
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      className="h-11 w-full justify-center"
+      disabled={pending}
+      onClick={() => navigate(waiterPaymentPath(visitId))}
+    >
+      <ReceiptText className="size-4" aria-hidden="true" /> Xem tạm tính &amp; gọi thu ngân
+    </Button>
+  )
+}
+
+function WaiterPaymentLinkButton({ visitId, pending }: { visitId: number; pending: boolean }) {
+  const inRouter = useInRouterContext()
+  if (!inRouter) {
+    return (
+      <Button type="button" variant="outline" className="h-11 w-full justify-center" disabled={pending}>
+        <ReceiptText className="size-4" aria-hidden="true" /> Xem tạm tính &amp; gọi thu ngân
+      </Button>
+    )
+  }
+  return <WaiterPaymentRouterButton visitId={visitId} pending={pending} />
 }
 
 export interface WaiterTableSheetProps extends WaiterTableSheetBodyProps {

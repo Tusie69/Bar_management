@@ -32,12 +32,17 @@ export const WAITER_LEGACY_BASE_PATH = "/waiter"
  * như đã dùng được.
  */
 export const WAITER_ORDER_PATH = "phien/:visitId/goi-mon"
+export const WAITER_PAYMENT_PATH = "phien/:visitId/thanh-toan"
 export const WAITER_ORDERS_VIEW_PATH = "orders"
 export const WAITER_QUEUE_PATH = "hang-doi"
 export const WAITER_QUEUE_ABSOLUTE_PATH = `${WAITER_BASE_PATH}/${WAITER_QUEUE_PATH}`
 
 export function waiterOrderPath(visitId: number): string {
   return `${WAITER_BASE_PATH}/phien/${visitId}/goi-mon`
+}
+
+export function waiterPaymentPath(visitId: number): string {
+  return `${WAITER_BASE_PATH}/phien/${visitId}/thanh-toan`
 }
 
 export function waiterOrdersViewPath(visitId: number): string {
@@ -75,6 +80,7 @@ export const WAITER_REARRANGE_PERMISSIONS: readonly Permission[] = ["visit.move"
  * navigation của Lễ tân, cộng với permission ở backend.
  */
 export const WAITER_FORBIDDEN_PATHS: readonly string[] = [
+  "/payment",
   "/reservations",
   "/waitlist",
   "/guests",

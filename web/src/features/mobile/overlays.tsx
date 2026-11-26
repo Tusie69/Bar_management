@@ -242,7 +242,7 @@ export function AccountSheet({
   const [loggingOut, setLoggingOut] = useState(false)
   const isReceptionist = user.role === "RECEPTIONIST"
   const focus = useRestoreTriggerFocus(open)
-  const more = NAV.filter((n) => ["/guests", "/reports", "/settings"].includes(n.to)).filter(
+  const more = NAV.filter((n) => ["/payment", "/guests", "/reports", "/settings"].includes(n.to)).filter(
     (n) =>
       !n.permission || (api.mode === "http" ? permissions.includes(n.permission) : roleCan(user.role, n.permission)),
   )

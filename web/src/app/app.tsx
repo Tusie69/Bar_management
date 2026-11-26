@@ -26,6 +26,7 @@ const SettingsPage = lazy(() => import("@/features/settings/settings-page"))
 const MobileApp = lazy(() => import("@/features/mobile/mobile-app"))
 const PreparationPage = lazy(() => import("@/features/preparation/preparation-page"))
 const CancellationQueuePage = lazy(() => import("@/features/orders/cancellation-queue-page"))
+const PaymentPage = lazy(() => import("@/features/payment/payment-page"))
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -93,6 +94,9 @@ const router = createBrowserRouter([
       { path: "home", element: <HomeRoute /> },
       { path: "overview", element: page(<OverviewPage />) },
       { path: "floor", element: <FloorPage /> },
+      { path: "payment", element: page(<PaymentPage />) },
+      { path: "payment/:visitId", element: page(<PaymentPage />) },
+      { path: "payment/:visitId/:step", element: page(<PaymentPage />) },
       { path: "reservations", element: page(<ReservationsPage />) },
       { path: "waitlist", element: page(<WaitlistPage />) },
       { path: "guests", element: page(<GuestsPage />) },

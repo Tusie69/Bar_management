@@ -1,6 +1,7 @@
 import {
   CalendarClock,
   ChartColumn,
+  CircleDollarSign,
   LayoutDashboard,
   ListOrdered,
   Settings,
@@ -21,6 +22,7 @@ export interface NavItem {
 // v2 nav: "Điều phối" (floor) is the home screen. /overview still routes, just not listed.
 export const NAV: NavItem[] = [
   { to: "/floor", label: "Điều phối", short: "Điều phối", icon: LayoutDashboard, mobile: true },
+  { to: "/payment", label: "Thu tiền", short: "Thu tiền", icon: CircleDollarSign, permission: "payment.collect", mobile: true },
   { to: "/reservations", label: "Đặt bàn", short: "Đặt bàn", icon: CalendarClock, mobile: true },
   { to: "/waitlist", label: "Chờ", short: "Chờ", icon: ListOrdered, mobile: true },
   { to: "/guests", label: "Khách", short: "Khách", icon: Users, mobile: true },
