@@ -5,8 +5,10 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it, vi } from "vitest"
 import { roleCan } from "@/domain/access"
 import type { RoleCode } from "@/domain/enums"
+import { WAITER_FORBIDDEN_PATHS } from "@/features/waiter/waiter-access"
 import type {
   CancelRequest,
+  PaidBillSummary,
   PayBill,
   PayBillSummary,
   PaymentApi,
@@ -24,12 +26,18 @@ import {
   canReadPaymentAudit,
   collectAuditBillCodes,
   extractPaidBillsFromSessions,
+  filterPaidBills,
   formatCancelTime,
+  formatPaidMethod,
+  formatPaidTableLabel,
   paidCandidatesFromVisits,
   partitionCancelRequests,
+  sortPaidBillsNewestFirst,
+  type PaidBillCandidate,
 } from "./cancel-model"
 import { CancelQueuePanel } from "./cancel-queue-panel"
 import { DirectCancelPanel } from "./direct-cancel-panel"
+import { PaidBillsPanel } from "./paid-bills-panel"
 import { PaymentCancelWorkspace } from "./payment-cancel-page"
 
 function makeFakeApi(overrides: Partial<PaymentApi> = {}): PaymentApi {
@@ -148,6 +156,18 @@ function makeFakeApi(overrides: Partial<PaymentApi> = {}): PaymentApi {
       device: "Máy quản trị",
     },
   ]
+  const paidBills: PaidBillSummary[] = [
+    {
+      billCode: "B0002",
+      visitId: "2",
+      code: "A2",
+      tables: ["A2"],
+      dueVnd: 165_000,
+      method: "CASH",
+      paidAt: "2026-11-26T21:35:00.000Z",
+      paidBy: "Thu ngân · Thu ngân",
+    },
+  ]
 
   return {
     listOpen: async () => [summary],
@@ -173,11 +193,12 @@ function makeFakeApi(overrides: Partial<PaymentApi> = {}): PaymentApi {
     }),
     cancelPaid: async () => undefined,
     listAudit: async (billCode) => (billCode ? audit.filter((a) => a.billCode === billCode) : audit),
+    listPaidBills: async () => paidBills,
     ...overrides,
   }
 }
 
-function renderWorkspaceAs(role: RoleCode, payApi: PaymentApi) {
+function renderWorkspaceAs(role: RoleCode, payApi: PaymentApi, initialBillCode = "") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return renderToStaticMarkup(
     createElement(
@@ -185,6 +206,7 @@ function renderWorkspaceAs(role: RoleCode, payApi: PaymentApi) {
       { client: qc },
       createElement(PaymentCancelWorkspace, {
         payApi,
+        initialBillCode,
         accessOverride: {
           role,
           canAuditRead: roleCan(role, "audit.read"),
@@ -203,6 +225,7 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
     expect(canAccessPaymentCancel("BAR", false, false)).toBe(false)
     expect(canAccessPaymentCancel("KITCHEN", false, false)).toBe(false)
     expect(canAccessPaymentCancel("CUSTOMER_CARE", false, false)).toBe(false)
+    expect(WAITER_FORBIDDEN_PATHS).toContain("/cancel-payment")
 
     expect(canAccessPaymentCancel("ADMIN", true, true)).toBe(true)
     expect(canAccessPaymentCancel("OWNER", true, true)).toBe(true)
@@ -217,11 +240,63 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
     expect(canDirectCancelPaid("ADMIN")).toBe(true)
     expect(canDirectCancelPaid("OWNER")).toBe(true)
     expect(canDirectCancelPaid("CASHIER")).toBe(false)
+    expect(canDirectCancelPaid("WAITER")).toBe(false)
+    expect(canDirectCancelPaid("BAR")).toBe(false)
 
     expect(canReadPaymentAudit("ADMIN", true)).toBe(true)
     expect(canReadPaymentAudit("OWNER", true)).toBe(true)
-    expect(canReadPaymentAudit("RECEPTIONIST", false)).toBe(false)
+    expect(canReadPaymentAudit("RECEPTIONIST", false)).toBe(true)
     expect(canReadPaymentAudit("CASHIER", true)).toBe(false)
+  })
+
+  it("sorts paid bills newest-first and searches by bill code, table, or cluster", () => {
+    const bills: PaidBillCandidate[] = [
+      {
+        billCode: "B0001",
+        visitId: "1",
+        code: "A1",
+        tables: ["A1"],
+        dueVnd: 120_000,
+        method: "CASH",
+        paidAt: "2026-11-26T20:10:00.000Z",
+        paidBy: "Thu ngân 1",
+      },
+      {
+        billCode: "B0003",
+        visitId: "3",
+        code: "G02",
+        clusterCode: "G02",
+        tables: ["B11", "B12"],
+        dueVnd: 540_000,
+        method: "TRANSFER",
+        paidAt: "2026-11-26T21:50:00.000Z",
+        paidBy: "Thu ngân 2",
+      },
+      {
+        billCode: "B0002",
+        visitId: "2",
+        code: "A2",
+        tables: ["A2"],
+        dueVnd: 231_000,
+        method: "CASH",
+        paidAt: "2026-11-26T21:15:00.000Z",
+        paidBy: "Thu ngân 1",
+      },
+    ]
+
+    const sorted = sortPaidBillsNewestFirst(bills)
+    expect(sorted.map((b) => b.billCode)).toEqual(["B0003", "B0002", "B0001"])
+
+    expect(filterPaidBills(sorted, "b0002").map((b) => b.billCode)).toEqual(["B0002"])
+    expect(filterPaidBills(sorted, "B12").map((b) => b.billCode)).toEqual(["B0003"])
+    expect(filterPaidBills(sorted, "g02").map((b) => b.billCode)).toEqual(["B0003"])
+    expect(filterPaidBills(sorted, "  ").map((b) => b.billCode)).toEqual(["B0003", "B0002", "B0001"])
+
+    expect(formatPaidMethod("CASH")).toBe("Tiền mặt")
+    expect(formatPaidMethod("TRANSFER")).toBe("Chuyển khoản QR")
+    expect(formatPaidMethod(undefined)).toBe("-")
+    expect(formatPaidTableLabel(bills[0])).toBe("Bàn A1")
+    expect(formatPaidTableLabel(bills[1])).toBe("Cụm G02 (B11, B12)")
   })
 
   it("partitions PENDING vs decided cancel requests newest-first", () => {
@@ -357,6 +432,49 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
 })
 
 describe("W4 TN-14 UI components against fake PaymentApi", () => {
+  it("renders PaidBillsPanel with bill code, table/cluster, amount, method, paid time, cashier newest-first", () => {
+    const html = renderToStaticMarkup(
+      createElement(PaidBillsPanel, {
+        paidBills: [
+          {
+            billCode: "B0001",
+            visitId: "1",
+            code: "A1",
+            tables: ["A1"],
+            dueVnd: 120_000,
+            method: "CASH",
+            paidAt: "20:10",
+            paidBy: "Thu ngân 1",
+          },
+          {
+            billCode: "B0003",
+            visitId: "3",
+            code: "G02",
+            clusterCode: "G02",
+            tables: ["B11", "B12"],
+            dueVnd: 540_000,
+            method: "TRANSFER",
+            paidAt: "21:45",
+            paidBy: "Thu ngân 2",
+          },
+        ],
+        selectedBillCode: "B0003",
+        onSelect: () => undefined,
+      }),
+    )
+    expect(html).toContain("Bill đã thu trong ca")
+    expect(html).toContain("Tìm theo mã bill hoặc bàn")
+    expect(html).toContain("B0003")
+    expect(html).toContain("Cụm G02 (B11, B12)")
+    expect(html).toContain("540.000đ")
+    expect(html).toContain("Chuyển khoản QR")
+    expect(html).toContain("21:45")
+    expect(html).toContain("Thu ngân 2")
+    expect(html).toContain("B0001")
+    expect(html).toContain("Tiền mặt")
+    expect(html.indexOf("B0003")).toBeLessThan(html.indexOf("B0001"))
+  })
+
   it("renders Admin approval queue with PENDING bill, table, amount, reason, requester, time, note, Approve/Reject", () => {
     const html = renderToStaticMarkup(
       createElement(CancelQueuePanel, {
@@ -431,6 +549,7 @@ describe("W4 TN-14 UI components against fake PaymentApi", () => {
             code: "A2",
             tables: ["A2"],
             dueVnd: 165_000,
+            method: "CASH",
             paidAt: "21:35",
             paidBy: "Thu ngân",
           },
@@ -445,6 +564,7 @@ describe("W4 TN-14 UI components against fake PaymentApi", () => {
     expect(html).toContain("B0002")
     expect(html).toContain("Bàn A2")
     expect(html).toContain("165.000đ")
+    expect(html).toContain("Tiền mặt")
     expect(html).toContain("Lý do huỷ thanh toán (bắt buộc)")
     expect(html).toContain("Xác nhận huỷ thanh toán")
   })
@@ -503,34 +623,60 @@ describe("W4 TN-14 UI components against fake PaymentApi", () => {
     expect(html).toContain("iPad quầy")
   })
 
-  it("gates PaymentCancelWorkspace by role: CASHIER denied, ADMIN/OWNER full view, RECEPTIONIST direct-cancel only", () => {
+  it("gates PaymentCancelWorkspace by role: CASHIER denied, ADMIN/OWNER full view, RECEPTIONIST paid-bills list and panels on selection", () => {
     const fakeApi = makeFakeApi()
 
     const cashierHtml = renderWorkspaceAs("CASHIER", fakeApi)
     expect(cashierHtml).toContain("Không có quyền truy cập")
     expect(cashierHtml).not.toContain("Hàng chờ duyệt huỷ")
+    expect(cashierHtml).not.toContain("Bill đã thu trong ca")
+
+    const waiterHtml = renderWorkspaceAs("WAITER", fakeApi)
+    expect(waiterHtml).toContain("Không có quyền truy cập")
+
+    const barHtml = renderWorkspaceAs("BAR", fakeApi)
+    expect(barHtml).toContain("Không có quyền truy cập")
 
     const adminHtml = renderWorkspaceAs("ADMIN", fakeApi)
     expect(adminHtml).toContain("Duyệt huỷ thanh toán")
     expect(adminHtml).toContain("Hàng chờ duyệt huỷ")
-    expect(adminHtml).toContain("Huỷ thanh toán trực tiếp")
+    expect(adminHtml).toContain("Bill đã thu trong ca")
     expect(adminHtml).toContain("Nhật ký theo bill")
 
     const ownerHtml = renderWorkspaceAs("OWNER", fakeApi)
     expect(ownerHtml).toContain("Duyệt huỷ thanh toán")
     expect(ownerHtml).toContain("Hàng chờ duyệt huỷ")
+    expect(ownerHtml).toContain("Bill đã thu trong ca")
 
-    const recHtml = renderWorkspaceAs("RECEPTIONIST", fakeApi)
-    expect(recHtml).toContain("Huỷ thanh toán đã thu")
-    expect(recHtml).toContain("Huỷ thanh toán trực tiếp")
-    expect(recHtml).not.toContain("Hàng chờ duyệt huỷ")
-    expect(recHtml).not.toContain("Nhật ký theo bill")
+    const recListHtml = renderWorkspaceAs("RECEPTIONIST", fakeApi)
+    expect(recListHtml).toContain("Huỷ thanh toán đã thu")
+    expect(recListHtml).toContain("Bill đã thu trong ca")
+    expect(recListHtml).not.toContain("Hàng chờ duyệt huỷ")
+    expect(recListHtml).not.toContain("Huỷ thanh toán trực tiếp")
+    expect(recListHtml).not.toContain("Nhật ký theo bill")
+
+    const recSelectedHtml = renderWorkspaceAs("RECEPTIONIST", fakeApi, "B0002")
+    expect(recSelectedHtml).toContain("Huỷ thanh toán trực tiếp")
+    expect(recSelectedHtml).toContain("Nhật ký theo bill")
+    expect(recSelectedHtml).not.toContain("Hàng chờ duyệt huỷ")
   })
 
-  it("validates decideCancel and cancelPaid contract calls against fake PaymentApi", async () => {
+  it("validates listPaidBills, decideCancel and cancelPaid contract calls against fake PaymentApi", async () => {
     const decideCancel = vi.fn(makeFakeApi().decideCancel)
     const cancelPaid = vi.fn(makeFakeApi().cancelPaid)
-    const fakeApi = makeFakeApi({ decideCancel, cancelPaid })
+    const listPaidBills = vi.fn(makeFakeApi().listPaidBills)
+    const fakeApi = makeFakeApi({ decideCancel, cancelPaid, listPaidBills })
+
+    const paidList = await fakeApi.listPaidBills!()
+    expect(paidList).toHaveLength(1)
+    expect(paidList[0]).toMatchObject({
+      billCode: "B0002",
+      code: "A2",
+      dueVnd: 165_000,
+      method: "CASH",
+      paidBy: "Thu ngân · Thu ngân",
+    })
+    expect(listPaidBills).toHaveBeenCalledTimes(1)
 
     const res = await fakeApi.decideCancel("cr-1", true, "Duyệt test")
     expect(res.status).toBe("APPROVED")
