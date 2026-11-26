@@ -390,7 +390,14 @@ mysqlDescribe('Module 4 preparation queue', () => {
     expect(back.startedAt).toBeNull()
     expect(back.acceptedAt).not.toBeNull()
 
-    const [events] = await databasePool.execute<RowDataPacket[]>(
+    // Khai kiểu từng cột thay vì `RowDataPacket[]` trần: `RowDataPacket` có
+    // index signature `any`, nên `.map()` bên dưới trả về `any[][]` và
+    // `no-unsafe-return` chặn cổng lint của deploy.
+    const [events] = await databasePool.execute<(RowDataPacket & {
+      from_status: string
+      to_status: string
+      reason: string | null
+    })[]>(
       `SELECT from_status, to_status, reason FROM preparation_ticket_events
         WHERE ticket_id = ? ORDER BY ticket_version`,
       [seeded.barId],

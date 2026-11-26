@@ -94,7 +94,7 @@ billRouter.get(
   requireAuthentication,
   requirePermission('order.read'),
   async (request, response) => {
-    const visitId = visitIdFromQuery(request.query as Record<string, unknown>)
+    const visitId = visitIdFromQuery(request.query)
     response.setHeader('Cache-Control', 'private, no-store')
     response.json({ preview: await previewBill(requireAuthenticatedActor(request), visitId) })
   },
@@ -286,7 +286,7 @@ billRouter.post(
   requireAuthentication,
   requireCsrfProtection,
   requirePermission('payment.collect'),
-  (request, _response) => {
+  (request) => {
     positiveInteger(request.params.billId, 'INVALID_BILL_ID', 'billId phải là số nguyên dương.')
     throw new AppError(
       501,
