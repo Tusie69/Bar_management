@@ -58,9 +58,10 @@ export function PaymentNotificationBell({
           setOpen(next)
           if (next) onOpen()
         }}
-        className="relative grid size-11 place-items-center rounded-full border border-border bg-surface-2 text-foreground cursor-pointer transition-colors hover:bg-surface-3"
+        className="relative inline-flex min-h-11 items-center gap-2 rounded-full border border-border bg-surface-2 px-3 text-foreground cursor-pointer transition-colors hover:bg-surface-3 md:px-3.5"
       >
-        <Bell className="size-5" aria-hidden />
+        <Bell className="size-5 shrink-0" aria-hidden />
+        <span className="hidden text-[13px] font-semibold md:inline">Thông báo thu tiền</span>
         {hasUnread ? (
           <span
             aria-hidden

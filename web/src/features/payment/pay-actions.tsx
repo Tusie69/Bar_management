@@ -13,7 +13,6 @@ import {
 import { useEffect, useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
 import {
-  calcBillTotals,
   evaluateCashInput,
   formatNumberVnd,
   formatVnd,
@@ -26,10 +25,34 @@ import {
 import { DemoQrBox } from "./bill-pane"
 
 export interface PaymentErrorState {
-  kind: "net" | "dup" | "other"
+  kind: "net" | "dup" | "conflict" | "other"
   message: string
   confirmedBy?: string
   confirmedAt?: string
+}
+
+function PaidClosedBanner({ onToList }: { onToList: () => void }) {
+  return (
+    <div
+      role="status"
+      className="flex items-start gap-2.5 rounded-[10px] border border-border-strong bg-surface-2 px-3 py-2.5 text-[13px]"
+    >
+      <Info className="mt-0.5 size-5 shrink-0 text-[var(--text-muted)]" aria-hidden />
+      <span>
+        <b className="block text-sm text-[var(--ink-strong)]">Bill này đã thanh toán</b>
+        Phiên đã đóng. Mọi thao tác chọn phương thức, kiểm tra và xác nhận thu tiền đã được khóa.
+        <span className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={onToList}
+            className="inline-flex min-h-10 items-center rounded-lg border border-border-strong bg-surface-1 px-3.5 text-sm font-medium cursor-pointer hover:border-foreground"
+          >
+            Về danh sách Phiên
+          </button>
+        </span>
+      </span>
+    </div>
+  )
 }
 
 function PaymentErrorBanner({
@@ -56,6 +79,20 @@ function PaymentErrorBanner({
           {context === "cash"
             ? "Thanh toán CHƯA được ghi nhận. Giữ tiền khách, không thu lại, bấm Thử lại khi có mạng."
             : "Thanh toán CHƯA được ghi nhận, bill chưa đóng. Thử lại khi có mạng."}
+        </span>
+      </div>
+    )
+  }
+  if (error.kind === "conflict") {
+    return (
+      <div
+        role="alert"
+        className="flex items-start gap-2.5 rounded-[10px] border border-[var(--st-pending)] bg-[var(--st-pending-tint)] px-3 py-2.5 text-[13px]"
+      >
+        <AlertTriangle className="mt-0.5 size-5 shrink-0 text-[var(--st-pending-ink)]" aria-hidden />
+        <span>
+          <b className="block text-sm text-[var(--st-pending-ink)]">Bill vừa được cập nhật</b>
+          Phiên bản bill đã thay đổi (chưa thu tiền). Đã tải lại số liệu mới nhất, vui lòng kiểm tra lại tổng tiền trước khi xác nhận lại.
         </span>
       </div>
     )
@@ -105,15 +142,17 @@ export function MethodActionPane({
   bill,
   lastMethod,
   onSelectMethod,
+  onToList,
 }: {
   bill: PayBill
   lastMethod: PaymentMethod | null
   onSelectMethod: (method: PaymentMethod) => void
+  onToList?: () => void
 }) {
-  const totals = useMemo(() => calcBillTotals(bill.lines), [bill.lines])
+  const isPaid = bill.status === "PAID"
   const dueSub =
-    totals.roundingVnd > 0
-      ? `Đã làm tròn lên từ ${formatVnd(totals.preRoundVnd)} · Bill ${bill.billCode}`
+    bill.roundingVnd > 0
+      ? `Đã làm tròn lên từ ${formatVnd(bill.preRoundVnd)} · Bill ${bill.billCode}`
       : `Không cần làm tròn · Bill ${bill.billCode}`
 
   return (
@@ -127,15 +166,18 @@ export function MethodActionPane({
             Khách cần trả
           </span>
           <b className="tnum text-[clamp(36px,4.4cqi,52px)] leading-none font-extrabold tracking-[-0.04em] text-[var(--ink-strong)]">
-            {formatVnd(totals.dueVnd)}
+            {formatVnd(bill.dueVnd)}
           </b>
           <span className="text-[13px] text-[var(--text-muted)]">{dueSub}</span>
         </div>
 
+        {isPaid ? <PaidClosedBanner onToList={onToList ?? (() => undefined)} /> : null}
+
         <div className="pay-mlist" role="group" aria-label="Chọn một phương thức thanh toán">
           <button
             type="button"
-            className={cn("pay-mrow", lastMethod === "CASH" && "sel")}
+            disabled={isPaid}
+            className={cn("pay-mrow", lastMethod === "CASH" && "sel", "disabled:cursor-not-allowed disabled:opacity-50")}
             onClick={() => onSelectMethod("CASH")}
           >
             <Banknote className="size-7 text-foreground" aria-hidden />
@@ -157,7 +199,8 @@ export function MethodActionPane({
 
           <button
             type="button"
-            className={cn("pay-mrow", lastMethod === "TRANSFER" && "sel")}
+            disabled={isPaid}
+            className={cn("pay-mrow", lastMethod === "TRANSFER" && "sel", "disabled:cursor-not-allowed disabled:opacity-50")}
             onClick={() => onSelectMethod("TRANSFER")}
           >
             <QrCode className="size-7 text-foreground" aria-hidden />
@@ -215,9 +258,8 @@ export function CashActionPane({
   onToList: () => void
 }) {
   const [givenVnd, setGivenVnd] = useState<number | null>(null)
-  const totals = useMemo(() => calcBillTotals(bill.lines), [bill.lines])
-  const chips = useMemo(() => quickCashAmounts(totals.dueVnd), [totals.dueVnd])
-  const res = useMemo(() => evaluateCashInput(totals.dueVnd, givenVnd), [givenVnd, totals.dueVnd])
+  const chips = useMemo(() => quickCashAmounts(bill.dueVnd), [bill.dueVnd])
+  const res = useMemo(() => evaluateCashInput(bill.dueVnd, givenVnd), [givenVnd, bill.dueVnd])
   const isPaid = bill.status === "PAID"
 
   const isShort = res.state === "short"
@@ -267,11 +309,11 @@ export function CashActionPane({
             Khách cần trả
           </span>
           <b className="tnum text-[clamp(36px,4.4cqi,52px)] leading-none font-extrabold tracking-[-0.04em] text-[var(--ink-strong)]">
-            {formatVnd(totals.dueVnd)}
+            {formatVnd(bill.dueVnd)}
           </b>
           <span className="text-[13px] text-[var(--text-muted)]">
-            {totals.roundingVnd > 0
-              ? `Đã làm tròn lên từ ${formatVnd(totals.preRoundVnd)} · Bill ${bill.billCode}`
+            {bill.roundingVnd > 0
+              ? `Đã làm tròn lên từ ${formatVnd(bill.preRoundVnd)} · Bill ${bill.billCode}`
               : `Không cần làm tròn · Bill ${bill.billCode}`}
           </span>
         </div>
@@ -341,6 +383,7 @@ export function CashActionPane({
         </div>
 
         <div className="grid gap-2">
+          {isPaid && error?.kind !== "dup" ? <PaidClosedBanner onToList={onToList} /> : null}
           <PaymentErrorBanner error={error} context="cash" onToList={onToList} />
 
           <div
@@ -408,17 +451,16 @@ export function QrActionPane({
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [ack, setAck] = useState(false)
 
-  const totals = useMemo(() => calcBillTotals(bill.lines), [bill.lines])
   const qrRef = `21GAM ${bill.billCode}`
   const isPaid = bill.status === "PAID"
 
   useEffect(() => {
-    if (qrStatus === "found") return
+    if (qrStatus === "found" || isPaid) return
     const timer = window.setInterval(() => {
       setElapsedSec((s) => s + 1)
     }, 1000)
     return () => window.clearInterval(timer)
-  }, [qrStatus])
+  }, [isPaid, qrStatus])
 
   const mm = String(Math.floor(elapsedSec / 60)).padStart(2, "0")
   const ss = String(elapsedSec % 60).padStart(2, "0")
@@ -442,7 +484,7 @@ export function QrActionPane({
     found: {
       cls: "border-[var(--st-seated)] bg-[var(--st-seated-tint)] text-[var(--st-seated-ink)]",
       title: "Đã thấy giao dịch khớp (mô phỏng)",
-      sub: `${formatVnd(totals.dueVnd)} · nội dung ${qrRef} · vẫn cần nhân viên xác nhận`,
+      sub: `${formatVnd(bill.dueVnd)} · nội dung ${qrRef} · vẫn cần nhân viên xác nhận`,
     },
   }[qrStatus]
 
@@ -468,11 +510,11 @@ export function QrActionPane({
             Khách cần trả
           </span>
           <b className="tnum text-[clamp(36px,4.4cqi,52px)] leading-none font-extrabold tracking-[-0.04em] text-[var(--ink-strong)]">
-            {formatVnd(totals.dueVnd)}
+            {formatVnd(bill.dueVnd)}
           </b>
           <span className="text-[13px] text-[var(--text-muted)]">
-            {totals.roundingVnd > 0
-              ? `Đã làm tròn lên từ ${formatVnd(totals.preRoundVnd)} · Bill ${bill.billCode}`
+            {bill.roundingVnd > 0
+              ? `Đã làm tròn lên từ ${formatVnd(bill.preRoundVnd)} · Bill ${bill.billCode}`
               : `Không cần làm tròn · Bill ${bill.billCode}`}
           </span>
         </div>
@@ -500,7 +542,7 @@ export function QrActionPane({
             </div>
             <div className="flex min-h-10 items-center justify-between gap-3 border-t border-border py-1">
               <dt className="text-[13px] text-[var(--text-muted)]">Số tiền</dt>
-              <dd className="tnum text-[15px] font-semibold text-[var(--ink-strong)]">{formatVnd(totals.dueVnd)}</dd>
+              <dd className="tnum text-[15px] font-semibold text-[var(--ink-strong)]">{formatVnd(bill.dueVnd)}</dd>
             </div>
             <div className="flex min-h-10 items-center justify-between gap-3 border-t border-border py-1">
               <dt className="text-[13px] text-[var(--text-muted)]">Nội dung</dt>
@@ -528,40 +570,43 @@ export function QrActionPane({
         </div>
 
         <div className="grid gap-2">
+          {isPaid && error?.kind !== "dup" ? <PaidClosedBanner onToList={onToList} /> : null}
           <PaymentErrorBanner error={error} context="qr" onToList={onToList} />
 
-          <div
-            role="status"
-            aria-live="polite"
-            className={cn(
-              "grid min-h-[60px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[10px] border py-2 pr-2 pl-3.5",
-              waitMeta.cls,
-            )}
-          >
-            {qrStatus === "waiting" ? (
-              <span className="pay-pulse" aria-hidden />
-            ) : qrStatus === "checking" ? (
-              <span className="pay-spin" aria-hidden />
-            ) : qrStatus === "found" ? (
-              <Check className="size-5" aria-hidden />
-            ) : (
-              <Info className="size-5" aria-hidden />
-            )}
-            <span className="grid min-w-0">
-              <b className="text-[15px] font-bold">{waitMeta.title}</b>
-              <span className="text-xs">{waitMeta.sub}</span>
-            </span>
-            <button
-              type="button"
-              disabled={qrStatus === "checking" || busy || isPaid}
-              onClick={() => void handleCheck()}
-              aria-label="Kiểm tra giao dịch (mô phỏng)"
-              className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-border-strong bg-surface-1 px-3 text-[13px] font-medium text-foreground cursor-pointer hover:border-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          {!isPaid && error?.kind !== "dup" ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className={cn(
+                "grid min-h-[60px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[10px] border py-2 pr-2 pl-3.5",
+                waitMeta.cls,
+              )}
             >
-              <RefreshCw className="size-4" aria-hidden />
-              Kiểm tra
-            </button>
-          </div>
+              {qrStatus === "waiting" ? (
+                <span className="pay-pulse" aria-hidden />
+              ) : qrStatus === "checking" ? (
+                <span className="pay-spin" aria-hidden />
+              ) : qrStatus === "found" ? (
+                <Check className="size-5" aria-hidden />
+              ) : (
+                <Info className="size-5" aria-hidden />
+              )}
+              <span className="grid min-w-0">
+                <b className="text-[15px] font-bold">{waitMeta.title}</b>
+                <span className="text-xs">{waitMeta.sub}</span>
+              </span>
+              <button
+                type="button"
+                disabled={qrStatus === "checking" || busy || isPaid}
+                onClick={() => void handleCheck()}
+                aria-label="Kiểm tra giao dịch (mô phỏng)"
+                className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-border-strong bg-surface-1 px-3 text-[13px] font-medium text-foreground cursor-pointer hover:border-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <RefreshCw className="size-4" aria-hidden />
+                Kiểm tra
+              </button>
+            </div>
+          ) : null}
 
           <button
             type="button"
@@ -590,7 +635,7 @@ export function QrActionPane({
               Xác nhận đã nhận chuyển khoản
             </h2>
             <p className="tnum text-4xl leading-none font-extrabold tracking-[-0.04em] text-[var(--ink-strong)]">
-              {formatVnd(totals.dueVnd)}
+              {formatVnd(bill.dueVnd)}
             </p>
             <label
               htmlFor="pay-qr-ack"
@@ -606,7 +651,7 @@ export function QrActionPane({
                 onChange={(e) => setAck(e.target.checked)}
                 className="mt-0.5 size-[22px] shrink-0 accent-primary"
               />
-              <span>{`Tôi đã thấy ${formatVnd(totals.dueVnd)} về tài khoản quán, đúng nội dung "${qrRef}".`}</span>
+              <span>{`Tôi đã thấy ${formatVnd(bill.dueVnd)} về tài khoản quán, đúng nội dung "${qrRef}".`}</span>
             </label>
             <p className="flex items-start gap-2 text-[13px] text-[var(--text-muted)]">
               <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
@@ -623,9 +668,9 @@ export function QrActionPane({
               </button>
               <button
                 type="button"
-                disabled={!ack || busy}
+                disabled={!ack || busy || isPaid}
                 onClick={() => {
-                  if (!ack) return
+                  if (!ack || isPaid) return
                   setConfirmOpen(false)
                   onConfirmManual()
                 }}

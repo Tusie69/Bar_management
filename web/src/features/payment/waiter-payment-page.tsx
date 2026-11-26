@@ -1,4 +1,5 @@
 import { Navigate, useParams, useSearchParams } from "react-router"
+import { isPaymentAvailable } from "@/services/payment"
 import { useSession } from "@/state/session"
 import { PaymentFlowWorkspace } from "./payment-page"
 
@@ -13,7 +14,7 @@ export default function WaiterPaymentPage() {
   const [searchParams] = useSearchParams()
   const role = useSession((s) => s.user.role)
 
-  if (role !== "WAITER") {
+  if (!isPaymentAvailable || role !== "WAITER") {
     return <Navigate to="/phucvu" replace />
   }
 

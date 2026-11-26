@@ -842,14 +842,18 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* Spinner is a status signal: keeps spinning (slower) with reduced motion on */
-  .pay-root .pay-spin {
+  /* Spinner is a status signal: keeps spinning (slower) with reduced motion on.
+     High specificity under [data-gm] ensures it wins over mobile.css reduced-motion reset. */
+  .pay-root .pay-spin,
+  [data-gm] .pay-root.pay-root.pay-root.pay-root.pay-root .pay-spin {
     animation-duration: 1.2s !important;
     animation-iteration-count: infinite !important;
   }
   /* Map zoom 0.6s is an explicit product decision by Nam */
   .pay-root .pay-fpanel.mv .pay-fview,
-  .pay-root .pay-fpanel.mv .pay-fsz {
+  .pay-root .pay-fpanel.mv .pay-fsz,
+  [data-gm] .pay-root.pay-root.pay-root .pay-fpanel.mv .pay-fview,
+  [data-gm] .pay-root.pay-root.pay-root .pay-fpanel.mv .pay-fsz {
     animation-duration: 600ms !important;
     animation-iteration-count: 1 !important;
   }

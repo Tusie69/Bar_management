@@ -1,16 +1,17 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { AlertTriangle, ChevronLeft, Clock, Link2, Lock, Send } from "lucide-react"
-import { useCallback, useRef, useState } from "react"
-import { useNavigate, useParams } from "react-router"
+import { AlertTriangle, ChevronLeft, Clock, Info, Link2, Lock, Send } from "lucide-react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { Navigate, useLocation, useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
 import { ROLE_LABEL } from "@/domain/enums"
 import { useBusinessShift, useNow } from "@/hooks/use-data"
 import { initials } from "@/lib/text"
 import { fmtBusinessDate, fmtBusinessShift, fmtTime, businessDateOf, shiftHour } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { ApiError, api, isApiError, newIdempotencyKey } from "@/services"
+import { ApiError, api } from "@/services"
 import {
   formatVnd,
+  isPaymentAvailable,
   paymentApi,
   type PayBillSummary,
   type PaymentMethod,
@@ -21,6 +22,7 @@ import { BillRoundsCard, DetailActionPane, ProvisionalPreviewView } from "./bill
 import { CashActionPane, MethodActionPane, QrActionPane, SuccessView, type PaymentErrorState } from "./pay-actions"
 import { PaymentFloorMap } from "./payment-floor-map"
 import { PaymentNotificationBell } from "./payment-notifications"
+import { submitPaymentConfirm, type IdempotencySlot } from "./payment-submit"
 
 export type PaymentStep = "list" | "detail" | "preview" | "method" | "cash" | "qr" | "success"
 
@@ -35,24 +37,6 @@ function parseStep(raw: string | undefined, hasVisit: boolean, canCollect: boole
   return "detail"
 }
 
-function toPaymentError(err: unknown): PaymentErrorState {
-  if (isApiError(err)) {
-    if (err.code === "NETWORK_ERROR" || err.status === 0) {
-      return { kind: "net", message: err.message }
-    }
-    if (err.code === "DUPLICATE_PAYMENT" || err.status === 409) {
-      return {
-        kind: "dup",
-        message: err.message,
-        confirmedBy: typeof err.details.confirmedBy === "string" ? err.details.confirmedBy : undefined,
-        confirmedAt: typeof err.details.confirmedAt === "string" ? err.details.confirmedAt : undefined,
-      }
-    }
-    return { kind: "other", message: err.message }
-  }
-  return { kind: "other", message: err instanceof Error ? err.message : "Đã có lỗi xảy ra." }
-}
-
 export function PaymentFlowWorkspace({
   visitIdParam,
   stepParam,
@@ -65,6 +49,7 @@ export function PaymentFlowWorkspace({
   backHomeLabel?: string
 }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const queryClient = useQueryClient()
   const user = useSession((s) => s.user)
   const principal = useSession((s) => s.principal)
@@ -84,34 +69,37 @@ export function PaymentFlowWorkspace({
   const step = parseStep(stepParam, Boolean(visitIdParam), canCollect)
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [ntfSeenCount, setNtfSeenCount] = useState<number>(0)
+  const [seenNtfIds, setSeenNtfIds] = useState<Set<string>>(() => new Set())
   const [billExpanded, setBillExpanded] = useState(false)
   const [lastMethod, setLastMethod] = useState<PaymentMethod | null>(null)
   const [busy, setBusy] = useState(false)
   const [payError, setPayError] = useState<PaymentErrorState | null>(null)
   const [receipt, setReceipt] = useState<Receipt | null>(null)
+  const prebillNotice =
+    (location.state as { prebillNotice?: string } | null)?.prebillNotice ?? null
 
   // Synchronous in-flight guard: React state updates on next render, so double-clicks
   // or fast taps within the same frame must be blocked synchronously here.
   const inFlightRef = useRef(false)
-  const idempotencyKeyRef = useRef<string | null>(null)
+  const idempotencyKeyRef = useRef<IdempotencySlot | null>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
 
   const openQuery = useQuery({
     queryKey: ["payment-open"],
     queryFn: () => paymentApi.listOpen(),
-    enabled: canViewAny && step === "list",
+    enabled: isPaymentAvailable && canViewAny && step === "list",
   })
 
   const ntfQuery = useQuery({
     queryKey: ["payment-notifications"],
     queryFn: () => paymentApi.listNotifications(),
-    enabled: canViewAny && step === "list",
+    enabled: isPaymentAvailable && canViewAny && step === "list",
   })
 
   const billQuery = useQuery({
     queryKey: ["payment-bill", visitIdParam],
     queryFn: () => paymentApi.getBill(visitIdParam!),
-    enabled: canViewAny && Boolean(visitIdParam) && step !== "list",
+    enabled: isPaymentAvailable && canViewAny && Boolean(visitIdParam) && step !== "list",
   })
 
   const navKey = `${visitIdParam ?? ""}:${step}`
@@ -122,9 +110,18 @@ export function PaymentFlowWorkspace({
     setBillExpanded(false)
   }
 
+  useLayoutEffect(() => {
+    const el = rootRef.current
+    if (!el) return
+    el.scrollTop = 0
+    if (el.parentElement && el.parentElement.scrollTop > 0) {
+      el.parentElement.scrollTop = 0
+    }
+  }, [visitIdParam, step])
+
   const openList = openQuery.data ?? []
   const notifications = ntfQuery.data ?? []
-  const hasUnreadNtf = notifications.length > ntfSeenCount
+  const hasUnreadNtf = notifications.some((n) => !seenNtfIds.has(n.id))
 
   const invalidatePaymentQueries = useCallback(async () => {
     await Promise.all([
@@ -135,19 +132,22 @@ export function PaymentFlowWorkspace({
     ])
   }, [queryClient, visitIdParam])
 
-  const goToStep = (nextVisitId: string, nextStep: PaymentStep) => {
-    idempotencyKeyRef.current = null
-    if (nextStep === "list") {
-      navigate(homePath)
-      return
-    }
-    if (homePath === "/phucvu") {
-      navigate(`/phucvu/phien/${nextVisitId}/thanh-toan${nextStep === "preview" ? "?view=preview" : ""}`)
-      return
-    }
-    if (nextStep === "detail") navigate(`${homePath}/${nextVisitId}`)
-    else navigate(`${homePath}/${nextVisitId}/${nextStep}`)
-  }
+  const goToStep = useCallback(
+    (nextVisitId: string, nextStep: PaymentStep, state?: { prebillNotice?: string }) => {
+      idempotencyKeyRef.current = null
+      if (nextStep === "list") {
+        navigate(homePath)
+        return
+      }
+      if (homePath === "/phucvu") {
+        navigate(`/phucvu/phien/${nextVisitId}/thanh-toan${nextStep === "preview" ? "?view=preview" : ""}`, { state })
+        return
+      }
+      if (nextStep === "detail") navigate(`${homePath}/${nextVisitId}`, { state })
+      else navigate(`${homePath}/${nextVisitId}/${nextStep}`, { state })
+    },
+    [homePath, navigate],
+  )
 
   const handleSessionPick = (session: PayBillSummary | string) => {
     const id = typeof session === "string" ? session : session.visitId
@@ -219,38 +219,24 @@ export function PaymentFlowWorkspace({
   }
 
   const handleConfirm = async (method: PaymentMethod, givenVnd = 0) => {
-    // Synchronous in-flight guard prevents duplicate submissions on fast double clicks.
-    if (inFlightRef.current || busy) return
-    const bill = billQuery.data
-    if (!bill || bill.status === "PAID" || !canCollect) return
-
-    inFlightRef.current = true
-    setBusy(true)
-    setPayError(null)
-    const key = idempotencyKeyRef.current ?? newIdempotencyKey()
-    idempotencyKeyRef.current = key
-
-    try {
-      const rc =
-        method === "CASH"
-          ? await paymentApi.confirmCash(bill.visitId, givenVnd, bill.version, key)
-          : await paymentApi.confirmTransfer(bill.visitId, true, bill.version, key)
-      idempotencyKeyRef.current = null
-      setReceipt(rc)
-      await invalidatePaymentQueries()
-      toast.success(`Đã ghi nhận thanh toán. ${rc.tables.join(", ")} về Trống.`)
-      goToStep(bill.visitId, "success")
-    } catch (err) {
-      const parsed = toPaymentError(err)
-      setPayError(parsed)
-      if (parsed.kind === "dup") {
-        idempotencyKeyRef.current = null
-        await invalidatePaymentQueries()
-      }
-    } finally {
-      inFlightRef.current = false
-      setBusy(false)
-    }
+    await submitPaymentConfirm({
+      api: paymentApi,
+      bill: billQuery.data,
+      canCollect,
+      method,
+      givenVnd,
+      busy,
+      inFlightRef,
+      idempotencyKeyRef,
+      setBusy,
+      setPayError,
+      setReceipt,
+      invalidate: invalidatePaymentQueries,
+      onSuccess: (rc) => {
+        toast.success(`Đã ghi nhận thanh toán. ${rc.tables.join(", ")} về Trống.`)
+        goToStep(rc.visitId, "success")
+      },
+    })
   }
 
   const handleBack = () => {
@@ -262,6 +248,21 @@ export function PaymentFlowWorkspace({
     } else if (step === "cash" || step === "qr") {
       goToStep(visitIdParam, "method")
     }
+  }
+
+  const bill = billQuery.data
+  const requiresPrebillStep = step === "preview" || step === "method" || step === "cash" || step === "qr"
+  const needsPrebillRedirect = Boolean(bill && bill.status === "SERVING" && requiresPrebillStep)
+
+  useEffect(() => {
+    if (!needsPrebillRedirect || !bill) return
+    goToStep(bill.visitId, "detail", {
+      prebillNotice: "Phiên đang phục vụ, chưa tạo tạm tính. Hãy bấm Xem tạm tính hoặc Chốt bill & thu tiền trước.",
+    })
+  }, [bill, goToStep, needsPrebillRedirect])
+
+  if (!isPaymentAvailable) {
+    return <Navigate to={homePath === "/phucvu" ? "/phucvu" : "/floor"} replace />
   }
 
   if (!canViewAny || (moneyStepRequested && !canCollect)) {
@@ -282,7 +283,6 @@ export function PaymentFlowWorkspace({
     )
   }
 
-  const bill = billQuery.data
   const stepIdx = step === "method" ? 2 : step === "cash" || step === "qr" ? 3 : step === "success" ? 4 : 1
   const pageTitleMap: Record<PaymentStep, string> = {
     list: "Phiên đang mở",
@@ -304,7 +304,7 @@ export function PaymentFlowWorkspace({
   }
 
   return (
-    <div className="pay-root h-full overflow-y-auto">
+    <div ref={rootRef} className="pay-root h-full overflow-y-auto">
       <div className="mx-auto max-w-[1360px] px-3 pt-3 pb-8 md:px-6 md:pt-5 lg:px-8">
         {/* S1: Home (session list + floor map) */}
         {step === "list" ? (
@@ -341,7 +341,7 @@ export function PaymentFlowWorkspace({
                 <PaymentNotificationBell
                   notifications={notifications}
                   unread={hasUnreadNtf}
-                  onOpen={() => setNtfSeenCount(notifications.length)}
+                  onOpen={() => setSeenNtfIds((prev) => new Set([...prev, ...notifications.map((n) => n.id)]))}
                   onSelectVisit={(id) => {
                     setSelectedId(id)
                   }}
@@ -506,6 +506,17 @@ export function PaymentFlowWorkspace({
               </div>
             ) : null}
 
+            {/* Prebill precondition notice when user jumped straight to S3-S6 on a SERVING bill */}
+            {step === "detail" && prebillNotice && bill?.status === "SERVING" ? (
+              <div
+                role="status"
+                className="flex items-start gap-2.5 rounded-xl border border-[var(--st-pending)] bg-[var(--st-pending-tint)] px-3.5 py-2.5 text-sm text-foreground"
+              >
+                <Info className="mt-0.5 size-5 shrink-0 text-[var(--st-pending-ink)]" aria-hidden />
+                <span>{prebillNotice}</span>
+              </div>
+            ) : null}
+
             {/* Role banner for Waiter PA-A or Bartender */}
             {isWaiter && step !== "success" ? (
               <div
@@ -588,7 +599,7 @@ export function PaymentFlowWorkspace({
                   </button>
                 </div>
               )
-            ) : step === "preview" && bill ? (
+            ) : needsPrebillRedirect ? null : step === "preview" && bill ? (
               <ProvisionalPreviewView
                 bill={bill}
                 canCollect={canCollect}
@@ -631,6 +642,7 @@ export function PaymentFlowWorkspace({
                       setLastMethod(m)
                       goToStep(bill.visitId, m === "CASH" ? "cash" : "qr")
                     }}
+                    onToList={() => navigate(homePath)}
                   />
                 ) : step === "cash" ? (
                   <CashActionPane
