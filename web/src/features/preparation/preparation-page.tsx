@@ -5,9 +5,10 @@ import { roleCan, type Permission } from "@/domain/access"
 import { api } from "@/services"
 import { isPaymentAvailable } from "@/services/payment"
 import { useSession } from "@/state/session"
+import { isBarGuestSession } from "@/features/waiter/waiter-invoice-model"
 import { BarBillDrawer } from "./bar-bill-drawer"
 import { PreparationQueue } from "./preparation-queue"
-import type { PreparationStation } from "./preparation-queue-data"
+import type { PreparationStation, PreparationTicket } from "./preparation-queue-data"
 import { fixedPreparationStation } from "./preparation-layout"
 
 export default function PreparationPage() {
@@ -23,6 +24,10 @@ export default function PreparationPage() {
     [permissions, role],
   )
   const canBarBill = role === "BAR" && station === "BAR" && isPaymentAvailable
+  const isBarTicket = useCallback(
+    (ticket: PreparationTicket) => isBarGuestSession({ tables: ticket.tableCodes }),
+    [],
+  )
 
   return (
     <>
@@ -47,9 +52,11 @@ export default function PreparationPage() {
             </Button>
           ) : undefined
         }
+        canOpenBill={canBarBill ? isBarTicket : undefined}
         onOpenBill={
           canBarBill
             ? (ticket) => {
+                if (!isBarTicket(ticket)) return
                 setBillVisitId(String(ticket.visitId))
                 setBillOpen(true)
               }
