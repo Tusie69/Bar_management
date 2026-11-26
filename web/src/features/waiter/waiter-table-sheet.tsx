@@ -23,7 +23,6 @@ import type { FloorTableState, TableView } from "@/domain/models"
 import { fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { isPaymentAvailable } from "@/services/payment"
-import { useSession } from "@/state/session"
 import {
   WAITER_PHASE_LABEL,
   waiterPaymentPath,
@@ -140,7 +139,6 @@ export function WaiterTableSheetBody({
   // thứ hai — chỉ là cùng một câu trả lời đọc ở hai chỗ.
   const visitItems = useVisitItems(capability.visitId)
   const hasOrders = (visitItems.data?.items.length ?? 0) > 0
-  const isBar = useSession((state) => state.user.role === "BAR")
 
   const modes = useMemo<WaiterRearrangeMode[]>(() => {
     if (!capability.canRearrange) return []
@@ -271,7 +269,7 @@ export function WaiterTableSheetBody({
             <ReceiptText className="size-4" aria-hidden="true" /> In bill tạm tính
           </Button>
         ) : null}
-        {!isBar && isPaymentAvailable && capability.visitId !== null ? (
+        {isPaymentAvailable && capability.visitId !== null ? (
           <WaiterPaymentLinkButton visitId={capability.visitId} pending={pending} />
         ) : null}
         {modes.length ? (
@@ -366,7 +364,7 @@ function WaiterPaymentRouterButton({ visitId, pending }: { visitId: number; pend
       disabled={pending}
       onClick={() => navigate(waiterPaymentPath(visitId))}
     >
-      <ReceiptText className="size-4" aria-hidden="true" /> Xem tạm tính &amp; gọi thu ngân
+      <ReceiptText className="size-4" aria-hidden="true" /> Xem tạm tính &amp; xuất hóa đơn
     </Button>
   )
 }
@@ -376,7 +374,7 @@ function WaiterPaymentLinkButton({ visitId, pending }: { visitId: number; pendin
   if (!inRouter) {
     return (
       <Button type="button" variant="outline" className="h-11 w-full justify-center" disabled={pending}>
-        <ReceiptText className="size-4" aria-hidden="true" /> Xem tạm tính &amp; gọi thu ngân
+        <ReceiptText className="size-4" aria-hidden="true" /> Xem tạm tính &amp; xuất hóa đơn
       </Button>
     )
   }

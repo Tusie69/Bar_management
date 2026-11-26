@@ -1,0 +1,190 @@
+/* NA-45/46 HU-44 v1.1 W2: Waiter + Bartender invoice & provisional bill styles */
+
+.pay-waiter {
+  display: grid;
+  gap: 16px;
+}
+
+.pay-waiter .pay-w2-badge-prov {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--st-pending-ink);
+  background: var(--st-pending-tint);
+  border: 1px solid var(--st-pending);
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+.pay-waiter .pay-w2-badge-inv {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--primary-ink);
+  background: var(--primary-tint);
+  border: 1px solid color-mix(in oklab, var(--primary) 35%, transparent);
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+.pay-waiter .pay-w2-prov-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  border-radius: var(--r-field);
+  border: 1px dashed var(--st-pending);
+  background: var(--st-pending-tint);
+  color: var(--foreground);
+  font-size: 13px;
+}
+
+.pay-waiter .pay-w2-prov-banner b {
+  color: var(--st-pending-ink);
+}
+
+.pay-waiter .pay-w2-bills {
+  display: grid;
+  gap: 10px;
+}
+
+.pay-waiter .pay-w2-bill-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 14px;
+  padding: 12px 14px;
+  border-radius: var(--r-field);
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+.pay-waiter .pay-w2-bill-row.unpaid {
+  border-color: var(--st-pending);
+  background: color-mix(in oklab, var(--st-pending-tint) 38%, var(--surface-1));
+}
+
+.pay-waiter .pay-w2-bill-meta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 200px;
+}
+
+.pay-waiter .pay-w2-bill-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.pay-waiter .pay-w2-bill-title b {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--ink-strong);
+  letter-spacing: -0.02em;
+}
+
+.pay-waiter .pay-w2-bill-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pay-waiter .pay-w2-bill-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pay-waiter .pay-w2-bill-due {
+  font-size: 16px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-strong);
+}
+
+.pay-waiter .pay-w2-inv-qr {
+  display: grid;
+  gap: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-strong);
+}
+
+.pay-waiter .pay-w2-inv-bank {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.pay-waiter .pay-w2-inv-bank > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 36px;
+  padding: 4px 0;
+  border-top: 1px solid var(--border);
+}
+
+.pay-waiter .pay-w2-inv-bank > div:first-child {
+  border-top: 0;
+}
+
+.pay-waiter .pay-w2-inv-bank dt {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pay-waiter .pay-w2-inv-bank dd {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-strong);
+  text-align: right;
+}
+
+@container pay (min-width: 600px) {
+  .pay-waiter .pay-w2-inv-qr {
+    grid-template-columns: 148px minmax(0, 1fr);
+    align-items: center;
+  }
+}
+
+.pay-w2-drawer-body {
+  display: grid;
+  gap: 14px;
+  padding: 0 16px 24px;
+}
+
+.pay-w2-sess-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 60px;
+  padding: 12px 14px;
+  border-radius: var(--r-field);
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 160ms var(--ease-pay), border-color 160ms var(--ease-pay);
+}
+
+.pay-w2-sess-btn:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+
+.pay-w2-sess-btn:active {
+  background: var(--surface-3);
+}
