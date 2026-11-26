@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactNode } from "react"
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react"
 import { Outlet } from "react-router"
 import { PaymentHeader } from "./payment-header"
 import { PaymentShellContext } from "./payment-shell-context"
@@ -15,6 +15,7 @@ export function PaymentShellFrame({
   children: ReactNode
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [pendingPayment, setPendingPayment] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
 
   const scrollToTop = useCallback(() => {
@@ -26,8 +27,13 @@ export function PaymentShellFrame({
     }
   }, [])
 
+  const contextValue = useMemo(
+    () => ({ selectedId, setSelectedId, scrollToTop, pendingPayment, setPendingPayment }),
+    [pendingPayment, scrollToTop, selectedId],
+  )
+
   return (
-    <PaymentShellContext.Provider value={{ selectedId, setSelectedId, scrollToTop }}>
+    <PaymentShellContext.Provider value={contextValue}>
       <div
         ref={rootRef}
         className={fullViewport ? "pay-root h-dvh overflow-y-auto" : "pay-root h-full overflow-y-auto"}

@@ -58,6 +58,7 @@ export function PaymentHeader({
 
   const notifications = ntfQuery.data ?? []
   const hasUnreadNtf = notifications.some((n) => !seenNtfIds.has(n.id))
+  const navigationLocked = Boolean(payShell?.pendingPayment)
 
   return (
     <header className="pay-hdr">
@@ -87,7 +88,14 @@ export function PaymentHeader({
             {showBackToApp ? (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem className="h-10 cursor-pointer" onSelect={() => navigate(isMobile ? "/home" : "/floor")}>
+                <DropdownMenuItem
+                  className="h-10 cursor-pointer"
+                  disabled={navigationLocked}
+                  onSelect={() => {
+                    if (navigationLocked) return
+                    navigate(isMobile ? "/home" : "/floor")
+                  }}
+                >
                   <LayoutDashboard className="mr-2 size-4" aria-hidden />
                   {isMobile ? "Về Tổng quan" : "Về Điều phối"}
                 </DropdownMenuItem>
@@ -98,12 +106,13 @@ export function PaymentHeader({
               <DropdownMenuRadioGroup
                 value={String(user.id)}
                 onValueChange={(v) => {
+                  if (navigationLocked) return
                   setUser(Number(v))
                   useUi.getState().clearHistory()
                 }}
               >
                 {users.map((u) => (
-                  <DropdownMenuRadioItem key={u.id} value={String(u.id)} className="h-11">
+                  <DropdownMenuRadioItem key={u.id} value={String(u.id)} disabled={navigationLocked} className="h-11">
                     <span className="grid">
                       <span>{ROLE_LABEL[u.role]}</span>
                       <span className="text-xs text-muted-foreground">
@@ -144,8 +153,10 @@ export function PaymentHeader({
           <PaymentNotificationBell
             notifications={notifications}
             unread={hasUnreadNtf}
+            navigationLocked={navigationLocked}
             onOpen={() => setSeenNtfIds((prev) => new Set([...prev, ...notifications.map((n) => n.id)]))}
             onSelectVisit={(visitId) => {
+              if (payShell?.pendingPayment) return
               if (location.pathname === "/payment" && payShell) {
                 payShell.setSelectedId(visitId)
                 return

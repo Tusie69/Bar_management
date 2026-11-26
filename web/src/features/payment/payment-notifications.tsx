@@ -13,11 +13,13 @@ const NTF_TYPE_CLASS: Record<PaymentNotificationType, string> = {
 export function PaymentNotificationBell({
   notifications,
   unread,
+  navigationLocked = false,
   onOpen,
   onSelectVisit,
 }: {
   notifications: PaymentNotification[]
   unread: boolean
+  navigationLocked?: boolean
   onOpen: () => void
   onSelectVisit?: (visitId: string) => void
 }) {
@@ -75,7 +77,9 @@ export function PaymentNotificationBell({
                 <li key={n.id}>
                   <button
                     type="button"
+                    disabled={navigationLocked}
                     onClick={() => {
+                      if (navigationLocked) return
                       setOpen(false)
                       if (n.visitId && onSelectVisit) onSelectVisit(n.visitId)
                     }}
