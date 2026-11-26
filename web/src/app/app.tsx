@@ -29,6 +29,7 @@ const PreparationPage = lazy(() => import("@/features/preparation/preparation-pa
 const CancellationQueuePage = lazy(() => import("@/features/orders/cancellation-queue-page"))
 const CashierShell = lazy(() => import("@/features/cashier/cashier-shell"))
 const PaymentPage = lazy(() => import("@/features/payment/payment-page"))
+const PaymentCancelPage = lazy(() => import("@/features/payment-cancel/payment-cancel-page"))
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -134,6 +135,7 @@ const router = createBrowserRouter([
           { path: "payment", element: <PaymentRouteElement /> },
           { path: "payment/:visitId", element: <PaymentRouteElement /> },
           { path: "payment/:visitId/:step", element: <PaymentRouteElement /> },
+          { path: "cancel-payment", element: page(<PaymentCancelPage />) },
           { path: "reservations", element: page(<ReservationsPage />) },
           { path: "waitlist", element: page(<WaitlistPage />) },
           { path: "guests", element: page(<GuestsPage />) },

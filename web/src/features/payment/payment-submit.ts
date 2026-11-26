@@ -70,7 +70,7 @@ export async function submitPaymentConfirm(params: {
   setBusy(true)
   setPayError(null)
   const normalizedGiven = method === "CASH" ? givenVnd : 0
-  const signature = `${bill.visitId}:${method}:${normalizedGiven}:${bill.version}`
+  const signature = `${bill.visitId}:${bill.billCode}:${method}:${normalizedGiven}:${bill.version}`
   const key =
     idempotencyKeyRef.current?.signature === signature ? idempotencyKeyRef.current.key : newIdempotencyKey()
   idempotencyKeyRef.current = { key, signature }
@@ -78,8 +78,8 @@ export async function submitPaymentConfirm(params: {
   try {
     const rc =
       method === "CASH"
-        ? await payApi.confirmCash(bill.visitId, normalizedGiven, bill.version, key)
-        : await payApi.confirmTransfer(bill.visitId, true, bill.version, key)
+        ? await payApi.confirmCash(bill.visitId, normalizedGiven, bill.version, key, bill.billCode)
+        : await payApi.confirmTransfer(bill.visitId, true, bill.version, key, bill.billCode)
     idempotencyKeyRef.current = null
     setReceipt(rc)
     await invalidate()

@@ -9,8 +9,8 @@ import { createServer as createViteServer } from "vite"
 const ARTIFACTS_DIR = path.resolve("e2e/.artifacts")
 fs.mkdirSync(ARTIFACTS_DIR, { recursive: true })
 
-const BASE_PORT = 43920
-const HTTP_CHECK_PORT = 43923
+const BASE_PORT = Number(process.env.E2E_PORT ?? 43920)
+const HTTP_CHECK_PORT = Number(process.env.E2E_HTTP_PORT ?? BASE_PORT)
 const PROVIDED_BASE = process.env.E2E_BASE_URL
 const base = PROVIDED_BASE ?? `http://127.0.0.1:${BASE_PORT}`
 
@@ -93,39 +93,99 @@ async function assertNoOverflow(page, label) {
   assert(ov.rootOverflow <= 1, `${label}: .pay-root horizontal overflow ${ov.rootOverflow}px`)
 }
 
-async function assertFeedbackNoOverlap(page, label, buttonNames = []) {
-  const check = await page.evaluate((names) => {
-    const fbNodes = [
-      ...document.querySelectorAll('[data-testid="pay-feedback"], [data-sonner-toast]'),
-    ].map((el) => ({
-      text: el.textContent?.trim() ?? "",
-      rect: el.getBoundingClientRect(),
-    }))
-    if (fbNodes.length === 0) return { ok: true, count: 0 }
-    const targets = []
-    const h1 = document.querySelector(".pay-ph h1, .pay-ok-hd h1")
-    if (h1) targets.push({ name: "h1", rect: h1.getBoundingClientRect() })
-    for (const btn of document.querySelectorAll("button")) {
-      const txt = btn.textContent?.trim() ?? ""
-      if (!txt || btn.offsetParent === null) continue
-      if (names.some((n) => txt.includes(n))) {
-        targets.push({ name: txt, rect: btn.getBoundingClientRect() })
+async function assertFeedbackNoOverlap(
+  page,
+  label,
+  buttonNames = [],
+  { feedbackSelector = '[data-testid="pay-feedback"], [data-sonner-toast]', expectedText = null } = {},
+) {
+  const waiter = expectedText
+    ? page.locator(feedbackSelector).filter({ hasText: expectedText }).first()
+    : page.locator(feedbackSelector).first()
+  await waiter.waitFor({ state: "visible", timeout: 5000 })
+  const check = await page.evaluate(
+    ({ names, fbSel, expText }) => {
+      const vw = window.innerWidth
+      const vh = window.innerHeight
+      const hdr = document.querySelector(".pay-hdr")?.getBoundingClientRect()
+      const minTop = hdr ? hdr.bottom - 0.5 : 0
+      const fbNodes = [...document.querySelectorAll(fbSel)]
+        .filter((el) => {
+          const cs = getComputedStyle(el)
+          const r = el.getBoundingClientRect()
+          return cs.visibility !== "hidden" && cs.display !== "none" && r.width > 0 && r.height > 0
+        })
+        .map((el) => ({
+          text: el.textContent?.trim() ?? "",
+          rect: el.getBoundingClientRect(),
+        }))
+      if (fbNodes.length === 0) {
+        return { ok: false, reason: `no visible feedback matched ${fbSel}` }
       }
-    }
-    for (const fb of fbNodes) {
-      for (const t of targets) {
-        const hit =
-          fb.rect.left < t.rect.right - 0.5 &&
-          fb.rect.right > t.rect.left + 0.5 &&
-          fb.rect.top < t.rect.bottom - 0.5 &&
-          fb.rect.bottom > t.rect.top + 0.5
-        if (hit) {
-          return { ok: false, reason: `feedback "${fb.text}" overlapped "${t.name}"` }
+      if (expText && !fbNodes.some((n) => n.text.includes(expText))) {
+        return {
+          ok: false,
+          reason: `expected feedback containing "${expText}", got ${JSON.stringify(fbNodes.map((n) => n.text))}`,
         }
       }
-    }
-    return { ok: true, count: fbNodes.length }
-  }, buttonNames)
+      for (const fb of fbNodes) {
+        if (fb.rect.top < minTop || fb.rect.bottom > vh + 0.5 || fb.rect.left < -0.5 || fb.rect.right > vw + 0.5) {
+          return {
+            ok: false,
+            reason: `feedback "${fb.text}" outside viewport (${JSON.stringify(fb.rect)}, minTop=${minTop}, vw=${vw}, vh=${vh})`,
+          }
+        }
+      }
+
+      const visibleButtons = [...document.querySelectorAll("button")].filter((btn) => {
+        const cs = getComputedStyle(btn)
+        const r = btn.getBoundingClientRect()
+        return cs.display !== "none" && cs.visibility !== "hidden" && r.width > 0 && r.height > 0
+      })
+
+      const targets = []
+      const h1 = document.querySelector(".pay-ph h1, .pay-ok-hd h1")
+      if (h1) targets.push({ name: "h1", rect: h1.getBoundingClientRect(), checkHit: false })
+
+      for (const reqName of names) {
+        const matching = visibleButtons.filter((b) => (b.textContent?.trim() ?? "").includes(reqName))
+        if (matching.length === 0) {
+          return { ok: false, reason: `required target button "${reqName}" not found` }
+        }
+        for (const btn of matching) {
+          const rect = btn.getBoundingClientRect()
+          if (rect.top < minTop || rect.bottom > vh + 0.5 || rect.left < -0.5 || rect.right > vw + 0.5) {
+            return { ok: false, reason: `target button "${reqName}" outside viewport (${JSON.stringify(rect)})` }
+          }
+          const cx = rect.left + rect.width / 2
+          const cy = rect.top + rect.height / 2
+          const hitEl = document.elementFromPoint(cx, cy)
+          if (!hitEl || (hitEl !== btn && !btn.contains(hitEl))) {
+            return {
+              ok: false,
+              reason: `target button "${reqName}" center (${cx.toFixed(1)},${cy.toFixed(1)}) blocked by ${hitEl?.tagName ?? "null"}`,
+            }
+          }
+          targets.push({ name: btn.textContent?.trim() ?? reqName, rect, checkHit: true })
+        }
+      }
+
+      for (const fb of fbNodes) {
+        for (const t of targets) {
+          const hit =
+            fb.rect.left < t.rect.right - 0.5 &&
+            fb.rect.right > t.rect.left + 0.5 &&
+            fb.rect.top < t.rect.bottom - 0.5 &&
+            fb.rect.bottom > t.rect.top + 0.5
+          if (hit) {
+            return { ok: false, reason: `feedback "${fb.text}" overlapped "${t.name}"` }
+          }
+        }
+      }
+      return { ok: true, count: fbNodes.length }
+    },
+    { names: buttonNames, fbSel: feedbackSelector, expText: expectedText },
+  )
   assert(check.ok, `${label}: ${check.reason}`)
 }
 
@@ -165,7 +225,7 @@ try {
         assert.deepEqual(orderedCodes, ["G02", "G04", "A3", "A2", "BAR01"], `${vp.name}: unexpected sort order ${orderedCodes}`)
 
         // Cluster G02 never renders "B11 + B12"; G06 (no mock lines) shows "Chưa có dữ liệu" instead of "0đ"
-        const listText = await page.locator(".pay-sess-list").textContent()
+        const listText = await page.locator(".pay-sess-col").textContent()
         assert(!listText.includes("B11 + B12"), `${vp.name}: cluster must show G02, never B11 + B12`)
         const g06Row = page.locator(".pay-sess", { hasText: "G06" })
         await expect(g06Row.getByText("Chưa có dữ liệu")).toBeVisible()
@@ -218,7 +278,7 @@ try {
         // NA45C-08: at 1440 desktop, S1 list panel stretches to match map panel bottom edge
         if (vp.width >= 960) {
           const panelDiff = await page.evaluate(() => {
-            const list = document.querySelector(".pay-sess-list")?.getBoundingClientRect()
+            const list = document.querySelector(".pay-sess-col")?.getBoundingClientRect()
             const map = document.querySelector("#floor-map")?.getBoundingClientRect()
             return list && map ? Math.abs(list.bottom - map.bottom) : 999
           })
@@ -283,14 +343,14 @@ try {
         await expect(page).toHaveURL(/\/payment$/)
         await page.goto(`${base}/payment/${a3VisitId}/cash`, { waitUntil: "networkidle" })
         await expect(page.getByRole("heading", { name: "Chi tiết Phiên" })).toBeVisible()
-        await expect(page.getByText(/chưa tạo tạm tính/)).toBeVisible()
+        await expect(page.getByText(/chưa xuất hóa đơn/).first()).toBeVisible()
         await page.goBack({ waitUntil: "networkidle" })
         assert.equal(new URL(page.url()).pathname, "/payment", `${vp.name}: Back after prebill redirect should return to /payment`)
         await page.goto(a3Url, { waitUntil: "networkidle" })
         await expect(page.getByRole("heading", { name: "Chi tiết Phiên" })).toBeVisible()
 
         // NA45-06: scroll down on S2, click Xem tạm tính -> S3 must scroll to top so back & 80mm toggle are in viewport
-        // AND S3 toggle sits on the same row as the Back button
+        // AND S3 toggle sits on the same row as the Back button. VM-03/VM-04: preview stays state-free and has NO QR.
         await page.evaluate(() => {
           const root = document.querySelector(".pay-root")
           if (root) root.scrollTop = 450
@@ -298,7 +358,8 @@ try {
         await page.getByRole("button", { name: "Xem tạm tính" }).click()
         await expect(page.getByRole("button", { name: "Trên màn hình" })).toBeVisible()
         await expect(page.getByRole("button", { name: "Bản in 80mm" })).toBeVisible()
-        await expect(page.getByText("Bill tạm tính, chưa phải hóa đơn. Món đã hủy không tính.")).toBeVisible()
+        await expect(page.getByText("Tạm tính – chưa phải hóa đơn. Món đã hủy không tính.")).toBeVisible()
+        await expect(page.getByText("DEMO – KHÔNG CHUYỂN TIỀN")).toHaveCount(0)
         await assertNoOverflow(page, `${vp.name} S3`)
         const scrollCheck = await page.evaluate((vh) => {
           const root = document.querySelector(".pay-root")
@@ -322,11 +383,12 @@ try {
         await page.getByRole("button", { name: "Bản in 80mm" }).click()
         await expect(page.getByLabel("Bản in tạm tính khổ 80mm")).toBeVisible()
 
-        // S4 method: heading wraps without horizontal overflow, and feedback does not overlap heading or controls
-        await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+        // Issue invoice from S3 -> returns to S2 with issued bill, then Thu tiền -> S4 method
+        await page.getByRole("button", { name: "Xuất hóa đơn" }).click()
+        await expect(page.getByRole("heading", { name: "Chi tiết Phiên" })).toBeVisible()
+        await page.getByRole("button", { name: "Thu tiền" }).click()
         await expect(page.getByRole("heading", { name: "Chọn phương thức thanh toán" })).toBeVisible()
         await assertNoOverflow(page, `${vp.name} S4`)
-        await assertFeedbackNoOverlap(page, `${vp.name} S4`, ["Tiền mặt", "Chuyển khoản QR"])
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-s4-method.png`) })
 
         // S5 cash: short -> exact -> over -> confirm -> S7 success
@@ -398,7 +460,8 @@ try {
         // Network error on Cash (G04), then retry with SAME button & SAME amount reuses exact idempotency key
         await page.locator(".pay-sess", { hasText: "G04" }).click()
         await page.locator(".pay-sess", { hasText: "G04" }).click()
-        await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+        await page.getByRole("button", { name: "Xuất hóa đơn" }).first().click()
+        await page.getByRole("button", { name: "Thu tiền" }).click()
         await page.getByRole("button", { name: /Tiền mặt/ }).click()
         await page.getByRole("button", { name: "500.000", exact: true }).click()
         const keysBeforeRetry = await page.evaluate(() => window.__21gamPaymentMock.getAttemptKeys().length)
@@ -422,7 +485,8 @@ try {
         await page.locator(".pay-sess", { hasText: "BAR01" }).click()
         await page.locator(".pay-sess", { hasText: "BAR01" }).click()
         const barVisitId = new URL(page.url()).pathname.split("/")[2]
-        await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+        await page.getByRole("button", { name: "Xuất hóa đơn" }).first().click()
+        await page.getByRole("button", { name: "Thu tiền" }).click()
         await page.getByRole("button", { name: /Tiền mặt/ }).click()
         await page.getByRole("button", { name: "500.000", exact: true }).click()
         await page.evaluate((id) => window.__21gamPaymentMock.bumpVersion(id), barVisitId)
@@ -433,17 +497,18 @@ try {
         await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
         await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
 
-        // Separate QR manual confirm on G02
+        // Separate QR manual confirm on G02 (already AWAITING_PAYMENT), check-tx locked Đang phát triển
         await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
         await page.locator(".pay-sess", { hasText: "G02" }).click()
         await page.locator(".pay-sess", { hasText: "G02" }).click()
-        await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+        await page.getByRole("button", { name: "Thu tiền" }).click()
         await page.getByRole("button", { name: /Chuyển khoản QR/ }).click()
-        await page.getByRole("button", { name: /Kiểm tra giao dịch/ }).click()
-        await expect(page.getByText("Chưa thấy giao dịch khớp")).toBeVisible()
+        await expect(page.getByText("Techcombank")).toBeVisible()
+        await expect(page.getByRole("button", { name: /Kiểm tra giao dịch/ })).toBeDisabled()
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-s6-qr.png`) })
 
         await page.getByRole("button", { name: "Xác nhận đã nhận tiền" }).click()
+        await expect(page.getByText("Chụp màn hình chuyển khoản của khách")).toBeVisible()
         await page.getByRole("checkbox").check()
         await page.getByRole("button", { name: "Xác nhận", exact: true }).click()
         await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
@@ -454,7 +519,8 @@ try {
         await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
         await page.locator(".pay-sess", { hasText: "A2" }).click()
         await page.locator(".pay-sess", { hasText: "A2" }).click()
-        await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+        await page.getByRole("button", { name: "Xuất hóa đơn" }).first().click()
+        await page.getByRole("button", { name: "Thu tiền" }).click()
         await page.getByRole("button", { name: /Chuyển khoản QR/ }).click()
         await page.evaluate(() => window.__21gamPaymentMock.setFault({ nextConfirm: "dup" }))
         await page.getByRole("button", { name: "Xác nhận đã nhận tiền" }).click()
@@ -498,7 +564,7 @@ try {
         await spin.waitFor({ state: "visible" })
         await expect(page.getByText(/Đang tải dữ liệu bill/)).toBeVisible()
         await expect(page.getByRole("button", { name: "Xem tạm tính" })).toHaveCount(0)
-        await expect(page.getByRole("button", { name: "Chốt bill & thu tiền" })).toHaveCount(0)
+        await expect(page.getByRole("button", { name: "Thu tiền" })).toHaveCount(0)
         const spinTiming = await spin.evaluate((el) => {
           const cs = getComputedStyle(el)
           return { dur: cs.animationDuration, iter: cs.animationIterationCount }
@@ -509,7 +575,7 @@ try {
           `${vp.name}: .pay-spin reduced-motion timing was ${JSON.stringify(spinTiming)}`,
         )
         await expect(page.getByText("Tiger Crystal")).toBeVisible()
-        await expect(page.getByRole("button", { name: "Chốt bill & thu tiền" })).toBeEnabled()
+        await expect(page.getByRole("button", { name: "Xuất hóa đơn" }).first()).toBeEnabled()
 
         assert.deepEqual(errors, [], `${vp.name} reducedMotion console errors: ${errors.join(" | ")}`)
         results.push(`PASS ${vp.name} reduced motion + loading lock`)
@@ -537,16 +603,16 @@ try {
       await expect(page).toHaveURL(/\/phucvu/)
 
       await page.locator('[aria-label^="Bàn A3,"]').first().click()
-      await page.getByRole("button", { name: /Xem tạm tính & gọi thu ngân/ }).click()
+      await page.getByRole("button", { name: /Xem tạm tính & xuất hóa đơn/ }).click()
       const waiterA3Id = new URL(page.url()).pathname.split("/")[3]
       assert.equal(waiterA3Id, cashierA3Id, `Waiter and Cashier A3 visitId mismatch: ${waiterA3Id} vs ${cashierA3Id}`)
       await expect(page.getByText("Tiger Crystal")).toBeVisible()
       await expect(page.getByText("231.000đ").first()).toBeVisible()
 
-      await page.getByRole("button", { name: "Gửi yêu cầu thanh toán" }).click()
-      await expect(page.getByRole("button", { name: "Đã gửi · chờ Thu ngân chốt" })).toBeDisabled()
+      await page.getByRole("button", { name: "Xuất hóa đơn" }).click()
+      await expect(page.getByText("HÓA ĐƠN", { exact: true })).toBeVisible()
 
-      // Verify the single MockGamApi dataset has exactly 1 updated A3 row with AWAITING_PAYMENT + requestedAt
+      // Verify the single MockGamApi dataset has exactly 1 updated A3 row with AWAITING_PAYMENT + issuedAt
       const openA3Rows = await page.evaluate(async () => {
         const rows = await window.__21gamPaymentMock.listOpen()
         return rows.filter((r) => r.code === "A3")
@@ -554,7 +620,7 @@ try {
       assert.equal(openA3Rows.length, 1, `Expected 1 A3 open row, got ${openA3Rows.length}`)
       assert.equal(openA3Rows[0].visitId, cashierA3Id)
       assert.equal(openA3Rows[0].status, "AWAITING_PAYMENT")
-      assert.ok(openA3Rows[0].requestedAt, "Expected requestedAt on A3 after Waiter request")
+      assert.ok(openA3Rows[0].issuedAt, "Expected issuedAt on A3 after Waiter issueInvoice")
 
       assert.deepEqual(errors, [], `Cross-role A3 console errors: ${errors.join(" | ")}`)
       results.push("PASS 1440 unified single-mock A3 Cashier <-> Waiter request sync")
@@ -563,37 +629,35 @@ try {
     }
   }
 
-  // 5. Waiter PA-A flow at 390 + S4-S7 blocked under BOTH /payment and /phucvu
+  // 5. Waiter flow at 390 + S4-S7 blocked under BOTH /payment and /phucvu
   {
     const { context, page, errors } = await openRole(VIEWPORTS[0], 6, "/phucvu")
     try {
       await page.locator('[aria-label^="Bàn A3,"]').first().click()
-      await page.getByRole("button", { name: /Xem tạm tính & gọi thu ngân/ }).click()
+      await page.getByRole("button", { name: /Xem tạm tính & xuất hóa đơn/ }).click()
       const waiterVisitId = new URL(page.url()).pathname.split("/")[3]
       assert(/^\d+$/.test(waiterVisitId), `Waiter A3 visitId must be numeric, got ${waiterVisitId}`)
 
-      // NA45-12: Waiter direct ?view=preview on SERVING A3 redirects with replace to S2; single Back returns to /phucvu
-      await page.goto(`${base}/phucvu`, { waitUntil: "networkidle" })
+      // Waiter ?view=preview on SERVING A3 stays state-free (no QR, TẠM TÍNH) and never redirects/mutates
       await page.goto(`${base}/phucvu/phien/${waiterVisitId}/thanh-toan?view=preview`, { waitUntil: "networkidle" })
-      await expect(page.getByText(/chưa tạo tạm tính/)).toBeVisible()
-      await page.goBack({ waitUntil: "networkidle" })
-      assert.equal(new URL(page.url()).pathname, "/phucvu", "Waiter Back after prebill redirect should return to /phucvu")
-      await page.locator('[aria-label^="Bàn A3,"]').first().click()
-      await page.getByRole("button", { name: /Xem tạm tính & gọi thu ngân/ }).click()
+      await expect(page.getByText("Tạm tính – chưa phải hóa đơn").first()).toBeVisible()
+      await expect(page.getByText("DEMO – KHÔNG CHUYỂN TIỀN")).toHaveCount(0)
+      await page.getByRole("button", { name: "Chi tiết Phiên" }).click()
 
-      await expect(page.getByText("PHƯƠNG ÁN A · QUYỀN PHỤC VỤ")).toBeVisible()
+      await expect(page.getByRole("button", { name: "Thu tiền" })).toHaveCount(0)
       await expect(page.getByRole("button", { name: "Chốt bill & thu tiền" })).toHaveCount(0)
-      const reqBtn = page.getByRole("button", { name: "Gửi yêu cầu thanh toán" })
-      await expect(reqBtn).toBeVisible()
-      await reqBtn.click()
-      await expect(page.getByRole("button", { name: "Đã gửi · chờ Thu ngân chốt" })).toBeDisabled()
       await page.screenshot({ path: path.join(ARTIFACTS_DIR, "payment-390-waiter-pa-a.png") })
 
-      // S3 provisional bill with QR is reachable for Waiter to show guest, without collect button
+      // S3 preview is reachable for Waiter to show guest, without collect button
       await page.getByRole("button", { name: "Xem tạm tính" }).click()
-      await expect(page.getByText("BILL TẠM TÍNH", { exact: true })).toBeVisible()
-      await expect(page.getByLabel("Mã QR minh họa trên bill, không chuyển tiền được")).toBeVisible()
-      await expect(page.getByRole("button", { name: "Chốt bill & thu tiền" })).toHaveCount(0)
+      await expect(page.getByText("TẠM TÍNH", { exact: true })).toBeVisible()
+      await expect(page.getByRole("button", { name: "Thu tiền" })).toHaveCount(0)
+
+      // Issue invoice works for Waiter without exposing money confirmation actions
+      await page.getByRole("button", { name: "Chi tiết Phiên" }).click()
+      await page.getByRole("button", { name: "Xuất hóa đơn" }).click()
+      await expect(page.getByText("HÓA ĐƠN", { exact: true })).toBeVisible()
+      await expect(page.getByRole("button", { name: /Xác nhận đã nhận/ })).toHaveCount(0)
 
       // Prove S4-S7 money routes are blocked under BOTH /payment and /phucvu
       for (const forbiddenUrl of [
@@ -673,7 +737,7 @@ try {
       }, c1VisitId)
       await expect(page.getByText("Đã trả bàn · chưa thu")).toBeVisible()
       await expect(page.getByText("Phiên đã trả bàn nhưng chưa ghi nhận thu tiền")).toBeVisible()
-      await expect(page.getByRole("button", { name: "Chốt bill & thu tiền" })).toBeDisabled()
+      await expect(page.getByRole("button", { name: "Xem tạm tính" })).toBeDisabled()
 
       // Undo release: bill returns to live SERVING state and C1 reappears in S1
       await page.locator("header").getByRole("button", { name: "Hoàn tác", exact: true }).click()
@@ -724,7 +788,7 @@ try {
         await g02Row.click()
         await expect(page.getByText("Chivas 18")).toBeVisible()
         const collectVisible = await page.evaluate((vh) => {
-          const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Chốt bill & thu tiền"))
+          const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Thu tiền"))
           if (!btn) return false
           const r = btn.getBoundingClientRect()
           return r.top >= 0 && r.bottom <= vh + 1
@@ -733,58 +797,90 @@ try {
         await assertNoOverflow(page, `${s2Vp.name} G02 sticky S2`)
       }
 
-      // 320px full S1->S7 route overflow + NA45C-04 active feedback clearance at 320 & 390, plus 1024 two-column check
+      // 320px full S1->S7 route overflow + NA45C-04/NA45C-09 viewport-bounded active feedback clearance + cash retry at 320 & 390
       for (const narrowVp of [{ width: 320, height: 640 }, { width: 390, height: 844 }]) {
         await page.setViewportSize(narrowVp)
         await page.evaluate(() => window.__21gamPaymentMock?.reset?.())
         await page.goto(`${base}/payment`, { waitUntil: "networkidle" })
         await assertNoOverflow(page, `${narrowVp.width} S1`)
+
+        // Cash error + full cash retry on G04 at 320/390 (NA45C-09)
+        const g04 = page.locator(".pay-sess", { hasText: "G04" })
+        await g04.click()
+        await g04.click()
+        await page.getByRole("button", { name: "Xuất hóa đơn" }).first().click()
+        await assertFeedbackNoOverlap(page, `${narrowVp.width} S2 invoice issued`, ["Xem tạm tính", "Thu tiền"], {
+          expectedText: "Đã xuất hóa đơn",
+        })
+        await page.getByRole("button", { name: "Thu tiền" }).click()
+        await page.getByRole("button", { name: /Tiền mặt/ }).click()
+        await assertNoOverflow(page, `${narrowVp.width} S5`)
+        await page.getByRole("button", { name: "500.000", exact: true }).click()
+        await page.evaluate(() => window.__21gamPaymentMock.setFault({ nextConfirm: "net" }))
+        const cashConfirmBtn = page.getByRole("button", { name: /Xác nhận đã nhận/ })
+        await cashConfirmBtn.click()
+        await expect(page.getByText("Không gửi được tới máy chủ")).toBeVisible()
+        await assertNoOverflow(page, `${narrowVp.width} S5 err`)
+        // Retry cash submission to completion at 320/390
+        await cashConfirmBtn.click()
+        await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
+        await assertFeedbackNoOverlap(
+          page,
+          `${narrowVp.width} S7 cash retry success`,
+          ["Về danh sách Phiên", "In biên nhận"],
+          { expectedText: "Đã ghi nhận thanh toán" },
+        )
+
+        // Back to S1 -> A3: S3 preview (state-free), issue invoice, S6 QR scrolled copy, S7 scrolled print (NA45C-04)
+        await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
         const a3 = page.locator(".pay-sess", { hasText: "A3" })
         await a3.click()
         await a3.click()
         await expect(page.getByText("1 món đang làm, vẫn tính vào bill. Hỏi khách trước khi chốt.")).toBeVisible()
         await assertNoOverflow(page, `${narrowVp.width} S2`)
         await page.getByRole("button", { name: "Xem tạm tính" }).click()
-        await expect(page.getByTestId("pay-feedback")).toContainText("Đã tạo tạm tính")
-        await assertFeedbackNoOverlap(page, `${narrowVp.width} S3 prebill`, ["Chốt bill & thu tiền", "In tạm tính"])
         await assertNoOverflow(page, `${narrowVp.width} S3 screen`)
         await page.getByRole("button", { name: "Bản in 80mm" }).click()
         await assertNoOverflow(page, `${narrowVp.width} S3 80mm`)
 
-        await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
-        await expect(page.getByTestId("pay-feedback")).toHaveCount(0)
+        await page.getByRole("button", { name: "Xuất hóa đơn" }).click()
+        await page.getByRole("button", { name: "Thu tiền" }).click()
         await assertNoOverflow(page, `${narrowVp.width} S4`)
 
-        // Cash net error -> retry path at 320/390
-        await page.getByRole("button", { name: /Tiền mặt/ }).click()
-        await assertNoOverflow(page, `${narrowVp.width} S5`)
-        await page.getByRole("button", { name: "500.000", exact: true }).click()
-        await page.evaluate(() => window.__21gamPaymentMock.setFault({ nextConfirm: "net" }))
-        await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
-        await expect(page.getByText("Không gửi được tới máy chủ")).toBeVisible()
-        await assertNoOverflow(page, `${narrowVp.width} S5 err`)
-        await page.getByRole("button", { name: /Chọn phương thức/ }).click()
-
-        // QR copy feedback + manual confirm + S7 success/print feedback at 320/390
+        // QR copy feedback scrolled into view + manual confirm + S7 scrolled-to-bottom print feedback at 320/390
         await page.getByRole("button", { name: /Chuyển khoản QR/ }).click()
         await assertNoOverflow(page, `${narrowVp.width} S6`)
-        await page.getByRole("button", { name: "Chép" }).click()
-        await expect(page.getByTestId("pay-feedback")).toContainText("Đã chép nội dung")
-        await assertFeedbackNoOverlap(page, `${narrowVp.width} S6 copy`, [
-          "Xác nhận đã nhận tiền",
-          "Kiểm tra",
-          "Chép",
-          "Xem ",
-        ])
+        const copyBtn = page.getByRole("button", { name: "Chép" })
+        await copyBtn.scrollIntoViewIfNeeded()
+        await copyBtn.click()
+        await assertFeedbackNoOverlap(
+          page,
+          `${narrowVp.width} S6 copy`,
+          ["Chép", "Xác nhận đã nhận tiền"],
+          { feedbackSelector: '[data-testid="pay-qr-copy-status"]', expectedText: "Đã chép nội dung" },
+        )
         await page.getByRole("button", { name: "Xác nhận đã nhận tiền" }).click()
         await page.getByRole("checkbox").check()
         await page.getByRole("button", { name: "Xác nhận", exact: true }).click()
         await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
-        await expect(page.getByTestId("pay-feedback")).toContainText("Đã ghi nhận thanh toán")
-        await assertFeedbackNoOverlap(page, `${narrowVp.width} S7 success`, ["Về danh sách Phiên", "In biên nhận"])
+        await assertFeedbackNoOverlap(
+          page,
+          `${narrowVp.width} S7 success`,
+          ["Về danh sách Phiên", "In biên nhận"],
+          { expectedText: "Đã ghi nhận thanh toán" },
+        )
+        // Scroll S7 receipt to bottom before clicking In biên nhận (NA45C-04 repro case)
+        await page.evaluate(() => {
+          const root = document.querySelector(".pay-root")
+          if (root) root.scrollTop = root.scrollHeight
+        })
         await page.getByRole("button", { name: /In biên nhận/ }).click()
-        await expect(page.getByTestId("pay-feedback")).toContainText("chưa nối máy in thật")
-        await assertFeedbackNoOverlap(page, `${narrowVp.width} S7 print`, ["Về danh sách Phiên", "In biên nhận"])
+        await assertFeedbackNoOverlap(
+          page,
+          `${narrowVp.width} S7 print`,
+          ["Về danh sách Phiên", "In biên nhận"],
+          { feedbackSelector: '[data-testid="pay-receipt-print-status"]', expectedText: "chưa nối máy in thật" },
+        )
         await assertNoOverflow(page, `${narrowVp.width} S7`)
       }
 
@@ -794,7 +890,7 @@ try {
       await page.goto(`${base}/payment`, { waitUntil: "networkidle" })
       await assertNoOverflow(page, "1024 S1")
       const twoColS1 = await page.evaluate(() => {
-        const list = document.querySelector(".pay-sess-list")?.getBoundingClientRect()
+        const list = document.querySelector(".pay-sess-col")?.getBoundingClientRect()
         const map = document.querySelector("#floor-map")?.getBoundingClientRect()
         return Boolean(list && map && list.right <= map.left + 1)
       })
@@ -820,7 +916,7 @@ try {
       const adminA3 = page.locator(".pay-sess", { hasText: "A3" })
       await adminA3.click()
       await adminA3.click()
-      await expect(page.getByRole("button", { name: "Chốt bill & thu tiền" })).toBeVisible()
+      await expect(page.getByRole("button", { name: "Xuất hóa đơn" }).first()).toBeVisible()
 
       await page.getByRole("button", { name: /Tài khoản:/ }).click()
       await page.getByRole("menuitemradio", { name: /Bartender/ }).click()
@@ -842,7 +938,7 @@ try {
       await page.getByRole("button", { name: /Thu tiền/ }).click()
       await expect(page).toHaveURL(/\/payment$/)
       await expect(page.getByText("Xin chào,").first()).toBeVisible()
-      await expect(page.locator(".pay-sess-list")).toBeVisible()
+      await expect(page.locator(".pay-sess-col")).toBeVisible()
       await assertCleanCashierShell(page, "390 Owner /payment")
       await assertNoOverflow(page, "390 Owner /payment")
 
@@ -871,7 +967,8 @@ try {
       // Confirm payment on A3 -> payment feedback displays & open list refreshes without A3
       await page.locator(".pay-sess", { hasText: "A3" }).click()
       await page.locator(".pay-sess", { hasText: "A3" }).click()
-      await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+      await page.getByRole("button", { name: "Xuất hóa đơn" }).first().click()
+      await page.getByRole("button", { name: "Thu tiền" }).click()
       await page.getByRole("button", { name: /Tiền mặt/ }).click()
       await page.getByRole("button", { name: "500.000", exact: true }).click()
       await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
@@ -904,7 +1001,8 @@ try {
     try {
       await page.locator(".pay-sess", { hasText: "A3" }).click()
       await page.locator(".pay-sess", { hasText: "A3" }).click()
-      await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+      await page.getByRole("button", { name: "Xuất hóa đơn" }).first().click()
+      await page.getByRole("button", { name: "Thu tiền" }).click()
       await page.getByRole("button", { name: /Tiền mặt/ }).click()
       await page.getByRole("button", { name: "500.000", exact: true }).click()
       const a3CashPath = new URL(page.url()).pathname
@@ -953,7 +1051,8 @@ try {
       await expect(page.getByText("G04").first()).toBeVisible()
 
       // Delayed network error stays on original G04 pending step
-      await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+      await page.getByRole("button", { name: "Xuất hóa đơn" }).first().click()
+      await page.getByRole("button", { name: "Thu tiền" }).click()
       await page.getByRole("button", { name: /Tiền mặt/ }).click()
       await page.getByRole("button", { name: "500.000", exact: true }).click()
       const g04CashPath = new URL(page.url()).pathname
@@ -1050,6 +1149,47 @@ try {
     results.push(`PASS NA45C-07 offscreen map scroll below header (${motion})`)
   }
 
+  // 14. NA45C-05: Standalone routes (/duyet-huy-mon, /chebien, /phucvu, /admin/overview) redirect CASHIER to /payment
+  //     at 390 and 1440, while preserving OWNER / WAITER / BAR access
+  {
+    for (const vp of [VIEWPORTS[0], VIEWPORTS[2]]) {
+      const { context, page, errors } = await openRole(vp, 5, "/payment")
+      try {
+        for (const standaloneRoute of ["/duyet-huy-mon", "/chebien", "/phucvu", "/admin/overview"]) {
+          await page.goto(`${base}${standaloneRoute}`, { waitUntil: "networkidle" })
+          assert.equal(
+            new URL(page.url()).pathname,
+            "/payment",
+            `${vp.name}: CASHIER on ${standaloneRoute} must redirect to /payment`,
+          )
+          await assertCleanCashierShell(page, `${vp.name} NA45C-05 ${standaloneRoute}`)
+          await expect(page.getByText("Phê duyệt hủy món")).toHaveCount(0)
+        }
+        assert.deepEqual(errors, [], `NA45C-05 (${vp.name}) Cashier errors: ${errors.join(" | ")}`)
+      } finally {
+        await context.close()
+      }
+    }
+
+    const ownerCtx = await openRole(VIEWPORTS[2], 3, "/duyet-huy-mon")
+    try {
+      assert.equal(new URL(ownerCtx.page.url()).pathname, "/duyet-huy-mon")
+      await expect(ownerCtx.page.getByText("Phê duyệt hủy món").first()).toBeVisible()
+      await ownerCtx.page.goto(`${base}/admin/overview`, { waitUntil: "networkidle" })
+      assert.equal(new URL(ownerCtx.page.url()).pathname, "/admin/overview")
+      assert.deepEqual(ownerCtx.errors, [], `NA45C-05 Owner errors: ${ownerCtx.errors.join(" | ")}`)
+      results.push("PASS NA45C-05 Cashier standalone redirects (/duyet-huy-mon etc.) + Owner preserved")
+    } finally {
+      await ownerCtx.context.close()
+    }
+  }
+
+  // Close mock Vite before starting HTTP-mode Vite so HTTP_CHECK_PORT can reuse BASE_PORT (e.g. 43943).
+  if (viteServer) {
+    await viteServer.close()
+    viteServer = null
+  }
+
   // 13. NA45C-06: HTTP-mode auth stub goes /thungan/login -> /payment directly (never /floor), logout returns to /thungan/login
   {
     const httpBase = `http://127.0.0.1:${HTTP_CHECK_PORT}`
@@ -1133,41 +1273,6 @@ try {
       results.push("PASS NA45C-06 HTTP login /thungan/login -> /payment direct (never /floor) + logout")
     } finally {
       await httpVite.close()
-    }
-  }
-
-  // 14. NA45C-05: Standalone routes (/duyet-huy-mon, /chebien, /phucvu, /admin/overview) redirect CASHIER to /payment
-  //     at 390 and 1440, while preserving OWNER / WAITER / BAR access
-  {
-    for (const vp of [VIEWPORTS[0], VIEWPORTS[2]]) {
-      const { context, page, errors } = await openRole(vp, 5, "/payment")
-      try {
-        for (const standaloneRoute of ["/duyet-huy-mon", "/chebien", "/phucvu", "/admin/overview"]) {
-          await page.goto(`${base}${standaloneRoute}`, { waitUntil: "networkidle" })
-          assert.equal(
-            new URL(page.url()).pathname,
-            "/payment",
-            `${vp.name}: CASHIER on ${standaloneRoute} must redirect to /payment`,
-          )
-          await assertCleanCashierShell(page, `${vp.name} NA45C-05 ${standaloneRoute}`)
-          await expect(page.getByText("Phê duyệt hủy món")).toHaveCount(0)
-        }
-        assert.deepEqual(errors, [], `NA45C-05 (${vp.name}) Cashier errors: ${errors.join(" | ")}`)
-      } finally {
-        await context.close()
-      }
-    }
-
-    const ownerCtx = await openRole(VIEWPORTS[2], 3, "/duyet-huy-mon")
-    try {
-      assert.equal(new URL(ownerCtx.page.url()).pathname, "/duyet-huy-mon")
-      await expect(ownerCtx.page.getByText("Phê duyệt hủy món").first()).toBeVisible()
-      await ownerCtx.page.goto(`${base}/admin/overview`, { waitUntil: "networkidle" })
-      assert.equal(new URL(ownerCtx.page.url()).pathname, "/admin/overview")
-      assert.deepEqual(ownerCtx.errors, [], `NA45C-05 Owner errors: ${ownerCtx.errors.join(" | ")}`)
-      results.push("PASS NA45C-05 Cashier standalone redirects (/duyet-huy-mon etc.) + Owner preserved")
-    } finally {
-      await ownerCtx.context.close()
     }
   }
 

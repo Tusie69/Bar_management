@@ -343,7 +343,8 @@ try {
         capturedCount++
       }
 
-      await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+      await page.getByRole("button", { name: "Xuất hóa đơn" }).click()
+      await page.getByRole("button", { name: "Thu tiền" }).click()
       await page.getByRole("heading", { name: "Chọn phương thức thanh toán" }).waitFor()
       await clearTransientFeedback(page)
       await page.waitForTimeout(150)
@@ -405,7 +406,8 @@ try {
         const g04Row = page.locator(".pay-sess", { hasText: "G04" })
         await g04Row.click()
         await g04Row.click()
-        await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+        await page.getByRole("button", { name: "Xuất hóa đơn" }).first().click()
+        await page.getByRole("button", { name: "Thu tiền" }).click()
         await page.getByRole("button", { name: /Chuyển khoản QR/ }).click()
         await page.getByRole("button", { name: "Xác nhận đã nhận tiền" }).click()
         await page.getByRole("checkbox").check()

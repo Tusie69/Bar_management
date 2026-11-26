@@ -9,6 +9,7 @@
 import { ApiError, api, clock } from "@/services"
 import type { PaymentApi } from "./contracts"
 import {
+  addPaymentOrderLines,
   getPaymentAttemptKeys,
   mockPaymentApi,
   setPaymentMockFault,
@@ -80,7 +81,9 @@ if (api.mode === "mock" && !import.meta.env.PROD && typeof window !== "undefined
     setFault: setPaymentMockFault,
     bumpVersion: simulatePaymentVersionBump,
     getAttemptKeys: getPaymentAttemptKeys,
+    addOrderLines: addPaymentOrderLines,
     listOpen: () => mockPaymentApi.listOpen(),
+    paymentApi: mockPaymentApi,
     visitIdForTable: async (code: string) => {
       const [catalog, floor] = await Promise.all([api.getCatalog(), api.getFloorState(clock.now())])
       const table = catalog.tables.find((t) => t.code === code)
