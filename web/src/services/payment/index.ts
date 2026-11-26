@@ -40,6 +40,30 @@ const unimplementedHttpPaymentApi: PaymentApi = {
   checkTransfer: async () => {
     throw new ApiError(501, "NOT_SUPPORTED_BY_BACKEND", "API thanh toán TU-45/46 chưa được kết nối.")
   },
+  previewBill: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
+  issueInvoice: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
+  getSessionBills: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
+  requestCancel: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
+  listCancelRequests: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
+  decideCancel: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
+  cancelPaid: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
+  listAudit: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
 }
 
 /**

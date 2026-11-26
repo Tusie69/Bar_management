@@ -8,6 +8,9 @@ const NTF_TYPE_CLASS: Record<PaymentNotificationType, string> = {
   PAYMENT_REQUEST: "pay-ntf-req",
   AWAITING_PAYMENT: "pay-ntf-pend",
   PAID: "pay-ntf-paid",
+  INVOICE_ISSUED: "pay-ntf-req",
+  CANCEL_REQUESTED: "pay-ntf-cancel",
+  CANCEL_DECIDED: "pay-ntf-pend",
 }
 
 export function PaymentNotificationBell({

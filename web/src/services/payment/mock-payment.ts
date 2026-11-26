@@ -24,6 +24,30 @@ export const mockPaymentApi: PaymentApi = {
     mockServer().confirmPaymentTransfer(visitId, manual, version, idempotencyKey),
   listNotifications: () => mockServer().listPaymentNotifications(),
   checkTransfer: (visitId) => mockServer().checkPaymentTransfer(visitId),
+  previewBill: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
+  issueInvoice: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
+  getSessionBills: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
+  requestCancel: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
+  listCancelRequests: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
+  decideCancel: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
+  cancelPaid: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
+  listAudit: async () => {
+    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
+  },
 }
 
 export function setPaymentMockFault(patch: {
