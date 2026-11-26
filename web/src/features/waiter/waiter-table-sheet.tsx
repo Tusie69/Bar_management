@@ -23,6 +23,8 @@ import type { FloorTableState, TableView } from "@/domain/models"
 import { fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { isPaymentAvailable } from "@/services/payment"
+import { useSession } from "@/state/session"
+import { isBarGuestSession } from "./waiter-invoice-model"
 import {
   WAITER_PHASE_LABEL,
   waiterPaymentPath,
@@ -107,6 +109,7 @@ export interface WaiterTableSheetBodyProps {
   canMove: boolean
   canCombine: boolean
   canSplit: boolean
+  isBarRole?: boolean
   pending: boolean
   onOrder: () => void
   onViewOrders: () => void
@@ -125,6 +128,7 @@ export function WaiterTableSheetBody({
   canMove,
   canCombine,
   canSplit,
+  isBarRole: isBarRoleProp,
   pending,
   onOrder,
   onViewOrders,
@@ -135,6 +139,15 @@ export function WaiterTableSheetBody({
   const { capability } = view
   const tone = capability.visitPhase === null ? null : WAITER_PHASE_TONE[capability.visitPhase]
   const [billOpen, setBillOpen] = useState(false)
+  const storeIsBarRole = useSession((state) => state.user.role === "BAR")
+  const isBarRole = isBarRoleProp ?? storeIsBarRole
+  const sessionTables = view.currentTableIds
+    .map((id) => byId.get(id))
+    .filter((t): t is TableView => Boolean(t))
+  const canOpenSessionBill =
+    isPaymentAvailable &&
+    capability.visitId !== null &&
+    (!isBarRole || isBarGuestSession({ tables: sessionTables.length > 0 ? sessionTables : view.tableCodes }))
   // Cùng khoá query với danh sách món bên dưới, nên đây không phải một request
   // thứ hai — chỉ là cùng một câu trả lời đọc ở hai chỗ.
   const visitItems = useVisitItems(capability.visitId)
@@ -269,7 +282,7 @@ export function WaiterTableSheetBody({
             <ReceiptText className="size-4" aria-hidden="true" /> In bill tạm tính
           </Button>
         ) : null}
-        {isPaymentAvailable && capability.visitId !== null ? (
+        {canOpenSessionBill && capability.visitId !== null ? (
           <WaiterPaymentLinkButton visitId={capability.visitId} pending={pending} />
         ) : null}
         {modes.length ? (

@@ -12,7 +12,9 @@ import type {
   SessionBills,
 } from "@/services/payment"
 import { BarBillDrawerBody } from "@/features/preparation/bar-bill-drawer"
+import { PreparationQueue } from "@/features/preparation/preparation-queue"
 import { PreparationTicketCard } from "@/features/preparation/preparation-ticket-card"
+import type { PreparationQueueSnapshot } from "@/features/preparation/preparation-queue-data"
 import {
   BANK_RECEIVING_NAME,
   PREVIEW_HAS_QR,
@@ -29,6 +31,7 @@ import {
 } from "@/features/waiter/waiter-invoice-model"
 import {
   WaiterInvoiceView,
+  WaiterInvoiceWorkspace,
   WaiterPreviewView,
   WaiterSessionDetailView,
 } from "@/features/waiter/waiter-invoice-views"
@@ -659,5 +662,356 @@ describe("W2 VM-02 / D1 / TN-02-K7: Bartender & Waiter role gates + /chebien ent
     )
     expect(html).toContain("Xem tạm tính &amp; xuất hóa đơn")
     expect(html).not.toContain("gọi thu ngân")
+  })
+})
+
+describe("W2 NA45H-06: Bartender scope restricted strictly to bar-area sessions", () => {
+  it("recognizes only bar-area sessions and excludes regular tables and mixed clusters", () => {
+    expect(isBarGuestSession({ tables: ["BAR01"] })).toBe(true)
+    expect(isBarGuestSession({ tables: ["BAR05", "BAR06"] })).toBe(true)
+    expect(isBarGuestSession({ tables: [{ code: "S1", zoneCode: "BAR" }] })).toBe(true)
+    expect(isBarGuestSession({ tables: [{ code: "BAR01", zoneCode: "A" }] })).toBe(false)
+    expect(isBarGuestSession({ tables: ["A3"] })).toBe(false)
+    expect(isBarGuestSession({ tables: ["B11", "B12"] })).toBe(false)
+    expect(isBarGuestSession({ tables: ["A3", "BAR01"] })).toBe(false)
+    expect(isBarGuestSession({ tables: [] })).toBe(false)
+  })
+
+  it("BarBillDrawerBody lists only bar-area sessions and omits 'Bàn khác đang phục vụ'", () => {
+    const { api } = createFakePaymentApi()
+    const qc = new QueryClient()
+    qc.setQueryData(
+      ["payment-open"],
+      [
+        {
+          visitId: "2001",
+          billCode: "B2001",
+          sessionCode: "S-2001",
+          code: "BAR01",
+          tables: ["BAR01"],
+          status: "SERVING",
+          openedAt: "20:49",
+          waiterName: "Khoa",
+          guests: 1,
+          dueVnd: 220_000,
+          hasOrderLines: true,
+          version: 1,
+        },
+        {
+          visitId: "2002",
+          billCode: "B2002",
+          sessionCode: "S-2002",
+          code: "G05",
+          tables: ["BAR05", "BAR06"],
+          clusterCode: "G05",
+          status: "SERVING",
+          openedAt: "20:05",
+          waiterName: "Khoa",
+          guests: 2,
+          dueVnd: 197_000,
+          hasOrderLines: true,
+          version: 1,
+        },
+        {
+          visitId: "1283",
+          billCode: "B1283",
+          sessionCode: "S-1283",
+          code: "A3",
+          tables: ["A3"],
+          status: "SERVING",
+          openedAt: "19:05",
+          waiterName: "Minh",
+          guests: 4,
+          dueVnd: 155_000,
+          hasOrderLines: true,
+          version: 1,
+        },
+      ] satisfies PayBillSummary[],
+    )
+
+    const html = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(BarBillDrawerBody, {
+          open: true,
+          selectedVisitId: null,
+          view: "detail",
+          onSelectVisit: () => undefined,
+          onNavigateView: () => undefined,
+          onBackToList: () => undefined,
+          api,
+        }),
+      ),
+    )
+
+    expect(html).toContain("Khách quầy Bar (2)")
+    expect(html).toContain("BAR01")
+    expect(html).toContain("G05")
+    expect(html).not.toContain("Bàn khác đang phục vụ")
+    expect(html).not.toContain("A3")
+  })
+
+  it("WaiterInvoiceWorkspace with barOnly refuses non-bar session detail/preview/invoice", () => {
+    const { api } = createFakePaymentApi()
+    const qc = new QueryClient()
+    qc.setQueryData(["payment-session-bills", "1283"], makeSessionBills({ visitId: "1283", code: "A3", tables: ["A3"] }))
+    qc.setQueryData(
+      ["payment-session-bills", "2001"],
+      makeSessionBills({ visitId: "2001", code: "BAR01", tables: ["BAR01"] }),
+    )
+
+    const blockedHtml = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(WaiterInvoiceWorkspace, {
+          visitId: "1283",
+          view: "detail",
+          backLabel: "Khách quầy Bar",
+          onBack: () => undefined,
+          onNavigateView: () => undefined,
+          api,
+          embedded: true,
+          barOnly: true,
+        }),
+      ),
+    )
+    expect(blockedHtml).toContain("Bàn ngoài quầy bar - Bartender không xuất hóa đơn")
+    expect(blockedHtml).not.toContain("Xuất hóa đơn")
+    expect(blockedHtml).not.toContain("Xem tạm tính")
+
+    const allowedHtml = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(WaiterInvoiceWorkspace, {
+          visitId: "2001",
+          view: "detail",
+          backLabel: "Khách quầy Bar",
+          onBack: () => undefined,
+          onNavigateView: () => undefined,
+          api,
+          embedded: true,
+          barOnly: true,
+        }),
+      ),
+    )
+    expect(allowedHtml).not.toContain("Bàn ngoài quầy bar - Bartender không xuất hóa đơn")
+    expect(allowedHtml).toContain("Xuất hóa đơn")
+  })
+
+  it("PreparationQueue shows ticket bill action only on bar-area tickets while keeping A3 preparation intact", () => {
+    const qc = new QueryClient()
+    const baseLine = {
+      lineNo: 1,
+      itemName: "Mojito",
+      variantDisplayName: "Ly",
+      menuItemVariantId: 1,
+      unitCode: "GLASS" as const,
+      quantity: 1,
+      cancelledQuantity: 0,
+      originalQuantity: 1,
+      doneQuantity: 0,
+      progressVersion: 0,
+      note: null,
+      pendingCancellation: null,
+    }
+    const snapshot: PreparationQueueSnapshot = {
+      station: "BAR",
+      changeCursor: "1",
+      generatedAt: "2026-11-26T10:01:00.000Z",
+      printing: { enabled: false },
+      limit: 50,
+      tickets: [
+        {
+          ticketId: 101,
+          orderId: 11,
+          visitId: 2001,
+          visitSequence: 1,
+          station: "BAR",
+          status: "SUBMITTED",
+          version: 1,
+          submittedAt: "2026-11-26T10:00:00.000Z",
+          acceptedAt: null,
+          startedAt: null,
+          readyAt: null,
+          collectedAt: null,
+          waitSeconds: 30,
+          tableCodes: ["BAR01"],
+          orderedByDisplayName: "Khoa",
+          guestFlags: { vip: false, birthday: false, designated: false },
+          lines: [baseLine],
+        },
+        {
+          ticketId: 102,
+          orderId: 12,
+          visitId: 2002,
+          visitSequence: 1,
+          station: "BAR",
+          status: "SUBMITTED",
+          version: 1,
+          submittedAt: "2026-11-26T10:00:00.000Z",
+          acceptedAt: null,
+          startedAt: null,
+          readyAt: null,
+          collectedAt: null,
+          waitSeconds: 30,
+          tableCodes: ["BAR05", "BAR06"],
+          orderedByDisplayName: "Khoa",
+          guestFlags: { vip: false, birthday: false, designated: false },
+          lines: [baseLine],
+        },
+        {
+          ticketId: 103,
+          orderId: 13,
+          visitId: 1283,
+          visitSequence: 1,
+          station: "BAR",
+          status: "SUBMITTED",
+          version: 1,
+          submittedAt: "2026-11-26T10:00:00.000Z",
+          acceptedAt: null,
+          startedAt: null,
+          readyAt: null,
+          collectedAt: null,
+          waitSeconds: 30,
+          tableCodes: ["A3"],
+          orderedByDisplayName: "Minh",
+          guestFlags: { vip: false, birthday: false, designated: false },
+          lines: [baseLine],
+        },
+      ],
+    }
+    qc.setQueryData(["preparation-queue", null, "BAR"], snapshot)
+
+    const html = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(PreparationQueue, {
+          station: "BAR",
+          canRead: true,
+          canTransition: true,
+          canRetry: false,
+          canOpenBill: (ticket) => isBarGuestSession({ tables: ticket.tableCodes }),
+          onOpenBill: () => undefined,
+        }),
+      ),
+    )
+
+    expect(html).toContain("Hóa đơn BAR01")
+    expect(html).toContain("Hóa đơn BAR05 · BAR06")
+    expect(html).not.toContain("Hóa đơn A3")
+    expect(html).toContain("A3")
+    expect(html).toContain("Tiếp nhận")
+  })
+
+  it("WaiterTableSheetBody hides session bill entry for BAR role on non-bar tables", () => {
+    const makeProps = (
+      code: string,
+      tableId: number,
+      kind: TableView["kind"],
+      zoneCode: TableView["zoneCode"],
+      isBarRole: boolean,
+    ) => {
+      const table: TableView = {
+        id: tableId,
+        version: 1,
+        code,
+        displayName: code,
+        zoneId: 1,
+        zoneCode,
+        kind,
+        capacity: 4,
+        seqNo: kind === "BAR_SEAT" ? 1 : null,
+        isSpare: false,
+        status: "ACTIVE",
+        x: 0,
+        y: 0,
+        w: 40,
+        h: 30,
+        seating: undefined,
+      }
+      const claim: ClaimView = {
+        kind: "visit",
+        visitId: 1283,
+        reservationId: null,
+        waitlistEntryId: null,
+        holdId: null,
+        displayName: "",
+        phoneLast3: null,
+        partySize: 2,
+        startsAt: new Date("2026-11-26T12:00:00.000Z"),
+        deadlineAt: null,
+        paid: false,
+        origin: null,
+        tableIds: [tableId],
+        groupId: null,
+        warning: null,
+        minutesLate: 0,
+        sourceCode: null,
+        note: null,
+        version: 1,
+      }
+      const state: FloorTableState = {
+        tableId,
+        state: "seated",
+        claim,
+        staleFromPreviousDay: false,
+      }
+      const byId = new Map([[tableId, table]])
+      const states = new Map([[tableId, state]])
+      const view = buildWaiterSheetView({
+        tableId,
+        state,
+        byId,
+        zoneName: zoneCode === "BAR" ? "Quầy Bar" : "Khu A",
+        serverNow: new Date("2026-11-26T12:30:00.000Z"),
+        canOrder: true,
+        canRearrange: false,
+      })
+      return {
+        view,
+        tables: [table],
+        states,
+        byId,
+        canMove: false,
+        canCombine: false,
+        canSplit: false,
+        isBarRole,
+        pending: false,
+        onOrder: () => undefined,
+        onViewOrders: () => undefined,
+        onRearrange: () => undefined,
+      }
+    }
+
+    const barOnA3 = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: new QueryClient() },
+        createElement(WaiterTableSheetBody, makeProps("A3", 11, "TABLE", "A", true)),
+      ),
+    )
+    expect(barOnA3).not.toContain("Xem tạm tính &amp; xuất hóa đơn")
+
+    const barOnBar01 = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: new QueryClient() },
+        createElement(WaiterTableSheetBody, makeProps("BAR01", 101, "BAR_SEAT", "BAR", true)),
+      ),
+    )
+    expect(barOnBar01).toContain("Xem tạm tính &amp; xuất hóa đơn")
+
+    const waiterOnA3 = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: new QueryClient() },
+        createElement(WaiterTableSheetBody, makeProps("A3", 11, "TABLE", "A", false)),
+      ),
+    )
+    expect(waiterOnA3).toContain("Xem tạm tính &amp; xuất hóa đơn")
   })
 })
