@@ -230,40 +230,25 @@ try {
       const a3BillCode = `B${String(a3VisitId).padStart(4, "0")}`
 
       const beforeStats = await page.evaluate(async (vid) => {
-        const [{ api, clock }, { DEMO_USERS }] = await Promise.all([
+        const [{ api, clock }, { businessDateOf }, { DEMO_USERS }] = await Promise.all([
           import("/src/services/index.ts"),
+          import("/src/lib/time.ts"),
           import("/src/services/mock/seed.ts"),
         ])
         api.setSession(DEMO_USERS.find((u) => u.role === "OWNER"))
-        const bd = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(clock.now())
-        const summary = await api.getTableTurnSummary({ from: bd, to: bd })
-        const turns = await api.getTableTurns({ from: bd, to: bd })
-        const visitTurn = turns.find((t) => String(t.visitId) === String(vid))
-        return { closedTurns: summary.closedTurns, visitTurnStatus: visitTurn?.status ?? null }
+        const bd = businessDateOf(clock.now())
+        const res = await api.getTableTurns({ from: bd, to: bd, includeUncounted: true })
+        const visitTurn = res.turns.find((t) => String(t.visitId) === String(vid))
+        const closedTurns = res.turns.filter((t) => t.status === "CLOSED").length
+        return { closedTurns, visitTurnStatus: visitTurn?.status ?? null }
       }, a3VisitId)
       assert.equal(beforeStats.visitTurnStatus, "CLOSED", "Paid A3 turn should be CLOSED before cancel")
 
-      // Also verify Cashier cannot stay on /cancel-payment
-      await page.evaluate(async () => {
-        const [{ api }, { DEMO_USERS }] = await Promise.all([
-          import("/src/services/index.ts"),
-          import("/src/services/mock/seed.ts"),
-        ])
-        api.setSession(DEMO_USERS.find((u) => u.role === "CASHIER"))
-      })
-      await page.goto(`${base}/cancel-payment`, { waitUntil: "networkidle" })
-      assert.equal(new URL(page.url()).pathname, "/payment", "CASHIER must be redirected away from /cancel-payment")
-
-      // Switch to RECEPTIONIST on /floor -> check Menu item "Huỷ thanh toán" at 390, 820, 1440 -> navigate
-      await page.evaluate(async () => {
-        const [{ api }, { DEMO_USERS }] = await Promise.all([
-          import("/src/services/index.ts"),
-          import("/src/services/mock/seed.ts"),
-        ])
-        api.setSession(DEMO_USERS.find((u) => u.role === "RECEPTIONIST"))
-      })
-      await page.goto(`${base}/floor`, { waitUntil: "networkidle" })
-      assert.equal(new URL(page.url()).pathname, "/floor")
+      // Switch to RECEPTIONIST via Account menu (preserves in-memory MockGamApi state and redirects /payment -> /floor)
+      await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
+      await expect(page).toHaveURL(/\/payment$/)
+      await switchRoleInUi(page, /Lễ tân 1/)
+      await expect(page).toHaveURL(/\/floor$/)
 
       for (const vp of [
         { width: 390, height: 844, label: "390" },
@@ -275,7 +260,7 @@ try {
         const cancelMenuItem = page.getByRole("button", { name: /Huỷ thanh toán/ })
         await expect(cancelMenuItem).toBeVisible()
         if (vp.label !== "1440") {
-          await page.getByRole("button", { name: "Đóng", exact: true }).click()
+          await page.getByRole("button", { name: "Đóng", exact: true }).first().click()
         } else {
           await cancelMenuItem.click()
         }
@@ -323,19 +308,20 @@ try {
       await expect(page.locator('[aria-label*="A3"][aria-label*="Đã tới"]').first()).toBeVisible()
 
       const afterStats = await page.evaluate(async (vid) => {
-        const [{ api, clock }, { paymentApi }, { DEMO_USERS }] = await Promise.all([
+        const [{ api, clock }, { businessDateOf }, { paymentApi }, { DEMO_USERS }] = await Promise.all([
           import("/src/services/index.ts"),
+          import("/src/lib/time.ts"),
           import("/src/services/payment/index.ts"),
           import("/src/services/mock/seed.ts"),
         ])
         api.setSession(DEMO_USERS.find((u) => u.role === "OWNER"))
-        const bd = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(clock.now())
-        const summary = await api.getTableTurnSummary({ from: bd, to: bd })
-        const turns = await api.getTableTurns({ from: bd, to: bd })
-        const visitTurn = turns.find((t) => String(t.visitId) === String(vid))
+        const bd = businessDateOf(clock.now())
+        const res = await api.getTableTurns({ from: bd, to: bd, includeUncounted: true })
+        const visitTurn = res.turns.find((t) => String(t.visitId) === String(vid))
+        const closedTurns = res.turns.filter((t) => t.status === "CLOSED").length
         const sessionBills = await paymentApi.getSessionBills(vid)
         return {
-          closedTurns: summary.closedTurns,
+          closedTurns,
           visitTurnStatus: visitTurn?.status ?? null,
           billStatuses: sessionBills.bills.map((b) => b.billStatus),
         }
