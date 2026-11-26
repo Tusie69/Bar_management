@@ -1,50 +1,49 @@
 // E2E mock verification for NA-45/46 payment flows across 390, 820, and 1440 viewports.
 // Artifacts (screenshots) are written strictly inside web/e2e/.artifacts/.
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { chromium, expect } from "@playwright/test"
+import { createServer as createViteServer } from "vite"
 
 const ARTIFACTS_DIR = path.resolve("e2e/.artifacts")
 fs.mkdirSync(ARTIFACTS_DIR, { recursive: true })
 
 const BASE_PORT = 43920
+const HTTP_CHECK_PORT = 43923
 const PROVIDED_BASE = process.env.E2E_BASE_URL
 const base = PROVIDED_BASE ?? `http://127.0.0.1:${BASE_PORT}`
 
-async function waitForServer(url, timeoutMs = 20_000) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(url)
-      if (res.ok) return true
-    } catch {
-      /* waiting */
-    }
-    await new Promise((r) => setTimeout(r, 250))
+async function startOwnedVite(port, modeEnv = null) {
+  const prevMode = process.env.VITE_API_MODE
+  const prevUrl = process.env.VITE_API_BASE_URL
+  if (modeEnv) {
+    process.env.VITE_API_MODE = modeEnv.mode
+    process.env.VITE_API_BASE_URL = modeEnv.baseUrl
+  } else {
+    delete process.env.VITE_API_MODE
+    delete process.env.VITE_API_BASE_URL
   }
-  return false
+  try {
+    const server = await createViteServer({
+      configFile: path.resolve("vite.config.ts"),
+      clearScreen: false,
+      logLevel: "silent",
+      server: { host: "127.0.0.1", port, strictPort: true },
+    })
+    await server.listen()
+    return server
+  } finally {
+    if (prevMode === undefined) delete process.env.VITE_API_MODE
+    else process.env.VITE_API_MODE = prevMode
+    if (prevUrl === undefined) delete process.env.VITE_API_BASE_URL
+    else process.env.VITE_API_BASE_URL = prevUrl
+  }
 }
 
-let devServer = null
+let viteServer = null
 if (!PROVIDED_BASE) {
-  const alreadyUp = await waitForServer(base, 800)
-  if (!alreadyUp) {
-    devServer =
-      process.platform === "win32"
-        ? spawn("cmd.exe", ["/c", "pnpm", "exec", "vite", "--host", "127.0.0.1", "--port", String(BASE_PORT), "--strictPort"], {
-            stdio: "ignore",
-          })
-        : spawn("pnpm", ["exec", "vite", "--host", "127.0.0.1", "--port", String(BASE_PORT), "--strictPort"], {
-            stdio: "ignore",
-          })
-    const ready = await waitForServer(base, 25_000)
-    if (!ready) {
-      devServer.kill()
-      throw new Error(`Timed out waiting for Vite dev server at ${base}`)
-    }
-  }
+  viteServer = await startOwnedVite(BASE_PORT)
 }
 
 const launchOptions = {
@@ -92,6 +91,42 @@ async function assertNoOverflow(page, label) {
   })
   assert(ov.docOverflow <= 1, `${label}: document horizontal overflow ${ov.docOverflow}px`)
   assert(ov.rootOverflow <= 1, `${label}: .pay-root horizontal overflow ${ov.rootOverflow}px`)
+}
+
+async function assertFeedbackNoOverlap(page, label, buttonNames = []) {
+  const check = await page.evaluate((names) => {
+    const fbNodes = [
+      ...document.querySelectorAll('[data-testid="pay-feedback"], [data-sonner-toast]'),
+    ].map((el) => ({
+      text: el.textContent?.trim() ?? "",
+      rect: el.getBoundingClientRect(),
+    }))
+    if (fbNodes.length === 0) return { ok: true, count: 0 }
+    const targets = []
+    const h1 = document.querySelector(".pay-ph h1, .pay-ok-hd h1")
+    if (h1) targets.push({ name: "h1", rect: h1.getBoundingClientRect() })
+    for (const btn of document.querySelectorAll("button")) {
+      const txt = btn.textContent?.trim() ?? ""
+      if (!txt || btn.offsetParent === null) continue
+      if (names.some((n) => txt.includes(n))) {
+        targets.push({ name: txt, rect: btn.getBoundingClientRect() })
+      }
+    }
+    for (const fb of fbNodes) {
+      for (const t of targets) {
+        const hit =
+          fb.rect.left < t.rect.right - 0.5 &&
+          fb.rect.right > t.rect.left + 0.5 &&
+          fb.rect.top < t.rect.bottom - 0.5 &&
+          fb.rect.bottom > t.rect.top + 0.5
+        if (hit) {
+          return { ok: false, reason: `feedback "${fb.text}" overlapped "${t.name}"` }
+        }
+      }
+    }
+    return { ok: true, count: fbNodes.length }
+  }, buttonNames)
+  assert(check.ok, `${label}: ${check.reason}`)
 }
 
 async function assertCleanCashierShell(page, label) {
@@ -180,6 +215,38 @@ try {
         })
         assert(clearance.ok, `${vp.name}: map clearance failed: ${clearance.reason}`)
 
+        // NA45C-08: at 1440 desktop, S1 list panel stretches to match map panel bottom edge
+        if (vp.width >= 960) {
+          const panelDiff = await page.evaluate(() => {
+            const list = document.querySelector(".pay-sess-list")?.getBoundingClientRect()
+            const map = document.querySelector("#floor-map")?.getBoundingClientRect()
+            return list && map ? Math.abs(list.bottom - map.bottom) : 999
+          })
+          assert(panelDiff <= 2, `${vp.name}: S1 list/map bottom diff ${panelDiff}px > 2px`)
+        }
+
+        // NA45C-11: selecting bar-seat cluster G05 uses clean cluster frame without per-seat rings or neighbor clipping
+        const g05Row = page.locator(".pay-sess", { hasText: "G05" })
+        await g05Row.click()
+        await page.waitForTimeout(700)
+        const g05RingCheck = await page.evaluate(() => {
+          const selFrame = document.querySelector(".pay-f-cl.pay-f-cl-sel")?.getBoundingClientRect()
+          const s4 = document.querySelector('[aria-label^="Ghế bar 4,"]')?.getBoundingClientRect()
+          const s5 = document.querySelector('[aria-label^="BAR05,"]')?.getBoundingClientRect()
+          const s6 = document.querySelector('[aria-label^="BAR06,"]')?.getBoundingClientRect()
+          const s7 = document.querySelector('[aria-label^="Ghế bar 7,"]')?.getBoundingClientRect()
+          const seatSelRings = [...document.querySelectorAll(".pay-ft-seat.pay-ft-sel")].length
+          if (!selFrame || !s4 || !s5 || !s6 || !s7) return { ok: false, reason: "missing G05 map nodes" }
+          if (seatSelRings > 0) return { ok: false, reason: `found ${seatSelRings} seat selection rings inside G05` }
+          if (s6.bottom > s5.top + 0.5) return { ok: false, reason: "seat 6 overlaps seat 5" }
+          if (selFrame.top < s7.bottom - 0.5) return { ok: false, reason: `G05 frame overlaps seat 7 (${selFrame.top} < ${s7.bottom})` }
+          if (selFrame.bottom > s4.top + 0.5) return { ok: false, reason: `G05 frame overlaps seat 4 (${selFrame.bottom} > ${s4.top})` }
+          return { ok: true }
+        })
+        assert(g05RingCheck.ok, `${vp.name}: NA45C-11 G05 check failed: ${g05RingCheck.reason}`)
+        await page.getByRole("button", { name: "Toàn sơ đồ", exact: true }).click()
+        await page.waitForTimeout(700)
+
         // First tap on A3 selects (and scrolls offscreen map into view on 820px); second tap opens S2 detail
         const a3Row = page.locator(".pay-sess", { hasText: "A3" })
         await a3Row.click()
@@ -204,11 +271,8 @@ try {
         await expect(page.getByText("Mojito")).toBeVisible()
         await expect(page.getByText("Margarita")).toHaveCount(0)
         await expect(page.getByText(/dòng món đã hủy/)).toHaveCount(0)
-        if (vp.width >= 600) {
-          await expect(page.getByText("1 món đang làm, vẫn tính vào bill. Hỏi khách trước khi chốt.")).toBeVisible()
-        } else {
-          await expect(page.getByText("1 món đang làm, vẫn tính vào bill. Hỏi khách trước khi chốt.")).toBeAttached()
-        }
+        // NA45C-03: making warning MUST remain visible on ALL viewports (including phones 320/390)
+        await expect(page.getByText("1 món đang làm, vẫn tính vào bill. Hỏi khách trước khi chốt.")).toBeVisible()
         await expect(page.getByText("Làm tròn lên nghìn (bước cuối)")).toBeVisible()
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-s2-detail.png`) })
 
@@ -258,17 +322,11 @@ try {
         await page.getByRole("button", { name: "Bản in 80mm" }).click()
         await expect(page.getByLabel("Bản in tạm tính khổ 80mm")).toBeVisible()
 
-        // S4 method: heading wraps without horizontal overflow, and toast does not overlap heading
+        // S4 method: heading wraps without horizontal overflow, and feedback does not overlap heading or controls
         await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
         await expect(page.getByRole("heading", { name: "Chọn phương thức thanh toán" })).toBeVisible()
         await assertNoOverflow(page, `${vp.name} S4`)
-        const toastOverlap = await page.evaluate(() => {
-          const h1 = document.querySelector(".pay-ph h1")?.getBoundingClientRect()
-          const toastEl = document.querySelector("[data-sonner-toast]")?.getBoundingClientRect()
-          if (!h1 || !toastEl) return false
-          return h1.left < toastEl.right && h1.right > toastEl.left && h1.top < toastEl.bottom && h1.bottom > toastEl.top
-        })
-        assert(!toastOverlap, `${vp.name}: toast overlapped S4 heading`)
+        await assertFeedbackNoOverlap(page, `${vp.name} S4`, ["Tiền mặt", "Chuyển khoản QR"])
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-s4-method.png`) })
 
         // S5 cash: short -> exact -> over -> confirm -> S7 success
@@ -675,15 +733,85 @@ try {
         await assertNoOverflow(page, `${s2Vp.name} G02 sticky S2`)
       }
 
-      // 320px & 1024px layout sanity (zero horizontal overflow)
-      for (const extraVp of [{ width: 320, height: 640 }, { width: 1024, height: 768 }]) {
-        await page.setViewportSize(extraVp)
+      // 320px full S1->S7 route overflow + NA45C-04 active feedback clearance at 320 & 390, plus 1024 two-column check
+      for (const narrowVp of [{ width: 320, height: 640 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(narrowVp)
+        await page.evaluate(() => window.__21gamPaymentMock?.reset?.())
         await page.goto(`${base}/payment`, { waitUntil: "networkidle" })
-        await assertNoOverflow(page, `${extraVp.width} S1`)
+        await assertNoOverflow(page, `${narrowVp.width} S1`)
+        const a3 = page.locator(".pay-sess", { hasText: "A3" })
+        await a3.click()
+        await a3.click()
+        await expect(page.getByText("1 món đang làm, vẫn tính vào bill. Hỏi khách trước khi chốt.")).toBeVisible()
+        await assertNoOverflow(page, `${narrowVp.width} S2`)
+        await page.getByRole("button", { name: "Xem tạm tính" }).click()
+        await expect(page.getByTestId("pay-feedback")).toContainText("Đã tạo tạm tính")
+        await assertFeedbackNoOverlap(page, `${narrowVp.width} S3 prebill`, ["Chốt bill & thu tiền", "In tạm tính"])
+        await assertNoOverflow(page, `${narrowVp.width} S3 screen`)
+        await page.getByRole("button", { name: "Bản in 80mm" }).click()
+        await assertNoOverflow(page, `${narrowVp.width} S3 80mm`)
+
+        await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+        await expect(page.getByTestId("pay-feedback")).toHaveCount(0)
+        await assertNoOverflow(page, `${narrowVp.width} S4`)
+
+        // Cash net error -> retry path at 320/390
+        await page.getByRole("button", { name: /Tiền mặt/ }).click()
+        await assertNoOverflow(page, `${narrowVp.width} S5`)
+        await page.getByRole("button", { name: "500.000", exact: true }).click()
+        await page.evaluate(() => window.__21gamPaymentMock.setFault({ nextConfirm: "net" }))
+        await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+        await expect(page.getByText("Không gửi được tới máy chủ")).toBeVisible()
+        await assertNoOverflow(page, `${narrowVp.width} S5 err`)
+        await page.getByRole("button", { name: /Chọn phương thức/ }).click()
+
+        // QR copy feedback + manual confirm + S7 success/print feedback at 320/390
+        await page.getByRole("button", { name: /Chuyển khoản QR/ }).click()
+        await assertNoOverflow(page, `${narrowVp.width} S6`)
+        await page.getByRole("button", { name: "Chép" }).click()
+        await expect(page.getByTestId("pay-feedback")).toContainText("Đã chép nội dung")
+        await assertFeedbackNoOverlap(page, `${narrowVp.width} S6 copy`, [
+          "Xác nhận đã nhận tiền",
+          "Kiểm tra",
+          "Chép",
+          "Xem ",
+        ])
+        await page.getByRole("button", { name: "Xác nhận đã nhận tiền" }).click()
+        await page.getByRole("checkbox").check()
+        await page.getByRole("button", { name: "Xác nhận", exact: true }).click()
+        await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
+        await expect(page.getByTestId("pay-feedback")).toContainText("Đã ghi nhận thanh toán")
+        await assertFeedbackNoOverlap(page, `${narrowVp.width} S7 success`, ["Về danh sách Phiên", "In biên nhận"])
+        await page.getByRole("button", { name: /In biên nhận/ }).click()
+        await expect(page.getByTestId("pay-feedback")).toContainText("chưa nối máy in thật")
+        await assertFeedbackNoOverlap(page, `${narrowVp.width} S7 print`, ["Về danh sách Phiên", "In biên nhận"])
+        await assertNoOverflow(page, `${narrowVp.width} S7`)
       }
+
+      // 1024x768 transition check (>=960px two-column layout)
+      await page.setViewportSize({ width: 1024, height: 768 })
+      await page.evaluate(() => window.__21gamPaymentMock?.reset?.())
+      await page.goto(`${base}/payment`, { waitUntil: "networkidle" })
+      await assertNoOverflow(page, "1024 S1")
+      const twoColS1 = await page.evaluate(() => {
+        const list = document.querySelector(".pay-sess-list")?.getBoundingClientRect()
+        const map = document.querySelector("#floor-map")?.getBoundingClientRect()
+        return Boolean(list && map && list.right <= map.left + 1)
+      })
+      assert(twoColS1, "1024 S1 should use side-by-side two-column layout")
+      await page.locator(".pay-sess", { hasText: "A3" }).click()
+      await page.locator(".pay-sess", { hasText: "A3" }).click()
+      await expect(page.locator(".pay-pane-bill")).toBeVisible()
+      const twoColS2 = await page.evaluate(() => {
+        const bill = document.querySelector(".pay-pane-bill")?.getBoundingClientRect()
+        const act = document.querySelector(".pay-pane-act")?.getBoundingClientRect()
+        return Boolean(bill && act && bill.right <= act.left + 1)
+      })
+      assert(twoColS2, "1024 S2 should use side-by-side split layout")
 
       // ADMIN (7) and BAR (8) exist in mock AccountMenu and enforce role rules
       await page.setViewportSize({ width: 1440, height: 900 })
+      await page.goto(`${base}/payment`, { waitUntil: "networkidle" })
       await page.getByRole("button", { name: /Tài khoản:/ }).click()
       await expect(page.getByRole("menuitemradio", { name: /Quản trị viên/ })).toBeVisible()
       await expect(page.getByRole("menuitemradio", { name: /Bartender/ })).toBeVisible()
@@ -700,7 +828,7 @@ try {
       await expect(page.getByText("Thu tiền")).toHaveCount(0)
 
       assert.deepEqual(errors, [], `Cashier shell / role isolation console errors: ${errors.join(" | ")}`)
-      results.push("PASS cashier shell isolation + redirects + sticky S2 + ADMIN/BAR demo users")
+      results.push("PASS cashier shell isolation + 320/390 feedback clearance + 1024 split + ADMIN/BAR")
     } finally {
       await context.close()
     }
@@ -725,8 +853,326 @@ try {
     }
   }
 
+  // 10. NA45C-01: Cashier filters reception realtime toasts while preserving data sync & payment feedback
+  {
+    const { context, page, errors } = await openRole(VIEWPORTS[2], 5, "/payment")
+    try {
+      await page.evaluate(async () => {
+        const { api, clock, demo } = await import("/src/services/index.ts")
+        await demo.simulateRemoteActivity()
+        clock.advance(15)
+        await api.getFloorState(clock.now())
+      })
+      await page.waitForTimeout(250)
+      await expect(page.locator("[data-sonner-toast]")).toHaveCount(0)
+      await expect(page.getByText(/Thiết bị khác:/)).toHaveCount(0)
+      await expect(page.getByText(/Cảnh báo tự động/)).toHaveCount(0)
+
+      // Confirm payment on A3 -> payment feedback displays & open list refreshes without A3
+      await page.locator(".pay-sess", { hasText: "A3" }).click()
+      await page.locator(".pay-sess", { hasText: "A3" }).click()
+      await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+      await page.getByRole("button", { name: /Tiền mặt/ }).click()
+      await page.getByRole("button", { name: "500.000", exact: true }).click()
+      await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+      await expect(page.getByTestId("pay-feedback")).toContainText("Đã ghi nhận thanh toán")
+      await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
+      await expect(page.locator(".pay-sess", { hasText: "A3" })).toHaveCount(0)
+      assert.deepEqual(errors, [], `NA45C-01 Cashier realtime console errors: ${errors.join(" | ")}`)
+    } finally {
+      await context.close()
+    }
+
+    // Verify reception-capable account still receives realtime alerts
+    const rec = await openRole(VIEWPORTS[2], 1, "/floor")
+    try {
+      await rec.page.evaluate(async () => {
+        const { demo } = await import("/src/services/index.ts")
+        await demo.simulateRemoteActivity()
+      })
+      await expect(rec.page.locator("[data-sonner-toast]").filter({ hasText: /Thiết bị khác:/ })).toBeVisible()
+      assert.deepEqual(rec.errors, [], `NA45C-01 Reception realtime console errors: ${rec.errors.join(" | ")}`)
+      results.push("PASS NA45C-01 Cashier filters reception toasts while keeping sync & Reception alerts")
+    } finally {
+      await rec.context.close()
+    }
+  }
+
+  // 11. NA45C-02: Payment bell & header nav locked during delayed confirm (390 & 1440, success & error)
+  for (const lockVp of [VIEWPORTS[0], VIEWPORTS[2]]) {
+    const { context, page, errors } = await openRole(lockVp, 5, "/payment")
+    try {
+      await page.locator(".pay-sess", { hasText: "A3" }).click()
+      await page.locator(".pay-sess", { hasText: "A3" }).click()
+      await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+      await page.getByRole("button", { name: /Tiền mặt/ }).click()
+      await page.getByRole("button", { name: "500.000", exact: true }).click()
+      const a3CashPath = new URL(page.url()).pathname
+
+      await page.evaluate(async () => {
+        const { paymentApi } = await import("/src/services/payment/index.ts")
+        const orig = paymentApi.confirmCash.bind(paymentApi)
+        window.__delayedConfirmCount = 0
+        paymentApi.confirmCash = async (...args) => {
+          window.__delayedConfirmCount += 1
+          await new Promise((r) => setTimeout(r, 1200))
+          return orig(...args)
+        }
+      })
+
+      // Test notification popover opened BEFORE submission, then confirm starts
+      const bell = page.getByRole("button", { name: /Thông báo thanh toán/ })
+      await bell.click()
+      await expect(page.getByRole("dialog", { name: "Thông báo thanh toán" })).toBeVisible()
+      const confirmCashBtn = page.getByRole("button", { name: /Xác nhận đã nhận/ })
+      await confirmCashBtn.focus()
+      await page.keyboard.press("Enter")
+      await expect(page.getByRole("button", { name: "Đang ghi nhận…" })).toBeDisabled()
+      await expect(page.getByRole("button", { name: /Chọn phương thức/ })).toBeDisabled()
+      if ((await page.getByRole("dialog", { name: "Thông báo thanh toán" }).count()) === 0) {
+        await bell.click()
+      }
+      const g04Ntf = page.getByRole("dialog", { name: "Thông báo thanh toán" }).locator("button", { hasText: "G04" })
+      await expect(g04Ntf).toBeDisabled()
+      await g04Ntf.click({ force: true })
+      assert.equal(new URL(page.url()).pathname, a3CashPath, `${lockVp.name}: bell bypassed pending lock`)
+
+      // Wait for delayed confirm to complete on A3 -> redirects to A3 success, only 1 call
+      await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
+      assert.equal(new URL(page.url()).pathname, a3CashPath.replace(/\/cash$/, "/success"))
+      const attempts = await page.evaluate(() => window.__delayedConfirmCount)
+      assert.equal(attempts, 1, `${lockVp.name}: expected 1 delayed confirm call, got ${attempts}`)
+
+      // Bell unlocks after pending state clears and can navigate to G04
+      if ((await page.getByRole("dialog", { name: "Thông báo thanh toán" }).count()) === 0) {
+        await bell.click()
+      }
+      await expect(g04Ntf).toBeEnabled()
+      await g04Ntf.click()
+      await expect(page.getByRole("heading", { name: "Chi tiết Phiên" })).toBeVisible()
+      await expect(page.getByText("G04").first()).toBeVisible()
+
+      // Delayed network error stays on original G04 pending step
+      await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+      await page.getByRole("button", { name: /Tiền mặt/ }).click()
+      await page.getByRole("button", { name: "500.000", exact: true }).click()
+      const g04CashPath = new URL(page.url()).pathname
+      await page.evaluate(() => window.__21gamPaymentMock.setFault({ nextConfirm: "net" }))
+      await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+      await expect(page.getByRole("button", { name: "Đang ghi nhận…" })).toBeDisabled()
+      await bell.click()
+      await expect(page.getByRole("dialog", { name: "Thông báo thanh toán" }).locator("button", { hasText: "G02" }).first()).toBeDisabled()
+      await expect(page.getByText("Không gửi được tới máy chủ")).toBeVisible()
+      assert.equal(new URL(page.url()).pathname, g04CashPath, `${lockVp.name}: delayed error left original bill`)
+
+      assert.deepEqual(errors, [], `NA45C-02 (${lockVp.name}) console errors: ${errors.join(" | ")}`)
+      results.push(`PASS ${lockVp.name} NA45C-02 delayed confirm bell lock + recovery`)
+    } finally {
+      await context.close()
+    }
+  }
+
+  // 12. NA45C-07: Offscreen zoomed map scrolls cleanly below header on 820x680 and scrolled 390x844 (both motion prefs)
+  for (const motion of ["no-preference", "reduce"]) {
+    // 820x680 where map starts below fold
+    {
+      const { context, page, errors } = await openRole({ width: 820, height: 680 }, 5, "/payment", {
+        reducedMotion: motion,
+      })
+      try {
+        const before = await page.evaluate(() => {
+          const el = document.getElementById("floor-map")
+          return el ? el.getBoundingClientRect().top : -1
+        })
+        assert(before >= 680 - 1, `820x680 (${motion}): expected #floor-map offscreen initially, got top=${before}`)
+        const a3 = page.locator(".pay-sess", { hasText: "A3" })
+        await a3.click()
+        await page.waitForTimeout(750)
+        const after = await page.evaluate(() => {
+          const el = document.getElementById("floor-map")
+          const hdr = document.querySelector(".pay-hdr")?.getBoundingClientRect()
+          if (!el || !hdr) return null
+          const r = el.getBoundingClientRect()
+          return { top: r.top, bottom: r.bottom, hdrBottom: hdr.bottom }
+        })
+        assert(
+          after && after.top >= after.hdrBottom - 1 && after.top < 680 && after.bottom > after.hdrBottom,
+          `820x680 (${motion}): zoomed map not below header: ${JSON.stringify(after)}`,
+        )
+        await a3.click()
+        await expect(page.getByRole("heading", { name: "Chi tiết Phiên" })).toBeVisible()
+        assert.deepEqual(errors, [], `NA45C-07 820x680 (${motion}) errors: ${errors.join(" | ")}`)
+      } finally {
+        await context.close()
+      }
+    }
+
+    // 390x568 phone scrolled down past map so map is offscreen above
+    {
+      const { context, page, errors } = await openRole({ width: 390, height: 568 }, 5, "/payment", {
+        reducedMotion: motion,
+      })
+      try {
+        await page.evaluate(() => {
+          const root = document.querySelector(".pay-root")
+          if (root) root.scrollTop = root.scrollHeight
+        })
+        const before = await page.evaluate(() => {
+          const el = document.getElementById("floor-map")
+          const hdr = document.querySelector(".pay-hdr")?.getBoundingClientRect()
+          return el && hdr ? { bottom: el.getBoundingClientRect().bottom, hdrBottom: hdr.bottom } : null
+        })
+        assert(
+          before && before.bottom <= before.hdrBottom + 1,
+          `390x568 (${motion}): expected #floor-map scrolled offscreen above, got ${JSON.stringify(before)}`,
+        )
+        const bar1 = page.locator(".pay-sess", { hasText: "BAR01" })
+        await bar1.click()
+        await page.waitForTimeout(750)
+        const after = await page.evaluate(() => {
+          const el = document.getElementById("floor-map")
+          const hdr = document.querySelector(".pay-hdr")?.getBoundingClientRect()
+          if (!el || !hdr) return null
+          const r = el.getBoundingClientRect()
+          return { top: r.top, bottom: r.bottom, hdrBottom: hdr.bottom }
+        })
+        assert(
+          after && after.top >= after.hdrBottom - 1 && after.top < 568 && after.bottom > after.hdrBottom,
+          `390x568 (${motion}): zoomed map not below header: ${JSON.stringify(after)}`,
+        )
+        await bar1.click()
+        await expect(page.getByRole("heading", { name: "Chi tiết Phiên" })).toBeVisible()
+        assert.deepEqual(errors, [], `NA45C-07 390x568 (${motion}) errors: ${errors.join(" | ")}`)
+      } finally {
+        await context.close()
+      }
+    }
+    results.push(`PASS NA45C-07 offscreen map scroll below header (${motion})`)
+  }
+
+  // 13. NA45C-06: HTTP-mode auth stub goes /thungan/login -> /payment directly (never /floor), logout returns to /thungan/login
+  {
+    const httpBase = `http://127.0.0.1:${HTTP_CHECK_PORT}`
+    const httpVite = await startOwnedVite(HTTP_CHECK_PORT, { mode: "http", baseUrl: httpBase })
+    try {
+      const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } })
+      const page = await ctx.newPage()
+      let signedIn = false
+      let portalMode = "cashier"
+      const paymentApiRequests = []
+      const framePaths = []
+      page.on("framenavigated", (frame) => {
+        if (frame === page.mainFrame()) framePaths.push(new URL(frame.url()).pathname)
+      })
+      await page.route("**/api/v1/**", async (route) => {
+        const req = route.request()
+        const urlPath = new URL(req.url()).pathname
+        if (urlPath.includes("/payment")) paymentApiRequests.push(urlPath)
+        const headers = { "access-control-allow-origin": httpBase, "access-control-allow-credentials": "true" }
+        const makeSession = () => ({
+          user: {
+            id: portalMode === "cashier" ? 5 : 6,
+            username: portalMode === "cashier" ? "thungan1" : "phucvu1",
+            displayName: portalMode === "cashier" ? "Thu ngân" : "Phục vụ 1",
+            organizationId: 1,
+            venueId: 1,
+            roles: [portalMode === "cashier" ? "CASHIER" : "WAITER"],
+            accessLevel: null,
+          },
+          roles: [portalMode === "cashier" ? "CASHIER" : "WAITER"],
+          permissions: portalMode === "cashier" ? ["payment.collect", "order.read"] : ["order.read"],
+          csrfToken: "csrf-stub",
+          portal: portalMode,
+          expiresAt: "2026-12-01T00:00:00.000Z",
+        })
+        if (urlPath === "/api/v1/auth/me") {
+          return signedIn
+            ? route.fulfill({ status: 200, headers, json: makeSession() })
+            : route.fulfill({ status: 401, headers, json: { error: { code: "AUTH_REQUIRED", message: "Login" } } })
+        }
+        if (urlPath === "/api/v1/auth/login") {
+          signedIn = true
+          return route.fulfill({ status: 200, headers, json: makeSession() })
+        }
+        if (urlPath === "/api/v1/auth/logout") {
+          signedIn = false
+          return route.fulfill({ status: 204, headers })
+        }
+        return route.fulfill({ status: 200, headers, json: {} })
+      })
+
+      await page.goto(`${httpBase}/thungan/login`, { waitUntil: "networkidle" })
+      framePaths.length = 0
+      await page.getByLabel("Tên đăng nhập", { exact: true }).fill("thungan1")
+      await page.getByLabel("Mật khẩu", { exact: true }).fill("secret")
+      await Promise.all([
+        page.waitForURL((u) => new URL(u).pathname === "/payment"),
+        page.getByRole("button", { name: /Đăng nhập/ }).click(),
+      ])
+      await expect(page.getByRole("heading", { name: "Thu tiền chưa kết nối máy chủ" })).toBeVisible()
+      assert(!framePaths.includes("/floor"), `Cashier login touched /floor: ${JSON.stringify(framePaths)}`)
+      assert.deepEqual(paymentApiRequests, [], `Unexpected PaymentApi requests in HTTP fallback: ${paymentApiRequests}`)
+
+      // Account menu works and logs out cleanly back to /thungan/login
+      await page.getByRole("button", { name: /Tài khoản:/ }).click()
+      await page.getByRole("menuitem", { name: /Đăng xuất/ }).click()
+      await expect(page).toHaveURL(/\/thungan\/login$/)
+
+      // Spot-check Waiter portal still navigates directly to /phucvu
+      portalMode = "waiter"
+      await page.goto(`${httpBase}/phucvu/login`, { waitUntil: "networkidle" })
+      framePaths.length = 0
+      await page.getByLabel("Tên đăng nhập", { exact: true }).fill("phucvu1")
+      await page.getByLabel("Mật khẩu", { exact: true }).fill("secret")
+      await Promise.all([
+        page.waitForURL((u) => new URL(u).pathname === "/phucvu"),
+        page.getByRole("button", { name: /Đăng nhập/ }).click(),
+      ])
+      assert(!framePaths.includes("/floor"), `Waiter login touched /floor: ${JSON.stringify(framePaths)}`)
+      await ctx.close()
+      results.push("PASS NA45C-06 HTTP login /thungan/login -> /payment direct (never /floor) + logout")
+    } finally {
+      await httpVite.close()
+    }
+  }
+
+  // 14. NA45C-05: Standalone routes (/duyet-huy-mon, /chebien, /phucvu, /admin/overview) redirect CASHIER to /payment
+  //     at 390 and 1440, while preserving OWNER / WAITER / BAR access
+  {
+    for (const vp of [VIEWPORTS[0], VIEWPORTS[2]]) {
+      const { context, page, errors } = await openRole(vp, 5, "/payment")
+      try {
+        for (const standaloneRoute of ["/duyet-huy-mon", "/chebien", "/phucvu", "/admin/overview"]) {
+          await page.goto(`${base}${standaloneRoute}`, { waitUntil: "networkidle" })
+          assert.equal(
+            new URL(page.url()).pathname,
+            "/payment",
+            `${vp.name}: CASHIER on ${standaloneRoute} must redirect to /payment`,
+          )
+          await assertCleanCashierShell(page, `${vp.name} NA45C-05 ${standaloneRoute}`)
+          await expect(page.getByText("Phê duyệt hủy món")).toHaveCount(0)
+        }
+        assert.deepEqual(errors, [], `NA45C-05 (${vp.name}) Cashier errors: ${errors.join(" | ")}`)
+      } finally {
+        await context.close()
+      }
+    }
+
+    const ownerCtx = await openRole(VIEWPORTS[2], 3, "/duyet-huy-mon")
+    try {
+      assert.equal(new URL(ownerCtx.page.url()).pathname, "/duyet-huy-mon")
+      await expect(ownerCtx.page.getByText("Phê duyệt hủy món").first()).toBeVisible()
+      await ownerCtx.page.goto(`${base}/admin/overview`, { waitUntil: "networkidle" })
+      assert.equal(new URL(ownerCtx.page.url()).pathname, "/admin/overview")
+      assert.deepEqual(ownerCtx.errors, [], `NA45C-05 Owner errors: ${ownerCtx.errors.join(" | ")}`)
+      results.push("PASS NA45C-05 Cashier standalone redirects (/duyet-huy-mon etc.) + Owner preserved")
+    } finally {
+      await ownerCtx.context.close()
+    }
+  }
+
   console.log(results.join("\n"))
 } finally {
   await browser.close()
-  if (devServer) devServer.kill()
+  if (viteServer) await viteServer.close()
 }

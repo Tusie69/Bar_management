@@ -1,11 +1,11 @@
 // Side-by-side fidelity capture: App (/payment as CASHIER) vs Mockup (Main.dc.html + pay.css)
-// across S1-S7 at 390x844, 820x1180, and 1440x900 (plus 320 and 1024 sanity checks).
-// Saves strictly under web/e2e/.artifacts/cashier-fidelity/.
-import { spawn } from "node:child_process"
+// across S1-S7 at 390x844, 820x1180, and 1440x900 plus key visual variants (NA45C-09).
+// Uses programmatic Vite server ownership (NA45C-10); saves strictly under web/e2e/.artifacts/cashier-fidelity/.
 import fs from "node:fs"
 import http from "node:http"
 import path from "node:path"
 import { chromium } from "@playwright/test"
+import { createServer as createViteServer } from "vite"
 
 const OUT_DIR = path.resolve("e2e/.artifacts/cashier-fidelity")
 fs.mkdirSync(OUT_DIR, { recursive: true })
@@ -172,7 +172,7 @@ window.addEventListener("DOMContentLoaded", () => {
 `
 
 function startMockupServer() {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
       const reqPath = (req.url || "/").split("?")[0]
       if (reqPath === "/support.js") {
@@ -192,39 +192,39 @@ function startMockupServer() {
       res.writeHead(200, { "content-type": ctype })
       res.end(fs.readFileSync(fullPath))
     })
+    server.once("error", reject)
     server.listen(MOCKUP_PORT, "127.0.0.1", () => resolve(server))
   })
 }
 
-async function waitForServer(url, timeoutMs = 20_000) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    try {
-      const r = await fetch(url)
-      if (r.ok) return true
-    } catch {
-      /* waiting */
-    }
-    await new Promise((r) => setTimeout(r, 250))
+async function startAppServer() {
+  delete process.env.VITE_API_MODE
+  delete process.env.VITE_API_BASE_URL
+  const server = await createViteServer({
+    configFile: path.resolve("vite.config.ts"),
+    clearScreen: false,
+    logLevel: "silent",
+    server: { host: "127.0.0.1", port: APP_PORT, strictPort: true },
+  })
+  await server.listen()
+  return server
+}
+
+async function clearTransientFeedback(page) {
+  const dismiss = page.getByTestId("pay-feedback-dismiss")
+  if ((await dismiss.count()) > 0 && (await dismiss.isVisible())) {
+    await dismiss.click()
+    await page.getByTestId("pay-feedback").waitFor({ state: "detached" })
   }
-  return false
+  const sonnerCount = await page.locator("[data-sonner-toast]").count()
+  if (sonnerCount > 0) {
+    throw new Error(`Unexpected Sonner toast in resting capture: count=${sonnerCount}`)
+  }
 }
 
-const mockupServer = await startMockupServer()
-const devServer =
-  process.platform === "win32"
-    ? spawn("cmd.exe", ["/c", "pnpm", "exec", "vite", "--host", "127.0.0.1", "--port", String(APP_PORT), "--strictPort"], {
-        stdio: "ignore",
-      })
-    : spawn("pnpm", ["exec", "vite", "--host", "127.0.0.1", "--port", String(APP_PORT), "--strictPort"], {
-        stdio: "ignore",
-      })
-
-if (!(await waitForServer(APP_BASE, 25_000))) {
-  devServer.kill()
-  mockupServer.close()
-  throw new Error("App Vite server failed to start")
-}
+let mockupServer = null
+let viteServer = null
+let browser = null
 
 const launchOptions = {
   headless: true,
@@ -234,7 +234,6 @@ const launchOptions = {
   ...(process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {}),
 }
 
-const browser = await chromium.launch(launchOptions)
 const VIEWPORTS = [
   { name: "390", width: 390, height: 844 },
   { name: "820", width: 820, height: 1180 },
@@ -251,9 +250,15 @@ const MOCKUP_QUERIES = {
   s7: "?start=success&panel=false&sel=s412&method=cash&cash=500000",
 }
 
+let capturedCount = 0
+
 try {
+  mockupServer = await startMockupServer()
+  viteServer = await startAppServer()
+  browser = await chromium.launch(launchOptions)
+
   for (const vp of VIEWPORTS) {
-    // Capture Mockup S1-S7
+    // Capture Mockup S1-S7 + key variants
     {
       const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height } })
       const page = await ctx.newPage()
@@ -261,11 +266,38 @@ try {
         await page.goto(`${MOCKUP_BASE}/${qs}`, { waitUntil: "networkidle" })
         await page.waitForTimeout(150)
         await page.screenshot({ path: path.join(OUT_DIR, `mockup-${vp.name}-${stepName}.png`) })
+        capturedCount++
+      }
+
+      if (vp.name === "390" || vp.name === "1440") {
+        await page.goto(`${MOCKUP_BASE}/?start=preview&panel=false&sel=s412`, { waitUntil: "networkidle" })
+        await page.getByRole("button", { name: "Bản in 80mm" }).click()
+        await page.waitForTimeout(150)
+        await page.screenshot({ path: path.join(OUT_DIR, `mockup-${vp.name}-s3-print.png`) })
+        capturedCount++
+
+        await page.goto(`${MOCKUP_BASE}/?start=success&panel=false&sel=s412&method=qr`, { waitUntil: "networkidle" })
+        await page.waitForTimeout(150)
+        await page.screenshot({ path: path.join(OUT_DIR, `mockup-${vp.name}-s7-qr.png`) })
+        capturedCount++
+      }
+
+      if (vp.name === "390") {
+        await page.goto(`${MOCKUP_BASE}/?start=cash&panel=false&sel=s412&cash=100000`, { waitUntil: "networkidle" })
+        await page.waitForTimeout(150)
+        await page.screenshot({ path: path.join(OUT_DIR, `mockup-390-s5-short.png`) })
+        capturedCount++
+
+        await page.goto(`${MOCKUP_BASE}/?start=qr&panel=false&sel=s412`, { waitUntil: "networkidle" })
+        await page.getByRole("button", { name: "Xác nhận đã nhận tiền" }).click()
+        await page.waitForTimeout(150)
+        await page.screenshot({ path: path.join(OUT_DIR, `mockup-390-s6-confirm.png`) })
+        capturedCount++
       }
       await ctx.close()
     }
 
-    // Capture App (CASHIER, userId: 5) S1-S7
+    // Capture App (CASHIER, userId: 5) S1-S7 (resting clean states) + variants
     {
       const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height } })
       const page = await ctx.newPage()
@@ -274,51 +306,123 @@ try {
       })
       await page.goto(`${APP_BASE}/payment`, { waitUntil: "networkidle" })
       await page.waitForTimeout(200)
+      await clearTransientFeedback(page)
       await page.screenshot({ path: path.join(OUT_DIR, `app-${vp.name}-s1.png`) })
+      capturedCount++
+
+      // NA45C-11: selected bar-seat cluster G05 (seats 5 & 6) zoomed on S1 without overlapping rings
+      const g05Row = page.locator(".pay-sess", { hasText: "G05" })
+      await g05Row.click()
+      await page.waitForTimeout(700)
+      await page.screenshot({ path: path.join(OUT_DIR, `app-${vp.name}-s1-g05.png`) })
+      capturedCount++
+      await page.getByRole("button", { name: "Toàn sơ đồ", exact: true }).click()
+      await page.waitForTimeout(700)
 
       const a3Row = page.locator(".pay-sess", { hasText: "A3" })
       await a3Row.click()
       await a3Row.click()
       await page.getByRole("heading", { name: "Chi tiết Phiên" }).waitFor()
       await page.waitForTimeout(150)
+      await clearTransientFeedback(page)
       await page.screenshot({ path: path.join(OUT_DIR, `app-${vp.name}-s2.png`) })
+      capturedCount++
 
       await page.getByRole("button", { name: "Xem tạm tính" }).click()
       await page.getByRole("button", { name: "Bản in 80mm" }).waitFor()
-      await page.waitForTimeout(200)
+      await clearTransientFeedback(page)
+      await page.waitForTimeout(150)
       await page.screenshot({ path: path.join(OUT_DIR, `app-${vp.name}-s3.png`) })
+      capturedCount++
+
+      if (vp.name === "390" || vp.name === "1440") {
+        await page.getByRole("button", { name: "Bản in 80mm" }).click()
+        await page.getByLabel("Bản in tạm tính khổ 80mm").waitFor()
+        await page.waitForTimeout(150)
+        await page.screenshot({ path: path.join(OUT_DIR, `app-${vp.name}-s3-print.png`) })
+        capturedCount++
+      }
 
       await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
       await page.getByRole("heading", { name: "Chọn phương thức thanh toán" }).waitFor()
-      await page.waitForTimeout(200)
+      await clearTransientFeedback(page)
+      await page.waitForTimeout(150)
       await page.screenshot({ path: path.join(OUT_DIR, `app-${vp.name}-s4.png`) })
+      capturedCount++
 
       await page.getByRole("button", { name: /Tiền mặt/ }).click()
       await page.getByRole("heading", { name: "Thanh toán tiền mặt" }).waitFor()
+      if (vp.name === "390") {
+        await page.getByLabel("Khách đưa").fill("100000")
+        await page.waitForTimeout(150)
+        await page.screenshot({ path: path.join(OUT_DIR, `app-390-s5-short.png`) })
+        capturedCount++
+      }
       await page.getByRole("button", { name: "500.000", exact: true }).click()
-      await page.waitForTimeout(200)
+      await clearTransientFeedback(page)
+      await page.waitForTimeout(150)
       await page.screenshot({ path: path.join(OUT_DIR, `app-${vp.name}-s5.png`) })
+      capturedCount++
+
+      if (vp.name === "390") {
+        await page.evaluate(() => window.__21gamPaymentMock.setFault({ nextConfirm: "net" }))
+        await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+        await page.getByText("Không gửi được tới máy chủ").waitFor()
+        await page.waitForTimeout(150)
+        await page.screenshot({ path: path.join(OUT_DIR, `app-390-s5-error.png`) })
+        capturedCount++
+      }
 
       await page.getByRole("button", { name: /Chọn phương thức/ }).click()
       await page.getByRole("button", { name: /Chuyển khoản QR/ }).click()
       await page.getByRole("heading", { name: "Chuyển khoản QR" }).waitFor()
-      await page.waitForTimeout(200)
+      await clearTransientFeedback(page)
+      await page.waitForTimeout(150)
       await page.screenshot({ path: path.join(OUT_DIR, `app-${vp.name}-s6.png`) })
+      capturedCount++
+
+      if (vp.name === "390") {
+        await page.getByRole("button", { name: "Xác nhận đã nhận tiền" }).click()
+        await page.getByRole("dialog", { name: "Xác nhận đã nhận chuyển khoản" }).waitFor()
+        await page.waitForTimeout(150)
+        await page.screenshot({ path: path.join(OUT_DIR, `app-390-s6-confirm.png`) })
+        capturedCount++
+        await page.getByRole("button", { name: "Hủy" }).click()
+      }
 
       await page.getByRole("button", { name: /Chọn phương thức/ }).click()
       await page.getByRole("button", { name: /Tiền mặt/ }).click()
       await page.getByRole("button", { name: "500.000", exact: true }).click()
       await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
       await page.getByRole("heading", { name: "Đã thanh toán" }).waitFor()
-      await page.waitForTimeout(200)
+      await clearTransientFeedback(page)
+      await page.waitForTimeout(150)
       await page.screenshot({ path: path.join(OUT_DIR, `app-${vp.name}-s7.png`) })
+      capturedCount++
+
+      if (vp.name === "390" || vp.name === "1440") {
+        await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
+        const g04Row = page.locator(".pay-sess", { hasText: "G04" })
+        await g04Row.click()
+        await g04Row.click()
+        await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+        await page.getByRole("button", { name: /Chuyển khoản QR/ }).click()
+        await page.getByRole("button", { name: "Xác nhận đã nhận tiền" }).click()
+        await page.getByRole("checkbox").check()
+        await page.getByRole("button", { name: "Xác nhận", exact: true }).click()
+        await page.getByRole("heading", { name: "Đã thanh toán" }).waitFor()
+        await clearTransientFeedback(page)
+        await page.waitForTimeout(150)
+        await page.screenshot({ path: path.join(OUT_DIR, `app-${vp.name}-s7-qr.png`) })
+        capturedCount++
+      }
 
       await ctx.close()
     }
   }
-  console.log(`Saved 42 fidelity screenshots (S1-S7 x 390/820/1440 x app/mockup) to ${OUT_DIR}`)
+  console.log(`Saved ${capturedCount} fidelity screenshots (42 base pairs + variants) to ${OUT_DIR}`)
 } finally {
-  await browser.close()
-  devServer.kill()
-  mockupServer.close()
+  if (browser) await browser.close()
+  if (viteServer) await viteServer.close()
+  if (mockupServer) await new Promise((resolve) => mockupServer.close(() => resolve()))
 }
