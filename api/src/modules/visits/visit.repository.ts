@@ -123,6 +123,45 @@ async function nextVenueChangeSequence(connection: PoolConnection, actor: Authen
   return nextSequence
 }
 
+/**
+ * TU-46 — đóng Phiên và nhả bàn, TRONG transaction của người gọi.
+ *
+ * Tách ra khỏi `closeVisit` vì luồng thanh toán phải làm đúng những bước này
+ * nhưng trong CÙNG transaction đã ghi giao dịch thu tiền: nếu nhả bàn là một
+ * transaction thứ hai thì có một khoảnh khắc tiền đã ghi mà bàn vẫn bận, và một
+ * lần mất kết nối ở giữa sẽ để nó kẹt ở đó tới hết ca.
+ *
+ * Chép lại những câu SQL này sang module bill là cách để hai đường đóng Phiên
+ * lệch nhau ở lần sửa đầu tiên — và lúc đó bàn trả bằng nút Trả bàn sạch sẽ còn
+ * bàn trả bằng thanh toán thì quên một bước.
+ *
+ * Người gọi chịu trách nhiệm: mở transaction, kiểm quyền, và COMMIT.
+ */
+export interface CloseVisitWithinTransactionInput {
+  visitId: number
+  /** Đọc dưới cùng khóa dòng mà người gọi đang giữ, nên nó không thể cũ. */
+  expectedVersion: number
+  /** Ghi vào `visits.end_reason` — CHECK chỉ cho GUEST_LEFT / MERGED / ENTRY_ERROR. */
+  reason: ManualCloseReason
+  /**
+   * Ghi vào `table_turns.end_reason`. Khác `reason` vì sổ lượt khách phân biệt
+   * được "khách tự về" với "đóng sau khi thanh toán", và `countsAsServed` tính
+   * cả hai là một lượt đã phục vụ.
+   */
+  turnEndReason: string
+  /** Mã hành động trong nhật ký: `VISIT_CLOSED` hay `VISIT_CLOSED_AFTER_PAYMENT`. */
+  auditAction: string
+  note?: string
+}
+
+export async function closeVisitWithinTransaction(
+  connection: PoolConnection,
+  actor: AuthenticatedActor,
+  input: CloseVisitWithinTransactionInput,
+): Promise<ClosedVisitView> {
+  return runVisitClose(connection, actor, input)
+}
+
 export async function closeVisit(
   actor: AuthenticatedActor,
   input: CloseVisitInput,
@@ -133,14 +172,43 @@ export async function closeVisit(
     await connection.beginTransaction()
     await assertVisitPermission(connection, actor, 'visit.end')
 
+    // TU-46 đã xây luồng thanh toán, và nó tự đóng Phiên trong chính transaction
+    // ghi giao dịch thu tiền (`closeVisitWithinTransaction`). Endpoint Trả bàn
+    // thủ công này KHÔNG phải đường đó: nó không biết gì về bill, nên để nó
+    // "đóng sau khi thanh toán" là cho phép trả bàn mà không có một đồng nào
+    // được ghi nhận.
     if (input.mode === 'AFTER_PAYMENT') {
       throw new AppError(
         409,
         'PAYMENT_VERIFICATION_UNAVAILABLE',
-        'Chưa có tích hợp thanh toán đáng tin cậy để tự động trả bàn.',
+        'Trả bàn sau thanh toán đi theo luồng thu tiền của bill, không qua endpoint này.',
       )
     }
 
+    const result = await runVisitClose(connection, actor, {
+      visitId: input.visitId,
+      expectedVersion: input.expectedVersion,
+      reason: input.reason,
+      turnEndReason: input.reason,
+      auditAction: 'VISIT_CLOSED',
+      ...(input.note === undefined ? {} : { note: input.note }),
+    })
+    await connection.commit()
+    return result
+  } catch (error) {
+    await connection.rollback()
+    throw error
+  } finally {
+    connection.release()
+  }
+}
+
+async function runVisitClose(
+  connection: PoolConnection,
+  actor: AuthenticatedActor,
+  input: CloseVisitWithinTransactionInput,
+): Promise<ClosedVisitView> {
+  {
     const [visitRows] = await connection.execute<LockedVisitRow[]>(
       `SELECT v.id, v.business_date, v.ended_at, v.version, v.paid_marked_at, v.guest_count,
          v.started_at, v.contact_name, c.display_name AS customer_name
@@ -233,7 +301,7 @@ export async function closeVisit(
       releasedAt: closedAt,
       guestCount: Number(visit.guest_count),
       guestName: visit.contact_name ?? visit.customer_name ?? 'Khách',
-      endReason: input.reason,
+      endReason: input.turnEndReason,
       closedByUserId: actor.userId,
     })
 
@@ -242,7 +310,7 @@ export async function closeVisit(
         (organization_id, venue_id, change_seq, actor_kind, actor_user_id, actor_membership_id,
          auth_session_id, action, entity_type, entity_id, entity_version_before,
          entity_version_after, changes, reason_code, reason_note, is_undoable)
-       VALUES (?, ?, ?, 'USER', ?, ?, ?, 'VISIT_CLOSED', 'visit', ?, ?, ?, ?, 'MANUAL', ?, 0)`,
+       VALUES (?, ?, ?, 'USER', ?, ?, ?, ?, 'visit', ?, ?, ?, ?, 'MANUAL', ?, 0)`,
       [
         actor.organizationId,
         actor.venueId,
@@ -250,6 +318,7 @@ export async function closeVisit(
         actor.userId,
         actor.membershipId,
         actor.authSessionId ?? null,
+        input.auditAction,
         input.visitId,
         input.expectedVersion,
         input.expectedVersion + 1,
@@ -269,7 +338,6 @@ export async function closeVisit(
     const closed = closedRows[0]
     if (!closed) throw new AppError(500, 'VISIT_CLOSE_READ_FAILED', 'Không đọc lại được lượt khách vừa kết thúc.')
 
-    await connection.commit()
     return {
       id: input.visitId,
       businessDate: visitBusinessDate,
@@ -282,11 +350,6 @@ export async function closeVisit(
         ? { turnId: turn.turnId, scope: turn.scope, turnNo: turn.turnNo, counted: turn.counted }
         : null,
     }
-  } catch (error) {
-    await connection.rollback()
-    throw error
-  } finally {
-    connection.release()
   }
 }
 

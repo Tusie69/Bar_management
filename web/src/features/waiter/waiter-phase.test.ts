@@ -80,7 +80,15 @@ describe("waiterPhaseCounts", () => {
     const counts = waiterPhaseCounts(
       floor(table(1, "ARRIVED"), table(2, "ORDERING"), table(3, "PAYMENT"), table(4, null)),
     )
-    expect(counts).toEqual({ ARRIVED: 1, ORDERING: 1, AWAITING_FOOD: 0, DINING: 0, PAYMENT: 1, CHECKED_OUT: 0 })
+    expect(counts).toEqual({
+      ARRIVED: 1,
+      ORDERING: 1,
+      AWAITING_FOOD: 0,
+      DINING: 0,
+      AWAITING_PAYMENT: 0,
+      PAYMENT: 1,
+      CHECKED_OUT: 0,
+    })
   })
 
   it("bàn có khách nhưng chưa có visitId vẫn được đếm theo ô bàn", () => {
@@ -89,11 +97,28 @@ describe("waiterPhaseCounts", () => {
   })
 })
 
-describe("bảng màu sáu trạng thái", () => {
-  it("đủ sáu trạng thái, không trùng màu", () => {
-    expect(WAITER_PHASE_ORDER).toHaveLength(6)
+describe("bảng màu bảy trạng thái", () => {
+  // TU-45 thêm trạng thái thứ bảy: "Chờ thanh toán" (đã chốt bill, chưa nhận
+  // tiền). Nó KHÔNG trùng màu với "Đang dùng" theo nghĩa hex, nhưng cố ý cùng
+  // họ xanh — mockup NA-44 yêu cầu ô bàn vẫn xanh, và tín hiệu phân biệt là
+  // CHỮ ("chờ TT"), không phải màu.
+  it("đủ bảy trạng thái, không trùng màu", () => {
+    expect(WAITER_PHASE_ORDER).toHaveLength(7)
     const colors = new Set(WAITER_PHASE_ORDER.map((phase) => WAITER_PHASE_TONE[phase].color))
-    expect(colors.size).toBe(6)
+    expect(colors.size).toBe(7)
+  })
+
+  /**
+   * "Chờ thanh toán" và "Đã thanh toán" là hai việc khác nhau với khách đang
+   * ngồi ở bàn, nên chúng không được trông giống nhau — và cũng không được chỉ
+   * khác nhau ở màu.
+   */
+  it("chờ thanh toán và đã thanh toán khác cả màu lẫn chữ", () => {
+    const awaiting = WAITER_PHASE_TONE.AWAITING_PAYMENT
+    const paid = WAITER_PHASE_TONE.PAYMENT
+    expect(awaiting.color).not.toBe(paid.color)
+    expect(awaiting.label).not.toBe(paid.label)
+    expect(awaiting.short).not.toBe(paid.short)
   })
 
   /**

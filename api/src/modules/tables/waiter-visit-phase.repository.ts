@@ -19,6 +19,7 @@ import type { WaiterVisitActivity } from './waiter-visit-phase.js'
 interface VisitActivityRow extends RowDataPacket {
   visit_id: number
   paid: number
+  awaiting_payment: number
   ordering_since: Date | string | null
   order_count: number
   pending_ticket_count: number
@@ -49,6 +50,27 @@ export async function readWaiterVisitActivity(
   const [rows] = await databasePool.execute<VisitActivityRow[]>(
     `SELECT v.id AS visit_id,
             (v.paid_marked_at IS NOT NULL) AS paid,
+            -- HU-44 v1.1: Phiên "Chờ thanh toán" khi CÒN hoá đơn chưa thu VÀ
+            -- không còn món nào chưa lên hoá đơn. Khách gọi thêm sau khi đã
+            -- cầm hoá đơn thì Phiên về Đang phục vụ (TN-13-K4), dù bill cũ vẫn
+            -- chưa thu — bàn đó đang được phục vụ tiếp, không đang chờ trả tiền.
+            (EXISTS (SELECT 1 FROM bills AS b
+                      WHERE b.venue_id = v.venue_id AND b.visit_id = v.id
+                        AND b.status = 'AWAITING_PAYMENT')
+             AND NOT EXISTS (
+               SELECT 1
+                 FROM sales_order_lines AS l
+                 JOIN sales_orders AS so ON so.venue_id = l.venue_id AND so.id = l.order_id
+                 LEFT JOIN (
+                   SELECT s.order_line_id, SUM(s.quantity) AS quantity
+                     FROM bill_line_sources s
+                     JOIN bills bb ON bb.venue_id = s.venue_id AND bb.id = s.bill_id
+                    WHERE s.venue_id = v.venue_id AND bb.status <> 'VOIDED'
+                    GROUP BY s.order_line_id
+                 ) AS billed ON billed.order_line_id = l.id
+                WHERE l.venue_id = v.venue_id AND so.visit_id = v.id
+                  AND (l.net_quantity - IFNULL(billed.quantity, 0)) > 0
+             )) AS awaiting_payment,
             v.ordering_since,
             (SELECT COUNT(*) FROM sales_orders AS o
               WHERE o.venue_id = v.venue_id AND o.visit_id = v.id) AS order_count,
@@ -62,6 +84,7 @@ export async function readWaiterVisitActivity(
   return rows.map((row) => ({
     visitId: Number(row.visit_id),
     paid: sqlBoolean(row.paid),
+    awaitingPayment: sqlBoolean(row.awaiting_payment),
     orderCount: Number(row.order_count),
     pendingTicketCount: Number(row.pending_ticket_count),
     orderingSince: toDate(row.ordering_since),

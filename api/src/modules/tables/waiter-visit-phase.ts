@@ -31,7 +31,16 @@ export type WaiterVisitPhase =
   | 'AWAITING_FOOD'
   /** 4. Đang dùng — mọi phiếu của mọi đơn đã ở bước cuối "Đã mang ra". */
   | 'DINING'
-  /** 5. Thanh toán — Phiên đã được đánh dấu đã thanh toán. */
+  /**
+   * 5a. Chờ thanh toán — TU-45: đã chốt bill, CHƯA nhận tiền.
+   *
+   * Mockup NA-44 đòi đúng trạng thái này và nói rõ nó khác "Đã thanh toán": ô
+   * bàn VẪN XANH, chỉ thêm huy hiệu đồng hồ ở góc. Gộp nó vào `PAYMENT` sẽ làm
+   * bàn chuyển màu như đã thu tiền trong khi khách còn đang rút ví — và một sơ
+   * đồ nói dối một lần là một sơ đồ không ai còn tin.
+   */
+  | 'AWAITING_PAYMENT'
+  /** 5b. Thanh toán — Phiên đã được đánh dấu đã thanh toán. */
   | 'PAYMENT'
   /** 6. Đã checkout — Phiên đã đóng. Xem ghi chú ở `waiterVisitPhase`. */
   | 'CHECKED_OUT'
@@ -47,6 +56,8 @@ export interface WaiterVisitActivity {
   visitId: number
   /** `paid_marked_at IS NOT NULL`. */
   paid: boolean
+  /** TU-45: Phiên có một bill ở trạng thái `AWAITING_PAYMENT`. */
+  awaitingPayment: boolean
   /** Số đơn đã gửi của Phiên. 0 nghĩa là chưa ai gọi món. */
   orderCount: number
   /** Số phiếu Bar/Bếp của Phiên chưa ở trạng thái `COLLECTED`. */
@@ -77,6 +88,10 @@ export const ORDERING_PRESENCE_TTL_MS = 3 * 60_000
  * Trạng thái của một lượt khách. Thứ tự các nhánh LÀ luật, không phải ngẫu nhiên:
  *
  * 1. Đã thanh toán thì không còn gì khác quan trọng.
+ * 1b. Đã chốt bill mà chưa thu tiền thì bàn đang chờ thanh toán, và nó đứng
+ *     TRƯỚC mọi tín hiệu về món: sau khi chốt bill không gọi thêm được nữa
+ *     (`lockOrderableVisit`), nên "còn phiếu chưa mang ra" không còn là việc
+ *     chính của bàn đó.
  * 2. Đang có người mở màn Gọi món thì đó là việc đang diễn ra — kể cả khi bàn
  *    còn món chờ. Khách gọi thêm thì bàn về "Đang gọi món" rồi mới sang "Chờ
  *    đồ", đúng Hình 0 của tài liệu.
@@ -92,6 +107,7 @@ export const ORDERING_PRESENCE_TTL_MS = 3 * 60_000
  */
 export function waiterVisitPhase(activity: WaiterVisitActivity, now: Date): WaiterVisitPhase {
   if (activity.paid) return 'PAYMENT'
+  if (activity.awaitingPayment) return 'AWAITING_PAYMENT'
   if (activity.orderingSince !== null && now.getTime() - activity.orderingSince.getTime() < ORDERING_PRESENCE_TTL_MS) {
     return 'ORDERING'
   }

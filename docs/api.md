@@ -1655,3 +1655,237 @@ which fill the `discount` group ("Giảm giá / hủy món") that 0027 reserved 
 Free text never reaches the audit detail column: `changes` carries `hasReason` / `hasNote` booleans, while the reason
 itself lives in `sales_order_cancellations.reason` and the decision note in `sales_order_line_changes.reason`. Item
 notes and cancellation reasons are free-text fields staff type into, and they have carried a guest name before.
+
+## Bill và thanh toán (Module 6) — TU-45
+
+Closing a bill is the moment a number stops moving. Everything in this section exists to make that moment
+reconstructible afterwards: what the guest was charged, who charged it, and under which arithmetic.
+
+### Money is an integer number of đồng
+
+`bills`, `bill_lines` and `bill_charge_lines` store money as `BIGINT UNSIGNED` — the same type `sales_order_lines`
+has used since 0036. The đồng has no subunit, so `DECIMAL(13,0)` would represent the same set of values without
+being any more exact. The real hazard is *mixing* the two: `mysql2` returns `DECIMAL` to Node as a string and
+`BIGINT` as a number, so one `Number(...)` on one side of an addition is where a đồng disappears. The per-line
+price ceiling of 1.000.000.000đ and the bill ceiling of 4.950.000.000.000đ keep every valid total inside the
+exact-integer range of JavaScript, because money crosses JSON as a `number`.
+
+### The order of arithmetic
+
+```
+subtotal = sum(unit_price_vnd * net_quantity)          -- generated column, never recomputed
+vat      = floor((subtotal * vat_rate_bp + 5000) / 10000)
+preRound = subtotal + vat
+total    = ceil(preRound / 1000) * 1000
+rounding = total - preRound                            -- 0..999, stored separately
+```
+
+Four decisions are locked into those four lines, and all four were confirmed on 26/11:
+
+- **VAT is charged once, on the subtotal**, half-up to the đồng — not per line and then summed. The two differ:
+  two lines of 44.995đ and 45.005đ give 99.000đ this way and 100.000đ the other way, because a 1đ difference in
+  VAT is enough to cross a thousand boundary. `visit-bill.ts` already chose this for the provisional bill, and
+  changing it would make the provisional and the closed bill two different numbers for the same table.
+- **Rounding up to the thousand applies only to the final total** (TN-06, 18/11: 230.560đ to 231.000đ). Rounding
+  each line first gives a different answer: three lines of 33.333đ become 113.000đ instead of 110.000đ.
+- **The rounding difference is stored on its own** (`rounding_adjustment_vnd`), never folded into VAT.
+- **The VAT rate is copied onto the bill**, so a rate change next month does not rewrite last month's paper.
+
+`ck_bills_pre_round`, `ck_bills_total`, `ck_bills_rounding` and `ck_bills_total_thousand` enforce the three
+rounding steps in the database. The database cannot check `subtotal` against the sum of the lines — a CHECK does
+not read another table — so `bill-close.mysql.test.ts` does.
+
+`bills.pricing_policy_snapshot` carries the arithmetic each bill was computed under, as a fixed key set
+(`vatRateBasisPoints`, `vatMode`, `vatBasis`, `roundingMode`, `roundingScope`, `roundingUnitVnd`). The key set is
+asserted by test: a free-form JSON column is where somebody eventually stores a guest's phone number "just in case".
+
+### One open bill per visit
+
+`bills.open_visit_slot` is a generated column that is the `visit_id` while the bill is `AWAITING_PAYMENT` and NULL
+otherwise, with a UNIQUE key over it. Two devices pressing "Chốt bill" on the same table: the second gets
+`ER_DUP_ENTRY`, which the route turns into `409 BILL_ALREADY_OPEN` carrying `billId` — so the screen opens the bill
+that was just closed instead of creating a second one. The transaction holds `FOR UPDATE` on the `visits` row first,
+which serialises bill closing against order submission; the UNIQUE key is the floor under that, and it holds even
+when the application layer is wrong.
+
+`daily_seq` is allocated under a `FOR UPDATE` lock on the `venues` row, because the sequence is shared across every
+visit in the venue — a per-visit lock would let two tables both read `MAX(daily_seq)` and both ask for 412.
+
+### A closed bill is immutable
+
+Nothing updates `bill_lines` or `bill_charge_lines`. Amending a closed bill is a new `revision`, not an overwrite,
+and the reopen endpoint does not exist yet (it sits too close to voiding a paid bill, which is waiting on HU-43).
+The price and item name on a bill line are a *second* snapshot: the order line already copied the price at submit
+time, but the order line answers "what did the guest order" while the bill line answers "what does this paper say",
+and those two diverge the moment an item is cancelled — `listVisitItems` groups by (variant, note, price) and drops
+`net_quantity = 0` rows, so one bill line is usually several order lines.
+
+### Ordering stops when the bill is closed
+
+`lockOrderableVisit` rejects a new order on a visit that has an `AWAITING_PAYMENT` bill with
+`409 VISIT_BILL_CLOSED`, carrying `billId` and `reopen: { status: "IN_DEVELOPMENT" }`. Letting the guest order more
+would mean the paper just printed is already wrong, and the only way to fix it is to void the bill.
+
+### Bill code
+
+`B{yyMMdd}-{seq:4}` over the **business date**, for example `B261126-0412`. The mockup shows `B0412`, which is enough
+to read aloud but repeats every day — and this code goes into the transfer description and from there into the bank
+statement, where thirty `B0412` rows are a reconciliation nobody finishes. `shortCode` returns `B0412` for places on
+screen that are short of room. A bill closed at 02:00 belongs to the previous business date, because the venue
+trades 17:00-05:00.
+
+### Table of endpoints
+
+| Method | Path | Permission | Notes |
+|---|---|---|---|
+| GET | `/bills/preview?visitId=` | `order.read` | The number that *would* be locked, plus `blockers`. Accepts `?session=` as an alias |
+| GET | `/bills?businessDate=` | `order.read` | Screen 1: open visits with filter counts. A merged cluster is one row |
+| POST | `/bills` | `payment.collect` | Close the bill. `idempotencyKey` in the body, `expectedTotalVnd` optional |
+| GET | `/bills/:billId` | `order.read` | The closed bill, its lines and its ledger |
+| POST | `/bills/:billId/void` | `payment.collect` | `501 BILL_VOID_NOT_AVAILABLE`, `status: "IN_DEVELOPMENT"` |
+
+`?session=` is accepted because the work item spelled it that way, but `visitId` is the documented name: in this
+repository "session" already means the *login* session (`auth_sessions`, `session-lifecycle.ts`), and one word with
+two meanings in one API is how a bug sits still for six months. `session` here is the table session (`visits.id`).
+
+`expectedTotalVnd` is optional but worth sending. A guest ordering one more drink between the moment the waiter
+shows the provisional total and the moment the cashier presses Close is an ordinary evening; with the field the
+server answers `409 BILL_TOTAL_CHANGED` and the new total, and without it the bill is locked at a number the guest
+never agreed to.
+
+Who may close a bill: `payment.collect`, which 0027 grants to OWNER, ADMIN and CASHIER. The waiter can *read* the
+preview (`order.read`) because the waiter is the person who shows it to the guest, but cannot close it. Sprint 5
+asked for "Phục vụ chốt bill" and the 15/11 permission minutes say otherwise; the NA-44 mockup marks that point as
+awaiting the BA. Granting the right to take money is one-directional — revoking it mid-shift from someone already
+using it is the part nobody wants — so this week follows the permissions that already exist. Moving to
+"waiter closes the bill" later is one `INSERT INTO role_permissions` and one label.
+
+### Errors
+
+| Code | HTTP | When |
+|---|---|---|
+| `BILL_EMPTY` | 422 | No item with `net_quantity > 0` |
+| `BILL_ALREADY_OPEN` | 409 | An `AWAITING_PAYMENT` bill exists; carries `billId`, `billCode`, `totalVnd` |
+| `BILL_TOTAL_CHANGED` | 409 | `expectedTotalVnd` no longer matches; carries `actualTotalVnd` |
+| `ORDER_CANCELLATION_PENDING` | 409 | A cancellation request is still `PENDING`; carries `pendingCount` |
+| `VISIT_ALREADY_PAID` / `VISIT_ALREADY_CLOSED` | 409 | The visit is past charging |
+| `VISIT_NOT_SEATED` | 409 | No open `USAGE` allocation |
+| `BILL_NOT_FOUND` | 404 | Also for a bill in another venue — a 403 would confirm it exists |
+| `BILL_VOID_NOT_AVAILABLE` | 501 | Voiding is `IN_DEVELOPMENT`, pending HU-43 |
+
+A pending cancellation blocks closing. `net_quantity` has not been reduced yet, so closing now charges the guest for
+an item that is about to be cancelled — and the only way back is voiding a paid bill, which is the thing HU-43 has
+not decided.
+
+### What "Đang phát triển" means on the wire
+
+Features that exist in the NA-44 design but are not built are returned, not hidden: `preview.notAvailable` and
+`bill.notAvailable` list `DISCOUNT`, `SERVICE_FEE`, `SURCHARGE`, `SPLIT_BILL`, `SPLIT_PAYMENT`, `E_INVOICE` and
+`VOID_PAID_BILL`, each with `status: "IN_DEVELOPMENT"` and a Vietnamese label. The mockup wants those cards *on
+screen* in a locked state; a feature that disappears gets re-asked every sprint, a feature labelled
+"Đang phát triển" does not.
+
+`bill.paymentMethods` lists all three methods with `CREDIT` (Ghi nợ) at `available: false`,
+`status: "IN_DEVELOPMENT"` (CH-05). Payment itself is TU-46; this week the list exists so the method picker can be
+built against real data.
+
+`bill_charge_lines.signed_amount_vnd` is signed even though all three current charge types are non-negative:
+a discount will be a negative row, and changing a column's type once it holds data is a migration nobody wants on a
+Friday evening.
+
+### Privacy
+
+A bill carries items, amounts, table codes, the visit id and the **staff member** who acted. It never carries
+`customerId`, `contactName`, `guestName`, `phoneE164`, `phoneLast3`, `honorific` or `reservationId` — at any role,
+cashier and admin included. A bill is printed, photographed and sent over Zalo; guest data does not belong on it
+regardless of who is holding it. The types in `bill.model.ts` are hand-written rather than `Omit<...>` of a wider
+type, so a new identifying field added to the visit projection does not flow here on its own.
+
+Item notes are passed through `redactPhoneNumbersInNote` when they are copied into `bill_lines` **and** when they are
+read back, because the printed copy does not travel through the API.
+
+### Audit
+
+`BILL_CLOSED` on `entity_type = 'bill'`, carrying `billCode`, `visitId`, `revision`, counts and every money field.
+It does **not** carry `lines[]` or any note: the audit log is readable through `audit.read` and exported to CSV, and
+item notes are free text staff type in. Same precedent as `SALES_ORDER_CREATED`.
+
+### Realtime
+
+Closing a bill bumps `venues.change_seq` inside the transaction and publishes `floor-changed` over SSE from
+`afterIdempotencyCommit` — after the idempotency transaction is durable. That transaction is held across the route
+handler, so publishing directly from the handler would announce a change for data that has not committed, and the
+other device would refetch and find nothing.
+
+The visit then reads as `AWAITING_PAYMENT` in the waiter floor projection — a seventh phase, distinct from `PAYMENT`
+(money received). The mockup is explicit that the cell stays green with a clock badge: the guest is still sitting
+there. The distinguishing signal is text (`chờ TT`), not colour.
+
+### HU-44 v1.1 — what changed, and why the shape above is not the final one
+
+The sections above were written against the 22/11 decisions. HU-44 v1.1 (26/11) reversed several of
+them, and the code now follows v1.1. The differences are worth stating because they are the kind that
+look like bugs if you only read the older text.
+
+**A visit has many bills (V12).** Guests who order again after the invoice has been handed to them do
+not get the old invoice amended: the old bill stays exactly as printed and the new items go onto a
+*new* bill of the same visit. The visit returns to "serving" meanwhile. So:
+
+- `uq_bills_one_open_per_visit` is gone (migration 0050). Two unpaid bills on one visit is a normal
+  state, not a race to prevent.
+- Submitting an order is no longer refused while a bill is unpaid. The 22/11 code answered
+  `409 VISIT_BILL_CLOSED`; that check is removed.
+- What prevents charging twice is no longer "one bill per visit" but `bill_line_sources`: a row per
+  (bill line, order line) with the quantity that line contributed. Building a bill reads only the
+  *remaining* quantity — `net_quantity` minus everything already billed on a non-voided bill. Without
+  that table the second bill repeats every item of the first, which is a money bug, not a display one.
+- `bill_lines.source_order_line_id` is **not** that relation. A bill line is the result of grouping
+  several order lines (by variant + note + price), and that column only holds the group's `MIN(id)` as
+  a back-reference. `bill_line_sources` is the full relation, and it is also what split-bill (TN-11)
+  will need.
+- A voided bill releases its items: the subquery filters `status <> 'VOIDED'`, so the items go back
+  into the queue of things still to invoice.
+
+**The visit closes on the last bill, not on a bill.** `finalizeBill` marks the bill paid, then closes
+the visit only when both are true: no other bill of the visit is `AWAITING_PAYMENT`, and no order line
+has quantity left to invoice. Missing the second condition would free a table while the guests are
+still eating what they just ordered. When the visit does not close, the response carries
+`settlement: null` and the screen says nothing about the table.
+
+**"Chốt bill" is now "Xuất hóa đơn", and the QR is on the invoice.** `POST /bills` generates the
+VietQR string at issue time and stores it on `bills` (`qr_payload`, `qr_payload_sha256`,
+`qr_transfer_note`, `qr_provider`), because the point of the new flow is that the waiter hands the
+guest a piece of paper with a scannable code and the guest walks to the till. In the 22/11 code the QR
+was built when the cashier picked the transfer method, which is one room too late.
+
+The QR is **optional on the invoice**. The venue has not supplied its Techcombank account yet (HD-06),
+and refusing to issue an invoice without it would take the cash flow down with it — cash needs no bank.
+So an invoice without configuration still issues, `bill.qr` is null, and `bill.paymentMethods` marks
+`BANK_TRANSFER` unavailable with the reason. A payment attempt on such a bill answers
+`409 PAYMENT_QR_NOT_CONFIGURED`.
+
+`bill_payments.qr_payload` stays: the transaction copies the string that was actually on the invoice,
+so reconciliation reads what the guest scanned rather than what the current configuration would
+produce.
+
+**Switching method cancels the waiting transaction.** TN-08-K6 allows the cashier to move from the QR
+screen to cash. Capturing by one method now sets any `PENDING` row of another method to `CANCELLED`
+with `failure_code = 'METHOD_SWITCHED'`. Left alone it would sit `PENDING` forever, dirtying the shift
+report and blocking the next QR on that bill.
+
+**The waiting-payment phase is narrower.** `AWAITING_PAYMENT` on the waiter floor means *an unpaid bill
+exists **and** nothing is left to invoice*. A table that has ordered again reads as serving even though
+its first bill is unpaid (TN-13-K4) — those guests are being served, not waiting to pay.
+
+### Still on the 22/11 shape, waiting on answers
+
+Two things in the sections above have **not** moved to v1.1, because the decision needed is not mine:
+
+- **Who may issue an invoice.** v1.1 gives "Xuất hóa đơn" to waiters and bartenders as well as
+  cashiers (TN-02, VM-01, VM-02), while payment stays cashier-only. `POST /bills` still requires
+  `payment.collect`, so a waiter gets 403. The permission code is open question O16 (Hưng → anh Luân);
+  naming one here and renaming it later means revoking a permission from someone mid-shift.
+- **Voiding a paid bill.** v1.1 makes TN-14 a Sprint 5 MUST with a request-and-approve flow and a
+  turn decrement. `POST /bills/:id/void` still answers `501 BILL_VOID_NOT_AVAILABLE`. Open question O6
+  (where a reopened visit goes when the table already seated the next party) has to be answered first,
+  or two visits end up on one table.

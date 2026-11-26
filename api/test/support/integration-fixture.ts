@@ -66,6 +66,18 @@ async function truncateFixtureTables(): Promise<void> {
   // integration sau đó đỏ vì một lý do không liên quan tới nó.
   await databasePool.execute('DELETE FROM sales_order_line_changes')
   await databasePool.execute('DELETE FROM sales_order_cancellations')
+  // TU-45: bill tham chiếu dòng đơn (`source_order_line_id`) và Phiên, nên phải
+  // xoá trước `sales_order_lines` và trước `visits`. Ledger và dòng bill trỏ về
+  // `bills`, nên chúng đi trước nó.
+  // TU-46: giao dịch trỏ về `bills` và về `users`, nên nó đi trước cả hai.
+  await databasePool.execute('DELETE FROM bill_payments')
+  await databasePool.execute('DELETE FROM bill_charge_lines')
+  // V12 (0050): nguồn dòng trỏ về cả `bill_lines` và `sales_order_lines`, nên
+  // nó phải đi trước cả hai.
+  await databasePool.execute('DELETE FROM bill_line_sources')
+  await databasePool.execute('DELETE FROM bill_lines')
+  await databasePool.execute('DELETE FROM bills')
+  await databasePool.execute('DELETE FROM venue_settings')
   await databasePool.execute('DELETE FROM preparation_ready_notifications')
   await databasePool.execute('DELETE FROM preparation_print_retry_events')
   await databasePool.execute('DELETE FROM preparation_print_outbox')

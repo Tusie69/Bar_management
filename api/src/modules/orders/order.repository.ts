@@ -209,6 +209,14 @@ async function lockOrderableVisit(
       'Phiên bàn đang chờ hoàn tất thanh toán. Liên hệ Thu ngân nếu khách muốn gọi thêm.',
     )
   }
+  // HU-44 v1.1 (V12) — hoá đơn đã xuất KHÔNG chặn gọi thêm.
+  //
+  // Bản 22/11 chặn ở đây, vì khi ấy một Phiên chỉ có một bill và cho gọi thêm
+  // nghĩa là tờ hoá đơn vừa in đã sai. v1.1 trả lời khác: bill cũ GIỮ NGUYÊN,
+  // món mới vào một BILL MỚI của cùng Phiên, và Phiên về Đang phục vụ
+  // (TN-02-K6). Thứ chặn tính tiền hai lần không còn là một ràng buộc ở đây mà
+  // là `bill_line_sources` — món đã lên bill thì lần xuất sau không lấy lại.
+
   const [allocations] = await connection.execute<RowDataPacket[]>(
     `SELECT 1 FROM table_allocations
      WHERE organization_id = ? AND venue_id = ? AND visit_id = ? AND kind = 'USAGE' AND released_at IS NULL

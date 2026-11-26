@@ -8,6 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import { FloorPage } from "@/features/floor/floor-page"
 import { AuthBoundary } from "@/features/auth/auth-boundary"
 import { adminRoute } from "@/features/admin/admin-routes"
+import { billingRoute } from "@/features/billing/billing-routes"
 import { waiterLegacyRoute, waiterRoute } from "@/features/waiter/waiter-routes"
 import { useRealtimeSync } from "@/hooks/use-data"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -79,6 +80,10 @@ const router = createBrowserRouter([
   // thứ tự như /chebien: nó không thuộc khung của Lễ tân và cũng không thuộc
   // khu vực Phục vụ — người mở nó là người có quyền phê duyệt.
   { path: "/duyet-huy-mon", element: page(<CancellationQueuePage />) },
+  // TU-45: khu vực Thanh toán của Thu ngân. Route riêng ở gốc, cùng lý do thứ
+  // tự như /chebien: nó không thuộc khung của Lễ tân, và người mở nó là người
+  // có quyền thu tiền.
+  billingRoute,
   // TU-39: Trang Quản trị có shell, sidebar và registry riêng. Nó đứng trước
   // route "/" vì route đó bắt mọi URL còn lại và sẽ nuốt /admin.
   adminRoute,

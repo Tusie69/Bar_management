@@ -6,6 +6,7 @@ import { requireTrustedOrigin } from './auth/auth.middleware.js'
 import { env } from './config/env.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { notFoundHandler } from './middleware/not-found.js'
+import { billRouter } from './modules/bills/bill.route.js'
 import { bookingRouter } from './modules/bookings/booking.route.js'
 import { accountRouter } from './modules/accounts/account.route.js'
 import { operationRouter } from './modules/operations/operation.route.js'
@@ -47,6 +48,7 @@ app.use('/api/v1/reception', receptionRouter)
 app.use('/api/v1/waiter', waiterMenuRouter)
 app.use('/api/v1/waiter', waiterOrderRouter)
 app.use('/api/v1/orders', orderCancellationRouter)
+app.use('/api/v1/bills', billRouter)
 app.use('/api/v1/preparation', preparationRouter)
 
 app.use(notFoundHandler)

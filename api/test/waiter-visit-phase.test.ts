@@ -13,6 +13,7 @@ function activity(overrides: Partial<WaiterVisitActivity> = {}): WaiterVisitActi
   return {
     visitId: 9001,
     paid: false,
+    awaitingPayment: false,
     orderCount: 0,
     pendingTicketCount: 0,
     orderingSince: null,

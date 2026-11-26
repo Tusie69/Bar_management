@@ -228,7 +228,15 @@ export type TableLiveState =
  *
  * Giá trị do MÁY CHỦ tính và gửi xuống; web không tự suy ra từ đồng hồ máy.
  */
-export type WaiterVisitPhase = "ARRIVED" | "ORDERING" | "AWAITING_FOOD" | "DINING" | "PAYMENT" | "CHECKED_OUT"
+export type WaiterVisitPhase =
+  | "ARRIVED"
+  | "ORDERING"
+  | "AWAITING_FOOD"
+  | "DINING"
+  /** TU-45: đã chốt bill, CHƯA nhận tiền. Khác "PAYMENT" (đã thanh toán). */
+  | "AWAITING_PAYMENT"
+  | "PAYMENT"
+  | "CHECKED_OUT"
 
 export type BookingWarning = "late" | "noshow" | null
 

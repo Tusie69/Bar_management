@@ -173,11 +173,14 @@ describe("panel chi tiết bàn — nút Gọi món", () => {
     expect(html).toContain("#7B3FF2")
   })
 
-  it("Phiên chờ thanh toán: nút Gọi món tắt và hiện đúng câu đã chốt", () => {
+  it("Phiên đã thanh toán: nút Gọi món tắt và hiện đúng câu đã chốt", () => {
     const html = render(tableState({ claim: claim({ paid: true }) }))
     expect(orderButtonDisabled(html)).toBe(true)
     expect(html).toContain(WAITER_PAYMENT_NOTICE)
-    expect(html).toContain("Thanh toán")
+    // TU-45 tách "Chờ thanh toán" (đã chốt bill, chưa nhận tiền) khỏi "Đã
+    // thanh toán" (đã nhận tiền), nên nhãn của `paid` nói rõ tiền đã về —
+    // trước đây nó chỉ ghi "Thanh toán" và hai việc đó trông như một.
+    expect(html).toContain("Đã thanh toán")
   })
 
   /**

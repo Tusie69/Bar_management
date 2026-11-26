@@ -60,9 +60,25 @@ export const WAITER_PHASE_TONE: Record<WaiterVisitPhase, WaiterPhaseTone> = {
     tint: "#E6F4EA",
     ink: "#146C2E",
   },
+  /**
+   * TU-45 — "Chờ thanh toán": đã chốt bill, CHƯA nhận tiền.
+   *
+   * Màu GIỮ NGUYÊN họ xanh của "Đang dùng", đúng yêu cầu mockup NA-44: ô bàn
+   * vẫn xanh vì khách vẫn đang ngồi đó, chỉ thêm một tín hiệu nữa. Tín hiệu đó
+   * là CHỮ ("chờ TT") chứ không phải màu — nguyên tắc "không dùng màu làm tín
+   * hiệu duy nhất" của bảng Hành vi, và cũng là thứ duy nhất đọc được trên một
+   * ô bàn 56px đối với người không phân biệt được xanh với xanh đậm.
+   */
+  AWAITING_PAYMENT: {
+    label: "Chờ thanh toán",
+    short: "chờ TT",
+    color: "#0B7C57",
+    tint: "#DFF3EA",
+    ink: "#075239",
+  },
   PAYMENT: {
-    label: "Thanh toán",
-    short: "thanh toán",
+    label: "Đã thanh toán",
+    short: "đã trả",
     color: "#E52E5B",
     tint: "#FDE8EE",
     ink: "#A81541",
@@ -82,6 +98,7 @@ export const WAITER_PHASE_ORDER: readonly WaiterVisitPhase[] = [
   "ORDERING",
   "AWAITING_FOOD",
   "DINING",
+  "AWAITING_PAYMENT",
   "PAYMENT",
   "CHECKED_OUT",
 ]
@@ -92,7 +109,8 @@ export const WAITER_PHASE_HINT: Record<WaiterVisitPhase, string> = {
   ORDERING: "Đang có người lên đơn cho bàn này.",
   AWAITING_FOOD: "Đơn đã gửi, Bar hoặc Bếp chưa mang ra đủ.",
   DINING: "Đã nhận đủ món. Gọi thêm hoặc chốt bill được.",
-  PAYMENT: "Đã chốt bill. Gọi món bị khoá.",
+  AWAITING_PAYMENT: "Đã chốt bill, chưa nhận tiền. Gọi thêm bị khoá.",
+  PAYMENT: "Đã nhận tiền. Bàn sắp trả về trống.",
   CHECKED_OUT: "Khách đã về. Bàn sắp trả về trống.",
 }
 
@@ -114,14 +132,13 @@ export function waiterCellTones(states: ReadonlyMap<number, FloorTableState>): M
 }
 
 /** Đếm số LƯỢT KHÁCH ở mỗi trạng thái, không đếm số ô bàn. */
-export function waiterPhaseCounts(
-  states: ReadonlyMap<number, FloorTableState>,
-): Record<WaiterVisitPhase, number> {
+export function waiterPhaseCounts(states: ReadonlyMap<number, FloorTableState>): Record<WaiterVisitPhase, number> {
   const counts: Record<WaiterVisitPhase, number> = {
     ARRIVED: 0,
     ORDERING: 0,
     AWAITING_FOOD: 0,
     DINING: 0,
+    AWAITING_PAYMENT: 0,
     PAYMENT: 0,
     CHECKED_OUT: 0,
   }
