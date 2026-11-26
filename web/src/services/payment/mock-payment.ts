@@ -33,3 +33,7 @@ export function setPaymentMockFault(patch: {
 }) {
   mockServer().setPaymentTestFault(patch)
 }
+
+export function simulatePaymentVersionBump(visitId: string) {
+  mockServer().simulatePaymentVersionBump(visitId)
+}

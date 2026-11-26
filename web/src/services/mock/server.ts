@@ -9,7 +9,7 @@
  */
 import { foldVietnamese, NOTE_PHONE_ERROR, noteHasPhoneNumber, normalizePhone } from "@/lib/text"
 import { MockCustomerHistory } from "./customer-history"
-import { addDays, businessDateOf, fmtTime, fromVenueLocal, MS, type BusinessDate } from "@/lib/time"
+import { addDays, atBusinessTime, businessDateOf, fmtTime, fromVenueLocal, MS, type BusinessDate } from "@/lib/time"
 import { roleCan, PERMISSION_LABEL, type Permission } from "@/domain/access"
 import {
   BOOKING_MINUTE_STEP,
@@ -106,7 +106,14 @@ import {
   visitView,
   waitlistView,
 } from "./derive"
-import { DEMO_USERS, REMOTE_USER_ID, seedDb, seedPaymentBills, type SeededPaymentBillInput } from "./seed"
+import {
+  DEMO_USERS,
+  REMOTE_USER_ID,
+  paymentTableSignature,
+  seedDb,
+  seedPaymentBills,
+  type SeededPaymentBillInput,
+} from "./seed"
 import { mockTableTurns, mockTableTurnSummary } from "./table-turns"
 import { Tx } from "./tx"
 import { formatDailyBookingText } from "./booking-export"
@@ -118,6 +125,7 @@ import type {
   PayLine,
   PaymentNotification,
   Receipt,
+  VisitPayStatus,
 } from "../payment/contracts"
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -137,6 +145,22 @@ interface CommitOut<T> {
   entityId: number
   summary: string
   extra?: T
+}
+
+interface PaymentVisitMeta {
+  billCode: string
+  status: VisitPayStatus
+  pendingAt?: string
+  pendingAtDate?: Date
+  requestedAt?: string
+  requestedAtDate?: Date
+  waiterName: string
+  lines: PayLine[]
+  versionOffset: number
+  paidAt?: string
+  paidBy?: string
+  closedTables?: string[]
+  closedClusterCode?: string
 }
 
 export interface DemoControls {
@@ -193,9 +217,9 @@ export class MockGamApi implements GamApi, DemoControls {
     outcomeBy: string | null
   }[] = []
   private readonly businessDayWorkerEnabled: boolean
-  private paymentBills = new Map<string, PayBill>()
+  private paymentMeta = new Map<number, PaymentVisitMeta>()
   private paymentPaidLog: PaymentNotification[] = []
-  private paymentIdempotency = new Map<string, Receipt>()
+  private paymentIdempotency = new Map<string, { fingerprint: string; receipt: Receipt }>()
   private paymentFault: { nextConfirm?: "net" | "dup"; qrFound?: boolean; billDelayMs?: number } = {}
 
   constructor(options: { businessDayWorkerEnabled?: boolean } = {}) {
@@ -3008,8 +3032,8 @@ export class MockGamApi implements GamApi, DemoControls {
 
   /* ================= temporary payment mock (NA-45/46, swap for TU-45/46) ================= */
 
-  private toPayBill(input: SeededPaymentBillInput): PayBill {
-    const lines: PayLine[] = input.lines.map((l) => ({
+  private toPayLines(input: SeededPaymentBillInput["lines"]): PayLine[] {
+    return input.map((l) => ({
       orderRound: l.orderRound,
       roundTime: l.roundTime,
       roundBy: l.roundBy,
@@ -3021,108 +3045,103 @@ export class MockGamApi implements GamApi, DemoControls {
       state: l.state,
       ...(l.note ? { note: l.note } : {}),
     }))
-    const totals = calcBillTotals(lines)
-    const roundCount = new Set(lines.map((l) => l.orderRound)).size
+  }
+
+  private initPaymentBills() {
+    this.paymentMeta.clear()
+    const bySignature = new Map(seedPaymentBills().map((b) => [b.tableSignature, b]))
+    for (const visit of this.db.visits.values()) {
+      if (visit.endedAt || visit.paidMarkedAt) continue
+      const tableCodes = visitTableIds(this.db, visit.id).map((id) => this.db.tables.get(id)?.code ?? `#${id}`)
+      if (tableCodes.length === 0) continue
+      const seed = bySignature.get(paymentTableSignature(tableCodes))
+      if (!seed) continue
+      this.paymentMeta.set(visit.id, {
+        billCode: `B${String(visit.id).padStart(4, "0")}`,
+        status: seed.status,
+        ...(seed.pendingAt
+          ? { pendingAt: seed.pendingAt, pendingAtDate: atBusinessTime(visit.businessDate, seed.pendingAt) }
+          : {}),
+        ...(seed.requestedAt
+          ? { requestedAt: seed.requestedAt, requestedAtDate: atBusinessTime(visit.businessDate, seed.requestedAt) }
+          : {}),
+        waiterName: seed.waiterName,
+        lines: this.toPayLines(seed.lines),
+        versionOffset: 0,
+      })
+    }
+  }
+
+  private ensurePaymentMeta(visit: VisitRow): PaymentVisitMeta {
+    const existing = this.paymentMeta.get(visit.id)
+    if (existing) return existing
+    const created: PaymentVisitMeta = {
+      billCode: `B${String(visit.id).padStart(4, "0")}`,
+      status: visit.endedAt || visit.paidMarkedAt ? "PAID" : "SERVING",
+      waiterName: "Phục vụ",
+      lines: [],
+      versionOffset: 0,
+    }
+    this.paymentMeta.set(visit.id, created)
+    return created
+  }
+
+  private buildPayBill(visit: VisitRow): PayBill {
+    const meta = this.ensurePaymentMeta(visit)
+    const activeTableIds = visitTableIds(this.db, visit.id)
+    const liveTableCodes = activeTableIds.map((id) => this.db.tables.get(id)?.code ?? `#${id}`)
+    const viewTableCodes =
+      liveTableCodes.length > 0
+        ? liveTableCodes
+        : meta.closedTables && meta.closedTables.length > 0
+          ? meta.closedTables
+          : visitView(this.db, visit).tableIds.map((id) => this.db.tables.get(id)?.code ?? `#${id}`)
+    const tables = viewTableCodes.length > 0 ? viewTableCodes : [`#${visit.id}`]
+    const alloc = activeAllocations(this.db).find((a) => a.visitId === visit.id && a.kind === "USAGE")
+    const liveGroupCode = alloc?.groupId
+      ? (groupCodeFromSymbol(groupSymbolNo(this.db, alloc.groupId)) ?? undefined)
+      : undefined
+    const clusterCode = tables.length > 1 ? (liveGroupCode ?? meta.closedClusterCode) : undefined
+    const status: VisitPayStatus = visit.endedAt || visit.paidMarkedAt ? "PAID" : meta.status
+    const totals = calcBillTotals(meta.lines)
+    const roundCount = new Set(meta.lines.map((l) => l.orderRound)).size
+
     return {
-      billCode: input.billCode,
-      visitId: input.visitId,
-      sessionCode: input.sessionCode,
-      code: input.code,
-      tables: [...input.tables],
-      ...(input.clusterCode ? { clusterCode: input.clusterCode } : {}),
-      status: input.status,
-      lines,
+      billCode: meta.billCode,
+      visitId: String(visit.id),
+      sessionCode: `S-${String(visit.id).padStart(4, "0")}`,
+      code: clusterCode ?? tables[0],
+      tables,
+      ...(clusterCode ? { clusterCode } : {}),
+      status,
+      lines: structuredClone(meta.lines),
       subtotalVnd: totals.subtotalVnd,
       vatVnd: totals.vatVnd,
       preRoundVnd: totals.preRoundVnd,
       roundingVnd: totals.roundingVnd,
       dueVnd: totals.dueVnd,
-      version: 1,
-      openedAt: input.openedAt,
-      ...(input.pendingAt ? { pendingAt: input.pendingAt } : {}),
-      ...(input.requestedAt ? { requestedAt: input.requestedAt } : {}),
-      waiterName: input.waiterName,
-      guests: input.guests,
+      version: visit.version + meta.versionOffset,
+      openedAt: fmtTime(visit.startedAt),
+      ...(meta.pendingAt ? { pendingAt: meta.pendingAt } : {}),
+      ...(meta.requestedAt ? { requestedAt: meta.requestedAt } : {}),
+      waiterName: meta.waiterName,
+      guests: visit.guestCount,
       roundCount,
+      ...(meta.paidAt ? { paidAt: meta.paidAt } : {}),
+      ...(meta.paidBy ? { paidBy: meta.paidBy } : {}),
     }
   }
 
-  private initPaymentBills() {
-    this.paymentBills.clear()
-    for (const seedBill of seedPaymentBills()) {
-      this.paymentBills.set(seedBill.visitId, this.toPayBill(seedBill))
-    }
-  }
-
-  private resolvePaymentBill(visitId: string): PayBill {
-    const direct = this.paymentBills.get(visitId)
-    if (direct) return direct
-
+  private resolvePaymentVisit(visitId: string): { visit: VisitRow; bill: PayBill } {
     const numericId = Number(visitId)
-    if (Number.isSafeInteger(numericId) && numericId > 0) {
-      const visit = this.db.visits.get(numericId)
-      if (visit) {
-        const tableIds = visitTableIds(this.db, visit.id)
-        const tableCodes = tableIds.map((id) => this.db.tables.get(id)?.code ?? `#${id}`)
-        const alloc = activeAllocations(this.db).find((a) => a.visitId === visit.id && a.kind === "USAGE")
-        const groupCode = alloc?.groupId
-          ? (groupCodeFromSymbol(groupSymbolNo(this.db, alloc.groupId)) ?? undefined)
-          : undefined
-        const matchSeed = [...this.paymentBills.values()].find((b) =>
-          tableCodes.some((tc) => b.tables.includes(tc)),
-        )
-        const lines: PayLine[] = matchSeed
-          ? structuredClone(matchSeed.lines)
-          : [
-              {
-                orderRound: 1,
-                roundTime: fmtTime(visit.startedAt),
-                roundBy: "Phục vụ",
-                name: "Tiger Crystal",
-                unit: "Chai 330ml",
-                qty: 2,
-                unitPriceVnd: 42_800,
-                lineTotalVnd: 85_600,
-                state: "SERVED",
-              },
-              {
-                orderRound: 1,
-                roundTime: fmtTime(visit.startedAt),
-                roundBy: "Phục vụ",
-                name: "Khô bò",
-                unit: "Đĩa",
-                qty: 1,
-                unitPriceVnd: 99_000,
-                lineTotalVnd: 99_000,
-                state: "SERVED",
-              },
-            ]
-        const totals = calcBillTotals(lines)
-        const bill: PayBill = {
-          billCode: `B${String(visit.id).padStart(4, "0")}`,
-          visitId,
-          sessionCode: `S-${String(visit.id).padStart(4, "0")}`,
-          code: groupCode ?? (tableCodes[0] || `#${visit.id}`),
-          tables: tableCodes.length ? tableCodes : [`#${visit.id}`],
-          ...(groupCode && tableCodes.length > 1 ? { clusterCode: groupCode } : {}),
-          status: visit.endedAt || visit.paidMarkedAt ? "PAID" : "SERVING",
-          lines,
-          subtotalVnd: totals.subtotalVnd,
-          vatVnd: totals.vatVnd,
-          preRoundVnd: totals.preRoundVnd,
-          roundingVnd: totals.roundingVnd,
-          dueVnd: totals.dueVnd,
-          version: visit.version,
-          openedAt: fmtTime(visit.startedAt),
-          waiterName: "Minh",
-          guests: visit.guestCount,
-          roundCount: new Set(lines.map((l) => l.orderRound)).size,
-        }
-        this.paymentBills.set(visitId, bill)
-        return bill
-      }
+    if (!Number.isSafeInteger(numericId) || numericId <= 0) {
+      throw new ApiError(404, "NOT_FOUND", "Không tìm thấy phiên thanh toán.")
     }
-    throw new ApiError(404, "NOT_FOUND", "Không tìm thấy phiên thanh toán.")
+    const visit = this.db.visits.get(numericId)
+    if (!visit) {
+      throw new ApiError(404, "NOT_FOUND", "Không tìm thấy phiên thanh toán.")
+    }
+    return { visit, bill: this.buildPayBill(visit) }
   }
 
   private requirePaymentRead() {
@@ -3138,29 +3157,39 @@ export class MockGamApi implements GamApi, DemoControls {
     if (patch.billDelayMs !== undefined) this.paymentFault.billDelayMs = patch.billDelayMs
   }
 
+  simulatePaymentVersionBump(visitId: string) {
+    const { visit } = this.resolvePaymentVisit(visitId)
+    const meta = this.ensurePaymentMeta(visit)
+    meta.versionOffset += 1
+  }
+
   async listPaymentOpen(): Promise<PayBillSummary[]> {
     await this.latency("q")
     this.requirePaymentRead()
-    const open = [...this.paymentBills.values()]
-      .filter((b) => b.status !== "PAID")
-      .map(
-        (b): PayBillSummary => ({
-          visitId: b.visitId,
-          billCode: b.billCode,
-          sessionCode: b.sessionCode,
-          code: b.code,
-          tables: [...b.tables],
-          ...(b.clusterCode ? { clusterCode: b.clusterCode } : {}),
-          status: b.status,
-          openedAt: b.openedAt,
-          ...(b.pendingAt ? { pendingAt: b.pendingAt } : {}),
-          ...(b.requestedAt ? { requestedAt: b.requestedAt } : {}),
-          waiterName: b.waiterName,
-          guests: b.guests,
-          dueVnd: b.dueVnd,
-          version: b.version,
-        }),
-      )
+    const open: PayBillSummary[] = []
+    for (const visit of this.db.visits.values()) {
+      if (visit.endedAt || visit.paidMarkedAt) continue
+      const meta = this.paymentMeta.get(visit.id)
+      if (meta?.status === "PAID") continue
+      const b = this.buildPayBill(visit)
+      if (b.status === "PAID") continue
+      open.push({
+        visitId: b.visitId,
+        billCode: b.billCode,
+        sessionCode: b.sessionCode,
+        code: b.code,
+        tables: [...b.tables],
+        ...(b.clusterCode ? { clusterCode: b.clusterCode } : {}),
+        status: b.status,
+        openedAt: b.openedAt,
+        ...(b.pendingAt ? { pendingAt: b.pendingAt } : {}),
+        ...(b.requestedAt ? { requestedAt: b.requestedAt } : {}),
+        waiterName: b.waiterName,
+        guests: b.guests,
+        dueVnd: b.dueVnd,
+        version: b.version,
+      })
+    }
     return sortOpenBills(open)
   }
 
@@ -3171,23 +3200,25 @@ export class MockGamApi implements GamApi, DemoControls {
       await this.latency("q")
     }
     this.requirePaymentRead()
-    return structuredClone(this.resolvePaymentBill(visitId))
+    return this.resolvePaymentVisit(visitId).bill
   }
 
   async createPaymentPrebill(visitId: string, version: number): Promise<PayBill> {
     await this.latency("m")
     this.requirePaymentRead()
-    const bill = this.resolvePaymentBill(visitId)
+    const { visit, bill } = this.resolvePaymentVisit(visitId)
     if (bill.status === "PAID") {
       throw new ApiError(409, "INVALID_STATE", "Bill này đã được thanh toán.")
     }
     if (bill.version !== version) {
       throw new ApiError(409, "VERSION_CONFLICT", "Bill vừa được cập nhật trên thiết bị khác.")
     }
+    const meta = this.ensurePaymentMeta(visit)
     if (bill.status === "SERVING") {
-      bill.status = "AWAITING_PAYMENT"
-      bill.pendingAt = fmtTime(this.now)
-      bill.version += 1
+      meta.status = "AWAITING_PAYMENT"
+      meta.pendingAt = fmtTime(this.now)
+      meta.pendingAtDate = new Date(this.now.getTime())
+      meta.versionOffset += 1
       this.seq += 1
       this.emit({
         latestSeq: this.seq,
@@ -3198,23 +3229,31 @@ export class MockGamApi implements GamApi, DemoControls {
         summary: `${bill.code} · tạo tạm tính`,
       })
     }
-    return structuredClone(bill)
+    return this.buildPayBill(visit)
   }
 
   async requestPayment(visitId: string): Promise<void> {
     await this.latency("m")
     this.require("order.read")
-    const bill = this.resolvePaymentBill(visitId)
+    const { visit, bill } = this.resolvePaymentVisit(visitId)
     if (bill.status === "PAID") {
       throw new ApiError(409, "INVALID_STATE", "Bill này đã được thanh toán.")
     }
+    const meta = this.ensurePaymentMeta(visit)
     const nowTime = fmtTime(this.now)
-    bill.requestedAt = bill.requestedAt ?? nowTime
-    if (bill.status === "SERVING") {
-      bill.status = "AWAITING_PAYMENT"
-      bill.pendingAt = bill.pendingAt ?? nowTime
+    const nowDate = new Date(this.now.getTime())
+    if (!meta.requestedAt) {
+      meta.requestedAt = nowTime
+      meta.requestedAtDate = nowDate
     }
-    bill.version += 1
+    if (meta.status === "SERVING") {
+      meta.status = "AWAITING_PAYMENT"
+      if (!meta.pendingAt) {
+        meta.pendingAt = nowTime
+        meta.pendingAtDate = nowDate
+      }
+    }
+    meta.versionOffset += 1
     this.seq += 1
     this.emit({
       latestSeq: this.seq,
@@ -3226,6 +3265,55 @@ export class MockGamApi implements GamApi, DemoControls {
     })
   }
 
+  private finalizePaidBill(
+    visit: VisitRow,
+    bill: PayBill,
+    method: "CASH" | "TRANSFER",
+    staff: string,
+    confirmedAt: string,
+  ) {
+    const meta = this.ensurePaymentMeta(visit)
+    meta.closedTables = [...bill.tables]
+    meta.closedClusterCode = bill.clusterCode
+    meta.status = "PAID"
+    meta.paidAt = confirmedAt
+    meta.paidBy = staff
+
+    if (!visit.endedAt) {
+      this.commit({ action: "VISIT_ENDED", entityType: "visit", undoable: false }, (tx) => {
+        const allocs = activeAllocations(this.db).filter((a) => a.visitId === visit.id)
+        allocs.forEach((a) => this.release(tx, a, "GUEST_LEFT"))
+        this.dissolveOrphanGroups(
+          tx,
+          allocs.map((a) => a.groupId),
+        )
+        const row = tx.edit("visits", visit.id)
+        if (!row.paidMarkedAt) {
+          row.paidMarkedAt = this.now
+          row.paidMarkedByUserId = this.session.id
+        }
+        row.endedAt = this.now
+        row.endedByUserId = this.session.id
+        row.endReason = "GUEST_LEFT"
+        return { entityId: visit.id, summary: `Thanh toán ${bill.code} · bàn về Trống` }
+      })
+    } else {
+      meta.versionOffset += 1
+    }
+
+    if (!this.paymentPaidLog.some((n) => n.visitId === bill.visitId)) {
+      this.paymentPaidLog.unshift({
+        id: `paid-${bill.billCode}-${this.seq + 1}`,
+        type: "PAID",
+        title: "Đã thanh toán",
+        text: `${bill.code} · ${formatVnd(bill.dueVnd)} · ${method === "CASH" ? "Tiền mặt" : "Chuyển khoản QR"}`,
+        time: confirmedAt,
+        occurredAt: this.now.toISOString(),
+        visitId: bill.visitId,
+      })
+    }
+  }
+
   private commitPayment(
     visitId: string,
     method: "CASH" | "TRANSFER",
@@ -3235,22 +3323,27 @@ export class MockGamApi implements GamApi, DemoControls {
     idempotencyKey: string,
   ): Receipt {
     this.require("payment.collect")
+    const fingerprint = `${visitId}:${method}:${manual ? 1 : 0}:${method === "CASH" ? givenVnd : 0}:${version}`
     const existing = this.paymentIdempotency.get(idempotencyKey)
-    if (existing) return structuredClone(existing)
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        throw new ApiError(409, "IDEMPOTENCY_CONFLICT", "Khóa idempotency đã được sử dụng cho một thao tác khác.")
+      }
+      return structuredClone(existing.receipt)
+    }
 
     if (this.paymentFault.nextConfirm === "net") {
       this.paymentFault.nextConfirm = undefined
       throw new ApiError(0, "NETWORK_ERROR", "Không gửi được tới máy chủ")
     }
 
-    const bill = this.resolvePaymentBill(visitId)
+    const { visit, bill } = this.resolvePaymentVisit(visitId)
     if (this.paymentFault.nextConfirm === "dup") {
       this.paymentFault.nextConfirm = undefined
       const dupAt = fmtTime(this.now)
-      bill.status = "PAID"
-      bill.paidAt = dupAt
-      bill.paidBy = "Hà · Thu ngân"
-      bill.version += 1
+      if (bill.status !== "PAID") {
+        this.finalizePaidBill(visit, bill, method, "Hà · Thu ngân", dupAt)
+      }
       throw new ApiError(409, "DUPLICATE_PAYMENT", "Bill này đã được thanh toán trên thiết bị khác", {
         confirmedBy: "Thu ngân Hà",
         confirmedAt: dupAt,
@@ -3265,6 +3358,12 @@ export class MockGamApi implements GamApi, DemoControls {
     }
     if (bill.version !== version) {
       throw new ApiError(409, "VERSION_CONFLICT", "Bill vừa được cập nhật, vui lòng tải lại.")
+    }
+    if (bill.status !== "AWAITING_PAYMENT") {
+      throw new ApiError(409, "INVALID_STATE", "Phiên chưa tạo tạm tính (Chờ thanh toán), chưa thể xác nhận thu tiền.")
+    }
+    if (bill.lines.length === 0) {
+      throw new ApiError(409, "INVALID_STATE", "Phiên chưa có dữ liệu món trong bản mô phỏng.")
     }
     if (method === "CASH" && (!Number.isSafeInteger(givenVnd) || givenVnd < bill.dueVnd)) {
       throw new ApiError(400, "VALIDATION_FAILED", "Số tiền khách đưa chưa đủ.")
@@ -3289,43 +3388,8 @@ export class MockGamApi implements GamApi, DemoControls {
       confirmedBy: staff,
     }
 
-    bill.status = "PAID"
-    bill.paidAt = confirmedAt
-    bill.paidBy = staff
-    bill.version += 1
-    this.paymentIdempotency.set(idempotencyKey, receipt)
-    this.paymentPaidLog.unshift({
-      id: `paid-${bill.billCode}-${this.seq + 1}`,
-      type: "PAID",
-      title: "Đã thanh toán",
-      text: `${bill.code} · ${formatVnd(bill.dueVnd)} · ${method === "CASH" ? "Tiền mặt" : "Chuyển khoản QR"}`,
-      time: confirmedAt,
-      visitId: bill.visitId,
-    })
-
-    const numericVisitId = Number(visitId)
-    if (Number.isSafeInteger(numericVisitId) && this.db.visits.has(numericVisitId)) {
-      const visit = this.db.visits.get(numericVisitId)!
-      if (!visit.paidMarkedAt) {
-        visit.paidMarkedAt = this.now
-        visit.paidMarkedByUserId = this.session.id
-      }
-      if (!visit.endedAt) {
-        this.commit({ action: "VISIT_ENDED", entityType: "visit", undoable: false }, (tx) => {
-          const allocs = activeAllocations(this.db).filter((a) => a.visitId === visit.id)
-          allocs.forEach((a) => this.release(tx, a, "GUEST_LEFT"))
-          this.dissolveOrphanGroups(
-            tx,
-            allocs.map((a) => a.groupId),
-          )
-          const row = tx.edit("visits", visit.id)
-          row.endedAt = this.now
-          row.endedByUserId = this.session.id
-          row.endReason = "GUEST_LEFT"
-          return { entityId: visit.id, summary: `Thanh toán ${bill.code} · bàn về Trống` }
-        })
-      }
-    }
+    this.finalizePaidBill(visit, bill, method, staff, confirmedAt)
+    this.paymentIdempotency.set(idempotencyKey, { fingerprint, receipt })
 
     this.seq += 1
     this.emit({
@@ -3363,51 +3427,60 @@ export class MockGamApi implements GamApi, DemoControls {
     await this.latency("q")
     this.requirePaymentRead()
     const items: PaymentNotification[] = []
-    for (const bill of this.paymentBills.values()) {
+    for (const [visitIdNum, meta] of this.paymentMeta.entries()) {
+      const visit = this.db.visits.get(visitIdNum)
+      if (!visit) continue
+      const bill = this.buildPayBill(visit)
       for (let i = 0; i < bill.lines.length; i += 1) {
         const line = bill.lines[i]
         if (line.state === "CANCELLED") {
+          const timeStr = line.roundTime ?? bill.openedAt
           items.push({
             id: `cancel-${bill.billCode}-${i}`,
             type: "CANCELLED_ITEM",
             title: "Đã hủy món",
             text: `${bill.code} · ${line.qty}× ${line.name}${line.note ? ` · ${line.note}` : ""}`,
-            time: line.roundTime ?? bill.openedAt,
+            time: timeStr,
+            occurredAt: atBusinessTime(visit.businessDate, timeStr).toISOString(),
             visitId: bill.visitId,
           })
         }
       }
       if (bill.status !== "PAID") {
-        if (bill.requestedAt) {
+        if (meta.requestedAt) {
+          const reqDate = meta.requestedAtDate ?? atBusinessTime(visit.businessDate, meta.requestedAt)
           items.push({
             id: `req-${bill.billCode}`,
             type: "PAYMENT_REQUEST",
             title: "Gọi thanh toán",
             text: `${bill.code} · PV ${bill.waiterName} gửi yêu cầu`,
-            time: bill.requestedAt,
+            time: meta.requestedAt,
+            occurredAt: reqDate.toISOString(),
             visitId: bill.visitId,
           })
         }
-        if (bill.status === "AWAITING_PAYMENT" && bill.pendingAt) {
+        if (bill.status === "AWAITING_PAYMENT" && meta.pendingAt) {
+          const pendDate = meta.pendingAtDate ?? atBusinessTime(visit.businessDate, meta.pendingAt)
           items.push({
             id: `pend-${bill.billCode}`,
             type: "AWAITING_PAYMENT",
             title: "Chờ thanh toán",
             text: `${bill.code} · đã tạm tính ${formatVnd(bill.dueVnd)}`,
-            time: bill.pendingAt,
+            time: meta.pendingAt,
+            occurredAt: pendDate.toISOString(),
             visitId: bill.visitId,
           })
         }
       }
     }
     items.push(...this.paymentPaidLog)
-    return items.sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0))
+    return items.sort((a, b) => (b.occurredAt ?? b.time).localeCompare(a.occurredAt ?? a.time))
   }
 
   async checkPaymentTransfer(visitId: string): Promise<{ found: boolean }> {
     await this.latency("m")
     this.require("payment.collect")
-    this.resolvePaymentBill(visitId)
+    this.resolvePaymentVisit(visitId)
     return { found: Boolean(this.paymentFault.qrFound) }
   }
 

@@ -1219,18 +1219,11 @@ export function seedDb(now: Date): MockDb {
 }
 
 export interface SeededPaymentBillInput {
-  visitId: string
-  billCode: string
-  sessionCode: string
-  code: string
-  tables: string[]
-  clusterCode?: string
+  tableSignature: string
   status: "SERVING" | "AWAITING_PAYMENT"
-  openedAt: string
   pendingAt?: string
   requestedAt?: string
   waiterName: string
-  guests: number
   lines: {
     orderRound: number
     roundTime: string
@@ -1244,12 +1237,15 @@ export interface SeededPaymentBillInput {
   }[]
 }
 
+export function paymentTableSignature(tables: readonly string[]): string {
+  return [...tables].sort().join(",")
+}
+
 /**
- * NA-45/46 temporary mock payment dataset ported from approved mockup NA-44.
- * Kept separate from `seedDb` floor allocations so existing reception/booking
- * tests stay deterministic while payment flows exercise single tables, bar seat,
- * adjacent cluster (G01), split far cluster (G02), making items, cancelled items,
- * and waiter payment requests.
+ * NA-45/46 temporary mock payment line fixtures attached 1:1 to real active visits
+ * from `seedDb` by their initial table signature (no separate `s...` visit IDs).
+ * Seeded visits without an entry here (e.g. BAR10+BAR11+BAR12) and newly created
+ * visits intentionally have empty lines (honest no-mock-order state).
  */
 export function seedPaymentBills(): SeededPaymentBillInput[] {
   const item = (
@@ -1276,15 +1272,9 @@ export function seedPaymentBills(): SeededPaymentBillInput[] {
 
   return [
     {
-      visitId: "s412",
-      billCode: "B0412",
-      sessionCode: "S-0412",
-      code: "A3",
-      tables: ["A3"],
+      tableSignature: paymentTableSignature(["A3"]),
       status: "SERVING",
-      openedAt: "19:05",
       waiterName: "Minh",
-      guests: 4,
       lines: [
         item(1, "19:08", "Minh", 2, "Tiger Crystal", "Chai 330ml", 42_800),
         item(1, "19:08", "Minh", 1, "Khoai tây lắc phô mai", "Đĩa", 69_000, "SERVED", "Ít muối"),
@@ -1293,72 +1283,55 @@ export function seedPaymentBills(): SeededPaymentBillInput[] {
       ],
     },
     {
-      visitId: "s408",
-      billCode: "B0408",
-      sessionCode: "S-0408",
-      code: "G01",
-      tables: ["A1", "A2"],
-      clusterCode: "G01",
+      tableSignature: paymentTableSignature(["B11", "B12"]),
       status: "AWAITING_PAYMENT",
-      openedAt: "19:00",
       pendingAt: "21:31",
       waiterName: "Minh",
-      guests: 9,
       lines: [
-        item(1, "19:02", "Minh", 1, "Chivas 18", "Chai 700ml", 2_150_000),
-        item(1, "19:02", "Minh", 1, "Trái cây thập cẩm", "Đĩa lớn", 189_000),
-        item(1, "19:02", "Minh", 6, "Coca-Cola", "Lon", 25_000),
+        item(1, "19:38", "Minh", 1, "Chivas 18", "Chai 700ml", 2_150_000),
+        item(1, "19:38", "Minh", 1, "Trái cây thập cẩm", "Đĩa lớn", 189_000),
+        item(1, "19:38", "Minh", 6, "Coca-Cola", "Lon", 25_000),
         item(2, "20:10", "Minh", 2, "Khô bò", "Đĩa", 99_000),
         item(3, "20:55", "Hà", 4, "Nước suối", "Chai", 20_000),
         item(3, "20:55", "Hà", 1, "Tháp bia Heineken", "Tháp 3L", 450_000, "CANCELLED", "Hết bia tháp"),
       ],
     },
     {
-      visitId: "s415",
-      billCode: "B0415",
-      sessionCode: "S-0415",
-      code: "Bar1",
-      tables: [barSeatCode(1)],
+      tableSignature: paymentTableSignature(["B6", "B8"]),
       status: "SERVING",
-      openedAt: "20:40",
-      waiterName: "Khoa",
-      guests: 1,
-      lines: [
-        item(1, "20:41", "Khoa", 1, "Old Fashioned", "Ly", 165_000),
-        item(1, "20:41", "Khoa", 1, "Đậu phộng rang", "Đĩa", 35_000),
-      ],
-    },
-    {
-      visitId: "s421",
-      billCode: "B0421",
-      sessionCode: "S-0421",
-      code: "G02",
-      tables: ["C2", "A5"],
-      clusterCode: "G02",
-      status: "SERVING",
-      openedAt: "21:20",
-      waiterName: "Hà",
-      guests: 6,
-      lines: [
-        item(1, "21:22", "Hà", 2, "Tiger Crystal", "Chai 330ml", 42_800),
-        item(1, "21:22", "Hà", 1, "Khô bò", "Đĩa", 99_000),
-      ],
-    },
-    {
-      visitId: "s419",
-      billCode: "B0419",
-      sessionCode: "S-0419",
-      code: "B4",
-      tables: ["B4"],
-      status: "SERVING",
-      openedAt: "21:10",
       requestedAt: "21:38",
       waiterName: "Hà",
-      guests: 3,
       lines: [
         item(1, "21:12", "Hà", 3, "Heineken", "Chai 330ml", 38_000),
         item(1, "21:12", "Hà", 1, "Mực chiên giòn", "Đĩa", 129_000),
         item(2, "21:30", "Hà", 2, "Heineken", "Chai 330ml", 38_000),
+      ],
+    },
+    {
+      tableSignature: paymentTableSignature([barSeatCode(1)]),
+      status: "SERVING",
+      waiterName: "Khoa",
+      lines: [
+        item(1, "20:49", "Khoa", 1, "Old Fashioned", "Ly", 165_000),
+        item(1, "20:49", "Khoa", 1, "Đậu phộng rang", "Đĩa", 35_000),
+      ],
+    },
+    {
+      tableSignature: paymentTableSignature(["A2"]),
+      status: "SERVING",
+      waiterName: "Minh",
+      lines: [
+        item(1, "20:14", "Minh", 2, "Tiger Crystal", "Chai 330ml", 42_800),
+        item(1, "20:14", "Minh", 1, "Khô bò", "Đĩa", 99_000),
+      ],
+    },
+    {
+      tableSignature: paymentTableSignature([barSeatCode(5), barSeatCode(6)]),
+      status: "SERVING",
+      waiterName: "Khoa",
+      lines: [
+        item(1, "20:06", "Khoa", 2, "Mojito", "Ly", 55_000),
+        item(1, "20:06", "Khoa", 1, "Khoai tây lắc phô mai", "Đĩa", 69_000),
       ],
     },
   ]

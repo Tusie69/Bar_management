@@ -40,6 +40,8 @@ export interface PayBillSummary {
   waiterName: string
   guests: number
   dueVnd: number
+  vatLabel?: string
+  vatNote?: string
   version: number
 }
 
@@ -57,6 +59,8 @@ export interface PayBill {
   preRoundVnd: number
   roundingVnd: number
   dueVnd: number
+  vatLabel?: string
+  vatNote?: string
   version: number
   openedAt: string
   pendingAt?: string
@@ -91,6 +95,7 @@ export interface PaymentNotification {
   title: string
   text: string
   time: string
+  occurredAt?: string
   visitId?: string
 }
 

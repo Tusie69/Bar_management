@@ -58,6 +58,28 @@ export function calcVatVnd(subtotalVnd: number): number {
 }
 
 /**
+ * Counts active (non-cancelled) items and making items without computing money totals.
+ */
+export function countActiveLines(lines: readonly PayLine[]): {
+  itemCount: number
+  makingCount: number
+  cancelledCount: number
+} {
+  let itemCount = 0
+  let makingCount = 0
+  let cancelledCount = 0
+  for (const line of lines) {
+    if (line.state === "CANCELLED") {
+      cancelledCount += 1
+      continue
+    }
+    itemCount += line.qty
+    if (line.state === "MAKING") makingCount += 1
+  }
+  return { itemCount, makingCount, cancelledCount }
+}
+
+/**
  * Computes bill totals in integer VND.
  * Cancelled lines are completely excluded from subtotal, VAT, item count, and due.
  */
