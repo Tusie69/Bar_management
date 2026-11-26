@@ -54,6 +54,7 @@ export default function WaiterPaymentPage() {
       backLabel="Sơ đồ bàn"
       onBack={() => navigate("/phucvu")}
       onNavigateView={handleNavigateView}
+      barOnly={role === "BAR"}
     />
   )
 }

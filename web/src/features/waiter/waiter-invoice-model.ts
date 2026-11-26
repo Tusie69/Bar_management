@@ -52,9 +52,21 @@ export function selectInvoiceBill(sessionBills: SessionBills | undefined, billCo
   return latestUnpaid ?? sessionBills.bills[sessionBills.bills.length - 1] ?? null
 }
 
-export function isBarGuestSession(summary: Pick<PayBillSummary, "code" | "tables">): boolean {
-  if (/^BAR/i.test(summary.code)) return true
-  return summary.tables.some((table) => /^BAR/i.test(table))
+export function isBarTableCode(tableCode: string): boolean {
+  return /^BAR/i.test(tableCode.trim())
+}
+
+export function isBarTableItem(table: string | { code: string; zoneCode?: string | null }): boolean {
+  if (typeof table === "string") return isBarTableCode(table)
+  if (table.zoneCode) return table.zoneCode === "BAR"
+  return isBarTableCode(table.code)
+}
+
+export function isBarGuestSession(summary: {
+  code?: string | null
+  tables: readonly (string | { code: string; zoneCode?: string | null })[]
+}): boolean {
+  return summary.tables.length > 0 && summary.tables.every(isBarTableItem)
 }
 
 export function sortBarSessionsFirst(sessions: readonly PayBillSummary[]): {

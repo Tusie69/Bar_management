@@ -31,6 +31,7 @@ import {
   PREVIEW_HAS_QR,
   PROVISIONAL_LABEL,
   canIssueNewInvoice,
+  isBarGuestSession,
   previewToBillDisplay,
   selectInvoiceBill,
   submitIssueInvoice,
@@ -846,6 +847,7 @@ export interface WaiterInvoiceWorkspaceProps {
   onNavigateView: (view: WaiterBillView, billCode?: string) => void
   api?: PaymentApi
   embedded?: boolean
+  barOnly?: boolean
   onNotify?: (kind: "success" | "info" | "error", text: string) => void
 }
 
@@ -858,6 +860,7 @@ export function WaiterInvoiceWorkspace({
   onNavigateView,
   api = paymentApi,
   embedded = false,
+  barOnly = false,
   onNotify = notifyViaSonner,
 }: WaiterInvoiceWorkspaceProps) {
   const queryClient = useQueryClient()
@@ -889,8 +892,10 @@ export function WaiterInvoiceWorkspace({
   })
 
   const sessionBills = sessionBillsQuery.data
+  const outOfBarScope = Boolean(barOnly && sessionBills && !isBarGuestSession(sessionBills))
   const shouldFetchPreview =
     Boolean(visitId) &&
+    !outOfBarScope &&
     (view === "preview" || (sessionBills ? sessionBills.unbilledLineCount > 0 : false))
 
   const previewQuery = useQuery({
@@ -1003,6 +1008,19 @@ export function WaiterInvoiceWorkspace({
               <button type="button" onClick={() => void sessionBillsQuery.refetch()} className="pay-btn pay-btn-s">
                 Thử lại
               </button>
+              <button type="button" onClick={onBack} className="pay-btn pay-btn-s">
+                {backLabel}
+              </button>
+            </span>
+          </span>
+        </div>
+      ) : outOfBarScope ? (
+        <div role="alert" className="pay-bn pay-bn-err">
+          <AlertTriangle className="pay-i" aria-hidden />
+          <span>
+            <b>Bàn ngoài quầy bar - Bartender không xuất hóa đơn</b>
+            Vui lòng chuyển cho Phục vụ hoặc Thu ngân xử lý hóa đơn của bàn này.
+            <span className="pay-bn-act">
               <button type="button" onClick={onBack} className="pay-btn pay-btn-s">
                 {backLabel}
               </button>
