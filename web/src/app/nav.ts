@@ -9,6 +9,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import type { Permission } from "@/domain/access"
+import { isPaymentAvailable } from "@/services/payment"
 
 export interface NavItem {
   to: string
@@ -16,13 +17,22 @@ export interface NavItem {
   short: string
   icon: LucideIcon
   permission?: Permission
+  available?: boolean
   mobile: boolean
 }
 
 // v2 nav: "Điều phối" (floor) is the home screen. /overview still routes, just not listed.
 export const NAV: NavItem[] = [
   { to: "/floor", label: "Điều phối", short: "Điều phối", icon: LayoutDashboard, mobile: true },
-  { to: "/payment", label: "Thu tiền", short: "Thu tiền", icon: CircleDollarSign, permission: "payment.collect", mobile: true },
+  {
+    to: "/payment",
+    label: "Thu tiền",
+    short: "Thu tiền",
+    icon: CircleDollarSign,
+    permission: "payment.collect",
+    available: isPaymentAvailable,
+    mobile: true,
+  },
   { to: "/reservations", label: "Đặt bàn", short: "Đặt bàn", icon: CalendarClock, mobile: true },
   { to: "/waitlist", label: "Chờ", short: "Chờ", icon: ListOrdered, mobile: true },
   { to: "/guests", label: "Khách", short: "Khách", icon: Users, mobile: true },

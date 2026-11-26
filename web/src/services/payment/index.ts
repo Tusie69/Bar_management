@@ -8,7 +8,7 @@
  */
 import { ApiError, api } from "@/services"
 import type { PaymentApi } from "./contracts"
-import { mockPaymentApi, setPaymentMockFault } from "./mock-payment"
+import { mockPaymentApi, setPaymentMockFault, simulatePaymentVersionBump } from "./mock-payment"
 
 const unimplementedHttpPaymentApi: PaymentApi = {
   listOpen: async () => {
@@ -37,12 +37,19 @@ const unimplementedHttpPaymentApi: PaymentApi = {
   },
 }
 
+/**
+ * Availability gate for the payment UI.
+ * True in mock mode; false in HTTP mode until TU-45/46 endpoints are wired here.
+ */
+export const isPaymentAvailable = api.mode === "mock"
+
 export const paymentApi: PaymentApi = api.mode === "mock" ? mockPaymentApi : unimplementedHttpPaymentApi
 
 // Expose mock fault injector for Playwright E2E scripts only (no product UI control bar).
 if (api.mode === "mock" && !import.meta.env.PROD && typeof window !== "undefined") {
   ;(window as unknown as Record<string, unknown>).__21gamPaymentMock = {
     setFault: setPaymentMockFault,
+    bumpVersion: simulatePaymentVersionBump,
     reset: () => (api as unknown as { reset?: () => void }).reset?.(),
   }
 }

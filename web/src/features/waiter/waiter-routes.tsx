@@ -12,6 +12,7 @@
 import { lazy, Suspense } from "react"
 import { Navigate, type RouteObject } from "react-router"
 import { Skeleton } from "@/components/ui/skeleton"
+import { isPaymentAvailable } from "@/services/payment"
 import {
   WAITER_BASE_PATH,
   WAITER_LEGACY_BASE_PATH,
@@ -52,7 +53,10 @@ export const waiterRoute: RouteObject = {
   children: [
     { index: true, element: page(<WaiterPage />) },
     { path: WAITER_ORDER_PATH, element: page(<WaiterMenuPage />) },
-    { path: WAITER_PAYMENT_PATH, element: page(<WaiterPaymentPage />) },
+    {
+      path: WAITER_PAYMENT_PATH,
+      element: isPaymentAvailable ? page(<WaiterPaymentPage />) : <Navigate to={WAITER_BASE_PATH} replace />,
+    },
     { path: `${WAITER_ORDERS_VIEW_PATH}/:visitId`, element: page(<WaiterOrdersPage />) },
     { path: WAITER_QUEUE_PATH, element: page(<WaiterBarQueuePage />) },
     // Một URL con lạ dưới /phucvu về sơ đồ, không rơi ra ngoài khu vực Phục vụ.

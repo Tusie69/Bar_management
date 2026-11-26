@@ -22,6 +22,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import type { FloorTableState, TableView } from "@/domain/models"
 import { fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { isPaymentAvailable } from "@/services/payment"
 import { useSession } from "@/state/session"
 import {
   WAITER_PHASE_LABEL,
@@ -270,7 +271,7 @@ export function WaiterTableSheetBody({
             <ReceiptText className="size-4" aria-hidden="true" /> In bill tạm tính
           </Button>
         ) : null}
-        {!isBar && capability.visitId !== null ? (
+        {!isBar && isPaymentAvailable && capability.visitId !== null ? (
           <WaiterPaymentLinkButton visitId={capability.visitId} pending={pending} />
         ) : null}
         {modes.length ? (

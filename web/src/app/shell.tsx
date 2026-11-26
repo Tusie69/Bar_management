@@ -13,6 +13,7 @@ import {
   Sun,
   Undo2,
   Unplug,
+  UserRound,
   X,
   Zap,
 } from "lucide-react"
@@ -122,6 +123,7 @@ function AppSidebar() {
             <SidebarMenu className="gap-1">
               {NAV.filter(
                 (n) =>
+                  n.available !== false &&
                   (user.role !== "RECEPTIONIST" || n.to === "/floor") &&
                   (!n.permission ||
                     (api.mode === "http" ? permissions.includes(n.permission) : roleCan(user.role, n.permission))),
@@ -180,6 +182,7 @@ function TopBar() {
   const navigate = useNavigate()
   const location = useLocation()
   const receptionist = useSession((state) => state.user.role === "RECEPTIONIST")
+  const onPayment = location.pathname.startsWith("/payment")
   const pageTitle =
     NAV.find((n) => location.pathname.startsWith(n.to))?.label ??
     (location.pathname === "/overview" ? "Tổng quan" : "21GAM")
@@ -196,7 +199,7 @@ function TopBar() {
         <Menu />
       </Button>
       <div className="mr-auto flex min-w-0 items-center gap-2">
-        <AccountMenu />
+        <AccountMenu greeting={onPayment} />
         {!receptionist ? (
           <Button
             className="hidden h-11 rounded-lg px-3.5 shadow-xs sm:inline-flex xl:h-10"
@@ -212,6 +215,7 @@ function TopBar() {
         <UndoRedo />
         <ThemeToggle />
         {!receptionist ? <AlertsBell /> : null}
+        {!receptionist && !onPayment ? <Identity /> : null}
       </div>
     </header>
   )
@@ -555,7 +559,7 @@ function AlertsBellContent({ className }: { className?: string }) {
         <Button
           variant="outline"
           size="icon"
-          className={cn("relative size-11 min-h-[44px] min-w-[44px] rounded-full bg-surface-1 shadow-xs", className)}
+          className={cn("relative size-11 min-h-[44px] min-w-[44px] rounded-lg bg-surface-1 shadow-xs", className)}
           aria-label={`Cần xử lý: ${alerts.length}`}
         >
           <Bell />
@@ -616,7 +620,26 @@ function AlertsBellContent({ className }: { className?: string }) {
   )
 }
 
-function AccountMenu() {
+function Identity() {
+  const user = useSession((s) => s.user)
+  const principal = useSession((s) => s.principal)
+  const displayName = api.mode === "http" ? (principal?.displayName ?? "Nhân viên") : user.displayName
+  const subtitle = api.mode === "http" ? ROLE_LABEL[user.role] : `${ROLE_LABEL[user.role]} · ${user.deviceLabel}`
+
+  return (
+    <div className="hidden items-center gap-2.5 rounded-xl border border-border-subtle bg-surface-1/80 py-1 pr-3 pl-1.5 xl:flex">
+      <span className="grid size-8 place-items-center rounded-full bg-surface-3 text-xs font-semibold text-tx-strong">
+        {initials(displayName)}
+      </span>
+      <span className="leading-tight">
+        <span className="block text-[13px] font-semibold text-tx-strong">{displayName}</span>
+        <span className="block text-xs text-tx-3">{subtitle}</span>
+      </span>
+    </div>
+  )
+}
+
+function AccountMenu({ greeting }: { greeting: boolean }) {
   const { user, users, setUser, theme, setTheme, principal, logout } = useSession()
   const displayName = api.mode === "http" ? (principal?.displayName ?? "Đã đăng nhập") : user.displayName
   const roleLabel = ROLE_LABEL[user.role]
@@ -626,23 +649,35 @@ function AccountMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button
-          variant="outline"
-          className="h-12 min-h-[44px] max-w-[280px] gap-2.5 rounded-full bg-surface-1 pr-3 pl-1.5 text-left text-sm font-medium shadow-xs"
-          aria-label={`Tài khoản: ${displayName}`}
-        >
-          <span
-            aria-hidden
-            className="grid size-9 shrink-0 place-items-center rounded-full bg-primary-tint text-xs font-bold text-primary-ink"
+        {greeting ? (
+          <Button
+            variant="outline"
+            className="h-12 min-h-[44px] max-w-[280px] gap-2.5 rounded-full bg-surface-1 pr-3 pl-1.5 text-left text-sm font-medium shadow-xs"
+            aria-label={`Tài khoản: ${displayName}`}
           >
-            {initials(displayName)}
-          </span>
-          <span className="grid min-w-0 leading-tight">
-            <small className="text-[11px] font-normal text-muted-foreground">Xin chào,</small>
-            <b className="truncate text-[14px] font-bold text-tx-strong">{`${displayName} · ${roleLabel}`}</b>
-          </span>
-          <ChevronDown className="size-3.5 shrink-0 text-subtle" />
-        </Button>
+            <span
+              aria-hidden
+              className="grid size-9 shrink-0 place-items-center rounded-full bg-primary-tint text-xs font-bold text-primary-ink"
+            >
+              {initials(displayName)}
+            </span>
+            <span className="grid min-w-0 leading-tight">
+              <small className="text-[11px] font-normal text-muted-foreground">Xin chào,</small>
+              <b className="truncate text-[14px] font-bold text-tx-strong">{`${displayName} · ${roleLabel}`}</b>
+            </span>
+            <ChevronDown className="size-3.5 shrink-0 text-subtle" />
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            className="h-11 min-h-[44px] max-w-[220px] gap-2 rounded-lg bg-surface-1 pr-2.5 pl-2.5 text-sm font-medium shadow-xs"
+            aria-label={`Tài khoản: ${displayName}`}
+          >
+            <UserRound className="text-muted-foreground" />
+            <span className="truncate">{displayName}</span>
+            <ChevronDown className="size-3.5 text-subtle" />
+          </Button>
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
         <DropdownMenuLabel className="font-normal">

@@ -15,6 +15,7 @@ import { AppShell } from "./shell"
 import { shouldUseMobileShell } from "./shell-mode"
 import { useSession } from "@/state/session"
 import { WAITER_HOME_PATH } from "@/features/waiter/waiter-access"
+import { isPaymentAvailable } from "@/services/payment"
 
 const OverviewPage = lazy(() => import("@/features/overview/overview-page"))
 const ReservationsPage = lazy(() => import("@/features/reservations/reservations-page"))
@@ -94,9 +95,9 @@ const router = createBrowserRouter([
       { path: "home", element: <HomeRoute /> },
       { path: "overview", element: page(<OverviewPage />) },
       { path: "floor", element: <FloorPage /> },
-      { path: "payment", element: page(<PaymentPage />) },
-      { path: "payment/:visitId", element: page(<PaymentPage />) },
-      { path: "payment/:visitId/:step", element: page(<PaymentPage />) },
+      { path: "payment", element: isPaymentAvailable ? page(<PaymentPage />) : <Navigate to="/floor" replace /> },
+      { path: "payment/:visitId", element: isPaymentAvailable ? page(<PaymentPage />) : <Navigate to="/floor" replace /> },
+      { path: "payment/:visitId/:step", element: isPaymentAvailable ? page(<PaymentPage />) : <Navigate to="/floor" replace /> },
       { path: "reservations", element: page(<ReservationsPage />) },
       { path: "waitlist", element: page(<WaitlistPage />) },
       { path: "guests", element: page(<GuestsPage />) },

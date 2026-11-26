@@ -244,7 +244,8 @@ export function AccountSheet({
   const focus = useRestoreTriggerFocus(open)
   const more = NAV.filter((n) => ["/payment", "/guests", "/reports", "/settings"].includes(n.to)).filter(
     (n) =>
-      !n.permission || (api.mode === "http" ? permissions.includes(n.permission) : roleCan(user.role, n.permission)),
+      n.available !== false &&
+      (!n.permission || (api.mode === "http" ? permissions.includes(n.permission) : roleCan(user.role, n.permission))),
   )
   return (
     <Sheet open={open} onOpenChange={(next) => !next && onClose()}>
