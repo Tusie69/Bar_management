@@ -18,36 +18,28 @@ export const mockPaymentApi: PaymentApi = {
   getBill: (visitId) => mockServer().getPaymentBill(visitId),
   createPrebill: (visitId, version) => mockServer().createPaymentPrebill(visitId, version),
   requestPayment: (visitId) => mockServer().requestPayment(visitId),
-  confirmCash: (visitId, givenVnd, version, idempotencyKey) =>
-    mockServer().confirmPaymentCash(visitId, givenVnd, version, idempotencyKey),
-  confirmTransfer: (visitId, manual, version, idempotencyKey) =>
-    mockServer().confirmPaymentTransfer(visitId, manual, version, idempotencyKey),
+  confirmCash: (visitId, givenVnd, version, idempotencyKey, billCode) =>
+    mockServer().confirmPaymentCash(visitId, givenVnd, version, idempotencyKey, billCode),
+  confirmTransfer: (visitId, manual, version, idempotencyKey, billCode) =>
+    mockServer().confirmPaymentTransfer(visitId, manual, version, idempotencyKey, billCode),
   listNotifications: () => mockServer().listPaymentNotifications(),
   checkTransfer: (visitId) => mockServer().checkPaymentTransfer(visitId),
-  previewBill: async () => {
-    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
-  },
-  issueInvoice: async () => {
-    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
-  },
-  getSessionBills: async () => {
-    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
-  },
-  requestCancel: async () => {
-    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
-  },
-  listCancelRequests: async () => {
-    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
-  },
-  decideCancel: async () => {
-    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
-  },
-  cancelPaid: async () => {
-    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
-  },
-  listAudit: async () => {
-    throw new ApiError(501, "NOT_IMPLEMENTED_YET", "Đang phát triển")
-  },
+  previewBill: (visitId) => mockServer().previewPaymentBill(visitId),
+  issueInvoice: (visitId, version, idempotencyKey) =>
+    mockServer().issuePaymentInvoice(visitId, version, idempotencyKey),
+  getSessionBills: (visitId) => mockServer().getPaymentSessionBills(visitId),
+  requestCancel: (billCode, reason) => mockServer().requestPaymentCancel(billCode, reason),
+  listCancelRequests: () => mockServer().listPaymentCancelRequests(),
+  decideCancel: (requestId, approve, note) => mockServer().decidePaymentCancel(requestId, approve, note),
+  cancelPaid: (billCode, reason) => mockServer().cancelPaidBill(billCode, reason),
+  listAudit: (billCode) => mockServer().listPaymentAudit(billCode),
+}
+
+export function addPaymentOrderLines(
+  visitId: string,
+  lines: Parameters<MockGamApi["addPaymentOrderRound"]>[1],
+) {
+  return mockServer().addPaymentOrderRound(visitId, lines)
 }
 
 export function setPaymentMockFault(patch: {

@@ -120,11 +120,18 @@ import { formatDailyBookingText } from "./booking-export"
 import { apiErrorMessage } from "../error-messages"
 import { calcBillTotals, formatVnd, sortOpenBills } from "../payment/calc"
 import type {
+  BillPayStatus,
+  CancelRequest,
   PayBill,
   PayBillSummary,
   PayLine,
+  PaymentAuditAction,
+  PaymentAuditEntry,
   PaymentNotification,
+  PaymentNotificationType,
+  PreviewBill,
   Receipt,
+  SessionBills,
   VisitPayStatus,
 } from "../payment/contracts"
 
@@ -147,18 +154,34 @@ interface CommitOut<T> {
   extra?: T
 }
 
-interface PaymentVisitMeta {
+type InvoiceIssuerRole = "WAITER" | "BAR" | "CASHIER" | "OWNER" | "ADMIN"
+
+interface IssuedBillRecord {
   billCode: string
-  status: "SERVING" | "AWAITING_PAYMENT" | "PAID"
+  billStatus: BillPayStatus
+  lines: PayLine[]
+  issuedAt: string
+  issuedAtDate: Date
+  issuedBy: string
+  issuedByRole: InvoiceIssuerRole
   pendingAt?: string
   pendingAtDate?: Date
+  paidAt?: string
+  paidBy?: string
+  manualConfirm?: boolean
+  cancelPending?: boolean
+}
+
+interface PaymentVisitMeta {
+  /** Mon goi chua chot vao hoa don (V12: preview/order round tiep theo). */
+  unbilledLines: PayLine[]
+  /** Cac hoa don da chot theo thu tu thoi gian cu -> moi. */
+  bills: IssuedBillRecord[]
+  nextBillSeq: number
   requestedAt?: string
   requestedAtDate?: Date
   waiterName: string
-  lines: PayLine[]
   versionOffset: number
-  paidAt?: string
-  paidBy?: string
   closedTables?: string[]
   closedClusterCode?: string
 }
@@ -219,7 +242,13 @@ export class MockGamApi implements GamApi, DemoControls {
   private readonly businessDayWorkerEnabled: boolean
   private paymentMeta = new Map<number, PaymentVisitMeta>()
   private paymentPaidLog: PaymentNotification[] = []
+  private paymentEventLog: PaymentNotification[] = []
   private paymentIdempotency = new Map<string, { fingerprint: string; receipt: Receipt }>()
+  private paymentIssueIdempotency = new Map<string, { fingerprint: string; bill: PayBill }>()
+  private cancelRequests: CancelRequest[] = []
+  private cancelRequestSeq = 1
+  private paymentAuditLog: PaymentAuditEntry[] = []
+  private paymentAuditSeq = 1
   private paymentAttemptKeys: string[] = []
   private paymentFault: { nextConfirm?: "net" | "dup"; qrFound?: boolean; billDelayMs?: number } = {}
 
@@ -3018,7 +3047,13 @@ export class MockGamApi implements GamApi, DemoControls {
     this.quickTimes = ["21:00", "21:30", "22:00", "22:30"]
     this.initPaymentBills()
     this.paymentPaidLog = []
+    this.paymentEventLog = []
     this.paymentIdempotency.clear()
+    this.paymentIssueIdempotency.clear()
+    this.cancelRequests = []
+    this.cancelRequestSeq = 1
+    this.paymentAuditLog = []
+    this.paymentAuditSeq = 1
     this.paymentAttemptKeys = []
     this.paymentFault = {}
     this.seq = venueOf(this.db).changeSeq
@@ -3058,19 +3093,46 @@ export class MockGamApi implements GamApi, DemoControls {
       if (tableCodes.length === 0) continue
       const seed = bySignature.get(paymentTableSignature(tableCodes))
       if (!seed) continue
-      this.paymentMeta.set(visit.id, {
-        billCode: `B${String(visit.id).padStart(4, "0")}`,
-        status: seed.status,
-        ...(seed.pendingAt
-          ? { pendingAt: seed.pendingAt, pendingAtDate: atBusinessTime(visit.businessDate, seed.pendingAt) }
-          : {}),
-        ...(seed.requestedAt
-          ? { requestedAt: seed.requestedAt, requestedAtDate: atBusinessTime(visit.businessDate, seed.requestedAt) }
-          : {}),
-        waiterName: seed.waiterName,
-        lines: this.toPayLines(seed.lines),
-        versionOffset: 0,
-      })
+      const baseCode = `B${String(visit.id).padStart(4, "0")}`
+      if (seed.status === "AWAITING_PAYMENT") {
+        const issuedAt = seed.pendingAt ?? "21:31"
+        const issuedAtDate = atBusinessTime(visit.businessDate, issuedAt)
+        this.paymentMeta.set(visit.id, {
+          unbilledLines: [],
+          bills: [
+            {
+              billCode: baseCode,
+              billStatus: "UNPAID",
+              lines: this.toPayLines(seed.lines),
+              issuedAt,
+              issuedAtDate,
+              issuedBy: seed.waiterName,
+              issuedByRole: "WAITER",
+              ...(seed.pendingAt ? { pendingAt: seed.pendingAt, pendingAtDate: issuedAtDate } : {}),
+            },
+          ],
+          nextBillSeq: 2,
+          ...(seed.requestedAt
+            ? { requestedAt: seed.requestedAt, requestedAtDate: atBusinessTime(visit.businessDate, seed.requestedAt) }
+            : {}),
+          waiterName: seed.waiterName,
+          versionOffset: 0,
+        })
+      } else {
+        this.paymentMeta.set(visit.id, {
+          unbilledLines: this.toPayLines(seed.lines),
+          bills: [],
+          nextBillSeq: 1,
+          ...(seed.pendingAt
+            ? { pendingAt: seed.pendingAt, pendingAtDate: atBusinessTime(visit.businessDate, seed.pendingAt) }
+            : {}),
+          ...(seed.requestedAt
+            ? { requestedAt: seed.requestedAt, requestedAtDate: atBusinessTime(visit.businessDate, seed.requestedAt) }
+            : {}),
+          waiterName: seed.waiterName,
+          versionOffset: 0,
+        })
+      }
     }
   }
 
@@ -3078,19 +3140,45 @@ export class MockGamApi implements GamApi, DemoControls {
     const existing = this.paymentMeta.get(visit.id)
     if (existing) return existing
     const created: PaymentVisitMeta = {
-      billCode: `B${String(visit.id).padStart(4, "0")}`,
-      // Derive CLOSED_UNPAID from live visit.endedAt in buildPayBill; never cache it on meta.
-      status: visit.paidMarkedAt ? "PAID" : "SERVING",
+      unbilledLines: [],
+      bills: [],
+      nextBillSeq: 1,
       waiterName: "Phục vụ",
-      lines: [],
       versionOffset: 0,
     }
     this.paymentMeta.set(visit.id, created)
     return created
   }
 
-  private buildPayBill(visit: VisitRow): PayBill {
-    const meta = this.ensurePaymentMeta(visit)
+  private paymentVersion(visit: VisitRow, meta: PaymentVisitMeta): number {
+    return visit.version + meta.versionOffset
+  }
+
+  private hasActiveUnbilledLines(meta: PaymentVisitMeta): boolean {
+    return meta.unbilledLines.some((l) => l.state !== "CANCELLED" && l.qty > 0)
+  }
+
+  private countActiveUnbilledLines(meta: PaymentVisitMeta): number {
+    return meta.unbilledLines.filter((l) => l.state !== "CANCELLED" && l.qty > 0).length
+  }
+
+  private deriveSessionStatus(visit: VisitRow, meta: PaymentVisitMeta): VisitPayStatus {
+    const hasBills = meta.bills.length > 0
+    const hasUnpaidBill = meta.bills.some((b) => b.billStatus === "UNPAID")
+    const hasActiveUnbilled = this.hasActiveUnbilledLines(meta)
+    if ((hasBills && !hasUnpaidBill && !hasActiveUnbilled) || (visit.paidMarkedAt && !hasUnpaidBill && !hasActiveUnbilled)) {
+      return "PAID"
+    }
+    // Derive CLOSED_UNPAID from live visit.endedAt; never cache it on meta.
+    if (visit.endedAt) return "CLOSED_UNPAID"
+    if (hasUnpaidBill) return "AWAITING_PAYMENT"
+    return "SERVING"
+  }
+
+  private resolveVisitTableInfo(
+    visit: VisitRow,
+    meta: PaymentVisitMeta,
+  ): { tables: string[]; clusterCode?: string } {
     const activeTableIds = visitTableIds(this.db, visit.id)
     const liveTableCodes = activeTableIds.map((id) => this.db.tables.get(id)?.code ?? `#${id}`)
     const viewTableCodes =
@@ -3105,35 +3193,163 @@ export class MockGamApi implements GamApi, DemoControls {
       ? (groupCodeFromSymbol(groupSymbolNo(this.db, alloc.groupId)) ?? undefined)
       : undefined
     const clusterCode = tables.length > 1 ? (liveGroupCode ?? meta.closedClusterCode) : undefined
-    const hasPaymentProof = meta.status === "PAID" || Boolean(meta.paidAt) || Boolean(visit.paidMarkedAt)
-    const status: VisitPayStatus = hasPaymentProof ? "PAID" : visit.endedAt ? "CLOSED_UNPAID" : meta.status
-    const totals = calcBillTotals(meta.lines)
-    const roundCount = new Set(meta.lines.map((l) => l.orderRound)).size
+    return { tables, ...(clusterCode ? { clusterCode } : {}) }
+  }
+
+  private buildIssuedPayBill(
+    visit: VisitRow,
+    meta: PaymentVisitMeta,
+    record: IssuedBillRecord,
+    tableInfo = this.resolveVisitTableInfo(visit, meta),
+  ): PayBill {
+    const totals = calcBillTotals(record.lines)
+    const roundCount = new Set(record.lines.map((l) => l.orderRound)).size
+    const status: VisitPayStatus =
+      record.billStatus === "PAID" ? "PAID" : visit.endedAt ? "CLOSED_UNPAID" : "AWAITING_PAYMENT"
 
     return {
-      billCode: meta.billCode,
+      billCode: record.billCode,
       visitId: String(visit.id),
       sessionCode: `S-${String(visit.id).padStart(4, "0")}`,
-      code: clusterCode ?? tables[0],
-      tables,
-      ...(clusterCode ? { clusterCode } : {}),
+      code: tableInfo.clusterCode ?? tableInfo.tables[0],
+      tables: [...tableInfo.tables],
+      ...(tableInfo.clusterCode ? { clusterCode: tableInfo.clusterCode } : {}),
       status,
-      lines: structuredClone(meta.lines),
+      billStatus: record.billStatus,
+      lines: structuredClone(record.lines),
       subtotalVnd: totals.subtotalVnd,
       vatVnd: totals.vatVnd,
       preRoundVnd: totals.preRoundVnd,
       roundingVnd: totals.roundingVnd,
       dueVnd: totals.dueVnd,
-      version: visit.version + meta.versionOffset,
+      version: this.paymentVersion(visit, meta),
       openedAt: fmtTime(visit.startedAt),
-      ...(meta.pendingAt ? { pendingAt: meta.pendingAt } : {}),
+      ...(record.pendingAt ? { pendingAt: record.pendingAt } : {}),
+      ...(meta.requestedAt ? { requestedAt: meta.requestedAt } : {}),
+      issuedAt: record.issuedAt,
+      issuedBy: record.issuedBy,
+      issuedByRole: record.issuedByRole,
+      waiterName: meta.waiterName,
+      guests: visit.guestCount,
+      roundCount,
+      ...(record.paidAt ? { paidAt: record.paidAt } : {}),
+      ...(record.paidBy ? { paidBy: record.paidBy } : {}),
+      ...(record.manualConfirm !== undefined ? { manualConfirm: record.manualConfirm } : {}),
+      ...(record.cancelPending !== undefined ? { cancelPending: record.cancelPending } : {}),
+    }
+  }
+
+  private buildUnbilledPayBill(
+    visit: VisitRow,
+    meta: PaymentVisitMeta,
+    tableInfo = this.resolveVisitTableInfo(visit, meta),
+  ): PayBill {
+    const totals = calcBillTotals(meta.unbilledLines)
+    const roundCount = new Set(meta.unbilledLines.map((l) => l.orderRound)).size
+    const status = this.deriveSessionStatus(visit, meta)
+    return {
+      billCode: `B${String(visit.id).padStart(4, "0")}`,
+      visitId: String(visit.id),
+      sessionCode: `S-${String(visit.id).padStart(4, "0")}`,
+      code: tableInfo.clusterCode ?? tableInfo.tables[0],
+      tables: [...tableInfo.tables],
+      ...(tableInfo.clusterCode ? { clusterCode: tableInfo.clusterCode } : {}),
+      status,
+      lines: structuredClone(meta.unbilledLines),
+      subtotalVnd: totals.subtotalVnd,
+      vatVnd: totals.vatVnd,
+      preRoundVnd: totals.preRoundVnd,
+      roundingVnd: totals.roundingVnd,
+      dueVnd: totals.dueVnd,
+      version: this.paymentVersion(visit, meta),
+      openedAt: fmtTime(visit.startedAt),
       ...(meta.requestedAt ? { requestedAt: meta.requestedAt } : {}),
       waiterName: meta.waiterName,
       guests: visit.guestCount,
       roundCount,
-      ...(meta.paidAt ? { paidAt: meta.paidAt } : {}),
-      ...(meta.paidBy ? { paidBy: meta.paidBy } : {}),
     }
+  }
+
+  private buildPayBill(visit: VisitRow): PayBill {
+    const meta = this.ensurePaymentMeta(visit)
+    const tableInfo = this.resolveVisitTableInfo(visit, meta)
+    const oldestUnpaid = meta.bills.find((b) => b.billStatus === "UNPAID")
+    if (oldestUnpaid) return this.buildIssuedPayBill(visit, meta, oldestUnpaid, tableInfo)
+    if (meta.bills.length > 0 && !this.hasActiveUnbilledLines(meta)) {
+      const latestPaid = meta.bills[meta.bills.length - 1]
+      return this.buildIssuedPayBill(visit, meta, latestPaid, tableInfo)
+    }
+    return this.buildUnbilledPayBill(visit, meta, tableInfo)
+  }
+
+  private nextBillCode(visitId: number, meta: PaymentVisitMeta): string {
+    const seq = meta.nextBillSeq
+    meta.nextBillSeq += 1
+    const base = `B${String(visitId).padStart(4, "0")}`
+    return seq <= 1 ? base : `${base}-${seq}`
+  }
+
+  private lockUnbilledIntoBill(
+    visit: VisitRow,
+    meta: PaymentVisitMeta,
+    issuedBy: string,
+    issuedByRole: InvoiceIssuerRole,
+  ): IssuedBillRecord {
+    const nowTime = fmtTime(this.now)
+    const nowDate = new Date(this.now.getTime())
+    const record: IssuedBillRecord = {
+      billCode: this.nextBillCode(visit.id, meta),
+      billStatus: "UNPAID",
+      lines: structuredClone(meta.unbilledLines),
+      issuedAt: nowTime,
+      issuedAtDate: nowDate,
+      issuedBy,
+      issuedByRole,
+      pendingAt: nowTime,
+      pendingAtDate: nowDate,
+    }
+    meta.bills.push(record)
+    meta.unbilledLines = []
+    meta.versionOffset += 1
+    return record
+  }
+
+  private recordPaymentAudit(
+    action: PaymentAuditAction,
+    billCode: string,
+    visitId: number,
+    opts?: { actor?: string; approver?: string; reason?: string },
+  ) {
+    const defaultActor = `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`
+    this.paymentAuditLog.unshift({
+      id: `aud-${this.paymentAuditSeq++}`,
+      action,
+      billCode,
+      visitId: String(visitId),
+      actor: opts?.actor ?? defaultActor,
+      ...(opts?.approver ? { approver: opts.approver } : {}),
+      ...(opts?.reason ? { reason: opts.reason } : {}),
+      at: this.now.toISOString(),
+      device: this.session.deviceLabel,
+    })
+  }
+
+  private pushPaymentEvent(
+    type: PaymentNotificationType,
+    title: string,
+    text: string,
+    visitId: number,
+    prefix: string,
+  ) {
+    this.paymentEventLog.unshift({
+      id: `${prefix}-${this.seq + 1}-${this.paymentEventLog.length + 1}`,
+      type,
+      title,
+      text,
+      time: fmtTime(this.now),
+      occurredAt: this.now.toISOString(),
+      visitId: String(visitId),
+    })
   }
 
   private resolvePaymentVisit(visitId: string): { visit: VisitRow; bill: PayBill } {
@@ -3148,9 +3364,28 @@ export class MockGamApi implements GamApi, DemoControls {
     return { visit, bill: this.buildPayBill(visit) }
   }
 
+  private locateIssuedBill(
+    billCode: string,
+  ): { visit: VisitRow; meta: PaymentVisitMeta; record: IssuedBillRecord } {
+    for (const [visitIdNum, meta] of this.paymentMeta.entries()) {
+      const record = meta.bills.find((b) => b.billCode === billCode)
+      if (!record) continue
+      const visit = this.db.visits.get(visitIdNum)
+      if (visit) return { visit, meta, record }
+    }
+    throw new ApiError(404, "NOT_FOUND", `Không tìm thấy hóa đơn ${billCode}.`)
+  }
+
   private requirePaymentRead() {
     if (!roleCan(this.session.role, "payment.collect") && !roleCan(this.session.role, "order.read")) {
       throw new ApiError(403, "PERMISSION_DENIED", "Tài khoản không có quyền xem thanh toán.")
+    }
+  }
+
+  private requireInvoiceIssuer() {
+    const allowed: RoleCode[] = ["WAITER", "BAR", "CASHIER", "OWNER", "ADMIN"]
+    if (!allowed.includes(this.session.role) || !roleCan(this.session.role, "order.read")) {
+      throw new ApiError(403, "PERMISSION_DENIED", "Tài khoản không có quyền xuất hóa đơn.")
     }
   }
 
@@ -3171,32 +3406,97 @@ export class MockGamApi implements GamApi, DemoControls {
     return [...this.paymentAttemptKeys]
   }
 
+  addPaymentOrderRound(
+    visitId: string,
+    lines: {
+      name: string
+      unit: string
+      qty: number
+      unitPriceVnd: number
+      state?: PayLine["state"]
+      note?: string
+      roundTime?: string
+      roundBy?: string
+    }[],
+  ): SessionBills {
+    const { visit } = this.resolvePaymentVisit(visitId)
+    if (visit.endedAt) {
+      throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc, không thể gọi thêm món.")
+    }
+    const meta = this.ensurePaymentMeta(visit)
+    const allExistingRounds = [
+      ...meta.bills.flatMap((b) => b.lines.map((l) => l.orderRound)),
+      ...meta.unbilledLines.map((l) => l.orderRound),
+    ]
+    const nextRound = (allExistingRounds.length > 0 ? Math.max(...allExistingRounds) : 0) + 1
+    const roundTime = fmtTime(this.now)
+    const roundBy = this.session.displayName
+    for (const l of lines) {
+      meta.unbilledLines.push({
+        orderRound: nextRound,
+        roundTime: l.roundTime ?? roundTime,
+        roundBy: l.roundBy ?? roundBy,
+        name: l.name,
+        unit: l.unit,
+        qty: l.qty,
+        unitPriceVnd: l.unitPriceVnd,
+        lineTotalVnd: l.qty * l.unitPriceVnd,
+        state: l.state ?? "SERVED",
+        ...(l.note ? { note: l.note } : {}),
+      })
+    }
+    meta.versionOffset += 1
+    const tableInfo = this.resolveVisitTableInfo(visit, meta)
+    return {
+      visitId: String(visit.id),
+      sessionCode: `S-${String(visit.id).padStart(4, "0")}`,
+      code: tableInfo.clusterCode ?? tableInfo.tables[0],
+      tables: [...tableInfo.tables],
+      ...(tableInfo.clusterCode ? { clusterCode: tableInfo.clusterCode } : {}),
+      status: this.deriveSessionStatus(visit, meta),
+      unbilledLineCount: this.countActiveUnbilledLines(meta),
+      bills: meta.bills.map((r) => this.buildIssuedPayBill(visit, meta, r, tableInfo)),
+      version: this.paymentVersion(visit, meta),
+    }
+  }
+
   async listPaymentOpen(): Promise<PayBillSummary[]> {
     await this.latency("q")
     this.requirePaymentRead()
     const open: PayBillSummary[] = []
     for (const visit of this.db.visits.values()) {
-      if (visit.endedAt || visit.paidMarkedAt) continue
-      const meta = this.paymentMeta.get(visit.id)
-      if (meta?.status === "PAID") continue
-      const b = this.buildPayBill(visit)
-      if (b.status === "PAID" || b.status === "CLOSED_UNPAID") continue
+      if (visit.endedAt) continue
+      const meta = this.ensurePaymentMeta(visit)
+      const sessionStatus = this.deriveSessionStatus(visit, meta)
+      if (sessionStatus === "PAID" || sessionStatus === "CLOSED_UNPAID") continue
+      const tableInfo = this.resolveVisitTableInfo(visit, meta)
+      const unpaidBills = meta.bills.filter((b) => b.billStatus === "UNPAID")
+      const primaryUnpaid = unpaidBills[0]
+      const dueVnd =
+        unpaidBills.length > 0
+          ? unpaidBills.reduce((sum, b) => sum + calcBillTotals(b.lines).dueVnd, 0) +
+            calcBillTotals(meta.unbilledLines).dueVnd
+          : calcBillTotals(meta.unbilledLines).dueVnd
+      const hasOrderLines = unpaidBills.some((b) => b.lines.length > 0) || meta.unbilledLines.length > 0
       open.push({
-        visitId: b.visitId,
-        billCode: b.billCode,
-        sessionCode: b.sessionCode,
-        code: b.code,
-        tables: [...b.tables],
-        ...(b.clusterCode ? { clusterCode: b.clusterCode } : {}),
-        status: b.status,
-        openedAt: b.openedAt,
-        ...(b.pendingAt ? { pendingAt: b.pendingAt } : {}),
-        ...(b.requestedAt ? { requestedAt: b.requestedAt } : {}),
-        waiterName: b.waiterName,
-        guests: b.guests,
-        dueVnd: b.dueVnd,
-        hasOrderLines: b.lines.length > 0,
-        version: b.version,
+        visitId: String(visit.id),
+        billCode: primaryUnpaid?.billCode ?? `B${String(visit.id).padStart(4, "0")}`,
+        sessionCode: `S-${String(visit.id).padStart(4, "0")}`,
+        code: tableInfo.clusterCode ?? tableInfo.tables[0],
+        tables: [...tableInfo.tables],
+        ...(tableInfo.clusterCode ? { clusterCode: tableInfo.clusterCode } : {}),
+        status: sessionStatus,
+        openedAt: fmtTime(visit.startedAt),
+        ...(primaryUnpaid?.pendingAt ? { pendingAt: primaryUnpaid.pendingAt } : {}),
+        ...(meta.requestedAt ? { requestedAt: meta.requestedAt } : {}),
+        ...(primaryUnpaid?.issuedAt ? { issuedAt: primaryUnpaid.issuedAt } : {}),
+        ...(primaryUnpaid?.issuedBy ? { issuedBy: primaryUnpaid.issuedBy } : {}),
+        unpaidBillCount: unpaidBills.length,
+        waiterName: meta.waiterName,
+        guests: visit.guestCount,
+        dueVnd,
+        hasOrderLines,
+        version: this.paymentVersion(visit, meta),
       })
     }
     return sortOpenBills(open)
@@ -3212,25 +3512,119 @@ export class MockGamApi implements GamApi, DemoControls {
     return this.resolvePaymentVisit(visitId).bill
   }
 
+  async previewPaymentBill(visitId: string): Promise<PreviewBill> {
+    await this.latency("q")
+    this.requirePaymentRead()
+    const { visit } = this.resolvePaymentVisit(visitId)
+    const meta = this.ensurePaymentMeta(visit)
+    const tableInfo = this.resolveVisitTableInfo(visit, meta)
+    const totals = calcBillTotals(meta.unbilledLines)
+    return {
+      visitId: String(visit.id),
+      sessionCode: `S-${String(visit.id).padStart(4, "0")}`,
+      code: tableInfo.clusterCode ?? tableInfo.tables[0],
+      tables: [...tableInfo.tables],
+      ...(tableInfo.clusterCode ? { clusterCode: tableInfo.clusterCode } : {}),
+      lines: structuredClone(meta.unbilledLines),
+      subtotalVnd: totals.subtotalVnd,
+      vatVnd: totals.vatVnd,
+      preRoundVnd: totals.preRoundVnd,
+      roundingVnd: totals.roundingVnd,
+      dueVnd: totals.dueVnd,
+      version: this.paymentVersion(visit, meta),
+    }
+  }
+
+  async issuePaymentInvoice(visitId: string, version: number, idempotencyKey: string): Promise<PayBill> {
+    await this.latency("m")
+    this.requireInvoiceIssuer()
+    const fingerprint = `${visitId}:${version}:ISSUE`
+    const existing = this.paymentIssueIdempotency.get(idempotencyKey)
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        throw new ApiError(409, "IDEMPOTENCY_CONFLICT", "Khóa idempotency đã được sử dụng cho lần xuất hóa đơn khác.")
+      }
+      return structuredClone(existing.bill)
+    }
+
+    const { visit } = this.resolvePaymentVisit(visitId)
+    const meta = this.ensurePaymentMeta(visit)
+    const sessionStatus = this.deriveSessionStatus(visit, meta)
+    if (sessionStatus === "CLOSED_UNPAID" || visit.endedAt) {
+      throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc, không thể xuất hóa đơn.")
+    }
+    if (this.paymentVersion(visit, meta) !== version) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Phiên vừa được cập nhật trên thiết bị khác.")
+    }
+    if (!this.hasActiveUnbilledLines(meta)) {
+      throw new ApiError(409, "INVALID_STATE", "Không có món mới chưa chốt bill để xuất hóa đơn.")
+    }
+
+    const issuerRole = this.session.role as InvoiceIssuerRole
+    const record = this.lockUnbilledIntoBill(visit, meta, this.session.displayName, issuerRole)
+    const tableInfo = this.resolveVisitTableInfo(visit, meta)
+    const issuedBill = this.buildIssuedPayBill(visit, meta, record, tableInfo)
+    this.paymentIssueIdempotency.set(idempotencyKey, { fingerprint, bill: issuedBill })
+
+    this.seq += 1
+    this.pushPaymentEvent(
+      "INVOICE_ISSUED",
+      "Đã đưa hóa đơn",
+      `${issuedBill.code} · Đã đưa hóa đơn · ${record.issuedBy} · ${record.issuedAt}`,
+      visit.id,
+      "inv",
+    )
+    this.recordPaymentAudit("INVOICE_ISSUED", record.billCode, visit.id)
+    this.emit({
+      latestSeq: this.seq,
+      action: "PAYMENT_INVOICE_ISSUED",
+      entityType: "visit",
+      actorKind: "USER",
+      actorUserId: this.session.id,
+      summary: `${issuedBill.code} · đã đưa hóa đơn (${record.billCode})`,
+    })
+    return structuredClone(issuedBill)
+  }
+
+  async getPaymentSessionBills(visitId: string): Promise<SessionBills> {
+    await this.latency("q")
+    this.requirePaymentRead()
+    const { visit } = this.resolvePaymentVisit(visitId)
+    const meta = this.ensurePaymentMeta(visit)
+    const tableInfo = this.resolveVisitTableInfo(visit, meta)
+    return {
+      visitId: String(visit.id),
+      sessionCode: `S-${String(visit.id).padStart(4, "0")}`,
+      code: tableInfo.clusterCode ?? tableInfo.tables[0],
+      tables: [...tableInfo.tables],
+      ...(tableInfo.clusterCode ? { clusterCode: tableInfo.clusterCode } : {}),
+      status: this.deriveSessionStatus(visit, meta),
+      unbilledLineCount: this.countActiveUnbilledLines(meta),
+      bills: meta.bills.map((r) => this.buildIssuedPayBill(visit, meta, r, tableInfo)),
+      version: this.paymentVersion(visit, meta),
+    }
+  }
+
   async createPaymentPrebill(visitId: string, version: number): Promise<PayBill> {
     await this.latency("m")
     this.requirePaymentRead()
     const { visit, bill } = this.resolvePaymentVisit(visitId)
-    if (bill.status === "PAID") {
+    const meta = this.ensurePaymentMeta(visit)
+    const sessionStatus = this.deriveSessionStatus(visit, meta)
+    if (sessionStatus === "PAID") {
       throw new ApiError(409, "INVALID_STATE", "Bill này đã được thanh toán.")
     }
-    if (bill.status === "CLOSED_UNPAID") {
+    if (sessionStatus === "CLOSED_UNPAID") {
       throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc (đã trả bàn) nhưng chưa ghi nhận thu tiền.")
     }
-    if (bill.version !== version) {
+    if (this.paymentVersion(visit, meta) !== version) {
       throw new ApiError(409, "VERSION_CONFLICT", "Bill vừa được cập nhật trên thiết bị khác.")
     }
-    const meta = this.ensurePaymentMeta(visit)
-    if (bill.status === "SERVING") {
-      meta.status = "AWAITING_PAYMENT"
-      meta.pendingAt = fmtTime(this.now)
-      meta.pendingAtDate = new Date(this.now.getTime())
-      meta.versionOffset += 1
+    if (sessionStatus === "SERVING") {
+      const issuerRole: InvoiceIssuerRole = roleCan(this.session.role, "order.read")
+        ? (this.session.role as InvoiceIssuerRole)
+        : "CASHIER"
+      const record = this.lockUnbilledIntoBill(visit, meta, this.session.displayName, issuerRole)
       this.seq += 1
       this.emit({
         latestSeq: this.seq,
@@ -3240,6 +3634,7 @@ export class MockGamApi implements GamApi, DemoControls {
         actorUserId: this.session.id,
         summary: `${bill.code} · tạo tạm tính`,
       })
+      return this.buildIssuedPayBill(visit, meta, record)
     }
     return this.buildPayBill(visit)
   }
@@ -3248,27 +3643,26 @@ export class MockGamApi implements GamApi, DemoControls {
     await this.latency("m")
     this.require("order.read")
     const { visit, bill } = this.resolvePaymentVisit(visitId)
-    if (bill.status === "PAID") {
+    const meta = this.ensurePaymentMeta(visit)
+    const sessionStatus = this.deriveSessionStatus(visit, meta)
+    if (sessionStatus === "PAID") {
       throw new ApiError(409, "INVALID_STATE", "Bill này đã được thanh toán.")
     }
-    if (bill.status === "CLOSED_UNPAID") {
+    if (sessionStatus === "CLOSED_UNPAID") {
       throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc (đã trả bàn) nhưng chưa ghi nhận thu tiền.")
     }
-    const meta = this.ensurePaymentMeta(visit)
     const nowTime = fmtTime(this.now)
     const nowDate = new Date(this.now.getTime())
     if (!meta.requestedAt) {
       meta.requestedAt = nowTime
       meta.requestedAtDate = nowDate
     }
-    if (meta.status === "SERVING") {
-      meta.status = "AWAITING_PAYMENT"
-      if (!meta.pendingAt) {
-        meta.pendingAt = nowTime
-        meta.pendingAtDate = nowDate
-      }
+    if (sessionStatus === "SERVING" && meta.bills.length === 0) {
+      const issuerRole = this.session.role as InvoiceIssuerRole
+      this.lockUnbilledIntoBill(visit, meta, this.session.displayName, issuerRole)
+    } else {
+      meta.versionOffset += 1
     }
-    meta.versionOffset += 1
     this.seq += 1
     this.emit({
       latestSeq: this.seq,
@@ -3282,19 +3676,26 @@ export class MockGamApi implements GamApi, DemoControls {
 
   private finalizePaidBill(
     visit: VisitRow,
-    bill: PayBill,
+    meta: PaymentVisitMeta,
+    record: IssuedBillRecord,
+    billView: PayBill,
     method: "CASH" | "TRANSFER",
+    manual: boolean,
     staff: string,
     confirmedAt: string,
   ) {
-    const meta = this.ensurePaymentMeta(visit)
-    meta.closedTables = [...bill.tables]
-    meta.closedClusterCode = bill.clusterCode
-    meta.status = "PAID"
-    meta.paidAt = confirmedAt
-    meta.paidBy = staff
+    record.billStatus = "PAID"
+    record.paidAt = confirmedAt
+    record.paidBy = staff
+    record.manualConfirm = manual
+    record.cancelPending = false
 
-    if (!visit.endedAt) {
+    const allBillsPaid = meta.bills.length > 0 && meta.bills.every((b) => b.billStatus === "PAID")
+    const shouldCloseVisit = allBillsPaid && !this.hasActiveUnbilledLines(meta)
+
+    if (shouldCloseVisit && !visit.endedAt) {
+      meta.closedTables = [...billView.tables]
+      meta.closedClusterCode = billView.clusterCode
       this.commit({ action: "VISIT_ENDED", entityType: "visit", undoable: false }, (tx) => {
         const allocs = activeAllocations(this.db).filter((a) => a.visitId === visit.id)
         allocs.forEach((a) => this.release(tx, a, "GUEST_LEFT"))
@@ -3310,23 +3711,21 @@ export class MockGamApi implements GamApi, DemoControls {
         row.endedAt = this.now
         row.endedByUserId = this.session.id
         row.endReason = "GUEST_LEFT"
-        return { entityId: visit.id, summary: `Thanh toán ${bill.code} · bàn về Trống` }
+        return { entityId: visit.id, summary: `Thanh toán ${billView.code} · bàn về Trống` }
       })
     } else {
       meta.versionOffset += 1
     }
 
-    if (!this.paymentPaidLog.some((n) => n.visitId === bill.visitId)) {
-      this.paymentPaidLog.unshift({
-        id: `paid-${bill.billCode}-${this.seq + 1}`,
-        type: "PAID",
-        title: "Đã thanh toán",
-        text: `${bill.code} · ${formatVnd(bill.dueVnd)} · ${method === "CASH" ? "Tiền mặt" : "Chuyển khoản QR"}`,
-        time: confirmedAt,
-        occurredAt: this.now.toISOString(),
-        visitId: bill.visitId,
-      })
-    }
+    this.paymentPaidLog.unshift({
+      id: `paid-${record.billCode}-${this.seq + 1}-${this.paymentPaidLog.length + 1}`,
+      type: "PAID",
+      title: "Đã thanh toán",
+      text: `${billView.code} · ${formatVnd(billView.dueVnd)} · ${method === "CASH" ? "Tiền mặt" : "Chuyển khoản QR"}`,
+      time: confirmedAt,
+      occurredAt: this.now.toISOString(),
+      visitId: billView.visitId,
+    })
   }
 
   private commitPayment(
@@ -3336,10 +3735,11 @@ export class MockGamApi implements GamApi, DemoControls {
     givenVnd: number,
     version: number,
     idempotencyKey: string,
+    billCode?: string,
   ): Receipt {
     this.require("payment.collect")
     this.paymentAttemptKeys.push(idempotencyKey)
-    const fingerprint = `${visitId}:${method}:${manual ? 1 : 0}:${method === "CASH" ? givenVnd : 0}:${version}`
+    const fingerprint = `${visitId}:${billCode ?? ""}:${method}:${manual ? 1 : 0}:${method === "CASH" ? givenVnd : 0}:${version}`
     const existing = this.paymentIdempotency.get(idempotencyKey)
     if (existing) {
       if (existing.fingerprint !== fingerprint) {
@@ -3353,34 +3753,64 @@ export class MockGamApi implements GamApi, DemoControls {
       throw new ApiError(0, "NETWORK_ERROR", "Không gửi được tới máy chủ")
     }
 
-    const { visit, bill } = this.resolvePaymentVisit(visitId)
-    if (bill.status === "PAID") {
+    const { visit } = this.resolvePaymentVisit(visitId)
+    const meta = this.ensurePaymentMeta(visit)
+    const sessionStatus = this.deriveSessionStatus(visit, meta)
+
+    let targetRecord: IssuedBillRecord | undefined
+    if (billCode !== undefined) {
+      targetRecord = meta.bills.find((b) => b.billCode === billCode)
+      if (!targetRecord) {
+        throw new ApiError(404, "NOT_FOUND", `Không tìm thấy hóa đơn ${billCode} trong phiên.`)
+      }
+    } else {
+      targetRecord = meta.bills.find((b) => b.billStatus === "UNPAID")
+      if (!targetRecord) {
+        if (sessionStatus === "PAID") {
+          if (this.paymentFault.nextConfirm === "dup") this.paymentFault.nextConfirm = undefined
+          const lastPaid = meta.bills[meta.bills.length - 1]
+          throw new ApiError(409, "DUPLICATE_PAYMENT", "Bill này đã được thanh toán trên thiết bị khác", {
+            confirmedBy: lastPaid?.paidBy ?? "Thu ngân khác",
+            confirmedAt: lastPaid?.paidAt ?? fmtTime(this.now),
+          })
+        }
+        if (sessionStatus === "CLOSED_UNPAID" || visit.endedAt) {
+          throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc (đã trả bàn) nhưng chưa ghi nhận thu tiền.")
+        }
+        throw new ApiError(
+          409,
+          "INVALID_STATE",
+          "Phiên chưa tạo tạm tính (Chờ thanh toán), chưa thể xác nhận thu tiền.",
+        )
+      }
+    }
+
+    if (targetRecord.billStatus === "PAID") {
       if (this.paymentFault.nextConfirm === "dup") this.paymentFault.nextConfirm = undefined
       throw new ApiError(409, "DUPLICATE_PAYMENT", "Bill này đã được thanh toán trên thiết bị khác", {
-        confirmedBy: bill.paidBy ?? "Thu ngân khác",
-        confirmedAt: bill.paidAt ?? fmtTime(this.now),
+        confirmedBy: targetRecord.paidBy ?? "Thu ngân khác",
+        confirmedAt: targetRecord.paidAt ?? fmtTime(this.now),
       })
     }
-    if (bill.status === "CLOSED_UNPAID") {
+    if (visit.endedAt) {
       throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc (đã trả bàn) nhưng chưa ghi nhận thu tiền.")
     }
-    if (bill.version !== version) {
+    if (this.paymentVersion(visit, meta) !== version) {
       throw new ApiError(409, "VERSION_CONFLICT", "Bill vừa được cập nhật, vui lòng tải lại.")
     }
-    if (bill.status !== "AWAITING_PAYMENT") {
-      throw new ApiError(409, "INVALID_STATE", "Phiên chưa tạo tạm tính (Chờ thanh toán), chưa thể xác nhận thu tiền.")
-    }
-    if (bill.lines.length === 0) {
+
+    const billView = this.buildIssuedPayBill(visit, meta, targetRecord)
+    if (billView.lines.length === 0) {
       throw new ApiError(409, "INVALID_STATE", "Phiên chưa có dữ liệu món trong bản mô phỏng.")
     }
-    if (method === "CASH" && (!Number.isSafeInteger(givenVnd) || givenVnd < bill.dueVnd)) {
+    if (method === "CASH" && (!Number.isSafeInteger(givenVnd) || givenVnd < billView.dueVnd)) {
       throw new ApiError(400, "VALIDATION_FAILED", "Số tiền khách đưa chưa đủ.")
     }
 
     if (this.paymentFault.nextConfirm === "dup") {
       this.paymentFault.nextConfirm = undefined
       const dupAt = fmtTime(this.now)
-      this.finalizePaidBill(visit, bill, method, "Hà · Thu ngân", dupAt)
+      this.finalizePaidBill(visit, meta, targetRecord, billView, method, manual, "Hà · Thu ngân", dupAt)
       throw new ApiError(409, "DUPLICATE_PAYMENT", "Bill này đã được thanh toán trên thiết bị khác", {
         confirmedBy: "Thu ngân Hà",
         confirmedAt: dupAt,
@@ -3390,24 +3820,25 @@ export class MockGamApi implements GamApi, DemoControls {
     const confirmedAt = fmtTime(this.now)
     const staff = `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`
     const receipt: Receipt = {
-      billCode: bill.billCode,
-      visitId: bill.visitId,
-      sessionCode: bill.sessionCode,
-      code: bill.code,
-      tables: [...bill.tables],
-      ...(bill.clusterCode ? { clusterCode: bill.clusterCode } : {}),
+      billCode: billView.billCode,
+      visitId: billView.visitId,
+      sessionCode: billView.sessionCode,
+      code: billView.code,
+      tables: [...billView.tables],
+      ...(billView.clusterCode ? { clusterCode: billView.clusterCode } : {}),
       method,
       manual,
-      givenVnd: method === "CASH" ? givenVnd : bill.dueVnd,
-      changeVnd: method === "CASH" ? givenVnd - bill.dueVnd : 0,
-      preRoundVnd: bill.preRoundVnd,
-      dueVnd: bill.dueVnd,
+      givenVnd: method === "CASH" ? givenVnd : billView.dueVnd,
+      changeVnd: method === "CASH" ? givenVnd - billView.dueVnd : 0,
+      preRoundVnd: billView.preRoundVnd,
+      dueVnd: billView.dueVnd,
       confirmedAt,
       confirmedBy: staff,
     }
 
-    this.finalizePaidBill(visit, bill, method, staff, confirmedAt)
+    this.finalizePaidBill(visit, meta, targetRecord, billView, method, manual, staff, confirmedAt)
     this.paymentIdempotency.set(idempotencyKey, { fingerprint, receipt })
+    this.recordPaymentAudit("PAID", billView.billCode, visit.id)
 
     this.seq += 1
     this.emit({
@@ -3416,7 +3847,7 @@ export class MockGamApi implements GamApi, DemoControls {
       entityType: "visit",
       actorKind: "USER",
       actorUserId: this.session.id,
-      summary: `Đã ghi nhận thanh toán ${bill.code}`,
+      summary: `Đã ghi nhận thanh toán ${billView.code}`,
     })
     return structuredClone(receipt)
   }
@@ -3426,9 +3857,10 @@ export class MockGamApi implements GamApi, DemoControls {
     givenVnd: number,
     version: number,
     idempotencyKey: string,
+    billCode?: string,
   ): Promise<Receipt> {
     await this.latency("m")
-    return this.commitPayment(visitId, "CASH", false, givenVnd, version, idempotencyKey)
+    return this.commitPayment(visitId, "CASH", false, givenVnd, version, idempotencyKey, billCode)
   }
 
   async confirmPaymentTransfer(
@@ -3436,9 +3868,212 @@ export class MockGamApi implements GamApi, DemoControls {
     manual: boolean,
     version: number,
     idempotencyKey: string,
+    billCode?: string,
   ): Promise<Receipt> {
     await this.latency("m")
-    return this.commitPayment(visitId, "TRANSFER", manual, 0, version, idempotencyKey)
+    return this.commitPayment(visitId, "TRANSFER", manual, 0, version, idempotencyKey, billCode)
+  }
+
+  private revertPaidBillToUnpaid(visit: VisitRow, meta: PaymentVisitMeta, record: IssuedBillRecord) {
+    if (visit.endedAt !== null) {
+      const releasedAllocs = [...this.db.allocations.values()].filter(
+        (a) => a.visitId === visit.id && a.kind === "USAGE" && a.releaseReason === "GUEST_LEFT",
+      )
+      const activeTableIds = new Set(activeAllocations(this.db).map((a) => a.tableId))
+      if (releasedAllocs.some((a) => activeTableIds.has(a.tableId))) {
+        throw new ApiError(409, "CONFLICT", "Bàn đang có khách khác sử dụng, không thể mở lại phiên.")
+      }
+      this.commit({ action: "PAYMENT_CANCELLED", entityType: "visit", undoable: false }, (tx) => {
+        for (const alloc of releasedAllocs) {
+          const aRow = tx.edit("allocations", alloc.id)
+          aRow.releasedAt = null
+          aRow.releasedByUserId = null
+          aRow.releaseReason = null
+          if (alloc.groupId !== null) {
+            const grp = this.db.groups.get(alloc.groupId)
+            if (grp && grp.dissolvedAt && !grp.layoutTableIds) {
+              const gRow = tx.edit("groups", grp.id)
+              gRow.dissolvedAt = null
+              gRow.dissolvedByUserId = null
+            }
+          }
+        }
+        const vRow = tx.edit("visits", visit.id)
+        vRow.endedAt = null
+        vRow.endedByUserId = null
+        vRow.endReason = null
+        vRow.paidMarkedAt = null
+        vRow.paidMarkedByUserId = null
+        return { entityId: visit.id, summary: `Mở lại phiên sau khi hủy ${record.billCode}` }
+      })
+    } else {
+      this.seq += 1
+      this.emit({
+        latestSeq: this.seq,
+        action: "PAYMENT_CANCELLED",
+        entityType: "visit",
+        actorKind: "USER",
+        actorUserId: this.session.id,
+        summary: `Hủy thanh toán ${record.billCode}`,
+      })
+    }
+
+    record.billStatus = "UNPAID"
+    record.paidAt = undefined
+    record.paidBy = undefined
+    record.manualConfirm = undefined
+    record.cancelPending = false
+    meta.versionOffset += 1
+  }
+
+  async requestPaymentCancel(billCode: string, reason: string): Promise<CancelRequest> {
+    await this.latency("m")
+    this.require("payment.collect")
+    const trimmed = reason.trim()
+    if (!trimmed) {
+      throw new ApiError(400, "VALIDATION_FAILED", "Vui lòng nhập lý do yêu cầu hủy thanh toán.")
+    }
+    const { visit, meta, record } = this.locateIssuedBill(billCode)
+    if (record.billStatus !== "PAID") {
+      throw new ApiError(409, "INVALID_STATE", "Chỉ có thể yêu cầu hủy bill đã thanh toán.")
+    }
+    if (record.cancelPending || this.cancelRequests.some((r) => r.billCode === billCode && r.status === "PENDING")) {
+      throw new ApiError(409, "INVALID_STATE", "Bill này đang có yêu cầu hủy chờ duyệt.")
+    }
+    const billView = this.buildIssuedPayBill(visit, meta, record)
+    const req: CancelRequest = {
+      id: `cr-${this.cancelRequestSeq++}`,
+      billCode,
+      visitId: String(visit.id),
+      code: billView.code,
+      dueVnd: billView.dueVnd,
+      reason: trimmed,
+      requestedBy: `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`,
+      requestedAt: this.now.toISOString(),
+      status: "PENDING",
+    }
+    this.cancelRequests.unshift(req)
+    record.cancelPending = true
+    meta.versionOffset += 1
+    this.seq += 1
+    this.pushPaymentEvent(
+      "CANCEL_REQUESTED",
+      "Yêu cầu hủy bill",
+      `${billView.code} (${billCode}) · ${trimmed}`,
+      visit.id,
+      "creq",
+    )
+    this.recordPaymentAudit("CANCEL_REQUESTED", billCode, visit.id, {
+      actor: req.requestedBy,
+      reason: trimmed,
+    })
+    return structuredClone(req)
+  }
+
+  async listPaymentCancelRequests(): Promise<CancelRequest[]> {
+    await this.latency("q")
+    this.require("audit.read")
+    return structuredClone(this.cancelRequests)
+  }
+
+  async decidePaymentCancel(requestId: string, approve: boolean, note?: string): Promise<CancelRequest> {
+    await this.latency("m")
+    this.require("audit.read")
+    const req = this.cancelRequests.find((r) => r.id === requestId)
+    if (!req) {
+      throw new ApiError(404, "NOT_FOUND", "Không tìm thấy yêu cầu hủy thanh toán.")
+    }
+    if (req.status !== "PENDING") {
+      throw new ApiError(409, "INVALID_STATE", "Yêu cầu hủy này đã được xử lý trước đó.")
+    }
+    const { visit, meta, record } = this.locateIssuedBill(req.billCode)
+    const decider = `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`
+    const trimmedNote = note?.trim() || undefined
+
+    if (approve) {
+      if (record.billStatus !== "PAID") {
+        throw new ApiError(409, "INVALID_STATE", "Bill không còn ở trạng thái Đã thanh toán.")
+      }
+      this.revertPaidBillToUnpaid(visit, meta, record)
+      req.status = "APPROVED"
+      req.decidedBy = decider
+      req.decidedAt = this.now.toISOString()
+      if (trimmedNote) req.decisionNote = trimmedNote
+      this.pushPaymentEvent(
+        "CANCEL_DECIDED",
+        "Đã duyệt hủy thanh toán",
+        `${req.code} (${req.billCode}) · quay lại Chờ thanh toán`,
+        visit.id,
+        "cdec",
+      )
+      this.recordPaymentAudit("CANCEL_APPROVED", req.billCode, visit.id, {
+        actor: req.requestedBy,
+        approver: decider,
+        reason: trimmedNote ?? req.reason,
+      })
+    } else {
+      req.status = "REJECTED"
+      req.decidedBy = decider
+      req.decidedAt = this.now.toISOString()
+      if (trimmedNote) req.decisionNote = trimmedNote
+      record.cancelPending = false
+      meta.versionOffset += 1
+      this.pushPaymentEvent(
+        "CANCEL_DECIDED",
+        "Từ chối hủy thanh toán",
+        `${req.code} (${req.billCode}) · giữ Đã thanh toán`,
+        visit.id,
+        "cdec",
+      )
+      this.recordPaymentAudit("CANCEL_REJECTED", req.billCode, visit.id, {
+        actor: req.requestedBy,
+        approver: decider,
+        reason: trimmedNote ?? req.reason,
+      })
+    }
+    return structuredClone(req)
+  }
+
+  async cancelPaidBill(billCode: string, reason: string): Promise<void> {
+    await this.latency("m")
+    const allowed: RoleCode[] = ["RECEPTIONIST", "ADMIN", "OWNER"]
+    if (!allowed.includes(this.session.role)) {
+      throw new ApiError(403, "PERMISSION_DENIED", "Chỉ Lễ tân / Quản trị mới được hủy bill đã thanh toán trực tiếp.")
+    }
+    const trimmed = reason.trim()
+    if (!trimmed) {
+      throw new ApiError(400, "VALIDATION_FAILED", "Vui lòng nhập lý do hủy thanh toán.")
+    }
+    const { visit, meta, record } = this.locateIssuedBill(billCode)
+    if (record.billStatus !== "PAID") {
+      throw new ApiError(409, "INVALID_STATE", "Chỉ có thể hủy bill đã thanh toán.")
+    }
+    const billView = this.buildIssuedPayBill(visit, meta, record)
+    this.revertPaidBillToUnpaid(visit, meta, record)
+    const pendingReq = this.cancelRequests.find((r) => r.billCode === billCode && r.status === "PENDING")
+    if (pendingReq) {
+      pendingReq.status = "APPROVED"
+      pendingReq.decidedBy = `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`
+      pendingReq.decidedAt = this.now.toISOString()
+      pendingReq.decisionNote = trimmed
+    }
+    this.pushPaymentEvent(
+      "CANCEL_DECIDED",
+      "Đã hủy thanh toán",
+      `${billView.code} (${billCode}) · ${trimmed}`,
+      visit.id,
+      "cdir",
+    )
+    this.recordPaymentAudit("CANCELLED_DIRECT", billCode, visit.id, { reason: trimmed })
+  }
+
+  async listPaymentAudit(billCode?: string): Promise<PaymentAuditEntry[]> {
+    await this.latency("q")
+    this.require("payment.collect")
+    const list = billCode
+      ? this.paymentAuditLog.filter((entry) => entry.billCode === billCode)
+      : this.paymentAuditLog
+    return structuredClone(list)
   }
 
   async listPaymentNotifications(): Promise<PaymentNotification[]> {
@@ -3448,50 +4083,60 @@ export class MockGamApi implements GamApi, DemoControls {
     for (const [visitIdNum, meta] of this.paymentMeta.entries()) {
       const visit = this.db.visits.get(visitIdNum)
       if (!visit) continue
-      const bill = this.buildPayBill(visit)
-      for (let i = 0; i < bill.lines.length; i += 1) {
-        const line = bill.lines[i]
+      const tableInfo = this.resolveVisitTableInfo(visit, meta)
+      const displayCode = tableInfo.clusterCode ?? tableInfo.tables[0]
+      const sessionStatus = this.deriveSessionStatus(visit, meta)
+
+      const allLines: { scope: string; line: PayLine; index: number }[] = [
+        ...meta.unbilledLines.map((line, index) => ({ scope: `u-${visit.id}`, line, index })),
+        ...meta.bills.flatMap((b) => b.lines.map((line, index) => ({ scope: b.billCode, line, index }))),
+      ]
+      for (const { scope, line, index } of allLines) {
         if (line.state === "CANCELLED") {
-          const timeStr = line.roundTime ?? bill.openedAt
+          const timeStr = line.roundTime ?? fmtTime(visit.startedAt)
           items.push({
-            id: `cancel-${bill.billCode}-${i}`,
+            id: `cancel-${scope}-${index}`,
             type: "CANCELLED_ITEM",
             title: "Đã hủy món",
-            text: `${bill.code} · ${line.qty}× ${line.name}${line.note ? ` · ${line.note}` : ""}`,
+            text: `${displayCode} · ${line.qty}× ${line.name}${line.note ? ` · ${line.note}` : ""}`,
             time: timeStr,
             occurredAt: atBusinessTime(visit.businessDate, timeStr).toISOString(),
-            visitId: bill.visitId,
+            visitId: String(visit.id),
           })
         }
       }
-      if (bill.status !== "PAID" && bill.status !== "CLOSED_UNPAID") {
+
+      if (sessionStatus !== "PAID" && sessionStatus !== "CLOSED_UNPAID") {
         if (meta.requestedAt) {
           const reqDate = meta.requestedAtDate ?? atBusinessTime(visit.businessDate, meta.requestedAt)
           items.push({
-            id: `req-${bill.billCode}`,
+            id: `req-B${String(visit.id).padStart(4, "0")}`,
             type: "PAYMENT_REQUEST",
             title: "Gọi thanh toán",
-            text: `${bill.code} · PV ${bill.waiterName} gửi yêu cầu`,
+            text: `${displayCode} · PV ${meta.waiterName} gửi yêu cầu`,
             time: meta.requestedAt,
             occurredAt: reqDate.toISOString(),
-            visitId: bill.visitId,
+            visitId: String(visit.id),
           })
         }
-        if (bill.status === "AWAITING_PAYMENT" && meta.pendingAt) {
-          const pendDate = meta.pendingAtDate ?? atBusinessTime(visit.businessDate, meta.pendingAt)
-          items.push({
-            id: `pend-${bill.billCode}`,
-            type: "AWAITING_PAYMENT",
-            title: "Chờ thanh toán",
-            text: `${bill.code} · đã tạm tính ${formatVnd(bill.dueVnd)}`,
-            time: meta.pendingAt,
-            occurredAt: pendDate.toISOString(),
-            visitId: bill.visitId,
-          })
+        for (const record of meta.bills) {
+          if (record.billStatus === "UNPAID" && record.pendingAt) {
+            const pendDate = record.pendingAtDate ?? atBusinessTime(visit.businessDate, record.pendingAt)
+            const totals = calcBillTotals(record.lines)
+            items.push({
+              id: `pend-${record.billCode}`,
+              type: "AWAITING_PAYMENT",
+              title: "Chờ thanh toán",
+              text: `${displayCode} · đã tạm tính ${formatVnd(totals.dueVnd)}`,
+              time: record.pendingAt,
+              occurredAt: pendDate.toISOString(),
+              visitId: String(visit.id),
+            })
+          }
         }
       }
     }
-    items.push(...this.paymentPaidLog)
+    items.push(...this.paymentPaidLog, ...this.paymentEventLog)
     return items.sort((a, b) => (b.occurredAt ?? b.time).localeCompare(a.occurredAt ?? a.time))
   }
 
