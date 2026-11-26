@@ -123,12 +123,19 @@ try {
     }
   }
 
-  // 2. VM-02 / D1 / TN-02-K7: Bartender flow on /chebien (userId 8)
+  // 2. VM-02 / D1 / TN-02-K7 / NA45H-06: Bartender flow on /chebien (userId 8)
   for (const vp of VIEWPORTS) {
     const { context, page, errors } = await openUser({ width: vp.width, height: vp.height }, 8, "/chebien")
     try {
       await page.getByRole("button", { name: "Hóa đơn quầy Bar" }).click()
       await expect(page.getByText("Khách quầy Bar")).toBeVisible()
+      // NA45H-06: Bartender drawer only lists bar-area sessions (never A3 / G02 / G04 / A2 or "Bàn khác đang phục vụ")
+      await expect(page.getByText(/Bàn khác đang phục vụ/)).toHaveCount(0)
+      for (const nonBar of ["A3", "G02", "G04", "A2"]) {
+        await expect(page.locator(".pay-w2-sess-btn", { hasText: nonBar })).toHaveCount(0)
+      }
+      await expect(page.locator(".pay-w2-sess-btn", { hasText: "BAR01" })).toBeVisible()
+      await expect(page.locator(".pay-w2-sess-btn", { hasText: "G05" })).toBeVisible()
       await page.locator(".pay-w2-sess-btn", { hasText: "BAR01" }).click()
       await assertNoOverflow(page, `bar-${vp.name}-detail`)
 
