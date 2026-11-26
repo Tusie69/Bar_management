@@ -88,8 +88,10 @@ describe("BillRoundsCard & ProvisionalPreviewView", () => {
     expect(html).not.toContain("Tháp bia")
     expect(html).not.toContain("Đợt 3")
     expect(html).not.toContain("dòng món đã hủy")
-    expect(html).toContain("theo cấu hình · chờ chốt TN-03")
-    expect(html).toContain("Chưa áp dụng · chờ BA chốt")
+    expect(html).not.toContain("theo cấu hình · chờ chốt TN-03")
+    expect(html).toContain("Phí phục vụ · phụ thu")
+    expect(html).toContain("Đang phát triển")
+    expect(html).toContain("0đ")
     expect(html).toContain("155.000đ")
   })
 
@@ -121,10 +123,11 @@ describe("BillRoundsCard & ProvisionalPreviewView", () => {
     expect(detailHtml).toContain("disabled")
   })
 
-  it("renders S3 preview without page title and keeps demo QR + provisional notice", () => {
-    const html = renderToStaticMarkup(
+  it("renders S3 preview without QR and S3 invoice with demo QR", () => {
+    const provisionalHtml = renderToStaticMarkup(
       createElement(ProvisionalPreviewView, {
-        bill: sampleBill({ status: "AWAITING_PAYMENT", pendingAt: "21:31" }),
+        bill: sampleBill({ status: "SERVING" }),
+        isProvisional: true,
         canCollect: true,
         isWaiter: false,
         busy: false,
@@ -133,10 +136,25 @@ describe("BillRoundsCard & ProvisionalPreviewView", () => {
         onSimulatedPrint: () => undefined,
       }),
     )
-    expect(html).toContain("Trên màn hình")
-    expect(html).toContain("Bản in 80mm")
-    expect(html).toContain("21GAM B0412")
-    expect(html).toContain("Bill tạm tính, chưa phải hóa đơn")
+    expect(provisionalHtml).toContain("Trên màn hình")
+    expect(provisionalHtml).toContain("Bản in 80mm")
+    expect(provisionalHtml).not.toContain("21GAM B0412")
+    expect(provisionalHtml).toContain("Tạm tính – chưa phải hóa đơn")
+
+    const invoiceHtml = renderToStaticMarkup(
+      createElement(ProvisionalPreviewView, {
+        bill: sampleBill({ status: "AWAITING_PAYMENT", pendingAt: "21:31" }),
+        isProvisional: false,
+        canCollect: true,
+        isWaiter: false,
+        busy: false,
+        onCollect: () => undefined,
+        onRequestPayment: () => undefined,
+        onSimulatedPrint: () => undefined,
+      }),
+    )
+    expect(invoiceHtml).toContain("21GAM B0412")
+    expect(invoiceHtml).toContain("HÓA ĐƠN")
   })
 })
 
@@ -232,7 +250,7 @@ describe("Role-specific detail actions (PA-A)", () => {
     )
     expect(html).toContain("1 món đang làm, vẫn tính vào bill. Hỏi khách trước khi chốt.")
     expect(html).toContain("Xem tạm tính")
-    expect(html).toContain("Chốt bill &amp; thu tiền")
+    expect(html).toContain("Thu tiền")
     expect(html).not.toContain("Gửi yêu cầu thanh toán")
   })
 
@@ -371,8 +389,9 @@ describe("Cash, QR, Method, PAID locks, and Error states", () => {
       }),
     )
     expect(methodHtml).toContain("Bill này đã thanh toán")
-    const disabledBtns = methodHtml.match(/<button[^>]*disabled=""/g) ?? []
-    expect(disabledBtns).toHaveLength(2)
+    expect(methodHtml).toContain("Đang phát triển")
+    const disabledMethodRows = methodHtml.match(/<button[^>]*disabled=""[^>]*class="pay-mrow[^"]*"/g) ?? []
+    expect(disabledMethodRows).toHaveLength(2)
 
     const cashHtml = renderToStaticMarkup(
       createElement(CashActionPane, {
