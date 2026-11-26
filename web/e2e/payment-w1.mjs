@@ -86,11 +86,12 @@ try {
       throw new Error(`Unexpected BAR permissions: order.read=${barCanRead}, payment.collect=${barCanCollect}`)
     }
 
-    // Bartender previews and issues invoice on BAR01, blocked on cash confirm
+    // NA45H-06: Bartender previews and issues invoice on BAR01, blocked on A3 & cash confirm
     api.setSession(bar)
     const barOpen = await paymentApi.listOpen()
     const barSummary = barOpen.find((b) => b.code === "BAR01")
     if (!barSummary) throw new Error("BAR01 missing from open bills")
+    if (barOpen.some((b) => b.code === "A3")) throw new Error("BAR listOpen must exclude A3")
     const barPreview = await paymentApi.previewBill(barSummary.visitId)
     if ("billCode" in barPreview) throw new Error("previewBill must not include billCode")
     const barIssued = await paymentApi.issueInvoice(barSummary.visitId, barPreview.version, "e2e-w1-bar-inv")
@@ -102,12 +103,21 @@ try {
     }
     if (!barBlocked) throw new Error("BAR was not blocked 403 from confirmCash")
 
-    // V12 multi-bill on A3: issue bill 1 -> order round 2 -> issue bill 2 -> pay bill 1 -> table stays seated -> pay bill 2 -> table free
-    api.setSession(waiter)
     const a3VisitId = await mockCtrl.visitIdForTable("A3")
+    let barA3Blocked = false
+    try {
+      await paymentApi.previewBill(a3VisitId)
+    } catch (e) {
+      barA3Blocked = e?.code === "PERMISSION_DENIED" && e?.status === 403
+    }
+    if (!barA3Blocked) throw new Error("BAR was not blocked 403 from A3 previewBill")
+
+    // V12 + NA45H-05 multi-bill on A3: issue bill 1 -> order round 2 (returns to SERVING) -> issue bill 2 -> pay bill 1 -> table stays seated -> pay bill 2 -> table free
+    api.setSession(waiter)
     const a3Serving = await paymentApi.getBill(a3VisitId)
     const a3Bill1 = await paymentApi.issueInvoice(a3VisitId, a3Serving.version, "e2e-w1-a3-inv1")
-    mockCtrl.addOrderLines(a3VisitId, [{ name: "Mojito", unit: "Ly", qty: 1, unitPriceVnd: 100_000 }])
+    const afterRound2 = mockCtrl.addOrderLines(a3VisitId, [{ name: "Mojito", unit: "Ly", qty: 1, unitPriceVnd: 100_000 }])
+    if (afterRound2.status !== "SERVING") throw new Error(`Expected A3 back to SERVING after order round 2, got ${afterRound2.status}`)
     const a3Preview2 = await paymentApi.previewBill(a3VisitId)
     if (a3Preview2.dueVnd !== 110_000) throw new Error(`Expected round 2 preview 110000, got ${a3Preview2.dueVnd}`)
     const a3Bill2 = await paymentApi.issueInvoice(a3VisitId, a3Preview2.version, "e2e-w1-a3-inv2")
@@ -126,7 +136,19 @@ try {
     const endFloorA3 = (await api.getFloorState(clock.now())).tables.find((t) => t.tableId === tableIdOf("A3")).state
     if (endFloorA3 !== "free") throw new Error(`Expected A3 free after all bills paid, got ${endFloorA3}`)
 
-    // D2 cancel flow on A2
+    // NA45H-01: cancelPaid on A3 succeeds even with seeded future bd+2 HOLD
+    const receptionist = byRole("RECEPTIONIST")
+    api.setSession(receptionist)
+    const paidBills = await paymentApi.listPaidBills()
+    if (!paidBills.some((b) => b.billCode === a3Bill2.billCode)) {
+      throw new Error("listPaidBills missing A3 bill2")
+    }
+    await paymentApi.cancelPaid(a3Bill2.billCode, "E2E NA45H-01 reopen A3 despite future HOLD")
+    const reopenedFloorA3 = (await api.getFloorState(clock.now())).tables.find((t) => t.tableId === tableIdOf("A3")).state
+    if (reopenedFloorA3 !== "seated") throw new Error(`Expected A3 reopened to seated, got ${reopenedFloorA3}`)
+
+    // D2 + NA45H-02 + NA45H-03 + NA45H-04 cancel flow on A2
+    api.setSession(cashier)
     const a2VisitId = await mockCtrl.visitIdForTable("A2")
     const a2Serving = await paymentApi.getBill(a2VisitId)
     const a2Bill = await paymentApi.issueInvoice(a2VisitId, a2Serving.version, "e2e-w1-a2-inv")
@@ -140,13 +162,24 @@ try {
     }
     if (!cashierDirectDenied) throw new Error("Cashier cancelPaid was not denied with 403")
 
+    const events = []
+    const unsub = api.subscribe((ev) => events.push(ev.action))
     const cancelReq = await paymentApi.requestCancel(a2Bill.billCode, "Khách đổi sang QR")
+    const myReqs = await paymentApi.listMyCancelRequests(a2Bill.billCode)
+    if (myReqs[0]?.status !== "PENDING") throw new Error("Cashier listMyCancelRequests missing PENDING")
     api.setSession(admin)
     const adminQueue = await paymentApi.listCancelRequests()
     if (!adminQueue.some((r) => r.id === cancelReq.id && r.status === "PENDING")) {
       throw new Error("Admin queue missing PENDING cancel request")
     }
     const approved = await paymentApi.decideCancel(cancelReq.id, true, "Duyệt hủy")
+    unsub()
+    if (!events.includes("PAYMENT_CANCEL_REQUESTED") || !events.includes("PAYMENT_CANCELLED")) {
+      throw new Error(`Missing cancel change events: ${events.join(",")}`)
+    }
+    api.setSession(cashier)
+    const myApproved = await paymentApi.listMyCancelRequests(a2Bill.billCode)
+    if (myApproved[0]?.status !== "APPROVED") throw new Error("Cashier listMyCancelRequests missing APPROVED")
     const a2ReopenedFloor = (await api.getFloorState(clock.now())).tables.find((t) => t.tableId === tableIdOf("A2")).state
     const audit = await paymentApi.listAudit(a2Bill.billCode)
 

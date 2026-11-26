@@ -122,11 +122,13 @@ import { calcBillTotals, formatVnd, sortOpenBills } from "../payment/calc"
 import type {
   BillPayStatus,
   CancelRequest,
+  PaidBillSummary,
   PayBill,
   PayBillSummary,
   PayLine,
   PaymentAuditAction,
   PaymentAuditEntry,
+  PaymentMethod,
   PaymentNotification,
   PaymentNotificationType,
   PreviewBill,
@@ -146,6 +148,7 @@ interface CommitMeta {
   reasonCode?: string | null
   reasonNote?: string | null
   compensates?: number | null
+  silent?: boolean
 }
 
 interface CommitOut<T> {
@@ -167,6 +170,8 @@ interface IssuedBillRecord {
   pendingAt?: string
   pendingAtDate?: Date
   paidAt?: string
+  paidAtDate?: Date
+  paidMethod?: PaymentMethod
   paidBy?: string
   manualConfirm?: boolean
   cancelPending?: boolean
@@ -184,6 +189,11 @@ interface PaymentVisitMeta {
   versionOffset: number
   closedTables?: string[]
   closedClusterCode?: string
+  lastClosedAllocIds?: number[]
+}
+
+interface CancelRequestInternal extends CancelRequest {
+  requestedByUserId: number
 }
 
 export interface DemoControls {
@@ -245,7 +255,7 @@ export class MockGamApi implements GamApi, DemoControls {
   private paymentEventLog: PaymentNotification[] = []
   private paymentIdempotency = new Map<string, { fingerprint: string; receipt: Receipt }>()
   private paymentIssueIdempotency = new Map<string, { fingerprint: string; bill: PayBill }>()
-  private cancelRequests: CancelRequest[] = []
+  private cancelRequests: CancelRequestInternal[] = []
   private cancelRequestSeq = 1
   private paymentAuditLog: PaymentAuditEntry[] = []
   private paymentAuditSeq = 1
@@ -450,14 +460,16 @@ export class MockGamApi implements GamApi, DemoControls {
       compensatedBy: null,
     }
     this.db.ops.push(op)
-    this.emit({
-      latestSeq: this.seq,
-      action: meta.action,
-      entityType: meta.entityType,
-      actorKind: op.actorKind,
-      actorUserId: op.actorUserId,
-      summary: out.summary,
-    })
+    if (!meta.silent) {
+      this.emit({
+        latestSeq: this.seq,
+        action: meta.action,
+        entityType: meta.entityType,
+        actorKind: op.actorKind,
+        actorUserId: op.actorUserId,
+        summary: out.summary,
+      })
+    }
     return {
       ...(out.extra as T),
       operationId: op.id,
@@ -3171,8 +3183,38 @@ export class MockGamApi implements GamApi, DemoControls {
     }
     // Derive CLOSED_UNPAID from live visit.endedAt; never cache it on meta.
     if (visit.endedAt) return "CLOSED_UNPAID"
+    if (hasActiveUnbilled) return "SERVING"
     if (hasUnpaidBill) return "AWAITING_PAYMENT"
     return "SERVING"
+  }
+
+  private isBarAreaVisit(visit: VisitRow, meta: PaymentVisitMeta): boolean {
+    const tableIds = visitTableIds(this.db, visit.id)
+    if (tableIds.length > 0) {
+      return tableIds.every((id) => {
+        const table = this.db.tables.get(id)
+        if (!table) return false
+        const zone = this.db.zones.get(table.zoneId)
+        return zone ? zone.code === "BAR" : /^BAR/i.test(table.code)
+      })
+    }
+    const info = this.resolveVisitTableInfo(visit, meta)
+    return info.tables.length > 0 && info.tables.every((code) => /^BAR/i.test(code))
+  }
+
+  private assertBarScope(visit: VisitRow, meta: PaymentVisitMeta) {
+    if (this.session.role === "BAR" && !this.isBarAreaVisit(visit, meta)) {
+      throw new ApiError(
+        403,
+        "PERMISSION_DENIED",
+        "Bartender chỉ được xem và xuất hóa đơn cho phiên thuộc khu vực quầy Bar.",
+      )
+    }
+  }
+
+  private toCancelRequest(req: CancelRequestInternal): CancelRequest {
+    const { requestedByUserId: _omit, ...rest } = req
+    return structuredClone(rest)
   }
 
   private resolveVisitTableInfo(
@@ -3447,6 +3489,15 @@ export class MockGamApi implements GamApi, DemoControls {
     }
     meta.versionOffset += 1
     const tableInfo = this.resolveVisitTableInfo(visit, meta)
+    this.seq += 1
+    this.emit({
+      latestSeq: this.seq,
+      action: "PAYMENT_ORDER_ADDED",
+      entityType: "visit",
+      actorKind: "USER",
+      actorUserId: this.session.id,
+      summary: `${tableInfo.clusterCode ?? tableInfo.tables[0]} · gọi thêm món`,
+    })
     return {
       visitId: String(visit.id),
       sessionCode: `S-${String(visit.id).padStart(4, "0")}`,
@@ -3467,6 +3518,7 @@ export class MockGamApi implements GamApi, DemoControls {
     for (const visit of this.db.visits.values()) {
       if (visit.endedAt) continue
       const meta = this.ensurePaymentMeta(visit)
+      if (this.session.role === "BAR" && !this.isBarAreaVisit(visit, meta)) continue
       const sessionStatus = this.deriveSessionStatus(visit, meta)
       if (sessionStatus === "PAID" || sessionStatus === "CLOSED_UNPAID") continue
       const tableInfo = this.resolveVisitTableInfo(visit, meta)
@@ -3509,7 +3561,9 @@ export class MockGamApi implements GamApi, DemoControls {
       await this.latency("q")
     }
     this.requirePaymentRead()
-    return this.resolvePaymentVisit(visitId).bill
+    const { visit, bill } = this.resolvePaymentVisit(visitId)
+    this.assertBarScope(visit, this.ensurePaymentMeta(visit))
+    return bill
   }
 
   async previewPaymentBill(visitId: string): Promise<PreviewBill> {
@@ -3517,6 +3571,7 @@ export class MockGamApi implements GamApi, DemoControls {
     this.requirePaymentRead()
     const { visit } = this.resolvePaymentVisit(visitId)
     const meta = this.ensurePaymentMeta(visit)
+    this.assertBarScope(visit, meta)
     const tableInfo = this.resolveVisitTableInfo(visit, meta)
     const totals = calcBillTotals(meta.unbilledLines)
     return {
@@ -3538,6 +3593,9 @@ export class MockGamApi implements GamApi, DemoControls {
   async issuePaymentInvoice(visitId: string, version: number, idempotencyKey: string): Promise<PayBill> {
     await this.latency("m")
     this.requireInvoiceIssuer()
+    const { visit } = this.resolvePaymentVisit(visitId)
+    const meta = this.ensurePaymentMeta(visit)
+    this.assertBarScope(visit, meta)
     const fingerprint = `${visitId}:${version}:ISSUE`
     const existing = this.paymentIssueIdempotency.get(idempotencyKey)
     if (existing) {
@@ -3547,8 +3605,6 @@ export class MockGamApi implements GamApi, DemoControls {
       return structuredClone(existing.bill)
     }
 
-    const { visit } = this.resolvePaymentVisit(visitId)
-    const meta = this.ensurePaymentMeta(visit)
     const sessionStatus = this.deriveSessionStatus(visit, meta)
     if (sessionStatus === "CLOSED_UNPAID" || visit.endedAt) {
       throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc, không thể xuất hóa đơn.")
@@ -3591,6 +3647,7 @@ export class MockGamApi implements GamApi, DemoControls {
     this.requirePaymentRead()
     const { visit } = this.resolvePaymentVisit(visitId)
     const meta = this.ensurePaymentMeta(visit)
+    this.assertBarScope(visit, meta)
     const tableInfo = this.resolveVisitTableInfo(visit, meta)
     return {
       visitId: String(visit.id),
@@ -3686,6 +3743,8 @@ export class MockGamApi implements GamApi, DemoControls {
   ) {
     record.billStatus = "PAID"
     record.paidAt = confirmedAt
+    record.paidAtDate = new Date(this.now.getTime())
+    record.paidMethod = method
     record.paidBy = staff
     record.manualConfirm = manual
     record.cancelPending = false
@@ -3696,8 +3755,9 @@ export class MockGamApi implements GamApi, DemoControls {
     if (shouldCloseVisit && !visit.endedAt) {
       meta.closedTables = [...billView.tables]
       meta.closedClusterCode = billView.clusterCode
-      this.commit({ action: "VISIT_ENDED", entityType: "visit", undoable: false }, (tx) => {
+      this.commit({ action: "VISIT_ENDED", entityType: "visit", undoable: false, silent: true }, (tx) => {
         const allocs = activeAllocations(this.db).filter((a) => a.visitId === visit.id)
+        meta.lastClosedAllocIds = allocs.map((a) => a.id)
         allocs.forEach((a) => this.release(tx, a, "GUEST_LEFT"))
         this.dissolveOrphanGroups(
           tx,
@@ -3874,16 +3934,30 @@ export class MockGamApi implements GamApi, DemoControls {
     return this.commitPayment(visitId, "TRANSFER", manual, 0, version, idempotencyKey, billCode)
   }
 
+  private hasReopenConflict(tableId: number, visitBd: BusinessDate): boolean {
+    const currentBd = businessDateOf(this.now)
+    if (blockingAllocations(this.db, tableId, visitBd).length > 0) return true
+    if (currentBd !== visitBd && blockingAllocations(this.db, tableId, currentBd).length > 0) return true
+    return activeAllocations(this.db).some((a) => a.tableId === tableId && a.kind === "USAGE")
+  }
+
   private revertPaidBillToUnpaid(visit: VisitRow, meta: PaymentVisitMeta, record: IssuedBillRecord) {
     if (visit.endedAt !== null) {
-      const releasedAllocs = [...this.db.allocations.values()].filter(
-        (a) => a.visitId === visit.id && a.kind === "USAGE" && a.releaseReason === "GUEST_LEFT",
-      )
-      const activeTableIds = new Set(activeAllocations(this.db).map((a) => a.tableId))
-      if (releasedAllocs.some((a) => activeTableIds.has(a.tableId))) {
+      const tracked = meta.lastClosedAllocIds?.length
+        ? meta.lastClosedAllocIds
+            .map((id) => this.db.allocations.get(id))
+            .filter((a): a is NonNullable<typeof a> => Boolean(a && a.releasedAt !== null && a.releaseReason === "GUEST_LEFT"))
+        : []
+      const releasedAllocs =
+        tracked.length > 0
+          ? tracked
+          : [...this.db.allocations.values()].filter(
+              (a) => a.visitId === visit.id && a.kind === "USAGE" && a.releaseReason === "GUEST_LEFT",
+            )
+      if (releasedAllocs.some((a) => this.hasReopenConflict(a.tableId, visit.businessDate))) {
         throw new ApiError(409, "CONFLICT", "Bàn đang có khách khác sử dụng, không thể mở lại phiên.")
       }
-      this.commit({ action: "PAYMENT_CANCELLED", entityType: "visit", undoable: false }, (tx) => {
+      this.commit({ action: "PAYMENT_CANCELLED", entityType: "visit", undoable: false, silent: true }, (tx) => {
         for (const alloc of releasedAllocs) {
           const aRow = tx.edit("allocations", alloc.id)
           aRow.releasedAt = null
@@ -3906,20 +3980,15 @@ export class MockGamApi implements GamApi, DemoControls {
         vRow.paidMarkedByUserId = null
         return { entityId: visit.id, summary: `Mở lại phiên sau khi hủy ${record.billCode}` }
       })
+      meta.lastClosedAllocIds = undefined
     } else {
       this.seq += 1
-      this.emit({
-        latestSeq: this.seq,
-        action: "PAYMENT_CANCELLED",
-        entityType: "visit",
-        actorKind: "USER",
-        actorUserId: this.session.id,
-        summary: `Hủy thanh toán ${record.billCode}`,
-      })
     }
 
     record.billStatus = "UNPAID"
     record.paidAt = undefined
+    record.paidAtDate = undefined
+    record.paidMethod = undefined
     record.paidBy = undefined
     record.manualConfirm = undefined
     record.cancelPending = false
@@ -3928,7 +3997,9 @@ export class MockGamApi implements GamApi, DemoControls {
 
   async requestPaymentCancel(billCode: string, reason: string): Promise<CancelRequest> {
     await this.latency("m")
-    this.require("payment.collect")
+    if (this.session.role !== "CASHIER") {
+      throw new ApiError(403, "PERMISSION_DENIED", "Chỉ Thu ngân mới được gửi yêu cầu hủy thanh toán.")
+    }
     const trimmed = reason.trim()
     if (!trimmed) {
       throw new ApiError(400, "VALIDATION_FAILED", "Vui lòng nhập lý do yêu cầu hủy thanh toán.")
@@ -3941,7 +4012,7 @@ export class MockGamApi implements GamApi, DemoControls {
       throw new ApiError(409, "INVALID_STATE", "Bill này đang có yêu cầu hủy chờ duyệt.")
     }
     const billView = this.buildIssuedPayBill(visit, meta, record)
-    const req: CancelRequest = {
+    const req: CancelRequestInternal = {
       id: `cr-${this.cancelRequestSeq++}`,
       billCode,
       visitId: String(visit.id),
@@ -3949,6 +4020,7 @@ export class MockGamApi implements GamApi, DemoControls {
       dueVnd: billView.dueVnd,
       reason: trimmed,
       requestedBy: `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`,
+      requestedByUserId: this.session.id,
       requestedAt: this.now.toISOString(),
       status: "PENDING",
     }
@@ -3967,13 +4039,29 @@ export class MockGamApi implements GamApi, DemoControls {
       actor: req.requestedBy,
       reason: trimmed,
     })
-    return structuredClone(req)
+    this.emit({
+      latestSeq: this.seq,
+      action: "PAYMENT_CANCEL_REQUESTED",
+      entityType: "visit",
+      actorKind: "USER",
+      actorUserId: this.session.id,
+      summary: `${billView.code} (${billCode}) · yêu cầu hủy thanh toán`,
+    })
+    return this.toCancelRequest(req)
+  }
+
+  async listMyPaymentCancelRequests(billCode?: string): Promise<CancelRequest[]> {
+    await this.latency("q")
+    this.require("payment.collect")
+    return this.cancelRequests
+      .filter((r) => r.requestedByUserId === this.session.id && (!billCode || r.billCode === billCode))
+      .map((r) => this.toCancelRequest(r))
   }
 
   async listPaymentCancelRequests(): Promise<CancelRequest[]> {
     await this.latency("q")
     this.require("audit.read")
-    return structuredClone(this.cancelRequests)
+    return this.cancelRequests.map((r) => this.toCancelRequest(r))
   }
 
   async decidePaymentCancel(requestId: string, approve: boolean, note?: string): Promise<CancelRequest> {
@@ -4011,6 +4099,14 @@ export class MockGamApi implements GamApi, DemoControls {
         approver: decider,
         reason: trimmedNote ?? req.reason,
       })
+      this.emit({
+        latestSeq: this.seq,
+        action: "PAYMENT_CANCELLED",
+        entityType: "visit",
+        actorKind: "USER",
+        actorUserId: this.session.id,
+        summary: `Đã duyệt hủy thanh toán ${req.code} (${req.billCode})`,
+      })
     } else {
       req.status = "REJECTED"
       req.decidedBy = decider
@@ -4018,6 +4114,7 @@ export class MockGamApi implements GamApi, DemoControls {
       if (trimmedNote) req.decisionNote = trimmedNote
       record.cancelPending = false
       meta.versionOffset += 1
+      this.seq += 1
       this.pushPaymentEvent(
         "CANCEL_DECIDED",
         "Từ chối hủy thanh toán",
@@ -4030,8 +4127,16 @@ export class MockGamApi implements GamApi, DemoControls {
         approver: decider,
         reason: trimmedNote ?? req.reason,
       })
+      this.emit({
+        latestSeq: this.seq,
+        action: "PAYMENT_CANCEL_REJECTED",
+        entityType: "visit",
+        actorKind: "USER",
+        actorUserId: this.session.id,
+        summary: `Từ chối hủy thanh toán ${req.code} (${req.billCode})`,
+      })
     }
-    return structuredClone(req)
+    return this.toCancelRequest(req)
   }
 
   async cancelPaidBill(billCode: string, reason: string): Promise<void> {
@@ -4065,11 +4170,57 @@ export class MockGamApi implements GamApi, DemoControls {
       "cdir",
     )
     this.recordPaymentAudit("CANCELLED_DIRECT", billCode, visit.id, { reason: trimmed })
+    this.emit({
+      latestSeq: this.seq,
+      action: "PAYMENT_CANCELLED",
+      entityType: "visit",
+      actorKind: "USER",
+      actorUserId: this.session.id,
+      summary: `Hủy thanh toán ${billView.code} (${billCode})`,
+    })
+  }
+
+  async listPaidPaymentBills(): Promise<PaidBillSummary[]> {
+    await this.latency("q")
+    const allowed: RoleCode[] = ["RECEPTIONIST", "ADMIN", "OWNER"]
+    if (!allowed.includes(this.session.role)) {
+      throw new ApiError(403, "PERMISSION_DENIED", "Chỉ Lễ tân / Quản trị mới được xem danh sách bill đã thu.")
+    }
+    const currentBd = businessDateOf(this.now)
+    const paid: { summary: PaidBillSummary; paidAtMs: number }[] = []
+    for (const [visitIdNum, meta] of this.paymentMeta.entries()) {
+      const visit = this.db.visits.get(visitIdNum)
+      if (!visit) continue
+      const tableInfo = this.resolveVisitTableInfo(visit, meta)
+      for (const record of meta.bills) {
+        if (record.billStatus !== "PAID") continue
+        const shiftBd = record.paidAtDate ? businessDateOf(record.paidAtDate) : visit.businessDate
+        if (shiftBd !== currentBd) continue
+        paid.push({
+          paidAtMs: record.paidAtDate?.getTime() ?? 0,
+          summary: {
+            billCode: record.billCode,
+            visitId: String(visit.id),
+            code: tableInfo.clusterCode ?? tableInfo.tables[0],
+            tables: [...tableInfo.tables],
+            ...(tableInfo.clusterCode ? { clusterCode: tableInfo.clusterCode } : {}),
+            dueVnd: calcBillTotals(record.lines).dueVnd,
+            method: record.paidMethod ?? "CASH",
+            paidAt: record.paidAt ?? "",
+            paidBy: record.paidBy ?? "",
+          },
+        })
+      }
+    }
+    paid.sort((a, b) => b.paidAtMs - a.paidAtMs || b.summary.billCode.localeCompare(a.summary.billCode))
+    return paid.map((item) => item.summary)
   }
 
   async listPaymentAudit(billCode?: string): Promise<PaymentAuditEntry[]> {
     await this.latency("q")
-    this.require("payment.collect")
+    if (!roleCan(this.session.role, "payment.collect") && this.session.role !== "RECEPTIONIST") {
+      throw new ApiError(403, "PERMISSION_DENIED", "Tài khoản không có quyền xem nhật ký thanh toán.")
+    }
     const list = billCode
       ? this.paymentAuditLog.filter((entry) => entry.billCode === billCode)
       : this.paymentAuditLog
