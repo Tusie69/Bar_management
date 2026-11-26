@@ -485,7 +485,7 @@ try {
     }
   }
 
-  // 5. NA45-11: TopBar outside /payment preserves deviceLabel & non-greeting header at 1440px
+  // 6. NA45-11: TopBar outside /payment preserves deviceLabel & non-greeting header at 1440px
   {
     for (const roleCheck of [
       { userId: 3, deviceLabel: "Laptop văn phòng", name: "Owner" },
@@ -500,6 +500,61 @@ try {
       } finally {
         await context.close()
       }
+    }
+  }
+
+  // 7. NA45-14: Newly seated visit -> release -> open bill (CLOSED_UNPAID) -> undo (visible + live) -> redo (CLOSED_UNPAID)
+  {
+    const { context, page, errors } = await openRole(VIEWPORTS[2], 3, "/floor")
+    try {
+      const c1Tile = page.locator('[aria-label^="Bàn C1,"], [aria-label^="Bàn C1:"]').first()
+      await c1Tile.click()
+      await page.getByRole("button", { name: /^Mở .*C1.* cho \d+ khách$/ }).click()
+      await expect(c1Tile).toHaveAttribute("aria-label", /Đã tới|Có khách/)
+
+      const c1VisitId = await page.evaluate(() => window.__21gamPaymentMock.visitIdForTable("C1"))
+      assert.ok(c1VisitId && /^\d+$/.test(c1VisitId), `Expected numeric C1 visitId, got ${c1VisitId}`)
+
+      // Release C1 BEFORE ever opening its payment bill (sheet stays open on C1 after Walk-in)
+      await page.getByRole("button", { name: /Nhả bàn \(khách rời\)/ }).click()
+      await page.getByRole("button", { name: "Nhả bàn", exact: true }).click()
+      await expect(c1Tile).toHaveAttribute("aria-label", /Trống/)
+
+      // Client-side nav to /payment, verify C1 absent, then open /payment/:c1VisitId (CLOSED_UNPAID)
+      await page.locator('a[href="/payment"]').first().click()
+      await expect(page).toHaveURL(/\/payment$/)
+      await expect(page.locator(".pay-sess", { hasText: "C1" })).toHaveCount(0)
+
+      await page.evaluate((id) => {
+        window.history.pushState({}, "", `/payment/${id}`)
+        window.dispatchEvent(new PopStateEvent("popstate"))
+      }, c1VisitId)
+      await expect(page.getByText("Đã trả bàn · chưa thu")).toBeVisible()
+      await expect(page.getByText("Phiên đã trả bàn nhưng chưa ghi nhận thu tiền")).toBeVisible()
+      await expect(page.getByRole("button", { name: "Chốt bill & thu tiền" })).toBeDisabled()
+
+      // Undo release: bill returns to live SERVING state and C1 reappears in S1
+      await page.locator("header").getByRole("button", { name: "Hoàn tác", exact: true }).click()
+      await expect(page.getByText("Đang phục vụ")).toBeVisible()
+      await expect(page.getByText("Đã trả bàn · chưa thu")).toHaveCount(0)
+      await page.getByRole("button", { name: "Phiên đang mở" }).click()
+      const c1Row = page.locator(".pay-sess", { hasText: "C1" })
+      await expect(c1Row).toHaveCount(1)
+      await expect(c1Row.getByText("Chưa có dữ liệu")).toBeVisible()
+
+      // Redo release: C1 leaves S1 and bill shows CLOSED_UNPAID again
+      await page.locator("header").getByRole("button", { name: "Làm lại", exact: true }).click()
+      await expect(page.locator(".pay-sess", { hasText: "C1" })).toHaveCount(0)
+      await page.evaluate((id) => {
+        window.history.pushState({}, "", `/payment/${id}`)
+        window.dispatchEvent(new PopStateEvent("popstate"))
+      }, c1VisitId)
+      await expect(page.getByText("Đã trả bàn · chưa thu")).toBeVisible()
+
+      assert.deepEqual(errors, [], `NA45-14 undo/redo console errors: ${errors.join(" | ")}`)
+      results.push("PASS 1440 NA45-14 release -> open bill -> undo -> redo sync")
+    } finally {
+      await context.close()
     }
   }
 

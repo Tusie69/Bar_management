@@ -6,7 +6,7 @@
  * - When Tú's TU-45/46 HTTP endpoints land, implement `httpPaymentApi: PaymentApi`
  *   using `httpClient` and select it here when `api.mode === "http"`.
  */
-import { ApiError, api } from "@/services"
+import { ApiError, api, clock } from "@/services"
 import type { PaymentApi } from "./contracts"
 import {
   getPaymentAttemptKeys,
@@ -57,6 +57,12 @@ if (api.mode === "mock" && !import.meta.env.PROD && typeof window !== "undefined
     bumpVersion: simulatePaymentVersionBump,
     getAttemptKeys: getPaymentAttemptKeys,
     listOpen: () => mockPaymentApi.listOpen(),
+    visitIdForTable: async (code: string) => {
+      const [catalog, floor] = await Promise.all([api.getCatalog(), api.getFloorState(clock.now())])
+      const table = catalog.tables.find((t) => t.code === code)
+      const claim = table ? floor.tables.find((t) => t.tableId === table.id)?.claim : undefined
+      return claim?.visitId ? String(claim.visitId) : null
+    },
     reset: () => (api as unknown as { reset?: () => void }).reset?.(),
   }
 }

@@ -205,6 +205,45 @@ describe("mockPaymentApi", () => {
     expect(ntfs.some((n) => n.type === "PAID" && n.visitId === a3Id)).toBe(false)
   })
 
+  it("restores a released visit to SERVING after undo and back to CLOSED_UNPAID after redo even if its bill was opened while closed (NA45-14)", async () => {
+    api.setSession(receptionist)
+    const catalog = await api.getCatalog()
+    const c1 = catalog.tables.find((t) => t.code === "C1")!
+    const seated = await api.seatWalkIn({ tableIds: [c1.id], guestCount: 2, contactName: "Khách hoàn tác" })
+    const visitId = String(seated.visitId)
+    const seatedFloor = await api.getFloorState(clock.now())
+    const visitVersion = seatedFloor.tables.find((t) => t.tableId === c1.id)!.claim!.version
+
+    // Release WITHOUT opening the bill first, then open the bill while closed.
+    const ended = await api.endVisit(seated.visitId, visitVersion)
+    api.setSession(cashier)
+    const closed = await paymentApi.getBill(visitId)
+    expect(closed.status).toBe("CLOSED_UNPAID")
+    expect((await paymentApi.listOpen()).find((x) => x.visitId === visitId)).toBeUndefined()
+
+    // Undo restores the live visit on floor and in S1/getBill.
+    api.setSession(receptionist)
+    const undone = await api.undo(ended.operationId!)
+    const floorAfterUndo = await api.getFloorState(clock.now())
+    expect(floorAfterUndo.tables.find((t) => t.tableId === c1.id)?.state).toBe("seated")
+
+    api.setSession(cashier)
+    const openAfterUndo = await paymentApi.listOpen()
+    expect(openAfterUndo.find((x) => x.visitId === visitId)).toMatchObject({
+      code: "C1",
+      status: "SERVING",
+      hasOrderLines: false,
+    })
+    expect((await paymentApi.getBill(visitId)).status).toBe("SERVING")
+
+    // Redo hides the visit from S1 and derives CLOSED_UNPAID again.
+    api.setSession(receptionist)
+    await api.redo(undone.operationId!)
+    api.setSession(cashier)
+    expect((await paymentApi.listOpen()).find((x) => x.visitId === visitId)).toBeUndefined()
+    expect((await paymentApi.getBill(visitId)).status).toBe("CLOSED_UNPAID")
+  })
+
   it("does not allow dup fault to finalize a SERVING bill before prebill/version/line guards", async () => {
     const a2Id = await visitIdByCode("A2")
     const serving = await paymentApi.getBill(a2Id)
