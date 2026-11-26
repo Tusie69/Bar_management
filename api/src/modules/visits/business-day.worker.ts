@@ -3,6 +3,7 @@ import type { PoolConnection, ResultSetHeader, RowDataPacket } from 'mysql2/prom
 import { env } from '../../config/env.js'
 import { databasePool } from '../../database/pool.js'
 import { recordTableTurn } from './table-turn.repository.js'
+import { applicationNow } from '../../time/application-clock.js'
 
 const supportedTimeZone = 'Asia/Ho_Chi_Minh'
 const calendarDatePattern = /^(\d{4})-(\d{2})-(\d{2})$/
@@ -252,7 +253,7 @@ export async function runBusinessDayEndSweep(options: {
   venueId: number
   now?: Date
 }): Promise<{ closed: number; skipped: number }> {
-  const now = options.now ?? new Date()
+  const now = options.now ?? applicationNow()
   const candidates = await listBusinessDayEndCandidates(options.organizationId, options.venueId, now)
   let closed = 0
   let skipped = 0
@@ -454,7 +455,7 @@ export async function runStaleHoldSweep(options: {
   venueId: number
   now?: Date
 }): Promise<{ released: number; skipped: number }> {
-  const now = options.now ?? new Date()
+  const now = options.now ?? applicationNow()
   const candidates = await listStaleHoldCandidates(options.organizationId, options.venueId, now)
   let released = 0
   let skipped = 0

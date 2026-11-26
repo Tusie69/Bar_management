@@ -3,6 +3,9 @@
 Tài liệu này đủ để dựng lại toàn bộ hệ thống từ một VPS trắng. Mọi lệnh chạy
 trên Ubuntu 22.04 hoặc 24.04.
 
+Bản Dev chạy song song trên cùng VPS (tên miền phụ, database riêng): xem
+[dev-environment.md](dev-environment.md).
+
 Kiến trúc: **một VPS, một origin.** Nginx phục vụ bundle React tĩnh và đồng
 thời proxy `/api/` sang Express trên `127.0.0.1:3000`. Vì web và API cùng tên
 miền nên cookie phiên chạy với `SameSite=lax` và không cần CORS cross-site —

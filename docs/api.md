@@ -38,7 +38,7 @@ conflict, 422 `INVALID_PHONE_NUMBER` / `BOOKING_PHONE_UNAVAILABLE`, 429 rate lim
 
 | Method | Path                        | Access                            | Response                                                                                                      |
 | ------ | --------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| GET    | `/health`                   | Public                            | `{ok:true}`; process liveness, not a database check                                                           |
+| GET    | `/health`                   | Public                            | `{ok:true, appEnv}`; process liveness, not a database check. `appEnv` = `production` \| `dev` \| `local` (TU-41)                                                          |
 | POST   | `/auth/login`               | Trusted origin                    | Body `{username,password,portal}`; returns `{user,permissions,csrfToken,portal,expiresAt}` and session cookie |
 | GET    | `/auth/me`                  | Session                           | `{user,permissions,csrfToken,portal}`                                                                         |
 | POST   | `/auth/logout`              | Session + CSRF                    | 204, no body                                                                                                  |
@@ -1315,6 +1315,56 @@ read the table. Writing additionally requires `user.manage`, an unchanged `versi
 and the target rules: nobody edits their own permissions (`409 CANNOT_MANAGE_SELF`) and OWNER accounts are untouchable
 (`403 OWNER_PROTECTED`). A code outside the ceiling is rejected with `400 PERMISSION_NOT_GRANTABLE` rather than
 silently ignored.
+
+## Dev clock (TU-42) — chỉ có trên bản Dev
+
+Router `/api/v1/dev` chỉ được gắn khi `APP_ENV=dev`. Trên Production mọi đường dẫn `/api/v1/dev/*` trả **404** mặc định (không phải 403).
+
+| Method | Path         | Quyền                                      | Request                                                                 | Response 200 | Lỗi |
+| ------ | ------------ | ------------------------------------------ | ----------------------------------------------------------------------- | ------------ | --- |
+| GET    | `/dev/clock` | Đã đăng nhập (mọi vai)                     | —                                                                       | `DevClockState` | 401 `AUTHENTICATION_REQUIRED` |
+| PUT    | `/dev/clock` | Session + CSRF + `venue.configure` (SuperAdmin) | Đúng một khoá: `{"preset":"17:00"\|"21:50"\|"23:30"\|"04:55"}`, `{"at":"YYYY-MM-DDTHH:mm"}` (giờ Việt Nam) hoặc `{"mode":"real"}` | `DevClockState` | 400 `INVALID_DEV_CLOCK_PAYLOAD`, `INVALID_DEV_CLOCK_PRESET`, `INVALID_DEV_CLOCK_AT`, `DEV_CLOCK_OUT_OF_RANGE` (quá ±31 ngày); 403 `PERMISSION_DENIED` |
+
+`DevClockState` = `{appEnv:"dev", simulated, offsetMs, now, realNow, setBy, setAt, canEdit}`. `now` là giờ nghiệp vụ (đã cộng `offsetMs`), `realNow` là giờ thật, `setAt` là giờ THẬT lúc đổi.
+
+Ví dụ:
+
+```bash
+curl -s -b jar -c jar -H 'Origin: https://dev.21gamofhanoi.com' -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' -X PUT https://dev.21gamofhanoi.com/api/v1/dev/clock -d '{"preset":"23:30"}'
+# {"appEnv":"dev","simulated":true,"offsetMs":45000000,"now":"2026-11-25T16:30:00.000Z",
+#  "realNow":"2026-11-25T04:00:00.000Z","setBy":"Owner dev","setAt":"2026-11-25T04:00:00.000Z","canEdit":true}
+```
+
+Mốc chọn nhanh rơi vào ca **đang mở hoặc sắp mở theo giờ thật**: ngày ca = ngày lịch của (giờ thật − mốc cắt ca); giờ trước mốc cắt (04:55) thuộc rạng sáng hôm sau. Bấm 23:30 lúc 10h sáng 25/11 → 23:30 tối 25/11.
+
+Sau một lần PUT thành công:
+- độ lệch lưu ở `venue_settings` khoá `dev_clock` (giữ qua restart / tự triển khai);
+- `operation_log` thêm dòng `DEV_CLOCK_CHANGED` (nhãn "Đổi giờ giả lập (Dev)", `occurred_at` = giờ thật, `changes` mang giờ giả lập trước/sau);
+- mọi máy đang mở `GET /tables/stream` nhận sự kiện SSE `dev-clock-changed` `{offsetMs, now}` và tự tải lại.
+
+**Cái gì đi theo đồng hồ giả lập:** `applicationNow()` ở API, mọi `UTC_TIMESTAMP()` / `NOW()` / `DEFAULT CURRENT_TIMESTAMP` trong SQL (qua `SET timestamp` trên từng kết nối MySQL), worker no-show và cắt ngày vận hành, `serverNow` của sơ đồ bàn, đồng hồ trên trình duyệt.
+**Cái gì giữ giờ thật:** hạn phiên đăng nhập (`expires_at`), giới hạn tần suất, TTL bộ nhớ đệm, thời điểm ghi nhật ký của chính thao tác đổi giờ.
+
+## Dev data (TU-43) — chỉ có trên bản Dev
+
+Cùng router `/api/v1/dev` (chỉ gắn khi `APP_ENV=dev`; Production trả **404**).
+
+| Method | Path | Quyền | Request | Response 200 | Lỗi |
+| ------ | ---- | ----- | ------- | ------------ | --- |
+| POST | `/dev/seed` | Session + CSRF + `venue.configure` | `{"scenario":"empty"\|"quiet"\|"busy"}` | `DevDataResult` | 400 `INVALID_DEV_SCENARIO`; 403 `PERMISSION_DENIED`; 409 `DEV_SEED_OUTSIDE_SHIFT` (đồng hồ ngoài ca), `DEV_DATABASE_REQUIRED` (database không có hậu tố `_dev`), `DEV_RESET_UNCLASSIFIED_TABLE` |
+| POST | `/dev/reset` | Session + CSRF + `venue.configure` | `{}` | `DevDataResult` (`scenario:"reset"`) | 403, 409 như trên |
+
+`DevDataResult` = `{scenario, businessDate, simulatedNow, counts:{accountsCreated, seatedParties, bookingsUpcoming, bookingsLate, bookingsUnassigned, waitlist, tableGroups, orders, cancellationRequests, menuItemsAvailable}, notes[], durationMs}`. `notes` liệt kê bước bị bỏ qua (VD chưa có danh mục món).
+
+```bash
+curl -s -b jar -H 'Origin: https://dev.21gamofhanoi.com' -H "X-CSRF-Token: $CSRF" \
+  -H 'Content-Type: application/json' -X POST https://dev.21gamofhanoi.com/api/v1/dev/seed -d '{"scenario":"busy"}'
+# {"scenario":"busy","businessDate":"2026-11-26","counts":{"seatedParties":26,"bookingsLate":3,"bookingsUpcoming":4,
+#  "bookingsUnassigned":4,"waitlist":6,"tableGroups":1,"orders":53,"cancellationRequests":1,...},"notes":[],"durationMs":2945}
+```
+
+Sau mỗi lần gọi thành công: dữ liệu vận hành cũ bị xoá trước (không cộng dồn), `operation_log` có dòng `DEV_DATA_SEEDED` / `DEV_DATA_RESET`, mọi máy mở `GET /tables/stream` nhận SSE `dev-data-changed`.
 
 ## Audit log (TU-35)
 

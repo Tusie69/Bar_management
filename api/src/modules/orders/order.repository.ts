@@ -618,7 +618,7 @@ async function readOrderDetail(
         version: Number(row.cancellation_version),
         requestedByUserId: Number(row.cancellation_requested_by),
         requestedByDisplayName: row.cancellation_requested_by_name ?? '',
-        requestedAt: isoDateTime(row.cancellation_requested_at ?? new Date()),
+        requestedAt: isoDateTime(row.cancellation_requested_at ?? applicationNow()),
       },
       lastRejection: row.rejection_id === null ? null : {
         cancellationId: Number(row.rejection_id),
@@ -626,7 +626,7 @@ async function readOrderDetail(
         reason: row.rejection_reason ?? '',
         rejectedByUserId: Number(row.rejection_decided_by),
         rejectedByDisplayName: row.rejection_decided_by_name ?? '',
-        rejectedAt: isoDateTime(row.rejection_decided_at ?? new Date()),
+        rejectedAt: isoDateTime(row.rejection_decided_at ?? applicationNow()),
         decisionNote: row.rejection_decision_note ?? null,
       },
     })),

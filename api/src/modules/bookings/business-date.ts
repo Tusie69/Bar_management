@@ -1,5 +1,6 @@
 import { AppError } from '../../errors/app-error.js'
 import { DEFAULT_VENUE_SHIFT, shiftLabel, type VenueShift } from '../venues/venue-shift.js'
+import { applicationNow } from '../../time/application-clock.js'
 
 export const bookingTimeZone = 'Asia/Ho_Chi_Minh'
 export const bookingReceptionStartMinutes = 19 * 60
@@ -75,14 +76,14 @@ export function validateCalendarDate(value: unknown): string {
  * Ngày nghiệp vụ tại thời điểm `now`, không ném lỗi ngoài ca: trước mốc cắt thuộc ngày hôm
  * trước, từ mốc cắt trở đi là ngày lịch hiện tại (kể cả khoảng chờ giữa mốc cắt và giờ mở ca).
  */
-export function businessDateAt(now = new Date(), shift: Shift = defaultShift): string {
+export function businessDateAt(now = applicationNow(), shift: Shift = defaultShift): string {
   const local = localPartsAt(now)
   return local.hour < shift.cutoffHour
     ? previousCalendarDate(local.year, local.month, local.day)
     : formatCalendarDate(local.year, local.month, local.day)
 }
 
-export function currentBusinessDate(now = new Date(), shift: Shift = defaultShift): string {
+export function currentBusinessDate(now = applicationNow(), shift: Shift = defaultShift): string {
   const local = localPartsAt(now)
   if (local.hour >= shift.cutoffHour && local.hour < shift.startHour) {
     throw new AppError(
@@ -99,7 +100,7 @@ export function currentBusinessDate(now = new Date(), shift: Shift = defaultShif
  * chặt hơn bởi EXPECTED_AT_IN_PAST trong validateBookingSchedule; Bàn chờ không có giờ đến nên
  * kiểm theo ngày.
  */
-export function assertBusinessDateNotPast(value: string, now = new Date(), shift: Shift = defaultShift): string {
+export function assertBusinessDateNotPast(value: string, now = applicationNow(), shift: Shift = defaultShift): string {
   const supplied = validateCalendarDate(value)
   if (supplied < businessDateAt(now, shift)) {
     throw new AppError(409, 'BUSINESS_DATE_IN_PAST', 'Không thể đặt bàn cho ngày đã qua.')
@@ -107,7 +108,7 @@ export function assertBusinessDateNotPast(value: string, now = new Date(), shift
   return supplied
 }
 
-export function assertCurrentBusinessDate(value: unknown, now = new Date(), shift: Shift = defaultShift): string {
+export function assertCurrentBusinessDate(value: unknown, now = applicationNow(), shift: Shift = defaultShift): string {
   const supplied = validateCalendarDate(value)
   const current = currentBusinessDate(now, shift)
   if (supplied !== current) {
@@ -141,7 +142,7 @@ function localPartsAt(date: Date): LocalDateTime {
 export function validateBookingSchedule(
   expectedAt: unknown,
   suppliedBusinessDate: unknown,
-  now = new Date(),
+  now = applicationNow(),
   shift: Shift = defaultShift,
 ): BookingSchedule {
   const businessDate = validateCalendarDate(suppliedBusinessDate)
@@ -215,7 +216,7 @@ export function validateBookingSchedule(
 
 export function assertCheckInBusinessDate(
   value: unknown,
-  now = new Date(),
+  now = applicationNow(),
   shift: Shift = defaultShift,
 ): CheckInBusinessDate {
   const businessDate = validateCalendarDate(value)

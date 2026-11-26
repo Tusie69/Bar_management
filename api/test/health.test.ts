@@ -8,7 +8,7 @@ describe('GET /api/v1/health', () => {
     const response = await request(app).get('/api/v1/health')
 
     expect(response.status).toBe(200)
-    expect(response.body).toEqual({ ok: true })
+    expect(response.body).toEqual({ ok: true, appEnv: 'local' })
   })
 })
 

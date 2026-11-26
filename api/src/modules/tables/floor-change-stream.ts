@@ -114,6 +114,28 @@ export async function publishFloorChange(
   }))
 }
 
+/**
+ * TU-42: một sự kiện không gắn với cursor (VD bản Dev đổi giờ giả lập) tới mọi
+ * máy đang mở stream của venue. Vẫn kiểm phiên từng máy như floor-changed.
+ */
+export async function broadcastVenueEvent(
+  organizationId: number,
+  venueId: number,
+  event: string,
+  data: unknown,
+): Promise<void> {
+  const matching = [...subscribers].filter((subscriber) =>
+    subscriber.organizationId === organizationId && subscriber.venueId === venueId)
+  await Promise.all(matching.map(async (subscriber) => {
+    const denied = await subscriber.authorize()
+    if (denied) {
+      closeSubscriber(subscriber, denied)
+      return
+    }
+    write(subscriber, event, data)
+  }))
+}
+
 /** Reads the cursor on a fresh connection after commit, then emits only that cursor. */
 export async function publishCommittedFloorChange(organizationId: number, venueId: number): Promise<void> {
   const [rows] = await databasePool.execute<(RowDataPacket & { change_seq: string | number })[]>(

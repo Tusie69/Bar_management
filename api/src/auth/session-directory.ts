@@ -18,6 +18,7 @@ import { recordAuthAudit } from './auth-audit.js'
 import type { AuthenticatedActor } from './authenticated-actor.js'
 import { shortDeviceId } from './device-identity.js'
 import { notifySessionsRevoked } from './session-lifecycle.js'
+import { realNow } from '../time/application-clock.js'
 
 /** Vai trò mà ADMIN được phép buộc đăng xuất. OWNER và ADMIN không nằm trong. */
 const STAFF_ROLES = new Set(['RECEPTIONIST', 'CUSTOMER_CARE', 'CASHIER', 'WAITER'])
@@ -99,12 +100,13 @@ export async function listActiveSessions(actor: AuthenticatedActor): Promise<Act
          WHERE mr.organization_id = s.organization_id AND mr.membership_id = s.membership_id
            AND mr.revoked_at IS NULL AND r.code = 'ADMIN' LIMIT 1) AS access_level,
        s.portal, s.device_id, s.device_label, s.created_at, s.last_seen_at, s.expires_at,
-       (s.expires_at <= UTC_TIMESTAMP(3)) AS expired
+       (s.expires_at <= ?) AS expired
      FROM auth_sessions AS s
      JOIN users AS u ON u.id = s.user_id
      WHERE s.organization_id = ? AND s.revoked_at IS NULL
      ORDER BY s.created_at DESC`,
-    [actor.organizationId],
+    // TU-42: hạn phiên so với giờ THẬT, kể cả khi bản Dev đang giả lập giờ.
+    [realNow(), actor.organizationId],
   )
   return rows.map((row) => toView(row, actor.authSessionId ?? null))
 }

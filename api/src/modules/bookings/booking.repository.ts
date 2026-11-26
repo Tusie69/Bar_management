@@ -363,7 +363,7 @@ async function resolveBookingCustomer(
 export async function createBooking(
   actor: AuthenticatedActor,
   input: CreateBookingInput,
-  now = new Date(),
+  now = applicationNow(),
   transaction?: PoolConnection,
 ): Promise<BookingView> {
   assertNoteHasNoPhoneNumber(input.note)
@@ -428,7 +428,7 @@ export async function createBooking(
 export async function createAndAssignBooking(
   actor: AuthenticatedActor,
   input: CreateAndAssignBookingInput,
-  now = new Date(),
+  now = applicationNow(),
   transaction?: PoolConnection,
 ): Promise<BookingView> {
   assertNoteHasNoPhoneNumber(input.note)
@@ -645,7 +645,7 @@ export async function updateBooking(
   actor: AuthenticatedActor,
   id: number,
   input: UpdateBookingInput,
-  now = new Date(),
+  now = applicationNow(),
 ): Promise<BookingView> {
   const connection = await databasePool.getConnection()
   try {
@@ -1553,7 +1553,7 @@ export async function checkInBooking(
   actor: AuthenticatedActor,
   id: number,
   expectedVersion: number,
-  now = new Date(),
+  now = applicationNow(),
 ): Promise<BookingView> {
   const connection = await databasePool.getConnection()
   try {

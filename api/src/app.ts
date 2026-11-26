@@ -21,6 +21,8 @@ import { waiterMenuRouter } from './modules/menu/menu.route.js'
 import { waiterOrderRouter } from './modules/orders/order.route.js'
 import { orderCancellationRouter } from './modules/orders/order-cancellation.route.js'
 import { preparationRouter } from './modules/preparation/preparation.route.js'
+import { devRouter } from './modules/dev/dev-clock.route.js'
+import { devClockEnabled } from './time/application-clock.js'
 
 export const app: Express = express()
 
@@ -50,6 +52,8 @@ app.use('/api/v1/waiter', waiterOrderRouter)
 app.use('/api/v1/orders', orderCancellationRouter)
 app.use('/api/v1/bills', billRouter)
 app.use('/api/v1/preparation', preparationRouter)
+// TU-42: chỉ bản Dev có /api/v1/dev/*. Production không gắn router → 404.
+if (devClockEnabled()) app.use('/api/v1/dev', devRouter)
 
 app.use(notFoundHandler)
 app.use(errorHandler)

@@ -1,10 +1,13 @@
 export type ApiMode = "mock" | "http"
+/** TU-41: bản nào của quán — khớp APP_ENV phía API. */
+export type AppEnv = "production" | "dev" | "local"
 
 export interface RuntimeConfig {
   apiMode: ApiMode
   apiBaseUrl: string
   venueId: number
   testFixedNow: Date | null
+  appEnv: AppEnv
 }
 
 function parseApiMode(): ApiMode {
@@ -69,9 +72,29 @@ function parseTestFixedNow(): Date | null {
   return parsed
 }
 
+/**
+ * Nhúng lúc build từ web/.env.production. Bản Dev đặt VITE_APP_ENV=dev để hiện
+ * dải băng đỏ; bỏ trống thì build production là "production", còn lại "local".
+ */
+export function parseAppEnv(raw: string | undefined, isProd: boolean): AppEnv {
+  const value = raw?.trim() || (isProd ? "production" : "local")
+  if (value !== "production" && value !== "dev" && value !== "local") {
+    throw new Error("VITE_APP_ENV phải là production, dev hoặc local.")
+  }
+  return value
+}
+
+export const DEV_BANNER_TEXT = "MÔI TRƯỜNG DEV — DỮ LIỆU GIẢ"
+
+/** Có hiện dải băng đỏ hay không. Tách khỏi component để test không cần render. */
+export function shouldShowEnvBanner(appEnv: AppEnv): boolean {
+  return appEnv === "dev"
+}
+
 export const runtimeConfig: RuntimeConfig = {
   apiMode,
   apiBaseUrl,
   venueId: parseVenueId(),
   testFixedNow: parseTestFixedNow(),
+  appEnv: parseAppEnv(import.meta.env.VITE_APP_ENV, import.meta.env.PROD),
 }

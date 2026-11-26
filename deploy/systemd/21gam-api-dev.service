@@ -1,0 +1,44 @@
+# Unit chạy API của BẢN DEV (TU-41), song song 21gam-api.service của Production.
+# Cài đặt: xem docs/dev-environment.md mục 5.
+#
+# Khác bản Production: user gam21dev (không đọc được /srv/21gam/api/.env của
+# Production), thư mục /srv/21gam-dev, cổng 3001 đặt trong /srv/21gam-dev/api/.env.
+
+[Unit]
+Description=21GAM Bar Management API (DEV)
+After=network-online.target mysql.service
+Wants=network-online.target
+Requires=mysql.service
+
+[Service]
+Type=simple
+User=gam21dev
+Group=gam21dev
+WorkingDirectory=/srv/21gam-dev/api
+ExecStart=/usr/bin/node dist/server.js
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=21gam-api-dev
+# Bản Dev nhường CPU/RAM cho Production khi máy bận.
+Nice=5
+MemoryMax=700M
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+
+[Install]
+WantedBy=multi-user.target

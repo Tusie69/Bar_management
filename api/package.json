@@ -15,6 +15,7 @@
     "auth:bootstrap": "tsx src/auth/bootstrap-admin.ts",
     "menu:import": "tsx scripts/import-menu-catalog.ts",
     "menu:verify": "tsx scripts/verify-menu-catalog.ts",
+    "dev:accounts": "tsx src/modules/dev/dev-accounts.cli.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "lint": "eslint src test",

@@ -285,9 +285,11 @@ function ClockMenu() {
               {fmtBusinessDate(bd)} · {fmtBusinessShift(shift)}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              {clock.isSimulated
-                ? "Đồng hồ mô phỏng bắt đầu lúc 21:30 để thấy cảnh báo 15'/30'."
-                : "Đang dùng giờ thật của máy."}
+              {!clock.isSimulated
+                ? "Đang dùng giờ thật của máy."
+                : demo
+                  ? "Đồng hồ mô phỏng bắt đầu lúc 21:30 để thấy cảnh báo 15'/30'."
+                  : "Bản Dev đang giả lập giờ. Đổi ở nút Đồng hồ Dev góc dưới trái."}
             </p>
           </div>
           {demo ? (

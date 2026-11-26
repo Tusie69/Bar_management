@@ -1,5 +1,7 @@
 import 'dotenv/config'
 
+import { resolveAppEnv } from './app-env.js'
+
 function readNumber(name: string, fallback: number): number {
   const rawValue = process.env[name]
   if (!rawValue) return fallback
@@ -72,6 +74,7 @@ function readOptionalUtcInstant(name: string): Date | undefined {
 
 const nodeEnv = process.env.NODE_ENV ?? 'development'
 const databaseName = readString('DB_NAME', 'gam21_platform_dev')
+const appEnv = resolveAppEnv(process.env.APP_ENV, nodeEnv, databaseName)
 const e2eFixedNow = readOptionalUtcInstant('E2E_FIXED_NOW')
 if (e2eFixedNow && (nodeEnv !== 'test' || !/_test$/.test(databaseName))) {
   throw new Error('E2E_FIXED_NOW chỉ được phép khi NODE_ENV=test và DB_NAME kết thúc bằng _test')
@@ -144,6 +147,8 @@ if (noShowWorkerEnabled && !noShowAutomationCutoff) {
 
 export const env = {
   nodeEnv,
+  /** TU-41: production | dev | local — xem config/app-env.ts. */
+  appEnv,
   port: readNumber('PORT', 3000),
   // Số reverse proxy đứng trước API. 0 nghĩa là không tin header chuyển tiếp
   // nào, nên req.ip không thể bị giả mạo khi API nhận request trực tiếp.

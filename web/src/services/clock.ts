@@ -47,6 +47,21 @@ export class SimClock {
     this.emit()
   }
 
+  /**
+   * TU-42: bản Dev chạy HTTP và server đang giả lập giờ. Trình duyệt chỉ chép
+   * lại độ lệch server công bố (GET /dev/clock) — server mới là nguồn sự thật
+   * cho màu bàn, ngày ca; ở đây chỉ để header, đồng hồ đếm khớp theo.
+   * Không phát sự kiện khi độ lệch không đổi, để poll định kỳ không làm mọi
+   * query tải lại vô cớ.
+   */
+  applyServerOffset(offsetMs: number) {
+    if (this.fixedNowMs === null && this.offsetMs === offsetMs && this.simulated === (offsetMs !== 0)) return
+    this.fixedNowMs = null
+    this.offsetMs = offsetMs
+    this.simulated = offsetMs !== 0
+    this.emit()
+  }
+
   useRealTime() {
     this.fixedNowMs = null
     this.offsetMs = 0

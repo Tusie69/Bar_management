@@ -11,6 +11,7 @@ import type {
   PreparationStatus,
   PreparationTicketView,
 } from './preparation.model.js'
+import { applicationNow } from '../../time/application-clock.js'
 
 interface TicketRow extends RowDataPacket {
   id: number
@@ -165,7 +166,7 @@ function baseTicket(row: TicketRow, lines: PreparationLineView[]): PreparationTi
     startedAt: iso(row.started_at),
     readyAt: iso(row.ready_at),
     collectedAt: iso(row.collected_at),
-    waitSeconds: Math.max(0, Math.floor((Date.now() - new Date(submittedAt).getTime()) / 1000)),
+    waitSeconds: Math.max(0, Math.floor((applicationNow().getTime() - new Date(submittedAt).getTime()) / 1000)),
     tableCodes: row.table_codes ? row.table_codes.split(',') : [],
     orderedByDisplayName: row.ordered_by_display_name || 'Nhân viên',
     guestFlags: {
@@ -226,7 +227,7 @@ export async function getPreparationQueue(
         AND worker_heartbeat_at >= UTC_TIMESTAMP(3) - INTERVAL 2 MINUTE) enabled`,
     [actor.organizationId, actor.venueId, station],
   )
-  return { station, changeCursor: await readCursor(databasePool, actor), generatedAt: new Date().toISOString(),
+  return { station, changeCursor: await readCursor(databasePool, actor), generatedAt: applicationNow().toISOString(),
     printing: { enabled: Number(capabilities[0]?.enabled ?? 0) === 1 }, limit: PREPARATION_QUEUE_LIMIT, tickets }
 }
 
