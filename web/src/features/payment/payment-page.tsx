@@ -3,12 +3,8 @@ import { AlertTriangle, ChevronLeft, Clock, Info, Link2, Lock, Send } from "luci
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Navigate, useLocation, useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
-import { ROLE_LABEL } from "@/domain/enums"
-import { useBusinessShift, useNow } from "@/hooks/use-data"
-import { initials } from "@/lib/text"
-import { fmtBusinessDate, fmtBusinessShift, fmtTime, businessDateOf, shiftHour } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { ApiError, api } from "@/services"
+import { ApiError } from "@/services"
 import {
   formatVnd,
   isPaymentAvailable,
@@ -18,10 +14,10 @@ import {
   type Receipt,
 } from "@/services/payment"
 import { useCan, useSession } from "@/state/session"
+import { usePaymentShell } from "@/features/cashier/payment-shell-context"
 import { BillRoundsCard, DetailActionPane, ProvisionalPreviewView } from "./bill-pane"
 import { CashActionPane, MethodActionPane, QrActionPane, SuccessView, type PaymentErrorState } from "./pay-actions"
 import { PaymentFloorMap } from "./payment-floor-map"
-import { PaymentNotificationBell } from "./payment-notifications"
 import { submitPaymentConfirm, type IdempotencySlot } from "./payment-submit"
 
 export type PaymentStep = "list" | "detail" | "preview" | "method" | "cash" | "qr" | "success"
@@ -51,8 +47,8 @@ export function PaymentFlowWorkspace({
   const navigate = useNavigate()
   const location = useLocation()
   const queryClient = useQueryClient()
+  const payShell = usePaymentShell()
   const user = useSession((s) => s.user)
-  const principal = useSession((s) => s.principal)
   const canCollect = useCan("payment.collect")
   const canReadOrders = useCan("order.read")
   const isWaiter = user.role === "WAITER" && canReadOrders
@@ -60,17 +56,14 @@ export function PaymentFlowWorkspace({
   const moneyStepRequested =
     stepParam === "method" || stepParam === "cash" || stepParam === "qr" || stepParam === "success"
 
-  const displayName = api.mode === "http" ? (principal?.displayName ?? user.displayName) : user.displayName
-  const roleLabel = ROLE_LABEL[user.role]
-  const now = useNow(30_000)
-  const shift = useBusinessShift()
-  const bd = businessDateOf(now, shiftHour(shift.cutoffLocal))
-
   const step = parseStep(stepParam, Boolean(visitIdParam), canCollect)
 
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [seenNtfIds, setSeenNtfIds] = useState<Set<string>>(() => new Set())
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null)
+  const selectedId = payShell ? payShell.selectedId : localSelectedId
+  const setSelectedId = payShell ? payShell.setSelectedId : setLocalSelectedId
+
   const [billExpanded, setBillExpanded] = useState(false)
+  const [previewViewMode, setPreviewViewMode] = useState<"screen" | "print">("screen")
   const [lastMethod, setLastMethod] = useState<PaymentMethod | null>(null)
   const [busy, setBusy] = useState(false)
   const [payError, setPayError] = useState<PaymentErrorState | null>(null)
@@ -90,12 +83,6 @@ export function PaymentFlowWorkspace({
     enabled: isPaymentAvailable && canViewAny && step === "list",
   })
 
-  const ntfQuery = useQuery({
-    queryKey: ["payment-notifications"],
-    queryFn: () => paymentApi.listNotifications(),
-    enabled: isPaymentAvailable && canViewAny && step === "list",
-  })
-
   const billQuery = useQuery({
     queryKey: ["payment-bill", visitIdParam],
     queryFn: () => paymentApi.getBill(visitIdParam!),
@@ -108,20 +95,23 @@ export function PaymentFlowWorkspace({
     setPrevNavKey(navKey)
     setPayError(null)
     setBillExpanded(false)
+    if (step === "preview") setPreviewViewMode("screen")
   }
 
   useLayoutEffect(() => {
+    if (payShell) {
+      payShell.scrollToTop()
+      return
+    }
     const el = rootRef.current
     if (!el) return
     el.scrollTop = 0
     if (el.parentElement && el.parentElement.scrollTop > 0) {
       el.parentElement.scrollTop = 0
     }
-  }, [visitIdParam, step])
+  }, [payShell, visitIdParam, step])
 
   const openList = openQuery.data ?? []
-  const notifications = ntfQuery.data ?? []
-  const hasUnreadNtf = notifications.some((n) => !seenNtfIds.has(n.id))
 
   const invalidatePaymentQueries = useCallback(async () => {
     await Promise.all([
@@ -163,6 +153,23 @@ export function PaymentFlowWorkspace({
       return
     }
     setSelectedId(id)
+    try {
+      const mapEl = document.getElementById("floor-map")
+      if (mapEl) {
+        const r = mapEl.getBoundingClientRect()
+        const scrollParent = mapEl.closest(".pay-root")
+        const viewRect = scrollParent ? scrollParent.getBoundingClientRect() : { top: 0, bottom: window.innerHeight }
+        const headerH = scrollParent?.querySelector(".pay-hdr")?.getBoundingClientRect().height ?? 0
+        const visibleTop = Math.max(0, viewRect.top + headerH)
+        const visibleBottom = Math.min(window.innerHeight, viewRect.bottom)
+        if (r.top >= visibleBottom - 24 || r.bottom <= visibleTop + 24) {
+          const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
+          mapEl.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" })
+        }
+      }
+    } catch {
+      /* scrollIntoView optional in non-DOM envs */
+    }
   }
 
   const ensurePrebillIfNeeded = async () => {
@@ -274,21 +281,20 @@ export function PaymentFlowWorkspace({
   }
 
   if (!canViewAny || (moneyStepRequested && !canCollect)) {
-    return (
-      <div className="pay-root p-6">
-        <div className="mx-auto max-w-md rounded-2xl border border-border bg-surface-1 p-6 text-center shadow-xs">
-          <Lock className="mx-auto mb-3 size-8 text-[var(--text-muted)]" aria-hidden />
-          <h1 className="text-lg font-bold">
-            {moneyStepRequested && !canCollect ? "Chỉ Thu ngân mới thu tiền" : "Không có quyền truy cập thanh toán"}
-          </h1>
-          <p className="mt-1 text-sm text-[var(--text-muted)]">
-            {moneyStepRequested && !canCollect
-              ? "Mọi thao tác thu tiền (chọn phương thức, tiền mặt, chuyển khoản QR) chỉ dành cho Thu ngân, Chủ sở hữu hoặc Quản trị."
-              : "Chỉ Thu ngân, Chủ sở hữu, Quản trị hoặc Phục vụ (từ chi tiết phiên) mới xem được màn hình này."}
-          </p>
-        </div>
+    const deniedContent = (
+      <div className="mx-auto max-w-md rounded-2xl border border-border bg-surface-1 p-6 text-center shadow-xs">
+        <Lock className="mx-auto mb-3 size-8 text-[var(--text-muted)]" aria-hidden />
+        <h1 className="text-lg font-bold">
+          {moneyStepRequested && !canCollect ? "Chỉ Thu ngân mới thu tiền" : "Không có quyền truy cập thanh toán"}
+        </h1>
+        <p className="mt-1 text-sm text-[var(--text-muted)]">
+          {moneyStepRequested && !canCollect
+            ? "Mọi thao tác thu tiền (chọn phương thức, tiền mặt, chuyển khoản QR) chỉ dành cho Thu ngân, Chủ sở hữu hoặc Quản trị."
+            : "Chỉ Thu ngân, Chủ sở hữu, Quản trị hoặc Phục vụ (từ chi tiết phiên) mới xem được màn hình này."}
+        </p>
       </div>
     )
+    return payShell ? deniedContent : <div className="pay-root p-6">{deniedContent}</div>
   }
 
   const stepIdx = step === "method" ? 2 : step === "cash" || step === "qr" ? 3 : step === "success" ? 4 : 1
@@ -311,382 +317,312 @@ export function PaymentFlowWorkspace({
     success: backHomeLabel,
   }
 
-  return (
-    <div ref={rootRef} className="pay-root h-full overflow-y-auto">
-      <div className="mx-auto max-w-[1360px] px-3 pt-3 pb-8 md:px-6 md:pt-5 lg:px-8">
-        {/* S1: Home (session list + floor map) */}
-        {step === "list" ? (
-          <div className="grid gap-4">
-            {/* Mobile greeting header + payment notifications bell on all widths */}
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-surface-1 px-4 py-2.5 shadow-xs">
-              <div className="flex items-center gap-2.5 md:hidden">
-                <span
-                  aria-hidden
-                  className="grid size-10 place-items-center rounded-full bg-primary-tint font-bold text-primary-ink"
-                >
-                  {initials(displayName)}
-                </span>
-                <span className="grid leading-tight">
-                  <small className="text-xs text-[var(--text-muted)]">Xin chào,</small>
-                  <b className="text-[15px] font-bold text-[var(--ink-strong)]">{`${displayName} · ${roleLabel}`}</b>
-                </span>
-              </div>
-
-              <div className="hidden items-center gap-2.5 md:flex">
-                <h1 className="text-base font-bold tracking-[-0.015em] text-[var(--ink-strong)]">
-                  Thu tiền · Phiên đang mở
-                </h1>
-                <span className="inline-flex h-7 items-center rounded-full bg-surface-2 px-3 text-xs font-medium text-[var(--text-muted)]">
-                  {`${fmtBusinessDate(bd, "short")} · ${fmtBusinessShift(shift)}`}
-                </span>
-                <span className="tnum inline-flex items-center gap-1 text-xs font-semibold text-foreground">
-                  <Clock className="size-3.5 text-[var(--text-muted)]" aria-hidden />
-                  {fmtTime(now)}
-                </span>
-              </div>
-
-              <div className="ml-auto flex items-center gap-2">
-                <PaymentNotificationBell
-                  notifications={notifications}
-                  unread={hasUnreadNtf}
-                  onOpen={() => setSeenNtfIds((prev) => new Set([...prev, ...notifications.map((n) => n.id)]))}
-                  onSelectVisit={(id) => {
-                    setSelectedId(id)
-                  }}
-                />
-              </div>
+  const workspaceBody = (
+    <>
+      {/* S1: Home (session list + floor map) */}
+      {step === "list" ? (
+        openQuery.isPending ? (
+          <div className="pay-lg" aria-busy="true">
+            <div className="pay-card pay-sk-stack">
+              <div className="pay-sk" style={{ height: 64 }} />
+              <div className="pay-sk" style={{ height: 64 }} />
+              <div className="pay-sk" style={{ height: 64 }} />
             </div>
-
-            {openQuery.isPending ? (
-              <div className="pay-lg" aria-busy="true">
-                <div className="grid gap-3 rounded-2xl border border-border bg-surface-1 p-4">
-                  <div className="gam-skeleton h-16 rounded-xl bg-surface-3" />
-                  <div className="gam-skeleton h-16 rounded-xl bg-surface-3" />
-                  <div className="gam-skeleton h-16 rounded-xl bg-surface-3" />
-                </div>
-                <div className="gam-skeleton h-[420px] rounded-2xl bg-surface-3" />
-              </div>
-            ) : openQuery.isError ? (
-              <div role="alert" className="rounded-2xl border border-destructive/45 bg-[var(--destructive-tint)] p-5">
-                <p className="font-semibold text-[var(--destructive-ink)]">Không tải được danh sách phiên đang mở</p>
-                <button
-                  type="button"
-                  onClick={() => void openQuery.refetch()}
-                  className="mt-3 inline-flex min-h-11 items-center rounded-lg border border-border-strong bg-surface-1 px-4 text-sm font-medium cursor-pointer"
-                >
+            <div className="pay-card pay-sk-stack">
+              <div className="pay-sk" style={{ height: 420 }} />
+            </div>
+          </div>
+        ) : openQuery.isError ? (
+          <div role="alert" className="pay-bn pay-bn-err">
+            <span>
+              <b>Không tải được danh sách phiên đang mở</b>
+              <span className="pay-bn-act">
+                <button type="button" onClick={() => void openQuery.refetch()} className="pay-btn pay-btn-s">
                   Thử lại
                 </button>
-              </div>
-            ) : (
-              <div className="pay-lg pay-lg-m">
-                <section aria-label="Danh sách phiên" className="pay-sess-list">
-                  {openList.length === 0 ? (
-                    <div className="m-3 rounded-[14px] border border-dashed border-border-strong px-4 py-8 text-center text-[var(--text-muted)]">
-                      <b className="mb-1 block text-foreground">Không còn phiên nào đang mở</b>
-                      Bàn đã thanh toán tự về Trống trên sơ đồ.
-                    </div>
-                  ) : (
-                    openList.map((s) => {
-                      const isSel = selectedId === s.visitId
-                      const isPend = s.status === "AWAITING_PAYMENT"
-                      const isCluster = Boolean(s.clusterCode && s.tables.length > 1)
-                      const hasLines = s.hasOrderLines !== false
-                      return (
-                        <button
-                          key={s.visitId}
-                          type="button"
-                          onClick={() => handleSessionPick(s)}
-                          className={cn("pay-sess", isSel && "sel")}
-                        >
-                          <span className="grid min-w-0 gap-1">
-                            <span className="flex flex-wrap items-center gap-2">
-                              <b className="text-xl font-extrabold tracking-[-0.03em] text-[var(--ink-strong)]">
-                                {s.code}
-                              </b>
-                              {isCluster ? (
-                                <span className="inline-flex h-[22px] items-center gap-1 rounded-full bg-[var(--cluster)] px-2 text-[11px] font-bold text-white dark:text-[oklch(0.2_0.02_245)]">
-                                  <Link2 className="size-3.5" aria-hidden />
-                                  {`Cụm ${s.tables.length} bàn · 1 phiên`}
-                                </span>
-                              ) : null}
-                              {isPend ? (
-                                <span className="inline-flex h-6 items-center gap-1 rounded-[6px] bg-[var(--st-pending-tint)] px-2 text-xs font-semibold text-[var(--st-pending-ink)]">
-                                  <Clock className="size-3.5" aria-hidden />
-                                  Chờ thanh toán
-                                </span>
-                              ) : null}
-                              {s.requestedAt ? (
-                                <span className="inline-flex h-6 items-center gap-1 rounded-[6px] bg-primary-tint px-2 text-xs font-semibold text-primary-ink">
-                                  <Send className="size-3.5" aria-hidden />
-                                  {`Gọi thanh toán · ${s.requestedAt}`}
-                                </span>
-                              ) : null}
-                            </span>
-                            <span className="text-[13px] text-[var(--text-muted)]">
-                              {`mở ${s.openedAt} · PV ${s.waiterName}`}
-                            </span>
-                            {isSel ? (
-                              <span className="text-xs font-semibold text-primary-ink">
-                                Chạm lần nữa để mở chi tiết
-                              </span>
-                            ) : null}
-                          </span>
-                          <span className="grid justify-items-end">
-                            <small className="text-xs text-[var(--text-muted)]">
-                              {!hasLines ? "Dữ liệu món" : isPend ? "Phải trả" : "Tạm tính"}
-                            </small>
-                            <b
-                              className={cn(
-                                "tnum font-extrabold tracking-[-0.02em]",
-                                hasLines ? "text-lg text-[var(--ink-strong)]" : "text-sm font-semibold text-[var(--text-muted)]",
-                              )}
-                            >
-                              {hasLines ? formatVnd(s.dueVnd) : "Chưa có dữ liệu"}
-                            </b>
-                          </span>
-                        </button>
-                      )
-                    })
-                  )}
-                </section>
-
-                <PaymentFloorMap
-                  sessions={openList}
-                  selectedId={selectedId}
-                  onSelectSession={handleSessionPick}
-                  onClearSelection={() => setSelectedId(null)}
-                />
-              </div>
-            )}
+              </span>
+            </span>
           </div>
-        ) : null}
-
-        {/* S2, S3, S4, S5, S6, S7 */}
-        {step !== "list" ? (
-          <div className="grid gap-4">
-            {/* Top bar for flow screens: S3 preview intentionally has no page title or subtitle */}
-            {step !== "success" ? (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={handleBack}
-                  className="inline-flex h-11 items-center gap-1.5 rounded-lg border border-border bg-surface-1 pr-3.5 pl-2 font-medium cursor-pointer hover:border-border-strong active:bg-surface-3 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <ChevronLeft className="size-5" aria-hidden />
-                  {backLabelMap[step]}
-                </button>
-                <div className="min-w-0 flex-1">
-                  {step !== "preview" && pageTitleMap[step] ? (
-                    <h1 className="text-[19px] leading-[1.2] font-extrabold tracking-[-0.03em] whitespace-nowrap text-[var(--ink-strong)] sm:text-2xl">
-                      {pageTitleMap[step]}
-                    </h1>
-                  ) : null}
+        ) : (
+          <div className="pay-lg pay-lg-m">
+            <section aria-label="Danh sách phiên" className="pay-sess-list">
+              {openList.length === 0 ? (
+                <div className="pay-empty">
+                  <b>Không còn phiên nào đang mở</b>
+                  Bàn đã thanh toán tự về Trống trên sơ đồ.
                 </div>
-                {step !== "preview" && canCollect ? (
-                  <ol aria-label="Các bước thanh toán" className="hidden items-center text-xs text-[var(--text-subtle)] lg:flex">
-                    {STEPS_META.map((label, idx) => {
-                      const n = idx + 1
-                      const isDone = n < stepIdx
-                      const isCur = n === stepIdx
-                      return (
-                        <li
-                          key={label}
-                          className={cn(
-                            "inline-flex h-7 items-center gap-1.5 px-2",
-                            idx > 0 && "before:mr-2 before:h-px before:w-3 before:bg-border-strong before:content-['']",
-                            isCur && "font-bold text-[var(--ink-strong)]",
-                            isDone && "text-[var(--st-seated-ink)]",
-                          )}
-                        >
-                          <b
-                            className={cn(
-                              "grid size-[18px] place-items-center rounded-[5px] border text-[11px] font-semibold",
-                              isCur
-                                ? "border-[var(--ink-strong)] bg-[var(--ink-strong)] text-background"
-                                : isDone
-                                  ? "border-[var(--st-seated)]"
-                                  : "border-border-strong",
-                            )}
-                          >
-                            {n}
-                          </b>
-                          {label}
-                        </li>
-                      )
-                    })}
-                  </ol>
-                ) : null}
-              </div>
-            ) : null}
+              ) : (
+                openList.map((s) => {
+                  const isSel = selectedId === s.visitId
+                  const isPend = s.status === "AWAITING_PAYMENT"
+                  const isCluster = Boolean(s.clusterCode && s.tables.length > 1)
+                  const hasLines = s.hasOrderLines !== false
+                  return (
+                    <button
+                      key={s.visitId}
+                      type="button"
+                      onClick={() => handleSessionPick(s)}
+                      className={cn("pay-sess", isSel && "sel")}
+                    >
+                      <span className="pay-sess-main">
+                        <span className="pay-sess-code">
+                          <b>{s.code}</b>
+                          {isCluster ? (
+                            <span className="pay-chip-cl">
+                              <Link2 className="pay-i sm" aria-hidden />
+                              {`Cụm ${s.tables.length} bàn · 1 phiên`}
+                            </span>
+                          ) : null}
+                          {isPend ? (
+                            <span className="pay-pill pay-p-pend">
+                              <Clock className="pay-i sm" aria-hidden />
+                              Chờ thanh toán
+                            </span>
+                          ) : null}
+                          {s.requestedAt ? (
+                            <span className="pay-pill pay-p-req">
+                              <Send className="pay-i sm" aria-hidden />
+                              {`Gọi thanh toán · ${s.requestedAt}`}
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="pay-sess-meta">{`mở ${s.openedAt} · PV ${s.waiterName}`}</span>
+                        {isSel ? <span className="pay-sess-hint">Chạm lần nữa để mở chi tiết</span> : null}
+                      </span>
+                      <span className="pay-sess-amt">
+                        <small>{!hasLines ? "Dữ liệu món" : isPend ? "Phải trả" : "Tạm tính"}</small>
+                        <b className={cn(!hasLines && "!text-sm !font-semibold !text-[var(--text-muted)]")}>
+                          {hasLines ? formatVnd(s.dueVnd) : "Chưa có dữ liệu"}
+                        </b>
+                      </span>
+                    </button>
+                  )
+                })
+              )}
+            </section>
 
-            {/* Prebill precondition notice when user jumped straight to S3-S6 on a SERVING bill */}
-            {step === "detail" && prebillNotice && bill?.status === "SERVING" ? (
-              <div
-                role="status"
-                className="flex items-start gap-2.5 rounded-xl border border-[var(--st-pending)] bg-[var(--st-pending-tint)] px-3.5 py-2.5 text-sm text-foreground"
-              >
-                <Info className="mt-0.5 size-5 shrink-0 text-[var(--st-pending-ink)]" aria-hidden />
-                <span>{prebillNotice}</span>
-              </div>
-            ) : null}
+            <PaymentFloorMap
+              sessions={openList}
+              selectedId={selectedId}
+              onSelectSession={handleSessionPick}
+              onClearSelection={() => setSelectedId(null)}
+            />
+          </div>
+        )
+      ) : null}
 
-            {/* Role banner for Waiter PA-A or Bartender */}
-            {isWaiter && step !== "success" ? (
-              <div
-                role="note"
-                className="flex items-start gap-3 rounded-xl border border-dashed border-[var(--st-pending)] bg-[var(--st-pending-tint)] px-3.5 py-3 text-foreground"
-              >
-                <AlertTriangle className="mt-0.5 size-5 shrink-0 text-[var(--st-pending-ink)]" aria-hidden />
-                <span className="grid gap-0.5 text-sm">
-                  <b className="text-[var(--st-pending-ink)]">PHƯƠNG ÁN A · QUYỀN PHỤC VỤ</b>
-                  <span>
-                    Phục vụ xem tạm tính (kèm mã QR để đưa khách xem) và gửi yêu cầu thanh toán. Thu ngân là người chốt bill và nhận tiền.
-                  </span>
+      {/* S2, S3, S4, S5, S6, S7 */}
+      {step !== "list" ? (
+        <>
+          {step !== "success" ? (
+            <div className="pay-ph">
+              <button type="button" disabled={busy} onClick={handleBack} className="pay-back">
+                <ChevronLeft className="pay-i" aria-hidden />
+                {backLabelMap[step]}
+              </button>
+              {step !== "preview" && pageTitleMap[step] ? (
+                <div className="pay-ph-grow">
+                  <h1>{pageTitleMap[step]}</h1>
+                </div>
+              ) : null}
+              {step === "preview" ? (
+                <div role="group" aria-label="Cách xem" className="pay-seg ml-auto">
+                  <button
+                    type="button"
+                    aria-pressed={previewViewMode === "screen"}
+                    onClick={() => setPreviewViewMode("screen")}
+                  >
+                    Trên màn hình
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={previewViewMode === "print"}
+                    onClick={() => setPreviewViewMode("print")}
+                  >
+                    Bản in 80mm
+                  </button>
+                </div>
+              ) : null}
+              {step !== "preview" && canCollect ? (
+                <ol aria-label="Các bước thanh toán" className="pay-steps">
+                  {STEPS_META.map((label, idx) => {
+                    const n = idx + 1
+                    const isDone = n < stepIdx
+                    const isCur = n === stepIdx
+                    return (
+                      <li key={label} className={cn(isCur && "cur", isDone && "done")}>
+                        <b>{n}</b>
+                        {label}
+                      </li>
+                    )
+                  })}
+                </ol>
+              ) : null}
+            </div>
+          ) : null}
+
+          {step === "detail" && prebillNotice && bill?.status === "SERVING" ? (
+            <div role="status" className="pay-bn pay-bn-warn mb-4">
+              <Info className="pay-i" aria-hidden />
+              <span>{prebillNotice}</span>
+            </div>
+          ) : null}
+
+          {isWaiter && step !== "success" ? (
+            <div role="note" className="pay-rb">
+              <AlertTriangle className="pay-i" aria-hidden />
+              <span className="pay-rb-t">
+                <b>PHƯƠNG ÁN A · QUYỀN PHỤC VỤ</b>
+                <span>
+                  Phục vụ xem tạm tính (kèm mã QR để đưa khách xem) và gửi yêu cầu thanh toán. Thu ngân là người chốt bill và nhận tiền.
                 </span>
-              </div>
-            ) : null}
+              </span>
+            </div>
+          ) : null}
 
-            {/* Loading skeleton while bill fetches */}
-            {step !== "success" && billQuery.isPending ? (
-              <div className="pay-split" aria-busy="true">
-                <div className="grid gap-3 rounded-2xl border border-border bg-surface-1 p-4">
-                  <div className="gam-skeleton h-7 w-2/5 rounded-[10px] bg-surface-3" />
-                  <div className="gam-skeleton h-4 w-3/5 rounded-[10px] bg-surface-3" />
-                  <div className="gam-skeleton h-14 rounded-[10px] bg-surface-3" />
-                  <div className="gam-skeleton h-14 rounded-[10px] bg-surface-3" />
-                  <div className="gam-skeleton h-24 rounded-[10px] bg-surface-3" />
+          {step !== "success" && billQuery.isPending ? (
+            <div className="pay-split" aria-busy="true">
+              <div className="pay-card">
+                <div className="pay-sk-stack">
+                  <div className="pay-sk" style={{ height: 28, width: "40%" }} />
+                  <div className="pay-sk" style={{ height: 16, width: "60%" }} />
+                  <div className="pay-sk" style={{ height: 56 }} />
+                  <div className="pay-sk" style={{ height: 56 }} />
+                  <div className="pay-sk" style={{ height: 96 }} />
                 </div>
-                <div className="grid gap-3 rounded-2xl border border-border bg-surface-1 p-4">
-                  <div className="gam-skeleton h-4 w-1/3 rounded-[10px] bg-surface-3" />
-                  <div className="gam-skeleton h-12 w-2/3 rounded-[10px] bg-surface-3" />
-                  <div className="gam-skeleton h-[52px] rounded-[10px] bg-surface-3" />
-                  <div className="gam-skeleton h-[60px] rounded-[10px] bg-surface-3" />
-                  <span className="flex items-center gap-2 text-[13px] text-[var(--text-muted)]">
+              </div>
+              <div className="pay-card">
+                <div className="pay-sk-stack">
+                  <div className="pay-sk" style={{ height: 16, width: "35%" }} />
+                  <div className="pay-sk" style={{ height: 48, width: "70%" }} />
+                  <div className="pay-sk" style={{ height: 52 }} />
+                  <div className="pay-sk" style={{ height: 60 }} />
+                  <span className="pay-hint">
                     <span className="pay-spin" aria-hidden />
                     Đang tải dữ liệu bill… Nút thanh toán khóa tới khi tải xong.
                   </span>
                 </div>
               </div>
-            ) : step !== "success" && billQuery.isError ? (
-              <div role="alert" className="rounded-2xl border border-destructive/45 bg-[var(--destructive-tint)] p-5">
-                <p className="font-semibold text-[var(--destructive-ink)]">
+            </div>
+          ) : step !== "success" && billQuery.isError ? (
+            <div role="alert" className="pay-bn pay-bn-err">
+              <span>
+                <b>
                   {billQuery.error instanceof ApiError
                     ? billQuery.error.message
                     : "Không tải được dữ liệu bill."}
-                </p>
-                <div className="mt-3 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void billQuery.refetch()}
-                    className="inline-flex min-h-11 items-center rounded-lg border border-border-strong bg-surface-1 px-4 text-sm font-medium cursor-pointer"
-                  >
+                </b>
+                <span className="pay-bn-act">
+                  <button type="button" onClick={() => void billQuery.refetch()} className="pay-btn pay-btn-s">
                     Thử lại
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => navigate(homePath)}
-                    className="inline-flex min-h-11 items-center rounded-lg border border-border bg-surface-1 px-4 text-sm font-medium cursor-pointer"
-                  >
+                  <button type="button" onClick={() => navigate(homePath)} className="pay-btn pay-btn-s">
                     {backHomeLabel}
                   </button>
-                </div>
-              </div>
-            ) : step === "success" ? (
-              receipt ? (
-                <SuccessView
-                  receipt={receipt}
-                  onToList={() => navigate(homePath)}
-                  onPrintReceipt={() => toast.info("Mô phỏng: chưa nối máy in thật.")}
-                />
-              ) : (
-                <div className="rounded-2xl border border-border bg-surface-1 p-6 text-center shadow-xs">
-                  <p className="font-semibold">
-                    {bill?.status === "PAID"
-                      ? "Bill này đã được thanh toán."
-                      : bill?.status === "CLOSED_UNPAID"
-                        ? "Phiên đã trả bàn nhưng chưa ghi nhận thu tiền."
-                        : "Không có biên nhận trong phiên này."}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => navigate(homePath)}
-                    className="mt-4 inline-flex min-h-11 items-center rounded-lg bg-primary px-5 text-sm font-semibold text-primary-foreground cursor-pointer"
-                  >
-                    {backHomeLabel}
-                  </button>
-                </div>
-              )
-            ) : needsPrebillRedirect ? null : step === "preview" && bill ? (
-              <ProvisionalPreviewView
-                bill={bill}
-                canCollect={canCollect}
-                isWaiter={isWaiter}
-                busy={busy}
-                onCollect={() => void handleCloseToMethod()}
-                onRequestPayment={() => void handleRequestPayment()}
-                onSimulatedPrint={(n) => toast.info(`Mô phỏng: chưa nối máy in thật. Ghi nhận lần in #${n}.`)}
+                </span>
+              </span>
+            </div>
+          ) : step === "success" ? (
+            receipt ? (
+              <SuccessView
+                receipt={receipt}
+                onToList={() => navigate(homePath)}
+                onPrintReceipt={() => toast.info("Mô phỏng: chưa nối máy in thật.")}
               />
-            ) : bill ? (
-              <div
-                className={cn(
-                  "pay-split",
-                  step !== "detail" && "pay-first",
-                  step !== "detail" && !billExpanded && "pay-collapsed",
-                )}
-              >
-                <BillRoundsCard
-                  bill={bill}
-                  collapsible={step !== "detail"}
-                  expanded={billExpanded}
-                  onToggleExpanded={() => setBillExpanded((v) => !v)}
-                />
-
-                {step === "detail" ? (
-                  <DetailActionPane
-                    bill={bill}
-                    canCollect={canCollect}
-                    isWaiter={isWaiter}
-                    busy={busy}
-                    onPreview={() => void handlePreview()}
-                    onCollect={() => void handleCloseToMethod()}
-                    onRequestPayment={() => void handleRequestPayment()}
-                  />
-                ) : step === "method" ? (
-                  <MethodActionPane
-                    bill={bill}
-                    lastMethod={lastMethod}
-                    onSelectMethod={(m) => {
-                      setLastMethod(m)
-                      goToStep(bill.visitId, m === "CASH" ? "cash" : "qr")
-                    }}
-                    onToList={() => navigate(homePath)}
-                  />
-                ) : step === "cash" ? (
-                  <CashActionPane
-                    bill={bill}
-                    busy={busy}
-                    error={payError}
-                    onClearError={() => setPayError(null)}
-                    onConfirm={(givenVnd) => void handleConfirm("CASH", givenVnd)}
-                    onToList={() => navigate(homePath)}
-                  />
-                ) : step === "qr" ? (
-                  <QrActionPane
-                    bill={bill}
-                    busy={busy}
-                    error={payError}
-                    onCheckTransfer={() => paymentApi.checkTransfer(bill.visitId)}
-                    onConfirmManual={() => void handleConfirm("TRANSFER")}
-                    onToList={() => navigate(homePath)}
-                    onCopied={(refText) => toast.success(`Đã chép nội dung: ${refText}`)}
-                  />
-                ) : null}
+            ) : (
+              <div className="pay-card p-6 text-center">
+                <p className="font-semibold">
+                  {bill?.status === "PAID"
+                    ? "Bill này đã được thanh toán."
+                    : bill?.status === "CLOSED_UNPAID"
+                      ? "Phiên đã trả bàn nhưng chưa ghi nhận thu tiền."
+                      : "Không có biên nhận trong phiên này."}
+                </p>
+                <button type="button" onClick={() => navigate(homePath)} className="pay-btn pay-btn-p mt-4">
+                  {backHomeLabel}
+                </button>
               </div>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
+            )
+          ) : needsPrebillRedirect ? null : step === "preview" && bill ? (
+            <ProvisionalPreviewView
+              bill={bill}
+              canCollect={canCollect}
+              isWaiter={isWaiter}
+              busy={busy}
+              viewMode={previewViewMode}
+              onChangeViewMode={setPreviewViewMode}
+              onCollect={() => void handleCloseToMethod()}
+              onRequestPayment={() => void handleRequestPayment()}
+              onSimulatedPrint={(n) => toast.info(`Mô phỏng: chưa nối máy in thật. Ghi nhận lần in #${n}.`)}
+            />
+          ) : bill ? (
+            <div
+              className={cn(
+                "pay-split",
+                step === "detail" && "detail",
+                step !== "detail" && "pay-first",
+                step !== "detail" && !billExpanded && "pay-collapsed",
+              )}
+            >
+              <BillRoundsCard
+                bill={bill}
+                collapsible={step !== "detail"}
+                expanded={billExpanded}
+                onToggleExpanded={() => setBillExpanded((v) => !v)}
+              />
+
+              {step === "detail" ? (
+                <DetailActionPane
+                  bill={bill}
+                  canCollect={canCollect}
+                  isWaiter={isWaiter}
+                  busy={busy}
+                  onPreview={() => void handlePreview()}
+                  onCollect={() => void handleCloseToMethod()}
+                  onRequestPayment={() => void handleRequestPayment()}
+                />
+              ) : step === "method" ? (
+                <MethodActionPane
+                  bill={bill}
+                  lastMethod={lastMethod}
+                  onSelectMethod={(m) => {
+                    setLastMethod(m)
+                    goToStep(bill.visitId, m === "CASH" ? "cash" : "qr")
+                  }}
+                  onToList={() => navigate(homePath)}
+                />
+              ) : step === "cash" ? (
+                <CashActionPane
+                  bill={bill}
+                  busy={busy}
+                  error={payError}
+                  onClearError={() => setPayError(null)}
+                  onConfirm={(givenVnd) => void handleConfirm("CASH", givenVnd)}
+                  onToList={() => navigate(homePath)}
+                />
+              ) : step === "qr" ? (
+                <QrActionPane
+                  bill={bill}
+                  busy={busy}
+                  error={payError}
+                  onCheckTransfer={() => paymentApi.checkTransfer(bill.visitId)}
+                  onConfirmManual={() => void handleConfirm("TRANSFER")}
+                  onToList={() => navigate(homePath)}
+                  onCopied={(refText) => toast.success(`Đã chép nội dung: ${refText}`)}
+                />
+              ) : null}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </>
+  )
+
+  if (payShell) return workspaceBody
+
+  return (
+    <div ref={rootRef} className="pay-root h-full overflow-y-auto">
+      <div className="pay-pg">{workspaceBody}</div>
     </div>
   )
 }

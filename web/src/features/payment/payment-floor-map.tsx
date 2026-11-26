@@ -193,7 +193,7 @@ export function PaymentFloorMap({
   }, [zoomAnim.key, zoomAnim.prev])
 
   const clusterOutlines = useMemo(() => {
-    const outlines: { tag: string; style: ReturnType<typeof boxStyle> }[] = []
+    const outlines: { tag: string; sideTag: boolean; style: ReturnType<typeof boxStyle> }[] = []
     for (const s of sessions) {
       if (!s.clusterCode || s.tables.length < 2) continue
       const boxes = s.tables
@@ -204,7 +204,13 @@ export function PaymentFloorMap({
         const y0 = Math.min(...group.map((r) => r.y)) - 4
         const x1 = Math.max(...group.map((r) => r.x + r.w)) + 4
         const y1 = Math.max(...group.map((r) => r.y + r.h)) + 4
-        outlines.push({ tag: s.clusterCode, style: boxStyle({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }) })
+        // Vertical bar seats (1..14) sit in a 4px-spaced column: placing the pill above covers seat 7/13.
+        const sideTag = group.length > 0 && group.every((r) => r.seat && r.x < 170)
+        outlines.push({
+          tag: s.clusterCode,
+          sideTag,
+          style: boxStyle({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }),
+        })
       }
     }
     return outlines
@@ -213,24 +219,10 @@ export function PaymentFloorMap({
   const isSplit = views.length > 1
 
   return (
-    <section
-      id="floor-map"
-      aria-label="Sơ đồ bàn"
-      className="pay-floor-card rounded-2xl border border-border bg-surface-1 shadow-xs"
-    >
-      <div className="relative flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
-        <h2 className="mr-auto text-[15px] font-semibold tracking-[-0.01em]">Sơ đồ bàn</h2>
-        <button
-          type="button"
-          aria-pressed={!target}
-          onClick={onClearSelection}
-          className={cn(
-            "inline-flex min-h-10 items-center rounded-[10px] border px-3 text-[13px] font-medium cursor-pointer transition-colors",
-            !target
-              ? "border-primary bg-primary-tint text-primary-ink"
-              : "border-border-strong bg-surface-1 text-foreground hover:bg-surface-2",
-          )}
-        >
+    <section id="floor-map" aria-label="Sơ đồ bàn" className="pay-floor-card pay-card">
+      <div className="pay-card-h pay-legend-h">
+        <h2 style={{ marginRight: "auto" }}>Sơ đồ bàn</h2>
+        <button type="button" aria-pressed={!target} onClick={onClearSelection} className="pay-icon-tog">
           Toàn sơ đồ
         </button>
         <button
@@ -239,14 +231,9 @@ export function PaymentFloorMap({
           aria-expanded={legendOpen}
           aria-controls="pay-floor-legend"
           aria-label="Ký hiệu trạng thái bàn"
-          className={cn(
-            "grid size-11 place-items-center rounded-full border cursor-pointer transition-colors",
-            legendOpen
-              ? "border-primary bg-primary-tint text-primary-ink"
-              : "border-border bg-surface-1 text-foreground hover:bg-surface-2",
-          )}
+          className="pay-icon-btn pay-legend-btn"
         >
-          <Info className="size-5" aria-hidden />
+          <Info className="pay-i" aria-hidden />
         </button>
 
         {legendOpen ? (
@@ -254,34 +241,31 @@ export function PaymentFloorMap({
             id="pay-floor-legend"
             role="dialog"
             aria-label="Ký hiệu trạng thái bàn"
-            className="absolute top-[calc(100%+6px)] right-3 z-20 grid gap-2.5 rounded-xl border border-border bg-surface-1 px-4 py-3.5 text-[13px] shadow-float"
+            className="pay-legend-pop"
           >
-            <span className="inline-flex items-center gap-2">
+            <span>
               <i
-                className="inline-block size-3.5 rounded-[4px] border-2 border-dashed"
-                style={{ background: "var(--surface-2)", borderColor: "var(--st-free)" }}
+                className="pay-lg-sw"
+                style={{ background: "var(--surface-2)", borderColor: "var(--st-free)", borderStyle: "dashed" }}
               />
               Trống
             </span>
-            <span className="inline-flex items-center gap-2">
+            <span>
               <i
-                className="inline-block size-3.5 rounded-[4px] border-2"
+                className="pay-lg-sw"
                 style={{ background: "var(--st-seated-tint)", borderColor: "var(--st-seated)" }}
               />
               Đang dùng
             </span>
-            <span className="inline-flex items-center gap-2">
+            <span>
               <i
-                className="inline-block size-3.5 rounded-[4px] border-2"
+                className="pay-lg-sw"
                 style={{ background: "var(--st-pending)", borderColor: "var(--st-pending-ink)" }}
               />
               Chờ thanh toán
             </span>
-            <span className="inline-flex items-center gap-2">
-              <i
-                className="inline-block size-3.5 rounded-[4px] border-2"
-                style={{ borderColor: "var(--cluster)" }}
-              />
+            <span>
+              <i className="pay-lg-sw" style={{ borderColor: "var(--cluster)" }} />
               Cụm bàn ghép
             </span>
           </div>
@@ -289,8 +273,8 @@ export function PaymentFloorMap({
       </div>
 
       {isSplit && target ? (
-        <p className="flex items-start gap-2 px-4 pt-2.5 text-[13px] text-[var(--text-muted)]">
-          <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
+        <p className="pay-hint pay-fnote">
+          <Info className="pay-i sm shrink-0" aria-hidden />
           <span>{`Cụm ${target.clusterCode || target.code} có bàn ở xa nhau nên sơ đồ tách thành 2 khung.`}</span>
         </p>
       ) : null}
@@ -327,15 +311,8 @@ export function PaymentFloorMap({
           const entrance = FIXTURES.find((f) => f.kind === "entrance")
 
           return (
-            <figure
-              key={`${idx}-${view.full ? "full" : "zoom"}`}
-              className={cn("pay-fpanel mv", view.full && "full")}
-            >
-              {view.label ? (
-                <figcaption className="absolute top-2 left-2 z-[3] rounded-md border border-border bg-surface-1 px-2 py-0.5 text-xs font-semibold">
-                  {view.label}
-                </figcaption>
-              ) : null}
+            <figure key={`${idx}-${view.full ? "full" : "zoom"}`} className={cn("pay-fpanel mv", view.full && "full")}>
+              {view.label ? <figcaption className="pay-fcap">{view.label}</figcaption> : null}
               <div className="pay-fsz" style={szStyle} />
               <div className="pay-fview" style={viewStyle}>
                 <button
@@ -345,7 +322,6 @@ export function PaymentFloorMap({
                   aria-label="Thu về toàn sơ đồ"
                   className="absolute inset-0 border-0 bg-transparent p-0 enabled:cursor-zoom-out disabled:cursor-default"
                 />
-                {/* Zone rects matching venue-layout.ts */}
                 {ZONES.filter((z) => z.code !== "BAR").map((z) => {
                   const [rx, ry, rw, rh] = z.rects[0]
                   return (
@@ -356,7 +332,6 @@ export function PaymentFloorMap({
                     />
                   )
                 })}
-                {/* Outer wall & entrance */}
                 {wall ? (
                   <div
                     className="pointer-events-none absolute"
@@ -415,14 +390,12 @@ export function PaymentFloorMap({
                   ) : null,
                 )}
 
-                {/* Cluster outlines with tag drawn ABOVE the tiles */}
                 {clusterOutlines.map((o) => (
                   <div key={o.tag + o.style.left + o.style.top} className="pay-f-cl" style={o.style}>
-                    <span className="pay-f-cltag">{o.tag}</span>
+                    <span className={cn("pay-f-cltag", o.sideTag && "pay-f-cltag-side")}>{o.tag}</span>
                   </div>
                 ))}
 
-                {/* Interactive tables & bar seats */}
                 {SPOTS.map((spot) => {
                   const session = sessionByTable.get(spot.code)
                   const baseCls = cn("pay-ft", spot.seat && "pay-ft-seat")
@@ -459,7 +432,7 @@ export function PaymentFloorMap({
                       aria-label={`${spot.code}, ${isPending ? "chờ thanh toán" : "đang dùng"}, ${hasLines ? formatVnd(session.dueVnd) : "chưa có dữ liệu món"}${session.clusterCode ? `, cụm ${session.clusterCode}` : ""}`}
                     >
                       <b>{spot.label}</b>
-                      {showAmount ? <small className="font-semibold tnum">{formatCompactVnd(session.dueVnd)}</small> : null}
+                      {showAmount ? <small>{formatCompactVnd(session.dueVnd)}</small> : null}
                     </button>
                   )
                 })}

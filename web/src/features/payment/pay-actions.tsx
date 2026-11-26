@@ -34,24 +34,15 @@ export interface PaymentErrorState {
 function ClosedBillBanner({ status, onToList }: { status: PayBill["status"]; onToList: () => void }) {
   const unpaid = status === "CLOSED_UNPAID"
   return (
-    <div
-      role="status"
-      className="flex items-start gap-2.5 rounded-[10px] border border-border-strong bg-surface-2 px-3 py-2.5 text-[13px]"
-    >
-      <Info className="mt-0.5 size-5 shrink-0 text-[var(--text-muted)]" aria-hidden />
+    <div role="status" className="pay-bn pay-bn-closed">
+      <Info className="pay-i" aria-hidden />
       <span>
-        <b className="block text-sm text-[var(--ink-strong)]">
-          {unpaid ? "Phiên đã trả bàn nhưng chưa thu tiền" : "Bill này đã thanh toán"}
-        </b>
+        <b>{unpaid ? "Phiên đã trả bàn nhưng chưa thu tiền" : "Bill này đã thanh toán"}</b>
         {unpaid
           ? "Lượt khách đã kết thúc mà chưa có biên nhận thu tiền. Mọi thao tác thu tiền đã được khóa."
           : "Phiên đã đóng. Mọi thao tác chọn phương thức, kiểm tra và xác nhận thu tiền đã được khóa."}
-        <span className="mt-2 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={onToList}
-            className="inline-flex min-h-10 items-center rounded-lg border border-border-strong bg-surface-1 px-3.5 text-sm font-medium cursor-pointer hover:border-foreground"
-          >
+        <span className="pay-bn-act">
+          <button type="button" onClick={onToList} className="pay-btn pay-btn-s">
             Về danh sách Phiên
           </button>
         </span>
@@ -72,15 +63,10 @@ function PaymentErrorBanner({
   if (!error) return null
   if (error.kind === "net") {
     return (
-      <div
-        role="alert"
-        className="flex items-start gap-2.5 rounded-[10px] border border-destructive/45 bg-[var(--destructive-tint)] px-3 py-2.5 text-[13px]"
-      >
-        <WifiOff className="mt-0.5 size-5 shrink-0 text-[var(--destructive-ink)]" aria-hidden />
+      <div role="alert" className="pay-bn pay-bn-err">
+        <WifiOff className="pay-i" aria-hidden />
         <span>
-          <b className="block text-sm text-[var(--destructive-ink)]">
-            {context === "cash" ? "Không gửi được tới máy chủ" : "Không gửi được xác nhận"}
-          </b>
+          <b>{context === "cash" ? "Không gửi được tới máy chủ" : "Không gửi được xác nhận"}</b>
           {context === "cash"
             ? "Thanh toán CHƯA được ghi nhận. Giữ tiền khách, không thu lại, bấm Thử lại khi có mạng."
             : "Thanh toán CHƯA được ghi nhận, bill chưa đóng. Thử lại khi có mạng."}
@@ -90,14 +76,12 @@ function PaymentErrorBanner({
   }
   if (error.kind === "conflict") {
     return (
-      <div
-        role="alert"
-        className="flex items-start gap-2.5 rounded-[10px] border border-[var(--st-pending)] bg-[var(--st-pending-tint)] px-3 py-2.5 text-[13px]"
-      >
-        <AlertTriangle className="mt-0.5 size-5 shrink-0 text-[var(--st-pending-ink)]" aria-hidden />
+      <div role="alert" className="pay-bn pay-bn-warn">
+        <AlertTriangle className="pay-i" aria-hidden />
         <span>
-          <b className="block text-sm text-[var(--st-pending-ink)]">Bill vừa được cập nhật</b>
-          Phiên bản bill đã thay đổi (chưa thu tiền). Đã tải lại số liệu mới nhất, vui lòng kiểm tra lại tổng tiền trước khi xác nhận lại.
+          <b>Bill vừa được cập nhật</b>
+          Phiên bản bill đã thay đổi (chưa thu tiền). Đã tải lại số liệu mới nhất, vui lòng kiểm tra lại tổng tiền trước
+          khi xác nhận lại.
         </span>
       </div>
     )
@@ -106,22 +90,13 @@ function PaymentErrorBanner({
     const who = error.confirmedBy ?? "Thu ngân khác"
     const when = error.confirmedAt ? ` lúc ${error.confirmedAt}` : ""
     return (
-      <div
-        role="alert"
-        className="flex items-start gap-2.5 rounded-[10px] border border-destructive/45 bg-[var(--destructive-tint)] px-3 py-2.5 text-[13px]"
-      >
-        <AlertTriangle className="mt-0.5 size-5 shrink-0 text-[var(--destructive-ink)]" aria-hidden />
+      <div role="alert" className="pay-bn pay-bn-err">
+        <AlertTriangle className="pay-i" aria-hidden />
         <span>
-          <b className="block text-sm text-[var(--destructive-ink)]">
-            Bill này đã được thanh toán trên thiết bị khác
-          </b>
+          <b>Bill này đã được thanh toán trên thiết bị khác</b>
           {`${who} xác nhận${when}. ${context === "cash" ? "Không thu lại tiền khách." : "Không xác nhận lại."}`}
-          <span className="mt-2 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={onToList}
-              className="inline-flex min-h-10 items-center rounded-lg border border-border-strong bg-surface-1 px-3.5 text-sm font-medium cursor-pointer hover:border-foreground"
-            >
+          <span className="pay-bn-act">
+            <button type="button" onClick={onToList} className="pay-btn pay-btn-s">
               Về danh sách Phiên
             </button>
           </span>
@@ -130,13 +105,10 @@ function PaymentErrorBanner({
     )
   }
   return (
-    <div
-      role="alert"
-      className="flex items-start gap-2.5 rounded-[10px] border border-destructive/45 bg-[var(--destructive-tint)] px-3 py-2.5 text-[13px]"
-    >
-      <AlertTriangle className="mt-0.5 size-5 shrink-0 text-[var(--destructive-ink)]" aria-hidden />
+    <div role="alert" className="pay-bn pay-bn-err">
+      <AlertTriangle className="pay-i" aria-hidden />
       <span>
-        <b className="block text-sm text-[var(--destructive-ink)]">Không thể hoàn tất thanh toán</b>
+        <b>Không thể hoàn tất thanh toán</b>
         {error.message}
       </span>
     </div>
@@ -161,19 +133,12 @@ export function MethodActionPane({
       : `Không cần làm tròn · Bill ${bill.billCode}`
 
   return (
-    <section
-      aria-label="Thanh toán"
-      className="pay-pane-act min-w-0 rounded-2xl border border-border bg-surface-1 p-5 shadow-xs"
-    >
-      <div className="grid gap-5">
-        <div className="grid gap-1">
-          <span className="text-xs font-semibold tracking-[0.06em] text-[var(--text-muted)] uppercase">
-            Khách cần trả
-          </span>
-          <b className="tnum text-[clamp(36px,4.4cqi,52px)] leading-none font-extrabold tracking-[-0.04em] text-[var(--ink-strong)]">
-            {formatVnd(bill.dueVnd)}
-          </b>
-          <span className="text-[13px] text-[var(--text-muted)]">{dueSub}</span>
+    <section aria-label="Thanh toán" className="pay-pane-act pay-card">
+      <div className="pay-act">
+        <div className="pay-due-b">
+          <span className="pay-due-l">Khách cần trả</span>
+          <b className="pay-due">{formatVnd(bill.dueVnd)}</b>
+          <span className="pay-due-s">{dueSub}</span>
         </div>
 
         {isClosed ? <ClosedBillBanner status={bill.status} onToList={onToList ?? (() => undefined)} /> : null}
@@ -182,62 +147,43 @@ export function MethodActionPane({
           <button
             type="button"
             disabled={isClosed}
-            className={cn("pay-mrow", lastMethod === "CASH" && "sel", "disabled:cursor-not-allowed disabled:opacity-50")}
+            className={cn("pay-mrow", lastMethod === "CASH" && "sel")}
             onClick={() => onSelectMethod("CASH")}
           >
-            <Banknote className="size-7 text-foreground" aria-hidden />
-            <span className="grid min-w-0 gap-0.5">
-              <b className="text-[17px] font-bold tracking-[-0.015em] text-[var(--ink-strong)]">Tiền mặt</b>
-              <span className="text-[13px] text-[var(--text-muted)]">
-                Nhập tiền khách đưa, hệ thống tính tiền thừa.
-              </span>
+            <Banknote className="pay-i lg pay-mrow-ic" aria-hidden />
+            <span className="pay-mrow-t">
+              <b>Tiền mặt</b>
+              <span className="pay-d">Nhập tiền khách đưa, hệ thống tính tiền thừa.</span>
             </span>
-            {lastMethod === "CASH" ? (
-              <span className="inline-flex h-6 items-center rounded-[6px] bg-primary px-2 text-xs font-semibold text-primary-foreground">
-                Đang chọn
-              </span>
-            ) : (
-              <span />
-            )}
-            <ChevronRight className="size-5 text-[var(--text-subtle)]" aria-hidden />
+            {lastMethod === "CASH" ? <span className="pay-mrow-sel">Đang chọn</span> : <span />}
+            <ChevronRight className="pay-i pay-chev" aria-hidden />
           </button>
 
           <button
             type="button"
             disabled={isClosed}
-            className={cn("pay-mrow", lastMethod === "TRANSFER" && "sel", "disabled:cursor-not-allowed disabled:opacity-50")}
+            className={cn("pay-mrow", lastMethod === "TRANSFER" && "sel")}
             onClick={() => onSelectMethod("TRANSFER")}
           >
-            <QrCode className="size-7 text-foreground" aria-hidden />
-            <span className="grid min-w-0 gap-0.5">
-              <b className="text-[17px] font-bold tracking-[-0.015em] text-[var(--ink-strong)]">Chuyển khoản QR</b>
-              <span className="text-[13px] text-[var(--text-muted)]">
-                Khách quét mã, nhân viên xác nhận khi thấy tiền về.
-              </span>
+            <QrCode className="pay-i lg pay-mrow-ic" aria-hidden />
+            <span className="pay-mrow-t">
+              <b>Chuyển khoản QR</b>
+              <span className="pay-d">Khách quét mã, nhân viên xác nhận khi thấy tiền về.</span>
             </span>
-            {lastMethod === "TRANSFER" ? (
-              <span className="inline-flex h-6 items-center rounded-[6px] bg-primary px-2 text-xs font-semibold text-primary-foreground">
-                Đang chọn
-              </span>
-            ) : (
-              <span />
-            )}
-            <ChevronRight className="size-5 text-[var(--text-subtle)]" aria-hidden />
+            {lastMethod === "TRANSFER" ? <span className="pay-mrow-sel">Đang chọn</span> : <span />}
+            <ChevronRight className="pay-i pay-chev" aria-hidden />
           </button>
         </div>
 
-        <p className="flex items-start gap-2 text-[13px] text-[var(--text-muted)]">
-          <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
+        <p className="pay-hint">
+          <Info className="pay-i sm" aria-hidden />
           <span>Mỗi bill chỉ dùng một phương thức. Không chia tiền mặt và chuyển khoản trên cùng bill.</span>
         </p>
 
-        <div className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--text-muted)]" aria-label="Giai đoạn sau">
+        <div className="pay-later" aria-label="Giai đoạn sau">
           <span>Giai đoạn sau:</span>
           {["Ghi nợ", "Thẻ", "Tách bill", "Giảm giá · voucher", "Hóa đơn điện tử"].map((tag) => (
-            <span
-              key={tag}
-              className="inline-flex h-6 items-center rounded-[6px] bg-surface-3 px-2 text-[11px] font-semibold text-[var(--text-muted)]"
-            >
+            <span key={tag} className="pay-tag">
               {tag}
             </span>
           ))}
@@ -273,7 +219,7 @@ export function CashActionPane({
   const resMeta = (() => {
     if (res.state === "short") {
       return {
-        cls: "border-[var(--destructive)] bg-[var(--destructive-tint)] text-[var(--destructive-ink)]",
+        cls: "pay-res pay-res-short",
         label: "Còn thiếu",
         value: formatVnd(res.shortVnd),
         note: "Chưa đủ tiền, không thể hoàn tất",
@@ -281,7 +227,7 @@ export function CashActionPane({
     }
     if (res.state === "exact") {
       return {
-        cls: "border-[var(--st-seated)] bg-[var(--st-seated-tint)] text-[var(--st-seated-ink)]",
+        cls: "pay-res pay-res-ok",
         label: "Vừa đủ",
         value: "0đ",
         note: "Không có tiền thừa",
@@ -289,14 +235,14 @@ export function CashActionPane({
     }
     if (res.state === "change") {
       return {
-        cls: "border-[var(--st-seated)] bg-[var(--st-seated-tint)] text-[var(--st-seated-ink)]",
+        cls: "pay-res pay-res-ok",
         label: "Tiền thừa trả khách",
         value: formatVnd(res.changeVnd),
         note: `Khách đưa ${formatVnd(res.givenVnd)}`,
       }
     }
     return {
-      cls: "border-dashed border-border-strong bg-surface-2 text-[var(--text-muted)]",
+      cls: "pay-res pay-res-idle",
       label: "Tiền thừa trả khách",
       value: "—",
       note: "Nhập hoặc chọn số tiền khách đưa",
@@ -304,34 +250,22 @@ export function CashActionPane({
   })()
 
   return (
-    <section
-      aria-label="Thanh toán"
-      className="pay-pane-act min-w-0 rounded-2xl border border-border bg-surface-1 p-5 shadow-xs"
-    >
-      <div className="grid gap-5">
-        <div className="grid gap-1">
-          <span className="text-xs font-semibold tracking-[0.06em] text-[var(--text-muted)] uppercase">
-            Khách cần trả
-          </span>
-          <b className="tnum text-[clamp(36px,4.4cqi,52px)] leading-none font-extrabold tracking-[-0.04em] text-[var(--ink-strong)]">
-            {formatVnd(bill.dueVnd)}
-          </b>
-          <span className="text-[13px] text-[var(--text-muted)]">
+    <section aria-label="Thanh toán" className="pay-pane-act pay-card">
+      <div className="pay-act">
+        <div className="pay-due-b">
+          <span className="pay-due-l">Khách cần trả</span>
+          <b className="pay-due">{formatVnd(bill.dueVnd)}</b>
+          <span className="pay-due-s">
             {bill.roundingVnd > 0
               ? `Đã làm tròn lên từ ${formatVnd(bill.preRoundVnd)} · Bill ${bill.billCode}`
               : `Không cần làm tròn · Bill ${bill.billCode}`}
           </span>
         </div>
 
-        <div className="grid gap-2">
-          <div className="grid gap-2">
-            <label
-              htmlFor="pay-cash-in"
-              className="text-xs font-semibold tracking-[0.06em] text-[var(--text-muted)] uppercase"
-            >
-              Khách đưa
-            </label>
-            <div className="relative">
+        <div className="pay-cash-in">
+          <div className="pay-fld">
+            <label htmlFor="pay-cash-in">Khách đưa</label>
+            <div className="pay-money-in">
               <input
                 id="pay-cash-in"
                 type="text"
@@ -346,21 +280,14 @@ export function CashActionPane({
                   setGivenVnd(parseCashInputDigits(e.target.value))
                   onClearError()
                 }}
-                className={cn(
-                  "tnum h-[72px] w-full rounded-[10px] border-2 bg-surface-1 pr-12 pl-4 text-right text-[34px] font-extrabold tracking-[-0.03em] text-[var(--ink-strong)] focus:border-primary focus:ring-4 focus:ring-primary-tint focus:outline-none disabled:bg-surface-2 disabled:text-[var(--text-subtle)]",
-                  isShort ? "border-destructive" : "border-border-strong",
-                )}
               />
-              <span
-                aria-hidden
-                className="pointer-events-none absolute top-1/2 right-[18px] -translate-y-1/2 text-[22px] font-semibold text-[var(--text-muted)]"
-              >
+              <span aria-hidden className="pay-cur">
                 đ
               </span>
             </div>
           </div>
 
-          <div role="group" aria-label="Chọn nhanh mệnh giá" className="grid grid-cols-3 gap-2">
+          <div role="group" aria-label="Chọn nhanh mệnh giá" className="pay-chips">
             {chips.map((v) => {
               const pressed = givenVnd === v
               return (
@@ -373,12 +300,7 @@ export function CashActionPane({
                     setGivenVnd(v)
                     onClearError()
                   }}
-                  className={cn(
-                    "tnum grid min-h-[52px] place-content-center rounded-lg border px-1.5 py-1 text-[15px] leading-[1.15] font-semibold cursor-pointer transition-colors disabled:cursor-not-allowed disabled:bg-surface-2 disabled:text-[var(--text-subtle)]",
-                    pressed
-                      ? "border-primary bg-primary-tint text-primary-ink shadow-[inset_0_0_0_1px_var(--primary)]"
-                      : "border-border-strong bg-surface-1 hover:border-foreground",
-                  )}
+                  className="pay-chip"
                 >
                   {formatNumberVnd(v)}
                 </button>
@@ -387,29 +309,22 @@ export function CashActionPane({
           </div>
         </div>
 
-        <div className="grid gap-2">
+        <div className="pay-act-foot">
           {isClosed && error?.kind !== "dup" ? <ClosedBillBanner status={bill.status} onToList={onToList} /> : null}
           <PaymentErrorBanner error={error} context="cash" onToList={onToList} />
 
-          <div
-            id="pay-cash-res"
-            role="status"
-            aria-live="polite"
-            className={cn("grid min-h-16 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-[10px] border px-3.5 py-2.5", resMeta.cls)}
-          >
+          <div id="pay-cash-res" role="status" aria-live="polite" className={resMeta.cls}>
             {res.state === "short" ? (
-              <AlertTriangle className="size-7" aria-hidden />
+              <AlertTriangle className="pay-i lg" aria-hidden />
             ) : res.state === "exact" || res.state === "change" ? (
-              <Check className="size-7" aria-hidden />
+              <Check className="pay-i lg" aria-hidden />
             ) : (
-              <Banknote className="size-7" aria-hidden />
+              <Banknote className="pay-i lg" aria-hidden />
             )}
-            <span className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3">
-              <span className="text-[13px] font-semibold">{resMeta.label}</span>
-              <b className={cn("tnum font-extrabold tracking-[-0.03em]", res.state === "idle" ? "text-xl" : "text-[28px] leading-[1.15]")}>
-                {resMeta.value}
-              </b>
-              <small className="basis-full text-xs">{resMeta.note}</small>
+            <span className="pay-res-t">
+              <span>{resMeta.label}</span>
+              <b>{resMeta.value}</b>
+              <small>{resMeta.note}</small>
             </span>
           </div>
 
@@ -419,9 +334,9 @@ export function CashActionPane({
             onClick={() => {
               if (givenVnd !== null && !isShort) onConfirm(givenVnd)
             }}
-            className="inline-flex min-h-[60px] w-full items-center justify-center gap-2 rounded-lg bg-[var(--ok-bg)] px-5 text-[17px] font-bold text-white cursor-pointer transition-colors hover:bg-[var(--ok-bg-hover)] active:bg-[var(--ok-bg-active)] disabled:cursor-not-allowed disabled:bg-surface-3 disabled:text-[var(--text-subtle)] dark:text-[oklch(0.2_0.02_158)]"
+            className="pay-btn pay-btn-ok pay-btn-xl pay-btn-w"
           >
-            {busy ? <span className="pay-spin" aria-hidden /> : <Check className="size-5" aria-hidden />}
+            {busy ? <span className="pay-spin" aria-hidden /> : <Check className="pay-i" aria-hidden />}
             {busy
               ? "Đang ghi nhận…"
               : canSubmit && givenVnd !== null
@@ -472,22 +387,22 @@ export function QrActionPane({
 
   const waitMeta = {
     waiting: {
-      cls: "border-[var(--st-pending)] bg-[var(--st-pending-tint)] text-[var(--st-pending-ink)]",
+      cls: "pay-wait pay-w-wait",
       title: "Chờ nhận tiền",
       sub: `Đã chờ ${mm}:${ss} · chưa nhận tiền, bill chưa đóng`,
     },
     checking: {
-      cls: "border-[var(--st-pending)] bg-[var(--st-pending-tint)] text-[var(--st-pending-ink)]",
+      cls: "pay-wait pay-w-wait",
       title: "Đang kiểm tra giao dịch…",
       sub: "Mô phỏng truy vấn, chưa nối cổng thanh toán",
     },
     none: {
-      cls: "border-dashed border-border-strong bg-surface-2 text-foreground",
+      cls: "pay-wait pay-w-none",
       title: "Chưa thấy giao dịch khớp",
       sub: "Xem SMS hoặc app ngân hàng của quán, hỏi khách ảnh chuyển khoản",
     },
     found: {
-      cls: "border-[var(--st-seated)] bg-[var(--st-seated-tint)] text-[var(--st-seated-ink)]",
+      cls: "pay-wait pay-w-found",
       title: "Đã thấy giao dịch khớp (mô phỏng)",
       sub: `${formatVnd(bill.dueVnd)} · nội dung ${qrRef} · vẫn cần nhân viên xác nhận`,
     },
@@ -505,53 +420,52 @@ export function QrActionPane({
   }
 
   return (
-    <section
-      aria-label="Thanh toán"
-      className="pay-pane-act min-w-0 rounded-2xl border border-border bg-surface-1 p-5 shadow-xs"
-    >
-      <div className="grid gap-5">
-        <div className="grid gap-1">
-          <span className="text-xs font-semibold tracking-[0.06em] text-[var(--text-muted)] uppercase">
-            Khách cần trả
-          </span>
-          <b className="tnum text-[clamp(36px,4.4cqi,52px)] leading-none font-extrabold tracking-[-0.04em] text-[var(--ink-strong)]">
-            {formatVnd(bill.dueVnd)}
-          </b>
-          <span className="text-[13px] text-[var(--text-muted)]">
+    <section aria-label="Thanh toán" className="pay-pane-act pay-card">
+      <div className="pay-act">
+        <div className="pay-due-b">
+          <span className="pay-due-l">Khách cần trả</span>
+          <b className="pay-due">{formatVnd(bill.dueVnd)}</b>
+          <span className="pay-due-s">
             {bill.roundingVnd > 0
               ? `Đã làm tròn lên từ ${formatVnd(bill.preRoundVnd)} · Bill ${bill.billCode}`
               : `Không cần làm tròn · Bill ${bill.billCode}`}
           </span>
         </div>
 
-        <div className="pay-qr-wrap grid gap-4">
-          <div className="grid justify-items-center gap-2">
+        <div className="pay-qr-wrap">
+          <div className="pay-qr-area">
             <DemoQrBox size="md" label="Mã QR minh họa, không chuyển tiền được" />
-            <span className="text-center text-[11px] text-[var(--text-muted)]">
-              QR giả lập. Bản thật: QR động đúng số tiền và mã bill.
+            <span className="pay-qr-cap">
+              QR giả lập. Bản thật: QR động đúng số tiền và mã bill; giai đoạn sau tự xác nhận qua cổng thanh toán.
             </span>
           </div>
 
-          <dl aria-label="Thông tin nhận tiền" className="pay-bank grid text-sm">
-            <div className="flex min-h-10 items-center justify-between gap-3 py-1">
-              <dt className="text-[13px] text-[var(--text-muted)]">Ngân hàng</dt>
-              <dd className="font-medium text-[var(--text-subtle)] italic">[Chờ quán cung cấp]</dd>
+          <dl aria-label="Thông tin nhận tiền" className="pay-bank">
+            <div>
+              <dt>Ngân hàng</dt>
+              <dd>
+                <span className="pay-val-ph">[Chờ quán cung cấp]</span>
+              </dd>
             </div>
-            <div className="flex min-h-10 items-center justify-between gap-3 border-t border-border py-1">
-              <dt className="text-[13px] text-[var(--text-muted)]">Số tài khoản</dt>
-              <dd className="font-medium text-[var(--text-subtle)] italic">[Chờ quán cung cấp]</dd>
+            <div>
+              <dt>Số tài khoản</dt>
+              <dd>
+                <span className="pay-val-ph">[Chờ quán cung cấp]</span>
+              </dd>
             </div>
-            <div className="flex min-h-10 items-center justify-between gap-3 border-t border-border py-1">
-              <dt className="text-[13px] text-[var(--text-muted)]">Chủ tài khoản</dt>
-              <dd className="font-medium text-[var(--text-subtle)] italic">[Chờ quán cung cấp]</dd>
+            <div>
+              <dt>Chủ tài khoản</dt>
+              <dd>
+                <span className="pay-val-ph">[Chờ quán cung cấp]</span>
+              </dd>
             </div>
-            <div className="flex min-h-10 items-center justify-between gap-3 border-t border-border py-1">
-              <dt className="text-[13px] text-[var(--text-muted)]">Số tiền</dt>
-              <dd className="tnum text-[15px] font-semibold text-[var(--ink-strong)]">{formatVnd(bill.dueVnd)}</dd>
+            <div className="pay-key">
+              <dt>Số tiền</dt>
+              <dd className="tnum">{formatVnd(bill.dueVnd)}</dd>
             </div>
-            <div className="flex min-h-10 items-center justify-between gap-3 border-t border-border py-1">
-              <dt className="text-[13px] text-[var(--text-muted)]">Nội dung</dt>
-              <dd className="flex items-center gap-1.5 text-[15px] font-semibold text-[var(--ink-strong)]">
+            <div className="pay-key">
+              <dt>Nội dung</dt>
+              <dd>
                 <span>{qrRef}</span>
                 <button
                   type="button"
@@ -564,9 +478,9 @@ export function QrActionPane({
                     onCopied(qrRef)
                   }}
                   aria-label="Chép nội dung chuyển khoản"
-                  className="inline-flex min-h-9 items-center gap-1 rounded-lg border border-border-strong bg-surface-1 px-2.5 text-xs font-medium cursor-pointer hover:border-foreground"
+                  className="pay-copy"
                 >
-                  <Copy className="size-3.5" aria-hidden />
+                  <Copy className="pay-i sm" aria-hidden />
                   Chép
                 </button>
               </dd>
@@ -574,40 +488,33 @@ export function QrActionPane({
           </dl>
         </div>
 
-        <div className="grid gap-2">
+        <div className="pay-act-foot">
           {isClosed && error?.kind !== "dup" ? <ClosedBillBanner status={bill.status} onToList={onToList} /> : null}
           <PaymentErrorBanner error={error} context="qr" onToList={onToList} />
 
           {!isClosed && error?.kind !== "dup" ? (
-            <div
-              role="status"
-              aria-live="polite"
-              className={cn(
-                "grid min-h-[60px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-[10px] border py-2 pr-2 pl-3.5",
-                waitMeta.cls,
-              )}
-            >
+            <div role="status" aria-live="polite" className={waitMeta.cls}>
               {qrStatus === "waiting" ? (
                 <span className="pay-pulse" aria-hidden />
               ) : qrStatus === "checking" ? (
                 <span className="pay-spin" aria-hidden />
               ) : qrStatus === "found" ? (
-                <Check className="size-5" aria-hidden />
+                <Check className="pay-i" aria-hidden />
               ) : (
-                <Info className="size-5" aria-hidden />
+                <Info className="pay-i" aria-hidden />
               )}
-              <span className="grid min-w-0">
-                <b className="text-[15px] font-bold">{waitMeta.title}</b>
-                <span className="text-xs">{waitMeta.sub}</span>
+              <span className="pay-wait-t">
+                <b>{waitMeta.title}</b>
+                <span>{waitMeta.sub}</span>
               </span>
               <button
                 type="button"
                 disabled={qrStatus === "checking" || busy || isClosed}
                 onClick={() => void handleCheck()}
                 aria-label="Kiểm tra giao dịch (mô phỏng)"
-                className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-border-strong bg-surface-1 px-3 text-[13px] font-medium text-foreground cursor-pointer hover:border-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                className="pay-btn pay-btn-s"
               >
-                <RefreshCw className="size-4" aria-hidden />
+                <RefreshCw className="pay-i sm" aria-hidden />
                 Kiểm tra
               </button>
             </div>
@@ -620,55 +527,29 @@ export function QrActionPane({
               setAck(false)
               setConfirmOpen(true)
             }}
-            className="inline-flex min-h-[60px] w-full items-center justify-center gap-2 rounded-lg bg-[var(--ok-bg)] px-5 text-[17px] font-bold text-white cursor-pointer transition-colors hover:bg-[var(--ok-bg-hover)] active:bg-[var(--ok-bg-active)] disabled:cursor-not-allowed disabled:bg-surface-3 disabled:text-[var(--text-subtle)] dark:text-[oklch(0.2_0.02_158)]"
+            className="pay-btn pay-btn-ok pay-btn-xl pay-btn-w"
           >
-            {busy ? <span className="pay-spin" aria-hidden /> : <Check className="size-5" aria-hidden />}
+            {busy ? <span className="pay-spin" aria-hidden /> : <Check className="pay-i" aria-hidden />}
             {busy ? "Đang ghi nhận…" : "Xác nhận đã nhận tiền"}
           </button>
         </div>
       </div>
 
       {confirmOpen ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-[var(--scrim)] p-4">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="pay-qr-cf-title"
-            className="grid max-h-[calc(100vh-32px)] w-[min(460px,100%)] gap-3 overflow-auto rounded-[20px] bg-surface-1 p-6 shadow-float"
-          >
-            <h2 id="pay-qr-cf-title" className="text-lg font-bold tracking-[-0.015em]">
-              Xác nhận đã nhận chuyển khoản
-            </h2>
-            <p className="tnum text-4xl leading-none font-extrabold tracking-[-0.04em] text-[var(--ink-strong)]">
-              {formatVnd(bill.dueVnd)}
-            </p>
-            <label
-              htmlFor="pay-qr-ack"
-              className={cn(
-                "flex cursor-pointer items-start gap-3 rounded-[10px] border px-3.5 py-3",
-                ack ? "border-[var(--st-seated)] bg-[var(--st-seated-tint)]" : "border-border-strong",
-              )}
-            >
-              <input
-                id="pay-qr-ack"
-                type="checkbox"
-                checked={ack}
-                onChange={(e) => setAck(e.target.checked)}
-                className="mt-0.5 size-[22px] shrink-0 accent-primary"
-              />
+        <div className="pay-ov">
+          <div role="dialog" aria-modal="true" aria-labelledby="pay-qr-cf-title" className="pay-sheet">
+            <h2 id="pay-qr-cf-title">Xác nhận đã nhận chuyển khoản</h2>
+            <p className="pay-due tnum">{formatVnd(bill.dueVnd)}</p>
+            <label htmlFor="pay-qr-ack" className="pay-ack">
+              <input id="pay-qr-ack" type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />
               <span>{`Tôi đã thấy ${formatVnd(bill.dueVnd)} về tài khoản quán, đúng nội dung "${qrRef}".`}</span>
             </label>
-            <p className="flex items-start gap-2 text-[13px] text-[var(--text-muted)]">
-              <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
-              <span>Giao dịch được gắn cờ "xác nhận tay" kèm tên người xác nhận để đối soát.</span>
+            <p className="pay-hint">
+              <Info className="pay-i sm" aria-hidden />
+              <span>Giao dịch được gắn cờ "xác nhận tay" kèm tên người xác nhận để Kế toán đối soát (TN-09).</span>
             </p>
-            <div className="grid grid-cols-2 gap-2.5">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => setConfirmOpen(false)}
-                className="inline-flex min-h-[52px] items-center justify-center rounded-lg border border-border-strong bg-surface-1 px-4 text-[15px] font-medium cursor-pointer hover:border-foreground"
-              >
+            <div className="pay-sheet-act">
+              <button type="button" disabled={busy} onClick={() => setConfirmOpen(false)} className="pay-btn pay-btn-s pay-btn-lg">
                 Hủy
               </button>
               <button
@@ -679,7 +560,7 @@ export function QrActionPane({
                   setConfirmOpen(false)
                   onConfirmManual()
                 }}
-                className="inline-flex min-h-[52px] items-center justify-center rounded-lg bg-[var(--ok-bg)] px-4 text-[15px] font-semibold text-white cursor-pointer hover:bg-[var(--ok-bg-hover)] disabled:cursor-not-allowed disabled:bg-surface-3 disabled:text-[var(--text-subtle)] dark:text-[oklch(0.2_0.02_158)]"
+                className="pay-btn pay-btn-ok pay-btn-lg"
               >
                 Xác nhận
               </button>
@@ -724,62 +605,45 @@ export function SuccessView({
   ]
 
   return (
-    <section className="grid justify-items-center">
-      <div className="grid w-[min(640px,100%)] gap-6 rounded-2xl border border-border bg-surface-1 p-7 shadow-xs">
-        <div role="status" className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
-          <span
-            aria-hidden
-            className="grid size-10 place-items-center rounded-lg bg-[var(--ok-bg)] text-white dark:text-[oklch(0.2_0.02_158)]"
-          >
-            <Check className="size-5" strokeWidth={3} />
+    <section className="pay-ok">
+      <div className="pay-ok-card pay-card">
+        <div role="status" className="pay-ok-hd">
+          <span aria-hidden className="pay-ok-ic">
+            <Check className="pay-i" strokeWidth={3} />
           </span>
-          <span className="grid min-w-0 gap-0.5">
-            <h1 className="text-xl font-bold tracking-[-0.02em] text-[var(--st-seated-ink)]">Đã thanh toán</h1>
-            <span className="text-[13px] text-[var(--text-muted)]">
+          <span className="pay-ok-hd-t">
+            <h1>Đã thanh toán</h1>
+            <span className="pay-ok-sub">
               {`${receipt.method === "CASH" ? "Tiền mặt" : "Chuyển khoản QR"} · ${receipt.clusterCode ? "Cụm " : "Bàn "}${receipt.code} · ${receipt.confirmedAt}`}
             </span>
           </span>
         </div>
 
-        <div className="grid gap-1">
-          <span className="text-xs font-semibold tracking-[0.06em] text-[var(--text-muted)] uppercase">Đã thu</span>
-          <p className="tnum text-[clamp(40px,7cqi,56px)] leading-none font-extrabold tracking-[-0.04em] text-[var(--ink-strong)]">
-            {formatVnd(receipt.dueVnd)}
-          </p>
+        <div className="pay-ok-amt-b">
+          <span className="pay-due-l">Đã thu</span>
+          <p className="pay-ok-amt">{formatVnd(receipt.dueVnd)}</p>
         </div>
 
-        <dl className="grid grid-cols-[repeat(auto-fit,minmax(min(220px,100%),1fr))] gap-x-6 border-t border-border">
+        <dl className="pay-ok-dl">
           {rows.map((r) => (
-            <div key={r.k} className="flex justify-between gap-3 border-b border-border py-2.5">
-              <dt className="text-[var(--text-muted)]">{r.k}</dt>
-              <dd className="tnum text-right font-semibold">{r.v}</dd>
+            <div key={r.k}>
+              <dt>{r.k}</dt>
+              <dd className="tnum">{r.v}</dd>
             </div>
           ))}
         </dl>
 
-        <div className="flex flex-wrap items-center gap-3.5 rounded-[10px] bg-surface-2 p-3.5">
-          <div
-            className={cn(
-              "flex flex-none gap-2",
-              isCluster && "relative rounded-[14px] border-2 border-[var(--cluster)] bg-[color-mix(in_oklab,var(--cluster)_8%,transparent)] p-1.5",
-            )}
-          >
-            {isCluster ? (
-              <span className="absolute -top-2.5 right-2.5 h-5 rounded-full bg-[var(--cluster)] px-2 text-[11px] leading-5 font-bold text-white dark:text-[oklch(0.2_0.02_245)]">
-                {receipt.clusterCode}
-              </span>
-            ) : null}
+        <div className="pay-ok-close">
+          <div className={cn("pay-grp", isCluster && "cl")}>
+            {isCluster ? <span className="pay-grp-tag">{receipt.clusterCode}</span> : null}
             {receipt.tables.map((t) => (
-              <span
-                key={t}
-                className="grid h-[60px] w-[72px] place-content-center justify-items-center rounded-[10px] border-2 border-dashed border-[var(--st-free)] bg-surface-2 px-1 text-xs leading-tight text-[var(--text-muted)]"
-              >
-                <b className="text-[15px] font-bold">{t}</b>
-                <small className="text-[11px]">Trống</small>
+              <span key={t} className="pay-tile pay-t-free">
+                <b>{t}</b>
+                <small>Trống</small>
               </span>
             ))}
           </div>
-          <p className="min-w-[200px] flex-1 text-[13px]">
+          <p>
             {`Phiên ${receipt.sessionCode} đã đóng. ${receipt.tables.join(" và ")} về Trống.`}
             {isCluster ? (
               <>
@@ -790,26 +654,21 @@ export function SuccessView({
           </p>
         </div>
 
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))] gap-2.5">
-          <button
-            type="button"
-            onClick={onToList}
-            className="inline-flex min-h-[60px] items-center justify-center rounded-lg bg-primary px-5 text-[17px] font-bold text-primary-foreground cursor-pointer hover:bg-[var(--primary-hover)]"
-          >
+        <div className="pay-ok-act">
+          <button type="button" onClick={onToList} className="pay-btn pay-btn-p pay-btn-xl">
             Về danh sách Phiên
           </button>
-          <button
-            type="button"
-            onClick={onPrintReceipt}
-            className="inline-flex min-h-[60px] items-center justify-center gap-2 rounded-lg border border-border-strong bg-surface-1 px-5 text-[17px] font-semibold cursor-pointer hover:border-foreground"
-          >
-            <Printer className="size-5" aria-hidden />
+          <button type="button" onClick={onPrintReceipt} className="pay-btn pay-btn-s pay-btn-xl">
+            <Printer className="pay-i" aria-hidden />
             In biên nhận
-            <span className="inline-flex h-5 items-center rounded-[6px] bg-surface-3 px-1.5 text-[11px] font-semibold text-[var(--text-muted)]">
-              mô phỏng
-            </span>
+            <span className="pay-tag">mô phỏng</span>
           </button>
         </div>
+
+        <p className="pay-hint">
+          <Info className="pay-i sm" aria-hidden />
+          <span>Bấm nhầm? Chỉ Lễ tân, Admin Edit, SuperAdmin hủy được thao tác Đã thanh toán (TN-14).</span>
+        </p>
       </div>
     </section>
   )

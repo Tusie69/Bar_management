@@ -3,11 +3,11 @@ import { useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
 import type { PaymentNotification, PaymentNotificationType } from "@/services/payment"
 
-const DOT_CLASS: Record<PaymentNotificationType, string> = {
-  CANCELLED_ITEM: "bg-destructive",
-  PAYMENT_REQUEST: "bg-primary",
-  AWAITING_PAYMENT: "bg-[var(--st-pending)]",
-  PAID: "bg-st-seated",
+const NTF_TYPE_CLASS: Record<PaymentNotificationType, string> = {
+  CANCELLED_ITEM: "pay-ntf-cancel",
+  PAYMENT_REQUEST: "pay-ntf-req",
+  AWAITING_PAYMENT: "pay-ntf-pend",
+  PAID: "pay-ntf-paid",
 }
 
 export function PaymentNotificationBell({
@@ -45,7 +45,7 @@ export function PaymentNotificationBell({
   const hasUnread = unread && notifications.length > 0
 
   return (
-    <span ref={wrapRef} className="relative inline-flex">
+    <span ref={wrapRef} className="pay-ntf-wrap">
       <button
         type="button"
         aria-label={
@@ -58,47 +58,35 @@ export function PaymentNotificationBell({
           setOpen(next)
           if (next) onOpen()
         }}
-        className="relative inline-flex min-h-11 items-center gap-2 rounded-full border border-border bg-surface-2 px-3 text-foreground cursor-pointer transition-colors hover:bg-surface-3 md:px-3.5"
+        className="pay-icon-btn"
       >
-        <Bell className="size-5 shrink-0" aria-hidden />
-        <span className="hidden text-[13px] font-semibold md:inline">Thông báo thu tiền</span>
-        {hasUnread ? (
-          <span
-            aria-hidden
-            data-testid="pay-ntf-unread-dot"
-            className="absolute top-2 right-2.5 size-2.5 rounded-full border-2 border-surface-1 bg-destructive"
-          />
-        ) : null}
+        <Bell className="pay-i" aria-hidden />
+        {hasUnread ? <span aria-hidden data-testid="pay-ntf-unread-dot" className="pay-ntf-dot" /> : null}
       </button>
 
       {open ? (
-        <div
-          id="pay-ntf-list"
-          role="dialog"
-          aria-label="Thông báo thanh toán"
-          className="absolute top-[calc(100%+6px)] right-0 z-30 max-h-[420px] w-[min(340px,calc(100vw-24px))] overflow-auto rounded-xl border border-border bg-surface-1 pt-3 pb-1 text-foreground shadow-float"
-        >
-          <b className="block px-4 pb-2 text-sm">Thông báo</b>
+        <div id="pay-ntf-list" role="dialog" aria-label="Thông báo thanh toán" className="pay-ntf-pop">
+          <b className="pay-ntf-h">Thông báo</b>
           {notifications.length === 0 ? (
             <p className="border-t border-border px-4 py-3 text-sm text-[var(--text-muted)]">Chưa có thông báo.</p>
           ) : (
-            <ul className="m-0 list-none p-0">
+            <ul>
               {notifications.map((n) => (
-                <li key={n.id} className="border-t border-border">
+                <li key={n.id}>
                   <button
                     type="button"
                     onClick={() => {
                       setOpen(false)
                       if (n.visitId && onSelectVisit) onSelectVisit(n.visitId)
                     }}
-                    className="grid w-full grid-cols-[10px_1fr_auto] items-start gap-2.5 px-4 py-2.5 text-left text-[13px] cursor-pointer hover:bg-surface-2"
+                    className={cn("pay-ntf", NTF_TYPE_CLASS[n.type])}
                   >
-                    <span className={cn("mt-1 size-2.5 rounded-full", DOT_CLASS[n.type])} aria-hidden />
-                    <span className="grid min-w-0 gap-0.5">
-                      <b className="font-semibold text-foreground">{n.title}</b>
-                      <span className="text-[var(--text-muted)]">{n.text}</span>
+                    <span className="pay-ntf-ic" aria-hidden />
+                    <span className="pay-ntf-t">
+                      <b>{n.title}</b>
+                      <span>{n.text}</span>
                     </span>
-                    <time className="tnum text-xs text-[var(--text-muted)]">{n.time}</time>
+                    <time>{n.time}</time>
                   </button>
                 </li>
               ))}
