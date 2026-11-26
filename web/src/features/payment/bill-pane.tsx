@@ -178,6 +178,7 @@ export function DetailActionPane({
   unbilledLineCount,
   cancelRequests,
   canCollect,
+  canRequestCancel = canCollect,
   isWaiter,
   busy,
   onPreview,
@@ -194,6 +195,7 @@ export function DetailActionPane({
   unbilledLineCount?: number
   cancelRequests?: readonly CancelRequest[]
   canCollect: boolean
+  canRequestCancel?: boolean
   isWaiter: boolean
   busy: boolean
   onPreview: () => void
@@ -218,15 +220,34 @@ export function DetailActionPane({
   const canIssue = Boolean(canCollect && onIssueInvoice && !isClosedUnpaid && unbilledCount > 0 && hasLines)
   const canCollectSelected = Boolean(canCollect && !isClosed && hasLines && (isUnpaidBill || !onIssueInvoice))
 
-  const activeCancelRequest = useMemo(() => {
+  const latestCancelRequest = useMemo(() => {
     if (!cancelRequests?.length || !bill.billCode) return null
     const matches = cancelRequests.filter((r) => r.billCode === bill.billCode)
-    return matches[0] ?? null
+    if (matches.length <= 1) return matches[0] ?? null
+    return [...matches].sort((a, b) => {
+      const ta = Date.parse(a.requestedAt)
+      const tb = Date.parse(b.requestedAt)
+      if (!Number.isNaN(ta) && !Number.isNaN(tb) && tb !== ta) return tb - ta
+      return 0
+    })[0]
   }, [bill.billCode, cancelRequests])
+
+  // An APPROVED request reverted a prior payment to UNPAID. Once the bill is
+  // re-collected (isBillPaid === true), that approval belongs to the prior
+  // collection and must not block or mislabel a new cancel request.
+  const activeCancelRequest =
+    latestCancelRequest && !(isBillPaid && latestCancelRequest.status === "APPROVED")
+      ? latestCancelRequest
+      : null
 
   const hasPendingCancel = activeCancelRequest?.status === "PENDING" || Boolean(bill.cancelPending)
   const canSubmitCancelRequest = Boolean(
-    isBillPaid && canCollect && onRequestCancel && bill.billCode && !hasPendingCancel && activeCancelRequest?.status !== "APPROVED",
+    isBillPaid && canRequestCancel && onRequestCancel && bill.billCode && !hasPendingCancel,
+  )
+  const showCancelBox = Boolean(
+    canCollect &&
+      ((isBillPaid && (activeCancelRequest || bill.cancelPending || canSubmitCancelRequest)) ||
+        (isUnpaidBill && activeCancelRequest?.status === "APPROVED")),
   )
 
   const dueSub =
@@ -413,7 +434,7 @@ export function DetailActionPane({
           ) : null}
         </div>
 
-        {isBillPaid && canCollect ? (
+        {showCancelBox ? (
           <div className="pay-cancel-box" aria-label="Yêu cầu huỷ thanh toán">
             {activeCancelRequest ? (
               <div className="grid gap-1 text-sm">
@@ -570,6 +591,7 @@ export function ProvisionalPreviewView({
   const qrRef = `21GAM ${bill.billCode}`
   const place = bill.clusterCode ? `${bill.code} (${bill.tables.join(", ")})` : bill.code
   const pendingAt = bill.issuedAt ?? bill.pendingAt ?? "21:42"
+  const hasLines = bill.lines.length > 0
   const isClosed = bill.status === "PAID" || bill.status === "CLOSED_UNPAID"
   const requested = Boolean(bill.requestedAt)
   const vatLabel = bill.vatLabel ?? PAYMENT_VAT_CONFIG.label
@@ -769,7 +791,7 @@ export function ProvisionalPreviewView({
               {canCollect && isProvisional && onIssueInvoice ? (
                 <button
                   type="button"
-                  disabled={isClosed || busy}
+                  disabled={isClosed || busy || !hasLines}
                   onClick={onIssueInvoice}
                   className="pay-btn pay-btn-p pay-btn-xl pay-btn-w"
                 >
@@ -779,7 +801,7 @@ export function ProvisionalPreviewView({
               ) : canCollect ? (
                 <button
                   type="button"
-                  disabled={isClosed || busy}
+                  disabled={isClosed || busy || !hasLines}
                   onClick={onCollect}
                   className="pay-btn pay-btn-p pay-btn-xl pay-btn-w"
                 >
@@ -791,7 +813,7 @@ export function ProvisionalPreviewView({
               {!canCollect && isWaiter ? (
                 <button
                   type="button"
-                  disabled={requested || isClosed || busy}
+                  disabled={requested || isClosed || busy || !hasLines}
                   onClick={onRequestPayment}
                   className="pay-btn pay-btn-p pay-btn-xl pay-btn-w"
                 >
