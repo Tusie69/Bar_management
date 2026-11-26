@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { lazy, Suspense, useEffect, useState } from "react"
-import { createBrowserRouter, Navigate, RouterProvider, useLocation } from "react-router"
+import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation } from "react-router"
 import { ConfirmDialog, ConflictDialog, OverrideDialog } from "@/components/dialogs"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Toaster } from "@/components/ui/sonner"
@@ -62,13 +62,24 @@ function Root() {
   // món. Cổng preparation vẫn về `/chebien` như trước.
   if (role === "BAR" && portal === "waiter") return <Navigate to={WAITER_HOME_PATH} replace />
   if (role === "BAR" || role === "KITCHEN") return <Navigate to="/chebien" replace />
+  if (role === "CASHIER") return page(<CashierShell />)
+  if (role === "RECEPTIONIST" && location.pathname !== "/floor") return <Navigate to="/floor" replace />
+  return shouldUseMobileShell(role, mobile) ? page(<MobileApp />) : <AppShell />
+}
+
+/**
+ * NA45C-05: Cashier's workspace is strictly /payment (S1-S7). Redirect any
+ * non-payment standalone entry point (/duyet-huy-mon, /chebien, /phucvu, /admin)
+ * above the competing route branches without changing access.ts or other roles.
+ */
+function CashierRouteGuard() {
+  const role = useSession((state) => state.user.role)
+  const location = useLocation()
   if (role === "CASHIER") {
     const onPayment = location.pathname === "/payment" || location.pathname.startsWith("/payment/")
     if (!onPayment) return <Navigate to="/payment" replace />
-    return page(<CashierShell />)
   }
-  if (role === "RECEPTIONIST" && location.pathname !== "/floor") return <Navigate to="/floor" replace />
-  return shouldUseMobileShell(role, mobile) ? page(<MobileApp />) : <AppShell />
+  return <Outlet />
 }
 
 // Phone opens the role home (Tiếp đón / Tổng quan). Deep links keep their route.
@@ -98,34 +109,39 @@ function PaymentRouteElement() {
 }
 
 const router = createBrowserRouter([
-  { path: "/chebien", element: page(<PreparationPage />) },
-  // Module Phục vụ 5: hàng chờ phê duyệt hủy món. Route riêng ở gốc, cùng lý do
-  // thứ tự như /chebien: nó không thuộc khung của Lễ tân và cũng không thuộc
-  // khu vực Phục vụ — người mở nó là người có quyền phê duyệt.
-  { path: "/duyet-huy-mon", element: page(<CancellationQueuePage />) },
-  // TU-39: Trang Quản trị có shell, sidebar và registry riêng. Nó đứng trước
-  // route "/" vì route đó bắt mọi URL còn lại và sẽ nuốt /admin.
-  adminRoute,
-  // Module Phục vụ 1: khu vực Phục vụ, cùng lý do thứ tự như adminRoute.
-  waiterRoute,
-  waiterLegacyRoute,
   {
-    path: "/",
-    element: <Root />,
+    element: <CashierRouteGuard />,
     children: [
-      { index: true, element: <HomeIndex /> },
-      { path: "home", element: <HomeRoute /> },
-      { path: "overview", element: page(<OverviewPage />) },
-      { path: "floor", element: <FloorPage /> },
-      { path: "payment", element: <PaymentRouteElement /> },
-      { path: "payment/:visitId", element: <PaymentRouteElement /> },
-      { path: "payment/:visitId/:step", element: <PaymentRouteElement /> },
-      { path: "reservations", element: page(<ReservationsPage />) },
-      { path: "waitlist", element: page(<WaitlistPage />) },
-      { path: "guests", element: page(<GuestsPage />) },
-      { path: "reports", element: page(<ReportsPage />) },
-      { path: "settings", element: page(<SettingsPage />) },
-      { path: "*", element: <Navigate to="/floor" replace /> },
+      { path: "/chebien", element: page(<PreparationPage />) },
+      // Module Phục vụ 5: hàng chờ phê duyệt hủy món. Route riêng ở gốc, cùng lý do
+      // thứ tự như /chebien: nó không thuộc khung của Lễ tân và cũng không thuộc
+      // khu vực Phục vụ — người mở nó là người có quyền phê duyệt.
+      { path: "/duyet-huy-mon", element: page(<CancellationQueuePage />) },
+      // TU-39: Trang Quản trị có shell, sidebar và registry riêng. Nó đứng trước
+      // route "/" vì route đó bắt mọi URL còn lại và sẽ nuốt /admin.
+      adminRoute,
+      // Module Phục vụ 1: khu vực Phục vụ, cùng lý do thứ tự như adminRoute.
+      waiterRoute,
+      waiterLegacyRoute,
+      {
+        path: "/",
+        element: <Root />,
+        children: [
+          { index: true, element: <HomeIndex /> },
+          { path: "home", element: <HomeRoute /> },
+          { path: "overview", element: page(<OverviewPage />) },
+          { path: "floor", element: <FloorPage /> },
+          { path: "payment", element: <PaymentRouteElement /> },
+          { path: "payment/:visitId", element: <PaymentRouteElement /> },
+          { path: "payment/:visitId/:step", element: <PaymentRouteElement /> },
+          { path: "reservations", element: page(<ReservationsPage />) },
+          { path: "waitlist", element: page(<WaitlistPage />) },
+          { path: "guests", element: page(<GuestsPage />) },
+          { path: "reports", element: page(<ReportsPage />) },
+          { path: "settings", element: page(<SettingsPage />) },
+          { path: "*", element: <Navigate to="/floor" replace /> },
+        ],
+      },
     ],
   },
 ])
@@ -159,7 +175,7 @@ function AppToaster() {
 
   return (
     <Toaster
-      position={onPayment ? "bottom-center" : "top-center"}
+      position={onPayment ? "top-right" : "top-center"}
       richColors={false}
       closeButton
       visibleToasts={3}

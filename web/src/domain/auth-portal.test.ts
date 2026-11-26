@@ -80,6 +80,7 @@ describe("portal-bound login routes", () => {
       expect(resolvePortalLoginDestination(portal, undefined, "/admin/turns")).toBe(PORTAL_CONFIG[portal].home)
     }
     expect(PORTAL_CONFIG.waiter.home).toBe("/phucvu")
+    expect(PORTAL_CONFIG.cashier.home).toBe("/payment")
   })
 
   it("gives every portal exactly one role set and a home route", () => {
