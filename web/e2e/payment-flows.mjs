@@ -9,7 +9,7 @@ import { chromium, expect } from "@playwright/test"
 const ARTIFACTS_DIR = path.resolve("e2e/.artifacts")
 fs.mkdirSync(ARTIFACTS_DIR, { recursive: true })
 
-const BASE_PORT = 4195
+const BASE_PORT = 43920
 const PROVIDED_BASE = process.env.E2E_BASE_URL
 const base = PROVIDED_BASE ?? `http://127.0.0.1:${BASE_PORT}`
 
@@ -83,16 +83,46 @@ async function openRole(vp, userId, startPath = "/payment", extraOptions = {}) {
   return { context, page, errors }
 }
 
+async function assertNoOverflow(page, label) {
+  const ov = await page.evaluate(() => {
+    const docOverflow = document.documentElement.scrollWidth - document.documentElement.clientWidth
+    const root = document.querySelector(".pay-root")
+    const rootOverflow = root ? root.scrollWidth - root.clientWidth : 0
+    return { docOverflow, rootOverflow }
+  })
+  assert(ov.docOverflow <= 1, `${label}: document horizontal overflow ${ov.docOverflow}px`)
+  assert(ov.rootOverflow <= 1, `${label}: .pay-root horizontal overflow ${ov.rootOverflow}px`)
+}
+
+async function assertCleanCashierShell(page, label) {
+  const counts = await page.evaluate(() => ({
+    headers: document.querySelectorAll("header").length,
+    payBells: document.querySelectorAll('button[aria-label*="Thông báo thanh toán"]').length,
+    recBells: document.querySelectorAll('button[aria-label*="Cần xử lý"]').length,
+    bottomNavs: document.querySelectorAll('nav[aria-label="Điều hướng chính"]').length,
+    sidebars: document.querySelectorAll("[data-sidebar]").length,
+  }))
+  assert.equal(counts.headers, 1, `${label}: expected 1 header, got ${counts.headers}`)
+  assert.equal(counts.payBells, 1, `${label}: expected 1 payment bell, got ${counts.payBells}`)
+  assert.equal(counts.recBells, 0, `${label}: unexpected reception bell`)
+  assert.equal(counts.bottomNavs, 0, `${label}: unexpected BottomNav`)
+  assert.equal(counts.sidebars, 0, `${label}: unexpected AppSidebar`)
+  await expect(page.getByText("Thông báo thu tiền")).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Theo dõi đơn đặt bàn" })).toHaveCount(0)
+}
+
 const results = []
 try {
   for (const vp of VIEWPORTS) {
-    // 1. S1 List, notifications unread dot on PAID, A10/BAR01 clearance, scroll-to-top on S3,
+    // 1. S1 List, notifications unread dot on PAID, A10/BAR01 & G05/G06 clearance, scroll-to-top on S3,
     //    Cash (short/exact/over), S7 success, Back lock on S4, floor sync on /floor
     {
       const { context, page, errors } = await openRole(vp, 5, "/payment")
       try {
         await expect(page.getByText("Xin chào,").first()).toBeVisible()
         await expect(page.getByText("Thu ngân · Thu ngân").first()).toBeVisible()
+        await assertCleanCashierShell(page, `${vp.name} S1`)
+        await assertNoOverflow(page, `${vp.name} S1`)
 
         // Sort order check: G02 (awaiting payment) first, G04 (requested) second
         const rowCodes = await page.locator(".pay-sess b").allTextContents()
@@ -119,31 +149,66 @@ try {
         await bell.click()
         await expect(page.getByTestId("pay-ntf-unread-dot")).toHaveCount(0)
 
-        // Floor map: BOTH A10 and BAR01 selectors MUST exist and A10 must stay clear of BAR01
+        // Floor map: BOTH A10 and BAR01 selectors MUST exist and A10 must stay clear of BAR01;
+        // AND G05 / G06 cluster pills must NOT overlap any bar seat (e.g. BAR07, BAR13)
         const clearance = await page.evaluate(() => {
           const a10 = document.querySelector('[aria-label^="Bàn A10,"]')?.getBoundingClientRect()
           const bar1 = document.querySelector('[aria-label^="BAR01,"]')?.getBoundingClientRect()
           if (!a10 || !bar1) return { ok: false, reason: `missing selector a10=${Boolean(a10)} bar1=${Boolean(bar1)}` }
-          return { ok: a10.right <= bar1.left + 0.5, reason: `a10.right=${a10.right}, bar1.left=${bar1.left}` }
+          if (a10.right > bar1.left + 0.5) return { ok: false, reason: `a10.right=${a10.right}, bar1.left=${bar1.left}` }
+          const seats = [...document.querySelectorAll(".pay-ft-seat")].map((el) => ({
+            label: el.textContent?.trim() ?? "",
+            rect: el.getBoundingClientRect(),
+          }))
+          const tags = [...document.querySelectorAll(".pay-f-cltag")].map((el) => ({
+            tag: el.textContent?.trim() ?? "",
+            rect: el.getBoundingClientRect(),
+          }))
+          for (const t of tags) {
+            for (const s of seats) {
+              const overlap =
+                t.rect.left < s.rect.right - 0.5 &&
+                t.rect.right > s.rect.left + 0.5 &&
+                t.rect.top < s.rect.bottom - 0.5 &&
+                t.rect.bottom > s.rect.top + 0.5
+              if (overlap) {
+                return { ok: false, reason: `cluster tag ${t.tag} overlaps bar seat ${s.label}` }
+              }
+            }
+          }
+          return { ok: true }
         })
-        assert(clearance.ok, `${vp.name}: A10/BAR01 clearance failed: ${clearance.reason}`)
+        assert(clearance.ok, `${vp.name}: map clearance failed: ${clearance.reason}`)
 
-        // First tap on A3 selects; second tap opens S2 detail
+        // First tap on A3 selects (and scrolls offscreen map into view on 820px); second tap opens S2 detail
         const a3Row = page.locator(".pay-sess", { hasText: "A3" })
         await a3Row.click()
         await expect(page.getByText("Chạm lần nữa để mở chi tiết")).toBeVisible()
+        await page.waitForTimeout(700)
+        const mapVisibleAfterPick = await page.evaluate((vh) => {
+          const el = document.getElementById("floor-map")
+          if (!el) return false
+          const r = el.getBoundingClientRect()
+          return r.top < vh && r.bottom > 0
+        }, vp.height)
+        assert(mapVisibleAfterPick, `${vp.name}: #floor-map should be scrolled into view after row pick`)
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-s1-list.png`) })
         await a3Row.click()
 
         // S2 detail: cancelled Margarita hidden, Mojito making warning visible, rounding shown separately
         await expect(page.getByRole("heading", { name: "Chi tiết Phiên" })).toBeVisible()
+        await assertNoOverflow(page, `${vp.name} S2`)
         const a3VisitId = new URL(page.url()).pathname.split("/")[2]
         assert(/^\d+$/.test(a3VisitId), `${vp.name}: expected numeric visitId for A3, got ${a3VisitId}`)
         await expect(page.getByText("Tiger Crystal")).toBeVisible()
         await expect(page.getByText("Mojito")).toBeVisible()
         await expect(page.getByText("Margarita")).toHaveCount(0)
         await expect(page.getByText(/dòng món đã hủy/)).toHaveCount(0)
-        await expect(page.getByText("1 món đang làm, vẫn tính vào bill. Hỏi khách trước khi chốt.")).toBeVisible()
+        if (vp.width >= 600) {
+          await expect(page.getByText("1 món đang làm, vẫn tính vào bill. Hỏi khách trước khi chốt.")).toBeVisible()
+        } else {
+          await expect(page.getByText("1 món đang làm, vẫn tính vào bill. Hỏi khách trước khi chốt.")).toBeAttached()
+        }
         await expect(page.getByText("Làm tròn lên nghìn (bước cuối)")).toBeVisible()
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-s2-detail.png`) })
 
@@ -161,6 +226,7 @@ try {
         await expect(page.getByRole("heading", { name: "Chi tiết Phiên" })).toBeVisible()
 
         // NA45-06: scroll down on S2, click Xem tạm tính -> S3 must scroll to top so back & 80mm toggle are in viewport
+        // AND S3 toggle sits on the same row as the Back button
         await page.evaluate(() => {
           const root = document.querySelector(".pay-root")
           if (root) root.scrollTop = 450
@@ -169,33 +235,46 @@ try {
         await expect(page.getByRole("button", { name: "Trên màn hình" })).toBeVisible()
         await expect(page.getByRole("button", { name: "Bản in 80mm" })).toBeVisible()
         await expect(page.getByText("Bill tạm tính, chưa phải hóa đơn. Món đã hủy không tính.")).toBeVisible()
+        await assertNoOverflow(page, `${vp.name} S3`)
         const scrollCheck = await page.evaluate((vh) => {
           const root = document.querySelector(".pay-root")
           const backBtn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Chi tiết Phiên"))
           const printBtn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Bản in 80mm"))
           const bRect = backBtn?.getBoundingClientRect()
           const pRect = printBtn?.getBoundingClientRect()
+          const sameRow = Boolean(bRect && pRect && Math.min(bRect.bottom, pRect.bottom) > Math.max(bRect.top, pRect.top))
           return {
             scrollTop: root?.scrollTop ?? -1,
             backVisible: Boolean(bRect && bRect.top >= 0 && bRect.bottom <= vh),
             printVisible: Boolean(pRect && pRect.top >= 0 && pRect.bottom <= vh),
+            sameRow,
           }
         }, vp.height)
         assert.equal(scrollCheck.scrollTop, 0, `${vp.name}: S3 scrollTop should be 0, got ${scrollCheck.scrollTop}`)
         assert(scrollCheck.backVisible && scrollCheck.printVisible, `${vp.name}: S3 header controls not in viewport: ${JSON.stringify(scrollCheck)}`)
+        assert(scrollCheck.sameRow, `${vp.name}: S3 toggle should be on the same row as Back button`)
 
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-s3-preview.png`) })
         await page.getByRole("button", { name: "Bản in 80mm" }).click()
         await expect(page.getByLabel("Bản in tạm tính khổ 80mm")).toBeVisible()
 
-        // S4 method
+        // S4 method: heading wraps without horizontal overflow, and toast does not overlap heading
         await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
         await expect(page.getByRole("heading", { name: "Chọn phương thức thanh toán" })).toBeVisible()
+        await assertNoOverflow(page, `${vp.name} S4`)
+        const toastOverlap = await page.evaluate(() => {
+          const h1 = document.querySelector(".pay-ph h1")?.getBoundingClientRect()
+          const toastEl = document.querySelector("[data-sonner-toast]")?.getBoundingClientRect()
+          if (!h1 || !toastEl) return false
+          return h1.left < toastEl.right && h1.right > toastEl.left && h1.top < toastEl.bottom && h1.bottom > toastEl.top
+        })
+        assert(!toastOverlap, `${vp.name}: toast overlapped S4 heading`)
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-s4-method.png`) })
 
         // S5 cash: short -> exact -> over -> confirm -> S7 success
         await page.getByRole("button", { name: /Tiền mặt/ }).click()
         await expect(page.getByRole("heading", { name: "Thanh toán tiền mặt" })).toBeVisible()
+        await assertNoOverflow(page, `${vp.name} S5`)
         const cashInput = page.getByLabel("Khách đưa")
         await cashInput.fill("100000")
         await expect(page.getByText("Còn thiếu")).toBeVisible()
@@ -217,6 +296,7 @@ try {
         await confirmCashBtn.click()
         await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
         await expect(page.getByText("Trống", { exact: true }).first()).toBeVisible()
+        await assertNoOverflow(page, `${vp.name} S7`)
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-s7-success-cash.png`) })
 
         // NA45-03: Browser Back to S5 & S4 on PAID bill must lock all money actions
@@ -234,8 +314,12 @@ try {
         await expect(page.getByRole("button", { name: /^Bàn A3, trống$/ })).toBeVisible()
         await expect(page.getByTestId("pay-ntf-unread-dot")).toBeVisible()
 
-        // Verify A3 is ALSO released on operational /floor (client-side nav preserves in-memory mock session)
+        // Verify A3 is ALSO released on operational /floor (switch to Owner in same MockGamApi session)
+        await page.getByRole("button", { name: /Tài khoản:/ }).click()
+        await page.getByRole("menuitemradio", { name: /Chủ sở hữu/ }).click()
         if (vp.width < 768) {
+          await page.getByRole("button", { name: /Tài khoản:/ }).click()
+          await page.getByRole("menuitem", { name: /Về Tổng quan/ }).click()
           await page.getByRole("button", { name: "Sơ đồ", exact: true }).click()
         } else {
           await page.locator('a[href="/floor"]').first().click()
@@ -553,6 +637,89 @@ try {
 
       assert.deepEqual(errors, [], `NA45-14 undo/redo console errors: ${errors.join(" | ")}`)
       results.push("PASS 1440 NA45-14 release -> open bill -> undo -> redo sync")
+    } finally {
+      await context.close()
+    }
+  }
+
+  // 8. Cashier shell isolation, reception route redirects, sticky S2 action bar (<960px),
+  //    390/320 zero overflow, ADMIN/BAR demo users, and Owner clean /payment layout
+  {
+    const { context, page, errors } = await openRole(VIEWPORTS[0], 5, "/")
+    try {
+      await expect(page).toHaveURL(/\/payment$/)
+      await assertCleanCashierShell(page, "390 landing")
+      await assertNoOverflow(page, "390 landing")
+
+      // Reception routes redirect CASHIER back to /payment
+      for (const route of ["/floor", "/home", "/overview", "/reservations", "/waitlist", "/guests", "/reports", "/settings"]) {
+        await page.goto(`${base}${route}`, { waitUntil: "networkidle" })
+        assert.equal(new URL(page.url()).pathname, "/payment", `CASHIER on ${route} must redirect to /payment`)
+      }
+
+      // Sticky S2 action bar on long bill (G02) at 390px and 820px
+      for (const s2Vp of [VIEWPORTS[0], VIEWPORTS[1]]) {
+        await page.setViewportSize({ width: s2Vp.width, height: s2Vp.height })
+        await page.goto(`${base}/payment`, { waitUntil: "networkidle" })
+        const g02Row = page.locator(".pay-sess", { hasText: "G02" })
+        await g02Row.click()
+        await g02Row.click()
+        await expect(page.getByText("Chivas 18")).toBeVisible()
+        const collectVisible = await page.evaluate((vh) => {
+          const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Chốt bill & thu tiền"))
+          if (!btn) return false
+          const r = btn.getBoundingClientRect()
+          return r.top >= 0 && r.bottom <= vh + 1
+        }, s2Vp.height)
+        assert(collectVisible, `${s2Vp.name}: sticky S2 collect button must remain in viewport on long bill G02`)
+        await assertNoOverflow(page, `${s2Vp.name} G02 sticky S2`)
+      }
+
+      // 320px & 1024px layout sanity (zero horizontal overflow)
+      for (const extraVp of [{ width: 320, height: 640 }, { width: 1024, height: 768 }]) {
+        await page.setViewportSize(extraVp)
+        await page.goto(`${base}/payment`, { waitUntil: "networkidle" })
+        await assertNoOverflow(page, `${extraVp.width} S1`)
+      }
+
+      // ADMIN (7) and BAR (8) exist in mock AccountMenu and enforce role rules
+      await page.setViewportSize({ width: 1440, height: 900 })
+      await page.getByRole("button", { name: /Tài khoản:/ }).click()
+      await expect(page.getByRole("menuitemradio", { name: /Quản trị viên/ })).toBeVisible()
+      await expect(page.getByRole("menuitemradio", { name: /Bartender/ })).toBeVisible()
+      await page.getByRole("menuitemradio", { name: /Quản trị viên/ }).click()
+      await expect(page).toHaveURL(/\/payment/)
+      const adminA3 = page.locator(".pay-sess", { hasText: "A3" })
+      await adminA3.click()
+      await adminA3.click()
+      await expect(page.getByRole("button", { name: "Chốt bill & thu tiền" })).toBeVisible()
+
+      await page.getByRole("button", { name: /Tài khoản:/ }).click()
+      await page.getByRole("menuitemradio", { name: /Bartender/ }).click()
+      await expect(page).toHaveURL(/\/chebien/)
+      await expect(page.getByText("Thu tiền")).toHaveCount(0)
+
+      assert.deepEqual(errors, [], `Cashier shell / role isolation console errors: ${errors.join(" | ")}`)
+      results.push("PASS cashier shell isolation + redirects + sticky S2 + ADMIN/BAR demo users")
+    } finally {
+      await context.close()
+    }
+  }
+
+  // 9. Owner at 390px reaches /payment via AccountSheet "Thu tiền" and gets clean payment layout
+  {
+    const { context, page, errors } = await openRole(VIEWPORTS[0], 3, "/home")
+    try {
+      await page.getByRole("button", { name: /Tài khoản/ }).click()
+      await page.getByRole("button", { name: /Thu tiền/ }).click()
+      await expect(page).toHaveURL(/\/payment$/)
+      await expect(page.getByText("Xin chào,").first()).toBeVisible()
+      await expect(page.locator(".pay-sess-list")).toBeVisible()
+      await assertCleanCashierShell(page, "390 Owner /payment")
+      await assertNoOverflow(page, "390 Owner /payment")
+
+      assert.deepEqual(errors, [], `Owner 390 /payment console errors: ${errors.join(" | ")}`)
+      results.push("PASS 390 Owner /payment clean layout (no duplicate header/bell/BottomNav)")
     } finally {
       await context.close()
     }
