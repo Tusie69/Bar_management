@@ -149,7 +149,7 @@ interface CommitOut<T> {
 
 interface PaymentVisitMeta {
   billCode: string
-  status: VisitPayStatus
+  status: "SERVING" | "AWAITING_PAYMENT" | "PAID"
   pendingAt?: string
   pendingAtDate?: Date
   requestedAt?: string
@@ -3079,7 +3079,8 @@ export class MockGamApi implements GamApi, DemoControls {
     if (existing) return existing
     const created: PaymentVisitMeta = {
       billCode: `B${String(visit.id).padStart(4, "0")}`,
-      status: visit.paidMarkedAt ? "PAID" : visit.endedAt ? "CLOSED_UNPAID" : "SERVING",
+      // Derive CLOSED_UNPAID from live visit.endedAt in buildPayBill; never cache it on meta.
+      status: visit.paidMarkedAt ? "PAID" : "SERVING",
       waiterName: "Phục vụ",
       lines: [],
       versionOffset: 0,
