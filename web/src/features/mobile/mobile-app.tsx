@@ -46,6 +46,7 @@ import { AccountSheet, AlertsSheet, ConfirmDialog, CreateSheet, StatusDialog, To
 import { useSeenKeys } from "./seen-keys"
 import { PlainHeader } from "./ui"
 import { EntryDetailScreen, WaitScreen } from "./wait"
+import { PaymentShellFrame } from "../cashier/cashier-shell"
 import "./mobile.css"
 
 /** Khoá localStorage cho cảnh báo đã xem (chuông) và toast "tới muộn" đã xử lý. */
@@ -106,6 +107,7 @@ export default function MobileApp() {
   const loc = useLocation()
   const navigate = useNavigate()
   const tab: Tab | null = TAB_OF[loc.pathname] ?? null
+  const onPayment = loc.pathname === "/payment" || loc.pathname.startsWith("/payment/")
   const role = useSession((s) => s.user.role)
   const permissions = useSession((s) => s.permissions)
   const isOwner = role === "OWNER"
@@ -358,22 +360,33 @@ export default function MobileApp() {
           ref={shellContentRef}
           data-gm-shell-content=""
           aria-hidden={hasFullScreenModal || undefined}
-          className="absolute inset-x-0 top-0 bottom-[var(--nav-h)] flex flex-col overflow-hidden"
+          className={cn(
+            "absolute inset-x-0 top-0 flex flex-col overflow-hidden",
+            onPayment ? "bottom-0" : "bottom-[var(--nav-h)]",
+          )}
         >
-          <Toast15
-            r={toast15 && !busy ? toast15 : null}
-            onView={() => {
-              if (!toast15) return
-              handle(`l${toast15.id}`)
-              const target = notificationTarget(toast15.tableIds[0], toast15.id, toast15.businessDate)
-              if (target?.kind === "table") ctx.openTable(target.tableId)
-              else if (target?.kind === "reservation") setDetail({ id: target.reservationId, bd: target.businessDate })
-            }}
-            onClose={() => {
-              if (toast15) handle(`l${toast15.id}`)
-            }}
-          />
-          {tab === "home" ? (
+          {onPayment ? null : (
+            <Toast15
+              r={toast15 && !busy ? toast15 : null}
+              onView={() => {
+                if (!toast15) return
+                handle(`l${toast15.id}`)
+                const target = notificationTarget(toast15.tableIds[0], toast15.id, toast15.businessDate)
+                if (target?.kind === "table") ctx.openTable(target.tableId)
+                else if (target?.kind === "reservation") setDetail({ id: target.reservationId, bd: target.businessDate })
+              }}
+              onClose={() => {
+                if (toast15) handle(`l${toast15.id}`)
+              }}
+            />
+          )}
+          {onPayment ? (
+            <PaymentShellFrame fullViewport={false} showBackToApp>
+              <Suspense fallback={null}>
+                <Outlet />
+              </Suspense>
+            </PaymentShellFrame>
+          ) : tab === "home" ? (
             <HomeScreen />
           ) : tab === "list" ? (
             <ListScreen />
@@ -430,7 +443,7 @@ export default function MobileApp() {
           )}
         </div>
 
-        {!isReceptionist ? (
+        {!isReceptionist && !onPayment ? (
           <BottomNav
             navRef={bottomNavRef}
             hidden={hasFullScreenModal}

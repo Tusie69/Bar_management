@@ -63,6 +63,7 @@ import { useUi } from "@/state/ui"
 import { useShiftAlerts } from "@/features/floor/alerts"
 import { useFloorModel } from "@/features/floor/use-floor-model"
 import { WalkInSheet } from "@/features/floor/walk-in-sheet"
+import { PaymentShellFrame } from "@/features/cashier/cashier-shell"
 import { BookingSheet } from "@/features/reservations/booking-sheet"
 import { ReservationDetailSheet } from "@/features/reservations/reservation-detail"
 import { NAV } from "./nav"
@@ -71,18 +72,25 @@ export function AppShell() {
   // v2: on Điều phối the booking / walk-in forms live inline in the right column (quick-form.tsx).
   const path = useLocation().pathname
   const onFloor = path.startsWith("/floor")
+  const onPayment = path === "/payment" || path.startsWith("/payment/")
   return (
     <SidebarProvider defaultOpen={false} className="h-dvh min-h-0">
       <AppSidebar />
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar />
+        {onPayment ? null : <TopBar />}
         <main className="min-h-0 flex-1 overflow-hidden">
-          <Outlet />
+          {onPayment ? (
+            <PaymentShellFrame fullViewport={false} showBackToApp rightSlot={<UndoRedo />}>
+              <Outlet />
+            </PaymentShellFrame>
+          ) : (
+            <Outlet />
+          )}
         </main>
       </div>
-      {onFloor ? null : <BookingSheet />}
-      {onFloor ? null : <WalkInSheet />}
-      <ReservationDetailSheet />
+      {onFloor || onPayment ? null : <BookingSheet />}
+      {onFloor || onPayment ? null : <WalkInSheet />}
+      {onPayment ? null : <ReservationDetailSheet />}
     </SidebarProvider>
   )
 }

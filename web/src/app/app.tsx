@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { lazy, Suspense } from "react"
+import { lazy, Suspense, useEffect, useState } from "react"
 import { createBrowserRouter, Navigate, RouterProvider, useLocation } from "react-router"
 import { ConfirmDialog, ConflictDialog, OverrideDialog } from "@/components/dialogs"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -27,6 +27,7 @@ const SettingsPage = lazy(() => import("@/features/settings/settings-page"))
 const MobileApp = lazy(() => import("@/features/mobile/mobile-app"))
 const PreparationPage = lazy(() => import("@/features/preparation/preparation-page"))
 const CancellationQueuePage = lazy(() => import("@/features/orders/cancellation-queue-page"))
+const CashierShell = lazy(() => import("@/features/cashier/cashier-shell"))
 const PaymentPage = lazy(() => import("@/features/payment/payment-page"))
 
 const queryClient = new QueryClient({
@@ -61,6 +62,11 @@ function Root() {
   // món. Cổng preparation vẫn về `/chebien` như trước.
   if (role === "BAR" && portal === "waiter") return <Navigate to={WAITER_HOME_PATH} replace />
   if (role === "BAR" || role === "KITCHEN") return <Navigate to="/chebien" replace />
+  if (role === "CASHIER") {
+    const onPayment = location.pathname === "/payment" || location.pathname.startsWith("/payment/")
+    if (!onPayment) return <Navigate to="/payment" replace />
+    return page(<CashierShell />)
+  }
   if (role === "RECEPTIONIST" && location.pathname !== "/floor") return <Navigate to="/floor" replace />
   return shouldUseMobileShell(role, mobile) ? page(<MobileApp />) : <AppShell />
 }
@@ -73,6 +79,22 @@ function HomeIndex() {
 /** /home exists on phone only. */
 function HomeRoute() {
   return useIsMobile() ? null : <Navigate to="/floor" replace />
+}
+
+function PaymentRouteElement() {
+  const role = useSession((state) => state.user.role)
+  if (isPaymentAvailable) return page(<PaymentPage />)
+  if (role === "CASHIER") {
+    return (
+      <div className="mx-auto max-w-md rounded-2xl border border-border bg-surface-1 p-6 text-center shadow-xs">
+        <h1 className="text-lg font-bold">Thu tiền chưa kết nối máy chủ</h1>
+        <p className="mt-1 text-sm text-[var(--text-muted)]">
+          API thanh toán chưa sẵn sàng ở chế độ hiện tại.
+        </p>
+      </div>
+    )
+  }
+  return <Navigate to="/floor" replace />
 }
 
 const router = createBrowserRouter([
@@ -95,9 +117,9 @@ const router = createBrowserRouter([
       { path: "home", element: <HomeRoute /> },
       { path: "overview", element: page(<OverviewPage />) },
       { path: "floor", element: <FloorPage /> },
-      { path: "payment", element: isPaymentAvailable ? page(<PaymentPage />) : <Navigate to="/floor" replace /> },
-      { path: "payment/:visitId", element: isPaymentAvailable ? page(<PaymentPage />) : <Navigate to="/floor" replace /> },
-      { path: "payment/:visitId/:step", element: isPaymentAvailable ? page(<PaymentPage />) : <Navigate to="/floor" replace /> },
+      { path: "payment", element: <PaymentRouteElement /> },
+      { path: "payment/:visitId", element: <PaymentRouteElement /> },
+      { path: "payment/:visitId/:step", element: <PaymentRouteElement /> },
       { path: "reservations", element: page(<ReservationsPage />) },
       { path: "waitlist", element: page(<WaitlistPage />) },
       { path: "guests", element: page(<GuestsPage />) },
@@ -119,6 +141,33 @@ function GlobalLayer() {
   )
 }
 
+function AppToaster() {
+  const [onPayment, setOnPayment] = useState(() => {
+    if (typeof window === "undefined") return false
+    const p = window.location.pathname
+    return p === "/payment" || p.startsWith("/payment/")
+  })
+
+  useEffect(() => {
+    const sync = () => {
+      const p = router.state.location.pathname
+      setOnPayment(p === "/payment" || p.startsWith("/payment/"))
+    }
+    sync()
+    return router.subscribe(sync)
+  }, [])
+
+  return (
+    <Toaster
+      position={onPayment ? "bottom-center" : "top-center"}
+      richColors={false}
+      closeButton
+      visibleToasts={3}
+      duration={3000}
+    />
+  )
+}
+
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -127,7 +176,7 @@ export function App() {
           <GlobalLayer />
           <RouterProvider router={router} />
         </AuthBoundary>
-        <Toaster position="top-center" richColors={false} closeButton visibleToasts={3} duration={3000} />
+        <AppToaster />
       </TooltipProvider>
     </QueryClientProvider>
   )

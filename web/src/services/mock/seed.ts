@@ -21,6 +21,8 @@ export const DEMO_USERS: MockUser[] = [
   // Module Phục vụ 1: để mở được /phucvu trong bản prototype (chế độ mock)
   // mà không cần backend. Quyền thật vẫn do backend quyết định ở chế độ HTTP.
   { id: 6, displayName: "Phục vụ 1", role: "WAITER", deviceLabel: "Điện thoại phục vụ" },
+  { id: 7, displayName: "Quản trị viên", role: "ADMIN", deviceLabel: "Máy quản trị" },
+  { id: 8, displayName: "Bartender", role: "BAR", deviceLabel: "Quầy bar" },
 ]
 
 export const REMOTE_USER_ID = 2
