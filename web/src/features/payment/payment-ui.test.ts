@@ -1,15 +1,19 @@
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it, vi } from "vitest"
-import type { PayBill, Receipt } from "@/services/payment"
+import { ApiError } from "@/services"
+import { isPaymentAvailable, type PayBill, type PaymentNotification, type Receipt } from "@/services/payment"
 import { BillRoundsCard, DetailActionPane, ProvisionalPreviewView } from "./bill-pane"
 import { CashActionPane, MethodActionPane, QrActionPane, SuccessView } from "./pay-actions"
+import { PaymentFloorMap } from "./payment-floor-map"
+import { PaymentNotificationBell } from "./payment-notifications"
+import { submitPaymentConfirm, toPaymentError, type IdempotencySlot } from "./payment-submit"
 
 function sampleBill(overrides: Partial<PayBill> = {}): PayBill {
   return {
     billCode: "B0412",
-    visitId: "s412",
-    sessionCode: "S-0412",
+    visitId: "1283",
+    sessionCode: "S-1283",
     code: "A3",
     tables: ["A3"],
     status: "SERVING",
@@ -89,6 +93,34 @@ describe("BillRoundsCard & ProvisionalPreviewView", () => {
     expect(html).toContain("155.000đ")
   })
 
+  it("renders an honest empty state when a visit has no mock order lines", () => {
+    const emptyBill = sampleBill({
+      lines: [],
+      subtotalVnd: 0,
+      vatVnd: 0,
+      preRoundVnd: 0,
+      roundingVnd: 0,
+      dueVnd: 0,
+      roundCount: 0,
+    })
+    const cardHtml = renderToStaticMarkup(createElement(BillRoundsCard, { bill: emptyBill }))
+    expect(cardHtml).toContain("Chưa có dữ liệu món cho phiên này")
+
+    const detailHtml = renderToStaticMarkup(
+      createElement(DetailActionPane, {
+        bill: emptyBill,
+        canCollect: true,
+        isWaiter: false,
+        busy: false,
+        onPreview: () => undefined,
+        onCollect: () => undefined,
+        onRequestPayment: () => undefined,
+      }),
+    )
+    expect(detailHtml).toContain("Chưa có dữ liệu món (mô phỏng)")
+    expect(detailHtml).toContain("disabled")
+  })
+
   it("renders S3 preview without page title and keeps demo QR + provisional notice", () => {
     const html = renderToStaticMarkup(
       createElement(ProvisionalPreviewView, {
@@ -105,6 +137,83 @@ describe("BillRoundsCard & ProvisionalPreviewView", () => {
     expect(html).toContain("Bản in 80mm")
     expect(html).toContain("21GAM B0412")
     expect(html).toContain("Bill tạm tính, chưa phải hóa đơn")
+  })
+})
+
+describe("DTO-only money contract (NA45-04)", () => {
+  it("renders DTO totals across S2-S6 even when DTO totals differ from line sums", () => {
+    const policyAdjustedBill = sampleBill({
+      status: "AWAITING_PAYMENT",
+      pendingAt: "21:31",
+      subtotalVnd: 140_600,
+      vatVnd: 11_248,
+      preRoundVnd: 151_848,
+      roundingVnd: 152,
+      dueVnd: 152_000,
+      vatLabel: "VAT 8%",
+      vatNote: "chính sách DTO",
+    })
+
+    const roundsHtml = renderToStaticMarkup(createElement(BillRoundsCard, { bill: policyAdjustedBill }))
+    const detailHtml = renderToStaticMarkup(
+      createElement(DetailActionPane, {
+        bill: policyAdjustedBill,
+        canCollect: true,
+        isWaiter: false,
+        busy: false,
+        onPreview: () => undefined,
+        onCollect: () => undefined,
+        onRequestPayment: () => undefined,
+      }),
+    )
+    const previewHtml = renderToStaticMarkup(
+      createElement(ProvisionalPreviewView, {
+        bill: policyAdjustedBill,
+        canCollect: true,
+        isWaiter: false,
+        busy: false,
+        onCollect: () => undefined,
+        onRequestPayment: () => undefined,
+        onSimulatedPrint: () => undefined,
+      }),
+    )
+    const methodHtml = renderToStaticMarkup(
+      createElement(MethodActionPane, {
+        bill: policyAdjustedBill,
+        lastMethod: null,
+        onSelectMethod: () => undefined,
+        onToList: () => undefined,
+      }),
+    )
+    const cashHtml = renderToStaticMarkup(
+      createElement(CashActionPane, {
+        bill: policyAdjustedBill,
+        busy: false,
+        error: null,
+        onClearError: () => undefined,
+        onConfirm: () => undefined,
+        onToList: () => undefined,
+      }),
+    )
+    const qrHtml = renderToStaticMarkup(
+      createElement(QrActionPane, {
+        bill: policyAdjustedBill,
+        busy: false,
+        error: null,
+        onCheckTransfer: async () => ({ found: false }),
+        onConfirmManual: () => undefined,
+        onToList: () => undefined,
+        onCopied: () => undefined,
+      }),
+    )
+
+    for (const html of [roundsHtml, detailHtml, previewHtml, methodHtml, cashHtml, qrHtml]) {
+      expect(html).toContain("152.000đ")
+      expect(html).not.toContain("155.000đ")
+    }
+    expect(roundsHtml).toContain("VAT 8%")
+    expect(roundsHtml).toContain("chính sách DTO")
+    expect(cashHtml).toContain("152.000")
   })
 })
 
@@ -175,11 +284,11 @@ describe("Role-specific detail actions (PA-A)", () => {
   })
 })
 
-describe("Cash, QR, Method, and Success views", () => {
+describe("Cash, QR, Method, PAID locks, and Error states", () => {
   it("does not show a method switch on Cash or QR screens and omits vừa đủ sub-label on exact chip", () => {
     const cashHtml = renderToStaticMarkup(
       createElement(CashActionPane, {
-        bill: sampleBill(),
+        bill: sampleBill({ status: "AWAITING_PAYMENT" }),
         busy: false,
         error: null,
         onClearError: () => undefined,
@@ -194,7 +303,7 @@ describe("Cash, QR, Method, and Success views", () => {
 
     const qrHtml = renderToStaticMarkup(
       createElement(QrActionPane, {
-        bill: sampleBill(),
+        bill: sampleBill({ status: "AWAITING_PAYMENT" }),
         busy: false,
         error: null,
         onCheckTransfer: async () => ({ found: false }),
@@ -208,10 +317,10 @@ describe("Cash, QR, Method, and Success views", () => {
     expect(qrHtml).not.toContain("Tiền mặt")
   })
 
-  it("renders duplicate and network error banners honestly", () => {
+  it("renders network, VERSION_CONFLICT, and DUPLICATE_PAYMENT banners distinctly", () => {
     const netHtml = renderToStaticMarkup(
       createElement(CashActionPane, {
-        bill: sampleBill(),
+        bill: sampleBill({ status: "AWAITING_PAYMENT" }),
         busy: false,
         error: { kind: "net", message: "Mất mạng" },
         onClearError: () => undefined,
@@ -222,9 +331,23 @@ describe("Cash, QR, Method, and Success views", () => {
     expect(netHtml).toContain("Không gửi được tới máy chủ")
     expect(netHtml).toContain("CHƯA được ghi nhận")
 
+    const conflictHtml = renderToStaticMarkup(
+      createElement(CashActionPane, {
+        bill: sampleBill({ status: "AWAITING_PAYMENT" }),
+        busy: false,
+        error: { kind: "conflict", message: "Version mismatch" },
+        onClearError: () => undefined,
+        onConfirm: () => undefined,
+        onToList: () => undefined,
+      }),
+    )
+    expect(conflictHtml).toContain("Bill vừa được cập nhật")
+    expect(conflictHtml).toContain("chưa thu tiền")
+    expect(conflictHtml).not.toContain("đã được thanh toán")
+
     const dupHtml = renderToStaticMarkup(
       createElement(QrActionPane, {
-        bill: sampleBill(),
+        bill: sampleBill({ status: "PAID" }),
         busy: false,
         error: { kind: "dup", message: "Dup", confirmedBy: "Thu ngân Hà", confirmedAt: "21:43" },
         onCheckTransfer: async () => ({ found: false }),
@@ -237,10 +360,50 @@ describe("Cash, QR, Method, and Success views", () => {
     expect(dupHtml).toContain("Thu ngân Hà xác nhận lúc 21:43")
   })
 
+  it("locks Method, Cash, and QR actions when bill status is PAID", () => {
+    const paidBill = sampleBill({ status: "PAID" })
+    const methodHtml = renderToStaticMarkup(
+      createElement(MethodActionPane, {
+        bill: paidBill,
+        lastMethod: "CASH",
+        onSelectMethod: () => undefined,
+        onToList: () => undefined,
+      }),
+    )
+    expect(methodHtml).toContain("Bill này đã thanh toán")
+    const disabledBtns = methodHtml.match(/<button[^>]*disabled=""/g) ?? []
+    expect(disabledBtns).toHaveLength(2)
+
+    const cashHtml = renderToStaticMarkup(
+      createElement(CashActionPane, {
+        bill: paidBill,
+        busy: false,
+        error: null,
+        onClearError: () => undefined,
+        onConfirm: () => undefined,
+        onToList: () => undefined,
+      }),
+    )
+    expect(cashHtml).toContain("Bill này đã thanh toán")
+
+    const qrHtml = renderToStaticMarkup(
+      createElement(QrActionPane, {
+        bill: paidBill,
+        busy: false,
+        error: null,
+        onCheckTransfer: async () => ({ found: false }),
+        onConfirmManual: () => undefined,
+        onToList: () => undefined,
+        onCopied: () => undefined,
+      }),
+    )
+    expect(qrHtml).toContain("Bill này đã thanh toán")
+  })
+
   it("applies selected class on Method row and renders cluster receipt on Success", () => {
     const methodHtml = renderToStaticMarkup(
       createElement(MethodActionPane, {
-        bill: sampleBill(),
+        bill: sampleBill({ status: "AWAITING_PAYMENT" }),
         lastMethod: "CASH",
         onSelectMethod: () => undefined,
       }),
@@ -250,11 +413,11 @@ describe("Cash, QR, Method, and Success views", () => {
 
     const receipt: Receipt = {
       billCode: "B0408",
-      visitId: "s408",
-      sessionCode: "S-0408",
-      code: "G01",
-      tables: ["A1", "A2"],
-      clusterCode: "G01",
+      visitId: "1284",
+      sessionCode: "S-1284",
+      code: "G02",
+      tables: ["B11", "B12"],
+      clusterCode: "G02",
       method: "TRANSFER",
       manual: true,
       givenVnd: 3_044_000,
@@ -271,22 +434,203 @@ describe("Cash, QR, Method, and Success views", () => {
         onPrintReceipt: () => undefined,
       }),
     )
-    expect(okHtml).toContain("G01 (A1, A2)")
+    expect(okHtml).toContain("G02 (B11, B12)")
     expect(okHtml).toContain("Chuyển khoản QR · xác nhận tay")
     expect(okHtml).toContain("Trống")
   })
 
-  it("enforces synchronous in-flight guard against double submit before React re-renders", () => {
-    const ref = { current: false }
-    const submitSpy = vi.fn()
-    const attemptSubmit = () => {
-      if (ref.current) return false
-      ref.current = true
-      submitSpy()
-      return true
+  it("renders split 2-frame floor map for far-apart cluster tables", () => {
+    const html = renderToStaticMarkup(
+      createElement(PaymentFloorMap, {
+        sessions: [
+          {
+            visitId: "900",
+            billCode: "B0900",
+            sessionCode: "S-0900",
+            code: "G03",
+            tables: ["C2", "B5"],
+            clusterCode: "G03",
+            status: "SERVING",
+            openedAt: "21:00",
+            waiterName: "Hà",
+            guests: 4,
+            dueVnd: 200_000,
+            version: 1,
+          },
+        ],
+        selectedId: "900",
+        onSelectSession: () => undefined,
+        onClearSelection: () => undefined,
+      }),
+    )
+    expect(html).toContain("Cụm G03 có bàn ở xa nhau nên sơ đồ tách thành 2 khung.")
+    expect(html).toContain("pay-fgrid two")
+  })
+
+  it("renders unread dot on PaymentNotificationBell according to unread prop", () => {
+    const ntfs: PaymentNotification[] = [
+      { id: "n1", type: "PAID", title: "Đã thanh toán", text: "A3 · 231.000đ", time: "21:45", visitId: "1" },
+    ]
+    const unreadHtml = renderToStaticMarkup(
+      createElement(PaymentNotificationBell, { notifications: ntfs, unread: true, onOpen: () => undefined }),
+    )
+    expect(unreadHtml).toContain('data-testid="pay-ntf-unread-dot"')
+
+    const readHtml = renderToStaticMarkup(
+      createElement(PaymentNotificationBell, { notifications: ntfs, unread: false, onOpen: () => undefined }),
+    )
+    expect(readHtml).not.toContain('data-testid="pay-ntf-unread-dot"')
+  })
+})
+
+describe("PaymentFlowWorkspace submitPaymentConfirm & error classification", () => {
+  it("blocks duplicate confirm invocations synchronously before the first adapter call resolves", async () => {
+    let resolveConfirm!: (rc: Receipt) => void
+    const confirmCash = vi.fn(
+      () =>
+        new Promise<Receipt>((resolve) => {
+          resolveConfirm = resolve
+        }),
+    )
+    const confirmTransfer = vi.fn()
+    const inFlightRef = { current: false }
+    const idempotencyKeyRef: { current: IdempotencySlot | null } = { current: null }
+    const setBusy = vi.fn()
+    const setPayError = vi.fn()
+    const setReceipt = vi.fn()
+    const invalidate = vi.fn(async () => undefined)
+    const onSuccess = vi.fn()
+
+    const bill = sampleBill({ status: "AWAITING_PAYMENT" })
+    const p1 = submitPaymentConfirm({
+      api: { confirmCash, confirmTransfer },
+      bill,
+      canCollect: true,
+      method: "CASH",
+      givenVnd: 200_000,
+      busy: false,
+      inFlightRef,
+      idempotencyKeyRef,
+      setBusy,
+      setPayError,
+      setReceipt,
+      invalidate,
+      onSuccess,
+    })
+    const p2 = submitPaymentConfirm({
+      api: { confirmCash, confirmTransfer },
+      bill,
+      canCollect: true,
+      method: "CASH",
+      givenVnd: 200_000,
+      busy: false,
+      inFlightRef,
+      idempotencyKeyRef,
+      setBusy,
+      setPayError,
+      setReceipt,
+      invalidate,
+      onSuccess,
+    })
+
+    expect(confirmCash).toHaveBeenCalledTimes(1)
+    const rc: Receipt = {
+      billCode: bill.billCode,
+      visitId: bill.visitId,
+      sessionCode: bill.sessionCode,
+      code: bill.code,
+      tables: bill.tables,
+      method: "CASH",
+      manual: false,
+      givenVnd: 200_000,
+      changeVnd: 45_000,
+      preRoundVnd: bill.preRoundVnd,
+      dueVnd: bill.dueVnd,
+      confirmedAt: "21:45",
+      confirmedBy: "Thu ngân",
     }
-    expect(attemptSubmit()).toBe(true)
-    expect(attemptSubmit()).toBe(false)
-    expect(submitSpy).toHaveBeenCalledTimes(1)
+    resolveConfirm(rc)
+    const [r1, r2] = await Promise.all([p1, p2])
+    expect(r1).toEqual(rc)
+    expect(r2).toBeNull()
+    expect(setReceipt).toHaveBeenCalledTimes(1)
+    expect(onSuccess).toHaveBeenCalledTimes(1)
+    expect(inFlightRef.current).toBe(false)
+  })
+
+  it("preserves idempotency key on network error retry with same amount, and rotates key when amount changes", async () => {
+    const confirmCash = vi.fn().mockRejectedValue(new ApiError(0, "NETWORK_ERROR", "Mất mạng"))
+    const inFlightRef = { current: false }
+    const idempotencyKeyRef: { current: IdempotencySlot | null } = { current: null }
+    const bill = sampleBill({ status: "AWAITING_PAYMENT", version: 2 })
+
+    await submitPaymentConfirm({
+      api: { confirmCash, confirmTransfer: vi.fn() },
+      bill,
+      canCollect: true,
+      method: "CASH",
+      givenVnd: 200_000,
+      busy: false,
+      inFlightRef,
+      idempotencyKeyRef,
+      setBusy: () => undefined,
+      setPayError: () => undefined,
+      setReceipt: () => undefined,
+      invalidate: async () => undefined,
+      onSuccess: () => undefined,
+    })
+    const firstKey = confirmCash.mock.calls[0][3]
+
+    // Retry same amount -> must reuse exact same key
+    await submitPaymentConfirm({
+      api: { confirmCash, confirmTransfer: vi.fn() },
+      bill,
+      canCollect: true,
+      method: "CASH",
+      givenVnd: 200_000,
+      busy: false,
+      inFlightRef,
+      idempotencyKeyRef,
+      setBusy: () => undefined,
+      setPayError: () => undefined,
+      setReceipt: () => undefined,
+      invalidate: async () => undefined,
+      onSuccess: () => undefined,
+    })
+    expect(confirmCash.mock.calls[1][3]).toBe(firstKey)
+
+    // Edit amount -> must generate a new key
+    await submitPaymentConfirm({
+      api: { confirmCash, confirmTransfer: vi.fn() },
+      bill,
+      canCollect: true,
+      method: "CASH",
+      givenVnd: 500_000,
+      busy: false,
+      inFlightRef,
+      idempotencyKeyRef,
+      setBusy: () => undefined,
+      setPayError: () => undefined,
+      setReceipt: () => undefined,
+      invalidate: async () => undefined,
+      onSuccess: () => undefined,
+    })
+    expect(confirmCash.mock.calls[2][3]).not.toBe(firstKey)
+  })
+
+  it("classifies VERSION_CONFLICT separately from DUPLICATE_PAYMENT and exports availability flag", () => {
+    expect(isPaymentAvailable).toBe(true)
+    expect(toPaymentError(new ApiError(409, "VERSION_CONFLICT", "Stale")).kind).toBe("conflict")
+    expect(
+      toPaymentError(
+        new ApiError(409, "DUPLICATE_PAYMENT", "Dup", { confirmedBy: "Thu ngân Hà", confirmedAt: "21:43" }),
+      ),
+    ).toEqual({
+      kind: "dup",
+      message: "Dup",
+      confirmedBy: "Thu ngân Hà",
+      confirmedAt: "21:43",
+    })
+    expect(toPaymentError(new ApiError(409, "IDEMPOTENCY_CONFLICT", "Conflict")).kind).toBe("other")
   })
 })

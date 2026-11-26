@@ -49,6 +49,9 @@ if (!PROVIDED_BASE) {
 
 const launchOptions = {
   headless: true,
+  ...(process.platform === "win32" && fs.existsSync("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe")
+    ? { executablePath: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" }
+    : {}),
   ...(process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : {}),
 }
 
@@ -60,8 +63,11 @@ const VIEWPORTS = [
 
 const browser = await chromium.launch(launchOptions)
 
-async function openCashierPayment(vp, userId = 5) {
-  const context = await browser.newContext({ viewport: { width: vp.width, height: vp.height } })
+async function openRole(vp, userId, startPath = "/payment", extraOptions = {}) {
+  const context = await browser.newContext({
+    viewport: { width: vp.width, height: vp.height },
+    ...extraOptions,
+  })
   const page = await context.newPage()
   const errors = []
   page.on("pageerror", (e) => errors.push(e.message))
@@ -71,32 +77,33 @@ async function openCashierPayment(vp, userId = 5) {
   await page.addInitScript((uid) => {
     localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: uid, theme: "light" }))
   }, userId)
-  await page.goto(`${base}/payment`, { waitUntil: "networkidle" })
+  await page.goto(`${base}${startPath}`, { waitUntil: "networkidle" })
   await page.evaluate(() => window.__21gamPaymentMock?.reset?.())
-  await page.goto(`${base}/payment`, { waitUntil: "networkidle" })
+  await page.goto(`${base}${startPath}`, { waitUntil: "networkidle" })
   return { context, page, errors }
 }
 
 const results = []
 try {
   for (const vp of VIEWPORTS) {
-    // 1. S1 List, notifications, floor map zoom + split cluster, S2 detail, S3 preview, S4 method, S5 cash (short/exact/over), S7 success
+    // 1. S1 List, notifications unread dot on PAID, A10/BAR01 clearance, scroll-to-top on S3,
+    //    Cash (short/exact/over), S7 success, Back lock on S4, floor sync on /floor
     {
-      const { context, page, errors } = await openCashierPayment(vp, 5)
+      const { context, page, errors } = await openRole(vp, 5, "/payment")
       try {
         await expect(page.getByText("Xin chào,").first()).toBeVisible()
         await expect(page.getByText("Thu ngân · Thu ngân").first()).toBeVisible()
 
-        // Sort order check: G01 (awaiting payment) first, B4 (requested) second
+        // Sort order check: G02 (awaiting payment) first, G04 (requested) second
         const rowCodes = await page.locator(".pay-sess b").allTextContents()
-        const orderedCodes = rowCodes.filter((c) => ["G01", "B4", "A3", "Bar1", "G02"].includes(c))
-        assert.deepEqual(orderedCodes, ["G01", "B4", "A3", "Bar1", "G02"], `${vp.name}: unexpected sort order ${orderedCodes}`)
+        const orderedCodes = rowCodes.filter((c) => ["G02", "G04", "A3", "A2", "BAR01"].includes(c))
+        assert.deepEqual(orderedCodes, ["G02", "G04", "A3", "A2", "BAR01"], `${vp.name}: unexpected sort order ${orderedCodes}`)
 
-        // No "A1 + A2" for cluster G01
+        // Cluster G02 never renders "B11 + B12"
         const listText = await page.locator(".pay-sess-list").textContent()
-        assert(!listText.includes("A1 + A2"), `${vp.name}: cluster must show G01, never A1 + A2`)
+        assert(!listText.includes("B11 + B12"), `${vp.name}: cluster must show G02, never B11 + B12`)
 
-        // Notifications bell: unread dot -> open clears unread & shows types
+        // Notifications bell: unread dot -> open clears unread -> stays cleared until new PAID event
         const bell = page.getByRole("button", { name: /Thông báo thanh toán/ })
         await expect(page.getByTestId("pay-ntf-unread-dot")).toBeVisible()
         await bell.click()
@@ -107,24 +114,14 @@ try {
         await bell.click()
         await expect(page.getByTestId("pay-ntf-unread-dot")).toHaveCount(0)
 
-        // Floor map A10 must not overlap Bar1/Bar2
+        // Floor map: BOTH A10 and BAR01 selectors MUST exist and A10 must stay clear of BAR01
         const clearance = await page.evaluate(() => {
-          const a10 = document.querySelector('[aria-label^="A10,"]')?.getBoundingClientRect()
+          const a10 = document.querySelector('[aria-label^="Bàn A10,"]')?.getBoundingClientRect()
           const bar1 = document.querySelector('[aria-label^="BAR01,"]')?.getBoundingClientRect()
-          if (!a10 || !bar1) return true
-          return a10.right <= bar1.left + 0.5
+          if (!a10 || !bar1) return { ok: false, reason: `missing selector a10=${Boolean(a10)} bar1=${Boolean(bar1)}` }
+          return { ok: a10.right <= bar1.left + 0.5, reason: `a10.right=${a10.right}, bar1.left=${bar1.left}` }
         })
-        assert(clearance, `${vp.name}: A10 overlapped Bar1`)
-
-        // First tap on G02 -> zooms & splits into 2 frames
-        await page.locator(".pay-sess", { hasText: "G02" }).click()
-        await expect(page.getByText("Cụm G02 có bàn ở xa nhau nên sơ đồ tách thành 2 khung.")).toBeVisible()
-        await expect(page.locator(".pay-fpanel")).toHaveCount(2)
-        await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-s1-split.png`) })
-
-        // Zoom back out with Toàn sơ đồ
-        await page.getByRole("button", { name: "Toàn sơ đồ", exact: true }).click()
-        await expect(page.locator(".pay-fpanel")).toHaveCount(1)
+        assert(clearance.ok, `${vp.name}: A10/BAR01 clearance failed: ${clearance.reason}`)
 
         // First tap on A3 selects; second tap opens S2 detail
         const a3Row = page.locator(".pay-sess", { hasText: "A3" })
@@ -135,6 +132,8 @@ try {
 
         // S2 detail: cancelled Margarita hidden, Mojito making warning visible, rounding shown separately
         await expect(page.getByRole("heading", { name: "Chi tiết Phiên" })).toBeVisible()
+        const a3VisitId = new URL(page.url()).pathname.split("/")[2]
+        assert(/^\d+$/.test(a3VisitId), `${vp.name}: expected numeric visitId for A3, got ${a3VisitId}`)
         await expect(page.getByText("Tiger Crystal")).toBeVisible()
         await expect(page.getByText("Mojito")).toBeVisible()
         await expect(page.getByText("Margarita")).toHaveCount(0)
@@ -143,11 +142,35 @@ try {
         await expect(page.getByText("Làm tròn lên nghìn (bước cuối)")).toBeVisible()
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-s2-detail.png`) })
 
-        // S3 preview: no page title, toggle 80mm, demo QR
+        // NA45-03: direct URL to /cash on SERVING bill redirects back to S2 detail with prebill instruction
+        await page.goto(`${base}/payment/${a3VisitId}/cash`, { waitUntil: "networkidle" })
+        await expect(page.getByRole("heading", { name: "Chi tiết Phiên" })).toBeVisible()
+        await expect(page.getByText(/chưa tạo tạm tính/)).toBeVisible()
+
+        // NA45-06: scroll down on S2, click Xem tạm tính -> S3 must scroll to top so back & 80mm toggle are in viewport
+        await page.evaluate(() => {
+          const root = document.querySelector(".pay-root")
+          if (root) root.scrollTop = 450
+        })
         await page.getByRole("button", { name: "Xem tạm tính" }).click()
         await expect(page.getByRole("button", { name: "Trên màn hình" })).toBeVisible()
         await expect(page.getByRole("button", { name: "Bản in 80mm" })).toBeVisible()
         await expect(page.getByText("Bill tạm tính, chưa phải hóa đơn. Món đã hủy không tính.")).toBeVisible()
+        const scrollCheck = await page.evaluate((vh) => {
+          const root = document.querySelector(".pay-root")
+          const backBtn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Chi tiết Phiên"))
+          const printBtn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("Bản in 80mm"))
+          const bRect = backBtn?.getBoundingClientRect()
+          const pRect = printBtn?.getBoundingClientRect()
+          return {
+            scrollTop: root?.scrollTop ?? -1,
+            backVisible: Boolean(bRect && bRect.top >= 0 && bRect.bottom <= vh),
+            printVisible: Boolean(pRect && pRect.top >= 0 && pRect.bottom <= vh),
+          }
+        }, vp.height)
+        assert.equal(scrollCheck.scrollTop, 0, `${vp.name}: S3 scrollTop should be 0, got ${scrollCheck.scrollTop}`)
+        assert(scrollCheck.backVisible && scrollCheck.printVisible, `${vp.name}: S3 header controls not in viewport: ${JSON.stringify(scrollCheck)}`)
+
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-s3-preview.png`) })
         await page.getByRole("button", { name: "Bản in 80mm" }).click()
         await expect(page.getByLabel("Bản in tạm tính khổ 80mm")).toBeVisible()
@@ -183,35 +206,76 @@ try {
         await expect(page.getByText("Trống", { exact: true }).first()).toBeVisible()
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-s7-success-cash.png`) })
 
-        // Back to S1: A3 is gone from open list and A3 tile is Trống
+        // NA45-03: Browser Back to S5 & S4 on PAID bill must lock all money actions
+        await page.goBack({ waitUntil: "networkidle" })
+        await expect(page.getByText("Bill này đã thanh toán").first()).toBeVisible()
+        await expect(page.getByRole("button", { name: /Xác nhận đã nhận/ })).toBeDisabled()
+        await page.goBack({ waitUntil: "networkidle" })
+        await expect(page.getByText("Bill này đã thanh toán").first()).toBeVisible()
+        await expect(page.getByRole("button", { name: /Tiền mặt/ })).toBeDisabled()
+        await expect(page.getByRole("button", { name: /Chuyển khoản QR/ })).toBeDisabled()
+
+        // Back to S1: A3 is gone from open list, A3 tile is Trống, and PAID notification turns unread dot back on
         await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
         await expect(page.locator(".pay-sess", { hasText: "A3" })).toHaveCount(0)
         await expect(page.getByRole("button", { name: /^Bàn A3, trống$/ })).toBeVisible()
+        await expect(page.getByTestId("pay-ntf-unread-dot")).toBeVisible()
+
+        // Verify A3 is ALSO released on operational /floor (client-side nav preserves in-memory mock session)
+        if (vp.width < 768) {
+          await page.getByRole("button", { name: "Sơ đồ", exact: true }).click()
+        } else {
+          await page.locator('a[href="/floor"]').first().click()
+        }
+        await expect(page.locator('[aria-label*="A3"][aria-label*="Trống"]').first()).toBeVisible()
 
         assert.deepEqual(errors, [], `${vp.name} console errors: ${errors.join(" | ")}`)
-        results.push(`PASS ${vp.name} cash flow`)
+        results.push(`PASS ${vp.name} cash flow + floor sync`)
       } finally {
         await context.close()
       }
     }
 
-    // 2. QR manual confirm + Network error + Duplicate 409
+    // 2. Network error + same-amount/same-button retry, VERSION_CONFLICT vs DUPLICATE_PAYMENT, QR manual confirm
     {
-      const { context, page, errors } = await openCashierPayment(vp, 5)
+      const { context, page, errors } = await openRole(vp, 5, "/payment")
       try {
-        // Network error on Cash (B4), then retry succeeds
-        await page.locator(".pay-sess", { hasText: "B4" }).click()
-        await page.locator(".pay-sess", { hasText: "B4" }).click()
+        // Network error on Cash (G04), then retry with SAME button & SAME amount succeeds
+        await page.locator(".pay-sess", { hasText: "G04" }).click()
+        await page.locator(".pay-sess", { hasText: "G04" }).click()
         await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
         await page.getByRole("button", { name: /Tiền mặt/ }).click()
         await page.getByRole("button", { name: "500.000", exact: true }).click()
         await page.evaluate(() => window.__21gamPaymentMock.setFault({ nextConfirm: "net" }))
-        await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+        const confirmBtn = page.getByRole("button", { name: /Xác nhận đã nhận/ })
+        await confirmBtn.click()
         await expect(page.getByText("Không gửi được tới máy chủ")).toBeVisible()
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-err-net.png`) })
+        // Retry with the exact same button and amount (same idempotency key path)
+        await confirmBtn.click()
+        await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
 
-        // Retry QR manual confirm on G01 (s408)
-        await page.getByRole("button", { name: "Chọn phương thức" }).click()
+        // VERSION_CONFLICT on BAR01: must reload bill and NOT claim "already paid", then retry succeeds
+        await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
+        await page.locator(".pay-sess", { hasText: "BAR01" }).click()
+        await page.locator(".pay-sess", { hasText: "BAR01" }).click()
+        const barVisitId = new URL(page.url()).pathname.split("/")[2]
+        await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
+        await page.getByRole("button", { name: /Tiền mặt/ }).click()
+        await page.getByRole("button", { name: "500.000", exact: true }).click()
+        await page.evaluate((id) => window.__21gamPaymentMock.bumpVersion(id), barVisitId)
+        await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+        await expect(page.getByText("Bill vừa được cập nhật")).toBeVisible()
+        await expect(page.getByText("Bill này đã được thanh toán trên thiết bị khác")).toHaveCount(0)
+        // Confirm again against reloaded bill succeeds
+        await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+        await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
+
+        // Separate QR manual confirm on G02
+        await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
+        await page.locator(".pay-sess", { hasText: "G02" }).click()
+        await page.locator(".pay-sess", { hasText: "G02" }).click()
+        await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
         await page.getByRole("button", { name: /Chuyển khoản QR/ }).click()
         await page.getByRole("button", { name: /Kiểm tra giao dịch/ }).click()
         await expect(page.getByText("Chưa thấy giao dịch khớp")).toBeVisible()
@@ -224,10 +288,10 @@ try {
         await expect(page.getByText("Chuyển khoản QR · xác nhận tay")).toBeVisible()
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-s7-success-qr.png`) })
 
-        // Duplicate 409 on G01
+        // Duplicate 409 fault on A2: marks PAID, releases A2, shows "đã được thanh toán trên thiết bị khác"
         await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
-        await page.locator(".pay-sess", { hasText: "G01" }).click()
-        await page.locator(".pay-sess", { hasText: "G01" }).click()
+        await page.locator(".pay-sess", { hasText: "A2" }).click()
+        await page.locator(".pay-sess", { hasText: "A2" }).click()
         await page.getByRole("button", { name: "Chốt bill & thu tiền" }).click()
         await page.getByRole("button", { name: /Chuyển khoản QR/ }).click()
         await page.evaluate(() => window.__21gamPaymentMock.setFault({ nextConfirm: "dup" }))
@@ -235,24 +299,68 @@ try {
         await page.getByRole("checkbox").check()
         await page.getByRole("button", { name: "Xác nhận", exact: true }).click()
         await expect(page.getByText("Bill này đã được thanh toán trên thiết bị khác")).toBeVisible()
+        await expect(page.getByRole("button", { name: "Xác nhận đã nhận tiền" })).toBeDisabled()
         await page.screenshot({ path: path.join(ARTIFACTS_DIR, `payment-${vp.name}-err-dup.png`) })
+        await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
+        await expect(page.getByRole("button", { name: /^Bàn A2, trống$/ })).toBeVisible()
 
         assert.deepEqual(errors, [], `${vp.name} QR/error console errors: ${errors.join(" | ")}`)
-        results.push(`PASS ${vp.name} qr + error + dup`)
+        results.push(`PASS ${vp.name} retry + 409 conflict/dup + qr`)
+      } finally {
+        await context.close()
+      }
+    }
+
+    // 3. Reduced motion (NA45-05) & loading lock across 390, 820, 1440
+    {
+      const { context, page, errors } = await openRole(vp, 5, "/payment", { reducedMotion: "reduce" })
+      try {
+        // Trigger zoom on A3 selection and verify 0.6s duration on .pay-fview and .pay-fsz
+        await page.locator(".pay-sess", { hasText: "A3" }).click()
+        const zoomTiming = await page.evaluate(() => {
+          const fview = document.querySelector(".pay-fpanel.mv .pay-fview")
+          const fsz = document.querySelector(".pay-fpanel.mv .pay-fsz")
+          return {
+            fviewDur: fview ? getComputedStyle(fview).animationDuration : null,
+            fszDur: fsz ? getComputedStyle(fsz).animationDuration : null,
+          }
+        })
+        assert.equal(zoomTiming.fviewDur, "0.6s", `${vp.name}: .pay-fview reduced-motion duration was ${zoomTiming.fviewDur}`)
+        assert.equal(zoomTiming.fszDur, "0.6s", `${vp.name}: .pay-fsz reduced-motion duration was ${zoomTiming.fszDur}`)
+
+        // Loading skeleton + .pay-spin runs infinitely at 1.2s under reducedMotion: "reduce"
+        await page.evaluate(() => window.__21gamPaymentMock.setFault({ billDelayMs: 1200 }))
+        await page.locator(".pay-sess", { hasText: "A3" }).click()
+        const spin = page.locator(".pay-spin").first()
+        await spin.waitFor({ state: "visible" })
+        const spinTiming = await spin.evaluate((el) => {
+          const cs = getComputedStyle(el)
+          return { dur: cs.animationDuration, iter: cs.animationIterationCount }
+        })
+        assert.deepEqual(
+          spinTiming,
+          { dur: "1.2s", iter: "infinite" },
+          `${vp.name}: .pay-spin reduced-motion timing was ${JSON.stringify(spinTiming)}`,
+        )
+        await expect(page.getByRole("heading", { name: "Chi tiết Phiên" })).toBeVisible()
+
+        assert.deepEqual(errors, [], `${vp.name} reducedMotion console errors: ${errors.join(" | ")}`)
+        results.push(`PASS ${vp.name} reduced motion + loading lock`)
       } finally {
         await context.close()
       }
     }
   }
 
-  // 3. Waiter PA-A flow reached only through session detail on /phucvu (at 390):
-  //    Waiter sees S2 + S3 (provisional bill with QR) + request payment, and S4-S7 are unreachable.
+  // 4. Waiter PA-A flow + unified A3 visitId + S4-S7 blocked under BOTH /payment and /phucvu
   {
-    const { context, page, errors } = await openCashierPayment(VIEWPORTS[0], 6)
+    const { context, page, errors } = await openRole(VIEWPORTS[0], 6, "/phucvu")
     try {
-      await page.goto(`${base}/phucvu`, { waitUntil: "networkidle" })
       await page.locator('[aria-label^="Bàn A3,"]').first().click()
       await page.getByRole("button", { name: /Xem tạm tính & gọi thu ngân/ }).click()
+      const waiterVisitId = new URL(page.url()).pathname.split("/")[3]
+      assert(/^\d+$/.test(waiterVisitId), `Waiter A3 visitId must be numeric, got ${waiterVisitId}`)
+
       await expect(page.getByText("PHƯƠNG ÁN A · QUYỀN PHỤC VỤ")).toBeVisible()
       await expect(page.getByRole("button", { name: "Chốt bill & thu tiền" })).toHaveCount(0)
       const reqBtn = page.getByRole("button", { name: "Gửi yêu cầu thanh toán" })
@@ -267,13 +375,13 @@ try {
       await expect(page.getByLabel("Mã QR minh họa trên bill, không chuyển tiền được")).toBeVisible()
       await expect(page.getByRole("button", { name: "Chốt bill & thu tiền" })).toHaveCount(0)
 
-      // Prove S4-S7 money routes are blocked for Waiter (direct URL redirect / no money screen)
+      // Prove S4-S7 money routes are blocked under BOTH /payment and /phucvu
       for (const forbiddenUrl of [
         "/payment",
-        "/payment/s412/method",
-        "/payment/s412/cash",
-        "/payment/s412/qr",
-        "/payment/s412/success",
+        `/payment/${waiterVisitId}/method`,
+        `/payment/${waiterVisitId}/cash`,
+        `/payment/${waiterVisitId}/qr`,
+        `/payment/${waiterVisitId}/success`,
       ]) {
         await page.goto(`${base}${forbiddenUrl}`, { waitUntil: "networkidle" })
         assert(
@@ -281,14 +389,39 @@ try {
           `Waiter direct URL ${forbiddenUrl} should redirect to /phucvu, got ${page.url()}`,
         )
       }
-      await page.goto(`${base}/phucvu/phien/s412/thanh-toan?view=cash`, { waitUntil: "networkidle" })
-      await expect(page.getByRole("heading", { name: "Thanh toán tiền mặt" })).toHaveCount(0)
-      await expect(page.getByRole("button", { name: /Xác nhận đã nhận/ })).toHaveCount(0)
+      for (const moneyView of ["method", "cash", "qr", "success"]) {
+        await page.goto(`${base}/phucvu/phien/${waiterVisitId}/thanh-toan?view=${moneyView}`, {
+          waitUntil: "networkidle",
+        })
+        await expect(page.getByRole("heading", { name: "Chọn phương thức thanh toán" })).toHaveCount(0)
+        await expect(page.getByRole("heading", { name: "Thanh toán tiền mặt" })).toHaveCount(0)
+        await expect(page.getByRole("heading", { name: "Chuyển khoản QR" })).toHaveCount(0)
+        await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toHaveCount(0)
+        await expect(page.getByRole("button", { name: /Xác nhận đã nhận/ })).toHaveCount(0)
+      }
 
       assert.deepEqual(errors, [], `Waiter PA-A console errors: ${errors.join(" | ")}`)
-      results.push("PASS 390 waiter PA-A session detail flow + S4-S7 blocked")
+      results.push("PASS 390 waiter PA-A + S4-S7 blocked under /payment and /phucvu")
     } finally {
       await context.close()
+    }
+  }
+
+  // 5. NA45-11: TopBar outside /payment preserves deviceLabel & non-greeting header at 1440px
+  {
+    for (const roleCheck of [
+      { userId: 3, deviceLabel: "Laptop văn phòng", name: "Owner" },
+      { userId: 4, deviceLabel: "Điện thoại CSKH", name: "CustomerCare" },
+    ]) {
+      const { context, page, errors } = await openRole(VIEWPORTS[2], roleCheck.userId, "/floor")
+      try {
+        await expect(page.locator("header").getByText(roleCheck.deviceLabel)).toBeVisible()
+        await expect(page.locator("header").getByText("Xin chào,")).toHaveCount(0)
+        assert.deepEqual(errors, [], `${roleCheck.name} /floor console errors: ${errors.join(" | ")}`)
+        results.push(`PASS 1440 ${roleCheck.name} /floor TopBar deviceLabel preserved`)
+      } finally {
+        await context.close()
+      }
     }
   }
 
