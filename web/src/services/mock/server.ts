@@ -45,6 +45,7 @@ import type {
 } from "@/domain/models"
 import type { ReservationRow, TableHoldRow, VisitRow, WaitlistEntryRow } from "@/domain/schema"
 import { GROUP_SYMBOL_COUNT_MAX, symbolByNo } from "@/domain/symbols"
+import { groupCodeFromSymbol } from "@/domain/group-code"
 import { clock } from "../clock"
 import {
   ApiError,
@@ -89,6 +90,7 @@ import {
   customerSummary,
   describeAllocation,
   floorState,
+  groupSymbolNo,
   holdTableIds,
   operationView,
   projectTableTurns,
@@ -104,11 +106,19 @@ import {
   visitView,
   waitlistView,
 } from "./derive"
-import { DEMO_USERS, REMOTE_USER_ID, seedDb } from "./seed"
+import { DEMO_USERS, REMOTE_USER_ID, seedDb, seedPaymentBills, type SeededPaymentBillInput } from "./seed"
 import { mockTableTurns, mockTableTurnSummary } from "./table-turns"
 import { Tx } from "./tx"
 import { formatDailyBookingText } from "./booking-export"
 import { apiErrorMessage } from "../error-messages"
+import { calcBillTotals, formatVnd, sortOpenBills } from "../payment/calc"
+import type {
+  PayBill,
+  PayBillSummary,
+  PayLine,
+  PaymentNotification,
+  Receipt,
+} from "../payment/contracts"
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const ACTIVE_ENTRY = ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"] as const
@@ -183,15 +193,20 @@ export class MockGamApi implements GamApi, DemoControls {
     outcomeBy: string | null
   }[] = []
   private readonly businessDayWorkerEnabled: boolean
+  private paymentBills = new Map<string, PayBill>()
+  private paymentPaidLog: PaymentNotification[] = []
+  private paymentIdempotency = new Map<string, Receipt>()
+  private paymentFault: { nextConfirm?: "net" | "dup"; qrFound?: boolean; billDelayMs?: number } = {}
 
   constructor(options: { businessDayWorkerEnabled?: boolean } = {}) {
     this.businessDayWorkerEnabled = options.businessDayWorkerEnabled ?? true
     this.db = seedDb(clock.now())
+    this.initPaymentBills()
     this.seq = venueOf(this.db).changeSeq
-    const first = DEMO_USERS[0]
-    this.session = { ...first }
     setInterval(() => this.tick(), 5_000)
     clock.subscribe(() => this.tick())
+    const first = DEMO_USERS[0]
+    this.session = { ...first }
   }
 
   /* ================= infrastructure ================= */
@@ -2976,6 +2991,10 @@ export class MockGamApi implements GamApi, DemoControls {
     this.history = this.createCustomerHistory()
     this.guestCounts.clear()
     this.quickTimes = ["21:00", "21:30", "22:00", "22:30"]
+    this.initPaymentBills()
+    this.paymentPaidLog = []
+    this.paymentIdempotency.clear()
+    this.paymentFault = {}
     this.seq = venueOf(this.db).changeSeq
     this.emit({
       latestSeq: this.seq,
@@ -2985,6 +3004,411 @@ export class MockGamApi implements GamApi, DemoControls {
       actorUserId: null,
       summary: "Đã nạp lại dữ liệu mẫu",
     })
+  }
+
+  /* ================= temporary payment mock (NA-45/46, swap for TU-45/46) ================= */
+
+  private toPayBill(input: SeededPaymentBillInput): PayBill {
+    const lines: PayLine[] = input.lines.map((l) => ({
+      orderRound: l.orderRound,
+      roundTime: l.roundTime,
+      roundBy: l.roundBy,
+      name: l.name,
+      unit: l.unit,
+      qty: l.qty,
+      unitPriceVnd: l.unitPriceVnd,
+      lineTotalVnd: l.qty * l.unitPriceVnd,
+      state: l.state,
+      ...(l.note ? { note: l.note } : {}),
+    }))
+    const totals = calcBillTotals(lines)
+    const roundCount = new Set(lines.map((l) => l.orderRound)).size
+    return {
+      billCode: input.billCode,
+      visitId: input.visitId,
+      sessionCode: input.sessionCode,
+      code: input.code,
+      tables: [...input.tables],
+      ...(input.clusterCode ? { clusterCode: input.clusterCode } : {}),
+      status: input.status,
+      lines,
+      subtotalVnd: totals.subtotalVnd,
+      vatVnd: totals.vatVnd,
+      preRoundVnd: totals.preRoundVnd,
+      roundingVnd: totals.roundingVnd,
+      dueVnd: totals.dueVnd,
+      version: 1,
+      openedAt: input.openedAt,
+      ...(input.pendingAt ? { pendingAt: input.pendingAt } : {}),
+      ...(input.requestedAt ? { requestedAt: input.requestedAt } : {}),
+      waiterName: input.waiterName,
+      guests: input.guests,
+      roundCount,
+    }
+  }
+
+  private initPaymentBills() {
+    this.paymentBills.clear()
+    for (const seedBill of seedPaymentBills()) {
+      this.paymentBills.set(seedBill.visitId, this.toPayBill(seedBill))
+    }
+  }
+
+  private resolvePaymentBill(visitId: string): PayBill {
+    const direct = this.paymentBills.get(visitId)
+    if (direct) return direct
+
+    const numericId = Number(visitId)
+    if (Number.isSafeInteger(numericId) && numericId > 0) {
+      const visit = this.db.visits.get(numericId)
+      if (visit) {
+        const tableIds = visitTableIds(this.db, visit.id)
+        const tableCodes = tableIds.map((id) => this.db.tables.get(id)?.code ?? `#${id}`)
+        const alloc = activeAllocations(this.db).find((a) => a.visitId === visit.id && a.kind === "USAGE")
+        const groupCode = alloc?.groupId
+          ? (groupCodeFromSymbol(groupSymbolNo(this.db, alloc.groupId)) ?? undefined)
+          : undefined
+        const matchSeed = [...this.paymentBills.values()].find((b) =>
+          tableCodes.some((tc) => b.tables.includes(tc)),
+        )
+        const lines: PayLine[] = matchSeed
+          ? structuredClone(matchSeed.lines)
+          : [
+              {
+                orderRound: 1,
+                roundTime: fmtTime(visit.startedAt),
+                roundBy: "Phục vụ",
+                name: "Tiger Crystal",
+                unit: "Chai 330ml",
+                qty: 2,
+                unitPriceVnd: 42_800,
+                lineTotalVnd: 85_600,
+                state: "SERVED",
+              },
+              {
+                orderRound: 1,
+                roundTime: fmtTime(visit.startedAt),
+                roundBy: "Phục vụ",
+                name: "Khô bò",
+                unit: "Đĩa",
+                qty: 1,
+                unitPriceVnd: 99_000,
+                lineTotalVnd: 99_000,
+                state: "SERVED",
+              },
+            ]
+        const totals = calcBillTotals(lines)
+        const bill: PayBill = {
+          billCode: `B${String(visit.id).padStart(4, "0")}`,
+          visitId,
+          sessionCode: `S-${String(visit.id).padStart(4, "0")}`,
+          code: groupCode ?? (tableCodes[0] || `#${visit.id}`),
+          tables: tableCodes.length ? tableCodes : [`#${visit.id}`],
+          ...(groupCode && tableCodes.length > 1 ? { clusterCode: groupCode } : {}),
+          status: visit.endedAt || visit.paidMarkedAt ? "PAID" : "SERVING",
+          lines,
+          subtotalVnd: totals.subtotalVnd,
+          vatVnd: totals.vatVnd,
+          preRoundVnd: totals.preRoundVnd,
+          roundingVnd: totals.roundingVnd,
+          dueVnd: totals.dueVnd,
+          version: visit.version,
+          openedAt: fmtTime(visit.startedAt),
+          waiterName: "Minh",
+          guests: visit.guestCount,
+          roundCount: new Set(lines.map((l) => l.orderRound)).size,
+        }
+        this.paymentBills.set(visitId, bill)
+        return bill
+      }
+    }
+    throw new ApiError(404, "NOT_FOUND", "Không tìm thấy phiên thanh toán.")
+  }
+
+  private requirePaymentRead() {
+    if (!roleCan(this.session.role, "payment.collect") && !roleCan(this.session.role, "order.read")) {
+      throw new ApiError(403, "PERMISSION_DENIED", "Tài khoản không có quyền xem thanh toán.")
+    }
+  }
+
+  setPaymentTestFault(patch: { nextConfirm?: "net" | "dup" | null; qrFound?: boolean; billDelayMs?: number }) {
+    if (patch.nextConfirm === null) delete this.paymentFault.nextConfirm
+    else if (patch.nextConfirm !== undefined) this.paymentFault.nextConfirm = patch.nextConfirm
+    if (patch.qrFound !== undefined) this.paymentFault.qrFound = patch.qrFound
+    if (patch.billDelayMs !== undefined) this.paymentFault.billDelayMs = patch.billDelayMs
+  }
+
+  async listPaymentOpen(): Promise<PayBillSummary[]> {
+    await this.latency("q")
+    this.requirePaymentRead()
+    const open = [...this.paymentBills.values()]
+      .filter((b) => b.status !== "PAID")
+      .map(
+        (b): PayBillSummary => ({
+          visitId: b.visitId,
+          billCode: b.billCode,
+          sessionCode: b.sessionCode,
+          code: b.code,
+          tables: [...b.tables],
+          ...(b.clusterCode ? { clusterCode: b.clusterCode } : {}),
+          status: b.status,
+          openedAt: b.openedAt,
+          ...(b.pendingAt ? { pendingAt: b.pendingAt } : {}),
+          ...(b.requestedAt ? { requestedAt: b.requestedAt } : {}),
+          waiterName: b.waiterName,
+          guests: b.guests,
+          dueVnd: b.dueVnd,
+          version: b.version,
+        }),
+      )
+    return sortOpenBills(open)
+  }
+
+  async getPaymentBill(visitId: string): Promise<PayBill> {
+    if (this.paymentFault.billDelayMs && this.paymentFault.billDelayMs > 0) {
+      await sleep(this.paymentFault.billDelayMs)
+    } else {
+      await this.latency("q")
+    }
+    this.requirePaymentRead()
+    return structuredClone(this.resolvePaymentBill(visitId))
+  }
+
+  async createPaymentPrebill(visitId: string, version: number): Promise<PayBill> {
+    await this.latency("m")
+    this.requirePaymentRead()
+    const bill = this.resolvePaymentBill(visitId)
+    if (bill.status === "PAID") {
+      throw new ApiError(409, "INVALID_STATE", "Bill này đã được thanh toán.")
+    }
+    if (bill.version !== version) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Bill vừa được cập nhật trên thiết bị khác.")
+    }
+    if (bill.status === "SERVING") {
+      bill.status = "AWAITING_PAYMENT"
+      bill.pendingAt = fmtTime(this.now)
+      bill.version += 1
+      this.seq += 1
+      this.emit({
+        latestSeq: this.seq,
+        action: "PAYMENT_PREBILL_CREATED",
+        entityType: "visit",
+        actorKind: "USER",
+        actorUserId: this.session.id,
+        summary: `${bill.code} · tạo tạm tính`,
+      })
+    }
+    return structuredClone(bill)
+  }
+
+  async requestPayment(visitId: string): Promise<void> {
+    await this.latency("m")
+    this.require("order.read")
+    const bill = this.resolvePaymentBill(visitId)
+    if (bill.status === "PAID") {
+      throw new ApiError(409, "INVALID_STATE", "Bill này đã được thanh toán.")
+    }
+    const nowTime = fmtTime(this.now)
+    bill.requestedAt = bill.requestedAt ?? nowTime
+    if (bill.status === "SERVING") {
+      bill.status = "AWAITING_PAYMENT"
+      bill.pendingAt = bill.pendingAt ?? nowTime
+    }
+    bill.version += 1
+    this.seq += 1
+    this.emit({
+      latestSeq: this.seq,
+      action: "PAYMENT_REQUESTED",
+      entityType: "visit",
+      actorKind: "USER",
+      actorUserId: this.session.id,
+      summary: `${bill.code} · gửi yêu cầu thanh toán`,
+    })
+  }
+
+  private commitPayment(
+    visitId: string,
+    method: "CASH" | "TRANSFER",
+    manual: boolean,
+    givenVnd: number,
+    version: number,
+    idempotencyKey: string,
+  ): Receipt {
+    this.require("payment.collect")
+    const existing = this.paymentIdempotency.get(idempotencyKey)
+    if (existing) return structuredClone(existing)
+
+    if (this.paymentFault.nextConfirm === "net") {
+      this.paymentFault.nextConfirm = undefined
+      throw new ApiError(0, "NETWORK_ERROR", "Không gửi được tới máy chủ")
+    }
+
+    const bill = this.resolvePaymentBill(visitId)
+    if (this.paymentFault.nextConfirm === "dup") {
+      this.paymentFault.nextConfirm = undefined
+      const dupAt = fmtTime(this.now)
+      bill.status = "PAID"
+      bill.paidAt = dupAt
+      bill.paidBy = "Hà · Thu ngân"
+      bill.version += 1
+      throw new ApiError(409, "DUPLICATE_PAYMENT", "Bill này đã được thanh toán trên thiết bị khác", {
+        confirmedBy: "Thu ngân Hà",
+        confirmedAt: dupAt,
+      })
+    }
+
+    if (bill.status === "PAID") {
+      throw new ApiError(409, "DUPLICATE_PAYMENT", "Bill này đã được thanh toán trên thiết bị khác", {
+        confirmedBy: bill.paidBy ?? "Thu ngân khác",
+        confirmedAt: bill.paidAt ?? fmtTime(this.now),
+      })
+    }
+    if (bill.version !== version) {
+      throw new ApiError(409, "VERSION_CONFLICT", "Bill vừa được cập nhật, vui lòng tải lại.")
+    }
+    if (method === "CASH" && (!Number.isSafeInteger(givenVnd) || givenVnd < bill.dueVnd)) {
+      throw new ApiError(400, "VALIDATION_FAILED", "Số tiền khách đưa chưa đủ.")
+    }
+
+    const confirmedAt = fmtTime(this.now)
+    const staff = `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`
+    const receipt: Receipt = {
+      billCode: bill.billCode,
+      visitId: bill.visitId,
+      sessionCode: bill.sessionCode,
+      code: bill.code,
+      tables: [...bill.tables],
+      ...(bill.clusterCode ? { clusterCode: bill.clusterCode } : {}),
+      method,
+      manual,
+      givenVnd: method === "CASH" ? givenVnd : bill.dueVnd,
+      changeVnd: method === "CASH" ? givenVnd - bill.dueVnd : 0,
+      preRoundVnd: bill.preRoundVnd,
+      dueVnd: bill.dueVnd,
+      confirmedAt,
+      confirmedBy: staff,
+    }
+
+    bill.status = "PAID"
+    bill.paidAt = confirmedAt
+    bill.paidBy = staff
+    bill.version += 1
+    this.paymentIdempotency.set(idempotencyKey, receipt)
+    this.paymentPaidLog.unshift({
+      id: `paid-${bill.billCode}-${this.seq + 1}`,
+      type: "PAID",
+      title: "Đã thanh toán",
+      text: `${bill.code} · ${formatVnd(bill.dueVnd)} · ${method === "CASH" ? "Tiền mặt" : "Chuyển khoản QR"}`,
+      time: confirmedAt,
+      visitId: bill.visitId,
+    })
+
+    const numericVisitId = Number(visitId)
+    if (Number.isSafeInteger(numericVisitId) && this.db.visits.has(numericVisitId)) {
+      const visit = this.db.visits.get(numericVisitId)!
+      if (!visit.paidMarkedAt) {
+        visit.paidMarkedAt = this.now
+        visit.paidMarkedByUserId = this.session.id
+      }
+      if (!visit.endedAt) {
+        this.commit({ action: "VISIT_ENDED", entityType: "visit", undoable: false }, (tx) => {
+          const allocs = activeAllocations(this.db).filter((a) => a.visitId === visit.id)
+          allocs.forEach((a) => this.release(tx, a, "GUEST_LEFT"))
+          this.dissolveOrphanGroups(
+            tx,
+            allocs.map((a) => a.groupId),
+          )
+          const row = tx.edit("visits", visit.id)
+          row.endedAt = this.now
+          row.endedByUserId = this.session.id
+          row.endReason = "GUEST_LEFT"
+          return { entityId: visit.id, summary: `Thanh toán ${bill.code} · bàn về Trống` }
+        })
+      }
+    }
+
+    this.seq += 1
+    this.emit({
+      latestSeq: this.seq,
+      action: "PAYMENT_CONFIRMED",
+      entityType: "visit",
+      actorKind: "USER",
+      actorUserId: this.session.id,
+      summary: `Đã ghi nhận thanh toán ${bill.code}`,
+    })
+    return structuredClone(receipt)
+  }
+
+  async confirmPaymentCash(
+    visitId: string,
+    givenVnd: number,
+    version: number,
+    idempotencyKey: string,
+  ): Promise<Receipt> {
+    await this.latency("m")
+    return this.commitPayment(visitId, "CASH", false, givenVnd, version, idempotencyKey)
+  }
+
+  async confirmPaymentTransfer(
+    visitId: string,
+    manual: boolean,
+    version: number,
+    idempotencyKey: string,
+  ): Promise<Receipt> {
+    await this.latency("m")
+    return this.commitPayment(visitId, "TRANSFER", manual, 0, version, idempotencyKey)
+  }
+
+  async listPaymentNotifications(): Promise<PaymentNotification[]> {
+    await this.latency("q")
+    this.requirePaymentRead()
+    const items: PaymentNotification[] = []
+    for (const bill of this.paymentBills.values()) {
+      for (let i = 0; i < bill.lines.length; i += 1) {
+        const line = bill.lines[i]
+        if (line.state === "CANCELLED") {
+          items.push({
+            id: `cancel-${bill.billCode}-${i}`,
+            type: "CANCELLED_ITEM",
+            title: "Đã hủy món",
+            text: `${bill.code} · ${line.qty}× ${line.name}${line.note ? ` · ${line.note}` : ""}`,
+            time: line.roundTime ?? bill.openedAt,
+            visitId: bill.visitId,
+          })
+        }
+      }
+      if (bill.status !== "PAID") {
+        if (bill.requestedAt) {
+          items.push({
+            id: `req-${bill.billCode}`,
+            type: "PAYMENT_REQUEST",
+            title: "Gọi thanh toán",
+            text: `${bill.code} · PV ${bill.waiterName} gửi yêu cầu`,
+            time: bill.requestedAt,
+            visitId: bill.visitId,
+          })
+        }
+        if (bill.status === "AWAITING_PAYMENT" && bill.pendingAt) {
+          items.push({
+            id: `pend-${bill.billCode}`,
+            type: "AWAITING_PAYMENT",
+            title: "Chờ thanh toán",
+            text: `${bill.code} · đã tạm tính ${formatVnd(bill.dueVnd)}`,
+            time: bill.pendingAt,
+            visitId: bill.visitId,
+          })
+        }
+      }
+    }
+    items.push(...this.paymentPaidLog)
+    return items.sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0))
+  }
+
+  async checkPaymentTransfer(visitId: string): Promise<{ found: boolean }> {
+    await this.latency("m")
+    this.require("payment.collect")
+    this.resolvePaymentBill(visitId)
+    return { found: Boolean(this.paymentFault.qrFound) }
   }
 
   async simulateRemoteActivity(): Promise<string> {
