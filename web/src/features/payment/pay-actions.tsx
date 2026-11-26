@@ -1,10 +1,12 @@
 import {
   AlertTriangle,
   Banknote,
+  Camera,
   Check,
   ChevronRight,
   Copy,
   Info,
+  Lock,
   Printer,
   QrCode,
   RefreshCw,
@@ -23,6 +25,11 @@ import {
   type Receipt,
 } from "@/services/payment"
 import { DemoQrBox } from "./bill-pane"
+
+/** VM-12 / O5: single constant to flip when bank transaction check API goes live. */
+export const ENABLE_BANK_TRANSFER_CHECK = false
+
+const LOCKED_METHODS = ["Ghi nợ", "Thẻ", "Tách bill", "Giảm giá", "Voucher", "Hóa đơn điện tử"] as const
 
 export interface PaymentErrorState {
   kind: "net" | "dup" | "conflict" | "other"
@@ -118,15 +125,18 @@ function PaymentErrorBanner({
 export function MethodActionPane({
   bill,
   lastMethod,
+  isOffline = false,
   onSelectMethod,
   onToList,
 }: {
   bill: PayBill
   lastMethod: PaymentMethod | null
+  isOffline?: boolean
   onSelectMethod: (method: PaymentMethod) => void
   onToList?: () => void
 }) {
-  const isClosed = bill.status === "PAID" || bill.status === "CLOSED_UNPAID"
+  const isClosed = (bill.billStatus ? bill.billStatus === "PAID" : bill.status === "PAID") || bill.status === "CLOSED_UNPAID"
+  const qrDisabled = isClosed || isOffline
   const dueSub =
     bill.roundingVnd > 0
       ? `Đã làm tròn lên từ ${formatVnd(bill.preRoundVnd)} · Bill ${bill.billCode}`
@@ -161,14 +171,18 @@ export function MethodActionPane({
 
           <button
             type="button"
-            disabled={isClosed}
+            disabled={qrDisabled}
             className={cn("pay-mrow", lastMethod === "TRANSFER" && "sel")}
             onClick={() => onSelectMethod("TRANSFER")}
           >
             <QrCode className="pay-i lg pay-mrow-ic" aria-hidden />
             <span className="pay-mrow-t">
               <b>Chuyển khoản QR</b>
-              <span className="pay-d">Khách quét mã, nhân viên xác nhận khi thấy tiền về.</span>
+              <span className="pay-d">
+                {isOffline
+                  ? "Mất kết nối mạng, không tạo được QR. Hãy thu Tiền mặt."
+                  : "Khách quét mã, nhân viên xác nhận khi thấy tiền về."}
+              </span>
             </span>
             {lastMethod === "TRANSFER" ? <span className="pay-mrow-sel">Đang chọn</span> : <span />}
             <ChevronRight className="pay-i pay-chev" aria-hidden />
@@ -180,12 +194,13 @@ export function MethodActionPane({
           <span>Mỗi bill chỉ dùng một phương thức. Không chia tiền mặt và chuyển khoản trên cùng bill.</span>
         </p>
 
-        <div className="pay-later" aria-label="Giai đoạn sau">
-          <span>Giai đoạn sau:</span>
-          {["Ghi nợ", "Thẻ", "Tách bill", "Giảm giá · voucher", "Hóa đơn điện tử"].map((tag) => (
-            <span key={tag} className="pay-tag">
+        <div className="pay-later" aria-label="Đang phát triển">
+          <span>Đang phát triển:</span>
+          {LOCKED_METHODS.map((tag) => (
+            <button key={tag} type="button" disabled title="Đang phát triển" className="pay-tag-lock">
+              <Lock className="pay-i xs" aria-hidden />
               {tag}
-            </span>
+            </button>
           ))}
         </div>
       </div>
@@ -211,7 +226,7 @@ export function CashActionPane({
   const [givenVnd, setGivenVnd] = useState<number | null>(null)
   const chips = useMemo(() => quickCashAmounts(bill.dueVnd), [bill.dueVnd])
   const res = useMemo(() => evaluateCashInput(bill.dueVnd, givenVnd), [givenVnd, bill.dueVnd])
-  const isClosed = bill.status === "PAID" || bill.status === "CLOSED_UNPAID"
+  const isClosed = (bill.billStatus ? bill.billStatus === "PAID" : bill.status === "PAID") || bill.status === "CLOSED_UNPAID"
 
   const isShort = res.state === "short"
   const canSubmit = givenVnd !== null && !isShort && !busy && !isClosed
@@ -353,26 +368,31 @@ export function QrActionPane({
   bill,
   busy,
   error,
+  isOffline = false,
   onCheckTransfer,
   onConfirmManual,
+  onSwitchToCash,
   onToList,
   onCopied,
 }: {
   bill: PayBill
   busy: boolean
   error: PaymentErrorState | null
+  isOffline?: boolean
   onCheckTransfer: () => Promise<{ found: boolean }>
   onConfirmManual: () => void
+  onSwitchToCash?: () => void
   onToList: () => void
-  onCopied: (refText: string) => void
+  onCopied?: (refText: string) => void
 }) {
   const [qrStatus, setQrStatus] = useState<"waiting" | "checking" | "none" | "found">("waiting")
   const [elapsedSec, setElapsedSec] = useState(0)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [ack, setAck] = useState(false)
+  const [copyMessage, setCopyMessage] = useState<string | null>(null)
 
   const qrRef = `21GAM ${bill.billCode}`
-  const isClosed = bill.status === "PAID" || bill.status === "CLOSED_UNPAID"
+  const isClosed = (bill.billStatus ? bill.billStatus === "PAID" : bill.status === "PAID") || bill.status === "CLOSED_UNPAID"
 
   useEffect(() => {
     if (qrStatus === "found" || isClosed) return
@@ -382,6 +402,12 @@ export function QrActionPane({
     return () => window.clearInterval(timer)
   }, [isClosed, qrStatus])
 
+  useEffect(() => {
+    if (!copyMessage) return
+    const timer = window.setTimeout(() => setCopyMessage(null), 3000)
+    return () => window.clearTimeout(timer)
+  }, [copyMessage])
+
   const mm = String(Math.floor(elapsedSec / 60)).padStart(2, "0")
   const ss = String(elapsedSec % 60).padStart(2, "0")
 
@@ -389,7 +415,9 @@ export function QrActionPane({
     waiting: {
       cls: "pay-wait pay-w-wait",
       title: "Chờ nhận tiền",
-      sub: `Đã chờ ${mm}:${ss} · chưa nhận tiền, bill chưa đóng`,
+      sub: ENABLE_BANK_TRANSFER_CHECK
+        ? `Đã chờ ${mm}:${ss} · chưa nhận tiền, bill chưa đóng`
+        : `Đã chờ ${mm}:${ss} · kiểm tra giao dịch: Đang phát triển`,
     },
     checking: {
       cls: "pay-wait pay-w-wait",
@@ -409,7 +437,7 @@ export function QrActionPane({
   }[qrStatus]
 
   const handleCheck = async () => {
-    if (qrStatus === "checking" || busy || isClosed) return
+    if (!ENABLE_BANK_TRANSFER_CHECK || qrStatus === "checking" || busy || isClosed || isOffline) return
     setQrStatus("checking")
     try {
       const res = await onCheckTransfer()
@@ -434,30 +462,35 @@ export function QrActionPane({
 
         <div className="pay-qr-wrap">
           <div className="pay-qr-area">
-            <DemoQrBox size="md" label="Mã QR minh họa, không chuyển tiền được" />
-            <span className="pay-qr-cap">
-              QR giả lập. Bản thật: QR động đúng số tiền và mã bill; giai đoạn sau tự xác nhận qua cổng thanh toán.
-            </span>
+            {isOffline ? (
+              <div role="alert" className="pay-bn pay-bn-err w-full">
+                <WifiOff className="pay-i" aria-hidden />
+                <span>
+                  <b>Mất kết nối mạng</b>
+                  Không tạo được QR khi ngoại tuyến. Thu bằng Tiền mặt hoặc thử lại khi có mạng.
+                  {onSwitchToCash ? (
+                    <span className="pay-bn-act">
+                      <button type="button" onClick={onSwitchToCash} className="pay-btn pay-btn-p">
+                        Chuyển sang Tiền mặt
+                      </button>
+                    </span>
+                  ) : null}
+                </span>
+              </div>
+            ) : (
+              <>
+                <DemoQrBox size="md" label="Mã QR minh họa, không chuyển tiền được" />
+                <span className="pay-qr-cap">
+                  QR giả lập. Bản thật: QR động đúng số tiền và mã bill; giai đoạn sau tự xác nhận qua cổng thanh toán.
+                </span>
+              </>
+            )}
           </div>
 
           <dl aria-label="Thông tin nhận tiền" className="pay-bank">
             <div>
               <dt>Ngân hàng</dt>
-              <dd>
-                <span className="pay-val-ph">[Chờ quán cung cấp]</span>
-              </dd>
-            </div>
-            <div>
-              <dt>Số tài khoản</dt>
-              <dd>
-                <span className="pay-val-ph">[Chờ quán cung cấp]</span>
-              </dd>
-            </div>
-            <div>
-              <dt>Chủ tài khoản</dt>
-              <dd>
-                <span className="pay-val-ph">[Chờ quán cung cấp]</span>
-              </dd>
+              <dd>Techcombank</dd>
             </div>
             <div className="pay-key">
               <dt>Số tiền</dt>
@@ -475,7 +508,8 @@ export function QrActionPane({
                     } catch {
                       /* clipboard optional */
                     }
-                    onCopied(qrRef)
+                    setCopyMessage(`Đã chép nội dung: ${qrRef}`)
+                    onCopied?.(qrRef)
                   }}
                   aria-label="Chép nội dung chuyển khoản"
                   className="pay-copy"
@@ -484,6 +518,21 @@ export function QrActionPane({
                   Chép
                 </button>
               </dd>
+            </div>
+            <div
+              role="status"
+              aria-live="polite"
+              data-testid="pay-qr-copy-status"
+              className={cn("pay-inline-status", copyMessage ? "ok" : "empty")}
+            >
+              {copyMessage ? (
+                <>
+                  <Check className="pay-i sm" aria-hidden />
+                  <span>{copyMessage}</span>
+                </>
+              ) : (
+                <span aria-hidden>—</span>
+              )}
             </div>
           </dl>
         </div>
@@ -509,20 +558,29 @@ export function QrActionPane({
               </span>
               <button
                 type="button"
-                disabled={qrStatus === "checking" || busy || isClosed}
+                disabled={!ENABLE_BANK_TRANSFER_CHECK || qrStatus === "checking" || busy || isClosed || isOffline}
                 onClick={() => void handleCheck()}
-                aria-label="Kiểm tra giao dịch (mô phỏng)"
+                aria-label={
+                  ENABLE_BANK_TRANSFER_CHECK
+                    ? "Kiểm tra giao dịch (mô phỏng)"
+                    : "Kiểm tra giao dịch · Đang phát triển"
+                }
+                title={ENABLE_BANK_TRANSFER_CHECK ? undefined : "Đang phát triển"}
                 className="pay-btn pay-btn-s"
               >
-                <RefreshCw className="pay-i sm" aria-hidden />
-                Kiểm tra
+                {ENABLE_BANK_TRANSFER_CHECK ? (
+                  <RefreshCw className="pay-i sm" aria-hidden />
+                ) : (
+                  <Lock className="pay-i sm" aria-hidden />
+                )}
+                {ENABLE_BANK_TRANSFER_CHECK ? "Kiểm tra" : "Đang phát triển"}
               </button>
             </div>
           ) : null}
 
           <button
             type="button"
-            disabled={busy || isClosed}
+            disabled={busy || isClosed || isOffline}
             onClick={() => {
               setAck(false)
               setConfirmOpen(true)
@@ -544,6 +602,12 @@ export function QrActionPane({
               <input id="pay-qr-ack" type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} />
               <span>{`Tôi đã thấy ${formatVnd(bill.dueVnd)} về tài khoản quán, đúng nội dung "${qrRef}".`}</span>
             </label>
+            <p className="pay-hint">
+              <Camera className="pay-i sm" aria-hidden />
+              <span>
+                <b>Nhắc thu ngân:</b> Chụp màn hình chuyển khoản của khách.
+              </span>
+            </p>
             <p className="pay-hint">
               <Info className="pay-i sm" aria-hidden />
               <span>Giao dịch được gắn cờ "xác nhận tay" kèm tên người xác nhận để Kế toán đối soát (TN-09).</span>
@@ -574,19 +638,30 @@ export function QrActionPane({
 
 export function SuccessView({
   receipt,
+  sessionRemainingOpen = false,
   onToList,
+  onBackToSession,
   onPrintReceipt,
 }: {
   receipt: Receipt
+  sessionRemainingOpen?: boolean
   onToList: () => void
-  onPrintReceipt: () => void
+  onBackToSession?: () => void
+  onPrintReceipt?: () => void
 }) {
+  const [printMessage, setPrintMessage] = useState<string | null>(null)
   const isCluster = Boolean(receipt.clusterCode && receipt.tables.length > 1)
   const methodText =
     receipt.method === "CASH"
       ? "Tiền mặt"
       : `Chuyển khoản QR${receipt.manual ? " · xác nhận tay" : ""}`
   const placeText = receipt.clusterCode ? `${receipt.code} (${receipt.tables.join(", ")})` : receipt.code
+
+  useEffect(() => {
+    if (!printMessage) return
+    const timer = window.setTimeout(() => setPrintMessage(null), 3000)
+    return () => window.clearTimeout(timer)
+  }, [printMessage])
 
   const rows: { k: string; v: string }[] = [
     { k: "Mã bill", v: receipt.billCode },
@@ -633,41 +708,79 @@ export function SuccessView({
           ))}
         </dl>
 
-        <div className="pay-ok-close">
-          <div className={cn("pay-grp", isCluster && "cl")}>
-            {isCluster ? <span className="pay-grp-tag">{receipt.clusterCode}</span> : null}
-            {receipt.tables.map((t) => (
-              <span key={t} className="pay-tile pay-t-free">
-                <b>{t}</b>
-                <small>Trống</small>
-              </span>
-            ))}
+        {sessionRemainingOpen ? (
+          <div className="pay-ok-close">
+            <p>
+              {`Đã thu bill ${receipt.billCode}. Phiên ${receipt.sessionCode} vẫn đang mở vì còn bill chưa thu hoặc món chưa xuất hóa đơn.`}
+            </p>
           </div>
-          <p>
-            {`Phiên ${receipt.sessionCode} đã đóng. ${receipt.tables.join(" và ")} về Trống.`}
-            {isCluster ? (
-              <>
-                <br />
-                <b>{`Cụm ${receipt.clusterCode} vẫn giữ quan hệ ghép tới khi Lễ tân bấm Tách.`}</b>
-              </>
-            ) : null}
-          </p>
-        </div>
+        ) : (
+          <div className="pay-ok-close">
+            <div className={cn("pay-grp", isCluster && "cl")}>
+              {isCluster ? <span className="pay-grp-tag">{receipt.clusterCode}</span> : null}
+              {receipt.tables.map((t) => (
+                <span key={t} className="pay-tile pay-t-free">
+                  <b>{t}</b>
+                  <small>Trống</small>
+                </span>
+              ))}
+            </div>
+            <p>
+              {`Phiên ${receipt.sessionCode} đã đóng. ${receipt.tables.join(" và ")} về Trống.`}
+              {isCluster ? (
+                <>
+                  <br />
+                  <b>{`Cụm ${receipt.clusterCode} vẫn giữ quan hệ ghép tới khi Lễ tân bấm Tách.`}</b>
+                </>
+              ) : null}
+            </p>
+          </div>
+        )}
 
-        <div className="pay-ok-act">
-          <button type="button" onClick={onToList} className="pay-btn pay-btn-p pay-btn-xl">
-            Về danh sách Phiên
-          </button>
-          <button type="button" onClick={onPrintReceipt} className="pay-btn pay-btn-s pay-btn-xl">
-            <Printer className="pay-i" aria-hidden />
-            In biên nhận
-            <span className="pay-tag">mô phỏng</span>
-          </button>
+        <div className="pay-ok-foot">
+          <div
+            role="status"
+            aria-live="polite"
+            data-testid="pay-receipt-print-status"
+            className={cn("pay-inline-status", printMessage ? "info" : "empty")}
+          >
+            {printMessage ? (
+              <>
+                <Info className="pay-i sm" aria-hidden />
+                <span>{printMessage}</span>
+              </>
+            ) : (
+              <span aria-hidden>—</span>
+            )}
+          </div>
+          <div className="pay-ok-act">
+            {sessionRemainingOpen && onBackToSession ? (
+              <button type="button" onClick={onBackToSession} className="pay-btn pay-btn-p pay-btn-xl">
+                Về chi tiết Phiên
+              </button>
+            ) : (
+              <button type="button" onClick={onToList} className="pay-btn pay-btn-p pay-btn-xl">
+                Về danh sách Phiên
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setPrintMessage("Mô phỏng: chưa nối máy in thật.")
+                onPrintReceipt?.()
+              }}
+              className="pay-btn pay-btn-s pay-btn-xl"
+            >
+              <Printer className="pay-i" aria-hidden />
+              In biên nhận
+              <span className="pay-tag">mô phỏng</span>
+            </button>
+          </div>
         </div>
 
         <p className="pay-hint">
           <Info className="pay-i sm" aria-hidden />
-          <span>Bấm nhầm? Chỉ Lễ tân, Admin Edit, SuperAdmin hủy được thao tác Đã thanh toán (TN-14).</span>
+          <span>Bấm nhầm? Thu ngân chỉ gửi yêu cầu huỷ từ chi tiết bill đã thu; Lễ tân, Admin Edit, SuperAdmin mới huỷ trực tiếp (TN-14).</span>
         </p>
       </div>
     </section>

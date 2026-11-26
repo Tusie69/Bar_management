@@ -1,4 +1,4 @@
-import { ChevronRight, Info, Printer, ReceiptText, Send } from "lucide-react"
+import { AlertTriangle, CheckCircle2, ChevronRight, Clock, Info, Lock, Printer, ReceiptText, Send, XCircle } from "lucide-react"
 import { useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
 import {
@@ -7,16 +7,19 @@ import {
   countActiveLines,
   formatVnd,
   groupActiveRounds,
+  type CancelRequest,
   type PayBill,
 } from "@/services/payment"
 
-function statusPillMeta(status: PayBill["status"]): { label: string; cls: string } {
-  if (status === "PAID") return { label: "Đã thanh toán", cls: "pay-pill pay-p-free" }
-  if (status === "CLOSED_UNPAID") {
+function statusPillMeta(bill: Pick<PayBill, "status" | "billStatus">): { label: string; cls: string } {
+  if (bill.billStatus === "PAID" || bill.status === "PAID") {
+    return { label: "Đã thu", cls: "pay-pill pay-p-free" }
+  }
+  if (bill.status === "CLOSED_UNPAID") {
     return { label: "Đã trả bàn · chưa thu", cls: "pay-pill pay-p-unpaid" }
   }
-  if (status === "AWAITING_PAYMENT") {
-    return { label: "Chờ thanh toán", cls: "pay-pill pay-p-pend" }
+  if (bill.billStatus === "UNPAID" || bill.status === "AWAITING_PAYMENT") {
+    return { label: "Chưa thu", cls: "pay-pill pay-p-pend" }
   }
   return { label: "Đang phục vụ", cls: "pay-pill pay-p-open" }
 }
@@ -51,17 +54,27 @@ export function BillRoundsCard({
 }) {
   const lineCounts = useMemo(() => countActiveLines(bill.lines), [bill.lines])
   const rounds = useMemo(() => groupActiveRounds(bill.lines), [bill.lines])
-  const pill = statusPillMeta(bill.status)
+  const pill = statusPillMeta(bill)
   const isCluster = Boolean(bill.clusterCode && bill.tables.length > 1)
   const vatLabel = bill.vatLabel ?? PAYMENT_VAT_CONFIG.label
-  const vatNote = bill.vatNote ?? PAYMENT_VAT_CONFIG.pendingNote
+  const vatNote = bill.vatNote && bill.vatNote !== PAYMENT_VAT_CONFIG.pendingNote ? bill.vatNote : null
 
   return (
     <section aria-label="Chi tiết bill" className="pay-pane-bill pay-card">
       <div className="pay-bill-h">
         <div className="pay-bill-h-t">
           <b>{bill.code}</b>
-          <span>{`${bill.sessionCode} · mở ${bill.openedAt} · ${rounds.length} đơn · ${bill.guests} khách · Khách lẻ`}</span>
+          <span>
+            {[
+              bill.sessionCode,
+              bill.openedAt && bill.openedAt !== "—" ? `mở ${bill.openedAt}` : "",
+              `${rounds.length} đơn`,
+              bill.guests > 0 ? `${bill.guests} khách` : "",
+              "Khách lẻ",
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
         </div>
         {isCluster ? <span className="pay-chip-cl">{`Cụm ${bill.tables.length} bàn · 1 bill`}</span> : null}
         <span className={pill.cls}>{pill.label}</span>
@@ -124,13 +137,21 @@ export function BillRoundsCard({
         </div>
         <div>
           <dt>
-            {vatLabel} <span className="pay-tag pay-tag-wait">{vatNote}</span>
+            {vatLabel}
+            {vatNote ? (
+              <>
+                {" "}
+                <span className="pay-tag pay-tag-wait">{vatNote}</span>
+              </>
+            ) : null}
           </dt>
           <dd>{formatVnd(bill.vatVnd)}</dd>
         </div>
         <div className="pay-na">
-          <dt>Phí phục vụ · phụ thu · giảm giá</dt>
-          <dd>Chưa áp dụng · chờ BA chốt</dd>
+          <dt>
+            Phí phục vụ · phụ thu <span className="pay-tag">Đang phát triển</span>
+          </dt>
+          <dd>0đ</dd>
         </div>
         <div>
           <dt>Tổng trước làm tròn</dt>
@@ -151,50 +172,167 @@ export function BillRoundsCard({
 
 export function DetailActionPane({
   bill,
+  bills,
+  selectedBillCode,
+  onSelectBill,
+  unbilledLineCount,
+  cancelRequests,
   canCollect,
   isWaiter,
   busy,
   onPreview,
+  onViewInvoice,
+  onIssueInvoice,
   onCollect,
   onRequestPayment,
+  onRequestCancel,
 }: {
   bill: PayBill
+  bills?: readonly PayBill[]
+  selectedBillCode?: string | null
+  onSelectBill?: (billCode: string) => void
+  unbilledLineCount?: number
+  cancelRequests?: readonly CancelRequest[]
   canCollect: boolean
   isWaiter: boolean
   busy: boolean
   onPreview: () => void
+  onViewInvoice?: () => void
+  onIssueInvoice?: () => void
   onCollect: () => void
   onRequestPayment: () => void
+  onRequestCancel?: (billCode: string, reason: string) => Promise<void> | void
 }) {
+  const [cancelOpen, setCancelOpen] = useState(false)
+  const [cancelReason, setCancelReason] = useState("")
+  const [cancelError, setCancelError] = useState<string | null>(null)
+  const [cancelSubmitting, setCancelSubmitting] = useState(false)
+
   const { makingCount } = useMemo(() => countActiveLines(bill.lines), [bill.lines])
-  const isPaid = bill.status === "PAID"
+  const isBillPaid = bill.billStatus ? bill.billStatus === "PAID" : bill.status === "PAID"
   const isClosedUnpaid = bill.status === "CLOSED_UNPAID"
-  const isClosed = isPaid || isClosedUnpaid
-  const isPending = bill.status === "AWAITING_PAYMENT"
+  const isClosed = isBillPaid || isClosedUnpaid
+  const isUnpaidBill = Boolean(bill.billCode) && (bill.billStatus === "UNPAID" || bill.status === "AWAITING_PAYMENT")
   const hasLines = bill.lines.length > 0
+  const unbilledCount = unbilledLineCount ?? (bills && bills.length > 0 ? 0 : !bill.billCode && hasLines ? 1 : 0)
+  const canIssue = Boolean(canCollect && onIssueInvoice && !isClosedUnpaid && unbilledCount > 0 && hasLines)
+  const canCollectSelected = Boolean(canCollect && !isClosed && hasLines && (isUnpaidBill || !onIssueInvoice))
+
+  const activeCancelRequest = useMemo(() => {
+    if (!cancelRequests?.length || !bill.billCode) return null
+    const matches = cancelRequests.filter((r) => r.billCode === bill.billCode)
+    return matches[0] ?? null
+  }, [bill.billCode, cancelRequests])
+
+  const hasPendingCancel = activeCancelRequest?.status === "PENDING" || Boolean(bill.cancelPending)
+  const canSubmitCancelRequest = Boolean(
+    isBillPaid && canCollect && onRequestCancel && bill.billCode && !hasPendingCancel && activeCancelRequest?.status !== "APPROVED",
+  )
+
   const dueSub =
-    bill.roundingVnd > 0
-      ? `Đã làm tròn lên từ ${formatVnd(bill.preRoundVnd)} · Bill ${bill.billCode}`
-      : `Không cần làm tròn · Bill ${bill.billCode}`
-  const statusNote = isPaid
-    ? "Bill đã đóng"
+    !bill.billCode
+      ? "Chưa xuất hóa đơn"
+      : bill.roundingVnd > 0
+        ? `Đã làm tròn lên từ ${formatVnd(bill.preRoundVnd)} · Bill ${bill.billCode}`
+        : `Không cần làm tròn · Bill ${bill.billCode}`
+
+  const statusNote = isBillPaid
+    ? `Bill ${bill.billCode} đã thu${bill.paidAt ? ` lúc ${bill.paidAt}` : ""}`
     : isClosedUnpaid
       ? "Phiên đã trả bàn nhưng chưa ghi nhận thu tiền"
       : !hasLines
         ? "Chưa có dữ liệu món (mô phỏng)"
-        : isPending
-          ? `Tạm tính lúc ${bill.pendingAt ?? "21:42"} · chưa nhận tiền`
-          : "Chưa tạo tạm tính"
+        : isUnpaidBill
+          ? bill.issuedBy || bill.issuedAt
+            ? `Đã đưa hóa đơn · ${bill.issuedBy ?? bill.waiterName}${bill.issuedAt ? ` · ${bill.issuedAt}` : ""}`
+            : `Tạm tính lúc ${bill.pendingAt ?? "21:42"} · chưa nhận tiền`
+          : "Chưa xuất hóa đơn"
   const requested = Boolean(bill.requestedAt)
+
+  const handleCancelSubmit = async () => {
+    const trimmed = cancelReason.trim()
+    if (!trimmed) {
+      setCancelError("Vui lòng nhập lý do gửi yêu cầu huỷ.")
+      return
+    }
+    if (!onRequestCancel || !bill.billCode || cancelSubmitting) return
+    setCancelSubmitting(true)
+    setCancelError(null)
+    try {
+      await onRequestCancel(bill.billCode, trimmed)
+      setCancelReason("")
+      setCancelOpen(false)
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : "Không gửi được yêu cầu huỷ.")
+    } finally {
+      setCancelSubmitting(false)
+    }
+  }
 
   return (
     <section aria-label="Thanh toán" className="pay-pane-act pay-card">
       <div className="pay-act">
         <div className="pay-due-b">
-          <span className="pay-due-l">Khách cần trả</span>
+          <span className="pay-due-l">{isBillPaid ? "Đã thu" : "Khách cần trả"}</span>
           <b className="pay-due">{formatVnd(bill.dueVnd)}</b>
           <span className="pay-due-s">{dueSub}</span>
         </div>
+
+        {bills && bills.length > 0 ? (
+          <div className="pay-bills-sec" aria-label="Danh sách hóa đơn của phiên">
+            <div className="pay-bills-h">
+              <span>{`Hóa đơn trong phiên (${bills.length})`}</span>
+            </div>
+            <div className="pay-bills-list">
+              {bills.map((b) => {
+                const bPaid = b.billStatus ? b.billStatus === "PAID" : b.status === "PAID"
+                const isSelected = (selectedBillCode ?? bill.billCode) === b.billCode
+                return (
+                  <button
+                    key={b.billCode}
+                    type="button"
+                    onClick={() => onSelectBill?.(b.billCode)}
+                    aria-pressed={isSelected}
+                    className={cn("pay-bill-item", isSelected && "sel")}
+                  >
+                    <span className="pay-bill-item-l">
+                      <b>{b.billCode}</b>
+                      <small>
+                        {b.issuedBy || b.issuedAt
+                          ? `${b.issuedBy ?? b.waiterName}${b.issuedAt ? ` · ${b.issuedAt}` : ""}`
+                          : b.openedAt}
+                      </small>
+                    </span>
+                    <span className="pay-bill-item-r">
+                      <span className={cn("pay-pill", bPaid ? "pay-p-free" : "pay-p-pend")}>
+                        {bPaid ? "Đã thu" : "Chưa thu"}
+                      </span>
+                      <b>{formatVnd(b.dueVnd)}</b>
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        {unbilledCount > 0 && !isClosedUnpaid ? (
+          <div role="note" className="pay-unbilled">
+            <span>
+              <b>{`Còn ${unbilledCount} dòng món chưa xuất hóa đơn`}</b>
+            </span>
+            {canIssue && isUnpaidBill ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={onIssueInvoice}
+                className="pay-btn pay-btn-p"
+              >
+                Xuất hóa đơn
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="pay-st-line">
           <span>{statusNote}</span>
@@ -218,14 +356,46 @@ export function DetailActionPane({
             Xem tạm tính
           </button>
 
-          {canCollect ? (
+          {onViewInvoice && bill.billCode && (isUnpaidBill || isBillPaid) ? (
+            <button
+              type="button"
+              disabled={busy || !hasLines || isClosedUnpaid}
+              onClick={onViewInvoice}
+              className="pay-btn pay-btn-s pay-btn-lg"
+            >
+              <Printer className="pay-i" aria-hidden />
+              Xem hóa đơn
+            </button>
+          ) : null}
+
+          {canCollect && isUnpaidBill ? (
+            <button
+              type="button"
+              disabled={!canCollectSelected || busy}
+              onClick={onCollect}
+              className="pay-btn pay-btn-p pay-btn-xl"
+            >
+              {bills && bills.length > 1 ? `Thu tiền · ${bill.billCode}` : "Thu tiền"}
+              <ChevronRight className="pay-i" aria-hidden />
+            </button>
+          ) : canCollect && canIssue ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onIssueInvoice}
+              className="pay-btn pay-btn-p pay-btn-xl"
+            >
+              Xuất hóa đơn
+              <ChevronRight className="pay-i" aria-hidden />
+            </button>
+          ) : canCollect && !isBillPaid ? (
             <button
               type="button"
               disabled={isClosed || busy || !hasLines}
               onClick={onCollect}
               className="pay-btn pay-btn-p pay-btn-xl"
             >
-              Chốt bill &amp; thu tiền
+              Thu tiền
               <ChevronRight className="pay-i" aria-hidden />
             </button>
           ) : null}
@@ -242,6 +412,124 @@ export function DetailActionPane({
             </button>
           ) : null}
         </div>
+
+        {isBillPaid && canCollect ? (
+          <div className="pay-cancel-box" aria-label="Yêu cầu huỷ thanh toán">
+            {activeCancelRequest ? (
+              <div className="grid gap-1 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">Trạng thái yêu cầu huỷ</span>
+                  <span
+                    className={cn(
+                      "pay-pill",
+                      activeCancelRequest.status === "APPROVED"
+                        ? "pay-p-open"
+                        : activeCancelRequest.status === "REJECTED"
+                          ? "pay-p-unpaid"
+                          : "pay-p-pend",
+                    )}
+                  >
+                    {activeCancelRequest.status === "PENDING" ? (
+                      <>
+                        <Clock className="pay-i sm" aria-hidden />
+                        Đang chờ duyệt (PENDING)
+                      </>
+                    ) : activeCancelRequest.status === "APPROVED" ? (
+                      <>
+                        <CheckCircle2 className="pay-i sm" aria-hidden />
+                        Đã duyệt huỷ (APPROVED)
+                      </>
+                    ) : (
+                      <>
+                        <XCircle className="pay-i sm" aria-hidden />
+                        Bị từ chối (REJECTED)
+                      </>
+                    )}
+                  </span>
+                </div>
+                <span className="text-xs text-[var(--text-muted)]">
+                  {`Lý do: ${activeCancelRequest.reason} · ${activeCancelRequest.requestedBy} (${activeCancelRequest.requestedAt})`}
+                </span>
+                {activeCancelRequest.decidedBy || activeCancelRequest.decisionNote ? (
+                  <span className="text-xs text-[var(--text-muted)]">
+                    {[
+                      activeCancelRequest.decidedBy ? `Người duyệt: ${activeCancelRequest.decidedBy}` : "",
+                      activeCancelRequest.decidedAt ?? "",
+                      activeCancelRequest.decisionNote ? `Ghi chú: ${activeCancelRequest.decisionNote}` : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                ) : null}
+              </div>
+            ) : bill.cancelPending ? (
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <span className="font-semibold">Trạng thái yêu cầu huỷ</span>
+                <span className="pay-pill pay-p-pend">Đang chờ duyệt (PENDING)</span>
+              </div>
+            ) : null}
+
+            {canSubmitCancelRequest && !cancelOpen ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setCancelError(null)
+                  setCancelOpen(true)
+                }}
+                className="pay-btn pay-btn-s"
+              >
+                <Lock className="pay-i sm" aria-hidden />
+                Gửi yêu cầu huỷ
+              </button>
+            ) : null}
+
+            {canSubmitCancelRequest && cancelOpen ? (
+              <div className="pay-cancel-form">
+                <label htmlFor="pay-cancel-reason" className="text-xs font-semibold">
+                  Lý do gửi yêu cầu huỷ (bắt buộc)
+                </label>
+                <textarea
+                  id="pay-cancel-reason"
+                  placeholder="Nhập lý do cần huỷ thanh toán bill này…"
+                  value={cancelReason}
+                  disabled={cancelSubmitting}
+                  onChange={(e) => {
+                    setCancelReason(e.target.value)
+                    if (cancelError) setCancelError(null)
+                  }}
+                />
+                {cancelError ? (
+                  <p role="alert" className="flex items-center gap-1.5 text-xs text-[var(--destructive-ink)]">
+                    <AlertTriangle className="pay-i sm" aria-hidden />
+                    <span>{cancelError}</span>
+                  </p>
+                ) : null}
+                <div className="pay-cancel-form-act">
+                  <button
+                    type="button"
+                    disabled={cancelSubmitting}
+                    onClick={() => {
+                      setCancelOpen(false)
+                      setCancelError(null)
+                    }}
+                    className="pay-btn pay-btn-s"
+                  >
+                    Đóng
+                  </button>
+                  <button
+                    type="button"
+                    disabled={cancelSubmitting}
+                    onClick={() => void handleCancelSubmit()}
+                    className="pay-btn pay-btn-p"
+                  >
+                    {cancelSubmitting ? "Đang gửi…" : "Xác nhận gửi yêu cầu huỷ"}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </section>
   )
@@ -249,21 +537,25 @@ export function DetailActionPane({
 
 export function ProvisionalPreviewView({
   bill,
+  isProvisional = true,
   canCollect,
   isWaiter,
   busy,
   viewMode: controlledViewMode,
   onChangeViewMode,
+  onIssueInvoice,
   onCollect,
   onRequestPayment,
   onSimulatedPrint,
 }: {
   bill: PayBill
+  isProvisional?: boolean
   canCollect: boolean
   isWaiter: boolean
   busy: boolean
   viewMode?: "screen" | "print"
   onChangeViewMode?: (mode: "screen" | "print") => void
+  onIssueInvoice?: () => void
   onCollect: () => void
   onRequestPayment: () => void
   onSimulatedPrint: (count: number) => void
@@ -277,10 +569,15 @@ export function ProvisionalPreviewView({
   const activeLines = useMemo(() => rounds.flatMap((r) => r.items), [rounds])
   const qrRef = `21GAM ${bill.billCode}`
   const place = bill.clusterCode ? `${bill.code} (${bill.tables.join(", ")})` : bill.code
-  const pendingAt = bill.pendingAt ?? "21:42"
+  const pendingAt = bill.issuedAt ?? bill.pendingAt ?? "21:42"
   const isClosed = bill.status === "PAID" || bill.status === "CLOSED_UNPAID"
   const requested = Boolean(bill.requestedAt)
   const vatLabel = bill.vatLabel ?? PAYMENT_VAT_CONFIG.label
+  const docTitle = isProvisional ? "TẠM TÍNH" : "HÓA ĐƠN"
+  const docNotice = isProvisional
+    ? "Tạm tính – chưa phải hóa đơn. Món đã hủy không tính."
+    : "Hóa đơn thanh toán. Món đã hủy không tính."
+  const printBtnLabel = isProvisional ? "In tạm tính" : "In hóa đơn"
 
   const handlePrint = () => {
     const next = prints + 1
@@ -305,20 +602,22 @@ export function ProvisionalPreviewView({
 
       <div className="pay-pv">
         {viewMode === "screen" ? (
-          <article aria-label="Bill tạm tính" className="pay-rcpt">
+          <article aria-label={isProvisional ? "Tạm tính – chưa phải hóa đơn" : "Hóa đơn"} className="pay-rcpt">
             <div className="pay-r-top">
               <div>
                 <div className="pay-r-logo">21GAM</div>
                 <span className="pay-val-ph text-xs">[Địa chỉ, số điện thoại quán · chờ cung cấp]</span>
               </div>
-              <span className="pay-r-kind">BILL TẠM TÍNH</span>
+              <span className="pay-r-kind">{docTitle}</span>
             </div>
 
             <dl className="pay-r-meta">
-              <div>
-                <dt>Mã bill</dt>
-                <dd>{bill.billCode}</dd>
-              </div>
+              {!isProvisional ? (
+                <div>
+                  <dt>Mã bill</dt>
+                  <dd>{bill.billCode}</dd>
+                </div>
+              ) : null}
               <div>
                 <dt>Phiên</dt>
                 <dd>{bill.sessionCode}</dd>
@@ -331,10 +630,12 @@ export function ProvisionalPreviewView({
                 <dt>Giờ vào</dt>
                 <dd>{bill.openedAt}</dd>
               </div>
-              <div>
-                <dt>Tạm tính lúc</dt>
-                <dd>{pendingAt}</dd>
-              </div>
+              {!isProvisional ? (
+                <div>
+                  <dt>Xuất hóa đơn lúc</dt>
+                  <dd>{pendingAt}</dd>
+                </div>
+              ) : null}
               <div>
                 <dt>Phục vụ</dt>
                 <dd>{bill.waiterName}</dd>
@@ -362,6 +663,12 @@ export function ProvisionalPreviewView({
                 <dt>{vatLabel}</dt>
                 <dd>{formatVnd(bill.vatVnd)}</dd>
               </div>
+              <div className="pay-na">
+                <dt>
+                  Phí phục vụ · phụ thu <span className="pay-tag">Đang phát triển</span>
+                </dt>
+                <dd>0đ</dd>
+              </div>
               <div>
                 <dt>Làm tròn</dt>
                 <dd>{`${bill.roundingVnd > 0 ? "+" : ""}${formatVnd(bill.roundingVnd)}`}</dd>
@@ -373,25 +680,27 @@ export function ProvisionalPreviewView({
               <b>{formatVnd(bill.dueVnd)}</b>
             </div>
 
-            <div className="pay-r-qr">
-              <DemoQrBox size="sm" label="Mã QR minh họa trên bill, không chuyển tiền được" />
-              <div style={{ display: "grid", gap: 4 }}>
-                <b>{`Quét để chuyển khoản đúng ${formatVnd(bill.dueVnd)}`}</b>
-                <span className="pay-r-qr-n">
-                  {`Nội dung: ${qrRef}. Nhân viên chỉ xác nhận khi đã thấy tiền về.`}
-                </span>
+            {!isProvisional ? (
+              <div className="pay-r-qr">
+                <DemoQrBox size="sm" label="Mã QR minh họa trên hóa đơn, không chuyển tiền được" />
+                <div style={{ display: "grid", gap: 4 }}>
+                  <b>{`Quét để chuyển khoản đúng ${formatVnd(bill.dueVnd)}`}</b>
+                  <span className="pay-r-qr-n">
+                    {`Nội dung: ${qrRef}. Nhân viên chỉ xác nhận khi đã thấy tiền về.`}
+                  </span>
+                </div>
               </div>
-            </div>
+            ) : null}
 
-            <p className="pay-r-foot">Bill tạm tính, chưa phải hóa đơn. Món đã hủy không tính.</p>
+            <p className="pay-r-foot">{docNotice}</p>
           </article>
         ) : (
-          <article aria-label="Bản in tạm tính khổ 80mm" className="pay-r80">
+          <article aria-label={isProvisional ? "Bản in tạm tính khổ 80mm" : "Bản in hóa đơn khổ 80mm"} className="pay-r80">
             <div className="c big">21GAM</div>
-            <div className="c">BILL TẠM TÍNH</div>
+            <div className="c">{docTitle}</div>
             <div className="hr" />
             <div className="row">
-              <span>{`Bill ${bill.billCode}`}</span>
+              <span>{isProvisional ? "Tạm tính" : `Bill ${bill.billCode}`}</span>
               <span>{bill.sessionCode}</span>
             </div>
             <div className="row">
@@ -425,10 +734,14 @@ export function ProvisionalPreviewView({
               <span>CẦN TRẢ</span>
               <span>{formatVnd(bill.dueVnd)}</span>
             </div>
-            <div className="hr" />
-            <DemoQrBox size="xs" label="Mã QR bản in 80mm, không chuyển tiền được" />
-            <div className="c">{`ND: ${qrRef}`}</div>
-            <div className="c">Bill tạm tính, chưa phải hóa đơn</div>
+            {!isProvisional ? (
+              <>
+                <div className="hr" />
+                <DemoQrBox size="xs" label="Mã QR bản in 80mm, không chuyển tiền được" />
+                <div className="c">{`ND: ${qrRef}`}</div>
+              </>
+            ) : null}
+            <div className="c">{isProvisional ? "Tạm tính – chưa phải hóa đơn" : "Hóa đơn thanh toán"}</div>
           </article>
         )}
 
@@ -441,24 +754,36 @@ export function ProvisionalPreviewView({
                 <span className="pay-due-s">
                   {prints
                     ? `Đã in ${prints} lần (mô phỏng) · in đúng 1 bản đưa khách`
-                    : "Chưa in · in đúng 1 bản đưa khách (TN-02)"}
+                    : isProvisional
+                      ? "Tạm tính – chưa phải hóa đơn (không đổi trạng thái phiên)"
+                      : "Chưa in · in đúng 1 bản đưa khách"}
                 </span>
               </div>
 
-              <button type="button" onClick={handlePrint} className="pay-btn pay-btn-s pay-btn-lg pay-btn-w">
+              <button type="button" onClick={handlePrint} className="pay-btn pay-btn-s btn-lg pay-btn-lg pay-btn-w">
                 <Printer className="pay-i" aria-hidden />
-                In tạm tính
+                {printBtnLabel}
                 <span className="pay-tag">mô phỏng</span>
               </button>
 
-              {canCollect ? (
+              {canCollect && isProvisional && onIssueInvoice ? (
+                <button
+                  type="button"
+                  disabled={isClosed || busy}
+                  onClick={onIssueInvoice}
+                  className="pay-btn pay-btn-p pay-btn-xl pay-btn-w"
+                >
+                  Xuất hóa đơn
+                  <ChevronRight className="pay-i" aria-hidden />
+                </button>
+              ) : canCollect ? (
                 <button
                   type="button"
                   disabled={isClosed || busy}
                   onClick={onCollect}
                   className="pay-btn pay-btn-p pay-btn-xl pay-btn-w"
                 >
-                  Chốt bill &amp; thu tiền
+                  Thu tiền
                   <ChevronRight className="pay-i" aria-hidden />
                 </button>
               ) : null}

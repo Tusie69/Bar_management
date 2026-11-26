@@ -725,6 +725,57 @@
   gap: var(--sp-sec);
 }
 
+.pay-root .pay-sess-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.pay-root .pay-sess-col > .pay-sess-list:last-child {
+  flex: 1 1 auto;
+}
+
+.pay-root .pay-grp-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 -4px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.pay-root .pay-grp-title.hot {
+  color: var(--st-pending-ink);
+}
+
+.pay-root .pay-grp-n {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 9999px;
+  background: var(--surface-3);
+  color: var(--foreground);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.pay-root .pay-grp-title.hot .pay-grp-n {
+  background: var(--st-pending);
+  color: oklch(0.2 0.02 80);
+}
+
+.pay-root .pay-grp-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  padding: 6px 2px 4px;
+}
+
 .pay-root .pay-sess-list {
   display: grid;
   gap: 0;
@@ -1622,8 +1673,156 @@
   color: var(--text-muted);
 }
 
-.pay-root .pay-later span.pay-tag {
+.pay-root .pay-later span.pay-tag,
+.pay-root .pay-later button.pay-tag-lock {
   height: 24px;
+}
+
+.pay-root .pay-tag-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px dashed var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: not-allowed;
+  opacity: 0.82;
+}
+
+.pay-root .pay-tag-lock .pay-i.xs {
+  width: 12px;
+  height: 12px;
+}
+
+/* S2 Multi-bill list, unbilled lines & TN-14 cancel request */
+.pay-root .pay-bills-sec {
+  display: grid;
+  gap: 8px;
+}
+
+.pay-root .pay-bills-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.pay-root .pay-bills-list {
+  display: grid;
+  gap: 6px;
+}
+
+.pay-root .pay-bill-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 12px;
+  border-radius: var(--r-field);
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms var(--ease-pay), border-color 140ms var(--ease-pay);
+}
+
+.pay-root .pay-bill-item:hover {
+  background: var(--surface-2);
+}
+
+.pay-root .pay-bill-item.sel {
+  border-color: var(--primary);
+  background: var(--primary-tint);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.pay-root .pay-bill-item-l {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.pay-root .pay-bill-item-l b {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink-strong);
+}
+
+.pay-root .pay-bill-item-l small {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pay-root .pay-bill-item-r {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+}
+
+.pay-root .pay-bill-item-r b {
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-strong);
+}
+
+.pay-root .pay-unbilled {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-radius: var(--r-field);
+  border: 1px dashed var(--st-pending);
+  background: var(--st-pending-tint);
+  font-size: 13px;
+}
+
+.pay-root .pay-cancel-box {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--r-field);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+}
+
+.pay-root .pay-cancel-form {
+  display: grid;
+  gap: 8px;
+}
+
+.pay-root .pay-cancel-form textarea {
+  width: 100%;
+  min-height: 72px;
+  padding: 8px 10px;
+  border-radius: var(--r-ctl);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-1);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.pay-root .pay-cancel-form-act {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 /* S5 Cash */
@@ -1925,6 +2124,34 @@
 
 .pay-root .pay-copy:active {
   background: var(--surface-3);
+}
+
+.pay-root .pay-inline-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: var(--r-ctl);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pay-root .pay-inline-status.ok {
+  background: var(--st-seated-tint);
+  color: var(--st-seated-ink);
+  border: 1px solid var(--st-seated);
+}
+
+.pay-root .pay-inline-status.info {
+  background: var(--primary-tint);
+  color: var(--primary-ink);
+  border: 1px solid var(--primary);
+}
+
+.pay-root .pay-inline-status.empty {
+  visibility: hidden;
+  border: 1px solid transparent;
 }
 
 .pay-root .pay-wait {
@@ -2453,6 +2680,11 @@
   flex: 1 1 200px;
 }
 
+.pay-root .pay-ok-foot {
+  display: grid;
+  gap: 8px;
+}
+
 .pay-root .pay-ok-act {
   display: grid;
   gap: 10px;
@@ -2692,14 +2924,19 @@
   .pay-root .pay-ok-card {
     padding: 22px 16px;
   }
-  .pay-root .pay-ok-act {
+  .pay-root .pay-ok-foot {
     position: sticky;
     bottom: 0;
     z-index: 2;
     margin: 0 -16px;
-    padding: 12px 16px;
+    padding: 10px 16px 12px;
     background: var(--surface-1);
     border-top: 1px solid var(--border);
+  }
+  .pay-root .pay-ok-act {
+    margin: 0;
+    padding: 0;
+    border-top: 0;
   }
   /* S1 mobile: floor map comes first, compact rows */
   .pay-root .pay-lg-m {
