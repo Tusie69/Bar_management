@@ -418,7 +418,7 @@ export function PaymentFloorMap({
                       </button>
                     )
                   }
-                  const isPending = session.status === "AWAITING_PAYMENT"
+                  const isPending = session.status === "AWAITING_PAYMENT" || (session.unpaidBillCount ?? 0) > 0
                   const isBarSeatCluster = spot.seat && Boolean(session.clusterCode && session.tables.length > 1)
                   const isSelected = session.visitId === selectedId && !isBarSeatCluster
                   const hasLines = session.hasOrderLines !== false

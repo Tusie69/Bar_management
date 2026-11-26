@@ -17,16 +17,18 @@ export function PaymentNotificationBell({
   notifications,
   unread,
   navigationLocked = false,
+  defaultOpen = false,
   onOpen,
   onSelectVisit,
 }: {
   notifications: PaymentNotification[]
   unread: boolean
   navigationLocked?: boolean
+  defaultOpen?: boolean
   onOpen: () => void
   onSelectVisit?: (visitId: string) => void
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
   const wrapRef = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {

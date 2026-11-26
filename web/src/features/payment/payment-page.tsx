@@ -1,16 +1,20 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle, Check, ChevronLeft, Clock, Info, Link2, Lock, Send, X } from "lucide-react"
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
-import { Navigate, useLocation, useNavigate, useParams } from "react-router"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router"
 import { cn } from "@/lib/utils"
-import { ApiError } from "@/services"
+import { ApiError, isApiError, newIdempotencyKey } from "@/services"
 import {
   formatVnd,
   isPaymentAvailable,
   paymentApi,
+  type PayBill,
   type PayBillSummary,
+  type PaymentApi,
   type PaymentMethod,
+  type PreviewBill,
   type Receipt,
+  type SessionBills,
 } from "@/services/payment"
 import { useCan, useSession } from "@/state/session"
 import { usePaymentShell } from "@/features/cashier/payment-shell-context"
@@ -32,19 +36,89 @@ function parseStep(raw: string | undefined, hasVisit: boolean, canCollect: boole
   return "detail"
 }
 
+function useOnlineStatus(): boolean {
+  const [online, setOnline] = useState(() => (typeof navigator !== "undefined" ? navigator.onLine : true))
+  useEffect(() => {
+    const onOnline = () => setOnline(true)
+    const onOffline = () => setOnline(false)
+    window.addEventListener("online", onOnline)
+    window.addEventListener("offline", onOffline)
+    return () => {
+      window.removeEventListener("online", onOnline)
+      window.removeEventListener("offline", onOffline)
+    }
+  }, [])
+  return online
+}
+
+function isUnimplemented501(err: unknown): boolean {
+  return isApiError(err) && (err.status === 501 || err.code === "NOT_IMPLEMENTED_YET")
+}
+
+function isBillPaid(bill: Pick<PayBill, "status" | "billStatus">): boolean {
+  return bill.billStatus ? bill.billStatus === "PAID" : bill.status === "PAID"
+}
+
+function previewToPayBill(preview: PreviewBill, status: PayBill["status"]): PayBill {
+  return {
+    billCode: "",
+    visitId: preview.visitId,
+    sessionCode: preview.sessionCode,
+    code: preview.code,
+    tables: preview.tables,
+    clusterCode: preview.clusterCode,
+    status,
+    lines: preview.lines,
+    subtotalVnd: preview.subtotalVnd,
+    vatVnd: preview.vatVnd,
+    preRoundVnd: preview.preRoundVnd,
+    roundingVnd: preview.roundingVnd,
+    dueVnd: preview.dueVnd,
+    version: preview.version,
+    openedAt: "—",
+    waiterName: "—",
+    guests: 0,
+    roundCount: 0,
+  }
+}
+
+export function partitionOpenSessions<T extends Pick<PayBillSummary, "status" | "unpaidBillCount">>(
+  sessions: readonly T[],
+): { pending: T[]; serving: T[] } {
+  const pending: T[] = []
+  const serving: T[] = []
+  for (const s of sessions) {
+    if (s.status === "AWAITING_PAYMENT" || (s.unpaidBillCount ?? 0) > 0) {
+      pending.push(s)
+    } else {
+      serving.push(s)
+    }
+  }
+  return { pending, serving }
+}
+
 export function PaymentFlowWorkspace({
   visitIdParam,
   stepParam,
   homePath = "/payment",
   backHomeLabel = "Phiên đang mở",
+  api,
+  isOfflineOverride,
 }: {
   visitIdParam?: string
   stepParam?: string
   homePath?: string
   backHomeLabel?: string
+  api?: PaymentApi
+  isOfflineOverride?: boolean
 }) {
+  const activeApi = api ?? paymentApi
+  const online = useOnlineStatus()
+  const isOffline = isOfflineOverride ?? !online
+
   const navigate = useNavigate()
   const location = useLocation()
+  const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
   const payShell = usePaymentShell()
   const user = useSession((s) => s.user)
@@ -74,6 +148,9 @@ export function PaymentFlowWorkspace({
   } | null>(null)
   const prebillNotice =
     (location.state as { prebillNotice?: string } | null)?.prebillNotice ?? null
+
+  const requestedBillCode = searchParams.get("bill")
+  const previewKind = searchParams.get("kind") === "invoice" ? "invoice" : "provisional"
 
   // Synchronous in-flight guard: React state updates on next render, so double-clicks
   // or fast taps within the same frame must be blocked synchronously here.
@@ -108,14 +185,80 @@ export function PaymentFlowWorkspace({
 
   const openQuery = useQuery({
     queryKey: ["payment-open"],
-    queryFn: () => paymentApi.listOpen(),
+    queryFn: () => activeApi.listOpen(),
     enabled: isPaymentAvailable && canViewAny && step === "list",
   })
 
-  const billQuery = useQuery({
-    queryKey: ["payment-bill", visitIdParam],
-    queryFn: () => paymentApi.getBill(visitIdParam!),
+  const sessionBillsQuery = useQuery({
+    queryKey: ["payment-session-bills", visitIdParam],
+    queryFn: async (): Promise<SessionBills> => {
+      try {
+        return await activeApi.getSessionBills(visitIdParam!)
+      } catch (err) {
+        if (isUnimplemented501(err)) {
+          const b = await activeApi.getBill(visitIdParam!)
+          return {
+            visitId: b.visitId,
+            sessionCode: b.sessionCode,
+            code: b.code,
+            tables: b.tables,
+            clusterCode: b.clusterCode,
+            status: b.status,
+            unbilledLineCount: b.status === "SERVING" && b.lines.length > 0 ? b.lines.length : 0,
+            bills: b.status === "SERVING" ? [] : [b],
+            version: b.version,
+          }
+        }
+        throw err
+      }
+    },
     enabled: isPaymentAvailable && canViewAny && Boolean(visitIdParam) && step !== "list",
+  })
+
+  const sessionBills = sessionBillsQuery.data
+  const needsPreviewFetch =
+    step === "preview" || Boolean(sessionBills && sessionBills.bills.length === 0 && sessionBills.status !== "CLOSED_UNPAID")
+
+  const previewQuery = useQuery({
+    queryKey: ["payment-preview", visitIdParam],
+    queryFn: async (): Promise<PreviewBill> => {
+      try {
+        return await activeApi.previewBill(visitIdParam!)
+      } catch (err) {
+        if (isUnimplemented501(err)) {
+          const b = await activeApi.getBill(visitIdParam!)
+          return {
+            visitId: b.visitId,
+            sessionCode: b.sessionCode,
+            code: b.code,
+            tables: b.tables,
+            clusterCode: b.clusterCode,
+            lines: b.lines,
+            subtotalVnd: b.subtotalVnd,
+            vatVnd: b.vatVnd,
+            preRoundVnd: b.preRoundVnd,
+            roundingVnd: b.roundingVnd,
+            dueVnd: b.dueVnd,
+            version: b.version,
+          }
+        }
+        throw err
+      }
+    },
+    enabled: isPaymentAvailable && canViewAny && Boolean(visitIdParam) && needsPreviewFetch,
+  })
+
+  const cancelRequestsQuery = useQuery({
+    queryKey: ["payment-cancel-requests"],
+    queryFn: async () => {
+      try {
+        return await activeApi.listCancelRequests()
+      } catch (err) {
+        if (isUnimplemented501(err)) return []
+        throw err
+      }
+    },
+    enabled: isPaymentAvailable && canCollect && step === "detail",
   })
 
   const [prevNavKey, setPrevNavKey] = useState(navKey)
@@ -176,18 +319,56 @@ export function PaymentFlowWorkspace({
   }, [selectedId, step])
 
   const openList = openQuery.data ?? []
+  const { pending: pendingSessions, serving: servingSessions } = useMemo(
+    () => partitionOpenSessions(openList),
+    [openList],
+  )
+
+  const selectedBill: PayBill | undefined = useMemo(() => {
+    if (!sessionBills) return undefined
+    const bills = sessionBills.bills
+    if (bills.length > 0) {
+      if (requestedBillCode) {
+        const match = bills.find((b) => b.billCode === requestedBillCode)
+        if (match) return match
+      }
+      return bills.find((b) => !isBillPaid(b)) ?? bills[0]
+    }
+    if (previewQuery.data) {
+      return previewToPayBill(previewQuery.data, sessionBills.status)
+    }
+    return undefined
+  }, [previewQuery.data, requestedBillCode, sessionBills])
+
+  const previewBillModel: PayBill | undefined = useMemo(() => {
+    if (previewQuery.data) {
+      return previewToPayBill(previewQuery.data, sessionBills?.status ?? "SERVING")
+    }
+    return selectedBill
+  }, [previewQuery.data, selectedBill, sessionBills?.status])
 
   const invalidatePaymentQueries = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["payment-open"] }),
       queryClient.invalidateQueries({ queryKey: ["payment-notifications"] }),
-      ...(visitIdParam ? [queryClient.invalidateQueries({ queryKey: ["payment-bill", visitIdParam] })] : []),
+      ...(visitIdParam
+        ? [
+            queryClient.invalidateQueries({ queryKey: ["payment-session-bills", visitIdParam] }),
+            queryClient.invalidateQueries({ queryKey: ["payment-preview", visitIdParam] }),
+            queryClient.invalidateQueries({ queryKey: ["payment-bill", visitIdParam] }),
+          ]
+        : []),
+      queryClient.invalidateQueries({ queryKey: ["payment-cancel-requests"] }),
       queryClient.invalidateQueries({ queryKey: ["floor"] }),
     ])
   }, [queryClient, visitIdParam])
 
   const goToStep = useCallback(
-    (nextVisitId: string, nextStep: PaymentStep, options?: { prebillNotice?: string; replace?: boolean }) => {
+    (
+      nextVisitId: string,
+      nextStep: PaymentStep,
+      options?: { prebillNotice?: string; replace?: boolean; billCode?: string | null; kind?: "invoice" | "provisional" },
+    ) => {
       idempotencyKeyRef.current = null
       const navOpts =
         options?.prebillNotice || options?.replace
@@ -200,12 +381,16 @@ export function PaymentFlowWorkspace({
         navigate(homePath)
         return
       }
+      const qp = new URLSearchParams()
+      if (options?.billCode) qp.set("bill", options.billCode)
+      if (options?.kind === "invoice") qp.set("kind", "invoice")
+      const billSuffix = qp.toString() ? `?${qp.toString()}` : ""
       if (homePath === "/phucvu") {
         navigate(`/phucvu/phien/${nextVisitId}/thanh-toan${nextStep === "preview" ? "?view=preview" : ""}`, navOpts)
         return
       }
-      if (nextStep === "detail") navigate(`${homePath}/${nextVisitId}`, navOpts)
-      else navigate(`${homePath}/${nextVisitId}/${nextStep}`, navOpts)
+      if (nextStep === "detail") navigate(`${homePath}/${nextVisitId}${billSuffix}`, navOpts)
+      else navigate(`${homePath}/${nextVisitId}/${nextStep}${billSuffix}`, navOpts)
     },
     [homePath, navigate],
   )
@@ -221,62 +406,68 @@ export function PaymentFlowWorkspace({
     setSelectedId(id)
   }
 
-  const ensurePrebillIfNeeded = async () => {
-    const bill = billQuery.data
-    if (!bill || bill.status !== "SERVING") return false
-    await paymentApi.createPrebill(bill.visitId, bill.version)
-    await invalidatePaymentQueries()
-    return true
+  const handleSelectBill = (billCode: string) => {
+    const next = new URLSearchParams(searchParams)
+    next.set("bill", billCode)
+    setSearchParams(next, { replace: true })
   }
 
-  const handlePreview = async () => {
-    const bill = billQuery.data
-    if (!bill || inFlightRef.current) return
+  // VM-04 / TN-02-K3: Xem tạm tính stays strictly state-free via previewBill.
+  const handlePreview = () => {
+    if (!visitIdParam) return
+    goToStep(visitIdParam, "preview")
+  }
+
+  const handleIssueInvoice = async (): Promise<PayBill | null> => {
+    if (!sessionBills || inFlightRef.current || !canCollect) return null
     inFlightRef.current = true
     setBusy(true)
     try {
-      const moved = await ensurePrebillIfNeeded()
-      if (moved) {
-        showFeedback(
-          "success",
-          "Đã tạo tạm tính. Phiên chuyển sang Chờ thanh toán, chưa nhận tiền.",
-          `${bill.visitId}:preview`,
-        )
+      let issued: PayBill
+      try {
+        issued = await activeApi.issueInvoice(sessionBills.visitId, sessionBills.version, newIdempotencyKey())
+      } catch (err) {
+        if (isUnimplemented501(err)) {
+          issued = await activeApi.createPrebill(sessionBills.visitId, sessionBills.version)
+        } else {
+          throw err
+        }
       }
-      goToStep(bill.visitId, "preview")
+      await invalidatePaymentQueries()
+      handleSelectBill(issued.billCode)
+      showFeedback("success", `Đã xuất hóa đơn ${issued.billCode}. Phiên chuyển sang Chờ thanh toán.`)
+      return issued
     } catch (err) {
-      showFeedback("error", err instanceof Error ? err.message : "Không tạo được tạm tính.")
+      showFeedback("error", err instanceof Error ? err.message : "Không xuất được hóa đơn.")
+      return null
     } finally {
       inFlightRef.current = false
       setBusy(false)
     }
   }
 
-  const handleCloseToMethod = async () => {
-    const bill = billQuery.data
-    if (!bill || bill.status === "PAID" || bill.status === "CLOSED_UNPAID" || !canCollect || inFlightRef.current) return
-    inFlightRef.current = true
-    setBusy(true)
-    try {
-      await ensurePrebillIfNeeded()
-      goToStep(bill.visitId, "method")
-    } catch (err) {
-      showFeedback("error", err instanceof Error ? err.message : "Không thể chuyển sang thu tiền.")
-    } finally {
-      inFlightRef.current = false
-      setBusy(false)
+  const handleCollect = async () => {
+    if (!sessionBills || !selectedBill || !canCollect || inFlightRef.current) return
+    if (selectedBill.status === "CLOSED_UNPAID" || isBillPaid(selectedBill)) return
+    if (selectedBill.billCode) {
+      goToStep(sessionBills.visitId, "method", { billCode: selectedBill.billCode })
+      return
+    }
+    const issued = await handleIssueInvoice()
+    if (issued) {
+      goToStep(sessionBills.visitId, "method", { billCode: issued.billCode })
     }
   }
 
   const handleRequestPayment = async () => {
-    const bill = billQuery.data
-    if (!bill || inFlightRef.current) return
+    const targetBill = selectedBill
+    if (!targetBill || inFlightRef.current) return
     inFlightRef.current = true
     setBusy(true)
     try {
-      await paymentApi.requestPayment(bill.visitId)
+      await activeApi.requestPayment(targetBill.visitId)
       await invalidatePaymentQueries()
-      showFeedback("success", `Đã gửi yêu cầu thanh toán ${bill.code} cho Thu ngân.`)
+      showFeedback("success", `Đã gửi yêu cầu thanh toán ${targetBill.code} cho Thu ngân.`)
     } catch (err) {
       showFeedback("error", err instanceof Error ? err.message : "Không gửi được yêu cầu thanh toán.")
     } finally {
@@ -285,10 +476,16 @@ export function PaymentFlowWorkspace({
     }
   }
 
+  const handleRequestCancel = async (billCode: string, reason: string) => {
+    await activeApi.requestCancel(billCode, reason)
+    await invalidatePaymentQueries()
+    showFeedback("success", `Đã gửi yêu cầu huỷ thanh toán cho bill ${billCode}.`)
+  }
+
   const handleConfirm = async (method: PaymentMethod, givenVnd = 0) => {
     await submitPaymentConfirm({
-      api: paymentApi,
-      bill: billQuery.data,
+      api: activeApi,
+      bill: selectedBill,
       canCollect,
       method,
       givenVnd,
@@ -301,7 +498,7 @@ export function PaymentFlowWorkspace({
       invalidate: invalidatePaymentQueries,
       onSuccess: (rc) => {
         showFeedback("success", `Đã ghi nhận thanh toán. ${rc.tables.join(", ")} về Trống.`, `${rc.visitId}:success`)
-        goToStep(rc.visitId, "success")
+        goToStep(rc.visitId, "success", { billCode: rc.billCode })
       },
     })
   }
@@ -311,23 +508,26 @@ export function PaymentFlowWorkspace({
     if (step === "detail" || step === "success") {
       navigate(homePath)
     } else if (step === "preview" || step === "method") {
-      goToStep(visitIdParam, "detail")
+      goToStep(visitIdParam, "detail", { billCode: selectedBill?.billCode || null })
     } else if (step === "cash" || step === "qr") {
-      goToStep(visitIdParam, "method")
+      goToStep(visitIdParam, "method", { billCode: selectedBill?.billCode || null })
     }
   }
 
-  const bill = billQuery.data
-  const requiresPrebillStep = step === "preview" || step === "method" || step === "cash" || step === "qr"
-  const needsPrebillRedirect = Boolean(bill && bill.status === "SERVING" && requiresPrebillStep)
+  const requiresIssuedBillStep = step === "method" || step === "cash" || step === "qr"
+  const needsPrebillRedirect = Boolean(
+    sessionBills &&
+      requiresIssuedBillStep &&
+      (!selectedBill || !selectedBill.billCode || (sessionBills.status === "SERVING" && sessionBills.bills.length === 0)),
+  )
 
   useEffect(() => {
-    if (!needsPrebillRedirect || !bill) return
-    goToStep(bill.visitId, "detail", {
-      prebillNotice: "Phiên đang phục vụ, chưa tạo tạm tính. Hãy bấm Xem tạm tính hoặc Chốt bill & thu tiền trước.",
+    if (!needsPrebillRedirect || !sessionBills) return
+    goToStep(sessionBills.visitId, "detail", {
+      prebillNotice: "Phiên đang phục vụ, chưa xuất hóa đơn. Hãy bấm Xuất hóa đơn trước khi thu tiền.",
       replace: true,
     })
-  }, [bill, goToStep, needsPrebillRedirect])
+  }, [goToStep, needsPrebillRedirect, sessionBills])
 
   if (!isPaymentAvailable) {
     return <Navigate to={homePath === "/phucvu" ? "/phucvu" : "/floor"} replace />
@@ -370,9 +570,64 @@ export function PaymentFlowWorkspace({
     success: backHomeLabel,
   }
 
+  const renderSessionRow = (s: PayBillSummary) => {
+    const isSel = selectedId === s.visitId
+    const isPend = s.status === "AWAITING_PAYMENT" || (s.unpaidBillCount ?? 0) > 0
+    const isCluster = Boolean(s.clusterCode && s.tables.length > 1)
+    const hasLines = s.hasOrderLines !== false
+    const hasIssuedInfo = Boolean(s.issuedAt || s.issuedBy || s.requestedAt)
+    const issuer = s.issuedBy ?? s.waiterName
+    const issuedTime = s.issuedAt ?? s.requestedAt ?? s.pendingAt
+    return (
+      <button
+        key={s.visitId}
+        type="button"
+        onClick={() => handleSessionPick(s)}
+        className={cn("pay-sess", isSel && "sel")}
+      >
+        <span className="pay-sess-main">
+          <span className="pay-sess-code">
+            <b>{s.code}</b>
+            {isCluster ? (
+              <span className="pay-chip-cl">
+                <Link2 className="pay-i sm" aria-hidden />
+                {`Cụm ${s.tables.length} bàn · 1 phiên`}
+              </span>
+            ) : null}
+            {isPend ? (
+              <span className="pay-pill pay-p-pend">
+                <Clock className="pay-i sm" aria-hidden />
+                Chờ thanh toán
+              </span>
+            ) : null}
+            {hasIssuedInfo ? (
+              <span className="pay-pill pay-p-req">
+                <Send className="pay-i sm" aria-hidden />
+                {`Đã đưa hóa đơn · ${issuer}${issuedTime ? ` · ${issuedTime}` : ""}`}
+              </span>
+            ) : null}
+          </span>
+          <span className="pay-sess-meta">{`mở ${s.openedAt} · PV ${s.waiterName}`}</span>
+          {isSel ? <span className="pay-sess-hint">Chạm lần nữa để mở chi tiết</span> : null}
+        </span>
+        <span className="pay-sess-amt">
+          <small>{!hasLines ? "Dữ liệu món" : isPend ? "Phải trả" : "Tạm tính"}</small>
+          <b className={cn(!hasLines && "!text-sm !font-semibold !text-[var(--text-muted)]")}>
+            {hasLines ? formatVnd(s.dueVnd) : "Chưa có dữ liệu"}
+          </b>
+        </span>
+      </button>
+    )
+  }
+
+  const sessionRemainingOpen = Boolean(
+    sessionBills &&
+      (sessionBills.unbilledLineCount > 0 || sessionBills.bills.some((b) => !isBillPaid(b))),
+  )
+
   const workspaceBody = (
     <>
-      {/* S1: Home (session list + floor map) */}
+      {/* S1: Home (Cần thu + Đang phục vụ + floor map) */}
       {step === "list" ? (
         openQuery.isPending ? (
           <div className="pay-lg" aria-busy="true">
@@ -398,61 +653,40 @@ export function PaymentFlowWorkspace({
           </div>
         ) : (
           <div className="pay-lg pay-lg-m">
-            <section aria-label="Danh sách phiên" className="pay-sess-list">
+            <div className="pay-sess-col">
               {openList.length === 0 ? (
-                <div className="pay-empty">
-                  <b>Không còn phiên nào đang mở</b>
-                  Bàn đã thanh toán tự về Trống trên sơ đồ.
-                </div>
+                <section aria-label="Danh sách phiên" className="pay-sess-list">
+                  <div className="pay-empty">
+                    <b>Không còn phiên nào đang mở</b>
+                    Bàn đã thanh toán tự về Trống trên sơ đồ.
+                  </div>
+                </section>
               ) : (
-                openList.map((s) => {
-                  const isSel = selectedId === s.visitId
-                  const isPend = s.status === "AWAITING_PAYMENT"
-                  const isCluster = Boolean(s.clusterCode && s.tables.length > 1)
-                  const hasLines = s.hasOrderLines !== false
-                  return (
-                    <button
-                      key={s.visitId}
-                      type="button"
-                      onClick={() => handleSessionPick(s)}
-                      className={cn("pay-sess", isSel && "sel")}
-                    >
-                      <span className="pay-sess-main">
-                        <span className="pay-sess-code">
-                          <b>{s.code}</b>
-                          {isCluster ? (
-                            <span className="pay-chip-cl">
-                              <Link2 className="pay-i sm" aria-hidden />
-                              {`Cụm ${s.tables.length} bàn · 1 phiên`}
-                            </span>
-                          ) : null}
-                          {isPend ? (
-                            <span className="pay-pill pay-p-pend">
-                              <Clock className="pay-i sm" aria-hidden />
-                              Chờ thanh toán
-                            </span>
-                          ) : null}
-                          {s.requestedAt ? (
-                            <span className="pay-pill pay-p-req">
-                              <Send className="pay-i sm" aria-hidden />
-                              {`Gọi thanh toán · ${s.requestedAt}`}
-                            </span>
-                          ) : null}
-                        </span>
-                        <span className="pay-sess-meta">{`mở ${s.openedAt} · PV ${s.waiterName}`}</span>
-                        {isSel ? <span className="pay-sess-hint">Chạm lần nữa để mở chi tiết</span> : null}
-                      </span>
-                      <span className="pay-sess-amt">
-                        <small>{!hasLines ? "Dữ liệu món" : isPend ? "Phải trả" : "Tạm tính"}</small>
-                        <b className={cn(!hasLines && "!text-sm !font-semibold !text-[var(--text-muted)]")}>
-                          {hasLines ? formatVnd(s.dueVnd) : "Chưa có dữ liệu"}
-                        </b>
-                      </span>
-                    </button>
-                  )
-                })
+                <>
+                  <h2 className="pay-grp-title hot">
+                    Cần thu <span className="pay-grp-n">{pendingSessions.length}</span>
+                  </h2>
+                  {pendingSessions.length > 0 ? (
+                    <section aria-label="Cần thu" className="pay-sess-list">
+                      {pendingSessions.map(renderSessionRow)}
+                    </section>
+                  ) : (
+                    <p className="pay-grp-empty">Chưa có phiên nào chờ thu tiền.</p>
+                  )}
+
+                  {servingSessions.length > 0 ? (
+                    <>
+                      <h2 className="pay-grp-title">
+                        Đang phục vụ <span className="pay-grp-n">{servingSessions.length}</span>
+                      </h2>
+                      <section aria-label="Danh sách phiên" className="pay-sess-list">
+                        {servingSessions.map(renderSessionRow)}
+                      </section>
+                    </>
+                  ) : null}
+                </>
               )}
-            </section>
+            </div>
 
             <PaymentFloorMap
               sessions={openList}
@@ -549,7 +783,7 @@ export function PaymentFlowWorkspace({
             </div>
           ) : null}
 
-          {step === "detail" && prebillNotice && bill?.status === "SERVING" ? (
+          {step === "detail" && prebillNotice && sessionBills?.status === "SERVING" ? (
             <div role="status" className="pay-bn pay-bn-warn mb-4">
               <Info className="pay-i" aria-hidden />
               <span>{prebillNotice}</span>
@@ -562,13 +796,14 @@ export function PaymentFlowWorkspace({
               <span className="pay-rb-t">
                 <b>PHƯƠNG ÁN A · QUYỀN PHỤC VỤ</b>
                 <span>
-                  Phục vụ xem tạm tính (kèm mã QR để đưa khách xem) và gửi yêu cầu thanh toán. Thu ngân là người chốt bill và nhận tiền.
+                  Phục vụ xem tạm tính và xuất hóa đơn. Thu ngân là người thu tiền.
                 </span>
               </span>
             </div>
           ) : null}
 
-          {step !== "success" && billQuery.isPending ? (
+          {step !== "success" &&
+          (sessionBillsQuery.isPending || (step === "preview" && previewQuery.isPending)) ? (
             <div className="pay-split" aria-busy="true">
               <div className="pay-card">
                 <div className="pay-sk-stack">
@@ -592,16 +827,16 @@ export function PaymentFlowWorkspace({
                 </div>
               </div>
             </div>
-          ) : step !== "success" && billQuery.isError ? (
+          ) : step !== "success" && sessionBillsQuery.isError ? (
             <div role="alert" className="pay-bn pay-bn-err">
               <span>
                 <b>
-                  {billQuery.error instanceof ApiError
-                    ? billQuery.error.message
+                  {sessionBillsQuery.error instanceof ApiError
+                    ? sessionBillsQuery.error.message
                     : "Không tải được dữ liệu bill."}
                 </b>
                 <span className="pay-bn-act">
-                  <button type="button" onClick={() => void billQuery.refetch()} className="pay-btn pay-btn-s">
+                  <button type="button" onClick={() => void sessionBillsQuery.refetch()} className="pay-btn pay-btn-s">
                     Thử lại
                   </button>
                   <button type="button" onClick={() => navigate(homePath)} className="pay-btn pay-btn-s">
@@ -614,15 +849,16 @@ export function PaymentFlowWorkspace({
             receipt ? (
               <SuccessView
                 receipt={receipt}
+                sessionRemainingOpen={sessionRemainingOpen}
                 onToList={() => navigate(homePath)}
-                onPrintReceipt={() => showFeedback("info", "Mô phỏng: chưa nối máy in thật.")}
+                onBackToSession={() => goToStep(visitIdParam!, "detail")}
               />
             ) : (
               <div className="pay-card p-6 text-center">
                 <p className="font-semibold">
-                  {bill?.status === "PAID"
+                  {selectedBill && isBillPaid(selectedBill)
                     ? "Bill này đã được thanh toán."
-                    : bill?.status === "CLOSED_UNPAID"
+                    : selectedBill?.status === "CLOSED_UNPAID"
                       ? "Phiên đã trả bàn nhưng chưa ghi nhận thu tiền."
                       : "Không có biên nhận trong phiên này."}
                 </p>
@@ -631,19 +867,25 @@ export function PaymentFlowWorkspace({
                 </button>
               </div>
             )
-          ) : needsPrebillRedirect ? null : step === "preview" && bill ? (
+          ) : needsPrebillRedirect ? null : step === "preview" &&
+            (previewKind === "invoice" ? selectedBill : previewBillModel) ? (
             <ProvisionalPreviewView
-              bill={bill}
+              bill={(previewKind === "invoice" ? selectedBill : previewBillModel)!}
+              isProvisional={previewKind !== "invoice"}
               canCollect={canCollect}
               isWaiter={isWaiter}
               busy={busy}
               viewMode={previewViewMode}
               onChangeViewMode={setPreviewViewMode}
-              onCollect={() => void handleCloseToMethod()}
+              onIssueInvoice={async () => {
+                const issued = await handleIssueInvoice()
+                if (issued) goToStep(issued.visitId, "detail", { billCode: issued.billCode })
+              }}
+              onCollect={() => void handleCollect()}
               onRequestPayment={() => void handleRequestPayment()}
               onSimulatedPrint={(n) => showFeedback("info", `Mô phỏng: chưa nối máy in thật. Ghi nhận lần in #${n}.`)}
             />
-          ) : bill ? (
+          ) : selectedBill ? (
             <div
               className={cn(
                 "pay-split",
@@ -653,7 +895,7 @@ export function PaymentFlowWorkspace({
               )}
             >
               <BillRoundsCard
-                bill={bill}
+                bill={selectedBill}
                 collapsible={step !== "detail"}
                 expanded={billExpanded}
                 onToggleExpanded={() => setBillExpanded((v) => !v)}
@@ -661,27 +903,44 @@ export function PaymentFlowWorkspace({
 
               {step === "detail" ? (
                 <DetailActionPane
-                  bill={bill}
+                  bill={selectedBill}
+                  bills={sessionBills?.bills}
+                  selectedBillCode={selectedBill.billCode}
+                  onSelectBill={handleSelectBill}
+                  unbilledLineCount={sessionBills?.unbilledLineCount}
+                  cancelRequests={cancelRequestsQuery.data}
                   canCollect={canCollect}
                   isWaiter={isWaiter}
                   busy={busy}
-                  onPreview={() => void handlePreview()}
-                  onCollect={() => void handleCloseToMethod()}
+                  onPreview={handlePreview}
+                  onViewInvoice={
+                    selectedBill.billCode
+                      ? () =>
+                          goToStep(selectedBill.visitId, "preview", {
+                            billCode: selectedBill.billCode,
+                            kind: "invoice",
+                          })
+                      : undefined
+                  }
+                  onIssueInvoice={() => void handleIssueInvoice()}
+                  onCollect={() => void handleCollect()}
                   onRequestPayment={() => void handleRequestPayment()}
+                  onRequestCancel={handleRequestCancel}
                 />
               ) : step === "method" ? (
                 <MethodActionPane
-                  bill={bill}
+                  bill={selectedBill}
                   lastMethod={lastMethod}
+                  isOffline={isOffline}
                   onSelectMethod={(m) => {
                     setLastMethod(m)
-                    goToStep(bill.visitId, m === "CASH" ? "cash" : "qr")
+                    goToStep(selectedBill.visitId, m === "CASH" ? "cash" : "qr", { billCode: selectedBill.billCode })
                   }}
                   onToList={() => navigate(homePath)}
                 />
               ) : step === "cash" ? (
                 <CashActionPane
-                  bill={bill}
+                  bill={selectedBill}
                   busy={busy}
                   error={payError}
                   onClearError={() => setPayError(null)}
@@ -690,13 +949,16 @@ export function PaymentFlowWorkspace({
                 />
               ) : step === "qr" ? (
                 <QrActionPane
-                  bill={bill}
+                  bill={selectedBill}
                   busy={busy}
                   error={payError}
-                  onCheckTransfer={() => paymentApi.checkTransfer(bill.visitId)}
+                  isOffline={isOffline}
+                  onCheckTransfer={() => activeApi.checkTransfer(selectedBill.visitId)}
                   onConfirmManual={() => void handleConfirm("TRANSFER")}
+                  onSwitchToCash={() =>
+                    goToStep(selectedBill.visitId, "cash", { billCode: selectedBill.billCode })
+                  }
                   onToList={() => navigate(homePath)}
-                  onCopied={(refText) => showFeedback("success", `Đã chép nội dung: ${refText}`)}
                 />
               ) : null}
             </div>
