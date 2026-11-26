@@ -438,8 +438,8 @@
   pointer-events: none;
 }
 
-.pc-input-search {
-  padding-left: 36px;
+.pc-input.pc-input-search {
+  padding-left: 38px;
 }
 
 .pc-item-top {
