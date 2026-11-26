@@ -23,7 +23,14 @@ import {
   SuccessView,
 } from "./pay-actions"
 import { PaymentNotificationBell } from "./payment-notifications"
-import { PaymentFlowWorkspace, partitionOpenSessions } from "./payment-page"
+import {
+  PaymentFlowWorkspace,
+  buildSuccessFeedbackText,
+  isSessionConfirmedClosed,
+  partitionOpenSessions,
+  previewToPayBill,
+  type PaymentAccessOverride,
+} from "./payment-page"
 import { submitPaymentConfirm, type IdempotencySlot } from "./payment-submit"
 
 function makeBill(overrides: Partial<PayBill> = {}): PayBill {
@@ -144,6 +151,7 @@ function makeFakeApi(overrides: Partial<PaymentApi> = {}): PaymentApi {
       status: "PENDING",
     }),
     listCancelRequests: async () => [],
+    listMyCancelRequests: async () => [],
     decideCancel: async () => {
       throw new Error("not used in W3")
     },
@@ -155,8 +163,15 @@ function makeFakeApi(overrides: Partial<PaymentApi> = {}): PaymentApi {
   }
 }
 
+const CASHIER_ACCESS: PaymentAccessOverride = {
+  role: "CASHIER",
+  canCollect: true,
+  canAuditRead: false,
+  canReadOrders: false,
+}
+
 describe("W3 TN-01: S1 Cần thu grouping, invoice-issued tag, and INVOICE_ISSUED bell", () => {
-  it("partitions AWAITING_PAYMENT and multi-bill unpaid sessions into Cần thu", () => {
+  it("groups AWAITING_PAYMENT into Cần thu while keeping SERVING with unpaid bills in Đang phục vụ with a badge", () => {
     const sessions: PayBillSummary[] = [
       {
         visitId: "1",
@@ -203,8 +218,26 @@ describe("W3 TN-01: S1 Cần thu grouping, invoice-issued tag, and INVOICE_ISSUE
       },
     ]
     const { pending, serving } = partitionOpenSessions(sessions)
-    expect(pending.map((s) => s.code)).toEqual(["A3", "B5"])
-    expect(serving.map((s) => s.code)).toEqual(["A1"])
+    expect(pending.map((s) => s.code)).toEqual(["A3"])
+    expect(serving.map((s) => s.code)).toEqual(["A1", "B5"])
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    qc.setQueryData<PayBillSummary[]>(["payment-open"], sessions)
+    const html = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(
+          MemoryRouter,
+          { initialEntries: ["/payment"] },
+          createElement(PaymentFlowWorkspace, {
+            api: makeFakeApi({ listOpen: async () => sessions }),
+            accessOverride: CASHIER_ACCESS,
+          }),
+        ),
+      ),
+    )
+    expect(html).toContain("1 bill chờ thu")
   })
 
   it("renders INVOICE_ISSUED notification in PaymentNotificationBell", () => {
@@ -484,12 +517,28 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
     expect(html).not.toContain("Thu tiền")
   })
 
-  it.each<{ status: CancelRequest["status"]; expectedText: string }>([
-    { status: "PENDING", expectedText: "Đang chờ duyệt (PENDING)" },
-    { status: "APPROVED", expectedText: "Đã duyệt huỷ (APPROVED)" },
-    { status: "REJECTED", expectedText: "Bị từ chối (REJECTED)" },
-  ])("renders $status cancel request state accurately", ({ status, expectedText }) => {
-    const paidBill = makeBill({ billCode: "B0412", billStatus: "PAID", status: "PAID", paidAt: "21:40" })
+  it.each<{
+    status: CancelRequest["status"]
+    billOverrides?: Partial<PayBill>
+    expectedText: string
+    expectRequestButton: boolean
+  }>([
+    { status: "PENDING", expectedText: "Đang chờ duyệt (PENDING)", expectRequestButton: false },
+    {
+      status: "APPROVED",
+      billOverrides: { billStatus: "UNPAID", status: "AWAITING_PAYMENT", paidAt: undefined },
+      expectedText: "Đã duyệt huỷ (APPROVED)",
+      expectRequestButton: false,
+    },
+    { status: "REJECTED", expectedText: "Bị từ chối (REJECTED)", expectRequestButton: true },
+  ])("renders $status cancel request state accurately", ({ status, billOverrides, expectedText, expectRequestButton }) => {
+    const targetBill = makeBill({
+      billCode: "B0412",
+      billStatus: "PAID",
+      status: "PAID",
+      paidAt: "21:40",
+      ...billOverrides,
+    })
     const req: CancelRequest = {
       id: "cr-1",
       billCode: "B0412",
@@ -504,11 +553,12 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
     }
     const html = renderToStaticMarkup(
       createElement(DetailActionPane, {
-        bill: paidBill,
-        bills: [paidBill],
+        bill: targetBill,
+        bills: [targetBill],
         selectedBillCode: "B0412",
         cancelRequests: [req],
         canCollect: true,
+        canRequestCancel: true,
         isWaiter: false,
         busy: false,
         onPreview: () => undefined,
@@ -519,11 +569,136 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
     )
     expect(html).toContain(expectedText)
     expect(html).toContain("Thu nhầm phương thức")
-    if (status === "PENDING" || status === "APPROVED") {
-      expect(html).not.toContain("Gửi yêu cầu huỷ")
-    } else {
-      expect(html).toContain("Gửi yêu cầu huỷ")
+    if (status !== "PENDING") {
+      expect(html).toContain("Admin Edit")
+      expect(html).toContain("Đã kiểm tra")
     }
+    if (expectRequestButton) {
+      expect(html).toContain("Gửi yêu cầu huỷ")
+    } else {
+      expect(html).not.toContain("Gửi yêu cầu huỷ")
+    }
+  })
+
+  it("allows submitting a new cancel request after a cancelled bill is re-collected, and hides request button for non-cashier (NA45H-03)", () => {
+    const recollectedPaidBill = makeBill({
+      billCode: "B0412",
+      billStatus: "PAID",
+      status: "PAID",
+      paidAt: "21:55",
+    })
+    const priorApprovedReq: CancelRequest = {
+      id: "cr-old",
+      billCode: "B0412",
+      visitId: "1283",
+      code: "A3",
+      dueVnd: 155_000,
+      reason: "Thu nhầm lần 1",
+      requestedBy: "Thu ngân",
+      requestedAt: "21:42",
+      status: "APPROVED",
+      decidedBy: "Admin Edit",
+      decidedAt: "21:44",
+      decisionNote: "Duyệt huỷ lần 1",
+    }
+
+    const cashierHtml = renderToStaticMarkup(
+      createElement(DetailActionPane, {
+        bill: recollectedPaidBill,
+        bills: [recollectedPaidBill],
+        selectedBillCode: "B0412",
+        cancelRequests: [priorApprovedReq],
+        canCollect: true,
+        canRequestCancel: true,
+        isWaiter: false,
+        busy: false,
+        onPreview: () => undefined,
+        onCollect: () => undefined,
+        onRequestPayment: () => undefined,
+        onRequestCancel: async () => undefined,
+      }),
+    )
+    expect(cashierHtml).toContain("Gửi yêu cầu huỷ")
+    expect(cashierHtml).not.toContain("Đã duyệt huỷ (APPROVED)")
+
+    const adminHtml = renderToStaticMarkup(
+      createElement(DetailActionPane, {
+        bill: recollectedPaidBill,
+        bills: [recollectedPaidBill],
+        selectedBillCode: "B0412",
+        cancelRequests: [
+          {
+            ...priorApprovedReq,
+            status: "REJECTED",
+          },
+        ],
+        canCollect: true,
+        canRequestCancel: false,
+        isWaiter: false,
+        busy: false,
+        onPreview: () => undefined,
+        onCollect: () => undefined,
+        onRequestPayment: () => undefined,
+        onRequestCancel: async () => undefined,
+      }),
+    )
+    expect(adminHtml).toContain("Bị từ chối (REJECTED)")
+    expect(adminHtml).not.toContain("Gửi yêu cầu huỷ")
+  })
+
+  it("reads cashier cancel-request decisions via listMyCancelRequests without calling listCancelRequests (NA45H-03)", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const paidBill = makeBill({ billCode: "B0412", billStatus: "PAID", status: "PAID", paidAt: "21:40" })
+    qc.setQueryData<SessionBills>(["payment-session-bills", "1283"], {
+      visitId: "1283",
+      sessionCode: "S-1283",
+      code: "A3",
+      tables: ["A3"],
+      status: "PAID",
+      unbilledLineCount: 0,
+      bills: [paidBill],
+      version: 2,
+    })
+    const rejectedReq: CancelRequest = {
+      id: "cr-2",
+      billCode: "B0412",
+      visitId: "1283",
+      code: "A3",
+      dueVnd: 155_000,
+      reason: "Sai tiền",
+      requestedBy: "Thu ngân",
+      requestedAt: "21:42",
+      status: "REJECTED",
+      decidedBy: "Admin Edit",
+      decidedAt: "21:44",
+      decisionNote: "Kiểm lại quỹ",
+    }
+    qc.setQueryData<CancelRequest[]>(["payment-cancel-requests", "CASHIER", "B0412"], [rejectedReq])
+    const listCancelRequests = vi.fn(async () => [])
+    const listMyCancelRequests = vi.fn(async () => [rejectedReq])
+    const api = makeFakeApi({ listCancelRequests, listMyCancelRequests })
+
+    const html = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(
+          MemoryRouter,
+          { initialEntries: ["/payment/1283"] },
+          createElement(PaymentFlowWorkspace, {
+            visitIdParam: "1283",
+            stepParam: "detail",
+            api,
+            accessOverride: CASHIER_ACCESS,
+          }),
+        ),
+      ),
+    )
+    expect(listCancelRequests).not.toHaveBeenCalled()
+    expect(html).toContain("Bị từ chối (REJECTED)")
+    expect(html).toContain("Admin Edit")
+    expect(html).toContain("Kiểm lại quỹ")
+    expect(html).toContain("Gửi yêu cầu huỷ")
   })
 
   it("mounts PaymentFlowWorkspace with a fake PaymentApi without throwing", () => {
@@ -541,5 +716,176 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
       ),
     )
     expect(html).toContain("pay-root")
+  })
+})
+
+describe("W3 NA45H-07 / NA45H-08 / NA45H-09: S7 closure banner, preview error isolation, and S2/S3 metadata", () => {
+  it("reports tables Trống ONLY when session is confirmed closed, and keeps session open otherwise (NA45H-07)", () => {
+    const paidBill = makeBill({ billCode: "B0411", billStatus: "PAID", status: "PAID" })
+    const unpaidBill = makeBill({ billCode: "B0412", billStatus: "UNPAID", status: "AWAITING_PAYMENT" })
+    const rc: Receipt = {
+      billCode: "B0411",
+      visitId: "1283",
+      sessionCode: "S-1283",
+      code: "A3",
+      tables: ["A3"],
+      method: "TRANSFER",
+      manual: true,
+      givenVnd: 155_000,
+      changeVnd: 0,
+      preRoundVnd: 154_660,
+      dueVnd: 155_000,
+      confirmedAt: "21:45",
+      confirmedBy: "Thu ngân",
+    }
+
+    const withUnpaid: SessionBills = {
+      visitId: "1283",
+      sessionCode: "S-1283",
+      code: "A3",
+      tables: ["A3"],
+      status: "AWAITING_PAYMENT",
+      unbilledLineCount: 0,
+      bills: [paidBill, unpaidBill],
+      version: 2,
+    }
+    expect(isSessionConfirmedClosed(withUnpaid)).toBe(false)
+    expect(buildSuccessFeedbackText(rc, withUnpaid)).toContain("B0411")
+    expect(buildSuccessFeedbackText(rc, withUnpaid)).toContain("vẫn đang mở")
+    expect(buildSuccessFeedbackText(rc, withUnpaid)).not.toContain("về Trống")
+
+    const withUnbilled: SessionBills = {
+      visitId: "1283",
+      sessionCode: "S-1283",
+      code: "A3",
+      tables: ["A3"],
+      status: "SERVING",
+      unbilledLineCount: 1,
+      bills: [paidBill],
+      version: 2,
+    }
+    expect(isSessionConfirmedClosed(withUnbilled)).toBe(false)
+    expect(buildSuccessFeedbackText(rc, withUnbilled)).not.toContain("về Trống")
+    expect(isSessionConfirmedClosed(undefined)).toBe(false)
+    expect(buildSuccessFeedbackText(rc, undefined)).not.toContain("về Trống")
+
+    const closed: SessionBills = {
+      visitId: "1283",
+      sessionCode: "S-1283",
+      code: "A3",
+      tables: ["A3"],
+      status: "PAID",
+      unbilledLineCount: 0,
+      bills: [paidBill],
+      version: 3,
+    }
+    expect(isSessionConfirmedClosed(closed)).toBe(true)
+    expect(buildSuccessFeedbackText(rc, closed)).toBe("Đã ghi nhận thanh toán. A3 về Trống.")
+  })
+
+  it("renders preview error state without falling back to an issued bill amount (NA45H-08)", async () => {
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retry: false, retryOnMount: false, staleTime: Infinity } },
+    })
+    const issuedBill = makeBill({ billCode: "B0412", dueVnd: 3_044_000, status: "AWAITING_PAYMENT" })
+    qc.setQueryData<SessionBills>(["payment-session-bills", "1283"], {
+      visitId: "1283",
+      sessionCode: "S-1283",
+      code: "G02",
+      tables: ["B11", "B12"],
+      clusterCode: "G02",
+      status: "AWAITING_PAYMENT",
+      unbilledLineCount: 1,
+      bills: [issuedBill],
+      version: 2,
+    })
+    await qc
+      .fetchQuery({
+        queryKey: ["payment-preview", "1283"],
+        queryFn: async () => {
+          throw new Error("review preview unavailable")
+        },
+      })
+      .catch(() => undefined)
+
+    const html = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(
+          MemoryRouter,
+          { initialEntries: ["/payment/1283/preview"] },
+          createElement(PaymentFlowWorkspace, {
+            visitIdParam: "1283",
+            stepParam: "preview",
+            accessOverride: CASHIER_ACCESS,
+            api: makeFakeApi({
+              previewBill: async () => {
+                throw new Error("review preview unavailable")
+              },
+            }),
+          }),
+        ),
+      ),
+    )
+    expect(html).toContain("review preview unavailable")
+    expect(html).toContain("Thử lại")
+    expect(html).not.toContain("3.044.000đ")
+    expect(html).not.toContain("Tạm tính – chưa phải hóa đơn")
+  })
+
+  it("keeps S2 in loading state while preview is pending for unbilled session and preserves metadata in previewToPayBill (NA45H-09)", () => {
+    const preview: PreviewBill = {
+      visitId: "1283",
+      sessionCode: "S-1283",
+      code: "A3",
+      tables: ["A3"],
+      lines: makeBill().lines,
+      subtotalVnd: 140_600,
+      vatVnd: 14_060,
+      preRoundVnd: 154_660,
+      roundingVnd: 340,
+      dueVnd: 155_000,
+      version: 1,
+    }
+    const mapped = previewToPayBill(preview, "SERVING", {
+      openedAt: "19:05",
+      waiterName: "Minh",
+      guests: 4,
+    })
+    expect(mapped.openedAt).toBe("19:05")
+    expect(mapped.waiterName).toBe("Minh")
+    expect(mapped.guests).toBe(4)
+    expect(mapped.roundCount).toBe(2)
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    qc.setQueryData<SessionBills>(["payment-session-bills", "1283"], {
+      visitId: "1283",
+      sessionCode: "S-1283",
+      code: "A3",
+      tables: ["A3"],
+      status: "SERVING",
+      unbilledLineCount: 2,
+      bills: [],
+      version: 1,
+    })
+    const html = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(
+          MemoryRouter,
+          { initialEntries: ["/payment/1283"] },
+          createElement(PaymentFlowWorkspace, {
+            visitIdParam: "1283",
+            stepParam: "detail",
+            api: makeFakeApi(),
+            accessOverride: CASHIER_ACCESS,
+          }),
+        ),
+      ),
+    )
+    expect(html).toContain('aria-busy="true"')
+    expect(html).toContain("Đang tải dữ liệu bill")
   })
 })

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest"
-import { businessDateOf } from "@/lib/time"
+import { addDays, businessDateOf } from "@/lib/time"
 import { api, clock, demo } from "@/services"
 import { DEMO_USERS } from "@/services/mock/seed"
 import { isPaymentAvailable, paymentApi } from "./index"
@@ -445,13 +445,17 @@ describe("mockPaymentApi", () => {
     const bill1 = await paymentApi.issueInvoice(a3Id, s0.version, "v12-inv-1")
     expect(bill1.billCode).toBe(`B${a3Id.padStart(4, "0")}`)
 
-    // Guest orders extra round after Bill 1 was issued
+    // Guest orders extra round after Bill 1 was issued -> NA45H-05: session returns to SERVING while old bill stays UNPAID
     const afterAdd = addPaymentOrderLines(a3Id, [
       { name: "Gin Tonic", unit: "Ly", qty: 2, unitPriceVnd: 150_000, state: "SERVED" },
     ])
+    expect(afterAdd.status).toBe("SERVING")
     expect(afterAdd.unbilledLineCount).toBe(1)
     expect(afterAdd.bills).toHaveLength(1)
     expect(afterAdd.bills[0].dueVnd).toBe(bill1.dueVnd)
+    const openWhileServing = (await paymentApi.listOpen()).find((s) => s.visitId === a3Id)!
+    expect(openWhileServing.status).toBe("SERVING")
+    expect(openWhileServing.unpaidBillCount).toBe(1)
 
     // Preview sees ONLY the new unbilled round
     api.setSession(cashier)
@@ -606,5 +610,279 @@ describe("mockPaymentApi", () => {
     expect(approvedEntry.reason).toBe("OK hủy thu lại QR")
     expect(approvedEntry.at).toBeTruthy()
     expect(approvedEntry.device).toBeTruthy()
+  })
+
+  it("NA45H-01: future HOLD does not block reopening a paid visit (A3), while new USAGE still returns 409", async () => {
+    const bd = businessDateOf(clock.now())
+    const a3Id = await visitIdByCode("A3")
+    const catalog = await api.getCatalog()
+    const a3TableId = catalog.tables.find((t) => t.code === "A3")!.id
+
+    // Verify seeded future bd+2 HOLD exists on A3
+    api.setSession(receptionist)
+    const futureRes = await api.listReservations({ businessDate: addDays(bd, 2) })
+    expect(futureRes.some((r) => r.tableIds.includes(a3TableId))).toBe(true)
+
+    api.setSession(cashier)
+    const s0 = await paymentApi.getBill(a3Id)
+    const bill = await paymentApi.issueInvoice(a3Id, s0.version, "na45h01-inv")
+    await paymentApi.confirmCash(a3Id, bill.dueVnd, bill.version, "na45h01-pay1", bill.billCode)
+    expect((await api.getFloorState(clock.now())).tables.find((t) => t.tableId === a3TableId)?.state).toBe("free")
+
+    // 1) Direct cancel on A3 succeeds despite future bd+2 HOLD
+    api.setSession(admin)
+    await paymentApi.cancelPaid(bill.billCode, "Hủy thẳng A3")
+    const reopened = await paymentApi.getBill(a3Id)
+    expect(reopened.billStatus).toBe("UNPAID")
+    expect(reopened.status).toBe("AWAITING_PAYMENT")
+    expect((await api.getFloorState(clock.now())).tables.find((t) => t.tableId === a3TableId)?.state).toBe("seated")
+
+    // Re-pay then test approved cancel request on A3 despite bd+2 HOLD
+    api.setSession(cashier)
+    await paymentApi.confirmTransfer(a3Id, false, reopened.version, "na45h01-pay2", bill.billCode)
+    const req = await paymentApi.requestCancel(bill.billCode, "Duyệt hủy A3")
+    api.setSession(admin)
+    const approved = await paymentApi.decideCancel(req.id, true, "Duyệt")
+    expect(approved.status).toBe("APPROVED")
+    expect((await api.getFloorState(clock.now())).tables.find((t) => t.tableId === a3TableId)?.state).toBe("seated")
+    // Future reservation on bd+2 is still intact
+    expect((await api.listReservations({ businessDate: addDays(bd, 2) })).some((r) => r.tableIds.includes(a3TableId))).toBe(true)
+
+    // 2) Re-pay A3, seat a new walk-in USAGE on A3 -> cancelPaid and approve must reject 409 without corrupting state
+    api.setSession(cashier)
+    const repaidSource = await paymentApi.getBill(a3Id)
+    await paymentApi.confirmCash(a3Id, repaidSource.dueVnd, repaidSource.version, "na45h01-pay3", bill.billCode)
+    const reqBlocked = await paymentApi.requestCancel(bill.billCode, "Thử hủy khi có khách mới")
+
+    api.setSession(receptionist)
+    await api.seatWalkIn({ tableIds: [a3TableId], guestCount: 2, contactName: "Khách mới A3" })
+    await expect(paymentApi.cancelPaid(bill.billCode, "Hủy khi có khách mới")).rejects.toMatchObject({
+      code: "CONFLICT",
+      status: 409,
+    })
+
+    api.setSession(admin)
+    await expect(paymentApi.decideCancel(reqBlocked.id, true, "Duyệt khi có khách mới")).rejects.toMatchObject({
+      code: "CONFLICT",
+      status: 409,
+    })
+    const stillPaid = await paymentApi.getBill(a3Id)
+    expect(stillPaid.billStatus).toBe("PAID")
+    expect((await paymentApi.listCancelRequests()).find((r) => r.id === reqBlocked.id)?.status).toBe("PENDING")
+    expect((await turnsForVisit(a3Id, admin))?.status).toBe("CLOSED")
+  })
+
+  it("NA45H-02: updates turn openTotal & closed count (completedTotal - openTotal) on final bill pay and cancel", async () => {
+    const bd = businessDateOf(clock.now())
+    const a3Id = await visitIdByCode("A3")
+    api.setSession(admin)
+    const beforeSummary = await api.getTableTurnSummary({ from: bd, to: bd })
+    const beforeClosed = beforeSummary.completedTotal - beforeSummary.openTotal
+
+    // Multi-bill A3: pay bill 1 while bill 2 exists -> closed count unchanged
+    api.setSession(waiter)
+    const s0 = await paymentApi.getBill(a3Id)
+    const bill1 = await paymentApi.issueInvoice(a3Id, s0.version, "na45h02-inv1")
+    addPaymentOrderLines(a3Id, [{ name: "Coca", unit: "Lon", qty: 2, unitPriceVnd: 45_000, state: "SERVED" }])
+    const p2 = await paymentApi.previewBill(a3Id)
+    const bill2 = await paymentApi.issueInvoice(a3Id, p2.version, "na45h02-inv2")
+
+    api.setSession(cashier)
+    await paymentApi.confirmCash(a3Id, bill1.dueVnd, bill2.version, "na45h02-pay1", bill1.billCode)
+    api.setSession(admin)
+    const afterBill1 = await api.getTableTurnSummary({ from: bd, to: bd })
+    expect(afterBill1.openTotal).toBe(beforeSummary.openTotal)
+    expect(afterBill1.completedTotal - afterBill1.openTotal).toBe(beforeClosed)
+    expect((await turnsForVisit(a3Id, admin))?.status).toBe("OPEN")
+
+    // Pay final bill 2 -> visit closes, openTotal -1, closed count +1
+    api.setSession(cashier)
+    const s2 = await paymentApi.getSessionBills(a3Id)
+    await paymentApi.confirmCash(a3Id, bill2.dueVnd, s2.version, "na45h02-pay2", bill2.billCode)
+    api.setSession(admin)
+    const afterFinal = await api.getTableTurnSummary({ from: bd, to: bd })
+    expect(afterFinal.openTotal).toBe(beforeSummary.openTotal - 1)
+    expect(afterFinal.completedTotal - afterFinal.openTotal).toBe(beforeClosed + 1)
+    expect((await turnsForVisit(a3Id, admin))?.status).toBe("CLOSED")
+
+    // Cancel bill 2 -> visit reopens, openTotal +1, closed count -1
+    await paymentApi.cancelPaid(bill2.billCode, "Hoàn tác bill cuối")
+    const afterCancel = await api.getTableTurnSummary({ from: bd, to: bd })
+    expect(afterCancel.openTotal).toBe(beforeSummary.openTotal)
+    expect(afterCancel.completedTotal - afterCancel.openTotal).toBe(beforeClosed)
+    expect((await turnsForVisit(a3Id, admin))?.status).toBe("OPEN")
+  })
+
+  it("NA45H-03 & NA45H-04: restricts requestCancel to CASHIER, lets cashier read own decisions via listMyCancelRequests, and emits change events after state/audit/notifications", async () => {
+    const a2Id = await visitIdByCode("A2")
+    const s0 = await paymentApi.getBill(a2Id)
+    const bill = await paymentApi.issueInvoice(a2Id, s0.version, "na45h03-inv")
+    await paymentApi.confirmCash(a2Id, bill.dueVnd, bill.version, "na45h03-pay", bill.billCode)
+
+    // Non-cashier roles (including OWNER, ADMIN, WAITER) cannot submit requestCancel
+    for (const nonCashier of [owner, admin, receptionist, waiter, bar]) {
+      api.setSession(nonCashier)
+      await expect(paymentApi.requestCancel(bill.billCode, "Thử gửi sai vai")).rejects.toMatchObject({
+        code: "PERMISSION_DENIED",
+        status: 403,
+      })
+    }
+
+    // Track change events from api.subscribe and verify read consistency at emission time
+    const observed: { action: string; latestSeq: number }[] = []
+    const unsub = api.subscribe((ev) => {
+      observed.push({ action: ev.action, latestSeq: ev.latestSeq })
+    })
+    try {
+      // 1) Cashier requests cancel
+      api.setSession(cashier)
+      const req1 = await paymentApi.requestCancel(bill.billCode, "Khách đổi sang chuyển khoản")
+      expect(observed.at(-1)?.action).toBe("PAYMENT_CANCEL_REQUESTED")
+      expect(await paymentApi.listMyCancelRequests?.(bill.billCode)).toMatchObject([
+        { id: req1.id, status: "PENDING", billCode: bill.billCode },
+      ])
+      // Waiter / Bar / Receptionist cannot call listMyCancelRequests
+      api.setSession(waiter)
+      await expect(paymentApi.listMyCancelRequests?.()).rejects.toMatchObject({ code: "PERMISSION_DENIED", status: 403 })
+      api.setSession(receptionist)
+      await expect(paymentApi.listMyCancelRequests?.()).rejects.toMatchObject({ code: "PERMISSION_DENIED", status: 403 })
+
+      // 2) Admin rejects -> event emitted AFTER request/audit/notification updated
+      api.setSession(admin)
+      await paymentApi.decideCancel(req1.id, false, "Đã khóa ca")
+      expect(observed.at(-1)?.action).toBe("PAYMENT_CANCEL_REJECTED")
+      expect((await paymentApi.listAudit(bill.billCode))[0]?.action).toBe("CANCEL_REJECTED")
+
+      // Cashier reads own decision without audit.read
+      api.setSession(cashier)
+      await expect(paymentApi.listCancelRequests()).rejects.toMatchObject({ code: "PERMISSION_DENIED", status: 403 })
+      const myAfterReject = await paymentApi.listMyCancelRequests?.(bill.billCode)
+      expect(myAfterReject?.[0]).toMatchObject({
+        id: req1.id,
+        status: "REJECTED",
+        decisionNote: "Đã khóa ca",
+      })
+      expect(myAfterReject?.[0]?.decidedBy).toContain("Quản trị viên")
+
+      // 3) Cashier submits 2nd request -> Admin approves -> event emitted AFTER state/request/audit/notification updated
+      const req2 = await paymentApi.requestCancel(bill.billCode, "Gửi lại lần 2")
+      expect(observed.at(-1)?.action).toBe("PAYMENT_CANCEL_REQUESTED")
+      api.setSession(admin)
+      await paymentApi.decideCancel(req2.id, true, "OK duyệt")
+      expect(observed.at(-1)?.action).toBe("PAYMENT_CANCELLED")
+      expect((await paymentApi.listAudit(bill.billCode))[0]?.action).toBe("CANCEL_APPROVED")
+
+      api.setSession(cashier)
+      const myAfterApprove = await paymentApi.listMyCancelRequests?.(bill.billCode)
+      expect(myAfterApprove?.[0]).toMatchObject({ id: req2.id, status: "APPROVED", decisionNote: "OK duyệt" })
+
+      // Re-collect then submit a 3rd request -> Receptionist direct cancel emits PAYMENT_CANCELLED and resolves pending request
+      const unpaid = await paymentApi.getBill(a2Id)
+      await paymentApi.confirmTransfer(a2Id, false, unpaid.version, "na45h03-repay", bill.billCode)
+      const req3 = await paymentApi.requestCancel(bill.billCode, "Gửi sau khi thu lại")
+      expect(req3.status).toBe("PENDING")
+
+      api.setSession(receptionist)
+      await paymentApi.cancelPaid(bill.billCode, "Lễ tân hủy trực tiếp")
+      expect(observed.at(-1)?.action).toBe("PAYMENT_CANCELLED")
+      expect((await paymentApi.listAudit(bill.billCode))[0]?.action).toBe("CANCELLED_DIRECT")
+      // Strictly increasing latestSeq across all cancel/decision events
+      for (let i = 1; i < observed.length; i++) {
+        expect(observed[i]!.latestSeq).toBeGreaterThan(observed[i - 1]!.latestSeq)
+      }
+    } finally {
+      unsub()
+    }
+  })
+
+  it("NA45H-06: restricts BAR role listOpen/getBill/previewBill/issueInvoice/getSessionBills to pure bar-area sessions", async () => {
+    const a3Id = await visitIdByCode("A3")
+    const barId = await visitIdByCode("BAR01")
+
+    // Create a pure bar-seat cluster and a mixed cluster using currently free seats/tables
+    api.setSession(receptionist)
+    const [catalog, floor] = await Promise.all([api.getCatalog(), api.getFloorState(clock.now())])
+    const freeIds = new Set(floor.tables.filter((t) => t.state === "free").map((t) => t.tableId))
+    const freeBarTables = catalog.tables.filter((t) => t.kind === "BAR_SEAT" && freeIds.has(t.id))
+    const freeMainTables = catalog.tables.filter((t) => t.kind === "TABLE" && !t.isSpare && freeIds.has(t.id))
+    expect(freeBarTables.length).toBeGreaterThanOrEqual(3)
+    expect(freeMainTables.length).toBeGreaterThanOrEqual(1)
+    const barPair = await api.seatWalkIn({ tableIds: [freeBarTables[0]!.id, freeBarTables[1]!.id], guestCount: 2 })
+    addPaymentOrderLines(String(barPair.visitId), [{ name: "Gin Fizz", unit: "Ly", qty: 1, unitPriceVnd: 160_000 }])
+    const mixed = await api.seatWalkIn({ tableIds: [freeMainTables[0]!.id, freeBarTables[2]!.id], guestCount: 3 })
+    addPaymentOrderLines(String(mixed.visitId), [{ name: "Whisky", unit: "Ly", qty: 1, unitPriceVnd: 220_000 }])
+
+    api.setSession(bar)
+    const barOpen = await paymentApi.listOpen()
+    expect(barOpen.some((s) => s.visitId === barId)).toBe(true)
+    expect(barOpen.some((s) => s.visitId === String(barPair.visitId))).toBe(true)
+    expect(barOpen.some((s) => s.visitId === a3Id)).toBe(false)
+    expect(barOpen.some((s) => s.visitId === String(mixed.visitId))).toBe(false)
+
+    // Pure bar cluster preview & invoice succeed
+    const pairPreview = await paymentApi.previewBill(String(barPair.visitId))
+    expect(pairPreview.dueVnd).toBe(176_000)
+    const pairIssued = await paymentApi.issueInvoice(String(barPair.visitId), pairPreview.version, "na45h06-bar-pair")
+    expect(pairIssued.issuedByRole).toBe("BAR")
+
+    // Non-bar (A3) and mixed (C4 + BAR05) sessions are refused 403 on all read/preview/issue endpoints
+    for (const forbiddenVisitId of [a3Id, String(mixed.visitId)]) {
+      await expect(paymentApi.getBill(forbiddenVisitId)).rejects.toMatchObject({ code: "PERMISSION_DENIED", status: 403 })
+      await expect(paymentApi.previewBill(forbiddenVisitId)).rejects.toMatchObject({ code: "PERMISSION_DENIED", status: 403 })
+      await expect(paymentApi.getSessionBills(forbiddenVisitId)).rejects.toMatchObject({
+        code: "PERMISSION_DENIED",
+        status: 403,
+      })
+      await expect(
+        paymentApi.issueInvoice(forbiddenVisitId, 1, `na45h06-forbid-${forbiddenVisitId}`),
+      ).rejects.toMatchObject({ code: "PERMISSION_DENIED", status: 403 })
+    }
+  })
+
+  it("listPaidBills & Receptionist audit access: returns current-shift PAID bills newest-first for RECEPTIONIST/ADMIN/OWNER and blocks CASHIER/WAITER/BAR", async () => {
+    const a2Id = await visitIdByCode("A2")
+    const a3Id = await visitIdByCode("A3")
+
+    const a2Bill = await paymentApi.issueInvoice(a2Id, (await paymentApi.getBill(a2Id)).version, "paid-list-a2")
+    await paymentApi.confirmCash(a2Id, a2Bill.dueVnd, a2Bill.version, "paid-list-pay-a2", a2Bill.billCode)
+
+    const a3Bill = await paymentApi.issueInvoice(a3Id, (await paymentApi.getBill(a3Id)).version, "paid-list-a3")
+    await paymentApi.confirmTransfer(a3Id, true, a3Bill.version, "paid-list-pay-a3", a3Bill.billCode)
+
+    // CASHIER / WAITER / BAR cannot call listPaidBills
+    for (const denied of [cashier, waiter, bar]) {
+      api.setSession(denied)
+      await expect(paymentApi.listPaidBills?.()).rejects.toMatchObject({ code: "PERMISSION_DENIED", status: 403 })
+    }
+
+    // RECEPTIONIST, ADMIN, OWNER can read listPaidBills + listAudit
+    for (const allowed of [receptionist, admin, owner]) {
+      api.setSession(allowed)
+      const list = (await paymentApi.listPaidBills?.()) ?? []
+      expect(list.map((b) => b.billCode)).toContain(a2Bill.billCode)
+      expect(list.map((b) => b.billCode)).toContain(a3Bill.billCode)
+      const first = list.find((b) => b.billCode === a3Bill.billCode)!
+      expect(first).toMatchObject({
+        billCode: a3Bill.billCode,
+        visitId: a3Id,
+        code: "A3",
+        tables: ["A3"],
+        dueVnd: a3Bill.dueVnd,
+        method: "TRANSFER",
+      })
+      expect(first.paidAt).toBeTruthy()
+      expect(first.paidBy).toContain("Thu ngân")
+      expect(list.findIndex((b) => b.billCode === a3Bill.billCode)).toBeLessThan(
+        list.findIndex((b) => b.billCode === a2Bill.billCode),
+      )
+      expect((await paymentApi.listAudit(a3Bill.billCode)).length).toBeGreaterThan(0)
+    }
+
+    // Cancelling removes bill from listPaidBills
+    api.setSession(receptionist)
+    await paymentApi.cancelPaid(a3Bill.billCode, "Hủy trên danh sách đã thu")
+    const afterCancel = (await paymentApi.listPaidBills?.()) ?? []
+    expect(afterCancel.some((b) => b.billCode === a3Bill.billCode)).toBe(false)
+    expect(afterCancel.some((b) => b.billCode === a2Bill.billCode)).toBe(true)
   })
 })

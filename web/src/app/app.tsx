@@ -64,7 +64,8 @@ function Root() {
   if (role === "BAR" && portal === "waiter") return <Navigate to={WAITER_HOME_PATH} replace />
   if (role === "BAR" || role === "KITCHEN") return <Navigate to="/chebien" replace />
   if (role === "CASHIER") return page(<CashierShell />)
-  if (role === "RECEPTIONIST" && location.pathname !== "/floor") return <Navigate to="/floor" replace />
+  if (role === "RECEPTIONIST" && location.pathname !== "/floor" && location.pathname !== "/cancel-payment")
+    return <Navigate to="/floor" replace />
   return shouldUseMobileShell(role, mobile) ? page(<MobileApp />) : <AppShell />
 }
 
