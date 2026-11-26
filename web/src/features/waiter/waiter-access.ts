@@ -81,6 +81,7 @@ export const WAITER_REARRANGE_PERMISSIONS: readonly Permission[] = ["visit.move"
  */
 export const WAITER_FORBIDDEN_PATHS: readonly string[] = [
   "/payment",
+  "/cancel-payment",
   "/reservations",
   "/waitlist",
   "/guests",
