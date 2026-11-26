@@ -1,8 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { AlertTriangle, ChevronLeft, Clock, Info, Link2, Lock, Send } from "lucide-react"
+import { AlertTriangle, Check, ChevronLeft, Clock, Info, Link2, Lock, Send, X } from "lucide-react"
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Navigate, useLocation, useNavigate, useParams } from "react-router"
-import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { ApiError } from "@/services"
 import {
@@ -68,6 +67,11 @@ export function PaymentFlowWorkspace({
   const [busy, setBusy] = useState(false)
   const [payError, setPayError] = useState<PaymentErrorState | null>(null)
   const [receipt, setReceipt] = useState<Receipt | null>(null)
+  const [feedback, setFeedback] = useState<{
+    navKey: string
+    kind: "success" | "info" | "error"
+    text: string
+  } | null>(null)
   const prebillNotice =
     (location.state as { prebillNotice?: string } | null)?.prebillNotice ?? null
 
@@ -75,7 +79,32 @@ export function PaymentFlowWorkspace({
   // or fast taps within the same frame must be blocked synchronously here.
   const inFlightRef = useRef(false)
   const idempotencyKeyRef = useRef<IdempotencySlot | null>(null)
+  const pendingMapScrollRef = useRef<string | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
+  const setShellPendingPayment = payShell?.setPendingPayment
+  const scrollToTop = payShell?.scrollToTop
+
+  const navKey = `${visitIdParam ?? ""}:${step}`
+  const visibleFeedback = feedback && feedback.navKey === navKey ? feedback : null
+
+  const showFeedback = useCallback(
+    (kind: "success" | "info" | "error", text: string, targetKey = navKey) => {
+      setFeedback({ navKey: targetKey, kind, text })
+    },
+    [navKey],
+  )
+
+  useEffect(() => {
+    if (!feedback) return
+    const timer = window.setTimeout(() => setFeedback(null), 3000)
+    return () => window.clearTimeout(timer)
+  }, [feedback])
+
+  useEffect(() => {
+    if (!setShellPendingPayment) return
+    setShellPendingPayment(busy)
+    return () => setShellPendingPayment(false)
+  }, [busy, setShellPendingPayment])
 
   const openQuery = useQuery({
     queryKey: ["payment-open"],
@@ -89,7 +118,6 @@ export function PaymentFlowWorkspace({
     enabled: isPaymentAvailable && canViewAny && Boolean(visitIdParam) && step !== "list",
   })
 
-  const navKey = `${visitIdParam ?? ""}:${step}`
   const [prevNavKey, setPrevNavKey] = useState(navKey)
   if (prevNavKey !== navKey) {
     setPrevNavKey(navKey)
@@ -99,8 +127,8 @@ export function PaymentFlowWorkspace({
   }
 
   useLayoutEffect(() => {
-    if (payShell) {
-      payShell.scrollToTop()
+    if (scrollToTop) {
+      scrollToTop()
       return
     }
     const el = rootRef.current
@@ -109,7 +137,43 @@ export function PaymentFlowWorkspace({
     if (el.parentElement && el.parentElement.scrollTop > 0) {
       el.parentElement.scrollTop = 0
     }
-  }, [payShell, visitIdParam, step])
+  }, [scrollToTop, visitIdParam, step])
+
+  useEffect(() => {
+    if (step !== "list" || !selectedId || pendingMapScrollRef.current !== selectedId) return
+    pendingMapScrollRef.current = null
+    let raf2 = 0
+    const raf1 = window.requestAnimationFrame(() => {
+      raf2 = window.requestAnimationFrame(() => {
+        try {
+          const mapEl = document.getElementById("floor-map")
+          if (!mapEl) return
+          const r = mapEl.getBoundingClientRect()
+          const scrollParent = mapEl.closest(".pay-root") as HTMLElement | null
+          const viewRect = scrollParent
+            ? scrollParent.getBoundingClientRect()
+            : { top: 0, bottom: window.innerHeight }
+          const headerH = scrollParent?.querySelector(".pay-hdr")?.getBoundingClientRect().height ?? 0
+          const visibleTop = Math.max(0, viewRect.top) + headerH
+          const visibleBottom = Math.min(window.innerHeight, viewRect.bottom)
+          if (r.top >= visibleTop + 4 && r.bottom <= visibleBottom - 4) return
+          const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
+          if (scrollParent) {
+            const targetTop = Math.max(0, scrollParent.scrollTop + (r.top - viewRect.top) - headerH - 12)
+            scrollParent.scrollTo({ top: targetTop, behavior: reduced ? "auto" : "smooth" })
+          } else {
+            mapEl.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" })
+          }
+        } catch {
+          /* scrollTo optional in non-DOM envs */
+        }
+      })
+    })
+    return () => {
+      window.cancelAnimationFrame(raf1)
+      window.cancelAnimationFrame(raf2)
+    }
+  }, [selectedId, step])
 
   const openList = openQuery.data ?? []
 
@@ -149,27 +213,12 @@ export function PaymentFlowWorkspace({
   const handleSessionPick = (session: PayBillSummary | string) => {
     const id = typeof session === "string" ? session : session.visitId
     if (selectedId === id) {
+      pendingMapScrollRef.current = null
       goToStep(id, "detail")
       return
     }
+    pendingMapScrollRef.current = id
     setSelectedId(id)
-    try {
-      const mapEl = document.getElementById("floor-map")
-      if (mapEl) {
-        const r = mapEl.getBoundingClientRect()
-        const scrollParent = mapEl.closest(".pay-root")
-        const viewRect = scrollParent ? scrollParent.getBoundingClientRect() : { top: 0, bottom: window.innerHeight }
-        const headerH = scrollParent?.querySelector(".pay-hdr")?.getBoundingClientRect().height ?? 0
-        const visibleTop = Math.max(0, viewRect.top + headerH)
-        const visibleBottom = Math.min(window.innerHeight, viewRect.bottom)
-        if (r.top >= visibleBottom - 24 || r.bottom <= visibleTop + 24) {
-          const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
-          mapEl.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" })
-        }
-      }
-    } catch {
-      /* scrollIntoView optional in non-DOM envs */
-    }
   }
 
   const ensurePrebillIfNeeded = async () => {
@@ -188,11 +237,15 @@ export function PaymentFlowWorkspace({
     try {
       const moved = await ensurePrebillIfNeeded()
       if (moved) {
-        toast.success("Đã tạo tạm tính. Phiên chuyển sang Chờ thanh toán, chưa nhận tiền.")
+        showFeedback(
+          "success",
+          "Đã tạo tạm tính. Phiên chuyển sang Chờ thanh toán, chưa nhận tiền.",
+          `${bill.visitId}:preview`,
+        )
       }
       goToStep(bill.visitId, "preview")
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Không tạo được tạm tính.")
+      showFeedback("error", err instanceof Error ? err.message : "Không tạo được tạm tính.")
     } finally {
       inFlightRef.current = false
       setBusy(false)
@@ -208,7 +261,7 @@ export function PaymentFlowWorkspace({
       await ensurePrebillIfNeeded()
       goToStep(bill.visitId, "method")
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Không thể chuyển sang thu tiền.")
+      showFeedback("error", err instanceof Error ? err.message : "Không thể chuyển sang thu tiền.")
     } finally {
       inFlightRef.current = false
       setBusy(false)
@@ -223,9 +276,9 @@ export function PaymentFlowWorkspace({
     try {
       await paymentApi.requestPayment(bill.visitId)
       await invalidatePaymentQueries()
-      toast.success(`Đã gửi yêu cầu thanh toán ${bill.code} cho Thu ngân.`)
+      showFeedback("success", `Đã gửi yêu cầu thanh toán ${bill.code} cho Thu ngân.`)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Không gửi được yêu cầu thanh toán.")
+      showFeedback("error", err instanceof Error ? err.message : "Không gửi được yêu cầu thanh toán.")
     } finally {
       inFlightRef.current = false
       setBusy(false)
@@ -247,7 +300,7 @@ export function PaymentFlowWorkspace({
       setReceipt,
       invalidate: invalidatePaymentQueries,
       onSuccess: (rc) => {
-        toast.success(`Đã ghi nhận thanh toán. ${rc.tables.join(", ")} về Trống.`)
+        showFeedback("success", `Đã ghi nhận thanh toán. ${rc.tables.join(", ")} về Trống.`, `${rc.visitId}:success`)
         goToStep(rc.visitId, "success")
       },
     })
@@ -461,6 +514,41 @@ export function PaymentFlowWorkspace({
             </div>
           ) : null}
 
+          {visibleFeedback ? (
+            <div
+              role="status"
+              aria-live="polite"
+              data-testid="pay-feedback"
+              className={cn(
+                "pay-fb",
+                visibleFeedback.kind === "error"
+                  ? "pay-fb-err"
+                  : visibleFeedback.kind === "success"
+                    ? "pay-fb-ok"
+                    : "pay-fb-info",
+                step === "success" && "pay-fb-narrow",
+              )}
+            >
+              {visibleFeedback.kind === "error" ? (
+                <AlertTriangle className="pay-i sm" aria-hidden />
+              ) : visibleFeedback.kind === "success" ? (
+                <Check className="pay-i sm" aria-hidden />
+              ) : (
+                <Info className="pay-i sm" aria-hidden />
+              )}
+              <span>{visibleFeedback.text}</span>
+              <button
+                type="button"
+                aria-label="Đóng thông báo"
+                data-testid="pay-feedback-dismiss"
+                onClick={() => setFeedback(null)}
+                className="pay-fb-x"
+              >
+                <X className="pay-i sm" aria-hidden />
+              </button>
+            </div>
+          ) : null}
+
           {step === "detail" && prebillNotice && bill?.status === "SERVING" ? (
             <div role="status" className="pay-bn pay-bn-warn mb-4">
               <Info className="pay-i" aria-hidden />
@@ -527,7 +615,7 @@ export function PaymentFlowWorkspace({
               <SuccessView
                 receipt={receipt}
                 onToList={() => navigate(homePath)}
-                onPrintReceipt={() => toast.info("Mô phỏng: chưa nối máy in thật.")}
+                onPrintReceipt={() => showFeedback("info", "Mô phỏng: chưa nối máy in thật.")}
               />
             ) : (
               <div className="pay-card p-6 text-center">
@@ -553,7 +641,7 @@ export function PaymentFlowWorkspace({
               onChangeViewMode={setPreviewViewMode}
               onCollect={() => void handleCloseToMethod()}
               onRequestPayment={() => void handleRequestPayment()}
-              onSimulatedPrint={(n) => toast.info(`Mô phỏng: chưa nối máy in thật. Ghi nhận lần in #${n}.`)}
+              onSimulatedPrint={(n) => showFeedback("info", `Mô phỏng: chưa nối máy in thật. Ghi nhận lần in #${n}.`)}
             />
           ) : bill ? (
             <div
@@ -608,7 +696,7 @@ export function PaymentFlowWorkspace({
                   onCheckTransfer={() => paymentApi.checkTransfer(bill.visitId)}
                   onConfirmManual={() => void handleConfirm("TRANSFER")}
                   onToList={() => navigate(homePath)}
-                  onCopied={(refText) => toast.success(`Đã chép nội dung: ${refText}`)}
+                  onCopied={(refText) => showFeedback("success", `Đã chép nội dung: ${refText}`)}
                 />
               ) : null}
             </div>

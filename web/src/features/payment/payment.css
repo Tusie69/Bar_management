@@ -285,8 +285,13 @@
   cursor: pointer;
 }
 
-.pay-root .pay-ntf:hover {
+.pay-root .pay-ntf:hover:not(:disabled) {
   background: var(--surface-2);
+}
+
+.pay-root .pay-ntf:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .pay-root .pay-ntf-ic {
@@ -718,7 +723,6 @@
 .pay-root .pay-lg {
   display: grid;
   gap: var(--sp-sec);
-  align-items: start;
 }
 
 .pay-root .pay-sess-list {
@@ -1101,6 +1105,16 @@
   background: color-mix(in oklab, var(--cluster) 10%, transparent);
 }
 
+.pay-root .pay-f-cl.pay-f-cl-sel {
+  border-color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+}
+
+.pay-root .pay-f-cl.pay-f-cl-sel .pay-f-cltag {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
 .pay-root .pay-f-cltag {
   position: absolute;
   z-index: 2;
@@ -1385,6 +1399,67 @@
 
 .pay-root .pay-st-line + .pay-hint {
   margin-top: -12px;
+}
+
+/* Allocated in-flow payment feedback (NA45C-04: never overlaps sticky controls or headings) */
+.pay-root .pay-fb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: var(--r-field);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-1);
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--shadow-xs);
+}
+
+.pay-root .pay-fb > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pay-root .pay-fb-ok {
+  background: var(--st-seated-tint);
+  border-color: var(--st-seated);
+  color: var(--st-seated-ink);
+}
+
+.pay-root .pay-fb-info {
+  background: var(--primary-tint);
+  border-color: var(--primary);
+  color: var(--primary-ink);
+}
+
+.pay-root .pay-fb-err {
+  background: var(--destructive-tint);
+  border-color: color-mix(in oklab, var(--destructive) 45%, transparent);
+  color: var(--destructive-ink);
+}
+
+.pay-root .pay-fb-narrow {
+  width: min(640px, 100%);
+  margin-inline: auto;
+}
+
+.pay-root .pay-fb-x {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.pay-root .pay-fb-x:hover {
+  background: color-mix(in oklab, currentColor 12%, transparent);
 }
 
 /* Banners */
@@ -2551,8 +2626,20 @@
     padding: 0 12px;
   }
   .pay-root .pay-split.detail .pay-st-line,
-  .pay-root .pay-split.detail .pay-hint {
+  .pay-root .pay-split.detail .pay-hint:not(.pay-making-warn) {
     display: none;
+  }
+  .pay-root .pay-split.detail .pay-making-warn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: var(--st-pending-tint);
+    color: var(--st-pending-ink);
+    font-size: 12px;
+    line-height: 1.3;
   }
   .pay-root .pay-split.detail .pay-act {
     gap: 12px;

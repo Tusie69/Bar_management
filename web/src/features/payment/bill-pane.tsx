@@ -201,7 +201,7 @@ export function DetailActionPane({
         </div>
 
         {makingCount > 0 ? (
-          <p className="pay-hint">
+          <p role="note" className="pay-hint pay-making-warn">
             <Info className="pay-i sm" aria-hidden />
             <span>{`${makingCount} món đang làm, vẫn tính vào bill. Hỏi khách trước khi chốt.`}</span>
           </p>

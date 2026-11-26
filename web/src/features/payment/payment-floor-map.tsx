@@ -193,7 +193,7 @@ export function PaymentFloorMap({
   }, [zoomAnim.key, zoomAnim.prev])
 
   const clusterOutlines = useMemo(() => {
-    const outlines: { tag: string; sideTag: boolean; style: ReturnType<typeof boxStyle> }[] = []
+    const outlines: { tag: string; sideTag: boolean; selected: boolean; style: ReturnType<typeof boxStyle> }[] = []
     for (const s of sessions) {
       if (!s.clusterCode || s.tables.length < 2) continue
       const boxes = s.tables
@@ -209,12 +209,13 @@ export function PaymentFloorMap({
         outlines.push({
           tag: s.clusterCode,
           sideTag,
+          selected: s.visitId === selectedId,
           style: boxStyle({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }),
         })
       }
     }
     return outlines
-  }, [sessions])
+  }, [selectedId, sessions])
 
   const isSplit = views.length > 1
 
@@ -391,7 +392,11 @@ export function PaymentFloorMap({
                 )}
 
                 {clusterOutlines.map((o) => (
-                  <div key={o.tag + o.style.left + o.style.top} className="pay-f-cl" style={o.style}>
+                  <div
+                    key={o.tag + o.style.left + o.style.top}
+                    className={cn("pay-f-cl", o.selected && "pay-f-cl-sel")}
+                    style={o.style}
+                  >
                     <span className={cn("pay-f-cltag", o.sideTag && "pay-f-cltag-side")}>{o.tag}</span>
                   </div>
                 ))}
@@ -414,7 +419,8 @@ export function PaymentFloorMap({
                     )
                   }
                   const isPending = session.status === "AWAITING_PAYMENT"
-                  const isSelected = session.visitId === selectedId
+                  const isBarSeatCluster = spot.seat && Boolean(session.clusterCode && session.tables.length > 1)
+                  const isSelected = session.visitId === selectedId && !isBarSeatCluster
                   const hasLines = session.hasOrderLines !== false
                   const firstTableNormalized = normalizeTableCode(session.tables[0] ?? "")
                   const showAmount = !spot.seat && hasLines && firstTableNormalized === spot.code

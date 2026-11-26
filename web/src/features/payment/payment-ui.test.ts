@@ -565,6 +565,34 @@ describe("Cash, QR, Method, PAID locks, and Error states", () => {
     expect(html).toContain("pay-fgrid two")
   })
 
+  it("highlights selected bar-seat cluster frame without thick seat-selection rings (NA45C-11)", () => {
+    const html = renderToStaticMarkup(
+      createElement(PaymentFloorMap, {
+        sessions: [
+          {
+            visitId: "905",
+            billCode: "B0905",
+            sessionCode: "S-0905",
+            code: "G05",
+            tables: ["BAR05", "BAR06"],
+            clusterCode: "G05",
+            status: "SERVING",
+            openedAt: "20:00",
+            waiterName: "Khoa",
+            guests: 2,
+            dueVnd: 200_000,
+            version: 1,
+          },
+        ],
+        selectedId: "905",
+        onSelectSession: () => undefined,
+        onClearSelection: () => undefined,
+      }),
+    )
+    expect(html).toContain("pay-f-cl pay-f-cl-sel")
+    expect(html).not.toContain("pay-ft-sel")
+  })
+
   it("renders unread dot on PaymentNotificationBell according to unread prop", () => {
     const ntfs: PaymentNotification[] = [
       { id: "n1", type: "PAID", title: "Đã thanh toán", text: "A3 · 231.000đ", time: "21:45", visitId: "1" },
@@ -578,6 +606,16 @@ describe("Cash, QR, Method, PAID locks, and Error states", () => {
       createElement(PaymentNotificationBell, { notifications: ntfs, unread: false, onOpen: () => undefined }),
     )
     expect(readHtml).not.toContain('data-testid="pay-ntf-unread-dot"')
+
+    const lockedHtml = renderToStaticMarkup(
+      createElement(PaymentNotificationBell, {
+        notifications: ntfs,
+        unread: true,
+        navigationLocked: true,
+        onOpen: () => undefined,
+      }),
+    )
+    expect(lockedHtml).toContain("Thông báo thanh toán")
   })
 })
 
