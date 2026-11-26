@@ -1,36 +1,59 @@
-import { Navigate, useParams, useSearchParams } from "react-router"
+import { useCallback } from "react"
+import { Navigate, useNavigate, useParams, useSearchParams } from "react-router"
 import { isPaymentAvailable } from "@/services/payment"
 import { useSession } from "@/state/session"
-import { PaymentFlowWorkspace } from "./payment-page"
-
-const MONEY_VIEWS = new Set(["method", "cash", "qr", "success"])
+import { WaiterInvoiceWorkspace } from "@/features/waiter/waiter-invoice-views"
+import {
+  isMoneyViewParam,
+  isWaiterBillRole,
+  parseWaiterBillView,
+  type WaiterBillView,
+} from "@/features/waiter/waiter-invoice-model"
+import "./css/waiter.css"
 
 /**
- * Waiter entry to S2/S3 (reached ONLY through the session detail on /phucvu).
- * Bartender gets NO payment screens. Waiter never sees S4-S7 money screens.
+ * Waiter & Bartender entry to session bill / Xem tạm tính / Xuất hóa đơn.
+ * Never exposes S4-S7 money collection screens (method, cash, QR confirm, success).
  */
 export default function WaiterPaymentPage() {
   const { visitId } = useParams<{ visitId: string }>()
   const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const role = useSession((s) => s.user.role)
 
-  if (!isPaymentAvailable || role !== "WAITER") {
-    return <Navigate to="/phucvu" replace />
-  }
-
   const rawView = searchParams.get("view") ?? searchParams.get("step")
-  if (rawView && MONEY_VIEWS.has(rawView)) {
+  const billCode = searchParams.get("bill")
+
+  const handleNavigateView = useCallback(
+    (nextView: WaiterBillView, nextBillCode?: string) => {
+      if (!visitId) return
+      const params = new URLSearchParams()
+      if (nextView !== "detail") params.set("view", nextView)
+      if (nextBillCode) params.set("bill", nextBillCode)
+      const qs = params.toString()
+      navigate(`/phucvu/phien/${visitId}/thanh-toan${qs ? `?${qs}` : ""}`)
+    },
+    [navigate, visitId],
+  )
+
+  if (!isPaymentAvailable || !visitId || !isWaiterBillRole(role)) {
     return <Navigate to="/phucvu" replace />
   }
 
-  const step = rawView === "preview" ? "preview" : "detail"
+  if (isMoneyViewParam(rawView)) {
+    return <Navigate to="/phucvu" replace />
+  }
+
+  const view = parseWaiterBillView(rawView)
 
   return (
-    <PaymentFlowWorkspace
-      visitIdParam={visitId}
-      stepParam={step}
-      homePath="/phucvu"
-      backHomeLabel="Sơ đồ bàn"
+    <WaiterInvoiceWorkspace
+      visitId={visitId}
+      view={view}
+      billCode={billCode}
+      backLabel="Sơ đồ bàn"
+      onBack={() => navigate("/phucvu")}
+      onNavigateView={handleNavigateView}
     />
   )
 }
