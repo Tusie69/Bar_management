@@ -5,11 +5,17 @@ import type {
   PayBill,
   PaymentAuditAction,
   PaymentAuditEntry,
+  PaymentMethod,
   SessionBills,
 } from "@/services/payment"
 
 export const PAID_CANCEL_OUTCOME_TEXT =
   "Đã huỷ thanh toán - bill về Chưa thu, bàn xanh lá, lượt -1."
+
+export const PAID_METHOD_LABEL: Record<PaymentMethod, string> = {
+  CASH: "Tiền mặt",
+  TRANSFER: "Chuyển khoản QR",
+}
 
 export const AUDIT_ACTION_META: Record<
   PaymentAuditAction,
@@ -27,8 +33,10 @@ export interface PaidBillCandidate {
   billCode: string
   visitId: string
   code: string
+  clusterCode?: string
   tables: string[]
   dueVnd?: number
+  method?: PaymentMethod
   paidAt?: string
   paidBy?: string
   cancelPending?: boolean
@@ -59,7 +67,40 @@ export function canDirectCancelPaid(role: RoleCode): boolean {
 }
 
 export function canReadPaymentAudit(role: RoleCode, canCollect: boolean): boolean {
-  return (role === "OWNER" || role === "ADMIN") && canCollect
+  return role === "RECEPTIONIST" || ((role === "OWNER" || role === "ADMIN") && canCollect)
+}
+
+export function formatPaidMethod(method?: PaymentMethod): string {
+  return method ? PAID_METHOD_LABEL[method] : "-"
+}
+
+export function formatPaidTableLabel(bill: Pick<PaidBillCandidate, "code" | "clusterCode" | "tables">): string {
+  if (bill.clusterCode) {
+    return bill.tables.length ? `Cụm ${bill.clusterCode} (${bill.tables.join(", ")})` : `Cụm ${bill.clusterCode}`
+  }
+  return `Bàn ${bill.code}`
+}
+
+function paidAtSortKey(raw?: string): number {
+  if (!raw) return 0
+  const hhmm = /^(\d{2}):(\d{2})$/.exec(raw.trim())
+  if (hhmm) return Number(hhmm[1]) * 60 + Number(hhmm[2])
+  const parsed = Date.parse(raw)
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
+export function sortPaidBillsNewestFirst(bills: readonly PaidBillCandidate[]): PaidBillCandidate[] {
+  return [...bills].sort((a, b) => paidAtSortKey(b.paidAt) - paidAtSortKey(a.paidAt))
+}
+
+export function filterPaidBills(bills: readonly PaidBillCandidate[], query: string): PaidBillCandidate[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return [...bills]
+  return bills.filter((bill) =>
+    [bill.billCode, bill.code, bill.clusterCode ?? "", ...bill.tables, bill.guestName ?? ""].some((field) =>
+      field.toLowerCase().includes(q),
+    ),
+  )
 }
 
 export function partitionCancelRequests(requests: readonly CancelRequest[]): {
@@ -104,6 +145,7 @@ export function extractPaidBillsFromSessions(sessions: readonly SessionBills[]):
           billCode: bill.billCode,
           visitId: bill.visitId,
           code: bill.code,
+          clusterCode: bill.clusterCode,
           tables: bill.tables,
           dueVnd: bill.dueVnd,
           paidAt: bill.paidAt,

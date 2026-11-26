@@ -1,15 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Lock, RefreshCw } from "lucide-react"
+import { ArrowLeft, Lock, RefreshCw } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { useNavigate } from "react-router"
 import type { RoleCode } from "@/domain/enums"
-import { useBusinessDate } from "@/hooks/use-data"
 import { api, clock } from "@/services"
 import {
   isPaymentAvailable,
   paymentApi,
   type PaymentApi,
-  type PaymentAuditEntry,
-  type SessionBills,
 } from "@/services/payment"
 import { useCan, useSession } from "@/state/session"
 import { AuditPanel } from "./audit-panel"
@@ -19,11 +17,11 @@ import {
   canDirectCancelPaid,
   canReadPaymentAudit,
   collectAuditBillCodes,
-  extractPaidBillsFromSessions,
-  paidCandidatesFromVisits,
+  type PaidBillCandidate,
 } from "./cancel-model"
 import { CancelQueuePanel } from "./cancel-queue-panel"
 import { DirectCancelPanel } from "./direct-cancel-panel"
+import { PaidBillsPanel } from "./paid-bills-panel"
 import "./payment-cancel.css"
 
 const REFRESH_INTERVAL_MS = 5_000
@@ -32,11 +30,13 @@ export function PaymentCancelWorkspace({
   payApi = paymentApi,
   initialBillCode = "",
   embedded = false,
+  onBackToFloor,
   accessOverride,
 }: {
   payApi?: PaymentApi
   initialBillCode?: string
   embedded?: boolean
+  onBackToFloor?: () => void
   accessOverride?: {
     role: RoleCode
     canAuditRead?: boolean
@@ -49,7 +49,6 @@ export function PaymentCancelWorkspace({
   const principal = useSession((s) => s.principal)
   const sessionCanAuditRead = useCan("audit.read")
   const sessionCanCollect = useCan("payment.collect")
-  const today = useBusinessDate()
 
   const role = accessOverride?.role ?? sessionUser.role
   const canAuditRead = accessOverride?.canAuditRead ?? sessionCanAuditRead
@@ -64,7 +63,9 @@ export function PaymentCancelWorkspace({
     (role === "ADMIN" &&
       (principal as { accessLevel?: string } | null)?.accessLevel === "READ_ONLY")
 
+  const [selectedBillCode, setSelectedBillCode] = useState(initialBillCode)
   const [auditBillFilter, setAuditBillFilter] = useState(initialBillCode)
+  const [cancelledBillCode, setCancelledBillCode] = useState("")
 
   const invalidateAll = useCallback(async () => {
     await Promise.all([
@@ -106,49 +107,37 @@ export function PaymentCancelWorkspace({
     refetchInterval: REFRESH_INTERVAL_MS,
   })
 
+  const paidBillsQuery = useQuery({
+    queryKey: ["payment-cancel-paid-bills", role],
+    queryFn: async (): Promise<PaidBillCandidate[]> => {
+      if (!payApi.listPaidBills) return []
+      return payApi.listPaidBills()
+    },
+    enabled: isPaymentAvailable && allowed && showDirectCancel,
+    refetchInterval: REFRESH_INTERVAL_MS,
+  })
+
+  const paidBills = useMemo(() => paidBillsQuery.data ?? [], [paidBillsQuery.data])
+  const selectedPaidBill = useMemo(
+    () => paidBills.find((b) => b.billCode === selectedBillCode) ?? null,
+    [paidBills, selectedBillCode],
+  )
+
+  const hasSelectionOrOutcome = Boolean(selectedBillCode || selectedPaidBill || cancelledBillCode)
+  const shouldShowDirectPanel = showDirectCancel && hasSelectionOrOutcome
+  const shouldShowAuditPanel = showAudit && (showQueue || hasSelectionOrOutcome || Boolean(auditBillFilter))
+
   const auditQuery = useQuery({
     queryKey: ["payment-audit", role, auditBillFilter.trim() || "ALL"],
     queryFn: () => payApi.listAudit(auditBillFilter.trim() || undefined),
-    enabled: isPaymentAvailable && allowed && showAudit,
+    enabled: isPaymentAvailable && allowed && shouldShowAuditPanel,
     refetchInterval: REFRESH_INTERVAL_MS,
   })
 
   const allAuditQuery = useQuery({
     queryKey: ["payment-audit", role, "ALL"],
     queryFn: () => payApi.listAudit(),
-    enabled: isPaymentAvailable && allowed && showAudit,
-    refetchInterval: REFRESH_INTERVAL_MS,
-  })
-
-  const paidBillsQuery = useQuery({
-    queryKey: ["payment-cancel-paid-bills", today, role, showAudit],
-    queryFn: async () => {
-      const [catalog, visits] = await Promise.all([api.getCatalog(), api.listVisits(today)])
-      const tableCodeById = new Map(catalog.tables.map((t) => [t.id, t.code]))
-
-      if (!showAudit) {
-        return paidCandidatesFromVisits(visits, tableCodeById)
-      }
-
-      const candidateVisitIds = new Set<string>()
-      for (const v of visits) {
-        if (v.paidMarkedAt !== null) candidateVisitIds.add(String(v.id))
-      }
-      const auditEntries: PaymentAuditEntry[] = allAuditQuery.data ?? (await payApi.listAudit())
-      for (const entry of auditEntries) {
-        if (entry.visitId) candidateVisitIds.add(entry.visitId)
-      }
-
-      const sessionResults = await Promise.allSettled(
-        [...candidateVisitIds].map((vid) => payApi.getSessionBills(vid)),
-      )
-      const sessions: SessionBills[] = []
-      for (const res of sessionResults) {
-        if (res.status === "fulfilled") sessions.push(res.value)
-      }
-      return extractPaidBillsFromSessions(sessions)
-    },
-    enabled: isPaymentAvailable && allowed && showDirectCancel,
+    enabled: isPaymentAvailable && allowed && showAudit && showQueue,
     refetchInterval: REFRESH_INTERVAL_MS,
   })
 
@@ -156,10 +145,10 @@ export function PaymentCancelWorkspace({
     () =>
       collectAuditBillCodes(
         requestsQuery.data ?? [],
-        paidBillsQuery.data ?? [],
+        paidBills,
         allAuditQuery.data ?? auditQuery.data ?? [],
       ),
-    [allAuditQuery.data, auditQuery.data, paidBillsQuery.data, requestsQuery.data],
+    [allAuditQuery.data, auditQuery.data, paidBills, requestsQuery.data],
   )
 
   if (!isPaymentAvailable) {
@@ -195,6 +184,18 @@ export function PaymentCancelWorkspace({
     void invalidateAll()
   }
 
+  const handleSelectPaidBill = (billCode: string) => {
+    setSelectedBillCode(billCode)
+    setAuditBillFilter(billCode)
+    setCancelledBillCode("")
+  }
+
+  const handleCloseDirect = () => {
+    setSelectedBillCode("")
+    setCancelledBillCode("")
+    if (!showQueue) setAuditBillFilter("")
+  }
+
   return (
     <div className={embedded ? "pc-root" : "pc-root h-full overflow-y-auto"}>
       <div className="pc-pg">
@@ -205,10 +206,16 @@ export function PaymentCancelWorkspace({
               <p className="pc-ph-sub">
                 {showQueue
                   ? "Duyệt yêu cầu huỷ từ Thu ngân theo thời gian thực, huỷ trực tiếp bill đã thu và tra cứu nhật ký theo bill."
-                  : "Huỷ trực tiếp bill đã thanh toán (bắt buộc nhập lý do)."}
+                  : "Chọn bill đã thu trong ca để huỷ thanh toán trực tiếp (bắt buộc nhập lý do) và xem nhật ký bill."}
               </p>
             </div>
             <div className="pc-ph-actions">
+              {role === "RECEPTIONIST" && onBackToFloor ? (
+                <button type="button" onClick={onBackToFloor} className="pc-btn pc-btn-s pc-btn-sm">
+                  <ArrowLeft className="size-4" aria-hidden />
+                  Về sơ đồ
+                </button>
+              ) : null}
               <span className="pc-live-tag" aria-live="polite">
                 <span className="pc-live-dot" aria-hidden />
                 Tự làm mới 5s
@@ -221,7 +228,7 @@ export function PaymentCancelWorkspace({
           </header>
         ) : null}
 
-        <div className={showAudit ? "pc-grid pc-grid-2" : "pc-grid"}>
+        <div className={shouldShowAuditPanel ? "pc-grid pc-grid-2" : "pc-grid"}>
           <div className="pc-col">
             {showQueue ? (
               <CancelQueuePanel
@@ -240,22 +247,36 @@ export function PaymentCancelWorkspace({
             ) : null}
 
             {showDirectCancel ? (
-              <DirectCancelPanel
-                paidBills={paidBillsQuery.data ?? []}
+              <PaidBillsPanel
+                paidBills={paidBills}
+                selectedBillCode={selectedBillCode}
                 loading={paidBillsQuery.isPending}
-                initialBillCode={initialBillCode}
+                error={paidBillsQuery.error}
+                onSelect={handleSelectPaidBill}
+                onRefresh={() => void paidBillsQuery.refetch()}
+              />
+            ) : null}
+
+            {shouldShowDirectPanel ? (
+              <DirectCancelPanel
+                selectedBill={selectedPaidBill}
+                paidBills={paidBills}
+                initialBillCode={selectedBillCode}
                 api={payApi}
                 canViewAudit={showAudit}
                 onCancelled={async (billCode) => {
+                  setSelectedBillCode("")
+                  setCancelledBillCode(billCode)
                   if (showAudit) setAuditBillFilter(billCode)
                   await invalidateAll()
                 }}
                 onInspectAudit={showAudit ? (billCode) => setAuditBillFilter(billCode) : undefined}
+                onClose={handleCloseDirect}
               />
             ) : null}
           </div>
 
-          {showAudit ? (
+          {shouldShowAuditPanel ? (
             <div className="pc-col pc-sticky-side">
               <AuditPanel
                 entries={auditQuery.data ?? []}
@@ -275,5 +296,6 @@ export function PaymentCancelWorkspace({
 }
 
 export default function PaymentCancelPage() {
-  return <PaymentCancelWorkspace />
+  const navigate = useNavigate()
+  return <PaymentCancelWorkspace onBackToFloor={() => navigate("/floor")} />
 }

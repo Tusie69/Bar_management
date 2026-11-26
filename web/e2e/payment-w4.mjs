@@ -1,4 +1,4 @@
-// W4 Payment Cancel & Approval E2E suite (runs against W1+W3+W4 mock on port 43944).
+// W4 + W4b Payment Cancel & Approval E2E suite (runs against mock on port 43946).
 // Screenshots saved strictly under web/e2e/.artifacts/w4-cancel/.
 import assert from "node:assert/strict"
 import fs from "node:fs"
@@ -9,7 +9,7 @@ import { createServer as createViteServer } from "vite"
 const ARTIFACTS_DIR = path.resolve("e2e/.artifacts/w4-cancel")
 fs.mkdirSync(ARTIFACTS_DIR, { recursive: true })
 
-const PORT = 43944
+const PORT = Number(process.env.E2E_PORT ?? 43946)
 const base = process.env.E2E_BASE_URL ?? `http://127.0.0.1:${PORT}`
 
 let viteServer = null
@@ -63,7 +63,7 @@ async function assertNoOverflow(page, label) {
 }
 
 try {
-  // 1. Desktop 1440: CASHIER blocked from /payment-cancel, ADMIN queue approve/reject + real-time + audit + OWNER direct cancel
+  // 1. Desktop 1440: CASHIER/WAITER/BAR blocked from /cancel-payment, ADMIN queue approve/reject + real-time + audit + OWNER direct cancel
   {
     const { context, page, errors } = await openAs({ width: 1440, height: 900 }, 5, "/payment")
 
@@ -141,7 +141,7 @@ try {
       await page.getByRole("button", { name: "Phiên đang mở" }).click()
       await expect(page).toHaveURL(/\/payment$/)
 
-      // Switch to Admin -> back to /payment-cancel -> Approve 2nd request -> verify outcome + audit
+      // Switch to Admin -> back to /cancel-payment -> Approve 2nd request -> verify outcome + audit
       await switchRoleInUi(page, /Quản trị viên/)
       await page.getByRole("button", { name: /Tài khoản:/ }).click()
       await page.getByRole("menuitem", { name: /Về Điều phối/ }).click()
@@ -151,7 +151,9 @@ try {
       const approveBtn = page.getByRole("button", { name: "Duyệt huỷ", exact: true }).first()
       await approveBtn.scrollIntoViewIfNeeded()
       await approveBtn.click()
-      await expect(page.getByTestId("pc-queue-feedback")).toContainText("bill về Chưa thu, bàn xanh lá, lượt -1", { timeout: 10000 })
+      await expect(page.getByTestId("pc-queue-feedback")).toContainText("bill về Chưa thu, bàn xanh lá, lượt -1", {
+        timeout: 10000,
+      })
 
       // Verify Audit panel has full trail for billCode
       const auditRegion = page.getByRole("region", { name: "Nhật ký thanh toán và huỷ theo bill" })
@@ -178,7 +180,7 @@ try {
       await page.getByRole("button", { name: "Xác nhận", exact: true }).click()
       await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
 
-      // Switch to OWNER -> Direct cancel on paid bill with blank-reason validation + valid submit
+      // Switch to OWNER -> PaidBillsPanel -> select billCode -> DirectCancelPanel blank-reason validation + valid submit
       await switchRoleInUi(page, /Chủ sở hữu/)
       await page.getByRole("button", { name: /Tài khoản:/ }).click()
       await page.getByRole("menuitem", { name: /Về Điều phối/ }).click()
@@ -186,11 +188,13 @@ try {
 
       const paidCard = page.getByTestId(`pc-paid-${billCode}`)
       await expect(paidCard).toBeVisible()
-      await paidCard.getByRole("button", { name: "Huỷ thanh toán" }).click()
-      await paidCard.getByRole("button", { name: "Xác nhận huỷ thanh toán" }).click()
-      await expect(paidCard.getByText("Vui lòng nhập lý do huỷ thanh toán.")).toBeVisible()
-      await paidCard.getByLabel("Lý do huỷ thanh toán (bắt buộc)").fill("Khách gọi thêm món")
-      await paidCard.getByRole("button", { name: "Xác nhận huỷ thanh toán" }).click()
+      await paidCard.getByRole("button", { name: "Chọn huỷ thanh toán" }).click()
+      const directForm = page.getByTestId(`pc-direct-form-${billCode}`)
+      await expect(directForm).toBeVisible()
+      await directForm.getByRole("button", { name: "Xác nhận huỷ thanh toán" }).click()
+      await expect(directForm.getByText("Vui lòng nhập lý do huỷ thanh toán.")).toBeVisible()
+      await directForm.getByLabel("Lý do huỷ thanh toán (bắt buộc)").fill("Khách gọi thêm món")
+      await directForm.getByRole("button", { name: "Xác nhận huỷ thanh toán" }).click()
       await expect(page.getByTestId("pc-direct-outcome")).toContainText(
         "bill về Chưa thu, bàn xanh lá, lượt -1",
       )
@@ -199,29 +203,6 @@ try {
       ).toBeVisible()
       await page.screenshot({ path: path.join(ARTIFACTS_DIR, "w4-1440-direct-cancel.png") })
 
-      // Verify RECEPTIONIST contract permission for cancelPaid on a freshly paid bill
-      const recCheck = await page.evaluate(async (bCode) => {
-        const [{ api }, { paymentApi }, { DEMO_USERS }] = await Promise.all([
-          import("/src/services/index.ts"),
-          import("/src/services/payment/index.ts"),
-          import("/src/services/mock/seed.ts"),
-        ])
-        api.setSession(DEMO_USERS.find((u) => u.role === "CASHIER"))
-        const visitId = await window.__21gamPaymentMock.visitIdForTable("A2")
-        const bill = await paymentApi.getBill(visitId)
-        await paymentApi.confirmCash(visitId, bill.dueVnd, bill.version, "w4-e2e-rec-pay", bCode)
-
-        api.setSession(DEMO_USERS.find((u) => u.role === "RECEPTIONIST"))
-        await paymentApi.cancelPaid(bCode, "Lễ tân huỷ do khách đổi bàn")
-        const floor = await api.getFloorState(new Date())
-        const catalog = await api.getCatalog()
-        const a2Id = catalog.tables.find((t) => t.code === "A2").id
-        return {
-          a2State: floor.tables.find((t) => t.tableId === a2Id)?.state,
-        }
-      }, billCode)
-      assert.equal(recCheck.a2State, "seated", "RECEPTIONIST direct cancel should reopen A2 to seated")
-
       assert.deepEqual(errors, [], `w4 1440 console errors: ${errors.join(" | ")}`)
       console.log("PASS w4 1440 approval queue + reject/approve + direct cancel + audit")
     } finally {
@@ -229,17 +210,175 @@ try {
     }
   }
 
-  // 2. Mobile 390x844 layout overflow check
+  // 2. W4b Lễ tân (RECEPTIONIST) E2E: Menu "Huỷ thanh toán" across 390/820/1440 -> pick just-paid bill -> empty reason blocked -> cancel with reason -> bill Chưa thu, table green, turn -1, audit row
+  {
+    const { context, page, errors } = await openAs({ width: 1440, height: 900 }, 5, "/payment")
+
+    try {
+      // Cashier pays A3 (Cash) and records turn count before cancel
+      const a3Session = page.locator(".pay-sess", { hasText: "A3" })
+      await a3Session.click()
+      await a3Session.click()
+      await page.getByRole("button", { name: "Xuất hóa đơn" }).click()
+      await page.getByRole("button", { name: /^Thu tiền/ }).click()
+      await page.getByRole("button", { name: /Tiền mặt/ }).click()
+      await page.locator(".pay-chips .pay-chip").first().click()
+      await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+      await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
+
+      const a3VisitId = new URL(page.url()).pathname.split("/")[2]
+      const a3BillCode = `B${String(a3VisitId).padStart(4, "0")}`
+
+      const beforeStats = await page.evaluate(async (vid) => {
+        const [{ api, clock }, { businessDateOf }, { DEMO_USERS }] = await Promise.all([
+          import("/src/services/index.ts"),
+          import("/src/lib/time.ts"),
+          import("/src/services/mock/seed.ts"),
+        ])
+        api.setSession(DEMO_USERS.find((u) => u.role === "OWNER"))
+        const bd = businessDateOf(clock.now())
+        const res = await api.getTableTurns({ from: bd, to: bd, includeUncounted: true })
+        const visitTurn = res.turns.find((t) => String(t.visitId) === String(vid))
+        const closedTurns = res.turns.filter((t) => t.status === "CLOSED").length
+        return { closedTurns, visitTurnStatus: visitTurn?.status ?? null }
+      }, a3VisitId)
+      assert.equal(beforeStats.visitTurnStatus, "CLOSED", "Paid A3 turn should be CLOSED before cancel")
+
+      // Switch to RECEPTIONIST via Account menu (preserves in-memory MockGamApi state and redirects /payment -> /floor)
+      await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
+      await expect(page).toHaveURL(/\/payment$/)
+      await switchRoleInUi(page, /Lễ tân 1/)
+      await expect(page).toHaveURL(/\/floor$/)
+
+      for (const vp of [
+        { width: 390, height: 844, label: "390" },
+        { width: 820, height: 1180, label: "820" },
+        { width: 1440, height: 900, label: "1440" },
+      ]) {
+        await page.setViewportSize({ width: vp.width, height: vp.height })
+        await page.getByRole("button", { name: /^Menu/ }).click()
+        const cancelMenuItem = page.getByRole("button", { name: /Huỷ thanh toán/ })
+        await expect(cancelMenuItem).toBeVisible()
+        if (vp.label !== "1440") {
+          await page.getByRole("button", { name: "Đóng", exact: true }).first().click()
+        } else {
+          await cancelMenuItem.click()
+        }
+      }
+
+      await expect(page).toHaveURL(/\/cancel-payment$/)
+      await expect(page.getByRole("heading", { name: "Huỷ thanh toán đã thu" })).toBeVisible()
+      await expect(page.getByRole("region", { name: "Bill đã thu trong ca" })).toBeVisible()
+      await expect(page.getByRole("region", { name: "Hàng chờ duyệt huỷ thanh toán" })).toHaveCount(0)
+
+      // Search by bill code / table works
+      const searchInput = page.getByLabel("Tìm theo mã bill hoặc bàn")
+      await searchInput.fill(a3BillCode)
+      const a3Card = page.getByTestId(`pc-paid-${a3BillCode}`)
+      await expect(a3Card).toBeVisible()
+      await expect(a3Card).toContainText("Bàn A3")
+      await expect(a3Card).toContainText("Tiền mặt")
+      await expect(a3Card).toContainText("Thu ngân")
+      await searchInput.fill("")
+
+      // Select just-paid bill -> opens DirectCancelPanel (reason required) + AuditPanel
+      await a3Card.getByRole("button", { name: "Chọn huỷ thanh toán" }).click()
+      const directForm = page.getByTestId(`pc-direct-form-${a3BillCode}`)
+      await expect(directForm).toBeVisible()
+      const recAuditRegion = page.getByRole("region", { name: "Nhật ký thanh toán và huỷ theo bill" })
+      await expect(recAuditRegion).toBeVisible()
+
+      // Empty reason is blocked
+      await directForm.getByRole("button", { name: "Xác nhận huỷ thanh toán" }).click()
+      await expect(directForm.getByText("Vui lòng nhập lý do huỷ thanh toán.")).toBeVisible()
+
+      // Cancel with reason
+      await directForm.getByLabel("Lý do huỷ thanh toán (bắt buộc)").fill("Lễ tân huỷ: khách gọi thêm")
+      await directForm.getByRole("button", { name: "Xác nhận huỷ thanh toán" }).click()
+      await expect(page.getByTestId("pc-direct-outcome")).toContainText("bill về Chưa thu, bàn xanh lá, lượt -1")
+
+      // Audit row visible on AuditPanel for RECEPTIONIST
+      await expect(recAuditRegion.getByText("Huỷ thanh toán trực tiếp").first()).toBeVisible()
+      await expect(recAuditRegion.getByText("Lễ tân huỷ: khách gọi thêm").first()).toBeVisible()
+      await page.screenshot({ path: path.join(ARTIFACTS_DIR, "w4b-1440-reception-cancel.png") })
+
+      // Navigate back to /floor -> verify table A3 is green (Đã tới) and turn -1 + bill Chưa thu
+      await page.getByRole("button", { name: "Về sơ đồ" }).click()
+      await expect(page).toHaveURL(/\/floor$/)
+      await expect(page.locator('[aria-label*="A3"][aria-label*="Đã tới"]').first()).toBeVisible()
+
+      const afterStats = await page.evaluate(async (vid) => {
+        const [{ api, clock }, { businessDateOf }, { paymentApi }, { DEMO_USERS }] = await Promise.all([
+          import("/src/services/index.ts"),
+          import("/src/lib/time.ts"),
+          import("/src/services/payment/index.ts"),
+          import("/src/services/mock/seed.ts"),
+        ])
+        api.setSession(DEMO_USERS.find((u) => u.role === "OWNER"))
+        const bd = businessDateOf(clock.now())
+        const res = await api.getTableTurns({ from: bd, to: bd, includeUncounted: true })
+        const visitTurn = res.turns.find((t) => String(t.visitId) === String(vid))
+        const closedTurns = res.turns.filter((t) => t.status === "CLOSED").length
+        const sessionBills = await paymentApi.getSessionBills(vid)
+        return {
+          closedTurns,
+          visitTurnStatus: visitTurn?.status ?? null,
+          billStatuses: sessionBills.bills.map((b) => b.billStatus),
+        }
+      }, a3VisitId)
+      assert.equal(afterStats.closedTurns, beforeStats.closedTurns - 1, "Closed turns should decrement by 1")
+      assert.equal(afterStats.visitTurnStatus, "OPEN", "A3 turn should reopen to OPEN")
+      assert(afterStats.billStatuses.includes("UNPAID"), "Cancelled bill should return to UNPAID (Chưa thu)")
+
+      assert.deepEqual(errors, [], `w4b reception console errors: ${errors.join(" | ")}`)
+      console.log("PASS w4b reception menu + paid bills list + cancel + floor green + turn -1 + audit")
+    } finally {
+      await context.close()
+    }
+  }
+
+  // 3. Guard check: Waiter (6) & Bartender (8) cannot reach /cancel-payment
+  {
+    for (const guardCase of [
+      { userId: 6, expectedPathPrefix: "/phucvu", label: "WAITER" },
+      { userId: 8, expectedPathPrefix: "/chebien", label: "BAR" },
+    ]) {
+      const { context, page, errors } = await openAs({ width: 390, height: 844 }, guardCase.userId, "/cancel-payment")
+      try {
+        assert(
+          new URL(page.url()).pathname.startsWith(guardCase.expectedPathPrefix),
+          `${guardCase.label} should redirect away from /cancel-payment to ${guardCase.expectedPathPrefix}, got ${page.url()}`,
+        )
+        assert.deepEqual(errors, [], `${guardCase.label} guard console errors: ${errors.join(" | ")}`)
+      } finally {
+        await context.close()
+      }
+    }
+    console.log("PASS w4b WAITER & BAR blocked from /cancel-payment")
+  }
+
+  // 4. Mobile 390x844 layout overflow check (ADMIN & RECEPTIONIST)
   {
     const { context, page, errors } = await openAs({ width: 390, height: 844 }, 7, "/cancel-payment")
     try {
       await expect(page.getByRole("heading", { name: "Duyệt huỷ thanh toán" }).first()).toBeVisible()
       await assertNoOverflow(page, "w4 390 admin")
       await page.screenshot({ path: path.join(ARTIFACTS_DIR, "w4-390-admin.png") })
-      assert.deepEqual(errors, [], `w4 390 console errors: ${errors.join(" | ")}`)
-      console.log("PASS w4 390 layout check")
+      assert.deepEqual(errors, [], `w4 390 admin console errors: ${errors.join(" | ")}`)
+      console.log("PASS w4 390 admin layout check")
     } finally {
       await context.close()
+    }
+
+    const rec = await openAs({ width: 390, height: 844 }, 1, "/cancel-payment")
+    try {
+      await expect(rec.page.getByRole("heading", { name: "Huỷ thanh toán đã thu" }).first()).toBeVisible()
+      await assertNoOverflow(rec.page, "w4b 390 receptionist")
+      await rec.page.screenshot({ path: path.join(ARTIFACTS_DIR, "w4b-390-reception.png") })
+      assert.deepEqual(rec.errors, [], `w4b 390 reception console errors: ${rec.errors.join(" | ")}`)
+      console.log("PASS w4b 390 reception layout check")
+    } finally {
+      await rec.context.close()
     }
   }
 } finally {

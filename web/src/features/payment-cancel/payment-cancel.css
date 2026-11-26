@@ -420,6 +420,28 @@
   background: color-mix(in oklab, var(--st-pending-tint) 35%, var(--surface-1));
 }
 
+.pc-item-selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--primary) 22%, transparent);
+}
+
+.pc-search-wrap {
+  position: relative;
+}
+
+.pc-search-ico {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-subtle);
+  pointer-events: none;
+}
+
+.pc-input.pc-input-search {
+  padding-left: 38px;
+}
+
 .pc-item-top {
   display: flex;
   flex-wrap: wrap;
