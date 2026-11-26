@@ -1,0 +1,543 @@
+// @vitest-environment node
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { createElement } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import { describe, expect, it, vi } from "vitest"
+import { roleCan } from "@/domain/access"
+import type { RoleCode } from "@/domain/enums"
+import type {
+  CancelRequest,
+  PayBill,
+  PayBillSummary,
+  PaymentApi,
+  PaymentAuditEntry,
+  PaymentNotification,
+  PreviewBill,
+  Receipt,
+  SessionBills,
+} from "@/services/payment"
+import { AuditPanel } from "./audit-panel"
+import {
+  canAccessPaymentCancel,
+  canApproveCancelRequests,
+  canDirectCancelPaid,
+  canReadPaymentAudit,
+  collectAuditBillCodes,
+  extractPaidBillsFromSessions,
+  formatCancelTime,
+  paidCandidatesFromVisits,
+  partitionCancelRequests,
+} from "./cancel-model"
+import { CancelQueuePanel } from "./cancel-queue-panel"
+import { DirectCancelPanel } from "./direct-cancel-panel"
+import { PaymentCancelWorkspace } from "./payment-cancel-page"
+
+function makeFakeApi(overrides: Partial<PaymentApi> = {}): PaymentApi {
+  const bill: PayBill = {
+    billCode: "B0002",
+    visitId: "2",
+    sessionCode: "S-0002",
+    code: "A2",
+    tables: ["A2"],
+    status: "PAID",
+    billStatus: "PAID",
+    lines: [],
+    subtotalVnd: 150_000,
+    vatVnd: 15_000,
+    preRoundVnd: 165_000,
+    roundingVnd: 0,
+    dueVnd: 165_000,
+    version: 3,
+    openedAt: "19:20",
+    waiterName: "Minh",
+    guests: 2,
+    roundCount: 1,
+    paidAt: "21:35",
+    paidBy: "Thu ngân · Thu ngân",
+  }
+  const summary: PayBillSummary = {
+    visitId: bill.visitId,
+    billCode: bill.billCode,
+    sessionCode: bill.sessionCode,
+    code: bill.code,
+    tables: bill.tables,
+    status: "PAID",
+    openedAt: bill.openedAt,
+    waiterName: bill.waiterName,
+    guests: bill.guests,
+    dueVnd: bill.dueVnd,
+    version: bill.version,
+  }
+  const preview: PreviewBill = {
+    visitId: bill.visitId,
+    sessionCode: bill.sessionCode,
+    code: bill.code,
+    tables: bill.tables,
+    lines: [],
+    subtotalVnd: bill.subtotalVnd,
+    vatVnd: bill.vatVnd,
+    preRoundVnd: bill.preRoundVnd,
+    roundingVnd: bill.roundingVnd,
+    dueVnd: bill.dueVnd,
+    version: bill.version,
+  }
+  const sessionBills: SessionBills = {
+    visitId: bill.visitId,
+    sessionCode: bill.sessionCode,
+    code: bill.code,
+    tables: bill.tables,
+    status: "PAID",
+    unbilledLineCount: 0,
+    bills: [bill],
+    version: bill.version,
+  }
+  const receipt: Receipt = {
+    billCode: bill.billCode,
+    visitId: bill.visitId,
+    sessionCode: bill.sessionCode,
+    code: bill.code,
+    tables: bill.tables,
+    method: "CASH",
+    manual: false,
+    givenVnd: 200_000,
+    changeVnd: 35_000,
+    preRoundVnd: bill.preRoundVnd,
+    dueVnd: bill.dueVnd,
+    confirmedAt: "21:35",
+    confirmedBy: "Thu ngân",
+  }
+  const pendingReq: CancelRequest = {
+    id: "cr-1",
+    billCode: "B0002",
+    visitId: "2",
+    code: "A2",
+    dueVnd: 165_000,
+    reason: "Khách đổi sang chuyển khoản QR",
+    requestedBy: "Thu ngân · Thu ngân",
+    requestedAt: "2026-11-26T21:40:00.000Z",
+    status: "PENDING",
+  }
+  const ntf: PaymentNotification = {
+    id: "ntf-1",
+    type: "CANCEL_REQUESTED",
+    title: "Yêu cầu hủy bill",
+    text: "A2 (B0002)",
+    time: "21:40",
+    visitId: "2",
+  }
+  const audit: PaymentAuditEntry[] = [
+    {
+      id: "aud-1",
+      action: "CANCEL_REQUESTED",
+      billCode: "B0002",
+      visitId: "2",
+      actor: "Thu ngân · Thu ngân",
+      reason: "Khách đổi sang chuyển khoản QR",
+      at: "2026-11-26T21:40:00.000Z",
+      device: "Máy thu ngân",
+    },
+    {
+      id: "aud-2",
+      action: "CANCEL_APPROVED",
+      billCode: "B0002",
+      visitId: "2",
+      actor: "Thu ngân · Thu ngân",
+      approver: "Quản trị viên · Quản trị viên",
+      reason: "Đã đối soát, cho thu lại",
+      at: "2026-11-26T21:42:00.000Z",
+      device: "Máy quản trị",
+    },
+  ]
+
+  return {
+    listOpen: async () => [summary],
+    getBill: async () => bill,
+    createPrebill: async () => bill,
+    requestPayment: async () => undefined,
+    confirmCash: async () => receipt,
+    confirmTransfer: async () => receipt,
+    listNotifications: async () => [ntf],
+    checkTransfer: async () => ({ found: false }),
+    previewBill: async () => preview,
+    issueInvoice: async () => bill,
+    getSessionBills: async () => sessionBills,
+    requestCancel: async () => pendingReq,
+    listCancelRequests: async () => [pendingReq],
+    decideCancel: async (requestId, approve, note) => ({
+      ...pendingReq,
+      id: requestId,
+      status: approve ? "APPROVED" : "REJECTED",
+      decidedBy: "Quản trị viên · Quản trị viên",
+      decidedAt: "2026-11-26T21:42:00.000Z",
+      ...(note ? { decisionNote: note } : {}),
+    }),
+    cancelPaid: async () => undefined,
+    listAudit: async (billCode) => (billCode ? audit.filter((a) => a.billCode === billCode) : audit),
+    ...overrides,
+  }
+}
+
+function renderWorkspaceAs(role: RoleCode, payApi: PaymentApi) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return renderToStaticMarkup(
+    createElement(
+      QueryClientProvider,
+      { client: qc },
+      createElement(PaymentCancelWorkspace, {
+        payApi,
+        accessOverride: {
+          role,
+          canAuditRead: roleCan(role, "audit.read"),
+          canCollect: roleCan(role, "payment.collect"),
+        },
+      }),
+    ),
+  )
+}
+
+describe("W4 TN-14 access gates & pure model helpers", () => {
+  it("denies CASHIER, WAITER, BAR, KITCHEN, CUSTOMER_CARE and allows ADMIN, OWNER, RECEPTIONIST", () => {
+    expect(canAccessPaymentCancel("CASHIER", false, true)).toBe(false)
+    expect(canAccessPaymentCancel("CASHIER", true, true)).toBe(false)
+    expect(canAccessPaymentCancel("WAITER", false, false)).toBe(false)
+    expect(canAccessPaymentCancel("BAR", false, false)).toBe(false)
+    expect(canAccessPaymentCancel("KITCHEN", false, false)).toBe(false)
+    expect(canAccessPaymentCancel("CUSTOMER_CARE", false, false)).toBe(false)
+
+    expect(canAccessPaymentCancel("ADMIN", true, true)).toBe(true)
+    expect(canAccessPaymentCancel("OWNER", true, true)).toBe(true)
+    expect(canAccessPaymentCancel("RECEPTIONIST", false, false)).toBe(true)
+
+    expect(canApproveCancelRequests("ADMIN", true)).toBe(true)
+    expect(canApproveCancelRequests("OWNER", true)).toBe(true)
+    expect(canApproveCancelRequests("RECEPTIONIST", false)).toBe(false)
+    expect(canApproveCancelRequests("CASHIER", false)).toBe(false)
+
+    expect(canDirectCancelPaid("RECEPTIONIST")).toBe(true)
+    expect(canDirectCancelPaid("ADMIN")).toBe(true)
+    expect(canDirectCancelPaid("OWNER")).toBe(true)
+    expect(canDirectCancelPaid("CASHIER")).toBe(false)
+
+    expect(canReadPaymentAudit("ADMIN", true)).toBe(true)
+    expect(canReadPaymentAudit("OWNER", true)).toBe(true)
+    expect(canReadPaymentAudit("RECEPTIONIST", false)).toBe(false)
+    expect(canReadPaymentAudit("CASHIER", true)).toBe(false)
+  })
+
+  it("partitions PENDING vs decided cancel requests newest-first", () => {
+    const reqs: CancelRequest[] = [
+      {
+        id: "1",
+        billCode: "B0001",
+        visitId: "1",
+        code: "A1",
+        dueVnd: 100_000,
+        reason: "Older pending",
+        requestedBy: "Thu ngân",
+        requestedAt: "2026-11-26T20:00:00.000Z",
+        status: "PENDING",
+      },
+      {
+        id: "2",
+        billCode: "B0002",
+        visitId: "2",
+        code: "A2",
+        dueVnd: 200_000,
+        reason: "Approved one",
+        requestedBy: "Thu ngân",
+        requestedAt: "2026-11-26T20:10:00.000Z",
+        status: "APPROVED",
+        decidedBy: "Admin",
+        decidedAt: "2026-11-26T20:12:00.000Z",
+      },
+      {
+        id: "3",
+        billCode: "B0003",
+        visitId: "3",
+        code: "A3",
+        dueVnd: 300_000,
+        reason: "Newer pending",
+        requestedBy: "Thu ngân",
+        requestedAt: "2026-11-26T21:00:00.000Z",
+        status: "PENDING",
+      },
+    ]
+    const { pending, decided } = partitionCancelRequests(reqs)
+    expect(pending.map((r) => r.id)).toEqual(["3", "1"])
+    expect(decided.map((r) => r.id)).toEqual(["2"])
+  })
+
+  it("extracts PAID bills from sessions and fallback visits and formats times cleanly", () => {
+    const paidFromSessions = extractPaidBillsFromSessions([
+      {
+        visitId: "2",
+        sessionCode: "S-0002",
+        code: "A2",
+        tables: ["A2"],
+        status: "AWAITING_PAYMENT",
+        unbilledLineCount: 0,
+        version: 2,
+        bills: [
+          {
+            billCode: "B0002",
+            visitId: "2",
+            sessionCode: "S-0002",
+            code: "A2",
+            tables: ["A2"],
+            status: "AWAITING_PAYMENT",
+            billStatus: "PAID",
+            lines: [],
+            subtotalVnd: 100_000,
+            vatVnd: 10_000,
+            preRoundVnd: 110_000,
+            roundingVnd: 0,
+            dueVnd: 110_000,
+            version: 2,
+            openedAt: "19:00",
+            waiterName: "Minh",
+            guests: 2,
+            roundCount: 1,
+            paidAt: "21:30",
+            paidBy: "Thu ngân",
+          },
+          {
+            billCode: "B0002-2",
+            visitId: "2",
+            sessionCode: "S-0002",
+            code: "A2",
+            tables: ["A2"],
+            status: "AWAITING_PAYMENT",
+            billStatus: "UNPAID",
+            lines: [],
+            subtotalVnd: 50_000,
+            vatVnd: 5_000,
+            preRoundVnd: 55_000,
+            roundingVnd: 0,
+            dueVnd: 55_000,
+            version: 2,
+            openedAt: "19:00",
+            waiterName: "Minh",
+            guests: 2,
+            roundCount: 1,
+          },
+        ],
+      },
+    ])
+    expect(paidFromSessions.map((b) => b.billCode)).toEqual(["B0002"])
+
+    const visitPaid = paidCandidatesFromVisits(
+      [
+        {
+          id: 9,
+          version: 1,
+          origin: "WALK_IN",
+          customerId: null,
+          displayName: "Khách B1",
+          phoneLast3: null,
+          guestCount: 2,
+          startedAt: new Date("2026-11-26T12:00:00.000Z"),
+          endedAt: new Date("2026-11-26T14:00:00.000Z"),
+          endReason: "GUEST_LEFT",
+          paidMarkedAt: new Date("2026-11-26T14:00:00.000Z"),
+          tableIds: [11],
+          groupId: null,
+          symbolNo: null,
+          reservationId: null,
+          businessDate: "2026-11-26",
+          note: null,
+        },
+      ],
+      new Map([[11, "B1"]]),
+    )
+    expect(visitPaid[0]).toMatchObject({ billCode: "B0009", code: "B1", guestName: "Khách B1" })
+    expect(formatCancelTime("21:45")).toBe("21:45")
+    expect(formatCancelTime(undefined)).toBe("-")
+    expect(collectAuditBillCodes([], paidFromSessions, [])).toEqual(["B0002"])
+  })
+})
+
+describe("W4 TN-14 UI components against fake PaymentApi", () => {
+  it("renders Admin approval queue with PENDING bill, table, amount, reason, requester, time, note, Approve/Reject", () => {
+    const html = renderToStaticMarkup(
+      createElement(CancelQueuePanel, {
+        requests: [
+          {
+            id: "cr-10",
+            billCode: "B0412",
+            visitId: "412",
+            code: "G02",
+            dueVnd: 3_044_000,
+            reason: "Thu nhầm phương thức tiền mặt",
+            requestedBy: "Thu ngân · Thu ngân",
+            requestedAt: "21:40",
+            status: "PENDING",
+          },
+        ],
+        loading: false,
+        error: null,
+        api: makeFakeApi(),
+        onRefresh: () => undefined,
+        onDecided: () => undefined,
+        onInspectAudit: () => undefined,
+      }),
+    )
+    expect(html).toContain("Hàng chờ duyệt huỷ")
+    expect(html).toContain("B0412")
+    expect(html).toContain("Bàn G02")
+    expect(html).toContain("3.044.000đ")
+    expect(html).toContain("Thu nhầm phương thức tiền mặt")
+    expect(html).toContain("Thu ngân · Thu ngân")
+    expect(html).toContain("21:40")
+    expect(html).toContain("Ghi chú phản hồi (tuỳ chọn)")
+    expect(html).toContain("Từ chối")
+    expect(html).toContain("Duyệt huỷ")
+  })
+
+  it("disables Approve/Reject in readOnly mode for Admin Read-Only", () => {
+    const html = renderToStaticMarkup(
+      createElement(CancelQueuePanel, {
+        requests: [
+          {
+            id: "cr-10",
+            billCode: "B0412",
+            visitId: "412",
+            code: "G02",
+            dueVnd: 3_044_000,
+            reason: "Thu nhầm",
+            requestedBy: "Thu ngân",
+            requestedAt: "21:40",
+            status: "PENDING",
+          },
+        ],
+        loading: false,
+        error: null,
+        readOnly: true,
+        api: makeFakeApi(),
+        onRefresh: () => undefined,
+        onDecided: () => undefined,
+      }),
+    )
+    expect(html).toContain("Chế độ chỉ xem")
+    expect(html).toContain("disabled")
+  })
+
+  it("renders DirectCancelPanel for a PAID bill with required reason form", () => {
+    const html = renderToStaticMarkup(
+      createElement(DirectCancelPanel, {
+        paidBills: [
+          {
+            billCode: "B0002",
+            visitId: "2",
+            code: "A2",
+            tables: ["A2"],
+            dueVnd: 165_000,
+            paidAt: "21:35",
+            paidBy: "Thu ngân",
+          },
+        ],
+        initialBillCode: "B0002",
+        api: makeFakeApi(),
+        canViewAudit: true,
+        onInspectAudit: () => undefined,
+      }),
+    )
+    expect(html).toContain("Huỷ thanh toán trực tiếp")
+    expect(html).toContain("B0002")
+    expect(html).toContain("Bàn A2")
+    expect(html).toContain("165.000đ")
+    expect(html).toContain("Lý do huỷ thanh toán (bắt buộc)")
+    expect(html).toContain("Xác nhận huỷ thanh toán")
+  })
+
+  it("renders per-bill AuditPanel with requester, approver/canceller, reason, time, and device", () => {
+    const html = renderToStaticMarkup(
+      createElement(AuditPanel, {
+        entries: [
+          {
+            id: "aud-1",
+            action: "CANCEL_REQUESTED",
+            billCode: "B0002",
+            visitId: "2",
+            actor: "Thu ngân · Thu ngân",
+            reason: "Khách đổi QR",
+            at: "21:40",
+            device: "Máy thu ngân",
+          },
+          {
+            id: "aud-2",
+            action: "CANCEL_APPROVED",
+            billCode: "B0002",
+            visitId: "2",
+            actor: "Thu ngân · Thu ngân",
+            approver: "Quản trị viên · Quản trị viên",
+            reason: "OK duyệt",
+            at: "21:42",
+            device: "Máy quản trị",
+          },
+          {
+            id: "aud-3",
+            action: "CANCELLED_DIRECT",
+            billCode: "B0003",
+            visitId: "3",
+            actor: "Lễ tân 1 · Lễ tân",
+            reason: "Khách gọi thêm món",
+            at: "21:45",
+            device: "iPad quầy",
+          },
+        ],
+        selectedBillCode: "B0002",
+        knownBillCodes: ["B0002", "B0003"],
+        onSelectBillCode: () => undefined,
+        onRefresh: () => undefined,
+      }),
+    )
+    expect(html).toContain("Nhật ký theo bill")
+    expect(html).toContain("Gửi yêu cầu huỷ")
+    expect(html).toContain("Duyệt huỷ thanh toán")
+    expect(html).toContain("Huỷ thanh toán trực tiếp")
+    expect(html).toContain("Thu ngân · Thu ngân")
+    expect(html).toContain("Quản trị viên · Quản trị viên")
+    expect(html).toContain("Lễ tân 1 · Lễ tân")
+    expect(html).toContain("OK duyệt")
+    expect(html).toContain("Máy quản trị")
+    expect(html).toContain("iPad quầy")
+  })
+
+  it("gates PaymentCancelWorkspace by role: CASHIER denied, ADMIN/OWNER full view, RECEPTIONIST direct-cancel only", () => {
+    const fakeApi = makeFakeApi()
+
+    const cashierHtml = renderWorkspaceAs("CASHIER", fakeApi)
+    expect(cashierHtml).toContain("Không có quyền truy cập")
+    expect(cashierHtml).not.toContain("Hàng chờ duyệt huỷ")
+
+    const adminHtml = renderWorkspaceAs("ADMIN", fakeApi)
+    expect(adminHtml).toContain("Duyệt huỷ thanh toán")
+    expect(adminHtml).toContain("Hàng chờ duyệt huỷ")
+    expect(adminHtml).toContain("Huỷ thanh toán trực tiếp")
+    expect(adminHtml).toContain("Nhật ký theo bill")
+
+    const ownerHtml = renderWorkspaceAs("OWNER", fakeApi)
+    expect(ownerHtml).toContain("Duyệt huỷ thanh toán")
+    expect(ownerHtml).toContain("Hàng chờ duyệt huỷ")
+
+    const recHtml = renderWorkspaceAs("RECEPTIONIST", fakeApi)
+    expect(recHtml).toContain("Huỷ thanh toán đã thu")
+    expect(recHtml).toContain("Huỷ thanh toán trực tiếp")
+    expect(recHtml).not.toContain("Hàng chờ duyệt huỷ")
+    expect(recHtml).not.toContain("Nhật ký theo bill")
+  })
+
+  it("validates decideCancel and cancelPaid contract calls against fake PaymentApi", async () => {
+    const decideCancel = vi.fn(makeFakeApi().decideCancel)
+    const cancelPaid = vi.fn(makeFakeApi().cancelPaid)
+    const fakeApi = makeFakeApi({ decideCancel, cancelPaid })
+
+    const res = await fakeApi.decideCancel("cr-1", true, "Duyệt test")
+    expect(res.status).toBe("APPROVED")
+    expect(res.decisionNote).toBe("Duyệt test")
+    expect(decideCancel).toHaveBeenCalledWith("cr-1", true, "Duyệt test")
+
+    await fakeApi.cancelPaid("B0002", "Khách gọi thêm")
+    expect(cancelPaid).toHaveBeenCalledWith("B0002", "Khách gọi thêm")
+  })
+})
