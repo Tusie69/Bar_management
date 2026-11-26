@@ -402,3 +402,455 @@
 [data-sonner-toast] [data-close-button] {
   pointer-events: auto !important;
 }
+
+/* ---------------- NA-45/46 Payment Flow UI ---------------- */
+.pay-root {
+  --ink-strong: oklch(0.16 0.008 80);
+  --ok-bg: #3e7a1c;
+  --ok-bg-hover: #356a17;
+  --ok-bg-active: #2c5912;
+  --st-pending: #d9a406;
+  --st-pending-tint: #fbeec2;
+  --st-pending-ink: #854d0e;
+  --cluster: oklch(0.5 0.12 245);
+  --r-panel: 16px;
+  --r-ctl: 8px;
+  --r-field: 10px;
+  --r-modal: 20px;
+  --r-badge: 6px;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-sec: 24px;
+  --sp-page: 32px;
+  --ease-pay: cubic-bezier(0.22, 1, 0.36, 1);
+  container-type: inline-size;
+  container-name: pay;
+  min-height: 100%;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.dark .pay-root {
+  --ink-strong: oklch(0.97 0.008 90);
+  --ok-bg: var(--st-seated);
+  --ok-bg-hover: oklch(0.8 0.11 158);
+  --ok-bg-active: oklch(0.7 0.11 158);
+  --st-pending: oklch(0.82 0.13 88);
+  --st-pending-tint: oklch(0.82 0.13 88 / 0.2);
+  --st-pending-ink: #fcd34d;
+  --cluster: oklch(0.74 0.1 245);
+}
+
+.pay-root .pay-spin {
+  display: inline-block;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: pay-spin 700ms linear infinite;
+}
+
+@keyframes pay-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pay-root .pay-pulse {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 9999px;
+  background: currentColor;
+}
+
+.pay-root .pay-pulse::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 9999px;
+  border: 2px solid currentColor;
+  opacity: 0;
+  animation: pay-pulse 1.6s var(--ease-pay) infinite;
+}
+
+@keyframes pay-pulse {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.6);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}
+
+/* Session list rows: last row keeps bottom divider, selection ring follows outer corners */
+.pay-sess-list {
+  display: grid;
+  gap: 0;
+  align-content: start;
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+}
+
+.pay-sess {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  width: 100%;
+  min-height: 84px;
+  padding: 14px 16px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 160ms var(--ease-pay);
+}
+
+.pay-sess:first-child {
+  border-top: 0;
+  border-top-left-radius: calc(var(--r-panel) - 1px);
+  border-top-right-radius: calc(var(--r-panel) - 1px);
+}
+
+.pay-sess:last-of-type {
+  border-bottom: 1px solid var(--border);
+  border-bottom-left-radius: calc(var(--r-panel) - 1px);
+  border-bottom-right-radius: calc(var(--r-panel) - 1px);
+}
+
+.pay-sess:hover {
+  background: var(--surface-2);
+}
+
+.pay-sess:active {
+  background: var(--surface-3);
+}
+
+.pay-sess.sel {
+  background: var(--primary-tint);
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+
+/* Method selection list: primary ring follows outer rounded corners */
+.pay-mlist {
+  display: grid;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-field);
+  overflow: hidden;
+}
+
+.pay-mrow {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto 20px;
+  align-items: center;
+  gap: 12px;
+  min-height: 76px;
+  padding: 14px 16px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: var(--surface-1);
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 160ms var(--ease-pay);
+}
+
+.pay-mrow:first-child {
+  border-top: 0;
+  border-top-left-radius: calc(var(--r-field) - 1px);
+  border-top-right-radius: calc(var(--r-field) - 1px);
+}
+
+.pay-mrow:last-child {
+  border-bottom-left-radius: calc(var(--r-field) - 1px);
+  border-bottom-right-radius: calc(var(--r-field) - 1px);
+}
+
+.pay-mrow:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.pay-mrow.sel {
+  background: var(--primary-tint);
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+
+/* Floor map zoom (0.6s, preserved under prefers-reduced-motion per Nam's explicit decision) */
+.pay-fgrid {
+  display: grid;
+  gap: 12px;
+  padding: 12px 16px 16px;
+  justify-items: center;
+}
+
+.pay-fgrid.two {
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+}
+
+.pay-fpanel {
+  position: relative;
+  margin: 0;
+  width: 100%;
+  container-type: inline-size;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background-color: var(--floor);
+  --u: calc(100cqw / 374);
+  max-width: 640px;
+  transition: max-width 600ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.pay-fpanel.full {
+  max-width: 340px;
+}
+
+.pay-fpanel .pay-fsz {
+  animation: none 600ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.pay-fpanel .pay-fview {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: auto;
+  bottom: auto;
+  aspect-ratio: 374 / 732;
+  container-type: inline-size;
+  background-image: radial-gradient(var(--floor-grid) 1px, transparent 1.2px);
+  background-size: calc(12 * var(--u)) calc(12 * var(--u));
+  animation: none 600ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+@keyframes pay-mzA {
+  from {
+    width: var(--fw);
+    transform: translate(var(--fx), var(--fy));
+  }
+}
+
+@keyframes pay-mzB {
+  from {
+    width: var(--fw);
+    transform: translate(var(--fx), var(--fy));
+  }
+}
+
+@keyframes pay-szA {
+  from {
+    padding-top: var(--fpt);
+  }
+}
+
+@keyframes pay-szB {
+  from {
+    padding-top: var(--fpt);
+  }
+}
+
+.pay-ft {
+  position: absolute;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  padding: 0;
+  border: calc(1.6 * var(--u)) solid;
+  border-radius: calc(5 * var(--u));
+  cursor: pointer;
+  line-height: 1.1;
+  font-size: calc(7 * var(--u));
+}
+
+.pay-ft b {
+  font-size: calc(10 * var(--u));
+  font-weight: 700;
+}
+
+.pay-ft-seat {
+  border-radius: 9999px;
+}
+
+.pay-ft-seat b {
+  font-size: calc(8 * var(--u));
+}
+
+.pay-ft-on {
+  background: var(--st-seated-tint);
+  border-color: var(--st-seated);
+  color: var(--st-seated-ink);
+}
+
+.pay-ft-free {
+  background: var(--surface-1);
+  border-color: var(--st-free);
+  border-style: dashed;
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.pay-ft-pend {
+  background: var(--st-pending);
+  border-color: var(--st-pending-ink);
+  color: oklch(0.22 0.04 75);
+}
+
+.dark .pay-ft-pend {
+  border-color: var(--st-pending);
+}
+
+.pay-ft-sel {
+  box-shadow:
+    0 0 0 calc(2 * var(--u)) var(--surface-1),
+    0 0 0 calc(4 * var(--u)) var(--primary);
+}
+
+.pay-fpanel.full .pay-ft small {
+  display: none;
+}
+
+.pay-fpanel.full .pay-ft b {
+  font-size: max(8px, calc(10 * var(--u)));
+}
+
+.pay-fpanel.full .pay-ft-seat b {
+  font-size: max(7px, calc(8 * var(--u)));
+}
+
+.pay-f-cl {
+  position: absolute;
+  pointer-events: none;
+  border: calc(2 * var(--u)) solid var(--cluster);
+  border-radius: calc(7 * var(--u));
+  background: color-mix(in oklab, var(--cluster) 10%, transparent);
+}
+
+.pay-f-cltag {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  top: calc(-7 * var(--u));
+  right: calc(4 * var(--u));
+  padding: 0 calc(3 * var(--u));
+  border-radius: 9999px;
+  background: var(--cluster);
+  color: #fff;
+  font-size: calc(7 * var(--u));
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.dark .pay-f-cltag {
+  color: oklch(0.2 0.02 245);
+}
+
+/* Container-responsive layouts matching NA-44 mockup */
+.pay-lg {
+  display: grid;
+  gap: var(--sp-sec);
+}
+
+.pay-split {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+}
+
+.pay-pv {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+}
+
+@container pay (min-width: 960px) {
+  .pay-lg {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  }
+  .pay-split {
+    grid-template-columns: minmax(0, 1fr) minmax(380px, 440px);
+    gap: var(--sp-sec);
+  }
+  .pay-pane-act {
+    position: sticky;
+    top: 16px;
+  }
+  .pay-qr-wrap {
+    display: grid;
+    grid-template-columns: 168px minmax(0, 1fr);
+    gap: 14px;
+    align-items: start;
+  }
+  .pay-qr-wrap .pay-qr-box {
+    width: 168px;
+    padding: 8px;
+  }
+  .pay-qr-wrap .pay-bank > div {
+    display: grid;
+    gap: 0;
+    min-height: 0;
+    padding: 4px 0;
+  }
+  .pay-pv {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+}
+
+@container pay (max-width: 959px) {
+  .pay-split.pay-first .pay-pane-act {
+    order: -1;
+  }
+  .pay-split.pay-first.pay-collapsed .pay-rounds {
+    display: none;
+  }
+}
+
+@container pay (max-width: 599px) {
+  .pay-lg-m {
+    gap: 12px;
+  }
+  .pay-lg-m .pay-floor-card {
+    order: -1;
+  }
+  .pay-lg-m .pay-fgrid {
+    padding: 8px 10px 10px;
+  }
+  .pay-lg-m .pay-fpanel {
+    max-width: 280px;
+  }
+  .pay-lg-m .pay-fpanel.full {
+    max-width: 210px;
+  }
+  .pay-lg-m .pay-fgrid.two {
+    grid-template-columns: 1fr 1fr;
+  }
+  .pay-lg-m .pay-fgrid.two .pay-ft small {
+    display: none;
+  }
+  .pay-lg-m .pay-sess {
+    min-height: 60px;
+    padding: 10px 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Spinner is a status signal: keeps spinning (slower) with reduced motion on */
+  .pay-root .pay-spin {
+    animation-duration: 1.2s !important;
+    animation-iteration-count: infinite !important;
+  }
+  /* Map zoom 0.6s is an explicit product decision by Nam */
+  .pay-root .pay-fpanel.mv .pay-fview,
+  .pay-root .pay-fpanel.mv .pay-fsz {
+    animation-duration: 600ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
