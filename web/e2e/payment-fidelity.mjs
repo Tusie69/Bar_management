@@ -323,6 +323,8 @@ try {
       await a3Row.click()
       await a3Row.click()
       await page.getByRole("heading", { name: "Chi tiết Phiên" }).waitFor()
+      await page.locator(".pay-pane-bill .pay-bill-h b", { hasText: "A3" }).waitFor()
+      await page.getByRole("region", { name: "Thanh toán" }).getByRole("button", { name: "Xem tạm tính" }).waitFor()
       await page.waitForTimeout(150)
       await clearTransientFeedback(page)
       await page.screenshot({ path: path.join(OUT_DIR, `app-${vp.name}-s2.png`) })
@@ -330,6 +332,7 @@ try {
 
       await page.getByRole("button", { name: "Xem tạm tính" }).click()
       await page.getByRole("button", { name: "Bản in 80mm" }).waitFor()
+      await page.getByLabel("Tạm tính – chưa phải hóa đơn").waitFor()
       await clearTransientFeedback(page)
       await page.waitForTimeout(150)
       await page.screenshot({ path: path.join(OUT_DIR, `app-${vp.name}-s3.png`) })

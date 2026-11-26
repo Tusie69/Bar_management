@@ -2,12 +2,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle, Check, ChevronLeft, Clock, Info, Link2, Lock, Send, X } from "lucide-react"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router"
+import type { RoleCode } from "@/domain/enums"
 import { cn } from "@/lib/utils"
 import { ApiError, isApiError, newIdempotencyKey } from "@/services"
 import {
   formatVnd,
   isPaymentAvailable,
   paymentApi,
+  type CancelRequest,
   type PayBill,
   type PayBillSummary,
   type PaymentApi,
@@ -59,7 +61,51 @@ function isBillPaid(bill: Pick<PayBill, "status" | "billStatus">): boolean {
   return bill.billStatus ? bill.billStatus === "PAID" : bill.status === "PAID"
 }
 
-function previewToPayBill(preview: PreviewBill, status: PayBill["status"]): PayBill {
+export function isSessionConfirmedClosed(sessionBills: SessionBills | undefined): boolean {
+  if (!sessionBills) return false
+  return (
+    sessionBills.status === "PAID" &&
+    sessionBills.unbilledLineCount === 0 &&
+    sessionBills.bills.length > 0 &&
+    sessionBills.bills.every((b) => isBillPaid(b))
+  )
+}
+
+export function buildSuccessFeedbackText(rc: Receipt, sessionBills: SessionBills | undefined): string {
+  if (isSessionConfirmedClosed(sessionBills)) {
+    return `Đã ghi nhận thanh toán. ${rc.tables.join(", ")} về Trống.`
+  }
+  return `Đã thu bill ${rc.billCode}. Phiên ${rc.sessionCode} vẫn đang mở.`
+}
+
+async function fetchSessionBills(api: PaymentApi, visitId: string): Promise<SessionBills> {
+  try {
+    return await api.getSessionBills(visitId)
+  } catch (err) {
+    if (isUnimplemented501(err)) {
+      const b = await api.getBill(visitId)
+      return {
+        visitId: b.visitId,
+        sessionCode: b.sessionCode,
+        code: b.code,
+        tables: b.tables,
+        clusterCode: b.clusterCode,
+        status: b.status,
+        unbilledLineCount: b.status === "SERVING" && b.lines.length > 0 ? b.lines.length : 0,
+        bills: b.status === "SERVING" ? [] : [b],
+        version: b.version,
+      }
+    }
+    throw err
+  }
+}
+
+export function previewToPayBill(
+  preview: PreviewBill,
+  status: PayBill["status"],
+  meta?: Partial<Pick<PayBill, "openedAt" | "waiterName" | "guests" | "requestedAt">>,
+): PayBill {
+  const roundCount = new Set(preview.lines.filter((l) => l.state !== "CANCELLED").map((l) => l.orderRound)).size
   return {
     billCode: "",
     visitId: preview.visitId,
@@ -75,10 +121,11 @@ function previewToPayBill(preview: PreviewBill, status: PayBill["status"]): PayB
     roundingVnd: preview.roundingVnd,
     dueVnd: preview.dueVnd,
     version: preview.version,
-    openedAt: "—",
-    waiterName: "—",
-    guests: 0,
-    roundCount: 0,
+    openedAt: meta?.openedAt ?? "—",
+    waiterName: meta?.waiterName ?? "—",
+    guests: meta?.guests ?? 0,
+    ...(meta?.requestedAt ? { requestedAt: meta.requestedAt } : {}),
+    roundCount,
   }
 }
 
@@ -88,13 +135,20 @@ export function partitionOpenSessions<T extends Pick<PayBillSummary, "status" | 
   const pending: T[] = []
   const serving: T[] = []
   for (const s of sessions) {
-    if (s.status === "AWAITING_PAYMENT" || (s.unpaidBillCount ?? 0) > 0) {
+    if (s.status === "AWAITING_PAYMENT") {
       pending.push(s)
     } else {
       serving.push(s)
     }
   }
   return { pending, serving }
+}
+
+export interface PaymentAccessOverride {
+  role: RoleCode
+  canCollect: boolean
+  canAuditRead?: boolean
+  canReadOrders?: boolean
 }
 
 export function PaymentFlowWorkspace({
@@ -104,6 +158,7 @@ export function PaymentFlowWorkspace({
   backHomeLabel = "Phiên đang mở",
   api,
   isOfflineOverride,
+  accessOverride,
 }: {
   visitIdParam?: string
   stepParam?: string
@@ -111,6 +166,7 @@ export function PaymentFlowWorkspace({
   backHomeLabel?: string
   api?: PaymentApi
   isOfflineOverride?: boolean
+  accessOverride?: PaymentAccessOverride
 }) {
   const activeApi = api ?? paymentApi
   const online = useOnlineStatus()
@@ -121,10 +177,16 @@ export function PaymentFlowWorkspace({
   const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
   const payShell = usePaymentShell()
-  const user = useSession((s) => s.user)
-  const canCollect = useCan("payment.collect")
-  const canReadOrders = useCan("order.read")
-  const isWaiter = user.role === "WAITER" && canReadOrders
+  const sessionUser = useSession((s) => s.user)
+  const sessionCanCollect = useCan("payment.collect")
+  const sessionCanAuditRead = useCan("audit.read")
+  const sessionCanReadOrders = useCan("order.read")
+  const userRole = accessOverride?.role ?? sessionUser.role
+  const canCollect = accessOverride?.canCollect ?? sessionCanCollect
+  const canAuditRead = accessOverride?.canAuditRead ?? sessionCanAuditRead
+  const canReadOrders = accessOverride?.canReadOrders ?? sessionCanReadOrders
+  const isCashier = userRole === "CASHIER"
+  const isWaiter = userRole === "WAITER" && canReadOrders
   const canViewAny = canCollect || isWaiter
   const moneyStepRequested =
     stepParam === "method" || stepParam === "cash" || stepParam === "qr" || stepParam === "success"
@@ -191,33 +253,14 @@ export function PaymentFlowWorkspace({
 
   const sessionBillsQuery = useQuery({
     queryKey: ["payment-session-bills", visitIdParam],
-    queryFn: async (): Promise<SessionBills> => {
-      try {
-        return await activeApi.getSessionBills(visitIdParam!)
-      } catch (err) {
-        if (isUnimplemented501(err)) {
-          const b = await activeApi.getBill(visitIdParam!)
-          return {
-            visitId: b.visitId,
-            sessionCode: b.sessionCode,
-            code: b.code,
-            tables: b.tables,
-            clusterCode: b.clusterCode,
-            status: b.status,
-            unbilledLineCount: b.status === "SERVING" && b.lines.length > 0 ? b.lines.length : 0,
-            bills: b.status === "SERVING" ? [] : [b],
-            version: b.version,
-          }
-        }
-        throw err
-      }
-    },
+    queryFn: () => fetchSessionBills(activeApi, visitIdParam!),
     enabled: isPaymentAvailable && canViewAny && Boolean(visitIdParam) && step !== "list",
   })
 
   const sessionBills = sessionBillsQuery.data
+  const isProvisionalPreviewStep = step === "preview" && previewKind !== "invoice"
   const needsPreviewFetch =
-    step === "preview" || Boolean(sessionBills && sessionBills.bills.length === 0)
+    isProvisionalPreviewStep || Boolean(sessionBills && sessionBills.bills.length === 0)
 
   const previewQuery = useQuery({
     queryKey: ["payment-preview", visitIdParam],
@@ -248,18 +291,26 @@ export function PaymentFlowWorkspace({
     enabled: isPaymentAvailable && canViewAny && Boolean(visitIdParam) && needsPreviewFetch,
   })
 
-  const cancelRequestsQuery = useQuery({
-    queryKey: ["payment-cancel-requests"],
-    queryFn: async () => {
-      try {
-        return await activeApi.listCancelRequests()
-      } catch (err) {
-        if (isUnimplemented501(err)) return []
-        throw err
-      }
-    },
-    enabled: isPaymentAvailable && canCollect && step === "detail",
+  const cachedOpenSummary = useMemo(() => {
+    if (!visitIdParam) return undefined
+    const list = queryClient.getQueryData<PayBillSummary[]>(["payment-open"])
+    return list?.find((s) => s.visitId === visitIdParam)
+  }, [openQuery.dataUpdatedAt, queryClient, visitIdParam])
+
+  const firstIssuedBill = sessionBills?.bills[0]
+  const hasKnownMeta = Boolean(firstIssuedBill || cachedOpenSummary)
+  const visitMetaQuery = useQuery({
+    queryKey: ["payment-visit-meta", visitIdParam],
+    queryFn: () => activeApi.getBill(visitIdParam!),
+    enabled:
+      isPaymentAvailable &&
+      canViewAny &&
+      Boolean(visitIdParam) &&
+      step !== "list" &&
+      !hasKnownMeta &&
+      Boolean(sessionBills && sessionBills.bills.length === 0),
   })
+  const sessionMeta = firstIssuedBill ?? cachedOpenSummary ?? visitMetaQuery.data
 
   const [prevNavKey, setPrevNavKey] = useState(navKey)
   if (prevNavKey !== navKey) {
@@ -324,6 +375,12 @@ export function PaymentFlowWorkspace({
     [openList],
   )
 
+  const previewBillModel: PayBill | undefined = useMemo(() => {
+    if (!previewQuery.data) return undefined
+    if (visitIdParam && previewQuery.data.visitId !== visitIdParam) return undefined
+    return previewToPayBill(previewQuery.data, sessionBills?.status ?? "SERVING", sessionMeta)
+  }, [previewQuery.data, sessionBills?.status, sessionMeta, visitIdParam])
+
   const selectedBill: PayBill | undefined = useMemo(() => {
     if (!sessionBills) return undefined
     const bills = sessionBills.bills
@@ -334,18 +391,30 @@ export function PaymentFlowWorkspace({
       }
       return bills.find((b) => !isBillPaid(b)) ?? bills[0]
     }
-    if (previewQuery.data) {
-      return previewToPayBill(previewQuery.data, sessionBills.status)
-    }
-    return undefined
-  }, [previewQuery.data, requestedBillCode, sessionBills])
+    return previewBillModel
+  }, [previewBillModel, requestedBillCode, sessionBills])
 
-  const previewBillModel: PayBill | undefined = useMemo(() => {
-    if (previewQuery.data) {
-      return previewToPayBill(previewQuery.data, sessionBills?.status ?? "SERVING")
-    }
-    return selectedBill
-  }, [previewQuery.data, selectedBill, sessionBills?.status])
+  const cancelRequestsQuery = useQuery({
+    queryKey: ["payment-cancel-requests", userRole, selectedBill?.billCode ?? ""],
+    queryFn: async (): Promise<CancelRequest[]> => {
+      try {
+        if (isCashier) {
+          return (await activeApi.listMyCancelRequests?.(selectedBill?.billCode)) ?? []
+        }
+        if (canAuditRead) {
+          return await activeApi.listCancelRequests()
+        }
+        return []
+      } catch (err) {
+        if (isUnimplemented501(err)) return []
+        throw err
+      }
+    },
+    enabled:
+      isPaymentAvailable &&
+      step === "detail" &&
+      (isCashier ? Boolean(selectedBill?.billCode) : canAuditRead),
+  })
 
   const invalidatePaymentQueries = useCallback(async () => {
     await Promise.all([
@@ -415,6 +484,7 @@ export function PaymentFlowWorkspace({
   // VM-04 / TN-02-K3: Xem tạm tính stays strictly state-free via previewBill.
   const handlePreview = () => {
     if (!visitIdParam) return
+    void queryClient.invalidateQueries({ queryKey: ["payment-preview", visitIdParam] })
     goToStep(visitIdParam, "preview")
   }
 
@@ -496,8 +566,16 @@ export function PaymentFlowWorkspace({
       setPayError,
       setReceipt,
       invalidate: invalidatePaymentQueries,
-      onSuccess: (rc) => {
-        showFeedback("success", `Đã ghi nhận thanh toán. ${rc.tables.join(", ")} về Trống.`, `${rc.visitId}:success`)
+      onSuccess: async (rc) => {
+        const latestSession =
+          queryClient.getQueryData<SessionBills>(["payment-session-bills", rc.visitId]) ??
+          (await queryClient
+            .fetchQuery({
+              queryKey: ["payment-session-bills", rc.visitId],
+              queryFn: () => fetchSessionBills(activeApi, rc.visitId),
+            })
+            .catch(() => undefined))
+        showFeedback("success", buildSuccessFeedbackText(rc, latestSession), `${rc.visitId}:success`)
         goToStep(rc.visitId, "success", { billCode: rc.billCode })
       },
     })
@@ -572,7 +650,8 @@ export function PaymentFlowWorkspace({
 
   const renderSessionRow = (s: PayBillSummary) => {
     const isSel = selectedId === s.visitId
-    const isPend = s.status === "AWAITING_PAYMENT" || (s.unpaidBillCount ?? 0) > 0
+    const isPend = s.status === "AWAITING_PAYMENT"
+    const unpaidCount = s.unpaidBillCount ?? 0
     const isCluster = Boolean(s.clusterCode && s.tables.length > 1)
     const hasLines = s.hasOrderLines !== false
     const hasIssuedInfo = Boolean(s.issuedAt || s.issuedBy || s.requestedAt)
@@ -599,6 +678,11 @@ export function PaymentFlowWorkspace({
                 <Clock className="pay-i sm" aria-hidden />
                 Chờ thanh toán
               </span>
+            ) : unpaidCount > 0 ? (
+              <span className="pay-pill pay-p-pend">
+                <Clock className="pay-i sm" aria-hidden />
+                {`${unpaidCount} bill chờ thu`}
+              </span>
             ) : null}
             {hasIssuedInfo ? (
               <span className="pay-pill pay-p-req">
@@ -620,10 +704,13 @@ export function PaymentFlowWorkspace({
     )
   }
 
-  const sessionRemainingOpen = Boolean(
-    sessionBills &&
-      (sessionBills.unbilledLineCount > 0 || sessionBills.bills.some((b) => !isBillPaid(b))),
-  )
+  const sessionRemainingOpen = !isSessionConfirmedClosed(sessionBills)
+  const isPreviewBlockingPending = isProvisionalPreviewStep
+    ? previewQuery.isPending
+    : Boolean(sessionBills && sessionBills.bills.length === 0 && previewQuery.isPending)
+  const isPreviewBlockingError = isProvisionalPreviewStep
+    ? previewQuery.isError
+    : Boolean(sessionBills && sessionBills.bills.length === 0 && previewQuery.isError)
 
   const workspaceBody = (
     <>
@@ -802,8 +889,7 @@ export function PaymentFlowWorkspace({
             </div>
           ) : null}
 
-          {step !== "success" &&
-          (sessionBillsQuery.isPending || (step === "preview" && previewQuery.isPending)) ? (
+          {step !== "success" && (sessionBillsQuery.isPending || isPreviewBlockingPending) ? (
             <div className="pay-split" aria-busy="true">
               <div className="pay-card">
                 <div className="pay-sk-stack">
@@ -845,6 +931,29 @@ export function PaymentFlowWorkspace({
                 </span>
               </span>
             </div>
+          ) : step !== "success" && isPreviewBlockingError ? (
+            <div role="alert" className="pay-bn pay-bn-err">
+              <span>
+                <b>
+                  {previewQuery.error instanceof Error
+                    ? previewQuery.error.message
+                    : "Không tải được dữ liệu tạm tính."}
+                </b>
+                <span className="pay-bn-act">
+                  <button type="button" onClick={() => void previewQuery.refetch()} className="pay-btn pay-btn-s">
+                    Thử lại
+                  </button>
+                  {step === "preview" && visitIdParam ? (
+                    <button type="button" onClick={handleBack} className="pay-btn pay-btn-s">
+                      Chi tiết Phiên
+                    </button>
+                  ) : null}
+                  <button type="button" onClick={() => navigate(homePath)} className="pay-btn pay-btn-s">
+                    {backHomeLabel}
+                  </button>
+                </span>
+              </span>
+            </div>
           ) : step === "success" ? (
             receipt ? (
               <SuccessView
@@ -867,24 +976,51 @@ export function PaymentFlowWorkspace({
                 </button>
               </div>
             )
-          ) : needsPrebillRedirect ? null : step === "preview" &&
-            (previewKind === "invoice" ? selectedBill : previewBillModel) ? (
-            <ProvisionalPreviewView
-              bill={(previewKind === "invoice" ? selectedBill : previewBillModel)!}
-              isProvisional={previewKind !== "invoice"}
-              canCollect={canCollect}
-              isWaiter={isWaiter}
-              busy={busy}
-              viewMode={previewViewMode}
-              onChangeViewMode={setPreviewViewMode}
-              onIssueInvoice={async () => {
-                const issued = await handleIssueInvoice()
-                if (issued) goToStep(issued.visitId, "detail", { billCode: issued.billCode })
-              }}
-              onCollect={() => void handleCollect()}
-              onRequestPayment={() => void handleRequestPayment()}
-              onSimulatedPrint={(n) => showFeedback("info", `Mô phỏng: chưa nối máy in thật. Ghi nhận lần in #${n}.`)}
-            />
+          ) : needsPrebillRedirect ? null : step === "preview" ? (
+            previewKind === "invoice" ? (
+              selectedBill && selectedBill.billCode ? (
+                <ProvisionalPreviewView
+                  bill={selectedBill}
+                  isProvisional={false}
+                  canCollect={canCollect}
+                  isWaiter={isWaiter}
+                  busy={busy}
+                  viewMode={previewViewMode}
+                  onChangeViewMode={setPreviewViewMode}
+                  onCollect={() => void handleCollect()}
+                  onRequestPayment={() => void handleRequestPayment()}
+                  onSimulatedPrint={(n) => showFeedback("info", `Mô phỏng: chưa nối máy in thật. Ghi nhận lần in #${n}.`)}
+                />
+              ) : (
+                <div role="alert" className="pay-bn pay-bn-err">
+                  <span>
+                    <b>Không tìm thấy hóa đơn đã xuất.</b>
+                    <span className="pay-bn-act">
+                      <button type="button" onClick={handleBack} className="pay-btn pay-btn-s">
+                        Chi tiết Phiên
+                      </button>
+                    </span>
+                  </span>
+                </div>
+              )
+            ) : previewBillModel ? (
+              <ProvisionalPreviewView
+                bill={previewBillModel}
+                isProvisional
+                canCollect={canCollect}
+                isWaiter={isWaiter}
+                busy={busy}
+                viewMode={previewViewMode}
+                onChangeViewMode={setPreviewViewMode}
+                onIssueInvoice={async () => {
+                  const issued = await handleIssueInvoice()
+                  if (issued) goToStep(issued.visitId, "detail", { billCode: issued.billCode })
+                }}
+                onCollect={() => void handleCollect()}
+                onRequestPayment={() => void handleRequestPayment()}
+                onSimulatedPrint={(n) => showFeedback("info", `Mô phỏng: chưa nối máy in thật. Ghi nhận lần in #${n}.`)}
+              />
+            ) : null
           ) : selectedBill ? (
             <div
               className={cn(
@@ -910,6 +1046,7 @@ export function PaymentFlowWorkspace({
                   unbilledLineCount={sessionBills?.unbilledLineCount}
                   cancelRequests={cancelRequestsQuery.data}
                   canCollect={canCollect}
+                  canRequestCancel={isCashier && canCollect}
                   isWaiter={isWaiter}
                   busy={busy}
                   onPreview={handlePreview}

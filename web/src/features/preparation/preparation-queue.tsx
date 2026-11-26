@@ -118,6 +118,7 @@ export interface PreparationQueueProps {
   embedded?: boolean
   headerActions?: ReactNode
   stationControls?: ReactNode
+  canOpenBill?: (ticket: PreparationTicket) => boolean
   onOpenBill?: (ticket: PreparationTicket) => void
   onBack?: () => void
   onLogout?: () => void
@@ -131,6 +132,7 @@ export function PreparationQueue({
   embedded = false,
   headerActions,
   stationControls,
+  canOpenBill,
   onOpenBill,
   onBack,
   onLogout,
@@ -516,7 +518,9 @@ export function PreparationQueue({
                         }}
                         onTransition={(item, status) => void transition(item, status)}
                         onRetry={(item) => void retry(item)}
-                        onOpenBill={onOpenBill}
+                        onOpenBill={
+                          onOpenBill && (!canOpenBill || canOpenBill(ticket)) ? onOpenBill : undefined
+                        }
                         onProgress={(item, lineNo, doneQuantity, expectedVersion) =>
                           void updateProgress(item, lineNo, doneQuantity, expectedVersion)
                         }

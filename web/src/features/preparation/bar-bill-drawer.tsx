@@ -3,7 +3,7 @@ import { AlertTriangle, ChevronRight, Clock, Link2, ReceiptText } from "lucide-r
 import { useState } from "react"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
-import { sortBarSessionsFirst, toWaiterErrorMessage, type WaiterBillView } from "@/features/waiter/waiter-invoice-model"
+import { isBarGuestSession, toWaiterErrorMessage, type WaiterBillView } from "@/features/waiter/waiter-invoice-model"
 import { WaiterInvoiceWorkspace } from "@/features/waiter/waiter-invoice-views"
 import { formatVnd, paymentApi, type PayBillSummary, type PaymentApi } from "@/services/payment"
 
@@ -91,12 +91,12 @@ export function BarBillDrawerBody({
         onNavigateView={onNavigateView}
         api={api}
         embedded
+        barOnly
       />
     )
   }
 
-  const sessions = openQuery.data ?? []
-  const { barSessions, otherSessions } = sortBarSessionsFirst(sessions)
+  const barSessions = (openQuery.data ?? []).filter(isBarGuestSession)
 
   return (
     <div className="pay-root">
@@ -118,39 +118,20 @@ export function BarBillDrawerBody({
             </span>
           </span>
         </div>
-      ) : barSessions.length === 0 && otherSessions.length === 0 ? (
+      ) : barSessions.length === 0 ? (
         <div className="pay-empty">
           <b>Chưa có khách đang mở ở quầy Bar</b>
-          Khách ngồi ghế Bar hoặc bàn khác sẽ xuất hiện tại đây để xem tạm tính và xuất hóa đơn.
+          Khách ngồi ghế Bar sẽ xuất hiện tại đây để xem tạm tính và xuất hóa đơn.
         </div>
       ) : (
-        <div className="grid gap-4">
-          <section className="grid gap-2" aria-label="Phiên khách quầy Bar">
-            <h3 className="text-xs font-semibold tracking-wider text-[var(--text-muted)] uppercase">
-              {`Khách quầy Bar (${barSessions.length})`}
-            </h3>
-            {barSessions.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-border p-4 text-sm text-[var(--text-muted)]">
-                Hiện chưa có khách ngồi ghế Bar.
-              </p>
-            ) : (
-              barSessions.map((s) => <SessionPickerRow key={s.visitId} session={s} onSelect={onSelectVisit} />)
-            )}
-          </section>
-
-          {otherSessions.length > 0 ? (
-            <details className="grid gap-2">
-              <summary className="cursor-pointer text-xs font-semibold tracking-wider text-[var(--text-muted)] uppercase">
-                {`Bàn khác đang phục vụ (${otherSessions.length})`}
-              </summary>
-              <div className="mt-2 grid gap-2">
-                {otherSessions.map((s) => (
-                  <SessionPickerRow key={s.visitId} session={s} onSelect={onSelectVisit} />
-                ))}
-              </div>
-            </details>
-          ) : null}
-        </div>
+        <section className="grid gap-2" aria-label="Phiên khách quầy Bar">
+          <h3 className="text-xs font-semibold tracking-wider text-[var(--text-muted)] uppercase">
+            {`Khách quầy Bar (${barSessions.length})`}
+          </h3>
+          {barSessions.map((s) => (
+            <SessionPickerRow key={s.visitId} session={s} onSelect={onSelectVisit} />
+          ))}
+        </section>
       )}
     </div>
   )

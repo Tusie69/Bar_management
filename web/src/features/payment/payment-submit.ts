@@ -45,7 +45,7 @@ export async function submitPaymentConfirm(params: {
   setPayError: (err: PaymentErrorState | null) => void
   setReceipt: (rc: Receipt) => void
   invalidate: () => Promise<void>
-  onSuccess: (rc: Receipt) => void
+  onSuccess: (rc: Receipt) => void | Promise<void>
 }): Promise<Receipt | null> {
   const {
     api: payApi,
@@ -83,7 +83,7 @@ export async function submitPaymentConfirm(params: {
     idempotencyKeyRef.current = null
     setReceipt(rc)
     await invalidate()
-    onSuccess(rc)
+    await onSuccess(rc)
     return rc
   } catch (err) {
     const parsed = toPaymentError(err)
