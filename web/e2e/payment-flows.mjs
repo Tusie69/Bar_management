@@ -603,16 +603,16 @@ try {
       await expect(page).toHaveURL(/\/phucvu/)
 
       await page.locator('[aria-label^="Bàn A3,"]').first().click()
-      await page.getByRole("button", { name: /Xem tạm tính & gọi thu ngân/ }).click()
+      await page.getByRole("button", { name: /Xem tạm tính & xuất hóa đơn/ }).click()
       const waiterA3Id = new URL(page.url()).pathname.split("/")[3]
       assert.equal(waiterA3Id, cashierA3Id, `Waiter and Cashier A3 visitId mismatch: ${waiterA3Id} vs ${cashierA3Id}`)
       await expect(page.getByText("Tiger Crystal")).toBeVisible()
       await expect(page.getByText("231.000đ").first()).toBeVisible()
 
-      await page.getByRole("button", { name: "Gửi yêu cầu thanh toán" }).click()
-      await expect(page.getByRole("button", { name: "Đã gửi · chờ Thu ngân chốt" })).toBeDisabled()
+      await page.getByRole("button", { name: "Xuất hóa đơn" }).click()
+      await expect(page.getByText("HÓA ĐƠN", { exact: true })).toBeVisible()
 
-      // Verify the single MockGamApi dataset has exactly 1 updated A3 row with AWAITING_PAYMENT + requestedAt
+      // Verify the single MockGamApi dataset has exactly 1 updated A3 row with AWAITING_PAYMENT + issuedAt
       const openA3Rows = await page.evaluate(async () => {
         const rows = await window.__21gamPaymentMock.listOpen()
         return rows.filter((r) => r.code === "A3")
@@ -620,7 +620,7 @@ try {
       assert.equal(openA3Rows.length, 1, `Expected 1 A3 open row, got ${openA3Rows.length}`)
       assert.equal(openA3Rows[0].visitId, cashierA3Id)
       assert.equal(openA3Rows[0].status, "AWAITING_PAYMENT")
-      assert.ok(openA3Rows[0].requestedAt, "Expected requestedAt on A3 after Waiter request")
+      assert.ok(openA3Rows[0].issuedAt, "Expected issuedAt on A3 after Waiter issueInvoice")
 
       assert.deepEqual(errors, [], `Cross-role A3 console errors: ${errors.join(" | ")}`)
       results.push("PASS 1440 unified single-mock A3 Cashier <-> Waiter request sync")
@@ -629,33 +629,35 @@ try {
     }
   }
 
-  // 5. Waiter PA-A flow at 390 + S4-S7 blocked under BOTH /payment and /phucvu
+  // 5. Waiter flow at 390 + S4-S7 blocked under BOTH /payment and /phucvu
   {
     const { context, page, errors } = await openRole(VIEWPORTS[0], 6, "/phucvu")
     try {
       await page.locator('[aria-label^="Bàn A3,"]').first().click()
-      await page.getByRole("button", { name: /Xem tạm tính & gọi thu ngân/ }).click()
+      await page.getByRole("button", { name: /Xem tạm tính & xuất hóa đơn/ }).click()
       const waiterVisitId = new URL(page.url()).pathname.split("/")[3]
       assert(/^\d+$/.test(waiterVisitId), `Waiter A3 visitId must be numeric, got ${waiterVisitId}`)
 
       // Waiter ?view=preview on SERVING A3 stays state-free (no QR, TẠM TÍNH) and never redirects/mutates
       await page.goto(`${base}/phucvu/phien/${waiterVisitId}/thanh-toan?view=preview`, { waitUntil: "networkidle" })
-      await expect(page.getByText("Tạm tính – chưa phải hóa đơn. Món đã hủy không tính.")).toBeVisible()
+      await expect(page.getByText("Tạm tính – chưa phải hóa đơn").first()).toBeVisible()
       await expect(page.getByText("DEMO – KHÔNG CHUYỂN TIỀN")).toHaveCount(0)
       await page.getByRole("button", { name: "Chi tiết Phiên" }).click()
 
-      await expect(page.getByText("PHƯƠNG ÁN A · QUYỀN PHỤC VỤ")).toBeVisible()
       await expect(page.getByRole("button", { name: "Thu tiền" })).toHaveCount(0)
-      const reqBtn = page.getByRole("button", { name: "Gửi yêu cầu thanh toán" })
-      await expect(reqBtn).toBeVisible()
-      await reqBtn.click()
-      await expect(page.getByRole("button", { name: "Đã gửi · chờ Thu ngân chốt" })).toBeDisabled()
+      await expect(page.getByRole("button", { name: "Chốt bill & thu tiền" })).toHaveCount(0)
       await page.screenshot({ path: path.join(ARTIFACTS_DIR, "payment-390-waiter-pa-a.png") })
 
       // S3 preview is reachable for Waiter to show guest, without collect button
       await page.getByRole("button", { name: "Xem tạm tính" }).click()
       await expect(page.getByText("TẠM TÍNH", { exact: true })).toBeVisible()
       await expect(page.getByRole("button", { name: "Thu tiền" })).toHaveCount(0)
+
+      // Issue invoice works for Waiter without exposing money confirmation actions
+      await page.getByRole("button", { name: "Chi tiết Phiên" }).click()
+      await page.getByRole("button", { name: "Xuất hóa đơn" }).click()
+      await expect(page.getByText("HÓA ĐƠN", { exact: true })).toBeVisible()
+      await expect(page.getByRole("button", { name: /Xác nhận đã nhận/ })).toHaveCount(0)
 
       // Prove S4-S7 money routes are blocked under BOTH /payment and /phucvu
       for (const forbiddenUrl of [

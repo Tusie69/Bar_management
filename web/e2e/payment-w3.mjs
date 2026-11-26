@@ -135,7 +135,7 @@ try {
       await context.setOffline(true)
       await expect(page.getByRole("button", { name: /Chuyển khoản QR/ })).toBeDisabled()
       await expect(page.getByText("Mất kết nối mạng, không tạo được QR. Hãy thu Tiền mặt.")).toBeVisible()
-      await expect(page.getByRole("button", { name: /Tiền mặt/ })).toBeEnabled()
+      await expect(page.getByRole("button", { name: /^Tiền mặt/ })).toBeEnabled()
       await context.setOffline(false)
 
       // Go to S6 QR -> VM-11 Techcombank (no account number), VM-12 locked Đang phát triển, VM-10 reminder
