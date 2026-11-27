@@ -331,12 +331,11 @@ try {
       await expect(page.getByTestId("pc-queue-feedback")).toContainText("Đã từ chối yêu cầu huỷ")
 
       await switchRoleInUi(page, /Thu ngân/)
-      await expect(page).toHaveURL(/\/payment/)
-      const openSessionForNav = page.locator(".pay-sess", { hasText: "A2" })
-      await openSessionForNav.click()
-      await openSessionForNav.click()
+      await expect(page).toHaveURL(/\/payment$/)
+      // NA45H-13: Directly from S1 (/payment), click Từ chối hủy thanh toán for closed session A3 -> opens exact bill detail
       await page.getByRole("button", { name: /Thông báo thanh toán/ }).click()
       await page.locator(".pay-ntf", { hasText: "Từ chối hủy thanh toán" }).first().click()
+      await expect(page).toHaveURL(new RegExp(`/payment/${a3VisitId}`))
       await expect(page.getByText(/Bị từ chối \(REJECTED\)/)).toBeVisible()
       await expect(page.getByText(/Người duyệt:.*Quản trị viên/)).toBeVisible()
       await expect(page.getByText(/Kiểm lại tiền mặt/)).toBeVisible()
@@ -364,17 +363,97 @@ try {
       await a3Reopened.click()
       await a3Reopened.click()
       await expect(page.getByText(/Đã duyệt huỷ \(APPROVED\)/)).toBeVisible()
-      await expect(page.getByText(/Người duyệt:.*Quản trị viên/)).toBeVisible()
+      await expect(page.getByText(/Người duyệt:.*Quản trị viên/).first()).toBeVisible()
 
-      // Re-collect the reverted bill -> Gửi yêu cầu huỷ must be available again
+      // Re-collect the reverted bill -> return to S1 -> open PAID notification from S1 (NA45H-13)
+      // -> verify NA45H-11: both cancel history (reason/approver/note) AND re-collection milestone AND new cancel request
       await page.getByRole("button", { name: /Thu tiền/ }).click()
       await page.getByRole("button", { name: /Tiền mặt/ }).click()
       await page.locator(".pay-chips .pay-chip").first().click()
       await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
       await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
+      await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
+      await expect(page).toHaveURL(/\/payment$/)
       await page.getByRole("button", { name: /Thông báo thanh toán/ }).click()
       await page.locator(".pay-ntf", { hasText: "Đã thanh toán" }).first().click()
+      await expect(page).toHaveURL(new RegExp(`/payment/${a3VisitId}`))
+      await expect(page.getByText("Lần thanh toán sau")).toBeVisible()
+      await expect(page.getByText(/Đã thu lại lúc/)).toBeVisible()
+      await expect(page.getByText(/Đã duyệt huỷ \(APPROVED\)/)).toBeVisible()
+      await expect(page.getByText(/Khách chuyển sang quẹt thẻ/)).toBeVisible()
+      await expect(page.getByText(/Người duyệt:.*Quản trị viên/).first()).toBeVisible()
+      await expect(page.getByText(/Đã duyệt huỷ bill/)).toBeVisible()
       await expect(page.getByRole("button", { name: "Gửi yêu cầu huỷ" })).toBeVisible()
+      await page.getByRole("button", { name: "Gửi yêu cầu huỷ" }).click()
+      await page.getByLabel("Lý do gửi yêu cầu huỷ (bắt buộc)").fill("Huỷ lại sau khi đã thu lại")
+      await page.getByRole("button", { name: "Xác nhận gửi yêu cầu huỷ" }).click()
+      await expect(page.getByText(/Đang chờ duyệt \(PENDING\)/)).toBeVisible()
+      await expect(page.getByText(/Đã duyệt huỷ \(APPROVED\)/)).toBeVisible()
+
+      // NA45H-13: Multi-bill closed session (A2 with 2 bills) -> S1 bell opens the exact target billCode
+      await page.getByRole("button", { name: "Phiên đang mở" }).click()
+      await expect(page).toHaveURL(/\/payment$/)
+      const a2Multi = page.locator(".pay-sess", { hasText: "A2" })
+      await a2Multi.click()
+      await a2Multi.click()
+      await page.getByRole("button", { name: "Xuất hóa đơn" }).click()
+      await expect(page.getByText("Hóa đơn trong phiên (1)")).toBeVisible()
+      const a2VisitId = new URL(page.url()).pathname.split("/")[2]
+      const a2Bill1 = `B${String(a2VisitId).padStart(4, "0")}`
+      const a2Bill2 = `${a2Bill1}-2`
+      await page.evaluate((vid) => {
+        window.__21gamPaymentMock.addOrderLines(vid, [
+          { name: "Nước suối", unit: "Chai", qty: 1, unitPriceVnd: 25_000, state: "SERVED" },
+        ])
+      }, a2VisitId)
+      await page.locator(".pay-unbilled").getByRole("button", { name: "Xuất hóa đơn" }).click()
+      await expect(page.getByText("Hóa đơn trong phiên (2)")).toBeVisible()
+
+      // Collect bill 1 then bill 2 so A2 is closed with 2 bills
+      await page.locator(".pay-bill-item", { hasText: a2Bill1 }).first().click()
+      await page.getByRole("button", { name: new RegExp(`Thu tiền · ${a2Bill1}$`) }).click()
+      await page.getByRole("button", { name: /Tiền mặt/ }).click()
+      await page.locator(".pay-chips .pay-chip").first().click()
+      await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+      await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
+      await page.getByRole("button", { name: "Về chi tiết Phiên" }).click()
+      await page.locator(".pay-bill-item", { hasText: a2Bill2 }).click()
+      await page.getByRole("button", { name: new RegExp(`Thu tiền · ${a2Bill2}$`) }).click()
+      await page.getByRole("button", { name: /Tiền mặt/ }).click()
+      await page.locator(".pay-chips .pay-chip").first().click()
+      await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+      await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
+
+      // From S1, click PAID notification for A2 -> opens a2Bill2 (the latest PAID bill)
+      await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
+      await expect(page).toHaveURL(/\/payment$/)
+      await page.getByRole("button", { name: /Thông báo thanh toán/ }).click()
+      await page.locator(".pay-ntf", { hasText: "Đã thanh toán" }).filter({ hasText: "A2" }).first().click()
+      await expect(page).toHaveURL(new RegExp(`/payment/${a2VisitId}\\?bill=${a2Bill2}`))
+      await expect(page.locator(".pay-bill-item", { hasText: a2Bill2 })).toHaveAttribute("aria-pressed", "true")
+
+      // Submit cancel request on a2Bill2 -> Admin rejects -> Cashier clicks rejection notification from S1 -> opens a2Bill2
+      await page.getByRole("button", { name: "Gửi yêu cầu huỷ" }).click()
+      await page.getByLabel("Lý do gửi yêu cầu huỷ (bắt buộc)").fill("Kiểm tra bill 2 nhiều bill")
+      await page.getByRole("button", { name: "Xác nhận gửi yêu cầu huỷ" }).click()
+      await expect(page.getByText(/Đang chờ duyệt \(PENDING\)/)).toBeVisible()
+
+      await page.getByRole("button", { name: "Phiên đang mở" }).click()
+      await switchRoleInUi(page, /Quản trị viên/)
+      await page.getByRole("button", { name: /Tài khoản:/ }).click()
+      await page.getByRole("menuitem", { name: /Về Điều phối/ }).click()
+      await page.getByRole("link", { name: "Duyệt huỷ thanh toán" }).click()
+      await page.getByLabel("Ghi chú phản hồi (tuỳ chọn)").first().fill("Giữ nguyên bill 2")
+      await page.getByRole("button", { name: "Từ chối" }).first().click()
+      await expect(page.getByTestId("pc-queue-feedback")).toContainText("Đã từ chối yêu cầu huỷ")
+
+      await switchRoleInUi(page, /Thu ngân/)
+      await expect(page).toHaveURL(/\/payment$/)
+      await page.getByRole("button", { name: /Thông báo thanh toán/ }).click()
+      await page.locator(".pay-ntf", { hasText: "Từ chối hủy thanh toán" }).filter({ hasText: a2Bill2 }).first().click()
+      await expect(page).toHaveURL(new RegExp(`/payment/${a2VisitId}\\?bill=${a2Bill2}`))
+      await expect(page.locator(".pay-bill-item", { hasText: a2Bill2 })).toHaveAttribute("aria-pressed", "true")
+      await expect(page.getByText("Giữ nguyên bill 2")).toBeVisible()
 
       assert.deepEqual(errors, [], `w3 1440 console errors: ${errors.join(" | ")}`)
       console.log("PASS w3 1440 HU-44 v1.1 contract flow")
