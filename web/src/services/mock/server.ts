@@ -128,6 +128,7 @@ import { apiErrorMessage } from "../error-messages"
 import { calcBillTotals, formatVnd, sortOpenBills } from "../payment/calc"
 import type {
   BillPayStatus,
+  CancelEffect,
   CancelRequest,
   PaidBillSummary,
   PayBill,
@@ -4282,7 +4283,7 @@ export class MockGamApi implements GamApi, DemoControls {
     return this.toCancelRequest(req)
   }
 
-  async cancelPaidBill(billCode: string, reason: string): Promise<void> {
+  async cancelPaidBill(billCode: string, reason: string): Promise<CancelEffect> {
     await this.latency("m")
     const allowed: RoleCode[] = ["RECEPTIONIST", "ADMIN", "OWNER"]
     if (!allowed.includes(this.session.role)) {
@@ -4322,6 +4323,7 @@ export class MockGamApi implements GamApi, DemoControls {
       actorUserId: this.session.id,
       summary: `Hủy thanh toán ${billView.code} (${billCode})`,
     })
+    return { sessionReopened: false, closedTurnsDelta: 0 }
   }
 
   async listPaidPaymentBills(): Promise<PaidBillSummary[]> {

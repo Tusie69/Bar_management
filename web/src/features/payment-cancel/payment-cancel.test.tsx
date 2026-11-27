@@ -197,7 +197,7 @@ function makeFakeApi(overrides: Partial<PaymentApi> = {}): PaymentApi {
       decidedAt: "2026-11-26T21:42:00.000Z",
       ...(note ? { decisionNote: note } : {}),
     }),
-    cancelPaid: async () => undefined,
+    cancelPaid: async () => ({ sessionReopened: true, closedTurnsDelta: -1 }),
     listAudit: async (billCode) => (billCode ? audit.filter((a) => a.billCode === billCode) : audit),
     listPaidBills: async () => paidBills,
     listMyCancelRequests: async () => [],
