@@ -1,4 +1,5 @@
 import type { ChangeEvent } from "@/domain/models"
+import { ApiError } from "../contracts"
 
 export interface MockSyncPacket {
   rev: number
@@ -76,7 +77,6 @@ function parsePacket(raw: string | null): MockSyncPacket | null {
  * Uses BroadcastChannel for instant push + localStorage for late-opening tabs and backup delivery.
  */
 export function createBrowserMockSyncTransport(): MockSyncTransport {
-  let lockQueue: Promise<void> = Promise.resolve()
   return {
     readLatest() {
       try {
@@ -102,24 +102,24 @@ export function createBrowserMockSyncTransport(): MockSyncTransport {
       }
     },
     withLock<T>(fn: () => Promise<T> | T): Promise<T> {
-      if (typeof navigator !== "undefined" && navigator.locks?.request) {
-        return navigator.locks.request(SYNC_LOCK_NAME, () => fn())
+      if (typeof navigator === "undefined" || !navigator.locks?.request) {
+        return Promise.reject(
+          new ApiError(
+            503,
+            "WEB_LOCKS_REQUIRED",
+            "Chế độ demo cần trình duyệt hỗ trợ Web Locks (mở qua localhost hoặc HTTPS).",
+          ),
+        )
       }
-      const next = lockQueue.then(() => fn())
-      lockQueue = next.then(
-        () => undefined,
-        () => undefined,
-      )
-      return next
+      return navigator.locks.request(SYNC_LOCK_NAME, () => fn())
     },
     tryWithLock(fn) {
-      if (typeof navigator !== "undefined" && navigator.locks?.request) {
-        void navigator.locks.request(SYNC_LOCK_NAME, { ifAvailable: true }, (lock) => {
-          if (lock) fn()
-        })
+      if (typeof navigator === "undefined" || !navigator.locks?.request) {
         return
       }
-      fn()
+      void navigator.locks.request(SYNC_LOCK_NAME, { ifAvailable: true }, (lock) => {
+        if (lock) fn()
+      })
     },
     subscribe(listener) {
       let channel: BroadcastChannel | null = null
