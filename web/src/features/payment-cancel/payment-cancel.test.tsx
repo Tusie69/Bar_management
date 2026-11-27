@@ -7,6 +7,7 @@ import { roleCan } from "@/domain/access"
 import type { RoleCode } from "@/domain/enums"
 import { WAITER_FORBIDDEN_PATHS } from "@/features/waiter/waiter-access"
 import type {
+  CancelEffect,
   CancelRequest,
   PaidBillSummary,
   PayBill,
@@ -38,7 +39,6 @@ import {
   sortPaidBillsNewestFirst,
   submitDecideCancel,
   submitDirectCancel,
-  type CancelEffectLike,
   type PaidBillCandidate,
 } from "./cancel-model"
 import { CancelQueuePanel } from "./cancel-queue-panel"
@@ -365,10 +365,10 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
       getSessionBills,
       listOpen,
       getBill,
-      cancelPaid: (async (billCode: string) =>
-        (billCode === "B0002"
+      cancelPaid: async (billCode: string): Promise<CancelEffect> =>
+        billCode === "B0002"
           ? { sessionReopened: true, closedTurnsDelta: -1 }
-          : { sessionReopened: false, closedTurnsDelta: 0 }) satisfies CancelEffectLike) as unknown as PaymentApi["cancelPaid"],
+          : { sessionReopened: false, closedTurnsDelta: 0 },
       decideCancel: async (requestId, approve, note) => ({
         id: requestId,
         billCode: "B0002",
@@ -384,9 +384,10 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
         ...(note ? { decisionNote: note } : {}),
         ...(approve
           ? {
-              effect: (requestId === "cr-reopen"
-                ? { sessionReopened: true, closedTurnsDelta: -1 }
-                : { sessionReopened: false, closedTurnsDelta: 0 }) satisfies CancelEffectLike,
+              effect:
+                requestId === "cr-reopen"
+                  ? { sessionReopened: true, closedTurnsDelta: -1 }
+                  : { sessionReopened: false, closedTurnsDelta: 0 },
             }
           : {}),
       }),
@@ -420,7 +421,9 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
     expect(rejectRes.feedback.text).toContain("Đã từ chối yêu cầu huỷ")
 
     // Missing effect fallback (temporary contract without effect) shows only confirmed bill status
-    const noEffectApi = makeFakeApi()
+    const noEffectApi = makeFakeApi({
+      cancelPaid: async () => undefined as unknown as CancelEffect,
+    })
     const directUnknown = await submitDirectCancel(noEffectApi, "B0002", "Fallback")
     expect(directUnknown.title).toBe("B0002: Đã huỷ thanh toán - bill về Chưa thu.")
     const approveUnknown = await submitDecideCancel(

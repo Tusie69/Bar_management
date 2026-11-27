@@ -1,6 +1,7 @@
 import type { RoleCode } from "@/domain/enums"
 import type { VisitView } from "@/domain/models"
 import {
+  type CancelEffect,
   type CancelRequest,
   type PayBill,
   type PaymentApi,
@@ -10,15 +11,10 @@ import {
   type SessionBills,
 } from "@/services/payment"
 
-export interface CancelEffectLike {
-  sessionReopened: boolean
-  closedTurnsDelta: 0 | -1
-}
-
 export type CancelSessionImpact = "REOPENED" | "REOPENED_NO_TURN" | "STILL_OPEN" | "UNKNOWN"
 
 export function resolveCancelSessionImpact(
-  effect?: CancelEffectLike | null,
+  effect?: CancelEffect | null,
 ): CancelSessionImpact {
   if (!effect || typeof effect !== "object" || typeof effect.sessionReopened !== "boolean") {
     return "UNKNOWN"
@@ -79,7 +75,7 @@ export async function submitDirectCancel(
   billCode: string,
   reason: string,
 ): Promise<{ title: string; detail: string }> {
-  const effect = (await api.cancelPaid(billCode, reason)) as CancelEffectLike | undefined
+  const effect = await api.cancelPaid(billCode, reason)
   return buildDirectCancelOutcome(billCode, resolveCancelSessionImpact(effect))
 }
 
@@ -99,12 +95,11 @@ export async function submitDecideCancel(
       },
     }
   }
-  const effect = (updated as { effect?: CancelEffectLike }).effect
   return {
     updated,
     feedback: {
       kind: "ok",
-      text: buildApproveCancelFeedback(req.billCode, req.code, resolveCancelSessionImpact(effect)),
+      text: buildApproveCancelFeedback(req.billCode, req.code, resolveCancelSessionImpact(updated.effect)),
     },
   }
 }
