@@ -220,34 +220,28 @@ export function DetailActionPane({
   const canIssue = Boolean(canCollect && onIssueInvoice && !isClosedUnpaid && unbilledCount > 0 && hasLines)
   const canCollectSelected = Boolean(canCollect && !isClosed && hasLines && (isUnpaidBill || !onIssueInvoice))
 
-  const latestCancelRequest = useMemo(() => {
-    if (!cancelRequests?.length || !bill.billCode) return null
+  const billCancelRequests = useMemo(() => {
+    if (!cancelRequests?.length || !bill.billCode) return []
     const matches = cancelRequests.filter((r) => r.billCode === bill.billCode)
-    if (matches.length <= 1) return matches[0] ?? null
+    if (matches.length <= 1) return matches
     return [...matches].sort((a, b) => {
       const ta = Date.parse(a.requestedAt)
       const tb = Date.parse(b.requestedAt)
       if (!Number.isNaN(ta) && !Number.isNaN(tb) && tb !== ta) return tb - ta
       return 0
-    })[0]
+    })
   }, [bill.billCode, cancelRequests])
 
-  // An APPROVED request reverted a prior payment to UNPAID. Once the bill is
-  // re-collected (isBillPaid === true), that approval belongs to the prior
-  // collection and must not block or mislabel a new cancel request.
-  const activeCancelRequest =
-    latestCancelRequest && !(isBillPaid && latestCancelRequest.status === "APPROVED")
-      ? latestCancelRequest
-      : null
-
-  const hasPendingCancel = activeCancelRequest?.status === "PENDING" || Boolean(bill.cancelPending)
+  const latestCancelRequest = billCancelRequests[0] ?? null
+  const hasPendingCancel = latestCancelRequest?.status === "PENDING" || Boolean(bill.cancelPending)
+  const hasApprovedHistory = billCancelRequests.some((r) => r.status === "APPROVED")
   const canSubmitCancelRequest = Boolean(
     isBillPaid && canRequestCancel && onRequestCancel && bill.billCode && !hasPendingCancel,
   )
   const showCancelBox = Boolean(
     canCollect &&
-      ((isBillPaid && (activeCancelRequest || bill.cancelPending || canSubmitCancelRequest)) ||
-        (isUnpaidBill && activeCancelRequest?.status === "APPROVED")),
+      ((isBillPaid && (billCancelRequests.length > 0 || bill.cancelPending || canSubmitCancelRequest)) ||
+        (isUnpaidBill && hasApprovedHistory)),
   )
 
   const dueSub =
@@ -258,7 +252,7 @@ export function DetailActionPane({
         : `Không cần làm tròn · Bill ${bill.billCode}`
 
   const statusNote = isBillPaid
-    ? `Bill ${bill.billCode} đã thu${bill.paidAt ? ` lúc ${bill.paidAt}` : ""}`
+    ? `Bill ${bill.billCode} đã thu${bill.paidAt ? ` lúc ${bill.paidAt}` : ""}${bill.paidBy ? ` · ${bill.paidBy}` : ""}`
     : isClosedUnpaid
       ? "Phiên đã trả bàn nhưng chưa ghi nhận thu tiền"
       : !hasLines
@@ -436,52 +430,72 @@ export function DetailActionPane({
 
         {showCancelBox ? (
           <div className="pay-cancel-box" aria-label="Yêu cầu huỷ thanh toán">
-            {activeCancelRequest ? (
-              <div className="grid gap-1 text-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold">Trạng thái yêu cầu huỷ</span>
-                  <span
-                    className={cn(
-                      "pay-pill",
-                      activeCancelRequest.status === "APPROVED"
-                        ? "pay-p-open"
-                        : activeCancelRequest.status === "REJECTED"
-                          ? "pay-p-unpaid"
-                          : "pay-p-pend",
-                    )}
-                  >
-                    {activeCancelRequest.status === "PENDING" ? (
-                      <>
-                        <Clock className="pay-i sm" aria-hidden />
-                        Đang chờ duyệt (PENDING)
-                      </>
-                    ) : activeCancelRequest.status === "APPROVED" ? (
-                      <>
-                        <CheckCircle2 className="pay-i sm" aria-hidden />
-                        Đã duyệt huỷ (APPROVED)
-                      </>
-                    ) : (
-                      <>
-                        <XCircle className="pay-i sm" aria-hidden />
-                        Bị từ chối (REJECTED)
-                      </>
-                    )}
-                  </span>
-                </div>
-                <span className="text-xs text-[var(--text-muted)]">
-                  {`Lý do: ${activeCancelRequest.reason} · ${activeCancelRequest.requestedBy} (${activeCancelRequest.requestedAt})`}
+            {isBillPaid && hasApprovedHistory ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2 text-xs">
+                <span className="font-semibold text-foreground">Lần thanh toán sau</span>
+                <span className="text-[var(--text-muted)]">
+                  {`Đã thu lại${bill.paidAt ? ` lúc ${bill.paidAt}` : ""}${bill.paidBy ? ` · ${bill.paidBy}` : ""}`}
                 </span>
-                {activeCancelRequest.decidedBy || activeCancelRequest.decisionNote ? (
-                  <span className="text-xs text-[var(--text-muted)]">
-                    {[
-                      activeCancelRequest.decidedBy ? `Người duyệt: ${activeCancelRequest.decidedBy}` : "",
-                      activeCancelRequest.decidedAt ?? "",
-                      activeCancelRequest.decisionNote ? `Ghi chú: ${activeCancelRequest.decisionNote}` : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </span>
-                ) : null}
+              </div>
+            ) : null}
+
+            {billCancelRequests.length > 0 ? (
+              <div className="grid gap-2">
+                {billCancelRequests.map((req, idx) => (
+                  <div
+                    key={req.id}
+                    className={cn("grid gap-1 text-sm", idx > 0 && "border-t border-border pt-2")}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold">
+                        {idx === 0 && (!isBillPaid || req.status !== "APPROVED")
+                          ? "Trạng thái yêu cầu huỷ"
+                          : "Lịch sử huỷ thanh toán"}
+                      </span>
+                      <span
+                        className={cn(
+                          "pay-pill",
+                          req.status === "APPROVED"
+                            ? "pay-p-open"
+                            : req.status === "REJECTED"
+                              ? "pay-p-unpaid"
+                              : "pay-p-pend",
+                        )}
+                      >
+                        {req.status === "PENDING" ? (
+                          <>
+                            <Clock className="pay-i sm" aria-hidden />
+                            Đang chờ duyệt (PENDING)
+                          </>
+                        ) : req.status === "APPROVED" ? (
+                          <>
+                            <CheckCircle2 className="pay-i sm" aria-hidden />
+                            Đã duyệt huỷ (APPROVED)
+                          </>
+                        ) : (
+                          <>
+                            <XCircle className="pay-i sm" aria-hidden />
+                            Bị từ chối (REJECTED)
+                          </>
+                        )}
+                      </span>
+                    </div>
+                    <span className="text-xs text-[var(--text-muted)]">
+                      {`Lý do: ${req.reason} · ${req.requestedBy} (${req.requestedAt})`}
+                    </span>
+                    {req.decidedBy || req.decisionNote ? (
+                      <span className="text-xs text-[var(--text-muted)]">
+                        {[
+                          req.decidedBy ? `Người duyệt: ${req.decidedBy}` : "",
+                          req.decidedAt ?? "",
+                          req.decisionNote ? `Ghi chú: ${req.decisionNote}` : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </span>
+                    ) : null}
+                  </div>
+                ))}
               </div>
             ) : bill.cancelPending ? (
               <div className="flex items-center justify-between gap-2 text-sm">
