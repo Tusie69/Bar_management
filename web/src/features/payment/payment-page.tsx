@@ -960,7 +960,9 @@ export function PaymentFlowWorkspace({
                 receipt={receipt}
                 sessionRemainingOpen={sessionRemainingOpen}
                 onToList={() => navigate(homePath)}
-                onBackToSession={() => goToStep(visitIdParam!, "detail")}
+                onBackToSession={() =>
+                  goToStep(visitIdParam!, "detail", sessionRemainingOpen ? undefined : { billCode: receipt.billCode })
+                }
               />
             ) : (
               <div className="pay-card p-6 text-center">
@@ -1039,6 +1041,7 @@ export function PaymentFlowWorkspace({
 
               {step === "detail" ? (
                 <DetailActionPane
+                  key={selectedBill.billCode || selectedBill.visitId}
                   bill={selectedBill}
                   bills={sessionBills?.bills}
                   selectedBillCode={selectedBill.billCode}

@@ -26,7 +26,7 @@ export function PaymentNotificationBell({
   navigationLocked?: boolean
   defaultOpen?: boolean
   onOpen: () => void
-  onSelectVisit?: (visitId: string) => void
+  onSelectVisit?: (visitId: string, notification?: PaymentNotification) => void
 }) {
   const [open, setOpen] = useState(defaultOpen)
   const wrapRef = useRef<HTMLSpanElement>(null)
@@ -86,7 +86,7 @@ export function PaymentNotificationBell({
                     onClick={() => {
                       if (navigationLocked) return
                       setOpen(false)
-                      if (n.visitId && onSelectVisit) onSelectVisit(n.visitId)
+                      if (n.visitId && onSelectVisit) onSelectVisit(n.visitId, n)
                     }}
                     className={cn("pay-ntf", NTF_TYPE_CLASS[n.type])}
                   >
