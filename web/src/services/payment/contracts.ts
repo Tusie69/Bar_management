@@ -165,6 +165,7 @@ export interface PaymentAuditEntry {
   actor: string
   approver?: string
   reason?: string
+  decisionNote?: string
   at: string
   device: string
 }
@@ -194,6 +195,7 @@ export interface PaymentNotification {
   time: string
   occurredAt?: string
   visitId?: string
+  billCode?: string
 }
 
 /**
