@@ -3,12 +3,10 @@ import { useState } from "react"
 import { isApiError } from "@/services"
 import { formatVnd, paymentApi, type PaymentApi } from "@/services/payment"
 import {
-  buildDirectCancelOutcome,
   formatCancelTime,
   formatPaidMethod,
   formatPaidTableLabel,
-  isVisitOpenAfterCancelCheck,
-  resolveCancelSessionImpact,
+  submitDirectCancel,
   type PaidBillCandidate,
 } from "./cancel-model"
 
@@ -18,7 +16,6 @@ export function DirectCancelPanel({
   initialBillCode = "",
   api = paymentApi,
   canViewAudit = false,
-  checkVisitOpen,
   onCancelled,
   onInspectAudit,
   onClose,
@@ -28,14 +25,12 @@ export function DirectCancelPanel({
   initialBillCode?: string
   api?: PaymentApi
   canViewAudit?: boolean
-  checkVisitOpen?: (visitId: string) => Promise<boolean | null>
   onCancelled?: (billCode: string) => void | Promise<void>
   onInspectAudit?: (billCode: string) => void
   onClose?: () => void
 }) {
   const activeBill =
-    selectedBill ??
-    (initialBillCode ? paidBills.find((b) => b.billCode === initialBillCode) ?? null : null)
+    selectedBill ?? (initialBillCode ? (paidBills.find((b) => b.billCode === initialBillCode) ?? null) : null)
   const activeBillCode = activeBill?.billCode ?? initialBillCode.trim()
 
   const [prevBillCode, setPrevBillCode] = useState(activeBillCode)
@@ -70,21 +65,12 @@ export function DirectCancelPanel({
     setApiError(null)
     setOutcome(null)
     try {
-      const visitId = activeBill?.visitId ?? ""
-      const probeOpen = checkVisitOpen ?? ((id: string) => isVisitOpenAfterCancelCheck(id, api, false))
-      const wasOpenBefore = visitId ? await probeOpen(visitId) : null
-      await api.cancelPaid(code, trimmedReason)
-      const isOpenAfter = visitId ? await probeOpen(visitId) : null
-      const impact = resolveCancelSessionImpact(wasOpenBefore, isOpenAfter)
+      const nextOutcome = await submitDirectCancel(api, code, trimmedReason)
       setReason("")
-      setOutcome(buildDirectCancelOutcome(code, impact))
+      setOutcome(nextOutcome)
       await onCancelled?.(code)
     } catch (err) {
-      setApiError(
-        isApiError(err) || err instanceof Error
-          ? err.message
-          : "Không thể huỷ thanh toán cho bill này.",
-      )
+      setApiError(isApiError(err) || err instanceof Error ? err.message : "Không thể huỷ thanh toán cho bill này.")
     } finally {
       setSubmitting(false)
     }
@@ -124,16 +110,10 @@ export function DirectCancelPanel({
               <div className="pc-item-id">
                 <b>{activeBillCode}</b>
                 <span className="pc-pill pc-p-ok">Đã thu</span>
-                {activeBill ? (
-                  <span className="pc-pill pc-p-req">{formatPaidTableLabel(activeBill)}</span>
-                ) : null}
-                {activeBill?.cancelPending ? (
-                  <span className="pc-pill pc-p-pend">Có yêu cầu chờ duyệt</span>
-                ) : null}
+                {activeBill ? <span className="pc-pill pc-p-req">{formatPaidTableLabel(activeBill)}</span> : null}
+                {activeBill?.cancelPending ? <span className="pc-pill pc-p-pend">Có yêu cầu chờ duyệt</span> : null}
               </div>
-              {activeBill?.dueVnd !== undefined ? (
-                <span className="pc-amt">{formatVnd(activeBill.dueVnd)}</span>
-              ) : null}
+              {activeBill?.dueVnd !== undefined ? <span className="pc-amt">{formatVnd(activeBill.dueVnd)}</span> : null}
             </div>
 
             {activeBill ? (
@@ -155,9 +135,7 @@ export function DirectCancelPanel({
 
             <div className="grid gap-3 border-t border-border pt-3">
               <div className="pc-field">
-                <label htmlFor={`pc-direct-reason-${activeBillCode}`}>
-                  Lý do huỷ thanh toán (bắt buộc)
-                </label>
+                <label htmlFor={`pc-direct-reason-${activeBillCode}`}>Lý do huỷ thanh toán (bắt buộc)</label>
                 <textarea
                   id={`pc-direct-reason-${activeBillCode}`}
                   className="pc-textarea"

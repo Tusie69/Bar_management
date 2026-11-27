@@ -7,6 +7,7 @@ import { roleCan } from "@/domain/access"
 import type { RoleCode } from "@/domain/enums"
 import { WAITER_FORBIDDEN_PATHS } from "@/features/waiter/waiter-access"
 import type {
+  CancelEffect,
   CancelRequest,
   PaidBillSummary,
   PayBill,
@@ -36,6 +37,8 @@ import {
   partitionCancelRequests,
   resolveCancelSessionImpact,
   sortPaidBillsNewestFirst,
+  submitDecideCancel,
+  submitDirectCancel,
   type PaidBillCandidate,
 } from "./cancel-model"
 import { CancelQueuePanel } from "./cancel-queue-panel"
@@ -321,12 +324,18 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
     expect(sortPaidBillsNewestFirst(isoAcrossMidnight).map((b) => b.billCode)).toEqual(["B0003", "B0002"])
   })
 
-  it("NA45H-12: builds cancel impact text from confirmed session state without false turn -1 for open sessions", () => {
-    expect(resolveCancelSessionImpact(false, true)).toBe("REOPENED")
-    expect(resolveCancelSessionImpact(true, true)).toBe("STILL_OPEN")
-    expect(resolveCancelSessionImpact(null, true)).toBe("UNKNOWN")
+  it("NA45H-12: builds cancel impact text strictly from returned CancelEffect without floor/session reads", async () => {
+    expect(resolveCancelSessionImpact({ sessionReopened: true, closedTurnsDelta: -1 })).toBe("REOPENED")
+    expect(resolveCancelSessionImpact({ sessionReopened: true, closedTurnsDelta: 0 })).toBe("REOPENED_NO_TURN")
+    expect(resolveCancelSessionImpact({ sessionReopened: false, closedTurnsDelta: 0 })).toBe("STILL_OPEN")
+    expect(resolveCancelSessionImpact(undefined)).toBe("UNKNOWN")
+    expect(resolveCancelSessionImpact(null)).toBe("UNKNOWN")
 
     expect(buildDirectCancelOutcome("B0002", "REOPENED").title).toContain("bàn xanh lá, lượt -1")
+    const reopenedNoTurn = buildDirectCancelOutcome("B0002", "REOPENED_NO_TURN")
+    expect(reopenedNoTurn.title).toContain("bàn xanh lá")
+    expect(reopenedNoTurn.title).not.toContain("lượt -1")
+
     const stillOpenDirect = buildDirectCancelOutcome("B0003", "STILL_OPEN")
     expect(stillOpenDirect.title).toContain("bill về Chưa thu")
     expect(stillOpenDirect.title).toContain("phiên vẫn đang mở")
@@ -336,12 +345,85 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
     const unknownDirect = buildDirectCancelOutcome("B0004", "UNKNOWN")
     expect(unknownDirect.title).toContain("bill về Chưa thu")
     expect(unknownDirect.title).not.toContain("lượt -1")
+    expect(unknownDirect.title).not.toContain("phiên vẫn đang mở")
 
     expect(buildApproveCancelFeedback("B0002", "A2", "REOPENED")).toContain("lượt -1")
     const stillOpenApprove = buildApproveCancelFeedback("B0003", "A3", "STILL_OPEN")
     expect(stillOpenApprove).toContain("bill về Chưa thu")
     expect(stillOpenApprove).toContain("phiên vẫn đang mở")
     expect(stillOpenApprove).not.toContain("lượt -1")
+    const unknownApprove = buildApproveCancelFeedback("B0004", "A4", "UNKNOWN")
+    expect(unknownApprove).toContain("bill về Chưa thu")
+    expect(unknownApprove).not.toContain("lượt -1")
+    expect(unknownApprove).not.toContain("phiên vẫn đang mở")
+
+    const getSessionBills = vi.fn(makeFakeApi().getSessionBills)
+    const listOpen = vi.fn(makeFakeApi().listOpen)
+    const getBill = vi.fn(makeFakeApi().getBill)
+
+    const fakeApi = makeFakeApi({
+      getSessionBills,
+      listOpen,
+      getBill,
+      cancelPaid: async (billCode: string): Promise<CancelEffect> =>
+        billCode === "B0002"
+          ? { sessionReopened: true, closedTurnsDelta: -1 }
+          : { sessionReopened: false, closedTurnsDelta: 0 },
+      decideCancel: async (requestId, approve, note) => ({
+        id: requestId,
+        billCode: "B0002",
+        visitId: "2",
+        code: "A2",
+        dueVnd: 165_000,
+        reason: "Test",
+        requestedBy: "Thu ngân",
+        requestedAt: "2026-11-26T21:40:00.000Z",
+        status: approve ? "APPROVED" : "REJECTED",
+        decidedBy: "Admin",
+        decidedAt: "2026-11-26T21:42:00.000Z",
+        ...(note ? { decisionNote: note } : {}),
+        ...(approve
+          ? {
+              effect:
+                requestId === "cr-reopen"
+                  ? { sessionReopened: true, closedTurnsDelta: -1 }
+                  : { sessionReopened: false, closedTurnsDelta: 0 },
+            }
+          : {}),
+      }),
+    })
+
+    const directReopen = await submitDirectCancel(fakeApi, "B0002", "Khách gọi thêm")
+    expect(directReopen.title).toContain("bàn xanh lá, lượt -1")
+    const directOpen = await submitDirectCancel(fakeApi, "B0003", "Tách bill")
+    expect(directOpen.title).toContain("phiên vẫn đang mở (không đổi lượt)")
+
+    const approveReopen = await submitDecideCancel(fakeApi, { id: "cr-reopen", billCode: "B0002", code: "A2" }, true)
+    expect(approveReopen.feedback.text).toContain("bàn xanh lá, lượt -1")
+    const approveOpen = await submitDecideCancel(fakeApi, { id: "cr-open", billCode: "B0003", code: "A3" }, true)
+    expect(approveOpen.feedback.text).toContain("phiên vẫn đang mở (không đổi lượt)")
+
+    const rejectRes = await submitDecideCancel(
+      fakeApi,
+      { id: "cr-rej", billCode: "B0002", code: "A2" },
+      false,
+      "Giữ nguyên",
+    )
+    expect(rejectRes.feedback.kind).toBe("info")
+    expect(rejectRes.feedback.text).toContain("Đã từ chối yêu cầu huỷ")
+
+    // Missing effect fallback (temporary contract without effect) shows only confirmed bill status
+    const noEffectApi = makeFakeApi({
+      cancelPaid: async () => undefined as unknown as CancelEffect,
+    })
+    const directUnknown = await submitDirectCancel(noEffectApi, "B0002", "Fallback")
+    expect(directUnknown.title).toBe("B0002: Đã huỷ thanh toán - bill về Chưa thu.")
+    const approveUnknown = await submitDecideCancel(noEffectApi, { id: "cr-1", billCode: "B0002", code: "A2" }, true)
+    expect(approveUnknown.feedback.text).toBe("Đã duyệt huỷ B0002 (A2) - bill về Chưa thu. Đã thông báo Thu ngân.")
+
+    expect(getSessionBills).not.toHaveBeenCalled()
+    expect(listOpen).not.toHaveBeenCalled()
+    expect(getBill).not.toHaveBeenCalled()
   })
 
   it("partitions PENDING vs decided cancel requests newest-first", () => {

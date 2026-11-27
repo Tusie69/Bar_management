@@ -3,13 +3,7 @@ import { useState } from "react"
 import { cn } from "@/lib/utils"
 import { isApiError } from "@/services"
 import { formatVnd, paymentApi, type CancelRequest, type PaymentApi } from "@/services/payment"
-import {
-  buildApproveCancelFeedback,
-  formatCancelTime,
-  isVisitOpenAfterCancelCheck,
-  partitionCancelRequests,
-  resolveCancelSessionImpact,
-} from "./cancel-model"
+import { formatCancelTime, partitionCancelRequests, submitDecideCancel } from "./cancel-model"
 
 export function CancelQueuePanel({
   requests,
@@ -17,7 +11,6 @@ export function CancelQueuePanel({
   error,
   readOnly = false,
   api = paymentApi,
-  checkVisitOpen,
   onRefresh,
   onDecided,
   onInspectAudit,
@@ -27,7 +20,6 @@ export function CancelQueuePanel({
   error: unknown
   readOnly?: boolean
   api?: PaymentApi
-  checkVisitOpen?: (visitId: string) => Promise<boolean | null>
   onRefresh: () => void
   onDecided: (result: CancelRequest) => void | Promise<void>
   onInspectAudit?: (billCode: string) => void
@@ -48,32 +40,16 @@ export function CancelQueuePanel({
     setFeedback(null)
     try {
       const note = notes[req.id]?.trim() || undefined
-      const probeOpen = checkVisitOpen ?? ((id: string) => isVisitOpenAfterCancelCheck(id, api, true))
-      const wasOpenBefore = approve ? await probeOpen(req.visitId) : null
-      const updated = await api.decideCancel(req.id, approve, note)
-      const isOpenAfter = approve ? await probeOpen(req.visitId) : null
-      const impact = approve ? resolveCancelSessionImpact(wasOpenBefore, isOpenAfter) : "UNKNOWN"
+      const { updated, feedback: nextFeedback } = await submitDecideCancel(api, req, approve, note)
       setNotes((prev) => {
         const next = { ...prev }
         delete next[req.id]
         return next
       })
       await onDecided(updated)
-      setFeedback(
-        approve
-          ? {
-              kind: "ok",
-              text: buildApproveCancelFeedback(req.billCode, req.code, impact),
-            }
-          : {
-              kind: "info",
-              text: `Đã từ chối yêu cầu huỷ ${req.billCode} (${req.code}) - giữ Đã thanh toán. Đã thông báo Thu ngân.`,
-            },
-      )
+      setFeedback(nextFeedback)
     } catch (err) {
-      setActionError(
-        isApiError(err) || err instanceof Error ? err.message : "Không xử lý được yêu cầu huỷ.",
-      )
+      setActionError(isApiError(err) || err instanceof Error ? err.message : "Không xử lý được yêu cầu huỷ.")
     } finally {
       setBusyId(null)
     }
@@ -163,11 +139,7 @@ export function CancelQueuePanel({
           </div>
         ) : visible.length === 0 ? (
           <div className="pc-empty">
-            <b>
-              {tab === "PENDING"
-                ? "Chưa có yêu cầu huỷ nào đang chờ duyệt"
-                : "Chưa có yêu cầu huỷ nào đã xử lý"}
-            </b>
+            <b>{tab === "PENDING" ? "Chưa có yêu cầu huỷ nào đang chờ duyệt" : "Chưa có yêu cầu huỷ nào đã xử lý"}</b>
             {tab === "PENDING"
               ? "Khi Thu ngân gửi yêu cầu huỷ từ bill đã thanh toán, yêu cầu sẽ tự động hiện tại đây."
               : "Lịch sử các yêu cầu đã duyệt hoặc từ chối sẽ hiện ở đây."}
