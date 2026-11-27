@@ -107,11 +107,10 @@ export const PERMISSION_MATRIX: Record<Permission, RoleCode[]> = {
   "user.read": M,
   "user.manage": M,
   "operation.undo": [...M, R],
-  // Phuc vu goi mon va xem trang thai cho thanh toan; Thu ngan lam ca hai cong
-  // viec nay cong them thu tien. Phuc vu KHONG co payment.collect va KHONG co
-  // quyen nao ve khach hang, ke ca 3 so cuoi: bien ban 15/11 khong cap.
+  // Phuc vu goi mon va xem trang thai cho thanh toan; Bartender xem hoa don quay bar
+  // de in/chot bill nhung KHONG co quyen thu tien; Thu ngan co ca thu tien.
   "order.create": [...M, C, W],
-  "order.read": [...M, C, W],
+  "order.read": [...M, C, W, B],
   "payment.collect": [...M, C],
   "preparation.bar.read": [...M, B],
   "preparation.bar.transition": [...M, B],

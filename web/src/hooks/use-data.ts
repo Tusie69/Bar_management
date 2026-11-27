@@ -267,12 +267,20 @@ const WARNING_ACTIONS = new Set(["RESERVATION_LATE_WARNING", "RESERVATION_NO_SHO
 export function useRealtimeSync() {
   const qc = useQueryClient()
   const userId = useSession((s) => s.user.id)
+  const role = useSession((s) => s.user.role)
   const expire = useSession((s) => s.expire)
+
+  useEffect(() => {
+    if (role === "CASHIER") {
+      toast.dismiss()
+    }
+  }, [role])
+
   useEffect(() => {
     const off = api.subscribe(
       (event) => {
         qc.invalidateQueries()
-        if (event.action === "RESET") return
+        if (event.action === "RESET" || useSession.getState().user.role === "CASHIER") return
         if (event.actorKind === "SYSTEM" && WARNING_ACTIONS.has(event.action)) {
           toast.warning(event.summary, { description: "Cảnh báo tự động. Không tự hủy booking hay nhả bàn." })
         } else if (event.actorKind === "USER" && event.actorUserId !== userId) {

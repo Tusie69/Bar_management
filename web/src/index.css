@@ -5,6 +5,7 @@
 @import "@fontsource/roboto/600.css";
 @import "@fontsource/roboto/700.css";
 @import "./styles/tokens.css";
+@import "./features/payment/payment.css";
 
 @custom-variant dark (&:where(.dark, .dark *):not(:where(.admin-portal, .admin-portal *, .admin-root, .admin-root *)));
 

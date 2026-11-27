@@ -64,7 +64,7 @@ export const PORTAL_CONFIG: Record<AuthPortal, { label: string; roles: readonly 
   admin: { label: "Quản trị", roles: ["OWNER", "ADMIN"], home: "/admin/overview" },
   receptionist: { label: "Lễ tân", roles: ["RECEPTIONIST"], home: "/floor" },
   "customer-care": { label: "Chăm sóc khách hàng", roles: ["CUSTOMER_CARE"], home: "/waitlist" },
-  cashier: { label: "Thu ngân", roles: ["CASHIER"], home: "/floor" },
+  cashier: { label: "Thu ngân", roles: ["CASHIER"], home: "/payment" },
   // Module Phục vụ 1: Phục vụ có khu vực riêng ở /phucvu và KHÔNG dùng màn
   // Điều phối của Lễ tân. Giá trị này phải khớp WAITER_HOME_PATH trong
   // features/waiter/waiter-access.ts (có test ràng buộc).

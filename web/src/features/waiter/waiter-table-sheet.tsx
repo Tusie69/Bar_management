@@ -15,14 +15,19 @@
  */
 import { ArrowLeftRight, Clock3, Columns3, Info, ReceiptText, Scissors, UsersRound, UtensilsCrossed } from "lucide-react"
 import { useMemo, useState } from "react"
+import { useInRouterContext, useNavigate } from "react-router"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import type { FloorTableState, TableView } from "@/domain/models"
 import { fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import { isPaymentAvailable } from "@/services/payment"
+import { useSession } from "@/state/session"
+import { isBarGuestSession } from "./waiter-invoice-model"
 import {
   WAITER_PHASE_LABEL,
+  waiterPaymentPath,
   waiterServedDuration,
   waiterTableCapability,
   type WaiterTableCapability,
@@ -104,6 +109,7 @@ export interface WaiterTableSheetBodyProps {
   canMove: boolean
   canCombine: boolean
   canSplit: boolean
+  isBarRole?: boolean
   pending: boolean
   onOrder: () => void
   onViewOrders: () => void
@@ -122,6 +128,7 @@ export function WaiterTableSheetBody({
   canMove,
   canCombine,
   canSplit,
+  isBarRole: isBarRoleProp,
   pending,
   onOrder,
   onViewOrders,
@@ -132,6 +139,19 @@ export function WaiterTableSheetBody({
   const { capability } = view
   const tone = capability.visitPhase === null ? null : WAITER_PHASE_TONE[capability.visitPhase]
   const [billOpen, setBillOpen] = useState(false)
+  const storeIsBarRole = useSession((state) => state.user.role === "BAR")
+  const isBarRole = isBarRoleProp ?? storeIsBarRole
+  const sessionTables = view.currentTableIds
+    .map((id) => byId.get(id))
+    .filter((t): t is TableView => Boolean(t))
+  const canOpenSessionBill =
+    isPaymentAvailable &&
+    capability.visitId !== null &&
+    (!isBarRole ||
+      isBarGuestSession(
+        { tables: sessionTables.length > 0 ? sessionTables : view.tableCodes },
+        tables,
+      ))
   // Cùng khoá query với danh sách món bên dưới, nên đây không phải một request
   // thứ hai — chỉ là cùng một câu trả lời đọc ở hai chỗ.
   const visitItems = useVisitItems(capability.visitId)
@@ -266,6 +286,9 @@ export function WaiterTableSheetBody({
             <ReceiptText className="size-4" aria-hidden="true" /> In bill tạm tính
           </Button>
         ) : null}
+        {canOpenSessionBill && capability.visitId !== null ? (
+          <WaiterPaymentLinkButton visitId={capability.visitId} pending={pending} />
+        ) : null}
         {modes.length ? (
           <div className="grid gap-2 rounded-lg border border-border-subtle p-2">
             <p className="px-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
@@ -346,6 +369,33 @@ export function WaiterTableSheetBody({
       <WaiterBillSheet visitId={capability.visitId} open={billOpen} onClose={() => setBillOpen(false)} />
     </div>
   )
+}
+
+function WaiterPaymentRouterButton({ visitId, pending }: { visitId: number; pending: boolean }) {
+  const navigate = useNavigate()
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      className="h-11 w-full justify-center"
+      disabled={pending}
+      onClick={() => navigate(waiterPaymentPath(visitId))}
+    >
+      <ReceiptText className="size-4" aria-hidden="true" /> Xem tạm tính &amp; xuất hóa đơn
+    </Button>
+  )
+}
+
+function WaiterPaymentLinkButton({ visitId, pending }: { visitId: number; pending: boolean }) {
+  const inRouter = useInRouterContext()
+  if (!inRouter) {
+    return (
+      <Button type="button" variant="outline" className="h-11 w-full justify-center" disabled={pending}>
+        <ReceiptText className="size-4" aria-hidden="true" /> Xem tạm tính &amp; xuất hóa đơn
+      </Button>
+    )
+  }
+  return <WaiterPaymentRouterButton visitId={visitId} pending={pending} />
 }
 
 export interface WaiterTableSheetProps extends WaiterTableSheetBodyProps {

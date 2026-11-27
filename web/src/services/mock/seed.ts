@@ -21,6 +21,8 @@ export const DEMO_USERS: MockUser[] = [
   // Module Phục vụ 1: để mở được /phucvu trong bản prototype (chế độ mock)
   // mà không cần backend. Quyền thật vẫn do backend quyết định ở chế độ HTTP.
   { id: 6, displayName: "Phục vụ 1", role: "WAITER", deviceLabel: "Điện thoại phục vụ" },
+  { id: 7, displayName: "Quản trị viên", role: "ADMIN", deviceLabel: "Máy quản trị" },
+  { id: 8, displayName: "Bartender", role: "BAR", deviceLabel: "Quầy bar" },
 ]
 
 export const REMOTE_USER_ID = 2
@@ -1216,4 +1218,123 @@ export function seedDb(now: Date): MockDb {
   seedOp(5, 0, "RESERVATION_NO_SHOW_WARNING", "reservation", noshow.id, "A6 + A7 · booking 20:55 chưa đến sau 30'")
 
   return db
+}
+
+export interface SeededPaymentBillInput {
+  tableSignature: string
+  status: "SERVING" | "AWAITING_PAYMENT"
+  pendingAt?: string
+  requestedAt?: string
+  waiterName: string
+  lines: {
+    orderRound: number
+    roundTime: string
+    roundBy: string
+    name: string
+    unit: string
+    qty: number
+    unitPriceVnd: number
+    state: "SERVED" | "MAKING" | "CANCELLED"
+    note?: string
+  }[]
+}
+
+export function paymentTableSignature(tables: readonly string[]): string {
+  return [...tables].sort().join(",")
+}
+
+/**
+ * NA-45/46 temporary mock payment line fixtures attached 1:1 to real active visits
+ * from `seedDb` by their initial table signature (no separate `s...` visit IDs).
+ * Seeded visits without an entry here (e.g. BAR10+BAR11+BAR12) and newly created
+ * visits intentionally have empty lines (honest no-mock-order state).
+ */
+export function seedPaymentBills(): SeededPaymentBillInput[] {
+  const item = (
+    orderRound: number,
+    roundTime: string,
+    roundBy: string,
+    qty: number,
+    name: string,
+    unit: string,
+    unitPriceVnd: number,
+    state: "SERVED" | "MAKING" | "CANCELLED" = "SERVED",
+    note?: string,
+  ) => ({
+    orderRound,
+    roundTime,
+    roundBy,
+    name,
+    unit,
+    qty,
+    unitPriceVnd,
+    state,
+    note,
+  })
+
+  return [
+    {
+      tableSignature: paymentTableSignature(["A3"]),
+      status: "SERVING",
+      waiterName: "Minh",
+      lines: [
+        item(1, "19:08", "Minh", 2, "Tiger Crystal", "Chai 330ml", 42_800),
+        item(1, "19:08", "Minh", 1, "Khoai tây lắc phô mai", "Đĩa", 69_000, "SERVED", "Ít muối"),
+        item(2, "20:15", "Minh", 1, "Mojito", "Ly", 55_000, "MAKING", "Ít đá"),
+        item(2, "20:15", "Minh", 1, "Margarita", "Ly", 120_000, "CANCELLED", "Khách đổi món"),
+      ],
+    },
+    {
+      tableSignature: paymentTableSignature(["B11", "B12"]),
+      status: "AWAITING_PAYMENT",
+      pendingAt: "21:31",
+      waiterName: "Minh",
+      lines: [
+        item(1, "19:38", "Minh", 1, "Chivas 18", "Chai 700ml", 2_150_000),
+        item(1, "19:38", "Minh", 1, "Trái cây thập cẩm", "Đĩa lớn", 189_000),
+        item(1, "19:38", "Minh", 6, "Coca-Cola", "Lon", 25_000),
+        item(2, "20:10", "Minh", 2, "Khô bò", "Đĩa", 99_000),
+        item(3, "20:55", "Hà", 4, "Nước suối", "Chai", 20_000),
+        item(3, "20:55", "Hà", 1, "Tháp bia Heineken", "Tháp 3L", 450_000, "CANCELLED", "Hết bia tháp"),
+      ],
+    },
+    {
+      tableSignature: paymentTableSignature(["B6", "B8"]),
+      status: "SERVING",
+      requestedAt: "21:38",
+      waiterName: "Hà",
+      lines: [
+        item(1, "21:12", "Hà", 3, "Heineken", "Chai 330ml", 38_000),
+        item(1, "21:12", "Hà", 1, "Mực chiên giòn", "Đĩa", 129_000),
+        item(2, "21:30", "Hà", 2, "Heineken", "Chai 330ml", 38_000),
+      ],
+    },
+    {
+      tableSignature: paymentTableSignature([barSeatCode(1)]),
+      status: "SERVING",
+      waiterName: "Khoa",
+      lines: [
+        item(1, "20:49", "Khoa", 1, "Old Fashioned", "Ly", 165_000),
+        item(1, "20:49", "Khoa", 1, "Đậu phộng rang", "Đĩa", 35_000),
+      ],
+    },
+    {
+      tableSignature: paymentTableSignature(["A2"]),
+      status: "SERVING",
+      waiterName: "Minh",
+      lines: [
+        item(1, "20:14", "Minh", 2, "Tiger Crystal", "Chai 330ml", 42_800),
+        item(1, "20:14", "Minh", 1, "Khô bò", "Đĩa", 99_000),
+      ],
+    },
+    {
+      tableSignature: paymentTableSignature([barSeatCode(5), barSeatCode(6)]),
+      status: "SERVING",
+      waiterName: "Khoa",
+      lines: [
+        item(1, "20:06", "Khoa", 2, "Mojito", "Ly", 55_000),
+        item(1, "20:06", "Khoa", 1, "Khoai tây lắc phô mai", "Đĩa", 69_000),
+      ],
+    },
+  ]
 }

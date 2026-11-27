@@ -1,22 +1,22 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { lazy, Suspense } from "react"
-import { createBrowserRouter, Navigate, RouterProvider, useLocation } from "react-router"
+import { lazy, Suspense, useEffect, useState } from "react"
+import { createBrowserRouter, Navigate, Outlet, RouterProvider, useLocation } from "react-router"
 import { ConfirmDialog, ConflictDialog, OverrideDialog } from "@/components/dialogs"
-import { DevClock } from "@/components/dev-clock"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { FloorPage } from "@/features/floor/floor-page"
 import { AuthBoundary } from "@/features/auth/auth-boundary"
 import { adminRoute } from "@/features/admin/admin-routes"
-import { billingRoute } from "@/features/billing/billing-routes"
 import { waiterLegacyRoute, waiterRoute } from "@/features/waiter/waiter-routes"
 import { useRealtimeSync } from "@/hooks/use-data"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { DevClock } from "@/components/dev-clock"
 import { AppShell } from "./shell"
 import { shouldUseMobileShell } from "./shell-mode"
 import { useSession } from "@/state/session"
 import { WAITER_HOME_PATH } from "@/features/waiter/waiter-access"
+import { isPaymentAvailable } from "@/services/payment"
 
 const OverviewPage = lazy(() => import("@/features/overview/overview-page"))
 const ReservationsPage = lazy(() => import("@/features/reservations/reservations-page"))
@@ -28,6 +28,9 @@ const SettingsPage = lazy(() => import("@/features/settings/settings-page"))
 const MobileApp = lazy(() => import("@/features/mobile/mobile-app"))
 const PreparationPage = lazy(() => import("@/features/preparation/preparation-page"))
 const CancellationQueuePage = lazy(() => import("@/features/orders/cancellation-queue-page"))
+const CashierShell = lazy(() => import("@/features/cashier/cashier-shell"))
+const PaymentPage = lazy(() => import("@/features/payment/payment-page"))
+const PaymentCancelPage = lazy(() => import("@/features/payment-cancel/payment-cancel-page"))
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -61,8 +64,25 @@ function Root() {
   // món. Cổng preparation vẫn về `/chebien` như trước.
   if (role === "BAR" && portal === "waiter") return <Navigate to={WAITER_HOME_PATH} replace />
   if (role === "BAR" || role === "KITCHEN") return <Navigate to="/chebien" replace />
-  if (role === "RECEPTIONIST" && location.pathname !== "/floor") return <Navigate to="/floor" replace />
+  if (role === "CASHIER") return page(<CashierShell />)
+  if (role === "RECEPTIONIST" && location.pathname !== "/floor" && location.pathname !== "/cancel-payment")
+    return <Navigate to="/floor" replace />
   return shouldUseMobileShell(role, mobile) ? page(<MobileApp />) : <AppShell />
+}
+
+/**
+ * NA45C-05: Cashier's workspace is strictly /payment (S1-S7). Redirect any
+ * non-payment standalone entry point (/duyet-huy-mon, /chebien, /phucvu, /admin)
+ * above the competing route branches without changing access.ts or other roles.
+ */
+function CashierRouteGuard() {
+  const role = useSession((state) => state.user.role)
+  const location = useLocation()
+  if (role === "CASHIER") {
+    const onPayment = location.pathname === "/payment" || location.pathname.startsWith("/payment/")
+    if (!onPayment) return <Navigate to="/payment" replace />
+  }
+  return <Outlet />
 }
 
 // Phone opens the role home (Tiếp đón / Tổng quan). Deep links keep their route.
@@ -75,36 +95,57 @@ function HomeRoute() {
   return useIsMobile() ? null : <Navigate to="/floor" replace />
 }
 
+function PaymentRouteElement() {
+  const role = useSession((state) => state.user.role)
+  if (isPaymentAvailable) return page(<PaymentPage />)
+  if (role === "CASHIER") {
+    return (
+      <div className="mx-auto max-w-md rounded-2xl border border-border bg-surface-1 p-6 text-center shadow-xs">
+        <h1 className="text-lg font-bold">Thu tiền chưa kết nối máy chủ</h1>
+        <p className="mt-1 text-sm text-[var(--text-muted)]">
+          API thanh toán chưa sẵn sàng ở chế độ hiện tại.
+        </p>
+      </div>
+    )
+  }
+  return <Navigate to="/floor" replace />
+}
+
 const router = createBrowserRouter([
-  { path: "/chebien", element: page(<PreparationPage />) },
-  // Module Phục vụ 5: hàng chờ phê duyệt hủy món. Route riêng ở gốc, cùng lý do
-  // thứ tự như /chebien: nó không thuộc khung của Lễ tân và cũng không thuộc
-  // khu vực Phục vụ — người mở nó là người có quyền phê duyệt.
-  { path: "/duyet-huy-mon", element: page(<CancellationQueuePage />) },
-  // TU-45: khu vực Thanh toán của Thu ngân. Route riêng ở gốc, cùng lý do thứ
-  // tự như /chebien: nó không thuộc khung của Lễ tân, và người mở nó là người
-  // có quyền thu tiền.
-  billingRoute,
-  // TU-39: Trang Quản trị có shell, sidebar và registry riêng. Nó đứng trước
-  // route "/" vì route đó bắt mọi URL còn lại và sẽ nuốt /admin.
-  adminRoute,
-  // Module Phục vụ 1: khu vực Phục vụ, cùng lý do thứ tự như adminRoute.
-  waiterRoute,
-  waiterLegacyRoute,
   {
-    path: "/",
-    element: <Root />,
+    element: <CashierRouteGuard />,
     children: [
-      { index: true, element: <HomeIndex /> },
-      { path: "home", element: <HomeRoute /> },
-      { path: "overview", element: page(<OverviewPage />) },
-      { path: "floor", element: <FloorPage /> },
-      { path: "reservations", element: page(<ReservationsPage />) },
-      { path: "waitlist", element: page(<WaitlistPage />) },
-      { path: "guests", element: page(<GuestsPage />) },
-      { path: "reports", element: page(<ReportsPage />) },
-      { path: "settings", element: page(<SettingsPage />) },
-      { path: "*", element: <Navigate to="/floor" replace /> },
+      { path: "/chebien", element: page(<PreparationPage />) },
+      // Module Phục vụ 5: hàng chờ phê duyệt hủy món. Route riêng ở gốc, cùng lý do
+      // thứ tự như /chebien: nó không thuộc khung của Lễ tân và cũng không thuộc
+      // khu vực Phục vụ — người mở nó là người có quyền phê duyệt.
+      { path: "/duyet-huy-mon", element: page(<CancellationQueuePage />) },
+      // TU-39: Trang Quản trị có shell, sidebar và registry riêng. Nó đứng trước
+      // route "/" vì route đó bắt mọi URL còn lại và sẽ nuốt /admin.
+      adminRoute,
+      // Module Phục vụ 1: khu vực Phục vụ, cùng lý do thứ tự như adminRoute.
+      waiterRoute,
+      waiterLegacyRoute,
+      {
+        path: "/",
+        element: <Root />,
+        children: [
+          { index: true, element: <HomeIndex /> },
+          { path: "home", element: <HomeRoute /> },
+          { path: "overview", element: page(<OverviewPage />) },
+          { path: "floor", element: <FloorPage /> },
+          { path: "payment", element: <PaymentRouteElement /> },
+          { path: "payment/:visitId", element: <PaymentRouteElement /> },
+          { path: "payment/:visitId/:step", element: <PaymentRouteElement /> },
+          { path: "cancel-payment", element: page(<PaymentCancelPage />) },
+          { path: "reservations", element: page(<ReservationsPage />) },
+          { path: "waitlist", element: page(<WaitlistPage />) },
+          { path: "guests", element: page(<GuestsPage />) },
+          { path: "reports", element: page(<ReportsPage />) },
+          { path: "settings", element: page(<SettingsPage />) },
+          { path: "*", element: <Navigate to="/floor" replace /> },
+        ],
+      },
     ],
   },
 ])
@@ -120,6 +161,33 @@ function GlobalLayer() {
   )
 }
 
+function AppToaster() {
+  const [onPayment, setOnPayment] = useState(() => {
+    if (typeof window === "undefined") return false
+    const p = window.location.pathname
+    return p === "/payment" || p.startsWith("/payment/")
+  })
+
+  useEffect(() => {
+    const sync = () => {
+      const p = router.state.location.pathname
+      setOnPayment(p === "/payment" || p.startsWith("/payment/"))
+    }
+    sync()
+    return router.subscribe(sync)
+  }, [])
+
+  return (
+    <Toaster
+      position={onPayment ? "top-right" : "top-center"}
+      richColors={false}
+      closeButton
+      visibleToasts={3}
+      duration={3000}
+    />
+  )
+}
+
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -128,9 +196,11 @@ export function App() {
           <GlobalLayer />
           <RouterProvider router={router} />
         </AuthBoundary>
-        {/* TU-42: chỉ hiện ở bản Dev (APP_ENV=dev + HTTP). */}
+        {/* TU-42 (PR #21): chỉ hiện ở bản Dev (APP_ENV=dev + HTTP). Nhánh NA-45
+            rẽ trước khi TU-42 vào develop, nên nó không có dòng này — merge mà
+            lấy nguyên bản NA-45 là mất đồng hồ giả lập vừa làm xong. */}
         <DevClock />
-        <Toaster position="top-center" richColors={false} closeButton visibleToasts={3} duration={3000} />
+        <AppToaster />
       </TooltipProvider>
     </QueryClientProvider>
   )

@@ -116,7 +116,10 @@ export interface PreparationQueueProps {
   canTransition: boolean
   canRetry: boolean
   embedded?: boolean
+  headerActions?: ReactNode
   stationControls?: ReactNode
+  canOpenBill?: (ticket: PreparationTicket) => boolean
+  onOpenBill?: (ticket: PreparationTicket) => void
   onBack?: () => void
   onLogout?: () => void
 }
@@ -127,7 +130,10 @@ export function PreparationQueue({
   canTransition,
   canRetry: hasRetryPermission,
   embedded = false,
+  headerActions,
   stationControls,
+  canOpenBill,
+  onOpenBill,
   onBack,
   onLogout,
 }: PreparationQueueProps) {
@@ -362,6 +368,7 @@ export function PreparationQueue({
         </div>
         {stationControls ? <div className="order-last w-full sm:order-none sm:w-auto">{stationControls}</div> : null}
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+          {headerActions}
           <Button
             type="button"
             variant="outline"
@@ -511,6 +518,9 @@ export function PreparationQueue({
                         }}
                         onTransition={(item, status) => void transition(item, status)}
                         onRetry={(item) => void retry(item)}
+                        onOpenBill={
+                          onOpenBill && (!canOpenBill || canOpenBill(ticket)) ? onOpenBill : undefined
+                        }
                         onProgress={(item, lineNo, doneQuantity, expectedVersion) =>
                           void updateProgress(item, lineNo, doneQuantity, expectedVersion)
                         }

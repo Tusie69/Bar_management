@@ -26,7 +26,6 @@
     "e2e:waiter-order-board": "node e2e/waiter-order-board.mjs",
     "e2e:preparation": "node e2e/preparation-queue.mjs",
     "e2e:preparation-routes": "node e2e/preparation-queue-routes.mjs",
-    "e2e:tu45": "node e2e/tu45-bill-close.mjs",
     "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
   },
   "dependencies": {

@@ -4,6 +4,7 @@ import {
   Check,
   ChevronRight,
   Clock,
+  FileX2,
   ListPlus,
   LogOut,
   UserPlus,
@@ -33,6 +34,7 @@ import { usePresenceController } from "@/lib/motion"
 import { fmtTime } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { api } from "@/services"
+import { isPaymentAvailable } from "@/services/payment"
 import { useSession } from "@/state/session"
 import { NAV } from "@/app/nav"
 import type { Alert } from "../floor/alerts"
@@ -242,9 +244,10 @@ export function AccountSheet({
   const [loggingOut, setLoggingOut] = useState(false)
   const isReceptionist = user.role === "RECEPTIONIST"
   const focus = useRestoreTriggerFocus(open)
-  const more = NAV.filter((n) => ["/guests", "/reports", "/settings"].includes(n.to)).filter(
+  const more = NAV.filter((n) => ["/payment", "/guests", "/reports", "/settings"].includes(n.to)).filter(
     (n) =>
-      !n.permission || (api.mode === "http" ? permissions.includes(n.permission) : roleCan(user.role, n.permission)),
+      n.available !== false &&
+      (!n.permission || (api.mode === "http" ? permissions.includes(n.permission) : roleCan(user.role, n.permission))),
   )
   return (
     <Sheet open={open} onOpenChange={(next) => !next && onClose()}>
@@ -364,10 +367,21 @@ export function AccountSheet({
               </Button>
             </div>
           ) : null}
-          {more.length ? (
+          {more.length || (isReceptionist && isPaymentAvailable) ? (
             <div className="flex flex-col gap-1.5">
               <span className="eyebrow px-0.5 pt-1">Trang khác</span>
               <div className="flex flex-col gap-2">
+                {isReceptionist && isPaymentAvailable ? (
+                  <SheetItem
+                    icon={FileX2}
+                    label="Huỷ thanh toán"
+                    sub="Xem bill đã thu trong ca và huỷ thanh toán"
+                    onClick={() => {
+                      onClose()
+                      navigate("/cancel-payment")
+                    }}
+                  />
+                ) : null}
                 {more.map((n) => (
                   <SheetItem
                     key={n.to}

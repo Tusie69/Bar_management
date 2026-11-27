@@ -12,11 +12,13 @@
 import { lazy, Suspense } from "react"
 import { Navigate, type RouteObject } from "react-router"
 import { Skeleton } from "@/components/ui/skeleton"
+import { isPaymentAvailable } from "@/services/payment"
 import {
   WAITER_BASE_PATH,
   WAITER_LEGACY_BASE_PATH,
   WAITER_ORDERS_VIEW_PATH,
   WAITER_ORDER_PATH,
+  WAITER_PAYMENT_PATH,
   WAITER_QUEUE_PATH,
 } from "./waiter-access"
 import { WaiterGuard } from "./waiter-guard"
@@ -26,6 +28,7 @@ const WaiterPage = lazy(() => import("./waiter-page").then((module) => ({ defaul
 const WaiterMenuPage = lazy(() => import("@/features/waiter-menu/waiter-menu-page"))
 const WaiterOrdersPage = lazy(() => import("@/features/waiter-menu/waiter-orders-page"))
 const WaiterBarQueuePage = lazy(() => import("./waiter-bar-queue-page"))
+const WaiterPaymentPage = lazy(() => import("@/features/payment/waiter-payment-page"))
 
 function WaiterPageFallback() {
   return (
@@ -50,6 +53,10 @@ export const waiterRoute: RouteObject = {
   children: [
     { index: true, element: page(<WaiterPage />) },
     { path: WAITER_ORDER_PATH, element: page(<WaiterMenuPage />) },
+    {
+      path: WAITER_PAYMENT_PATH,
+      element: isPaymentAvailable ? page(<WaiterPaymentPage />) : <Navigate to={WAITER_BASE_PATH} replace />,
+    },
     { path: `${WAITER_ORDERS_VIEW_PATH}/:visitId`, element: page(<WaiterOrdersPage />) },
     { path: WAITER_QUEUE_PATH, element: page(<WaiterBarQueuePage />) },
     // Một URL con lạ dưới /phucvu về sơ đồ, không rơi ra ngoài khu vực Phục vụ.
