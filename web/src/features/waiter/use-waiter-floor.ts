@@ -30,12 +30,13 @@ export const waiterCatalogQueryKey = ["waiter-catalog"] as const
  * –05:00 cứng thay vì theo ca mà quán đã cấu hình (TU-38). Quán đổi giờ đóng
  * ca là Phục vụ hỏi sai ngày và thấy sơ đồ rỗng, không một thông báo nào.
  */
-export function useWaiterCatalogQuery() {
+export function useWaiterCatalogQuery(enabled = true) {
   return useQuery({
     queryKey: waiterCatalogQueryKey,
     retry: api.mode === "mock" ? 1 : false,
     queryFn: () => api.getWaiterCatalog(),
     staleTime: 60_000,
+    enabled,
   })
 }
 

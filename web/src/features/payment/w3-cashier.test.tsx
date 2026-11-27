@@ -23,6 +23,7 @@ import {
   SuccessView,
 } from "./pay-actions"
 import { PaymentNotificationBell } from "./payment-notifications"
+import { buildNotificationTargetPath, resolveNotificationBillCode } from "./payment-notification-target"
 import {
   PaymentFlowWorkspace,
   buildSuccessFeedbackText,
@@ -152,6 +153,7 @@ function makeFakeApi(overrides: Partial<PaymentApi> = {}): PaymentApi {
     }),
     listCancelRequests: async () => [],
     listMyCancelRequests: async () => [],
+    listPaidBills: async () => [],
     decideCancel: async () => {
       throw new Error("not used in W3")
     },
@@ -580,12 +582,13 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
     }
   })
 
-  it("allows submitting a new cancel request after a cancelled bill is re-collected, and hides request button for non-cashier (NA45H-03)", () => {
+  it("keeps cancel approval history alongside re-collection and still allows a new cancel request (NA45H-11)", () => {
     const recollectedPaidBill = makeBill({
       billCode: "B0412",
       billStatus: "PAID",
       status: "PAID",
       paidAt: "21:55",
+      paidBy: "Thu ngân",
     })
     const priorApprovedReq: CancelRequest = {
       id: "cr-old",
@@ -619,7 +622,46 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
       }),
     )
     expect(cashierHtml).toContain("Gửi yêu cầu huỷ")
-    expect(cashierHtml).not.toContain("Đã duyệt huỷ (APPROVED)")
+    expect(cashierHtml).toContain("Lần thanh toán sau")
+    expect(cashierHtml).toContain("Đã thu lại lúc 21:55")
+    expect(cashierHtml).toContain("Lịch sử huỷ thanh toán")
+    expect(cashierHtml).toContain("Đã duyệt huỷ (APPROVED)")
+    expect(cashierHtml).toContain("Thu nhầm lần 1")
+    expect(cashierHtml).toContain("Admin Edit")
+    expect(cashierHtml).toContain("Duyệt huỷ lần 1")
+
+    const pendingFollowupReq: CancelRequest = {
+      id: "cr-new",
+      billCode: "B0412",
+      visitId: "1283",
+      code: "A3",
+      dueVnd: 155_000,
+      reason: "Huỷ lần 2 sau thu lại",
+      requestedBy: "Thu ngân",
+      requestedAt: "22:00",
+      status: "PENDING",
+    }
+    const withNewPendingHtml = renderToStaticMarkup(
+      createElement(DetailActionPane, {
+        bill: recollectedPaidBill,
+        bills: [recollectedPaidBill],
+        selectedBillCode: "B0412",
+        cancelRequests: [pendingFollowupReq, priorApprovedReq],
+        canCollect: true,
+        canRequestCancel: true,
+        isWaiter: false,
+        busy: false,
+        onPreview: () => undefined,
+        onCollect: () => undefined,
+        onRequestPayment: () => undefined,
+        onRequestCancel: async () => undefined,
+      }),
+    )
+    expect(withNewPendingHtml).toContain("Đang chờ duyệt (PENDING)")
+    expect(withNewPendingHtml).toContain("Huỷ lần 2 sau thu lại")
+    expect(withNewPendingHtml).toContain("Đã duyệt huỷ (APPROVED)")
+    expect(withNewPendingHtml).toContain("Thu nhầm lần 1")
+    expect(withNewPendingHtml).not.toContain("Gửi yêu cầu huỷ")
 
     const adminHtml = renderToStaticMarkup(
       createElement(DetailActionPane, {
@@ -644,6 +686,74 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
     )
     expect(adminHtml).toContain("Bị từ chối (REJECTED)")
     expect(adminHtml).not.toContain("Gửi yêu cầu huỷ")
+  })
+
+  it("resolves target billCode from notifications and opens exact bill on multi-bill closed session (NA45H-13)", () => {
+    const ntfDirect: PaymentNotification = {
+      id: "paid-1",
+      type: "PAID",
+      title: "Đã thanh toán",
+      text: "A3 · 155.000đ",
+      time: "21:45",
+      visitId: "1283",
+      billCode: "B1283-2",
+    }
+    expect(resolveNotificationBillCode(ntfDirect)).toBe("B1283-2")
+    expect(buildNotificationTargetPath("1283", ntfDirect)).toBe("/payment/1283?bill=B1283-2")
+
+    const ntfPaidFallback: PaymentNotification = {
+      id: "paid-B1283-2-14-1",
+      type: "PAID",
+      title: "Đã thanh toán",
+      text: "A3 · 155.000đ · Tiền mặt",
+      time: "21:45",
+      visitId: "1283",
+    }
+    expect(resolveNotificationBillCode(ntfPaidFallback)).toBe("B1283-2")
+    expect(buildNotificationTargetPath("1283", ntfPaidFallback)).toBe("/payment/1283?bill=B1283-2")
+
+    const ntfDecidedFallback: PaymentNotification = {
+      id: "cdec-15-1",
+      type: "CANCEL_DECIDED",
+      title: "Từ chối hủy thanh toán",
+      text: "A3 (B1283-2) · giữ Đã thanh toán",
+      time: "21:48",
+      visitId: "1283",
+    }
+    expect(resolveNotificationBillCode(ntfDecidedFallback)).toBe("B1283-2")
+    expect(buildNotificationTargetPath("1283", ntfDecidedFallback)).toBe("/payment/1283?bill=B1283-2")
+
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const bill1 = makeBill({ billCode: "B1283", billStatus: "PAID", status: "PAID", paidAt: "21:40", dueVnd: 100_000 })
+    const bill2 = makeBill({ billCode: "B1283-2", billStatus: "PAID", status: "PAID", paidAt: "21:50", dueVnd: 155_000 })
+    qc.setQueryData<SessionBills>(["payment-session-bills", "1283"], {
+      visitId: "1283",
+      sessionCode: "S-1283",
+      code: "A3",
+      tables: ["A3"],
+      status: "PAID",
+      unbilledLineCount: 0,
+      bills: [bill1, bill2],
+      version: 4,
+    })
+    const html = renderToStaticMarkup(
+      createElement(
+        QueryClientProvider,
+        { client: qc },
+        createElement(
+          MemoryRouter,
+          { initialEntries: ["/payment/1283?bill=B1283-2"] },
+          createElement(PaymentFlowWorkspace, {
+            visitIdParam: "1283",
+            stepParam: "detail",
+            api: makeFakeApi(),
+            accessOverride: CASHIER_ACCESS,
+          }),
+        ),
+      ),
+    )
+    expect(html).toContain("Bill B1283-2 đã thu lúc 21:50")
+    expect(html).toContain("Gửi yêu cầu huỷ")
   })
 
   it("reads cashier cancel-request decisions via listMyCancelRequests without calling listCancelRequests (NA45H-03)", () => {

@@ -26,6 +26,7 @@ import {
   type SessionBills,
 } from "@/services/payment"
 import "@/features/payment/css/waiter.css"
+import { useWaiterCatalogQuery } from "./use-waiter-floor"
 import {
   BANK_RECEIVING_NAME,
   PREVIEW_HAS_QR,
@@ -890,11 +891,16 @@ export function WaiterInvoiceWorkspace({
     queryFn: () => api.getSessionBills(visitId),
     enabled: Boolean(visitId),
   })
+  const catalogQuery = useWaiterCatalogQuery(barOnly)
 
   const sessionBills = sessionBillsQuery.data
-  const outOfBarScope = Boolean(barOnly && sessionBills && !isBarGuestSession(sessionBills))
+  const waitingBarCatalog = barOnly && catalogQuery.isLoading
+  const outOfBarScope = Boolean(
+    barOnly && !waitingBarCatalog && sessionBills && !isBarGuestSession(sessionBills, catalogQuery.data?.tables),
+  )
   const shouldFetchPreview =
     Boolean(visitId) &&
+    !waitingBarCatalog &&
     !outOfBarScope &&
     (view === "preview" || (sessionBills ? sessionBills.unbilledLineCount > 0 : false))
 
@@ -982,7 +988,7 @@ export function WaiterInvoiceWorkspace({
         ) : null}
       </div>
 
-      {sessionBillsQuery.isPending ? (
+      {sessionBillsQuery.isPending || waitingBarCatalog ? (
         <div className="pay-split" aria-busy="true">
           <div className="pay-card pay-sk-stack">
             <div className="pay-sk" style={{ height: 28, width: "45%" }} />

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { ChevronDown, LayoutDashboard, LogOut, Moon, Sun } from "lucide-react"
 import { useState, type ReactNode } from "react"
-import { useLocation, useNavigate } from "react-router"
+import { useNavigate } from "react-router"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,6 +20,7 @@ import { businessDateOf, fmtBusinessDate, fmtBusinessShift, fmtTime, shiftHour }
 import { api, clock } from "@/services"
 import { isPaymentAvailable, paymentApi } from "@/services/payment"
 import { PaymentNotificationBell } from "@/features/payment/payment-notifications"
+import { buildNotificationTargetPath } from "@/features/payment/payment-notification-target"
 import { useCan, useSession } from "@/state/session"
 import { useUi } from "@/state/ui"
 import { usePaymentShell } from "./payment-shell-context"
@@ -36,7 +37,6 @@ export function PaymentHeader({
   const canReadOrders = useCan("order.read")
   const canViewAny = canCollect || (user.role === "WAITER" && canReadOrders)
   const navigate = useNavigate()
-  const location = useLocation()
   const isMobile = useIsMobile()
   const payShell = usePaymentShell()
 
@@ -155,13 +155,10 @@ export function PaymentHeader({
             unread={hasUnreadNtf}
             navigationLocked={navigationLocked}
             onOpen={() => setSeenNtfIds((prev) => new Set([...prev, ...notifications.map((n) => n.id)]))}
-            onSelectVisit={(visitId) => {
+            onSelectVisit={(visitId, notification) => {
               if (payShell?.pendingPayment) return
-              if (location.pathname === "/payment" && payShell) {
-                payShell.setSelectedId(visitId)
-                return
-              }
-              navigate(`/payment/${visitId}`)
+              payShell?.setSelectedId(visitId)
+              navigate(buildNotificationTargetPath(visitId, notification))
             }}
           />
         ) : null}
