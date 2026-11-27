@@ -789,8 +789,20 @@ try {
           closedTurns: turnsWhileOpen.closedTurns,
         })
 
-      // B) Approve Cancel Request interleaved with Cashier closing session by paying bill2
-      // Re-pay bill1 only (bill2 remains UNPAID -> A3 stays OPEN), then Cashier requests cancel on bill1
+      // B) Approve Cancel Request interleaved with Cashier closing session by paying bill1
+      // After Case A, bill2 is PAID and bill1 is UNPAID (A3 stays OPEN); Cashier requests cancel on bill2
+      await cashierPage.evaluate(async (b2) => {
+        const [{ api }, { DEMO_USERS }] = await Promise.all([
+          import("/src/services/index.ts"),
+          import("/src/services/mock/seed.ts"),
+        ])
+        api.setSession(DEMO_USERS.find((u) => u.role === "CASHIER"))
+        await window.__21gamPaymentMock.paymentApi.requestCancel(b2, "Xen kẽ thu bill cuối - duyệt huỷ")
+      }, bill2Code)
+
+      await expect(adminPage.getByText("Xen kẽ thu bill cuối - duyệt huỷ").first()).toBeVisible({ timeout: 5000 })
+
+      // Cashier now collects bill1 (last unpaid bill) -> A3 transitions OPEN -> CLOSED before Admin clicks Approve
       await cashierPage.evaluate(
         async ({ vid, b1 }) => {
           const [{ api }, { DEMO_USERS }] = await Promise.all([
@@ -801,28 +813,9 @@ try {
           const mock = window.__21gamPaymentMock
           const sb = await mock.paymentApi.getSessionBills(vid)
           const target = sb.bills.find((b) => b.billCode === b1)
-          await mock.paymentApi.confirmCash(vid, target.dueVnd, sb.version, "w4-na45h12-interleave-repay-b1", b1)
-          await mock.paymentApi.requestCancel(b1, "Xen kẽ thu bill cuối - duyệt huỷ")
+          await mock.paymentApi.confirmCash(vid, target.dueVnd, sb.version, "w4-na45h12-interleave-pay-b1-last", b1)
         },
         { vid: a3VisitId, b1: bill1Code },
-      )
-
-      await expect(adminPage.getByText("Xen kẽ thu bill cuối - duyệt huỷ").first()).toBeVisible({ timeout: 5000 })
-
-      // Cashier now collects bill2 -> A3 transitions OPEN -> CLOSED before Admin clicks Approve
-      await cashierPage.evaluate(
-        async ({ vid, b2 }) => {
-          const [{ api }, { DEMO_USERS }] = await Promise.all([
-            import("/src/services/index.ts"),
-            import("/src/services/mock/seed.ts"),
-          ])
-          api.setSession(DEMO_USERS.find((u) => u.role === "CASHIER"))
-          const mock = window.__21gamPaymentMock
-          const sb = await mock.paymentApi.getSessionBills(vid)
-          const target = sb.bills.find((b) => b.billCode === b2)
-          await mock.paymentApi.confirmCash(vid, target.dueVnd, sb.version, "w4-na45h12-interleave-pay-b2-again", b2)
-        },
-        { vid: a3VisitId, b2: bill2Code },
       )
 
       await expect
