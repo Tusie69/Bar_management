@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest"
 import { addDays, businessDateOf } from "@/lib/time"
 import { api, clock, demo } from "@/services"
+import type { MockDb } from "@/services/mock/db"
+import { createInMemoryMockSyncTransport } from "@/services/mock/mock-sync"
 import { DEMO_USERS } from "@/services/mock/seed"
+import { MockGamApi } from "@/services/mock/server"
 import { isPaymentAvailable, paymentApi } from "./index"
 import { addPaymentOrderLines, setPaymentMockFault } from "./mock-payment"
 
@@ -409,6 +412,7 @@ describe("mockPaymentApi", () => {
     const ntfs = await paymentApi.listNotifications()
     const invNtf = ntfs.find((n) => n.type === "INVOICE_ISSUED" && n.visitId === barId)
     expect(invNtf).toBeDefined()
+    expect(invNtf?.billCode).toBe(barIssued.billCode)
     expect(invNtf?.text).toContain(`Đã đưa hóa đơn · ${bar.displayName} · ${barIssued.issuedAt}`)
     expect(ntfs.some((n) => n.type === "PAID" && n.visitId === barId)).toBe(false)
 
@@ -604,10 +608,17 @@ describe("mockPaymentApi", () => {
     expect(audit.map((e) => e.action)).toContain("CANCEL_REQUESTED")
     expect(audit.map((e) => e.action)).toContain("PAID")
     expect(audit.map((e) => e.action)).toContain("INVOICE_ISSUED")
+    const rejectedEntry = audit.find((e) => e.action === "CANCEL_REJECTED")!
+    expect(rejectedEntry.actor).toContain("Thu ngân")
+    expect(rejectedEntry.approver).toContain("Quản trị viên")
+    expect(rejectedEntry.reason).toBe("Khách đổi sang chuyển khoản")
+    expect(rejectedEntry.decisionNote).toBe("Đã đối soát cuối ca")
+
     const approvedEntry = audit.find((e) => e.action === "CANCEL_APPROVED")!
     expect(approvedEntry.actor).toContain("Thu ngân")
     expect(approvedEntry.approver).toContain("Quản trị viên")
-    expect(approvedEntry.reason).toBe("OK hủy thu lại QR")
+    expect(approvedEntry.reason).toBe("Nhập nhầm tiền mặt")
+    expect(approvedEntry.decisionNote).toBe("OK hủy thu lại QR")
     expect(approvedEntry.at).toBeTruthy()
     expect(approvedEntry.device).toBeTruthy()
   })
@@ -775,6 +786,11 @@ describe("mockPaymentApi", () => {
       api.setSession(cashier)
       const myAfterApprove = await paymentApi.listMyCancelRequests?.(bill.billCode)
       expect(myAfterApprove?.[0]).toMatchObject({ id: req2.id, status: "APPROVED", decisionNote: "OK duyệt" })
+      const ntfsAfterApprove = await paymentApi.listNotifications()
+      expect(ntfsAfterApprove.find((n) => n.type === "PAID" && n.visitId === a2Id)?.billCode).toBe(bill.billCode)
+      expect(ntfsAfterApprove.find((n) => n.type === "CANCEL_DECIDED" && n.visitId === a2Id)?.billCode).toBe(
+        bill.billCode,
+      )
 
       // Re-collect then submit a 3rd request -> Receptionist direct cancel emits PAYMENT_CANCELLED and resolves pending request
       const unpaid = await paymentApi.getBill(a2Id)
@@ -836,6 +852,138 @@ describe("mockPaymentApi", () => {
       await expect(
         paymentApi.issueInvoice(forbiddenVisitId, 1, `na45h06-forbid-${forbiddenVisitId}`),
       ).rejects.toMatchObject({ code: "PERMISSION_DENIED", status: 403 })
+    }
+
+    // NA45H-06 OR predicate: { code: "BAR99", zone: MAIN } AND { code: "QUAY99", zone: BAR } both qualify
+    const db = (api as unknown as { db: MockDb }).db
+    const mainZone = [...db.zones.values()].find((z) => z.code !== "BAR")!
+    const barZone = [...db.zones.values()].find((z) => z.code === "BAR")!
+    const bar99Id = db.nextId.tables++
+    const quay99Id = db.nextId.tables++
+    const mainTemplate = [...db.tables.values()].find((t) => t.kind === "TABLE" && !t.isSpare)!
+    const barTemplate = [...db.tables.values()].find((t) => t.kind === "BAR_SEAT")!
+    db.tables.set(bar99Id, {
+      ...mainTemplate,
+      id: bar99Id,
+      zoneId: mainZone.id,
+      code: "BAR99",
+      kind: "TABLE",
+      isSpare: false,
+      status: "ACTIVE",
+    })
+    db.tables.set(quay99Id, {
+      ...barTemplate,
+      id: quay99Id,
+      zoneId: barZone.id,
+      code: "QUAY99",
+      kind: "BAR_SEAT",
+      isSpare: false,
+      status: "ACTIVE",
+    })
+
+    api.setSession(receptionist)
+    const bar99Visit = await api.seatWalkIn({ tableIds: [bar99Id], guestCount: 2 })
+    addPaymentOrderLines(String(bar99Visit.visitId), [{ name: "Mojito", unit: "Ly", qty: 1, unitPriceVnd: 110_000 }])
+    const quay99Visit = await api.seatWalkIn({ tableIds: [quay99Id], guestCount: 1 })
+    addPaymentOrderLines(String(quay99Visit.visitId), [{ name: "Daiquiri", unit: "Ly", qty: 1, unitPriceVnd: 120_000 }])
+    const freeNow = new Set(
+      (await api.getFloorState(clock.now())).tables.filter((t) => t.state === "free").map((t) => t.tableId),
+    )
+    const mainTableForMix = catalog.tables.find(
+      (t) => t.kind === "TABLE" && !t.isSpare && freeNow.has(t.id) && !/^BAR/i.test(t.code),
+    )!
+    const barSeatForMix = catalog.tables.find((t) => t.kind === "BAR_SEAT" && freeNow.has(t.id))!
+    const mixed2 = await api.seatWalkIn({ tableIds: [mainTableForMix.id, barSeatForMix.id], guestCount: 2 })
+    addPaymentOrderLines(String(mixed2.visitId), [{ name: "Whisky Sour", unit: "Ly", qty: 1, unitPriceVnd: 150_000 }])
+
+    api.setSession(bar)
+    const barOpen2 = await paymentApi.listOpen()
+    expect(barOpen2.some((s) => s.visitId === String(bar99Visit.visitId))).toBe(true)
+    expect(barOpen2.some((s) => s.visitId === String(quay99Visit.visitId))).toBe(true)
+    expect(barOpen2.some((s) => s.visitId === String(mixed2.visitId))).toBe(false)
+
+    const bar99Preview = await paymentApi.previewBill(String(bar99Visit.visitId))
+    expect(bar99Preview.dueVnd).toBe(121_000)
+    const quay99Preview = await paymentApi.previewBill(String(quay99Visit.visitId))
+    expect(quay99Preview.dueVnd).toBe(132_000)
+    const quay99Bill = await paymentApi.issueInvoice(String(quay99Visit.visitId), quay99Preview.version, "na45h06-quay99")
+    await expect(paymentApi.getBill(String(mixed2.visitId))).rejects.toMatchObject({ code: "PERMISSION_DENIED", status: 403 })
+
+    // Closed/paid QUAY99 session (no active allocations) still passes isBarAreaVisit for BAR
+    api.setSession(cashier)
+    await paymentApi.confirmCash(
+      String(quay99Visit.visitId),
+      quay99Bill.dueVnd,
+      quay99Bill.version,
+      "na45h06-quay99-pay",
+      quay99Bill.billCode,
+    )
+    api.setSession(bar)
+    expect((await paymentApi.getBill(String(quay99Visit.visitId))).billStatus).toBe("PAID")
+  })
+
+  it("NA45H-10 & NA45H-14: shares mock state & change events across independent MockGamApi instances while keeping per-instance session and separate audit reason/decisionNote", async () => {
+    const transport = createInMemoryMockSyncTransport()
+    const cashierApi = new MockGamApi({ businessDayWorkerEnabled: false, syncTransport: transport })
+    const adminApi = new MockGamApi({ businessDayWorkerEnabled: false, syncTransport: transport })
+    try {
+      cashierApi.setSession(cashier)
+      adminApi.setSession(admin)
+
+      const adminEvents: string[] = []
+      const cashierEvents: string[] = []
+      const unsubAdmin = adminApi.subscribe((ev) => adminEvents.push(ev.action))
+      const unsubCashier = cashierApi.subscribe((ev) => cashierEvents.push(ev.action))
+
+      try {
+        const a2 = (await cashierApi.listPaymentOpen()).find((s) => s.code === "A2")!
+        const issued = await cashierApi.issuePaymentInvoice(a2.visitId, a2.version, "sync-inv-1")
+        await cashierApi.confirmPaymentCash(a2.visitId, issued.dueVnd, issued.version, "sync-pay-1", issued.billCode)
+
+        const req = await cashierApi.requestPaymentCancel(issued.billCode, "Thu nhầm tiền mặt")
+        expect(adminEvents).toContain("PAYMENT_CANCEL_REQUESTED")
+
+        // Admin instance sees the Cashier's PENDING request without changing its own session
+        const adminQueue = await adminApi.listPaymentCancelRequests()
+        expect(adminQueue.some((r) => r.id === req.id && r.status === "PENDING")).toBe(true)
+
+        // Admin approves with a note distinct from the request reason
+        const approved = await adminApi.decidePaymentCancel(req.id, true, "OK thu lại QR")
+        expect(approved.status).toBe("APPROVED")
+        expect(cashierEvents).toContain("PAYMENT_CANCELLED")
+
+        // Cashier instance sees decision immediately and keeps its CASHIER session
+        const myReqs = await cashierApi.listMyPaymentCancelRequests(issued.billCode)
+        expect(myReqs[0]).toMatchObject({ id: req.id, status: "APPROVED", decisionNote: "OK thu lại QR" })
+
+        // NA45H-14: audit entry keeps request reason and decision note in separate fields
+        const audit = await adminApi.listPaymentAudit(issued.billCode)
+        const approvedAudit = audit.find((e) => e.action === "CANCEL_APPROVED")!
+        expect(approvedAudit.reason).toBe("Thu nhầm tiền mặt")
+        expect(approvedAudit.decisionNote).toBe("OK thu lại QR")
+
+        // Also verify without a decision note: reason stays intact, decisionNote omitted
+        await cashierApi.confirmPaymentTransfer(
+          a2.visitId,
+          false,
+          (await cashierApi.getPaymentBill(a2.visitId)).version,
+          "sync-pay-2",
+          issued.billCode,
+        )
+        const req2 = await cashierApi.requestPaymentCancel(issued.billCode, "Khách đổi ý")
+        await adminApi.decidePaymentCancel(req2.id, false)
+        const rejectedNoNote = (await adminApi.listPaymentAudit(issued.billCode)).find(
+          (e) => e.action === "CANCEL_REJECTED",
+        )!
+        expect(rejectedNoNote.reason).toBe("Khách đổi ý")
+        expect(rejectedNoNote.decisionNote).toBeUndefined()
+      } finally {
+        unsubAdmin()
+        unsubCashier()
+      }
+    } finally {
+      cashierApi.dispose()
+      adminApi.dispose()
     }
   })
 

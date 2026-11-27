@@ -115,6 +115,13 @@ import {
   type SeededPaymentBillInput,
 } from "./seed"
 import { mockTableTurns, mockTableTurnSummary } from "./table-turns"
+import {
+  createBrowserMockSyncTransport,
+  parseMockSnapshot,
+  stringifyMockSnapshot,
+  type MockSyncPacket,
+  type MockSyncTransport,
+} from "./mock-sync"
 import { Tx } from "./tx"
 import { formatDailyBookingText } from "./booking-export"
 import { apiErrorMessage } from "../error-messages"
@@ -196,6 +203,33 @@ interface CancelRequestInternal extends CancelRequest {
   requestedByUserId: number
 }
 
+interface MockSyncedState {
+  db: MockDb
+  seq: number
+  armed: boolean
+  guestCounts: Map<BusinessDate, ReceptionGuestCount>
+  quickTimes: string[]
+  callLog: {
+    callId: number
+    targetKey: string
+    initiatedAt: Date
+    initiatedBy: string
+    outcome: "CONTACTED" | "NO_ANSWER" | "LATE_CONFIRMED" | null
+    outcomeAt: Date | null
+    outcomeBy: string | null
+  }[]
+  paymentMeta: Map<number, PaymentVisitMeta>
+  paymentPaidLog: PaymentNotification[]
+  paymentEventLog: PaymentNotification[]
+  paymentIdempotency: Map<string, { fingerprint: string; receipt: Receipt }>
+  paymentIssueIdempotency: Map<string, { fingerprint: string; bill: PayBill }>
+  cancelRequests: CancelRequestInternal[]
+  cancelRequestSeq: number
+  paymentAuditLog: PaymentAuditEntry[]
+  paymentAuditSeq: number
+  paymentAttemptKeys: string[]
+}
+
 export interface DemoControls {
   simulateRemoteActivity(): Promise<string>
   armConflictOnce(): void
@@ -261,16 +295,36 @@ export class MockGamApi implements GamApi, DemoControls {
   private paymentAuditSeq = 1
   private paymentAttemptKeys: string[] = []
   private paymentFault: { nextConfirm?: "net" | "dup"; qrFound?: boolean; billDelayMs?: number } = {}
+  private readonly instanceId = crypto.randomUUID()
+  private syncRev = 0
+  private readonly syncTransport: MockSyncTransport | null
+  private unsubSync: (() => void) | null = null
+  private tickTimer: ReturnType<typeof setInterval>
 
-  constructor(options: { businessDayWorkerEnabled?: boolean } = {}) {
+  constructor(
+    options: { businessDayWorkerEnabled?: boolean; crossTabSync?: boolean; syncTransport?: MockSyncTransport } = {},
+  ) {
     this.businessDayWorkerEnabled = options.businessDayWorkerEnabled ?? true
+    this.syncTransport =
+      options.syncTransport ??
+      (options.crossTabSync !== false && typeof window !== "undefined" ? createBrowserMockSyncTransport() : null)
     this.db = seedDb(clock.now())
     this.initPaymentBills()
     this.seq = venueOf(this.db).changeSeq
-    setInterval(() => this.tick(), 5_000)
+    if (this.syncTransport) {
+      this.pullSharedState(false)
+      this.unsubSync = this.syncTransport.subscribe((packet) => this.handleRemoteSyncPacket(packet))
+    }
+    this.tickTimer = setInterval(() => this.tick(), 5_000)
     clock.subscribe(() => this.tick())
     const first = DEMO_USERS[0]
     this.session = { ...first }
+  }
+
+  dispose() {
+    clearInterval(this.tickTimer)
+    this.unsubSync?.()
+    this.unsubSync = null
   }
 
   /* ================= infrastructure ================= */
@@ -319,6 +373,7 @@ export class MockGamApi implements GamApi, DemoControls {
   private async latency(kind: "q" | "m") {
     const [min, max] = kind === "q" ? [50, 130] : [140, 320]
     await sleep(min + Math.random() * (max - min))
+    this.pullSharedState(true)
   }
 
   async getReceptionGuestCount(businessDate: BusinessDate): Promise<ReceptionGuestCount> {
@@ -416,8 +471,86 @@ export class MockGamApi implements GamApi, DemoControls {
     return ids.map((id) => this.db.tables.get(id)?.code ?? `#${id}`).join(" + ")
   }
 
-  private emit(event: ChangeEvent) {
+  private emitLocal(event: ChangeEvent) {
     this.listeners.forEach((l) => l(event))
+  }
+
+  private serializeSyncedState(): string {
+    const state: MockSyncedState = {
+      db: this.db,
+      seq: this.seq,
+      armed: this.armed,
+      guestCounts: this.guestCounts,
+      quickTimes: this.quickTimes,
+      callLog: this.callLog,
+      paymentMeta: this.paymentMeta,
+      paymentPaidLog: this.paymentPaidLog,
+      paymentEventLog: this.paymentEventLog,
+      paymentIdempotency: this.paymentIdempotency,
+      paymentIssueIdempotency: this.paymentIssueIdempotency,
+      cancelRequests: this.cancelRequests,
+      cancelRequestSeq: this.cancelRequestSeq,
+      paymentAuditLog: this.paymentAuditLog,
+      paymentAuditSeq: this.paymentAuditSeq,
+      paymentAttemptKeys: this.paymentAttemptKeys,
+    }
+    return stringifyMockSnapshot(state)
+  }
+
+  private applySyncPacket(packet: MockSyncPacket, emitEvent: boolean) {
+    const state = parseMockSnapshot<MockSyncedState>(packet.snapshot)
+    this.db = state.db
+    this.seq = state.seq
+    this.armed = state.armed
+    this.guestCounts = state.guestCounts
+    this.quickTimes = state.quickTimes
+    this.callLog = state.callLog
+    this.paymentMeta = state.paymentMeta
+    this.paymentPaidLog = state.paymentPaidLog
+    this.paymentEventLog = state.paymentEventLog
+    this.paymentIdempotency = state.paymentIdempotency
+    this.paymentIssueIdempotency = state.paymentIssueIdempotency
+    this.cancelRequests = state.cancelRequests
+    this.cancelRequestSeq = state.cancelRequestSeq
+    this.paymentAuditLog = state.paymentAuditLog
+    this.paymentAuditSeq = state.paymentAuditSeq
+    this.paymentAttemptKeys = state.paymentAttemptKeys
+    this.syncRev = packet.rev
+    if (emitEvent) this.emitLocal(packet.event)
+  }
+
+  private handleRemoteSyncPacket(packet: MockSyncPacket) {
+    if (packet.senderId === this.instanceId) return
+    if (packet.rev <= this.syncRev) return
+    if (packet.businessDate !== businessDateOf(this.now)) return
+    this.applySyncPacket(packet, true)
+  }
+
+  private pullSharedState(emitEvent: boolean) {
+    if (!this.syncTransport) return
+    const latest = this.syncTransport.readLatest()
+    if (!latest) return
+    if (latest.senderId === this.instanceId || latest.rev <= this.syncRev) return
+    if (latest.businessDate !== businessDateOf(this.now)) return
+    this.applySyncPacket(latest, emitEvent)
+  }
+
+  private pushSharedState(event: ChangeEvent) {
+    if (!this.syncTransport) return
+    const storedRev = this.syncTransport.readLatest()?.rev ?? 0
+    this.syncRev = Math.max(this.syncRev, storedRev) + 1
+    this.syncTransport.publish({
+      rev: this.syncRev,
+      senderId: this.instanceId,
+      businessDate: businessDateOf(this.now),
+      snapshot: this.serializeSyncedState(),
+      event,
+    })
+  }
+
+  private emit(event: ChangeEvent) {
+    this.emitLocal(event)
+    this.pushSharedState(event)
   }
 
   private commit<T = object>(meta: CommitMeta, fn: (tx: Tx) => CommitOut<T>): MutationResult & T {
@@ -3189,17 +3322,17 @@ export class MockGamApi implements GamApi, DemoControls {
   }
 
   private isBarAreaVisit(visit: VisitRow, meta: PaymentVisitMeta): boolean {
-    const tableIds = visitTableIds(this.db, visit.id)
+    const liveIds = visitTableIds(this.db, visit.id)
+    const tableIds = liveIds.length > 0 ? liveIds : visitView(this.db, visit).tableIds
     if (tableIds.length > 0) {
       return tableIds.every((id) => {
         const table = this.db.tables.get(id)
         if (!table) return false
         const zone = this.db.zones.get(table.zoneId)
-        return zone ? zone.code === "BAR" : /^BAR/i.test(table.code)
+        return zone?.code === "BAR" || /^BAR/i.test(table.code.trim())
       })
     }
-    const info = this.resolveVisitTableInfo(visit, meta)
-    return info.tables.length > 0 && info.tables.every((code) => /^BAR/i.test(code))
+    return Boolean(meta.closedTables?.length) && meta.closedTables!.every((code) => /^BAR/i.test(code.trim()))
   }
 
   private assertBarScope(visit: VisitRow, meta: PaymentVisitMeta) {
@@ -3360,7 +3493,7 @@ export class MockGamApi implements GamApi, DemoControls {
     action: PaymentAuditAction,
     billCode: string,
     visitId: number,
-    opts?: { actor?: string; approver?: string; reason?: string },
+    opts?: { actor?: string; approver?: string; reason?: string; decisionNote?: string },
   ) {
     const defaultActor = `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`
     this.paymentAuditLog.unshift({
@@ -3371,6 +3504,7 @@ export class MockGamApi implements GamApi, DemoControls {
       actor: opts?.actor ?? defaultActor,
       ...(opts?.approver ? { approver: opts.approver } : {}),
       ...(opts?.reason ? { reason: opts.reason } : {}),
+      ...(opts?.decisionNote ? { decisionNote: opts.decisionNote } : {}),
       at: this.now.toISOString(),
       device: this.session.deviceLabel,
     })
@@ -3382,6 +3516,7 @@ export class MockGamApi implements GamApi, DemoControls {
     text: string,
     visitId: number,
     prefix: string,
+    billCode?: string,
   ) {
     this.paymentEventLog.unshift({
       id: `${prefix}-${this.seq + 1}-${this.paymentEventLog.length + 1}`,
@@ -3391,6 +3526,7 @@ export class MockGamApi implements GamApi, DemoControls {
       time: fmtTime(this.now),
       occurredAt: this.now.toISOString(),
       visitId: String(visitId),
+      ...(billCode ? { billCode } : {}),
     })
   }
 
@@ -3629,6 +3765,7 @@ export class MockGamApi implements GamApi, DemoControls {
       `${issuedBill.code} · Đã đưa hóa đơn · ${record.issuedBy} · ${record.issuedAt}`,
       visit.id,
       "inv",
+      record.billCode,
     )
     this.recordPaymentAudit("INVOICE_ISSUED", record.billCode, visit.id)
     this.emit({
@@ -3785,6 +3922,7 @@ export class MockGamApi implements GamApi, DemoControls {
       time: confirmedAt,
       occurredAt: this.now.toISOString(),
       visitId: billView.visitId,
+      billCode: record.billCode,
     })
   }
 
@@ -4034,6 +4172,7 @@ export class MockGamApi implements GamApi, DemoControls {
       `${billView.code} (${billCode}) · ${trimmed}`,
       visit.id,
       "creq",
+      billCode,
     )
     this.recordPaymentAudit("CANCEL_REQUESTED", billCode, visit.id, {
       actor: req.requestedBy,
@@ -4093,11 +4232,13 @@ export class MockGamApi implements GamApi, DemoControls {
         `${req.code} (${req.billCode}) · quay lại Chờ thanh toán`,
         visit.id,
         "cdec",
+        req.billCode,
       )
       this.recordPaymentAudit("CANCEL_APPROVED", req.billCode, visit.id, {
         actor: req.requestedBy,
         approver: decider,
-        reason: trimmedNote ?? req.reason,
+        reason: req.reason,
+        ...(trimmedNote ? { decisionNote: trimmedNote } : {}),
       })
       this.emit({
         latestSeq: this.seq,
@@ -4121,11 +4262,13 @@ export class MockGamApi implements GamApi, DemoControls {
         `${req.code} (${req.billCode}) · giữ Đã thanh toán`,
         visit.id,
         "cdec",
+        req.billCode,
       )
       this.recordPaymentAudit("CANCEL_REJECTED", req.billCode, visit.id, {
         actor: req.requestedBy,
         approver: decider,
-        reason: trimmedNote ?? req.reason,
+        reason: req.reason,
+        ...(trimmedNote ? { decisionNote: trimmedNote } : {}),
       })
       this.emit({
         latestSeq: this.seq,
@@ -4168,6 +4311,7 @@ export class MockGamApi implements GamApi, DemoControls {
       `${billView.code} (${billCode}) · ${trimmed}`,
       visit.id,
       "cdir",
+      billCode,
     )
     this.recordPaymentAudit("CANCELLED_DIRECT", billCode, visit.id, { reason: trimmed })
     this.emit({
@@ -4282,6 +4426,7 @@ export class MockGamApi implements GamApi, DemoControls {
               time: record.pendingAt,
               occurredAt: pendDate.toISOString(),
               visitId: String(visit.id),
+              billCode: record.billCode,
             })
           }
         }
