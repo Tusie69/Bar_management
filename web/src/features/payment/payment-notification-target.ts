@@ -1,8 +1,7 @@
 import type { PaymentNotification } from "@/services/payment"
 
 export function resolveNotificationBillCode(n: PaymentNotification): string | undefined {
-  const direct = (n as PaymentNotification & { billCode?: unknown }).billCode
-  if (typeof direct === "string" && direct.trim()) return direct.trim()
+  if (n.billCode?.trim()) return n.billCode.trim()
   const paidMatch = /^paid-(B\d+(?:-\d+)?)-\d+-\d+$/.exec(n.id)
   if (paidMatch) return paidMatch[1]
   const pendMatch = /^pend-(B\d+(?:-\d+)?)$/.exec(n.id)

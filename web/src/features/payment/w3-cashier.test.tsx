@@ -688,7 +688,7 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
   })
 
   it("resolves target billCode from notifications and opens exact bill on multi-bill closed session (NA45H-13)", () => {
-    const ntfDirect = {
+    const ntfDirect: PaymentNotification = {
       id: "paid-1",
       type: "PAID",
       title: "Đã thanh toán",
@@ -696,7 +696,7 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
       time: "21:45",
       visitId: "1283",
       billCode: "B1283-2",
-    } as PaymentNotification
+    }
     expect(resolveNotificationBillCode(ntfDirect)).toBe("B1283-2")
     expect(buildNotificationTargetPath("1283", ntfDirect)).toBe("/payment/1283?bill=B1283-2")
 
