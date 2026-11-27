@@ -128,7 +128,7 @@ try {
     const { context, page, errors } = await openUser({ width: vp.width, height: vp.height }, 8, "/chebien")
     try {
       await page.getByRole("button", { name: "Hóa đơn quầy Bar" }).click()
-      await expect(page.getByText("Khách quầy Bar")).toBeVisible()
+      await expect(page.getByRole("heading", { name: /^Khách quầy Bar \(/ })).toBeVisible()
       // NA45H-06: Bartender drawer only lists bar-area sessions (never A3 / G02 / G04 / A2 or "Bàn khác đang phục vụ")
       await expect(page.getByText(/Bàn khác đang phục vụ/)).toHaveCount(0)
       for (const nonBar of ["A3", "G02", "G04", "A2"]) {

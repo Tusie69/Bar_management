@@ -147,7 +147,11 @@ export function WaiterTableSheetBody({
   const canOpenSessionBill =
     isPaymentAvailable &&
     capability.visitId !== null &&
-    (!isBarRole || isBarGuestSession({ tables: sessionTables.length > 0 ? sessionTables : view.tableCodes }))
+    (!isBarRole ||
+      isBarGuestSession(
+        { tables: sessionTables.length > 0 ? sessionTables : view.tableCodes },
+        tables,
+      ))
   // Cùng khoá query với danh sách món bên dưới, nên đây không phải một request
   // thứ hai — chỉ là cùng một câu trả lời đọc ở hai chỗ.
   const visitItems = useVisitItems(capability.visitId)
