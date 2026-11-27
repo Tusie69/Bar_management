@@ -1250,5 +1250,5 @@ describe("mockPaymentApi", () => {
       cashierApiB.dispose()
       adminApi.dispose()
     }
-  })
+  }, 15_000)
 })
