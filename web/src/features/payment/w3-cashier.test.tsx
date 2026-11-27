@@ -784,7 +784,7 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
           decisionNote: "Đã kiểm tra quỹ",
           at: "22:00",
           recollectedAt: "22:05",
-        } as NonNullable<PayBill["cancelHistory"]>[number],
+        },
       ],
     })
     const matchingApprovedReq: CancelRequest = {
@@ -851,7 +851,7 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
           actor: "Linh · Lễ tân",
           at: "21:44",
           recollectedAt: "21:55",
-        } as NonNullable<PayBill["cancelHistory"]>[number],
+        },
       ],
     })
 
@@ -966,7 +966,7 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
           actor: "Linh · Lễ tân",
           at: "2026-11-27T21:22:00.000Z",
           recollectedAt: "2026-11-27T21:25:00.000Z",
-        } as NonNullable<PayBill["cancelHistory"]>[number],
+        },
         {
           kind: "APPROVED",
           requestId: "cr-col-1",
@@ -976,7 +976,7 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
           decisionNote: "Duyệt lần 1",
           at: "2026-11-27T21:12:00.000Z",
           recollectedAt: "2026-11-27T21:15:00.000Z",
-        } as NonNullable<PayBill["cancelHistory"]>[number],
+        },
       ],
     })
 

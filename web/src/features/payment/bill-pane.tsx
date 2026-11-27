@@ -11,10 +11,6 @@ import {
   type PayBill,
 } from "@/services/payment"
 
-type CancelHistoryEntryWithRequestId = PayBill["cancelHistory"] extends (infer T)[] | undefined
-  ? T & { requestId?: string }
-  : never
-
 type CancelDisplayItem =
   | {
       key: string
@@ -281,7 +277,7 @@ export function DetailActionPane({
     const historyItems: CancelDisplayItem[] = []
 
     for (let idx = 0; idx < billCancelHistory.length; idx++) {
-      const h = billCancelHistory[idx] as CancelHistoryEntryWithRequestId
+      const h = billCancelHistory[idx]
       const linkedReq = h.requestId ? reqById.get(h.requestId) : undefined
       if (linkedReq) {
         matchedRequestIds.add(linkedReq.id)
