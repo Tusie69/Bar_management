@@ -1,8 +1,7 @@
 import type { RoleCode } from "@/domain/enums"
 import type { VisitView } from "@/domain/models"
-import { api, clock } from "@/services"
 import {
-  paymentApi,
+  type CancelEffect,
   type CancelRequest,
   type PayBill,
   type PaymentApi,
@@ -12,15 +11,16 @@ import {
   type SessionBills,
 } from "@/services/payment"
 
-export type CancelSessionImpact = "REOPENED" | "STILL_OPEN" | "UNKNOWN"
+export type CancelSessionImpact = "REOPENED" | "REOPENED_NO_TURN" | "STILL_OPEN" | "UNKNOWN"
 
-export function resolveCancelSessionImpact(
-  wasOpenBefore: boolean | null,
-  isOpenAfter: boolean | null,
-): CancelSessionImpact {
-  if (wasOpenBefore === false && isOpenAfter === true) return "REOPENED"
-  if (wasOpenBefore === true && isOpenAfter === true) return "STILL_OPEN"
-  return "UNKNOWN"
+export function resolveCancelSessionImpact(effect?: CancelEffect | null): CancelSessionImpact {
+  if (!effect || typeof effect !== "object" || typeof effect.sessionReopened !== "boolean") {
+    return "UNKNOWN"
+  }
+  if (effect.sessionReopened) {
+    return effect.closedTurnsDelta === -1 ? "REOPENED" : "REOPENED_NO_TURN"
+  }
+  return "STILL_OPEN"
 }
 
 export function buildDirectCancelOutcome(
@@ -30,6 +30,12 @@ export function buildDirectCancelOutcome(
   if (impact === "REOPENED") {
     return {
       title: `${billCode}: Đã huỷ thanh toán - bill về Chưa thu, bàn xanh lá, lượt -1.`,
+      detail: "Bill đã mở lại để thu tiền; bàn được trả về trạng thái đang phục vụ trên sơ đồ.",
+    }
+  }
+  if (impact === "REOPENED_NO_TURN") {
+    return {
+      title: `${billCode}: Đã huỷ thanh toán - bill về Chưa thu, bàn xanh lá.`,
       detail: "Bill đã mở lại để thu tiền; bàn được trả về trạng thái đang phục vụ trên sơ đồ.",
     }
   }
@@ -45,13 +51,12 @@ export function buildDirectCancelOutcome(
   }
 }
 
-export function buildApproveCancelFeedback(
-  billCode: string,
-  tableCode: string,
-  impact: CancelSessionImpact,
-): string {
+export function buildApproveCancelFeedback(billCode: string, tableCode: string, impact: CancelSessionImpact): string {
   if (impact === "REOPENED") {
     return `Đã duyệt huỷ ${billCode} (${tableCode}) - bill về Chưa thu, bàn xanh lá, lượt -1. Đã thông báo Thu ngân.`
+  }
+  if (impact === "REOPENED_NO_TURN") {
+    return `Đã duyệt huỷ ${billCode} (${tableCode}) - bill về Chưa thu, bàn xanh lá. Đã thông báo Thu ngân.`
   }
   if (impact === "STILL_OPEN") {
     return `Đã duyệt huỷ ${billCode} (${tableCode}) - bill về Chưa thu, phiên vẫn đang mở (không đổi lượt). Đã thông báo Thu ngân.`
@@ -59,26 +64,37 @@ export function buildApproveCancelFeedback(
   return `Đã duyệt huỷ ${billCode} (${tableCode}) - bill về Chưa thu. Đã thông báo Thu ngân.`
 }
 
-export async function isVisitOpenAfterCancelCheck(
-  visitId: string,
-  payApi: PaymentApi,
-  canReadSessionBills = false,
-): Promise<boolean | null> {
-  if (!visitId) return null
-  if (payApi !== paymentApi) {
-    if (!canReadSessionBills) return null
-    try {
-      const session = await payApi.getSessionBills(visitId)
-      return session.status === "SERVING" || session.status === "AWAITING_PAYMENT"
-    } catch {
-      return null
+export async function submitDirectCancel(
+  api: PaymentApi,
+  billCode: string,
+  reason: string,
+): Promise<{ title: string; detail: string }> {
+  const effect = await api.cancelPaid(billCode, reason)
+  return buildDirectCancelOutcome(billCode, resolveCancelSessionImpact(effect))
+}
+
+export async function submitDecideCancel(
+  api: PaymentApi,
+  req: Pick<CancelRequest, "id" | "billCode" | "code">,
+  approve: boolean,
+  note?: string,
+): Promise<{ updated: CancelRequest; feedback: { kind: "ok" | "info"; text: string } }> {
+  const updated = await api.decideCancel(req.id, approve, note)
+  if (!approve) {
+    return {
+      updated,
+      feedback: {
+        kind: "info",
+        text: `Đã từ chối yêu cầu huỷ ${req.billCode} (${req.code}) - giữ Đã thanh toán. Đã thông báo Thu ngân.`,
+      },
     }
   }
-  try {
-    const floor = await api.getFloorState(clock.now())
-    return floor.tables.some((t) => String(t.claim?.visitId ?? "") === String(visitId))
-  } catch {
-    return null
+  return {
+    updated,
+    feedback: {
+      kind: "ok",
+      text: buildApproveCancelFeedback(req.billCode, req.code, resolveCancelSessionImpact(updated.effect)),
+    },
   }
 }
 
@@ -117,11 +133,7 @@ export interface PaidBillCandidate {
  * Access gate for W4 payment-cancel surfaces.
  * CASHIER is always denied (TN-14: Cashier can only request cancel inside /payment).
  */
-export function canAccessPaymentCancel(
-  role: RoleCode,
-  canAuditRead: boolean,
-  canCollect: boolean,
-): boolean {
+export function canAccessPaymentCancel(role: RoleCode, canAuditRead: boolean, canCollect: boolean): boolean {
   if (role === "CASHIER") return false
   if (role === "RECEPTIONIST") return true
   if (role === "OWNER" || role === "ADMIN") return canAuditRead || canCollect
