@@ -182,6 +182,10 @@ try {
     if (myApproved[0]?.status !== "APPROVED") throw new Error("Cashier listMyCancelRequests missing APPROVED")
     const a2ReopenedFloor = (await api.getFloorState(clock.now())).tables.find((t) => t.tableId === tableIdOf("A2")).state
     const audit = await paymentApi.listAudit(a2Bill.billCode)
+    const approvedAudit = audit.find((e) => e.action === "CANCEL_APPROVED")
+    if (!approvedAudit || approvedAudit.reason !== "Khách đổi sang QR" || approvedAudit.decisionNote !== "Duyệt hủy") {
+      throw new Error(`Unexpected CANCEL_APPROVED audit entry: ${JSON.stringify(approvedAudit)}`)
+    }
 
     return {
       barBillCode: barIssued.billCode,

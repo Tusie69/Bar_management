@@ -165,6 +165,7 @@ export interface PaymentAuditEntry {
   actor: string
   approver?: string
   reason?: string
+  decisionNote?: string
   at: string
   device: string
 }

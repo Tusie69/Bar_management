@@ -605,10 +605,17 @@ describe("mockPaymentApi", () => {
     expect(audit.map((e) => e.action)).toContain("CANCEL_REQUESTED")
     expect(audit.map((e) => e.action)).toContain("PAID")
     expect(audit.map((e) => e.action)).toContain("INVOICE_ISSUED")
+    const rejectedEntry = audit.find((e) => e.action === "CANCEL_REJECTED")!
+    expect(rejectedEntry.actor).toContain("Thu ngân")
+    expect(rejectedEntry.approver).toContain("Quản trị viên")
+    expect(rejectedEntry.reason).toBe("Khách đổi sang chuyển khoản")
+    expect(rejectedEntry.decisionNote).toBe("Đã đối soát cuối ca")
+
     const approvedEntry = audit.find((e) => e.action === "CANCEL_APPROVED")!
     expect(approvedEntry.actor).toContain("Thu ngân")
     expect(approvedEntry.approver).toContain("Quản trị viên")
-    expect(approvedEntry.reason).toBe("OK hủy thu lại QR")
+    expect(approvedEntry.reason).toBe("Nhập nhầm tiền mặt")
+    expect(approvedEntry.decisionNote).toBe("OK hủy thu lại QR")
     expect(approvedEntry.at).toBeTruthy()
     expect(approvedEntry.device).toBeTruthy()
   })

@@ -3360,7 +3360,7 @@ export class MockGamApi implements GamApi, DemoControls {
     action: PaymentAuditAction,
     billCode: string,
     visitId: number,
-    opts?: { actor?: string; approver?: string; reason?: string },
+    opts?: { actor?: string; approver?: string; reason?: string; decisionNote?: string },
   ) {
     const defaultActor = `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`
     this.paymentAuditLog.unshift({
@@ -3371,6 +3371,7 @@ export class MockGamApi implements GamApi, DemoControls {
       actor: opts?.actor ?? defaultActor,
       ...(opts?.approver ? { approver: opts.approver } : {}),
       ...(opts?.reason ? { reason: opts.reason } : {}),
+      ...(opts?.decisionNote ? { decisionNote: opts.decisionNote } : {}),
       at: this.now.toISOString(),
       device: this.session.deviceLabel,
     })
@@ -4103,7 +4104,8 @@ export class MockGamApi implements GamApi, DemoControls {
       this.recordPaymentAudit("CANCEL_APPROVED", req.billCode, visit.id, {
         actor: req.requestedBy,
         approver: decider,
-        reason: trimmedNote ?? req.reason,
+        reason: req.reason,
+        ...(trimmedNote ? { decisionNote: trimmedNote } : {}),
       })
       this.emit({
         latestSeq: this.seq,
@@ -4132,7 +4134,8 @@ export class MockGamApi implements GamApi, DemoControls {
       this.recordPaymentAudit("CANCEL_REJECTED", req.billCode, visit.id, {
         actor: req.requestedBy,
         approver: decider,
-        reason: trimmedNote ?? req.reason,
+        reason: req.reason,
+        ...(trimmedNote ? { decisionNote: trimmedNote } : {}),
       })
       this.emit({
         latestSeq: this.seq,
