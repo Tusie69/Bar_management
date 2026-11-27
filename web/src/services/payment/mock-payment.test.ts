@@ -1066,7 +1066,7 @@ describe("mockPaymentApi", () => {
     await paymentApi.confirmCash(a3Id, bill1.dueVnd, bill2.version, "na45h12-pay1", bill1.billCode)
     api.setSession(receptionist)
     const partialEffect = await paymentApi.cancelPaid(bill1.billCode, "Huỷ khi còn bill 2 chưa thu")
-    expect(partialEffect).toEqual({ sessionReopened: false, closedTurnsDelta: 0 })
+    expect(partialEffect).toEqual({ sessionReopened: false, closedTurnsDelta: 0, tableRestored: false })
 
     // Re-pay Bill 1, then pay Bill 2 so visit closes -> direct cancel on Bill 1 now reopens session (delta -1)
     api.setSession(cashier)
@@ -1077,7 +1077,7 @@ describe("mockPaymentApi", () => {
 
     api.setSession(receptionist)
     const reopenEffect = await paymentApi.cancelPaid(bill1.billCode, "Huỷ sau khi bill 2 đã đóng phiên")
-    expect(reopenEffect).toEqual({ sessionReopened: true, closedTurnsDelta: -1 })
+    expect(reopenEffect).toEqual({ sessionReopened: true, closedTurnsDelta: -1, tableRestored: true })
 
     // Re-pay Bill 1 -> visit closes again -> Cashier request + Admin approve returns effect, reject omits effect
     api.setSession(cashier)
@@ -1092,7 +1092,7 @@ describe("mockPaymentApi", () => {
     const reqApprove = await paymentApi.requestCancel(bill1.billCode, "Duyệt mở lại phiên")
     api.setSession(admin)
     const approved = await paymentApi.decideCancel(reqApprove.id, true, "OK mở lại")
-    expect(approved.effect).toEqual({ sessionReopened: true, closedTurnsDelta: -1 })
+    expect(approved.effect).toEqual({ sessionReopened: true, closedTurnsDelta: -1, tableRestored: true })
   })
 
   it("NA45H-11: populates PayBill.cancelHistory for DIRECT and APPROVED cancels and sets recollectedAt on re-collection", async () => {

@@ -138,10 +138,12 @@ export type CancelRequestStatus = "PENDING" | "APPROVED" | "REJECTED"
 export interface CancelEffect {
   sessionReopened: boolean
   closedTurnsDelta: 0 | -1
+  tableRestored: boolean
 }
 
 export interface PayBillCancelHistoryEntry {
   kind: "DIRECT" | "APPROVED"
+  requestId?: string
   reason: string
   actor: string
   approver?: string
