@@ -843,6 +843,128 @@ try {
       await interleaveContext.close()
     }
   }
+
+  // 9. NA45H-19: Approve cancel request after mock clock passes 05:00 (BUSINESS_DAY_END) -> banner must match getFloorState (A3 free, no green table claim)
+  {
+    const cutoffContext = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+    try {
+      const cashierPage = await cutoffContext.newPage()
+      const adminPage = await cutoffContext.newPage()
+      const cutoffErrors = []
+      for (const p of [cashierPage, adminPage]) {
+        p.on("pageerror", (e) => cutoffErrors.push(e.message))
+        p.on("console", (msg) => {
+          if (msg.type() === "error") cutoffErrors.push(msg.text())
+        })
+      }
+
+      await cashierPage.addInitScript(() => {
+        localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 5, theme: "light" }))
+      })
+      await adminPage.addInitScript(() => {
+        localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 7, theme: "light" }))
+      })
+
+      await cashierPage.goto(`${base}/payment`, { waitUntil: "networkidle" })
+      await adminPage.goto(`${base}/cancel-payment`, { waitUntil: "networkidle" })
+
+      // Prepare A3 with bill1 PAID and extra unpaid bill2 so session stays open until 05:00 BUSINESS_DAY_END
+      const a3Session = cashierPage.locator(".pay-sess", { hasText: "A3" })
+      await a3Session.click()
+      await a3Session.click()
+      await expect(cashierPage).toHaveURL(/\/payment\/\d+/)
+      const a3VisitId = new URL(cashierPage.url()).pathname.split("/")[2]
+
+      await cashierPage.getByRole("button", { name: "Xuất hóa đơn" }).click()
+      await expect(cashierPage.getByRole("button", { name: /^Thu tiền/ })).toBeVisible()
+      const { bill1Code, visitBusinessDate } = await cashierPage.evaluate(async (vid) => {
+        const [{ clock }, { businessDateOf }] = await Promise.all([
+          import("/src/services/index.ts"),
+          import("/src/lib/time.ts"),
+        ])
+        const mock = window.__21gamPaymentMock
+        const sb1 = await mock.paymentApi.getSessionBills(vid)
+        await mock.addOrderLines(vid, [{ name: "Coca", unit: "Lon", qty: 1, unitPriceVnd: 45_000, state: "SERVED" }])
+        const prev = await mock.paymentApi.previewBill(vid)
+        await mock.paymentApi.issueInvoice(vid, prev.version, "w4-na45h19-b2")
+        return { bill1Code: sb1.bills[0].billCode, visitBusinessDate: businessDateOf(clock.now()) }
+      }, a3VisitId)
+
+      await cashierPage.locator("button", { hasText: bill1Code }).first().click()
+      await cashierPage.getByRole("button", { name: new RegExp(`Thu tiền · ${bill1Code}`) }).click()
+      await cashierPage.getByRole("button", { name: /Tiền mặt/ }).click()
+      await cashierPage.locator(".pay-chips .pay-chip").first().click()
+      await cashierPage.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+      await expect(cashierPage.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
+
+      await cashierPage.evaluate(async (b1) => {
+        const [{ api }, { DEMO_USERS }] = await Promise.all([
+          import("/src/services/index.ts"),
+          import("/src/services/mock/seed.ts"),
+        ])
+        api.setSession(DEMO_USERS.find((u) => u.role === "CASHIER"))
+        await window.__21gamPaymentMock.paymentApi.requestCancel(b1, "Yêu cầu huỷ qua giờ chốt")
+      }, bill1Code)
+
+      await expect(adminPage.getByText("Yêu cầu huỷ qua giờ chốt").first()).toBeVisible({ timeout: 5000 })
+
+      // Advance mock clock past 05:00 (21:30 -> 05:30 next morning) -> BUSINESS_DAY_END closes visit and frees A3
+      await adminPage.evaluate(async () => {
+        const { clock } = await import("/src/services/index.ts")
+        clock.advance(8 * 60)
+      })
+
+      const readCutoffState = async (vid, bd) =>
+        adminPage.evaluate(
+          async ({ visitId, businessDate }) => {
+            const { api, clock } = await import("/src/services/index.ts")
+            const [floor, turnsRes, sb] = await Promise.all([
+              api.getFloorState(clock.now()),
+              api.getTableTurns({ from: businessDate, to: businessDate, includeUncounted: true }),
+              window.__21gamPaymentMock.paymentApi.getSessionBills(visitId),
+            ])
+            const a3 = floor.tables.find((t) => t.code === "A3")
+            const visitTurn = turnsRes.turns.find((t) => String(t.visitId) === String(visitId))
+            const bill1 = sb.bills[0]
+            return {
+              a3Status: a3?.status ?? null,
+              a3Claim: a3?.claim ?? null,
+              visitTurnEndReason: visitTurn?.endReason ?? null,
+              visitTurnStatus: visitTurn?.status ?? null,
+              bill1Status: bill1?.billStatus ?? null,
+            }
+          },
+          { visitId: vid, businessDate: bd },
+        )
+
+      await expect
+        .poll(() => readCutoffState(a3VisitId, visitBusinessDate), { timeout: 5000 })
+        .toMatchObject({
+          a3Status: "free",
+          a3Claim: null,
+          visitTurnStatus: "CLOSED",
+          visitTurnEndReason: "BUSINESS_DAY_END",
+        })
+
+      // Admin approves after 05:00 cutoff -> banner must NOT report "bàn xanh lá" and must match getFloorState (A3 free)
+      await adminPage.getByRole("button", { name: "Duyệt huỷ", exact: true }).first().click()
+      const feedback = adminPage.getByTestId("pc-queue-feedback")
+      await expect(feedback).toContainText("bill về Chưa thu, bàn không mở lại")
+      const feedbackText = await feedback.innerText()
+      assert(!feedbackText.includes("bàn xanh"), `Post-cutoff banner must not report green table: ${feedbackText}`)
+      assert(!feedbackText.includes("lượt -1"), `Post-cutoff banner must not report turn -1: ${feedbackText}`)
+
+      const afterApprove = await readCutoffState(a3VisitId, visitBusinessDate)
+      assert.equal(afterApprove.a3Status, "free", "A3 must remain free on floor after post-cutoff approve")
+      assert.equal(afterApprove.a3Claim, null, "A3 claim must remain null after post-cutoff approve")
+      assert.equal(afterApprove.bill1Status, "UNPAID", "Cancelled bill must return to UNPAID")
+
+      assert.deepEqual(cutoffErrors, [], `NA45H-19 post-cutoff console errors: ${cutoffErrors.join(" | ")}`)
+      console.log("PASS NA45H-19 approve after 05:00 BUSINESS_DAY_END matches getFloorState (A3 free)")
+    } finally {
+      await cutoffContext.close()
+    }
+  }
 } finally {
   if (browser) await browser.close()
   if (viteServer) await viteServer.close()
