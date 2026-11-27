@@ -908,12 +908,6 @@ try {
 
       await expect(adminPage.getByText("Yêu cầu huỷ qua giờ chốt").first()).toBeVisible({ timeout: 5000 })
 
-      // Advance mock clock past 05:00 (21:30 -> 05:30 next morning) -> BUSINESS_DAY_END closes visit and frees A3
-      await adminPage.evaluate(async () => {
-        const { clock } = await import("/src/services/index.ts")
-        clock.advance(8 * 60)
-      })
-
       const readCutoffState = async (vid, bd) =>
         adminPage.evaluate(
           async ({ visitId, businessDate }) => {
@@ -939,8 +933,68 @@ try {
           { visitId: vid, businessDate: bd },
         )
 
+      // NA45H-20 contention check: hold Web Lock in Cashier tab when Admin advances clock -> first tick is skipped
+      await cashierPage.evaluate(
+        () =>
+          new Promise((acquired) => {
+            void navigator.locks.request("21gam.mock.sync.v1.lock", () => {
+              return new Promise((release) => {
+                window.__releaseW4CutoffLock = release
+                acquired()
+              })
+            })
+          }),
+      )
+
+      const lockHeldBeforeAdvance = await adminPage.evaluate(async () => {
+        const snapshot = await navigator.locks.query()
+        return snapshot.held?.some((l) => l.name === "21gam.mock.sync.v1.lock") ?? false
+      })
+      assert.equal(lockHeldBeforeAdvance, true, "Cashier must hold mock sync lock before Admin advances clock")
+
+      // Advance mock clock past 05:00 (21:30 -> 05:30 next morning) while Cashier holds lock
+      await adminPage.evaluate(async () => {
+        const { clock } = await import("/src/services/index.ts")
+        clock.advance(8 * 60)
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      })
+
+      const skippedWhileLocked = await readCutoffState(a3VisitId, visitBusinessDate)
+      assert.equal(
+        skippedWhileLocked.visitTurnStatus,
+        "OPEN",
+        "First tick under lock must be skipped (turn stays OPEN)",
+      )
+      assert.equal(skippedWhileLocked.visitTurnEndReason, null, "First tick under lock must not set BUSINESS_DAY_END")
+      assert.equal(skippedWhileLocked.a3Status, "seated", "A3 must remain seated while first tick is skipped")
+      assert.notEqual(skippedWhileLocked.a3Claim, null, "A3 claim must remain present while first tick is skipped")
+
+      // Release Cashier lock, then poll while re-signaling tick via clock.advance(0) until BUSINESS_DAY_END completes
+      await cashierPage.evaluate(() => {
+        window.__releaseW4CutoffLock?.()
+        delete window.__releaseW4CutoffLock
+      })
+
       await expect
-        .poll(() => readCutoffState(a3VisitId, visitBusinessDate), { timeout: 5000 })
+        .poll(
+          async () => {
+            const state = await readCutoffState(a3VisitId, visitBusinessDate)
+            if (
+              state.a3Status !== "free" ||
+              state.a3Claim !== null ||
+              state.visitTurnStatus !== "CLOSED" ||
+              state.visitTurnEndReason !== "BUSINESS_DAY_END"
+            ) {
+              await adminPage.evaluate(async () => {
+                const { clock } = await import("/src/services/index.ts")
+                clock.advance(0)
+              })
+              return readCutoffState(a3VisitId, visitBusinessDate)
+            }
+            return state
+          },
+          { timeout: 5000 },
+        )
         .toMatchObject({
           a3Status: "free",
           a3Claim: null,
