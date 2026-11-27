@@ -214,7 +214,7 @@ it("validates keys, only remembers successes and clears replay state on demo res
   expect((await api.assignAnonymousVisit({ ...input, displayName: "New guest" })).customer.displayName).toBe(
     "New guest",
   )
-  api.reset()
+  await api.reset()
   const resetVisit = (await api.getAnonymousVisits(range)).visits[0]!
   await expect(
     api.assignAnonymousVisit({

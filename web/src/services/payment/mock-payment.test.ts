@@ -32,9 +32,9 @@ async function turnsForVisit(visitId: string, restoreTo = cashier) {
 }
 
 describe("mockPaymentApi", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     clock.resetToScenario()
-    demo?.reset()
+    await demo?.reset()
     api.setSession(cashier)
   })
 
@@ -1395,8 +1395,108 @@ describe("mockPaymentApi", () => {
           tickCallbackRan = true
         })
         expect(tickCallbackRan).toBe(false)
+
+        // reset() also routes through Web Locks and rejects before read/replace/publish
+        await expect(guardedApi.reset()).rejects.toMatchObject({
+          code: "WEB_LOCKS_REQUIRED",
+          status: 503,
+        })
+        expect(readSpy).toBe(readBeforeMutation)
+        expect(publishSpy).toBe(publishBeforeMutation)
       } finally {
         guardedApi.dispose()
+      }
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("NA45H-17 reset: preserves state when navigator.locks is missing and resets/syncs cleanly with in-memory transport", async () => {
+    const store = new Map<string, string>()
+    vi.stubGlobal("localStorage", {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        store.set(k, v)
+      },
+      removeItem: (k: string) => {
+        store.delete(k)
+      },
+    })
+    try {
+      const locksMap = new Map<string, Promise<void>>()
+      vi.stubGlobal("navigator", {
+        locks: {
+          request: async <T>(_name: string, ...args: unknown[]): Promise<T> => {
+            const cb = args[args.length - 1] as (lock: { name: string }) => Promise<T> | T
+            const prev = locksMap.get(_name) ?? Promise.resolve()
+            let release!: () => void
+            const next = new Promise<void>((r) => {
+              release = r
+            })
+            locksMap.set(_name, next)
+            await prev
+            try {
+              return await cb({ name: _name })
+            } finally {
+              release()
+            }
+          },
+        },
+      })
+
+      const writerApi = new MockGamApi({
+        businessDayWorkerEnabled: false,
+        syncTransport: createBrowserMockSyncTransport(),
+      })
+      try {
+        writerApi.setSession(cashier)
+        const a2 = (await writerApi.listPaymentOpen()).find((s) => s.code === "A2")!
+        const issued = await writerApi.issuePaymentInvoice(a2.visitId, a2.version, "na45h17-reset-inv")
+        await writerApi.confirmPaymentCash(
+          a2.visitId,
+          issued.dueVnd,
+          issued.version,
+          "na45h17-reset-pay",
+          issued.billCode,
+        )
+        const req = await writerApi.requestPaymentCancel(issued.billCode, "Sentinel before reset")
+        const snapshotBefore = store.get("21gam.mock.sync.v1")
+
+        // Switch navigator to missing locks -> reset() must fail before replacing data or publishing
+        vi.stubGlobal("navigator", {})
+        await expect(writerApi.reset()).rejects.toMatchObject({
+          code: "WEB_LOCKS_REQUIRED",
+          status: 503,
+        })
+        expect(store.get("21gam.mock.sync.v1")).toBe(snapshotBefore)
+        expect((await writerApi.listMyPaymentCancelRequests(issued.billCode)).some((r) => r.id === req.id)).toBe(true)
+        writerApi.setSession(admin)
+        expect((await writerApi.listPaymentAudit(issued.billCode)).some((e) => e.action === "CANCEL_REQUESTED")).toBe(
+          true,
+        )
+      } finally {
+        writerApi.dispose()
+      }
+
+      // In-memory transport reset remains functional and propagates across instances
+      const inMem = createInMemoryMockSyncTransport()
+      const instA = new MockGamApi({ businessDayWorkerEnabled: false, syncTransport: inMem })
+      const instB = new MockGamApi({ businessDayWorkerEnabled: false, syncTransport: inMem })
+      try {
+        instA.setSession(cashier)
+        instB.setSession(admin)
+        const a2 = (await instA.listPaymentOpen()).find((s) => s.code === "A2")!
+        const issued = await instA.issuePaymentInvoice(a2.visitId, a2.version, "na45h17-mem-inv")
+        await instA.confirmPaymentCash(a2.visitId, issued.dueVnd, issued.version, "na45h17-mem-pay", issued.billCode)
+        await instA.requestPaymentCancel(issued.billCode, "In-memory sentinel")
+        expect(await instB.listPaymentCancelRequests()).toHaveLength(1)
+
+        await instA.reset()
+        expect(await instB.listPaymentCancelRequests()).toHaveLength(0)
+        expect(await instB.listPaymentAudit()).toHaveLength(0)
+      } finally {
+        instA.dispose()
+        instB.dispose()
       }
     } finally {
       vi.unstubAllGlobals()

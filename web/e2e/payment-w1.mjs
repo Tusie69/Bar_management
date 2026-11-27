@@ -70,7 +70,7 @@ try {
     const mockCtrl = window.__21gamPaymentMock
     if (!mockCtrl) throw new Error("Missing window.__21gamPaymentMock in mock mode")
 
-    demo.reset()
+    await demo.reset()
     clock.resetToScenario()
 
     const byRole = (role) => DEMO_USERS.find((u) => u.role === role)
@@ -337,7 +337,7 @@ try {
         import("/src/services/index.ts"),
         import("/src/services/payment/index.ts"),
       ])
-      demo.reset()
+      await demo.reset()
       clock.resetToScenario()
       const open = await paymentApi.listOpen()
       const visitIdOf = (code) => {
@@ -507,15 +507,19 @@ try {
     await raceContext.close()
   }
 
-  // NA45H-17 no-Web-Locks probe: hide navigator.locks via addInitScript -> browser mock mutation
-  // must reject BEFORE read/mutate/publish with clear error; no PENDING request and no audit row written.
+  // NA45H-17 no-Web-Locks probe (Boss "Kiểm lại"):
+  // 1) Locked tabs create a sentinel PENDING cancel request + CANCEL_REQUESTED audit.
+  // 2) Tab with navigator.locks hidden rejects requestCancel AND UI "Nạp lại dữ liệu mẫu"
+  //    with WEB_LOCKS_REQUIRED error, leaving snapshot, PENDING, and audit intact for open & newly opened Admin.
+  // 3) Reset from a locked tab clears state and updates open Admin.
   const noLockContext = await browser.newContext({ viewport: { width: 1440, height: 900 } })
   try {
     const setupPage = await noLockContext.newPage()
     const adminCheckPage = await noLockContext.newPage()
     const noLockCashierPage = await noLockContext.newPage()
+    const noLockFloorPage = await noLockContext.newPage()
     const noLockErrors = []
-    for (const p of [setupPage, adminCheckPage, noLockCashierPage]) {
+    for (const p of [setupPage, adminCheckPage, noLockCashierPage, noLockFloorPage]) {
       p.on("pageerror", (err) => noLockErrors.push(`pageerror: ${err.message}`))
       p.on("console", (msg) => {
         if (msg.type() === "error") noLockErrors.push(`console.error: ${msg.text()}`)
@@ -531,14 +535,21 @@ try {
         import("/src/services/index.ts"),
         import("/src/services/payment/index.ts"),
       ])
-      demo.reset()
+      await demo.reset()
       clock.resetToScenario()
-      const a2 = (await paymentApi.listOpen()).find((b) => b.code === "A2")
-      if (!a2) throw new Error("Missing A2 for no-Web-Locks probe")
-      const issued = await paymentApi.issueInvoice(a2.visitId, a2.version, "na45h17-nolock-inv")
-      await paymentApi.confirmCash(a2.visitId, issued.dueVnd, issued.version, "na45h17-nolock-pay", issued.billCode)
+      const open = await paymentApi.listOpen()
+      const a2 = open.find((b) => b.code === "A2")
+      const a3 = open.find((b) => b.code === "A3")
+      if (!a2 || !a3) throw new Error("Missing A2/A3 for no-Web-Locks probe")
+      const a2Bill = await paymentApi.issueInvoice(a2.visitId, a2.version, "na45h17-nolock-a2-inv")
+      await paymentApi.confirmCash(a2.visitId, a2Bill.dueVnd, a2Bill.version, "na45h17-nolock-a2-pay", a2Bill.billCode)
+      const a3Bill = await paymentApi.issueInvoice(a3.visitId, a3.version, "na45h17-nolock-a3-inv")
+      await paymentApi.confirmCash(a3.visitId, a3Bill.dueVnd, a3Bill.version, "na45h17-nolock-a3-pay", a3Bill.billCode)
+      const sentinelReq = await paymentApi.requestCancel(a2Bill.billCode, "Sentinel PENDING with Web Locks")
       return {
-        billCode: issued.billCode,
+        sentinelBillCode: a2Bill.billCode,
+        sentinelReqId: sentinelReq.id,
+        probeBillCode: a3Bill.billCode,
         syncBefore: localStorage.getItem("21gam.mock.sync.v1"),
       }
     })
@@ -547,8 +558,10 @@ try {
       localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 7, theme: "light" }))
     })
     await adminCheckPage.goto(`${BASE_URL}/cancel-payment`, { waitUntil: "networkidle" })
-    await expect(adminCheckPage.getByText("Chờ duyệt (0)")).toBeVisible()
+    await expect(adminCheckPage.getByText("Chờ duyệt (1)")).toBeVisible()
+    await expect(adminCheckPage.getByText("Sentinel PENDING with Web Locks").first()).toBeVisible()
 
+    // 2a) Hidden navigator.locks blocks requestCancel before read/mutate/publish
     await noLockCashierPage.addInitScript(() => {
       localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 5, theme: "light" }))
       Object.defineProperty(navigator, "locks", { get: () => undefined, configurable: true })
@@ -569,7 +582,7 @@ try {
           syncAfter: localStorage.getItem("21gam.mock.sync.v1"),
         }
       }
-    }, paidSetup.billCode)
+    }, paidSetup.probeBillCode)
 
     assert.equal(noLockOutcome.rejected, true)
     assert.equal(noLockOutcome.code, "WEB_LOCKS_REQUIRED")
@@ -577,16 +590,81 @@ try {
     assert.match(noLockOutcome.message ?? "", /Web Locks/i)
     assert.equal(noLockOutcome.syncAfter, paidSetup.syncBefore, "Snapshot must not be mutated or published")
 
-    const adminAfterNoLock = await adminCheckPage.evaluate(async (billCode) => {
+    // 2b) Hidden navigator.locks blocks UI "Nạp lại dữ liệu mẫu" on /floor and surfaces error toast
+    await noLockFloorPage.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 7, theme: "light" }))
+      Object.defineProperty(navigator, "locks", { get: () => undefined, configurable: true })
+    })
+    await noLockFloorPage.goto(`${BASE_URL}/floor`, { waitUntil: "networkidle" })
+    await noLockFloorPage.getByRole("button", { name: /Mở điều khiển thời gian/ }).click()
+    await noLockFloorPage.getByRole("button", { name: "Nạp lại dữ liệu mẫu" }).click()
+    await expect(noLockFloorPage.getByText(/Web Locks/i).first()).toBeVisible({ timeout: 3000 })
+    assert.equal(await noLockFloorPage.getByText("Đã nạp lại dữ liệu mẫu").count(), 0)
+
+    const syncAfterNoLockReset = await noLockFloorPage.evaluate(() => localStorage.getItem("21gam.mock.sync.v1"))
+    assert.equal(
+      syncAfterNoLockReset,
+      paidSetup.syncBefore,
+      "Reset without Web Locks must leave shared snapshot intact",
+    )
+
+    // Open Admin still sees sentinel PENDING and audit intact
+    await expect(adminCheckPage.getByText("Chờ duyệt (1)")).toBeVisible()
+    const adminOpenAfterNoLock = await adminCheckPage.evaluate(async (billCode) => {
       const { paymentApi } = await import("/src/services/payment/index.ts")
       const [queue, audit] = await Promise.all([paymentApi.listCancelRequests(), paymentApi.listAudit(billCode)])
       return {
-        pendingCount: queue.filter((r) => r.status === "PENDING").length,
+        pendingIds: queue.filter((r) => r.status === "PENDING").map((r) => r.id),
         cancelReqAuditCount: audit.filter((e) => e.action === "CANCEL_REQUESTED").length,
       }
-    }, paidSetup.billCode)
-    assert.equal(adminAfterNoLock.pendingCount, 0)
-    assert.equal(adminAfterNoLock.cancelReqAuditCount, 0)
+    }, paidSetup.sentinelBillCode)
+    assert.deepEqual(adminOpenAfterNoLock.pendingIds, [paidSetup.sentinelReqId])
+    assert.equal(adminOpenAfterNoLock.cancelReqAuditCount, 1)
+
+    // Newly opened Admin also sees sentinel PENDING and audit intact
+    const adminAfterNoLockPage = await noLockContext.newPage()
+    adminAfterNoLockPage.on("pageerror", (err) => noLockErrors.push(`pageerror: ${err.message}`))
+    adminAfterNoLockPage.on("console", (msg) => {
+      if (msg.type() === "error") noLockErrors.push(`console.error: ${msg.text()}`)
+    })
+    await adminAfterNoLockPage.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 7, theme: "light" }))
+    })
+    await adminAfterNoLockPage.goto(`${BASE_URL}/cancel-payment`, { waitUntil: "networkidle" })
+    await expect(adminAfterNoLockPage.getByText("Chờ duyệt (1)")).toBeVisible()
+    const adminNewAfterNoLock = await adminAfterNoLockPage.evaluate(async (billCode) => {
+      const { paymentApi } = await import("/src/services/payment/index.ts")
+      const [queue, audit] = await Promise.all([paymentApi.listCancelRequests(), paymentApi.listAudit(billCode)])
+      return {
+        pendingIds: queue.filter((r) => r.status === "PENDING").map((r) => r.id),
+        cancelReqAuditCount: audit.filter((e) => e.action === "CANCEL_REQUESTED").length,
+      }
+    }, paidSetup.sentinelBillCode)
+    assert.deepEqual(adminNewAfterNoLock.pendingIds, [paidSetup.sentinelReqId])
+    assert.equal(adminNewAfterNoLock.cancelReqAuditCount, 1)
+
+    // 3) Reset WITH Web Locks succeeds and clears PENDING + audit across open Admin tabs
+    const lockedFloorPage = await noLockContext.newPage()
+    lockedFloorPage.on("pageerror", (err) => noLockErrors.push(`pageerror: ${err.message}`))
+    lockedFloorPage.on("console", (msg) => {
+      if (msg.type() === "error") noLockErrors.push(`console.error: ${msg.text()}`)
+    })
+    await lockedFloorPage.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 7, theme: "light" }))
+    })
+    await lockedFloorPage.goto(`${BASE_URL}/floor`, { waitUntil: "networkidle" })
+    await lockedFloorPage.getByRole("button", { name: /Mở điều khiển thời gian/ }).click()
+    await lockedFloorPage.getByRole("button", { name: "Nạp lại dữ liệu mẫu" }).click()
+    await expect(lockedFloorPage.getByText("Đã nạp lại dữ liệu mẫu").first()).toBeVisible({ timeout: 3000 })
+
+    await expect(adminCheckPage.getByText("Chờ duyệt (0)")).toBeVisible({ timeout: 3000 })
+    const adminAfterLockedReset = await adminCheckPage.evaluate(async () => {
+      const { paymentApi } = await import("/src/services/payment/index.ts")
+      const [queue, audit] = await Promise.all([paymentApi.listCancelRequests(), paymentApi.listAudit()])
+      return { pendingCount: queue.length, auditCount: audit.length }
+    })
+    assert.equal(adminAfterLockedReset.pendingCount, 0)
+    assert.equal(adminAfterLockedReset.auditCount, 0)
     assert.deepEqual(noLockErrors, [])
   } finally {
     await noLockContext.close()

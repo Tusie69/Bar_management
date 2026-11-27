@@ -237,7 +237,7 @@ export interface DemoControls {
   simulateRemoteActivity(): Promise<string>
   armConflictOnce(): void
   readonly conflictArmed: boolean
-  reset(): void
+  reset(): Promise<void>
 }
 
 export class MockGamApi implements GamApi, DemoControls {
@@ -3285,30 +3285,32 @@ export class MockGamApi implements GamApi, DemoControls {
     this.armed = true
   }
 
-  reset() {
-    this.db = seedDb(clock.now())
-    this.history = this.createCustomerHistory()
-    this.guestCounts.clear()
-    this.quickTimes = ["21:00", "21:30", "22:00", "22:30"]
-    this.initPaymentBills()
-    this.paymentPaidLog = []
-    this.paymentEventLog = []
-    this.paymentIdempotency.clear()
-    this.paymentIssueIdempotency.clear()
-    this.cancelRequests = []
-    this.cancelRequestSeq = 1
-    this.paymentAuditLog = []
-    this.paymentAuditSeq = 1
-    this.paymentAttemptKeys = []
-    this.paymentFault = {}
-    this.seq = venueOf(this.db).changeSeq
-    this.emit({
-      latestSeq: this.seq,
-      action: "RESET",
-      entityType: "venue",
-      actorKind: "SYSTEM",
-      actorUserId: null,
-      summary: "Đã nạp lại dữ liệu mẫu",
+  reset(): Promise<void> {
+    return this.runSerializedMutation("none", () => {
+      this.db = seedDb(clock.now())
+      this.history = this.createCustomerHistory()
+      this.guestCounts.clear()
+      this.quickTimes = ["21:00", "21:30", "22:00", "22:30"]
+      this.initPaymentBills()
+      this.paymentPaidLog = []
+      this.paymentEventLog = []
+      this.paymentIdempotency.clear()
+      this.paymentIssueIdempotency.clear()
+      this.cancelRequests = []
+      this.cancelRequestSeq = 1
+      this.paymentAuditLog = []
+      this.paymentAuditSeq = 1
+      this.paymentAttemptKeys = []
+      this.paymentFault = {}
+      this.seq = venueOf(this.db).changeSeq
+      this.emit({
+        latestSeq: this.seq,
+        action: "RESET",
+        entityType: "venue",
+        actorKind: "SYSTEM",
+        actorUserId: null,
+        summary: "Đã nạp lại dữ liệu mẫu",
+      })
     })
   }
 

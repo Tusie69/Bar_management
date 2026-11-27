@@ -380,11 +380,19 @@ function DemoTools({
       <Button
         variant="ghost"
         size="sm"
-        onClick={() => {
-          d.reset()
-          useUi.getState().clearHistory()
-          useUi.getState().selectTable(null)
-          toast.success("Đã nạp lại dữ liệu mẫu")
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true)
+          try {
+            await d.reset()
+            useUi.getState().clearHistory()
+            useUi.getState().selectTable(null)
+            toast.success("Đã nạp lại dữ liệu mẫu")
+          } catch (e) {
+            reportError(e)
+          } finally {
+            setBusy(false)
+          }
         }}
       >
         Nạp lại dữ liệu mẫu
