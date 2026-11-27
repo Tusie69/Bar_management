@@ -11,6 +11,27 @@ import {
   type PayBill,
 } from "@/services/payment"
 
+type CancelDisplayItem =
+  | {
+      key: string
+      kind: "PENDING" | "REJECTED" | "APPROVED"
+      reason: string
+      actor: string
+      at: string
+      approver?: string
+      decidedAt?: string
+      decisionNote?: string
+    }
+  | {
+      key: string
+      kind: "DIRECT"
+      reason: string
+      actor: string
+      at: string
+      decisionNote?: string
+      recollectedAt?: string
+    }
+
 function statusPillMeta(bill: Pick<PayBill, "status" | "billStatus">): { label: string; cls: string } {
   if (bill.billStatus === "PAID" || bill.status === "PAID") {
     return { label: "Đã thu", cls: "pay-pill pay-p-free" }
@@ -232,16 +253,71 @@ export function DetailActionPane({
     })
   }, [bill.billCode, cancelRequests])
 
+  const billCancelHistory = useMemo(() => {
+    const raw = bill.cancelHistory
+    if (!raw?.length) return []
+    if (raw.length <= 1) return [...raw]
+    return [...raw].sort((a, b) => {
+      const ta = Date.parse(a.at)
+      const tb = Date.parse(b.at)
+      if (!Number.isNaN(ta) && !Number.isNaN(tb) && tb !== ta) return tb - ta
+      return 0
+    })
+  }, [bill.cancelHistory])
+
+  const cancelDisplayItems = useMemo<CancelDisplayItem[]>(() => {
+    const remainingHistory = billCancelHistory.map((h, idx) => ({ h, idx }))
+    const items: CancelDisplayItem[] = []
+
+    for (const req of billCancelRequests) {
+      if (req.status === "APPROVED" && remainingHistory.length > 0) {
+        const matchIdx = remainingHistory.findIndex(
+          ({ h }) =>
+            (h.kind === "APPROVED" && h.reason === req.reason) ||
+            (h.kind === "DIRECT" && (h.reason === req.decisionNote || h.reason === req.reason)),
+        )
+        if (matchIdx >= 0) continue
+      }
+      items.push({
+        key: `req-${req.id}`,
+        kind: req.status,
+        reason: req.reason,
+        actor: req.requestedBy,
+        at: req.requestedAt,
+        approver: req.decidedBy,
+        decidedAt: req.decidedAt,
+        decisionNote: req.decisionNote,
+      })
+    }
+
+    for (const { h, idx } of remainingHistory) {
+      items.push({
+        key: `hist-${idx}-${h.kind}-${h.at}`,
+        kind: h.kind,
+        reason: h.reason,
+        actor: h.actor,
+        at: h.at,
+        ...(h.kind === "APPROVED" && h.approver ? { approver: h.approver } : {}),
+        ...(h.decisionNote ? { decisionNote: h.decisionNote } : {}),
+        ...(h.recollectedAt ? { recollectedAt: h.recollectedAt } : {}),
+      })
+    }
+
+    return items
+  }, [billCancelHistory, billCancelRequests])
+
   const latestCancelRequest = billCancelRequests[0] ?? null
   const hasPendingCancel = latestCancelRequest?.status === "PENDING" || Boolean(bill.cancelPending)
-  const hasApprovedHistory = billCancelRequests.some((r) => r.status === "APPROVED")
+  const hasCancelHistory =
+    billCancelHistory.length > 0 || billCancelRequests.some((r) => r.status === "APPROVED")
+  const latestRecollectedAt = bill.paidAt || billCancelHistory[0]?.recollectedAt
   const canSubmitCancelRequest = Boolean(
     isBillPaid && canRequestCancel && onRequestCancel && bill.billCode && !hasPendingCancel,
   )
   const showCancelBox = Boolean(
     canCollect &&
-      ((isBillPaid && (billCancelRequests.length > 0 || bill.cancelPending || canSubmitCancelRequest)) ||
-        (isUnpaidBill && hasApprovedHistory)),
+      ((isBillPaid && (cancelDisplayItems.length > 0 || bill.cancelPending || canSubmitCancelRequest)) ||
+        (isUnpaidBill && hasCancelHistory)),
   )
 
   const dueSub =
@@ -430,47 +506,52 @@ export function DetailActionPane({
 
         {showCancelBox ? (
           <div className="pay-cancel-box" aria-label="Yêu cầu huỷ thanh toán">
-            {isBillPaid && hasApprovedHistory ? (
+            {isBillPaid && hasCancelHistory ? (
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2 text-xs">
                 <span className="font-semibold text-foreground">Lần thanh toán sau</span>
                 <span className="text-[var(--text-muted)]">
-                  {`Đã thu lại${bill.paidAt ? ` lúc ${bill.paidAt}` : ""}${bill.paidBy ? ` · ${bill.paidBy}` : ""}`}
+                  {`Đã thu lại${latestRecollectedAt ? ` lúc ${latestRecollectedAt}` : ""}${bill.paidBy ? ` · ${bill.paidBy}` : ""}`}
                 </span>
               </div>
             ) : null}
 
-            {billCancelRequests.length > 0 ? (
+            {cancelDisplayItems.length > 0 ? (
               <div className="grid gap-2">
-                {billCancelRequests.map((req, idx) => (
+                {cancelDisplayItems.map((item, idx) => (
                   <div
-                    key={req.id}
+                    key={item.key}
                     className={cn("grid gap-1 text-sm", idx > 0 && "border-t border-border pt-2")}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-semibold">
-                        {idx === 0 && (!isBillPaid || req.status !== "APPROVED")
+                        {idx === 0 && (item.kind === "PENDING" || item.kind === "REJECTED" || (!isBillPaid && item.kind === "APPROVED"))
                           ? "Trạng thái yêu cầu huỷ"
                           : "Lịch sử huỷ thanh toán"}
                       </span>
                       <span
                         className={cn(
                           "pay-pill",
-                          req.status === "APPROVED"
+                          item.kind === "APPROVED" || item.kind === "DIRECT"
                             ? "pay-p-open"
-                            : req.status === "REJECTED"
+                            : item.kind === "REJECTED"
                               ? "pay-p-unpaid"
                               : "pay-p-pend",
                         )}
                       >
-                        {req.status === "PENDING" ? (
+                        {item.kind === "PENDING" ? (
                           <>
                             <Clock className="pay-i sm" aria-hidden />
                             Đang chờ duyệt (PENDING)
                           </>
-                        ) : req.status === "APPROVED" ? (
+                        ) : item.kind === "APPROVED" ? (
                           <>
                             <CheckCircle2 className="pay-i sm" aria-hidden />
                             Đã duyệt huỷ (APPROVED)
+                          </>
+                        ) : item.kind === "DIRECT" ? (
+                          <>
+                            <CheckCircle2 className="pay-i sm" aria-hidden />
+                            Đã huỷ trực tiếp (DIRECT)
                           </>
                         ) : (
                           <>
@@ -480,20 +561,42 @@ export function DetailActionPane({
                         )}
                       </span>
                     </div>
-                    <span className="text-xs text-[var(--text-muted)]">
-                      {`Lý do: ${req.reason} · ${req.requestedBy} (${req.requestedAt})`}
-                    </span>
-                    {req.decidedBy || req.decisionNote ? (
-                      <span className="text-xs text-[var(--text-muted)]">
-                        {[
-                          req.decidedBy ? `Người duyệt: ${req.decidedBy}` : "",
-                          req.decidedAt ?? "",
-                          req.decisionNote ? `Ghi chú: ${req.decisionNote}` : "",
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </span>
-                    ) : null}
+                    {item.kind === "DIRECT" ? (
+                      <>
+                        <span className="text-xs text-[var(--text-muted)]">
+                          {`Lý do: ${item.reason}`}
+                        </span>
+                        <span className="text-xs text-[var(--text-muted)]">
+                          {[
+                            `Người huỷ: ${item.actor}`,
+                            item.at,
+                            item.decisionNote ? `Ghi chú: ${item.decisionNote}` : "",
+                            billCancelHistory.length > 1 && item.recollectedAt
+                              ? `Thu lại: ${item.recollectedAt}`
+                              : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-xs text-[var(--text-muted)]">
+                          {`Lý do: ${item.reason} · ${item.actor} (${item.at})`}
+                        </span>
+                        {item.approver || item.decisionNote ? (
+                          <span className="text-xs text-[var(--text-muted)]">
+                            {[
+                              item.approver ? `Người duyệt: ${item.approver}` : "",
+                              item.decidedAt ?? "",
+                              item.decisionNote ? `Ghi chú: ${item.decisionNote}` : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        ) : null}
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
