@@ -4193,6 +4193,7 @@ export class MockGamApi implements GamApi, DemoControls {
   private revertPaidBillToUnpaid(visit: VisitRow, meta: PaymentVisitMeta, record: IssuedBillRecord): CancelEffect {
     const wasVisitEnded = visit.endedAt !== null
     const wasCountedClosedTurn = wasVisitEnded && visit.endReason === "GUEST_LEFT"
+    let tableRestored = false
     if (wasVisitEnded) {
       const tracked = meta.lastClosedAllocIds?.length
         ? meta.lastClosedAllocIds
@@ -4205,7 +4206,11 @@ export class MockGamApi implements GamApi, DemoControls {
         tracked.length > 0
           ? tracked
           : [...this.db.allocations.values()].filter(
-              (a) => a.visitId === visit.id && a.kind === "USAGE" && a.releaseReason === "GUEST_LEFT",
+              (a) =>
+                a.visitId === visit.id &&
+                a.kind === "USAGE" &&
+                a.releasedAt !== null &&
+                a.releaseReason === "GUEST_LEFT",
             )
       if (releasedAllocs.some((a) => this.hasReopenConflict(a.tableId, visit.businessDate))) {
         throw new ApiError(409, "CONFLICT", "Bàn đang có khách khác sử dụng, không thể mở lại phiên.")
@@ -4216,6 +4221,7 @@ export class MockGamApi implements GamApi, DemoControls {
           aRow.releasedAt = null
           aRow.releasedByUserId = null
           aRow.releaseReason = null
+          tableRestored = true
           if (alloc.groupId !== null) {
             const grp = this.db.groups.get(alloc.groupId)
             if (grp && grp.dissolvedAt && !grp.layoutTableIds) {
@@ -4249,6 +4255,7 @@ export class MockGamApi implements GamApi, DemoControls {
     return {
       sessionReopened: wasVisitEnded,
       closedTurnsDelta: wasCountedClosedTurn ? -1 : 0,
+      tableRestored,
     }
   }
 
@@ -4351,6 +4358,7 @@ export class MockGamApi implements GamApi, DemoControls {
         record.cancelHistory ??= []
         record.cancelHistory.unshift({
           kind: "APPROVED",
+          requestId: req.id,
           reason: req.reason,
           actor: req.requestedBy,
           approver: decider,
@@ -4432,14 +4440,15 @@ export class MockGamApi implements GamApi, DemoControls {
       const effect = this.revertPaidBillToUnpaid(visit, meta, record)
       const actor = `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`
       const decidedAt = this.now.toISOString()
+      const pendingReq = this.cancelRequests.find((r) => r.billCode === billCode && r.status === "PENDING")
       record.cancelHistory ??= []
       record.cancelHistory.unshift({
         kind: "DIRECT",
+        ...(pendingReq ? { requestId: pendingReq.id } : {}),
         reason: trimmed,
         actor,
         at: decidedAt,
       })
-      const pendingReq = this.cancelRequests.find((r) => r.billCode === billCode && r.status === "PENDING")
       if (pendingReq) {
         pendingReq.status = "APPROVED"
         pendingReq.decidedBy = actor
