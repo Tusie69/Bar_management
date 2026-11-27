@@ -153,6 +153,7 @@ function makeFakeApi(overrides: Partial<PaymentApi> = {}): PaymentApi {
     }),
     listCancelRequests: async () => [],
     listMyCancelRequests: async () => [],
+    listPaidBills: async () => [],
     decideCancel: async () => {
       throw new Error("not used in W3")
     },

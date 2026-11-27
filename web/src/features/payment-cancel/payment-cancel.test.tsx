@@ -197,6 +197,7 @@ function makeFakeApi(overrides: Partial<PaymentApi> = {}): PaymentApi {
     cancelPaid: async () => undefined,
     listAudit: async (billCode) => (billCode ? audit.filter((a) => a.billCode === billCode) : audit),
     listPaidBills: async () => paidBills,
+    listMyCancelRequests: async () => [],
     ...overrides,
   }
 }

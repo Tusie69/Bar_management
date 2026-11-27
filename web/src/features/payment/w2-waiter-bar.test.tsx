@@ -219,6 +219,8 @@ function createFakePaymentApi(initial?: {
     confirmTransfer: notUsed,
     listNotifications: async () => [],
     checkTransfer: async () => ({ found: false }),
+    listMyCancelRequests: async () => [],
+    listPaidBills: async () => [],
     previewBill: async () => {
       calls.preview += 1
       return preview
