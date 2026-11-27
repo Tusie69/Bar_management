@@ -106,6 +106,7 @@ export function AuditPanel({
               const meta = AUDIT_ACTION_META[entry.action]
               const approverOrActor =
                 entry.approver ?? (entry.action === "CANCELLED_DIRECT" ? entry.actor : undefined)
+              const decisionNote = (entry as PaymentAuditEntry & { decisionNote?: string }).decisionNote
               return (
                 <li key={entry.id} data-testid={`pc-audit-${entry.id}`} className="pc-audit-item">
                   <div className="pc-audit-head">
@@ -140,6 +141,12 @@ export function AuditPanel({
                       <div>
                         <dt>Lý do</dt>
                         <dd>{entry.reason}</dd>
+                      </div>
+                    ) : null}
+                    {decisionNote ? (
+                      <div>
+                        <dt>Ghi chú quyết định</dt>
+                        <dd>{decisionNote}</dd>
                       </div>
                     ) : null}
                     <div>

@@ -3,7 +3,13 @@ import { useState } from "react"
 import { cn } from "@/lib/utils"
 import { isApiError } from "@/services"
 import { formatVnd, paymentApi, type CancelRequest, type PaymentApi } from "@/services/payment"
-import { formatCancelTime, partitionCancelRequests } from "./cancel-model"
+import {
+  buildApproveCancelFeedback,
+  formatCancelTime,
+  isVisitOpenAfterCancelCheck,
+  partitionCancelRequests,
+  resolveCancelSessionImpact,
+} from "./cancel-model"
 
 export function CancelQueuePanel({
   requests,
@@ -11,6 +17,7 @@ export function CancelQueuePanel({
   error,
   readOnly = false,
   api = paymentApi,
+  checkVisitOpen,
   onRefresh,
   onDecided,
   onInspectAudit,
@@ -20,6 +27,7 @@ export function CancelQueuePanel({
   error: unknown
   readOnly?: boolean
   api?: PaymentApi
+  checkVisitOpen?: (visitId: string) => Promise<boolean | null>
   onRefresh: () => void
   onDecided: (result: CancelRequest) => void | Promise<void>
   onInspectAudit?: (billCode: string) => void
@@ -40,7 +48,11 @@ export function CancelQueuePanel({
     setFeedback(null)
     try {
       const note = notes[req.id]?.trim() || undefined
+      const probeOpen = checkVisitOpen ?? ((id: string) => isVisitOpenAfterCancelCheck(id, api, true))
+      const wasOpenBefore = approve ? await probeOpen(req.visitId) : null
       const updated = await api.decideCancel(req.id, approve, note)
+      const isOpenAfter = approve ? await probeOpen(req.visitId) : null
+      const impact = approve ? resolveCancelSessionImpact(wasOpenBefore, isOpenAfter) : "UNKNOWN"
       setNotes((prev) => {
         const next = { ...prev }
         delete next[req.id]
@@ -51,7 +63,7 @@ export function CancelQueuePanel({
         approve
           ? {
               kind: "ok",
-              text: `Đã duyệt huỷ ${req.billCode} (${req.code}) - bill về Chưa thu, bàn xanh lá, lượt -1. Đã thông báo Thu ngân.`,
+              text: buildApproveCancelFeedback(req.billCode, req.code, impact),
             }
           : {
               kind: "info",

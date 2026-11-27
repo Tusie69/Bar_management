@@ -3,10 +3,12 @@ import { useState } from "react"
 import { isApiError } from "@/services"
 import { formatVnd, paymentApi, type PaymentApi } from "@/services/payment"
 import {
+  buildDirectCancelOutcome,
   formatCancelTime,
   formatPaidMethod,
   formatPaidTableLabel,
-  PAID_CANCEL_OUTCOME_TEXT,
+  isVisitOpenAfterCancelCheck,
+  resolveCancelSessionImpact,
   type PaidBillCandidate,
 } from "./cancel-model"
 
@@ -16,6 +18,7 @@ export function DirectCancelPanel({
   initialBillCode = "",
   api = paymentApi,
   canViewAudit = false,
+  checkVisitOpen,
   onCancelled,
   onInspectAudit,
   onClose,
@@ -25,6 +28,7 @@ export function DirectCancelPanel({
   initialBillCode?: string
   api?: PaymentApi
   canViewAudit?: boolean
+  checkVisitOpen?: (visitId: string) => Promise<boolean | null>
   onCancelled?: (billCode: string) => void | Promise<void>
   onInspectAudit?: (billCode: string) => void
   onClose?: () => void
@@ -38,7 +42,7 @@ export function DirectCancelPanel({
   const [reason, setReason] = useState("")
   const [reasonError, setReasonError] = useState<string | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
-  const [outcomeBanner, setOutcomeBanner] = useState<string | null>(null)
+  const [outcome, setOutcome] = useState<{ title: string; detail: string } | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   if (activeBillCode && activeBillCode !== prevBillCode) {
@@ -46,7 +50,7 @@ export function DirectCancelPanel({
     setReason("")
     setReasonError(null)
     setApiError(null)
-    setOutcomeBanner(null)
+    setOutcome(null)
   }
 
   const handleSubmit = async () => {
@@ -64,12 +68,17 @@ export function DirectCancelPanel({
     setSubmitting(true)
     setReasonError(null)
     setApiError(null)
-    setOutcomeBanner(null)
+    setOutcome(null)
     try {
+      const visitId = activeBill?.visitId ?? ""
+      const probeOpen = checkVisitOpen ?? ((id: string) => isVisitOpenAfterCancelCheck(id, api, false))
+      const wasOpenBefore = visitId ? await probeOpen(visitId) : null
       await api.cancelPaid(code, trimmedReason)
+      const isOpenAfter = visitId ? await probeOpen(visitId) : null
+      const impact = resolveCancelSessionImpact(wasOpenBefore, isOpenAfter)
       setReason("")
+      setOutcome(buildDirectCancelOutcome(code, impact))
       await onCancelled?.(code)
-      setOutcomeBanner(`${code}: ${PAID_CANCEL_OUTCOME_TEXT}`)
     } catch (err) {
       setApiError(
         isApiError(err) || err instanceof Error
@@ -92,12 +101,12 @@ export function DirectCancelPanel({
       </div>
 
       <div className="pc-card-b">
-        {outcomeBanner ? (
+        {outcome ? (
           <div role="status" aria-live="polite" data-testid="pc-direct-outcome" className="pc-bn pc-bn-ok">
             <Check className="mt-0.5 size-4 shrink-0" aria-hidden />
             <span>
-              <b>{outcomeBanner}</b>
-              Bill đã mở lại để thu tiền; bàn được trả về trạng thái đang phục vụ trên sơ đồ.
+              <b>{outcome.title}</b>
+              {outcome.detail}
             </span>
           </div>
         ) : null}
@@ -207,12 +216,12 @@ export function DirectCancelPanel({
               </div>
             </div>
           </article>
-        ) : outcomeBanner && onClose ? (
+        ) : outcome && onClose ? (
           <div className="pc-act-row">
             <button
               type="button"
               onClick={() => {
-                setOutcomeBanner(null)
+                setOutcome(null)
                 onClose()
               }}
               className="pc-btn pc-btn-s"
