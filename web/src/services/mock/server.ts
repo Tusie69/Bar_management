@@ -3382,6 +3382,7 @@ export class MockGamApi implements GamApi, DemoControls {
     text: string,
     visitId: number,
     prefix: string,
+    billCode?: string,
   ) {
     this.paymentEventLog.unshift({
       id: `${prefix}-${this.seq + 1}-${this.paymentEventLog.length + 1}`,
@@ -3391,6 +3392,7 @@ export class MockGamApi implements GamApi, DemoControls {
       time: fmtTime(this.now),
       occurredAt: this.now.toISOString(),
       visitId: String(visitId),
+      ...(billCode ? { billCode } : {}),
     })
   }
 
@@ -3629,6 +3631,7 @@ export class MockGamApi implements GamApi, DemoControls {
       `${issuedBill.code} · Đã đưa hóa đơn · ${record.issuedBy} · ${record.issuedAt}`,
       visit.id,
       "inv",
+      record.billCode,
     )
     this.recordPaymentAudit("INVOICE_ISSUED", record.billCode, visit.id)
     this.emit({
@@ -3785,6 +3788,7 @@ export class MockGamApi implements GamApi, DemoControls {
       time: confirmedAt,
       occurredAt: this.now.toISOString(),
       visitId: billView.visitId,
+      billCode: record.billCode,
     })
   }
 
@@ -4034,6 +4038,7 @@ export class MockGamApi implements GamApi, DemoControls {
       `${billView.code} (${billCode}) · ${trimmed}`,
       visit.id,
       "creq",
+      billCode,
     )
     this.recordPaymentAudit("CANCEL_REQUESTED", billCode, visit.id, {
       actor: req.requestedBy,
@@ -4093,6 +4098,7 @@ export class MockGamApi implements GamApi, DemoControls {
         `${req.code} (${req.billCode}) · quay lại Chờ thanh toán`,
         visit.id,
         "cdec",
+        req.billCode,
       )
       this.recordPaymentAudit("CANCEL_APPROVED", req.billCode, visit.id, {
         actor: req.requestedBy,
@@ -4121,6 +4127,7 @@ export class MockGamApi implements GamApi, DemoControls {
         `${req.code} (${req.billCode}) · giữ Đã thanh toán`,
         visit.id,
         "cdec",
+        req.billCode,
       )
       this.recordPaymentAudit("CANCEL_REJECTED", req.billCode, visit.id, {
         actor: req.requestedBy,
@@ -4168,6 +4175,7 @@ export class MockGamApi implements GamApi, DemoControls {
       `${billView.code} (${billCode}) · ${trimmed}`,
       visit.id,
       "cdir",
+      billCode,
     )
     this.recordPaymentAudit("CANCELLED_DIRECT", billCode, visit.id, { reason: trimmed })
     this.emit({
@@ -4282,6 +4290,7 @@ export class MockGamApi implements GamApi, DemoControls {
               time: record.pendingAt,
               occurredAt: pendDate.toISOString(),
               visitId: String(visit.id),
+              billCode: record.billCode,
             })
           }
         }

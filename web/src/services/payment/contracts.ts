@@ -194,6 +194,7 @@ export interface PaymentNotification {
   time: string
   occurredAt?: string
   visitId?: string
+  billCode?: string
 }
 
 /**

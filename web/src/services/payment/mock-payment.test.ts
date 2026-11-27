@@ -409,6 +409,7 @@ describe("mockPaymentApi", () => {
     const ntfs = await paymentApi.listNotifications()
     const invNtf = ntfs.find((n) => n.type === "INVOICE_ISSUED" && n.visitId === barId)
     expect(invNtf).toBeDefined()
+    expect(invNtf?.billCode).toBe(barIssued.billCode)
     expect(invNtf?.text).toContain(`Đã đưa hóa đơn · ${bar.displayName} · ${barIssued.issuedAt}`)
     expect(ntfs.some((n) => n.type === "PAID" && n.visitId === barId)).toBe(false)
 
@@ -775,6 +776,11 @@ describe("mockPaymentApi", () => {
       api.setSession(cashier)
       const myAfterApprove = await paymentApi.listMyCancelRequests?.(bill.billCode)
       expect(myAfterApprove?.[0]).toMatchObject({ id: req2.id, status: "APPROVED", decisionNote: "OK duyệt" })
+      const ntfsAfterApprove = await paymentApi.listNotifications()
+      expect(ntfsAfterApprove.find((n) => n.type === "PAID" && n.visitId === a2Id)?.billCode).toBe(bill.billCode)
+      expect(ntfsAfterApprove.find((n) => n.type === "CANCEL_DECIDED" && n.visitId === a2Id)?.billCode).toBe(
+        bill.billCode,
+      )
 
       // Re-collect then submit a 3rd request -> Receptionist direct cancel emits PAYMENT_CANCELLED and resolves pending request
       const unpaid = await paymentApi.getBill(a2Id)
