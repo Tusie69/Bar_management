@@ -197,7 +197,7 @@ function makeFakeApi(overrides: Partial<PaymentApi> = {}): PaymentApi {
       decidedAt: "2026-11-26T21:42:00.000Z",
       ...(note ? { decisionNote: note } : {}),
     }),
-    cancelPaid: async () => ({ sessionReopened: true, closedTurnsDelta: -1 }),
+    cancelPaid: async () => ({ sessionReopened: true, closedTurnsDelta: -1, tableRestored: true }),
     listAudit: async (billCode) => (billCode ? audit.filter((a) => a.billCode === billCode) : audit),
     listPaidBills: async () => paidBills,
     listMyCancelRequests: async () => [],
@@ -325,9 +325,15 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
   })
 
   it("NA45H-12: builds cancel impact text strictly from returned CancelEffect without floor/session reads", async () => {
-    expect(resolveCancelSessionImpact({ sessionReopened: true, closedTurnsDelta: -1 })).toBe("REOPENED")
-    expect(resolveCancelSessionImpact({ sessionReopened: true, closedTurnsDelta: 0 })).toBe("REOPENED_NO_TURN")
-    expect(resolveCancelSessionImpact({ sessionReopened: false, closedTurnsDelta: 0 })).toBe("STILL_OPEN")
+    expect(resolveCancelSessionImpact({ sessionReopened: true, closedTurnsDelta: -1, tableRestored: true })).toBe(
+      "REOPENED",
+    )
+    expect(resolveCancelSessionImpact({ sessionReopened: true, closedTurnsDelta: 0, tableRestored: true })).toBe(
+      "REOPENED_NO_TURN",
+    )
+    expect(resolveCancelSessionImpact({ sessionReopened: false, closedTurnsDelta: 0, tableRestored: false })).toBe(
+      "STILL_OPEN",
+    )
     expect(resolveCancelSessionImpact(undefined)).toBe("UNKNOWN")
     expect(resolveCancelSessionImpact(null)).toBe("UNKNOWN")
 
@@ -367,8 +373,8 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
       getBill,
       cancelPaid: async (billCode: string): Promise<CancelEffect> =>
         billCode === "B0002"
-          ? { sessionReopened: true, closedTurnsDelta: -1 }
-          : { sessionReopened: false, closedTurnsDelta: 0 },
+          ? { sessionReopened: true, closedTurnsDelta: -1, tableRestored: true }
+          : { sessionReopened: false, closedTurnsDelta: 0, tableRestored: false },
       decideCancel: async (requestId, approve, note) => ({
         id: requestId,
         billCode: "B0002",
@@ -386,8 +392,8 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
           ? {
               effect:
                 requestId === "cr-reopen"
-                  ? { sessionReopened: true, closedTurnsDelta: -1 }
-                  : { sessionReopened: false, closedTurnsDelta: 0 },
+                  ? { sessionReopened: true, closedTurnsDelta: -1, tableRestored: true }
+                  : { sessionReopened: false, closedTurnsDelta: 0, tableRestored: false },
             }
           : {}),
       }),
