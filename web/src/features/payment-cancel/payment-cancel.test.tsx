@@ -398,17 +398,9 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
     const directOpen = await submitDirectCancel(fakeApi, "B0003", "Tách bill")
     expect(directOpen.title).toContain("phiên vẫn đang mở (không đổi lượt)")
 
-    const approveReopen = await submitDecideCancel(
-      fakeApi,
-      { id: "cr-reopen", billCode: "B0002", code: "A2" },
-      true,
-    )
+    const approveReopen = await submitDecideCancel(fakeApi, { id: "cr-reopen", billCode: "B0002", code: "A2" }, true)
     expect(approveReopen.feedback.text).toContain("bàn xanh lá, lượt -1")
-    const approveOpen = await submitDecideCancel(
-      fakeApi,
-      { id: "cr-open", billCode: "B0003", code: "A3" },
-      true,
-    )
+    const approveOpen = await submitDecideCancel(fakeApi, { id: "cr-open", billCode: "B0003", code: "A3" }, true)
     expect(approveOpen.feedback.text).toContain("phiên vẫn đang mở (không đổi lượt)")
 
     const rejectRes = await submitDecideCancel(
@@ -426,14 +418,8 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
     })
     const directUnknown = await submitDirectCancel(noEffectApi, "B0002", "Fallback")
     expect(directUnknown.title).toBe("B0002: Đã huỷ thanh toán - bill về Chưa thu.")
-    const approveUnknown = await submitDecideCancel(
-      noEffectApi,
-      { id: "cr-1", billCode: "B0002", code: "A2" },
-      true,
-    )
-    expect(approveUnknown.feedback.text).toBe(
-      "Đã duyệt huỷ B0002 (A2) - bill về Chưa thu. Đã thông báo Thu ngân.",
-    )
+    const approveUnknown = await submitDecideCancel(noEffectApi, { id: "cr-1", billCode: "B0002", code: "A2" }, true)
+    expect(approveUnknown.feedback.text).toBe("Đã duyệt huỷ B0002 (A2) - bill về Chưa thu. Đã thông báo Thu ngân.")
 
     expect(getSessionBills).not.toHaveBeenCalled()
     expect(listOpen).not.toHaveBeenCalled()

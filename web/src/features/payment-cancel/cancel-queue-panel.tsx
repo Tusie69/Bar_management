@@ -3,11 +3,7 @@ import { useState } from "react"
 import { cn } from "@/lib/utils"
 import { isApiError } from "@/services"
 import { formatVnd, paymentApi, type CancelRequest, type PaymentApi } from "@/services/payment"
-import {
-  formatCancelTime,
-  partitionCancelRequests,
-  submitDecideCancel,
-} from "./cancel-model"
+import { formatCancelTime, partitionCancelRequests, submitDecideCancel } from "./cancel-model"
 
 export function CancelQueuePanel({
   requests,
@@ -53,9 +49,7 @@ export function CancelQueuePanel({
       await onDecided(updated)
       setFeedback(nextFeedback)
     } catch (err) {
-      setActionError(
-        isApiError(err) || err instanceof Error ? err.message : "Không xử lý được yêu cầu huỷ.",
-      )
+      setActionError(isApiError(err) || err instanceof Error ? err.message : "Không xử lý được yêu cầu huỷ.")
     } finally {
       setBusyId(null)
     }
@@ -145,11 +139,7 @@ export function CancelQueuePanel({
           </div>
         ) : visible.length === 0 ? (
           <div className="pc-empty">
-            <b>
-              {tab === "PENDING"
-                ? "Chưa có yêu cầu huỷ nào đang chờ duyệt"
-                : "Chưa có yêu cầu huỷ nào đã xử lý"}
-            </b>
+            <b>{tab === "PENDING" ? "Chưa có yêu cầu huỷ nào đang chờ duyệt" : "Chưa có yêu cầu huỷ nào đã xử lý"}</b>
             {tab === "PENDING"
               ? "Khi Thu ngân gửi yêu cầu huỷ từ bill đã thanh toán, yêu cầu sẽ tự động hiện tại đây."
               : "Lịch sử các yêu cầu đã duyệt hoặc từ chối sẽ hiện ở đây."}

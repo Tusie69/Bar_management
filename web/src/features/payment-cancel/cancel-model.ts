@@ -13,9 +13,7 @@ import {
 
 export type CancelSessionImpact = "REOPENED" | "REOPENED_NO_TURN" | "STILL_OPEN" | "UNKNOWN"
 
-export function resolveCancelSessionImpact(
-  effect?: CancelEffect | null,
-): CancelSessionImpact {
+export function resolveCancelSessionImpact(effect?: CancelEffect | null): CancelSessionImpact {
   if (!effect || typeof effect !== "object" || typeof effect.sessionReopened !== "boolean") {
     return "UNKNOWN"
   }
@@ -53,11 +51,7 @@ export function buildDirectCancelOutcome(
   }
 }
 
-export function buildApproveCancelFeedback(
-  billCode: string,
-  tableCode: string,
-  impact: CancelSessionImpact,
-): string {
+export function buildApproveCancelFeedback(billCode: string, tableCode: string, impact: CancelSessionImpact): string {
   if (impact === "REOPENED") {
     return `Đã duyệt huỷ ${billCode} (${tableCode}) - bill về Chưa thu, bàn xanh lá, lượt -1. Đã thông báo Thu ngân.`
   }
@@ -139,11 +133,7 @@ export interface PaidBillCandidate {
  * Access gate for W4 payment-cancel surfaces.
  * CASHIER is always denied (TN-14: Cashier can only request cancel inside /payment).
  */
-export function canAccessPaymentCancel(
-  role: RoleCode,
-  canAuditRead: boolean,
-  canCollect: boolean,
-): boolean {
+export function canAccessPaymentCancel(role: RoleCode, canAuditRead: boolean, canCollect: boolean): boolean {
   if (role === "CASHIER") return false
   if (role === "RECEPTIONIST") return true
   if (role === "OWNER" || role === "ADMIN") return canAuditRead || canCollect

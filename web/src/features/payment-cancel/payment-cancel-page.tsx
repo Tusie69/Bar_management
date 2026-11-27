@@ -4,11 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router"
 import type { RoleCode } from "@/domain/enums"
 import { api, clock } from "@/services"
-import {
-  isPaymentAvailable,
-  paymentApi,
-  type PaymentApi,
-} from "@/services/payment"
+import { isPaymentAvailable, paymentApi, type PaymentApi } from "@/services/payment"
 import { useCan, useSession } from "@/state/session"
 import { AuditPanel } from "./audit-panel"
 import {
@@ -60,8 +56,7 @@ export function PaymentCancelWorkspace({
   const showAudit = canReadPaymentAudit(role, canCollect)
   const isReadOnlyAdmin =
     accessOverride?.isReadOnlyAdmin ??
-    (role === "ADMIN" &&
-      (principal as { accessLevel?: string } | null)?.accessLevel === "READ_ONLY")
+    (role === "ADMIN" && (principal as { accessLevel?: string } | null)?.accessLevel === "READ_ONLY")
 
   const [selectedBillCode, setSelectedBillCode] = useState(initialBillCode)
   const [auditBillFilter, setAuditBillFilter] = useState(initialBillCode)
@@ -142,12 +137,7 @@ export function PaymentCancelWorkspace({
   })
 
   const knownBillCodes = useMemo(
-    () =>
-      collectAuditBillCodes(
-        requestsQuery.data ?? [],
-        paidBills,
-        allAuditQuery.data ?? auditQuery.data ?? [],
-      ),
+    () => collectAuditBillCodes(requestsQuery.data ?? [], paidBills, allAuditQuery.data ?? auditQuery.data ?? []),
     [allAuditQuery.data, auditQuery.data, paidBills, requestsQuery.data],
   )
 
@@ -156,9 +146,7 @@ export function PaymentCancelWorkspace({
       <div className="pc-root p-6">
         <div className="pc-card mx-auto max-w-md p-6 text-center">
           <h1 className="text-lg font-bold">Chức năng huỷ thanh toán chưa kết nối máy chủ</h1>
-          <p className="mt-1 text-sm text-[var(--text-muted)]">
-            API thanh toán chưa sẵn sàng ở chế độ hiện tại.
-          </p>
+          <p className="mt-1 text-sm text-[var(--text-muted)]">API thanh toán chưa sẵn sàng ở chế độ hiện tại.</p>
         </div>
       </div>
     )

@@ -30,8 +30,7 @@ export function DirectCancelPanel({
   onClose?: () => void
 }) {
   const activeBill =
-    selectedBill ??
-    (initialBillCode ? paidBills.find((b) => b.billCode === initialBillCode) ?? null : null)
+    selectedBill ?? (initialBillCode ? (paidBills.find((b) => b.billCode === initialBillCode) ?? null) : null)
   const activeBillCode = activeBill?.billCode ?? initialBillCode.trim()
 
   const [prevBillCode, setPrevBillCode] = useState(activeBillCode)
@@ -71,11 +70,7 @@ export function DirectCancelPanel({
       setOutcome(nextOutcome)
       await onCancelled?.(code)
     } catch (err) {
-      setApiError(
-        isApiError(err) || err instanceof Error
-          ? err.message
-          : "Không thể huỷ thanh toán cho bill này.",
-      )
+      setApiError(isApiError(err) || err instanceof Error ? err.message : "Không thể huỷ thanh toán cho bill này.")
     } finally {
       setSubmitting(false)
     }
@@ -115,16 +110,10 @@ export function DirectCancelPanel({
               <div className="pc-item-id">
                 <b>{activeBillCode}</b>
                 <span className="pc-pill pc-p-ok">Đã thu</span>
-                {activeBill ? (
-                  <span className="pc-pill pc-p-req">{formatPaidTableLabel(activeBill)}</span>
-                ) : null}
-                {activeBill?.cancelPending ? (
-                  <span className="pc-pill pc-p-pend">Có yêu cầu chờ duyệt</span>
-                ) : null}
+                {activeBill ? <span className="pc-pill pc-p-req">{formatPaidTableLabel(activeBill)}</span> : null}
+                {activeBill?.cancelPending ? <span className="pc-pill pc-p-pend">Có yêu cầu chờ duyệt</span> : null}
               </div>
-              {activeBill?.dueVnd !== undefined ? (
-                <span className="pc-amt">{formatVnd(activeBill.dueVnd)}</span>
-              ) : null}
+              {activeBill?.dueVnd !== undefined ? <span className="pc-amt">{formatVnd(activeBill.dueVnd)}</span> : null}
             </div>
 
             {activeBill ? (
@@ -146,9 +135,7 @@ export function DirectCancelPanel({
 
             <div className="grid gap-3 border-t border-border pt-3">
               <div className="pc-field">
-                <label htmlFor={`pc-direct-reason-${activeBillCode}`}>
-                  Lý do huỷ thanh toán (bắt buộc)
-                </label>
+                <label htmlFor={`pc-direct-reason-${activeBillCode}`}>Lý do huỷ thanh toán (bắt buộc)</label>
                 <textarea
                   id={`pc-direct-reason-${activeBillCode}`}
                   className="pc-textarea"
