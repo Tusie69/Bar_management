@@ -167,12 +167,7 @@ export interface CancelRequest {
 }
 
 export type PaymentAuditAction =
-  | "INVOICE_ISSUED"
-  | "PAID"
-  | "CANCEL_REQUESTED"
-  | "CANCEL_APPROVED"
-  | "CANCEL_REJECTED"
-  | "CANCELLED_DIRECT"
+  "INVOICE_ISSUED" | "PAID" | "CANCEL_REQUESTED" | "CANCEL_APPROVED" | "CANCEL_REJECTED" | "CANCELLED_DIRECT"
 
 export interface PaymentAuditEntry {
   id: string

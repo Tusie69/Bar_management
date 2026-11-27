@@ -132,6 +132,7 @@ import type {
   CancelRequest,
   PaidBillSummary,
   PayBill,
+  PayBillCancelHistoryEntry,
   PayBillSummary,
   PayLine,
   PaymentAuditAction,
@@ -183,6 +184,7 @@ interface IssuedBillRecord {
   paidBy?: string
   manualConfirm?: boolean
   cancelPending?: boolean
+  cancelHistory?: PayBillCancelHistoryEntry[]
 }
 
 interface PaymentVisitMeta {
@@ -260,12 +262,15 @@ export class MockGamApi implements GamApi, DemoControls {
     )
   }
   getAnonymousVisits: GamApi["getAnonymousVisits"] = (query) => this.history.getAnonymousVisits(query)
-  assignAnonymousVisit: GamApi["assignAnonymousVisit"] = (input) => this.history.assignAnonymousVisit(input)
-  undoAnonymousAssignment: GamApi["undoAnonymousAssignment"] = (input) => this.history.undoAnonymousAssignment(input)
+  assignAnonymousVisit: GamApi["assignAnonymousVisit"] = (input) =>
+    this.runSerializedMutation("none", () => this.history.assignAnonymousVisit(input))
+  undoAnonymousAssignment: GamApi["undoAnonymousAssignment"] = (input) =>
+    this.runSerializedMutation("none", () => this.history.undoAnonymousAssignment(input))
   getDuplicateCustomers: GamApi["getDuplicateCustomers"] = (query) => this.history.getDuplicateCustomers(query)
-  mergeDuplicateCustomers: GamApi["mergeDuplicateCustomers"] = (input) => this.history.mergeDuplicateCustomers(input)
+  mergeDuplicateCustomers: GamApi["mergeDuplicateCustomers"] = (input) =>
+    this.runSerializedMutation("none", () => this.history.mergeDuplicateCustomers(input))
   dismissDuplicateCustomers: GamApi["dismissDuplicateCustomers"] = (input) =>
-    this.history.dismissDuplicateCustomers(input)
+    this.runSerializedMutation("none", () => this.history.dismissDuplicateCustomers(input))
   private db: MockDb
   private session: SessionUser
   private seq: number
@@ -300,6 +305,7 @@ export class MockGamApi implements GamApi, DemoControls {
   private syncRev = 0
   private readonly syncTransport: MockSyncTransport | null
   private unsubSync: (() => void) | null = null
+  private mutationQueue: Promise<void> = Promise.resolve()
   private tickTimer: ReturnType<typeof setInterval>
 
   constructor(
@@ -377,9 +383,27 @@ export class MockGamApi implements GamApi, DemoControls {
     this.pullSharedState(true)
   }
 
-  async getReceptionGuestCount(businessDate: BusinessDate): Promise<ReceptionGuestCount> {
-    await this.latency("q")
-    this.require("customer.view_masked")
+  private async runSerializedMutation<T>(kind: "q" | "m" | "none", fn: () => Promise<T> | T): Promise<T> {
+    if (kind !== "none") {
+      const [min, max] = kind === "q" ? [50, 130] : [140, 320]
+      await sleep(min + Math.random() * (max - min))
+    }
+    const runInLock = async () => {
+      this.pullSharedState(true)
+      return await fn()
+    }
+    if (this.syncTransport?.withLock) {
+      return this.syncTransport.withLock(runInLock)
+    }
+    const queued = this.mutationQueue.then(runInLock)
+    this.mutationQueue = queued.then(
+      () => undefined,
+      () => undefined,
+    )
+    return queued
+  }
+
+  private readReceptionGuestCount(businessDate: BusinessDate): ReceptionGuestCount {
     const stored = this.guestCounts.get(businessDate)
     return stored
       ? structuredClone(stored)
@@ -396,32 +420,39 @@ export class MockGamApi implements GamApi, DemoControls {
         }
   }
 
+  async getReceptionGuestCount(businessDate: BusinessDate): Promise<ReceptionGuestCount> {
+    await this.latency("q")
+    this.require("customer.view_masked")
+    return this.readReceptionGuestCount(businessDate)
+  }
+
   async updateReceptionGuestCount(
     input: ReceptionGuestCountValues & { businessDate: BusinessDate; version: number },
   ): Promise<ReceptionGuestCount> {
-    await this.latency("m")
-    this.require("reservation.update")
-    const current = await this.getReceptionGuestCount(input.businessDate)
-    if (input.version !== current.version) {
-      throw new ApiError(409, "GUEST_COUNT_VERSION_CONFLICT", "Bộ đếm khách vừa được cập nhật trên máy khác.")
-    }
-    const saved: ReceptionGuestCount = {
-      ...input,
-      version: current.version + 1,
-      updatedAt: this.now,
-    }
-    this.guestCounts.set(input.businessDate, structuredClone(saved))
-    this.seq += 1
-    this.venue.changeSeq = this.seq
-    this.emit({
-      latestSeq: this.seq,
-      action: "RECEPTION_GUEST_COUNT_UPDATED",
-      entityType: "guest_count",
-      actorKind: "USER",
-      actorUserId: this.session.id,
-      summary: "Đã cập nhật bộ đếm khách",
+    return this.runSerializedMutation("m", () => {
+      this.require("reservation.update")
+      const current = this.readReceptionGuestCount(input.businessDate)
+      if (input.version !== current.version) {
+        throw new ApiError(409, "GUEST_COUNT_VERSION_CONFLICT", "Bộ đếm khách vừa được cập nhật trên máy khác.")
+      }
+      const saved: ReceptionGuestCount = {
+        ...input,
+        version: current.version + 1,
+        updatedAt: this.now,
+      }
+      this.guestCounts.set(input.businessDate, structuredClone(saved))
+      this.seq += 1
+      this.venue.changeSeq = this.seq
+      this.emit({
+        latestSeq: this.seq,
+        action: "RECEPTION_GUEST_COUNT_UPDATED",
+        entityType: "guest_count",
+        actorKind: "USER",
+        actorUserId: this.session.id,
+        summary: "Đã cập nhật bộ đếm khách",
+      })
+      return structuredClone(saved)
     })
-    return structuredClone(saved)
   }
 
   private require(p: Permission) {
@@ -1189,8 +1220,7 @@ export class MockGamApi implements GamApi, DemoControls {
     return catalog(this.db)
   }
 
-  async getVenueSettings() {
-    await this.latency("q")
+  private readVenueSettings() {
     return {
       quickTimes: [...this.quickTimes],
       upcomingMinutes: this.venue.upcomingWarningMinutes,
@@ -1198,6 +1228,11 @@ export class MockGamApi implements GamApi, DemoControls {
       businessDayStartLocal: this.venue.businessDayStartLocal,
       businessDayCutoffLocal: this.venue.businessDayCutoffLocal,
     }
+  }
+
+  async getVenueSettings() {
+    await this.latency("q")
+    return this.readVenueSettings()
   }
 
   async getFloorState(at: Date, businessDate?: BusinessDate) {
@@ -1408,250 +1443,255 @@ export class MockGamApi implements GamApi, DemoControls {
   /* ================= reservations ================= */
 
   async createReservation(input: CreateReservationInput) {
-    await this.latency("m")
-    this.require("reservation.create")
-    input = { ...input, tableIds: this.expandLayoutTables(input.tableIds ?? []) }
-    const name = input.contactName?.trim() || undefined
-    const phone = input.phone?.trim() || undefined
-    if (!name && !phone) this.fail("Đặt trước cần ít nhất tên hoặc số điện thoại.")
-    if (!Number.isInteger(input.partySize) || input.partySize < 1 || input.partySize > 500)
-      this.fail("Số khách phải từ 1 đến 500.")
-    if (input.note && noteHasPhoneNumber(input.note)) this.fail(NOTE_PHONE_ERROR)
-    if (input.expectedAt.getTime() < this.now.getTime() - 5 * MS.MIN) this.fail("Giờ đến đã qua.")
-    if (!isWithinBookingReceptionWindow(fmtTime(input.expectedAt))) {
-      throw new ApiError(
-        400,
-        "EXPECTED_AT_OUTSIDE_BOOKING_WINDOW",
-        "Giờ nhận booking chỉ từ 19:00 đến 01:00 sáng hôm sau.",
-      )
-    }
-    this.assertBookingSlot(input.expectedAt)
-    const bd = businessDateOf(input.expectedAt)
-    const tableIds = input.tableIds ?? []
-    if (tableIds.length) this.maybeTriggerConflict(tableIds[0], bd, input.expectedAt)
-    return this.commit<{ reservationId: number }>(
-      { action: "RESERVATION_CREATED", entityType: "reservation", undoable: true },
-      (tx) => {
-        const customerId = this.upsertCustomer(tx, name, phone)
-        const source = [...this.db.sources.values()].find((s) => s.code === input.sourceCode)
-        if (!source) this.fail("Nguồn đặt không hợp lệ.")
-        const contactName = name ?? this.db.customers.get(customerId ?? 0)?.displayName ?? null
-        const r = tx.insert("reservations", {
-          organizationId: ORG_ID,
-          venueId: VENUE_ID,
-          customerId,
-          contactName,
-          contactNameSearch: contactName ? foldVietnamese(contactName) : null,
-          sourceId: source.id,
-          // Mock-only booking form metadata.
-          socialPlatform: input.sourceCode === "SOCIAL" ? (input.socialPlatform ?? null) : null,
-          iconKeys: [...(input.iconKeys ?? [])],
-          honorific: input.honorific ?? null,
-          partySize: input.partySize,
-          expectedAt: input.expectedAt,
-          businessDate: bd,
-          customerClassification: input.classification ?? "UNCLASSIFIED",
-          guestType:
-            input.guestType ??
-            (input.classification === "RETURNING" ? "REGULAR" : input.classification === "NEW" ? "NEW" : null),
-          isBirthday: input.isBirthday ?? false,
-          status: "BOOKED",
-          note: input.note?.trim() || null,
-          visitId: null,
-          checkedInAt: null,
-          checkedInByUserId: null,
-          closedAt: null,
-          closedByUserId: null,
-          closeReasonCode: null,
-          closeReasonNote: null,
-          lateWarnedAt: null,
-          lateConfirmedAt: null,
-          lateConfirmedByUserId: null,
-          noShowWarnedAt: null,
-          createdByUserId: this.session.id,
-          createdAt: this.now,
-          updatedByUserId: null,
-          updatedAt: this.now,
-        })
-        let summary = `Booking ${fmtTime(input.expectedAt)} · ${input.partySize} khách`
-        if (tableIds.length) {
-          this.assertBookingTables(tableIds, input.partySize, true)
-          this.assertClaimable(tableIds, {
-            bd,
-            at: input.expectedAt,
+    return this.runSerializedMutation("m", () => {
+      this.require("reservation.create")
+      input = { ...input, tableIds: this.expandLayoutTables(input.tableIds ?? []) }
+      const name = input.contactName?.trim() || undefined
+      const phone = input.phone?.trim() || undefined
+      if (!name && !phone) this.fail("Đặt trước cần ít nhất tên hoặc số điện thoại.")
+      if (!Number.isInteger(input.partySize) || input.partySize < 1 || input.partySize > 500)
+        this.fail("Số khách phải từ 1 đến 500.")
+      if (input.note && noteHasPhoneNumber(input.note)) this.fail(NOTE_PHONE_ERROR)
+      if (input.expectedAt.getTime() < this.now.getTime() - 5 * MS.MIN) this.fail("Giờ đến đã qua.")
+      if (!isWithinBookingReceptionWindow(fmtTime(input.expectedAt))) {
+        throw new ApiError(
+          400,
+          "EXPECTED_AT_OUTSIDE_BOOKING_WINDOW",
+          "Giờ nhận booking chỉ từ 19:00 đến 01:00 sáng hôm sau.",
+        )
+      }
+      this.assertBookingSlot(input.expectedAt)
+      const bd = businessDateOf(input.expectedAt)
+      const tableIds = input.tableIds ?? []
+      if (tableIds.length) this.maybeTriggerConflict(tableIds[0], bd, input.expectedAt)
+      return this.commit<{ reservationId: number }>(
+        { action: "RESERVATION_CREATED", entityType: "reservation", undoable: true },
+        (tx) => {
+          const customerId = this.upsertCustomer(tx, name, phone)
+          const source = [...this.db.sources.values()].find((s) => s.code === input.sourceCode)
+          if (!source) this.fail("Nguồn đặt không hợp lệ.")
+          const contactName = name ?? this.db.customers.get(customerId ?? 0)?.displayName ?? null
+          const r = tx.insert("reservations", {
+            organizationId: ORG_ID,
+            venueId: VENUE_ID,
+            customerId,
+            contactName,
+            contactNameSearch: contactName ? foldVietnamese(contactName) : null,
+            sourceId: source.id,
+            // Mock-only booking form metadata.
+            socialPlatform: input.sourceCode === "SOCIAL" ? (input.socialPlatform ?? null) : null,
+            iconKeys: [...(input.iconKeys ?? [])],
+            honorific: input.honorific ?? null,
             partySize: input.partySize,
-            overrideReason: input.overrideReason,
+            expectedAt: input.expectedAt,
+            businessDate: bd,
+            customerClassification: input.classification ?? "UNCLASSIFIED",
+            guestType:
+              input.guestType ??
+              (input.classification === "RETURNING" ? "REGULAR" : input.classification === "NEW" ? "NEW" : null),
+            isBirthday: input.isBirthday ?? false,
+            status: "BOOKED",
+            note: input.note?.trim() || null,
+            visitId: null,
+            checkedInAt: null,
+            checkedInByUserId: null,
+            closedAt: null,
+            closedByUserId: null,
+            closeReasonCode: null,
+            closeReasonNote: null,
+            lateWarnedAt: null,
+            lateConfirmedAt: null,
+            lateConfirmedByUserId: null,
+            noShowWarnedAt: null,
+            createdByUserId: this.session.id,
+            createdAt: this.now,
+            updatedByUserId: null,
+            updatedAt: this.now,
           })
-          this.createHoldForReservation(tx, r, tableIds)
-          summary += ` · giữ ${this.codes(tableIds)}`
-        } else {
-          summary += " · chờ phân bàn"
-        }
-        return { entityId: r.id, summary, extra: { reservationId: r.id } }
-      },
-    )
+          let summary = `Booking ${fmtTime(input.expectedAt)} · ${input.partySize} khách`
+          if (tableIds.length) {
+            this.assertBookingTables(tableIds, input.partySize, true)
+            this.assertClaimable(tableIds, {
+              bd,
+              at: input.expectedAt,
+              partySize: input.partySize,
+              overrideReason: input.overrideReason,
+            })
+            this.createHoldForReservation(tx, r, tableIds)
+            summary += ` · giữ ${this.codes(tableIds)}`
+          } else {
+            summary += " · chờ phân bàn"
+          }
+          return { entityId: r.id, summary, extra: { reservationId: r.id } }
+        },
+      )
+    })
   }
 
   async updateReservation(input: UpdateReservationInput) {
-    await this.latency("m")
-    this.require("reservation.update")
-    const r = this.res(input.id)
-    this.checkVersion("reservations", r, input.version, "Booking")
-    if (r.status !== "BOOKED") this.fail("Chỉ sửa được booking đang ở trạng thái Đã đặt.", "INVALID_STATE")
-    if (input.note && noteHasPhoneNumber(input.note)) this.fail(NOTE_PHONE_ERROR)
-    if (
-      input.partySize !== undefined &&
-      (!Number.isInteger(input.partySize) || input.partySize < 1 || input.partySize > 500)
-    )
-      this.fail("Số khách phải từ 1 đến 500.")
-    if (input.contactName !== undefined && !input.contactName.trim() && !r.customerId)
-      this.fail("Cần ít nhất tên hoặc số điện thoại.")
-    return this.commit({ action: "RESERVATION_UPDATED", entityType: "reservation", undoable: true }, (tx) => {
-      const row = tx.edit("reservations", r.id)
-      const notes: string[] = []
-      if (input.contactName !== undefined) {
-        row.contactName = input.contactName.trim() || null
-        row.contactNameSearch = row.contactName ? foldVietnamese(row.contactName) : null
-      }
-      if (input.partySize !== undefined && input.partySize !== row.partySize) {
-        notes.push(`${row.partySize} → ${input.partySize} khách`)
-        row.partySize = input.partySize
-      }
-      if (input.sourceCode)
-        row.sourceId = [...this.db.sources.values()].find((s) => s.code === input.sourceCode)?.id ?? row.sourceId
-      // Mock-only booking form metadata follows the effective source.
-      if (this.db.sources.get(row.sourceId)?.code !== "SOCIAL") row.socialPlatform = null
-      else if (input.socialPlatform !== undefined) row.socialPlatform = input.socialPlatform
-      if (input.iconKeys !== undefined) row.iconKeys = [...input.iconKeys]
-      if (input.honorific !== undefined) row.honorific = input.honorific
-      if (input.note !== undefined) row.note = input.note?.trim() || null
-      if (input.classification !== undefined) row.customerClassification = input.classification
-      if (input.guestType !== undefined) row.guestType = input.guestType
-      else if (input.classification !== undefined)
-        row.guestType = input.classification === "RETURNING" ? "REGULAR" : input.classification === "NEW" ? "NEW" : null
-      if (input.isBirthday !== undefined) row.isBirthday = input.isBirthday
-      if (input.expectedAt && input.expectedAt.getTime() !== row.expectedAt.getTime()) {
-        this.assertBookingSlot(input.expectedAt)
-        if (!isWithinBookingReceptionWindow(fmtTime(input.expectedAt))) {
-          throw new ApiError(
-            400,
-            "EXPECTED_AT_OUTSIDE_BOOKING_WINDOW",
-            "Giờ nhận booking chỉ từ 19:00 đến 01:00 sáng hôm sau.",
-          )
+    return this.runSerializedMutation("m", () => {
+      this.require("reservation.update")
+      const r = this.res(input.id)
+      this.checkVersion("reservations", r, input.version, "Booking")
+      if (r.status !== "BOOKED") this.fail("Chỉ sửa được booking đang ở trạng thái Đã đặt.", "INVALID_STATE")
+      if (input.note && noteHasPhoneNumber(input.note)) this.fail(NOTE_PHONE_ERROR)
+      if (
+        input.partySize !== undefined &&
+        (!Number.isInteger(input.partySize) || input.partySize < 1 || input.partySize > 500)
+      )
+        this.fail("Số khách phải từ 1 đến 500.")
+      if (input.contactName !== undefined && !input.contactName.trim() && !r.customerId)
+        this.fail("Cần ít nhất tên hoặc số điện thoại.")
+      return this.commit({ action: "RESERVATION_UPDATED", entityType: "reservation", undoable: true }, (tx) => {
+        const row = tx.edit("reservations", r.id)
+        const notes: string[] = []
+        if (input.contactName !== undefined) {
+          row.contactName = input.contactName.trim() || null
+          row.contactNameSearch = row.contactName ? foldVietnamese(row.contactName) : null
         }
-        const newBd = businessDateOf(input.expectedAt)
-        notes.push(`giờ ${fmtTime(row.expectedAt)} → ${fmtTime(input.expectedAt)}`)
-        const hold = activeReservationHold(this.db, r.id)
-        if (hold && newBd !== row.businessDate) {
-          this.releaseHoldInternal(tx, hold, "STAFF_REASSIGNED", "MOVED", "Đổi ngày")
-          notes.push("đã nhả bàn cũ (khác ngày)")
-        } else if (hold) {
-          const h = tx.edit("holds", hold.id)
-          h.startsAt = input.expectedAt
+        if (input.partySize !== undefined && input.partySize !== row.partySize) {
+          notes.push(`${row.partySize} → ${input.partySize} khách`)
+          row.partySize = input.partySize
         }
-        row.expectedAt = input.expectedAt
-        row.businessDate = newBd
-      }
-      row.updatedByUserId = this.session.id
-      row.updatedAt = this.now
-      return {
-        entityId: r.id,
-        summary: `Sửa booking ${row.contactName ?? ""}${notes.length ? ` · ${notes.join(", ")}` : ""}`,
-      }
+        if (input.sourceCode)
+          row.sourceId = [...this.db.sources.values()].find((s) => s.code === input.sourceCode)?.id ?? row.sourceId
+        // Mock-only booking form metadata follows the effective source.
+        if (this.db.sources.get(row.sourceId)?.code !== "SOCIAL") row.socialPlatform = null
+        else if (input.socialPlatform !== undefined) row.socialPlatform = input.socialPlatform
+        if (input.iconKeys !== undefined) row.iconKeys = [...input.iconKeys]
+        if (input.honorific !== undefined) row.honorific = input.honorific
+        if (input.note !== undefined) row.note = input.note?.trim() || null
+        if (input.classification !== undefined) row.customerClassification = input.classification
+        if (input.guestType !== undefined) row.guestType = input.guestType
+        else if (input.classification !== undefined)
+          row.guestType =
+            input.classification === "RETURNING" ? "REGULAR" : input.classification === "NEW" ? "NEW" : null
+        if (input.isBirthday !== undefined) row.isBirthday = input.isBirthday
+        if (input.expectedAt && input.expectedAt.getTime() !== row.expectedAt.getTime()) {
+          this.assertBookingSlot(input.expectedAt)
+          if (!isWithinBookingReceptionWindow(fmtTime(input.expectedAt))) {
+            throw new ApiError(
+              400,
+              "EXPECTED_AT_OUTSIDE_BOOKING_WINDOW",
+              "Giờ nhận booking chỉ từ 19:00 đến 01:00 sáng hôm sau.",
+            )
+          }
+          const newBd = businessDateOf(input.expectedAt)
+          notes.push(`giờ ${fmtTime(row.expectedAt)} → ${fmtTime(input.expectedAt)}`)
+          const hold = activeReservationHold(this.db, r.id)
+          if (hold && newBd !== row.businessDate) {
+            this.releaseHoldInternal(tx, hold, "STAFF_REASSIGNED", "MOVED", "Đổi ngày")
+            notes.push("đã nhả bàn cũ (khác ngày)")
+          } else if (hold) {
+            const h = tx.edit("holds", hold.id)
+            h.startsAt = input.expectedAt
+          }
+          row.expectedAt = input.expectedAt
+          row.businessDate = newBd
+        }
+        row.updatedByUserId = this.session.id
+        row.updatedAt = this.now
+        return {
+          entityId: r.id,
+          summary: `Sửa booking ${row.contactName ?? ""}${notes.length ? ` · ${notes.join(", ")}` : ""}`,
+        }
+      })
     })
   }
 
   async assignTables(reservationId: number, version: number, tableIds: number[], overrideReason?: string) {
-    await this.latency("m")
-    this.require("table.assign")
-    tableIds = this.expandLayoutTables(tableIds)
-    const r = this.res(reservationId)
-    this.checkVersion("reservations", r, version, "Booking")
-    if (r.status !== "BOOKED") this.fail("Chỉ phân bàn cho booking Đã đặt.", "INVALID_STATE")
-    if (tableIds.length) this.maybeTriggerConflict(tableIds[0], r.businessDate, r.expectedAt)
-    return this.commit({ action: "TABLE_ASSIGNED", entityType: "reservation", undoable: true }, (tx) => {
-      const hold = activeReservationHold(this.db, r.id)
-      this.assertBookingTables(tableIds, r.partySize)
-      this.assertClaimable(tableIds, {
-        bd: r.businessDate,
-        at: r.expectedAt,
-        partySize: r.partySize,
-        ignore: (a) => !!hold && a.holdId === hold.id,
-        overrideReason,
+    return this.runSerializedMutation("m", () => {
+      this.require("table.assign")
+      tableIds = this.expandLayoutTables(tableIds)
+      const r = this.res(reservationId)
+      this.checkVersion("reservations", r, version, "Booking")
+      if (r.status !== "BOOKED") this.fail("Chỉ phân bàn cho booking Đã đặt.", "INVALID_STATE")
+      if (tableIds.length) this.maybeTriggerConflict(tableIds[0], r.businessDate, r.expectedAt)
+      return this.commit({ action: "TABLE_ASSIGNED", entityType: "reservation", undoable: true }, (tx) => {
+        const hold = activeReservationHold(this.db, r.id)
+        this.assertBookingTables(tableIds, r.partySize)
+        this.assertClaimable(tableIds, {
+          bd: r.businessDate,
+          at: r.expectedAt,
+          partySize: r.partySize,
+          ignore: (a) => !!hold && a.holdId === hold.id,
+          overrideReason,
+        })
+        if (hold) {
+          const old = activeAllocations(this.db).filter((a) => a.holdId === hold.id)
+          old.forEach((a) => this.release(tx, a, "MOVED"))
+          this.dissolveOrphanGroups(
+            tx,
+            old.map((a) => a.groupId),
+          )
+          const groupId =
+            tableIds.length > 1 ? (this.layoutGroupFor(tableIds) ?? this.newGroup(tx, r.businessDate)) : null
+          tableIds.forEach((tableId) =>
+            this.newAllocation(tx, {
+              tableId,
+              kind: "HOLD",
+              holdId: hold.id,
+              groupId,
+              startsAt: this.now,
+              bd: r.businessDate,
+              holdStart: r.expectedAt,
+            }),
+          )
+        } else {
+          this.createHoldForReservation(tx, r, tableIds)
+        }
+        const entry = activeEntryForReservation(this.db, r.id)
+        if (entry && entry.status !== "HOLD_ACTIVE") {
+          const e = tx.edit("waitlist", entry.id)
+          e.status = "CANCELLED"
+          e.closedAt = this.now
+          e.closedByUserId = this.session.id
+          e.closeReasonCode = "OTHER"
+          e.closeReasonNote = "Đã phân bàn trực tiếp"
+          e.claimedByUserId = null
+          e.claimedAt = null
+          e.claimExpiresAt = null
+        }
+        const row = tx.edit("reservations", r.id)
+        row.updatedByUserId = this.session.id
+        row.updatedAt = this.now
+        return { entityId: r.id, summary: `Phân bàn ${this.codes(tableIds)} cho booking ${fmtTime(r.expectedAt)}` }
       })
-      if (hold) {
-        const old = activeAllocations(this.db).filter((a) => a.holdId === hold.id)
-        old.forEach((a) => this.release(tx, a, "MOVED"))
-        this.dissolveOrphanGroups(
-          tx,
-          old.map((a) => a.groupId),
-        )
-        const groupId =
-          tableIds.length > 1 ? (this.layoutGroupFor(tableIds) ?? this.newGroup(tx, r.businessDate)) : null
-        tableIds.forEach((tableId) =>
-          this.newAllocation(tx, {
-            tableId,
-            kind: "HOLD",
-            holdId: hold.id,
-            groupId,
-            startsAt: this.now,
-            bd: r.businessDate,
-            holdStart: r.expectedAt,
-          }),
-        )
-      } else {
-        this.createHoldForReservation(tx, r, tableIds)
-      }
-      const entry = activeEntryForReservation(this.db, r.id)
-      if (entry && entry.status !== "HOLD_ACTIVE") {
-        const e = tx.edit("waitlist", entry.id)
-        e.status = "CANCELLED"
-        e.closedAt = this.now
-        e.closedByUserId = this.session.id
-        e.closeReasonCode = "OTHER"
-        e.closeReasonNote = "Đã phân bàn trực tiếp"
-        e.claimedByUserId = null
-        e.claimedAt = null
-        e.claimExpiresAt = null
-      }
-      const row = tx.edit("reservations", r.id)
-      row.updatedByUserId = this.session.id
-      row.updatedAt = this.now
-      return { entityId: r.id, summary: `Phân bàn ${this.codes(tableIds)} cho booking ${fmtTime(r.expectedAt)}` }
     })
   }
 
   async cancelReservation(id: number, version: number, reason: ReservationCloseReason, note?: string) {
-    await this.latency("m")
-    this.require("reservation.cancel")
-    const r = this.res(id)
-    this.checkVersion("reservations", r, version, "Booking")
-    if (r.status !== "BOOKED") this.fail("Booking không còn ở trạng thái Đã đặt.", "INVALID_STATE")
-    if (reason === "NO_SHOW_CONFIRMED") this.fail("Dùng thao tác Xác nhận không tới.")
-    if (reason === "OTHER" && !note?.trim()) this.fail("Ghi rõ lý do khác.")
-    if (note && noteHasPhoneNumber(note)) this.fail(NOTE_PHONE_ERROR)
-    return this.commit(
-      {
-        action: "RESERVATION_CANCELLED",
-        entityType: "reservation",
-        undoable: true,
-        reasonCode: reason,
-        reasonNote: note,
-      },
-      (tx) => {
-        const tables = this.closeReservationClaims(tx, r, "RESERVATION_CANCELLED", "RESERVATION_CANCELLED")
-        const row = tx.edit("reservations", r.id)
-        row.status = "CANCELLED"
-        row.closedAt = this.now
-        row.closedByUserId = this.session.id
-        row.closeReasonCode = reason
-        row.closeReasonNote = note?.trim() || null
-        return {
-          entityId: r.id,
-          summary: `Hủy booking ${fmtTime(r.expectedAt)}${tables.length ? ` · nhả ${this.codes(tables)}` : ""}`,
-        }
-      },
-    )
+    return this.runSerializedMutation("m", () => {
+      this.require("reservation.cancel")
+      const r = this.res(id)
+      this.checkVersion("reservations", r, version, "Booking")
+      if (r.status !== "BOOKED") this.fail("Booking không còn ở trạng thái Đã đặt.", "INVALID_STATE")
+      if (reason === "NO_SHOW_CONFIRMED") this.fail("Dùng thao tác Xác nhận không tới.")
+      if (reason === "OTHER" && !note?.trim()) this.fail("Ghi rõ lý do khác.")
+      if (note && noteHasPhoneNumber(note)) this.fail(NOTE_PHONE_ERROR)
+      return this.commit(
+        {
+          action: "RESERVATION_CANCELLED",
+          entityType: "reservation",
+          undoable: true,
+          reasonCode: reason,
+          reasonNote: note,
+        },
+        (tx) => {
+          const tables = this.closeReservationClaims(tx, r, "RESERVATION_CANCELLED", "RESERVATION_CANCELLED")
+          const row = tx.edit("reservations", r.id)
+          row.status = "CANCELLED"
+          row.closedAt = this.now
+          row.closedByUserId = this.session.id
+          row.closeReasonCode = reason
+          row.closeReasonNote = note?.trim() || null
+          return {
+            entityId: r.id,
+            summary: `Hủy booking ${fmtTime(r.expectedAt)}${tables.length ? ` · nhả ${this.codes(tables)}` : ""}`,
+          }
+        },
+      )
+    })
   }
 
   private closeReservationClaims(
@@ -1686,67 +1726,69 @@ export class MockGamApi implements GamApi, DemoControls {
   }
 
   async markNoShow(id: number, version: number) {
-    await this.latency("m")
-    this.require("reservation.mark_no_show")
-    const r = this.res(id)
-    this.checkVersion("reservations", r, version, "Booking")
-    if (r.status !== "BOOKED") this.fail("Booking không còn ở trạng thái Đã đặt.", "INVALID_STATE")
-    const { minutesLate } = reservationWarning(this.venue, r, this.now)
-    if (minutesLate < this.venue.noShowWarningMinutes) {
-      this.fail(
-        `Chỉ xác nhận không tới sau ${this.venue.noShowWarningMinutes} phút (hiện trễ ${minutesLate}'). Trước mốc này, nếu khách báo hủy hãy dùng Hủy booking.`,
-        "INVALID_STATE",
+    return this.runSerializedMutation("m", () => {
+      this.require("reservation.mark_no_show")
+      const r = this.res(id)
+      this.checkVersion("reservations", r, version, "Booking")
+      if (r.status !== "BOOKED") this.fail("Booking không còn ở trạng thái Đã đặt.", "INVALID_STATE")
+      const { minutesLate } = reservationWarning(this.venue, r, this.now)
+      if (minutesLate < this.venue.noShowWarningMinutes) {
+        this.fail(
+          `Chỉ xác nhận không tới sau ${this.venue.noShowWarningMinutes} phút (hiện trễ ${minutesLate}'). Trước mốc này, nếu khách báo hủy hãy dùng Hủy booking.`,
+          "INVALID_STATE",
+        )
+      }
+      return this.commit(
+        { action: "RESERVATION_NO_SHOW", entityType: "reservation", undoable: true, reasonCode: "NO_SHOW_CONFIRMED" },
+        (tx) => {
+          const tables = this.closeReservationClaims(tx, r, "CUSTOMER_NO_SHOW", "NO_SHOW")
+          const row = tx.edit("reservations", r.id)
+          row.status = "NO_SHOW"
+          row.closedAt = this.now
+          row.closedByUserId = this.session.id
+          row.closeReasonCode = "NO_SHOW_CONFIRMED"
+          return {
+            entityId: r.id,
+            summary: `Xác nhận không tới · booking ${fmtTime(r.expectedAt)}${tables.length ? ` · nhả ${this.codes(tables)}` : ""}`,
+          }
+        },
       )
-    }
-    return this.commit(
-      { action: "RESERVATION_NO_SHOW", entityType: "reservation", undoable: true, reasonCode: "NO_SHOW_CONFIRMED" },
-      (tx) => {
-        const tables = this.closeReservationClaims(tx, r, "CUSTOMER_NO_SHOW", "NO_SHOW")
-        const row = tx.edit("reservations", r.id)
-        row.status = "NO_SHOW"
-        row.closedAt = this.now
-        row.closedByUserId = this.session.id
-        row.closeReasonCode = "NO_SHOW_CONFIRMED"
-        return {
-          entityId: r.id,
-          summary: `Xác nhận không tới · booking ${fmtTime(r.expectedAt)}${tables.length ? ` · nhả ${this.codes(tables)}` : ""}`,
-        }
-      },
-    )
+    })
   }
 
   async confirmLate(id: number, version: number) {
-    await this.latency("m")
-    this.require("reservation.update")
-    const r = this.res(id)
-    if (r.status !== "BOOKED" || r.visitId) this.fail("Booking không còn ở trạng thái chờ khách.", "INVALID_STATE")
-    if (r.businessDate !== businessDateOf(this.now)) this.fail("Booking không thuộc ca hiện tại.", "INVALID_STATE")
-    if (!activeReservationHold(this.db, r.id)) this.fail("Booking không còn giữ bàn hợp lệ.", "INVALID_STATE")
-    if (r.lateConfirmedAt) {
-      if (version !== r.version - 1) this.checkVersion("reservations", r, version, "Booking")
-      return { operationId: null, changeSeq: null, undoable: false, summary: "Khách đã được ghi nhận tới muộn." }
-    }
-    this.checkVersion("reservations", r, version, "Booking")
-    const elapsed = this.now.getTime() - r.expectedAt.getTime()
-    if (elapsed < 0) this.fail("Chỉ xác nhận tới muộn sau giờ hẹn.", "INVALID_STATE")
-    if (elapsed >= this.venue.noShowWarningMinutes * 60_000)
-      this.fail("Cách xử lý sau ngưỡng không tới đang chờ phê duyệt.", "INVALID_STATE")
-    return this.commit(
-      {
-        action: "RESERVATION_LATE_CONFIRMED",
-        entityType: "reservation",
-        undoable: false,
-        reasonCode: "CUSTOMER_CONFIRMED_LATE",
-      },
-      (tx) => {
-        const row = tx.edit("reservations", r.id)
-        row.lateConfirmedAt = this.now
-        row.lateConfirmedByUserId = this.session.id
-        row.updatedByUserId = this.session.id
-        row.updatedAt = this.now
-        return { entityId: r.id, summary: `Đã ghi nhận ${r.contactName ?? "khách"} sẽ tới muộn` }
-      },
-    )
+    return this.runSerializedMutation("m", () => {
+      this.require("reservation.update")
+      const r = this.res(id)
+      if (r.status !== "BOOKED" || r.visitId) this.fail("Booking không còn ở trạng thái chờ khách.", "INVALID_STATE")
+      if (r.businessDate !== businessDateOf(this.now)) this.fail("Booking không thuộc ca hiện tại.", "INVALID_STATE")
+      if (!activeReservationHold(this.db, r.id)) this.fail("Booking không còn giữ bàn hợp lệ.", "INVALID_STATE")
+      if (r.lateConfirmedAt) {
+        if (version !== r.version - 1) this.checkVersion("reservations", r, version, "Booking")
+        return { operationId: null, changeSeq: null, undoable: false, summary: "Khách đã được ghi nhận tới muộn." }
+      }
+      this.checkVersion("reservations", r, version, "Booking")
+      const elapsed = this.now.getTime() - r.expectedAt.getTime()
+      if (elapsed < 0) this.fail("Chỉ xác nhận tới muộn sau giờ hẹn.", "INVALID_STATE")
+      if (elapsed >= this.venue.noShowWarningMinutes * 60_000)
+        this.fail("Cách xử lý sau ngưỡng không tới đang chờ phê duyệt.", "INVALID_STATE")
+      return this.commit(
+        {
+          action: "RESERVATION_LATE_CONFIRMED",
+          entityType: "reservation",
+          undoable: false,
+          reasonCode: "CUSTOMER_CONFIRMED_LATE",
+        },
+        (tx) => {
+          const row = tx.edit("reservations", r.id)
+          row.lateConfirmedAt = this.now
+          row.lateConfirmedByUserId = this.session.id
+          row.updatedByUserId = this.session.id
+          row.updatedAt = this.now
+          return { entityId: r.id, summary: `Đã ghi nhận ${r.contactName ?? "khách"} sẽ tới muộn` }
+        },
+      )
+    })
   }
 
   /**
@@ -1771,24 +1813,25 @@ export class MockGamApi implements GamApi, DemoControls {
   }
 
   async startCall(target: CallTarget) {
-    await this.latency("q")
-    this.require("booking.phone.call")
-    const phone = this.callPhone(target)
-    if (!phone) this.fail("Khách này chưa có số điện thoại hợp lệ.", "VALIDATION_FAILED")
-    const callId = Date.now()
-    const initiatedAt = new Date(this.now)
-    // Mock keeps the log in memory so the history panel has something real to
-    // show; the server writes it to booking_call_logs.
-    this.callLog.push({
-      callId,
-      targetKey: callTargetKey(target),
-      initiatedAt,
-      initiatedBy: this.session.displayName,
-      outcome: null,
-      outcomeAt: null,
-      outcomeBy: null,
+    return this.runSerializedMutation("q", () => {
+      this.require("booking.phone.call")
+      const phone = this.callPhone(target)
+      if (!phone) this.fail("Khách này chưa có số điện thoại hợp lệ.", "VALIDATION_FAILED")
+      const callId = Date.now()
+      const initiatedAt = new Date(this.now)
+      // Mock keeps the log in memory so the history panel has something real to
+      // show; the server writes it to booking_call_logs.
+      this.callLog.push({
+        callId,
+        targetKey: callTargetKey(target),
+        initiatedAt,
+        initiatedBy: this.session.displayName,
+        outcome: null,
+        outcomeAt: null,
+        outcomeBy: null,
+      })
+      return { callId, initiatedAt, telUri: `tel:${phone}` }
     })
-    return { callId, initiatedAt, telUri: `tel:${phone}` }
   }
 
   async listCalls(target: CallTarget) {
@@ -1812,81 +1855,84 @@ export class MockGamApi implements GamApi, DemoControls {
   async recordCallOutcome(target: CallTarget, _callId: number, outcome: CallOutcome, bookingVersion?: number) {
     if (outcome === "LATE_CONFIRMED") {
       if (target.kind !== "booking") this.fail("Kết quả cuộc gọi không hợp lệ.", "VALIDATION_FAILED")
+      if (this.syncTransport) this.pullSharedState(false)
       const reservation = this.res(target.id)
       if (reservation.lateConfirmedAt && bookingVersion === reservation.version) {
         return { operationId: null, changeSeq: null, undoable: false, summary: "Khách đã được ghi nhận tới muộn." }
       }
       return this.confirmLate(target.id, bookingVersion ?? 0)
     }
-    await this.latency("q")
-    this.require("booking.phone.call")
-    const key = callTargetKey(target)
-    const entry = this.callLog.find((c) => c.callId === _callId && c.targetKey === key)
-    if (entry && entry.outcome === null) {
-      entry.outcome = outcome
-      entry.outcomeAt = new Date(this.now)
-      entry.outcomeBy = this.session.displayName
-    }
-    return { operationId: null, changeSeq: null, undoable: false, summary: "Đã ghi kết quả cuộc gọi." }
+    return this.runSerializedMutation("q", () => {
+      this.require("booking.phone.call")
+      const key = callTargetKey(target)
+      const entry = this.callLog.find((c) => c.callId === _callId && c.targetKey === key)
+      if (entry && entry.outcome === null) {
+        entry.outcome = outcome
+        entry.outcomeAt = new Date(this.now)
+        entry.outcomeBy = this.session.displayName
+      }
+      return { operationId: null, changeSeq: null, undoable: false, summary: "Đã ghi kết quả cuộc gọi." }
+    })
   }
 
   async checkIn(input: CheckInInput) {
-    await this.latency("m")
-    this.require("visit.checkin")
-    const r = this.res(input.reservationId)
-    this.checkVersion("reservations", r, input.version, "Booking")
-    if (r.status !== "BOOKED") this.fail("Booking không còn ở trạng thái Đã đặt.", "INVALID_STATE")
-    if (!Number.isInteger(input.guestCount) || input.guestCount < 1 || input.guestCount > 500)
-      this.fail("Số khách phải từ 1 đến 500.")
-    const bd = businessDateOf(this.now)
-    if (r.businessDate !== bd)
-      this.fail(`Booking thuộc ngày ${r.businessDate}, không phải ca hiện tại.`, "INVALID_STATE")
-    const entry = activeEntryForReservation(this.db, r.id)
-    const hold = activeReservationHold(this.db, r.id) ?? (entry ? activeHoldForEntry(this.db, entry.id) : null)
-    const holdTables = hold ? holdTableIds(this.db, hold.id) : []
-    const target = this.expandLayoutTables(input.tableIds?.length ? input.tableIds : holdTables)
-    if (!target.length) this.fail("Booking chưa có bàn. Chọn bàn để check-in.")
-    const sameTables = target.length === holdTables.length && target.every((t) => holdTables.includes(t))
-    if (!sameTables)
-      this.maybeTriggerConflict(
-        target.find((t) => !holdTables.includes(t))!,
-        bd,
-        this.now,
-      )
-    return this.commit({ action: "CHECKED_IN", entityType: "reservation", undoable: true }, (tx) => {
-      this.assertClaimable(target, {
-        bd,
-        at: this.now,
-        ignore: (a) => !!hold && a.holdId === hold.id,
-        overrideReason: input.overrideReason,
+    return this.runSerializedMutation("m", () => {
+      this.require("visit.checkin")
+      const r = this.res(input.reservationId)
+      this.checkVersion("reservations", r, input.version, "Booking")
+      if (r.status !== "BOOKED") this.fail("Booking không còn ở trạng thái Đã đặt.", "INVALID_STATE")
+      if (!Number.isInteger(input.guestCount) || input.guestCount < 1 || input.guestCount > 500)
+        this.fail("Số khách phải từ 1 đến 500.")
+      const bd = businessDateOf(this.now)
+      if (r.businessDate !== bd)
+        this.fail(`Booking thuộc ngày ${r.businessDate}, không phải ca hiện tại.`, "INVALID_STATE")
+      const entry = activeEntryForReservation(this.db, r.id)
+      const hold = activeReservationHold(this.db, r.id) ?? (entry ? activeHoldForEntry(this.db, entry.id) : null)
+      const holdTables = hold ? holdTableIds(this.db, hold.id) : []
+      const target = this.expandLayoutTables(input.tableIds?.length ? input.tableIds : holdTables)
+      if (!target.length) this.fail("Booking chưa có bàn. Chọn bàn để check-in.")
+      const sameTables = target.length === holdTables.length && target.every((t) => holdTables.includes(t))
+      if (!sameTables)
+        this.maybeTriggerConflict(
+          target.find((t) => !holdTables.includes(t))!,
+          bd,
+          this.now,
+        )
+      return this.commit({ action: "CHECKED_IN", entityType: "reservation", undoable: true }, (tx) => {
+        this.assertClaimable(target, {
+          bd,
+          at: this.now,
+          ignore: (a) => !!hold && a.holdId === hold.id,
+          overrideReason: input.overrideReason,
+        })
+        const v = tx.insert("visits", {
+          organizationId: ORG_ID,
+          venueId: VENUE_ID,
+          origin: entry ? "WAITLIST" : "RESERVATION",
+          customerId: r.customerId,
+          contactName: r.contactName,
+          guestCount: input.guestCount,
+          startedAt: this.now,
+          businessDate: bd,
+          endedAt: null,
+          endedByUserId: null,
+          endReason: null,
+          mergedIntoVisitId: null,
+          paidMarkedAt: null,
+          paidMarkedByUserId: null,
+          note: r.note,
+          createdByUserId: this.session.id,
+          createdAt: this.now,
+        })
+        this.convertHold(tx, hold, v.id, target, sameTables, bd)
+        const row = tx.edit("reservations", r.id)
+        row.status = "CHECKED_IN"
+        row.visitId = v.id
+        row.checkedInAt = this.now
+        row.checkedInByUserId = this.session.id
+        if (entry) this.closeEntrySeated(tx, entry.id, v.id)
+        return { entityId: r.id, summary: `Check-in ${this.codes(target)} · ${input.guestCount} khách` }
       })
-      const v = tx.insert("visits", {
-        organizationId: ORG_ID,
-        venueId: VENUE_ID,
-        origin: entry ? "WAITLIST" : "RESERVATION",
-        customerId: r.customerId,
-        contactName: r.contactName,
-        guestCount: input.guestCount,
-        startedAt: this.now,
-        businessDate: bd,
-        endedAt: null,
-        endedByUserId: null,
-        endReason: null,
-        mergedIntoVisitId: null,
-        paidMarkedAt: null,
-        paidMarkedByUserId: null,
-        note: r.note,
-        createdByUserId: this.session.id,
-        createdAt: this.now,
-      })
-      this.convertHold(tx, hold, v.id, target, sameTables, bd)
-      const row = tx.edit("reservations", r.id)
-      row.status = "CHECKED_IN"
-      row.visitId = v.id
-      row.checkedInAt = this.now
-      row.checkedInByUserId = this.session.id
-      if (entry) this.closeEntrySeated(tx, entry.id, v.id)
-      return { entityId: r.id, summary: `Check-in ${this.codes(target)} · ${input.guestCount} khách` }
     })
   }
 
@@ -1934,51 +1980,56 @@ export class MockGamApi implements GamApi, DemoControls {
   /* ================= floor ================= */
 
   async seatWalkIn(input: WalkInInput) {
-    await this.latency("m")
-    this.require("visit.walkin")
-    input = { ...input, tableIds: this.expandLayoutTables(input.tableIds) }
-    if (!Number.isInteger(input.guestCount) || input.guestCount < 1 || input.guestCount > 500)
-      this.fail("Số khách phải từ 1 đến 500.")
-    if (input.contactName && noteHasPhoneNumber(input.contactName)) this.fail("Không nhập số điện thoại vào ô tên.")
-    const bd = businessDateOf(this.now)
-    if (input.tableIds.length) this.maybeTriggerConflict(input.tableIds[0], bd, this.now)
-    return this.commit<{ visitId: number }>({ action: "WALKIN_SEATED", entityType: "visit", undoable: true }, (tx) => {
-      this.assertClaimable(input.tableIds, {
-        bd,
-        at: this.now,
-        partySize: input.guestCount,
-        overrideReason: input.overrideReason,
-      })
-      const customerId = this.upsertCustomer(tx, input.contactName, input.phone)
-      const v = tx.insert("visits", {
-        organizationId: ORG_ID,
-        venueId: VENUE_ID,
-        origin: "WALK_IN",
-        customerId,
-        contactName: customerId === null ? input.contactName?.trim() || null : null,
-        guestCount: input.guestCount,
-        startedAt: this.now,
-        businessDate: bd,
-        endedAt: null,
-        endedByUserId: null,
-        endReason: null,
-        mergedIntoVisitId: null,
-        paidMarkedAt: null,
-        paidMarkedByUserId: null,
-        note: null,
-        createdByUserId: this.session.id,
-        createdAt: this.now,
-      })
-      const groupId = input.tableIds.length > 1 ? (this.layoutGroupFor(input.tableIds) ?? this.newGroup(tx, bd)) : null
-      input.tableIds.forEach((tableId) =>
-        this.newAllocation(tx, { tableId, kind: "USAGE", visitId: v.id, groupId, startsAt: this.now, bd }),
+    return this.runSerializedMutation("m", () => {
+      this.require("visit.walkin")
+      input = { ...input, tableIds: this.expandLayoutTables(input.tableIds) }
+      if (!Number.isInteger(input.guestCount) || input.guestCount < 1 || input.guestCount > 500)
+        this.fail("Số khách phải từ 1 đến 500.")
+      if (input.contactName && noteHasPhoneNumber(input.contactName)) this.fail("Không nhập số điện thoại vào ô tên.")
+      const bd = businessDateOf(this.now)
+      if (input.tableIds.length) this.maybeTriggerConflict(input.tableIds[0], bd, this.now)
+      return this.commit<{ visitId: number }>(
+        { action: "WALKIN_SEATED", entityType: "visit", undoable: true },
+        (tx) => {
+          this.assertClaimable(input.tableIds, {
+            bd,
+            at: this.now,
+            partySize: input.guestCount,
+            overrideReason: input.overrideReason,
+          })
+          const customerId = this.upsertCustomer(tx, input.contactName, input.phone)
+          const v = tx.insert("visits", {
+            organizationId: ORG_ID,
+            venueId: VENUE_ID,
+            origin: "WALK_IN",
+            customerId,
+            contactName: customerId === null ? input.contactName?.trim() || null : null,
+            guestCount: input.guestCount,
+            startedAt: this.now,
+            businessDate: bd,
+            endedAt: null,
+            endedByUserId: null,
+            endReason: null,
+            mergedIntoVisitId: null,
+            paidMarkedAt: null,
+            paidMarkedByUserId: null,
+            note: null,
+            createdByUserId: this.session.id,
+            createdAt: this.now,
+          })
+          const groupId =
+            input.tableIds.length > 1 ? (this.layoutGroupFor(input.tableIds) ?? this.newGroup(tx, bd)) : null
+          input.tableIds.forEach((tableId) =>
+            this.newAllocation(tx, { tableId, kind: "USAGE", visitId: v.id, groupId, startsAt: this.now, bd }),
+          )
+          const sym = groupId ? symbolByNo(this.db.groups.get(groupId)?.symbolNo)?.name : null
+          return {
+            entityId: v.id,
+            summary: `Walk-in ${this.codes(input.tableIds)} · ${input.guestCount} khách${sym ? ` · ký hiệu ${sym}` : ""}`,
+            extra: { visitId: v.id },
+          }
+        },
       )
-      const sym = groupId ? symbolByNo(this.db.groups.get(groupId)?.symbolNo)?.name : null
-      return {
-        entityId: v.id,
-        summary: `Walk-in ${this.codes(input.tableIds)} · ${input.guestCount} khách${sym ? ` · ký hiệu ${sym}` : ""}`,
-        extra: { visitId: v.id },
-      }
     })
   }
 
@@ -2031,26 +2082,31 @@ export class MockGamApi implements GamApi, DemoControls {
    * MERGE tự suy ra phần thêm vào thay vì để màn hình gửi hai nghĩa khác nhau.
    */
   async updateWaiterVisitTables(input: WaiterVisitTablesInput) {
-    const claim = { visitId: input.visitId, version: input.version }
-    const confirmations =
-      input.capacityOverrideConfirmed === undefined
-        ? {}
-        : { capacityOverrideConfirmed: input.capacityOverrideConfirmed }
-    if (input.mode === "MOVE") {
-      return this.moveClaim({ claim, tableIds: [...input.tableIds], ...confirmations })
-    }
-    const current = new Set(
-      [...this.db.allocations.values()]
-        .filter((allocation) => allocation.visitId === input.visitId && !allocation.releasedAt)
-        .map((allocation) => allocation.tableId),
-    )
-    const addTableIds = input.tableIds.filter((id) => !current.has(id))
-    if (!addTableIds.length) this.fail("Cần chọn ít nhất một bàn để ghép.", "INVALID_STATE")
-    return this.combineTables({ claim, addTableIds, ...confirmations })
+    return this.runSerializedMutation("m", () => {
+      const claim = { visitId: input.visitId, version: input.version }
+      const confirmations =
+        input.capacityOverrideConfirmed === undefined
+          ? {}
+          : { capacityOverrideConfirmed: input.capacityOverrideConfirmed }
+      if (input.mode === "MOVE") {
+        return this.moveClaimSynced({ claim, tableIds: [...input.tableIds], ...confirmations })
+      }
+      const current = new Set(
+        [...this.db.allocations.values()]
+          .filter((allocation) => allocation.visitId === input.visitId && !allocation.releasedAt)
+          .map((allocation) => allocation.tableId),
+      )
+      const addTableIds = input.tableIds.filter((id) => !current.has(id))
+      if (!addTableIds.length) this.fail("Cần chọn ít nhất một bàn để ghép.", "INVALID_STATE")
+      return this.combineTablesSynced({ claim, addTableIds, ...confirmations })
+    })
   }
 
   async moveClaim(input: MoveInput) {
-    await this.latency("m")
+    return this.runSerializedMutation("m", () => this.moveClaimSynced(input))
+  }
+
+  private moveClaimSynced(input: MoveInput) {
     this.require(input.claim.visitId ? "visit.move" : "table.assign")
     const { allocs, entity, at, party } = this.claimAllocations(input.claim)
     if (input.claim.version !== undefined) {
@@ -2187,7 +2243,10 @@ export class MockGamApi implements GamApi, DemoControls {
   }
 
   async createTableGroup(input: CreateTableGroupInput) {
-    await this.latency("m")
+    return this.runSerializedMutation("m", () => this.createTableGroupSynced(input))
+  }
+
+  private createTableGroupSynced(input: CreateTableGroupInput) {
     this.requireGroupManage()
     const claims = this.assertGroupTables(input.tableIds, undefined, input.spareOverrideConfirmed)
     return this.commit({ action: "TABLES_COMBINED", entityType: "table_group", undoable: true }, (tx) => {
@@ -2203,7 +2262,10 @@ export class MockGamApi implements GamApi, DemoControls {
   }
 
   async addTableGroupMembers(input: AddTableGroupMembersInput) {
-    await this.latency("m")
+    return this.runSerializedMutation("m", () => this.addTableGroupMembersSynced(input))
+  }
+
+  private addTableGroupMembersSynced(input: AddTableGroupMembersInput) {
     this.requireGroupManage()
     const group = this.groupVersion(input.groupId, input.version)
     if (!input.tableIds.length) this.fail("Chọn bàn cần thêm vào nhóm.")
@@ -2224,19 +2286,22 @@ export class MockGamApi implements GamApi, DemoControls {
   }
 
   async combineTables(input: CombineInput) {
+    return this.runSerializedMutation("m", () => this.combineTablesSynced(input))
+  }
+
+  private combineTablesSynced(input: CombineInput) {
     if (!input.claim.visitId && !input.claim.reservationId) {
       const group = [...this.db.groups.values()].find(
         (g) => !g.dissolvedAt && g.layoutTableIds?.some((id) => input.addTableIds.includes(id)),
       )
       return group
-        ? this.addTableGroupMembers({
+        ? this.addTableGroupMembersSynced({
             groupId: group.id,
             version: group.version,
             tableIds: input.addTableIds.filter((id) => !group.layoutTableIds!.includes(id)),
           })
-        : this.createTableGroup({ tableIds: input.addTableIds })
+        : this.createTableGroupSynced({ tableIds: input.addTableIds })
     }
-    await this.latency("m")
     this.require("visit.combine")
     const { allocs, entity, at } = this.claimAllocations(input.claim)
     if (input.claim.version !== undefined) {
@@ -2300,103 +2365,106 @@ export class MockGamApi implements GamApi, DemoControls {
   }
 
   async splitGroup(input: SplitInput) {
-    await this.latency("m")
-    if (input.mode === "ALL_TO_SINGLE") {
-      this.requireGroupManage()
-      const group = this.groupVersion(input.groupId, input.version)
-      const claims = activeAllocations(this.db).filter((a) => a.groupId === group.id)
-      if (claims.length)
-        throw new ApiError(409, "TABLE_GROUP_MIXED_STATE", "Nhóm đang có khách. Dùng Tách bàn và chọn bàn giữ lại.", {
-          conflictingTableIds: claims.map((a) => a.tableId),
+    return this.runSerializedMutation("m", () => {
+      if (input.mode === "ALL_TO_SINGLE") {
+        this.requireGroupManage()
+        const group = this.groupVersion(input.groupId, input.version)
+        const claims = activeAllocations(this.db).filter((a) => a.groupId === group.id)
+        if (claims.length)
+          throw new ApiError(409, "TABLE_GROUP_MIXED_STATE", "Nhóm đang có khách. Dùng Tách bàn và chọn bàn giữ lại.", {
+            conflictingTableIds: claims.map((a) => a.tableId),
+          })
+        return this.commit({ action: "TABLES_SPLIT", entityType: "table_group", undoable: true }, (tx) => {
+          const row = tx.edit("groups", group.id)
+          row.dissolvedAt = this.now
+          row.dissolvedByUserId = this.session.id
+          return { entityId: group.id, summary: "Đã tách nhóm trống thành bàn đơn (mô phỏng C1)" }
         })
-      return this.commit({ action: "TABLES_SPLIT", entityType: "table_group", undoable: true }, (tx) => {
-        const row = tx.edit("groups", group.id)
-        row.dissolvedAt = this.now
-        row.dissolvedByUserId = this.session.id
-        return { entityId: group.id, summary: "Đã tách nhóm trống thành bàn đơn (mô phỏng C1)" }
-      })
-    }
-    this.require("visit.split")
-    if (!Array.isArray(input.keepTableIds))
-      throw new ApiError(400, "INVALID_SPLIT_MODE", apiErrorMessage("INVALID_SPLIT_MODE", ""))
-    const g = this.db.groups.get(input.groupId)
-    if (!g || g.dissolvedAt) throw new ApiError(404, "NOT_FOUND", "Nhóm ghép không còn tồn tại.")
-    const allocs = activeAllocations(this.db).filter((a) => a.groupId === g.id)
-    const tables = allocs.map((a) => a.tableId)
-    if (!input.keepTableIds.length) throw new ApiError(400, "TABLES_REQUIRED", apiErrorMessage("TABLES_REQUIRED", ""))
-    if (input.keepTableIds.some((t) => !tables.includes(t))) this.fail("Bàn giữ lại không thuộc nhóm.")
-    // SPL-02 (PO 07/11/2026): a Split must release at least one table.
-    if (input.keepTableIds.length === tables.length)
-      this.fail("Tách bàn phải nhả ít nhất một bàn. Nhóm ghép giữ nguyên.")
-    return this.commit({ action: "TABLES_SPLIT", entityType: "table_group", undoable: true }, (tx) => {
-      allocs.forEach((a) => this.release(tx, a, "SPLIT"))
-      const gr = tx.edit("groups", g.id)
-      gr.dissolvedAt = this.now
-      gr.dissolvedByUserId = this.session.id
-      const keep = allocs.filter((a) => input.keepTableIds.includes(a.tableId))
-      const newGroupId = keep.length > 1 ? this.newGroup(tx, g.businessDate) : null
-      if (newGroupId && g.layoutTableIds) tx.edit("groups", newGroupId).layoutTableIds = [...input.keepTableIds]
-      keep.forEach((a) =>
-        this.newAllocation(tx, {
-          tableId: a.tableId,
-          kind: a.kind,
-          holdId: a.holdId,
-          visitId: a.visitId,
-          groupId: newGroupId,
-          startsAt: this.now,
-          bd: a.businessDate,
-        }),
-      )
-      const owner = allocs[0]
-      if (owner.visitId) tx.edit("visits", owner.visitId)
-      else if (owner.holdId) tx.edit("holds", owner.holdId)
-      const detached = tables.filter((t) => !input.keepTableIds.includes(t))
-      return {
-        entityId: g.id,
-        summary: `Tách nhóm ${this.codes(tables)} · giữ ${this.codes(input.keepTableIds)}${detached.length ? ` · nhả ${this.codes(detached)}` : ""}`,
       }
+      this.require("visit.split")
+      if (!Array.isArray(input.keepTableIds))
+        throw new ApiError(400, "INVALID_SPLIT_MODE", apiErrorMessage("INVALID_SPLIT_MODE", ""))
+      const g = this.db.groups.get(input.groupId)
+      if (!g || g.dissolvedAt) throw new ApiError(404, "NOT_FOUND", "Nhóm ghép không còn tồn tại.")
+      const allocs = activeAllocations(this.db).filter((a) => a.groupId === g.id)
+      const tables = allocs.map((a) => a.tableId)
+      if (!input.keepTableIds.length) throw new ApiError(400, "TABLES_REQUIRED", apiErrorMessage("TABLES_REQUIRED", ""))
+      if (input.keepTableIds.some((t) => !tables.includes(t))) this.fail("Bàn giữ lại không thuộc nhóm.")
+      // SPL-02 (PO 07/11/2026): a Split must release at least one table.
+      if (input.keepTableIds.length === tables.length)
+        this.fail("Tách bàn phải nhả ít nhất một bàn. Nhóm ghép giữ nguyên.")
+      return this.commit({ action: "TABLES_SPLIT", entityType: "table_group", undoable: true }, (tx) => {
+        allocs.forEach((a) => this.release(tx, a, "SPLIT"))
+        const gr = tx.edit("groups", g.id)
+        gr.dissolvedAt = this.now
+        gr.dissolvedByUserId = this.session.id
+        const keep = allocs.filter((a) => input.keepTableIds.includes(a.tableId))
+        const newGroupId = keep.length > 1 ? this.newGroup(tx, g.businessDate) : null
+        if (newGroupId && g.layoutTableIds) tx.edit("groups", newGroupId).layoutTableIds = [...input.keepTableIds]
+        keep.forEach((a) =>
+          this.newAllocation(tx, {
+            tableId: a.tableId,
+            kind: a.kind,
+            holdId: a.holdId,
+            visitId: a.visitId,
+            groupId: newGroupId,
+            startsAt: this.now,
+            bd: a.businessDate,
+          }),
+        )
+        const owner = allocs[0]
+        if (owner.visitId) tx.edit("visits", owner.visitId)
+        else if (owner.holdId) tx.edit("holds", owner.holdId)
+        const detached = tables.filter((t) => !input.keepTableIds.includes(t))
+        return {
+          entityId: g.id,
+          summary: `Tách nhóm ${this.codes(tables)} · giữ ${this.codes(input.keepTableIds)}${detached.length ? ` · nhả ${this.codes(detached)}` : ""}`,
+        }
+      })
     })
   }
 
   async endVisit(visitId: number, version: number) {
-    await this.latency("m")
-    this.require("visit.end")
-    const v = this.visit(visitId)
-    this.checkVersion("visits", v, version, "Lượt ghé")
-    if (v.endedAt) this.fail("Lượt ghé đã kết thúc.", "INVALID_STATE")
-    return this.commit({ action: "VISIT_ENDED", entityType: "visit", undoable: true }, (tx) => {
-      const allocs = activeAllocations(this.db).filter((a) => a.visitId === v.id)
-      allocs.forEach((a) => this.release(tx, a, "GUEST_LEFT"))
-      this.dissolveOrphanGroups(
-        tx,
-        allocs.map((a) => a.groupId),
-      )
-      const row = tx.edit("visits", v.id)
-      row.endedAt = this.now
-      row.endedByUserId = this.session.id
-      row.endReason = "GUEST_LEFT"
-      return {
-        entityId: v.id,
-        summary: `Nhả bàn ${this.codes(allocs.map((a) => a.tableId))} · ${v.guestCount} khách rời`,
-      }
+    return this.runSerializedMutation("m", () => {
+      this.require("visit.end")
+      const v = this.visit(visitId)
+      this.checkVersion("visits", v, version, "Lượt ghé")
+      if (v.endedAt) this.fail("Lượt ghé đã kết thúc.", "INVALID_STATE")
+      return this.commit({ action: "VISIT_ENDED", entityType: "visit", undoable: true }, (tx) => {
+        const allocs = activeAllocations(this.db).filter((a) => a.visitId === v.id)
+        allocs.forEach((a) => this.release(tx, a, "GUEST_LEFT"))
+        this.dissolveOrphanGroups(
+          tx,
+          allocs.map((a) => a.groupId),
+        )
+        const row = tx.edit("visits", v.id)
+        row.endedAt = this.now
+        row.endedByUserId = this.session.id
+        row.endReason = "GUEST_LEFT"
+        return {
+          entityId: v.id,
+          summary: `Nhả bàn ${this.codes(allocs.map((a) => a.tableId))} · ${v.guestCount} khách rời`,
+        }
+      })
     })
   }
 
   async markPaid(visitId: number, version: number) {
-    await this.latency("m")
-    this.require("visit.mark_paid")
-    const v = this.visit(visitId)
-    this.checkVersion("visits", v, version, "Lượt ghé")
-    if (v.endedAt) this.fail("Lượt ghé đã kết thúc.", "INVALID_STATE")
-    if (v.paidMarkedAt) this.fail("Đã đánh dấu thanh toán trước đó.", "INVALID_STATE")
-    return this.commit({ action: "VISIT_MARKED_PAID", entityType: "visit", undoable: true }, (tx) => {
-      const row = tx.edit("visits", v.id)
-      row.paidMarkedAt = this.now
-      row.paidMarkedByUserId = this.session.id
-      return {
-        entityId: v.id,
-        summary: `Đã thanh toán ${this.codes(visitTableIds(this.db, v.id))} · bàn vẫn đang sử dụng`,
-      }
+    return this.runSerializedMutation("m", () => {
+      this.require("visit.mark_paid")
+      const v = this.visit(visitId)
+      this.checkVersion("visits", v, version, "Lượt ghé")
+      if (v.endedAt) this.fail("Lượt ghé đã kết thúc.", "INVALID_STATE")
+      if (v.paidMarkedAt) this.fail("Đã đánh dấu thanh toán trước đó.", "INVALID_STATE")
+      return this.commit({ action: "VISIT_MARKED_PAID", entityType: "visit", undoable: true }, (tx) => {
+        const row = tx.edit("visits", v.id)
+        row.paidMarkedAt = this.now
+        row.paidMarkedByUserId = this.session.id
+        return {
+          entityId: v.id,
+          summary: `Đã thanh toán ${this.codes(visitTableIds(this.db, v.id))} · bàn vẫn đang sử dụng`,
+        }
+      })
     })
   }
 
@@ -2405,438 +2473,447 @@ export class MockGamApi implements GamApi, DemoControls {
     version: number,
     patch: { status?: "ACTIVE" | "OUT_OF_SERVICE"; isSpare?: boolean },
   ) {
-    await this.latency("m")
-    if (patch.status) this.require("venue.configure")
-    if (patch.isSpare !== undefined) this.require("table.spare.configure")
-    const t = this.db.tables.get(tableId)
-    if (!t) throw new ApiError(404, "NOT_FOUND", "Không tìm thấy bàn.")
-    this.checkVersion("tables", t, version, `Bàn ${t.code}`)
-    if (patch.status === "OUT_OF_SERVICE" && activeAllocations(this.db).some((a) => a.tableId === tableId)) {
-      throw new ApiError(409, "TABLE_CONFLICT", `${t.code} đang có khách hoặc đang giữ chỗ, không thể ngưng phục vụ.`)
-    }
-    return this.commit({ action: "TABLE_CONFIG_UPDATED", entityType: "dining_table", undoable: true }, (tx) => {
-      const row = tx.edit("tables", t.id)
-      if (patch.status) row.status = patch.status
-      if (patch.isSpare !== undefined) row.isSpare = patch.isSpare
-      const parts = [
-        patch.status ? (patch.status === "ACTIVE" ? "mở lại" : "ngưng phục vụ") : null,
-        patch.isSpare !== undefined ? (patch.isSpare ? "đặt làm sơ cua" : "bỏ sơ cua") : null,
-      ].filter(Boolean)
-      return { entityId: t.id, summary: `${t.code}: ${parts.join(", ")}` }
+    return this.runSerializedMutation("m", () => {
+      if (patch.status) this.require("venue.configure")
+      if (patch.isSpare !== undefined) this.require("table.spare.configure")
+      const t = this.db.tables.get(tableId)
+      if (!t) throw new ApiError(404, "NOT_FOUND", "Không tìm thấy bàn.")
+      this.checkVersion("tables", t, version, `Bàn ${t.code}`)
+      if (patch.status === "OUT_OF_SERVICE" && activeAllocations(this.db).some((a) => a.tableId === tableId)) {
+        throw new ApiError(409, "TABLE_CONFLICT", `${t.code} đang có khách hoặc đang giữ chỗ, không thể ngưng phục vụ.`)
+      }
+      return this.commit({ action: "TABLE_CONFIG_UPDATED", entityType: "dining_table", undoable: true }, (tx) => {
+        const row = tx.edit("tables", t.id)
+        if (patch.status) row.status = patch.status
+        if (patch.isSpare !== undefined) row.isSpare = patch.isSpare
+        const parts = [
+          patch.status ? (patch.status === "ACTIVE" ? "mở lại" : "ngưng phục vụ") : null,
+          patch.isSpare !== undefined ? (patch.isSpare ? "đặt làm sơ cua" : "bỏ sơ cua") : null,
+        ].filter(Boolean)
+        return { entityId: t.id, summary: `${t.code}: ${parts.join(", ")}` }
+      })
     })
   }
 
   /* ================= waitlist ================= */
 
   async addWaitlist(input: AddWaitlistInput) {
-    await this.latency("m")
-    this.require("waitlist.create")
-    if (input.note && noteHasPhoneNumber(input.note)) this.fail(NOTE_PHONE_ERROR)
-    if (input.preferences.length > 20) this.fail("Tối đa 20 lựa chọn ưu tiên.")
-    if (input.preferenceMode !== "ANY" && input.preferences.length === 0)
-      this.fail("Chọn ít nhất một khu/bàn mong muốn.")
-    let bd = input.businessDate ?? businessDateOf(this.now)
-    let label = ""
-    if (input.kind === "ADVANCE_RESERVATION") {
-      const r = this.res(input.reservationId ?? 0)
-      if (r.status !== "BOOKED") this.fail("Booking không còn ở trạng thái Đã đặt.", "INVALID_STATE")
-      if (activeReservationHold(this.db, r.id))
-        this.fail("Booking đã có bàn, không cần vào danh sách chờ.", "INVALID_STATE")
-      if (activeEntryForReservation(this.db, r.id)) this.fail("Booking đã có trong danh sách chờ.", "INVALID_STATE")
-      bd = r.businessDate
-      label = `Đặt trước ${fmtTime(r.expectedAt)} · ${r.partySize} khách`
-    } else {
-      if (!input.partySize || input.partySize < 1) this.fail("Nhập số khách.")
-      if (!input.contactName?.trim()) this.fail("Nhập tên hoặc đặc điểm nhận dạng (ví dụ: nhóm áo xanh).")
-      if (noteHasPhoneNumber(input.contactName)) this.fail("Không nhập số điện thoại vào ô tên.")
-      label = `Walk-in · ${input.partySize} khách`
-    }
-    return this.commit<{ entryId: number }>(
-      { action: "WAITLIST_ADDED", entityType: "waitlist_entry", undoable: true },
-      (tx) => {
-        const e = tx.insert("waitlist", {
-          organizationId: ORG_ID,
-          venueId: VENUE_ID,
-          kind: input.kind,
-          priorityClass: input.kind === "ADVANCE_RESERVATION" ? 1 : 2,
-          reservationId: input.kind === "ADVANCE_RESERVATION" ? input.reservationId! : null,
-          customerId: input.kind === "WALK_IN" ? this.upsertCustomer(tx, input.contactName, input.phone) : null,
-          contactName: input.kind === "WALK_IN" ? input.contactName!.trim() : null,
-          partySize: input.kind === "WALK_IN" ? input.partySize! : null,
-          preferenceMode: input.preferenceMode,
-          contactChannel: input.channel,
-          businessDate: bd,
-          queuedAt: this.now,
-          status: "WAITING",
-          claimedByUserId: null,
-          claimedAt: null,
-          claimExpiresAt: null,
-          offeredAt: null,
-          visitId: null,
-          closedAt: null,
-          closedByUserId: null,
-          closeReasonCode: null,
-          closeReasonNote: null,
-          note: input.note?.trim() || null,
-          createdByUserId: this.session.id,
-          createdAt: this.now,
-        })
-        input.preferences.forEach((p, i) => {
-          const zone = p.zoneCode ? [...this.db.zones.values()].find((z) => z.code === p.zoneCode) : undefined
-          tx.insert("prefs", {
+    return this.runSerializedMutation("m", () => {
+      this.require("waitlist.create")
+      if (input.note && noteHasPhoneNumber(input.note)) this.fail(NOTE_PHONE_ERROR)
+      if (input.preferences.length > 20) this.fail("Tối đa 20 lựa chọn ưu tiên.")
+      if (input.preferenceMode !== "ANY" && input.preferences.length === 0)
+        this.fail("Chọn ít nhất một khu/bàn mong muốn.")
+      let bd = input.businessDate ?? businessDateOf(this.now)
+      let label = ""
+      if (input.kind === "ADVANCE_RESERVATION") {
+        const r = this.res(input.reservationId ?? 0)
+        if (r.status !== "BOOKED") this.fail("Booking không còn ở trạng thái Đã đặt.", "INVALID_STATE")
+        if (activeReservationHold(this.db, r.id))
+          this.fail("Booking đã có bàn, không cần vào danh sách chờ.", "INVALID_STATE")
+        if (activeEntryForReservation(this.db, r.id)) this.fail("Booking đã có trong danh sách chờ.", "INVALID_STATE")
+        bd = r.businessDate
+        label = `Đặt trước ${fmtTime(r.expectedAt)} · ${r.partySize} khách`
+      } else {
+        if (!input.partySize || input.partySize < 1) this.fail("Nhập số khách.")
+        if (!input.contactName?.trim()) this.fail("Nhập tên hoặc đặc điểm nhận dạng (ví dụ: nhóm áo xanh).")
+        if (noteHasPhoneNumber(input.contactName)) this.fail("Không nhập số điện thoại vào ô tên.")
+        label = `Walk-in · ${input.partySize} khách`
+      }
+      return this.commit<{ entryId: number }>(
+        { action: "WAITLIST_ADDED", entityType: "waitlist_entry", undoable: true },
+        (tx) => {
+          const e = tx.insert("waitlist", {
             organizationId: ORG_ID,
             venueId: VENUE_ID,
-            entryId: e.id,
-            prefRank: i + 1,
-            tableId: p.tableId ?? null,
-            combinationId: p.combinationId ?? null,
-            zoneId: zone?.id ?? null,
-          })
-        })
-        return { entityId: e.id, summary: `Thêm danh sách chờ · ${label}`, extra: { entryId: e.id } }
-      },
-    )
-  }
-
-  async claimWaitlist(entryId: number, version: number) {
-    await this.latency("m")
-    this.require("waitlist.claim")
-    const e = this.entry(entryId)
-    const now = this.now
-    if (
-      e.status === "CONTACTING" &&
-      e.claimExpiresAt &&
-      e.claimExpiresAt > now &&
-      e.claimedByUserId !== this.session.id
-    ) {
-      const who = this.db.users.get(e.claimedByUserId ?? 0)
-      const left = Math.ceil((e.claimExpiresAt.getTime() - now.getTime()) / 1000)
-      throw new ApiError(
-        409,
-        "ENTRY_ALREADY_CLAIMED",
-        `${who?.displayName ?? "Người khác"} (${who?.deviceLabel ?? ""}) đang liên hệ khách này, còn ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}.`,
-      )
-    }
-    this.checkVersion("waitlist", e, version, "Mục chờ")
-    if (!["WAITING", "OFFERED", "CONTACTING"].includes(e.status))
-      this.fail("Mục chờ không ở trạng thái cần liên hệ.", "INVALID_STATE")
-    return this.commit({ action: "WAITLIST_CLAIMED", entityType: "waitlist_entry", undoable: false }, (tx) => {
-      const row = tx.edit("waitlist", e.id)
-      row.status = "CONTACTING"
-      row.claimedByUserId = this.session.id
-      row.claimedAt = now
-      row.claimExpiresAt = new Date(now.getTime() + this.venue.waitlistClaimLeaseSeconds * 1000)
-      return { entityId: e.id, summary: `Nhận liên hệ mục chờ #${e.id}` }
-    })
-  }
-
-  async releaseClaim(entryId: number, version: number) {
-    await this.latency("m")
-    this.require("waitlist.claim")
-    const e = this.entry(entryId)
-    this.checkVersion("waitlist", e, version, "Mục chờ")
-    if (e.status !== "CONTACTING") this.fail("Mục chờ không ở trạng thái đang liên hệ.", "INVALID_STATE")
-    return this.commit({ action: "WAITLIST_CLAIM_RELEASED", entityType: "waitlist_entry", undoable: false }, (tx) => {
-      const row = tx.edit("waitlist", e.id)
-      row.status = row.offeredAt ? "OFFERED" : "WAITING"
-      row.claimedByUserId = null
-      row.claimedAt = null
-      row.claimExpiresAt = null
-      return { entityId: e.id, summary: `Thả liên hệ mục chờ #${e.id}` }
-    })
-  }
-
-  async recordContact(input: RecordContactInput) {
-    await this.latency("m")
-    this.require("waitlist.record_contact")
-    const e = this.entry(input.entryId)
-    this.checkVersion("waitlist", e, input.version, "Mục chờ")
-    const now = this.now
-    if (
-      e.status !== "CONTACTING" ||
-      e.claimedByUserId !== this.session.id ||
-      !e.claimExpiresAt ||
-      e.claimExpiresAt < now
-    ) {
-      this.fail("Nhận liên hệ (claim) trước khi ghi kết quả. Phiên liên hệ có thể đã hết hạn.", "INVALID_STATE")
-    }
-    if (input.channel === "PHONE_BY_AUTHORIZED" && !roleCan(this.session.role, "customer.phone.reveal")) {
-      throw new ApiError(
-        403,
-        "PERMISSION_DENIED",
-        'Lễ tân không gọi trực tiếp số của khách. Dùng "Chuyển Chủ quán gọi" hoặc kênh Zalo/Fanpage.',
-        { permission: "customer.phone.reveal" },
-      )
-    }
-    if (input.note && noteHasPhoneNumber(input.note)) this.fail(NOTE_PHONE_ERROR)
-    const accepted = input.outcome === "ACCEPTED"
-    if (accepted) this.require("waitlist.accept_offer")
-    const offered = input.offeredTableIds ?? []
-    if ((accepted || input.outcome === "OFFER_PENDING") && offered.length === 0)
-      this.fail("Chọn bàn đề nghị cho khách.")
-    const res = e.reservationId ? this.db.reservations.get(e.reservationId) : undefined
-    const party = res?.partySize ?? e.partySize ?? 1
-    if (accepted) this.maybeTriggerConflict(offered[0], e.businessDate, now)
-    return this.commit(
-      {
-        action: accepted ? "HOLD_ACCEPTED" : "WAITLIST_CONTACT_RECORDED",
-        entityType: "waitlist_entry",
-        undoable: false,
-      },
-      (tx) => {
-        const attemptNo = [...this.db.attempts.values()].filter((a) => a.entryId === e.id).length + 1
-        tx.insert("attempts", {
-          organizationId: ORG_ID,
-          venueId: VENUE_ID,
-          entryId: e.id,
-          attemptNo,
-          attemptedByUserId: this.session.id,
-          channel: input.channel,
-          startedAt: e.claimedAt ?? now,
-          endedAt: now,
-          outcome: input.outcome,
-          offeredTableIds: offered.length ? offered : null,
-          note: input.note?.trim() || null,
-        })
-        const row = tx.edit("waitlist", e.id)
-        row.claimedByUserId = null
-        row.claimedAt = null
-        row.claimExpiresAt = null
-        let summary = `Liên hệ lần ${attemptNo}`
-        if (accepted) {
-          this.assertClaimable(offered, {
-            bd: e.businessDate,
-            at: now,
-            partySize: party,
-            overrideReason: input.overrideReason,
-          })
-          const minutes = this.venue.waitlistHoldDefaultMinutes
-          const hold = tx.insert("holds", {
-            organizationId: ORG_ID,
-            venueId: VENUE_ID,
-            holdKind: "WAITLIST_OFFER",
-            reservationId: null,
-            waitlistEntryId: e.id,
-            status: "ACTIVE",
-            startsAt: now,
-            customerConfirmedAt: now,
-            deadlineAt: new Date(now.getTime() + minutes * MS.MIN),
-            deadlineBasis: "DEFAULT",
-            defaultMinutesSnapshot: minutes,
-            deadlineSetByUserId: null,
-            deadlineReason: null,
-            deadlineWarnedAt: null,
-            convertedAt: null,
-            convertedVisitId: null,
-            releasedAt: null,
-            releasedByUserId: null,
-            releaseReasonCode: null,
-            releaseReasonNote: null,
-            createdByUserId: this.session.id,
-            createdAt: now,
-          })
-          const groupId = offered.length > 1 ? this.newGroup(tx, e.businessDate) : null
-          offered.forEach((tableId) =>
-            this.newAllocation(tx, {
-              tableId,
-              kind: "HOLD",
-              holdId: hold.id,
-              groupId,
-              startsAt: now,
-              bd: e.businessDate,
-              holdStart: now,
-            }),
-          )
-          row.status = "HOLD_ACTIVE"
-          row.offeredAt = row.offeredAt ?? now
-          summary = `Khách chờ nhận bàn ${this.codes(offered)} · giữ ${minutes}'`
-        } else if (input.outcome === "OFFER_PENDING") {
-          row.status = "OFFERED"
-          row.offeredAt = now
-          summary = `Đề nghị ${this.codes(offered)}, chờ khách trả lời`
-        } else if (input.outcome === "WITHDREW") {
-          row.status = "DECLINED"
-          row.closedAt = now
-          row.closedByUserId = this.session.id
-          row.closeReasonCode = "CUSTOMER_WITHDREW"
-          summary = "Khách rút khỏi danh sách chờ"
-        } else {
-          row.status = "WAITING"
-        }
-        return { entityId: e.id, summary }
-      },
-    )
-  }
-
-  async seatWaitlist(input: SeatWaitlistInput) {
-    await this.latency("m")
-    this.require("waitlist.accept_offer")
-    this.require("reservation.create")
-    this.require("table.assign")
-    const entry = this.entry(input.entryId)
-    this.checkVersion("waitlist", entry, input.version, "Mục chờ")
-    const offer = activeHoldForEntry(this.db, entry.id)
-    const allowed =
-      entry.kind === "WALK_IN" ? ["WAITING", "HOLD_ACTIVE"] : ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"]
-    if (!allowed.includes(entry.status) || (entry.status === "HOLD_ACTIVE" && !offer))
-      throw new ApiError(409, "WAITLIST_NOT_SEATABLE", "Khách chờ không thể được gán bàn trực tiếp.")
-    const linked = entry.reservationId ? this.res(entry.reservationId) : null
-    if (linked && (linked.status !== "BOOKED" || linked.businessDate !== entry.businessDate))
-      throw new ApiError(409, "BUSINESS_DATE_MISMATCH", "Booking đã đổi. Vui lòng tải lại danh sách chờ.")
-    if (linked && activeReservationHold(this.db, linked.id))
-      throw new ApiError(409, "BOOKING_ALREADY_ASSIGNED", "Booking đã có bàn.")
-    const target = [...new Set(input.tableIds ?? (offer ? holdTableIds(this.db, offer.id) : []))]
-    const partySize = linked?.partySize ?? entry.partySize ?? 0
-    if (!partySize) throw new ApiError(409, "WAITLIST_DATA_INCOMPLETE", "Thiếu số khách trong mục chờ.")
-    if (new Set(target.map((id) => this.db.tables.get(id)?.zoneId)).size > 1)
-      throw new ApiError(409, "TABLE_ZONE_MISMATCH", "Các bàn cho khách chờ phải thuộc cùng một khu.")
-    return this.commit<{ reservationId: number; groupId: number | null }>(
-      { action: "WAITLIST_ASSIGNED_TO_RESERVATION", entityType: "waitlist_entry", undoable: false },
-      (tx) => {
-        this.assertClaimable(target, {
-          bd: entry.businessDate,
-          at: linked?.expectedAt ?? this.now,
-          partySize,
-          ignore: (a) => !!offer && a.holdId === offer.id,
-        })
-        const source = [...this.db.sources.values()].find((row) => row.code === "OTHER")
-        if (!source) throw new ApiError(409, "WAITLIST_BOOKING_SOURCE_MISSING", "Cần cấu hình nguồn booking OTHER.")
-        const reservation =
-          linked ??
-          tx.insert("reservations", {
-            organizationId: ORG_ID,
-            venueId: VENUE_ID,
-            customerId: entry.customerId,
-            contactName: entry.contactName,
-            contactNameSearch: entry.contactName ? foldVietnamese(entry.contactName) : null,
-            sourceId: source.id,
-            partySize,
-            expectedAt: this.now,
-            businessDate: entry.businessDate,
-            customerClassification: "UNCLASSIFIED",
-            status: "BOOKED",
-            note: entry.note,
+            kind: input.kind,
+            priorityClass: input.kind === "ADVANCE_RESERVATION" ? 1 : 2,
+            reservationId: input.kind === "ADVANCE_RESERVATION" ? input.reservationId! : null,
+            customerId: input.kind === "WALK_IN" ? this.upsertCustomer(tx, input.contactName, input.phone) : null,
+            contactName: input.kind === "WALK_IN" ? input.contactName!.trim() : null,
+            partySize: input.kind === "WALK_IN" ? input.partySize! : null,
+            preferenceMode: input.preferenceMode,
+            contactChannel: input.channel,
+            businessDate: bd,
+            queuedAt: this.now,
+            status: "WAITING",
+            claimedByUserId: null,
+            claimedAt: null,
+            claimExpiresAt: null,
+            offeredAt: null,
             visitId: null,
-            checkedInAt: null,
-            checkedInByUserId: null,
             closedAt: null,
             closedByUserId: null,
             closeReasonCode: null,
             closeReasonNote: null,
-            lateWarnedAt: null,
-            lateConfirmedAt: null,
-            lateConfirmedByUserId: null,
-            noShowWarnedAt: null,
+            note: input.note?.trim() || null,
             createdByUserId: this.session.id,
             createdAt: this.now,
-            updatedByUserId: null,
-            updatedAt: this.now,
           })
-        const offerGroupId = offer
-          ? (activeAllocations(this.db).find((a) => a.holdId === offer.id && a.groupId)?.groupId ?? null)
-          : null
-        // Create the replacement first so releasing the offer keeps its group alive.
-        const hold = this.createHoldForReservation(tx, reservation, target, offerGroupId)
-        if (offer) this.releaseHoldInternal(tx, offer, "STAFF_REASSIGNED", "HOLD_RELEASED")
-        const groupId = activeAllocations(this.db).find((row) => row.holdId === hold.id)?.groupId ?? null
-        const row = tx.edit("waitlist", entry.id)
-        row.kind = "ADVANCE_RESERVATION"
-        row.reservationId = reservation.id
-        row.customerId = null
-        row.contactName = null
-        row.partySize = null
-        row.status = "HOLD_ACTIVE"
+          input.preferences.forEach((p, i) => {
+            const zone = p.zoneCode ? [...this.db.zones.values()].find((z) => z.code === p.zoneCode) : undefined
+            tx.insert("prefs", {
+              organizationId: ORG_ID,
+              venueId: VENUE_ID,
+              entryId: e.id,
+              prefRank: i + 1,
+              tableId: p.tableId ?? null,
+              combinationId: p.combinationId ?? null,
+              zoneId: zone?.id ?? null,
+            })
+          })
+          return { entityId: e.id, summary: `Thêm danh sách chờ · ${label}`, extra: { entryId: e.id } }
+        },
+      )
+    })
+  }
+
+  async claimWaitlist(entryId: number, version: number) {
+    return this.runSerializedMutation("m", () => {
+      this.require("waitlist.claim")
+      const e = this.entry(entryId)
+      const now = this.now
+      if (
+        e.status === "CONTACTING" &&
+        e.claimExpiresAt &&
+        e.claimExpiresAt > now &&
+        e.claimedByUserId !== this.session.id
+      ) {
+        const who = this.db.users.get(e.claimedByUserId ?? 0)
+        const left = Math.ceil((e.claimExpiresAt.getTime() - now.getTime()) / 1000)
+        throw new ApiError(
+          409,
+          "ENTRY_ALREADY_CLAIMED",
+          `${who?.displayName ?? "Người khác"} (${who?.deviceLabel ?? ""}) đang liên hệ khách này, còn ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}.`,
+        )
+      }
+      this.checkVersion("waitlist", e, version, "Mục chờ")
+      if (!["WAITING", "OFFERED", "CONTACTING"].includes(e.status))
+        this.fail("Mục chờ không ở trạng thái cần liên hệ.", "INVALID_STATE")
+      return this.commit({ action: "WAITLIST_CLAIMED", entityType: "waitlist_entry", undoable: false }, (tx) => {
+        const row = tx.edit("waitlist", e.id)
+        row.status = "CONTACTING"
+        row.claimedByUserId = this.session.id
+        row.claimedAt = now
+        row.claimExpiresAt = new Date(now.getTime() + this.venue.waitlistClaimLeaseSeconds * 1000)
+        return { entityId: e.id, summary: `Nhận liên hệ mục chờ #${e.id}` }
+      })
+    })
+  }
+
+  async releaseClaim(entryId: number, version: number) {
+    return this.runSerializedMutation("m", () => {
+      this.require("waitlist.claim")
+      const e = this.entry(entryId)
+      this.checkVersion("waitlist", e, version, "Mục chờ")
+      if (e.status !== "CONTACTING") this.fail("Mục chờ không ở trạng thái đang liên hệ.", "INVALID_STATE")
+      return this.commit({ action: "WAITLIST_CLAIM_RELEASED", entityType: "waitlist_entry", undoable: false }, (tx) => {
+        const row = tx.edit("waitlist", e.id)
+        row.status = row.offeredAt ? "OFFERED" : "WAITING"
         row.claimedByUserId = null
         row.claimedAt = null
         row.claimExpiresAt = null
-        return {
-          entityId: entry.id,
-          summary: `Đã gán bàn ${this.codes(target)} cho khách chờ`,
-          extra: { reservationId: reservation.id, groupId },
-        }
-      },
-    )
+        return { entityId: e.id, summary: `Thả liên hệ mục chờ #${e.id}` }
+      })
+    })
+  }
+
+  async recordContact(input: RecordContactInput) {
+    return this.runSerializedMutation("m", () => {
+      this.require("waitlist.record_contact")
+      const e = this.entry(input.entryId)
+      this.checkVersion("waitlist", e, input.version, "Mục chờ")
+      const now = this.now
+      if (
+        e.status !== "CONTACTING" ||
+        e.claimedByUserId !== this.session.id ||
+        !e.claimExpiresAt ||
+        e.claimExpiresAt < now
+      ) {
+        this.fail("Nhận liên hệ (claim) trước khi ghi kết quả. Phiên liên hệ có thể đã hết hạn.", "INVALID_STATE")
+      }
+      if (input.channel === "PHONE_BY_AUTHORIZED" && !roleCan(this.session.role, "customer.phone.reveal")) {
+        throw new ApiError(
+          403,
+          "PERMISSION_DENIED",
+          'Lễ tân không gọi trực tiếp số của khách. Dùng "Chuyển Chủ quán gọi" hoặc kênh Zalo/Fanpage.',
+          { permission: "customer.phone.reveal" },
+        )
+      }
+      if (input.note && noteHasPhoneNumber(input.note)) this.fail(NOTE_PHONE_ERROR)
+      const accepted = input.outcome === "ACCEPTED"
+      if (accepted) this.require("waitlist.accept_offer")
+      const offered = input.offeredTableIds ?? []
+      if ((accepted || input.outcome === "OFFER_PENDING") && offered.length === 0)
+        this.fail("Chọn bàn đề nghị cho khách.")
+      const res = e.reservationId ? this.db.reservations.get(e.reservationId) : undefined
+      const party = res?.partySize ?? e.partySize ?? 1
+      if (accepted) this.maybeTriggerConflict(offered[0], e.businessDate, now)
+      return this.commit(
+        {
+          action: accepted ? "HOLD_ACCEPTED" : "WAITLIST_CONTACT_RECORDED",
+          entityType: "waitlist_entry",
+          undoable: false,
+        },
+        (tx) => {
+          const attemptNo = [...this.db.attempts.values()].filter((a) => a.entryId === e.id).length + 1
+          tx.insert("attempts", {
+            organizationId: ORG_ID,
+            venueId: VENUE_ID,
+            entryId: e.id,
+            attemptNo,
+            attemptedByUserId: this.session.id,
+            channel: input.channel,
+            startedAt: e.claimedAt ?? now,
+            endedAt: now,
+            outcome: input.outcome,
+            offeredTableIds: offered.length ? offered : null,
+            note: input.note?.trim() || null,
+          })
+          const row = tx.edit("waitlist", e.id)
+          row.claimedByUserId = null
+          row.claimedAt = null
+          row.claimExpiresAt = null
+          let summary = `Liên hệ lần ${attemptNo}`
+          if (accepted) {
+            this.assertClaimable(offered, {
+              bd: e.businessDate,
+              at: now,
+              partySize: party,
+              overrideReason: input.overrideReason,
+            })
+            const minutes = this.venue.waitlistHoldDefaultMinutes
+            const hold = tx.insert("holds", {
+              organizationId: ORG_ID,
+              venueId: VENUE_ID,
+              holdKind: "WAITLIST_OFFER",
+              reservationId: null,
+              waitlistEntryId: e.id,
+              status: "ACTIVE",
+              startsAt: now,
+              customerConfirmedAt: now,
+              deadlineAt: new Date(now.getTime() + minutes * MS.MIN),
+              deadlineBasis: "DEFAULT",
+              defaultMinutesSnapshot: minutes,
+              deadlineSetByUserId: null,
+              deadlineReason: null,
+              deadlineWarnedAt: null,
+              convertedAt: null,
+              convertedVisitId: null,
+              releasedAt: null,
+              releasedByUserId: null,
+              releaseReasonCode: null,
+              releaseReasonNote: null,
+              createdByUserId: this.session.id,
+              createdAt: now,
+            })
+            const groupId = offered.length > 1 ? this.newGroup(tx, e.businessDate) : null
+            offered.forEach((tableId) =>
+              this.newAllocation(tx, {
+                tableId,
+                kind: "HOLD",
+                holdId: hold.id,
+                groupId,
+                startsAt: now,
+                bd: e.businessDate,
+                holdStart: now,
+              }),
+            )
+            row.status = "HOLD_ACTIVE"
+            row.offeredAt = row.offeredAt ?? now
+            summary = `Khách chờ nhận bàn ${this.codes(offered)} · giữ ${minutes}'`
+          } else if (input.outcome === "OFFER_PENDING") {
+            row.status = "OFFERED"
+            row.offeredAt = now
+            summary = `Đề nghị ${this.codes(offered)}, chờ khách trả lời`
+          } else if (input.outcome === "WITHDREW") {
+            row.status = "DECLINED"
+            row.closedAt = now
+            row.closedByUserId = this.session.id
+            row.closeReasonCode = "CUSTOMER_WITHDREW"
+            summary = "Khách rút khỏi danh sách chờ"
+          } else {
+            row.status = "WAITING"
+          }
+          return { entityId: e.id, summary }
+        },
+      )
+    })
+  }
+
+  async seatWaitlist(input: SeatWaitlistInput) {
+    return this.runSerializedMutation("m", () => {
+      this.require("waitlist.accept_offer")
+      this.require("reservation.create")
+      this.require("table.assign")
+      const entry = this.entry(input.entryId)
+      this.checkVersion("waitlist", entry, input.version, "Mục chờ")
+      const offer = activeHoldForEntry(this.db, entry.id)
+      const allowed =
+        entry.kind === "WALK_IN" ? ["WAITING", "HOLD_ACTIVE"] : ["WAITING", "CONTACTING", "OFFERED", "HOLD_ACTIVE"]
+      if (!allowed.includes(entry.status) || (entry.status === "HOLD_ACTIVE" && !offer))
+        throw new ApiError(409, "WAITLIST_NOT_SEATABLE", "Khách chờ không thể được gán bàn trực tiếp.")
+      const linked = entry.reservationId ? this.res(entry.reservationId) : null
+      if (linked && (linked.status !== "BOOKED" || linked.businessDate !== entry.businessDate))
+        throw new ApiError(409, "BUSINESS_DATE_MISMATCH", "Booking đã đổi. Vui lòng tải lại danh sách chờ.")
+      if (linked && activeReservationHold(this.db, linked.id))
+        throw new ApiError(409, "BOOKING_ALREADY_ASSIGNED", "Booking đã có bàn.")
+      const target = [...new Set(input.tableIds ?? (offer ? holdTableIds(this.db, offer.id) : []))]
+      const partySize = linked?.partySize ?? entry.partySize ?? 0
+      if (!partySize) throw new ApiError(409, "WAITLIST_DATA_INCOMPLETE", "Thiếu số khách trong mục chờ.")
+      if (new Set(target.map((id) => this.db.tables.get(id)?.zoneId)).size > 1)
+        throw new ApiError(409, "TABLE_ZONE_MISMATCH", "Các bàn cho khách chờ phải thuộc cùng một khu.")
+      return this.commit<{ reservationId: number; groupId: number | null }>(
+        { action: "WAITLIST_ASSIGNED_TO_RESERVATION", entityType: "waitlist_entry", undoable: false },
+        (tx) => {
+          this.assertClaimable(target, {
+            bd: entry.businessDate,
+            at: linked?.expectedAt ?? this.now,
+            partySize,
+            ignore: (a) => !!offer && a.holdId === offer.id,
+          })
+          const source = [...this.db.sources.values()].find((row) => row.code === "OTHER")
+          if (!source) throw new ApiError(409, "WAITLIST_BOOKING_SOURCE_MISSING", "Cần cấu hình nguồn booking OTHER.")
+          const reservation =
+            linked ??
+            tx.insert("reservations", {
+              organizationId: ORG_ID,
+              venueId: VENUE_ID,
+              customerId: entry.customerId,
+              contactName: entry.contactName,
+              contactNameSearch: entry.contactName ? foldVietnamese(entry.contactName) : null,
+              sourceId: source.id,
+              partySize,
+              expectedAt: this.now,
+              businessDate: entry.businessDate,
+              customerClassification: "UNCLASSIFIED",
+              status: "BOOKED",
+              note: entry.note,
+              visitId: null,
+              checkedInAt: null,
+              checkedInByUserId: null,
+              closedAt: null,
+              closedByUserId: null,
+              closeReasonCode: null,
+              closeReasonNote: null,
+              lateWarnedAt: null,
+              lateConfirmedAt: null,
+              lateConfirmedByUserId: null,
+              noShowWarnedAt: null,
+              createdByUserId: this.session.id,
+              createdAt: this.now,
+              updatedByUserId: null,
+              updatedAt: this.now,
+            })
+          const offerGroupId = offer
+            ? (activeAllocations(this.db).find((a) => a.holdId === offer.id && a.groupId)?.groupId ?? null)
+            : null
+          // Create the replacement first so releasing the offer keeps its group alive.
+          const hold = this.createHoldForReservation(tx, reservation, target, offerGroupId)
+          if (offer) this.releaseHoldInternal(tx, offer, "STAFF_REASSIGNED", "HOLD_RELEASED")
+          const groupId = activeAllocations(this.db).find((row) => row.holdId === hold.id)?.groupId ?? null
+          const row = tx.edit("waitlist", entry.id)
+          row.kind = "ADVANCE_RESERVATION"
+          row.reservationId = reservation.id
+          row.customerId = null
+          row.contactName = null
+          row.partySize = null
+          row.status = "HOLD_ACTIVE"
+          row.claimedByUserId = null
+          row.claimedAt = null
+          row.claimExpiresAt = null
+          return {
+            entityId: entry.id,
+            summary: `Đã gán bàn ${this.codes(target)} cho khách chờ`,
+            extra: { reservationId: reservation.id, groupId },
+          }
+        },
+      )
+    })
   }
 
   async cancelWaitlist(entryId: number, version: number, reason: WaitlistCloseReason, note?: string) {
-    await this.latency("m")
-    this.require("waitlist.cancel")
-    const e = this.entry(entryId)
-    this.checkVersion("waitlist", e, version, "Mục chờ")
-    if (!(ACTIVE_ENTRY as readonly string[]).includes(e.status)) this.fail("Mục chờ đã đóng.", "INVALID_STATE")
-    if (note && noteHasPhoneNumber(note)) this.fail(NOTE_PHONE_ERROR)
-    return this.commit(
-      { action: "WAITLIST_CANCELLED", entityType: "waitlist_entry", undoable: true, reasonCode: reason },
-      (tx) => {
-        const hold = activeHoldForEntry(this.db, e.id)
-        if (hold) this.releaseHoldInternal(tx, hold, "CUSTOMER_CANCELLED", "HOLD_RELEASED")
-        const row = tx.edit("waitlist", e.id)
-        row.status = "CANCELLED"
-        row.closedAt = this.now
-        row.closedByUserId = this.session.id
-        row.closeReasonCode = reason
-        row.closeReasonNote = note?.trim() || null
-        row.claimedByUserId = null
-        row.claimedAt = null
-        row.claimExpiresAt = null
-        return { entityId: e.id, summary: `Hủy mục chờ #${e.id}` }
-      },
-    )
+    return this.runSerializedMutation("m", () => {
+      this.require("waitlist.cancel")
+      const e = this.entry(entryId)
+      this.checkVersion("waitlist", e, version, "Mục chờ")
+      if (!(ACTIVE_ENTRY as readonly string[]).includes(e.status)) this.fail("Mục chờ đã đóng.", "INVALID_STATE")
+      if (note && noteHasPhoneNumber(note)) this.fail(NOTE_PHONE_ERROR)
+      return this.commit(
+        { action: "WAITLIST_CANCELLED", entityType: "waitlist_entry", undoable: true, reasonCode: reason },
+        (tx) => {
+          const hold = activeHoldForEntry(this.db, e.id)
+          if (hold) this.releaseHoldInternal(tx, hold, "CUSTOMER_CANCELLED", "HOLD_RELEASED")
+          const row = tx.edit("waitlist", e.id)
+          row.status = "CANCELLED"
+          row.closedAt = this.now
+          row.closedByUserId = this.session.id
+          row.closeReasonCode = reason
+          row.closeReasonNote = note?.trim() || null
+          row.claimedByUserId = null
+          row.claimedAt = null
+          row.claimExpiresAt = null
+          return { entityId: e.id, summary: `Hủy mục chờ #${e.id}` }
+        },
+      )
+    })
   }
 
   async setHoldDeadline(holdId: number, version: number, deadlineAt: Date, reason: string) {
-    await this.latency("m")
-    this.require("hold.set_deadline")
-    const h = this.hold(holdId)
-    this.checkVersion("holds", h, version, "Giữ bàn")
-    if (h.status !== "ACTIVE" || h.holdKind !== "WAITLIST_OFFER")
-      this.fail("Chỉ gia hạn giữ bàn cho khách chờ đang hiệu lực.", "INVALID_STATE")
-    if (!reason.trim()) this.fail("Ghi lý do gia hạn.")
-    if (deadlineAt <= (h.customerConfirmedAt ?? h.startsAt)) this.fail("Hạn mới phải sau thời điểm khách xác nhận.")
-    return this.commit(
-      { action: "HOLD_DEADLINE_SET", entityType: "table_hold", undoable: true, reasonNote: reason },
-      (tx) => {
-        const row = tx.edit("holds", h.id)
-        row.deadlineAt = deadlineAt
-        row.deadlineBasis = "NEGOTIATED"
-        row.deadlineSetByUserId = this.session.id
-        row.deadlineReason = reason.trim()
-        row.deadlineWarnedAt = null
-        return {
-          entityId: h.id,
-          summary: `Gia hạn giữ ${this.codes(holdTableIds(this.db, h.id))} đến ${fmtTime(deadlineAt)}`,
-        }
-      },
-    )
+    return this.runSerializedMutation("m", () => {
+      this.require("hold.set_deadline")
+      const h = this.hold(holdId)
+      this.checkVersion("holds", h, version, "Giữ bàn")
+      if (h.status !== "ACTIVE" || h.holdKind !== "WAITLIST_OFFER")
+        this.fail("Chỉ gia hạn giữ bàn cho khách chờ đang hiệu lực.", "INVALID_STATE")
+      if (!reason.trim()) this.fail("Ghi lý do gia hạn.")
+      if (deadlineAt <= (h.customerConfirmedAt ?? h.startsAt)) this.fail("Hạn mới phải sau thời điểm khách xác nhận.")
+      return this.commit(
+        { action: "HOLD_DEADLINE_SET", entityType: "table_hold", undoable: true, reasonNote: reason },
+        (tx) => {
+          const row = tx.edit("holds", h.id)
+          row.deadlineAt = deadlineAt
+          row.deadlineBasis = "NEGOTIATED"
+          row.deadlineSetByUserId = this.session.id
+          row.deadlineReason = reason.trim()
+          row.deadlineWarnedAt = null
+          return {
+            entityId: h.id,
+            summary: `Gia hạn giữ ${this.codes(holdTableIds(this.db, h.id))} đến ${fmtTime(deadlineAt)}`,
+          }
+        },
+      )
+    })
   }
 
   async releaseHold(holdId: number, version: number, reason: HoldReleaseReason, note?: string) {
-    await this.latency("m")
-    this.require("hold.release")
-    const h = this.hold(holdId)
-    this.checkVersion("holds", h, version, "Giữ bàn")
-    if (h.status !== "ACTIVE") this.fail("Giữ bàn không còn hiệu lực.", "INVALID_STATE")
-    if (reason === "OTHER" && !note?.trim()) this.fail("Ghi rõ lý do.")
-    const tables = holdTableIds(this.db, h.id)
-    return this.commit(
-      { action: "HOLD_RELEASED", entityType: "table_hold", undoable: true, reasonCode: reason, reasonNote: note },
-      (tx) => {
-        this.releaseHoldInternal(tx, h, reason, "HOLD_RELEASED", note)
-        if (h.waitlistEntryId) {
-          const e = tx.edit("waitlist", h.waitlistEntryId)
-          if (reason === "CUSTOMER_NO_SHOW") {
-            e.status = "CANCELLED"
-            e.closedAt = this.now
-            e.closedByUserId = this.session.id
-            e.closeReasonCode = "NO_SHOW_AFTER_ACCEPT"
-          } else {
-            e.status = "WAITING"
+    return this.runSerializedMutation("m", () => {
+      this.require("hold.release")
+      const h = this.hold(holdId)
+      this.checkVersion("holds", h, version, "Giữ bàn")
+      if (h.status !== "ACTIVE") this.fail("Giữ bàn không còn hiệu lực.", "INVALID_STATE")
+      if (reason === "OTHER" && !note?.trim()) this.fail("Ghi rõ lý do.")
+      const tables = holdTableIds(this.db, h.id)
+      return this.commit(
+        { action: "HOLD_RELEASED", entityType: "table_hold", undoable: true, reasonCode: reason, reasonNote: note },
+        (tx) => {
+          this.releaseHoldInternal(tx, h, reason, "HOLD_RELEASED", note)
+          if (h.waitlistEntryId) {
+            const e = tx.edit("waitlist", h.waitlistEntryId)
+            if (reason === "CUSTOMER_NO_SHOW") {
+              e.status = "CANCELLED"
+              e.closedAt = this.now
+              e.closedByUserId = this.session.id
+              e.closeReasonCode = "NO_SHOW_AFTER_ACCEPT"
+            } else {
+              e.status = "WAITING"
+            }
           }
-        }
-        if (h.reservationId) tx.edit("reservations", h.reservationId)
-        return { entityId: h.id, summary: `Nhả giữ ${this.codes(tables)}` }
-      },
-    )
+          if (h.reservationId) tx.edit("reservations", h.reservationId)
+          return { entityId: h.id, summary: `Nhả giữ ${this.codes(tables)}` }
+        },
+      )
+    })
   }
 
   /* ================= customers ================= */
@@ -2846,41 +2923,43 @@ export class MockGamApi implements GamApi, DemoControls {
     reasonCode: string,
     context: { reservationId?: number; entryId?: number },
   ): Promise<PhoneReveal> {
-    await this.latency("m")
-    this.require("customer.phone.reveal")
-    if (!reasonCode.trim()) this.fail("Chọn lý do xem số.")
-    const hourAgo = Date.now() - MS.HOUR
-    this.db.revealLog = this.db.revealLog.filter((r) => r.at > hourAgo)
-    if (this.db.revealLog.filter((r) => r.userId === this.session.id).length >= 30) {
-      throw new ApiError(429 as number, "VALIDATION_FAILED", "Đã xem quá 30 số trong 1 giờ. Thử lại sau.")
-    }
-    const c = this.db.customers.get(customerId)
-    if (!c || !c.phoneE164) throw new ApiError(404, "NOT_FOUND", "Khách không có số điện thoại.")
-    this.db.revealLog.push({ userId: this.session.id, at: Date.now() })
-    const ctx = context.reservationId
-      ? ` · booking #${context.reservationId}`
-      : context.entryId
-        ? ` · mục chờ #${context.entryId}`
-        : ""
-    this.commit({ action: "CUSTOMER_PHONE_REVEALED", entityType: "customer", undoable: false, reasonCode }, () => ({
-      entityId: c.id,
-      summary: `Xem SĐT khách #${c.id}${ctx} · lý do: ${reasonCode}`,
-    }))
-    return { customerId: c.id, phoneE164: c.phoneE164, revealedAt: this.now }
+    return this.runSerializedMutation("m", () => {
+      this.require("customer.phone.reveal")
+      if (!reasonCode.trim()) this.fail("Chọn lý do xem số.")
+      const hourAgo = Date.now() - MS.HOUR
+      this.db.revealLog = this.db.revealLog.filter((r) => r.at > hourAgo)
+      if (this.db.revealLog.filter((r) => r.userId === this.session.id).length >= 30) {
+        throw new ApiError(429 as number, "VALIDATION_FAILED", "Đã xem quá 30 số trong 1 giờ. Thử lại sau.")
+      }
+      const c = this.db.customers.get(customerId)
+      if (!c || !c.phoneE164) throw new ApiError(404, "NOT_FOUND", "Khách không có số điện thoại.")
+      this.db.revealLog.push({ userId: this.session.id, at: Date.now() })
+      const ctx = context.reservationId
+        ? ` · booking #${context.reservationId}`
+        : context.entryId
+          ? ` · mục chờ #${context.entryId}`
+          : ""
+      this.commit({ action: "CUSTOMER_PHONE_REVEALED", entityType: "customer", undoable: false, reasonCode }, () => ({
+        entityId: c.id,
+        summary: `Xem SĐT khách #${c.id}${ctx} · lý do: ${reasonCode}`,
+      }))
+      return { customerId: c.id, phoneE164: c.phoneE164, revealedAt: this.now }
+    })
   }
 
   async updateCustomerNotes(customerId: number, version: number, notes: string) {
-    await this.latency("m")
-    if (this.session.role === "CASHIER") this.require("reservation.update")
-    const c = this.db.customers.get(customerId)
-    if (!c) throw new ApiError(404, "NOT_FOUND", "Không tìm thấy khách.")
-    this.checkVersion("customers", c, version, "Hồ sơ khách")
-    if (noteHasPhoneNumber(notes)) this.fail(NOTE_PHONE_ERROR)
-    if (notes.length > 500) this.fail("Ghi chú tối đa 500 ký tự.")
-    return this.commit({ action: "CUSTOMER_NOTES_UPDATED", entityType: "customer", undoable: true }, (tx) => {
-      const row = tx.edit("customers", c.id)
-      row.notes = notes.trim() || null
-      return { entityId: c.id, summary: `Sửa ghi chú khách #${c.id}` }
+    return this.runSerializedMutation("m", () => {
+      if (this.session.role === "CASHIER") this.require("reservation.update")
+      const c = this.db.customers.get(customerId)
+      if (!c) throw new ApiError(404, "NOT_FOUND", "Không tìm thấy khách.")
+      this.checkVersion("customers", c, version, "Hồ sơ khách")
+      if (noteHasPhoneNumber(notes)) this.fail(NOTE_PHONE_ERROR)
+      if (notes.length > 500) this.fail("Ghi chú tối đa 500 ký tự.")
+      return this.commit({ action: "CUSTOMER_NOTES_UPDATED", entityType: "customer", undoable: true }, (tx) => {
+        const row = tx.edit("customers", c.id)
+        row.notes = notes.trim() || null
+        return { entityId: c.id, summary: `Sửa ghi chú khách #${c.id}` }
+      })
     })
   }
 
@@ -2959,130 +3038,150 @@ export class MockGamApi implements GamApi, DemoControls {
   }
 
   async undo(operationId: number) {
-    await this.latency("m")
-    this.require("operation.undo")
-    return this.applyCompensation(operationId, "UNDO_APPLIED")
+    return this.runSerializedMutation("m", () => {
+      this.require("operation.undo")
+      return this.applyCompensation(operationId, "UNDO_APPLIED")
+    })
   }
 
   async redo(undoOperationId: number) {
-    await this.latency("m")
-    this.require("operation.undo")
-    return this.applyCompensation(undoOperationId, "REDO_APPLIED")
+    return this.runSerializedMutation("m", () => {
+      this.require("operation.undo")
+      return this.applyCompensation(undoOperationId, "REDO_APPLIED")
+    })
   }
 
   /* ================= configuration ================= */
 
   async updateVenueConfig(patch: VenueConfigPatch) {
-    await this.latency("m")
-    this.require("venue.configure")
-    const v = this.venue
-    this.checkVersion("venue", v, patch.version, "Cấu hình quán")
-    const next = { ...v, ...Object.fromEntries(Object.entries(patch).filter(([, val]) => val !== undefined)) }
-    if (next.upcomingWarningMinutes < 1 || next.upcomingWarningMinutes > 240)
-      this.fail("Mốc sắp đến phải từ 1 đến 240 phút.")
-    if (next.lateWarningMinutes < 1) this.fail("Mốc đến muộn phải từ 1 phút.")
-    if (next.noShowWarningMinutes <= next.lateWarningMinutes) this.fail("Mốc không tới phải lớn hơn mốc đến muộn.")
-    if (next.waitlistHoldDefaultMinutes < 1 || next.waitlistHoldDefaultMinutes > 240)
-      this.fail("Thời gian giữ bàn từ 1 đến 240 phút.")
-    if (next.waitlistClaimLeaseSeconds < 30 || next.waitlistClaimLeaseSeconds > 3600)
-      this.fail("Phiên liên hệ từ 30 đến 3600 giây.")
-    if (
-      next.reservationHoldPolicy === "WINDOWED" &&
-      !(next.reservationWindowMinutes && next.reservationWindowMinutes >= 15 && next.reservationWindowMinutes <= 720)
-    ) {
-      this.fail("Chính sách WINDOWED cần khung giữ bàn 15 đến 720 phút.")
-    }
-    const maxUsed = Math.max(0, ...[...this.db.groups.values()].filter((g) => !g.dissolvedAt).map((g) => g.symbolNo))
-    if (next.groupSymbolCount < 1 || next.groupSymbolCount > GROUP_SYMBOL_COUNT_MAX)
-      this.fail(`Số ký hiệu ghép từ 1 đến ${GROUP_SYMBOL_COUNT_MAX}.`)
-    if (next.groupSymbolCount < maxUsed) this.fail(`Đang dùng ký hiệu số ${maxUsed}, không giảm thấp hơn.`)
-    const result = this.commit({ action: "VENUE_CONFIG_UPDATED", entityType: "venue", undoable: true }, (tx) => {
-      const row = tx.edit("venue", v.id)
-      row.upcomingWarningMinutes = next.upcomingWarningMinutes
-      row.lateWarningMinutes = next.lateWarningMinutes
-      row.noShowWarningMinutes = next.noShowWarningMinutes
-      row.waitlistHoldDefaultMinutes = next.waitlistHoldDefaultMinutes
-      row.waitlistClaimLeaseSeconds = next.waitlistClaimLeaseSeconds
-      row.reservationHoldPolicy = next.reservationHoldPolicy
-      row.reservationWindowMinutes = next.reservationHoldPolicy === "SEQUENTIAL" ? null : next.reservationWindowMinutes
-      row.groupSymbolCount = next.groupSymbolCount
-      return { entityId: v.id, summary: "Cập nhật cấu hình quán" }
+    return this.runSerializedMutation("m", () => {
+      this.require("venue.configure")
+      const v = this.venue
+      this.checkVersion("venue", v, patch.version, "Cấu hình quán")
+      const next = { ...v, ...Object.fromEntries(Object.entries(patch).filter(([, val]) => val !== undefined)) }
+      if (next.upcomingWarningMinutes < 1 || next.upcomingWarningMinutes > 240)
+        this.fail("Mốc sắp đến phải từ 1 đến 240 phút.")
+      if (next.lateWarningMinutes < 1) this.fail("Mốc đến muộn phải từ 1 phút.")
+      if (next.noShowWarningMinutes <= next.lateWarningMinutes) this.fail("Mốc không tới phải lớn hơn mốc đến muộn.")
+      if (next.waitlistHoldDefaultMinutes < 1 || next.waitlistHoldDefaultMinutes > 240)
+        this.fail("Thời gian giữ bàn từ 1 đến 240 phút.")
+      if (next.waitlistClaimLeaseSeconds < 30 || next.waitlistClaimLeaseSeconds > 3600)
+        this.fail("Phiên liên hệ từ 30 đến 3600 giây.")
+      if (
+        next.reservationHoldPolicy === "WINDOWED" &&
+        !(next.reservationWindowMinutes && next.reservationWindowMinutes >= 15 && next.reservationWindowMinutes <= 720)
+      ) {
+        this.fail("Chính sách WINDOWED cần khung giữ bàn 15 đến 720 phút.")
+      }
+      const maxUsed = Math.max(0, ...[...this.db.groups.values()].filter((g) => !g.dissolvedAt).map((g) => g.symbolNo))
+      if (next.groupSymbolCount < 1 || next.groupSymbolCount > GROUP_SYMBOL_COUNT_MAX)
+        this.fail(`Số ký hiệu ghép từ 1 đến ${GROUP_SYMBOL_COUNT_MAX}.`)
+      if (next.groupSymbolCount < maxUsed) this.fail(`Đang dùng ký hiệu số ${maxUsed}, không giảm thấp hơn.`)
+      const result = this.commit({ action: "VENUE_CONFIG_UPDATED", entityType: "venue", undoable: true }, (tx) => {
+        const row = tx.edit("venue", v.id)
+        row.upcomingWarningMinutes = next.upcomingWarningMinutes
+        row.lateWarningMinutes = next.lateWarningMinutes
+        row.noShowWarningMinutes = next.noShowWarningMinutes
+        row.waitlistHoldDefaultMinutes = next.waitlistHoldDefaultMinutes
+        row.waitlistClaimLeaseSeconds = next.waitlistClaimLeaseSeconds
+        row.reservationHoldPolicy = next.reservationHoldPolicy
+        row.reservationWindowMinutes =
+          next.reservationHoldPolicy === "SEQUENTIAL" ? null : next.reservationWindowMinutes
+        row.groupSymbolCount = next.groupSymbolCount
+        return { entityId: v.id, summary: "Cập nhật cấu hình quán" }
+      })
+      return { ...result, venue: venueConfig(this.db) }
     })
-    return { ...result, venue: venueConfig(this.db) }
   }
 
   async updateVenueSettings(input: VenueSettingsUpdate) {
-    await this.latency("m")
-    this.require("venue.configure")
-    if (
-      input.quickTimes.length < 1 ||
-      input.quickTimes.length > 24 ||
-      new Set(input.quickTimes).size !== input.quickTimes.length ||
-      input.quickTimes.some(
-        (time) => !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time) || !isWithinBookingReceptionWindow(time),
+    return this.runSerializedMutation("m", () => {
+      this.require("venue.configure")
+      if (
+        input.quickTimes.length < 1 ||
+        input.quickTimes.length > 24 ||
+        new Set(input.quickTimes).size !== input.quickTimes.length ||
+        input.quickTimes.some(
+          (time) => !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time) || !isWithinBookingReceptionWindow(time),
+        )
       )
-    )
-      this.fail("Cần 1–24 giờ nhanh HH:mm không trùng trong cửa sổ 19:00–01:00.")
-    if (input.upcomingMinutes < 1 || input.upcomingMinutes > 240) this.fail("Mốc sắp đến phải từ 1 đến 240 phút.")
-    if (input.noShowMinutes <= this.venue.lateWarningMinutes) this.fail("Mốc không tới phải lớn hơn mốc đến muộn.")
+        this.fail("Cần 1–24 giờ nhanh HH:mm không trùng trong cửa sổ 19:00–01:00.")
+      if (input.upcomingMinutes < 1 || input.upcomingMinutes > 240) this.fail("Mốc sắp đến phải từ 1 đến 240 phút.")
+      if (input.noShowMinutes <= this.venue.lateWarningMinutes) this.fail("Mốc không tới phải lớn hơn mốc đến muộn.")
 
-    // TU-38: the operating shift, validated exactly as the API does so the mock cannot accept
-    // a shift the server would refuse.
-    const hasStart = input.businessDayStartLocal !== undefined
-    const hasCutoff = input.businessDayCutoffLocal !== undefined
-    if (hasStart !== hasCutoff) this.fail("Phải gửi cả giờ mở ca và mốc cắt ca.")
-    const startLocal = hasStart
-      ? normalizeShiftBoundary(input.businessDayStartLocal!)
-      : this.venue.businessDayStartLocal
-    const cutoffLocal = hasCutoff
-      ? normalizeShiftBoundary(input.businessDayCutoffLocal!)
-      : this.venue.businessDayCutoffLocal
-    const shiftChanged =
-      startLocal !== this.venue.businessDayStartLocal || cutoffLocal !== this.venue.businessDayCutoffLocal
-    if (hasStart && (!isShiftBoundary(input.businessDayStartLocal!) || !isShiftBoundary(input.businessDayCutoffLocal!)))
-      this.fail("Giờ mở ca và mốc cắt ca phải có dạng HH:mm hoặc HH:mm:ss.")
-    if (shiftChanged) {
-      if (!shiftServesBookingWindow(startLocal, cutoffLocal))
-        this.fail("Ca vận hành phải bao trọn cửa sổ nhận booking 19:00–01:00.")
-      const open = [...this.db.visits.values()].filter(
-        (visit) => visit.venueId === this.venue.id && visit.endedAt === null,
-      ).length
-      if (open > 0) this.fail(`Còn ${open} lượt khách đang ngồi. Chỉ đổi ca vận hành khi quán không còn lượt nào mở.`)
-    }
+      // TU-38: the operating shift, validated exactly as the API does so the mock cannot accept
+      // a shift the server would refuse.
+      const hasStart = input.businessDayStartLocal !== undefined
+      const hasCutoff = input.businessDayCutoffLocal !== undefined
+      if (hasStart !== hasCutoff) this.fail("Phải gửi cả giờ mở ca và mốc cắt ca.")
+      const startLocal = hasStart
+        ? normalizeShiftBoundary(input.businessDayStartLocal!)
+        : this.venue.businessDayStartLocal
+      const cutoffLocal = hasCutoff
+        ? normalizeShiftBoundary(input.businessDayCutoffLocal!)
+        : this.venue.businessDayCutoffLocal
+      const shiftChanged =
+        startLocal !== this.venue.businessDayStartLocal || cutoffLocal !== this.venue.businessDayCutoffLocal
+      if (
+        hasStart &&
+        (!isShiftBoundary(input.businessDayStartLocal!) || !isShiftBoundary(input.businessDayCutoffLocal!))
+      )
+        this.fail("Giờ mở ca và mốc cắt ca phải có dạng HH:mm hoặc HH:mm:ss.")
+      if (shiftChanged) {
+        if (!shiftServesBookingWindow(startLocal, cutoffLocal))
+          this.fail("Ca vận hành phải bao trọn cửa sổ nhận booking 19:00–01:00.")
+        const open = [...this.db.visits.values()].filter(
+          (visit) => visit.venueId === this.venue.id && visit.endedAt === null,
+        ).length
+        if (open > 0) this.fail(`Còn ${open} lượt khách đang ngồi. Chỉ đổi ca vận hành khi quán không còn lượt nào mở.`)
+      }
 
-    this.quickTimes = [...input.quickTimes]
-    this.commit({ action: "VENUE_SETTINGS_UPDATED", entityType: "venue", undoable: false }, (tx) => {
-      const row = tx.edit("venue", this.venue.id)
-      row.upcomingWarningMinutes = input.upcomingMinutes
-      row.noShowWarningMinutes = input.noShowMinutes
-      row.businessDayStartLocal = startLocal
-      row.businessDayCutoffLocal = cutoffLocal
-      return { entityId: row.id, summary: "Cập nhật cấu hình quán" }
+      this.quickTimes = [...input.quickTimes]
+      this.commit({ action: "VENUE_SETTINGS_UPDATED", entityType: "venue", undoable: false }, (tx) => {
+        const row = tx.edit("venue", this.venue.id)
+        row.upcomingWarningMinutes = input.upcomingMinutes
+        row.noShowWarningMinutes = input.noShowMinutes
+        row.businessDayStartLocal = startLocal
+        row.businessDayCutoffLocal = cutoffLocal
+        return { entityId: row.id, summary: "Cập nhật cấu hình quán" }
+      })
+      return this.readVenueSettings()
     })
-    return this.getVenueSettings()
   }
 
   async setZoneFlags(zoneId: number, version: number, flags: { isBookable: boolean; isWaitingArea: boolean }) {
-    await this.latency("m")
-    this.require("venue.configure")
-    const z = this.db.zones.get(zoneId)
-    if (!z) throw new ApiError(404, "NOT_FOUND", "Không tìm thấy khu.")
-    this.checkVersion("zones", z, version, z.name)
-    if (flags.isBookable && flags.isWaitingArea) this.fail("Khu chờ không thể đồng thời nhận đặt bàn.")
-    return this.commit({ action: "ZONE_CONFIG_UPDATED", entityType: "zone", undoable: true }, (tx) => {
-      const row = tx.edit("zones", z.id)
-      row.isBookable = flags.isBookable
-      row.isWaitingArea = flags.isWaitingArea
-      return {
-        entityId: z.id,
-        summary: `${z.name}: ${flags.isBookable ? "nhận khách" : flags.isWaitingArea ? "khu chờ" : "tạm đóng"}`,
-      }
+    return this.runSerializedMutation("m", () => {
+      this.require("venue.configure")
+      const z = this.db.zones.get(zoneId)
+      if (!z) throw new ApiError(404, "NOT_FOUND", "Không tìm thấy khu.")
+      this.checkVersion("zones", z, version, z.name)
+      if (flags.isBookable && flags.isWaitingArea) this.fail("Khu chờ không thể đồng thời nhận đặt bàn.")
+      return this.commit({ action: "ZONE_CONFIG_UPDATED", entityType: "zone", undoable: true }, (tx) => {
+        const row = tx.edit("zones", z.id)
+        row.isBookable = flags.isBookable
+        row.isWaitingArea = flags.isWaitingArea
+        return {
+          entityId: z.id,
+          summary: `${z.name}: ${flags.isBookable ? "nhận khách" : flags.isWaitingArea ? "khu chờ" : "tạm đóng"}`,
+        }
+      })
     })
   }
 
   /* ================= system job (simulated 30s backend worker) ================= */
 
   private tick() {
+    if (this.syncTransport?.tryWithLock) {
+      this.syncTransport.tryWithLock(() => {
+        this.pullSharedState(false)
+        this.runTick()
+      })
+      return
+    }
+    this.runTick()
+  }
+
+  private runTick() {
     const now = this.now
     const bd = businessDateOf(now)
     const venue = this.venue
@@ -3312,7 +3411,10 @@ export class MockGamApi implements GamApi, DemoControls {
     const hasBills = meta.bills.length > 0
     const hasUnpaidBill = meta.bills.some((b) => b.billStatus === "UNPAID")
     const hasActiveUnbilled = this.hasActiveUnbilledLines(meta)
-    if ((hasBills && !hasUnpaidBill && !hasActiveUnbilled) || (visit.paidMarkedAt && !hasUnpaidBill && !hasActiveUnbilled)) {
+    if (
+      (hasBills && !hasUnpaidBill && !hasActiveUnbilled) ||
+      (visit.paidMarkedAt && !hasUnpaidBill && !hasActiveUnbilled)
+    ) {
       return "PAID"
     }
     // Derive CLOSED_UNPAID from live visit.endedAt; never cache it on meta.
@@ -3351,10 +3453,7 @@ export class MockGamApi implements GamApi, DemoControls {
     return structuredClone(rest)
   }
 
-  private resolveVisitTableInfo(
-    visit: VisitRow,
-    meta: PaymentVisitMeta,
-  ): { tables: string[]; clusterCode?: string } {
+  private resolveVisitTableInfo(visit: VisitRow, meta: PaymentVisitMeta): { tables: string[]; clusterCode?: string } {
     const activeTableIds = visitTableIds(this.db, visit.id)
     const liveTableCodes = activeTableIds.map((id) => this.db.tables.get(id)?.code ?? `#${id}`)
     const viewTableCodes =
@@ -3412,6 +3511,7 @@ export class MockGamApi implements GamApi, DemoControls {
       ...(record.paidBy ? { paidBy: record.paidBy } : {}),
       ...(record.manualConfirm !== undefined ? { manualConfirm: record.manualConfirm } : {}),
       ...(record.cancelPending !== undefined ? { cancelPending: record.cancelPending } : {}),
+      ...(record.cancelHistory?.length ? { cancelHistory: structuredClone(record.cancelHistory) } : {}),
     }
   }
 
@@ -3543,9 +3643,7 @@ export class MockGamApi implements GamApi, DemoControls {
     return { visit, bill: this.buildPayBill(visit) }
   }
 
-  private locateIssuedBill(
-    billCode: string,
-  ): { visit: VisitRow; meta: PaymentVisitMeta; record: IssuedBillRecord } {
+  private locateIssuedBill(billCode: string): { visit: VisitRow; meta: PaymentVisitMeta; record: IssuedBillRecord } {
     for (const [visitIdNum, meta] of this.paymentMeta.entries()) {
       const record = meta.bills.find((b) => b.billCode === billCode)
       if (!record) continue
@@ -3598,6 +3696,7 @@ export class MockGamApi implements GamApi, DemoControls {
       roundBy?: string
     }[],
   ): SessionBills {
+    if (this.syncTransport) this.pullSharedState(false)
     const { visit } = this.resolvePaymentVisit(visitId)
     if (visit.endedAt) {
       throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc, không thể gọi thêm món.")
@@ -3728,56 +3827,57 @@ export class MockGamApi implements GamApi, DemoControls {
   }
 
   async issuePaymentInvoice(visitId: string, version: number, idempotencyKey: string): Promise<PayBill> {
-    await this.latency("m")
-    this.requireInvoiceIssuer()
-    const { visit } = this.resolvePaymentVisit(visitId)
-    const meta = this.ensurePaymentMeta(visit)
-    this.assertBarScope(visit, meta)
-    const fingerprint = `${visitId}:${version}:ISSUE`
-    const existing = this.paymentIssueIdempotency.get(idempotencyKey)
-    if (existing) {
-      if (existing.fingerprint !== fingerprint) {
-        throw new ApiError(409, "IDEMPOTENCY_CONFLICT", "Khóa idempotency đã được sử dụng cho lần xuất hóa đơn khác.")
+    return this.runSerializedMutation("m", () => {
+      this.requireInvoiceIssuer()
+      const { visit } = this.resolvePaymentVisit(visitId)
+      const meta = this.ensurePaymentMeta(visit)
+      this.assertBarScope(visit, meta)
+      const fingerprint = `${visitId}:${version}:ISSUE`
+      const existing = this.paymentIssueIdempotency.get(idempotencyKey)
+      if (existing) {
+        if (existing.fingerprint !== fingerprint) {
+          throw new ApiError(409, "IDEMPOTENCY_CONFLICT", "Khóa idempotency đã được sử dụng cho lần xuất hóa đơn khác.")
+        }
+        return structuredClone(existing.bill)
       }
-      return structuredClone(existing.bill)
-    }
 
-    const sessionStatus = this.deriveSessionStatus(visit, meta)
-    if (sessionStatus === "CLOSED_UNPAID" || visit.endedAt) {
-      throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc, không thể xuất hóa đơn.")
-    }
-    if (this.paymentVersion(visit, meta) !== version) {
-      throw new ApiError(409, "VERSION_CONFLICT", "Phiên vừa được cập nhật trên thiết bị khác.")
-    }
-    if (!this.hasActiveUnbilledLines(meta)) {
-      throw new ApiError(409, "INVALID_STATE", "Không có món mới chưa chốt bill để xuất hóa đơn.")
-    }
+      const sessionStatus = this.deriveSessionStatus(visit, meta)
+      if (sessionStatus === "CLOSED_UNPAID" || visit.endedAt) {
+        throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc, không thể xuất hóa đơn.")
+      }
+      if (this.paymentVersion(visit, meta) !== version) {
+        throw new ApiError(409, "VERSION_CONFLICT", "Phiên vừa được cập nhật trên thiết bị khác.")
+      }
+      if (!this.hasActiveUnbilledLines(meta)) {
+        throw new ApiError(409, "INVALID_STATE", "Không có món mới chưa chốt bill để xuất hóa đơn.")
+      }
 
-    const issuerRole = this.session.role as InvoiceIssuerRole
-    const record = this.lockUnbilledIntoBill(visit, meta, this.session.displayName, issuerRole)
-    const tableInfo = this.resolveVisitTableInfo(visit, meta)
-    const issuedBill = this.buildIssuedPayBill(visit, meta, record, tableInfo)
-    this.paymentIssueIdempotency.set(idempotencyKey, { fingerprint, bill: issuedBill })
+      const issuerRole = this.session.role as InvoiceIssuerRole
+      const record = this.lockUnbilledIntoBill(visit, meta, this.session.displayName, issuerRole)
+      const tableInfo = this.resolveVisitTableInfo(visit, meta)
+      const issuedBill = this.buildIssuedPayBill(visit, meta, record, tableInfo)
+      this.paymentIssueIdempotency.set(idempotencyKey, { fingerprint, bill: issuedBill })
 
-    this.seq += 1
-    this.pushPaymentEvent(
-      "INVOICE_ISSUED",
-      "Đã đưa hóa đơn",
-      `${issuedBill.code} · Đã đưa hóa đơn · ${record.issuedBy} · ${record.issuedAt}`,
-      visit.id,
-      "inv",
-      record.billCode,
-    )
-    this.recordPaymentAudit("INVOICE_ISSUED", record.billCode, visit.id)
-    this.emit({
-      latestSeq: this.seq,
-      action: "PAYMENT_INVOICE_ISSUED",
-      entityType: "visit",
-      actorKind: "USER",
-      actorUserId: this.session.id,
-      summary: `${issuedBill.code} · đã đưa hóa đơn (${record.billCode})`,
+      this.seq += 1
+      this.pushPaymentEvent(
+        "INVOICE_ISSUED",
+        "Đã đưa hóa đơn",
+        `${issuedBill.code} · Đã đưa hóa đơn · ${record.issuedBy} · ${record.issuedAt}`,
+        visit.id,
+        "inv",
+        record.billCode,
+      )
+      this.recordPaymentAudit("INVOICE_ISSUED", record.billCode, visit.id)
+      this.emit({
+        latestSeq: this.seq,
+        action: "PAYMENT_INVOICE_ISSUED",
+        entityType: "visit",
+        actorKind: "USER",
+        actorUserId: this.session.id,
+        summary: `${issuedBill.code} · đã đưa hóa đơn (${record.billCode})`,
+      })
+      return structuredClone(issuedBill)
     })
-    return structuredClone(issuedBill)
   }
 
   async getPaymentSessionBills(visitId: string): Promise<SessionBills> {
@@ -3801,71 +3901,73 @@ export class MockGamApi implements GamApi, DemoControls {
   }
 
   async createPaymentPrebill(visitId: string, version: number): Promise<PayBill> {
-    await this.latency("m")
-    this.requirePaymentRead()
-    const { visit, bill } = this.resolvePaymentVisit(visitId)
-    const meta = this.ensurePaymentMeta(visit)
-    const sessionStatus = this.deriveSessionStatus(visit, meta)
-    if (sessionStatus === "PAID") {
-      throw new ApiError(409, "INVALID_STATE", "Bill này đã được thanh toán.")
-    }
-    if (sessionStatus === "CLOSED_UNPAID") {
-      throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc (đã trả bàn) nhưng chưa ghi nhận thu tiền.")
-    }
-    if (this.paymentVersion(visit, meta) !== version) {
-      throw new ApiError(409, "VERSION_CONFLICT", "Bill vừa được cập nhật trên thiết bị khác.")
-    }
-    if (sessionStatus === "SERVING") {
-      const issuerRole: InvoiceIssuerRole = roleCan(this.session.role, "order.read")
-        ? (this.session.role as InvoiceIssuerRole)
-        : "CASHIER"
-      const record = this.lockUnbilledIntoBill(visit, meta, this.session.displayName, issuerRole)
-      this.seq += 1
-      this.emit({
-        latestSeq: this.seq,
-        action: "PAYMENT_PREBILL_CREATED",
-        entityType: "visit",
-        actorKind: "USER",
-        actorUserId: this.session.id,
-        summary: `${bill.code} · tạo tạm tính`,
-      })
-      return this.buildIssuedPayBill(visit, meta, record)
-    }
-    return this.buildPayBill(visit)
+    return this.runSerializedMutation("m", () => {
+      this.requirePaymentRead()
+      const { visit, bill } = this.resolvePaymentVisit(visitId)
+      const meta = this.ensurePaymentMeta(visit)
+      const sessionStatus = this.deriveSessionStatus(visit, meta)
+      if (sessionStatus === "PAID") {
+        throw new ApiError(409, "INVALID_STATE", "Bill này đã được thanh toán.")
+      }
+      if (sessionStatus === "CLOSED_UNPAID") {
+        throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc (đã trả bàn) nhưng chưa ghi nhận thu tiền.")
+      }
+      if (this.paymentVersion(visit, meta) !== version) {
+        throw new ApiError(409, "VERSION_CONFLICT", "Bill vừa được cập nhật trên thiết bị khác.")
+      }
+      if (sessionStatus === "SERVING") {
+        const issuerRole: InvoiceIssuerRole = roleCan(this.session.role, "order.read")
+          ? (this.session.role as InvoiceIssuerRole)
+          : "CASHIER"
+        const record = this.lockUnbilledIntoBill(visit, meta, this.session.displayName, issuerRole)
+        this.seq += 1
+        this.emit({
+          latestSeq: this.seq,
+          action: "PAYMENT_PREBILL_CREATED",
+          entityType: "visit",
+          actorKind: "USER",
+          actorUserId: this.session.id,
+          summary: `${bill.code} · tạo tạm tính`,
+        })
+        return this.buildIssuedPayBill(visit, meta, record)
+      }
+      return this.buildPayBill(visit)
+    })
   }
 
   async requestPayment(visitId: string): Promise<void> {
-    await this.latency("m")
-    this.require("order.read")
-    const { visit, bill } = this.resolvePaymentVisit(visitId)
-    const meta = this.ensurePaymentMeta(visit)
-    const sessionStatus = this.deriveSessionStatus(visit, meta)
-    if (sessionStatus === "PAID") {
-      throw new ApiError(409, "INVALID_STATE", "Bill này đã được thanh toán.")
-    }
-    if (sessionStatus === "CLOSED_UNPAID") {
-      throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc (đã trả bàn) nhưng chưa ghi nhận thu tiền.")
-    }
-    const nowTime = fmtTime(this.now)
-    const nowDate = new Date(this.now.getTime())
-    if (!meta.requestedAt) {
-      meta.requestedAt = nowTime
-      meta.requestedAtDate = nowDate
-    }
-    if (sessionStatus === "SERVING" && meta.bills.length === 0) {
-      const issuerRole = this.session.role as InvoiceIssuerRole
-      this.lockUnbilledIntoBill(visit, meta, this.session.displayName, issuerRole)
-    } else {
-      meta.versionOffset += 1
-    }
-    this.seq += 1
-    this.emit({
-      latestSeq: this.seq,
-      action: "PAYMENT_REQUESTED",
-      entityType: "visit",
-      actorKind: "USER",
-      actorUserId: this.session.id,
-      summary: `${bill.code} · gửi yêu cầu thanh toán`,
+    return this.runSerializedMutation("m", () => {
+      this.require("order.read")
+      const { visit, bill } = this.resolvePaymentVisit(visitId)
+      const meta = this.ensurePaymentMeta(visit)
+      const sessionStatus = this.deriveSessionStatus(visit, meta)
+      if (sessionStatus === "PAID") {
+        throw new ApiError(409, "INVALID_STATE", "Bill này đã được thanh toán.")
+      }
+      if (sessionStatus === "CLOSED_UNPAID") {
+        throw new ApiError(409, "INVALID_STATE", "Phiên đã kết thúc (đã trả bàn) nhưng chưa ghi nhận thu tiền.")
+      }
+      const nowTime = fmtTime(this.now)
+      const nowDate = new Date(this.now.getTime())
+      if (!meta.requestedAt) {
+        meta.requestedAt = nowTime
+        meta.requestedAtDate = nowDate
+      }
+      if (sessionStatus === "SERVING" && meta.bills.length === 0) {
+        const issuerRole = this.session.role as InvoiceIssuerRole
+        this.lockUnbilledIntoBill(visit, meta, this.session.displayName, issuerRole)
+      } else {
+        meta.versionOffset += 1
+      }
+      this.seq += 1
+      this.emit({
+        latestSeq: this.seq,
+        action: "PAYMENT_REQUESTED",
+        entityType: "visit",
+        actorKind: "USER",
+        actorUserId: this.session.id,
+        summary: `${bill.code} · gửi yêu cầu thanh toán`,
+      })
     })
   }
 
@@ -3886,6 +3988,12 @@ export class MockGamApi implements GamApi, DemoControls {
     record.paidBy = staff
     record.manualConfirm = manual
     record.cancelPending = false
+    if (record.cancelHistory?.length) {
+      const recollectedAt = this.now.toISOString()
+      for (const entry of record.cancelHistory) {
+        if (!entry.recollectedAt) entry.recollectedAt = recollectedAt
+      }
+    }
 
     const allBillsPaid = meta.bills.length > 0 && meta.bills.every((b) => b.billStatus === "PAID")
     const shouldCloseVisit = allBillsPaid && !this.hasActiveUnbilledLines(meta)
@@ -4058,8 +4166,9 @@ export class MockGamApi implements GamApi, DemoControls {
     idempotencyKey: string,
     billCode?: string,
   ): Promise<Receipt> {
-    await this.latency("m")
-    return this.commitPayment(visitId, "CASH", false, givenVnd, version, idempotencyKey, billCode)
+    return this.runSerializedMutation("m", () =>
+      this.commitPayment(visitId, "CASH", false, givenVnd, version, idempotencyKey, billCode),
+    )
   }
 
   async confirmPaymentTransfer(
@@ -4069,8 +4178,9 @@ export class MockGamApi implements GamApi, DemoControls {
     idempotencyKey: string,
     billCode?: string,
   ): Promise<Receipt> {
-    await this.latency("m")
-    return this.commitPayment(visitId, "TRANSFER", manual, 0, version, idempotencyKey, billCode)
+    return this.runSerializedMutation("m", () =>
+      this.commitPayment(visitId, "TRANSFER", manual, 0, version, idempotencyKey, billCode),
+    )
   }
 
   private hasReopenConflict(tableId: number, visitBd: BusinessDate): boolean {
@@ -4080,12 +4190,16 @@ export class MockGamApi implements GamApi, DemoControls {
     return activeAllocations(this.db).some((a) => a.tableId === tableId && a.kind === "USAGE")
   }
 
-  private revertPaidBillToUnpaid(visit: VisitRow, meta: PaymentVisitMeta, record: IssuedBillRecord) {
-    if (visit.endedAt !== null) {
+  private revertPaidBillToUnpaid(visit: VisitRow, meta: PaymentVisitMeta, record: IssuedBillRecord): CancelEffect {
+    const wasVisitEnded = visit.endedAt !== null
+    const wasCountedClosedTurn = wasVisitEnded && visit.endReason === "GUEST_LEFT"
+    if (wasVisitEnded) {
       const tracked = meta.lastClosedAllocIds?.length
         ? meta.lastClosedAllocIds
             .map((id) => this.db.allocations.get(id))
-            .filter((a): a is NonNullable<typeof a> => Boolean(a && a.releasedAt !== null && a.releaseReason === "GUEST_LEFT"))
+            .filter((a): a is NonNullable<typeof a> =>
+              Boolean(a && a.releasedAt !== null && a.releaseReason === "GUEST_LEFT"),
+            )
         : []
       const releasedAllocs =
         tracked.length > 0
@@ -4132,62 +4246,67 @@ export class MockGamApi implements GamApi, DemoControls {
     record.manualConfirm = undefined
     record.cancelPending = false
     meta.versionOffset += 1
+    return {
+      sessionReopened: wasVisitEnded,
+      closedTurnsDelta: wasCountedClosedTurn ? -1 : 0,
+    }
   }
 
   async requestPaymentCancel(billCode: string, reason: string): Promise<CancelRequest> {
-    await this.latency("m")
-    if (this.session.role !== "CASHIER") {
-      throw new ApiError(403, "PERMISSION_DENIED", "Chỉ Thu ngân mới được gửi yêu cầu hủy thanh toán.")
-    }
-    const trimmed = reason.trim()
-    if (!trimmed) {
-      throw new ApiError(400, "VALIDATION_FAILED", "Vui lòng nhập lý do yêu cầu hủy thanh toán.")
-    }
-    const { visit, meta, record } = this.locateIssuedBill(billCode)
-    if (record.billStatus !== "PAID") {
-      throw new ApiError(409, "INVALID_STATE", "Chỉ có thể yêu cầu hủy bill đã thanh toán.")
-    }
-    if (record.cancelPending || this.cancelRequests.some((r) => r.billCode === billCode && r.status === "PENDING")) {
-      throw new ApiError(409, "INVALID_STATE", "Bill này đang có yêu cầu hủy chờ duyệt.")
-    }
-    const billView = this.buildIssuedPayBill(visit, meta, record)
-    const req: CancelRequestInternal = {
-      id: `cr-${this.cancelRequestSeq++}`,
-      billCode,
-      visitId: String(visit.id),
-      code: billView.code,
-      dueVnd: billView.dueVnd,
-      reason: trimmed,
-      requestedBy: `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`,
-      requestedByUserId: this.session.id,
-      requestedAt: this.now.toISOString(),
-      status: "PENDING",
-    }
-    this.cancelRequests.unshift(req)
-    record.cancelPending = true
-    meta.versionOffset += 1
-    this.seq += 1
-    this.pushPaymentEvent(
-      "CANCEL_REQUESTED",
-      "Yêu cầu hủy bill",
-      `${billView.code} (${billCode}) · ${trimmed}`,
-      visit.id,
-      "creq",
-      billCode,
-    )
-    this.recordPaymentAudit("CANCEL_REQUESTED", billCode, visit.id, {
-      actor: req.requestedBy,
-      reason: trimmed,
+    return this.runSerializedMutation("m", () => {
+      if (this.session.role !== "CASHIER") {
+        throw new ApiError(403, "PERMISSION_DENIED", "Chỉ Thu ngân mới được gửi yêu cầu hủy thanh toán.")
+      }
+      const trimmed = reason.trim()
+      if (!trimmed) {
+        throw new ApiError(400, "VALIDATION_FAILED", "Vui lòng nhập lý do yêu cầu hủy thanh toán.")
+      }
+      const { visit, meta, record } = this.locateIssuedBill(billCode)
+      if (record.billStatus !== "PAID") {
+        throw new ApiError(409, "INVALID_STATE", "Chỉ có thể yêu cầu hủy bill đã thanh toán.")
+      }
+      if (record.cancelPending || this.cancelRequests.some((r) => r.billCode === billCode && r.status === "PENDING")) {
+        throw new ApiError(409, "INVALID_STATE", "Bill này đang có yêu cầu hủy chờ duyệt.")
+      }
+      const billView = this.buildIssuedPayBill(visit, meta, record)
+      const req: CancelRequestInternal = {
+        id: `cr-${this.cancelRequestSeq++}`,
+        billCode,
+        visitId: String(visit.id),
+        code: billView.code,
+        dueVnd: billView.dueVnd,
+        reason: trimmed,
+        requestedBy: `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`,
+        requestedByUserId: this.session.id,
+        requestedAt: this.now.toISOString(),
+        status: "PENDING",
+      }
+      this.cancelRequests.unshift(req)
+      record.cancelPending = true
+      meta.versionOffset += 1
+      this.seq += 1
+      this.pushPaymentEvent(
+        "CANCEL_REQUESTED",
+        "Yêu cầu hủy bill",
+        `${billView.code} (${billCode}) · ${trimmed}`,
+        visit.id,
+        "creq",
+        billCode,
+      )
+      this.recordPaymentAudit("CANCEL_REQUESTED", billCode, visit.id, {
+        actor: req.requestedBy,
+        reason: trimmed,
+      })
+      this.emit({
+        latestSeq: this.seq,
+        action: "PAYMENT_CANCEL_REQUESTED",
+        entityType: "visit",
+        actorKind: "USER",
+        actorUserId: this.session.id,
+        summary: `${billView.code} (${billCode}) · yêu cầu hủy thanh toán`,
+      })
+      return this.toCancelRequest(req)
     })
-    this.emit({
-      latestSeq: this.seq,
-      action: "PAYMENT_CANCEL_REQUESTED",
-      entityType: "visit",
-      actorKind: "USER",
-      actorUserId: this.session.id,
-      summary: `${billView.code} (${billCode}) · yêu cầu hủy thanh toán`,
-    })
-    return this.toCancelRequest(req)
   }
 
   async listMyPaymentCancelRequests(billCode?: string): Promise<CancelRequest[]> {
@@ -4205,125 +4324,148 @@ export class MockGamApi implements GamApi, DemoControls {
   }
 
   async decidePaymentCancel(requestId: string, approve: boolean, note?: string): Promise<CancelRequest> {
-    await this.latency("m")
-    this.require("audit.read")
-    const req = this.cancelRequests.find((r) => r.id === requestId)
-    if (!req) {
-      throw new ApiError(404, "NOT_FOUND", "Không tìm thấy yêu cầu hủy thanh toán.")
-    }
-    if (req.status !== "PENDING") {
-      throw new ApiError(409, "INVALID_STATE", "Yêu cầu hủy này đã được xử lý trước đó.")
-    }
-    const { visit, meta, record } = this.locateIssuedBill(req.billCode)
-    const decider = `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`
-    const trimmedNote = note?.trim() || undefined
-
-    if (approve) {
-      if (record.billStatus !== "PAID") {
-        throw new ApiError(409, "INVALID_STATE", "Bill không còn ở trạng thái Đã thanh toán.")
+    return this.runSerializedMutation("m", () => {
+      this.require("audit.read")
+      const req = this.cancelRequests.find((r) => r.id === requestId)
+      if (!req) {
+        throw new ApiError(404, "NOT_FOUND", "Không tìm thấy yêu cầu hủy thanh toán.")
       }
-      this.revertPaidBillToUnpaid(visit, meta, record)
-      req.status = "APPROVED"
-      req.decidedBy = decider
-      req.decidedAt = this.now.toISOString()
-      if (trimmedNote) req.decisionNote = trimmedNote
+      if (req.status !== "PENDING") {
+        throw new ApiError(409, "INVALID_STATE", "Yêu cầu hủy này đã được xử lý trước đó.")
+      }
+      const { visit, meta, record } = this.locateIssuedBill(req.billCode)
+      const decider = `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`
+      const trimmedNote = note?.trim() || undefined
+
+      if (approve) {
+        if (record.billStatus !== "PAID") {
+          throw new ApiError(409, "INVALID_STATE", "Bill không còn ở trạng thái Đã thanh toán.")
+        }
+        const effect = this.revertPaidBillToUnpaid(visit, meta, record)
+        const decidedAt = this.now.toISOString()
+        req.status = "APPROVED"
+        req.decidedBy = decider
+        req.decidedAt = decidedAt
+        if (trimmedNote) req.decisionNote = trimmedNote
+        req.effect = effect
+        record.cancelHistory ??= []
+        record.cancelHistory.unshift({
+          kind: "APPROVED",
+          reason: req.reason,
+          actor: req.requestedBy,
+          approver: decider,
+          ...(trimmedNote ? { decisionNote: trimmedNote } : {}),
+          at: decidedAt,
+        })
+        this.pushPaymentEvent(
+          "CANCEL_DECIDED",
+          "Đã duyệt hủy thanh toán",
+          `${req.code} (${req.billCode}) · quay lại Chờ thanh toán`,
+          visit.id,
+          "cdec",
+          req.billCode,
+        )
+        this.recordPaymentAudit("CANCEL_APPROVED", req.billCode, visit.id, {
+          actor: req.requestedBy,
+          approver: decider,
+          reason: req.reason,
+          ...(trimmedNote ? { decisionNote: trimmedNote } : {}),
+        })
+        this.emit({
+          latestSeq: this.seq,
+          action: "PAYMENT_CANCELLED",
+          entityType: "visit",
+          actorKind: "USER",
+          actorUserId: this.session.id,
+          summary: `Đã duyệt hủy thanh toán ${req.code} (${req.billCode})`,
+        })
+      } else {
+        req.status = "REJECTED"
+        req.decidedBy = decider
+        req.decidedAt = this.now.toISOString()
+        if (trimmedNote) req.decisionNote = trimmedNote
+        record.cancelPending = false
+        meta.versionOffset += 1
+        this.seq += 1
+        this.pushPaymentEvent(
+          "CANCEL_DECIDED",
+          "Từ chối hủy thanh toán",
+          `${req.code} (${req.billCode}) · giữ Đã thanh toán`,
+          visit.id,
+          "cdec",
+          req.billCode,
+        )
+        this.recordPaymentAudit("CANCEL_REJECTED", req.billCode, visit.id, {
+          actor: req.requestedBy,
+          approver: decider,
+          reason: req.reason,
+          ...(trimmedNote ? { decisionNote: trimmedNote } : {}),
+        })
+        this.emit({
+          latestSeq: this.seq,
+          action: "PAYMENT_CANCEL_REJECTED",
+          entityType: "visit",
+          actorKind: "USER",
+          actorUserId: this.session.id,
+          summary: `Từ chối hủy thanh toán ${req.code} (${req.billCode})`,
+        })
+      }
+      return this.toCancelRequest(req)
+    })
+  }
+
+  async cancelPaidBill(billCode: string, reason: string): Promise<CancelEffect> {
+    return this.runSerializedMutation("m", () => {
+      const allowed: RoleCode[] = ["RECEPTIONIST", "ADMIN", "OWNER"]
+      if (!allowed.includes(this.session.role)) {
+        throw new ApiError(403, "PERMISSION_DENIED", "Chỉ Lễ tân / Quản trị mới được hủy bill đã thanh toán trực tiếp.")
+      }
+      const trimmed = reason.trim()
+      if (!trimmed) {
+        throw new ApiError(400, "VALIDATION_FAILED", "Vui lòng nhập lý do hủy thanh toán.")
+      }
+      const { visit, meta, record } = this.locateIssuedBill(billCode)
+      if (record.billStatus !== "PAID") {
+        throw new ApiError(409, "INVALID_STATE", "Chỉ có thể hủy bill đã thanh toán.")
+      }
+      const billView = this.buildIssuedPayBill(visit, meta, record)
+      const effect = this.revertPaidBillToUnpaid(visit, meta, record)
+      const actor = `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`
+      const decidedAt = this.now.toISOString()
+      record.cancelHistory ??= []
+      record.cancelHistory.unshift({
+        kind: "DIRECT",
+        reason: trimmed,
+        actor,
+        at: decidedAt,
+      })
+      const pendingReq = this.cancelRequests.find((r) => r.billCode === billCode && r.status === "PENDING")
+      if (pendingReq) {
+        pendingReq.status = "APPROVED"
+        pendingReq.decidedBy = actor
+        pendingReq.decidedAt = decidedAt
+        pendingReq.decisionNote = trimmed
+        pendingReq.effect = effect
+      }
       this.pushPaymentEvent(
         "CANCEL_DECIDED",
-        "Đã duyệt hủy thanh toán",
-        `${req.code} (${req.billCode}) · quay lại Chờ thanh toán`,
+        "Đã hủy thanh toán",
+        `${billView.code} (${billCode}) · ${trimmed}`,
         visit.id,
-        "cdec",
-        req.billCode,
+        "cdir",
+        billCode,
       )
-      this.recordPaymentAudit("CANCEL_APPROVED", req.billCode, visit.id, {
-        actor: req.requestedBy,
-        approver: decider,
-        reason: req.reason,
-        ...(trimmedNote ? { decisionNote: trimmedNote } : {}),
-      })
+      this.recordPaymentAudit("CANCELLED_DIRECT", billCode, visit.id, { reason: trimmed })
       this.emit({
         latestSeq: this.seq,
         action: "PAYMENT_CANCELLED",
         entityType: "visit",
         actorKind: "USER",
         actorUserId: this.session.id,
-        summary: `Đã duyệt hủy thanh toán ${req.code} (${req.billCode})`,
+        summary: `Hủy thanh toán ${billView.code} (${billCode})`,
       })
-    } else {
-      req.status = "REJECTED"
-      req.decidedBy = decider
-      req.decidedAt = this.now.toISOString()
-      if (trimmedNote) req.decisionNote = trimmedNote
-      record.cancelPending = false
-      meta.versionOffset += 1
-      this.seq += 1
-      this.pushPaymentEvent(
-        "CANCEL_DECIDED",
-        "Từ chối hủy thanh toán",
-        `${req.code} (${req.billCode}) · giữ Đã thanh toán`,
-        visit.id,
-        "cdec",
-        req.billCode,
-      )
-      this.recordPaymentAudit("CANCEL_REJECTED", req.billCode, visit.id, {
-        actor: req.requestedBy,
-        approver: decider,
-        reason: req.reason,
-        ...(trimmedNote ? { decisionNote: trimmedNote } : {}),
-      })
-      this.emit({
-        latestSeq: this.seq,
-        action: "PAYMENT_CANCEL_REJECTED",
-        entityType: "visit",
-        actorKind: "USER",
-        actorUserId: this.session.id,
-        summary: `Từ chối hủy thanh toán ${req.code} (${req.billCode})`,
-      })
-    }
-    return this.toCancelRequest(req)
-  }
-
-  async cancelPaidBill(billCode: string, reason: string): Promise<CancelEffect> {
-    await this.latency("m")
-    const allowed: RoleCode[] = ["RECEPTIONIST", "ADMIN", "OWNER"]
-    if (!allowed.includes(this.session.role)) {
-      throw new ApiError(403, "PERMISSION_DENIED", "Chỉ Lễ tân / Quản trị mới được hủy bill đã thanh toán trực tiếp.")
-    }
-    const trimmed = reason.trim()
-    if (!trimmed) {
-      throw new ApiError(400, "VALIDATION_FAILED", "Vui lòng nhập lý do hủy thanh toán.")
-    }
-    const { visit, meta, record } = this.locateIssuedBill(billCode)
-    if (record.billStatus !== "PAID") {
-      throw new ApiError(409, "INVALID_STATE", "Chỉ có thể hủy bill đã thanh toán.")
-    }
-    const billView = this.buildIssuedPayBill(visit, meta, record)
-    this.revertPaidBillToUnpaid(visit, meta, record)
-    const pendingReq = this.cancelRequests.find((r) => r.billCode === billCode && r.status === "PENDING")
-    if (pendingReq) {
-      pendingReq.status = "APPROVED"
-      pendingReq.decidedBy = `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`
-      pendingReq.decidedAt = this.now.toISOString()
-      pendingReq.decisionNote = trimmed
-    }
-    this.pushPaymentEvent(
-      "CANCEL_DECIDED",
-      "Đã hủy thanh toán",
-      `${billView.code} (${billCode}) · ${trimmed}`,
-      visit.id,
-      "cdir",
-      billCode,
-    )
-    this.recordPaymentAudit("CANCELLED_DIRECT", billCode, visit.id, { reason: trimmed })
-    this.emit({
-      latestSeq: this.seq,
-      action: "PAYMENT_CANCELLED",
-      entityType: "visit",
-      actorKind: "USER",
-      actorUserId: this.session.id,
-      summary: `Hủy thanh toán ${billView.code} (${billCode})`,
+      return effect
     })
-    return { sessionReopened: false, closedTurnsDelta: 0 }
   }
 
   async listPaidPaymentBills(): Promise<PaidBillSummary[]> {
@@ -4367,9 +4509,7 @@ export class MockGamApi implements GamApi, DemoControls {
     if (!roleCan(this.session.role, "payment.collect") && this.session.role !== "RECEPTIONIST") {
       throw new ApiError(403, "PERMISSION_DENIED", "Tài khoản không có quyền xem nhật ký thanh toán.")
     }
-    const list = billCode
-      ? this.paymentAuditLog.filter((entry) => entry.billCode === billCode)
-      : this.paymentAuditLog
+    const list = billCode ? this.paymentAuditLog.filter((entry) => entry.billCode === billCode) : this.paymentAuditLog
     return structuredClone(list)
   }
 
@@ -4446,67 +4586,68 @@ export class MockGamApi implements GamApi, DemoControls {
   }
 
   async simulateRemoteActivity(): Promise<string> {
-    await this.latency("m")
-    const remote = this.db.users.get(REMOTE_USER_ID)!
-    const mine = [...this.db.ops]
-      .reverse()
-      .find((o) => o.actorUserId === this.session.id && o.isUndoable && !o.compensatedBy)
-    const target = mine?.undo.find(
-      (e) => (e.col === "reservations" || e.col === "visits") && (this.db[e.col] as Map<number, unknown>).has(e.id),
-    )
-    if (mine && target) {
-      const label = target.col === "reservations" ? "booking" : "lượt ghé"
-      this.commit(
-        {
-          action: target.col === "reservations" ? "RESERVATION_UPDATED" : "VISIT_UPDATED",
-          entityType: target.col === "reservations" ? "reservation" : "visit",
-          undoable: false,
-          actorUserId: remote.id,
-        },
-        (tx) => {
-          const row = tx.edit(target.col as "reservations" | "visits", target.id)
-          row.note = `${row.note ? `${row.note} · ` : ""}Đã xác nhận lại với khách (${remote.deviceLabel})`
-          return { entityId: target.id, summary: `Cập nhật ghi chú ${label}` }
-        },
+    return this.runSerializedMutation("m", () => {
+      const remote = this.db.users.get(REMOTE_USER_ID)!
+      const mine = [...this.db.ops]
+        .reverse()
+        .find((o) => o.actorUserId === this.session.id && o.isUndoable && !o.compensatedBy)
+      const target = mine?.undo.find(
+        (e) => (e.col === "reservations" || e.col === "visits") && (this.db[e.col] as Map<number, unknown>).has(e.id),
       )
-      return `${remote.displayName} (${remote.deviceLabel}) vừa sửa ${label} liên quan tới "${mine.summary}". Thử Hoàn tác để xem cảnh báo xung đột.`
-    }
-    const bd = businessDateOf(this.now)
-    const free = [...this.db.tables.values()].filter((t) => {
-      const zone = this.db.zones.get(t.zoneId)!
-      return (
-        t.kind === "TABLE" &&
-        t.status === "ACTIVE" &&
-        !t.isSpare &&
-        zone.isBookable &&
-        blockingAllocations(this.db, t.id, bd).length === 0
-      )
-    })
-    if (!free.length) return `${remote.displayName}: không còn bàn trống để mô phỏng.`
-    const t = free[Math.floor(Math.random() * free.length)]
-    this.commit({ action: "WALKIN_SEATED", entityType: "visit", undoable: false, actorUserId: remote.id }, (tx) => {
-      const v = tx.insert("visits", {
-        organizationId: ORG_ID,
-        venueId: VENUE_ID,
-        origin: "WALK_IN",
-        customerId: null,
-        contactName: null,
-        guestCount: 2,
-        startedAt: this.now,
-        businessDate: bd,
-        endedAt: null,
-        endedByUserId: null,
-        endReason: null,
-        mergedIntoVisitId: null,
-        paidMarkedAt: null,
-        paidMarkedByUserId: null,
-        note: null,
-        createdByUserId: remote.id,
-        createdAt: this.now,
+      if (mine && target) {
+        const label = target.col === "reservations" ? "booking" : "lượt ghé"
+        this.commit(
+          {
+            action: target.col === "reservations" ? "RESERVATION_UPDATED" : "VISIT_UPDATED",
+            entityType: target.col === "reservations" ? "reservation" : "visit",
+            undoable: false,
+            actorUserId: remote.id,
+          },
+          (tx) => {
+            const row = tx.edit(target.col as "reservations" | "visits", target.id)
+            row.note = `${row.note ? `${row.note} · ` : ""}Đã xác nhận lại với khách (${remote.deviceLabel})`
+            return { entityId: target.id, summary: `Cập nhật ghi chú ${label}` }
+          },
+        )
+        return `${remote.displayName} (${remote.deviceLabel}) vừa sửa ${label} liên quan tới "${mine.summary}". Thử Hoàn tác để xem cảnh báo xung đột.`
+      }
+      const bd = businessDateOf(this.now)
+      const free = [...this.db.tables.values()].filter((t) => {
+        const zone = this.db.zones.get(t.zoneId)!
+        return (
+          t.kind === "TABLE" &&
+          t.status === "ACTIVE" &&
+          !t.isSpare &&
+          zone.isBookable &&
+          blockingAllocations(this.db, t.id, bd).length === 0
+        )
       })
-      this.newAllocation(tx, { tableId: t.id, kind: "USAGE", visitId: v.id, startsAt: this.now, bd })
-      return { entityId: v.id, summary: `Walk-in ${t.code} · 2 khách` }
+      if (!free.length) return `${remote.displayName}: không còn bàn trống để mô phỏng.`
+      const t = free[Math.floor(Math.random() * free.length)]
+      this.commit({ action: "WALKIN_SEATED", entityType: "visit", undoable: false, actorUserId: remote.id }, (tx) => {
+        const v = tx.insert("visits", {
+          organizationId: ORG_ID,
+          venueId: VENUE_ID,
+          origin: "WALK_IN",
+          customerId: null,
+          contactName: null,
+          guestCount: 2,
+          startedAt: this.now,
+          businessDate: bd,
+          endedAt: null,
+          endedByUserId: null,
+          endReason: null,
+          mergedIntoVisitId: null,
+          paidMarkedAt: null,
+          paidMarkedByUserId: null,
+          note: null,
+          createdByUserId: remote.id,
+          createdAt: this.now,
+        })
+        this.newAllocation(tx, { tableId: t.id, kind: "USAGE", visitId: v.id, startsAt: this.now, bd })
+        return { entityId: v.id, summary: `Walk-in ${t.code} · 2 khách` }
+      })
+      return `${remote.displayName} (${remote.deviceLabel}) vừa nhận Walk-in vào ${t.code}.`
     })
-    return `${remote.displayName} (${remote.deviceLabel}) vừa nhận Walk-in vào ${t.code}.`
   }
 }
