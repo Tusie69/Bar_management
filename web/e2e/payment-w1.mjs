@@ -371,33 +371,71 @@ try {
       await paymentApi.getBill(visitId)
     }, setupBills.a3Id)
 
-    // Interleave two concurrent requestCancel calls on two different bills across two Cashier windows
-    // while holding Cashier A's Web Lock briefly so Cashier B genuinely contends on the cross-tab lock.
-    const [resA, resB] = await Promise.all([
-      cashierPageA.evaluate(async (billCode) => {
-        const origRequest = navigator.locks.request.bind(navigator.locks)
-        navigator.locks.request = (name, ...args) => {
-          const cb = args[args.length - 1]
-          const opts = args.length > 1 ? args[0] : undefined
-          const wrapped = async (lock) => {
-            const out = await cb(lock)
-            await new Promise((r) => setTimeout(r, 150))
-            return out
-          }
-          return opts ? origRequest(name, opts, wrapped) : origRequest(name, wrapped)
-        }
-        try {
-          const { paymentApi } = await import("/src/services/payment/index.ts")
-          return await paymentApi.requestCancel(billCode, "Concurrent cancel A2")
-        } finally {
+    // Interleave two concurrent requestCancel calls on two different bills across two Cashier windows.
+    // Hold Cashier A inside navigator.locks.request BEFORE reading snapshot/mutating, verify Cashier B
+    // is pending in navigator.locks.query(), then release A's barrier.
+    await cashierPageA.evaluate(() => {
+      const origRequest = navigator.locks.request.bind(navigator.locks)
+      let releaseBarrier
+      let signalEntered
+      const enteredPromise = new Promise((resolve) => {
+        signalEntered = resolve
+      })
+      const barrierPromise = new Promise((resolve) => {
+        releaseBarrier = resolve
+      })
+      window.__na45h17Barrier = {
+        enteredPromise,
+        release: releaseBarrier,
+        restore: () => {
           navigator.locks.request = origRequest
+        },
+      }
+      navigator.locks.request = (name, ...args) => {
+        const cb = args[args.length - 1]
+        const opts = args.length > 1 ? args[0] : undefined
+        if (opts && opts.ifAvailable) {
+          return origRequest(name, opts, cb)
         }
-      }, setupBills.billA2),
-      cashierPageB.evaluate(async (billCode) => {
-        const { paymentApi } = await import("/src/services/payment/index.ts")
-        return await paymentApi.requestCancel(billCode, "Concurrent cancel A3")
-      }, setupBills.billA3),
-    ])
+        const wrapped = async (lock) => {
+          signalEntered()
+          await barrierPromise
+          return await cb(lock)
+        }
+        return opts ? origRequest(name, opts, wrapped) : origRequest(name, wrapped)
+      }
+    })
+
+    const reqAPromise = cashierPageA.evaluate(async (billCode) => {
+      const { paymentApi } = await import("/src/services/payment/index.ts")
+      return await paymentApi.requestCancel(billCode, "Concurrent cancel A2")
+    }, setupBills.billA2)
+
+    await cashierPageA.evaluate(() => window.__na45h17Barrier.enteredPromise)
+
+    const reqBPromise = cashierPageB.evaluate(async (billCode) => {
+      const { paymentApi } = await import("/src/services/payment/index.ts")
+      return await paymentApi.requestCancel(billCode, "Concurrent cancel A3")
+    }, setupBills.billA3)
+
+    // Verify via navigator.locks.query() that A holds the lock and B is waiting in pending
+    const lockContention = await cashierPageA.evaluate(async () => {
+      const deadline = Date.now() + 3000
+      while (Date.now() < deadline) {
+        const state = await navigator.locks.query()
+        const held = (state.held ?? []).some((l) => l.name === "21gam.mock.sync.v1.lock")
+        const pending = (state.pending ?? []).some((l) => l.name === "21gam.mock.sync.v1.lock")
+        if (held && pending) return { held, pending }
+        await new Promise((r) => setTimeout(r, 20))
+      }
+      return await navigator.locks.query()
+    })
+    assert.equal(lockContention.held, true, `Expected held lock, got ${JSON.stringify(lockContention)}`)
+    assert.equal(lockContention.pending, true, `Expected pending lock for Tab B, got ${JSON.stringify(lockContention)}`)
+
+    await cashierPageA.evaluate(() => window.__na45h17Barrier.release())
+    const [resA, resB] = await Promise.all([reqAPromise, reqBPromise])
+    await cashierPageA.evaluate(() => window.__na45h17Barrier.restore())
 
     assert.equal(resA.status, "PENDING")
     assert.equal(resB.status, "PENDING")
@@ -467,6 +505,91 @@ try {
     assert.deepEqual(raceErrors, [])
   } finally {
     await raceContext.close()
+  }
+
+  // NA45H-17 no-Web-Locks probe: hide navigator.locks via addInitScript -> browser mock mutation
+  // must reject BEFORE read/mutate/publish with clear error; no PENDING request and no audit row written.
+  const noLockContext = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  try {
+    const setupPage = await noLockContext.newPage()
+    const adminCheckPage = await noLockContext.newPage()
+    const noLockCashierPage = await noLockContext.newPage()
+    const noLockErrors = []
+    for (const p of [setupPage, adminCheckPage, noLockCashierPage]) {
+      p.on("pageerror", (err) => noLockErrors.push(`pageerror: ${err.message}`))
+      p.on("console", (msg) => {
+        if (msg.type() === "error") noLockErrors.push(`console.error: ${msg.text()}`)
+      })
+    }
+
+    await setupPage.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 5, theme: "light" }))
+    })
+    await setupPage.goto(`${BASE_URL}/payment`, { waitUntil: "networkidle" })
+    const paidSetup = await setupPage.evaluate(async () => {
+      const [{ clock, demo }, { paymentApi }] = await Promise.all([
+        import("/src/services/index.ts"),
+        import("/src/services/payment/index.ts"),
+      ])
+      demo.reset()
+      clock.resetToScenario()
+      const a2 = (await paymentApi.listOpen()).find((b) => b.code === "A2")
+      if (!a2) throw new Error("Missing A2 for no-Web-Locks probe")
+      const issued = await paymentApi.issueInvoice(a2.visitId, a2.version, "na45h17-nolock-inv")
+      await paymentApi.confirmCash(a2.visitId, issued.dueVnd, issued.version, "na45h17-nolock-pay", issued.billCode)
+      return {
+        billCode: issued.billCode,
+        syncBefore: localStorage.getItem("21gam.mock.sync.v1"),
+      }
+    })
+
+    await adminCheckPage.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 7, theme: "light" }))
+    })
+    await adminCheckPage.goto(`${BASE_URL}/cancel-payment`, { waitUntil: "networkidle" })
+    await expect(adminCheckPage.getByText("Chờ duyệt (0)")).toBeVisible()
+
+    await noLockCashierPage.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 5, theme: "light" }))
+      Object.defineProperty(navigator, "locks", { get: () => undefined, configurable: true })
+    })
+    await noLockCashierPage.goto(`${BASE_URL}/payment`, { waitUntil: "networkidle" })
+
+    const noLockOutcome = await noLockCashierPage.evaluate(async (billCode) => {
+      const { paymentApi } = await import("/src/services/payment/index.ts")
+      try {
+        await paymentApi.requestCancel(billCode, "Should reject without Web Locks")
+        return { rejected: false }
+      } catch (err) {
+        return {
+          rejected: true,
+          code: err?.code,
+          status: err?.status,
+          message: err?.message,
+          syncAfter: localStorage.getItem("21gam.mock.sync.v1"),
+        }
+      }
+    }, paidSetup.billCode)
+
+    assert.equal(noLockOutcome.rejected, true)
+    assert.equal(noLockOutcome.code, "WEB_LOCKS_REQUIRED")
+    assert.equal(noLockOutcome.status, 503)
+    assert.match(noLockOutcome.message ?? "", /Web Locks/i)
+    assert.equal(noLockOutcome.syncAfter, paidSetup.syncBefore, "Snapshot must not be mutated or published")
+
+    const adminAfterNoLock = await adminCheckPage.evaluate(async (billCode) => {
+      const { paymentApi } = await import("/src/services/payment/index.ts")
+      const [queue, audit] = await Promise.all([paymentApi.listCancelRequests(), paymentApi.listAudit(billCode)])
+      return {
+        pendingCount: queue.filter((r) => r.status === "PENDING").length,
+        cancelReqAuditCount: audit.filter((e) => e.action === "CANCEL_REQUESTED").length,
+      }
+    }, paidSetup.billCode)
+    assert.equal(adminAfterNoLock.pendingCount, 0)
+    assert.equal(adminAfterNoLock.cancelReqAuditCount, 0)
+    assert.deepEqual(noLockErrors, [])
+  } finally {
+    await noLockContext.close()
   }
 
   console.log("payment-w1 PASS:", JSON.stringify(result))

@@ -1,8 +1,8 @@
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 import { addDays, businessDateOf } from "@/lib/time"
 import { api, clock, demo } from "@/services"
 import type { MockDb } from "@/services/mock/db"
-import { createInMemoryMockSyncTransport } from "@/services/mock/mock-sync"
+import { createBrowserMockSyncTransport, createInMemoryMockSyncTransport } from "@/services/mock/mock-sync"
 import { DEMO_USERS } from "@/services/mock/seed"
 import { MockGamApi } from "@/services/mock/server"
 import { isPaymentAvailable, paymentApi } from "./index"
@@ -1251,4 +1251,155 @@ describe("mockPaymentApi", () => {
       adminApi.dispose()
     }
   }, 15_000)
+
+  it("NA45H-18: links PayBill.cancelHistory entries by requestId for APPROVED, DIRECT-closing-PENDING, and omits requestId for pure DIRECT", async () => {
+    const a2Id = await visitIdByCode("A2")
+    const s0 = await paymentApi.getBill(a2Id)
+    const bill = await paymentApi.issueInvoice(a2Id, s0.version, "na45h18-inv")
+    await paymentApi.confirmCash(a2Id, bill.dueVnd, bill.version, "na45h18-pay1", bill.billCode)
+
+    // 1) Pure direct cancel (no PENDING request) -> no requestId
+    api.setSession(receptionist)
+    await paymentApi.cancelPaid(bill.billCode, "Hủy trực tiếp không có yêu cầu")
+    api.setSession(cashier)
+    const afterPureDirect = await paymentApi.getBill(a2Id)
+    expect(afterPureDirect.cancelHistory?.[0]).toMatchObject({
+      kind: "DIRECT",
+      reason: "Hủy trực tiếp không có yêu cầu",
+    })
+    expect(afterPureDirect.cancelHistory?.[0]?.requestId).toBeUndefined()
+
+    // Re-collect then submit request #1 -> DIRECT cancel auto-resolves PENDING -> DIRECT history links requestId #1
+    await paymentApi.confirmCash(a2Id, bill.dueVnd, afterPureDirect.version, "na45h18-pay2", bill.billCode)
+    const req1 = await paymentApi.requestCancel(bill.billCode, "Lý do trùng")
+    api.setSession(receptionist)
+    await paymentApi.cancelPaid(bill.billCode, "Lễ tân chốt hủy trực tiếp")
+
+    api.setSession(cashier)
+    const afterDirectWithPending = await paymentApi.getBill(a2Id)
+    expect(afterDirectWithPending.cancelHistory?.[0]).toMatchObject({
+      kind: "DIRECT",
+      requestId: req1.id,
+      reason: "Lễ tân chốt hủy trực tiếp",
+    })
+    const myReqsAfterDirect = await paymentApi.listMyCancelRequests(bill.billCode)
+    expect(myReqsAfterDirect.find((r) => r.id === req1.id)).toMatchObject({
+      status: "APPROVED",
+      reason: "Lý do trùng",
+      decisionNote: "Lễ tân chốt hủy trực tiếp",
+    })
+
+    // Re-collect then submit request #2 with the SAME reason text -> Admin approves -> distinct requestId #2
+    await paymentApi.confirmTransfer(a2Id, false, afterDirectWithPending.version, "na45h18-pay3", bill.billCode)
+    const req2 = await paymentApi.requestCancel(bill.billCode, "Lý do trùng")
+    expect(req2.id).not.toBe(req1.id)
+    api.setSession(admin)
+    await paymentApi.decideCancel(req2.id, true, "Duyệt lần 2")
+
+    api.setSession(cashier)
+    await paymentApi.confirmCash(
+      a2Id,
+      bill.dueVnd,
+      (await paymentApi.getBill(a2Id)).version,
+      "na45h18-pay4",
+      bill.billCode,
+    )
+    const finalBill = await paymentApi.getBill(a2Id)
+    expect(finalBill.cancelHistory).toHaveLength(3)
+    expect(finalBill.cancelHistory?.[0]).toMatchObject({
+      kind: "APPROVED",
+      requestId: req2.id,
+      reason: "Lý do trùng",
+      decisionNote: "Duyệt lần 2",
+    })
+    expect(finalBill.cancelHistory?.[0]?.recollectedAt).toBeTruthy()
+    expect(finalBill.cancelHistory?.[1]).toMatchObject({
+      kind: "DIRECT",
+      requestId: req1.id,
+      reason: "Lễ tân chốt hủy trực tiếp",
+    })
+    expect(finalBill.cancelHistory?.[1]?.recollectedAt).toBeTruthy()
+    expect(finalBill.cancelHistory?.[2]?.requestId).toBeUndefined()
+  })
+
+  it("NA45H-19: returns tableRestored=false when visit was auto-closed by BUSINESS_DAY_END and keeps floor free", async () => {
+    const a3Id = await visitIdByCode("A3")
+    const catalog = await api.getCatalog()
+    const a3TableId = catalog.tables.find((t) => t.code === "A3")!.id
+
+    // A3 has bill 1 PAID and bill 2 UNPAID, plus a PENDING cancel request for bill 1
+    api.setSession(waiter)
+    const s0 = await paymentApi.getBill(a3Id)
+    const bill1 = await paymentApi.issueInvoice(a3Id, s0.version, "na45h19-inv1")
+    addPaymentOrderLines(a3Id, [{ name: "Mojito", unit: "Ly", qty: 1, unitPriceVnd: 110_000, state: "SERVED" }])
+    const p2 = await paymentApi.previewBill(a3Id)
+    await paymentApi.issueInvoice(a3Id, p2.version, "na45h19-inv2")
+
+    api.setSession(cashier)
+    const sTwo = await paymentApi.getSessionBills(a3Id)
+    await paymentApi.confirmCash(a3Id, bill1.dueVnd, sTwo.version, "na45h19-pay1", bill1.billCode)
+    const req = await paymentApi.requestCancel(bill1.billCode, "Hủy qua giờ chốt")
+
+    // Advance clock past 05:00 cutoff -> BUSINESS_DAY_END releases A3 allocation
+    clock.advance(460)
+    const floorBeforeApprove = await api.getFloorState(clock.now())
+    expect(floorBeforeApprove.tables.find((t) => t.tableId === a3TableId)?.state).toBe("free")
+
+    api.setSession(admin)
+    const approved = await paymentApi.decideCancel(req.id, true, "Duyệt sau giờ chốt")
+    expect(approved.effect).toEqual({
+      sessionReopened: true,
+      closedTurnsDelta: 0,
+      tableRestored: false,
+    })
+
+    const floorAfterApprove = await api.getFloorState(clock.now())
+    expect(floorAfterApprove.tables.find((t) => t.tableId === a3TableId)?.state).toBe("free")
+    expect(floorAfterApprove.tables.find((t) => t.tableId === a3TableId)?.claim).toBeNull()
+  })
+
+  it("NA45H-17 browser guard: rejects mutations before read/mutate/publish and skips tick when navigator.locks is unavailable", async () => {
+    vi.stubGlobal("navigator", {})
+    try {
+      const browserTransport = createBrowserMockSyncTransport()
+      let readSpy = 0
+      let publishSpy = 0
+      const guardedTransport = {
+        ...browserTransport,
+        readLatest() {
+          readSpy += 1
+          return browserTransport.readLatest()
+        },
+        publish(packet: Parameters<typeof browserTransport.publish>[0]) {
+          publishSpy += 1
+          browserTransport.publish(packet)
+        },
+      }
+      const guardedApi = new MockGamApi({ businessDayWorkerEnabled: true, syncTransport: guardedTransport })
+      try {
+        guardedApi.setSession(cashier)
+        const a2 = (await guardedApi.listPaymentOpen()).find((s) => s.code === "A2")!
+        const readBeforeMutation = readSpy
+        const publishBeforeMutation = publishSpy
+
+        await expect(guardedApi.issuePaymentInvoice(a2.visitId, a2.version, "no-locks-inv")).rejects.toMatchObject({
+          code: "WEB_LOCKS_REQUIRED",
+          status: 503,
+        })
+        expect(readSpy).toBe(readBeforeMutation)
+        expect(publishSpy).toBe(publishBeforeMutation)
+
+        // tryWithLock skips callback when navigator.locks is missing
+        let tickCallbackRan = false
+        browserTransport.tryWithLock?.(() => {
+          tickCallbackRan = true
+        })
+        expect(tickCallbackRan).toBe(false)
+      } finally {
+        guardedApi.dispose()
+      }
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 })
