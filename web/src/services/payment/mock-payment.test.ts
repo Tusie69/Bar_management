@@ -843,7 +843,75 @@ describe("mockPaymentApi", () => {
         paymentApi.issueInvoice(forbiddenVisitId, 1, `na45h06-forbid-${forbiddenVisitId}`),
       ).rejects.toMatchObject({ code: "PERMISSION_DENIED", status: 403 })
     }
+
+    // NA45H-06 OR predicate: { code: "BAR99", zone: MAIN } AND { code: "QUAY99", zone: BAR } both qualify
+    const db = (api as unknown as { db: MockDb }).db
+    const mainZone = [...db.zones.values()].find((z) => z.code !== "BAR")!
+    const barZone = [...db.zones.values()].find((z) => z.code === "BAR")!
+    const bar99Id = db.nextId.tables++
+    const quay99Id = db.nextId.tables++
+    const mainTemplate = [...db.tables.values()].find((t) => t.kind === "TABLE" && !t.isSpare)!
+    const barTemplate = [...db.tables.values()].find((t) => t.kind === "BAR_SEAT")!
+    db.tables.set(bar99Id, {
+      ...mainTemplate,
+      id: bar99Id,
+      zoneId: mainZone.id,
+      code: "BAR99",
+      kind: "TABLE",
+      isSpare: false,
+      status: "ACTIVE",
+    })
+    db.tables.set(quay99Id, {
+      ...barTemplate,
+      id: quay99Id,
+      zoneId: barZone.id,
+      code: "QUAY99",
+      kind: "BAR_SEAT",
+      isSpare: false,
+      status: "ACTIVE",
+    })
+
+    api.setSession(receptionist)
+    const bar99Visit = await api.seatWalkIn({ tableIds: [bar99Id], guestCount: 2 })
+    addPaymentOrderLines(String(bar99Visit.visitId), [{ name: "Mojito", unit: "Ly", qty: 1, unitPriceVnd: 110_000 }])
+    const quay99Visit = await api.seatWalkIn({ tableIds: [quay99Id], guestCount: 1 })
+    addPaymentOrderLines(String(quay99Visit.visitId), [{ name: "Daiquiri", unit: "Ly", qty: 1, unitPriceVnd: 120_000 }])
+    const freeNow = new Set(
+      (await api.getFloorState(clock.now())).tables.filter((t) => t.state === "free").map((t) => t.tableId),
+    )
+    const mainTableForMix = catalog.tables.find(
+      (t) => t.kind === "TABLE" && !t.isSpare && freeNow.has(t.id) && !/^BAR/i.test(t.code),
+    )!
+    const barSeatForMix = catalog.tables.find((t) => t.kind === "BAR_SEAT" && freeNow.has(t.id))!
+    const mixed2 = await api.seatWalkIn({ tableIds: [mainTableForMix.id, barSeatForMix.id], guestCount: 2 })
+    addPaymentOrderLines(String(mixed2.visitId), [{ name: "Whisky Sour", unit: "Ly", qty: 1, unitPriceVnd: 150_000 }])
+
+    api.setSession(bar)
+    const barOpen2 = await paymentApi.listOpen()
+    expect(barOpen2.some((s) => s.visitId === String(bar99Visit.visitId))).toBe(true)
+    expect(barOpen2.some((s) => s.visitId === String(quay99Visit.visitId))).toBe(true)
+    expect(barOpen2.some((s) => s.visitId === String(mixed2.visitId))).toBe(false)
+
+    const bar99Preview = await paymentApi.previewBill(String(bar99Visit.visitId))
+    expect(bar99Preview.dueVnd).toBe(121_000)
+    const quay99Preview = await paymentApi.previewBill(String(quay99Visit.visitId))
+    expect(quay99Preview.dueVnd).toBe(132_000)
+    const quay99Bill = await paymentApi.issueInvoice(String(quay99Visit.visitId), quay99Preview.version, "na45h06-quay99")
+    await expect(paymentApi.getBill(String(mixed2.visitId))).rejects.toMatchObject({ code: "PERMISSION_DENIED", status: 403 })
+
+    // Closed/paid QUAY99 session (no active allocations) still passes isBarAreaVisit for BAR
+    api.setSession(cashier)
+    await paymentApi.confirmCash(
+      String(quay99Visit.visitId),
+      quay99Bill.dueVnd,
+      quay99Bill.version,
+      "na45h06-quay99-pay",
+      quay99Bill.billCode,
+    )
+    api.setSession(bar)
+    expect((await paymentApi.getBill(String(quay99Visit.visitId))).billStatus).toBe("PAID")
   })
+
 
   it("listPaidBills & Receptionist audit access: returns current-shift PAID bills newest-first for RECEPTIONIST/ADMIN/OWNER and blocks CASHIER/WAITER/BAR", async () => {
     const a2Id = await visitIdByCode("A2")

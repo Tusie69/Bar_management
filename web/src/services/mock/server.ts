@@ -3189,17 +3189,17 @@ export class MockGamApi implements GamApi, DemoControls {
   }
 
   private isBarAreaVisit(visit: VisitRow, meta: PaymentVisitMeta): boolean {
-    const tableIds = visitTableIds(this.db, visit.id)
+    const liveIds = visitTableIds(this.db, visit.id)
+    const tableIds = liveIds.length > 0 ? liveIds : visitView(this.db, visit).tableIds
     if (tableIds.length > 0) {
       return tableIds.every((id) => {
         const table = this.db.tables.get(id)
         if (!table) return false
         const zone = this.db.zones.get(table.zoneId)
-        return zone ? zone.code === "BAR" : /^BAR/i.test(table.code)
+        return zone?.code === "BAR" || /^BAR/i.test(table.code.trim())
       })
     }
-    const info = this.resolveVisitTableInfo(visit, meta)
-    return info.tables.length > 0 && info.tables.every((code) => /^BAR/i.test(code))
+    return Boolean(meta.closedTables?.length) && meta.closedTables!.every((code) => /^BAR/i.test(code.trim()))
   }
 
   private assertBarScope(visit: VisitRow, meta: PaymentVisitMeta) {
