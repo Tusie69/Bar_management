@@ -11,6 +11,10 @@ import {
   type PayBill,
 } from "@/services/payment"
 
+type CancelHistoryEntryWithRequestId = PayBill["cancelHistory"] extends (infer T)[] | undefined
+  ? T & { requestId?: string }
+  : never
+
 type CancelDisplayItem =
   | {
       key: string
@@ -21,6 +25,8 @@ type CancelDisplayItem =
       approver?: string
       decidedAt?: string
       decisionNote?: string
+      recollectedAt?: string
+      sortAt: string
     }
   | {
       key: string
@@ -30,6 +36,10 @@ type CancelDisplayItem =
       at: string
       decisionNote?: string
       recollectedAt?: string
+      requestReason?: string
+      requestedBy?: string
+      requestedAt?: string
+      sortAt: string
     }
 
 function statusPillMeta(bill: Pick<PayBill, "status" | "billStatus">): { label: string; cls: string } {
@@ -266,19 +276,57 @@ export function DetailActionPane({
   }, [bill.cancelHistory])
 
   const cancelDisplayItems = useMemo<CancelDisplayItem[]>(() => {
-    const remainingHistory = billCancelHistory.map((h, idx) => ({ h, idx }))
-    const items: CancelDisplayItem[] = []
+    const reqById = new Map(billCancelRequests.map((req) => [req.id, req]))
+    const matchedRequestIds = new Set<string>()
+    const historyItems: CancelDisplayItem[] = []
 
-    for (const req of billCancelRequests) {
-      if (req.status === "APPROVED" && remainingHistory.length > 0) {
-        const matchIdx = remainingHistory.findIndex(
-          ({ h }) =>
-            (h.kind === "APPROVED" && h.reason === req.reason) ||
-            (h.kind === "DIRECT" && (h.reason === req.decisionNote || h.reason === req.reason)),
-        )
-        if (matchIdx >= 0) continue
+    for (let idx = 0; idx < billCancelHistory.length; idx++) {
+      const h = billCancelHistory[idx] as CancelHistoryEntryWithRequestId
+      const linkedReq = h.requestId ? reqById.get(h.requestId) : undefined
+      if (linkedReq) {
+        matchedRequestIds.add(linkedReq.id)
       }
-      items.push({
+
+      if (h.kind === "DIRECT") {
+        historyItems.push({
+          key: `hist-${idx}-${h.kind}-${h.at}`,
+          kind: "DIRECT",
+          reason: h.reason,
+          actor: h.actor,
+          at: h.at,
+          ...(h.decisionNote ? { decisionNote: h.decisionNote } : {}),
+          ...(h.recollectedAt ? { recollectedAt: h.recollectedAt } : {}),
+          ...(linkedReq
+            ? {
+                requestReason: linkedReq.reason,
+                requestedBy: linkedReq.requestedBy,
+                requestedAt: linkedReq.requestedAt,
+              }
+            : {}),
+          sortAt: h.at,
+        })
+      } else {
+        const approver = h.approver ?? linkedReq?.decidedBy
+        const decisionNote = h.decisionNote ?? linkedReq?.decisionNote
+        historyItems.push({
+          key: linkedReq ? `req-${linkedReq.id}` : `hist-${idx}-${h.kind}-${h.at}`,
+          kind: "APPROVED",
+          reason: linkedReq?.reason ?? h.reason,
+          actor: linkedReq?.requestedBy ?? h.actor,
+          at: linkedReq?.requestedAt ?? h.at,
+          ...(approver ? { approver } : {}),
+          ...(linkedReq ? { decidedAt: linkedReq.decidedAt ?? h.at } : {}),
+          ...(decisionNote ? { decisionNote } : {}),
+          ...(h.recollectedAt ? { recollectedAt: h.recollectedAt } : {}),
+          sortAt: linkedReq?.decidedAt ?? h.at,
+        })
+      }
+    }
+
+    const requestItems: CancelDisplayItem[] = []
+    for (const req of billCancelRequests) {
+      if (matchedRequestIds.has(req.id)) continue
+      requestItems.push({
         key: `req-${req.id}`,
         kind: req.status,
         reason: req.reason,
@@ -287,22 +335,14 @@ export function DetailActionPane({
         approver: req.decidedBy,
         decidedAt: req.decidedAt,
         decisionNote: req.decisionNote,
+        sortAt: req.decidedAt ?? req.requestedAt,
       })
     }
 
-    for (const { h, idx } of remainingHistory) {
-      items.push({
-        key: `hist-${idx}-${h.kind}-${h.at}`,
-        kind: h.kind,
-        reason: h.reason,
-        actor: h.actor,
-        at: h.at,
-        ...(h.kind === "APPROVED" && h.approver ? { approver: h.approver } : {}),
-        ...(h.decisionNote ? { decisionNote: h.decisionNote } : {}),
-        ...(h.recollectedAt ? { recollectedAt: h.recollectedAt } : {}),
-      })
+    const items = [...requestItems, ...historyItems]
+    if (items.length > 1 && items.every((item) => !Number.isNaN(Date.parse(item.sortAt)))) {
+      items.sort((a, b) => Date.parse(b.sortAt) - Date.parse(a.sortAt))
     }
-
     return items
   }, [billCancelHistory, billCancelRequests])
 
@@ -563,8 +603,19 @@ export function DetailActionPane({
                     </div>
                     {item.kind === "DIRECT" ? (
                       <>
+                        {item.requestReason ? (
+                          <span className="text-xs text-[var(--text-muted)]">
+                            {[
+                              `Yêu cầu gốc: ${item.requestReason}`,
+                              item.requestedBy ? `Người yêu cầu: ${item.requestedBy}` : "",
+                              item.requestedAt ?? "",
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        ) : null}
                         <span className="text-xs text-[var(--text-muted)]">
-                          {`Lý do: ${item.reason}`}
+                          {item.requestReason ? `Lý do huỷ trực tiếp: ${item.reason}` : `Lý do: ${item.reason}`}
                         </span>
                         <span className="text-xs text-[var(--text-muted)]">
                           {[
@@ -584,12 +635,15 @@ export function DetailActionPane({
                         <span className="text-xs text-[var(--text-muted)]">
                           {`Lý do: ${item.reason} · ${item.actor} (${item.at})`}
                         </span>
-                        {item.approver || item.decisionNote ? (
+                        {item.approver || item.decisionNote || (billCancelHistory.length > 1 && item.recollectedAt) ? (
                           <span className="text-xs text-[var(--text-muted)]">
                             {[
                               item.approver ? `Người duyệt: ${item.approver}` : "",
                               item.decidedAt ?? "",
                               item.decisionNote ? `Ghi chú: ${item.decisionNote}` : "",
+                              billCancelHistory.length > 1 && item.recollectedAt
+                                ? `Thu lại: ${item.recollectedAt}`
+                                : "",
                             ]
                               .filter(Boolean)
                               .join(" · ")}
