@@ -767,7 +767,7 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
     expect(recollectedHtml).toContain("Người huỷ: Linh · Lễ tân")
     expect(recollectedHtml).toContain("Gửi yêu cầu huỷ")
 
-    // Deduplicates APPROVED history when present in both PayBill.cancelHistory and cancelRequests
+    // Deduplicates APPROVED history ONLY by requestId when present in both PayBill.cancelHistory and cancelRequests
     const approvedBillWithBothSources = makeBill({
       billCode: "B1279",
       billStatus: "PAID",
@@ -777,6 +777,7 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
       cancelHistory: [
         {
           kind: "APPROVED",
+          requestId: "cr-dup",
           reason: "Thu nhầm tiền mặt",
           actor: "Thu ngân",
           approver: "Admin Edit",
@@ -819,6 +820,190 @@ describe("W3 TN-14: PAID bill cancel request (cashier side only)", () => {
     expect(dedupHtml.match(/Thu nhầm tiền mặt/g)?.length).toBe(1)
     expect(dedupHtml).toContain("Lần thanh toán sau")
     expect(dedupHtml).toContain("Gửi yêu cầu huỷ")
+  })
+
+  it("shows both original request reason/requester and direct-cancel reason/canceller plus re-collect mark via requestId, and renders separately without requestId (NA45H-18)", () => {
+    const directOverPendingReq: CancelRequest = {
+      id: "cr-direct-over-pending",
+      billCode: "B1279",
+      visitId: "1283",
+      code: "A3",
+      dueVnd: 155_000,
+      reason: "Boss cashier original reason",
+      requestedBy: "Thu ngân · Thu ngân",
+      requestedAt: "21:42",
+      status: "APPROVED",
+      decidedBy: "Linh · Lễ tân",
+      decidedAt: "21:44",
+      decisionNote: "Lễ tân huỷ trực tiếp lý do B",
+    }
+    const recollectedDirectOverPendingBill = makeBill({
+      billCode: "B1279",
+      billStatus: "PAID",
+      status: "PAID",
+      paidAt: "21:55",
+      paidBy: "Thu ngân",
+      cancelHistory: [
+        {
+          kind: "DIRECT",
+          requestId: "cr-direct-over-pending",
+          reason: "Lễ tân huỷ trực tiếp lý do B",
+          actor: "Linh · Lễ tân",
+          at: "21:44",
+          recollectedAt: "21:55",
+        },
+      ],
+    })
+
+    const linkedHtml = renderToStaticMarkup(
+      createElement(DetailActionPane, {
+        bill: recollectedDirectOverPendingBill,
+        bills: [recollectedDirectOverPendingBill],
+        selectedBillCode: "B1279",
+        cancelRequests: [directOverPendingReq],
+        canCollect: true,
+        canRequestCancel: true,
+        isWaiter: false,
+        busy: false,
+        onPreview: () => undefined,
+        onCollect: () => undefined,
+        onRequestPayment: () => undefined,
+        onRequestCancel: async () => undefined,
+      }),
+    )
+    expect(linkedHtml).toContain("Lần thanh toán sau")
+    expect(linkedHtml).toContain("Đã thu lại lúc 21:55")
+    expect(linkedHtml).toContain("Đã huỷ trực tiếp (DIRECT)")
+    expect(linkedHtml).toContain("Boss cashier original reason")
+    expect(linkedHtml).toContain("Thu ngân · Thu ngân")
+    expect(linkedHtml).toContain("Lễ tân huỷ trực tiếp lý do B")
+    expect(linkedHtml).toContain("Linh · Lễ tân")
+    expect(linkedHtml.match(/Lễ tân huỷ trực tiếp lý do B/g)?.length).toBe(1)
+    expect(linkedHtml).toContain("Gửi yêu cầu huỷ")
+
+    // Without requestId, never dedupe by reason text: request and history entry appear separately
+    const unlinkedBill = makeBill({
+      billCode: "B1279",
+      billStatus: "PAID",
+      status: "PAID",
+      paidAt: "21:55",
+      paidBy: "Thu ngân",
+      cancelHistory: [
+        {
+          kind: "DIRECT",
+          reason: "Lễ tân huỷ trực tiếp lý do B",
+          actor: "Linh · Lễ tân",
+          at: "21:44",
+          recollectedAt: "21:55",
+        },
+      ],
+    })
+    const unlinkedHtml = renderToStaticMarkup(
+      createElement(DetailActionPane, {
+        bill: unlinkedBill,
+        bills: [unlinkedBill],
+        selectedBillCode: "B1279",
+        cancelRequests: [directOverPendingReq],
+        canCollect: true,
+        canRequestCancel: true,
+        isWaiter: false,
+        busy: false,
+        onPreview: () => undefined,
+        onCollect: () => undefined,
+        onRequestPayment: () => undefined,
+        onRequestCancel: async () => undefined,
+      }),
+    )
+    expect(unlinkedHtml).toContain("Boss cashier original reason")
+    expect(unlinkedHtml).toContain("Thu ngân · Thu ngân")
+    expect(unlinkedHtml).toContain("Đã huỷ trực tiếp (DIRECT)")
+    expect(unlinkedHtml).toContain("Đã duyệt huỷ (APPROVED)")
+    expect(unlinkedHtml).toContain("Lễ tân huỷ trực tiếp lý do B")
+    expect(unlinkedHtml).toContain("Gửi yêu cầu huỷ")
+  })
+
+  it("keeps two requests with identical reason text across two collections distinct (NA45H-18)", () => {
+    const sameReason = "Thu nhầm tiền mặt"
+    const req1: CancelRequest = {
+      id: "cr-col-1",
+      billCode: "B1279",
+      visitId: "1283",
+      code: "A3",
+      dueVnd: 155_000,
+      reason: sameReason,
+      requestedBy: "Thu ngân",
+      requestedAt: "2026-11-27T21:10:00.000Z",
+      status: "APPROVED",
+      decidedBy: "Admin Edit",
+      decidedAt: "2026-11-27T21:12:00.000Z",
+      decisionNote: "Duyệt lần 1",
+    }
+    const req2: CancelRequest = {
+      id: "cr-col-2",
+      billCode: "B1279",
+      visitId: "1283",
+      code: "A3",
+      dueVnd: 155_000,
+      reason: sameReason,
+      requestedBy: "Thu ngân",
+      requestedAt: "2026-11-27T21:20:00.000Z",
+      status: "APPROVED",
+      decidedBy: "Linh · Lễ tân",
+      decidedAt: "2026-11-27T21:22:00.000Z",
+      decisionNote: "Huỷ trực tiếp lần 2",
+    }
+    const billTwoCollections = makeBill({
+      billCode: "B1279",
+      billStatus: "PAID",
+      status: "PAID",
+      paidAt: "21:25",
+      paidBy: "Thu ngân",
+      cancelHistory: [
+        {
+          kind: "DIRECT",
+          requestId: "cr-col-2",
+          reason: "Huỷ trực tiếp lần 2",
+          actor: "Linh · Lễ tân",
+          at: "2026-11-27T21:22:00.000Z",
+          recollectedAt: "2026-11-27T21:25:00.000Z",
+        },
+        {
+          kind: "APPROVED",
+          requestId: "cr-col-1",
+          reason: sameReason,
+          actor: "Thu ngân",
+          approver: "Admin Edit",
+          decisionNote: "Duyệt lần 1",
+          at: "2026-11-27T21:12:00.000Z",
+          recollectedAt: "2026-11-27T21:15:00.000Z",
+        },
+      ],
+    })
+
+    const twoHistHtml = renderToStaticMarkup(
+      createElement(DetailActionPane, {
+        bill: billTwoCollections,
+        bills: [billTwoCollections],
+        selectedBillCode: "B1279",
+        cancelRequests: [req2, req1],
+        canCollect: true,
+        canRequestCancel: true,
+        isWaiter: false,
+        busy: false,
+        onPreview: () => undefined,
+        onCollect: () => undefined,
+        onRequestPayment: () => undefined,
+        onRequestCancel: async () => undefined,
+      }),
+    )
+    expect(twoHistHtml.match(/Thu nhầm tiền mặt/g)?.length).toBe(2)
+    expect(twoHistHtml).toContain("Đã huỷ trực tiếp (DIRECT)")
+    expect(twoHistHtml).toContain("Đã duyệt huỷ (APPROVED)")
+    expect(twoHistHtml).toContain("Duyệt lần 1")
+    expect(twoHistHtml).toContain("Huỷ trực tiếp lần 2")
+    expect(twoHistHtml).toContain("Thu lại: 2026-11-27T21:15:00.000Z")
+    expect(twoHistHtml).toContain("Thu lại: 2026-11-27T21:25:00.000Z")
+    expect(twoHistHtml).toContain("Gửi yêu cầu huỷ")
   })
 
   it("resolves target billCode from notifications and opens exact bill on multi-bill closed session (NA45H-13)", () => {
