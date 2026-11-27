@@ -5,6 +5,7 @@ import { roleCan, type Permission } from "@/domain/access"
 import { api } from "@/services"
 import { isPaymentAvailable } from "@/services/payment"
 import { useSession } from "@/state/session"
+import { useWaiterCatalogQuery } from "@/features/waiter/use-waiter-floor"
 import { isBarGuestSession } from "@/features/waiter/waiter-invoice-model"
 import { BarBillDrawer } from "./bar-bill-drawer"
 import { PreparationQueue } from "./preparation-queue"
@@ -24,9 +25,10 @@ export default function PreparationPage() {
     [permissions, role],
   )
   const canBarBill = role === "BAR" && station === "BAR" && isPaymentAvailable
+  const catalogQuery = useWaiterCatalogQuery(canBarBill)
   const isBarTicket = useCallback(
-    (ticket: PreparationTicket) => isBarGuestSession({ tables: ticket.tableCodes }),
-    [],
+    (ticket: PreparationTicket) => isBarGuestSession({ tables: ticket.tableCodes }, catalogQuery.data?.tables),
+    [catalogQuery.data?.tables],
   )
 
   return (

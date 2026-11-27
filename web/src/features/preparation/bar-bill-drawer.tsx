@@ -3,6 +3,7 @@ import { AlertTriangle, ChevronRight, Clock, Link2, ReceiptText } from "lucide-r
 import { useState } from "react"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useWaiterCatalogQuery } from "@/features/waiter/use-waiter-floor"
 import { isBarGuestSession, toWaiterErrorMessage, type WaiterBillView } from "@/features/waiter/waiter-invoice-model"
 import { WaiterInvoiceWorkspace } from "@/features/waiter/waiter-invoice-views"
 import { formatVnd, paymentApi, type PayBillSummary, type PaymentApi } from "@/services/payment"
@@ -79,6 +80,7 @@ export function BarBillDrawerBody({
     queryFn: () => api.listOpen(),
     enabled: open && selectedVisitId === null,
   })
+  const catalogQuery = useWaiterCatalogQuery(open && selectedVisitId === null)
 
   if (selectedVisitId !== null) {
     return (
@@ -96,11 +98,13 @@ export function BarBillDrawerBody({
     )
   }
 
-  const barSessions = (openQuery.data ?? []).filter(isBarGuestSession)
+  const barSessions = (openQuery.data ?? []).filter((session) =>
+    isBarGuestSession(session, catalogQuery.data?.tables),
+  )
 
   return (
     <div className="pay-root">
-      {openQuery.isPending ? (
+      {openQuery.isPending || catalogQuery.isLoading ? (
         <div className="grid gap-2" aria-busy="true">
           <Skeleton className="h-16 rounded-xl" />
           <Skeleton className="h-16 rounded-xl" />
