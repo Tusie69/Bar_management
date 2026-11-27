@@ -12,10 +12,13 @@ export interface MockSyncTransport {
   readLatest(): MockSyncPacket | null
   publish(packet: MockSyncPacket): void
   subscribe(listener: (packet: MockSyncPacket) => void): () => void
+  withLock?<T>(fn: () => Promise<T> | T): Promise<T>
+  tryWithLock?(fn: () => void): void
 }
 
 const SYNC_STORAGE_KEY = "21gam.mock.sync.v1"
 const SYNC_CHANNEL_NAME = "21gam.mock.sync.v1"
+const SYNC_LOCK_NAME = "21gam.mock.sync.v1.lock"
 
 export function stringifyMockSnapshot(state: unknown): string {
   return JSON.stringify(state, function (this: Record<string, unknown>, key: string, val: unknown) {
@@ -73,6 +76,7 @@ function parsePacket(raw: string | null): MockSyncPacket | null {
  * Uses BroadcastChannel for instant push + localStorage for late-opening tabs and backup delivery.
  */
 export function createBrowserMockSyncTransport(): MockSyncTransport {
+  let lockQueue: Promise<void> = Promise.resolve()
   return {
     readLatest() {
       try {
@@ -96,6 +100,26 @@ export function createBrowserMockSyncTransport(): MockSyncTransport {
           /* ignore BroadcastChannel failures */
         }
       }
+    },
+    withLock<T>(fn: () => Promise<T> | T): Promise<T> {
+      if (typeof navigator !== "undefined" && navigator.locks?.request) {
+        return navigator.locks.request(SYNC_LOCK_NAME, () => fn())
+      }
+      const next = lockQueue.then(() => fn())
+      lockQueue = next.then(
+        () => undefined,
+        () => undefined,
+      )
+      return next
+    },
+    tryWithLock(fn) {
+      if (typeof navigator !== "undefined" && navigator.locks?.request) {
+        void navigator.locks.request(SYNC_LOCK_NAME, { ifAvailable: true }, (lock) => {
+          if (lock) fn()
+        })
+        return
+      }
+      fn()
     },
     subscribe(listener) {
       let channel: BroadcastChannel | null = null
@@ -136,12 +160,21 @@ export function createBrowserMockSyncTransport(): MockSyncTransport {
 /** In-memory transport for unit testing multi-instance mock sync in Node. */
 export function createInMemoryMockSyncTransport(): MockSyncTransport {
   let latest: MockSyncPacket | null = null
+  let lockQueue: Promise<void> = Promise.resolve()
   const listeners = new Set<(packet: MockSyncPacket) => void>()
   return {
     readLatest: () => latest,
     publish(packet) {
       latest = packet
       for (const listener of listeners) listener(packet)
+    },
+    withLock<T>(fn: () => Promise<T> | T): Promise<T> {
+      const next = lockQueue.then(() => fn())
+      lockQueue = next.then(
+        () => undefined,
+        () => undefined,
+      )
+      return next
     },
     subscribe(listener) {
       listeners.add(listener)
