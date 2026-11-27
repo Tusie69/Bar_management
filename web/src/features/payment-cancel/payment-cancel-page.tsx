@@ -17,7 +17,6 @@ import {
   canDirectCancelPaid,
   canReadPaymentAudit,
   collectAuditBillCodes,
-  isVisitOpenAfterCancelCheck,
   type PaidBillCandidate,
 } from "./cancel-model"
 import { CancelQueuePanel } from "./cancel-queue-panel"
@@ -152,11 +151,6 @@ export function PaymentCancelWorkspace({
     [allAuditQuery.data, auditQuery.data, paidBills, requestsQuery.data],
   )
 
-  const checkVisitOpen = useCallback(
-    (visitId: string) => isVisitOpenAfterCancelCheck(visitId, payApi, canCollect),
-    [canCollect, payApi],
-  )
-
   if (!isPaymentAvailable) {
     return (
       <div className="pc-root p-6">
@@ -243,7 +237,6 @@ export function PaymentCancelWorkspace({
                 error={requestsQuery.error}
                 readOnly={isReadOnlyAdmin}
                 api={payApi}
-                checkVisitOpen={checkVisitOpen}
                 onRefresh={() => void requestsQuery.refetch()}
                 onDecided={async (updated) => {
                   setAuditBillFilter(updated.billCode)
@@ -271,7 +264,6 @@ export function PaymentCancelWorkspace({
                 initialBillCode={selectedBillCode}
                 api={payApi}
                 canViewAudit={showAudit}
-                checkVisitOpen={checkVisitOpen}
                 onCancelled={async (billCode) => {
                   setSelectedBillCode("")
                   setCancelledBillCode(billCode)

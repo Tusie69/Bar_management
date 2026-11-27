@@ -3,12 +3,10 @@ import { useState } from "react"
 import { isApiError } from "@/services"
 import { formatVnd, paymentApi, type PaymentApi } from "@/services/payment"
 import {
-  buildDirectCancelOutcome,
   formatCancelTime,
   formatPaidMethod,
   formatPaidTableLabel,
-  isVisitOpenAfterCancelCheck,
-  resolveCancelSessionImpact,
+  submitDirectCancel,
   type PaidBillCandidate,
 } from "./cancel-model"
 
@@ -18,7 +16,6 @@ export function DirectCancelPanel({
   initialBillCode = "",
   api = paymentApi,
   canViewAudit = false,
-  checkVisitOpen,
   onCancelled,
   onInspectAudit,
   onClose,
@@ -28,7 +25,6 @@ export function DirectCancelPanel({
   initialBillCode?: string
   api?: PaymentApi
   canViewAudit?: boolean
-  checkVisitOpen?: (visitId: string) => Promise<boolean | null>
   onCancelled?: (billCode: string) => void | Promise<void>
   onInspectAudit?: (billCode: string) => void
   onClose?: () => void
@@ -70,14 +66,9 @@ export function DirectCancelPanel({
     setApiError(null)
     setOutcome(null)
     try {
-      const visitId = activeBill?.visitId ?? ""
-      const probeOpen = checkVisitOpen ?? ((id: string) => isVisitOpenAfterCancelCheck(id, api, false))
-      const wasOpenBefore = visitId ? await probeOpen(visitId) : null
-      await api.cancelPaid(code, trimmedReason)
-      const isOpenAfter = visitId ? await probeOpen(visitId) : null
-      const impact = resolveCancelSessionImpact(wasOpenBefore, isOpenAfter)
+      const nextOutcome = await submitDirectCancel(api, code, trimmedReason)
       setReason("")
-      setOutcome(buildDirectCancelOutcome(code, impact))
+      setOutcome(nextOutcome)
       await onCancelled?.(code)
     } catch (err) {
       setApiError(
