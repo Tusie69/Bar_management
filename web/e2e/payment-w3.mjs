@@ -455,6 +455,67 @@ try {
       await expect(page.locator(".pay-bill-item", { hasText: a2Bill2 })).toHaveAttribute("aria-pressed", "true")
       await expect(page.getByText("Giữ nguyên bill 2")).toBeVisible()
 
+      // NA45H-11: Receptionist (independent tab) direct-cancels a2Bill1 -> Cashier sees history & re-collects -> S1 bell opens a2Bill1 with history + re-collect milestone + new request allowed
+      await page.getByRole("button", { name: "Phiên đang mở" }).click()
+      await expect(page).toHaveURL(/\/payment$/)
+
+      const receptionPage = await context.newPage()
+      receptionPage.on("pageerror", (e) => errors.push(e.message))
+      receptionPage.on("console", (msg) => {
+        if (msg.type() === "error") errors.push(msg.text())
+      })
+      await receptionPage.addInitScript(() => {
+        localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme: "light" }))
+      })
+      await receptionPage.goto(`${base}/cancel-payment`, { waitUntil: "networkidle" })
+
+      const directTargetCard = receptionPage.getByTestId(`pc-paid-${a2Bill1}`)
+      await expect(directTargetCard).toBeVisible()
+      await directTargetCard.getByRole("button", { name: "Chọn huỷ thanh toán" }).click()
+      const directForm = receptionPage.getByTestId(`pc-direct-form-${a2Bill1}`)
+      await expect(directForm).toBeVisible()
+      await directForm.getByLabel("Lý do huỷ thanh toán (bắt buộc)").fill("Lễ tân huỷ trực tiếp kiểm tra NA45H-11")
+      await directForm.getByRole("button", { name: "Xác nhận huỷ thanh toán" }).click()
+      await expect(receptionPage.getByTestId("pc-direct-outcome")).toBeVisible({ timeout: 10000 })
+      await receptionPage.close()
+
+      const a2Reopened = page.locator(".pay-sess", { hasText: "A2" })
+      await expect(a2Reopened).toBeVisible({ timeout: 10000 })
+      if (!(await a2Reopened.evaluate((el) => el.classList.contains("sel")))) {
+        await a2Reopened.click()
+      }
+      await a2Reopened.click()
+      await expect(page.locator(".pay-bill-item", { hasText: a2Bill1 }).first()).toHaveAttribute("aria-pressed", "true")
+      await expect(page.getByText("Lịch sử huỷ thanh toán")).toBeVisible()
+      await expect(page.getByText(/Đã huỷ trực tiếp \(DIRECT\)/)).toBeVisible()
+      await expect(page.getByText("Lễ tân huỷ trực tiếp kiểm tra NA45H-11")).toBeVisible()
+      await expect(page.getByText(/Người huỷ:/)).toBeVisible()
+
+      await page.getByRole("button", { name: new RegExp(`Thu tiền · ${a2Bill1}$`) }).click()
+      await page.getByRole("button", { name: /Tiền mặt/ }).click()
+      await page.locator(".pay-chips .pay-chip").first().click()
+      await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+      await expect(page.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
+      await page.getByRole("button", { name: "Về danh sách Phiên" }).click()
+      await expect(page).toHaveURL(/\/payment$/)
+
+      await page.getByRole("button", { name: /Thông báo thanh toán/ }).click()
+      await page.locator(".pay-ntf", { hasText: "Đã thanh toán" }).filter({ hasText: "A2" }).first().click()
+      await expect(page).toHaveURL(new RegExp(`/payment/${a2VisitId}\\?bill=${a2Bill1}`))
+      await expect(page.getByText("Lần thanh toán sau")).toBeVisible()
+      await expect(page.getByText(/Đã thu lại lúc/)).toBeVisible()
+      await expect(page.getByText("Lịch sử huỷ thanh toán")).toBeVisible()
+      await expect(page.getByText(/Đã huỷ trực tiếp \(DIRECT\)/)).toBeVisible()
+      await expect(page.getByText("Lễ tân huỷ trực tiếp kiểm tra NA45H-11")).toBeVisible()
+      await expect(page.getByText(/Người huỷ:/)).toBeVisible()
+      await expect(page.getByRole("button", { name: "Gửi yêu cầu huỷ" })).toBeVisible()
+
+      await page.getByRole("button", { name: "Gửi yêu cầu huỷ" }).click()
+      await page.getByLabel("Lý do gửi yêu cầu huỷ (bắt buộc)").fill("Yêu cầu mới sau huỷ trực tiếp")
+      await page.getByRole("button", { name: "Xác nhận gửi yêu cầu huỷ" }).click()
+      await expect(page.getByText(/Đang chờ duyệt \(PENDING\)/)).toBeVisible()
+      await expect(page.getByText(/Đã huỷ trực tiếp \(DIRECT\)/)).toBeVisible()
+
       assert.deepEqual(errors, [], `w3 1440 console errors: ${errors.join(" | ")}`)
       console.log("PASS w3 1440 HU-44 v1.1 contract flow")
     } finally {
