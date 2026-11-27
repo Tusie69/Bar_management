@@ -97,7 +97,13 @@ try {
     const barIssued = await paymentApi.issueInvoice(barSummary.visitId, barPreview.version, "e2e-w1-bar-inv")
     let barBlocked = false
     try {
-      await paymentApi.confirmCash(barSummary.visitId, barIssued.dueVnd, barIssued.version, "e2e-w1-bar-pay", barIssued.billCode)
+      await paymentApi.confirmCash(
+        barSummary.visitId,
+        barIssued.dueVnd,
+        barIssued.version,
+        "e2e-w1-bar-pay",
+        barIssued.billCode,
+      )
     } catch (e) {
       barBlocked = e?.code === "PERMISSION_DENIED" && e?.status === 403
     }
@@ -116,8 +122,11 @@ try {
     api.setSession(waiter)
     const a3Serving = await paymentApi.getBill(a3VisitId)
     const a3Bill1 = await paymentApi.issueInvoice(a3VisitId, a3Serving.version, "e2e-w1-a3-inv1")
-    const afterRound2 = mockCtrl.addOrderLines(a3VisitId, [{ name: "Mojito", unit: "Ly", qty: 1, unitPriceVnd: 100_000 }])
-    if (afterRound2.status !== "SERVING") throw new Error(`Expected A3 back to SERVING after order round 2, got ${afterRound2.status}`)
+    const afterRound2 = mockCtrl.addOrderLines(a3VisitId, [
+      { name: "Mojito", unit: "Ly", qty: 1, unitPriceVnd: 100_000 },
+    ])
+    if (afterRound2.status !== "SERVING")
+      throw new Error(`Expected A3 back to SERVING after order round 2, got ${afterRound2.status}`)
     const a3Preview2 = await paymentApi.previewBill(a3VisitId)
     if (a3Preview2.dueVnd !== 110_000) throw new Error(`Expected round 2 preview 110000, got ${a3Preview2.dueVnd}`)
     const a3Bill2 = await paymentApi.issueInvoice(a3VisitId, a3Preview2.version, "e2e-w1-a3-inv2")
@@ -130,22 +139,45 @@ try {
     const midSession = await paymentApi.getSessionBills(a3VisitId)
     const midFloorA3 = (await api.getFloorState(clock.now())).tables.find((t) => t.tableId === tableIdOf("A3")).state
     if (midSession.status !== "AWAITING_PAYMENT" || midFloorA3 !== "seated") {
-      throw new Error(`Expected A3 still AWAITING_PAYMENT/seated after bill 1 pay, got ${midSession.status}/${midFloorA3}`)
+      throw new Error(
+        `Expected A3 still AWAITING_PAYMENT/seated after bill 1 pay, got ${midSession.status}/${midFloorA3}`,
+      )
     }
     await paymentApi.confirmTransfer(a3VisitId, false, midSession.version, "e2e-w1-a3-pay2", a3Bill2.billCode)
     const endFloorA3 = (await api.getFloorState(clock.now())).tables.find((t) => t.tableId === tableIdOf("A3")).state
     if (endFloorA3 !== "free") throw new Error(`Expected A3 free after all bills paid, got ${endFloorA3}`)
 
-    // NA45H-01: cancelPaid on A3 succeeds even with seeded future bd+2 HOLD
+    // NA45H-01 + NA45H-12 + NA45H-11: cancelPaid on A3 succeeds even with seeded future bd+2 HOLD,
+    // returns CancelEffect, and populates cancelHistory with recollectedAt on re-collection
     const receptionist = byRole("RECEPTIONIST")
     api.setSession(receptionist)
     const paidBills = await paymentApi.listPaidBills()
     if (!paidBills.some((b) => b.billCode === a3Bill2.billCode)) {
       throw new Error("listPaidBills missing A3 bill2")
     }
-    await paymentApi.cancelPaid(a3Bill2.billCode, "E2E NA45H-01 reopen A3 despite future HOLD")
-    const reopenedFloorA3 = (await api.getFloorState(clock.now())).tables.find((t) => t.tableId === tableIdOf("A3")).state
+    const a3DirectEffect = await paymentApi.cancelPaid(a3Bill2.billCode, "E2E NA45H-01 reopen A3 despite future HOLD")
+    if (!a3DirectEffect.sessionReopened || a3DirectEffect.closedTurnsDelta !== -1) {
+      throw new Error(`Expected reopen CancelEffect on A3, got ${JSON.stringify(a3DirectEffect)}`)
+    }
+    const reopenedFloorA3 = (await api.getFloorState(clock.now())).tables.find(
+      (t) => t.tableId === tableIdOf("A3"),
+    ).state
     if (reopenedFloorA3 !== "seated") throw new Error(`Expected A3 reopened to seated, got ${reopenedFloorA3}`)
+    api.setSession(cashier)
+    const a3AfterDirect = await paymentApi.getSessionBills(a3VisitId)
+    const a3Bill2Unpaid = a3AfterDirect.bills.find((b) => b.billCode === a3Bill2.billCode)
+    if (a3Bill2Unpaid?.cancelHistory?.[0]?.kind !== "DIRECT" || a3Bill2Unpaid?.cancelHistory?.[0]?.recollectedAt) {
+      throw new Error(`Unexpected cancelHistory after direct cancel: ${JSON.stringify(a3Bill2Unpaid?.cancelHistory)}`)
+    }
+    await paymentApi.confirmCash(a3VisitId, a3Bill2.dueVnd, a3AfterDirect.version, "e2e-w1-a3-repay2", a3Bill2.billCode)
+    const a3Bill2Repaid = (await paymentApi.getSessionBills(a3VisitId)).bills.find(
+      (b) => b.billCode === a3Bill2.billCode,
+    )
+    if (!a3Bill2Repaid?.cancelHistory?.[0]?.recollectedAt) {
+      throw new Error(
+        `Missing recollectedAt on A3 bill2 after re-collection: ${JSON.stringify(a3Bill2Repaid?.cancelHistory)}`,
+      )
+    }
 
     // D2 + NA45H-02 + NA45H-03 + NA45H-04 cancel flow on A2
     api.setSession(cashier)
@@ -174,13 +206,25 @@ try {
     }
     const approved = await paymentApi.decideCancel(cancelReq.id, true, "Duyệt hủy")
     unsub()
+    if (!approved.effect?.sessionReopened || approved.effect?.closedTurnsDelta !== -1) {
+      throw new Error(`Expected approved CancelEffect on A2, got ${JSON.stringify(approved.effect)}`)
+    }
     if (!events.includes("PAYMENT_CANCEL_REQUESTED") || !events.includes("PAYMENT_CANCELLED")) {
       throw new Error(`Missing cancel change events: ${events.join(",")}`)
     }
     api.setSession(cashier)
     const myApproved = await paymentApi.listMyCancelRequests(a2Bill.billCode)
     if (myApproved[0]?.status !== "APPROVED") throw new Error("Cashier listMyCancelRequests missing APPROVED")
-    const a2ReopenedFloor = (await api.getFloorState(clock.now())).tables.find((t) => t.tableId === tableIdOf("A2")).state
+    const a2ReopenedBill = await paymentApi.getBill(a2VisitId)
+    if (
+      a2ReopenedBill.cancelHistory?.[0]?.kind !== "APPROVED" ||
+      a2ReopenedBill.cancelHistory?.[0]?.decisionNote !== "Duyệt hủy"
+    ) {
+      throw new Error(`Missing APPROVED cancelHistory on A2: ${JSON.stringify(a2ReopenedBill.cancelHistory)}`)
+    }
+    const a2ReopenedFloor = (await api.getFloorState(clock.now())).tables.find(
+      (t) => t.tableId === tableIdOf("A2"),
+    ).state
     const audit = await paymentApi.listAudit(a2Bill.billCode)
     const approvedAudit = audit.find((e) => e.action === "CANCEL_APPROVED")
     if (!approvedAudit || approvedAudit.reason !== "Khách đổi sang QR" || approvedAudit.decisionNote !== "Duyệt hủy") {
@@ -261,6 +305,168 @@ try {
     assert.deepEqual(syncErrors, [])
   } finally {
     await syncContext.close()
+  }
+
+  // NA45H-17 Boss "Kiểm lại" interleaving: two concurrent Cashier windows at same origin
+  // + open Admin window + newly opened Admin window, plus same-bill single-PENDING verification.
+  const raceContext = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  try {
+    const cashierPageA = await raceContext.newPage()
+    const cashierPageB = await raceContext.newPage()
+    const adminOpenPage = await raceContext.newPage()
+    const raceErrors = []
+    for (const p of [cashierPageA, cashierPageB, adminOpenPage]) {
+      p.on("pageerror", (err) => raceErrors.push(`pageerror: ${err.message}`))
+      p.on("console", (msg) => {
+        if (msg.type() === "error") raceErrors.push(`console.error: ${msg.text()}`)
+      })
+    }
+
+    await adminOpenPage.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 7, theme: "light" }))
+    })
+    await adminOpenPage.goto(`${BASE_URL}/cancel-payment`, { waitUntil: "networkidle" })
+    await expect(adminOpenPage.getByText("Chờ duyệt (0)")).toBeVisible()
+
+    await cashierPageA.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 5, theme: "light" }))
+    })
+    await cashierPageA.goto(`${BASE_URL}/payment`, { waitUntil: "networkidle" })
+    const setupBills = await cashierPageA.evaluate(async () => {
+      const [{ clock, demo }, { paymentApi }] = await Promise.all([
+        import("/src/services/index.ts"),
+        import("/src/services/payment/index.ts"),
+      ])
+      demo.reset()
+      clock.resetToScenario()
+      const open = await paymentApi.listOpen()
+      const visitIdOf = (code) => {
+        const hit = open.find((b) => b.code === code)
+        if (!hit) throw new Error(`Missing open visit for ${code}`)
+        return hit.visitId
+      }
+      const a2Id = visitIdOf("A2")
+      const a3Id = visitIdOf("A3")
+      const g05Id = visitIdOf("G05")
+      const payTable = async (visitId, tag) => {
+        const cur = await paymentApi.getBill(visitId)
+        const issued = await paymentApi.issueInvoice(visitId, cur.version, `na45h17-${tag}-inv`)
+        await paymentApi.confirmCash(visitId, issued.dueVnd, issued.version, `na45h17-${tag}-pay`, issued.billCode)
+        return issued.billCode
+      }
+      const billA2 = await payTable(a2Id, "a2")
+      const billA3 = await payTable(a3Id, "a3")
+      const billG05 = await payTable(g05Id, "g05")
+      return { billA2, billA3, billG05, a2Id, a3Id }
+    })
+
+    await cashierPageB.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 5, theme: "light" }))
+    })
+    await cashierPageB.goto(`${BASE_URL}/payment`, { waitUntil: "networkidle" })
+
+    // Ensure Cashier B also has an older snapshot loaded before both concurrently request cancel
+    await cashierPageB.evaluate(async (visitId) => {
+      const { paymentApi } = await import("/src/services/payment/index.ts")
+      await paymentApi.getBill(visitId)
+    }, setupBills.a3Id)
+
+    // Interleave two concurrent requestCancel calls on two different bills across two Cashier windows
+    // while holding Cashier A's Web Lock briefly so Cashier B genuinely contends on the cross-tab lock.
+    const [resA, resB] = await Promise.all([
+      cashierPageA.evaluate(async (billCode) => {
+        const origRequest = navigator.locks.request.bind(navigator.locks)
+        navigator.locks.request = (name, ...args) => {
+          const cb = args[args.length - 1]
+          const opts = args.length > 1 ? args[0] : undefined
+          const wrapped = async (lock) => {
+            const out = await cb(lock)
+            await new Promise((r) => setTimeout(r, 150))
+            return out
+          }
+          return opts ? origRequest(name, opts, wrapped) : origRequest(name, wrapped)
+        }
+        try {
+          const { paymentApi } = await import("/src/services/payment/index.ts")
+          return await paymentApi.requestCancel(billCode, "Concurrent cancel A2")
+        } finally {
+          navigator.locks.request = origRequest
+        }
+      }, setupBills.billA2),
+      cashierPageB.evaluate(async (billCode) => {
+        const { paymentApi } = await import("/src/services/payment/index.ts")
+        return await paymentApi.requestCancel(billCode, "Concurrent cancel A3")
+      }, setupBills.billA3),
+    ])
+
+    assert.equal(resA.status, "PENDING")
+    assert.equal(resB.status, "PENDING")
+    assert.notEqual(resA.id, resB.id, "Two concurrent requests must allocate distinct IDs")
+
+    // Open Admin window sees both PENDING requests without reload
+    await expect(adminOpenPage.getByText("Chờ duyệt (2)")).toBeVisible({ timeout: 3000 })
+    await expect(adminOpenPage.getByText("Concurrent cancel A2").first()).toBeVisible({ timeout: 3000 })
+    await expect(adminOpenPage.getByText("Concurrent cancel A3").first()).toBeVisible({ timeout: 3000 })
+
+    // Newly opened Admin window reads storage and sees both requests + both audit rows
+    const adminNewPage = await raceContext.newPage()
+    adminNewPage.on("pageerror", (err) => raceErrors.push(`pageerror: ${err.message}`))
+    adminNewPage.on("console", (msg) => {
+      if (msg.type() === "error") raceErrors.push(`console.error: ${msg.text()}`)
+    })
+    await adminNewPage.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 7, theme: "light" }))
+    })
+    await adminNewPage.goto(`${BASE_URL}/cancel-payment`, { waitUntil: "networkidle" })
+    await expect(adminNewPage.getByText("Chờ duyệt (2)")).toBeVisible({ timeout: 3000 })
+
+    const newAdminData = await adminNewPage.evaluate(async () => {
+      const { paymentApi } = await import("/src/services/payment/index.ts")
+      const [queue, audit] = await Promise.all([paymentApi.listCancelRequests(), paymentApi.listAudit()])
+      return {
+        pendingIds: queue.filter((r) => r.status === "PENDING").map((r) => r.id),
+        cancelReqAuditBills: audit.filter((e) => e.action === "CANCEL_REQUESTED").map((e) => e.billCode),
+      }
+    })
+    assert.equal(newAdminData.pendingIds.length, 2)
+    assert.ok(newAdminData.pendingIds.includes(resA.id) && newAdminData.pendingIds.includes(resB.id))
+    assert.equal(newAdminData.cancelReqAuditBills.length, 2)
+    assert.ok(
+      newAdminData.cancelReqAuditBills.includes(setupBills.billA2) &&
+        newAdminData.cancelReqAuditBills.includes(setupBills.billA3),
+    )
+
+    // Same-bill control: two windows concurrently request cancel for the same bill -> only one PENDING
+    const sameBillCalls = await Promise.all([
+      cashierPageA.evaluate(async (billCode) => {
+        const { paymentApi } = await import("/src/services/payment/index.ts")
+        try {
+          const req = await paymentApi.requestCancel(billCode, "Same bill A")
+          return { ok: true, id: req.id, status: req.status }
+        } catch (err) {
+          return { ok: false, code: err?.code, status: err?.status }
+        }
+      }, setupBills.billG05),
+      cashierPageB.evaluate(async (billCode) => {
+        const { paymentApi } = await import("/src/services/payment/index.ts")
+        try {
+          const req = await paymentApi.requestCancel(billCode, "Same bill B")
+          return { ok: true, id: req.id, status: req.status }
+        } catch (err) {
+          return { ok: false, code: err?.code, status: err?.status }
+        }
+      }, setupBills.billG05),
+    ])
+    const sameOk = sameBillCalls.filter((x) => x.ok)
+    const sameErr = sameBillCalls.filter((x) => !x.ok)
+    assert.equal(sameOk.length, 1, `Expected 1 success for same bill, got ${JSON.stringify(sameBillCalls)}`)
+    assert.equal(sameErr.length, 1)
+    assert.equal(sameErr[0].code, "INVALID_STATE")
+    assert.equal(sameErr[0].status, 409)
+    await expect(adminNewPage.getByText("Chờ duyệt (3)")).toBeVisible({ timeout: 3000 })
+    assert.deepEqual(raceErrors, [])
+  } finally {
+    await raceContext.close()
   }
 
   console.log("payment-w1 PASS:", JSON.stringify(result))
