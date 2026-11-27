@@ -20,6 +20,8 @@ import type {
 } from "@/services/payment"
 import { AuditPanel } from "./audit-panel"
 import {
+  buildApproveCancelFeedback,
+  buildDirectCancelOutcome,
   canAccessPaymentCancel,
   canApproveCancelRequests,
   canDirectCancelPaid,
@@ -32,6 +34,7 @@ import {
   formatPaidTableLabel,
   paidCandidatesFromVisits,
   partitionCancelRequests,
+  resolveCancelSessionImpact,
   sortPaidBillsNewestFirst,
   type PaidBillCandidate,
 } from "./cancel-model"
@@ -299,6 +302,47 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
     expect(formatPaidTableLabel(bills[1])).toBe("Cụm G02 (B11, B12)")
   })
 
+  it("NA45H-15: preserves API newest-first order across midnight for HH:mm times and sorts full ISO timestamps across midnight", () => {
+    const apiOrderedHhmm: PaidBillCandidate[] = [
+      { billCode: "B0003", visitId: "3", code: "A3", tables: ["A3"], paidAt: "00:30" },
+      { billCode: "B0002", visitId: "2", code: "A2", tables: ["A2"], paidAt: "23:50" },
+    ]
+    expect(sortPaidBillsNewestFirst(apiOrderedHhmm).map((b) => b.billCode)).toEqual(["B0003", "B0002"])
+    expect(filterPaidBills(sortPaidBillsNewestFirst(apiOrderedHhmm), "A").map((b) => b.billCode)).toEqual([
+      "B0003",
+      "B0002",
+    ])
+
+    const isoAcrossMidnight: PaidBillCandidate[] = [
+      { billCode: "B0002", visitId: "2", code: "A2", tables: ["A2"], paidAt: "2026-11-26T23:50:00+07:00" },
+      { billCode: "B0003", visitId: "3", code: "A3", tables: ["A3"], paidAt: "2026-11-27T00:30:00+07:00" },
+    ]
+    expect(sortPaidBillsNewestFirst(isoAcrossMidnight).map((b) => b.billCode)).toEqual(["B0003", "B0002"])
+  })
+
+  it("NA45H-12: builds cancel impact text from confirmed session state without false turn -1 for open sessions", () => {
+    expect(resolveCancelSessionImpact(false, true)).toBe("REOPENED")
+    expect(resolveCancelSessionImpact(true, true)).toBe("STILL_OPEN")
+    expect(resolveCancelSessionImpact(null, true)).toBe("UNKNOWN")
+
+    expect(buildDirectCancelOutcome("B0002", "REOPENED").title).toContain("bàn xanh lá, lượt -1")
+    const stillOpenDirect = buildDirectCancelOutcome("B0003", "STILL_OPEN")
+    expect(stillOpenDirect.title).toContain("bill về Chưa thu")
+    expect(stillOpenDirect.title).toContain("phiên vẫn đang mở")
+    expect(stillOpenDirect.title).not.toContain("lượt -1")
+    expect(stillOpenDirect.detail).not.toContain("trả về trạng thái đang phục vụ")
+
+    const unknownDirect = buildDirectCancelOutcome("B0004", "UNKNOWN")
+    expect(unknownDirect.title).toContain("bill về Chưa thu")
+    expect(unknownDirect.title).not.toContain("lượt -1")
+
+    expect(buildApproveCancelFeedback("B0002", "A2", "REOPENED")).toContain("lượt -1")
+    const stillOpenApprove = buildApproveCancelFeedback("B0003", "A3", "STILL_OPEN")
+    expect(stillOpenApprove).toContain("bill về Chưa thu")
+    expect(stillOpenApprove).toContain("phiên vẫn đang mở")
+    expect(stillOpenApprove).not.toContain("lượt -1")
+  })
+
   it("partitions PENDING vs decided cancel requests newest-first", () => {
     const reqs: CancelRequest[] = [
       {
@@ -432,20 +476,10 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
 })
 
 describe("W4 TN-14 UI components against fake PaymentApi", () => {
-  it("renders PaidBillsPanel with bill code, table/cluster, amount, method, paid time, cashier newest-first", () => {
+  it("renders PaidBillsPanel with bill code, table/cluster, amount, method, paid time, cashier preserving across-midnight API order", () => {
     const html = renderToStaticMarkup(
       createElement(PaidBillsPanel, {
         paidBills: [
-          {
-            billCode: "B0001",
-            visitId: "1",
-            code: "A1",
-            tables: ["A1"],
-            dueVnd: 120_000,
-            method: "CASH",
-            paidAt: "20:10",
-            paidBy: "Thu ngân 1",
-          },
           {
             billCode: "B0003",
             visitId: "3",
@@ -454,8 +488,18 @@ describe("W4 TN-14 UI components against fake PaymentApi", () => {
             tables: ["B11", "B12"],
             dueVnd: 540_000,
             method: "TRANSFER",
-            paidAt: "21:45",
+            paidAt: "00:30",
             paidBy: "Thu ngân 2",
+          },
+          {
+            billCode: "B0001",
+            visitId: "1",
+            code: "A1",
+            tables: ["A1"],
+            dueVnd: 120_000,
+            method: "CASH",
+            paidAt: "23:50",
+            paidBy: "Thu ngân 1",
           },
         ],
         selectedBillCode: "B0003",
@@ -468,10 +512,11 @@ describe("W4 TN-14 UI components against fake PaymentApi", () => {
     expect(html).toContain("Cụm G02 (B11, B12)")
     expect(html).toContain("540.000đ")
     expect(html).toContain("Chuyển khoản QR")
-    expect(html).toContain("21:45")
+    expect(html).toContain("00:30")
     expect(html).toContain("Thu ngân 2")
     expect(html).toContain("B0001")
     expect(html).toContain("Tiền mặt")
+    expect(html).toContain("23:50")
     expect(html.indexOf("B0003")).toBeLessThan(html.indexOf("B0001"))
   })
 
@@ -590,7 +635,8 @@ describe("W4 TN-14 UI components against fake PaymentApi", () => {
             visitId: "2",
             actor: "Thu ngân · Thu ngân",
             approver: "Quản trị viên · Quản trị viên",
-            reason: "OK duyệt",
+            reason: "Khách đổi QR",
+            decisionNote: "OK duyệt",
             at: "21:42",
             device: "Máy quản trị",
           },
@@ -618,6 +664,8 @@ describe("W4 TN-14 UI components against fake PaymentApi", () => {
     expect(html).toContain("Thu ngân · Thu ngân")
     expect(html).toContain("Quản trị viên · Quản trị viên")
     expect(html).toContain("Lễ tân 1 · Lễ tân")
+    expect(html).toContain("Khách đổi QR")
+    expect(html).toContain("Ghi chú quyết định")
     expect(html).toContain("OK duyệt")
     expect(html).toContain("Máy quản trị")
     expect(html).toContain("iPad quầy")
