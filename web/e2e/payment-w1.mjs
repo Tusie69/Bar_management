@@ -3,7 +3,7 @@
 import assert from "node:assert/strict"
 import fs from "node:fs"
 import path from "node:path"
-import { chromium } from "@playwright/test"
+import { chromium, expect } from "@playwright/test"
 import { createServer as createViteServer } from "vite"
 
 const PORT = 43941
@@ -186,6 +186,7 @@ try {
     if (!approvedAudit || approvedAudit.reason !== "Khách đổi sang QR" || approvedAudit.decisionNote !== "Duyệt hủy") {
       throw new Error(`Unexpected CANCEL_APPROVED audit entry: ${JSON.stringify(approvedAudit)}`)
     }
+    const syncBytes = localStorage.getItem("21gam.mock.sync.v1")?.length ?? 0
 
     return {
       barBillCode: barIssued.billCode,
@@ -193,6 +194,7 @@ try {
       a2CancelStatus: approved.status,
       a2ReopenedFloor,
       auditCount: audit.length,
+      syncBytes,
     }
   })
 
@@ -200,7 +202,66 @@ try {
   assert.equal(result.a2ReopenedFloor, "seated")
   assert.equal(result.a3BillCodes.length, 2)
   assert.ok(result.auditCount >= 4)
+  assert.ok(result.syncBytes > 0, "Expected mock sync snapshot persisted in localStorage")
   assert.deepEqual(errors, [])
+
+  // NA45H-10 cross-window real-time sync check: two separate pages at the same origin
+  // Page A = Admin on /cancel-payment, Page B = Cashier on /payment
+  const syncContext = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+  try {
+    const adminPage = await syncContext.newPage()
+    const cashierPage = await syncContext.newPage()
+    const syncErrors = []
+    for (const p of [adminPage, cashierPage]) {
+      p.on("pageerror", (err) => syncErrors.push(`pageerror: ${err.message}`))
+      p.on("console", (msg) => {
+        if (msg.type() === "error") syncErrors.push(`console.error: ${msg.text()}`)
+      })
+    }
+
+    await adminPage.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 7, theme: "light" }))
+    })
+    await adminPage.goto(`${BASE_URL}/cancel-payment`, { waitUntil: "networkidle" })
+    await expect(adminPage.getByRole("heading", { name: "Duyệt huỷ thanh toán" }).first()).toBeVisible()
+    await expect(adminPage.getByText("Chờ duyệt (0)")).toBeVisible()
+
+    await cashierPage.addInitScript(() => {
+      localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 5, theme: "light" }))
+    })
+    await cashierPage.goto(`${BASE_URL}/payment`, { waitUntil: "networkidle" })
+
+    const a2Session = cashierPage.locator(".pay-sess", { hasText: "A2" })
+    await a2Session.click()
+    await a2Session.click()
+    await cashierPage.getByRole("button", { name: "Xuất hóa đơn" }).click()
+    await cashierPage.getByRole("button", { name: /^Thu tiền/ }).click()
+    await cashierPage.getByRole("button", { name: /Tiền mặt/ }).click()
+    await cashierPage.locator(".pay-chips .pay-chip").first().click()
+    await cashierPage.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+    await expect(cashierPage.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
+
+    // Open A2 paid bill detail in Cashier window & submit cancel request
+    await cashierPage.getByRole("button", { name: /Thông báo thanh toán/ }).click()
+    await cashierPage.locator(".pay-ntf", { hasText: "Đã thanh toán" }).first().click()
+    await cashierPage.getByRole("button", { name: "Gửi yêu cầu huỷ" }).click()
+    await cashierPage.getByLabel("Lý do gửi yêu cầu huỷ (bắt buộc)").fill("Cross-window sync test")
+    await cashierPage.getByRole("button", { name: "Xác nhận gửi yêu cầu huỷ" }).click()
+    await expect(cashierPage.getByText(/Đang chờ duyệt \(PENDING\)/)).toBeVisible()
+
+    // Admin window receives request automatically WITHOUT reload, refresh, or role switch
+    await expect(adminPage.getByText("Chờ duyệt (1)")).toBeVisible({ timeout: 3000 })
+    await expect(adminPage.getByText("Cross-window sync test").first()).toBeVisible({ timeout: 3000 })
+
+    // Admin approves -> Cashier window receives APPROVED decision automatically WITHOUT reload
+    await adminPage.getByLabel("Ghi chú phản hồi (tuỳ chọn)").first().fill("Admin duyệt sync")
+    await adminPage.getByRole("button", { name: "Duyệt huỷ", exact: true }).first().click()
+    await expect(cashierPage.getByText(/Đã duyệt huỷ \(APPROVED\)/)).toBeVisible({ timeout: 3000 })
+    await expect(cashierPage.getByText(/Admin duyệt sync/)).toBeVisible({ timeout: 3000 })
+    assert.deepEqual(syncErrors, [])
+  } finally {
+    await syncContext.close()
+  }
 
   console.log("payment-w1 PASS:", JSON.stringify(result))
 } finally {

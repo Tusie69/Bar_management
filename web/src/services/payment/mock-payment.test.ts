@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest"
 import { addDays, businessDateOf } from "@/lib/time"
 import { api, clock, demo } from "@/services"
+import type { MockDb } from "@/services/mock/db"
+import { createInMemoryMockSyncTransport } from "@/services/mock/mock-sync"
 import { DEMO_USERS } from "@/services/mock/seed"
+import { MockGamApi } from "@/services/mock/server"
 import { isPaymentAvailable, paymentApi } from "./index"
 import { addPaymentOrderLines, setPaymentMockFault } from "./mock-payment"
 
@@ -919,6 +922,70 @@ describe("mockPaymentApi", () => {
     expect((await paymentApi.getBill(String(quay99Visit.visitId))).billStatus).toBe("PAID")
   })
 
+  it("NA45H-10 & NA45H-14: shares mock state & change events across independent MockGamApi instances while keeping per-instance session and separate audit reason/decisionNote", async () => {
+    const transport = createInMemoryMockSyncTransport()
+    const cashierApi = new MockGamApi({ businessDayWorkerEnabled: false, syncTransport: transport })
+    const adminApi = new MockGamApi({ businessDayWorkerEnabled: false, syncTransport: transport })
+    try {
+      cashierApi.setSession(cashier)
+      adminApi.setSession(admin)
+
+      const adminEvents: string[] = []
+      const cashierEvents: string[] = []
+      const unsubAdmin = adminApi.subscribe((ev) => adminEvents.push(ev.action))
+      const unsubCashier = cashierApi.subscribe((ev) => cashierEvents.push(ev.action))
+
+      try {
+        const a2 = (await cashierApi.listPaymentOpen()).find((s) => s.code === "A2")!
+        const issued = await cashierApi.issuePaymentInvoice(a2.visitId, a2.version, "sync-inv-1")
+        await cashierApi.confirmPaymentCash(a2.visitId, issued.dueVnd, issued.version, "sync-pay-1", issued.billCode)
+
+        const req = await cashierApi.requestPaymentCancel(issued.billCode, "Thu nhầm tiền mặt")
+        expect(adminEvents).toContain("PAYMENT_CANCEL_REQUESTED")
+
+        // Admin instance sees the Cashier's PENDING request without changing its own session
+        const adminQueue = await adminApi.listPaymentCancelRequests()
+        expect(adminQueue.some((r) => r.id === req.id && r.status === "PENDING")).toBe(true)
+
+        // Admin approves with a note distinct from the request reason
+        const approved = await adminApi.decidePaymentCancel(req.id, true, "OK thu lại QR")
+        expect(approved.status).toBe("APPROVED")
+        expect(cashierEvents).toContain("PAYMENT_CANCELLED")
+
+        // Cashier instance sees decision immediately and keeps its CASHIER session
+        const myReqs = await cashierApi.listMyPaymentCancelRequests(issued.billCode)
+        expect(myReqs[0]).toMatchObject({ id: req.id, status: "APPROVED", decisionNote: "OK thu lại QR" })
+
+        // NA45H-14: audit entry keeps request reason and decision note in separate fields
+        const audit = await adminApi.listPaymentAudit(issued.billCode)
+        const approvedAudit = audit.find((e) => e.action === "CANCEL_APPROVED")!
+        expect(approvedAudit.reason).toBe("Thu nhầm tiền mặt")
+        expect(approvedAudit.decisionNote).toBe("OK thu lại QR")
+
+        // Also verify without a decision note: reason stays intact, decisionNote omitted
+        await cashierApi.confirmPaymentTransfer(
+          a2.visitId,
+          false,
+          (await cashierApi.getPaymentBill(a2.visitId)).version,
+          "sync-pay-2",
+          issued.billCode,
+        )
+        const req2 = await cashierApi.requestPaymentCancel(issued.billCode, "Khách đổi ý")
+        await adminApi.decidePaymentCancel(req2.id, false)
+        const rejectedNoNote = (await adminApi.listPaymentAudit(issued.billCode)).find(
+          (e) => e.action === "CANCEL_REJECTED",
+        )!
+        expect(rejectedNoNote.reason).toBe("Khách đổi ý")
+        expect(rejectedNoNote.decisionNote).toBeUndefined()
+      } finally {
+        unsubAdmin()
+        unsubCashier()
+      }
+    } finally {
+      cashierApi.dispose()
+      adminApi.dispose()
+    }
+  })
 
   it("listPaidBills & Receptionist audit access: returns current-shift PAID bills newest-first for RECEPTIONIST/ADMIN/OWNER and blocks CASHIER/WAITER/BAR", async () => {
     const a2Id = await visitIdByCode("A2")
