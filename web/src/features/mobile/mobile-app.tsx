@@ -337,6 +337,8 @@ export default function MobileApp() {
     ? { home: isOwner ? "Tổng quan" : "Tiếp đón", list: "Danh sách", map: "Sơ đồ bàn", wait: "Đơn chờ" }[tab]
     : ""
   const other = NAV.find((n) => loc.pathname.startsWith(n.to))
+  const otherTitle =
+    isReceptionist && other?.to === "/cancel-payment" ? "Huỷ thanh toán" : (other?.label ?? "21GAM")
   const tableSheetSuperseded = Boolean(
     detail || bookingEdit || entryDetail || form || ui.draft || ui.pick?.intent === "layout",
   )
@@ -430,7 +432,7 @@ export default function MobileApp() {
             <WaitScreen />
           ) : (
             <>
-              <PlainHeader title={other?.label ?? "21GAM"} />
+              <PlainHeader title={otherTitle} />
               <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 <ToastSlot />
                 <div className="min-h-0 flex-1 overflow-y-auto">

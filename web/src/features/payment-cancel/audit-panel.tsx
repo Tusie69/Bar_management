@@ -142,6 +142,12 @@ export function AuditPanel({
                         <dd>{entry.reason}</dd>
                       </div>
                     ) : null}
+                    {entry.decisionNote ? (
+                      <div>
+                        <dt>Ghi chú quyết định</dt>
+                        <dd>{entry.decisionNote}</dd>
+                      </div>
+                    ) : null}
                     <div>
                       <dt>Thiết bị</dt>
                       <dd>{entry.device || "-"}</dd>

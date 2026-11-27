@@ -52,31 +52,67 @@ export function selectInvoiceBill(sessionBills: SessionBills | undefined, billCo
   return latestUnpaid ?? sessionBills.bills[sessionBills.bills.length - 1] ?? null
 }
 
+export type BarTableInput =
+  | string
+  | { code: string; zoneCode?: string | null; zone?: string | null }
+
+export type BarTableCatalogItem = {
+  code: string
+  zoneCode?: string | null
+  zone?: string | null
+}
+
 export function isBarTableCode(tableCode: string): boolean {
   return /^BAR/i.test(tableCode.trim())
 }
 
-export function isBarTableItem(table: string | { code: string; zoneCode?: string | null }): boolean {
-  if (typeof table === "string") return isBarTableCode(table)
-  if (table.zoneCode) return table.zoneCode === "BAR"
-  return isBarTableCode(table.code)
+export function isBarTableItem(
+  table: BarTableInput,
+  zoneByCode?: ReadonlyMap<string, string | null | undefined>,
+): boolean {
+  const code = typeof table === "string" ? table : table.code
+  const trimmed = code.trim()
+  const lookedUp = zoneByCode?.get(trimmed) ?? zoneByCode?.get(trimmed.toUpperCase())
+  const zone = typeof table === "string" ? lookedUp : (table.zoneCode ?? table.zone ?? lookedUp)
+  return zone === "BAR" || isBarTableCode(code)
 }
 
-export function isBarGuestSession(summary: {
-  code?: string | null
-  tables: readonly (string | { code: string; zoneCode?: string | null })[]
-}): boolean {
-  return summary.tables.length > 0 && summary.tables.every(isBarTableItem)
+function toZoneByCode(
+  catalogTables?: readonly BarTableCatalogItem[] | ReadonlyMap<string, string | null | undefined>,
+): ReadonlyMap<string, string | null | undefined> | undefined {
+  if (!catalogTables) return undefined
+  if (catalogTables instanceof Map) return catalogTables as ReadonlyMap<string, string | null | undefined>
+  const map = new Map<string, string>()
+  for (const t of catalogTables as readonly BarTableCatalogItem[]) {
+    const z = t.zoneCode ?? t.zone
+    if (z) map.set(t.code.trim().toUpperCase(), z)
+  }
+  return map
 }
 
-export function sortBarSessionsFirst(sessions: readonly PayBillSummary[]): {
+export function isBarGuestSession(
+  summary: {
+    code?: string | null
+    tables: readonly BarTableInput[]
+  },
+  catalogTables?: readonly BarTableCatalogItem[] | ReadonlyMap<string, string | null | undefined>,
+): boolean {
+  if (summary.tables.length === 0) return false
+  const zoneByCode = toZoneByCode(catalogTables)
+  return summary.tables.every((table) => isBarTableItem(table, zoneByCode))
+}
+
+export function sortBarSessionsFirst(
+  sessions: readonly PayBillSummary[],
+  catalogTables?: readonly BarTableCatalogItem[] | ReadonlyMap<string, string | null | undefined>,
+): {
   barSessions: PayBillSummary[]
   otherSessions: PayBillSummary[]
 } {
   const barSessions: PayBillSummary[] = []
   const otherSessions: PayBillSummary[] = []
   for (const s of sessions) {
-    if (isBarGuestSession(s)) barSessions.push(s)
+    if (isBarGuestSession(s, catalogTables)) barSessions.push(s)
     else otherSessions.push(s)
   }
   return { barSessions, otherSessions }

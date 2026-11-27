@@ -267,7 +267,16 @@ try {
       }
 
       await expect(page).toHaveURL(/\/cancel-payment$/)
-      await expect(page.getByRole("heading", { name: "Huỷ thanh toán đã thu" })).toBeVisible()
+      for (const vp of [
+        { width: 390, height: 844, label: "390" },
+        { width: 820, height: 1180, label: "820" },
+        { width: 1440, height: 900, label: "1440" },
+      ]) {
+        await page.setViewportSize({ width: vp.width, height: vp.height })
+        await expect(page.locator("header.gm-glass-chrome h1")).toHaveText("Huỷ thanh toán")
+        await expect(page.getByRole("heading", { name: "Huỷ thanh toán đã thu" })).toBeVisible()
+        await assertNoOverflow(page, `w4b ${vp.label} reception cancel`)
+      }
       await expect(page.getByRole("region", { name: "Bill đã thu trong ca" })).toBeVisible()
       await expect(page.getByRole("region", { name: "Hàng chờ duyệt huỷ thanh toán" })).toHaveCount(0)
 
@@ -302,9 +311,12 @@ try {
       await expect(recAuditRegion.getByText("Lễ tân huỷ: khách gọi thêm").first()).toBeVisible()
       await page.screenshot({ path: path.join(ARTIFACTS_DIR, "w4b-1440-reception-cancel.png") })
 
-      // Navigate back to /floor -> verify table A3 is green (Đã tới) and turn -1 + bill Chưa thu
+      // Navigate back to /floor -> verify table A3 is green (Đã tới) and turn -1 + bill Chưa thu + menu item still reachable
       await page.getByRole("button", { name: "Về sơ đồ" }).click()
       await expect(page).toHaveURL(/\/floor$/)
+      await page.getByRole("button", { name: /^Menu/ }).click()
+      await expect(page.getByRole("button", { name: /Huỷ thanh toán/ })).toBeVisible()
+      await page.getByRole("button", { name: "Đóng", exact: true }).first().click()
       await expect(page.locator('[aria-label*="A3"][aria-label*="Đã tới"]').first()).toBeVisible()
 
       const afterStats = await page.evaluate(async (vid) => {
@@ -372,13 +384,285 @@ try {
 
     const rec = await openAs({ width: 390, height: 844 }, 1, "/cancel-payment")
     try {
+      await expect(rec.page.locator("header.gm-glass-chrome h1")).toHaveText("Huỷ thanh toán")
       await expect(rec.page.getByRole("heading", { name: "Huỷ thanh toán đã thu" }).first()).toBeVisible()
-      await assertNoOverflow(rec.page, "w4b 390 receptionist")
+      await assertNoOverflow(rec.page, "w4b 390 reception")
       await rec.page.screenshot({ path: path.join(ARTIFACTS_DIR, "w4b-390-reception.png") })
       assert.deepEqual(rec.errors, [], `w4b 390 reception console errors: ${rec.errors.join(" | ")}`)
       console.log("PASS w4b 390 reception layout check")
     } finally {
       await rec.context.close()
+    }
+  }
+
+  // 5. NA45H-12: Open multi-bill session cancel (both Queue Approve & Direct Cancel) must NOT report turn -1 and must keep closed turns unchanged
+  {
+    const { context, page, errors } = await openAs({ width: 1440, height: 900 }, 5, "/payment")
+    try {
+      const a3Session = page.locator(".pay-sess", { hasText: "A3" })
+      await a3Session.click()
+      await a3Session.click()
+      await expect(page).toHaveURL(/\/payment\/\d+/)
+      const a3VisitId = new URL(page.url()).pathname.split("/")[2]
+
+      // Issue bill 1, then add extra order round so session stays open with bill 2 / unbilled items
+      await page.getByRole("button", { name: "Xuất hóa đơn" }).click()
+      await expect(page.getByRole("button", { name: /^Thu tiền/ })).toBeVisible()
+      const bill1Code = await page.evaluate(async (vid) => {
+        const mock = window.__21gamPaymentMock
+        await mock.addOrderLines(vid, [{ name: "Coca", unit: "Lon", qty: 1, unitPriceVnd: 45_000, state: "SERVED" }])
+        const sb = await mock.paymentApi.getSessionBills(vid)
+        return sb.bills[0].billCode
+      }, a3VisitId)
+      const p2 = await page.evaluate(async (vid) => {
+        const mock = window.__21gamPaymentMock
+        const prev = await mock.paymentApi.previewBill(vid)
+        return mock.paymentApi.issueInvoice(vid, prev.version, "w4-na45h12-inv2")
+      }, a3VisitId)
+      const bill2Code = p2.billCode
+
+      // Stay on S2; issueInvoice emitted PAYMENT_INVOICE_ISSUED so both bill pills appear automatically
+      await expect(page.locator("button", { hasText: bill2Code }).first()).toBeVisible()
+      await page.locator("button", { hasText: bill1Code }).first().click()
+      await page.getByRole("button", { name: new RegExp(`Thu tiền · ${bill1Code}`) }).click()
+      await page.getByRole("button", { name: /Tiền mặt/ }).click()
+      await page.locator(".pay-chips .pay-chip").first().click()
+      await page.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+
+      const turnsBefore = await page.evaluate(async () => {
+        const [{ api, clock }, { businessDateOf }, { DEMO_USERS }] = await Promise.all([
+          import("/src/services/index.ts"),
+          import("/src/lib/time.ts"),
+          import("/src/services/mock/seed.ts"),
+        ])
+        api.setSession(DEMO_USERS.find((u) => u.role === "OWNER"))
+        const bd = businessDateOf(clock.now())
+        const res = await api.getTableTurns({ from: bd, to: bd, includeUncounted: true })
+        return res.turns.filter((t) => t.status === "CLOSED").length
+      })
+
+      // Cashier requests cancel on bill 1 while bill 2 is still UNPAID
+      await page.evaluate(async (b1) => {
+        const [{ api }, { DEMO_USERS }] = await Promise.all([
+          import("/src/services/index.ts"),
+          import("/src/services/mock/seed.ts"),
+        ])
+        api.setSession(DEMO_USERS.find((u) => u.role === "CASHIER"))
+        await window.__21gamPaymentMock.paymentApi.requestCancel(b1, "Tách lại món")
+      }, bill1Code)
+
+      await page.getByRole("button", { name: "Về chi tiết Phiên" }).click()
+      await page.getByRole("button", { name: "Phiên đang mở" }).click()
+      await expect(page).toHaveURL(/\/payment$/)
+      await switchRoleInUi(page, /Quản trị viên/)
+      await page.getByRole("button", { name: /Tài khoản:/ }).click()
+      await page.getByRole("menuitem", { name: /Về Điều phối/ }).click()
+      await page.getByRole("link", { name: "Duyệt huỷ thanh toán" }).click()
+
+      await page.getByRole("button", { name: "Duyệt huỷ", exact: true }).first().click()
+      const queueFeedback = page.getByTestId("pc-queue-feedback")
+      await expect(queueFeedback).toContainText("bill về Chưa thu, phiên vẫn đang mở (không đổi lượt)")
+      assert(!(await queueFeedback.innerText()).includes("lượt -1"), "Open session approve must not say lượt -1")
+
+      // Re-pay bill 1, then test Receptionist Direct Cancel on open session
+      await page.evaluate(async ({ vid, b1 }) => {
+        const [{ api }, { DEMO_USERS }] = await Promise.all([
+          import("/src/services/index.ts"),
+          import("/src/services/mock/seed.ts"),
+        ])
+        api.setSession(DEMO_USERS.find((u) => u.role === "CASHIER"))
+        const sb = await window.__21gamPaymentMock.paymentApi.getSessionBills(vid)
+        const target = sb.bills.find((b) => b.billCode === b1)
+        await window.__21gamPaymentMock.paymentApi.confirmCash(vid, target.dueVnd, sb.version, "w4-na45h12-repay", b1)
+      }, { vid: a3VisitId, b1: bill1Code })
+
+      await switchRoleInUi(page, /Lễ tân 1/)
+      await expect(page.getByRole("heading", { name: "Huỷ thanh toán đã thu" })).toBeVisible()
+      await page.getByRole("button", { name: "Làm mới tất cả" }).click()
+      await page.getByTestId(`pc-paid-${bill1Code}`).getByRole("button", { name: "Chọn huỷ thanh toán" }).click()
+      const directForm = page.getByTestId(`pc-direct-form-${bill1Code}`)
+      await directForm.getByLabel("Lý do huỷ thanh toán (bắt buộc)").fill("Huỷ bill 1 phiên đang mở")
+      await directForm.getByRole("button", { name: "Xác nhận huỷ thanh toán" }).click()
+
+      const directOutcome = page.getByTestId("pc-direct-outcome")
+      await expect(directOutcome).toContainText("bill về Chưa thu, phiên vẫn đang mở (không đổi lượt)")
+      assert(!(await directOutcome.innerText()).includes("lượt -1"), "Open session direct cancel must not say lượt -1")
+
+      const checkAfter = await page.evaluate(async (vid) => {
+        const [{ api, clock }, { businessDateOf }, { DEMO_USERS }] = await Promise.all([
+          import("/src/services/index.ts"),
+          import("/src/lib/time.ts"),
+          import("/src/services/mock/seed.ts"),
+        ])
+        api.setSession(DEMO_USERS.find((u) => u.role === "OWNER"))
+        const bd = businessDateOf(clock.now())
+        const res = await api.getTableTurns({ from: bd, to: bd, includeUncounted: true })
+        const sb = await window.__21gamPaymentMock.paymentApi.getSessionBills(vid)
+        const floor = await api.getFloorState(clock.now())
+        return {
+          closedTurns: res.turns.filter((t) => t.status === "CLOSED").length,
+          sessionStatus: sb.status,
+          bills: sb.bills.map((b) => ({ billCode: b.billCode, billStatus: b.billStatus })),
+          a3Open: floor.tables.some((t) => String(t.claim?.visitId ?? "") === String(vid)),
+        }
+      }, a3VisitId)
+
+      assert.equal(checkAfter.closedTurns, turnsBefore, "Open session cancel must keep closed turn count unchanged")
+      assert.equal(checkAfter.sessionStatus, "AWAITING_PAYMENT")
+      assert.equal(checkAfter.a3Open, true)
+      assert(checkAfter.bills.every((b) => b.billStatus === "UNPAID"), `Both ${bill1Code} and ${bill2Code} should be UNPAID`)
+      assert.deepEqual(errors, [], `NA45H-12 console errors: ${errors.join(" | ")}`)
+      console.log("PASS NA45H-12 open multi-bill session cancel impact (approve & direct)")
+    } finally {
+      await context.close()
+    }
+  }
+
+  // 6. NA45H-15: PaidBillsPanel keeps API timestamp order across midnight (00:30 before 23:50), including search and refresh
+  {
+    const { context, page, errors } = await openAs({ width: 1440, height: 900 }, 5, "/payment")
+    try {
+      const codes = await page.evaluate(async () => {
+        const [{ api, clock }, { DEMO_USERS }] = await Promise.all([
+          import("/src/services/index.ts"),
+          import("/src/services/mock/seed.ts"),
+        ])
+        const pay = window.__21gamPaymentMock.paymentApi
+        api.setSession(DEMO_USERS.find((u) => u.role === "CASHIER"))
+
+        // Advance from 21:30 -> 23:50 and pay A2
+        clock.advance(140)
+        const a2Id = await window.__21gamPaymentMock.visitIdForTable("A2")
+        const a2Bill0 = await pay.getBill(a2Id)
+        const a2Bill = await pay.issueInvoice(a2Id, a2Bill0.version, "w4-na45h15-a2")
+        await pay.confirmCash(a2Id, a2Bill.dueVnd, a2Bill.version, "w4-na45h15-pay-a2", a2Bill.billCode)
+
+        // Advance from 23:50 -> 00:30 (same business day) and pay A3
+        clock.advance(40)
+        const a3Id = await window.__21gamPaymentMock.visitIdForTable("A3")
+        const a3Bill0 = await pay.getBill(a3Id)
+        const a3Bill = await pay.issueInvoice(a3Id, a3Bill0.version, "w4-na45h15-a3")
+        await pay.confirmCash(a3Id, a3Bill.dueVnd, a3Bill.version, "w4-na45h15-pay-a3", a3Bill.billCode)
+
+        return { b2350: a2Bill.billCode, b0030: a3Bill.billCode }
+      })
+
+      await switchRoleInUi(page, /Lễ tân 1/)
+      await page.getByRole("button", { name: /^Menu/ }).click()
+      await page.getByRole("button", { name: /Huỷ thanh toán/ }).click()
+
+      const paidRegion = page.getByRole("region", { name: "Bill đã thu trong ca" })
+      await expect(paidRegion.getByTestId(`pc-paid-${codes.b0030}`)).toBeVisible()
+      await expect(paidRegion.getByTestId(`pc-paid-${codes.b2350}`)).toBeVisible()
+      const readOrder = async () =>
+        paidRegion.locator("[data-testid^='pc-paid-']").evaluateAll((els) =>
+          els.map((el) => el.getAttribute("data-testid") ?? ""),
+        )
+
+      const initialOrder = await readOrder()
+      assert(
+        initialOrder.indexOf(`pc-paid-${codes.b0030}`) < initialOrder.indexOf(`pc-paid-${codes.b2350}`),
+        `Expected 00:30 (${codes.b0030}) before 23:50 (${codes.b2350}), got ${initialOrder.join(",")}`,
+      )
+
+      await page.getByLabel("Tìm theo mã bill hoặc bàn").fill("A")
+      const searchOrder = await readOrder()
+      assert(
+        searchOrder.indexOf(`pc-paid-${codes.b0030}`) < searchOrder.indexOf(`pc-paid-${codes.b2350}`),
+        `Expected search order 00:30 before 23:50, got ${searchOrder.join(",")}`,
+      )
+
+      await page.getByLabel("Tìm theo mã bill hoặc bàn").fill("")
+      await paidRegion.getByRole("button", { name: "Làm mới danh sách bill đã thu" }).click()
+      const refreshOrder = await readOrder()
+      assert(
+        refreshOrder.indexOf(`pc-paid-${codes.b0030}`) < refreshOrder.indexOf(`pc-paid-${codes.b2350}`),
+        `Expected refresh order 00:30 before 23:50, got ${refreshOrder.join(",")}`,
+      )
+
+      assert.deepEqual(errors, [], `NA45H-15 console errors: ${errors.join(" | ")}`)
+      console.log("PASS NA45H-15 across-midnight order (00:30 before 23:50) + search + refresh")
+    } finally {
+      await context.close()
+    }
+  }
+
+  // 7. NA45H-10 & NA45H-14: Two independent browser windows at the same origin (Admin /cancel-payment + Cashier /payment)
+  // Real-time queue + decision sync without reload, role switch, refresh click, or clock advance, plus separate audit reason & decisionNote
+  {
+    const syncContext = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+    try {
+      const adminPage = await syncContext.newPage()
+      const cashierPage = await syncContext.newPage()
+      const syncErrors = []
+      for (const p of [adminPage, cashierPage]) {
+        p.on("pageerror", (e) => syncErrors.push(e.message))
+        p.on("console", (msg) => {
+          if (msg.type() === "error") syncErrors.push(msg.text())
+        })
+      }
+
+      await adminPage.addInitScript(() => {
+        localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 7, theme: "light" }))
+      })
+      await adminPage.goto(`${base}/cancel-payment`, { waitUntil: "networkidle" })
+      await expect(adminPage.getByRole("heading", { name: "Duyệt huỷ thanh toán" }).first()).toBeVisible()
+      await expect(adminPage.getByText("Chờ duyệt (0)")).toBeVisible()
+
+      await cashierPage.addInitScript(() => {
+        localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 5, theme: "light" }))
+      })
+      await cashierPage.goto(`${base}/payment`, { waitUntil: "networkidle" })
+
+      const a2Session = cashierPage.locator(".pay-sess", { hasText: "A2" })
+      await a2Session.click()
+      await a2Session.click()
+      await cashierPage.getByRole("button", { name: "Xuất hóa đơn" }).click()
+      await cashierPage.getByRole("button", { name: /^Thu tiền/ }).click()
+      await cashierPage.getByRole("button", { name: /Tiền mặt/ }).click()
+      await cashierPage.locator(".pay-chips .pay-chip").first().click()
+      await cashierPage.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+      await expect(cashierPage.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
+
+      await cashierPage.getByRole("button", { name: /Thông báo thanh toán/ }).click()
+      await cashierPage.locator(".pay-ntf", { hasText: "Đã thanh toán" }).first().click()
+      await cashierPage.getByRole("button", { name: "Gửi yêu cầu huỷ" }).click()
+      await cashierPage.getByLabel("Lý do gửi yêu cầu huỷ (bắt buộc)").fill("Khách đổi QR sang tiền mặt")
+      await cashierPage.getByRole("button", { name: "Xác nhận gửi yêu cầu huỷ" }).click()
+      await expect(cashierPage.getByText(/Đang chờ duyệt \(PENDING\)/)).toBeVisible()
+
+      // Admin window sees request automatically without reload, role switch, refresh, or clock advance
+      await expect(adminPage.getByText("Chờ duyệt (1)")).toBeVisible({ timeout: 3000 })
+      await expect(adminPage.getByText("Khách đổi QR sang tiền mặt").first()).toBeVisible({ timeout: 3000 })
+
+      // Reject with decisionNote -> Cashier sees REJECTED + note automatically; AuditPanel separates reason & decisionNote
+      await adminPage.getByLabel("Ghi chú phản hồi (tuỳ chọn)").first().fill("Chưa khớp sao kê")
+      await adminPage.getByRole("button", { name: "Từ chối" }).first().click()
+      await expect(cashierPage.getByText(/Bị từ chối \(REJECTED\)/)).toBeVisible({ timeout: 3000 })
+      await expect(cashierPage.getByText(/Chưa khớp sao kê/)).toBeVisible({ timeout: 3000 })
+
+      const auditRegion = adminPage.getByRole("region", { name: "Nhật ký thanh toán và huỷ theo bill" })
+      await expect(auditRegion.getByText("Khách đổi QR sang tiền mặt").first()).toBeVisible()
+      await expect(auditRegion.getByText("Chưa khớp sao kê").first()).toBeVisible()
+
+      // 2nd request -> Admin approves with distinct note -> Cashier sees APPROVED automatically & AuditPanel keeps both fields
+      await cashierPage.getByRole("button", { name: "Gửi yêu cầu huỷ" }).click()
+      await cashierPage.getByLabel("Lý do gửi yêu cầu huỷ (bắt buộc)").fill("Thu nhầm tiền mặt")
+      await cashierPage.getByRole("button", { name: "Xác nhận gửi yêu cầu huỷ" }).click()
+      await expect(adminPage.getByText("Chờ duyệt (1)")).toBeVisible({ timeout: 3000 })
+
+      await adminPage.getByLabel("Ghi chú phản hồi (tuỳ chọn)").first().fill("Duyệt thu lại QR")
+      await adminPage.getByRole("button", { name: "Duyệt huỷ", exact: true }).first().click()
+      await expect(adminPage.getByTestId("pc-queue-feedback")).toContainText("bill về Chưa thu, bàn xanh lá, lượt -1")
+      await expect(cashierPage.getByText(/Đã duyệt huỷ \(APPROVED\)/)).toBeVisible({ timeout: 3000 })
+      await expect(cashierPage.getByText(/Duyệt thu lại QR/)).toBeVisible({ timeout: 3000 })
+      await expect(auditRegion.getByText("Thu nhầm tiền mặt").first()).toBeVisible()
+      await expect(auditRegion.getByText("Duyệt thu lại QR").first()).toBeVisible()
+
+      assert.deepEqual(syncErrors, [], `NA45H-10 cross-window console errors: ${syncErrors.join(" | ")}`)
+      console.log("PASS NA45H-10 & NA45H-14 two-window real-time sync (reject & approve) + separate audit fields")
+    } finally {
+      await syncContext.close()
     }
   }
 } finally {

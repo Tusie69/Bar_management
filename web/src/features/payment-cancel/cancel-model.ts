@@ -1,16 +1,86 @@
 import type { RoleCode } from "@/domain/enums"
 import type { VisitView } from "@/domain/models"
-import type {
-  CancelRequest,
-  PayBill,
-  PaymentAuditAction,
-  PaymentAuditEntry,
-  PaymentMethod,
-  SessionBills,
+import { api, clock } from "@/services"
+import {
+  paymentApi,
+  type CancelRequest,
+  type PayBill,
+  type PaymentApi,
+  type PaymentAuditAction,
+  type PaymentAuditEntry,
+  type PaymentMethod,
+  type SessionBills,
 } from "@/services/payment"
 
-export const PAID_CANCEL_OUTCOME_TEXT =
-  "Đã huỷ thanh toán - bill về Chưa thu, bàn xanh lá, lượt -1."
+export type CancelSessionImpact = "REOPENED" | "STILL_OPEN" | "UNKNOWN"
+
+export function resolveCancelSessionImpact(
+  wasOpenBefore: boolean | null,
+  isOpenAfter: boolean | null,
+): CancelSessionImpact {
+  if (wasOpenBefore === false && isOpenAfter === true) return "REOPENED"
+  if (wasOpenBefore === true && isOpenAfter === true) return "STILL_OPEN"
+  return "UNKNOWN"
+}
+
+export function buildDirectCancelOutcome(
+  billCode: string,
+  impact: CancelSessionImpact,
+): { title: string; detail: string } {
+  if (impact === "REOPENED") {
+    return {
+      title: `${billCode}: Đã huỷ thanh toán - bill về Chưa thu, bàn xanh lá, lượt -1.`,
+      detail: "Bill đã mở lại để thu tiền; bàn được trả về trạng thái đang phục vụ trên sơ đồ.",
+    }
+  }
+  if (impact === "STILL_OPEN") {
+    return {
+      title: `${billCode}: Đã huỷ thanh toán - bill về Chưa thu, phiên vẫn đang mở (không đổi lượt).`,
+      detail: "Bill đã mở lại để thu tiền; phiên vẫn còn bill hoặc món khác nên bàn không đổi lượt.",
+    }
+  }
+  return {
+    title: `${billCode}: Đã huỷ thanh toán - bill về Chưa thu.`,
+    detail: "Bill đã mở lại để thu tiền.",
+  }
+}
+
+export function buildApproveCancelFeedback(
+  billCode: string,
+  tableCode: string,
+  impact: CancelSessionImpact,
+): string {
+  if (impact === "REOPENED") {
+    return `Đã duyệt huỷ ${billCode} (${tableCode}) - bill về Chưa thu, bàn xanh lá, lượt -1. Đã thông báo Thu ngân.`
+  }
+  if (impact === "STILL_OPEN") {
+    return `Đã duyệt huỷ ${billCode} (${tableCode}) - bill về Chưa thu, phiên vẫn đang mở (không đổi lượt). Đã thông báo Thu ngân.`
+  }
+  return `Đã duyệt huỷ ${billCode} (${tableCode}) - bill về Chưa thu. Đã thông báo Thu ngân.`
+}
+
+export async function isVisitOpenAfterCancelCheck(
+  visitId: string,
+  payApi: PaymentApi,
+  canReadSessionBills = false,
+): Promise<boolean | null> {
+  if (!visitId) return null
+  if (payApi !== paymentApi) {
+    if (!canReadSessionBills) return null
+    try {
+      const session = await payApi.getSessionBills(visitId)
+      return session.status === "SERVING" || session.status === "AWAITING_PAYMENT"
+    } catch {
+      return null
+    }
+  }
+  try {
+    const floor = await api.getFloorState(clock.now())
+    return floor.tables.some((t) => String(t.claim?.visitId ?? "") === String(visitId))
+  } catch {
+    return null
+  }
+}
 
 export const PAID_METHOD_LABEL: Record<PaymentMethod, string> = {
   CASH: "Tiền mặt",
@@ -81,16 +151,22 @@ export function formatPaidTableLabel(bill: Pick<PaidBillCandidate, "code" | "clu
   return `Bàn ${bill.code}`
 }
 
-function paidAtSortKey(raw?: string): number {
-  if (!raw) return 0
-  const hhmm = /^(\d{2}):(\d{2})$/.exec(raw.trim())
-  if (hhmm) return Number(hhmm[1]) * 60 + Number(hhmm[2])
-  const parsed = Date.parse(raw)
-  return Number.isNaN(parsed) ? 0 : parsed
+function paidAtTimestampMs(raw?: string): number | null {
+  if (!raw) return null
+  const trimmed = raw.trim()
+  // "HH:mm" has no calendar date and wraps across midnight (17:00 -> 05:00); preserve API order.
+  if (/^\d{2}:\d{2}$/.test(trimmed)) return null
+  const parsed = Date.parse(trimmed)
+  return Number.isNaN(parsed) ? null : parsed
 }
 
 export function sortPaidBillsNewestFirst(bills: readonly PaidBillCandidate[]): PaidBillCandidate[] {
-  return [...bills].sort((a, b) => paidAtSortKey(b.paidAt) - paidAtSortKey(a.paidAt))
+  return [...bills].sort((a, b) => {
+    const ta = paidAtTimestampMs(a.paidAt)
+    const tb = paidAtTimestampMs(b.paidAt)
+    if (ta !== null && tb !== null) return tb - ta
+    return 0
+  })
 }
 
 export function filterPaidBills(bills: readonly PaidBillCandidate[], query: string): PaidBillCandidate[] {
