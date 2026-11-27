@@ -918,16 +918,18 @@ try {
         adminPage.evaluate(
           async ({ visitId, businessDate }) => {
             const { api, clock } = await import("/src/services/index.ts")
-            const [floor, turnsRes, sb] = await Promise.all([
+            const [catalog, floor, turnsRes, sb] = await Promise.all([
+              api.getCatalog(),
               api.getFloorState(clock.now()),
               api.getTableTurns({ from: businessDate, to: businessDate, includeUncounted: true }),
               window.__21gamPaymentMock.paymentApi.getSessionBills(visitId),
             ])
-            const a3 = floor.tables.find((t) => t.code === "A3")
+            const a3TableId = catalog.tables.find((t) => t.code === "A3")?.id
+            const a3 = floor.tables.find((t) => t.tableId === a3TableId)
             const visitTurn = turnsRes.turns.find((t) => String(t.visitId) === String(visitId))
             const bill1 = sb.bills[0]
             return {
-              a3Status: a3?.status ?? null,
+              a3Status: a3?.state ?? null,
               a3Claim: a3?.claim ?? null,
               visitTurnEndReason: visitTurn?.endReason ?? null,
               visitTurnStatus: visitTurn?.status ?? null,

@@ -197,8 +197,7 @@ function makeFakeApi(overrides: Partial<PaymentApi> = {}): PaymentApi {
       decidedAt: "2026-11-26T21:42:00.000Z",
       ...(note ? { decisionNote: note } : {}),
     }),
-    cancelPaid: async () =>
-      ({ sessionReopened: true, closedTurnsDelta: -1, tableRestored: true }) as unknown as CancelEffect,
+    cancelPaid: async () => ({ sessionReopened: true, closedTurnsDelta: -1, tableRestored: true }),
     listAudit: async (billCode) => (billCode ? audit.filter((a) => a.billCode === billCode) : audit),
     listPaidBills: async () => paidBills,
     listMyCancelRequests: async () => [],
@@ -326,24 +325,21 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
   })
 
   it("NA45H-12 & NA45H-19: builds cancel impact text strictly from returned CancelEffect and requires tableRestored === true for green table", async () => {
-    type EffectWithTable = CancelEffect & { tableRestored?: boolean }
-    const makeEffect = (effect: EffectWithTable): EffectWithTable => effect
-
-    expect(
-      resolveCancelSessionImpact(makeEffect({ sessionReopened: true, closedTurnsDelta: -1, tableRestored: true })),
-    ).toBe("REOPENED")
-    expect(
-      resolveCancelSessionImpact(makeEffect({ sessionReopened: true, closedTurnsDelta: 0, tableRestored: true })),
-    ).toBe("REOPENED_NO_TURN")
-    expect(
-      resolveCancelSessionImpact(makeEffect({ sessionReopened: true, closedTurnsDelta: 0, tableRestored: false })),
-    ).toBe("REOPENED_NO_TABLE")
-    expect(resolveCancelSessionImpact(makeEffect({ sessionReopened: true, closedTurnsDelta: -1 }))).toBe(
+    expect(resolveCancelSessionImpact({ sessionReopened: true, closedTurnsDelta: -1, tableRestored: true })).toBe(
+      "REOPENED",
+    )
+    expect(resolveCancelSessionImpact({ sessionReopened: true, closedTurnsDelta: 0, tableRestored: true })).toBe(
+      "REOPENED_NO_TURN",
+    )
+    expect(resolveCancelSessionImpact({ sessionReopened: true, closedTurnsDelta: 0, tableRestored: false })).toBe(
       "REOPENED_NO_TABLE",
     )
-    expect(
-      resolveCancelSessionImpact(makeEffect({ sessionReopened: false, closedTurnsDelta: 0, tableRestored: false })),
-    ).toBe("STILL_OPEN")
+    expect(resolveCancelSessionImpact({ sessionReopened: true, closedTurnsDelta: -1 } as unknown as CancelEffect)).toBe(
+      "REOPENED_NO_TABLE",
+    )
+    expect(resolveCancelSessionImpact({ sessionReopened: false, closedTurnsDelta: 0, tableRestored: false })).toBe(
+      "STILL_OPEN",
+    )
     expect(resolveCancelSessionImpact(undefined)).toBe("UNKNOWN")
     expect(resolveCancelSessionImpact(null)).toBe("UNKNOWN")
 
@@ -392,13 +388,11 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
       listOpen,
       getBill,
       cancelPaid: async (billCode: string): Promise<CancelEffect> =>
-        makeEffect(
-          billCode === "B0002"
-            ? { sessionReopened: true, closedTurnsDelta: -1, tableRestored: true }
-            : billCode === "B0005"
-              ? { sessionReopened: true, closedTurnsDelta: 0, tableRestored: false }
-              : { sessionReopened: false, closedTurnsDelta: 0, tableRestored: false },
-        ) as unknown as CancelEffect,
+        billCode === "B0002"
+          ? { sessionReopened: true, closedTurnsDelta: -1, tableRestored: true }
+          : billCode === "B0005"
+            ? { sessionReopened: true, closedTurnsDelta: 0, tableRestored: false }
+            : { sessionReopened: false, closedTurnsDelta: 0, tableRestored: false },
       decideCancel: async (requestId, approve, note) => ({
         id: requestId,
         billCode: requestId === "cr-cutoff" ? "B0005" : "B0002",
@@ -414,13 +408,12 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
         ...(note ? { decisionNote: note } : {}),
         ...(approve
           ? {
-              effect: makeEffect(
+              effect:
                 requestId === "cr-reopen"
                   ? { sessionReopened: true, closedTurnsDelta: -1, tableRestored: true }
                   : requestId === "cr-cutoff"
                     ? { sessionReopened: true, closedTurnsDelta: 0, tableRestored: false }
                     : { sessionReopened: false, closedTurnsDelta: 0, tableRestored: false },
-              ) as unknown as CancelEffect,
             }
           : {}),
       }),

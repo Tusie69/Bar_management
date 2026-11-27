@@ -13,9 +13,7 @@ import {
 
 export type CancelSessionImpact = "REOPENED" | "REOPENED_NO_TURN" | "REOPENED_NO_TABLE" | "STILL_OPEN" | "UNKNOWN"
 
-type CancelEffectLike = CancelEffect & { tableRestored?: boolean }
-
-export function resolveCancelSessionImpact(effect?: CancelEffectLike | null): CancelSessionImpact {
+export function resolveCancelSessionImpact(effect?: CancelEffect | null): CancelSessionImpact {
   if (!effect || typeof effect !== "object" || typeof effect.sessionReopened !== "boolean") {
     return "UNKNOWN"
   }
