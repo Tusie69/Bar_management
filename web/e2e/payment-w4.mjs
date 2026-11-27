@@ -586,6 +586,85 @@ try {
       await context.close()
     }
   }
+
+  // 7. NA45H-10 & NA45H-14: Two independent browser windows at the same origin (Admin /cancel-payment + Cashier /payment)
+  // Real-time queue + decision sync without reload, role switch, refresh click, or clock advance, plus separate audit reason & decisionNote
+  {
+    const syncContext = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+    try {
+      const adminPage = await syncContext.newPage()
+      const cashierPage = await syncContext.newPage()
+      const syncErrors = []
+      for (const p of [adminPage, cashierPage]) {
+        p.on("pageerror", (e) => syncErrors.push(e.message))
+        p.on("console", (msg) => {
+          if (msg.type() === "error") syncErrors.push(msg.text())
+        })
+      }
+
+      await adminPage.addInitScript(() => {
+        localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 7, theme: "light" }))
+      })
+      await adminPage.goto(`${base}/cancel-payment`, { waitUntil: "networkidle" })
+      await expect(adminPage.getByRole("heading", { name: "Duyệt huỷ thanh toán" }).first()).toBeVisible()
+      await expect(adminPage.getByText("Chờ duyệt (0)")).toBeVisible()
+
+      await cashierPage.addInitScript(() => {
+        localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 5, theme: "light" }))
+      })
+      await cashierPage.goto(`${base}/payment`, { waitUntil: "networkidle" })
+
+      const a2Session = cashierPage.locator(".pay-sess", { hasText: "A2" })
+      await a2Session.click()
+      await a2Session.click()
+      await cashierPage.getByRole("button", { name: "Xuất hóa đơn" }).click()
+      await cashierPage.getByRole("button", { name: /^Thu tiền/ }).click()
+      await cashierPage.getByRole("button", { name: /Tiền mặt/ }).click()
+      await cashierPage.locator(".pay-chips .pay-chip").first().click()
+      await cashierPage.getByRole("button", { name: /Xác nhận đã nhận/ }).click()
+      await expect(cashierPage.getByRole("heading", { name: "Đã thanh toán" })).toBeVisible()
+
+      await cashierPage.getByRole("button", { name: /Thông báo thanh toán/ }).click()
+      await cashierPage.locator(".pay-ntf", { hasText: "Đã thanh toán" }).first().click()
+      await cashierPage.getByRole("button", { name: "Gửi yêu cầu huỷ" }).click()
+      await cashierPage.getByLabel("Lý do gửi yêu cầu huỷ (bắt buộc)").fill("Khách đổi QR sang tiền mặt")
+      await cashierPage.getByRole("button", { name: "Xác nhận gửi yêu cầu huỷ" }).click()
+      await expect(cashierPage.getByText(/Đang chờ duyệt \(PENDING\)/)).toBeVisible()
+
+      // Admin window sees request automatically without reload, role switch, refresh, or clock advance
+      await expect(adminPage.getByText("Chờ duyệt (1)")).toBeVisible({ timeout: 3000 })
+      await expect(adminPage.getByText("Khách đổi QR sang tiền mặt").first()).toBeVisible({ timeout: 3000 })
+
+      // Reject with decisionNote -> Cashier sees REJECTED + note automatically; AuditPanel separates reason & decisionNote
+      await adminPage.getByLabel("Ghi chú phản hồi (tuỳ chọn)").first().fill("Chưa khớp sao kê")
+      await adminPage.getByRole("button", { name: "Từ chối" }).first().click()
+      await expect(cashierPage.getByText(/Bị từ chối \(REJECTED\)/)).toBeVisible({ timeout: 3000 })
+      await expect(cashierPage.getByText(/Chưa khớp sao kê/)).toBeVisible({ timeout: 3000 })
+
+      const auditRegion = adminPage.getByRole("region", { name: "Nhật ký thanh toán và huỷ theo bill" })
+      await expect(auditRegion.getByText("Khách đổi QR sang tiền mặt").first()).toBeVisible()
+      await expect(auditRegion.getByText("Chưa khớp sao kê").first()).toBeVisible()
+
+      // 2nd request -> Admin approves with distinct note -> Cashier sees APPROVED automatically & AuditPanel keeps both fields
+      await cashierPage.getByRole("button", { name: "Gửi yêu cầu huỷ" }).click()
+      await cashierPage.getByLabel("Lý do gửi yêu cầu huỷ (bắt buộc)").fill("Thu nhầm tiền mặt")
+      await cashierPage.getByRole("button", { name: "Xác nhận gửi yêu cầu huỷ" }).click()
+      await expect(adminPage.getByText("Chờ duyệt (1)")).toBeVisible({ timeout: 3000 })
+
+      await adminPage.getByLabel("Ghi chú phản hồi (tuỳ chọn)").first().fill("Duyệt thu lại QR")
+      await adminPage.getByRole("button", { name: "Duyệt huỷ", exact: true }).first().click()
+      await expect(adminPage.getByTestId("pc-queue-feedback")).toContainText("bill về Chưa thu, bàn xanh lá, lượt -1")
+      await expect(cashierPage.getByText(/Đã duyệt huỷ \(APPROVED\)/)).toBeVisible({ timeout: 3000 })
+      await expect(cashierPage.getByText(/Duyệt thu lại QR/)).toBeVisible({ timeout: 3000 })
+      await expect(auditRegion.getByText("Thu nhầm tiền mặt").first()).toBeVisible()
+      await expect(auditRegion.getByText("Duyệt thu lại QR").first()).toBeVisible()
+
+      assert.deepEqual(syncErrors, [], `NA45H-10 cross-window console errors: ${syncErrors.join(" | ")}`)
+      console.log("PASS NA45H-10 & NA45H-14 two-window real-time sync (reject & approve) + separate audit fields")
+    } finally {
+      await syncContext.close()
+    }
+  }
 } finally {
   if (browser) await browser.close()
   if (viteServer) await viteServer.close()

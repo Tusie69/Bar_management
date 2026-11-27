@@ -639,7 +639,7 @@ describe("W4 TN-14 UI components against fake PaymentApi", () => {
             decisionNote: "OK duyệt",
             at: "21:42",
             device: "Máy quản trị",
-          } as PaymentAuditEntry,
+          },
           {
             id: "aud-3",
             action: "CANCELLED_DIRECT",
