@@ -11,13 +11,16 @@ import {
   type SessionBills,
 } from "@/services/payment"
 
-export type CancelSessionImpact = "REOPENED" | "REOPENED_NO_TURN" | "STILL_OPEN" | "UNKNOWN"
+export type CancelSessionImpact = "REOPENED" | "REOPENED_NO_TURN" | "REOPENED_NO_TABLE" | "STILL_OPEN" | "UNKNOWN"
 
 export function resolveCancelSessionImpact(effect?: CancelEffect | null): CancelSessionImpact {
   if (!effect || typeof effect !== "object" || typeof effect.sessionReopened !== "boolean") {
     return "UNKNOWN"
   }
   if (effect.sessionReopened) {
+    if (effect.tableRestored !== true) {
+      return "REOPENED_NO_TABLE"
+    }
     return effect.closedTurnsDelta === -1 ? "REOPENED" : "REOPENED_NO_TURN"
   }
   return "STILL_OPEN"
@@ -39,6 +42,12 @@ export function buildDirectCancelOutcome(
       detail: "Bill đã mở lại để thu tiền; bàn được trả về trạng thái đang phục vụ trên sơ đồ.",
     }
   }
+  if (impact === "REOPENED_NO_TABLE") {
+    return {
+      title: `${billCode}: Đã huỷ thanh toán - bill về Chưa thu, bàn không mở lại.`,
+      detail: "Bill đã mở lại để thu tiền; bàn không được mở lại trên sơ đồ.",
+    }
+  }
   if (impact === "STILL_OPEN") {
     return {
       title: `${billCode}: Đã huỷ thanh toán - bill về Chưa thu, phiên vẫn đang mở (không đổi lượt).`,
@@ -57,6 +66,9 @@ export function buildApproveCancelFeedback(billCode: string, tableCode: string, 
   }
   if (impact === "REOPENED_NO_TURN") {
     return `Đã duyệt huỷ ${billCode} (${tableCode}) - bill về Chưa thu, bàn xanh lá. Đã thông báo Thu ngân.`
+  }
+  if (impact === "REOPENED_NO_TABLE") {
+    return `Đã duyệt huỷ ${billCode} (${tableCode}) - bill về Chưa thu, bàn không mở lại. Đã thông báo Thu ngân.`
   }
   if (impact === "STILL_OPEN") {
     return `Đã duyệt huỷ ${billCode} (${tableCode}) - bill về Chưa thu, phiên vẫn đang mở (không đổi lượt). Đã thông báo Thu ngân.`

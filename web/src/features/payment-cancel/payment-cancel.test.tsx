@@ -324,12 +324,18 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
     expect(sortPaidBillsNewestFirst(isoAcrossMidnight).map((b) => b.billCode)).toEqual(["B0003", "B0002"])
   })
 
-  it("NA45H-12: builds cancel impact text strictly from returned CancelEffect without floor/session reads", async () => {
+  it("NA45H-12 & NA45H-19: builds cancel impact text strictly from returned CancelEffect and requires tableRestored === true for green table", async () => {
     expect(resolveCancelSessionImpact({ sessionReopened: true, closedTurnsDelta: -1, tableRestored: true })).toBe(
       "REOPENED",
     )
     expect(resolveCancelSessionImpact({ sessionReopened: true, closedTurnsDelta: 0, tableRestored: true })).toBe(
       "REOPENED_NO_TURN",
+    )
+    expect(resolveCancelSessionImpact({ sessionReopened: true, closedTurnsDelta: 0, tableRestored: false })).toBe(
+      "REOPENED_NO_TABLE",
+    )
+    expect(resolveCancelSessionImpact({ sessionReopened: true, closedTurnsDelta: -1 } as unknown as CancelEffect)).toBe(
+      "REOPENED_NO_TABLE",
     )
     expect(resolveCancelSessionImpact({ sessionReopened: false, closedTurnsDelta: 0, tableRestored: false })).toBe(
       "STILL_OPEN",
@@ -341,6 +347,12 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
     const reopenedNoTurn = buildDirectCancelOutcome("B0002", "REOPENED_NO_TURN")
     expect(reopenedNoTurn.title).toContain("bàn xanh lá")
     expect(reopenedNoTurn.title).not.toContain("lượt -1")
+
+    const reopenedNoTableDirect = buildDirectCancelOutcome("B0005", "REOPENED_NO_TABLE")
+    expect(reopenedNoTableDirect.title).toContain("bill về Chưa thu, bàn không mở lại")
+    expect(reopenedNoTableDirect.title).not.toContain("bàn xanh")
+    expect(reopenedNoTableDirect.title).not.toContain("lượt -1")
+    expect(reopenedNoTableDirect.detail).not.toContain("đang phục vụ")
 
     const stillOpenDirect = buildDirectCancelOutcome("B0003", "STILL_OPEN")
     expect(stillOpenDirect.title).toContain("bill về Chưa thu")
@@ -354,6 +366,10 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
     expect(unknownDirect.title).not.toContain("phiên vẫn đang mở")
 
     expect(buildApproveCancelFeedback("B0002", "A2", "REOPENED")).toContain("lượt -1")
+    const reopenedNoTableApprove = buildApproveCancelFeedback("B0005", "A3", "REOPENED_NO_TABLE")
+    expect(reopenedNoTableApprove).toContain("bill về Chưa thu, bàn không mở lại")
+    expect(reopenedNoTableApprove).not.toContain("bàn xanh")
+    expect(reopenedNoTableApprove).not.toContain("lượt -1")
     const stillOpenApprove = buildApproveCancelFeedback("B0003", "A3", "STILL_OPEN")
     expect(stillOpenApprove).toContain("bill về Chưa thu")
     expect(stillOpenApprove).toContain("phiên vẫn đang mở")
@@ -374,12 +390,14 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
       cancelPaid: async (billCode: string): Promise<CancelEffect> =>
         billCode === "B0002"
           ? { sessionReopened: true, closedTurnsDelta: -1, tableRestored: true }
-          : { sessionReopened: false, closedTurnsDelta: 0, tableRestored: false },
+          : billCode === "B0005"
+            ? { sessionReopened: true, closedTurnsDelta: 0, tableRestored: false }
+            : { sessionReopened: false, closedTurnsDelta: 0, tableRestored: false },
       decideCancel: async (requestId, approve, note) => ({
         id: requestId,
-        billCode: "B0002",
+        billCode: requestId === "cr-cutoff" ? "B0005" : "B0002",
         visitId: "2",
-        code: "A2",
+        code: requestId === "cr-cutoff" ? "A3" : "A2",
         dueVnd: 165_000,
         reason: "Test",
         requestedBy: "Thu ngân",
@@ -393,7 +411,9 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
               effect:
                 requestId === "cr-reopen"
                   ? { sessionReopened: true, closedTurnsDelta: -1, tableRestored: true }
-                  : { sessionReopened: false, closedTurnsDelta: 0, tableRestored: false },
+                  : requestId === "cr-cutoff"
+                    ? { sessionReopened: true, closedTurnsDelta: 0, tableRestored: false }
+                    : { sessionReopened: false, closedTurnsDelta: 0, tableRestored: false },
             }
           : {}),
       }),
@@ -401,11 +421,17 @@ describe("W4 TN-14 access gates & pure model helpers", () => {
 
     const directReopen = await submitDirectCancel(fakeApi, "B0002", "Khách gọi thêm")
     expect(directReopen.title).toContain("bàn xanh lá, lượt -1")
+    const directNoTable = await submitDirectCancel(fakeApi, "B0005", "Qua giờ chốt ca")
+    expect(directNoTable.title).toContain("bill về Chưa thu, bàn không mở lại")
+    expect(directNoTable.title).not.toContain("bàn xanh")
     const directOpen = await submitDirectCancel(fakeApi, "B0003", "Tách bill")
     expect(directOpen.title).toContain("phiên vẫn đang mở (không đổi lượt)")
 
     const approveReopen = await submitDecideCancel(fakeApi, { id: "cr-reopen", billCode: "B0002", code: "A2" }, true)
     expect(approveReopen.feedback.text).toContain("bàn xanh lá, lượt -1")
+    const approveCutoff = await submitDecideCancel(fakeApi, { id: "cr-cutoff", billCode: "B0005", code: "A3" }, true)
+    expect(approveCutoff.feedback.text).toContain("bill về Chưa thu, bàn không mở lại")
+    expect(approveCutoff.feedback.text).not.toContain("bàn xanh")
     const approveOpen = await submitDecideCancel(fakeApi, { id: "cr-open", billCode: "B0003", code: "A3" }, true)
     expect(approveOpen.feedback.text).toContain("phiên vẫn đang mở (không đổi lượt)")
 
