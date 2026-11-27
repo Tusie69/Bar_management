@@ -103,6 +103,7 @@ export interface PayBill {
   paidBy?: string
   manualConfirm?: boolean
   cancelPending?: boolean
+  cancelHistory?: PayBillCancelHistoryEntry[]
 }
 
 export interface PreviewBill {
@@ -134,6 +135,21 @@ export interface SessionBills {
 
 export type CancelRequestStatus = "PENDING" | "APPROVED" | "REJECTED"
 
+export interface CancelEffect {
+  sessionReopened: boolean
+  closedTurnsDelta: 0 | -1
+}
+
+export interface PayBillCancelHistoryEntry {
+  kind: "DIRECT" | "APPROVED"
+  reason: string
+  actor: string
+  approver?: string
+  decisionNote?: string
+  at: string
+  recollectedAt?: string
+}
+
 export interface CancelRequest {
   id: string
   billCode: string
@@ -147,6 +163,7 @@ export interface CancelRequest {
   decidedBy?: string
   decidedAt?: string
   decisionNote?: string
+  effect?: CancelEffect
 }
 
 export type PaymentAuditAction =
@@ -232,7 +249,7 @@ export interface PaymentApi {
   listMyCancelRequests(billCode?: string): Promise<CancelRequest[]>
   listCancelRequests(): Promise<CancelRequest[]>
   decideCancel(requestId: string, approve: boolean, note?: string): Promise<CancelRequest>
-  cancelPaid(billCode: string, reason: string): Promise<void>
+  cancelPaid(billCode: string, reason: string): Promise<CancelEffect>
   listPaidBills(): Promise<PaidBillSummary[]>
   listAudit(billCode?: string): Promise<PaymentAuditEntry[]>
 }
