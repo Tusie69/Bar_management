@@ -455,28 +455,35 @@ try {
       await expect(page.locator(".pay-bill-item", { hasText: a2Bill2 })).toHaveAttribute("aria-pressed", "true")
       await expect(page.getByText("Giữ nguyên bill 2")).toBeVisible()
 
-      // NA45H-11: Receptionist direct-cancels a2Bill1 -> Cashier sees history & re-collects -> S1 bell opens a2Bill1 with history + re-collect milestone + new request allowed
+      // NA45H-11: Receptionist (independent tab) direct-cancels a2Bill1 -> Cashier sees history & re-collects -> S1 bell opens a2Bill1 with history + re-collect milestone + new request allowed
       await page.getByRole("button", { name: "Phiên đang mở" }).click()
       await expect(page).toHaveURL(/\/payment$/)
-      await switchRoleInUi(page, /Lễ tân 1/)
-      await expect(page).toHaveURL(/\/floor$/)
-      await page.getByRole("button", { name: /^Menu/ }).click()
-      await page.getByRole("button", { name: /Huỷ thanh toán/ }).click()
-      await expect(page).toHaveURL(/\/cancel-payment$/)
 
-      const directTargetCard = page.getByTestId(`pc-paid-${a2Bill1}`)
+      const receptionPage = await context.newPage()
+      receptionPage.on("pageerror", (e) => errors.push(e.message))
+      receptionPage.on("console", (msg) => {
+        if (msg.type() === "error") errors.push(msg.text())
+      })
+      await receptionPage.addInitScript(() => {
+        localStorage.setItem("21gam.session.v1", JSON.stringify({ userId: 1, theme: "light" }))
+      })
+      await receptionPage.goto(`${base}/cancel-payment`, { waitUntil: "networkidle" })
+
+      const directTargetCard = receptionPage.getByTestId(`pc-paid-${a2Bill1}`)
       await expect(directTargetCard).toBeVisible()
       await directTargetCard.getByRole("button", { name: "Chọn huỷ thanh toán" }).click()
-      const directForm = page.getByTestId(`pc-direct-form-${a2Bill1}`)
+      const directForm = receptionPage.getByTestId(`pc-direct-form-${a2Bill1}`)
       await expect(directForm).toBeVisible()
       await directForm.getByLabel("Lý do huỷ thanh toán (bắt buộc)").fill("Lễ tân huỷ trực tiếp kiểm tra NA45H-11")
       await directForm.getByRole("button", { name: "Xác nhận huỷ thanh toán" }).click()
-      await expect(page.getByTestId("pc-direct-outcome")).toBeVisible({ timeout: 10000 })
+      await expect(receptionPage.getByTestId("pc-direct-outcome")).toBeVisible({ timeout: 10000 })
+      await receptionPage.close()
 
-      await switchRoleInUi(page, /Thu ngân/)
-      await expect(page).toHaveURL(/\/payment$/)
       const a2Reopened = page.locator(".pay-sess", { hasText: "A2" })
-      await a2Reopened.click()
+      await expect(a2Reopened).toBeVisible({ timeout: 10000 })
+      if (!(await a2Reopened.evaluate((el) => el.classList.contains("sel")))) {
+        await a2Reopened.click()
+      }
       await a2Reopened.click()
       await expect(page.locator(".pay-bill-item", { hasText: a2Bill1 }).first()).toHaveAttribute("aria-pressed", "true")
       await expect(page.getByText("Lịch sử huỷ thanh toán")).toBeVisible()
