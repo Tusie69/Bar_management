@@ -132,6 +132,7 @@ import type {
   CancelRequest,
   PaidBillSummary,
   PayBill,
+  PayBillCancelHistoryEntry,
   PayBillSummary,
   PayLine,
   PaymentAuditAction,
@@ -183,6 +184,7 @@ interface IssuedBillRecord {
   paidBy?: string
   manualConfirm?: boolean
   cancelPending?: boolean
+  cancelHistory?: PayBillCancelHistoryEntry[]
 }
 
 interface PaymentVisitMeta {
@@ -1562,7 +1564,8 @@ export class MockGamApi implements GamApi, DemoControls {
         if (input.classification !== undefined) row.customerClassification = input.classification
         if (input.guestType !== undefined) row.guestType = input.guestType
         else if (input.classification !== undefined)
-          row.guestType = input.classification === "RETURNING" ? "REGULAR" : input.classification === "NEW" ? "NEW" : null
+          row.guestType =
+            input.classification === "RETURNING" ? "REGULAR" : input.classification === "NEW" ? "NEW" : null
         if (input.isBirthday !== undefined) row.isBirthday = input.isBirthday
         if (input.expectedAt && input.expectedAt.getTime() !== row.expectedAt.getTime()) {
           this.assertBookingSlot(input.expectedAt)
@@ -1985,44 +1988,48 @@ export class MockGamApi implements GamApi, DemoControls {
       if (input.contactName && noteHasPhoneNumber(input.contactName)) this.fail("Không nhập số điện thoại vào ô tên.")
       const bd = businessDateOf(this.now)
       if (input.tableIds.length) this.maybeTriggerConflict(input.tableIds[0], bd, this.now)
-      return this.commit<{ visitId: number }>({ action: "WALKIN_SEATED", entityType: "visit", undoable: true }, (tx) => {
-        this.assertClaimable(input.tableIds, {
-          bd,
-          at: this.now,
-          partySize: input.guestCount,
-          overrideReason: input.overrideReason,
-        })
-        const customerId = this.upsertCustomer(tx, input.contactName, input.phone)
-        const v = tx.insert("visits", {
-          organizationId: ORG_ID,
-          venueId: VENUE_ID,
-          origin: "WALK_IN",
-          customerId,
-          contactName: customerId === null ? input.contactName?.trim() || null : null,
-          guestCount: input.guestCount,
-          startedAt: this.now,
-          businessDate: bd,
-          endedAt: null,
-          endedByUserId: null,
-          endReason: null,
-          mergedIntoVisitId: null,
-          paidMarkedAt: null,
-          paidMarkedByUserId: null,
-          note: null,
-          createdByUserId: this.session.id,
-          createdAt: this.now,
-        })
-        const groupId = input.tableIds.length > 1 ? (this.layoutGroupFor(input.tableIds) ?? this.newGroup(tx, bd)) : null
-        input.tableIds.forEach((tableId) =>
-          this.newAllocation(tx, { tableId, kind: "USAGE", visitId: v.id, groupId, startsAt: this.now, bd }),
-        )
-        const sym = groupId ? symbolByNo(this.db.groups.get(groupId)?.symbolNo)?.name : null
-        return {
-          entityId: v.id,
-          summary: `Walk-in ${this.codes(input.tableIds)} · ${input.guestCount} khách${sym ? ` · ký hiệu ${sym}` : ""}`,
-          extra: { visitId: v.id },
-        }
-      })
+      return this.commit<{ visitId: number }>(
+        { action: "WALKIN_SEATED", entityType: "visit", undoable: true },
+        (tx) => {
+          this.assertClaimable(input.tableIds, {
+            bd,
+            at: this.now,
+            partySize: input.guestCount,
+            overrideReason: input.overrideReason,
+          })
+          const customerId = this.upsertCustomer(tx, input.contactName, input.phone)
+          const v = tx.insert("visits", {
+            organizationId: ORG_ID,
+            venueId: VENUE_ID,
+            origin: "WALK_IN",
+            customerId,
+            contactName: customerId === null ? input.contactName?.trim() || null : null,
+            guestCount: input.guestCount,
+            startedAt: this.now,
+            businessDate: bd,
+            endedAt: null,
+            endedByUserId: null,
+            endReason: null,
+            mergedIntoVisitId: null,
+            paidMarkedAt: null,
+            paidMarkedByUserId: null,
+            note: null,
+            createdByUserId: this.session.id,
+            createdAt: this.now,
+          })
+          const groupId =
+            input.tableIds.length > 1 ? (this.layoutGroupFor(input.tableIds) ?? this.newGroup(tx, bd)) : null
+          input.tableIds.forEach((tableId) =>
+            this.newAllocation(tx, { tableId, kind: "USAGE", visitId: v.id, groupId, startsAt: this.now, bd }),
+          )
+          const sym = groupId ? symbolByNo(this.db.groups.get(groupId)?.symbolNo)?.name : null
+          return {
+            entityId: v.id,
+            summary: `Walk-in ${this.codes(input.tableIds)} · ${input.guestCount} khách${sym ? ` · ký hiệu ${sym}` : ""}`,
+            extra: { visitId: v.id },
+          }
+        },
+      )
     })
   }
 
@@ -3078,7 +3085,8 @@ export class MockGamApi implements GamApi, DemoControls {
         row.waitlistHoldDefaultMinutes = next.waitlistHoldDefaultMinutes
         row.waitlistClaimLeaseSeconds = next.waitlistClaimLeaseSeconds
         row.reservationHoldPolicy = next.reservationHoldPolicy
-        row.reservationWindowMinutes = next.reservationHoldPolicy === "SEQUENTIAL" ? null : next.reservationWindowMinutes
+        row.reservationWindowMinutes =
+          next.reservationHoldPolicy === "SEQUENTIAL" ? null : next.reservationWindowMinutes
         row.groupSymbolCount = next.groupSymbolCount
         return { entityId: v.id, summary: "Cập nhật cấu hình quán" }
       })
@@ -3114,7 +3122,10 @@ export class MockGamApi implements GamApi, DemoControls {
         : this.venue.businessDayCutoffLocal
       const shiftChanged =
         startLocal !== this.venue.businessDayStartLocal || cutoffLocal !== this.venue.businessDayCutoffLocal
-      if (hasStart && (!isShiftBoundary(input.businessDayStartLocal!) || !isShiftBoundary(input.businessDayCutoffLocal!)))
+      if (
+        hasStart &&
+        (!isShiftBoundary(input.businessDayStartLocal!) || !isShiftBoundary(input.businessDayCutoffLocal!))
+      )
         this.fail("Giờ mở ca và mốc cắt ca phải có dạng HH:mm hoặc HH:mm:ss.")
       if (shiftChanged) {
         if (!shiftServesBookingWindow(startLocal, cutoffLocal))
@@ -3400,7 +3411,10 @@ export class MockGamApi implements GamApi, DemoControls {
     const hasBills = meta.bills.length > 0
     const hasUnpaidBill = meta.bills.some((b) => b.billStatus === "UNPAID")
     const hasActiveUnbilled = this.hasActiveUnbilledLines(meta)
-    if ((hasBills && !hasUnpaidBill && !hasActiveUnbilled) || (visit.paidMarkedAt && !hasUnpaidBill && !hasActiveUnbilled)) {
+    if (
+      (hasBills && !hasUnpaidBill && !hasActiveUnbilled) ||
+      (visit.paidMarkedAt && !hasUnpaidBill && !hasActiveUnbilled)
+    ) {
       return "PAID"
     }
     // Derive CLOSED_UNPAID from live visit.endedAt; never cache it on meta.
@@ -3439,10 +3453,7 @@ export class MockGamApi implements GamApi, DemoControls {
     return structuredClone(rest)
   }
 
-  private resolveVisitTableInfo(
-    visit: VisitRow,
-    meta: PaymentVisitMeta,
-  ): { tables: string[]; clusterCode?: string } {
+  private resolveVisitTableInfo(visit: VisitRow, meta: PaymentVisitMeta): { tables: string[]; clusterCode?: string } {
     const activeTableIds = visitTableIds(this.db, visit.id)
     const liveTableCodes = activeTableIds.map((id) => this.db.tables.get(id)?.code ?? `#${id}`)
     const viewTableCodes =
@@ -3500,6 +3511,7 @@ export class MockGamApi implements GamApi, DemoControls {
       ...(record.paidBy ? { paidBy: record.paidBy } : {}),
       ...(record.manualConfirm !== undefined ? { manualConfirm: record.manualConfirm } : {}),
       ...(record.cancelPending !== undefined ? { cancelPending: record.cancelPending } : {}),
+      ...(record.cancelHistory?.length ? { cancelHistory: structuredClone(record.cancelHistory) } : {}),
     }
   }
 
@@ -3631,9 +3643,7 @@ export class MockGamApi implements GamApi, DemoControls {
     return { visit, bill: this.buildPayBill(visit) }
   }
 
-  private locateIssuedBill(
-    billCode: string,
-  ): { visit: VisitRow; meta: PaymentVisitMeta; record: IssuedBillRecord } {
+  private locateIssuedBill(billCode: string): { visit: VisitRow; meta: PaymentVisitMeta; record: IssuedBillRecord } {
     for (const [visitIdNum, meta] of this.paymentMeta.entries()) {
       const record = meta.bills.find((b) => b.billCode === billCode)
       if (!record) continue
@@ -3978,6 +3988,12 @@ export class MockGamApi implements GamApi, DemoControls {
     record.paidBy = staff
     record.manualConfirm = manual
     record.cancelPending = false
+    if (record.cancelHistory?.length) {
+      const recollectedAt = this.now.toISOString()
+      for (const entry of record.cancelHistory) {
+        if (!entry.recollectedAt) entry.recollectedAt = recollectedAt
+      }
+    }
 
     const allBillsPaid = meta.bills.length > 0 && meta.bills.every((b) => b.billStatus === "PAID")
     const shouldCloseVisit = allBillsPaid && !this.hasActiveUnbilledLines(meta)
@@ -4174,12 +4190,16 @@ export class MockGamApi implements GamApi, DemoControls {
     return activeAllocations(this.db).some((a) => a.tableId === tableId && a.kind === "USAGE")
   }
 
-  private revertPaidBillToUnpaid(visit: VisitRow, meta: PaymentVisitMeta, record: IssuedBillRecord) {
-    if (visit.endedAt !== null) {
+  private revertPaidBillToUnpaid(visit: VisitRow, meta: PaymentVisitMeta, record: IssuedBillRecord): CancelEffect {
+    const wasVisitEnded = visit.endedAt !== null
+    const wasCountedClosedTurn = wasVisitEnded && visit.endReason === "GUEST_LEFT"
+    if (wasVisitEnded) {
       const tracked = meta.lastClosedAllocIds?.length
         ? meta.lastClosedAllocIds
             .map((id) => this.db.allocations.get(id))
-            .filter((a): a is NonNullable<typeof a> => Boolean(a && a.releasedAt !== null && a.releaseReason === "GUEST_LEFT"))
+            .filter((a): a is NonNullable<typeof a> =>
+              Boolean(a && a.releasedAt !== null && a.releaseReason === "GUEST_LEFT"),
+            )
         : []
       const releasedAllocs =
         tracked.length > 0
@@ -4226,6 +4246,10 @@ export class MockGamApi implements GamApi, DemoControls {
     record.manualConfirm = undefined
     record.cancelPending = false
     meta.versionOffset += 1
+    return {
+      sessionReopened: wasVisitEnded,
+      closedTurnsDelta: wasCountedClosedTurn ? -1 : 0,
+    }
   }
 
   async requestPaymentCancel(billCode: string, reason: string): Promise<CancelRequest> {
@@ -4317,11 +4341,22 @@ export class MockGamApi implements GamApi, DemoControls {
         if (record.billStatus !== "PAID") {
           throw new ApiError(409, "INVALID_STATE", "Bill không còn ở trạng thái Đã thanh toán.")
         }
-        this.revertPaidBillToUnpaid(visit, meta, record)
+        const effect = this.revertPaidBillToUnpaid(visit, meta, record)
+        const decidedAt = this.now.toISOString()
         req.status = "APPROVED"
         req.decidedBy = decider
-        req.decidedAt = this.now.toISOString()
+        req.decidedAt = decidedAt
         if (trimmedNote) req.decisionNote = trimmedNote
+        req.effect = effect
+        record.cancelHistory ??= []
+        record.cancelHistory.unshift({
+          kind: "APPROVED",
+          reason: req.reason,
+          actor: req.requestedBy,
+          approver: decider,
+          ...(trimmedNote ? { decisionNote: trimmedNote } : {}),
+          at: decidedAt,
+        })
         this.pushPaymentEvent(
           "CANCEL_DECIDED",
           "Đã duyệt hủy thanh toán",
@@ -4394,13 +4429,23 @@ export class MockGamApi implements GamApi, DemoControls {
         throw new ApiError(409, "INVALID_STATE", "Chỉ có thể hủy bill đã thanh toán.")
       }
       const billView = this.buildIssuedPayBill(visit, meta, record)
-      this.revertPaidBillToUnpaid(visit, meta, record)
+      const effect = this.revertPaidBillToUnpaid(visit, meta, record)
+      const actor = `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`
+      const decidedAt = this.now.toISOString()
+      record.cancelHistory ??= []
+      record.cancelHistory.unshift({
+        kind: "DIRECT",
+        reason: trimmed,
+        actor,
+        at: decidedAt,
+      })
       const pendingReq = this.cancelRequests.find((r) => r.billCode === billCode && r.status === "PENDING")
       if (pendingReq) {
         pendingReq.status = "APPROVED"
-        pendingReq.decidedBy = `${this.session.displayName} · ${ROLE_LABEL[this.session.role]}`
-        pendingReq.decidedAt = this.now.toISOString()
+        pendingReq.decidedBy = actor
+        pendingReq.decidedAt = decidedAt
         pendingReq.decisionNote = trimmed
+        pendingReq.effect = effect
       }
       this.pushPaymentEvent(
         "CANCEL_DECIDED",
@@ -4419,7 +4464,7 @@ export class MockGamApi implements GamApi, DemoControls {
         actorUserId: this.session.id,
         summary: `Hủy thanh toán ${billView.code} (${billCode})`,
       })
-      return { sessionReopened: false, closedTurnsDelta: 0 }
+      return effect
     })
   }
 
@@ -4464,9 +4509,7 @@ export class MockGamApi implements GamApi, DemoControls {
     if (!roleCan(this.session.role, "payment.collect") && this.session.role !== "RECEPTIONIST") {
       throw new ApiError(403, "PERMISSION_DENIED", "Tài khoản không có quyền xem nhật ký thanh toán.")
     }
-    const list = billCode
-      ? this.paymentAuditLog.filter((entry) => entry.billCode === billCode)
-      : this.paymentAuditLog
+    const list = billCode ? this.paymentAuditLog.filter((entry) => entry.billCode === billCode) : this.paymentAuditLog
     return structuredClone(list)
   }
 
