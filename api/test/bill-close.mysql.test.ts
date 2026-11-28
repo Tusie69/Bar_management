@@ -30,7 +30,12 @@ import { databasePool } from '../src/database/pool.js'
 import { createWalkIn } from '../src/modules/bookings/booking.repository.js'
 import { applyVariantPriceWithinTransaction } from '../src/modules/menu/menu-price.repository.js'
 import { mergeVisitTables } from '../src/modules/visits/visit.repository.js'
-import type { BillListView, BillPreviewView, BillView } from '../src/modules/bills/bill.model.js'
+import type {
+  BillListView,
+  BillPreviewView,
+  BillView,
+  SessionBillsView,
+} from '../src/modules/bills/bill.model.js'
 import {
   actor,
   businessDate,
@@ -315,6 +320,33 @@ mysqlDescribe('TU-45 — chốt bill', () => {
       expect(view.counts).toEqual({ all: 1, serving: 0, awaitingPayment: 1 })
       expect(view.items[0]?.status).toBe('AWAITING_PAYMENT')
       expect(view.items[0]?.totalVnd).toBe(231_000)
+    })
+
+    /**
+     * V12 bỏ ràng buộc "mỗi Phiên một hoá đơn mở", nên đây là hàng rào chống
+     * một lỗi cụ thể: `LEFT JOIN bills` thẳng sẽ nhân hàng của Phiên lên theo
+     * số hoá đơn chưa thu, và Thu ngân thấy hai thẻ cho cùng một bàn.
+     */
+    it('hai hoá đơn chưa thu cộng một đợt mới vẫn là MỘT hàng, nợ là tổng cả ba', async () => {
+      await submitOrder(waiter, seeded, seeded.visitId)
+      const first = await post(cashier, '/api/v1/bills', { visitId: seeded.visitId, idempotencyKey: nextKey() })
+      expect(first.status, JSON.stringify(first.body)).toBe(201)
+      await submitOrder(waiter, seeded, seeded.visitId)
+      const second = await post(cashier, '/api/v1/bills', { visitId: seeded.visitId, idempotencyKey: nextKey() })
+      expect(second.status, JSON.stringify(second.body)).toBe(201)
+      // Đợt thứ ba: gọi thêm sau khi đã xuất hai hoá đơn, chưa lên tờ nào.
+      await submitOrder(waiter, seeded, seeded.visitId)
+
+      const view = (await get(cashier, `/api/v1/bills?businessDate=${businessDate}`)).body as BillListView
+      expect(view.items).toHaveLength(1)
+      const row = view.items[0]
+      expect(row?.unpaidBillCount).toBe(2)
+      // Hai tờ đã xuất (231.000 mỗi tờ) cộng đợt chưa xuất (231.000).
+      expect(row?.dueTotalVnd).toBe(693_000)
+      // `totalVnd` vẫn là của tờ cũ nhất — tờ sẽ được thu trước.
+      expect(row?.totalVnd).toBe(231_000)
+      expect(row?.billId).toBe((first.body as { bill: BillView }).bill.id)
+      expect(view.counts).toEqual({ all: 1, serving: 0, awaitingPayment: 1 })
     })
   })
 
@@ -698,6 +730,85 @@ mysqlDescribe('TU-45 — chốt bill', () => {
       expect(response.status).toBe(400)
       expect((response.body as { error: { code: string } }).error.code).toBe('INVALID_IDEMPOTENCY_KEY')
       expect(await countBills(seeded.visitId)).toBe(0)
+    })
+  })
+
+  describe('NA-45 — GET /bills/session/:visitId', () => {
+    it('trả mọi hoá đơn của Phiên cùng phần món chưa xuất', async () => {
+      await submitOrder(waiter, seeded, seeded.visitId)
+      const closed = await post(cashier, '/api/v1/bills', { visitId: seeded.visitId, idempotencyKey: nextKey() })
+      const billOne = (closed.body as { bill: BillView }).bill
+
+      // Gọi thêm sau khi đã xuất hoá đơn → phần này chưa lên bill nào.
+      await post(waiter, '/api/v1/waiter/orders', {
+        visitId: seeded.visitId,
+        idempotencyKey: nextKey(),
+        lines: [{ variantId: seeded.foodVariantId, priceId: seeded.foodPriceId, priceVersion: 1, quantity: 2 }],
+      })
+
+      const response = await get(cashier, `/api/v1/bills/session/${seeded.visitId}`)
+      expect(response.status, JSON.stringify(response.body)).toBe(200)
+      const session = (response.body as { session: SessionBillsView }).session
+
+      expect(session.visitId).toBe(seeded.visitId)
+      expect(session.bills.map((bill) => bill.id)).toEqual([billOne.id])
+      expect(session.unbilledLineCount).toBe(1)
+      expect(session.unbilledLines[0]?.itemCode).toBe('PEANUT')
+      // Còn món chưa xuất thì Phiên KHÔNG ở trạng thái chờ thanh toán (TN-13-K4).
+      expect(session.status).toBe('SERVING')
+    })
+
+    it('mang bối cảnh Phiên mà màn Thu ngân cần, và KHÔNG mang gì về khách', async () => {
+      await submitOrder(waiter, seeded, seeded.visitId)
+      await post(cashier, '/api/v1/bills', { visitId: seeded.visitId, idempotencyKey: nextKey() })
+
+      const response = await get(cashier, `/api/v1/bills/session/${seeded.visitId}`)
+      const session = (response.body as { session: SessionBillsView }).session
+
+      expect(session.sessionCode).toBe(`S-${String(seeded.visitId).padStart(4, '0')}`)
+      expect(session.code).toBe('A1')
+      expect(session.guests).toBe(4)
+      // `waiterName` là NHÂN VIÊN gửi đơn, không phải tên khách.
+      expect(session.waiterName).toBe('tu45_waiter')
+      expect(session.roundCount).toBe(1)
+      expect(session.status).toBe('AWAITING_PAYMENT')
+
+      const raw = JSON.stringify(response.body)
+      for (const field of ['contactName', 'guestName', 'phoneLast3', 'phoneE164', 'customerId']) {
+        expect(raw, `payload không được chứa ${field}`).not.toContain(field)
+      }
+    })
+
+    it('dòng món mang đợt gọi và trạng thái chế biến', async () => {
+      await submitOrder(waiter, seeded, seeded.visitId)
+      const closed = await post(cashier, '/api/v1/bills', { visitId: seeded.visitId, idempotencyKey: nextKey() })
+      const bill = (closed.body as { bill: BillView }).bill
+
+      for (const line of bill.lines) {
+        expect(line.orderRound).toBe(1)
+        // Phiếu Bar/Bếp vừa gửi nên chưa ai mang ra: món đang làm, và vẫn tính tiền.
+        expect(line.state).toBe('MAKING')
+      }
+      expect(bill.lines.reduce((sum, line) => sum + line.amountVnd, 0)).toBe(bill.subtotalVnd)
+    })
+
+    it('số đợt của một tờ là số đợt NẰM TRÊN tờ đó, không phải của cả Phiên', async () => {
+      await submitOrder(waiter, seeded, seeded.visitId)
+      await submitOrder(waiter, seeded, seeded.visitId)
+      const closed = await post(cashier, '/api/v1/bills', { visitId: seeded.visitId, idempotencyKey: nextKey() })
+      const firstBill = (closed.body as { bill: BillView }).bill
+      // Tờ này gom hai đợt đầu.
+      expect(firstBill.roundCount).toBe(2)
+
+      // Đợt thứ ba đi vào tờ thứ hai, nên tờ thứ hai chỉ có MỘT đợt dù Phiên đã có ba.
+      await submitOrder(waiter, seeded, seeded.visitId)
+      const again = await post(cashier, '/api/v1/bills', { visitId: seeded.visitId, idempotencyKey: nextKey() })
+      const secondBill = (again.body as { bill: BillView }).bill
+      expect(secondBill.roundCount).toBe(1)
+
+      // Còn bối cảnh Phiên vẫn đếm đủ ba đợt.
+      const response = await get(cashier, `/api/v1/bills/session/${seeded.visitId}`)
+      expect((response.body as { session: SessionBillsView }).session.roundCount).toBe(3)
     })
   })
 

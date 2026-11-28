@@ -1,4 +1,5 @@
 import { AlertTriangle, CheckCircle2, ChevronRight, Clock, Info, Lock, Printer, ReceiptText, Send, XCircle } from "lucide-react"
+import { QRCodeSVG } from "qrcode.react"
 import { useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
 import {
@@ -9,6 +10,7 @@ import {
   groupActiveRounds,
   type CancelRequest,
   type PayBill,
+  type PayBillQr,
 } from "@/services/payment"
 
 type CancelDisplayItem =
@@ -49,6 +51,31 @@ function statusPillMeta(bill: Pick<PayBill, "status" | "billStatus">): { label: 
     return { label: "Chưa thu", cls: "pay-pill pay-p-pend" }
   }
   return { label: "Đang phục vụ", cls: "pay-pill pay-p-open" }
+}
+
+/**
+ * Mã QR của tờ hoá đơn.
+ *
+ * `qr` có thì vẽ ĐÚNG chuỗi máy chủ đã sinh và lưu cùng hoá đơn — khách quét
+ * cái gì thì Kế toán đối soát cái đó, nên trình duyệt không được tự dựng một
+ * chuỗi khác. Không có `qr` (chế độ mô phỏng, hoặc quán chưa khai tài khoản)
+ * thì rơi về ô minh hoạ, và nhãn nói rõ nó không chuyển tiền được.
+ *
+ * Nhãn DEMO vẫn phủ lên mã THẬT khi `isDemo`: quán đang dùng số tài khoản mẫu,
+ * và một mã quét ra được mà tiền đi nhầm chỗ nguy hiểm hơn một mã không quét được.
+ */
+export function BillQrBox({ qr, label, size = 180 }: { qr: PayBillQr | null | undefined; label: string; size?: number }) {
+  if (!qr) return <DemoQrBox label={label} />
+  return (
+    <div role="img" aria-label={label} className="pay-qr-box">
+      <QRCodeSVG value={qr.payload} size={size} level="M" marginSize={2} />
+      {qr.isDemo ? (
+        <span aria-hidden className="pay-demo-band">
+          DEMO – KHÔNG CHUYỂN TIỀN
+        </span>
+      ) : null}
+    </div>
+  )
 }
 
 export function DemoQrBox({ label }: { size?: "sm" | "md" | "xs"; label: string }) {
@@ -755,7 +782,7 @@ export function ProvisionalPreviewView({
 
   const rounds = useMemo(() => groupActiveRounds(bill.lines), [bill.lines])
   const activeLines = useMemo(() => rounds.flatMap((r) => r.items), [rounds])
-  const qrRef = `21GAM ${bill.billCode}`
+  const qrRef = bill.qr?.transferNote ?? `21GAM ${bill.billCode}`
   const place = bill.clusterCode ? `${bill.code} (${bill.tables.join(", ")})` : bill.code
   const pendingAt = bill.issuedAt ?? bill.pendingAt ?? "21:42"
   const hasLines = bill.lines.length > 0
@@ -871,7 +898,7 @@ export function ProvisionalPreviewView({
 
             {!isProvisional ? (
               <div className="pay-r-qr">
-                <DemoQrBox size="sm" label="Mã QR minh họa trên hóa đơn, không chuyển tiền được" />
+                <BillQrBox qr={bill.qr} size={96} label="Mã QR chuyển khoản trên hóa đơn" />
                 <div style={{ display: "grid", gap: 4 }}>
                   <b>{`Quét để chuyển khoản đúng ${formatVnd(bill.dueVnd)}`}</b>
                   <span className="pay-r-qr-n">
@@ -926,7 +953,7 @@ export function ProvisionalPreviewView({
             {!isProvisional ? (
               <>
                 <div className="hr" />
-                <DemoQrBox size="xs" label="Mã QR bản in 80mm, không chuyển tiền được" />
+                <BillQrBox qr={bill.qr} size={72} label="Mã QR chuyển khoản, bản in 80mm" />
                 <div className="c">{`ND: ${qrRef}`}</div>
               </>
             ) : null}

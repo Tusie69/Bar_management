@@ -49,6 +49,8 @@ import {
 } from './bill-total.js'
 import {
   BILL_FEATURES_IN_DEVELOPMENT,
+  type BillLineState,
+  type BillVisitContext,
   PAYMENT_METHOD_OPTIONS,
   type BillActor,
   type BillBlocker,
@@ -56,6 +58,7 @@ import {
   type BillLineView,
   type BillListItem,
   type BillListView,
+  type SessionBillsView,
   type BillPreviewView,
   type BillStatus,
   type BillView,
@@ -92,6 +95,7 @@ interface VisitRow extends RowDataPacket {
   started_at: Date | string
   ended_at: Date | string | null
   paid_marked_at: Date | string | null
+  version: number | string
 }
 
 interface VenueRow extends RowDataPacket {
@@ -113,6 +117,8 @@ interface BillableLineRow extends RowDataPacket {
   note: string | null
   unit_price_vnd: number | string
   remaining_quantity: number | string
+  order_round: number | string
+  line_state: BillLineState
 }
 
 /**
@@ -142,9 +148,14 @@ async function readBillableOrderLines(
             l.menu_item_variant_id AS variant_id,
             l.item_code, l.item_name, l.variant_display_name, l.unit_code, l.note,
             l.unit_price_vnd,
-            (l.net_quantity - IFNULL(billed.quantity, 0)) AS remaining_quantity
+            (l.net_quantity - IFNULL(billed.quantity, 0)) AS remaining_quantity,
+            o.visit_sequence AS order_round,
+            ${LINE_STATE_SQL} AS line_state
        FROM sales_order_lines l
        JOIN sales_orders o ON o.venue_id = l.venue_id AND o.id = l.order_id
+       LEFT JOIN preparation_tickets pt
+         ON pt.venue_id = l.venue_id AND pt.order_id = l.order_id
+        AND pt.station = l.preparation_station
        LEFT JOIN (
          SELECT s.order_line_id, SUM(s.quantity) AS quantity
            FROM bill_line_sources s
@@ -170,6 +181,8 @@ async function readBillableOrderLines(
     note: redactPhoneNumbersInNote(row.note),
     unitPriceVnd: readMoney(row.unit_price_vnd, 'unit_price_vnd'),
     remainingQuantity: Number(row.remaining_quantity),
+    orderRound: Number(row.order_round),
+    state: row.line_state,
   }))
 }
 
@@ -188,6 +201,8 @@ async function readBillableLines(
 function toLineView(line: GroupedBillLine): BillLineView {
   return {
     lineNo: line.lineNo,
+    orderRound: line.orderRound,
+    state: line.state,
     sourceOrderLineId: line.sourceOrderLineId,
     itemCode: line.itemCode,
     itemName: line.itemName,
@@ -206,6 +221,12 @@ function toLineView(line: GroupedBillLine): BillLineView {
  * Một cụm bàn ghép dùng MỘT `visits.id` (mọi `table_allocations` của cụm trỏ về
  * cùng một Phiên), nên "một cụm, một bill" đúng tự nhiên — không cần code riêng,
  * chỉ cần không làm sai. `GROUP_CONCAT` cho ra "A1,A2" đúng như bảng thao tác bàn.
+ *
+ * Bàn ĐANG ngồi thắng, nhưng khi Phiên đã đóng thì không còn bàn nào đang ngồi
+ * — và một tờ hoá đơn in lại sau đó phải vẫn nói được khách ngồi bàn nào. Nên
+ * khi không còn phân bổ nào mở, hàm lấy những phân bổ ĐÃ TRẢ của chính Phiên
+ * đó. Cụm cũng vậy: cụm đã rã vẫn là cụm khách đã ngồi, nên `dissolved_at`
+ * không được xoá ký hiệu cụm khỏi tờ hoá đơn.
  */
 async function readSeating(
   connection: Queryable,
@@ -219,9 +240,16 @@ async function readSeating(
        JOIN dining_tables dt
          ON dt.organization_id = ta.organization_id AND dt.venue_id = ta.venue_id AND dt.id = ta.table_id
        LEFT JOIN table_groups g
-         ON g.venue_id = ta.venue_id AND g.id = ta.group_id AND g.dissolved_at IS NULL
+         ON g.venue_id = ta.venue_id AND g.id = ta.group_id
       WHERE ta.organization_id = ? AND ta.venue_id = ? AND ta.visit_id = ?
-        AND ta.kind = 'USAGE' AND ta.released_at IS NULL`,
+        AND ta.kind = 'USAGE'
+        AND (ta.released_at IS NULL OR NOT EXISTS (
+              SELECT 1 FROM table_allocations open_ta
+               WHERE open_ta.organization_id = ta.organization_id
+                 AND open_ta.venue_id = ta.venue_id
+                 AND open_ta.visit_id = ta.visit_id
+                 AND open_ta.kind = 'USAGE'
+                 AND open_ta.released_at IS NULL))`,
     [actor.organizationId, actor.venueId, visitId],
   )
   const row = rows[0]
@@ -293,7 +321,7 @@ async function readVisit(
   forUpdate: boolean,
 ): Promise<VisitRow> {
   const [rows] = await connection.execute<VisitRow[]>(
-    `SELECT id, business_date, started_at, ended_at, paid_marked_at FROM visits
+    `SELECT id, business_date, started_at, ended_at, paid_marked_at, version FROM visits
       WHERE organization_id = ? AND venue_id = ? AND id = ?${forUpdate ? ' FOR UPDATE' : ''}`,
     [actor.organizationId, actor.venueId, visitId],
   )
@@ -301,6 +329,64 @@ async function readVisit(
   if (!visit) throw new AppError(404, 'VISIT_NOT_FOUND', 'Không tìm thấy Phiên bàn trong địa điểm này.')
   return visit
 }
+
+/**
+ * Bối cảnh Phiên mà tờ bill nào cũng cần (NA-45).
+ *
+ * Gom vào MỘT câu thay vì rải ra: màn Thu ngân hiện bàn, số khách, Phục vụ phụ
+ * trách và số đợt gọi cạnh nhau trên cùng một thẻ, nên đọc chúng bằng bốn lần
+ * round-trip là bốn lần có thể lệch nhau.
+ *
+ * `waiterName` là NHÂN VIÊN gửi đơn đầu tiên của Phiên, không phải tên khách.
+ * Phiên chưa ai gọi món thì không có tên nào để hiện, và chuỗi rỗng là câu trả
+ * lời đúng — bịa "Khách" vào đó là nói một điều không biết.
+ */
+async function readVisitContext(
+  connection: Queryable,
+  actor: AuthenticatedActor,
+  visitId: number,
+): Promise<BillVisitContext> {
+  const [rows] = await connection.execute<(RowDataPacket & {
+    guest_count: number | string
+    started_at: Date | string
+    waiter_name: string | null
+    round_count: number | string
+  })[]>(
+    `SELECT v.guest_count, v.started_at,
+            (SELECT u.display_name
+               FROM sales_orders o JOIN users u ON u.id = o.ordered_by_user_id
+              WHERE o.venue_id = v.venue_id AND o.visit_id = v.id
+              ORDER BY o.visit_sequence LIMIT 1) AS waiter_name,
+            (SELECT COUNT(*) FROM sales_orders o
+              WHERE o.venue_id = v.venue_id AND o.visit_id = v.id) AS round_count
+       FROM visits v
+      WHERE v.organization_id = ? AND v.venue_id = ? AND v.id = ?`,
+    [actor.organizationId, actor.venueId, visitId],
+  )
+  const row = rows[0]
+  if (!row) throw new AppError(404, 'VISIT_NOT_FOUND', 'Không tìm thấy Phiên bàn trong địa điểm này.')
+  const seating = await readSeating(connection, actor, visitId)
+  return {
+    sessionCode: `S-${String(visitId).padStart(4, '0')}`,
+    code: seating.groupSymbol ?? seating.tableCodes[0] ?? '—',
+    tableCodes: seating.tableCodes,
+    groupSymbol: seating.groupSymbol,
+    guests: Number(row.guest_count),
+    waiterName: row.waiter_name ?? '',
+    openedAt: isoDateTime(row.started_at),
+    roundCount: Number(row.round_count),
+  }
+}
+
+/**
+ * Trạng thái chế biến của một dòng món.
+ *
+ * Mức chi tiết thật sự có là PHIẾU của quầy, không phải từng dòng (xem
+ * `order.model.ts`): một đơn sinh một phiếu cho Bar và một cho Bếp. Dòng nào
+ * thuộc phiếu đã `COLLECTED` thì đã mang ra; còn lại là đang làm. Món đang làm
+ * VẪN tính tiền — mockup NA-44 nói rõ điều đó.
+ */
+const LINE_STATE_SQL = `IF(pt.status = 'COLLECTED', 'SERVED', 'MAKING')`
 
 /* --------------------------------- preview -------------------------------- */
 
@@ -324,9 +410,9 @@ export async function previewBill(actor: AuthenticatedActor, visitId: number): P
   const venue = venues[0]
   if (!venue) throw new AppError(404, 'VENUE_NOT_FOUND', 'Không tìm thấy địa điểm vận hành.')
 
-  const [lines, seating, orderCount, pendingCancellations, openBill] = await Promise.all([
+  const [lines, context, orderCount, pendingCancellations, openBill] = await Promise.all([
     readBillableLines(databasePool, actor, visitId),
-    readSeating(databasePool, actor, visitId),
+    readVisitContext(databasePool, actor, visitId),
     countOrders(databasePool, actor, visitId),
     countPendingCancellations(databasePool, actor, visitId),
     findOpenBill(databasePool, actor, visitId),
@@ -361,12 +447,12 @@ export async function previewBill(actor: AuthenticatedActor, visitId: number): P
 
   return {
     visitId,
-    tableCodes: seating.tableCodes,
-    groupSymbol: seating.groupSymbol,
+    ...context,
     orderCount,
     lines: lines.map(toLineView),
     charges: buildChargeLedger(totals, itemCount),
     ...totals,
+    version: Number(visit.version ?? 1),
     previewedAt: applicationNow().toISOString(),
     blockers,
     notAvailable: BILL_FEATURES_IN_DEVELOPMENT,
@@ -776,10 +862,30 @@ export async function readBillView(
     quantity: number | string
     unit_price_vnd: number | string
     amount_vnd: number | string
+    order_round: number | string
+    line_state: BillLineState
   })[]>(
-    `SELECT line_no, source_order_line_id, item_code, item_name, variant_display_name,
-            unit_code, note, quantity, unit_price_vnd, amount_vnd
-       FROM bill_lines WHERE venue_id = ? AND bill_id = ? ORDER BY line_no`,
+    // Đợt gọi và trạng thái chế biến KHÔNG lưu trên `bill_lines`: chúng thuộc
+    // về dòng đơn, và một dòng bill gộp nhiều dòng đơn. Đọc qua
+    // `bill_line_sources`, lấy đợt sớm nhất và coi cả dòng là "đang làm" nếu
+    // còn bất kỳ phần nào chưa mang ra.
+    `SELECT bl.line_no, bl.source_order_line_id, bl.item_code, bl.item_name,
+            bl.variant_display_name, bl.unit_code, bl.note, bl.quantity,
+            bl.unit_price_vnd, bl.amount_vnd,
+            MIN(o.visit_sequence) AS order_round,
+            IF(MIN(${LINE_STATE_SQL} = 'SERVED') = 1, 'SERVED', 'MAKING') AS line_state
+       FROM bill_lines bl
+       LEFT JOIN bill_line_sources bs ON bs.bill_line_id = bl.id
+       LEFT JOIN sales_order_lines l ON l.id = bs.order_line_id
+       LEFT JOIN sales_orders o ON o.venue_id = l.venue_id AND o.id = l.order_id
+       LEFT JOIN preparation_tickets pt
+         ON pt.venue_id = l.venue_id AND pt.order_id = l.order_id
+        AND pt.station = l.preparation_station
+      WHERE bl.venue_id = ? AND bl.bill_id = ?
+      GROUP BY bl.id, bl.line_no, bl.source_order_line_id, bl.item_code, bl.item_name,
+               bl.variant_display_name, bl.unit_code, bl.note, bl.quantity,
+               bl.unit_price_vnd, bl.amount_vnd
+      ORDER BY bl.line_no`,
     [actor.venueId, billId],
   )
   const [chargeRows] = await connection.execute<(RowDataPacket & {
@@ -795,8 +901,8 @@ export async function readBillView(
     [actor.venueId, billId],
   )
 
-  const [seating, orderCount, qrConfig] = await Promise.all([
-    readSeating(connection, actor, visitId),
+  const [context, orderCount, qrConfig] = await Promise.all([
+    readVisitContext(connection, actor, visitId),
     countOrders(connection, actor, visitId),
     readQrConfiguration(connection, actor),
   ])
@@ -809,13 +915,19 @@ export async function readBillView(
     businessDate: businessDateString(row.business_date),
     revision: Number(row.revision),
     status: row.status,
-    tableCodes: seating.tableCodes,
-    groupSymbol: seating.groupSymbol,
+    ...context,
+    // `roundCount` của một TỜ là số đợt gọi món nằm TRÊN tờ đó, không phải số
+    // đợt của cả Phiên. V12 cho một Phiên nhiều tờ, nên hai con số khác nhau,
+    // và tờ hoá đơn đưa cho khách phải nói về chính nó: một tờ gom đợt 1-2 mà
+    // in "3 đợt" là một tờ hoá đơn sai.
+    roundCount: new Set(lineRows.map((line) => Number(line.order_round ?? 1))).size,
     orderCount,
     lineCount: Number(row.line_count),
     itemCount: Number(row.item_count),
     lines: lineRows.map((line): BillLineView => ({
       lineNo: Number(line.line_no),
+      orderRound: Number(line.order_round ?? 1),
+      state: line.line_state ?? 'SERVED',
       sourceOrderLineId: Number(line.source_order_line_id),
       itemCode: line.item_code,
       itemName: line.item_name,
@@ -882,11 +994,69 @@ export async function getBill(actor: AuthenticatedActor, billId: number): Promis
   return readBillView(databasePool, actor, billId)
 }
 
+
+/* --------------------- NA-45: mọi hoá đơn của một Phiên -------------------- */
+
+/**
+ * Mọi hoá đơn của một Phiên, cộng phần món chưa lên hoá đơn nào.
+ *
+ * Màn Thu ngân của NA-45 đọc đúng endpoint này cho các bước Chi tiết → Chọn
+ * phương thức → Thu tiền. V12 làm nó cần thiết: một Phiên có thể vừa có bill đã
+ * thu, vừa có bill đang chờ, vừa còn món chưa xuất — ba thứ phải đọc trong MỘT
+ * lần, nếu không màn hình ghép từ hai lần gọi và cho ra một bức tranh chắp vá.
+ *
+ * `status` là trạng thái nhìn TỪ PHÍA THU TIỀN, không phải `waiterVisitPhase`:
+ * - `PAID` — Phiên đã đóng và đã thu đủ.
+ * - `CLOSED_UNPAID` — Phiên đóng mà vẫn còn bill chưa thu. Không xảy ra ở luồng
+ *   bình thường; nó có mặt để màn hình nói được điều đó thay vì hiện sai.
+ * - `AWAITING_PAYMENT` — còn hoá đơn chưa thu và không còn món nào chưa xuất.
+ * - `SERVING` — mọi trường hợp còn lại, kể cả khi đang có bill chưa thu mà
+ *   khách vừa gọi thêm (TN-13-K4).
+ */
+export async function getSessionBills(
+  actor: AuthenticatedActor,
+  visitId: number,
+): Promise<SessionBillsView> {
+  const visit = await readVisit(databasePool, actor, visitId, false)
+  const [context, unbilled, billRows] = await Promise.all([
+    readVisitContext(databasePool, actor, visitId),
+    readBillableLines(databasePool, actor, visitId),
+    databasePool.execute<(RowDataPacket & { id: number | string })[]>(
+      `SELECT id FROM bills WHERE venue_id = ? AND visit_id = ? AND status <> 'VOIDED' ORDER BY revision`,
+      [actor.venueId, visitId],
+    ).then(([rows]) => rows),
+  ])
+
+  const bills: BillView[] = []
+  for (const row of billRows) {
+    bills.push(await readBillView(databasePool, actor, Number(row.id)))
+  }
+
+  const hasUnpaid = bills.some((bill) => bill.status === 'AWAITING_PAYMENT')
+  const closed = visit.ended_at !== null
+  const status: SessionBillsView['status'] = closed
+    ? (hasUnpaid ? 'CLOSED_UNPAID' : 'PAID')
+    : hasUnpaid && unbilled.length === 0
+      ? 'AWAITING_PAYMENT'
+      : 'SERVING'
+
+  return {
+    visitId,
+    ...context,
+    status,
+    unbilledLineCount: unbilled.length,
+    unbilledLines: unbilled.map(toLineView),
+    bills,
+    version: Number(visit.version ?? 1),
+  }
+}
+
 /* --------------------------- Màn 1: Phiên đang mở ------------------------- */
 
 interface ListRow extends RowDataPacket {
   visit_id: number | string
   started_at: Date | string
+  visit_version: number | string
   bill_id: number | string | null
   bill_code: string | null
   daily_seq: number | string | null
@@ -899,6 +1069,9 @@ interface ListRow extends RowDataPacket {
   pre_round_total_vnd: number | string | null
   rounding_adjustment_vnd: number | string | null
   total_vnd: number | string | null
+  unpaid_bill_count: number | string | null
+  unpaid_total_vnd: number | string | null
+  unpaid_item_count: number | string | null
 }
 
 /**
@@ -911,53 +1084,76 @@ interface ListRow extends RowDataPacket {
  * Phiên chưa chốt bill vẫn xuất hiện, với `status = 'SERVING'` và tổng tính
  * sống từ món đang có. Hai lý do: bộ lọc của mockup có nhóm "Đang phục vụ", và
  * Thu ngân cần thấy bàn nào sắp tới lượt chứ không chỉ bàn đã chốt.
+ *
+ * V12 bỏ ràng buộc "mỗi Phiên một hoá đơn mở", nên phần hoá đơn phải GOM trước
+ * khi join: một `LEFT JOIN bills` thẳng sẽ nhân hàng của Phiên lên theo số hoá
+ * đơn chưa thu, và cụm bàn ghép lại hiện hai thẻ — đúng cái mockup cấm.
  */
 export async function listOpenBills(
   actor: AuthenticatedActor,
   businessDate: string,
 ): Promise<BillListView> {
   const [rows] = await databasePool.execute<ListRow[]>(
-    `SELECT v.id AS visit_id, v.started_at,
+    `SELECT v.id AS visit_id, v.started_at, v.version AS visit_version,
             b.id AS bill_id, b.bill_code, b.daily_seq, b.status AS bill_status, b.closed_at,
             ve.vat_rate_basis_points, b.item_count,
-            b.subtotal_vnd, b.vat_vnd, b.pre_round_total_vnd, b.rounding_adjustment_vnd, b.total_vnd
+            b.subtotal_vnd, b.vat_vnd, b.pre_round_total_vnd, b.rounding_adjustment_vnd, b.total_vnd,
+            unpaid.bill_count AS unpaid_bill_count,
+            unpaid.total_vnd AS unpaid_total_vnd,
+            unpaid.item_count AS unpaid_item_count
        FROM visits v
        JOIN venues ve ON ve.organization_id = v.organization_id AND ve.id = v.venue_id
-       LEFT JOIN bills b
-         ON b.venue_id = v.venue_id AND b.visit_id = v.id AND b.status = 'AWAITING_PAYMENT'
+       LEFT JOIN (
+              SELECT venue_id, visit_id,
+                     COUNT(*) AS bill_count,
+                     SUM(total_vnd) AS total_vnd,
+                     SUM(item_count) AS item_count,
+                     MIN(id) AS oldest_bill_id
+                FROM bills
+               WHERE venue_id = ? AND status = 'AWAITING_PAYMENT'
+               GROUP BY venue_id, visit_id
+            ) unpaid ON unpaid.venue_id = v.venue_id AND unpaid.visit_id = v.id
+       LEFT JOIN bills b ON b.venue_id = v.venue_id AND b.id = unpaid.oldest_bill_id
       WHERE v.organization_id = ? AND v.venue_id = ? AND v.business_date = ?
         AND v.ended_at IS NULL AND v.paid_marked_at IS NULL
       ORDER BY v.started_at`,
-    [actor.organizationId, actor.venueId, businessDate],
+    [actor.venueId, actor.organizationId, actor.venueId, businessDate],
   )
 
   const items: BillListItem[] = []
   for (const row of rows) {
     const visitId = Number(row.visit_id)
-    const [seating, orderCount] = await Promise.all([
-      readSeating(databasePool, actor, visitId),
+    const [context, orderCount] = await Promise.all([
+      readVisitContext(databasePool, actor, visitId),
       countOrders(databasePool, actor, visitId),
     ])
     // Bàn chưa chốt bill thì chưa có con số nào được khoá, nên tổng được tính
     // sống từ món đang có — cùng công thức, cùng hàm, nên con số trên thẻ Phiên
     // không bao giờ lệch con số trên tờ bill sau khi chốt.
     const closed = row.bill_id !== null
-    const lines = closed ? [] : await readBillableLines(databasePool, actor, visitId)
+    // V12: món gọi thêm SAU khi đã xuất hoá đơn vẫn phải được cộng vào số nợ,
+    // nên phần chưa lên hoá đơn luôn được tính, kể cả khi Phiên đã có bill.
+    const lines = await readBillableLines(databasePool, actor, visitId)
     const live = buildBillTotals(lines, Number(row.vat_rate_basis_points))
-    const itemCount = lines.reduce((sum, line) => sum + line.quantity, 0)
+    const unbilledItemCount = lines.reduce((sum, line) => sum + line.quantity, 0)
+    const unpaidBillCount = Number(row.unpaid_bill_count ?? 0)
+    const unpaidBillsTotalVnd = row.unpaid_total_vnd === null ? 0 : readMoney(row.unpaid_total_vnd, 'unpaid_total_vnd')
+    const unpaidBillsItemCount = Number(row.unpaid_item_count ?? 0)
 
     items.push({
       billId: closed ? Number(row.bill_id) : null,
       billCode: row.bill_code,
       shortCode: row.daily_seq === null ? null : billShortCode(Number(row.daily_seq)),
       visitId,
+      ...context,
       status: closed ? (row.bill_status ?? 'AWAITING_PAYMENT') : 'SERVING',
-      tableCodes: seating.tableCodes,
-      groupSymbol: seating.groupSymbol,
       orderCount,
-      itemCount: closed ? Number(row.item_count ?? 0) : itemCount,
+      itemCount: unpaidBillsItemCount + unbilledItemCount,
       startedAt: isoDateTime(row.started_at),
       closedAt: row.closed_at === null ? null : isoDateTime(row.closed_at),
+      unpaidBillCount,
+      version: Number(row.visit_version ?? 1),
+      dueTotalVnd: unpaidBillsTotalVnd + live.totalVnd,
       subtotalVnd: closed ? readMoney(row.subtotal_vnd, 'subtotal_vnd') : live.subtotalVnd,
       vatRateBasisPoints: Number(row.vat_rate_basis_points),
       vatVnd: closed ? readMoney(row.vat_vnd, 'vat_vnd') : live.vatVnd,

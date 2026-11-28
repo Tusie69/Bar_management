@@ -6,10 +6,16 @@
  * "món nào CÒN LẠI chưa lên bill nào". Lấy nhầm thành câu thứ nhất thì bill
  * thứ hai lặp lại toàn bộ món của bill thứ nhất, và khách bị thu tiền hai lần.
  *
- * Phép gộp giữ đúng luật của `listVisitItems`: gộp theo (biến thể, ghi chú,
- * GIÁ LÚC GỌI). Giá nằm trong khoá gộp vì hai đơn của cùng một tối có thể mang
- * hai giá khác nhau nếu quán đổi giá giữa chừng; gộp chúng lại sẽ phải chọn một
- * giá để in, và con số đó sai với một trong hai lần khách đã nghe.
+ * Phép gộp theo (ĐỢT GỌI, biến thể, ghi chú, GIÁ LÚC GỌI). Giá nằm trong khoá
+ * vì hai đơn của cùng một tối có thể mang hai giá khác nhau nếu quán đổi giá
+ * giữa chừng; gộp chúng lại sẽ phải chọn một giá để in, và con số đó sai với
+ * một trong hai lần khách đã nghe.
+ *
+ * Đợt nằm trong khoá vì tờ hoá đơn của HU-44 v1.1 xếp món THEO ĐỢT. Gộp hai
+ * đợt vào một dòng thì dòng đó phải chọn một nhãn đợt, và cả số lượng của đợt
+ * sau hiện dưới nhãn của đợt trước: khách đọc "4 ly, đợt 1" khi họ gọi 2 ly ở
+ * đợt 1 và 2 ly nữa một tiếng sau. Hai lần rót cách nhau một tiếng là hai dòng
+ * trên tờ hoá đơn, không phải một.
  *
  * Mỗi dòng bill mang theo DANH SÁCH NGUỒN: dòng đơn nào góp bao nhiêu. Đó là
  * thứ `bill_line_sources` lưu, và là thứ cho phép lần xuất hóa đơn sau trừ ra
@@ -30,9 +36,15 @@ export interface BillableOrderLine {
   unitPriceVnd: number
   /** `net_quantity` trừ phần đã góp vào các bill chưa huỷ. Có thể là 0. */
   remainingQuantity: number
+  /** Đợt gọi món (`sales_orders.visit_sequence`). */
+  orderRound: number
+  /** Bar/Bếp đã mang ra chưa. Món đang làm vẫn tính tiền. */
+  state: BillLineState
 }
 
 /** Dòng đơn nào góp bao nhiêu vào một dòng bill. */
+import type { BillLineState } from './bill.model.js'
+
 export interface BillLineSource {
   orderLineId: number
   quantity: number
@@ -40,6 +52,8 @@ export interface BillLineSource {
 
 export interface GroupedBillLine {
   lineNo: number
+  orderRound: number
+  state: BillLineState
   /** `MIN(orderLineId)` của nhóm — con trỏ tra ngược, KHÔNG phải khoá. */
   sourceOrderLineId: number
   itemCode: string
@@ -65,7 +79,7 @@ export interface GroupedBillLine {
  * trên — dùng dấu `|` thì một ghi chú chứa `|` sẽ trộn hai nhóm vào nhau.
  */
 function groupKey(line: BillableOrderLine): string {
-  return [line.variantId, line.note ?? '', line.unitPriceVnd].join('\u0000')
+  return [line.orderRound, line.variantId, line.note ?? '', line.unitPriceVnd].join('\u0000')
 }
 
 /**
@@ -86,6 +100,10 @@ export function groupBillableLines(lines: readonly BillableOrderLine[]): Grouped
       existing.quantity += line.remainingQuantity
       existing.amountVnd = existing.unitPriceVnd * existing.quantity
       existing.sources.push({ orderLineId: line.orderLineId, quantity: line.remainingQuantity })
+      // Đợt đã nằm trong khoá gộp, nên mọi dòng trong nhóm cùng một đợt. Còn
+      // trạng thái thì chỉ cần một phần chưa mang ra là cả dòng còn "đang làm"
+      // — nói đã ra khi còn thiếu là nói sai với người đang bưng đồ.
+      if (line.state === 'MAKING') existing.state = 'MAKING'
       // Con trỏ tra ngược luôn là dòng đơn SỚM NHẤT của nhóm, kể cả khi dữ liệu
       // về không theo thứ tự id.
       if (line.orderLineId < existing.sourceOrderLineId) existing.sourceOrderLineId = line.orderLineId
@@ -93,6 +111,8 @@ export function groupBillableLines(lines: readonly BillableOrderLine[]): Grouped
     }
     groups.set(key, {
       lineNo: 0,
+      orderRound: line.orderRound,
+      state: line.state,
       sourceOrderLineId: line.orderLineId,
       itemCode: line.itemCode,
       itemName: line.itemName,

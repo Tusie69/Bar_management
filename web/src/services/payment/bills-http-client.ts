@@ -45,8 +45,14 @@ export interface BillFeatureFlag {
   label: string
 }
 
+export type BillLineState = "SERVED" | "MAKING" | "CANCELLED"
+
 export interface BillLine {
   lineNo: number
+  /** Đợt gọi món. Màn hình gom thành "Đợt 1", "Đợt 2". */
+  orderRound: number
+  /** Bar/Bếp đã mang ra chưa. Món đang làm vẫn tính tiền. */
+  state: BillLineState
   sourceOrderLineId: number
   itemCode: string
   itemName: string
@@ -72,6 +78,19 @@ export interface BillActor {
   displayName: string
 }
 
+/** Bối cảnh Phiên mà tờ bill nào cũng mang. Không có gì về khách. */
+export interface BillVisitContext {
+  sessionCode: string
+  code: string
+  tableCodes: string[]
+  groupSymbol: string | null
+  guests: number
+  /** Nhân viên phục vụ bàn, KHÔNG phải tên khách. */
+  waiterName: string
+  openedAt: string
+  roundCount: number
+}
+
 export interface BillAmounts {
   subtotalVnd: number
   /** Điểm cơ bản: 1000 = 10%. */
@@ -82,10 +101,10 @@ export interface BillAmounts {
   totalVnd: number
 }
 
-export interface BillPreview extends BillAmounts {
+export interface BillPreview extends BillAmounts, BillVisitContext {
   visitId: number
-  tableCodes: string[]
-  groupSymbol: string | null
+  /** Phiên bản của Phiên lúc xem trước. */
+  version: number
   orderCount: number
   lines: BillLine[]
   charges: BillCharge[]
@@ -114,7 +133,7 @@ export interface BillQr {
   isDemo: boolean
 }
 
-export interface Bill extends BillAmounts {
+export interface Bill extends BillAmounts, BillVisitContext {
   id: number
   billCode: string
   shortCode: string
@@ -143,7 +162,7 @@ export interface Bill extends BillAmounts {
   version: number
 }
 
-export interface BillListItem extends BillAmounts {
+export interface BillListItem extends BillAmounts, BillVisitContext {
   billId: number | null
   billCode: string | null
   shortCode: string | null
@@ -155,6 +174,11 @@ export interface BillListItem extends BillAmounts {
   itemCount: number
   startedAt: string
   closedAt: string | null
+  /** V12: một Phiên có thể đang giữ nhiều hoá đơn chưa thu. */
+  unpaidBillCount: number
+  version: number
+  /** Tổng mọi hoá đơn chưa thu CỘNG món chưa lên hoá đơn: số nợ của cả Phiên. */
+  dueTotalVnd: number
 }
 
 export interface BillList {
@@ -276,4 +300,27 @@ export async function confirmPayment(payload: ConfirmPaymentPayload): Promise<Pa
 export async function fetchPayment(billId: number, paymentId: number): Promise<Payment> {
   const response = await requireHttp().get<{ payment: Payment }>(`/bills/${billId}/payments/${paymentId}`)
   return response.payment
+}
+
+/* --------------------- NA-45: mọi hoá đơn của một Phiên -------------------- */
+
+export interface SessionBills extends BillVisitContext {
+  visitId: number
+  status: "SERVING" | "AWAITING_PAYMENT" | "PAID" | "CLOSED_UNPAID"
+  unbilledLineCount: number
+  unbilledLines: BillLine[]
+  bills: Bill[]
+  version: number
+}
+
+/**
+ * Mọi hoá đơn của một Phiên trong MỘT lần gọi.
+ *
+ * Màn Thu ngân đọc cái này cho các bước Chi tiết → Chọn phương thức → Thu tiền.
+ * Ghép từ nhiều lần gọi sẽ cho ra bức tranh chắp vá khi máy khác vừa thu xong
+ * một bill ở giữa hai lần đó.
+ */
+export async function fetchSessionBills(visitId: number): Promise<SessionBills> {
+  const response = await requireHttp().get<{ session: SessionBills }>(`/bills/session/${visitId}`)
+  return response.session
 }

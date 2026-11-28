@@ -1792,7 +1792,35 @@ trades 17:00-05:00.
 | GET | `/bills?businessDate=` | `order.read` | Screen 1: open visits with filter counts. A merged cluster is one row |
 | POST | `/bills` | `payment.collect` | Close the bill. `idempotencyKey` in the body, `expectedTotalVnd` optional |
 | GET | `/bills/:billId` | `order.read` | The closed bill, its lines and its ledger |
+| GET | `/bills/session/:visitId` | `order.read` | Every bill of one visit, plus the items not on any bill yet |
 | POST | `/bills/:billId/void` | `payment.collect` | `501 BILL_VOID_NOT_AVAILABLE`, `status: "IN_DEVELOPMENT"` |
+
+`GET /bills/session/:visitId` exists because of V12. A cashier facing a table that has already paid one invoice
+and is still drinking needs *both* facts at once: which bills are settled, and whether anything is still
+un-invoiced. Reading `/bills/:billId` one at a time and stitching the picture in the browser produces a patchwork
+whenever another till settles a bill between two of those calls. The response carries the visit context
+(`sessionCode`, `code`, `tableCodes`, `groupSymbol`, `guests`, `waiterName`, `openedAt`, `roundCount`), a
+`status` of `SERVING` / `AWAITING_PAYMENT` / `PAID` / `CLOSED_UNPAID`, the full `bills[]`, and `unbilledLines[]`
+— the items that would go onto the next invoice.
+
+Every bill line carries `orderRound` and `state` (`SERVED` once the station ticket is `COLLECTED`, otherwise
+`MAKING`; an item still being made is still charged). Lines are grouped by **(round, variant, note, unit price)**,
+not by (variant, note, price): the invoice lays items out by round, so a line that spanned two rounds would have to
+pick one round's label and show the other round's quantity under it. Two pours an hour apart are two lines.
+
+`roundCount` means different things in different places on purpose: on a **bill** it is the number of rounds on
+*that sheet*, on the session and on the Screen 1 row it is the number of rounds in the whole visit. A bill handed
+to a guest has to describe itself.
+
+Screen 1 (`GET /bills?businessDate=`) aggregates per visit, not per bill: `unpaidBillCount` says how many unpaid
+invoices the visit is holding, `dueTotalVnd` is everything it still owes (all unpaid bills **plus** the live total
+of anything not yet invoiced), and the `BillAmounts` fields describe the *oldest* unpaid bill — the one the cashier
+settles first. Without the aggregate a visit with two unpaid bills would appear as two cards for one table, which
+is what the mockup forbids.
+
+A bill keeps its `tableCodes` after the visit ends. Seating is read from the open `USAGE` allocations, and when
+none are open any more it falls back to that visit's released ones; a reprinted receipt saying "Bàn —" is a
+receipt nobody can reconcile.
 
 `?session=` is accepted because the work item spelled it that way, but `visitId` is the documented name: in this
 repository "session" already means the *login* session (`auth_sessions`, `session-lifecycle.ts`), and one word with
@@ -1918,6 +1946,13 @@ So an invoice without configuration still issues, `bill.qr` is null, and `bill.p
 so reconciliation reads what the guest scanned rather than what the current configuration would
 produce.
 
+**Asking for the QR twice gives back the same transaction.** `POST /bills/:id/payments` with
+`BANK_TRANSFER` on a bill that already has a `PENDING` transfer returns that transaction instead of
+`409 PAYMENT_ALREADY_PENDING`. The code on the invoice has not changed, so it is the same payment: a
+reload, a dropped connection, or a confirmation call that failed halfway must not leave the bill with
+no way to be collected until somebody edits the database. `uq_bill_payments_pending` still guarantees
+one waiting QR per bill.
+
 **Switching method cancels the waiting transaction.** TN-08-K6 allows the cashier to move from the QR
 screen to cash. Capturing by one method now sets any `PENDING` row of another method to `CANCELLED`
 with `failure_code = 'METHOD_SWITCHED'`. Left alone it would sit `PENDING` forever, dirtying the shift
@@ -1939,3 +1974,39 @@ Two things in the sections above have **not** moved to v1.1, because the decisio
   turn decrement. `POST /bills/:id/void` still answers `501 BILL_VOID_NOT_AVAILABLE`. Open question O6
   (where a reopened visit goes when the table already seated the next party) has to be answered first,
   or two visits end up on one table.
+
+### The browser side: one adapter, no second source of truth
+
+`web/src/services/payment/http-payment.ts` is the only place where the payment screens and these
+endpoints meet. The screens speak a visit-centric contract (`PaymentApi`, `getBill(visitId)`, times as
+`"20:15"`, ids as strings); the API is bill-centric with ISO timestamps and numeric ids. Every method
+in the adapter starts from `GET /bills/session/:visitId` and picks the sheet the next action is aimed
+at: the `billCode` the screen passed, or else the oldest unpaid bill. Screens never import
+`bills-http-client.ts` directly, so there is exactly one translation to get wrong.
+
+`isPaymentAvailable` is now true in HTTP mode as well as mock. Before the adapter existed the real
+build simply had no cashier screen.
+
+Two consequences worth knowing before editing it:
+
+- **The transfer is two calls, with two different idempotency keys.** Creating the transaction and
+  confirming that the money arrived are separate facts, and the server binds a key to one
+  (user, endpoint, body) triple. The confirm key is the capture key truncated to 56 characters plus
+  `-xacnhan`, because the format is `^[A-Za-z0-9_-]{8,64}$` and a colon is rejected outright.
+- **The QR drawn on screen is the server's string.** `PayBill.qr` carries `payload`, `transferNote`,
+  `beneficiary`, `amountVnd` and `isDemo` straight through, and the cashier screen, the invoice and
+  the 80mm print all render that payload with `qrcode.react`. The transfer description comes from
+  `qr.transferNote` rather than being rebuilt in the browser. The `DEMO – KHÔNG CHUYỂN TIỀN` band
+  stays over a **real** code while `isDemo` is true: a scannable code that sends money to a sample
+  account is worse than one that does not scan.
+
+What the adapter cannot do yet, and says so with `501 NOT_IMPLEMENTED_YET` rather than pretending:
+`requestCancel`, `listMyCancelRequests`, `listCancelRequests`, `decideCancel`, `cancelPaid`,
+`listPaidBills` and `listAudit` — TN-14 has no backend while O6 is open. `listNotifications` returns
+an empty list instead of throwing, because the cashier screen polls it and a repeating error there
+would bury the errors worth reading. `checkTransfer` does not poll a bank; it re-reads the visit and
+answers whether the bill has been settled, which is the only thing the system actually knows.
+
+Still hard-coded on the screen: the receiving bank's display name ("Techcombank"). The venue settings
+hold `bank_bin`, `account_number` and `account_name` but no bank label, so wiring it needs a new
+setting rather than a new field in a response.

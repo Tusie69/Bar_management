@@ -440,6 +440,8 @@ export async function capturePayment(
       }
     }
 
+    const capturedNow = input.method === 'CASH'
+
     // TN-08-K6: đang ở khối "Chờ nhận tiền" mà Thu ngân đổi sang Tiền mặt thì
     // đổi được. Dòng PENDING của mã QR phải được đóng lại, nếu không nó nằm
     // treo vĩnh viễn, làm bẩn đối soát và chặn lần tạo QR sau trên cùng bill.
@@ -451,7 +453,26 @@ export async function capturePayment(
       [actor.venueId, Number(bill.id), input.method],
     )
 
-    const capturedNow = input.method === 'CASH'
+    // Bấm "Chuyển khoản" lần nữa trên cùng một bill — mạng chập, trình duyệt
+    // tải lại, hoặc lần xác nhận trước lỗi giữa chừng — KHÔNG phải một giao
+    // dịch mới: mã QR trên tờ hoá đơn không đổi, nên giao dịch đang chờ chính
+    // là giao dịch đó. Trả lại nó thay vì 409, nếu không một lần xác nhận hỏng
+    // sẽ khoá luôn đường thu tiền của bill này cho tới khi có người sửa tay.
+    if (!capturedNow) {
+      const [pendingRows] = await connection.execute<(RowDataPacket & { id: number | string })[]>(
+        `SELECT id FROM bill_payments
+          WHERE venue_id = ? AND bill_id = ? AND status = 'PENDING' AND method = ?`,
+        [actor.venueId, Number(bill.id), input.method],
+      )
+      const pending = pendingRows[0]
+      if (pending) {
+        const payment = await readPaymentView(connection, actor, Number(pending.id), qr)
+        const view = await readBillView(connection, actor, Number(bill.id))
+        if (ownsTransaction) await connection.commit()
+        return { payment, bill: view, settlement: null }
+      }
+    }
+
     let paymentId: number
     try {
       const [result] = await connection.execute<ResultSetHeader>(

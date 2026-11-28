@@ -72,6 +72,22 @@ export interface PaidBillSummary {
   paidBy: string
 }
 
+/**
+ * Mã QR do MÁY CHỦ sinh lúc xuất hoá đơn (TU-45/46).
+ *
+ * `payload` là chuỗi EMVCo đã có CRC — màn hình vẽ nó thành ảnh và không được
+ * tự dựng lại chuỗi nào khác: khách quét cái gì thì Kế toán đối soát cái đó.
+ * Vắng mặt ở chế độ mock, và `null` khi quán chưa khai tài khoản nhận tiền.
+ */
+export interface PayBillQr {
+  payload: string
+  transferNote: string
+  beneficiary: { bankBin: string; accountNumber: string; accountName: string }
+  amountVnd: number
+  /** Quán chưa cung cấp tài khoản thật → phủ nhãn DEMO lên mã. */
+  isDemo: boolean
+}
+
 export interface PayBill {
   billCode: string
   visitId: string
@@ -102,6 +118,7 @@ export interface PayBill {
   paidAt?: string
   paidBy?: string
   manualConfirm?: boolean
+  qr?: PayBillQr | null
   cancelPending?: boolean
   cancelHistory?: PayBillCancelHistoryEntry[]
 }

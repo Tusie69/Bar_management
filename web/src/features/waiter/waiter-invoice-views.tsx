@@ -10,6 +10,7 @@ import {
   QrCode,
   ReceiptText,
 } from "lucide-react"
+import { QRCodeSVG } from "qrcode.react"
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -20,6 +21,7 @@ import {
   groupActiveRounds,
   paymentApi,
   type PayBill,
+  type PayBillQr,
   type PayLine,
   type PaymentApi,
   type PreviewBill,
@@ -47,8 +49,27 @@ function notifyViaSonner(kind: "success" | "info" | "error", text: string) {
   else toast.info(text)
 }
 
-function W2DemoQrBox({ label }: { label: string }) {
-  const cells = useMemo(() => buildDemoQrGrid(), [])
+/**
+ * Mã QR trên tờ hoá đơn Phục vụ đưa khách.
+ *
+ * HU-44 v1.1 đặt mã ở ĐÂY, không phải ở quầy: khách cầm tờ hoá đơn, quét tại
+ * bàn. Nên nó phải là chuỗi máy chủ đã sinh và lưu cùng hoá đơn, không phải
+ * một ô minh hoạ — ô minh hoạ chỉ còn dùng ở chế độ mô phỏng.
+ */
+function W2DemoQrBox({ qr, label, size = 128 }: { qr?: PayBillQr | null; label: string; size?: number }) {
+  const cells = useMemo(() => (qr ? [] : buildDemoQrGrid()), [qr])
+  if (qr) {
+    return (
+      <div role="img" aria-label={label} className="pay-qr-box">
+        <QRCodeSVG value={qr.payload} size={size} level="M" marginSize={2} />
+        {qr.isDemo ? (
+          <span aria-hidden className="pay-demo-band">
+            DEMO – KHÔNG CHUYỂN TIỀN
+          </span>
+        ) : null}
+      </div>
+    )
+  }
   return (
     <div role="img" aria-label={label} className="pay-qr-box">
       <div aria-hidden className="pay-qr">
@@ -195,11 +216,11 @@ function InvoiceQrSection({
   compact?: boolean
   onCopyRef: (refText: string) => void
 }) {
-  const qrRef = `21GAM ${bill.billCode}`
+  const qrRef = bill.qr?.transferNote ?? `21GAM ${bill.billCode}`
   if (compact) {
     return (
       <>
-        <W2DemoQrBox label="Mã QR thanh toán hóa đơn bản in 80mm, minh họa" />
+        <W2DemoQrBox qr={bill.qr} size={72} label="Mã QR thanh toán hóa đơn, bản in 80mm" />
         <div className="c">{`Ngân hàng: ${BANK_RECEIVING_NAME}`}</div>
         <div className="c">{`ND: ${qrRef}`}</div>
       </>
@@ -208,7 +229,7 @@ function InvoiceQrSection({
 
   return (
     <div className="pay-w2-inv-qr">
-      <W2DemoQrBox label="Mã QR thanh toán hóa đơn, minh họa" />
+      <W2DemoQrBox qr={bill.qr} label="Mã QR thanh toán hóa đơn" />
       <div className="grid gap-2">
         <b>{`Quét để chuyển khoản đúng ${formatVnd(bill.dueVnd)}`}</b>
         <dl className="pay-w2-inv-bank" aria-label="Thông tin chuyển khoản">

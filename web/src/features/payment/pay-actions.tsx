@@ -24,7 +24,7 @@ import {
   type PaymentMethod,
   type Receipt,
 } from "@/services/payment"
-import { DemoQrBox } from "./bill-pane"
+import { BillQrBox } from "./bill-pane"
 
 /** VM-12 / O5: single constant to flip when bank transaction check API goes live. */
 export const ENABLE_BANK_TRANSFER_CHECK = false
@@ -391,7 +391,10 @@ export function QrActionPane({
   const [ack, setAck] = useState(false)
   const [copyMessage, setCopyMessage] = useState<string | null>(null)
 
-  const qrRef = `21GAM ${bill.billCode}`
+  // Nội dung chuyển khoản do MÁY CHỦ đặt và nằm sẵn trong mã QR. Dựng lại một
+  // chuỗi ở trình duyệt là cách để hai chỗ lệch nhau, và lúc đó tiền về với
+  // một nội dung mà Kế toán không tra được.
+  const qrRef = bill.qr?.transferNote ?? `21GAM ${bill.billCode}`
   const isClosed = (bill.billStatus ? bill.billStatus === "PAID" : bill.status === "PAID") || bill.status === "CLOSED_UNPAID"
 
   useEffect(() => {
@@ -479,9 +482,20 @@ export function QrActionPane({
               </div>
             ) : (
               <>
-                <DemoQrBox size="md" label="Mã QR minh họa, không chuyển tiền được" />
+                <BillQrBox
+                  qr={bill.qr}
+                  label={
+                    bill.qr
+                      ? `Mã QR chuyển khoản ${formatVnd(bill.dueVnd)}, nội dung ${qrRef}`
+                      : "Mã QR minh họa, không chuyển tiền được"
+                  }
+                />
                 <span className="pay-qr-cap">
-                  QR giả lập. Bản thật: QR động đúng số tiền và mã bill; giai đoạn sau tự xác nhận qua cổng thanh toán.
+                  {!bill.qr
+                    ? "QR giả lập. Bản thật: QR động đúng số tiền và mã bill; giai đoạn sau tự xác nhận qua cổng thanh toán."
+                    : bill.qr.isDemo
+                      ? "Mã quét được, nhưng tài khoản nhận là tài khoản MẪU — quán chưa khai số thật. Đừng để khách chuyển tiền vào đây."
+                      : "QR động đúng số tiền và mã bill. Nhân viên vẫn phải xác nhận khi thấy tiền về; giai đoạn sau cổng thanh toán tự xác nhận."}
                 </span>
               </>
             )}

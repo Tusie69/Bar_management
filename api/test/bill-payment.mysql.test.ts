@@ -191,6 +191,14 @@ mysqlDescribe('TU-46 — thanh toán', () => {
     return Number(rows[0]!.total)
   }
 
+  async function countPending(billId: number): Promise<number> {
+    const [rows] = await databasePool.execute<(RowDataPacket & { total: number })[]>(
+      "SELECT COUNT(*) AS total FROM bill_payments WHERE bill_id = ? AND status = 'PENDING'",
+      [billId],
+    )
+    return Number(rows[0]!.total)
+  }
+
   describe('AC1 — tiền mặt', () => {
     it('một bước: CAPTURED ngay, tiền thừa tính đúng', async () => {
       const bill = await closedBill()
@@ -386,17 +394,61 @@ mysqlDescribe('TU-46 — thanh toán', () => {
       expect(cash.status, JSON.stringify(cash.body)).toBe(201)
     })
 
-    it('một bill chỉ có một QR đang chờ, không phải ba mã cho cùng số tiền', async () => {
+    /**
+     * Bấm "Chuyển khoản" lần nữa — tải lại trang, mạng chập, hoặc lần xác nhận
+     * trước hỏng giữa chừng — phải cho lại ĐÚNG giao dịch đang chờ. Sinh mã
+     * thứ hai là hai dòng tiền cho một tờ hoá đơn; trả 409 thì một lần xác
+     * nhận hỏng khoá luôn đường thu tiền của bill cho tới khi có người sửa tay.
+     */
+    it('bấm chuyển khoản lần nữa cho lại đúng giao dịch đang chờ, không sinh mã thứ hai', async () => {
       const bill = await closedBill()
       const first = await post(cashier, `/api/v1/bills/${bill.id}/payments`, {
         method: 'BANK_TRANSFER', idempotencyKey: nextKey(),
       })
       expect(first.status).toBe(201)
+      const firstPayment = (first.body as { payment: { id: number; status: string; qr: { payload: string } | null } }).payment
+
       const second = await post(cashier, `/api/v1/bills/${bill.id}/payments`, {
         method: 'BANK_TRANSFER', idempotencyKey: nextKey(),
       })
-      expect(second.status).toBe(409)
-      expect((second.body as { error: { code: string } }).error.code).toBe('PAYMENT_ALREADY_PENDING')
+      expect(second.status, JSON.stringify(second.body)).toBe(201)
+      const secondPayment = (second.body as { payment: { id: number; status: string; qr: { payload: string } | null } }).payment
+      expect(secondPayment.id).toBe(firstPayment.id)
+      expect(secondPayment.status).toBe('PENDING')
+      // Cùng một chuỗi QR: khách đang cầm tờ hoá đơn có mã đó.
+      expect(secondPayment.qr?.payload).toBe(firstPayment.qr?.payload)
+      expect(await countPending(bill.id)).toBe(1)
+
+      // Và giao dịch đó vẫn xác nhận được bình thường.
+      const confirmed = await post(
+        cashier,
+        `/api/v1/bills/${bill.id}/payments/${firstPayment.id}/confirm`,
+        { observedTransfer: true, idempotencyKey: nextKey() },
+      )
+      expect(confirmed.status, JSON.stringify(confirmed.body)).toBe(200)
+    })
+  })
+
+  describe('hoá đơn sau khi Phiên đã đóng', () => {
+    /**
+     * Thu xong bill cuối thì Phiên đóng và bàn được trả. Tờ hoá đơn đọc lại
+     * sau đó — in biên nhận, Kế toán đối soát — vẫn phải nói khách ngồi bàn
+     * nào. Một biên nhận ghi "Bàn —" là một biên nhận không đối soát được.
+     */
+    it('vẫn giữ mã bàn sau khi bàn đã được trả', async () => {
+      const bill = await closedBill()
+      const paid = await post(cashier, `/api/v1/bills/${bill.id}/payments`, {
+        method: 'CASH', tenderedAmountVnd: BILL_TOTAL_VND, idempotencyKey: nextKey(),
+      })
+      expect(paid.status, JSON.stringify(paid.body)).toBe(201)
+      const settlement = (paid.body as { settlement: { releasedTables: string[] } | null }).settlement
+      expect(settlement?.releasedTables.length, 'Phiên phải đóng và trả bàn').toBeGreaterThan(0)
+
+      const reread = await get(cashier, `/api/v1/bills/${bill.id}`)
+      expect(reread.status).toBe(200)
+      const view = (reread.body as { bill: { tableCodes: string[]; code: string } }).bill
+      expect(view.tableCodes.length).toBeGreaterThan(0)
+      expect(view.code).not.toBe('—')
     })
   })
 

@@ -23,6 +23,8 @@ function line(overrides: Partial<BillableOrderLine> & { orderLineId: number }): 
     note: null,
     unitPriceVnd: 100_000,
     remainingQuantity: 1,
+    orderRound: 1,
+    state: 'SERVED',
     ...overrides,
   }
 }
@@ -40,6 +42,18 @@ describe('groupBillableLines', () => {
       { orderLineId: 10, quantity: 2 },
       { orderLineId: 20, quantity: 3 },
     ])
+  })
+
+  it('KHÔNG gộp hai ĐỢT khác nhau — tờ hoá đơn xếp món theo đợt', () => {
+    const grouped = groupBillableLines([
+      line({ orderLineId: 10, orderRound: 1, remainingQuantity: 2 }),
+      line({ orderLineId: 20, orderRound: 3, remainingQuantity: 2, state: 'MAKING' }),
+    ])
+    expect(grouped).toHaveLength(2)
+    expect(grouped.map((item) => item.orderRound)).toEqual([1, 3])
+    // Mỗi dòng mang trạng thái của chính đợt mình: đợt 1 đã ra, đợt 3 đang làm.
+    expect(grouped.map((item) => item.state)).toEqual(['SERVED', 'MAKING'])
+    expect(grouped.every((item) => item.quantity === 2)).toBe(true)
   })
 
   it('KHÔNG gộp hai ghi chú khác nhau — hai lời nhắn là hai dòng', () => {

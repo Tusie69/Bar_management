@@ -33,7 +33,7 @@ import {
   type CloseBillInput,
   type PaymentMethod,
 } from './bill.model.js'
-import { closeBill, getBill, listOpenBills, previewBill } from './bill.repository.js'
+import { closeBill, getBill, getSessionBills, listOpenBills, previewBill } from './bill.repository.js'
 import { capturePayment, confirmPayment, getPayment } from './payment.repository.js'
 
 export const billRouter: Router = Router()
@@ -150,6 +150,27 @@ billRouter.post(
     // đọc lại rồi không thấy gì.
     afterIdempotencyCommit(response, () => publishCommittedFloorChange(actor.organizationId, actor.venueId))
     response.status(201).json({ bill })
+  },
+)
+
+
+/**
+ * NA-45 — mọi hoá đơn của một Phiên, cộng phần món chưa lên hoá đơn.
+ *
+ * Màn Thu ngân đọc endpoint này cho các bước Chi tiết → Chọn phương thức → Thu
+ * tiền. Quyền `order.read`: Phục vụ và Bartender cũng phải xem được hoá đơn họ
+ * vừa đưa khách, chỉ không thu tiền.
+ *
+ * Đặt TRƯỚC `/:billId` vì "session" sẽ bị route đó nuốt như một mã bill.
+ */
+billRouter.get(
+  '/session/:visitId',
+  requireAuthentication,
+  requirePermission('order.read'),
+  async (request, response) => {
+    const visitId = positiveInteger(request.params.visitId, 'INVALID_VISIT_ID', 'visitId phải là số nguyên dương.')
+    response.setHeader('Cache-Control', 'private, no-store')
+    response.json({ session: await getSessionBills(requireAuthenticatedActor(request), visitId) })
   },
 )
 

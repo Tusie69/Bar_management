@@ -69,8 +69,21 @@ export const BILL_FEATURES_IN_DEVELOPMENT: readonly BillFeatureFlag[] = [
   { feature: 'VOID_PAID_BILL', status: 'IN_DEVELOPMENT', label: 'Hủy bill đã thanh toán' },
 ] as const
 
+/**
+ * Trạng thái một dòng món nhìn từ tờ bill (NA-45).
+ *
+ * `CANCELLED` không bao giờ xuất hiện trên dòng ĐÃ LÊN BILL: phần bị hủy đã bị
+ * `net_quantity` trừ ra từ trước. Nó chỉ có nghĩa ở màn tạm tính, nơi màn hình
+ * cần nói rõ dòng nào đã hủy để khách đối chiếu.
+ */
+export type BillLineState = 'SERVED' | 'MAKING' | 'CANCELLED'
+
 export interface BillLineView {
   lineNo: number
+  /** Đợt gọi món (`sales_orders.visit_sequence`). Màn hình gom "Đợt 1", "Đợt 2". */
+  orderRound: number
+  /** Bar/Bếp đã mang ra chưa. Món đang làm VẪN tính tiền. */
+  state: BillLineState
   /** `MIN(sales_order_lines.id)` của nhóm đã gộp — con trỏ đối soát, không phải khóa. */
   sourceOrderLineId: number
   itemCode: string
@@ -99,6 +112,29 @@ export interface BillActor {
   displayName: string
 }
 
+/**
+ * Thông tin Phiên mà tờ bill nào cũng cần in hoặc hiện.
+ *
+ * KHÔNG có gì về khách: `waiterName` là NHÂN VIÊN phục vụ bàn, không phải tên
+ * khách; `guests` là số người, không phải danh tính ai.
+ */
+export interface BillVisitContext {
+  /** `S-0042` — mã Phiên đọc được, dựng từ `visits.id`. */
+  sessionCode: string
+  /** Mã cụm ghép nếu có, không thì mã bàn đầu tiên. Dùng làm nhãn ngắn. */
+  code: string
+  tableCodes: string[]
+  groupSymbol: string | null
+  /** Số khách của Phiên. */
+  guests: number
+  /** Phục vụ phụ trách — người gửi đơn đầu tiên của Phiên. */
+  waiterName: string
+  /** Giờ mở Phiên. */
+  openedAt: string
+  /** Số đợt gọi món của Phiên. */
+  roundCount: number
+}
+
 export interface BillAmounts {
   subtotalVnd: number
   vatRateBasisPoints: number
@@ -117,6 +153,8 @@ export interface BillAmounts {
  * từ module trước — đổi nghĩa của nó bây giờ sẽ làm lệch một màn hình đang dùng.
  */
 export interface BillPreview {
+  /** `visits.version` lúc xem trước. */
+  version: number
   visitId: number
   tableCodes: string[]
   /** `G01`… khi Phiên đang ngồi một cụm bàn ghép. */
@@ -130,7 +168,7 @@ export interface BillPreview {
   notAvailable: readonly BillFeatureFlag[]
 }
 
-export type BillPreviewView = BillPreview & BillAmounts
+export type BillPreviewView = BillPreview & BillAmounts & BillVisitContext
 
 export interface PaymentMethodOption {
   method: PaymentMethod
@@ -162,7 +200,7 @@ export const PAYMENT_METHOD_OPTIONS: readonly PaymentMethodOption[] = [
   },
 ] as const
 
-export interface BillView extends BillAmounts {
+export interface BillView extends BillAmounts, BillVisitContext {
   id: number
   billCode: string
   /** `B0412` — bản ngắn cho chỗ chật trên màn hình. Không dùng để đối soát. */
@@ -194,7 +232,7 @@ export interface BillView extends BillAmounts {
 }
 
 /** Một hàng của Màn 1 (Phiên đang mở). Không mang dòng món — màn đó chỉ cần tổng. */
-export interface BillListItem extends BillAmounts {
+export interface BillListItem extends BillAmounts, BillVisitContext {
   billId: number | null
   billCode: string | null
   shortCode: string | null
@@ -207,6 +245,43 @@ export interface BillListItem extends BillAmounts {
   /** Giờ mở Phiên, để màn hình hiện "đã ngồi 1 giờ 20". */
   startedAt: string
   closedAt: string | null
+  /**
+   * V12: một Phiên có thể đang giữ NHIỀU hoá đơn chưa thu. `billId` ở trên là
+   * tờ cũ nhất — tờ Thu ngân sẽ thu trước — còn con số này cho màn hình biết
+   * còn mấy tờ nữa phía sau.
+   */
+  unpaidBillCount: number
+  /** `visits.version`, để màn hình gửi lại khi Xuất hoá đơn. */
+  version: number
+  /**
+   * Tất cả những gì Phiên này còn nợ: tổng mọi hoá đơn chưa thu, CỘNG phần món
+   * chưa lên hoá đơn nào (tính sống, cùng công thức).
+   *
+   * Thẻ ở Màn 1 hiện con số này, không phải `totalVnd` của một tờ: một bàn đã
+   * thu tờ 1 và còn gọi tiếp mà chỉ hiện tờ 2 là báo thiếu tiền cho Thu ngân.
+   */
+  dueTotalVnd: number
+}
+
+/**
+ * Mọi hoá đơn của MỘT Phiên, cộng phần món chưa lên hoá đơn nào.
+ *
+ * V12 làm endpoint này cần thiết: màn Thu ngân phải thấy cả bill 1 đã thu lẫn
+ * bill 2 đang chờ, và biết còn món nào chưa xuất để quyết định xuất tiếp hay
+ * đóng Phiên. Đọc từng bill một rồi tự ghép ở trình duyệt sẽ cho ra một bức
+ * tranh chắp vá giữa hai lần gọi.
+ */
+export interface SessionBillsView extends BillVisitContext {
+  visitId: number
+  /** Trạng thái Phiên nhìn từ phía thu tiền. */
+  status: 'SERVING' | 'AWAITING_PAYMENT' | 'PAID' | 'CLOSED_UNPAID'
+  /** Số dòng món chưa lên hoá đơn nào. 0 nghĩa là xuất hết rồi. */
+  unbilledLineCount: number
+  /** Món chưa lên hoá đơn, để màn hình hiện trước khi bấm Xuất hóa đơn. */
+  unbilledLines: BillLineView[]
+  bills: BillView[]
+  /** `visits.version`, để client gửi kèm khi ghi. */
+  version: number
 }
 
 export interface BillListView {
